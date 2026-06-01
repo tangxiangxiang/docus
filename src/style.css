@@ -341,29 +341,353 @@ main.container {
   background: var(--border);
   height: calc(100vh - var(--navbar-h, 56px));
   outline: none;
+  /* Override docus tokens with VSCode-style tokens inside vault */
+  --vs-bg-1: #1e1e1e;
+  --vs-bg-2: #252526;
+  --vs-bg-3: #333333;
+  --vs-bg-4: #2d2d2d;
+  --vs-border: #3c3c3c;
+  --vs-text-1: #d4d4d4;
+  --vs-text-2: #858585;
+  --vs-text-3: #6a6a6a;
+  --vs-accent: #007acc;
+  --vs-accent-hover: #1f8ad2;
+  --vs-accent-bg: rgba(0, 122, 204, 0.2);
+  --vs-active-bg: #37373d;
+  --vs-tab-active-bg: #1e1e1e;
+  --vs-tab-inactive-bg: #2d2d2d;
+  --vs-hover-bg: #2a2d2e;
+  --vs-status-bg: #007acc;
+  --vs-status-fg: #ffffff;
 }
-.splitter {
-  background: var(--border);
+@media (prefers-color-scheme: light) {
+  .vault {
+    --vs-bg-1: #ffffff;
+    --vs-bg-2: #f3f3f3;
+    --vs-bg-3: #dddddd;
+    --vs-bg-4: #ececec;
+    --vs-border: #e0e0e0;
+    --vs-text-1: #1f1f1f;
+    --vs-text-2: #6f6f6f;
+    --vs-text-3: #999999;
+    --vs-accent: #005fb8;
+    --vs-accent-hover: #0258a8;
+    --vs-accent-bg: rgba(0, 95, 184, 0.1);
+    --vs-active-bg: #e8e8e8;
+    --vs-tab-active-bg: #ffffff;
+    --vs-tab-inactive-bg: #ececec;
+    --vs-hover-bg: #ececec;
+    --vs-status-bg: #005fb8;
+    --vs-status-fg: #ffffff;
+  }
+}
+.vault {
+  /* Re-bind docus tokens to VSCode palette so existing components
+     (FileTree, EditorPane, PreviewPane) inherit VSCode colors. */
+  --text: var(--vs-text-1);
+  --text-h: var(--vs-text-1);
+  --text-muted: var(--vs-text-2);
+  --bg: var(--vs-bg-1);
+  --bg-soft: var(--vs-bg-2);
+  --border: var(--vs-border);
+  --code-bg: var(--vs-bg-2);
+  --accent: var(--vs-accent);
+  --accent-hover: var(--vs-accent-hover);
+  --accent-bg: var(--vs-accent-bg);
+}
+
+/* Activity Bar */
+.activity-bar {
+  background: var(--vs-bg-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 0;
+  gap: 4px;
+}
+.ab-btn {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: var(--vs-text-2);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: color 0.12s, background 0.12s;
+}
+.ab-btn:hover { color: var(--vs-text-1); }
+.ab-btn.active {
+  color: var(--vs-text-1);
+  border-left-color: var(--vs-accent);
+  background: var(--vs-hover-bg);
+}
+
+/* FileTree: scope token names so it picks up VSCode palette */
+.vault .file-tree {
+  background: var(--vs-bg-2);
+  color: var(--vs-text-1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.vault .file-tree header {
+  padding: 10px 14px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--vs-text-2);
+  border-bottom: 1px solid var(--vs-border);
+  background: var(--vs-bg-2);
+}
+.vault .file-tree .new-btn {
+  border: 1px solid var(--vs-border);
+  background: transparent;
+  color: var(--vs-text-1);
+  font-size: 0.75rem;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.vault .file-tree .new-btn:hover {
+  background: var(--vs-hover-bg);
+  border-color: var(--vs-accent);
+}
+.vault .file-tree ul { overflow-y: auto; flex: 1; }
+.vault .file-tree li {
+  padding: 4px 14px;
+  border-bottom: 0;
+  font-size: 0.88rem;
+  color: var(--vs-text-1);
+  border-left: 2px solid transparent;
+}
+.vault .file-tree li.active {
+  background: var(--vs-active-bg);
+  border-left-color: var(--vs-accent);
+}
+.vault .file-tree li:hover { background: var(--vs-hover-bg); }
+.vault .file-tree .entry {
+  color: inherit;
+  font-size: inherit;
+}
+.vault .file-tree .entry-date {
+  font-size: 0.7rem;
+  color: var(--vs-text-3);
+}
+.vault .file-tree .actions button {
+  color: var(--vs-text-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.85rem;
+}
+.vault .file-tree .actions button:hover {
+  background: var(--vs-bg-3);
+  color: var(--vs-text-1);
+}
+.vault .file-tree .rename-input {
+  background: var(--vs-bg-1);
+  border: 1px solid var(--vs-accent);
+  color: var(--vs-text-1);
+  border-radius: 2px;
+  padding: 1px 5px;
+  font: inherit;
+}
+
+/* Editor Area */
+.editor-area {
+  display: grid;
+  grid-template-rows: 22px 36px 1fr 22px;
+  background: var(--vs-bg-1);
+  color: var(--vs-text-1);
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Breadcrumb */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  font-size: 0.8rem;
+  color: var(--vs-text-2);
+  background: var(--vs-bg-1);
+  border-bottom: 1px solid var(--vs-border);
+  user-select: none;
+}
+.bc-segment { color: var(--vs-text-2); }
+.bc-sep { color: var(--vs-text-3); }
+.bc-current { color: var(--vs-text-1); }
+.bc-placeholder { color: var(--vs-text-3); font-style: italic; }
+
+/* Tabs */
+.tabs {
+  display: flex;
+  background: var(--vs-bg-3);
+  border-bottom: 1px solid var(--vs-border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 36px;
+  font-size: 0.85rem;
+  color: var(--vs-text-2);
+  background: var(--vs-tab-inactive-bg);
+  border-right: 1px solid var(--vs-border);
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  min-width: 0;
+  max-width: 200px;
+}
+.tab:hover { background: var(--vs-hover-bg); color: var(--vs-text-1); }
+.tab.active {
+  background: var(--vs-tab-active-bg);
+  color: var(--vs-text-1);
+}
+.tab.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--vs-accent);
+}
+.tab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+  flex-shrink: 0;
+}
+.tab-dot.dirty { background: var(--vs-text-2); }
+.tab-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tab-close {
+  background: transparent;
+  border: 0;
+  color: var(--vs-text-2);
+  cursor: pointer;
+  border-radius: 3px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.tab-close:hover { background: var(--vs-bg-3); color: var(--vs-text-1); }
+
+/* Content area: editor + preview side by side */
+.content {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--vs-bg-1);
+}
+.editor-pane,
+.preview-pane {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  background: var(--vs-bg-1);
+}
+.editor-pane { flex: 1; }
+.preview-pane { flex: 1; border-left: 1px solid var(--vs-border); }
+.content-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vs-text-3);
+  font-style: italic;
+  background: var(--vs-bg-1);
+}
+
+/* Splitters inside vault (thinner, VSCode style) */
+.vault .splitter {
+  background: transparent;
   cursor: col-resize;
   position: relative;
   user-select: none;
   touch-action: none;
+  width: 6px;
 }
-.splitter::after {
+.vault .splitter::after {
   content: '';
   position: absolute;
   left: 50%;
   top: 0;
   bottom: 0;
-  width: 2px;
+  width: 1px;
   margin-left: -1px;
-  background: transparent;
-  transition: background 0.15s;
+  background: var(--vs-border);
+  transition: background 0.12s;
 }
-.splitter:hover::after,
-.splitter:active::after {
-  background: var(--accent);
+.vault .splitter:hover::after,
+.vault .splitter:active::after {
+  background: var(--vs-accent);
 }
+
+/* EditorPane inside vault */
+.vault .cm-host { height: 100%; }
+.vault .cm-host .cm-editor { height: 100%; }
+.vault .cm-host .cm-scroller { font-family: var(--mono); }
+
+/* PreviewPane inside vault: drop docus stylesheet padding to match */
+.vault .preview-pane .article {
+  padding: 14px 20px;
+  max-width: 100%;
+}
+.vault .preview-pane .article h1:first-child { margin-top: 0; }
+
+/* Status Bar */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--vs-status-bg);
+  color: var(--vs-status-fg);
+  font-size: 0.75rem;
+  padding: 0 12px;
+  user-select: none;
+}
+.sb-left, .sb-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.sb-item { white-space: nowrap; }
+.sb-status[data-status='dirty']::before { content: '● '; }
+.sb-status[data-status='saved']::before { content: '✓ '; }
+.sb-status[data-status='saving']::before { content: '⟳ '; }
+.sb-status[data-status='error']::before { content: '! '; }
+
+/* Empty / loading state inside vault */
+.vault .empty {
+  color: var(--vs-text-3);
+  font-style: italic;
+  padding: 16px 20px;
+}
+.vault .empty.error { color: #f48771; font-style: normal; }
 .vault > * {
   background: var(--bg);
   overflow: hidden;
