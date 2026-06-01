@@ -9,6 +9,8 @@ const router = createRouter({
     { path: '/archives', name: 'archives', component: () => import('../views/ArchivesView.vue') },
     { path: '/tags', name: 'tags', component: () => import('../views/TagsView.vue') },
     { path: '/tags/:tag', name: 'tag', component: () => import('../views/TagDetailView.vue'), props: true },
+    { path: '/vault', name: 'vault', component: () => import('../views/VaultView.vue') },
+    { path: '/vault/:slug', name: 'vault-post', component: () => import('../views/VaultView.vue'), props: true },
   ],
   scrollBehavior() {
     return { top: 0 }

@@ -10,6 +10,7 @@ import { RouterLink } from 'vue-router'
         <RouterLink to="/posts">Posts</RouterLink>
         <RouterLink to="/archives">Archives</RouterLink>
         <RouterLink to="/tags">Tags</RouterLink>
+        <RouterLink to="/vault">Vault</RouterLink>
       </nav>
     </div>
   </header>
