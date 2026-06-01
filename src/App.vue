@@ -4,7 +4,9 @@ import NavBar from './components/NavBar.vue'
 
 <template>
   <NavBar />
-  <main class="container">
-    <RouterView />
-  </main>
+  <RouterView v-slot="{ Component, route }">
+    <main :class="['container', { 'full-width': route.meta.fullWidth }]" :key="route.fullPath">
+      <component :is="Component" />
+    </main>
+  </RouterView>
 </template>

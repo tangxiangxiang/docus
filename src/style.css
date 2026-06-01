@@ -113,6 +113,10 @@ hr {
   margin: 0 auto;
   padding: 0 20px;
 }
+.container.full-width {
+  max-width: none;
+  padding: 0;
+}
 
 /* NavBar */
 .navbar {
@@ -272,7 +276,6 @@ main.container {
   gap: 1px;
   background: var(--border);
   height: calc(100vh - 56px);
-  margin: 0 -20px;
   outline: none;
 }
 .vault > * {
