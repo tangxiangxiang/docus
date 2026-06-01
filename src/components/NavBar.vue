@@ -14,7 +14,6 @@ defineProps<{ isVault?: boolean }>()
       <nav class="nav-links">
         <RouterLink to="/posts">Posts</RouterLink>
         <RouterLink to="/archives">Archives</RouterLink>
-        <RouterLink to="/tags">Tags</RouterLink>
         <RouterLink to="/vault">Vault</RouterLink>
       </nav>
       <div class="nav-spacer" />

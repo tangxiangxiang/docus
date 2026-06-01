@@ -12,9 +12,11 @@ import {
 } from '../lib/api'
 import { stringifyDoc, slugify } from '../lib/frontmatter'
 import FileTree from '../components/vault/FileTree.vue'
+import TagPanel from '../components/vault/TagPanel.vue'
 import EditorPane from '../components/vault/EditorPane.vue'
 import PreviewPane from '../components/vault/PreviewPane.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
+import type { SidePanel } from '../components/vault/ActivityBar.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
 import Breadcrumb from '../components/vault/Breadcrumb.vue'
 import StatusBar from '../components/vault/StatusBar.vue'
@@ -25,18 +27,18 @@ const router = useRouter()
 
 /* ---------- Layout state ---------- */
 const STORAGE_KEY = 'docus.vault.layout'
-const fileTreeOpen = ref(true)
-const fileTreeWidth = ref(260)
+type ActivePanel = SidePanel | null
+const activePanel = ref<ActivePanel>('files')
+const sidePanelWidth = ref(260)
 const editorRatio = ref(1)
 let saveTimer: number | null = null
 
 const vaultStyle = computed(() => {
-  /* 4 children: ActivityBar | FileTree | splitter | editor-area.
-   * The editor + preview live side-by-side INSIDE editor-area (.content is a flex row),
-   * so the outer grid is just 4 columns. When the file tree is closed we collapse to 2. */
-  if (fileTreeOpen.value) {
+  /* 4 children: ActivityBar | side-panel (FileTree or TagPanel) | splitter | editor-area.
+   * When no side panel is open we collapse to 2 columns. */
+  if (activePanel.value) {
     return {
-      gridTemplateColumns: `48px ${fileTreeWidth.value}px 6px 1fr`,
+      gridTemplateColumns: `48px ${sidePanelWidth.value}px 6px 1fr`,
     }
   }
   return {
@@ -59,14 +61,22 @@ function loadLayout() {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return
     const d = JSON.parse(raw) as {
+      activePanel?: ActivePanel | boolean
       fileTreeOpen?: boolean
+      sidePanelWidth?: number
       fileTreeWidth?: number
       editorRatio?: number
     }
-    if (typeof d.fileTreeOpen === 'boolean') fileTreeOpen.value = d.fileTreeOpen
-    if (typeof d.fileTreeWidth === 'number' && d.fileTreeWidth >= 150 && d.fileTreeWidth <= 600) {
-      fileTreeWidth.value = d.fileTreeWidth
+    /* Backwards compat: older layouts only had a boolean for the file tree. */
+    if (d.activePanel === 'files' || d.activePanel === 'tags' || d.activePanel === null) {
+      activePanel.value = d.activePanel
+    } else if (typeof d.fileTreeOpen === 'boolean') {
+      activePanel.value = d.fileTreeOpen ? 'files' : null
     }
+    const w = typeof d.sidePanelWidth === 'number'
+      ? d.sidePanelWidth
+      : typeof d.fileTreeWidth === 'number' ? d.fileTreeWidth : null
+    if (w !== null && w >= 150 && w <= 600) sidePanelWidth.value = w
     if (typeof d.editorRatio === 'number' && d.editorRatio >= 0.3 && d.editorRatio <= 3) {
       editorRatio.value = d.editorRatio
     }
@@ -80,8 +90,8 @@ function saveLayout() {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
-        fileTreeOpen: fileTreeOpen.value,
-        fileTreeWidth: fileTreeWidth.value,
+        activePanel: activePanel.value,
+        sidePanelWidth: sidePanelWidth.value,
         editorRatio: editorRatio.value,
       }),
     )
@@ -90,13 +100,19 @@ function saveLayout() {
   }
 }
 
+function selectPanel(panel: SidePanel) {
+  /* Click the active button to close, otherwise switch. */
+  activePanel.value = activePanel.value === panel ? null : panel
+  saveLayout()
+}
+
 function startDrag(which: 'tree' | 'middle', e: PointerEvent) {
   e.preventDefault()
   const vault = vaultRef.value
   if (!vault) return
   const rect = vault.getBoundingClientRect()
   const startX = e.clientX
-  const startTree = fileTreeWidth.value
+  const startTree = sidePanelWidth.value
   const startRatio = editorRatio.value
   const SPLITTER_PX = 6
 
@@ -104,7 +120,7 @@ function startDrag(which: 'tree' | 'middle', e: PointerEvent) {
     const dx = ev.clientX - startX
     if (which === 'tree') {
       const max = Math.min(600, rect.width - 480)
-      fileTreeWidth.value = clamp(startTree + dx, 150, max)
+      sidePanelWidth.value = clamp(startTree + dx, 150, max)
     } else {
       /* Middle splitter resizes editor vs preview INSIDE .content.
        * Measure .content directly so we don't have to redo the outer-grid math. */
@@ -266,8 +282,7 @@ function onKeydown(e: KeyboardEvent) {
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
     e.preventDefault()
-    fileTreeOpen.value = !fileTreeOpen.value
-    saveLayout()
+    selectPanel('files')
   }
 }
 
@@ -341,22 +356,17 @@ watch(
 onBeforeUnmount(() => {
   if (saveTimer) clearTimeout(saveTimer)
 })
-
-function toggleFileTree() {
-  fileTreeOpen.value = !fileTreeOpen.value
-  saveLayout()
-}
 </script>
 
 <template>
   <div ref="vaultRef" class="vault" tabindex="0" :style="vaultStyle" @keydown="onKeydown">
     <ActivityBar
-      :file-tree-open="fileTreeOpen"
-      @toggle-file-tree="toggleFileTree"
+      :active-panel="activePanel"
+      @select-panel="selectPanel"
     />
 
     <FileTree
-      v-show="fileTreeOpen"
+      v-if="activePanel === 'files'"
       :posts="posts"
       :current-slug="activeSlug"
       @select="openPost"
@@ -364,13 +374,14 @@ function toggleFileTree() {
       @rename="onRename"
       @delete="onDelete"
     />
+    <TagPanel v-else-if="activePanel === 'tags'" :posts="posts" />
 
     <div
-      v-show="fileTreeOpen"
+      v-show="activePanel"
       class="splitter"
       role="separator"
       aria-orientation="vertical"
-      title="Drag to resize file tree (Ctrl/Cmd+B to toggle)"
+      title="Drag to resize side panel"
       @pointerdown="startDrag('tree', $event)"
     />
 
