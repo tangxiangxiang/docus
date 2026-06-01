@@ -616,7 +616,12 @@ main.container {
   background: var(--vs-bg-1);
 }
 .preview-pane { border-left: 1px solid var(--vs-border); }
-.preview-pane > .article { flex: 1 1 auto; min-height: 0; }
+.preview-pane > .article {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: auto;
+  box-sizing: border-box;
+}
 .content-empty {
   flex: 1;
   display: flex;
@@ -658,9 +663,15 @@ main.container {
 .vault .cm-host .cm-scroller { font-family: var(--mono); }
 
 /* PreviewPane inside vault: drop docus stylesheet padding to match */
+.vault .preview-pane {
+  background: var(--vs-bg-1);
+  overflow: auto;
+}
 .vault .preview-pane .article {
   padding: 14px 20px;
   max-width: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
 }
 .vault .preview-pane .article h1:first-child { margin-top: 0; }
 
