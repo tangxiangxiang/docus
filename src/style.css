@@ -272,11 +272,32 @@ main.container {
 /* Vault: 3-pane layout */
 .vault {
   display: grid;
-  grid-template-columns: 240px 1fr 1fr;
-  gap: 1px;
+  gap: 0;
   background: var(--border);
   height: calc(100vh - 56px);
   outline: none;
+}
+.splitter {
+  background: var(--border);
+  cursor: col-resize;
+  position: relative;
+  user-select: none;
+  touch-action: none;
+}
+.splitter::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: transparent;
+  transition: background 0.15s;
+}
+.splitter:hover::after,
+.splitter:active::after {
+  background: var(--accent);
 }
 .vault > * {
   background: var(--bg);
