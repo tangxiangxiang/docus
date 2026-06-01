@@ -31,11 +31,23 @@ const editorRatio = ref(1)
 let saveTimer: number | null = null
 
 const vaultStyle = computed(() => {
-  const ft = fileTreeOpen.value ? `${fileTreeWidth.value}px 6px` : '0 0'
+  /* 4 children: ActivityBar | FileTree | splitter | editor-area.
+   * The editor + preview live side-by-side INSIDE editor-area (.content is a flex row),
+   * so the outer grid is just 4 columns. When the file tree is closed we collapse to 2. */
+  if (fileTreeOpen.value) {
+    return {
+      gridTemplateColumns: `48px ${fileTreeWidth.value}px 6px 1fr`,
+    }
+  }
   return {
-    gridTemplateColumns: `48px ${ft} ${editorRatio.value}fr 6px 1fr`,
+    gridTemplateColumns: '48px 1fr',
   }
 })
+const contentStyle = computed(() => ({
+  /* editor/preview split inside .content — middle splitter writes to editorRatio */
+  '--editor-flex': String(editorRatio.value),
+  '--preview-flex': '1',
+}))
 const vaultRef = ref<HTMLElement | null>(null)
 
 function clamp(n: number, min: number, max: number) {
@@ -94,11 +106,11 @@ function startDrag(which: 'tree' | 'middle', e: PointerEvent) {
       const max = Math.min(600, rect.width - 480)
       fileTreeWidth.value = clamp(startTree + dx, 150, max)
     } else {
-      const total =
-        rect.width -
-        48 -
-        (fileTreeOpen.value ? fileTreeWidth.value + SPLITTER_PX : 0) -
-        SPLITTER_PX
+      /* Middle splitter resizes editor vs preview INSIDE .content.
+       * Measure .content directly so we don't have to redo the outer-grid math. */
+      const content = vault.querySelector<HTMLElement>('.content')
+      const total = content ? content.clientWidth - SPLITTER_PX : 0
+      if (total <= 0) return
       const startEditor = (total * startRatio) / (1 + startRatio)
       const editorWidth = clamp(startEditor + dx, total * 0.2, total * 0.8)
       editorRatio.value = editorWidth / (total - editorWidth)
@@ -366,7 +378,7 @@ function toggleFileTree() {
       <Breadcrumb :slug="activeSlug" />
       <EditorTabs :tabs="tabs" :active-slug="activeSlug" @select="selectTab" @close="closeTab" />
 
-      <div class="content">
+      <div class="content" :style="contentStyle">
         <div
           v-for="t in tabs"
           v-show="t.slug === activeSlug"

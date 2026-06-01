@@ -606,9 +606,14 @@ main.container {
   overflow: hidden;
   background: var(--vs-bg-1);
 }
+.editor-pane {
+  flex: var(--editor-flex, 1) 1 0;
+}
+.preview-pane {
+  flex: var(--preview-flex, 1) 1 0;
+}
 .editor-pane,
 .preview-pane {
-  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   display: flex;
