@@ -337,6 +337,7 @@ main.container {
 /* Vault: 3-pane layout */
 .vault {
   display: grid;
+  grid-template-rows: 1fr;
   gap: 0;
   background: var(--border);
   height: calc(100vh - var(--navbar-h, 56px));
@@ -504,10 +505,12 @@ main.container {
 /* Editor Area */
 .editor-area {
   display: grid;
-  grid-template-rows: 22px 36px 1fr 22px;
+  grid-template-rows: 22px 36px minmax(0, 1fr) 22px;
   background: var(--vs-bg-1);
   color: var(--vs-text-1);
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -605,13 +608,15 @@ main.container {
 }
 .editor-pane,
 .preview-pane {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
-  overflow: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--vs-bg-1);
 }
-.editor-pane { flex: 1; }
-.preview-pane { flex: 1; border-left: 1px solid var(--vs-border); }
+.preview-pane { border-left: 1px solid var(--vs-border); }
+.preview-pane > .article { flex: 1 1 auto; min-height: 0; }
 .content-empty {
   flex: 1;
   display: flex;
@@ -648,7 +653,7 @@ main.container {
 }
 
 /* EditorPane inside vault */
-.vault .cm-host { height: 100%; }
+.vault .cm-host { flex: 1; min-height: 0; height: 100%; }
 .vault .cm-host .cm-editor { height: 100%; }
 .vault .cm-host .cm-scroller { font-family: var(--mono); }
 
@@ -688,7 +693,9 @@ main.container {
   padding: 16px 20px;
 }
 .vault .empty.error { color: #f48771; font-style: normal; }
-.vault > * {
+.vault > .activity-bar,
+.vault > .file-tree,
+.vault > .splitter {
   background: var(--bg);
   overflow: hidden;
   display: flex;
