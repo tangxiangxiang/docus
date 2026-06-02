@@ -79,6 +79,7 @@ pre {
   overflow-x: auto;
   font-size: 0.9em;
   line-height: 1.5;
+  border: 1px solid var(--border);
 }
 
 pre code {
@@ -399,7 +400,7 @@ main.container {
   --bg: var(--vs-bg-1);
   --bg-soft: var(--vs-bg-2);
   --border: var(--vs-border);
-  --code-bg: var(--vs-bg-2);
+  --code-bg: #2a2a2a;
   --accent: var(--vs-accent);
   --accent-hover: var(--vs-accent-hover);
   --accent-bg: var(--vs-accent-bg);
