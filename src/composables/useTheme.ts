@@ -5,14 +5,16 @@ export type Theme = 'auto' | 'light' | 'dark'
 const STORAGE_KEY = 'docus.theme'
 const ATTR = 'data-theme'
 
-/** Module-level singleton state. Initialized once at module load. */
-const theme = ref<Theme>(readSaved())
-const systemDark = ref<boolean>(getSystemDark())
-
-/** Single matchMedia instance, lazy (null on SSR / non-browser). */
+/** Single matchMedia instance, lazy (null on SSR / non-browser).
+ *  Declared before any function that closes over it, so callers
+ *  (notably the initial ref() below) can reference it. */
 const mq = typeof window !== 'undefined'
   ? window.matchMedia('(prefers-color-scheme: dark)')
   : null
+
+function getSystemDark(): boolean {
+  return mq ? mq.matches : false
+}
 
 function readSaved(): Theme {
   try {
@@ -24,9 +26,9 @@ function readSaved(): Theme {
   return 'auto'
 }
 
-function getSystemDark(): boolean {
-  return mq ? mq.matches : false
-}
+/** Module-level singleton state. Initialized once at module load. */
+const theme = ref<Theme>(readSaved())
+const systemDark = ref<boolean>(getSystemDark())
 
 function applyToDom(t: Theme) {
   const el = document.documentElement
