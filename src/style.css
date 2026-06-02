@@ -439,6 +439,9 @@ main.container {
   border-left-color: var(--vs-accent);
   background: var(--vs-hover-bg);
 }
+/* Invisible flex spacer that pushes the settings button to the bottom
+   of the activity bar. */
+.ab-spacer { flex: 1; }
 
 /* FileTree: scope token names so it picks up VSCode palette */
 .vault .file-tree {
