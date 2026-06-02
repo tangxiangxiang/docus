@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useStorage, useDebounceFn } from '@vueuse/core'
 import {
   listPosts,
   getPost,
@@ -11,6 +12,8 @@ import {
   type PostSummary,
 } from '../lib/api'
 import { stringifyDoc, slugify } from '../lib/frontmatter'
+import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import EditorPane from '../components/vault/EditorPane.vue'
@@ -20,33 +23,64 @@ import type { SidePanel } from '../components/vault/ActivityBar.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
 import Breadcrumb from '../components/vault/Breadcrumb.vue'
 import StatusBar from '../components/vault/StatusBar.vue'
+import CommandPalette from '../components/vault/CommandPalette.vue'
 import type { Tab } from '../components/vault/tabs'
 
 const route = useRoute()
 const router = useRouter()
+const toast = useToast()
+const { confirm } = useConfirm()
 
-/* ---------- Layout state ---------- */
-const STORAGE_KEY = 'docus.vault.layout'
+/* ---------- Layout state (useStorage 自动序列化到 localStorage) ---------- */
 type ActivePanel = SidePanel | null
 const activePanel = ref<ActivePanel>('files')
 const sidePanelWidth = ref(260)
 const editorRatio = ref(1)
-let saveTimer: number | null = null
+
+// 旧版只用 fileTreeOpen 布尔,这里做向后兼容:读旧值转成新 schema
+const layout = useStorage('docus.vault.layout', {
+  activePanel: 'files' as ActivePanel,
+  sidePanelWidth: 260,
+  editorRatio: 1,
+}, undefined, {
+  serializer: {
+    read: (raw) => {
+      try {
+        const d = JSON.parse(raw) as Record<string, unknown>
+        const ap = d.activePanel
+        let active: ActivePanel = null
+        if (ap === 'files' || ap === 'tags' || ap === null) active = ap as ActivePanel
+        else if (typeof d.fileTreeOpen === 'boolean') active = d.fileTreeOpen ? 'files' : null
+        const w = typeof d.sidePanelWidth === 'number'
+          ? d.sidePanelWidth
+          : typeof d.fileTreeWidth === 'number' ? d.fileTreeWidth : 260
+        const r = typeof d.editorRatio === 'number' ? d.editorRatio : 1
+        return { activePanel: active, sidePanelWidth: w, editorRatio: r }
+      } catch {
+        return { activePanel: 'files' as ActivePanel, sidePanelWidth: 260, editorRatio: 1 }
+      }
+    },
+    write: (v) => JSON.stringify(v),
+  },
+})
+
+watch(layout, (v) => {
+  activePanel.value = v.activePanel
+  sidePanelWidth.value = v.sidePanelWidth
+  editorRatio.value = v.editorRatio
+}, { immediate: true, deep: true })
+
+watch([activePanel, sidePanelWidth, editorRatio], ([ap, w, r]) => {
+  layout.value = { activePanel: ap, sidePanelWidth: w, editorRatio: r }
+})
 
 const vaultStyle = computed(() => {
-  /* 4 children: ActivityBar | side-panel (FileTree or TagPanel) | splitter | editor-area.
-   * When no side panel is open we collapse to 2 columns. */
   if (activePanel.value) {
-    return {
-      gridTemplateColumns: `48px ${sidePanelWidth.value}px 6px 1fr`,
-    }
+    return { gridTemplateColumns: `48px ${sidePanelWidth.value}px 6px 1fr` }
   }
-  return {
-    gridTemplateColumns: '48px 1fr',
-  }
+  return { gridTemplateColumns: '48px 1fr' }
 })
 const contentStyle = computed(() => ({
-  /* editor/preview split inside .content — middle splitter writes to editorRatio */
   '--editor-flex': String(editorRatio.value),
   '--preview-flex': '1',
 }))
@@ -56,54 +90,8 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
 }
 
-function loadLayout() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return
-    const d = JSON.parse(raw) as {
-      activePanel?: ActivePanel | boolean
-      fileTreeOpen?: boolean
-      sidePanelWidth?: number
-      fileTreeWidth?: number
-      editorRatio?: number
-    }
-    /* Backwards compat: older layouts only had a boolean for the file tree. */
-    if (d.activePanel === 'files' || d.activePanel === 'tags' || d.activePanel === null) {
-      activePanel.value = d.activePanel
-    } else if (typeof d.fileTreeOpen === 'boolean') {
-      activePanel.value = d.fileTreeOpen ? 'files' : null
-    }
-    const w = typeof d.sidePanelWidth === 'number'
-      ? d.sidePanelWidth
-      : typeof d.fileTreeWidth === 'number' ? d.fileTreeWidth : null
-    if (w !== null && w >= 150 && w <= 600) sidePanelWidth.value = w
-    if (typeof d.editorRatio === 'number' && d.editorRatio >= 0.3 && d.editorRatio <= 3) {
-      editorRatio.value = d.editorRatio
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
-function saveLayout() {
-  try {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        activePanel: activePanel.value,
-        sidePanelWidth: sidePanelWidth.value,
-        editorRatio: editorRatio.value,
-      }),
-    )
-  } catch {
-    /* ignore */
-  }
-}
-
 function selectPanel(panel: SidePanel) {
-  /* Click the active button to close, otherwise switch. */
   activePanel.value = activePanel.value === panel ? null : panel
-  saveLayout()
 }
 
 function startDrag(which: 'tree' | 'middle', e: PointerEvent) {
@@ -122,8 +110,6 @@ function startDrag(which: 'tree' | 'middle', e: PointerEvent) {
       const max = Math.min(600, rect.width - 480)
       sidePanelWidth.value = clamp(startTree + dx, 150, max)
     } else {
-      /* Middle splitter resizes editor vs preview INSIDE .content.
-       * Measure .content directly so we don't have to redo the outer-grid math. */
       const content = vault.querySelector<HTMLElement>('.content')
       const total = content ? content.clientWidth - SPLITTER_PX : 0
       if (total <= 0) return
@@ -137,7 +123,6 @@ function startDrag(which: 'tree' | 'middle', e: PointerEvent) {
     document.removeEventListener('pointerup', onUp)
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
-    saveLayout()
   }
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
@@ -186,7 +171,8 @@ async function openPost(slug: string) {
     return
   }
   if (isDirty.value && activeSlug.value) {
-    if (!confirm('Unsaved changes will be lost. Continue?')) return
+    const ok = await confirm('有未保存的修改,确定要切换吗?')
+    if (!ok) return
   }
   const tab = makeEmptyTab(slug)
   tabs.value.push(tab)
@@ -210,7 +196,8 @@ async function closeTab(slug: string) {
   if (idx === -1) return
   const tab = tabs.value[idx]
   if (tab.raw !== tab.originalRaw) {
-    if (!confirm(`Discard unsaved changes to "${tab.slug}"?`)) return
+    const ok = await confirm(`放弃对 "${tab.slug}" 的未保存修改?`)
+    if (!ok) return
   }
   tabs.value.splice(idx, 1)
   if (activeSlug.value === slug) {
@@ -249,58 +236,64 @@ async function doSave(slug: string): Promise<void> {
   } catch (e) {
     tab.saveStatus = 'error'
     tab.error = (e as Error).message
+    toast.error(`保存失败: ${tab.error}`)
   }
 }
+
+const debouncedSave = useDebounceFn((slug: string) => {
+  void doSave(slug)
+}, 800)
 
 function onEditorChange(slug: string, val: string) {
   const tab = tabs.value.find((t) => t.slug === slug)
   if (!tab) return
   tab.raw = val
   tab.saveStatus = tab.raw === tab.originalRaw ? 'idle' : 'dirty'
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = window.setTimeout(() => {
-    void doSave(slug)
-  }, 800)
+  debouncedSave(slug)
 }
 
 async function doSaveNow() {
-  if (saveTimer) {
-    clearTimeout(saveTimer)
-    saveTimer = null
-  }
   if (activeSlug.value) await doSave(activeSlug.value)
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+  const meta = e.metaKey || e.ctrlKey
+  if (meta && e.key === 's') {
     e.preventDefault()
     void doSaveNow()
   }
-  if ((e.metaKey || e.ctrlKey) && e.key === 'w' && activeSlug.value) {
+  if (meta && e.key === 'w' && activeSlug.value) {
     e.preventDefault()
     void closeTab(activeSlug.value)
   }
-  if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+  if (meta && e.key === 'b') {
     e.preventDefault()
     selectPanel('files')
   }
 }
 
-async function onNew() {
-  const title = prompt('New post title?')?.trim()
-  if (!title) return
-  const slug = slugify(title)
+async function onNewFromTree() {
+  const title = window.prompt('新文章标题?') ?? ''
+  if (!title.trim()) return
+  await onNew(title)
+}
+
+async function onNew(title: string) {
+  const trimmed = (title ?? '').trim()
+  if (!trimmed) return
+  const slug = slugify(trimmed)
   const today = new Date().toISOString().slice(0, 10)
   const raw = stringifyDoc(
-    { title, date: today, tags: [], summary: '' },
-    `# ${title}\n\nStart writing...\n`,
+    { title: trimmed, date: today, tags: [], summary: '' },
+    `# ${trimmed}\n\n开始写吧…\n`,
   )
   try {
     await createPost(slug, raw)
     await refresh()
     await openPost(slug)
+    toast.success(`已创建: ${slug}`)
   } catch (e) {
-    alert(`Create failed: ${(e as Error).message}`)
+    toast.error(`创建失败: ${(e as Error).message}`)
   }
 }
 
@@ -309,34 +302,36 @@ async function onRename(newSlug: string) {
   if (newSlug === activeSlug.value) return
   const oldSlug = activeSlug.value
   if (isDirty.value) {
-    if (!confirm('Unsaved changes will be lost. Rename anyway?')) return
+    const ok = await confirm('有未保存的修改,仍要重命名吗?')
+    if (!ok) return
   }
   try {
     await renamePost(oldSlug, newSlug)
-    // Update tab slug
     const tab = tabs.value.find((t) => t.slug === oldSlug)
     if (tab) tab.slug = newSlug
     activeSlug.value = newSlug
     router.replace(`/vault/${newSlug}`)
     await refresh()
+    toast.success(`已重命名为: ${newSlug}`)
   } catch (e) {
-    alert(`Rename failed: ${(e as Error).message}`)
+    toast.error(`重命名失败: ${(e as Error).message}`)
   }
 }
 
 async function onDelete(slug: string) {
-  if (!confirm(`Delete "${slug}"? This cannot be undone.`)) return
+  const ok = await confirm(`删除 "${slug}"? 此操作不可恢复。`)
+  if (!ok) return
   try {
     await deletePost(slug)
     void closeTab(slug)
     await refresh()
+    toast.success(`已删除: ${slug}`)
   } catch (e) {
-    alert(`Delete failed: ${(e as Error).message}`)
+    toast.error(`删除失败: ${(e as Error).message}`)
   }
 }
 
 onMounted(async () => {
-  loadLayout()
   await refresh()
   const slugFromRoute = route.params.slug
   if (typeof slugFromRoute === 'string' && slugFromRoute) {
@@ -352,10 +347,6 @@ watch(
     }
   },
 )
-
-onBeforeUnmount(() => {
-  if (saveTimer) clearTimeout(saveTimer)
-})
 </script>
 
 <template>
@@ -370,7 +361,7 @@ onBeforeUnmount(() => {
       :posts="posts"
       :current-slug="activeSlug"
       @select="openPost"
-      @new="onNew"
+      @new="onNewFromTree"
       @rename="onRename"
       @delete="onDelete"
     />
@@ -381,7 +372,7 @@ onBeforeUnmount(() => {
       class="splitter"
       role="separator"
       aria-orientation="vertical"
-      title="Drag to resize side panel"
+      title="拖动调整侧栏宽度"
       @pointerdown="startDrag('tree', $event)"
     />
 
@@ -396,7 +387,7 @@ onBeforeUnmount(() => {
           :key="t.slug"
           class="editor-pane"
         >
-          <div v-if="t.loading" class="empty">Loading {{ t.slug }}…</div>
+          <div v-if="t.loading" class="empty">正在加载 {{ t.slug }}…</div>
           <div v-else-if="t.loadError" class="empty error">{{ t.loadError }}</div>
           <EditorPane
             v-else
@@ -404,14 +395,14 @@ onBeforeUnmount(() => {
             @update:model-value="(val: string) => onEditorChange(t.slug, val)"
           />
         </div>
-        <div v-if="!tabs.length" class="content-empty">No file open. Pick a file or create a new one.</div>
+        <div v-if="!tabs.length" class="content-empty">未打开文件。在侧栏选一个或按 <kbd>⌘P</kbd> 新建。</div>
 
         <div
           v-if="tabs.length"
           class="splitter splitter-mid"
           role="separator"
           aria-orientation="vertical"
-          title="Drag to resize editor / preview"
+          title="拖动调整编辑器 / 预览"
           @pointerdown="startDrag('middle', $event)"
         />
 
@@ -433,5 +424,12 @@ onBeforeUnmount(() => {
         :dirty="isDirty"
       />
     </section>
+
+    <CommandPalette
+      :posts="posts"
+      :active-slug="activeSlug"
+      @select="openPost"
+      @new="onNew"
+    />
   </div>
 </template>

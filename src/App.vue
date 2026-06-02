@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import NavBar from './components/NavBar.vue'
+import ToastHost from './components/ToastHost.vue'
+import ConfirmHost from './components/ConfirmHost.vue'
 
 const route = useRoute()
 const isVault = computed(() => route.meta.fullWidth === true)
@@ -18,4 +20,6 @@ const isVault = computed(() => route.meta.fullWidth === true)
       <component :is="Component" />
     </main>
   </RouterView>
+  <ToastHost />
+  <ConfirmHost />
 </template>
