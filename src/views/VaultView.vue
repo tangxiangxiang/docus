@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, inject } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useStorage, useDebounceFn } from '@vueuse/core'
 import {
@@ -30,6 +30,12 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const { confirm } = useConfirm()
+
+/* App.vue provides a global "open search" trigger so the NavBar button
+   (which lives outside the router view) can ask the vault to open
+   its CommandPalette. We watch the tick and call show() each time. */
+const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
+watch(() => navSearch?.tick.value, () => openSearch())
 
 /* ---------- Layout state (useStorage 自动序列化到 localStorage) ---------- */
 type ActivePanel = SidePanel | null

@@ -196,6 +196,7 @@ hr {
 .navbar.is-vault .nav-links a { font-size: 0.85rem; }
 .navbar.is-vault .nav-links .router-link-exact-active::after { bottom: -10px; }
 .nav-spacer { flex: 1; }
+.nav-search,
 .theme-toggle {
   background: transparent;
   border: 1px solid transparent;
@@ -208,11 +209,13 @@ hr {
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
+.nav-search:hover,
 .theme-toggle:hover {
   color: var(--text-h);
   border-color: var(--border);
   background: var(--bg-soft);
 }
+.navbar.is-vault .nav-search,
 .navbar.is-vault .theme-toggle { padding: 4px; }
 
 /* Layout */
@@ -597,36 +600,15 @@ main.container {
 .bc-placeholder { color: var(--vs-text-3); font-style: italic; }
 
 /* Tabs */
-.tabs-row {
-  display: flex;
-  align-items: stretch;
-  background: var(--vs-bg-3);
-  border-bottom: 1px solid var(--vs-border);
-  min-width: 0;
-}
 .tabs {
   display: flex;
-  flex: 1;
-  min-width: 0;
+  background: var(--vs-bg-3);
+  border-bottom: 1px solid var(--vs-border);
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 .tabs::-webkit-scrollbar { display: none; }
-.tabs-search {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  flex: 0 0 auto;
-  background: transparent;
-  border: 0;
-  border-left: 1px solid var(--vs-border);
-  color: var(--vs-text-2);
-  cursor: pointer;
-  transition: color 0.12s, background 0.12s;
-}
-.tabs-search:hover { color: var(--vs-text-1); background: var(--vs-hover-bg); }
 .tab {
   display: flex;
   align-items: center;
