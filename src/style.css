@@ -587,8 +587,11 @@ main.container {
 
 /* Editor Area */
 .editor-area {
+  /* Status bar used to live here as a 4th row, but it now spans the
+     full vault width at the bottom (see .status-bar).  The remaining
+     rows are breadcrumb, tabs, and the editor/preview split. */
   display: grid;
-  grid-template-rows: 22px 36px minmax(0, 1fr) 22px;
+  grid-template-rows: 22px 36px minmax(0, 1fr);
   background: var(--vs-bg-1);
   color: var(--vs-text-1);
   min-width: 0;
@@ -765,7 +768,8 @@ main.container {
 }
 .vault .preview-pane .article h1:first-child { margin-top: 0; }
 
-/* Status Bar */
+/* Status Bar — spans the full width of the vault (last grid row,
+   column 1 / -1).  Matches VSCode: 24px tall, accent-colored bg. */
 .status-bar {
   display: flex;
   align-items: center;
@@ -775,6 +779,8 @@ main.container {
   font-size: 0.75rem;
   padding: 0 12px;
   user-select: none;
+  height: 24px;
+  grid-column: 1 / -1;
 }
 .sb-left, .sb-right {
   display: flex;

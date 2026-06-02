@@ -81,10 +81,12 @@ watch([activePanel, sidePanelWidth, editorRatio], ([ap, w, r]) => {
 })
 
 const vaultStyle = computed(() => {
-  if (activePanel.value) {
-    return { gridTemplateColumns: `48px ${sidePanelWidth.value}px 6px 1fr` }
-  }
-  return { gridTemplateColumns: '48px 1fr' }
+  /* Rows: editor-area (fills), then a 24px status-bar that spans the
+     full width.  Columns vary depending on whether a side panel is open. */
+  const cols = activePanel.value
+    ? `48px ${sidePanelWidth.value}px 6px 1fr`
+    : '48px 1fr'
+  return { gridTemplateColumns: cols, gridTemplateRows: '1fr 24px' }
 })
 const contentStyle = computed(() => ({
   '--editor-flex': String(editorRatio.value),
@@ -447,15 +449,16 @@ watch(
           <PreviewPane v-if="!t.loading && !t.loadError" :raw="t.raw" />
         </div>
       </div>
-
-      <StatusBar
-        :slug="activeSlug"
-        :save-status="activeTab?.saveStatus ?? 'idle'"
-        :error="activeTab?.error ?? null"
-        :size="activeSize"
-        :dirty="isDirty"
-      />
     </section>
+
+    <StatusBar
+      class="status-bar-row"
+      :slug="activeSlug"
+      :save-status="activeTab?.saveStatus ?? 'idle'"
+      :error="activeTab?.error ?? null"
+      :size="activeSize"
+      :dirty="isDirty"
+    />
 
     <CommandPalette
       ref="paletteRef"
