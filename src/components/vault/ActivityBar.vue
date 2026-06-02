@@ -4,7 +4,6 @@ export type SidePanel = 'files' | 'tags'
 defineProps<{ activePanel: SidePanel | null }>()
 const emit = defineEmits<{
   'select-panel': [panel: SidePanel]
-  'open-search': []
 }>()
 </script>
 
@@ -19,17 +18,6 @@ const emit = defineEmits<{
     >
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-      </svg>
-    </button>
-    <button
-      class="ab-btn"
-      title="搜索 (Ctrl/Cmd+P)"
-      aria-label="Search"
-      @click="emit('open-search')"
-    >
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="7" />
-        <line x1="20" y1="20" x2="16.5" y2="16.5" />
       </svg>
     </button>
     <button

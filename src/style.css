@@ -597,15 +597,36 @@ main.container {
 .bc-placeholder { color: var(--vs-text-3); font-style: italic; }
 
 /* Tabs */
-.tabs {
+.tabs-row {
   display: flex;
+  align-items: stretch;
   background: var(--vs-bg-3);
   border-bottom: 1px solid var(--vs-border);
+  min-width: 0;
+}
+.tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
 .tabs::-webkit-scrollbar { display: none; }
+.tabs-search {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  flex: 0 0 auto;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--vs-border);
+  color: var(--vs-text-2);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.tabs-search:hover { color: var(--vs-text-1); background: var(--vs-hover-bg); }
 .tab {
   display: flex;
   align-items: center;

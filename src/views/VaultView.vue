@@ -404,7 +404,7 @@ watch(
 
     <section class="editor-area">
       <Breadcrumb :slug="activeSlug" />
-      <EditorTabs :tabs="tabs" :active-slug="activeSlug" @select="selectTab" @close="closeTab" />
+      <EditorTabs :tabs="tabs" :active-slug="activeSlug" @select="selectTab" @close="closeTab" @open-search="openSearch" />
 
       <div class="content" :style="contentStyle">
         <div
