@@ -72,6 +72,14 @@ code {
   background: var(--code-bg);
   color: var(--text-h);
 }
+/* Inline <code> shares --code-bg / --text-h with the rest of the
+   chrome, but on dark schemes those can land on two near-equal
+   grays (#2a2a2a + #d4d4d4 is fine; #1f2937 + #d1d5db is also fine
+   but text reads as a dim off-white). Force a clear white so the
+   inline code always reads as a real code pill. */
+@media (prefers-color-scheme: dark) {
+  code { color: #ffffff; }
+}
 
 pre {
   border-radius: 8px;
