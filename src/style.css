@@ -389,6 +389,7 @@ main.container {
     --vs-hover-bg: #ececec;
     --vs-status-bg: #005fb8;
     --vs-status-fg: #ffffff;
+    --code-bg: #f3f4f6;
   }
 }
 .vault {
@@ -400,7 +401,7 @@ main.container {
   --bg: var(--vs-bg-1);
   --bg-soft: var(--vs-bg-2);
   --border: var(--vs-border);
-  --code-bg: #2a2a2a;
+  --code-bg: #2a2a2a; /* dark vault; overridden in light scheme below */
   --accent: var(--vs-accent);
   --accent-hover: var(--vs-accent-hover);
   --accent-bg: var(--vs-accent-bg);
