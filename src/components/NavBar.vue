@@ -25,7 +25,7 @@ const themeTitle = computed<string>(() => {
   <header :class="['navbar', { 'is-vault': isVault }]">
     <div :class="['navbar-inner', { container: !isVault, 'full-width': isVault }]">
       <RouterLink to="/" class="brand">
-        <span class="brand-dot" />
+        <img class="brand-logo" src="/public/logo.svg" alt="docus logo" width="24" height="24" />
         <span class="brand-name">docus</span>
       </RouterLink>
       <div class="nav-spacer" />
