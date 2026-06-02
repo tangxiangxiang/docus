@@ -1,32 +1,24 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import { useTheme, type Theme } from '../composables/useTheme'
+import { useTheme } from '../composables/useTheme'
 
 defineProps<{ isVault?: boolean }>()
 const emit = defineEmits<{
   'open-search': []
 }>()
 
-const { theme, isDark, cycle } = useTheme()
+const { theme, toggle } = useTheme()
 
-/* Always show the icon that matches the CURRENTLY RENDERED palette
-   (sun when it's dark on screen, moon when it's light). The toggle
-   cycles the underlying preference (auto → light → dark → auto)
-   regardless of which icon is showing. */
-const themeIcon = computed<'sun' | 'moon'>(() => (isDark.value ? 'sun' : 'moon'))
+/* Sun when current theme is dark (click to lighten),
+   moon when current theme is light (click to darken). */
+const themeIcon = computed<'sun' | 'moon'>(() => (theme.value === 'dark' ? 'sun' : 'moon'))
 
 const themeTitle = computed<string>(() => {
-  const next = nextLabel(theme.value)
-  return `Theme: ${label(theme.value)} (click for ${next})`
+  const next = theme.value === 'dark' ? 'Light' : 'Dark'
+  const cur = theme.value === 'dark' ? 'Dark' : 'Light'
+  return `Theme: ${cur} (click for ${next})`
 })
-
-function label(t: Theme): string {
-  return t === 'auto' ? 'System (auto)' : t === 'light' ? 'Light' : 'Dark'
-}
-function nextLabel(t: Theme): string {
-  return t === 'auto' ? 'Light' : t === 'light' ? 'Dark' : 'System'
-}
 </script>
 
 <template>
@@ -55,14 +47,14 @@ function nextLabel(t: Theme): string {
         type="button"
         :title="themeTitle"
         :aria-label="themeTitle"
-        @click="cycle"
+        @click="toggle"
       >
-        <!-- dark on screen: sun (click to lighten) -->
+        <!-- dark theme: sun (click to switch to light) -->
         <svg v-if="themeIcon === 'sun'" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="4" />
           <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
         </svg>
-        <!-- light on screen: moon (click to darken) -->
+        <!-- light theme: moon (click to switch to dark) -->
         <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
         </svg>

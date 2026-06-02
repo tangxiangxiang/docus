@@ -1,48 +1,35 @@
-import { ref, computed, readonly, onMounted, onBeforeUnmount } from 'vue'
+import { ref, readonly } from 'vue'
 
-export type Theme = 'auto' | 'light' | 'dark'
+export type Theme = 'light' | 'dark'
 
 const STORAGE_KEY = 'docus.theme'
 const ATTR = 'data-theme'
 
-/** Single matchMedia instance, lazy (null on SSR / non-browser).
- *  Declared before any function that closes over it, so callers
- *  (notably the initial ref() below) can reference it. */
-const mq = typeof window !== 'undefined'
-  ? window.matchMedia('(prefers-color-scheme: dark)')
-  : null
-
-function getSystemDark(): boolean {
-  return mq ? mq.matches : false
-}
-
+/** Default when nothing is persisted: follow the OS preference.
+ *  Inline boot script in index.html does the same read on first paint. */
 function readSaved(): Theme {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw === 'light' || raw === 'dark' || raw === 'auto') return raw
+    if (raw === 'light' || raw === 'dark') return raw
   } catch {
     /* private mode / storage blocked — fall through */
   }
-  return 'auto'
+  /* No persisted choice — defer to prefers-color-scheme via the media
+     query in style.css, which paints the right palette immediately. */
+  return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
+    ? 'dark'
+    : 'light'
 }
 
-/** Module-level singleton state. Initialized once at module load. */
 const theme = ref<Theme>(readSaved())
-const systemDark = ref<boolean>(getSystemDark())
 
+/** Keep DOM in sync at module load — covers the case where the inline
+ *  boot script in index.html didn't run (e.g. private mode). */
 function applyToDom(t: Theme) {
   const el = document.documentElement
-  if (t === 'auto') el.removeAttribute(ATTR)
-  else el.setAttribute(ATTR, t)
+  if (t === 'light' || t === 'dark') el.setAttribute(ATTR, t)
 }
-
-// Keep DOM in sync at module load — covers the case where the inline
-// boot script in index.html didn't run (e.g. private mode).
 applyToDom(theme.value)
-
-const isDark = computed(() =>
-  theme.value === 'dark' || (theme.value === 'auto' && systemDark.value),
-)
 
 function set(t: Theme) {
   theme.value = t
@@ -50,27 +37,14 @@ function set(t: Theme) {
   applyToDom(t)
 }
 
-function cycle() {
-  set(theme.value === 'auto' ? 'light' : theme.value === 'light' ? 'dark' : 'auto')
-}
-
-function onSystemChange() {
-  systemDark.value = mq?.matches ?? false
+function toggle() {
+  set(theme.value === 'light' ? 'dark' : 'light')
 }
 
 export function useTheme() {
-  // Lifecycle hooks are valid here only when called from a component
-  // setup(). The only caller in this app is NavBar.vue, so this is safe.
-  onMounted(() => {
-    mq?.addEventListener('change', onSystemChange)
-  })
-  onBeforeUnmount(() => {
-    mq?.removeEventListener('change', onSystemChange)
-  })
   return {
     theme: readonly(theme),
-    isDark,
     set,
-    cycle,
+    toggle,
   }
 }
