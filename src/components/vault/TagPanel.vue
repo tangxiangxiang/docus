@@ -1,9 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { RouterLink } from 'vue-router'
 import type { PostSummary } from '../../lib/api'
 
-const props = defineProps<{ posts: PostSummary[] }>()
+const props = defineProps<{
+  posts: PostSummary[]
+  activeTag: string | null
+}>()
+
+defineEmits<{
+  select: [tag: string]
+}>()
 
 const tagMap = computed(() => {
   const map = new Map<string, number>()
@@ -24,10 +30,15 @@ const tagMap = computed(() => {
     </header>
     <ul v-if="tagMap.length">
       <li v-for="[tag, count] in tagMap" :key="tag">
-        <RouterLink class="tag-entry" :to="`/tags/${tag}`">
+        <button
+          class="tag-entry"
+          :class="{ active: tag === activeTag }"
+          :aria-pressed="tag === activeTag"
+          @click="$emit('select', tag)"
+        >
           <span class="tag-name">#{{ tag }}</span>
           <span class="tag-count">{{ count }}</span>
-        </RouterLink>
+        </button>
       </li>
     </ul>
     <p v-else class="empty">No tags yet.</p>
