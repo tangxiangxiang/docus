@@ -541,6 +541,13 @@ main.container {
   border-left: 2px solid transparent;
 }
 .vault .tag-panel .tag-entry:hover { background: var(--vs-hover-bg); }
+.vault .tag-panel .tag-entry.active {
+  background: var(--vs-active-bg);
+  color: var(--vs-text-1);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--vs-accent);
+}
+.vault .tag-panel .tag-entry.active:hover { background: var(--vs-active-bg); }
 .vault .tag-panel .tag-name { font-family: var(--mono); }
 .vault .tag-panel .tag-count {
   font-size: 0.72rem;

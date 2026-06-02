@@ -151,6 +151,21 @@ const activeSize = computed(() => {
   return posts.value.find((p) => p.slug === slug)?.size ?? activeTab.value?.raw.length ?? 0
 })
 
+/* ---------- Tag filter (view-state, in-memory) ---------- */
+const activeTagFilter = ref<string | null>(null)
+const filteredPosts = computed(() => {
+  const t = activeTagFilter.value
+  return t ? posts.value.filter((p) => p.tags.includes(t)) : posts.value
+})
+function onTagSelect(tag: string) {
+  if (activeTagFilter.value === tag) {
+    activeTagFilter.value = null          // toggle off
+  } else {
+    activeTagFilter.value = tag
+    activePanel.value = 'files'           // ensure file tree is visible
+  }
+}
+
 async function refresh() {
   posts.value = await listPosts()
 }
@@ -364,14 +379,19 @@ watch(
 
     <FileTree
       v-if="activePanel === 'files'"
-      :posts="posts"
+      :posts="filteredPosts"
       :current-slug="activeSlug"
       @select="openPost"
       @new="onNewFromTree"
       @rename="onRename"
       @delete="onDelete"
     />
-    <TagPanel v-else-if="activePanel === 'tags'" :posts="posts" />
+    <TagPanel
+      v-else-if="activePanel === 'tags'"
+      :posts="posts"
+      :active-tag="activeTagFilter"
+      @select="onTagSelect"
+    />
 
     <div
       v-show="activePanel"
