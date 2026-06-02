@@ -1084,15 +1084,9 @@ main.container {
 
 /* ---------- Article enhancements ---------- */
 .article .header-anchor {
-  opacity: 0;
-  margin-left: 0.4em;
-  color: var(--text-muted);
+  color: inherit;
   text-decoration: none;
-  transition: opacity 0.15s;
 }
-.article h2:hover .header-anchor,
-.article h3:hover .header-anchor,
-.article h4:hover .header-anchor { opacity: 1; }
 .article pre { background: var(--code-bg); }
 .article .task-list-item { list-style: none; }
 .article .task-list-item input[type='checkbox'] { margin-right: 0.4em; }
