@@ -130,21 +130,19 @@ hr {
   padding: 0;
 }
 
-/* NavBar (frosted glass) */
+/* NavBar (frosted glass) — token-driven so light/dark follow data-theme.
+   Uses --bg-soft (a slightly lighter wash than the page background) so
+   the blur has something visible to pick up.  The old hardcoded
+   rgba(255,255,255,0.72) was stuck light in dark mode and produced a
+   milky overlay on top of dark content. */
 .navbar {
   position: sticky;
   top: 0;
   z-index: 100;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--bg-soft);
   -webkit-backdrop-filter: saturate(180%) blur(18px);
   backdrop-filter: saturate(180%) blur(18px);
-  border-bottom: 1px solid rgba(229, 231, 235, 0.6);
-}
-@media (prefers-color-scheme: dark) {
-  .navbar {
-    background: rgba(17, 24, 39, 0.72);
-    border-bottom-color: rgba(55, 65, 81, 0.6);
-  }
+  border-bottom: 1px solid var(--border);
 }
 .navbar-inner {
   display: flex;
