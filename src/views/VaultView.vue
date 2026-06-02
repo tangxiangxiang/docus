@@ -85,6 +85,11 @@ const contentStyle = computed(() => ({
   '--preview-flex': '1',
 }))
 const vaultRef = ref<HTMLElement | null>(null)
+const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
+
+function openSearch() {
+  paletteRef.value?.show()
+}
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
@@ -354,6 +359,7 @@ watch(
     <ActivityBar
       :active-panel="activePanel"
       @select-panel="selectPanel"
+      @open-search="openSearch"
     />
 
     <FileTree
@@ -426,6 +432,7 @@ watch(
     </section>
 
     <CommandPalette
+      ref="paletteRef"
       :posts="posts"
       :active-slug="activeSlug"
       @select="openPost"

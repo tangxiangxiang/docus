@@ -112,6 +112,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKey)
 })
 
+defineExpose({ show, hide })
+
 const placeholder = computed(() => `搜索 ${props.posts.length} 篇…`)
 </script>
 
