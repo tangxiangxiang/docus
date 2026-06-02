@@ -11,9 +11,6 @@ defineProps<{ isVault?: boolean }>()
         <span class="brand-dot" />
         <span class="brand-name">docus</span>
       </RouterLink>
-      <nav class="nav-links">
-        <RouterLink to="/vault">Vault</RouterLink>
-      </nav>
       <div class="nav-spacer" />
       <button class="theme-toggle" type="button" title="Theme (placeholder)" aria-label="Toggle theme">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
