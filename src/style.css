@@ -149,6 +149,8 @@ hr {
   align-items: center;
   gap: 28px;
   height: 56px;
+  padding-left: 10px;
+  padding-right: 3px;
 }
 .navbar.is-vault .navbar-inner {
   height: 36px;
@@ -158,7 +160,6 @@ hr {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding-left: 10px;
   font-weight: 700;
   font-size: 1.05rem;
   color: var(--text-h);
@@ -207,6 +208,11 @@ hr {
 .navbar.is-vault .nav-links a { font-size: 0.85rem; }
 .navbar.is-vault .nav-links .router-link-exact-active::after { bottom: -10px; }
 .nav-spacer { flex: 1; }
+.nav-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;            /* search and theme toggle sit close together as a unit */
+}
 .nav-search,
 .theme-toggle {
   background: transparent;
