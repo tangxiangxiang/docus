@@ -25,4 +25,4 @@ console.log('fenced code block')
 | - | - |
 | 1 | 2 |
 
-[internal link](/posts)
+[internal link](/)

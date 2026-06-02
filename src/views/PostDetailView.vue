@@ -32,9 +32,9 @@ watchEffect(async () => {
     </p>
     <Article :markdown="content" />
     <p class="back">
-      <RouterLink to="/posts">← Back to all posts</RouterLink>
+      <RouterLink to="/">← Back to home</RouterLink>
     </p>
   </article>
-  <p v-else-if="notFound">Post not found. <RouterLink to="/posts">Back to all posts</RouterLink></p>
+  <p v-else-if="notFound">Post not found. <RouterLink to="/">Back to home</RouterLink></p>
   <p v-else>Loading…</p>
 </template>
