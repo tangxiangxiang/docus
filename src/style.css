@@ -38,6 +38,11 @@
 body {
   margin: 0;
 }
+body.vault-mode {
+  overflow: hidden;
+  height: 100%;
+}
+body.vault-mode #app { height: 100%; }
 
 h1, h2, h3, h4 {
   font-family: var(--sans);

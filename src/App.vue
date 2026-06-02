@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref } from 'vue'
+import { computed, provide, ref, watchEffect } from 'vue'
 import { useRoute } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import ToastHost from './components/ToastHost.vue'
@@ -7,6 +7,14 @@ import ConfirmHost from './components/ConfirmHost.vue'
 
 const route = useRoute()
 const isVault = computed(() => route.meta.fullWidth === true)
+
+/* The vault uses an internal scrollable surface (FileTree, Editor,
+   Preview). It must NOT let the outer document scroll, otherwise
+   two scrollbars fight and the page wobbles. We toggle a body
+   class on route change so the lock applies only to vault routes. */
+watchEffect(() => {
+  document.body.classList.toggle('vault-mode', isVault.value)
+})
 
 /* Global open-search trigger: incremented by NavBar, watched by the
    vault view to open the CommandPalette. Lives in App so a button in
