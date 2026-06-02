@@ -1120,3 +1120,100 @@ main.container {
 .article .task-list-item { list-style: none; }
 .article .task-list-item input[type='checkbox'] { margin-right: 0.4em; }
 .article ul.contains-task-list { padding-left: 1.2em; }
+
+/* ---------- User-forced theme (data-theme on <html>) ----------
+   Higher specificity than the prefers-color-scheme media query
+   (`:root[data-theme=X]` beats `:root` inside `@media`), so when the
+   user has picked light or dark explicitly it wins over the OS. In
+   `auto` mode no attribute is set and the media query applies.
+
+   Token values mirror the baseline :root and the
+   prefers-color-scheme: dark / light :root blocks above. */
+
+:root[data-theme='light'] {
+  --text: #4b5563;
+  --text-h: #111827;
+  --text-muted: #6b7280;
+  --bg: #ffffff;
+  --bg-soft: #f9fafb;
+  --border: #e5e7eb;
+  --code-bg: #f3f4f6;
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+}
+
+:root[data-theme='dark'] {
+  --text: #d1d5db;
+  --text-h: #f9fafb;
+  --text-muted: #9ca3af;
+  --bg: #111827;
+  --bg-soft: #1f2937;
+  --border: #374151;
+  --code-bg: #1f2937;
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+}
+
+/* Vault: same idea, but the vault overrides live on .vault with its
+   own VSCode palette. We re-pin them under :root[data-theme=...] so
+   the vault respects the user's choice (not just the OS). */
+
+:root[data-theme='light'] .vault {
+  --vs-bg-1: #ffffff;
+  --vs-bg-2: #f3f3f3;
+  --vs-bg-3: #dddddd;
+  --vs-bg-4: #ececec;
+  --vs-border: #e0e0e0;
+  --vs-text-1: #1f1f1f;
+  --vs-text-2: #6f6f6f;
+  --vs-text-3: #999999;
+  --vs-accent: #005fb8;
+  --vs-accent-hover: #0258a8;
+  --vs-accent-bg: rgba(0, 95, 184, 0.1);
+  --vs-active-bg: #e8e8e8;
+  --vs-tab-active-bg: #ffffff;
+  --vs-tab-inactive-bg: #ececec;
+  --vs-hover-bg: #ececec;
+  --vs-status-bg: #005fb8;
+  --vs-status-fg: #ffffff;
+  --code-bg: #f3f4f6;
+  --text: var(--vs-text-1);
+  --text-h: var(--vs-text-1);
+  --text-muted: var(--vs-text-2);
+  --bg: var(--vs-bg-1);
+  --bg-soft: var(--vs-bg-2);
+  --border: var(--vs-border);
+  --accent: var(--vs-accent);
+  --accent-hover: var(--vs-accent-hover);
+  --accent-bg: var(--vs-accent-bg);
+}
+
+:root[data-theme='dark'] .vault {
+  --vs-bg-1: #1e1e1e;
+  --vs-bg-2: #252526;
+  --vs-bg-3: #333333;
+  --vs-bg-4: #2d2d2d;
+  --vs-border: #3c3c3c;
+  --vs-text-1: #d4d4d4;
+  --vs-text-2: #858585;
+  --vs-text-3: #6a6a6a;
+  --vs-accent: #007acc;
+  --vs-accent-hover: #1f8ad2;
+  --vs-accent-bg: rgba(0, 122, 204, 0.2);
+  --vs-active-bg: #37373d;
+  --vs-tab-active-bg: #1e1e1e;
+  --vs-tab-inactive-bg: #2d2d2d;
+  --vs-hover-bg: #2a2d2e;
+  --vs-status-bg: #007acc;
+  --vs-status-fg: #ffffff;
+  --code-bg: #2a2a2a;
+  --text: var(--vs-text-1);
+  --text-h: var(--vs-text-1);
+  --text-muted: var(--vs-text-2);
+  --bg: var(--vs-bg-1);
+  --bg-soft: var(--vs-bg-2);
+  --border: var(--vs-border);
+  --accent: var(--vs-accent);
+  --accent-hover: var(--vs-accent-hover);
+  --accent-bg: var(--vs-accent-bg);
+}
