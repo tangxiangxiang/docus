@@ -534,11 +534,17 @@ main.container {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
   padding: 5px 14px;
   font-size: 0.88rem;
   color: var(--vs-text-1);
   text-decoration: none;
+  background: transparent;
+  border: 0;
   border-left: 2px solid transparent;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
 }
 .vault .tag-panel .tag-entry:hover { background: var(--vs-hover-bg); }
 .vault .tag-panel .tag-entry.active {
