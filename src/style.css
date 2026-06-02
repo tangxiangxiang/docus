@@ -543,9 +543,7 @@ main.container {
 .vault .tag-panel .tag-entry:hover { background: var(--vs-hover-bg); }
 .vault .tag-panel .tag-entry.active {
   background: var(--vs-active-bg);
-  color: var(--vs-text-1);
-  font-weight: 600;
-  box-shadow: inset 3px 0 0 var(--vs-accent);
+  border-left-color: var(--vs-accent);
 }
 .vault .tag-panel .tag-entry.active:hover { background: var(--vs-active-bg); }
 .vault .tag-panel .tag-name { font-family: var(--mono); }
@@ -598,8 +596,10 @@ main.container {
   background: var(--vs-bg-3);
   border-bottom: 1px solid var(--vs-border);
   overflow-x: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
   display: flex;
   align-items: center;
