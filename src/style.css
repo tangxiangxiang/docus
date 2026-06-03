@@ -530,7 +530,7 @@ main.container {
 /* New recursive tree structure: TreeRow / tree-children / drop targets */
 .vault .file-tree .header-actions { display: flex; gap: 4px; }
 .vault .file-tree .tree {
-  list-style: none; padding: 4px 0; margin: 0;
+  list-style: none; padding: 0; margin: 0;
   overflow-y: auto; flex: 1;
 }
 .vault .file-tree .tree-children {
