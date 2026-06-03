@@ -89,7 +89,7 @@ All splat endpoints use Hono's `*` route; the path after the prefix becomes the 
 
 - **`POST /api/posts`**: auto-creates missing parent directories via `fs.mkdir(..., { recursive: true })`. Returns 409 if file already exists.
 - **`PATCH /api/posts/*`**: exactly one of `name` / `targetPath` must be set. `name` renames within the same folder; `targetPath` moves to a new location (may also rename). 409 if destination exists. 422 if `targetPath` resolves to a location inside the source's own subdirectory (cycle).
-- **`PATCH /api/folders/*`**: `newPath` must differ from the current path only in the last segment (single-segment rename; avoids ambiguity in cascade). Atomic on disk via `fs.rename` of the whole directory. Returns `moved: string[]` of all file `path` values that were renamed under the hood, so the client can refresh stale references in one round-trip.
+- **`PATCH /api/folders/*`**: `newPath` is a full `path` value, but the parent must match the current parent — only the last segment may differ (single-segment rename; avoids ambiguity in cascade). Atomic on disk via `fs.rename` of the whole directory. Returns `moved: string[]` of all file `path` values that were renamed under the hood, so the client can refresh stale references in one round-trip.
 - **`DELETE /api/folders/*`**: returns 400 if `?recursive=true` is missing and the folder is non-empty. With `?recursive=true`, deletes all contents and the folder itself, returning `deleted: string[]`.
 - **All endpoints**: validate via `assertSafePath` first; on failure return 400 with `{ error: 'invalid path' }`.
 
