@@ -41,6 +41,16 @@ const isDropTarget = ref(false)
 const dragDepth = ref(0)
 
 function onDragStart(e: DragEvent) {
+  // dragstart bubbles. Without this stopPropagation(), starting a drag on a
+  // child row would also fire onDragStart on every ancestor row, and each
+  // ancestor would overwrite the dataTransfer's path with its own. The user
+  // would see a drag that looks correct (drag image = the row they grabbed)
+  // but a drop on any folder would try to move the *outermost* ancestor
+  // (e.g. dragging inbox/test/foo.md appears to the user as "moving
+  // foo.md into inbox/" but actually moves the locked `inbox` folder, which
+  // isProtectedRoot() then rejects with a confusing toast). Stop the event
+  // here so only the row the user actually grabbed sets the drag payload.
+  e.stopPropagation()
   if (!e.dataTransfer) return
   e.dataTransfer.setData('text/x-docus-path', props.node.path)
   e.dataTransfer.effectAllowed = 'move'

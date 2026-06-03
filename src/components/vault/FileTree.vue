@@ -178,8 +178,12 @@ async function onDelete(p: string) {
 async function onMove(srcPath: string, targetFolder: string) {
   if (isProtectedRoot(srcPath)) { toast.error(protectedRootError(srcPath, 'move')); return }
   if (isInZettel(srcPath)) { toast.error('Zettel 是永久笔记，不能移动'); return }
-  if (isProtectedRoot(targetFolder)) { toast.error(`${targetFolder} 是固定目录，不能作为移动目标`); return }
-  if (isInZettel(targetFolder)) { toast.error('不能移动到 zettel'); return }
+  // The three top-level folders keep their names but their *contents* are
+  // fully editable. The one place we still refuse to write is zettel, which
+  // is the read-only permanent-notes sink. inbox / literature must remain
+  // valid drop targets so a file can be promoted out of a sub-folder
+  // (e.g. moving inbox/test/foo.md back up to inbox/foo.md).
+  if (targetFolder === 'zettel') { toast.error('Zettel 是永久笔记，不能直接写入'); return }
   const filename = srcPath.split('/').pop()!
   const newPath = targetFolder ? `${targetFolder}/${filename}` : filename
   if (newPath === srcPath) return
