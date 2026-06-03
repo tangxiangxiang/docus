@@ -588,7 +588,7 @@ main.container {
 }
 .vault .file-tree .tree-row {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
-  padding: 3px 12px 3px calc(12px + var(--depth, 0) * 12px);
+  padding: 2px 8px 2px calc(8px + var(--depth, 0) * 8px);
   cursor: default; user-select: none;
   position: relative;
   color: var(--vs-text-1);
@@ -596,18 +596,28 @@ main.container {
   line-height: 1.4;
   border-left: 2px solid transparent;
 }
-.vault .file-tree .tree-row:hover { background: var(--vs-hover-bg); }
+/* Full-width hover/active background that extends through the indent area
+   on the left, so deep rows don't show a gap between the file-tree's edge
+   and the active highlight. The 2px accent strip on the row's own
+   border-left stays at a consistent width and is just recoloured when
+   active, while the background spans the full row width. */
+.vault .file-tree .tree-row::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 0;
+}
+.vault .file-tree .tree-row:hover::before { background: var(--vs-hover-bg); }
 .vault .file-tree .tree-row.active {
-  background: var(--vs-active-bg);
   border-left-color: var(--vs-accent);
 }
+.vault .file-tree .tree-row.active::before { background: var(--vs-active-bg); }
+.vault .file-tree .tree-row > * { position: relative; z-index: 1; }
 .vault .file-tree .tree-row[draggable] { cursor: grab; }
 .vault .file-tree .tree-row.dragging { opacity: 0.4; }
-.vault .file-tree .tree-row.drop-target {
-  outline: 1px dashed var(--vs-accent);
-  outline-offset: -1px;
-  background: var(--vs-active-bg);
-}
+.vault .file-tree .tree-row.drop-target::before { background: var(--vs-active-bg); }
 .vault .file-tree.drop-target-root {
   box-shadow: inset 0 2px 0 0 var(--vs-accent);
 }
