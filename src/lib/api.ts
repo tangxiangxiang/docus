@@ -28,6 +28,12 @@ async function jsonOrThrow<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>
 }
 
+/** Strip the "posts/" prefix from a path so it can be appended to a /api/posts/* splat route.
+ *  Server adds the prefix back when resolving to disk. */
+function splat(path: string): string {
+  return path.replace(/^posts\//, '')
+}
+
 export async function getTree(): Promise<TreeNode[]> {
   return jsonOrThrow<TreeNode[]>(await fetch('/api/tree'))
 }
@@ -37,7 +43,7 @@ export async function listPosts(): Promise<PostSummary[]> {
 }
 
 export async function getPost(path: string): Promise<PostDetail> {
-  return jsonOrThrow<PostDetail>(await fetch('/api/posts/' + encodeURI(path).replace(/^posts%2F/, 'posts/')))
+  return jsonOrThrow<PostDetail>(await fetch('/api/posts/' + splat(path)))
 }
 
 export async function createPost(input: { path: string; title?: string }): Promise<PostSummary> {
@@ -48,14 +54,14 @@ export async function createPost(input: { path: string; title?: string }): Promi
 }
 
 export async function patchPost(srcPath: string, body: { name?: string; targetPath?: string }): Promise<PostSummary> {
-  return jsonOrThrow<PostSummary>(await fetch('/api/posts/' + encodeURI(srcPath).replace(/^posts%2F/, 'posts/'), {
+  return jsonOrThrow<PostSummary>(await fetch('/api/posts/' + splat(srcPath), {
     method: 'PATCH', headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   }))
 }
 
 export async function deletePost(path: string): Promise<{ ok: true }> {
-  return jsonOrThrow<{ ok: true }>(await fetch('/api/posts/' + encodeURI(path).replace(/^posts%2F/, 'posts/'), { method: 'DELETE' }))
+  return jsonOrThrow<{ ok: true }>(await fetch('/api/posts/' + splat(path), { method: 'DELETE' }))
 }
 
 export async function createFolder(path: string): Promise<{ path: string }> {
@@ -66,13 +72,13 @@ export async function createFolder(path: string): Promise<{ path: string }> {
 }
 
 export async function renameFolder(srcPath: string, newPath: string): Promise<{ path: string; moved: string[] }> {
-  return jsonOrThrow<{ path: string; moved: string[] }>(await fetch('/api/folders/' + encodeURI(srcPath).replace(/^posts%2F/, 'posts/'), {
+  return jsonOrThrow<{ path: string; moved: string[] }>(await fetch('/api/folders/' + splat(srcPath), {
     method: 'PATCH', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ newPath }),
   }))
 }
 
 export async function deleteFolder(path: string, recursive: boolean): Promise<{ deleted: string[] }> {
-  const url = '/api/folders/' + encodeURI(path).replace(/^posts%2F/, 'posts/') + (recursive ? '?recursive=true' : '')
+  const url = '/api/folders/' + splat(path) + (recursive ? '?recursive=true' : '')
   return jsonOrThrow<{ deleted: string[] }>(await fetch(url, { method: 'DELETE' }))
 }
