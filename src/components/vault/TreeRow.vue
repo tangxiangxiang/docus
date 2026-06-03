@@ -1,0 +1,162 @@
+<script setup lang="ts">
+import { ref, computed, nextTick } from 'vue'
+import type { TreeNode } from '../../lib/api'
+import { ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FILE_MD, ICON_CHEVRON } from './icons'
+
+const props = defineProps<{
+  node: TreeNode
+  depth: number
+  currentPath: string | null
+  expandedSet: Set<string>
+}>()
+
+const emit = defineEmits<{
+  select: [path: string]
+  toggle: [path: string]
+  rename: [oldPath: string, newName: string]
+  delete: [path: string]
+  move: [srcPath: string, targetFolder: string]
+  'create-in': [folder: string, kind: 'file' | 'folder']
+}>()
+
+const isFolder = computed(() => props.node.kind === 'folder')
+const isActive = computed(() => !isFolder.value && props.node.path === props.currentPath)
+const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.node.path))
+
+// --- drag state ---
+const isDragging = ref(false)
+const isDropTarget = ref(false)
+const dragDepth = ref(0)
+
+function onDragStart(e: DragEvent) {
+  if (!e.dataTransfer) return
+  e.dataTransfer.setData('text/x-docus-path', props.node.path)
+  e.dataTransfer.effectAllowed = 'move'
+  isDragging.value = true
+}
+function onDragEnd() {
+  isDragging.value = false
+  isDropTarget.value = false
+  dragDepth.value = 0
+}
+
+function onDragEnter(e: DragEvent) {
+  if (!isFolder.value) return
+  e.preventDefault()
+  dragDepth.value++
+  isDropTarget.value = true
+}
+function onDragLeave() {
+  if (!isFolder.value) return
+  dragDepth.value = Math.max(0, dragDepth.value - 1)
+  if (dragDepth.value === 0) isDropTarget.value = false
+}
+function onDragOver(e: DragEvent) {
+  if (!isFolder.value) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+}
+function onDrop(e: DragEvent) {
+  if (!isFolder.value) return
+  e.preventDefault()
+  e.stopPropagation()
+  const src = e.dataTransfer?.getData('text/x-docus-path') ?? ''
+  if (!src) return
+  isDropTarget.value = false
+  dragDepth.value = 0
+  emit('move', src, props.node.path)
+}
+
+// --- inline rename state ---
+const renaming = ref(false)
+const renameValue = ref('')
+
+function startRename() {
+  renaming.value = true
+  renameValue.value = props.node.name
+  nextTick(() => {
+    const el = document.getElementById('docus-rename-input-' + props.node.path) as HTMLInputElement | null
+    el?.focus()
+    el?.select()
+  })
+}
+function commitRename() {
+  const name = renameValue.value.trim()
+  renaming.value = false
+  if (!name || name === props.node.name) return
+  emit('rename', props.node.path, name)
+}
+function cancelRename() {
+  renaming.value = false
+}
+</script>
+
+<template>
+  <li
+    class="tree-row"
+    :class="{ active: isActive, expanded: isExpanded, folder: isFolder, dragging: isDragging, 'drop-target': isDropTarget }"
+    :style="{ '--depth': depth }"
+    :draggable="!renaming"
+    @dragstart="onDragStart"
+    @dragend="onDragEnd"
+    @dragenter="onDragEnter"
+    @dragleave="onDragLeave"
+    @dragover="onDragOver"
+    @drop="onDrop"
+  >
+    <span
+      v-if="isFolder"
+      class="chevron"
+      :class="{ expanded: isExpanded }"
+      @click.stop="emit('toggle', node.path)"
+      v-html="ICON_CHEVRON"
+    />
+    <span v-else class="chevron-spacer" />
+
+    <span class="row-icon" v-if="isFolder" v-html="isExpanded ? ICON_FOLDER_OPEN : ICON_FOLDER" />
+    <span class="row-icon" v-else v-html="ICON_FILE_MD" />
+
+    <template v-if="renaming">
+      <input
+        :id="'docus-rename-input-' + node.path"
+        v-model="renameValue"
+        class="rename-input"
+        @keydown.enter="commitRename"
+        @keydown.escape="cancelRename"
+        @blur="commitRename"
+        @click.stop
+      />
+    </template>
+    <template v-else>
+      <a
+        class="row-name"
+        href="#"
+        @click.prevent="isFolder ? emit('toggle', node.path) : emit('select', node.path)"
+      >{{ node.name }}</a>
+    </template>
+
+    <div v-if="!renaming" class="row-actions" @click.stop>
+      <button v-if="isFolder" @click="emit('create-in', node.path, 'file')"   title="新建文件">+F</button>
+      <button v-if="isFolder" @click="emit('create-in', node.path, 'folder')" title="新建文件夹">+D</button>
+      <button @click="startRename" title="重命名">✎</button>
+      <button @click="emit('delete', node.path)" title="删除">×</button>
+    </div>
+
+    <ul v-if="isFolder && isExpanded" class="tree-children">
+      <TreeRow
+        v-for="child in (node as any).children"
+        :key="child.path"
+        :node="child"
+        :depth="depth + 1"
+        :current-path="currentPath"
+        :expanded-set="expandedSet"
+        @select="(p) => emit('select', p)"
+        @toggle="(p) => emit('toggle', p)"
+        @rename="(oldP, n) => emit('rename', oldP, n)"
+        @delete="(p) => emit('delete', p)"
+        @move="(src, folder) => emit('move', src, folder)"
+        @create-in="(folder, kind) => emit('create-in', folder, kind)"
+      />
+    </ul>
+  </li>
+</template>
