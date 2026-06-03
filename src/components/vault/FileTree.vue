@@ -6,6 +6,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
 import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder } from '../../lib/api'
+import { ICON_NEW_FILE, ICON_NEW_FOLDER } from './icons'
 
 const props = defineProps<{
   tree: TreeNode[]
@@ -190,10 +191,22 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
     @drop="onRootDrop"
   >
     <header>
-      <span class="title">文件</span>
+      <span class="title">资源管理器</span>
       <div class="header-actions">
-        <button class="new-btn" @click="onCreateIn('posts', 'file')"   title="新建文件">+ 文件</button>
-        <button class="new-btn" @click="onCreateIn('posts', 'folder')" title="新建文件夹">+ 文件夹</button>
+        <button
+          class="new-btn icon-btn"
+          aria-label="新建文件"
+          title="新建文件"
+          @click="onCreateIn('posts', 'file')"
+          v-html="ICON_NEW_FILE"
+        />
+        <button
+          class="new-btn icon-btn"
+          aria-label="新建文件夹"
+          title="新建文件夹"
+          @click="onCreateIn('posts', 'folder')"
+          v-html="ICON_NEW_FOLDER"
+        />
       </div>
     </header>
     <ul v-if="tree.length" class="tree" role="tree">

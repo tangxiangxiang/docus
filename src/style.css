@@ -503,19 +503,34 @@ main.container {
   background: var(--vs-bg-2);
 }
 .vault .file-tree .new-btn {
-  border: 1px solid var(--vs-border);
+  border: 1px solid transparent;
   background: transparent;
   color: var(--vs-text-1);
   font-size: 0.75rem;
   text-transform: none;
   letter-spacing: 0;
   padding: 2px 8px;
-  border-radius: 3px;
+  border-radius: 4px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 .vault .file-tree .new-btn:hover {
   background: var(--vs-hover-bg);
-  border-color: var(--vs-accent);
+  border-color: var(--vs-border);
+  color: var(--vs-accent);
+}
+.vault .file-tree .new-btn.icon-btn {
+  padding: 3px;
+  width: 22px;
+  height: 22px;
+}
+.vault .file-tree .new-btn.icon-btn :deep(svg) {
+  display: block;
+  width: 14px;
+  height: 14px;
 }
 .vault .file-tree ul { overflow-y: auto; flex: 1; }
 .vault .file-tree li {
