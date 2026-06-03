@@ -74,6 +74,7 @@ const menuY = ref(0)
 
 function showMenu(e: MouseEvent) {
   e.preventDefault()
+  e.stopPropagation()
   menuVisible.value = true
   menuX.value = e.clientX
   menuY.value = e.clientY
