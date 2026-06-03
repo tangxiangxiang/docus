@@ -9,6 +9,7 @@ const props = defineProps<{
   currentPath: string | null
   expandedSet: Set<string>
   isInZettel?: boolean
+  isProtectedRoot?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -23,7 +24,11 @@ const emit = defineEmits<{
 const isFolder = computed(() => props.node.kind === 'folder')
 const isActive = computed(() => !isFolder.value && props.node.path === props.currentPath)
 const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.node.path))
-const readonly = computed(() => !!props.isInZettel)
+// Two reasons a node's context menu can hide write actions:
+//  - it's inside the read-only zettel subtree (entire subtree is locked)
+//  - it's itself a protected top-level folder (inbox / literature / zettel),
+//    which can hold children but can't be renamed/deleted/re-parented.
+const readonly = computed(() => !!props.isInZettel || !!props.isProtectedRoot)
 
 // --- drag state ---
 const isDragging = ref(false)
@@ -193,7 +198,8 @@ function cancelRename() {
         :depth="depth + 1"
         :current-path="currentPath"
         :expanded-set="expandedSet"
-        :is-in-zettel="readonly"
+        :is-in-zettel="isInZettel || (child.kind === 'folder' && (child.path === 'zettel' || child.path.startsWith('zettel/')))"
+        :is-protected-root="isProtectedRoot || (child.kind === 'folder' && (child.path === 'inbox' || child.path === 'literature' || child.path === 'zettel'))"
         @select="(p) => emit('select', p)"
         @toggle="(p) => emit('toggle', p)"
         @rename="(oldP, n) => emit('rename', oldP, n)"

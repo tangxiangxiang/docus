@@ -38,6 +38,20 @@ function isInZettel(path: string | null): boolean {
   return path === 'zettel' || path.startsWith('zettel/')
 }
 
+// The three Zettelkasten top-level folders are part of the protocol: they
+// must exist, must keep their names, and cannot be moved or deleted. Users
+// can only add files/sub-folders underneath them.
+const PROTECTED_ROOTS: ReadonlySet<string> = new Set(['inbox', 'literature', 'zettel'])
+function isProtectedRoot(path: string | null): boolean {
+  return !!path && PROTECTED_ROOTS.has(path)
+}
+function protectedRootError(path: string | null, op: 'rename' | 'delete' | 'move'): string {
+  const label = isProtectedRoot(path) ? path! : '顶层目录'
+  if (op === 'rename') return `${label} 是固定目录，不能重命名`
+  if (op === 'delete') return `${label} 是固定目录，不能删除`
+  return `${label} 是固定目录，不能移动`
+}
+
 function loadExpanded(): string[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -85,7 +99,9 @@ async function onRootDrop(e: DragEvent) {
   isRootDropTarget.value = false
   rootDragDepth.value = 0
   if (!src) return
-  // Reject moves from zettel (it's read-only).
+  // Reject moves of protected roots (the three top-level folders are part
+  // of the Zettelkasten protocol and cannot be re-parented).
+  if (isProtectedRoot(src)) { toast.error(protectedRootError(src, 'move')); return }
   if (isInZettel(src)) { toast.error('Zettel 是永久笔记，不能移动'); return }
   const filename = src.split('/').pop()!
   const targetPath = filename
@@ -123,6 +139,7 @@ async function onToggle(p: string) { toggle(p) }
 async function onRename(oldPath: string, newName: string) {
   const node = findNode(props.tree, oldPath)
   if (!node) return
+  if (isProtectedRoot(oldPath)) { toast.error(protectedRootError(oldPath, 'rename')); return }
   if (isInZettel(oldPath)) { toast.error('Zettel 是永久笔记，不能重命名'); return }
   try {
     if (node.kind === 'folder') {
@@ -142,6 +159,7 @@ async function onRename(oldPath: string, newName: string) {
 async function onDelete(p: string) {
   const node = findNode(props.tree, p)
   if (!node) return
+  if (isProtectedRoot(p)) { toast.error(protectedRootError(p, 'delete')); return }
   if (isInZettel(p)) { toast.error('Zettel 是永久笔记，不能删除'); return }
   const count = node.kind === 'folder' ? countDescendants(node) + 1 : 1
   const ok = await confirm(
@@ -158,7 +176,9 @@ async function onDelete(p: string) {
 }
 
 async function onMove(srcPath: string, targetFolder: string) {
+  if (isProtectedRoot(srcPath)) { toast.error(protectedRootError(srcPath, 'move')); return }
   if (isInZettel(srcPath)) { toast.error('Zettel 是永久笔记，不能移动'); return }
+  if (isProtectedRoot(targetFolder)) { toast.error(`${targetFolder} 是固定目录，不能作为移动目标`); return }
   if (isInZettel(targetFolder)) { toast.error('不能移动到 zettel'); return }
   const filename = srcPath.split('/').pop()!
   const newPath = targetFolder ? `${targetFolder}/${filename}` : filename
@@ -236,6 +256,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :current-path="currentPath"
         :expanded-set="expanded"
         :is-in-zettel="isInZettel(node.path)"
+        :is-protected-root="isProtectedRoot(node.path)"
         @select="onSelect"
         @toggle="onToggle"
         @rename="onRename"
