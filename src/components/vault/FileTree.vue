@@ -117,11 +117,20 @@ async function onRootDrop(e: DragEvent) {
 }
 
 // --- helpers ---
-function findNode(nodes: TreeNode[], path: string): TreeNode | null {
+// findNode now accepts an optional `kind` filter. The reason: a file and a
+// folder can legitimately share the same path string (e.g. `inbox/notes.md`
+// and `inbox/notes/` both surface as path='inbox/notes' in the API), and
+// buildTree sorts folders first. Without the filter, a path-only lookup
+// would always resolve to the folder even when the user right-clicked the
+// file — so renaming the file would silently rename the folder, deleting
+// the file would attempt to delete the folder, and the move cycle check
+// would never fire. Callers in this file pass the kind that was emitted
+// from TreeRow alongside the path.
+function findNode(nodes: TreeNode[], path: string, kind?: 'file' | 'folder'): TreeNode | null {
   for (const n of nodes) {
-    if (n.path === path) return n
+    if (n.path === path && (kind === undefined || n.kind === kind)) return n
     if (n.kind === 'folder') {
-      const found = findNode(n.children, path)
+      const found = findNode(n.children, path, kind)
       if (found) return found
     }
   }
@@ -136,8 +145,11 @@ function countDescendants(n: TreeNode): number {
 async function onSelect(p: string) { emit('select', p) }
 async function onToggle(p: string) { toggle(p) }
 
-async function onRename(oldPath: string, newName: string) {
-  const node = findNode(props.tree, oldPath)
+async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder') {
+  // Look up the node by *both* path and kind — see findNode for why path
+  // alone is ambiguous. A user right-clicking `inbox/notes.md` while the
+  // folder `inbox/notes/` also exists must rename the file, not the folder.
+  const node = findNode(props.tree, oldPath, kind)
   if (!node) return
   if (isProtectedRoot(oldPath)) { toast.error(protectedRootError(oldPath, 'rename')); return }
   if (isInZettel(oldPath)) { toast.error('Zettel 是永久笔记，不能重命名'); return }
@@ -156,8 +168,12 @@ async function onRename(oldPath: string, newName: string) {
   }
 }
 
-async function onDelete(p: string) {
-  const node = findNode(props.tree, p)
+async function onDelete(p: string, kind: 'file' | 'folder') {
+  // Same disambiguation as onRename — see findNode. A path-only lookup
+  // would resolve a delete on `inbox/notes` to whichever node appears
+  // first in the tree (the folder), and the wrong entity would be
+  // deleted (or a confirm dialog would be shown for the wrong target).
+  const node = findNode(props.tree, p, kind)
   if (!node) return
   if (isProtectedRoot(p)) { toast.error(protectedRootError(p, 'delete')); return }
   if (isInZettel(p)) { toast.error('Zettel 是永久笔记，不能删除'); return }
@@ -175,7 +191,7 @@ async function onDelete(p: string) {
   } catch (e: any) { toast.error('删除失败: ' + e.message) }
 }
 
-async function onMove(srcPath: string, targetFolder: string) {
+async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | 'folder') {
   if (isProtectedRoot(srcPath)) { toast.error(protectedRootError(srcPath, 'move')); return }
   if (isInZettel(srcPath)) { toast.error('Zettel 是永久笔记，不能移动'); return }
   // The three top-level folders keep their names but their *contents* are
@@ -187,8 +203,13 @@ async function onMove(srcPath: string, targetFolder: string) {
   const filename = srcPath.split('/').pop()!
   const newPath = targetFolder ? `${targetFolder}/${filename}` : filename
   if (newPath === srcPath) return
-  // Cycle check
-  const srcNode = findNode(props.tree, srcPath)
+  // Cycle check — kind-aware lookup. Without the kind filter, dragging a
+  // file that shares a name with a folder would never trigger this
+  // guard even if the path happened to also be an ancestor of the
+  // target, because findNode would return null for the file but the
+  // guard only fires when srcNode is a folder. With the kind, the
+  // check runs against the actual source entity.
+  const srcNode = findNode(props.tree, srcPath, srcKind)
   if (srcNode?.kind === 'folder' && (newPath === srcPath || newPath.startsWith(srcPath + '/'))) {
     toast.error('不能将文件夹移动到自身')
     return

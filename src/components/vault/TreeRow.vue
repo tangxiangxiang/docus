@@ -15,9 +15,17 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [path: string]
   toggle: [path: string]
-  rename: [oldPath: string, newName: string]
-  delete: [path: string]
-  move: [srcPath: string, targetFolder: string]
+  // `kind` is carried alongside `oldPath` / `path` so the parent can pick the
+  // exact TreeNode from the (path-keyed) server tree. When a file and a
+  // folder happen to share a path string (e.g. `inbox/notes.md` and
+  // `inbox/notes/` both surface as path='inbox/notes'), looking up by path
+  // alone is ambiguous: buildTree sorts folders first, so a path-only
+  // lookup would always resolve to the folder even when the user right-
+  // clicked the file. Without the kind, renaming the file would silently
+  // rename the folder instead.
+  rename: [oldPath: string, newName: string, kind: 'file' | 'folder']
+  delete: [path: string, kind: 'file' | 'folder']
+  move: [srcPath: string, targetFolder: string, srcKind: 'file' | 'folder']
   'create-in': [folder: string, kind: 'file' | 'folder']
 }>()
 
@@ -53,6 +61,12 @@ function onDragStart(e: DragEvent) {
   e.stopPropagation()
   if (!e.dataTransfer) return
   e.dataTransfer.setData('text/x-docus-path', props.node.path)
+  // Carry the source kind in the payload too. Path is not enough to
+  // disambiguate a file from a folder when they share a name (see
+  // emit signature comment above); the drop handler reads this back to
+  // route the move to the right API endpoint and to run the cycle check
+  // only when the source is a folder.
+  e.dataTransfer.setData('text/x-docus-kind', props.node.kind)
   e.dataTransfer.effectAllowed = 'move'
   isDragging.value = true
 }
@@ -84,9 +98,14 @@ function onDrop(e: DragEvent) {
   e.stopPropagation()
   const src = e.dataTransfer?.getData('text/x-docus-path') ?? ''
   if (!src) return
+  // Read the source kind back from the drag payload (set in onDragStart).
+  // Default to 'file' if a future caller forgets to set the kind, so the
+  // move still routes to the file API instead of silently 404'ing on a
+  // missing path.
+  const srcKind = (e.dataTransfer?.getData('text/x-docus-kind') === 'folder' ? 'folder' : 'file') as 'file' | 'folder'
   isDropTarget.value = false
   dragDepth.value = 0
-  emit('move', src, props.node.path)
+  emit('move', src, props.node.path, srcKind)
 }
 
 // --- context menu ---
@@ -233,9 +252,9 @@ function cancelRename() {
         :is-protected-root="child.path === 'inbox' || child.path === 'literature' || child.path === 'zettel'"
         @select="(p) => emit('select', p)"
         @toggle="(p) => emit('toggle', p)"
-        @rename="(oldP, n) => emit('rename', oldP, n)"
-        @delete="(p) => emit('delete', p)"
-        @move="(src, folder) => emit('move', src, folder)"
+        @rename="(oldP, n) => emit('rename', oldP, n, child.kind)"
+        @delete="(p) => emit('delete', p, child.kind)"
+        @move="(src, folder, srcKind) => emit('move', src, folder, srcKind)"
         @create-in="(folder, kind) => emit('create-in', folder, kind)"
       />
     </ul>
