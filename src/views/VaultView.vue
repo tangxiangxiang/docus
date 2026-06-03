@@ -105,12 +105,6 @@ function pathToUrl(p: string): string {
   return '/vault/' + p.replace(/^posts\//, '')
 }
 
-/** "posts/notes/draft" -> "notes/draft" (used as the slug for downstream components
-    that haven't been updated to the path model yet). */
-function pathToSlug(p: string | null): string | null {
-  return p ? p.replace(/^posts\//, '') : null
-}
-
 function selectPanel(panel: SidePanel) {
   activePanel.value = activePanel.value === panel ? null : panel
 }
@@ -366,8 +360,8 @@ watch(routePath, (p) => {
     />
 
     <section class="editor-area">
-      <Breadcrumb :slug="pathToSlug(activePath)" />
-      <EditorTabs :tabs="tabs" :active-slug="activePath" @select="selectTab" @close="closeTab" @open-search="openSearch" />
+      <Breadcrumb :current-path="activePath" />
+      <EditorTabs :tabs="tabs" :active-path="activePath" @select="selectTab" @close="closeTab" @open-search="openSearch" />
 
       <div class="content" :style="contentStyle">
         <div
@@ -408,7 +402,7 @@ watch(routePath, (p) => {
 
     <StatusBar
       class="status-bar-row"
-      :slug="activePath"
+      :path="activePath"
       :save-status="activeTab?.saveStatus ?? 'idle'"
       :error="activeTab?.error ?? null"
       :size="activeSize"

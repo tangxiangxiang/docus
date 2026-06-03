@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import type { SaveStatus } from './tabs'
 
 const props = defineProps<{
-  slug: string | null
+  path: string | null
   saveStatus: SaveStatus
   error: string | null
   size: number
@@ -11,7 +11,7 @@ const props = defineProps<{
 }>()
 
 const statusLabel = computed(() => {
-  if (!props.slug) return '—'
+  if (!props.path) return '—'
   if (props.saveStatus === 'saving') return '$(loading) Saving…'
   if (props.saveStatus === 'dirty') return '● Unsaved'
   if (props.saveStatus === 'saved') return '✓ Saved'
