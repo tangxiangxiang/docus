@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import NavBar from './components/NavBar.vue'
 import ToastHost from './components/ToastHost.vue'
 import ConfirmHost from './components/ConfirmHost.vue'
+import PromptHost from './components/PromptHost.vue'
 
 const route = useRoute()
 const isVault = computed(() => route.meta.fullWidth === true)
@@ -37,4 +38,5 @@ provide('openSearch', { tick: openSearchTick, trigger: onOpenSearch })
   </RouterView>
   <ToastHost />
   <ConfirmHost />
+  <PromptHost />
 </template>
