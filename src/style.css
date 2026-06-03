@@ -578,15 +578,32 @@ main.container {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   text-decoration: none; color: inherit;
 }
-.vault .file-tree .row-actions { opacity: 0; display: flex; gap: 2px; }
-.vault .file-tree .tree-row:hover .row-actions { opacity: 1; }
-.vault .file-tree .row-actions button {
-  background: transparent; border: 0; color: var(--vs-text-2);
-  padding: 1px 5px; border-radius: 2px; cursor: pointer; font-size: 0.75rem;
+/* Right-click context menu */
+.tree-context-menu {
+  position: fixed; z-index: 9999;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--vs-bg-2);
+  border: 1px solid var(--vs-border, rgba(255,255,255,0.1));
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.32);
+  display: flex; flex-direction: column;
 }
-.vault .file-tree .row-actions button:hover {
-  background: var(--vs-bg-3);
-  color: var(--vs-text-1);
+.tree-context-menu button {
+  background: transparent; border: 0; color: var(--vs-text-1);
+  padding: 5px 10px; border-radius: 4px; cursor: pointer; font: inherit;
+  font-size: 0.85rem; text-align: left;
+}
+.tree-context-menu button:hover {
+  background: var(--vs-hover-bg);
+}
+.tree-context-menu button.danger:hover {
+  background: rgba(220, 60, 60, 0.2);
+  color: #e06060;
+}
+.tree-context-menu hr {
+  border: 0; border-top: 1px solid var(--vs-border, rgba(255,255,255,0.06));
+  margin: 4px 0;
 }
 .vault .file-tree .empty {
   padding: 12px; color: var(--vs-text-3); font-size: 0.85rem;

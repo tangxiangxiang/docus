@@ -67,6 +67,33 @@ function onDrop(e: DragEvent) {
   emit('move', src, props.node.path)
 }
 
+// --- context menu ---
+const menuVisible = ref(false)
+const menuX = ref(0)
+const menuY = ref(0)
+
+function showMenu(e: MouseEvent) {
+  e.preventDefault()
+  menuVisible.value = true
+  menuX.value = e.clientX
+  menuY.value = e.clientY
+  nextTick(() => {
+    document.addEventListener('click', closeMenu, { once: true })
+    document.addEventListener('keydown', onMenuEscape)
+  })
+}
+function closeMenu() {
+  menuVisible.value = false
+  document.removeEventListener('keydown', onMenuEscape)
+}
+function onMenuEscape(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeMenu()
+}
+function menuAction(fn: () => void) {
+  closeMenu()
+  fn()
+}
+
 // --- inline rename state ---
 const renaming = ref(false)
 const renameValue = ref('')
@@ -103,6 +130,7 @@ function cancelRename() {
     @dragleave="onDragLeave"
     @dragover="onDragOver"
     @drop="onDrop"
+    @contextmenu="showMenu"
   >
     <span
       v-if="isFolder"
@@ -135,12 +163,23 @@ function cancelRename() {
       >{{ node.name }}</a>
     </template>
 
-    <div v-if="!renaming" class="row-actions" @click.stop>
-      <button v-if="isFolder" @click="emit('create-in', node.path, 'file')"   title="新建文件">+F</button>
-      <button v-if="isFolder" @click="emit('create-in', node.path, 'folder')" title="新建文件夹">+D</button>
-      <button @click="startRename" title="重命名">✎</button>
-      <button @click="emit('delete', node.path)" title="删除">×</button>
-    </div>
+    <Teleport to="body">
+      <div
+        v-if="menuVisible"
+        class="tree-context-menu"
+        :style="{ left: menuX + 'px', top: menuY + 'px' }"
+        @click.stop
+      >
+        <template v-if="isFolder">
+          <button @click="menuAction(() => emit('create-in', node.path, 'file'))">新建文件</button>
+          <button @click="menuAction(() => emit('create-in', node.path, 'folder'))">新建文件夹</button>
+          <hr />
+        </template>
+        <button @click="menuAction(startRename)">重命名</button>
+        <hr />
+        <button class="danger" @click="menuAction(() => emit('delete', node.path))">删除</button>
+      </div>
+    </Teleport>
 
     <ul v-if="isFolder && isExpanded" class="tree-children">
       <TreeRow
