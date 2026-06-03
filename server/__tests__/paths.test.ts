@@ -41,7 +41,6 @@ describe('isValidPathSyntax', () => {
 })
 
 describe('assertSafePath', () => {
-  const cwd = process.cwd()
   it('resolves a valid path to a disk path inside content/', () => {
     expect(assertSafePath('posts/hello-world')).toMatch(
       /[\\/]src[\\/]content[\\/]posts[\\/]hello-world$/,
