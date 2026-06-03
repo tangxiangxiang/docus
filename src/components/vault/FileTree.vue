@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { TreeNode } from '../../lib/api'
 import TreeRow from './TreeRow.vue'
 import { useConfirm } from '../../composables/useConfirm'
@@ -24,10 +24,14 @@ const toast = useToast()
 const STORAGE_KEY = 'docus.vault.expandedPaths'
 const expanded = ref<Set<string>>(new Set(loadExpanded()))
 
-// Always keep the implicit content root folder expanded so its children render.
-if (!expanded.value.has('')) {
-  expanded.value.add('')
-}
+// The server returns a single implicit root folder ("content", path "") whose
+// children are the user's top-level folders. We don't surface that synthetic
+// root in the UI — only its children are rendered.
+const topLevel = computed<TreeNode[]>(() => {
+  const root = props.tree[0]
+  if (root && root.kind === 'folder') return root.children
+  return []
+})
 
 function isInZettel(path: string | null): boolean {
   if (!path) return false
@@ -223,9 +227,9 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         />
       </div>
     </header>
-    <ul v-if="tree.length" class="tree" role="tree">
+    <ul v-if="topLevel.length" class="tree" role="tree">
       <TreeRow
-        v-for="node in tree"
+        v-for="node in topLevel"
         :key="node.path"
         :node="node"
         :depth="0"
