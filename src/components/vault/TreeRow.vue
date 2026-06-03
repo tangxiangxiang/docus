@@ -131,8 +131,21 @@ function startRename() {
   })
 }
 function commitRename() {
-  const name = renameValue.value.trim()
+  // The input's keydown (Enter) and blur both call us. When the user presses
+  // Enter, this function runs synchronously and sets renaming.value = false;
+  // the resulting DOM removal then fires blur, which would call us a second
+  // time. The second call would re-emit `rename` against the *old* path —
+  // and since the first call already moved the file on disk, the server
+  // answers the duplicate PATCH with 404, producing a "rename failed" toast
+  // for a rename that actually succeeded. The same hazard turns Escape
+  // (cancelRename) into a commit: cancel sets renaming = false, the input
+  // is unmounted, blur fires, commit runs. Guard with `if (!renaming.value)`
+  // so we only act on the first invocation; subsequent blur-after-keydown
+  // calls short-circuit, and the click-away (blur-only) path still commits
+  // because renaming is still true at that point.
+  if (!renaming.value) return
   renaming.value = false
+  const name = renameValue.value.trim()
   if (!name || name === props.node.name) return
   emit('rename', props.node.path, name)
 }
