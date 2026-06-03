@@ -18,6 +18,10 @@ const emit = defineEmits<{
 
 const STORAGE_KEY = 'docus.vault.expandedPaths'
 const expanded = ref<Set<string>>(new Set(loadExpanded()))
+// Always keep the posts root folder expanded.
+if (!expanded.value.has('posts')) {
+  expanded.value.add('posts')
+}
 
 const { confirm } = useConfirm()
 const { prompt } = usePrompt()

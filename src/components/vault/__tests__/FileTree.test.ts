@@ -22,13 +22,22 @@ vi.mock('../../../composables/useToast', () => ({
 }))
 
 const TREE: TreeNode[] = [
-  { kind: 'file', name: 'hello', path: 'posts/hello', title: 'Hello', mtime: 0 },
   {
-    kind: 'folder', name: 'notes', path: 'posts/notes', children: [
-      { kind: 'file', name: 'draft', path: 'posts/notes/draft', title: 'Draft', mtime: 0 },
+    kind: 'folder', name: 'posts', path: 'posts', children: [
+      { kind: 'file', name: 'hello', path: 'posts/hello', title: 'Hello', mtime: 0 },
+      {
+        kind: 'folder', name: 'notes', path: 'posts/notes', children: [
+          { kind: 'file', name: 'draft', path: 'posts/notes/draft', title: 'Draft', mtime: 0 },
+        ],
+      },
     ],
   },
 ]
+
+/** Pick the leafmost row whose .row-name element has the given text. */
+function rowByLabel(rows: ReturnType<typeof import('@vue/test-utils').DOMWrapper>[], name: string) {
+  return rows.filter((r) => r.find('.row-name')?.text() === name).pop()!
+}
 
 describe('FileTree', () => {
   beforeEach(() => {
@@ -39,38 +48,34 @@ describe('FileTree', () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
     expect(w.text()).toContain('hello')
     expect(w.text()).toContain('notes')
-    // 'draft' is nested inside 'notes' and should be hidden when notes is collapsed
+    expect(w.text()).toContain('posts')
+    // 'draft' is nested inside 'notes' which is collapsed by default
     expect(w.text()).not.toContain('draft')
   })
 
   it('expands a folder on click and shows nested files', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
-    // Find the chevron in the 'notes' row
-    const rows = w.findAll('.tree-row')
-    const notesRow = rows.find((r) => r.text().includes('notes'))!
+    const notesRow = rowByLabel(w.findAll('.tree-row'), 'notes')
     await notesRow.find('.chevron').trigger('click')
     expect(w.text()).toContain('draft')
   })
 
   it('emits select when a file is clicked', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
-    const rows = w.findAll('.tree-row')
-    const helloRow = rows.find((r) => r.text().includes('hello'))!
+    const helloRow = rowByLabel(w.findAll('.tree-row'), 'hello')
     await helloRow.find('.row-name').trigger('click')
     expect(w.emitted('select')?.[0]).toEqual(['posts/hello'])
   })
 
   it('highlights the active row', () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: 'posts/hello' } })
-    const active = w.findAll('.tree-row').find((r) => r.classes('active'))
-    expect(active).toBeTruthy()
-    expect(active!.text()).toContain('hello')
+    const active = rowByLabel(w.findAll('.tree-row'), 'hello')
+    expect(active.classes('active')).toBe(true)
   })
 
   it('persists expansion to localStorage', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
-    const rows = w.findAll('.tree-row')
-    const notesRow = rows.find((r) => r.text().includes('notes'))!
+    const notesRow = rowByLabel(w.findAll('.tree-row'), 'notes')
     await notesRow.find('.chevron').trigger('click')
     const stored = JSON.parse(localStorage.getItem('docus.vault.expandedPaths') ?? '[]')
     expect(stored).toContain('posts/notes')

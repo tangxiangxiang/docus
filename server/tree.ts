@@ -177,5 +177,5 @@ export async function buildTree(
   }
   sortChildren(rootFolder)
 
-  return rootFolder.children
+  return [rootFolder]
 }

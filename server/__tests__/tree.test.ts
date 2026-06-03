@@ -33,33 +33,42 @@ describe('listPostsFlat', () => {
 })
 
 describe('buildTree', () => {
-  it('nests folders before files, both alphabetically', async () => {
+  it('nests everything under a posts root folder', async () => {
     const tree = await buildTree(sandbox)
     expect(tree).toEqual([
       {
         kind: 'folder',
-        name: 'notes',
-        path: 'posts/notes',
+        name: 'posts',
+        path: 'posts',
         children: [
           {
             kind: 'folder',
-            name: 'archive',
-            path: 'posts/notes/archive',
+            name: 'notes',
+            path: 'posts/notes',
             children: [
-              { kind: 'file', name: 'old', path: 'posts/notes/archive/old', title: 'old', mtime: expect.any(Number) },
+              {
+                kind: 'folder',
+                name: 'archive',
+                path: 'posts/notes/archive',
+                children: [
+                  { kind: 'file', name: 'old', path: 'posts/notes/archive/old', title: 'old', mtime: expect.any(Number) },
+                ],
+              },
+              { kind: 'file', name: 'draft', path: 'posts/notes/draft', title: 'draft', mtime: expect.any(Number) },
             ],
           },
-          { kind: 'file', name: 'draft', path: 'posts/notes/draft', title: 'draft', mtime: expect.any(Number) },
+          { kind: 'file', name: 'hello', path: 'posts/hello', title: 'hi', mtime: expect.any(Number) },
         ],
       },
-      { kind: 'file', name: 'hello', path: 'posts/hello', title: 'hi', mtime: expect.any(Number) },
     ])
   })
 
-  it('returns an empty array for an empty directory', async () => {
+  it('returns a posts folder with empty children for an empty directory', async () => {
     const empty = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-empty-'))
     const tree = await buildTree(empty)
-    expect(tree).toEqual([])
+    expect(tree).toEqual([
+      { kind: 'folder', name: 'posts', path: 'posts', children: [] },
+    ])
     await fs.rm(empty, { recursive: true, force: true })
   })
 })
