@@ -5,10 +5,12 @@ import type { PostSummary } from '../../lib/api'
 const props = defineProps<{
   posts: PostSummary[]
   activeTag: string | null
+  path: string | null
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   select: [tag: string]
+  open: [path: string]
 }>()
 
 const tagMap = computed(() => {
@@ -20,6 +22,16 @@ const tagMap = computed(() => {
   }
   return Array.from(map.entries()).sort((a, b) => b[1] - a[1])
 })
+
+/** "posts/notes/draft" -> "notes / draft" (drops the "posts/" prefix). */
+function pathTail(p: string): string {
+  return p.replace(/^posts\//, '')
+}
+
+const filtered = computed(() => {
+  if (!props.activeTag) return []
+  return props.posts.filter((p) => p.tags.includes(props.activeTag!))
+})
 </script>
 
 <template>
@@ -28,13 +40,13 @@ const tagMap = computed(() => {
       <span class="title">Tags</span>
       <span class="count">{{ tagMap.length }}</span>
     </header>
-    <ul v-if="tagMap.length">
+    <ul v-if="tagMap.length" class="tag-list">
       <li v-for="[tag, count] in tagMap" :key="tag">
         <button
           class="tag-entry"
           :class="{ active: tag === activeTag }"
           :aria-pressed="tag === activeTag"
-          @click="$emit('select', tag)"
+          @click="emit('select', tag)"
         >
           <span class="tag-name">#{{ tag }}</span>
           <span class="tag-count">{{ count }}</span>
@@ -42,5 +54,25 @@ const tagMap = computed(() => {
       </li>
     </ul>
     <p v-else class="empty">No tags yet.</p>
+
+    <div v-if="activeTag" class="results">
+      <header class="results-header">
+        <span class="results-title">#{{ activeTag }}</span>
+        <span class="results-count">{{ filtered.length }}</span>
+      </header>
+      <ul v-if="filtered.length" class="results-list">
+        <li v-for="p in filtered" :key="p.path">
+          <button
+            class="result-entry"
+            :class="{ active: p.path === path }"
+            @click="emit('open', p.path)"
+          >
+            <span class="result-title">{{ p.title }}</span>
+            <span class="result-path">{{ pathTail(p.path) }}</span>
+          </button>
+        </li>
+      </ul>
+      <p v-else class="empty">No posts with this tag.</p>
+    </div>
   </aside>
 </template>

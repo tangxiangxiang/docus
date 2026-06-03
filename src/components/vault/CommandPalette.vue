@@ -5,10 +5,10 @@ import type { PostSummary } from '../../lib/api'
 
 const props = defineProps<{
   posts: PostSummary[]
-  activeSlug: string | null
+  activePath: string | null
 }>()
 const emit = defineEmits<{
-  (e: 'select', slug: string): void
+  (e: 'select', path: string): void
   (e: 'new', title: string): void
 }>()
 
@@ -19,6 +19,11 @@ const activeIdx = ref(0)
 const inputRef = ref<HTMLInputElement | null>(null)
 let indexed = false
 let priming: Promise<void> | null = null
+
+/** "posts/notes/draft" -> "notes / draft" (drops the "posts/" prefix). */
+function pathTail(p: string): string {
+  return p.replace(/^posts\//, '')
+}
 
 async function ensureIndexed() {
   if (props.posts.length === 0) return
@@ -50,7 +55,7 @@ function hide() {
 }
 
 function commit(hit: SearchHit) {
-  emit('select', hit.slug)
+  emit('select', hit.path)
   hide()
 }
 
@@ -134,7 +139,7 @@ const placeholder = computed(() => `搜索 ${props.posts.length} 篇…`)
         <ul v-if="hits.length" class="palette-list" role="listbox">
           <li
             v-for="(h, i) in hits"
-            :key="h.slug"
+            :key="h.path"
             :class="['palette-item', { active: i === activeIdx }]"
             role="option"
             :aria-selected="i === activeIdx"
@@ -146,6 +151,7 @@ const placeholder = computed(() => `搜索 ${props.posts.length} 篇…`)
               <span :class="['palette-badge', `badge-${h.match}`]">{{ h.match }}</span>
             </div>
             <div v-if="h.snippet" class="palette-snippet">{{ h.snippet }}</div>
+            <div class="palette-path">{{ pathTail(h.path) }}</div>
           </li>
         </ul>
         <div v-else class="palette-empty">

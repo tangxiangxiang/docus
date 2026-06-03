@@ -347,7 +347,9 @@ watch(routePath, (p) => {
       v-else-if="activePanel === 'tags'"
       :posts="posts"
       :active-tag="activeTagFilter"
+      :path="activePath"
       @select="onTagSelect"
+      @open="openPost"
     />
 
     <div
@@ -412,7 +414,7 @@ watch(routePath, (p) => {
     <CommandPalette
       ref="paletteRef"
       :posts="posts"
-      :active-slug="activePath"
+      :active-path="activePath"
       @select="openPost"
     />
   </div>

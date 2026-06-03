@@ -591,6 +591,74 @@ main.container {
   font-style: italic;
   font-size: 0.85rem;
 }
+.vault .tag-panel .results {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-top: 1px solid var(--vs-border);
+  flex: 1;
+  min-height: 0;
+}
+.vault .tag-panel .results-header {
+  padding: 8px 14px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--vs-text-2);
+  background: var(--vs-bg-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.vault .tag-panel .results-count {
+  font-weight: 500;
+  color: var(--vs-text-3);
+}
+.vault .tag-panel .results-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.vault .tag-panel .result-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 14px;
+  background: transparent;
+  border: 0;
+  border-left: 2px solid transparent;
+  color: var(--vs-text-1);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.vault .tag-panel .result-entry:hover { background: var(--vs-hover-bg); }
+.vault .tag-panel .result-entry.active {
+  background: var(--vs-active-bg);
+  border-left-color: var(--vs-accent);
+}
+.vault .tag-panel .result-title {
+  font-size: 0.88rem;
+  color: var(--vs-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.vault .tag-panel .result-path {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--vs-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
 
 /* Editor Area */
 .editor-area {
@@ -1088,6 +1156,7 @@ main.container {
 .palette-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .palette-title { font-size: 0.9rem; color: var(--text-h); }
 .palette-snippet { font-size: 0.78rem; color: var(--text-muted); margin-top: 2px; }
+.palette-path { font-size: 0.72rem; font-family: var(--mono); color: var(--text-muted); margin-top: 2px; }
 .palette-badge {
   font-size: 0.7rem;
   text-transform: uppercase;
