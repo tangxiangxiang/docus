@@ -29,9 +29,9 @@ if (!expanded.value.has('')) {
   expanded.value.add('')
 }
 
-function isInArchive(path: string | null): boolean {
+function isInZettel(path: string | null): boolean {
   if (!path) return false
-  return path === 'archive' || path.startsWith('archive/')
+  return path === 'zettel' || path.startsWith('zettel/')
 }
 
 function loadExpanded(): string[] {
@@ -53,10 +53,10 @@ function toggle(path: string) {
   saveExpanded()
 }
 
-// Default-expand ancestors of currentPath (skip archive — it's collapsed by default).
+// Default-expand ancestors of currentPath (skip zettel — it's collapsed by default).
 watch(() => props.currentPath, (p) => {
   if (!p) return
-  if (isInArchive(p)) return
+  if (isInZettel(p)) return
   const segs = p.split('/')
   const ancestors: string[] = []
   let acc = ''
@@ -81,8 +81,8 @@ async function onRootDrop(e: DragEvent) {
   isRootDropTarget.value = false
   rootDragDepth.value = 0
   if (!src) return
-  // Reject moves from archive (it's read-only).
-  if (isInArchive(src)) { toast.error('归档目录为只读'); return }
+  // Reject moves from zettel (it's read-only).
+  if (isInZettel(src)) { toast.error('Zettel 是永久笔记，不能移动'); return }
   const filename = src.split('/').pop()!
   const targetPath = filename
   if (targetPath === src) return
@@ -119,7 +119,7 @@ async function onToggle(p: string) { toggle(p) }
 async function onRename(oldPath: string, newName: string) {
   const node = findNode(props.tree, oldPath)
   if (!node) return
-  if (isInArchive(oldPath)) { toast.error('归档目录为只读'); return }
+  if (isInZettel(oldPath)) { toast.error('Zettel 是永久笔记，不能重命名'); return }
   try {
     if (node.kind === 'folder') {
       const parent = oldPath.split('/').slice(0, -1).join('/')
@@ -138,7 +138,7 @@ async function onRename(oldPath: string, newName: string) {
 async function onDelete(p: string) {
   const node = findNode(props.tree, p)
   if (!node) return
-  if (isInArchive(p)) { toast.error('归档目录为只读'); return }
+  if (isInZettel(p)) { toast.error('Zettel 是永久笔记，不能删除'); return }
   const count = node.kind === 'folder' ? countDescendants(node) + 1 : 1
   const ok = await confirm(
     node.kind === 'folder'
@@ -154,8 +154,8 @@ async function onDelete(p: string) {
 }
 
 async function onMove(srcPath: string, targetFolder: string) {
-  if (isInArchive(srcPath)) { toast.error('归档目录为只读'); return }
-  if (isInArchive(targetFolder)) { toast.error('不能移动到归档目录'); return }
+  if (isInZettel(srcPath)) { toast.error('Zettel 是永久笔记，不能移动'); return }
+  if (isInZettel(targetFolder)) { toast.error('不能移动到 zettel'); return }
   const filename = srcPath.split('/').pop()!
   const newPath = targetFolder ? `${targetFolder}/${filename}` : filename
   if (newPath === srcPath) return
@@ -175,9 +175,9 @@ async function onMove(srcPath: string, targetFolder: string) {
 }
 
 async function onCreateIn(folder: string, kind: 'file' | 'folder') {
-  if (isInArchive(folder)) { toast.error('归档目录为只读'); return }
+  if (isInZettel(folder)) { toast.error('Zettel 是永久笔记，不能直接新建'); return }
   const title = await prompt({
-    title: kind === 'file' ? `在 ${folder || 'content'} 中新建文件` : `在 ${folder || 'content'} 中新建文件夹`,
+    title: kind === 'file' ? `在 ${folder || 'inbox'} 中新建文件` : `在 ${folder || 'inbox'} 中新建文件夹`,
     placeholder: '名称',
   })
   if (!title) return
@@ -211,14 +211,14 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
           class="new-btn icon-btn"
           aria-label="新建文件"
           title="新建文件"
-          @click="onCreateIn('', 'file')"
+          @click="onCreateIn('inbox', 'file')"
           v-html="ICON_NEW_FILE"
         />
         <button
           class="new-btn icon-btn"
           aria-label="新建文件夹"
           title="新建文件夹"
-          @click="onCreateIn('', 'folder')"
+          @click="onCreateIn('inbox', 'folder')"
           v-html="ICON_NEW_FOLDER"
         />
       </div>
@@ -231,7 +231,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :depth="0"
         :current-path="currentPath"
         :expanded-set="expanded"
-        :is-in-archive="isInArchive(node.path)"
+        :is-in-zettel="isInZettel(node.path)"
         @select="onSelect"
         @toggle="onToggle"
         @rename="onRename"

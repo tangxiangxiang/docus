@@ -8,7 +8,7 @@ const props = defineProps<{
   depth: number
   currentPath: string | null
   expandedSet: Set<string>
-  isInArchive?: boolean
+  isInZettel?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -23,7 +23,7 @@ const emit = defineEmits<{
 const isFolder = computed(() => props.node.kind === 'folder')
 const isActive = computed(() => !isFolder.value && props.node.path === props.currentPath)
 const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.node.path))
-const readonly = computed(() => !!props.isInArchive)
+const readonly = computed(() => !!props.isInZettel)
 
 // --- drag state ---
 const isDragging = ref(false)
@@ -181,7 +181,7 @@ function cancelRename() {
         <button v-if="!readonly" @click="menuAction(startRename)">重命名</button>
         <hr v-if="!readonly" />
         <button v-if="!readonly" class="danger" @click="menuAction(() => emit('delete', node.path))">删除</button>
-        <span v-if="readonly" class="readonly-hint">归档 · 只读</span>
+        <span v-if="readonly" class="readonly-hint">Zettel · 永久笔记</span>
       </div>
     </Teleport>
 
@@ -193,7 +193,7 @@ function cancelRename() {
         :depth="depth + 1"
         :current-path="currentPath"
         :expanded-set="expandedSet"
-        :is-in-archive="readonly"
+        :is-in-zettel="readonly"
         @select="(p) => emit('select', p)"
         @toggle="(p) => emit('toggle', p)"
         @rename="(oldP, n) => emit('rename', oldP, n)"
