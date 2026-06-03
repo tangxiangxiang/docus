@@ -380,8 +380,8 @@ watch(routePath, (p) => {
     />
 
     <section class="editor-area">
-      <Breadcrumb :current-path="activePath" />
       <EditorTabs :tabs="tabs" :active-path="activePath" @select="selectTab" @close="closeTab" @open-search="openSearch" />
+      <Breadcrumb :current-path="activePath" />
 
       <div class="content" :style="contentStyle">
         <div

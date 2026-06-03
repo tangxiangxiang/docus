@@ -25,7 +25,7 @@ function goRoot() { router.push('/vault') }
     <template v-else>
       <a class="seg" @click="goRoot">posts</a>
       <template v-for="(seg, i) in segments" :key="i">
-        <span class="sep">/</span>
+        <span class="sep">›</span>
         <a v-if="i < segments.length - 1" class="seg" @click="goTo(i)">{{ seg }}</a>
         <span v-else class="seg current">{{ seg }}</span>
       </template>
@@ -35,11 +35,9 @@ function goRoot() { router.push('/vault') }
 </template>
 
 <style scoped>
-.breadcrumb { display: flex; align-items: center; gap: 4px; font-size: 0.85rem; color: var(--text-mute, #888); }
 .seg { color: inherit; text-decoration: none; cursor: pointer; }
-.seg:hover { color: var(--text, #ddd); text-decoration: underline; }
-.seg.current { color: var(--text, #ddd); cursor: default; }
-.seg.current:hover { text-decoration: none; }
-.sep { color: var(--text-mute, #666); }
-.ext { color: var(--text-mute, #666); }
+.seg:hover { color: var(--vs-text-1, #ddd); }
+.seg.current { color: var(--vs-text-1, #ddd); cursor: default; }
+.sep { color: var(--vs-text-3, #666); font-size: 0.85rem; }
+.ext { color: var(--vs-text-3, #666); }
 </style>

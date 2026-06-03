@@ -460,11 +460,16 @@ main.container {
   overflow: hidden;
 }
 .vault .file-tree header {
-  padding: 10px 14px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  height: 40px;
+  box-sizing: border-box;
+  font-size: 0.7rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
   color: var(--vs-text-2);
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
@@ -751,7 +756,7 @@ main.container {
      full vault width at the bottom (see .status-bar).  The remaining
      rows are breadcrumb, tabs, and the editor/preview split. */
   display: grid;
-  grid-template-rows: 22px 36px minmax(0, 1fr);
+  grid-template-rows: 40px 22px minmax(0, 1fr);
   background: var(--vs-bg-1);
   color: var(--vs-text-1);
   min-width: 0;
@@ -764,10 +769,10 @@ main.container {
 .breadcrumb {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   padding: 0 14px;
-  font-size: 0.8rem;
-  color: var(--vs-text-2);
+  font-size: 0.75rem;
+  color: var(--vs-text-3);
   background: var(--vs-bg-1);
   border-bottom: 1px solid var(--vs-border);
   user-select: none;
@@ -790,20 +795,19 @@ main.container {
 .tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 12px;
-  height: 36px;
-  font-size: 0.85rem;
-  color: var(--vs-text-2);
-  background: var(--vs-tab-inactive-bg);
-  border-right: 1px solid var(--vs-border);
+  gap: 5px;
+  padding: 0 10px;
+  height: 40px;
+  font-size: 0.8rem;
+  color: var(--vs-text-3);
+  background: transparent;
   cursor: pointer;
   user-select: none;
   position: relative;
   min-width: 0;
-  max-width: 200px;
+  max-width: 180px;
 }
-.tab:hover { background: var(--vs-hover-bg); color: var(--vs-text-1); }
+.tab:hover { color: var(--vs-text-1); }
 .tab.active {
   background: var(--vs-tab-active-bg);
   color: var(--vs-text-1);
@@ -814,17 +818,17 @@ main.container {
   top: 0;
   left: 0;
   right: 0;
-  height: 1px;
+  height: 2px;
   background: var(--vs-accent);
 }
 .tab-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: transparent;
   flex-shrink: 0;
 }
-.tab-dot.dirty { background: var(--vs-text-2); }
+.tab-dot.dirty { background: var(--vs-accent); }
 .tab-title {
   white-space: nowrap;
   overflow: hidden;
@@ -833,19 +837,23 @@ main.container {
 .tab-close {
   background: transparent;
   border: 0;
-  color: var(--vs-text-2);
+  color: var(--vs-text-3);
   cursor: pointer;
   border-radius: 3px;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 1rem;
+  font-size: 0.85rem;
   line-height: 1;
   flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.1s;
 }
-.tab-close:hover { background: var(--vs-bg-3); color: var(--vs-text-1); }
+.tab:hover .tab-close,
+.tab.active .tab-close { opacity: 1; }
+.tab-close:hover { background: var(--vs-hover-bg); color: var(--vs-text-1); }
 
 /* Content area: editor + preview side by side */
 .content {
