@@ -1,15 +1,10 @@
 import type { Plugin } from 'vite'
-import { buildApp } from './index.ts'
+import app from './index.ts'
 
-/**
- * Vite plugin: mount the Hono backend as a Vite dev middleware so frontend
- * and backend share port 5173 (no CORS, single dev process).
- */
 export function serverPlugin(): Plugin {
   return {
     name: 'docus-server',
     configureServer(server) {
-      const app = buildApp()
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith('/api/')) return next()
         const url = `http://localhost${req.url}`
@@ -28,8 +23,6 @@ export function serverPlugin(): Plugin {
         const fetchReq = new Request(url, {
           method,
           headers,
-          // Buffer is accepted by undici/fetch in Node; cast to any keeps TS happy under non-DOM lib.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           body: body as any,
         })
         const fetchRes = await app.fetch(fetchReq)

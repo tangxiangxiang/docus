@@ -1,13 +1,14 @@
 import { Hono } from 'hono'
-import fs from 'node:fs/promises'
+import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import matter from 'gray-matter'
+import { filePathFor, folderPathFor, POSTS_DIR } from './paths.js'
+import { listPostsFlat, buildTree, listSubtreePaths } from './tree.js'
 
-const POSTS_DIR = path.resolve(process.cwd(), 'src/content/posts')
-const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
-
-export interface PostSummary {
-  slug: string
+// Local type defs — kept in sync with src/lib/api.ts (Task 5). Don't import from src/
+// until that task lands to avoid coupling server type to a moving client surface.
+interface PostSummary {
+  path: string
   title: string
   date: string
   tags: string[]
@@ -15,186 +16,188 @@ export interface PostSummary {
   size: number
   mtime: number
 }
+interface PostDetail {
+  path: string
+  raw: string
+  frontmatter: Record<string, unknown>
+  size: number
+  mtime: number
+}
 
-function assertSafeSlug(slug: string): string {
-  if (!SLUG_RE.test(slug)) {
-    throw new Error(`Invalid slug: ${slug}`)
+const SEGMENT_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
+
+const app = new Hono()
+
+function bad(c: any, msg: string, code = 400) { return c.json({ error: msg }, code) }
+
+async function exists(p: string) {
+  try { await fs.stat(p); return true } catch { return false }
+}
+
+app.get('/api/health', (c) => c.json({ ok: true }))
+
+app.get('/api/tree', async (c) => {
+  const tree = await buildTree()
+  return c.json(tree)
+})
+
+app.get('/api/posts', async (c) => {
+  const posts = await listPostsFlat()
+  return c.json(posts)
+})
+
+// Create a new post. Body: { path: string, title?: string }
+app.post('/api/posts', async (c) => {
+  const body = await c.req.json().catch(() => null) as { path?: string; title?: string } | null
+  if (!body || typeof body.path !== 'string') return bad(c, 'path required')
+  // Validate only the final segment (the rest is path-validated by filePathFor).
+  if (!SEGMENT_RE.test(body.path.replace(/^posts\//, '').split('/').pop() ?? '')) {
+    return bad(c, 'invalid final segment')
   }
-  // Path containment check: resolved file must be inside POSTS_DIR
-  const fp = path.resolve(POSTS_DIR, `${slug}.md`)
-  if (!fp.startsWith(POSTS_DIR + path.sep)) {
-    throw new Error(`Slug escapes posts dir: ${slug}`)
+  let abs: string
+  try { abs = filePathFor(body.path) } catch (e: any) { return bad(c, e.message) }
+  if (await exists(abs)) return bad(c, 'file exists', 409)
+  await fs.mkdir(path.dirname(abs), { recursive: true })
+  const title = body.title ?? body.path.split('/').pop()!
+  const today = new Date().toISOString().slice(0, 10)
+  const slug = title.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
+  const body_text = `---\ntitle: ${title}\ndate: ${today}\ntags: []\nslug: ${slug}\n---\n\n# ${title}\n`
+  await fs.writeFile(abs, body_text, 'utf8')
+  const st = await fs.stat(abs)
+  return c.json({
+    path: body.path,
+    title,
+    date: today,
+    tags: [],
+    size: st.size,
+    mtime: st.mtimeMs,
+  } satisfies PostSummary, 201)
+})
+
+// PATCH a file: rename within folder (name) or move (targetPath). Exactly one.
+app.patch('/api/posts/*', async (c) => {
+  const splat = c.req.path.replace(/^\/api\/posts\//, '')
+  const srcPath = `posts/${splat}`
+  let src: string
+  try { src = filePathFor(srcPath) } catch (e: any) { return bad(c, e.message) }
+  if (!await exists(src)) return bad(c, 'not found', 404)
+
+  const body = await c.req.json().catch(() => null) as { name?: string; targetPath?: string } | null
+  if (!body || (body.name === undefined && body.targetPath === undefined)) {
+    return bad(c, 'name or targetPath required')
   }
-  return slug
-}
+  if (body.name !== undefined && body.targetPath !== undefined) {
+    return bad(c, 'pass exactly one of name / targetPath')
+  }
 
-function filePathFor(slug: string): string {
-  return path.join(POSTS_DIR, `${assertSafeSlug(slug)}.md`)
-}
+  let dest: string
+  let destPath: string
+  if (body.name !== undefined) {
+    if (!SEGMENT_RE.test(body.name)) return bad(c, 'invalid name')
+    const parent = path.dirname(src)
+    dest = path.join(parent, body.name + '.md')
+    const parentRel = path.dirname(srcPath)
+    destPath = parentRel === 'posts' ? `posts/${body.name}` : `${parentRel}/${body.name}`
+  } else {
+    try { dest = filePathFor(body.targetPath!) } catch (e: any) { return bad(c, e.message) }
+    destPath = body.targetPath!
+    // Cycle check: cannot move into own descendant.
+    if (dest !== src && body.targetPath!.startsWith(srcPath + '/')) {
+      return bad(c, 'cannot move into descendant', 422)
+    }
+  }
+  if (await exists(dest)) return bad(c, 'destination exists', 409)
+  await fs.rename(src, dest)
+  const st = await fs.stat(dest)
+  return c.json({
+    path: destPath,
+    title: destPath.split('/').pop()!,
+    date: '',
+    tags: [],
+    size: st.size,
+    mtime: st.mtimeMs,
+  } satisfies PostSummary)
+})
 
-async function readPostFile(slug: string): Promise<{ raw: string; frontmatter: Record<string, unknown>; content: string }> {
-  const raw = await fs.readFile(filePathFor(slug), 'utf-8')
-  const { data, content } = matter(raw)
-  return { raw, frontmatter: data, content }
-}
+// Delete a file
+app.delete('/api/posts/*', async (c) => {
+  const splat = c.req.path.replace(/^\/api\/posts\//, '')
+  let abs: string
+  try { abs = filePathFor(`posts/${splat}`) } catch (e: any) { return bad(c, e.message) }
+  if (!await exists(abs)) return bad(c, 'not found', 404)
+  await fs.unlink(abs)
+  return c.json({ ok: true })
+})
 
-async function listPosts(): Promise<PostSummary[]> {
-  const entries = await fs.readdir(POSTS_DIR)
-  const files = entries.filter((f) => f.endsWith('.md'))
-  const posts = await Promise.all(
-    files.map(async (file): Promise<PostSummary> => {
-      const slug = file.replace(/\.md$/, '')
-      const fullPath = path.join(POSTS_DIR, file)
-      const stat = await fs.stat(fullPath)
-      const { frontmatter } = await readPostFile(slug)
-      const fm = frontmatter as Record<string, unknown>
-      return {
-        slug,
-        title: (fm.title as string) ?? slug,
-        date: (fm.date as string) ?? '',
-        tags: (fm.tags as string[]) ?? [],
-        summary: (fm.summary as string) ?? '',
-        size: stat.size,
-        mtime: stat.mtimeMs,
-      }
-    }),
-  )
-  return posts.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
-}
+// Read a single post (raw + frontmatter)
+app.get('/api/posts/*', async (c) => {
+  const splat = c.req.path.replace(/^\/api\/posts\//, '')
+  let abs: string
+  try { abs = filePathFor(`posts/${splat}`) } catch (e: any) { return bad(c, e.message) }
+  if (!await exists(abs)) return bad(c, 'not found', 404)
+  const raw = await fs.readFile(abs, 'utf8')
+  const parsed = matter(raw)
+  const st = await fs.stat(abs)
+  return c.json({
+    path: `posts/${splat}`,
+    raw,
+    frontmatter: parsed.data,
+    size: st.size,
+    mtime: st.mtimeMs,
+  } satisfies PostDetail)
+})
 
-export function buildApp() {
-  const app = new Hono()
+// Create an empty folder. Body: { path: string }
+app.post('/api/folders', async (c) => {
+  const body = await c.req.json().catch(() => null) as { path?: string } | null
+  if (!body || typeof body.path !== 'string') return bad(c, 'path required')
+  if (!body.path.split('/').every((seg) => SEGMENT_RE.test(seg))) {
+    return bad(c, 'invalid segment')
+  }
+  let abs: string
+  try { abs = folderPathFor(body.path) } catch (e: any) { return bad(c, e.message) }
+  if (await exists(abs)) return bad(c, 'folder exists', 409)
+  await fs.mkdir(abs, { recursive: true })
+  return c.json({ path: body.path }, 201)
+})
 
-  app.use('*', async (c, next) => {
-    // Lightweight CORS for direct curl/extension access during dev
-    c.header('Access-Control-Allow-Origin', '*')
-    c.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS')
-    c.header('Access-Control-Allow-Headers', 'Content-Type')
-    if (c.req.method === 'OPTIONS') return c.body(null, 204)
-    await next()
-  })
+// Rename a folder (single-segment rename, cascades on disk).
+app.patch('/api/folders/*', async (c) => {
+  const splat = c.req.path.replace(/^\/api\/folders\//, '')
+  const srcPath = `posts/${splat}`
+  let src: string
+  try { src = folderPathFor(srcPath) } catch (e: any) { return bad(c, e.message) }
+  if (!await exists(src)) return bad(c, 'not found', 404)
 
-  app.get('/api/health', (c) => c.json({ ok: true }))
+  const body = await c.req.json().catch(() => null) as { newPath?: string } | null
+  if (!body || typeof body.newPath !== 'string') return bad(c, 'newPath required')
+  // Validate: newPath parent must match srcPath parent, only last segment differs.
+  const srcParent = path.dirname(srcPath)
+  const newParent = path.dirname(body.newPath)
+  if (srcParent !== newParent) return bad(c, 'only single-segment rename allowed', 422)
+  let dest: string
+  try { dest = folderPathFor(body.newPath) } catch (e: any) { return bad(c, e.message) }
+  if (await exists(dest)) return bad(c, 'destination exists', 409)
+  await fs.rename(src, dest)
+  // Collect affected file paths for client cache refresh.
+  const moved = await listSubtreePaths(POSTS_DIR, body.newPath)
+  return c.json({ path: body.newPath, moved })
+})
 
-  app.get('/api/posts', async (c) => {
-    return c.json({ posts: await listPosts() })
-  })
+// Delete a folder recursively. Requires ?recursive=true if non-empty.
+app.delete('/api/folders/*', async (c) => {
+  const splat = c.req.path.replace(/^\/api\/folders\//, '')
+  const folderP = `posts/${splat}`
+  let abs: string
+  try { abs = folderPathFor(folderP) } catch (e: any) { return bad(c, e.message) }
+  if (!await exists(abs)) return bad(c, 'not found', 404)
+  const recursive = c.req.query('recursive') === 'true'
+  const all = await listSubtreePaths(POSTS_DIR, folderP)
+  if (all.length > 0 && !recursive) {
+    return bad(c, 'folder is not empty; pass ?recursive=true to delete', 400)
+  }
+  await fs.rm(abs, { recursive: true, force: true })
+  return c.json({ deleted: all })
+})
 
-  app.get('/api/posts/:slug', async (c) => {
-    const slug = c.req.param('slug')
-    try {
-      const post = await readPostFile(slug)
-      return c.json({ slug, ...post })
-    } catch (e: unknown) {
-      const err = e as NodeJS.ErrnoException
-      if (err.code === 'ENOENT') return c.json({ error: 'not found' }, 404)
-      if (err.message?.startsWith('Invalid slug') || err.message?.startsWith('Slug escapes')) {
-        return c.json({ error: err.message }, 400)
-      }
-      throw e
-    }
-  })
-
-  app.post('/api/posts', async (c) => {
-    let body: { slug?: string; raw?: string }
-    try {
-      body = await c.req.json()
-    } catch {
-      return c.json({ error: 'invalid json' }, 400)
-    }
-    if (!body.slug || typeof body.raw !== 'string') {
-      return c.json({ error: 'slug and raw required' }, 400)
-    }
-    try {
-      assertSafeSlug(body.slug)
-    } catch (e) {
-      return c.json({ error: (e as Error).message }, 400)
-    }
-    const fp = filePathFor(body.slug)
-    try {
-      await fs.access(fp)
-      return c.json({ error: 'exists' }, 409)
-    } catch {
-      /* does not exist — proceed */
-    }
-    await fs.writeFile(fp, body.raw, 'utf-8')
-    return c.json({ ok: true, slug: body.slug })
-  })
-
-  app.put('/api/posts/:slug', async (c) => {
-    const slug = c.req.param('slug')
-    let body: { raw?: string }
-    try {
-      body = await c.req.json()
-    } catch {
-      return c.json({ error: 'invalid json' }, 400)
-    }
-    if (typeof body.raw !== 'string') {
-      return c.json({ error: 'raw required' }, 400)
-    }
-    let fp: string
-    try {
-      fp = filePathFor(slug)
-    } catch (e) {
-      return c.json({ error: (e as Error).message }, 400)
-    }
-    try {
-      await fs.access(fp)
-    } catch {
-      return c.json({ error: 'not found' }, 404)
-    }
-    await fs.writeFile(fp, body.raw, 'utf-8')
-    return c.json({ ok: true })
-  })
-
-  app.delete('/api/posts/:slug', async (c) => {
-    const slug = c.req.param('slug')
-    let fp: string
-    try {
-      fp = filePathFor(slug)
-    } catch (e) {
-      return c.json({ error: (e as Error).message }, 400)
-    }
-    try {
-      await fs.unlink(fp)
-    } catch (e) {
-      const err = e as NodeJS.ErrnoException
-      if (err.code === 'ENOENT') return c.json({ error: 'not found' }, 404)
-      throw e
-    }
-    return c.json({ ok: true })
-  })
-
-  app.patch('/api/posts/:slug/rename', async (c) => {
-    const oldSlug = c.req.param('slug')
-    let body: { newSlug?: string }
-    try {
-      body = await c.req.json()
-    } catch {
-      return c.json({ error: 'invalid json' }, 400)
-    }
-    if (!body.newSlug) {
-      return c.json({ error: 'newSlug required' }, 400)
-    }
-    let oldPath: string
-    let newPath: string
-    try {
-      oldPath = filePathFor(oldSlug)
-      assertSafeSlug(body.newSlug)
-      newPath = filePathFor(body.newSlug)
-    } catch (e) {
-      return c.json({ error: (e as Error).message }, 400)
-    }
-    if (oldPath === newPath) return c.json({ ok: true, slug: oldSlug })
-    try {
-      await fs.access(newPath)
-      return c.json({ error: 'exists' }, 409)
-    } catch {
-      /* ok */
-    }
-    await fs.rename(oldPath, newPath)
-    return c.json({ ok: true, slug: body.newSlug })
-  })
-
-  return app
-}
+export default app
