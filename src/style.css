@@ -527,6 +527,69 @@ main.container {
   font: inherit;
 }
 
+/* New recursive tree structure: TreeRow / tree-children / drop targets */
+.vault .file-tree .header-actions { display: flex; gap: 4px; }
+.vault .file-tree .tree {
+  list-style: none; padding: 4px 0; margin: 0;
+  overflow-y: auto; flex: 1;
+}
+.vault .file-tree .tree-children {
+  list-style: none; padding: 0; margin: 0;
+}
+.vault .file-tree .tree-row {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 12px 3px calc(12px + var(--depth, 0) * 12px);
+  cursor: default; user-select: none;
+  position: relative;
+  color: var(--vs-text-1);
+  font-size: 0.88rem;
+  line-height: 1.4;
+  border-left: 2px solid transparent;
+}
+.vault .file-tree .tree-row:hover { background: var(--vs-hover-bg); }
+.vault .file-tree .tree-row.active {
+  background: var(--vs-active-bg);
+  border-left-color: var(--vs-accent);
+}
+.vault .file-tree .tree-row[draggable] { cursor: grab; }
+.vault .file-tree .tree-row.dragging { opacity: 0.4; }
+.vault .file-tree .tree-row.drop-target {
+  outline: 1px dashed var(--vs-accent);
+  outline-offset: -1px;
+  background: var(--vs-active-bg);
+}
+.vault .file-tree.drop-target-root {
+  box-shadow: inset 0 2px 0 0 var(--vs-accent);
+}
+.vault .file-tree .chevron, .vault .file-tree .chevron-spacer {
+  width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--vs-text-3); flex-shrink: 0;
+}
+.vault .file-tree .chevron { cursor: pointer; transition: transform 120ms; }
+.vault .file-tree .chevron.expanded { transform: rotate(90deg); }
+.vault .file-tree .row-icon {
+  display: inline-flex; width: 14px; height: 14px; flex-shrink: 0;
+  color: var(--vs-text-2);
+}
+.vault .file-tree .tree-row.folder .row-icon { color: var(--vs-folder, #c8a96a); }
+.vault .file-tree .row-name {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-decoration: none; color: inherit;
+}
+.vault .file-tree .row-actions { opacity: 0; display: flex; gap: 2px; }
+.vault .file-tree .tree-row:hover .row-actions { opacity: 1; }
+.vault .file-tree .row-actions button {
+  background: transparent; border: 0; color: var(--vs-text-2);
+  padding: 1px 5px; border-radius: 2px; cursor: pointer; font-size: 0.75rem;
+}
+.vault .file-tree .row-actions button:hover {
+  background: var(--vs-bg-3);
+  color: var(--vs-text-1);
+}
+.vault .file-tree .empty {
+  padding: 12px; color: var(--vs-text-3); font-size: 0.85rem;
+}
+
 /* TagPanel: shares the file-tree column in the vault */
 .vault .tag-panel {
   background: var(--vs-bg-2);
