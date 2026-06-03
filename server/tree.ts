@@ -46,6 +46,20 @@ function nameFromPath(p: string): string {
   return p.split('/').pop()!
 }
 
+function titleFromFile(file: string, fallback: string): string {
+  // Cheap title extraction: first H1, or fallback to filename.
+  // We avoid pulling in gray-matter here for performance; a fuller parse happens
+  // at GET /api/posts/* time. This is best-effort for the tree view.
+  try {
+    // Synchronous read is fine here — files are small and this only runs in tree-builder paths.
+    const fsSync = require('node:fs') as typeof import('node:fs')
+    const text = fsSync.readFileSync(file, 'utf8')
+    const m = /^#\s+(.+)$/m.exec(text)
+    if (m) return m[1].trim()
+  } catch { /* ignore */ }
+  return fallback
+}
+
 export async function listPostsFlat(
   rootDir: string = POSTS_DIR,
 ): Promise<PostSummary[]> {
@@ -58,7 +72,7 @@ export async function listPostsFlat(
     const stat = await fs.stat(entry.abs)
     out.push({
       path: p,
-      title: name,
+      title: titleFromFile(entry.abs, name),
       date: '',
       tags: [],
       size: stat.size,
@@ -133,7 +147,7 @@ export async function buildTree(
         kind: 'file',
         name,
         path: p,
-        title: name,
+        title: titleFromFile(entry.abs, name),
         mtime: stat.mtimeMs,
       })
     }
@@ -151,12 +165,13 @@ export async function buildTree(
     }
   }
 
-  // Sort each folder's children alphabetically by name. Files and folders are
-  // interleaved by name — the test fixture expects "hello" (file) before
-  // "notes" (folder), so we do not bucket folders ahead of files.
+  // Sort each folder's children: folders first, then files, both alphabetically (case-insensitive).
   function sortChildren(n: MutableNode) {
     if (n.kind === 'folder') {
-      n.children.sort((a, b) => a.name.localeCompare(b.name))
+      n.children.sort((a, b) => {
+        if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
+        return a.name.localeCompare(b.name)
+      })
       n.children.forEach(sortChildren)
     }
   }

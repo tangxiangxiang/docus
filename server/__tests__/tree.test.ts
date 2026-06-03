@@ -36,7 +36,6 @@ describe('buildTree', () => {
   it('nests folders before files, both alphabetically', async () => {
     const tree = await buildTree(sandbox)
     expect(tree).toEqual([
-      { kind: 'file', name: 'hello', path: 'posts/hello', title: 'hello', mtime: expect.any(Number) },
       {
         kind: 'folder',
         name: 'notes',
@@ -53,6 +52,7 @@ describe('buildTree', () => {
           { kind: 'file', name: 'draft', path: 'posts/notes/draft', title: 'draft', mtime: expect.any(Number) },
         ],
       },
+      { kind: 'file', name: 'hello', path: 'posts/hello', title: 'hi', mtime: expect.any(Number) },
     ])
   })
 
