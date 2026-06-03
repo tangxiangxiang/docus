@@ -5,12 +5,10 @@ import { useStorage, useDebounceFn } from '@vueuse/core'
 import {
   listPosts,
   getPost,
-  createPost,
-  deletePost,
-  patchPost,
+  getTree,
   type PostSummary,
+  type TreeNode,
 } from '../lib/api'
-import { slugify } from '../lib/frontmatter'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import FileTree from '../components/vault/FileTree.vue'
@@ -154,6 +152,7 @@ function startDrag(which: 'tree' | 'middle', e: PointerEvent) {
 }
 
 /* ---------- Tabs state ---------- */
+const tree = ref<TreeNode[]>([])
 const posts = ref<PostSummary[]>([])
 const tabs = ref<Tab[]>([])
 const activePath = ref<string | null>(null)
@@ -175,10 +174,6 @@ const activeSize = computed(() => {
 
 /* ---------- Tag filter (view-state, in-memory) ---------- */
 const activeTagFilter = ref<string | null>(null)
-const filteredPosts = computed(() => {
-  const t = activeTagFilter.value
-  return t ? posts.value.filter((p) => p.tags.includes(t)) : posts.value
-})
 function onTagSelect(tag: string) {
   if (activeTagFilter.value === tag) {
     activeTagFilter.value = null          // toggle off
@@ -189,7 +184,9 @@ function onTagSelect(tag: string) {
 }
 
 async function refresh() {
-  posts.value = await listPosts()
+  const [t, p] = await Promise.all([getTree(), listPosts()])
+  tree.value = t
+  posts.value = p
 }
 
 function makeEmptyTab(path: string, title = ''): Tab {
@@ -319,61 +316,9 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-async function onNewFromTree() {
-  const title = window.prompt('新文章标题?') ?? ''
-  if (!title.trim()) return
-  await onNew(title)
-}
-
-async function onNew(title: string) {
-  const trimmed = (title ?? '').trim()
-  if (!trimmed) return
-  const parent = activePath.value ? activePath.value.replace(/\/[^/]+$/, '') : 'posts'
-  const filename = slugify(trimmed)
-  const newPath = parent === 'posts' ? `posts/${filename}` : `${parent}/${filename}`
-  try {
-    await createPost({ path: newPath, title: trimmed })
-    await refresh()
-    await openPost(newPath)
-    toast.success(`已创建: ${newPath}`)
-  } catch (e) {
-    toast.error(`创建失败: ${(e as Error).message}`)
-  }
-}
-
-async function onRename(newName: string) {
-  if (!activePath.value) return
-  const oldPath = activePath.value
-  if (isDirty.value) {
-    const ok = await confirm('有未保存的修改,仍要重命名吗?')
-    if (!ok) return
-  }
-  try {
-    const result = await patchPost(oldPath, { name: newName })
-    const newPath = result.path
-    const tab = tabs.value.find((t) => t.path === oldPath)
-    if (tab) tab.path = newPath
-    activePath.value = newPath
-    router.replace(pathToUrl(newPath))
-    await refresh()
-    toast.success(`已重命名为: ${newPath}`)
-  } catch (e) {
-    toast.error(`重命名失败: ${(e as Error).message}`)
-  }
-}
-
-async function onDelete(path: string) {
-  const ok = await confirm(`删除 "${path}"? 此操作不可恢复。`)
-  if (!ok) return
-  try {
-    await deletePost(path)
-    void closeTab(path)
-    await refresh()
-    toast.success(`已删除: ${path}`)
-  } catch (e) {
-    toast.error(`删除失败: ${(e as Error).message}`)
-  }
-}
+// FileTree now handles its own create/rename/delete via usePrompt and useConfirm.
+// These hooks are kept here as no-ops for backwards compatibility with any external
+// code that still emits @new/@rename/@delete; they can be removed in a follow-up.
 
 onMounted(async () => {
   await refresh()
@@ -399,12 +344,10 @@ watch(routePath, (p) => {
 
     <FileTree
       v-if="activePanel === 'files'"
-      :posts="filteredPosts"
-      :current-slug="pathToSlug(activePath)"
+      :tree="tree"
+      :current-path="activePath"
       @select="openPost"
-      @new="onNewFromTree"
-      @rename="onRename"
-      @delete="onDelete"
+      @refresh="refresh"
     />
     <TagPanel
       v-else-if="activePanel === 'tags'"
@@ -477,7 +420,6 @@ watch(routePath, (p) => {
       :posts="posts"
       :active-slug="activePath"
       @select="openPost"
-      @new="onNew"
     />
   </div>
 </template>
