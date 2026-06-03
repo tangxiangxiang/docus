@@ -1,5 +1,5 @@
 export interface PostSummary {
-  path: string            // replaces slug; e.g. "posts/hello-world" or "posts/notes/draft"
+  path: string            // e.g. "hello-world" or "notes/draft" or "archive/2024/old" — relative to src/content/, no implicit prefix
   title: string
   date: string
   tags: string[]
@@ -28,10 +28,9 @@ async function jsonOrThrow<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>
 }
 
-/** Strip the "posts/" prefix from a path so it can be appended to a /api/posts/* splat route.
- *  Server adds the prefix back when resolving to disk. */
+/** Path is already relative to `src/content/`, so it goes straight into the splat route. */
 function splat(path: string): string {
-  return path.replace(/^posts\//, '')
+  return path
 }
 
 export async function getTree(): Promise<TreeNode[]> {

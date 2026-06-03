@@ -21,13 +21,15 @@ vi.mock('../../../composables/useToast', () => ({
   }),
 }))
 
+// New convention: implicit root is `src/content/`, surfaced in the API as a
+// folder named "content" with path "".
 const TREE: TreeNode[] = [
   {
-    kind: 'folder', name: 'posts', path: 'posts', children: [
-      { kind: 'file', name: 'hello', path: 'posts/hello', title: 'Hello', mtime: 0 },
+    kind: 'folder', name: 'content', path: '', children: [
+      { kind: 'file', name: 'hello', path: 'hello', title: 'Hello', mtime: 0 },
       {
-        kind: 'folder', name: 'notes', path: 'posts/notes', children: [
-          { kind: 'file', name: 'draft', path: 'posts/notes/draft', title: 'Draft', mtime: 0 },
+        kind: 'folder', name: 'notes', path: 'notes', children: [
+          { kind: 'file', name: 'draft', path: 'notes/draft', title: 'Draft', mtime: 0 },
         ],
       },
     ],
@@ -48,7 +50,6 @@ describe('FileTree', () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
     expect(w.text()).toContain('hello')
     expect(w.text()).toContain('notes')
-    expect(w.text()).toContain('posts')
     // 'draft' is nested inside 'notes' which is collapsed by default
     expect(w.text()).not.toContain('draft')
   })
@@ -64,11 +65,11 @@ describe('FileTree', () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
     const helloRow = rowByLabel(w.findAll('.tree-row'), 'hello')
     await helloRow.find('.row-name').trigger('click')
-    expect(w.emitted('select')?.[0]).toEqual(['posts/hello'])
+    expect(w.emitted('select')?.[0]).toEqual(['hello'])
   })
 
   it('highlights the active row', () => {
-    const w = mount(FileTree, { props: { tree: TREE, currentPath: 'posts/hello' } })
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: 'hello' } })
     const active = rowByLabel(w.findAll('.tree-row'), 'hello')
     expect(active.classes('active')).toBe(true)
   })
@@ -78,12 +79,12 @@ describe('FileTree', () => {
     const notesRow = rowByLabel(w.findAll('.tree-row'), 'notes')
     await notesRow.find('.chevron').trigger('click')
     const stored = JSON.parse(localStorage.getItem('docus.vault.expandedPaths') ?? '[]')
-    expect(stored).toContain('posts/notes')
+    expect(stored).toContain('notes')
   })
 
   it('default-expands ancestors of the current path on mount', () => {
-    mount(FileTree, { props: { tree: TREE, currentPath: 'posts/notes/draft' } })
+    mount(FileTree, { props: { tree: TREE, currentPath: 'notes/draft' } })
     const stored = JSON.parse(localStorage.getItem('docus.vault.expandedPaths') ?? '[]')
-    expect(stored).toContain('posts/notes')
+    expect(stored).toContain('notes')
   })
 })

@@ -7,7 +7,7 @@ const router = useRouter()
 
 const segments = computed(() => {
   if (!props.currentPath) return []
-  return props.currentPath.replace(/^posts\//, '').split('/')
+  return props.currentPath.split('/')
 })
 
 function goTo(index: number) {
@@ -20,10 +20,10 @@ function goRoot() { router.push('/vault') }
 <template>
   <nav class="breadcrumb" aria-label="Path">
     <template v-if="!currentPath">
-      <span class="seg current">posts</span>
+      <span class="seg current">content</span>
     </template>
     <template v-else>
-      <a class="seg" @click="goRoot">posts</a>
+      <a class="seg" @click="goRoot">content</a>
       <template v-for="(seg, i) in segments" :key="i">
         <span class="sep">›</span>
         <a v-if="i < segments.length - 1" class="seg" @click="goTo(i)">{{ seg }}</a>

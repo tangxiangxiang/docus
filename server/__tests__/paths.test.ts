@@ -3,63 +3,74 @@ import { assertSafePath, filePathFor, folderPathFor, isValidPathSyntax } from '.
 
 describe('isValidPathSyntax', () => {
   it('accepts top-level post', () => {
-    expect(isValidPathSyntax('posts/hello-world')).toBe(true)
+    expect(isValidPathSyntax('hello-world')).toBe(true)
   })
   it('accepts nested post', () => {
-    expect(isValidPathSyntax('posts/notes/draft')).toBe(true)
+    expect(isValidPathSyntax('notes/draft')).toBe(true)
   })
-  it('accepts folder', () => {
-    expect(isValidPathSyntax('posts/notes')).toBe(true)
+  it('accepts deeply nested post', () => {
+    expect(isValidPathSyntax('notes/archive/old')).toBe(true)
   })
-  it('rejects missing posts prefix', () => {
-    expect(isValidPathSyntax('notes/draft')).toBe(false)
+  it('accepts a bare folder under content', () => {
+    expect(isValidPathSyntax('archive')).toBe(true)
+  })
+  it('rejects empty path', () => {
+    expect(isValidPathSyntax('')).toBe(false)
   })
   it('rejects empty segment', () => {
-    expect(isValidPathSyntax('posts//draft')).toBe(false)
+    expect(isValidPathSyntax('notes//draft')).toBe(false)
   })
   it('rejects ..', () => {
-    expect(isValidPathSyntax('posts/../etc')).toBe(false)
+    expect(isValidPathSyntax('notes/../etc')).toBe(false)
   })
   it('rejects uppercase', () => {
-    expect(isValidPathSyntax('posts/Hello')).toBe(false)
+    expect(isValidPathSyntax('notes/Hello')).toBe(false)
   })
   it('rejects leading slash', () => {
-    expect(isValidPathSyntax('/posts/draft')).toBe(false)
+    expect(isValidPathSyntax('/notes/draft')).toBe(false)
   })
   it('rejects trailing slash', () => {
-    expect(isValidPathSyntax('posts/notes/')).toBe(false)
+    expect(isValidPathSyntax('notes/')).toBe(false)
   })
   it('rejects .md extension', () => {
-    expect(isValidPathSyntax('posts/draft.md')).toBe(false)
+    expect(isValidPathSyntax('notes/draft.md')).toBe(false)
   })
   it('rejects leading hyphen', () => {
-    expect(isValidPathSyntax('posts/-draft')).toBe(false)
+    expect(isValidPathSyntax('notes/-draft')).toBe(false)
   })
   it('rejects trailing hyphen', () => {
-    expect(isValidPathSyntax('posts/draft-')).toBe(false)
+    expect(isValidPathSyntax('notes/draft-')).toBe(false)
+  })
+  it('rejects underscore', () => {
+    expect(isValidPathSyntax('notes/draft_v2')).toBe(false)
   })
 })
 
 describe('assertSafePath', () => {
   it('resolves a valid path to a disk path inside content/', () => {
-    expect(assertSafePath('posts/hello-world')).toMatch(
-      /[\\/]src[\\/]content[\\/]posts[\\/]hello-world$/,
+    expect(assertSafePath('hello-world')).toMatch(
+      /[\\/]src[\\/]content[\\/]hello-world$/,
+    )
+  })
+  it('resolves a nested path to a disk path inside content/', () => {
+    expect(assertSafePath('notes/draft')).toMatch(
+      /[\\/]src[\\/]content[\\/]notes[\\/]draft$/,
     )
   })
   it('throws on ..', () => {
-    expect(() => assertSafePath('posts/../etc')).toThrow()
+    expect(() => assertSafePath('notes/../etc')).toThrow()
   })
   it('throws on absolute injection', () => {
     // regex would already block, but the resolve check is a second line of defense
-    expect(() => assertSafePath('posts/..%2Fetc')).toThrow()
+    expect(() => assertSafePath('..%2Fetc')).toThrow()
   })
 })
 
 describe('filePathFor / folderPathFor', () => {
   it('filePathFor adds .md', () => {
-    expect(filePathFor('posts/draft')).toMatch(/src[\\/]content[\\/]posts[\\/]draft\.md$/)
+    expect(filePathFor('notes/draft')).toMatch(/src[\\/]content[\\/]notes[\\/]draft\.md$/)
   })
   it('folderPathFor does not add .md', () => {
-    expect(folderPathFor('posts/notes')).toMatch(/src[\\/]content[\\/]posts[\\/]notes$/)
+    expect(folderPathFor('notes')).toMatch(/src[\\/]content[\\/]notes$/)
   })
 })

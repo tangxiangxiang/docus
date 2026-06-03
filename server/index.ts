@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import matter from 'gray-matter'
-import { filePathFor, folderPathFor, POSTS_DIR } from './paths.js'
+import { filePathFor, folderPathFor, CONTENT_DIR } from './paths.js'
 import { listPostsFlat, buildTree, listSubtreePaths } from './tree.js'
 
 // Local type defs — kept in sync with src/lib/api.ts (Task 5). Don't import from src/
@@ -12,7 +12,6 @@ interface PostSummary {
   title: string
   date: string
   tags: string[]
-  summary?: string
   size: number
   mtime: number
 }
@@ -50,8 +49,7 @@ app.get('/api/posts', async (c) => {
 app.post('/api/posts', async (c) => {
   const body = await c.req.json().catch(() => null) as { path?: string; title?: string } | null
   if (!body || typeof body.path !== 'string') return bad(c, 'path required')
-  // Validate only the final segment (the rest is path-validated by filePathFor).
-  if (!SEGMENT_RE.test(body.path.replace(/^posts\//, '').split('/').pop() ?? '')) {
+  if (!SEGMENT_RE.test(body.path.split('/').pop() ?? '')) {
     return bad(c, 'invalid final segment')
   }
   let abs: string
@@ -78,7 +76,7 @@ app.post('/api/posts', async (c) => {
 app.put('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
   let abs: string
-  try { abs = filePathFor(`posts/${splat}`) } catch (e: any) { return bad(c, e.message) }
+  try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const body = await c.req.json().catch(() => null) as { raw?: string } | null
   if (!body || typeof body.raw !== 'string') return bad(c, 'raw required')
@@ -89,7 +87,7 @@ app.put('/api/posts/*', async (c) => {
 // PATCH a file: rename within folder (name) or move (targetPath). Exactly one.
 app.patch('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
-  const srcPath = `posts/${splat}`
+  const srcPath = splat
   let src: string
   try { src = filePathFor(srcPath) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(src)) return bad(c, 'not found', 404)
@@ -109,7 +107,7 @@ app.patch('/api/posts/*', async (c) => {
     const parent = path.dirname(src)
     dest = path.join(parent, body.name + '.md')
     const parentRel = path.dirname(srcPath)
-    destPath = parentRel === 'posts' ? `posts/${body.name}` : `${parentRel}/${body.name}`
+    destPath = parentRel ? `${parentRel}/${body.name}` : body.name
   } else {
     try { dest = filePathFor(body.targetPath!) } catch (e: any) { return bad(c, e.message) }
     destPath = body.targetPath!
@@ -135,7 +133,7 @@ app.patch('/api/posts/*', async (c) => {
 app.delete('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
   let abs: string
-  try { abs = filePathFor(`posts/${splat}`) } catch (e: any) { return bad(c, e.message) }
+  try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(abs)) return bad(c, 'not found', 404)
   await fs.unlink(abs)
   return c.json({ ok: true })
@@ -145,13 +143,13 @@ app.delete('/api/posts/*', async (c) => {
 app.get('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
   let abs: string
-  try { abs = filePathFor(`posts/${splat}`) } catch (e: any) { return bad(c, e.message) }
+  try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const raw = await fs.readFile(abs, 'utf8')
   const parsed = matter(raw)
   const st = await fs.stat(abs)
   return c.json({
-    path: `posts/${splat}`,
+    path: splat,
     raw,
     frontmatter: parsed.data,
     size: st.size,
@@ -176,7 +174,7 @@ app.post('/api/folders', async (c) => {
 // Rename a folder (single-segment rename, cascades on disk).
 app.patch('/api/folders/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/folders\//, '')
-  const srcPath = `posts/${splat}`
+  const srcPath = splat
   let src: string
   try { src = folderPathFor(srcPath) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(src)) return bad(c, 'not found', 404)
@@ -192,19 +190,19 @@ app.patch('/api/folders/*', async (c) => {
   if (await exists(dest)) return bad(c, 'destination exists', 409)
   await fs.rename(src, dest)
   // Collect affected file paths for client cache refresh.
-  const moved = await listSubtreePaths(POSTS_DIR, body.newPath)
+  const moved = await listSubtreePaths(CONTENT_DIR, body.newPath)
   return c.json({ path: body.newPath, moved })
 })
 
 // Delete a folder recursively. Requires ?recursive=true if non-empty.
 app.delete('/api/folders/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/folders\//, '')
-  const folderP = `posts/${splat}`
+  const folderP = splat
   let abs: string
   try { abs = folderPathFor(folderP) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const recursive = c.req.query('recursive') === 'true'
-  const all = await listSubtreePaths(POSTS_DIR, folderP)
+  const all = await listSubtreePaths(CONTENT_DIR, folderP)
   if (all.length > 0 && !recursive) {
     return bad(c, 'folder is not empty; pass ?recursive=true to delete', 400)
   }

@@ -101,9 +101,9 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
 }
 
-/** "posts/notes/draft" -> "/vault/notes/draft" (strips the "posts/" prefix). */
+/** "notes/draft" -> "/vault/notes/draft" (path is already relative to src/content/). */
 function pathToUrl(p: string): string {
-  return '/vault/' + p.replace(/^posts\//, '')
+  return '/vault/' + p
 }
 
 function selectPanel(panel: SidePanel) {
@@ -153,7 +153,7 @@ const tabs = ref<Tab[]>([])
 const activePath = ref<string | null>(null)
 const routePath = computed<string | null>(() => {
   const m = (route.params.pathMatch as string[] | undefined) ?? []
-  return m.length ? 'posts/' + m.join('/') : null
+  return m.length ? m.join('/') : null
 })
 const activeTab = computed<Tab | null>(
   () => tabs.value.find((t) => t.path === activePath.value) ?? null,
@@ -263,7 +263,7 @@ async function doSave(path: string): Promise<void> {
   tab.saveStatus = 'saving'
   tab.error = null
   try {
-    const r = await fetch('/api/posts/' + encodeURI(path).replace(/^posts%2F/, 'posts/'), {
+    const r = await fetch('/api/posts/' + encodeURI(path), {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ raw: tab.raw }),
@@ -318,10 +318,10 @@ function onKeydown(e: KeyboardEvent) {
 async function onCommandPaletteNew(title: string) {
   const trimmed = (title ?? '').trim()
   if (!trimmed) return
-  const parent = activePath.value ? activePath.value.replace(/\/[^/]+$/, '') : 'posts'
+  const parent = activePath.value ? activePath.value.replace(/\/[^/]+$/, '') : ''
   const filename = trimmed.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
   if (!filename) { toast.error('名称无效'); return }
-  const newPath = parent === 'posts' ? `posts/${filename}` : `${parent}/${filename}`
+  const newPath = parent ? `${parent}/${filename}` : filename
   try {
     await createPost({ path: newPath, title: trimmed })
     await refresh()

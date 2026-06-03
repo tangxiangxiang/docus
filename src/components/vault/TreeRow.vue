@@ -8,6 +8,7 @@ const props = defineProps<{
   depth: number
   currentPath: string | null
   expandedSet: Set<string>
+  isInArchive?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +23,7 @@ const emit = defineEmits<{
 const isFolder = computed(() => props.node.kind === 'folder')
 const isActive = computed(() => !isFolder.value && props.node.path === props.currentPath)
 const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.node.path))
+const readonly = computed(() => !!props.isInArchive)
 
 // --- drag state ---
 const isDragging = ref(false)
@@ -171,14 +173,15 @@ function cancelRename() {
         :style="{ left: menuX + 'px', top: menuY + 'px' }"
         @click.stop
       >
-        <template v-if="isFolder">
+        <template v-if="isFolder && !readonly">
           <button @click="menuAction(() => emit('create-in', node.path, 'file'))">新建文件</button>
           <button @click="menuAction(() => emit('create-in', node.path, 'folder'))">新建文件夹</button>
           <hr />
         </template>
-        <button @click="menuAction(startRename)">重命名</button>
-        <hr />
-        <button class="danger" @click="menuAction(() => emit('delete', node.path))">删除</button>
+        <button v-if="!readonly" @click="menuAction(startRename)">重命名</button>
+        <hr v-if="!readonly" />
+        <button v-if="!readonly" class="danger" @click="menuAction(() => emit('delete', node.path))">删除</button>
+        <span v-if="readonly" class="readonly-hint">归档 · 只读</span>
       </div>
     </Teleport>
 
@@ -190,6 +193,7 @@ function cancelRename() {
         :depth="depth + 1"
         :current-path="currentPath"
         :expanded-set="expandedSet"
+        :is-in-archive="readonly"
         @select="(p) => emit('select', p)"
         @toggle="(p) => emit('toggle', p)"
         @rename="(oldP, n) => emit('rename', oldP, n)"

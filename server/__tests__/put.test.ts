@@ -2,10 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import app from '../index'
-import { POSTS_DIR } from '../paths'
+import { CONTENT_DIR } from '../paths'
 
-const TEST_PATH = 'posts/put-smoke.md'
-const TEST_ABS = path.join(POSTS_DIR, 'put-smoke.md')
+const TEST_PATH = 'put-smoke.md'
+const TEST_ABS = path.join(CONTENT_DIR, 'put-smoke.md')
 const ORIGINAL = '---\ntitle: smoke\n---\n\noriginal\n'
 const UPDATED = '---\ntitle: smoke\n---\n\nupdated content\n'
 
@@ -20,7 +20,7 @@ async function call(method: string, urlPath: string, body?: unknown) {
 
 describe('PUT /api/posts/* (Task 7 smoke)', () => {
   beforeAll(async () => {
-    await fs.mkdir(POSTS_DIR, { recursive: true })
+    await fs.mkdir(CONTENT_DIR, { recursive: true })
     await fs.writeFile(TEST_ABS, ORIGINAL, 'utf8')
   })
 

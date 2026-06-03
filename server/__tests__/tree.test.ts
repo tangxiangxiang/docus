@@ -25,61 +25,68 @@ describe('listPostsFlat', () => {
     const posts = await listPostsFlat(sandbox)
     const paths = posts.map((p) => p.path).sort()
     expect(paths).toEqual([
-      'posts/hello',
-      'posts/notes/archive/old',
-      'posts/notes/draft',
+      'hello',
+      'notes/archive/old',
+      'notes/draft',
     ])
   })
 })
 
 describe('buildTree', () => {
-  it('nests everything under a posts root folder', async () => {
+  it('nests everything under a content root folder with empty path', async () => {
     const tree = await buildTree(sandbox)
     expect(tree).toEqual([
       {
         kind: 'folder',
-        name: 'posts',
-        path: 'posts',
+        name: 'content',
+        path: '',
         children: [
           {
             kind: 'folder',
             name: 'notes',
-            path: 'posts/notes',
+            path: 'notes',
             children: [
               {
                 kind: 'folder',
                 name: 'archive',
-                path: 'posts/notes/archive',
+                path: 'notes/archive',
                 children: [
-                  { kind: 'file', name: 'old', path: 'posts/notes/archive/old', title: 'old', mtime: expect.any(Number) },
+                  { kind: 'file', name: 'old', path: 'notes/archive/old', title: 'old', mtime: expect.any(Number) },
                 ],
               },
-              { kind: 'file', name: 'draft', path: 'posts/notes/draft', title: 'draft', mtime: expect.any(Number) },
+              { kind: 'file', name: 'draft', path: 'notes/draft', title: 'draft', mtime: expect.any(Number) },
             ],
           },
-          { kind: 'file', name: 'hello', path: 'posts/hello', title: 'hi', mtime: expect.any(Number) },
+          { kind: 'file', name: 'hello', path: 'hello', title: 'hi', mtime: expect.any(Number) },
         ],
       },
     ])
   })
 
-  it('returns a posts folder with empty children for an empty directory', async () => {
+  it('returns a content folder with empty children for an empty directory', async () => {
     const empty = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-empty-'))
     const tree = await buildTree(empty)
     expect(tree).toEqual([
-      { kind: 'folder', name: 'posts', path: 'posts', children: [] },
+      { kind: 'folder', name: 'content', path: '', children: [] },
     ])
     await fs.rm(empty, { recursive: true, force: true })
+  })
+
+  it('returns a content folder with empty children for a missing directory', async () => {
+    const tree = await buildTree(path.join(sandbox, 'does-not-exist'))
+    expect(tree).toEqual([
+      { kind: 'folder', name: 'content', path: '', children: [] },
+    ])
   })
 })
 
 describe('listSubtreePaths', () => {
   it('returns all descendant file paths under a folder', async () => {
-    const all = await listSubtreePaths(sandbox, 'posts/notes')
-    expect(all.sort()).toEqual(['posts/notes/archive/old', 'posts/notes/draft'])
+    const all = await listSubtreePaths(sandbox, 'notes')
+    expect(all.sort()).toEqual(['notes/archive/old', 'notes/draft'])
   })
   it('returns empty for a non-existent folder', async () => {
-    const all = await listSubtreePaths(sandbox, 'posts/missing')
+    const all = await listSubtreePaths(sandbox, 'missing')
     expect(all).toEqual([])
   })
 })

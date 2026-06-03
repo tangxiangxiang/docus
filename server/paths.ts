@@ -1,10 +1,13 @@
 import path from 'node:path'
 
 export const CONTENT_DIR = path.resolve(process.cwd(), 'src/content')
-export const POSTS_DIR = path.join(CONTENT_DIR, 'posts')
 
+// Every path segment is a lowercase kebab. The full path is one or more such
+// segments joined by `/` — there is no implicit `posts/` prefix anymore, since
+// `src/content/` itself is the implicit root (with `posts/`, `archive/`, etc.
+// as ordinary sub-folders).
 const SEGMENT_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
-const PATH_RE = /^posts\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/)*[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
+const PATH_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/
 
 export function isValidPathSyntax(p: string): boolean {
   return PATH_RE.test(p)

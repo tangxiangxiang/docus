@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { POSTS_DIR } from './paths.js'
+import { CONTENT_DIR } from './paths.js'
 
 // Local types — Task 5 will introduce the canonical PostSummary / TreeNode in
 // src/lib/api.ts and align them with these. Keeping them local for now avoids
@@ -23,7 +23,12 @@ async function* walk(
   dir: string,
   prefix: string,
 ): AsyncGenerator<{ abs: string; rel: string; isDir: boolean }> {
-  const entries = await fs.readdir(dir, { withFileTypes: true })
+  let entries: Awaited<ReturnType<typeof fs.readdir>>
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
   for (const entry of entries) {
     const abs = path.join(dir, entry.name)
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name
@@ -37,9 +42,9 @@ async function* walk(
 }
 
 function relToPath(rel: string): string {
-  // rel is e.g. "hello.md" or "notes/draft.md" — strip .md and prepend "posts/".
-  const noExt = rel.replace(/\.md$/, '')
-  return `posts/${noExt}`
+  // rel is e.g. "hello.md" or "notes/draft.md" — strip .md, no implicit prefix
+  // (the implicit root is `src/content/`, which is handled by the caller).
+  return rel.replace(/\.md$/, '')
 }
 
 function nameFromPath(p: string): string {
@@ -61,7 +66,7 @@ function titleFromFile(file: string, fallback: string): string {
 }
 
 export async function listPostsFlat(
-  rootDir: string = POSTS_DIR,
+  rootDir: string = CONTENT_DIR,
 ): Promise<PostSummary[]> {
   const out: PostSummary[] = []
   for await (const entry of walk(rootDir, '')) {
@@ -87,17 +92,16 @@ export async function listSubtreePaths(
   rootDir: string,
   folderPath: string,
 ): Promise<string[]> {
-  // folderPath is the `path` field, e.g. "posts/notes". Strip the "posts/"
-  // prefix to get the rel dir under rootDir.
-  const relDir = folderPath.replace(/^posts\//, '')
-  const absDir = path.join(rootDir, relDir)
+  // folderPath is the `path` field, e.g. "notes" or "notes/draft" — used as
+  // the rel dir under rootDir.
+  const absDir = path.join(rootDir, folderPath)
   try {
     await fs.stat(absDir)
   } catch {
     return []
   }
   const out: string[] = []
-  for await (const entry of walk(absDir, relDir)) {
+  for await (const entry of walk(absDir, folderPath)) {
     if (entry.isDir) continue
     if (!entry.rel.endsWith('.md')) continue
     out.push(relToPath(entry.rel))
@@ -110,25 +114,27 @@ type MutableNode =
   | { kind: 'folder'; name: string; path: string; children: MutableNode[] }
 
 export async function buildTree(
-  rootDir: string = POSTS_DIR,
+  rootDir: string = CONTENT_DIR,
 ): Promise<TreeNode[]> {
   // Build a tree by sorting and inserting into a path-keyed node map.
+  // The implicit root is `src/content/`, named "content" with `path: ''`
+  // (empty, since there is no prefix segment for it).
   const nodes = new Map<string, MutableNode>()
   const rootFolder: MutableNode = {
     kind: 'folder',
-    name: 'posts',
-    path: 'posts',
+    name: 'content',
+    path: '',
     children: [],
   }
-  nodes.set('posts', rootFolder)
+  nodes.set('', rootFolder)
 
   for await (const entry of walk(rootDir, '')) {
     if (entry.isDir) {
       // Ensure every ancestor folder exists.
       const parts = entry.rel.split('/')
-      let acc = 'posts'
+      let acc = ''
       for (const part of parts) {
-        acc = `${acc}/${part}`
+        acc = acc ? `${acc}/${part}` : part
         if (!nodes.has(acc)) {
           nodes.set(acc, { kind: 'folder', name: part, path: acc, children: [] })
         }
@@ -155,7 +161,7 @@ export async function buildTree(
 
   // Wire each ancestor folder into its parent (skipping the sentinel root itself).
   for (const [nodePath, node] of nodes) {
-    if (nodePath === 'posts') continue
+    if (nodePath === '') continue
     if (node.kind !== 'folder') continue
     const parts = nodePath.split('/')
     const parentPath = parts.slice(0, -1).join('/')

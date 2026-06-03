@@ -17,16 +17,22 @@ const emit = defineEmits<{
   refresh: []
 }>()
 
-const STORAGE_KEY = 'docus.vault.expandedPaths'
-const expanded = ref<Set<string>>(new Set(loadExpanded()))
-// Always keep the posts root folder expanded.
-if (!expanded.value.has('posts')) {
-  expanded.value.add('posts')
-}
-
 const { confirm } = useConfirm()
 const { prompt } = usePrompt()
 const toast = useToast()
+
+const STORAGE_KEY = 'docus.vault.expandedPaths'
+const expanded = ref<Set<string>>(new Set(loadExpanded()))
+
+// Always keep the implicit content root folder expanded so its children render.
+if (!expanded.value.has('')) {
+  expanded.value.add('')
+}
+
+function isInArchive(path: string | null): boolean {
+  if (!path) return false
+  return path === 'archive' || path.startsWith('archive/')
+}
 
 function loadExpanded(): string[] {
   try {
@@ -47,14 +53,15 @@ function toggle(path: string) {
   saveExpanded()
 }
 
-// Default-expand ancestors of currentPath
+// Default-expand ancestors of currentPath (skip archive — it's collapsed by default).
 watch(() => props.currentPath, (p) => {
   if (!p) return
+  if (isInArchive(p)) return
   const segs = p.split('/')
   const ancestors: string[] = []
-  let acc = 'posts'
-  for (let i = 1; i < segs.length - 1; i++) {
-    acc = i === 1 ? `posts/${segs[i]}` : `${acc}/${segs[i]}`
+  let acc = ''
+  for (let i = 0; i < segs.length - 1; i++) {
+    acc = acc ? `${acc}/${segs[i]}` : segs[i]
     ancestors.push(acc)
   }
   let changed = false
@@ -62,7 +69,7 @@ watch(() => props.currentPath, (p) => {
   if (changed) { expanded.value = new Set(expanded.value); saveExpanded() }
 }, { immediate: true })
 
-// --- drag on root (move to root) ---
+// --- drag on root (move to content root) ---
 const isRootDropTarget = ref(false)
 const rootDragDepth = ref(0)
 function onRootDragEnter(e: DragEvent) { e.preventDefault(); rootDragDepth.value++; isRootDropTarget.value = true }
@@ -74,8 +81,10 @@ async function onRootDrop(e: DragEvent) {
   isRootDropTarget.value = false
   rootDragDepth.value = 0
   if (!src) return
+  // Reject moves from archive (it's read-only).
+  if (isInArchive(src)) { toast.error('归档目录为只读'); return }
   const filename = src.split('/').pop()!
-  const targetPath = `posts/${filename}`
+  const targetPath = filename
   if (targetPath === src) return
   try {
     await patchPost(src, { targetPath })
@@ -110,10 +119,11 @@ async function onToggle(p: string) { toggle(p) }
 async function onRename(oldPath: string, newName: string) {
   const node = findNode(props.tree, oldPath)
   if (!node) return
+  if (isInArchive(oldPath)) { toast.error('归档目录为只读'); return }
   try {
     if (node.kind === 'folder') {
-      const parent = oldPath.split('/').slice(0, -1).join('/') || 'posts'
-      const newPath = parent === 'posts' ? `posts/${newName}` : `${parent}/${newName}`
+      const parent = oldPath.split('/').slice(0, -1).join('/')
+      const newPath = parent ? `${parent}/${newName}` : newName
       const res = await renameFolder(oldPath, newPath)
       toast.success(`已重命名 (${res.moved.length} 项)`)
     } else {
@@ -128,6 +138,7 @@ async function onRename(oldPath: string, newName: string) {
 async function onDelete(p: string) {
   const node = findNode(props.tree, p)
   if (!node) return
+  if (isInArchive(p)) { toast.error('归档目录为只读'); return }
   const count = node.kind === 'folder' ? countDescendants(node) + 1 : 1
   const ok = await confirm(
     node.kind === 'folder'
@@ -143,8 +154,10 @@ async function onDelete(p: string) {
 }
 
 async function onMove(srcPath: string, targetFolder: string) {
+  if (isInArchive(srcPath)) { toast.error('归档目录为只读'); return }
+  if (isInArchive(targetFolder)) { toast.error('不能移动到归档目录'); return }
   const filename = srcPath.split('/').pop()!
-  const newPath = targetFolder === 'posts' ? `posts/${filename}` : `${targetFolder}/${filename}`
+  const newPath = targetFolder ? `${targetFolder}/${filename}` : filename
   if (newPath === srcPath) return
   // Cycle check
   const srcNode = findNode(props.tree, srcPath)
@@ -162,14 +175,15 @@ async function onMove(srcPath: string, targetFolder: string) {
 }
 
 async function onCreateIn(folder: string, kind: 'file' | 'folder') {
+  if (isInArchive(folder)) { toast.error('归档目录为只读'); return }
   const title = await prompt({
-    title: kind === 'file' ? `在 ${folder} 中新建文件` : `在 ${folder} 中新建文件夹`,
+    title: kind === 'file' ? `在 ${folder || 'content'} 中新建文件` : `在 ${folder || 'content'} 中新建文件夹`,
     placeholder: '名称',
   })
   if (!title) return
   const name = title.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
   if (!name) { toast.error('名称无效'); return }
-  const path = folder === 'posts' ? `posts/${name}` : `${folder}/${name}`
+  const path = folder ? `${folder}/${name}` : name
   try {
     if (kind === 'file') await createPost({ path, title: name })
     else await createFolder(path)
@@ -197,14 +211,14 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
           class="new-btn icon-btn"
           aria-label="新建文件"
           title="新建文件"
-          @click="onCreateIn('posts', 'file')"
+          @click="onCreateIn('', 'file')"
           v-html="ICON_NEW_FILE"
         />
         <button
           class="new-btn icon-btn"
           aria-label="新建文件夹"
           title="新建文件夹"
-          @click="onCreateIn('posts', 'folder')"
+          @click="onCreateIn('', 'folder')"
           v-html="ICON_NEW_FOLDER"
         />
       </div>
@@ -217,6 +231,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :depth="0"
         :current-path="currentPath"
         :expanded-set="expanded"
+        :is-in-archive="isInArchive(node.path)"
         @select="onSelect"
         @toggle="onToggle"
         @rename="onRename"
