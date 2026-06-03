@@ -6,12 +6,11 @@ import {
   listPosts,
   getPost,
   createPost,
-  savePost,
   deletePost,
-  renamePost,
+  patchPost,
   type PostSummary,
 } from '../lib/api'
-import { stringifyDoc, slugify } from '../lib/frontmatter'
+import { slugify } from '../lib/frontmatter'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import FileTree from '../components/vault/FileTree.vue'
@@ -103,6 +102,17 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
 }
 
+/** "posts/notes/draft" -> "/vault/notes/draft" (strips the "posts/" prefix). */
+function pathToUrl(p: string): string {
+  return '/vault/' + p.replace(/^posts\//, '')
+}
+
+/** "posts/notes/draft" -> "notes/draft" (used as the slug for downstream components
+    that haven't been updated to the path model yet). */
+function pathToSlug(p: string | null): string | null {
+  return p ? p.replace(/^posts\//, '') : null
+}
+
 function selectPanel(panel: SidePanel) {
   activePanel.value = activePanel.value === panel ? null : panel
 }
@@ -146,17 +156,21 @@ function startDrag(which: 'tree' | 'middle', e: PointerEvent) {
 /* ---------- Tabs state ---------- */
 const posts = ref<PostSummary[]>([])
 const tabs = ref<Tab[]>([])
-const activeSlug = ref<string | null>(null)
+const activePath = ref<string | null>(null)
+const routePath = computed<string | null>(() => {
+  const m = (route.params.pathMatch as string[] | undefined) ?? []
+  return m.length ? 'posts/' + m.join('/') : null
+})
 const activeTab = computed<Tab | null>(
-  () => tabs.value.find((t) => t.slug === activeSlug.value) ?? null,
+  () => tabs.value.find((t) => t.path === activePath.value) ?? null,
 )
 const isDirty = computed(() =>
   activeTab.value ? activeTab.value.raw !== activeTab.value.originalRaw : false,
 )
 const activeSize = computed(() => {
-  const slug = activeSlug.value
-  if (!slug) return 0
-  return posts.value.find((p) => p.slug === slug)?.size ?? activeTab.value?.raw.length ?? 0
+  const p = activePath.value
+  if (!p) return 0
+  return posts.value.find((post) => post.path === p)?.size ?? activeTab.value?.raw.length ?? 0
 })
 
 /* ---------- Tag filter (view-state, in-memory) ---------- */
@@ -178,10 +192,10 @@ async function refresh() {
   posts.value = await listPosts()
 }
 
-function makeEmptyTab(slug: string, title = ''): Tab {
+function makeEmptyTab(path: string, title = ''): Tab {
   return {
-    slug,
-    title: title || slug,
+    path,
+    title: title || path,
     raw: '',
     originalRaw: '',
     saveStatus: 'idle',
@@ -191,26 +205,26 @@ function makeEmptyTab(slug: string, title = ''): Tab {
   }
 }
 
-async function openPost(slug: string) {
-  const existing = tabs.value.find((t) => t.slug === slug)
+async function openPost(path: string) {
+  const existing = tabs.value.find((t) => t.path === path)
   if (existing) {
-    activeSlug.value = slug
-    router.replace(`/vault/${slug}`)
+    activePath.value = path
+    router.replace(pathToUrl(path))
     return
   }
-  if (isDirty.value && activeSlug.value) {
+  if (isDirty.value && activePath.value) {
     const ok = await confirm('有未保存的修改,确定要切换吗?')
     if (!ok) return
   }
-  const tab = makeEmptyTab(slug)
+  const tab = makeEmptyTab(path)
   tabs.value.push(tab)
-  activeSlug.value = slug
-  router.replace(`/vault/${slug}`)
+  activePath.value = path
+  router.replace(pathToUrl(path))
   try {
-    const post = await getPost(slug)
+    const post = await getPost(path)
     tab.raw = post.raw
     tab.originalRaw = post.raw
-    tab.title = (post.frontmatter.title as string) || slug
+    tab.title = (post.frontmatter.title as string) || path
     tab.loading = false
   } catch (e) {
     tab.loadError = (e as Error).message
@@ -219,36 +233,36 @@ async function openPost(slug: string) {
   await refresh()
 }
 
-async function closeTab(slug: string) {
-  const idx = tabs.value.findIndex((t) => t.slug === slug)
+async function closeTab(path: string) {
+  const idx = tabs.value.findIndex((t) => t.path === path)
   if (idx === -1) return
   const tab = tabs.value[idx]
   if (tab.raw !== tab.originalRaw) {
-    const ok = await confirm(`放弃对 "${tab.slug}" 的未保存修改?`)
+    const ok = await confirm(`放弃对 "${tab.path}" 的未保存修改?`)
     if (!ok) return
   }
   tabs.value.splice(idx, 1)
-  if (activeSlug.value === slug) {
+  if (activePath.value === path) {
     const next = tabs.value[idx] ?? tabs.value[idx - 1] ?? null
-    activeSlug.value = next ? next.slug : null
-    if (activeSlug.value) {
-      router.replace(`/vault/${activeSlug.value}`)
+    activePath.value = next ? next.path : null
+    if (activePath.value) {
+      router.replace(pathToUrl(activePath.value))
     } else {
       router.replace('/vault')
     }
   }
 }
 
-function selectTab(slug: string) {
-  if (slug === activeSlug.value) return
-  const tab = tabs.value.find((t) => t.slug === slug)
+function selectTab(path: string) {
+  if (path === activePath.value) return
+  const tab = tabs.value.find((t) => t.path === path)
   if (!tab) return
-  activeSlug.value = slug
-  router.replace(`/vault/${slug}`)
+  activePath.value = path
+  router.replace(pathToUrl(path))
 }
 
-async function doSave(slug: string): Promise<void> {
-  const tab = tabs.value.find((t) => t.slug === slug)
+async function doSave(path: string): Promise<void> {
+  const tab = tabs.value.find((t) => t.path === path)
   if (!tab) return
   if (tab.raw === tab.originalRaw) {
     tab.saveStatus = 'idle'
@@ -257,7 +271,12 @@ async function doSave(slug: string): Promise<void> {
   tab.saveStatus = 'saving'
   tab.error = null
   try {
-    await savePost(slug, tab.raw)
+    const r = await fetch('/api/posts/' + encodeURI(path).replace(/^posts%2F/, 'posts/'), {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ raw: tab.raw }),
+    })
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
     tab.originalRaw = tab.raw
     tab.saveStatus = 'saved'
     await refresh()
@@ -268,20 +287,20 @@ async function doSave(slug: string): Promise<void> {
   }
 }
 
-const debouncedSave = useDebounceFn((slug: string) => {
-  void doSave(slug)
+const debouncedSave = useDebounceFn((path: string) => {
+  void doSave(path)
 }, 800)
 
-function onEditorChange(slug: string, val: string) {
-  const tab = tabs.value.find((t) => t.slug === slug)
+function onEditorChange(path: string, val: string) {
+  const tab = tabs.value.find((t) => t.path === path)
   if (!tab) return
   tab.raw = val
   tab.saveStatus = tab.raw === tab.originalRaw ? 'idle' : 'dirty'
-  debouncedSave(slug)
+  debouncedSave(path)
 }
 
 async function doSaveNow() {
-  if (activeSlug.value) await doSave(activeSlug.value)
+  if (activePath.value) await doSave(activePath.value)
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -290,9 +309,9 @@ function onKeydown(e: KeyboardEvent) {
     e.preventDefault()
     void doSaveNow()
   }
-  if (meta && e.key === 'w' && activeSlug.value) {
+  if (meta && e.key === 'w' && activePath.value) {
     e.preventDefault()
-    void closeTab(activeSlug.value)
+    void closeTab(activePath.value)
   }
   if (meta && e.key === 'b') {
     e.preventDefault()
@@ -309,51 +328,48 @@ async function onNewFromTree() {
 async function onNew(title: string) {
   const trimmed = (title ?? '').trim()
   if (!trimmed) return
-  const slug = slugify(trimmed)
-  const today = new Date().toISOString().slice(0, 10)
-  const raw = stringifyDoc(
-    { title: trimmed, date: today, tags: [], summary: '' },
-    `# ${trimmed}\n\n开始写吧…\n`,
-  )
+  const parent = activePath.value ? activePath.value.replace(/\/[^/]+$/, '') : 'posts'
+  const filename = slugify(trimmed)
+  const newPath = parent === 'posts' ? `posts/${filename}` : `${parent}/${filename}`
   try {
-    await createPost(slug, raw)
+    await createPost({ path: newPath, title: trimmed })
     await refresh()
-    await openPost(slug)
-    toast.success(`已创建: ${slug}`)
+    await openPost(newPath)
+    toast.success(`已创建: ${newPath}`)
   } catch (e) {
     toast.error(`创建失败: ${(e as Error).message}`)
   }
 }
 
-async function onRename(newSlug: string) {
-  if (!activeSlug.value) return
-  if (newSlug === activeSlug.value) return
-  const oldSlug = activeSlug.value
+async function onRename(newName: string) {
+  if (!activePath.value) return
+  const oldPath = activePath.value
   if (isDirty.value) {
     const ok = await confirm('有未保存的修改,仍要重命名吗?')
     if (!ok) return
   }
   try {
-    await renamePost(oldSlug, newSlug)
-    const tab = tabs.value.find((t) => t.slug === oldSlug)
-    if (tab) tab.slug = newSlug
-    activeSlug.value = newSlug
-    router.replace(`/vault/${newSlug}`)
+    const result = await patchPost(oldPath, { name: newName })
+    const newPath = result.path
+    const tab = tabs.value.find((t) => t.path === oldPath)
+    if (tab) tab.path = newPath
+    activePath.value = newPath
+    router.replace(pathToUrl(newPath))
     await refresh()
-    toast.success(`已重命名为: ${newSlug}`)
+    toast.success(`已重命名为: ${newPath}`)
   } catch (e) {
     toast.error(`重命名失败: ${(e as Error).message}`)
   }
 }
 
-async function onDelete(slug: string) {
-  const ok = await confirm(`删除 "${slug}"? 此操作不可恢复。`)
+async function onDelete(path: string) {
+  const ok = await confirm(`删除 "${path}"? 此操作不可恢复。`)
   if (!ok) return
   try {
-    await deletePost(slug)
-    void closeTab(slug)
+    await deletePost(path)
+    void closeTab(path)
     await refresh()
-    toast.success(`已删除: ${slug}`)
+    toast.success(`已删除: ${path}`)
   } catch (e) {
     toast.error(`删除失败: ${(e as Error).message}`)
   }
@@ -361,20 +377,16 @@ async function onDelete(slug: string) {
 
 onMounted(async () => {
   await refresh()
-  const slugFromRoute = route.params.slug
-  if (typeof slugFromRoute === 'string' && slugFromRoute) {
-    await openPost(slugFromRoute)
+  if (routePath.value) {
+    await openPost(routePath.value)
   }
 })
 
-watch(
-  () => route.params.slug,
-  (slug) => {
-    if (typeof slug === 'string' && slug && slug !== activeSlug.value) {
-      void openPost(slug)
-    }
-  },
-)
+watch(routePath, (p) => {
+  if (p && p !== activePath.value) {
+    void openPost(p)
+  }
+})
 </script>
 
 <template>
@@ -388,7 +400,7 @@ watch(
     <FileTree
       v-if="activePanel === 'files'"
       :posts="filteredPosts"
-      :current-slug="activeSlug"
+      :current-slug="pathToSlug(activePath)"
       @select="openPost"
       @new="onNewFromTree"
       @rename="onRename"
@@ -411,22 +423,22 @@ watch(
     />
 
     <section class="editor-area">
-      <Breadcrumb :slug="activeSlug" />
-      <EditorTabs :tabs="tabs" :active-slug="activeSlug" @select="selectTab" @close="closeTab" @open-search="openSearch" />
+      <Breadcrumb :slug="pathToSlug(activePath)" />
+      <EditorTabs :tabs="tabs" :active-slug="activePath" @select="selectTab" @close="closeTab" @open-search="openSearch" />
 
       <div class="content" :style="contentStyle">
         <div
           v-for="t in tabs"
-          v-show="t.slug === activeSlug"
-          :key="t.slug"
+          v-show="t.path === activePath"
+          :key="t.path"
           class="editor-pane"
         >
-          <div v-if="t.loading" class="empty">正在加载 {{ t.slug }}…</div>
+          <div v-if="t.loading" class="empty">正在加载 {{ t.path }}…</div>
           <div v-else-if="t.loadError" class="empty error">{{ t.loadError }}</div>
           <EditorPane
             v-else
             :model-value="t.raw"
-            @update:model-value="(val: string) => onEditorChange(t.slug, val)"
+            @update:model-value="(val: string) => onEditorChange(t.path, val)"
           />
         </div>
         <div v-if="!tabs.length" class="content-empty">未打开文件。在侧栏选一个或按 <kbd>⌘P</kbd> 新建。</div>
@@ -442,8 +454,8 @@ watch(
 
         <div
           v-for="t in tabs"
-          v-show="t.slug === activeSlug"
-          :key="`p-${t.slug}`"
+          v-show="t.path === activePath"
+          :key="`p-${t.path}`"
           class="preview-pane"
         >
           <PreviewPane v-if="!t.loading && !t.loadError" :raw="t.raw" />
@@ -453,7 +465,7 @@ watch(
 
     <StatusBar
       class="status-bar-row"
-      :slug="activeSlug"
+      :slug="activePath"
       :save-status="activeTab?.saveStatus ?? 'idle'"
       :error="activeTab?.error ?? null"
       :size="activeSize"
@@ -463,7 +475,7 @@ watch(
     <CommandPalette
       ref="paletteRef"
       :posts="posts"
-      :active-slug="activeSlug"
+      :active-slug="activePath"
       @select="openPost"
       @new="onNew"
     />

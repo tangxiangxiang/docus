@@ -74,6 +74,18 @@ app.post('/api/posts', async (c) => {
   } satisfies PostSummary, 201)
 })
 
+// PUT a file (save raw content). Body: { raw: string }
+app.put('/api/posts/*', async (c) => {
+  const splat = c.req.path.replace(/^\/api\/posts\//, '')
+  let abs: string
+  try { abs = filePathFor(`posts/${splat}`) } catch (e: any) { return bad(c, e.message) }
+  if (!await exists(abs)) return bad(c, 'not found', 404)
+  const body = await c.req.json().catch(() => null) as { raw?: string } | null
+  if (!body || typeof body.raw !== 'string') return bad(c, 'raw required')
+  await fs.writeFile(abs, body.raw, 'utf8')
+  return c.json({ ok: true })
+})
+
 // PATCH a file: rename within folder (name) or move (targetPath). Exactly one.
 app.patch('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
