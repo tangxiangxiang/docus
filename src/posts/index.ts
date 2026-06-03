@@ -1,5 +1,5 @@
 // 列表/标签/归档:仅取元数据(不打包正文,减小 main bundle)
-const metaModules = import.meta.glob('../content/posts/*.md', {
+const metaModules = import.meta.glob('../content/posts/**/*.md', {
   eager: true,
   query: '?meta',
   import: 'default',

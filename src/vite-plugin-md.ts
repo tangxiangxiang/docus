@@ -18,7 +18,14 @@ export function mdPlugin(): Plugin {
       const path = queryIdx === -1 ? id : id.slice(0, queryIdx)
       if (!path.includes('/src/content/posts/') || !path.endsWith('.md')) return null
       const { data, content } = matter(code)
-      const slug = path.split('/').pop()!.replace(/\.md$/, '')
+      // Derive slug from the file's path relative to /src/content/posts/.
+      // For "src/content/posts/hello-world.md" -> "hello-world"
+      // For "src/content/posts/notes/draft.md" -> "notes/draft"
+      const postsMarker = '/src/content/posts/'
+      const markerIdx = path.lastIndexOf(postsMarker)
+      const slug = markerIdx === -1
+        ? path.split('/').pop()!.replace(/\.md$/, '')
+        : path.slice(markerIdx + postsMarker.length, -3)   // strip .md
       const includeContent = id.includes('?full') || !id.includes('?meta')
 
       const lines = [

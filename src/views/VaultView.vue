@@ -6,6 +6,7 @@ import {
   listPosts,
   getPost,
   getTree,
+  createPost,
   type PostSummary,
   type TreeNode,
 } from '../lib/api'
@@ -314,6 +315,23 @@ function onKeydown(e: KeyboardEvent) {
 // These hooks are kept here as no-ops for backwards compatibility with any external
 // code that still emits @new/@rename/@delete; they can be removed in a follow-up.
 
+async function onCommandPaletteNew(title: string) {
+  const trimmed = (title ?? '').trim()
+  if (!trimmed) return
+  const parent = activePath.value ? activePath.value.replace(/\/[^/]+$/, '') : 'posts'
+  const filename = trimmed.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
+  if (!filename) { toast.error('名称无效'); return }
+  const newPath = parent === 'posts' ? `posts/${filename}` : `${parent}/${filename}`
+  try {
+    await createPost({ path: newPath, title: trimmed })
+    await refresh()
+    await openPost(newPath)
+    toast.success(`已创建: ${newPath}`)
+  } catch (e) {
+    toast.error(`创建失败: ${(e as Error).message}`)
+  }
+}
+
 onMounted(async () => {
   await refresh()
   if (routePath.value) {
@@ -416,6 +434,7 @@ watch(routePath, (p) => {
       :posts="posts"
       :active-path="activePath"
       @select="openPost"
+      @new="onCommandPaletteNew"
     />
   </div>
 </template>
