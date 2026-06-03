@@ -35,8 +35,8 @@ const TREE: TreeNode[] = [
 ]
 
 /** Pick the leafmost row whose .row-name element has the given text. */
-function rowByLabel(rows: ReturnType<typeof import('@vue/test-utils').DOMWrapper>[], name: string) {
-  return rows.filter((r) => r.find('.row-name')?.text() === name).pop()!
+function rowByLabel(rows: any[], name: string): any {
+  return rows.filter((r: any) => r.find('.row-name')?.text() === name).pop()!
 }
 
 describe('FileTree', () => {
