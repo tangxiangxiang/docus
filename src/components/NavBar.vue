@@ -26,8 +26,17 @@ const themeTitle = computed<string>(() => {
     <div :class="['navbar-inner', { container: !isVault, 'full-width': isVault }]">
       <RouterLink to="/" class="brand">
         <img class="brand-logo" src="/public/logo.svg" alt="docus logo" width="24" height="24" />
-        <span class="brand-name">docus</span>
       </RouterLink>
+      <nav v-if="isVault" class="menu-bar" aria-label="Main menu">
+        <button class="menu-item" type="button" tabindex="-1">文件(F)</button>
+        <button class="menu-item" type="button" tabindex="-1">编辑(E)</button>
+        <button class="menu-item" type="button" tabindex="-1">选择(S)</button>
+        <button class="menu-item" type="button" tabindex="-1">查看(V)</button>
+        <button class="menu-item" type="button" tabindex="-1">转到(G)</button>
+        <button class="menu-item" type="button" tabindex="-1">运行(R)</button>
+        <button class="menu-item" type="button" tabindex="-1">终端(T)</button>
+        <button class="menu-item" type="button" tabindex="-1">帮助(H)</button>
+      </nav>
       <div class="nav-spacer" />
       <div class="nav-actions">
         <button

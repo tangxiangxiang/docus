@@ -207,6 +207,34 @@ hr {
 }
 .navbar.is-vault .nav-links a { font-size: 0.85rem; }
 .navbar.is-vault .nav-links .router-link-exact-active::after { bottom: -10px; }
+
+/* VS Code-style top menu bar (shown only in vault mode, sits to the right of the brand) */
+.menu-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  height: 100%;
+}
+.menu-item {
+  padding: 0 8px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.78rem;
+  letter-spacing: 0.1px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  cursor: default;
+  user-select: none;
+  white-space: nowrap;
+  transition: color 0.12s, background 0.12s;
+}
+.menu-item:hover {
+  color: var(--text-h);
+  background: var(--bg-soft);
+}
+
 .nav-spacer { flex: 1; }
 .nav-actions {
   display: inline-flex;
