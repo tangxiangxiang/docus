@@ -1,5 +1,5 @@
 export interface PostSummary {
-  slug: string
+  path: string            // replaces slug; e.g. "posts/hello-world" or "posts/notes/draft"
   title: string
   date: string
   tags: string[]
@@ -8,53 +8,71 @@ export interface PostSummary {
   mtime: number
 }
 
-export interface PostFull {
-  slug: string
+export type TreeNode =
+  | { kind: 'file';   name: string; path: string; title: string; mtime: number }
+  | { kind: 'folder'; name: string; path: string; children: TreeNode[] }
+
+export interface PostDetail {
+  path: string
   raw: string
   frontmatter: Record<string, unknown>
-  content: string
+  size: number
+  mtime: number
 }
 
-async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`HTTP ${res.status}: ${body || res.statusText}`)
+async function jsonOrThrow<T>(r: Response): Promise<T> {
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({ error: r.statusText }))
+    throw Object.assign(new Error(body.error ?? `HTTP ${r.status}`), { status: r.status, body })
   }
-  return res.json() as Promise<T>
+  return r.json() as Promise<T>
+}
+
+export async function getTree(): Promise<TreeNode[]> {
+  return jsonOrThrow<TreeNode[]>(await fetch('/api/tree'))
 }
 
 export async function listPosts(): Promise<PostSummary[]> {
-  return json<{ posts: PostSummary[] }>(await fetch('/api/posts')).then((r) => r.posts)
+  return jsonOrThrow<PostSummary[]>(await fetch('/api/posts'))
 }
 
-export async function getPost(slug: string): Promise<PostFull> {
-  return json<PostFull>(await fetch(`/api/posts/${encodeURIComponent(slug)}`))
+export async function getPost(path: string): Promise<PostDetail> {
+  return jsonOrThrow<PostDetail>(await fetch('/api/posts/' + encodeURI(path).replace(/^posts%2F/, 'posts/')))
 }
 
-export async function createPost(slug: string, raw: string): Promise<void> {
-  await json(await fetch('/api/posts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, raw }),
+export async function createPost(input: { path: string; title?: string }): Promise<PostSummary> {
+  return jsonOrThrow<PostSummary>(await fetch('/api/posts', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
   }))
 }
 
-export async function savePost(slug: string, raw: string): Promise<void> {
-  await json(await fetch(`/api/posts/${encodeURIComponent(slug)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ raw }),
+export async function patchPost(srcPath: string, body: { name?: string; targetPath?: string }): Promise<PostSummary> {
+  return jsonOrThrow<PostSummary>(await fetch('/api/posts/' + encodeURI(srcPath).replace(/^posts%2F/, 'posts/'), {
+    method: 'PATCH', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
   }))
 }
 
-export async function deletePost(slug: string): Promise<void> {
-  await json(await fetch(`/api/posts/${encodeURIComponent(slug)}`, { method: 'DELETE' }))
+export async function deletePost(path: string): Promise<{ ok: true }> {
+  return jsonOrThrow<{ ok: true }>(await fetch('/api/posts/' + encodeURI(path).replace(/^posts%2F/, 'posts/'), { method: 'DELETE' }))
 }
 
-export async function renamePost(oldSlug: string, newSlug: string): Promise<{ slug: string }> {
-  return json<{ ok: true; slug: string }>(await fetch(`/api/posts/${encodeURIComponent(oldSlug)}/rename`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ newSlug }),
+export async function createFolder(path: string): Promise<{ path: string }> {
+  return jsonOrThrow<{ path: string }>(await fetch('/api/folders', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path }),
   }))
+}
+
+export async function renameFolder(srcPath: string, newPath: string): Promise<{ path: string; moved: string[] }> {
+  return jsonOrThrow<{ path: string; moved: string[] }>(await fetch('/api/folders/' + encodeURI(srcPath).replace(/^posts%2F/, 'posts/'), {
+    method: 'PATCH', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ newPath }),
+  }))
+}
+
+export async function deleteFolder(path: string, recursive: boolean): Promise<{ deleted: string[] }> {
+  const url = '/api/folders/' + encodeURI(path).replace(/^posts%2F/, 'posts/') + (recursive ? '?recursive=true' : '')
+  return jsonOrThrow<{ deleted: string[] }>(await fetch(url, { method: 'DELETE' }))
 }
