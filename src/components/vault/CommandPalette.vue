@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { buildIndex, rebuildIndex, primeBody, search, type SearchHit } from '../../lib/search'
 import type { PostSummary } from '../../lib/api'
+import { useFocusTrap } from '../../composables/useFocusTrap'
 
 const props = defineProps<{
   posts: PostSummary[]
@@ -43,13 +44,15 @@ async function refresh() {
   activeIdx.value = 0
 }
 
-// Remember which element had focus before the palette opened, so we
-// can put it back when the palette closes. Without this, a keyboard
-// user lands on <body> after dismiss and has to re-find their place.
-let lastFocused: HTMLElement | null = null
+// Focus management is delegated to useFocusTrap. The palette's modal
+// nature (teleported, modal, role=dialog) means a keyboard user would
+// otherwise walk out into the underlying vault on Tab and lose their
+// place on close — the trap captures the trigger on open, focuses
+// the input, and restores the trigger on close.
+const trap = useFocusTrap()
 
 function show() {
-  lastFocused = (document.activeElement as HTMLElement | null) ?? null
+  trap.activate()
   open.value = true
   query.value = ''
   activeIdx.value = 0
@@ -58,11 +61,7 @@ function show() {
 }
 function hide() {
   open.value = false
-  // Restore focus to the trigger — typically the nav-search button.
-  // nextTick waits for the Teleport to unmount the palette so the
-  // restore-target isn't covered by the still-rendered dialog.
-  void nextTick(() => lastFocused?.focus())
-  lastFocused = null
+  void trap.deactivate()
 }
 
 function commit(hit: SearchHit) {
@@ -109,32 +108,13 @@ function onInputKey(e: KeyboardEvent) {
 }
 
 // Tab / Shift+Tab while the palette is open would otherwise walk
-// straight out into the underlying vault. Trap it by listening for
-// Tab at the document level: if the next focusable is outside the
-// palette, send it back to the palette's first / last focusable.
-// This runs in addition to the Esc / Ctrl-P handlers, both of which
-// the original onKey still owns.
-function onTrapTab(e: KeyboardEvent) {
+// straight out into the underlying vault. The trap composable owns
+// the cycling logic; we just hand it a getter so it can find the
+// .palette root on each Tab press (the element may not exist when
+// the listener is bound and is recreated on every open).
+function onGlobalKey(e: KeyboardEvent) {
   if (!open.value) return
-  if (e.key !== 'Tab') return
-  const root = document.querySelector<HTMLElement>('.palette')
-  if (!root) return
-  const focusables = Array.from(
-    root.querySelectorAll<HTMLElement>(
-      'input, button, [tabindex]:not([tabindex="-1"]), [role="option"]',
-    ),
-  ).filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null)
-  if (focusables.length === 0) return
-  const first = focusables[0]
-  const last = focusables[focusables.length - 1]
-  const active = document.activeElement as HTMLElement | null
-  if (e.shiftKey && active === first) {
-    e.preventDefault()
-    last.focus()
-  } else if (!e.shiftKey && active === last) {
-    e.preventDefault()
-    first.focus()
-  }
+  trap.onTab(() => document.querySelector<HTMLElement>('.palette'), e)
 }
 
 watch(query, () => {
@@ -152,11 +132,11 @@ watch(
 
 onMounted(() => {
   document.addEventListener('keydown', onKey)
-  document.addEventListener('keydown', onTrapTab)
+  document.addEventListener('keydown', onGlobalKey)
 })
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKey)
-  document.removeEventListener('keydown', onTrapTab)
+  document.removeEventListener('keydown', onGlobalKey)
 })
 
 defineExpose({ show, hide })

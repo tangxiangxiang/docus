@@ -1,20 +1,30 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
 import { usePrompt } from '../composables/usePrompt'
+import { useFocusTrap } from '../composables/useFocusTrap'
 
 const { queue, answer } = usePrompt()
 const active = computed(() => queue.value[0] ?? null)
 const input = ref('')
+const cardRef = ref<HTMLElement | null>(null)
+const trap = useFocusTrap()
 
+// Focus management: when a prompt opens, remember the trigger and
+// focus the input. When it closes, send focus back so the keyboard
+// user doesn't drop into <body>. The Tab trap keeps focus cycling
+// between the input, the cancel button, and the OK button.
 watch(active, async (a) => {
   if (a) {
+    trap.activate()
     input.value = a.initial ?? ''
     await nextTick()
     const el = document.getElementById('docus-prompt-input') as HTMLInputElement | null
     el?.focus()
     el?.select()
+  } else {
+    void trap.deactivate()
   }
-})
+}, { immediate: true })
 
 function submit() {
   if (!active.value) return
@@ -25,9 +35,16 @@ function cancel() {
   answer(active.value.id, null)
 }
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') { e.preventDefault(); cancel() }
-  if (e.key === 'Enter')  { e.preventDefault(); submit() }
+  if (e.key === 'Escape') { e.preventDefault(); cancel(); return }
+  if (e.key === 'Enter')  { e.preventDefault(); submit(); return }
+  if (e.key === 'Tab' && cardRef.value) {
+    trap.onTab(() => cardRef.value, e)
+  }
 }
+
+onBeforeUnmount(() => {
+  if (active.value) void trap.deactivate()
+})
 </script>
 
 <template>
@@ -39,7 +56,13 @@ function onKeydown(e: KeyboardEvent) {
       @keydown="onKeydown"
       tabindex="-1"
     >
-      <div class="prompt-card" role="dialog" aria-modal="true">
+      <div
+        ref="cardRef"
+        class="prompt-card"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="active.title"
+      >
         <h3 class="prompt-title">{{ active.title }}</h3>
         <input
           id="docus-prompt-input"

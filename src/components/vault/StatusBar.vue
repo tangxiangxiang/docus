@@ -34,7 +34,16 @@ const sizeLabel = computed(() => {
 <template>
   <footer class="status-bar" aria-label="Status bar">
     <div class="sb-left">
-      <span class="sb-item sb-status" :data-status="saveStatus">{{ statusLabel }}</span>
+      <!-- aria-live="polite" so screen readers hear the save state
+           change ("Unsaved" → "Saving…" → "Saved") without being
+           interrupted. aria-atomic="true" re-announces the whole
+           status instead of just the diff. -->
+      <span
+        class="sb-item sb-status"
+        :data-status="saveStatus"
+        aria-live="polite"
+        aria-atomic="true"
+      >{{ statusLabel }}</span>
     </div>
     <div class="sb-right">
       <span class="sb-item">Markdown</span>
