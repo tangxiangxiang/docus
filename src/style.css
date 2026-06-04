@@ -512,14 +512,11 @@ main.container {
   white-space: nowrap;
 }
 .vault .file-tree header .scope-chips {
-  /* Take whatever space the title leaves. min-width:0 lets the
-     container shrink below its intrinsic content size when the
-     panel is narrow; the chips themselves overflow with ellipsis
-     rather than pushing the title into a vertical column. */
-  flex: 1 1 auto;
-  min-width: 0;
+  /* The chips are sized to fit alongside the title (see the
+     .scope-chip rules below); the container just needs to take
+     whatever space is left and right-align within it. */
+  flex: 0 1 auto;
   justify-content: flex-end;
-  overflow: hidden;
 }
 .vault .file-tree ul { overflow-y: auto; flex: 1; }
 .vault .file-tree li {
@@ -566,16 +563,20 @@ main.container {
 
 /* New recursive tree structure: TreeRow / tree-children / drop targets */
 .vault .file-tree .scope-chips {
-  display: flex; gap: 4px; align-items: center;
+  display: flex; gap: 2px; align-items: center;
 }
 .vault .file-tree .scope-chip {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 1px 6px;
+  /* Sized to fit three chips in a 40px row next to the title — see the
+     header .title rule above. Padding and count-badge background are
+     kept minimal so the three labels plus counts can sit on one line
+     even at the default 260px side panel width. */
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 0 4px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: var(--vs-text-2);
-  font-size: 0.68rem;
+  font-size: 0.6rem;
   font-weight: 400;
   line-height: 1.4;
   cursor: pointer;
@@ -591,17 +592,15 @@ main.container {
   border-color: var(--vs-accent);
 }
 .vault .file-tree .scope-chip-count {
-  font-size: 0.6rem;
+  /* Inline count, no background pill — keeps the chip narrow enough
+     that three of them fit alongside the title in the 40px header. */
+  font-size: 0.55rem;
   color: var(--vs-text-3);
-  background: var(--vs-bg-3);
-  border-radius: 6px;
-  padding: 0 4px;
-  min-width: 14px;
-  text-align: center;
+  padding: 0 2px;
 }
 .vault .file-tree .scope-chip.active .scope-chip-count {
-  background: var(--vs-accent);
-  color: var(--vs-status-fg, #ffffff);
+  color: var(--vs-accent);
+  opacity: 0.85;
 }
 .vault .file-tree .tree {
   list-style: none; padding: 0; margin: 0;
