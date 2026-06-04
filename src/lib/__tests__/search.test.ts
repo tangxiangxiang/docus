@@ -12,8 +12,8 @@ import { buildIndex, search, dispose } from '../search'
 import type { PostSummary } from '../api'
 
 const post: PostSummary = {
-  path: 'inbox/markdown-syntax.md',
-  name: 'markdown-syntax.md',
+  path: 'inbox/markdown-syntax',
+  name: 'markdown-syntax',
   title: 'H1',                    // title comes from the first H1 of the body
   tags: ['markdown', 'reference'],
   summary: 'Headings, lists, code, links — the essentials.',
@@ -101,5 +101,28 @@ describe('search', () => {
     const lateHits = search('H3')
     expect(lateHits).toHaveLength(1)
     expect(lateHits[0].match).toBe('body')
+  })
+
+  it('regression: primeBody must use encodeURI on the path, not encodeURIComponent', async () => {
+    // The splat route /api/posts/* expects raw `/` between segments, not
+    // %2F. encodeURIComponent turns `inbox/markdown-syntax` into
+    // `inbox%2Fmarkdown-syntax` and the server rejects it with 400 (its
+    // path regex would never see a `/` in a segment, so a %2F path
+    // matches no segment pattern and is treated as an invalid path
+    // string). The fix: primeBody uses encodeURI, which leaves the
+    // reserved `/` alone. This test pins the URL shape by asserting
+    // the path the fetch sees contains raw `/` separators.
+    const seenUrls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      seenUrls.push(url)
+      return { ok: true, json: async () => ({ content: body }) }
+    }))
+
+    const { primeBody } = await import('../search')
+    await primeBody([post])
+
+    expect(seenUrls).toHaveLength(1)
+    expect(seenUrls[0]).toBe('/api/posts/inbox/markdown-syntax')
+    expect(seenUrls[0]).not.toContain('%2F')
   })
 })

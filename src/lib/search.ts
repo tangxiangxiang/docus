@@ -67,7 +67,18 @@ export async function primeBody(posts: PostSummary[]): Promise<void> {
   await Promise.all(
     missing.map(async (p) => {
       try {
-        const res = await fetch(`/api/posts/${encodeURIComponent(p.path)}`)
+        // encodeURI (not encodeURIComponent) — the splat route
+        // /api/posts/* expects the path segments to be raw, not %2F
+        // encoded. encodeURIComponent converts `/` to `%2F`, which makes
+        // the splat path invalid server-side (filePathFor rejects it as
+        // a syntax error) and the response is 400. encodeURI leaves
+        // the `/` segments alone but still escapes unsafe characters
+        // in the kebab segments (the path regex already restricts them
+        // to [a-z0-9-] so escaping is a no-op in practice, but we
+        // still call it to be defensive against a future loosening of
+        // the path syntax). This matches what useEditorTabs.doSave
+        // does at useEditorTabs.ts:155.
+        const res = await fetch(`/api/posts/${encodeURI(p.path)}`)
         if (!res.ok) return
         const data = (await res.json()) as { content: string }
         bodyCache.set(p.path, data.content ?? '')

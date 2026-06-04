@@ -16,8 +16,10 @@ describe('GET /api/posts/*', () => {
     const r = await get('/api/posts/inbox/markdown-syntax')
     expect(r.status).toBe(200)
     const body = await r.json() as { raw: string; content: string; frontmatter: unknown }
-    // raw is the on-disk file (frontmatter + body, intact).
-    expect(body.raw).toMatch(/^---\n[\s\S]*\n---\n/)
+    // raw is the on-disk file (frontmatter + body, intact). Windows
+    // git config core.autocrlf=true writes CRLF, so the on-disk raw
+    // may have \r\n line endings — accept either.
+    expect(body.raw).toMatch(/^---\r?\n[\s\S]*\r?\n---\r?\n/)
     // content is the body only — the frontmatter block is gone, and
     // markdown headings are present.
     expect(body.content.startsWith('---')).toBe(false)
