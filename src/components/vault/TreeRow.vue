@@ -2,7 +2,11 @@
 import { ref, computed, nextTick } from 'vue'
 import type { TreeNode } from '../../lib/api'
 import { ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FILE_MD, ICON_CHEVRON } from './icons'
-import { readonlyReason, readonlyHintLabel } from '../../composables/zettelProtocol'
+import {
+  canModify,
+  canCreateChild,
+  readonlyHintLabel,
+} from '../../composables/zettelProtocol'
 
 const props = defineProps<{
   node: TreeNode
@@ -39,10 +43,22 @@ const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.
 const childNodes = computed(() =>
   props.node.kind === 'folder' ? props.node.children : [],
 )
-// Read-only check: the row is in the zettel/ subtree, OR it is one of the
-// three protected top-level folders. The rule lives in zettelProtocol.ts so
-// the same set {inbox, literature, zettel} is not duplicated across files.
-const readonly = computed(() => readonlyReason(props.node.path) !== null)
+// Two independent write-permission flags. The protocol distinguishes:
+//   • canModify — rename / delete / drag-out. Blocked for both the zettel
+//     subtree AND protected roots (the three top-level folder names are
+//     pinned by the Zettelkasten spec).
+//   • canCreateChild — in-place create-in. Blocked for the zettel subtree
+//     (the permanent-notes sink is write-locked at every depth) but
+//     ALLOWED for protected roots: the folder's name is pinned, but its
+//     contents are still user content. Without this split, right-clicking
+//     inbox/literature offered no way to add a child — see the
+//     "顶层目录 · 不可修改" hint in zettelProtocol.ts for the original
+//     "all or nothing" wording.
+const canModifyRow = computed(() => canModify(props.node.path))
+const canCreateChildRow = computed(() => canCreateChild(props.node.path))
+// `readonlyHint` is the single-line footer that appears when the row is
+// read-only in any sense. Reused for both menu states.
+const readonlyHint = computed(() => readonlyHintLabel(props.node.path))
 
 // --- drag state ---
 const isDragging = ref(false)
@@ -60,6 +76,15 @@ function onDragStart(e: DragEvent) {
   // isProtectedRoot() then rejects with a confusing toast). Stop the event
   // here so only the row the user actually grabbed sets the drag payload.
   e.stopPropagation()
+  // Protected roots (inbox/literature/zettel) cannot be re-parented. We
+  // still want their *children* to be draggable — the on-the-wire guard
+  // in FileTree's onMove/onRootDrop catches a misrouted move and toasts
+  // a clear error, but the better UX is to never start the drag in the
+  // first place (no ghost, no half-grabbed cursor). canCreateChild
+  // already encodes the deeper rule (zettel subtree children are also
+  // un-draggable) because canModify and canCreateChild are both false
+  // there.
+  if (!canModifyRow.value) { e.preventDefault(); return }
   if (!e.dataTransfer) return
   e.dataTransfer.setData('text/x-docus-path', props.node.path)
   // Carry the source kind in the payload too. Path is not enough to
@@ -179,7 +204,7 @@ function cancelRename() {
     class="tree-row"
     :class="{ active: isActive, expanded: isExpanded, folder: isFolder, dragging: isDragging, 'drop-target': isDropTarget }"
     :style="{ '--depth': depth }"
-    :draggable="!renaming"
+    :draggable="!renaming && canModifyRow"
     @dragstart="onDragStart"
     @dragend="onDragEnd"
     @dragenter="onDragEnter"
@@ -232,15 +257,24 @@ function cancelRename() {
         :style="{ left: menuX + 'px', top: menuY + 'px' }"
         @click.stop
       >
-        <template v-if="isFolder && !readonly">
+        <!-- create-in is allowed for ordinary folders AND for the three
+             protected roots (inbox / literature). zettel/ subtree children
+             cannot be created here — see canCreateChild in zettelProtocol.
+             Render the create buttons first so the most-common action on
+             a folder is the first thing under the cursor. -->
+        <template v-if="isFolder && canCreateChildRow">
           <button @click="menuAction(() => emit('create-in', node.path, 'file'))">新建文件</button>
           <button @click="menuAction(() => emit('create-in', node.path, 'folder'))">新建文件夹</button>
-          <hr />
+          <!-- On a protected root the create buttons are followed only by
+               a hint — no rename/delete divider, since the only other
+               write op is the destructive one and we deliberately don't
+               show "删除" (灰掉) for the root itself. -->
+          <hr v-if="canModifyRow" />
         </template>
-        <button v-if="!readonly" @click="menuAction(startRename)">重命名</button>
-        <hr v-if="!readonly" />
-        <button v-if="!readonly" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))">删除</button>
-        <span v-if="readonly" class="readonly-hint">{{ readonlyHintLabel(node.path) }}</span>
+        <button v-if="canModifyRow" @click="menuAction(startRename)">重命名</button>
+        <hr v-if="canModifyRow" />
+        <button v-if="canModifyRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))">删除</button>
+        <span v-if="!canModifyRow || (isFolder && !canCreateChildRow)" class="readonly-hint">{{ readonlyHint }}</span>
       </div>
     </Teleport>
 
