@@ -5,9 +5,8 @@ import TreeRow from './TreeRow.vue'
 import { useConfirm } from '../../composables/useConfirm'
 import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
-import { blockedMessage, isInZettel } from '../../composables/zettelProtocol'
+import { blockedMessage, isInZettel, PROTECTED_ROOTS } from '../../composables/zettelProtocol'
 import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder } from '../../lib/api'
-import { ICON_NEW_FILE, ICON_NEW_FOLDER } from './icons'
 
 const props = defineProps<{
   tree: TreeNode[]
@@ -23,15 +22,47 @@ const { prompt } = usePrompt()
 const toast = useToast()
 
 const STORAGE_KEY = 'docus.vault.expandedPaths'
+const SCOPE_KEY = 'docus.vault.activeScope'
 const expanded = ref<Set<string>>(new Set(loadExpanded()))
+
+// Optional scope filter (the three Zettelkasten root names). When non-null,
+// only that root's subtree is rendered — the other two are hidden. Click the
+// same chip again to clear, or click a different one to switch. Persisted
+// to localStorage so the view is restored on reload.
+const activeScope = ref<string | null>(loadScope())
+function loadScope(): string | null {
+  try {
+    const raw = localStorage.getItem(SCOPE_KEY)
+    return raw && PROTECTED_ROOTS.has(raw) ? raw : null
+  } catch { return null }
+}
+function toggleScope(root: string) {
+  activeScope.value = activeScope.value === root ? null : root
+  try { localStorage.setItem(SCOPE_KEY, activeScope.value ?? '') } catch { /* ignore */ }
+}
 
 // The server returns a single implicit root folder ("content", path "") whose
 // children are the user's top-level folders. We don't surface that synthetic
 // root in the UI — only its children are rendered.
 const topLevel = computed<TreeNode[]>(() => {
   const root = props.tree[0]
-  if (root && root.kind === 'folder') return root.children
-  return []
+  if (!root || root.kind !== 'folder') return []
+  if (activeScope.value) {
+    return root.children.filter((c) => c.path === activeScope.value)
+  }
+  return root.children
+})
+
+// Counts per root for the chip badges. Computed off the unfiltered tree so
+// the chips always show real numbers, not "1 / 0 / 0" when scope is active.
+const scopeCounts = computed<Record<string, number>>(() => {
+  const root = props.tree[0]
+  if (!root || root.kind !== 'folder') return {}
+  const out: Record<string, number> = {}
+  for (const c of root.children) {
+    if (PROTECTED_ROOTS.has(c.path)) out[c.path] = countDescendantFiles(c)
+  }
+  return out
 })
 
 function loadExpanded(): string[] {
@@ -124,6 +155,18 @@ function findNode(nodes: TreeNode[], path: string, kind?: 'file' | 'folder'): Tr
 function countDescendants(n: TreeNode): number {
   if (n.kind !== 'folder') return 0
   return n.children.reduce((acc, c) => acc + 1 + countDescendants(c), 0)
+}
+// File-only descendant count for the scope chips. Folders are organizational
+// scaffolding, not content — a chip showing `zettel 12` should read as
+// "12 permanent notes", not "12 children including N subfolders". The
+// folder-aware countDescendants above stays as-is because onDelete still
+// uses it to show "N items will be removed" on folder delete.
+function countDescendantFiles(n: TreeNode): number {
+  if (n.kind !== 'folder') return 0
+  return n.children.reduce(
+    (acc, c) => acc + (c.kind === 'file' ? 1 : 0) + countDescendantFiles(c),
+    0,
+  )
 }
 
 // --- row event handlers ---
@@ -249,21 +292,18 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
   >
     <header>
       <span class="title">资源管理器</span>
-      <div class="header-actions">
+      <div class="scope-chips" role="tablist" aria-label="范围过滤">
         <button
-          class="new-btn icon-btn"
-          aria-label="新建文件"
-          title="新建文件"
-          @click="onCreateIn('inbox', 'file')"
-          v-html="ICON_NEW_FILE"
-        />
-        <button
-          class="new-btn icon-btn"
-          aria-label="新建文件夹"
-          title="新建文件夹"
-          @click="onCreateIn('inbox', 'folder')"
-          v-html="ICON_NEW_FOLDER"
-        />
+          v-for="root in PROTECTED_ROOTS"
+          :key="root"
+          class="scope-chip"
+          :class="{ active: activeScope === root }"
+          :aria-pressed="activeScope === root"
+          :title="activeScope === root ? `已过滤为 ${root}（再次点击取消）` : `只看 ${root}`"
+          @click="toggleScope(root)"
+        >
+          {{ root }}<span class="scope-chip-count">{{ scopeCounts[root] ?? 0 }}</span>
+        </button>
       </div>
     </header>
     <ul v-if="topLevel.length" class="tree" role="tree">

@@ -502,36 +502,6 @@ main.container {
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
 }
-.vault .file-tree .new-btn {
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--vs-text-1);
-  font-size: 0.75rem;
-  text-transform: none;
-  letter-spacing: 0;
-  padding: 2px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-}
-.vault .file-tree .new-btn:hover {
-  background: var(--vs-hover-bg);
-  border-color: var(--vs-border);
-  color: var(--vs-accent);
-}
-.vault .file-tree .new-btn.icon-btn {
-  padding: 3px;
-  width: 22px;
-  height: 22px;
-}
-.vault .file-tree .new-btn.icon-btn :deep(svg) {
-  display: block;
-  width: 14px;
-  height: 14px;
-}
 .vault .file-tree ul { overflow-y: auto; flex: 1; }
 .vault .file-tree li {
   padding: 4px 14px;
@@ -576,7 +546,44 @@ main.container {
 }
 
 /* New recursive tree structure: TreeRow / tree-children / drop targets */
-.vault .file-tree .header-actions { display: flex; gap: 4px; }
+.vault .file-tree .scope-chips {
+  display: flex; gap: 4px; align-items: center;
+}
+.vault .file-tree .scope-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--vs-text-2);
+  font-size: 0.68rem;
+  font-weight: 400;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 100ms, color 100ms, border-color 100ms;
+}
+.vault .file-tree .scope-chip:hover {
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
+.vault .file-tree .scope-chip.active {
+  background: var(--vs-accent-bg);
+  color: var(--vs-accent);
+  border-color: var(--vs-accent);
+}
+.vault .file-tree .scope-chip-count {
+  font-size: 0.6rem;
+  color: var(--vs-text-3);
+  background: var(--vs-bg-3);
+  border-radius: 6px;
+  padding: 0 4px;
+  min-width: 14px;
+  text-align: center;
+}
+.vault .file-tree .scope-chip.active .scope-chip-count {
+  background: var(--vs-accent);
+  color: var(--vs-status-fg, #ffffff);
+}
 .vault .file-tree .tree {
   list-style: none; padding: 0; margin: 0;
   overflow-y: auto; flex: 1;
