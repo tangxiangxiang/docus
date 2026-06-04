@@ -486,6 +486,9 @@ main.container {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* The right-side seam is drawn by the splitter to the right of this
+     panel, not by this panel itself, so it doesn't get reflowed when
+     the user drags the handle. */
 }
 .vault .file-tree header {
   display: flex;
@@ -993,14 +996,6 @@ main.container {
   flex-direction: column;
   background: var(--vs-bg-1);
 }
-/* Draw the editor/preview divider with box-shadow (inside the
-   preview's own box) so the 1px line doesn't eat into the flex
-   layout's content area. The same --vs-border is used as the
-   ActivityBar's border-right, so all three vertical seams in the
-   vault read as the same weight. */
-.preview-pane {
-  box-shadow: inset 1px 0 0 var(--vs-border);
-}
 .preview-pane > .article {
   flex: 0 0 auto;
   min-height: 0;
@@ -1017,12 +1012,13 @@ main.container {
   background: var(--vs-bg-1);
 }
 
-/* Splitters inside vault — a 1px visual line + a 6px pointer hit area.
-   The visual line is drawn as an inset box-shadow on the splitter
-   itself so it doesn't shift when the user starts dragging, and the
-   6px width stays a comfortable target for a col-resize cursor
-   (a 1px hit area is impossible to click on a high-DPI display).
-   The line picks up --vs-accent on hover / drag. */
+/* Splitters inside vault — a 6px pointer hit area with the 1px visual
+   line drawn flush against the right-hand panel's left edge
+   (box-shadow: inset -1px 0 0). This matches VSCode's convention:
+   the line reads as the right panel's left border, not as a rule
+   floating in the middle of a gap, so the two adjacent panels
+   feel like they share the seam rather than being two boxes
+   with a slot between them. */
 .vault .splitter {
   background: transparent;
   cursor: col-resize;
@@ -1030,11 +1026,11 @@ main.container {
   user-select: none;
   touch-action: none;
   width: 6px;
-  box-shadow: inset 1px 0 0 var(--vs-border);
+  box-shadow: inset -1px 0 0 var(--vs-border);
 }
 .vault .splitter:hover,
 .vault .splitter:active {
-  box-shadow: inset 1px 0 0 var(--vs-accent);
+  box-shadow: inset -1px 0 0 var(--vs-accent);
 }
 
 /* EditorPane inside vault */
