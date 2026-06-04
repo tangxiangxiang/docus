@@ -4,24 +4,13 @@ import path from 'node:path'
 import matter from 'gray-matter'
 import { filePathFor, folderPathFor, CONTENT_DIR } from './paths.js'
 import { listPostsFlat, buildTree, listSubtreePaths } from './tree.js'
+import type { PostSummary, PostDetail } from '../src/lib/api.js'
 
-// Local type defs — kept in sync with src/lib/api.ts (Task 5). Don't import from src/
-// until that task lands to avoid coupling server type to a moving client surface.
-interface PostSummary {
-  path: string
-  title: string
-  date: string
-  tags: string[]
-  size: number
-  mtime: number
-}
-interface PostDetail {
-  path: string
-  raw: string
-  frontmatter: Record<string, unknown>
-  size: number
-  mtime: number
-}
+// The server is intentionally not in the type-check graph (no tsconfig include),
+// but the wire shapes still have to agree with the client. Importing the same
+// types that the client uses means there is a single source of truth for the
+// JSON contract — and the previous local copy was already drifting (missing
+// `summary?: string`), so a shared import also fixes a latent type bug.
 
 const SEGMENT_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
 

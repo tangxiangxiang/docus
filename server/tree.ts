@@ -1,23 +1,14 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { CONTENT_DIR } from './paths.js'
+import type { PostSummary, TreeNode } from '../src/lib/api.js'
 
-// Local types — Task 5 will introduce the canonical PostSummary / TreeNode in
-// src/lib/api.ts and align them with these. Keeping them local for now avoids
-// coupling server/ to src/ before that refactor lands.
-export interface PostSummary {
-  path: string
-  title: string
-  date: string
-  tags: string[]
-  summary?: string
-  size: number
-  mtime: number
-}
-
-export type TreeNode =
-  | { kind: 'file'; name: string; path: string; title: string; mtime: number }
-  | { kind: 'folder'; name: string; path: string; children: TreeNode[] }
+// `PostSummary` and `TreeNode` are owned by the client (src/lib/api.ts). The
+// server is intentionally not in the type-check graph (no tsconfig include),
+// but the wire shapes still have to agree — importing the same type that the
+// client uses means a future change to either side has a single source of
+// truth. Path resolution works because the whole repo is processed by
+// Vite/Vitest under `moduleResolution: bundler`.
 
 async function* walk(
   dir: string,
