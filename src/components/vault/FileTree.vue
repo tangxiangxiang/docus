@@ -7,6 +7,14 @@ import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
 import { blockedMessage, isInZettel, PROTECTED_ROOTS } from '../../composables/zettelProtocol'
 import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder } from '../../lib/api'
+import { ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ZETTEL } from './icons'
+
+// Map each Zettelkasten root to the icon shown in its scope chip.
+const SCOPE_ICONS: Record<string, string> = {
+  inbox: ICON_SCOPE_INBOX,
+  literature: ICON_SCOPE_LITERATURE,
+  zettel: ICON_SCOPE_ZETTEL,
+}
 
 const props = defineProps<{
   tree: TreeNode[]
@@ -299,10 +307,12 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
           class="scope-chip"
           :class="{ active: activeScope === root }"
           :aria-pressed="activeScope === root"
+          :aria-label="activeScope === root ? `已过滤为 ${root}（再次点击取消）` : `只看 ${root}`"
           :title="activeScope === root ? `已过滤为 ${root}（再次点击取消）` : `只看 ${root}`"
           @click="toggleScope(root)"
         >
-          {{ root }}<span class="scope-chip-count">{{ scopeCounts[root] ?? 0 }}</span>
+          <span class="scope-chip-icon" v-html="SCOPE_ICONS[root]" />
+          <span class="scope-chip-count">{{ scopeCounts[root] ?? 0 }}</span>
         </button>
       </div>
     </header>

@@ -42,3 +42,31 @@ export const ICON_NEW_FOLDER = `
   <circle cx="11.75" cy="11.75" r="3" fill="var(--vs-bg-2, #1e1e1e)" stroke="currentColor" stroke-width="1.2"/>
   <path d="M11.75 10.25v3M10.25 11.75h3"/>
 </svg>`
+
+// Scope chip glyphs. Each is 14×14 line art, matching the file-tree
+// row icons. The three map to the Zettelkasten roots:
+//   inbox       — capture bucket: an inbox tray with a downward arrow
+//   literature  — long-form reference: an open book
+//   zettel      — permanent note: a stacked card (the canonical
+//                 Zettelkasten card)
+export const ICON_SCOPE_INBOX = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2 9.5l1.5-5.5h9L14 9.5"/>
+  <path d="M2 9.5h3l1 1.5h4l1-1.5h3v3.5c0 .55-.45 1-1 1H3c-.55 0-1-.45-1-1V9.5z"/>
+  <path d="M8 2v5M5.5 4.5L8 7l2.5-2.5"/>
+</svg>`
+
+export const ICON_SCOPE_LITERATURE = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2 3.5C2 2.95 2.45 2.5 3 2.5h3.5c.83 0 1.5.67 1.5 1.5v8.5c0-.83-.67-1.5-1.5-1.5H3c-.55 0-1-.45-1-1V3.5z"/>
+  <path d="M14 3.5C14 2.95 13.55 2.5 13 2.5H9.5C8.67 2.5 8 3.17 8 4v8.5c0-.83.67-1.5 1.5-1.5H13c.55 0 1-.45 1-1V3.5z"/>
+  <path d="M8 4v8.5"/>
+</svg>`
+
+export const ICON_SCOPE_ZETTEL = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="2" width="9" height="11" rx="1" transform="rotate(-6 3 2)"/>
+  <rect x="4" y="3" width="9" height="11" rx="1" transform="rotate(4 4 3)"/>
+  <line x1="6" y1="8" x2="10" y2="8.5" transform="rotate(4 4 3)"/>
+  <line x1="6" y1="10.5" x2="9" y2="11" transform="rotate(4 4 3)"/>
+</svg>`
