@@ -12,6 +12,7 @@ const emit = defineEmits<{ select: [path: string]; close: [path: string] }>()
       :key="t.path"
       role="tab"
       :aria-selected="t.path === activePath"
+      :title="`${t.title || t.path}\n${t.path}\n中键 / × 关闭`"
       class="tab"
       :class="{ active: t.path === activePath }"
       @click="emit('select', t.path)"
@@ -20,9 +21,8 @@ const emit = defineEmits<{ select: [path: string]; close: [path: string] }>()
       <span class="tab-dot" :class="{ dirty: t.saveStatus === 'dirty' }" />
       <span class="tab-title">{{ t.title || t.path }}</span>
       <button
-        v-if="tabs.length > 0"
         class="tab-close"
-        title="Close"
+        title="关闭"
         @click.stop="emit('close', t.path)"
       >×</button>
     </div>

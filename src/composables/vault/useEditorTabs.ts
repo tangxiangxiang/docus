@@ -198,6 +198,19 @@ export function useEditorTabs(opts: {
       e.preventDefault()
       opts.selectPanel('files')
     }
+    // Ctrl+Tab / Ctrl+Shift+Tab — cycle through open tabs. Matches the
+    // browser convention: Tab goes forward, Shift+Tab goes backward.
+    // Falls back to first/last if nothing is open or the active tab is
+    // missing (e.g. closed externally).
+    if (meta && e.key === 'Tab' && tabs.value.length > 0) {
+      e.preventDefault()
+      const cur = tabs.value.findIndex((t) => t.path === activePath.value)
+      const dir = e.shiftKey ? -1 : 1
+      const nextIdx = cur === -1
+        ? (dir > 0 ? 0 : tabs.value.length - 1)
+        : (cur + dir + tabs.value.length) % tabs.value.length
+      selectTab(tabs.value[nextIdx].path)
+    }
   }
 
   async function onCommandPaletteNew(title: string) {

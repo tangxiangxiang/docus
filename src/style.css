@@ -908,10 +908,21 @@ main.container {
   background: var(--vs-bg-3);
   border-bottom: 1px solid var(--vs-border);
   overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  -ms-overflow-style: -ms-autohiding-scrollbar;
+  /* Subtle right-edge fade hints at overflow when more tabs are
+     scrolled off-screen. Uses mask so the fade doesn't tint the
+     background — it just fades the tab content into the bar color. */
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
 }
-.tabs::-webkit-scrollbar { display: none; }
+.tabs::-webkit-scrollbar { height: 4px; }
+.tabs::-webkit-scrollbar-thumb {
+  background: var(--vs-border);
+  border-radius: 2px;
+}
+.tabs::-webkit-scrollbar-track { background: transparent; }
 .tab {
   display: flex;
   align-items: center;
@@ -924,9 +935,18 @@ main.container {
   cursor: pointer;
   user-select: none;
   position: relative;
-  min-width: 0;
+  /* 80px minimum so a tab is always readable (dot + truncated title +
+     close button). Without this, min-width: 0 on a flex item lets the
+     tab shrink to 0 and disappears once the row overflows. */
+  min-width: 80px;
   max-width: 180px;
+  /* 1px right border + 1px left padding tweak keeps the divider
+     visually centered between adjacent tabs, so the bar reads as
+     "separate tabs" instead of a continuous strip. The rightmost tab
+     hides the divider with box-shadow to keep the bar edge clean. */
+  border-right: 1px solid var(--vs-border);
 }
+.tab:last-child { border-right: 0; }
 .tab:hover { color: var(--vs-text-1); }
 .tab.active {
   background: var(--vs-tab-active-bg);
@@ -950,6 +970,11 @@ main.container {
 }
 .tab-dot.dirty { background: var(--vs-accent); }
 .tab-title {
+  /* flex: 1 + min-width: 0 so the title (not the close button) takes
+     the available slack and truncates with ellipsis. The close button
+     keeps its 16px and the dot keeps 6px via flex-shrink: 0. */
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -968,8 +993,11 @@ main.container {
   font-size: 0.85rem;
   line-height: 1;
   flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.1s;
+  /* Always slightly visible (0.35) so users discover the close affordance
+     without hovering each tab. Hover or active bumps it to full opacity
+     and adds the background hover. */
+  opacity: 0.35;
+  transition: opacity 0.1s, background 0.1s, color 0.1s;
 }
 .tab:hover .tab-close,
 .tab.active .tab-close { opacity: 1; }
