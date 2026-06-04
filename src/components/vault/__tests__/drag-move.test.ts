@@ -1,22 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { flushPromises } from "@vue/test-utils"
 import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
 import * as api from '../../../lib/api'
+import { installDialogMocks, rowByLabel } from '../../../__test-helpers__/dialogs'
 
-vi.mock('../../../composables/useConfirm', () => ({
-  useConfirm: () => ({ confirm: vi.fn().mockResolvedValue(true), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/usePrompt', () => ({
-  usePrompt: () => ({ prompt: vi.fn().mockResolvedValue(null), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/useToast', () => ({
-  useToast: () => ({
-    toasts: { value: [] },
-    info: vi.fn(), success: vi.fn(), error: vi.fn(), dismiss: vi.fn(),
-  }),
-}))
+installDialogMocks()
 
 const TREE: TreeNode[] = [
   {
@@ -36,10 +27,7 @@ const TREE: TreeNode[] = [
   },
 ]
 
-/** Walk a flat list of rendered tree rows to the one with the given label. */
-function rowByLabel(rows: any[], name: string): any {
-  return rows.filter((r: any) => r.find('.row-name')?.text() === name).pop()!
-}
+
 
 describe('FileTree drag-move (sub-documents)', () => {
   beforeEach(() => {
@@ -83,7 +71,7 @@ describe('FileTree drag-move (sub-documents)', () => {
       },
     })
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
 
     expect(patchSpy).toHaveBeenCalledWith('inbox/test/test1', { targetPath: 'inbox/test1' })
     w.unmount()
@@ -115,7 +103,7 @@ describe('FileTree drag-move (sub-documents)', () => {
       },
     })
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
 
     expect(patchSpy).not.toHaveBeenCalled()
     w.unmount()
@@ -142,7 +130,7 @@ describe('FileTree drag-move (sub-documents)', () => {
       },
     })
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
 
     expect(patchSpy).not.toHaveBeenCalled()
     void inbox

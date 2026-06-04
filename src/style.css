@@ -440,7 +440,8 @@ main.container {
     --vs-border: #e0e0e0;
     --vs-text-1: #1f1f1f;
     --vs-text-2: #6f6f6f;
-    --vs-text-3: #999999;
+    --vs-text-3: #6b6b6b;   /* was #999999 — that was 2.85:1 on white,
+                                failing WCAG AA (4.5:1). #6b6b6b is ~5.1:1. */
     --vs-accent: #005fb8;
     --vs-accent-hover: #0258a8;
     --vs-accent-bg: rgba(0, 95, 184, 0.1);
@@ -717,6 +718,14 @@ main.container {
 .vault .file-tree .row-name {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   text-decoration: none; color: inherit;
+  /* Reset the native <button> chrome — the row name is a plain text
+     label that lives inside a clickable row. */
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: inherit;
 }
 /* Right-click context menu — teleported to <body>, outside .vault,
    so the .vault-scoped --vs-* tokens are not available here.

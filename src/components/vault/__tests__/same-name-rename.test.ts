@@ -1,22 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { flushPromises } from "@vue/test-utils"
 import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
 import * as api from '../../../lib/api'
+import { installDialogMocks, rowByLabel } from '../../../__test-helpers__/dialogs'
 
-vi.mock('../../../composables/useConfirm', () => ({
-  useConfirm: () => ({ confirm: vi.fn().mockResolvedValue(true), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/usePrompt', () => ({
-  usePrompt: () => ({ prompt: vi.fn().mockResolvedValue(null), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/useToast', () => ({
-  useToast: () => ({
-    toasts: { value: [] },
-    info: vi.fn(), success: vi.fn(), error: vi.fn(), dismiss: vi.fn(),
-  }),
-}))
+installDialogMocks()
 
 // buildTree sorts folders-first then files, so when a file and a folder
 // share a name in the same parent (e.g. `notes.md` and `notes/` both
@@ -50,16 +41,6 @@ const TREE: TreeNode[] = [
   },
 ]
 
-function rowByLabel(rows: any[], name: string, isFolder?: boolean): any {
-  // For same-name rows we have to disambiguate by .folder class as well —
-  // both rows render the same label text.
-  return rows.filter((r: any) => {
-    if (r.find('.row-name')?.text() !== name) return false
-    if (isFolder === undefined) return true
-    return r.classes('folder') === isFolder
-  }).pop()!
-}
-
 async function startRenameOn(row: any) {
   await row.trigger('contextmenu', { clientX: 10, clientY: 10 })
   await (row as any).vm?.$nextTick?.()
@@ -69,7 +50,7 @@ async function startRenameOn(row: any) {
     .find((b) => b.textContent?.trim() === '重命名')
   expect(btn).toBeDefined()
   btn!.click()
-  await new Promise((r) => setTimeout(r, 0))
+  await flushPromises()
 }
 
 describe('FileTree rename collision (file and folder share a path)', () => {
@@ -95,9 +76,9 @@ describe('FileTree rename collision (file and folder share a path)', () => {
 
     // Pick the FILE row, not the folder. With same labels, the file row is
     // the *second* matching row (folder comes first after buildTree's
-    // folders-first sort), but the helper accepts a `isFolder` filter so
+    // folders-first sort), but the helper accepts a `kind` filter so
     // we can target it unambiguously.
-    const fileRow = rowByLabel(w.findAll('li.tree-row'), 'notes', false)
+    const fileRow = rowByLabel(w.findAll('li.tree-row'), 'notes', 'file')
     expect(fileRow.exists()).toBe(true)
     expect(fileRow.classes('folder')).toBe(false)
 
@@ -107,7 +88,7 @@ describe('FileTree rename collision (file and folder share a path)', () => {
     await input.setValue('notes-v2')
     await input.trigger('keydown.enter')
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
 
     // The bug: findNode returned the folder (first match in the
     // folders-first-sorted tree), so onRename routed to renameFolder and
@@ -131,7 +112,7 @@ describe('FileTree rename collision (file and folder share a path)', () => {
     await w.vm.$nextTick()
 
     // Pick the FOLDER row this time.
-    const folderRow = rowByLabel(w.findAll('li.tree-row'), 'notes', true)
+    const folderRow = rowByLabel(w.findAll('li.tree-row'), 'notes', 'folder')
     expect(folderRow.exists()).toBe(true)
     expect(folderRow.classes('folder')).toBe(true)
 
@@ -140,7 +121,7 @@ describe('FileTree rename collision (file and folder share a path)', () => {
     await input.setValue('notes-v2')
     await input.trigger('keydown.enter')
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
 
     expect(patchSpy).not.toHaveBeenCalled()
     expect(renameFolderSpy).toHaveBeenCalledWith('inbox/notes', 'inbox/notes-v2')

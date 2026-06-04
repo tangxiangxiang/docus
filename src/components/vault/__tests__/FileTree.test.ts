@@ -3,23 +3,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
+import { installDialogMocks } from '../../../__test-helpers__/dialogs'
 
-// Stub composables to isolate FileTree's behavior
-vi.mock('../../../composables/useConfirm', () => ({
-  useConfirm: () => ({ confirm: vi.fn().mockResolvedValue(true), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/usePrompt', () => ({
-  usePrompt: () => ({ prompt: vi.fn().mockResolvedValue(null), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/useToast', () => ({
-  useToast: () => ({
-    toasts: { value: [] },
-    info: vi.fn(),
-    success: vi.fn(),
-    error: vi.fn(),
-    dismiss: vi.fn(),
-  }),
-}))
+installDialogMocks()
 
 // New convention: implicit root is `src/content/`, surfaced in the API as a
 // folder named "content" with path "". Top-level children are the Zettelkasten

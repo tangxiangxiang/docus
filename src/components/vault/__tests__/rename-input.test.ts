@@ -1,22 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { flushPromises } from "@vue/test-utils"
 import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
 import * as api from '../../../lib/api'
+import { installDialogMocks, rowByLabel } from '../../../__test-helpers__/dialogs'
 
-vi.mock('../../../composables/useConfirm', () => ({
-  useConfirm: () => ({ confirm: vi.fn().mockResolvedValue(true), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/usePrompt', () => ({
-  usePrompt: () => ({ prompt: vi.fn().mockResolvedValue(null), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/useToast', () => ({
-  useToast: () => ({
-    toasts: { value: [] },
-    info: vi.fn(), success: vi.fn(), error: vi.fn(), dismiss: vi.fn(),
-  }),
-}))
+installDialogMocks()
 
 const TREE: TreeNode[] = [
   {
@@ -32,9 +23,7 @@ const TREE: TreeNode[] = [
   },
 ]
 
-function rowByLabel(rows: any[], name: string): any {
-  return rows.filter((r: any) => r.find('.row-name')?.text() === name).pop()!
-}
+
 
 describe('FileTree inline rename (Enter + blur double-fire)', () => {
   beforeEach(() => {
@@ -58,7 +47,7 @@ describe('FileTree inline rename (Enter + blur double-fire)', () => {
     const draft = rowByLabel(w.findAll('.tree-row'), 'draft')
     await draft.trigger('contextmenu', { clientX: 10, clientY: 10 })
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
     // The context menu has a "重命名" button.
     document.querySelector<HTMLButtonElement>('.tree-context-menu button:not(.danger)')!.click()
     await w.vm.$nextTick()
@@ -75,7 +64,7 @@ describe('FileTree inline rename (Enter + blur double-fire)', () => {
     await w.vm.$nextTick()
     await input.trigger('blur')
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
 
     // patchPost must be called exactly once, with the new name. The second
     // call (from blur-after-Enter) used to fire with oldPath, hit a 404 on
@@ -96,7 +85,7 @@ describe('FileTree inline rename (Enter + blur double-fire)', () => {
     const draft = rowByLabel(w.findAll('.tree-row'), 'draft')
     await draft.trigger('contextmenu', { clientX: 10, clientY: 10 })
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
     document.querySelector<HTMLButtonElement>('.tree-context-menu button:not(.danger)')!.click()
     await w.vm.$nextTick()
 
@@ -108,7 +97,7 @@ describe('FileTree inline rename (Enter + blur double-fire)', () => {
     // commitRename and emit a rename despite the user pressing Escape.
     await input.trigger('blur')
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
 
     expect(patchSpy).not.toHaveBeenCalled()
   })

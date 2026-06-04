@@ -352,7 +352,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
           :title="activeScope === root ? `已过滤为 ${root}（再次点击取消）` : `只看 ${root}`"
           @click="toggleScope(root)"
         >
-          <span class="scope-chip-icon" v-html="SCOPE_ICONS[root]" />
+          <span class="scope-chip-icon" aria-hidden="true" v-html="SCOPE_ICONS[root]" />
           <span class="scope-chip-count">{{ scopeCounts[root] ?? 0 }}</span>
         </button>
       </div>

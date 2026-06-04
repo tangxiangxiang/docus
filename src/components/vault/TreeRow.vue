@@ -192,13 +192,14 @@ function cancelRename() {
       v-if="isFolder"
       class="chevron"
       :class="{ expanded: isExpanded }"
+      :aria-hidden="true"
       @click.stop="emit('toggle', node.path)"
       v-html="ICON_CHEVRON"
     />
     <span v-else class="chevron-spacer" />
 
-    <span class="row-icon" v-if="isFolder" v-html="isExpanded ? ICON_FOLDER_OPEN : ICON_FOLDER" />
-    <span class="row-icon" v-else v-html="ICON_FILE_MD" />
+    <span class="row-icon" v-if="isFolder" :aria-hidden="true" v-html="isExpanded ? ICON_FOLDER_OPEN : ICON_FOLDER" />
+    <span class="row-icon" v-else :aria-hidden="true" v-html="ICON_FILE_MD" />
 
     <template v-if="renaming">
       <input
@@ -212,11 +213,16 @@ function cancelRename() {
       />
     </template>
     <template v-else>
-      <a
+      <!-- Button, not anchor. A folder row toggles (not navigates) and
+           a file row opens in the same SPA (not a new tab). Using an
+           anchor with href="#" would pollute browser history on every
+           click and confuse screen readers announcing "link" for what
+           is really an activation. -->
+      <button
+        type="button"
         class="row-name"
-        href="#"
-        @click.prevent="isFolder ? emit('toggle', node.path) : emit('select', node.path)"
-      >{{ node.name }}</a>
+        @click="isFolder ? emit('toggle', node.path) : emit('select', node.path)"
+      >{{ node.name }}</button>
     </template>
 
     <Teleport to="body">

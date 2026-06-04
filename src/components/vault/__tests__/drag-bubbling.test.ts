@@ -1,22 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { flushPromises } from "@vue/test-utils"
 import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
 import * as api from '../../../lib/api'
+import { installDialogMocks, makeDT, rowByLabel } from '../../../__test-helpers__/dialogs'
 
-vi.mock('../../../composables/useConfirm', () => ({
-  useConfirm: () => ({ confirm: vi.fn().mockResolvedValue(true), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/usePrompt', () => ({
-  usePrompt: () => ({ prompt: vi.fn().mockResolvedValue(null), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/useToast', () => ({
-  useToast: () => ({
-    toasts: { value: [] },
-    info: vi.fn(), success: vi.fn(), error: vi.fn(), dismiss: vi.fn(),
-  }),
-}))
+installDialogMocks()
 
 const TREE: TreeNode[] = [
   {
@@ -37,22 +28,7 @@ const TREE: TreeNode[] = [
   },
 ]
 
-/** Mimics DataTransfer well enough for Vue Test Utils' event triggering. */
-function makeDT() {
-  const store = new Map<string, string>()
-  return {
-    setData: (k: string, v: string) => { store.set(k, v); return true },
-    getData: (k: string) => store.get(k) ?? '',
-    clearData: () => store.clear(),
-    effectAllowed: 'move' as const,
-    dropEffect: 'move' as const,
-    types: [] as string[],
-  }
-}
 
-function rowByLabel(rows: any[], name: string): any {
-  return rows.filter((r: any) => r.find('.row-name')?.text() === name).pop()!
-}
 
 describe('FileTree full drag flow (with bubbling)', () => {
   beforeEach(() => {
@@ -140,7 +116,7 @@ describe('FileTree full drag flow (with bubbling)', () => {
     await testRow.trigger('drop', { dataTransfer: dt })
     await mdRow.trigger('dragend', { dataTransfer: dt })
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
 
     expect(patchSpy).toHaveBeenCalledWith('inbox/markdown-syntax', { targetPath: 'inbox/test/markdown-syntax' })
     w.unmount()

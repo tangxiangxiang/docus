@@ -122,7 +122,7 @@ function onFilterKeydown(e: KeyboardEvent) {
       <header class="results-header">
         <span class="results-title">
           <template v-for="(t, i) in activeTags" :key="t">
-            <span v-if="i > 0" class="results-sep">∪</span>#{{ t }}
+            <span v-if="i > 0" class="results-sep" aria-hidden="true">∪</span>#{{ t }}
           </template>
         </span>
         <span class="results-count">{{ filtered.length }}</span>

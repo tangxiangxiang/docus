@@ -1,21 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { flushPromises } from "@vue/test-utils"
 import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
+import { installDialogMocks, rowByLabel, makeDT } from '../../../__test-helpers__/dialogs'
 
-vi.mock('../../../composables/useConfirm', () => ({
-  useConfirm: () => ({ confirm: vi.fn().mockResolvedValue(true), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/usePrompt', () => ({
-  usePrompt: () => ({ prompt: vi.fn().mockResolvedValue(null), answer: vi.fn(), queue: { value: [] } }),
-}))
-vi.mock('../../../composables/useToast', () => ({
-  useToast: () => ({
-    toasts: { value: [] },
-    info: vi.fn(), success: vi.fn(), error: vi.fn(), dismiss: vi.fn(),
-  }),
-}))
+installDialogMocks()
 
 const TREE: TreeNode[] = [
   {
@@ -48,7 +39,7 @@ describe('FileTree context menu', () => {
 
     await inboxRow.trigger('contextmenu', { clientX: 100, clientY: 100 })
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
 
     const menu = document.querySelector('.tree-context-menu')
     expect(menu).not.toBeNull()
@@ -68,7 +59,7 @@ describe('FileTree context menu', () => {
 
     await helloRow.trigger('contextmenu', { clientX: 100, clientY: 100 })
     await w.vm.$nextTick()
-    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
 
     const menu = document.querySelector('.tree-context-menu')
     expect(menu).not.toBeNull()
