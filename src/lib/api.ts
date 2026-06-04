@@ -15,6 +15,10 @@ export type TreeNode =
 export interface PostDetail {
   path: string
   raw: string
+  /** Markdown body with the frontmatter block stripped. Used by the
+   *  client-side full-text search (primeBody) and by the preview pane —
+   *  the raw field is what gets written back on save. */
+  content: string
   frontmatter: Record<string, unknown>
   size: number
   mtime: number

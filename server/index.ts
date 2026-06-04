@@ -140,6 +140,7 @@ app.get('/api/posts/*', async (c) => {
   return c.json({
     path: splat,
     raw,
+    content: parsed.content,
     frontmatter: parsed.data,
     size: st.size,
     mtime: st.mtimeMs,
