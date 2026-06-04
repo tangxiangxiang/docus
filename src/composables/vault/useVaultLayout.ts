@@ -91,8 +91,11 @@ export function useVaultLayout() {
   const vaultStyle = computed(() => {
     // Rows: editor-area (fills), then a 24px status-bar that spans the
     // full width. Columns vary depending on whether a side panel is open.
+    // The splitter grid track is 1px (matches .vault .splitter { width: 1px });
+    // the actual grabbable area is wider (7px), but that lives on a
+    // transparent ::before that overflows the layout box.
     const cols = activePanel.value
-      ? `48px ${sidePanelWidth.value}px 6px 1fr`
+      ? `48px ${sidePanelWidth.value}px 1px 1fr`
       : '48px 1fr'
     return { gridTemplateColumns: cols, gridTemplateRows: '1fr 24px' }
   })
@@ -116,7 +119,10 @@ export function useVaultLayout() {
     const startX = e.clientX
     const startTree = sidePanelWidth.value
     const startRatio = editorRatio.value
-    const SPLITTER_PX = 6
+    // Must match the splitter's layout width in .vault .splitter { width: 1px }
+    // and the .content flex track the mid-splitter sits in. The 7px hit area
+    // (::before) is purely for grabbing and doesn't affect this math.
+    const SPLITTER_PX = 1
 
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
