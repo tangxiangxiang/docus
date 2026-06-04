@@ -26,6 +26,15 @@ export const ICON_CHEVRON = `
   <path d="M3.5 2l3 3-3 3"/>
 </svg>`
 
+// "Search" — magnifier. 14×14 line art, matches the scope/file-tree icons.
+// Used as the prefix glyph in the TagPanel filter input; the host turns
+// it accent-blue on focus-within to confirm the search context.
+export const ICON_SEARCH = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="7" cy="7" r="4.25"/>
+  <path d="M10.25 10.25L13.5 13.5"/>
+</svg>`
+
 // "New file" — 16×16 doc glyph with a small accent "+" badge in the bottom-right.
 export const ICON_NEW_FILE = `
 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">

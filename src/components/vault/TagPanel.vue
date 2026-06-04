@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import { PROTECTED_ROOTS } from '../../composables/zettelProtocol'
+import { ICON_SEARCH } from './icons'
 
 const props = defineProps<{
   posts: PostSummary[]
@@ -82,6 +83,7 @@ function onFilterKeydown(e: KeyboardEvent) {
     </header>
 
     <div class="tag-filter">
+      <span class="tag-filter-icon" v-html="ICON_SEARCH" aria-hidden="true" />
       <input
         v-model="filter"
         class="tag-filter-input"

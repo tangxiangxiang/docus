@@ -804,7 +804,10 @@ main.container {
   color: var(--vs-text-1);
 }
 
-/* TagPanel: shares the file-tree column in the vault */
+/* TagPanel: shares the file-tree column in the vault. Layout is a
+   vertical stack: header (label + count pill), filter row (search icon
+   + input + clear), tag list (flex: 1), and an optional results section
+   capped at 55% so the picker never gets squeezed. */
 .vault .tag-panel {
   background: var(--vs-bg-2);
   color: var(--vs-text-1);
@@ -824,70 +827,109 @@ main.container {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
 .vault .tag-panel header .count {
   font-weight: 500;
-  font-size: 0.72rem;
-  color: var(--vs-text-3);
+  font-size: 0.7rem;
+  color: var(--vs-text-2);
+  background: var(--vs-bg-3);
+  border-radius: 8px;
+  padding: 1px 7px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.4;
 }
-.vault .tag-panel ul { overflow-y: auto; flex: 1; margin: 0; padding: 0; list-style: none; }
+/* Inside the vault the panel's <ul> is a flex item of the column
+   panel — `display: block` here overrides the global `.tag-list`
+   flex-wrap layout (which is meant for the /tags cloud view) so the
+   tag rows stay at intrinsic height and don't get stretched. */
+.vault .tag-panel ul {
+  display: block;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
 .vault .tag-panel li { border-bottom: 0; }
 
-/* Filter input bar: sits between the panel header and the scrollable
-   tag list. The trailing × is a small clear button that only renders
-   while there's text in the input. */
+/* Filter input row. The container is a flex bar with three children:
+   a magnifier icon (turns accent on focus-within), the bare text input,
+   and a × clear button that only renders while there's text. The input
+   itself drops its own border/background — the icon + clear button
+   provide the visual affordance, matching the file-tree filter bar. */
 .vault .tag-panel .tag-filter {
-  position: relative;
-  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
 }
+.vault .tag-panel .tag-filter-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--vs-text-3);
+  transition: color 100ms;
+}
+.vault .tag-panel .tag-filter:focus-within .tag-filter-icon {
+  color: var(--vs-accent);
+}
 .vault .tag-panel .tag-filter-input {
-  width: 100%;
-  background: var(--vs-bg-3);
-  border: 1px solid var(--vs-border);
-  border-radius: 4px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
   color: var(--vs-text-1);
   font: inherit;
   font-size: 0.82rem;
-  padding: 5px 26px 5px 10px;
   outline: none;
-  transition: border-color 0.1s, box-shadow 0.1s;
-}
-.vault .tag-panel .tag-filter-input:focus {
-  border-color: var(--vs-accent);
-  box-shadow: 0 0 0 2px var(--vs-focus-ring, rgba(99, 102, 241, 0.25));
 }
 .vault .tag-panel .tag-filter-input::placeholder { color: var(--vs-text-3); }
 .vault .tag-panel .tag-filter-clear-x {
-  position: absolute;
-  top: 50%;
-  right: 16px;
-  transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
   padding: 0;
   border: 0;
   background: transparent;
   color: var(--vs-text-3);
-  font-size: 1rem;
+  font-size: 0.85rem;
   line-height: 1;
   cursor: pointer;
   border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 100ms, color 100ms;
 }
 .vault .tag-panel .tag-filter-clear-x:hover {
   background: var(--vs-hover-bg);
   color: var(--vs-text-1);
 }
 
+/* Tag rows. Default text is one step dimmer (--vs-text-2) so the
+   selected tag naturally pops. Hover lifts both bg and text; the
+   active state swaps to an accent-tinted background and adds a 5px
+   dot before the tag name (in addition to the 2px left strip) as
+   a second visual anchor. All state changes use a 100ms multi-
+   property transition, matching the .scope-chip / .tag-filter-input
+   convention. */
 .vault .tag-panel .tag-entry {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
   width: 100%;
-  padding: 5px 14px;
-  font-size: 0.88rem;
-  color: var(--vs-text-1);
+  padding: 3px 14px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--vs-text-2);
   text-decoration: none;
   background: transparent;
   border: 0;
@@ -895,21 +937,50 @@ main.container {
   cursor: pointer;
   text-align: left;
   font-family: inherit;
+  transition: background 100ms, color 100ms, border-left-color 100ms;
 }
-.vault .tag-panel .tag-entry:hover { background: var(--vs-hover-bg); }
+.vault .tag-panel .tag-entry:hover {
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
 .vault .tag-panel .tag-entry.active {
-  background: var(--vs-active-bg);
+  background: var(--vs-accent-bg);
   border-left-color: var(--vs-accent);
+  color: var(--vs-text-1);
 }
-.vault .tag-panel .tag-entry.active:hover { background: var(--vs-active-bg); }
-.vault .tag-panel .tag-name { font-family: var(--mono); }
+.vault .tag-panel .tag-entry.active:hover {
+  background: var(--vs-accent-bg);
+}
+.vault .tag-panel .tag-name {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vault .tag-panel .tag-entry.active .tag-name::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--vs-accent);
+  flex-shrink: 0;
+}
 .vault .tag-panel .tag-count {
-  font-size: 0.72rem;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
   color: var(--vs-text-3);
-  background: var(--vs-bg-3);
-  border-radius: 8px;
-  padding: 1px 7px;
+  flex-shrink: 0;
+  min-width: 14px;
+  text-align: right;
+  transition: color 100ms;
 }
+.vault .tag-panel .tag-entry:hover .tag-count { color: var(--vs-text-2); }
+.vault .tag-panel .tag-entry.active .tag-count { color: var(--vs-text-1); }
 .vault .tag-panel .empty {
   padding: 14px;
   color: var(--vs-text-3);
@@ -917,13 +988,10 @@ main.container {
   font-size: 0.85rem;
 }
 
-/* Results section. The previous design gave .results flex: 1, which
-   made the tag list and the results share vertical space — once a tag
-   was selected the list would shrink to a sliver and the user could
-   no longer pick a different tag without scrolling. The new design
-   gives the list flex: 1 (so it fills the panel) and the results a
-   capped max-height with its own scroll, so the picker stays usable
-   and the results don't crowd it out. */
+/* Results section. The list fills the panel; the results are capped at
+   55% max-height with their own scroll so picking a tag never squeezes
+   the picker. The header shows the OR-joined active tags (∪) plus an
+   accent-tinted count pill. */
 .vault .tag-panel .results {
   display: flex;
   flex-direction: column;
@@ -934,7 +1002,7 @@ main.container {
   max-height: 55%;
 }
 .vault .tag-panel .results-header {
-  padding: 8px 14px;
+  padding: 10px 14px;
   font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -944,7 +1012,7 @@ main.container {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 8px;
   flex: 0 0 auto;
 }
 .vault .tag-panel .results-title {
@@ -958,16 +1026,27 @@ main.container {
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
 }
 .vault .tag-panel .results-sep {
   color: var(--vs-text-3);
   margin: 0 2px;
   font-weight: 400;
+  opacity: 0.7;
 }
 .vault .tag-panel .results-count {
   font-weight: 500;
-  color: var(--vs-text-3);
-  flex: 0 0 auto;
+  font-size: 0.7rem;
+  color: var(--vs-text-1);
+  background: var(--vs-accent-bg);
+  border-radius: 8px;
+  padding: 1px 8px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.4;
+  flex-shrink: 0;
 }
 .vault .tag-panel .results-list {
   list-style: none;
@@ -983,7 +1062,7 @@ main.container {
   align-items: flex-start;
   gap: 2px;
   width: 100%;
-  padding: 6px 14px;
+  padding: 7px 14px;
   background: transparent;
   border: 0;
   border-left: 2px solid transparent;
@@ -991,14 +1070,16 @@ main.container {
   text-align: left;
   cursor: pointer;
   font: inherit;
+  transition: background 100ms, border-left-color 100ms;
 }
 .vault .tag-panel .result-entry:hover { background: var(--vs-hover-bg); }
 .vault .tag-panel .result-entry.active {
-  background: var(--vs-active-bg);
+  background: var(--vs-accent-bg);
   border-left-color: var(--vs-accent);
 }
 .vault .tag-panel .result-title {
   font-size: 0.88rem;
+  font-weight: 500;
   color: var(--vs-text-1);
   overflow: hidden;
   text-overflow: ellipsis;
