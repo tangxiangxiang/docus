@@ -491,6 +491,7 @@ main.container {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 0 12px;
   height: 40px;
   box-sizing: border-box;
@@ -501,6 +502,24 @@ main.container {
   color: var(--vs-text-2);
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
+}
+.vault .file-tree header .title {
+  /* The chip group on the right can grow wider than the title, and
+     flex's default min-width:auto squeezes CJK characters one-per-line
+     instead of letting them overflow. Keep the title at its intrinsic
+     width and let the chips shrink / wrap inside their own group. */
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.vault .file-tree header .scope-chips {
+  /* Take whatever space the title leaves. min-width:0 lets the
+     container shrink below its intrinsic content size when the
+     panel is narrow; the chips themselves overflow with ellipsis
+     rather than pushing the title into a vertical column. */
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+  overflow: hidden;
 }
 .vault .file-tree ul { overflow-y: auto; flex: 1; }
 .vault .file-tree li {
