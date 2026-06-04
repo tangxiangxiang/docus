@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import matter from 'gray-matter'
 import { CONTENT_DIR } from './paths.js'
 import type { PostSummary, TreeNode } from '../src/lib/api.js'
 
@@ -42,17 +43,28 @@ function nameFromPath(p: string): string {
   return p.split('/').pop()!
 }
 
-function titleFromFile(file: string, fallback: string): string {
-  // Cheap title extraction: first H1, or fallback to filename.
-  // We avoid pulling in gray-matter here for performance; a fuller parse happens
-  // at GET /api/posts/* time. This is best-effort for the tree view.
+function readFrontmatter(file: string): { tags: string[]; firstHeading: string | null } {
+  // Sync read is fine here — files are small and this only runs in tree-builder paths.
+  // We use this for the cheap frontmatter fields (tags) and the first H1 — the
+  // full gray-matter parse is reserved for the single-file GET where we have
+  // the content anyway. Returning defaults on any parse error keeps the list
+  // endpoint resilient to a single corrupt file.
   try {
-    // Synchronous read is fine here — files are small and this only runs in tree-builder paths.
     const fsSync = require('node:fs') as typeof import('node:fs')
     const text = fsSync.readFileSync(file, 'utf8')
+    const parsed = matter(text)
+    const tags = Array.isArray(parsed.data.tags)
+      ? (parsed.data.tags as unknown[]).filter((t): t is string => typeof t === 'string')
+      : []
     const m = /^#\s+(.+)$/m.exec(text)
-    if (m) return m[1].trim()
-  } catch { /* ignore */ }
+    return { tags, firstHeading: m ? m[1].trim() : null }
+  } catch {
+    return { tags: [], firstHeading: null }
+  }
+}
+
+function titleFromFile(file: string, fallback: string, firstHeading: string | null): string {
+  if (firstHeading) return firstHeading
   return fallback
 }
 
@@ -66,11 +78,12 @@ export async function listPostsFlat(
     const p = relToPath(entry.rel)
     const name = nameFromPath(p)
     const stat = await fs.stat(entry.abs)
+    const fm = readFrontmatter(entry.abs)
     out.push({
       path: p,
-      title: titleFromFile(entry.abs, name),
+      title: titleFromFile(entry.abs, name, fm.firstHeading),
       date: '',
-      tags: [],
+      tags: fm.tags,
       size: stat.size,
       mtime: stat.mtimeMs,
     })
@@ -140,11 +153,12 @@ export async function buildTree(
       const parent = nodes.get(parentPath)
       if (!parent || parent.kind !== 'folder') continue
       const stat = await fs.stat(entry.abs)
+      const fm = readFrontmatter(entry.abs)
       parent.children.push({
         kind: 'file',
         name,
         path: p,
-        title: titleFromFile(entry.abs, name),
+        title: titleFromFile(entry.abs, name, fm.firstHeading),
         mtime: stat.mtimeMs,
       })
     }
