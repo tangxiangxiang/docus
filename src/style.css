@@ -1012,25 +1012,39 @@ main.container {
   background: var(--vs-bg-1);
 }
 
-/* Splitters inside vault — a 6px pointer hit area with the 1px visual
-   line drawn flush against the right-hand panel's left edge
-   (box-shadow: inset -1px 0 0). This matches VSCode's convention:
-   the line reads as the right panel's left border, not as a rule
-   floating in the middle of a gap, so the two adjacent panels
-   feel like they share the seam rather than being two boxes
-   with a slot between them. */
+/* Splitters inside vault — the visual rule is exactly 1px (the
+   splitter's own right edge, painted via box-shadow: inset -1px 0 0)
+   so the line reads as the right-hand panel's left border and the
+   adjacent panels share the seam. To keep the splitter easy to
+   grab, the actual hit area is widened to 7px (3px on each side of
+   the 1px line) by a transparent ::before that overflows the
+   splitter's layout box. The line is on the right inner edge, so
+   the hit area extends slightly to the right of the seam (over the
+   right panel) — that matches the "grab the line, not the gap"
+   feel, since the cursor snaps to the panel edge and the line is
+   the visual guide for where to grab. */
 .vault .splitter {
   background: transparent;
   cursor: col-resize;
   position: relative;
   user-select: none;
   touch-action: none;
-  width: 6px;
+  width: 1px;
   box-shadow: inset -1px 0 0 var(--vs-border);
 }
 .vault .splitter:hover,
 .vault .splitter:active {
   box-shadow: inset -1px 0 0 var(--vs-accent);
+}
+.vault .splitter::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+  /* pointer-events: auto is the default; the ::before exists solely
+     to enlarge the hit area, so leave it click-transparent visually. */
 }
 
 /* EditorPane inside vault */
