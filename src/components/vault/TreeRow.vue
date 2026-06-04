@@ -31,6 +31,14 @@ const emit = defineEmits<{
 const isFolder = computed(() => props.node.kind === 'folder')
 const isActive = computed(() => !isFolder.value && props.node.path === props.currentPath)
 const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.node.path))
+// Narrow the discriminated union for the children list. The computed
+// re-reads `props.node.kind` so TS sees the type guard fire here (the
+// outer `isFolder` computed is a closure value, not a narrowing aid).
+// Inside the template the v-if="isFolder && isExpanded" guards the
+// <ul>, so the array is non-empty only when the kind is 'folder'.
+const childNodes = computed(() =>
+  props.node.kind === 'folder' ? props.node.children : [],
+)
 // Read-only check: the row is in the zettel/ subtree, OR it is one of the
 // three protected top-level folders. The rule lives in zettelProtocol.ts so
 // the same set {inbox, literature, zettel} is not duplicated across files.
@@ -159,7 +167,7 @@ function commitRename() {
   renaming.value = false
   const name = renameValue.value.trim()
   if (!name || name === props.node.name) return
-  emit('rename', props.node.path, name)
+  emit('rename', props.node.path, name, props.node.kind)
 }
 function cancelRename() {
   renaming.value = false
@@ -225,14 +233,14 @@ function cancelRename() {
         </template>
         <button v-if="!readonly" @click="menuAction(startRename)">重命名</button>
         <hr v-if="!readonly" />
-        <button v-if="!readonly" class="danger" @click="menuAction(() => emit('delete', node.path))">删除</button>
+        <button v-if="!readonly" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))">删除</button>
         <span v-if="readonly" class="readonly-hint">{{ readonlyHintLabel(node.path) }}</span>
       </div>
     </Teleport>
 
     <ul v-if="isFolder && isExpanded" class="tree-children">
       <TreeRow
-        v-for="child in (node as any).children"
+        v-for="child in childNodes"
         :key="child.path"
         :node="child"
         :depth="depth + 1"

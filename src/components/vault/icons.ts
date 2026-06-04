@@ -35,23 +35,6 @@ export const ICON_SEARCH = `
   <path d="M10.25 10.25L13.5 13.5"/>
 </svg>`
 
-// "New file" — 16×16 doc glyph with a small accent "+" badge in the bottom-right.
-export const ICON_NEW_FILE = `
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M3.75 2h5.5L13 5.75V12.5c0 .83-.67 1.5-1.5 1.5h-7.75C2.92 14 2.25 13.33 2.25 12.5V3.5C2.25 2.67 2.92 2 3.75 2z"/>
-  <path d="M9.25 2v3.75H13"/>
-  <circle cx="11.75" cy="11.75" r="3" fill="var(--vs-bg-2, #1e1e1e)" stroke="currentColor" stroke-width="1.2"/>
-  <path d="M11.75 10.25v3M10.25 11.75h3"/>
-</svg>`
-
-// "New folder" — same doc/folder body with a "+" badge in the bottom-right.
-export const ICON_NEW_FOLDER = `
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2.5 4.5C2.5 3.67 3.17 3 4 3h3l1.5 1.5h4.5c.83 0 1.5.67 1.5 1.5v6.5c0 .83-.67 1.5-1.5 1.5h-9c-.83 0-1.5-.67-1.5-1.5V4.5z"/>
-  <circle cx="11.75" cy="11.75" r="3" fill="var(--vs-bg-2, #1e1e1e)" stroke="currentColor" stroke-width="1.2"/>
-  <path d="M11.75 10.25v3M10.25 11.75h3"/>
-</svg>`
-
 // Scope chip glyphs. Each is 14×14 line art, matching the file-tree
 // row icons. The three map to the Zettelkasten roots:
 //   inbox       — capture bucket: an inbox tray with a downward arrow

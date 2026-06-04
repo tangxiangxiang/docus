@@ -10,12 +10,17 @@ const props = defineProps<{
   dirty: boolean
 }>()
 
+// The leading glyphs (● ✓ ⟳ !) come from CSS `::before` on
+// `.sb-status[data-status=...]` (see style.css ~line 1351). This computed
+// only owns the *text* — prepending glyphs here would render the icon
+// twice. The `$(loading) Saving…` placeholder was a leftover from a
+// VSCode-status-bar port; the CSS-side `⟳ ` glyph now carries the state.
 const statusLabel = computed(() => {
   if (!props.path) return '—'
-  if (props.saveStatus === 'saving') return '$(loading) Saving…'
-  if (props.saveStatus === 'dirty') return '● Unsaved'
-  if (props.saveStatus === 'saved') return '✓ Saved'
-  if (props.saveStatus === 'error') return `! ${props.error ?? 'Error'}`
+  if (props.saveStatus === 'saving') return 'Saving…'
+  if (props.saveStatus === 'dirty') return 'Unsaved'
+  if (props.saveStatus === 'saved') return 'Saved'
+  if (props.saveStatus === 'error') return props.error ?? 'Error'
   return 'Idle'
 })
 

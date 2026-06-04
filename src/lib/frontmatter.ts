@@ -25,18 +25,3 @@ export function parseDoc(raw: string): ParsedDoc {
   }
   return { raw, frontmatter, content }
 }
-
-/** 用给定的 frontmatter + 正文合成 .md 源文本。 */
-export function stringifyDoc(frontmatter: Record<string, unknown>, content: string): string {
-  const yaml = YAML.stringify(frontmatter, { lineWidth: 0 }).trimEnd()
-  return `---\n${yaml}\n---\n${content.startsWith('\n') ? content : '\n' + content}`
-}
-
-/** 简单 slugify:把任意字符串转成 [a-z0-9-]。 */
-export function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64) || 'untitled'
-}
