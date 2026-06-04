@@ -486,9 +486,12 @@ main.container {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* The right-side seam is drawn by the splitter to the right of this
-     panel, not by this panel itself, so it doesn't get reflowed when
-     the user drags the handle. */
+  /* 1px right seam drawn by the panel itself (not the splitter), so
+     the line sits flush against the file-tree's right boundary
+     instead of floating in the 6px gap to its right. box-shadow
+     doesn't participate in layout, so dragging the splitter
+     doesn't reflow this rule. */
+  box-shadow: inset -1px 0 0 var(--vs-border);
 }
 .vault .file-tree header {
   display: flex;
@@ -744,6 +747,10 @@ main.container {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* Same right-edge seam as .file-tree — the seam is owned by the
+     panel, not by the splitter, so the line sits flush with the
+     panel's right boundary. */
+  box-shadow: inset -1px 0 0 var(--vs-border);
 }
 .vault .tag-panel header {
   padding: 10px 14px;
@@ -984,6 +991,9 @@ main.container {
 }
 .editor-pane {
   flex: var(--editor-flex, 1) 1 0;
+  /* 1px right seam drawn by the editor itself, not by the splitter
+     to its right. The splitter stays a pure hit area. */
+  box-shadow: inset -1px 0 0 var(--vs-border);
 }
 .preview-pane {
   flex: var(--preview-flex, 1) 1 0;
@@ -1012,13 +1022,12 @@ main.container {
   background: var(--vs-bg-1);
 }
 
-/* Splitters inside vault — a 6px pointer hit area with the 1px visual
-   line drawn flush against the right-hand panel's left edge
-   (box-shadow: inset -1px 0 0). This matches VSCode's convention:
-   the line reads as the right panel's left border, not as a rule
-   floating in the middle of a gap, so the two adjacent panels
-   feel like they share the seam rather than being two boxes
-   with a slot between them. */
+/* Splitters inside vault — pure pointer hit area, no visual line.
+   The 1px seam is drawn by the panel on the LEFT of the splitter
+   as a 1px right-edge box-shadow, so the line sits flush against
+   that panel's right boundary and visually reads as that panel's
+   own right border — exactly like the ActivityBar's border-right
+   reads as the bar's own right edge. */
 .vault .splitter {
   background: transparent;
   cursor: col-resize;
@@ -1026,11 +1035,6 @@ main.container {
   user-select: none;
   touch-action: none;
   width: 6px;
-  box-shadow: inset -1px 0 0 var(--vs-border);
-}
-.vault .splitter:hover,
-.vault .splitter:active {
-  box-shadow: inset -1px 0 0 var(--vs-accent);
 }
 
 /* EditorPane inside vault */
