@@ -993,7 +993,6 @@ main.container {
   flex-direction: column;
   background: var(--vs-bg-1);
 }
-.preview-pane { border-left: 1px solid var(--vs-border); }
 .preview-pane > .article {
   flex: 0 0 auto;
   min-height: 0;
@@ -1043,6 +1042,15 @@ main.container {
 /* EditorPane inside vault */
 .vault .cm-host { flex: 1; min-height: 0; height: 100%; }
 .vault .cm-host .cm-editor { height: 100%; }
+/* Override the oneDark theme's #282c34 background to match --vs-bg-1
+   so the editor pane reads as continuous with the preview pane. The
+   oneDark theme is still active (syntax colors / caret etc.), only
+   the bg of the editor and its scroller is re-tinted. */
+.vault .cm-host .cm-editor,
+.vault .cm-host .cm-scroller,
+.vault .cm-host .cm-gutters {
+  background-color: var(--vs-bg-1) !important;
+}
 .vault .cm-host .cm-scroller { font-family: var(--mono); }
 
 /* PreviewPane inside vault: drop docus stylesheet padding to match */
