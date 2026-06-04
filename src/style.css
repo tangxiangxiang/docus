@@ -737,6 +737,73 @@ main.container {
   padding: 12px; color: var(--vs-text-3); font-size: 0.85rem;
 }
 
+/* Active-tag filter bar. Sits between the file-tree header and the
+   scrollable tree. Each chip has a × so the user can drop a single
+   tag; the trailing "清除" empties the whole set in one click. */
+.vault .file-tree .tag-filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vs-border);
+  background: var(--vs-bg-2);
+}
+.vault .file-tree .tag-filter-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--vs-text-3);
+  font-weight: 600;
+  margin-right: 2px;
+}
+.vault .file-tree .tag-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  background: var(--vs-active-bg);
+  border: 1px solid var(--vs-accent);
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--vs-text-1);
+  line-height: 1.4;
+}
+.vault .file-tree .tag-filter-chip-x {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--vs-text-2);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.vault .file-tree .tag-filter-chip-x:hover {
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
+.vault .file-tree .tag-filter-clear {
+  margin-left: auto;
+  padding: 2px 8px;
+  background: transparent;
+  border: 0;
+  color: var(--vs-text-2);
+  font-size: 0.72rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.vault .file-tree .tag-filter-clear:hover {
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
+
 /* TagPanel: shares the file-tree column in the vault */
 .vault .tag-panel {
   background: var(--vs-bg-2);
@@ -765,6 +832,54 @@ main.container {
 }
 .vault .tag-panel ul { overflow-y: auto; flex: 1; margin: 0; padding: 0; list-style: none; }
 .vault .tag-panel li { border-bottom: 0; }
+
+/* Filter input bar: sits between the panel header and the scrollable
+   tag list. The trailing × is a small clear button that only renders
+   while there's text in the input. */
+.vault .tag-panel .tag-filter {
+  position: relative;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--vs-border);
+  background: var(--vs-bg-2);
+}
+.vault .tag-panel .tag-filter-input {
+  width: 100%;
+  background: var(--vs-bg-3);
+  border: 1px solid var(--vs-border);
+  border-radius: 4px;
+  color: var(--vs-text-1);
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 5px 26px 5px 10px;
+  outline: none;
+  transition: border-color 0.1s, box-shadow 0.1s;
+}
+.vault .tag-panel .tag-filter-input:focus {
+  border-color: var(--vs-accent);
+  box-shadow: 0 0 0 2px var(--vs-focus-ring, rgba(99, 102, 241, 0.25));
+}
+.vault .tag-panel .tag-filter-input::placeholder { color: var(--vs-text-3); }
+.vault .tag-panel .tag-filter-clear-x {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--vs-text-3);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+}
+.vault .tag-panel .tag-filter-clear-x:hover {
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
+
 .vault .tag-panel .tag-entry {
   display: flex;
   align-items: center;
@@ -801,13 +916,22 @@ main.container {
   font-style: italic;
   font-size: 0.85rem;
 }
+
+/* Results section. The previous design gave .results flex: 1, which
+   made the tag list and the results share vertical space — once a tag
+   was selected the list would shrink to a sliver and the user could
+   no longer pick a different tag without scrolling. The new design
+   gives the list flex: 1 (so it fills the panel) and the results a
+   capped max-height with its own scroll, so the picker stays usable
+   and the results don't crowd it out. */
 .vault .tag-panel .results {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   border-top: 1px solid var(--vs-border);
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: 55%;
 }
 .vault .tag-panel .results-header {
   padding: 8px 14px;
@@ -820,17 +944,38 @@ main.container {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.vault .tag-panel .results-title {
+  font-family: var(--mono);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--vs-text-1);
+  font-size: 0.78rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.vault .tag-panel .results-sep {
+  color: var(--vs-text-3);
+  margin: 0 2px;
+  font-weight: 400;
 }
 .vault .tag-panel .results-count {
   font-weight: 500;
   color: var(--vs-text-3);
+  flex: 0 0 auto;
 }
 .vault .tag-panel .results-list {
   list-style: none;
   margin: 0;
   padding: 0;
   overflow-y: auto;
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .vault .tag-panel .result-entry {
   display: flex;

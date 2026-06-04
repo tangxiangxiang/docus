@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import type { TreeNode } from '../../lib/api'
+import type { TreeNode, PostSummary } from '../../lib/api'
 import TreeRow from './TreeRow.vue'
 import { useConfirm } from '../../composables/useConfirm'
 import { usePrompt } from '../../composables/usePrompt'
@@ -16,13 +16,20 @@ const SCOPE_ICONS: Record<string, string> = {
   zettel: ICON_SCOPE_ZETTEL,
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   tree: TreeNode[]
+  posts?: PostSummary[]
+  activeTags?: string[]
   currentPath: string | null
-}>()
+}>(), {
+  posts: () => [],
+  activeTags: () => [],
+})
 const emit = defineEmits<{
   select: [path: string]
   refresh: []
+  'clear-tag-filter': []
+  'remove-tag': [tag: string]
 }>()
 
 const { confirm } = useConfirm()
@@ -55,10 +62,19 @@ function toggleScope(root: string) {
 const topLevel = computed<TreeNode[]>(() => {
   const root = props.tree[0]
   if (!root || root.kind !== 'folder') return []
+  let children = root.children
   if (activeScope.value) {
-    return root.children.filter((c) => c.path === activeScope.value)
+    children = children.filter((c) => c.path === activeScope.value)
   }
-  return root.children
+  // Tag filter is OR: a file passes if it has at least one of the active
+  // tags. We rebuild the subtree so non-matching files are hidden but
+  // matching parents stay visible (so the user can navigate to the file).
+  if (tagFilterSet.value.size) {
+    children = children
+      .map((c) => filterByTags(c, tagFilterSet.value))
+      .filter((n): n is TreeNode => n !== null)
+  }
+  return children
 })
 
 // Counts per root for the chip badges. Computed off the unfiltered tree so
@@ -72,6 +88,31 @@ const scopeCounts = computed<Record<string, number>>(() => {
   }
   return out
 })
+
+// Path -> tags lookup so the tree filter can run in O(n) without scanning
+// props.posts for every file node. Recomputed when posts or the active
+// tag set changes.
+const postsByPath = computed<Map<string, Set<string>>>(() => {
+  const m = new Map<string, Set<string>>()
+  for (const p of props.posts) m.set(p.path, new Set(p.tags))
+  return m
+})
+const tagFilterSet = computed<Set<string>>(() => new Set(props.activeTags))
+
+// Returns the node unchanged if it has no files (folder) but contains any
+// matching descendant, the file itself if it matches, or null when the
+// whole subtree is irrelevant under the active tag filter.
+function filterByTags(node: TreeNode, tags: Set<string>): TreeNode | null {
+  if (node.kind === 'file') {
+    const t = postsByPath.value.get(node.path)
+    return t && [...tags].some((tag) => t.has(tag)) ? node : null
+  }
+  const kids = node.children
+    .map((c) => filterByTags(c, tags))
+    .filter((n): n is TreeNode => n !== null)
+  if (kids.length === 0) return null
+  return { ...node, children: kids }
+}
 
 function loadExpanded(): string[] {
   try {
@@ -316,6 +357,31 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         </button>
       </div>
     </header>
+    <!-- Active tag filter row. Only shown when at least one tag is
+         selected. Each chip exposes its own × so the user can drop a
+         single tag without clearing the whole filter, and the trailing
+         "clear" button empties the set in one click. -->
+    <div v-if="activeTags.length" class="tag-filter-bar" role="status" aria-live="polite">
+      <span class="tag-filter-label">已过滤</span>
+      <span
+        v-for="tag in activeTags"
+        :key="tag"
+        class="tag-filter-chip"
+      >
+        <span class="tag-filter-chip-name">#{{ tag }}</span>
+        <button
+          class="tag-filter-chip-x"
+          :aria-label="`移除过滤 ${tag}`"
+          :title="`移除过滤 ${tag}`"
+          @click="emit('remove-tag', tag)"
+        >×</button>
+      </span>
+      <button
+        class="tag-filter-clear"
+        title="清除所有 tag 过滤"
+        @click="emit('clear-tag-filter')"
+      >清除</button>
+    </div>
     <ul v-if="topLevel.length" class="tree" role="tree">
       <TreeRow
         v-for="node in topLevel"
@@ -332,6 +398,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @create-in="onCreateIn"
       />
     </ul>
+    <p v-else-if="activeTags.length" class="empty">没有匹配这些 tag 的文件。</p>
     <p v-else class="empty">还没有文件。</p>
   </aside>
 </template>

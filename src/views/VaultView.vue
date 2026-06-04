@@ -40,7 +40,7 @@ const {
 } = useEditorTabs({ selectPanel })
 
 /* ---------- Tag filter ---------- */
-const { activeTagFilter, onTagSelect } = useTagFilter({ activePanel })
+const { activeTagList, toggleTag, clear: clearTagFilter, removeTag } = useTagFilter({ activePanel })
 
 watch(() => navSearch?.tick.value, () => openSearch())
 </script>
@@ -55,16 +55,20 @@ watch(() => navSearch?.tick.value, () => openSearch())
     <FileTree
       v-if="activePanel === 'files'"
       :tree="tree"
+      :posts="posts"
+      :active-tags="activeTagList"
       :current-path="activePath"
       @select="openPost"
       @refresh="refresh"
+      @clear-tag-filter="clearTagFilter"
+      @remove-tag="removeTag"
     />
     <TagPanel
       v-else-if="activePanel === 'tags'"
       :posts="posts"
-      :active-tag="activeTagFilter"
+      :active-tags="activeTagList"
       :path="activePath"
-      @select="onTagSelect"
+      @select="toggleTag"
       @open="openPost"
     />
 
