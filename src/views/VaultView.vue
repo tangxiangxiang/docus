@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, inject } from 'vue'
+import { ref, computed, onMounted, watch, inject, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useStorage, useDebounceFn } from '@vueuse/core'
+import { useDebounceFn } from '@vueuse/core'
 import {
   listPosts,
   getPost,
@@ -12,12 +12,12 @@ import {
 } from '../lib/api'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
+import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import EditorPane from '../components/vault/EditorPane.vue'
 import PreviewPane from '../components/vault/PreviewPane.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
-import type { SidePanel } from '../components/vault/ActivityBar.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
 import Breadcrumb from '../components/vault/Breadcrumb.vue'
 import StatusBar from '../components/vault/StatusBar.vue'
@@ -35,115 +35,28 @@ const { confirm } = useConfirm()
 const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
 watch(() => navSearch?.tick.value, () => openSearch())
 
-/* ---------- Layout state (useStorage 自动序列化到 localStorage) ---------- */
-type ActivePanel = SidePanel | null
-const activePanel = ref<ActivePanel>('files')
-const sidePanelWidth = ref(260)
-const editorRatio = ref(1)
+/* ---------- Layout state ---------- */
+const {
+  activePanel,
+  vaultStyle,
+  contentStyle,
+  selectPanel,
+  startDrag,
+} = useVaultLayout()
 
-// 旧版只用 fileTreeOpen 布尔,这里做向后兼容:读旧值转成新 schema
-const layout = useStorage('docus.vault.layout', {
-  activePanel: 'files' as ActivePanel,
-  sidePanelWidth: 260,
-  editorRatio: 1,
-}, undefined, {
-  serializer: {
-    read: (raw) => {
-      try {
-        const d = JSON.parse(raw) as Record<string, unknown>
-        const ap = d.activePanel
-        let active: ActivePanel = null
-        if (ap === 'files' || ap === 'tags' || ap === null) active = ap as ActivePanel
-        else if (typeof d.fileTreeOpen === 'boolean') active = d.fileTreeOpen ? 'files' : null
-        const w = typeof d.sidePanelWidth === 'number'
-          ? d.sidePanelWidth
-          : typeof d.fileTreeWidth === 'number' ? d.fileTreeWidth : 260
-        const r = typeof d.editorRatio === 'number' ? d.editorRatio : 1
-        return { activePanel: active, sidePanelWidth: w, editorRatio: r }
-      } catch {
-        return { activePanel: 'files' as ActivePanel, sidePanelWidth: 260, editorRatio: 1 }
-      }
-    },
-    write: (v) => JSON.stringify(v),
-  },
-})
-
-watch(layout, (v) => {
-  activePanel.value = v.activePanel
-  sidePanelWidth.value = v.sidePanelWidth
-  editorRatio.value = v.editorRatio
-}, { immediate: true, deep: true })
-
-watch([activePanel, sidePanelWidth, editorRatio], ([ap, w, r]) => {
-  layout.value = { activePanel: ap, sidePanelWidth: w, editorRatio: r }
-})
-
-const vaultStyle = computed(() => {
-  /* Rows: editor-area (fills), then a 24px status-bar that spans the
-     full width.  Columns vary depending on whether a side panel is open. */
-  const cols = activePanel.value
-    ? `48px ${sidePanelWidth.value}px 6px 1fr`
-    : '48px 1fr'
-  return { gridTemplateColumns: cols, gridTemplateRows: '1fr 24px' }
-})
-const contentStyle = computed(() => ({
-  '--editor-flex': String(editorRatio.value),
-  '--preview-flex': '1',
-}))
-const vaultRef = ref<HTMLElement | null>(null)
+// Lives in VaultView (not the composable) so the string `ref="vaultRef"`
+// template binding resolves cleanly. The composable's startDrag takes
+// the host element as a parameter.
+const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 
 function openSearch() {
   paletteRef.value?.show()
 }
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n))
-}
-
 /** "notes/draft" -> "/vault/notes/draft" (path is already relative to src/content/). */
 function pathToUrl(p: string): string {
   return '/vault/' + p
-}
-
-function selectPanel(panel: SidePanel) {
-  activePanel.value = activePanel.value === panel ? null : panel
-}
-
-function startDrag(which: 'tree' | 'middle', e: PointerEvent) {
-  e.preventDefault()
-  const vault = vaultRef.value
-  if (!vault) return
-  const rect = vault.getBoundingClientRect()
-  const startX = e.clientX
-  const startTree = sidePanelWidth.value
-  const startRatio = editorRatio.value
-  const SPLITTER_PX = 6
-
-  const onMove = (ev: PointerEvent) => {
-    const dx = ev.clientX - startX
-    if (which === 'tree') {
-      const max = Math.min(600, rect.width - 480)
-      sidePanelWidth.value = clamp(startTree + dx, 150, max)
-    } else {
-      const content = vault.querySelector<HTMLElement>('.content')
-      const total = content ? content.clientWidth - SPLITTER_PX : 0
-      if (total <= 0) return
-      const startEditor = (total * startRatio) / (1 + startRatio)
-      const editorWidth = clamp(startEditor + dx, total * 0.2, total * 0.8)
-      editorRatio.value = editorWidth / (total - editorWidth)
-    }
-  }
-  const onUp = () => {
-    document.removeEventListener('pointermove', onMove)
-    document.removeEventListener('pointerup', onUp)
-    document.body.style.cursor = ''
-    document.body.style.userSelect = ''
-  }
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-  document.addEventListener('pointermove', onMove)
-  document.addEventListener('pointerup', onUp)
 }
 
 /* ---------- Tabs state ---------- */
@@ -376,7 +289,7 @@ watch(routePath, (p) => {
       role="separator"
       aria-orientation="vertical"
       title="拖动调整侧栏宽度"
-      @pointerdown="startDrag('tree', $event)"
+      @pointerdown="startDrag(vaultRef!, 'tree', $event)"
     />
 
     <section class="editor-area">
@@ -406,7 +319,7 @@ watch(routePath, (p) => {
           role="separator"
           aria-orientation="vertical"
           title="拖动调整编辑器 / 预览"
-          @pointerdown="startDrag('middle', $event)"
+          @pointerdown="startDrag(vaultRef!, 'middle', $event)"
         />
 
         <div
