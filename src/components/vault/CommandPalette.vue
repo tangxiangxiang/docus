@@ -99,7 +99,7 @@ function onInputKey(e: KeyboardEvent) {
 
 watch(query, () => {
   activeIdx.value = 0
-  hits.value = search(query.value, 12)
+  void refresh()
 })
 
 watch(
