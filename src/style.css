@@ -993,6 +993,14 @@ main.container {
   flex-direction: column;
   background: var(--vs-bg-1);
 }
+/* Draw the editor/preview divider with box-shadow (inside the
+   preview's own box) so the 1px line doesn't eat into the flex
+   layout's content area. The same --vs-border is used as the
+   ActivityBar's border-right, so all three vertical seams in the
+   vault read as the same weight. */
+.preview-pane {
+  box-shadow: inset 1px 0 0 var(--vs-border);
+}
 .preview-pane > .article {
   flex: 0 0 auto;
   min-height: 0;
@@ -1009,12 +1017,12 @@ main.container {
   background: var(--vs-bg-1);
 }
 
-/* Splitters inside vault — invisible at rest, accent on hover/drag.
-   The 6px hit area is needed for the pointer to land cleanly on the
-   resize handle (a 1px hit area is impossible to click on a high-DPI
-   display), but the 1px visual line is hidden by default so the two
-   adjacent panels read as one continuous surface. The line appears
-   only on hover/drag, when the user is actually about to resize. */
+/* Splitters inside vault — a 1px visual line + a 6px pointer hit area.
+   The visual line is drawn as an inset box-shadow on the splitter
+   itself so it doesn't shift when the user starts dragging, and the
+   6px width stays a comfortable target for a col-resize cursor
+   (a 1px hit area is impossible to click on a high-DPI display).
+   The line picks up --vs-accent on hover / drag. */
 .vault .splitter {
   background: transparent;
   cursor: col-resize;
@@ -1022,21 +1030,11 @@ main.container {
   user-select: none;
   touch-action: none;
   width: 6px;
+  box-shadow: inset 1px 0 0 var(--vs-border);
 }
-.vault .splitter::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  margin-left: -1px;
-  background: transparent;
-  transition: background 0.12s;
-}
-.vault .splitter:hover::after,
-.vault .splitter:active::after {
-  background: var(--vs-accent);
+.vault .splitter:hover,
+.vault .splitter:active {
+  box-shadow: inset 1px 0 0 var(--vs-accent);
 }
 
 /* EditorPane inside vault */
