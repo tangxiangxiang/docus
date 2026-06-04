@@ -28,10 +28,15 @@ provide('openSearch', { tick: openSearchTick, trigger: onOpenSearch })
 <template>
   <NavBar :is-vault="isVault" @open-search="onOpenSearch" />
   <RouterView v-slot="{ Component, route: r }">
+    <!-- Do not key the wrapper on r.fullPath. The key on <main> caused
+         VaultView to re-mount on every route change (e.g. /vault ->
+         /vault/inbox/markdown-syntax), which reset the tabs ref to []
+         and made multi-tab state impossible to keep. The component
+         itself is keyed by the router, and re-mounting on every
+         navigation is what we explicitly want to avoid. -->
     <main
       :class="['container', { 'full-width': r.meta.fullWidth }]"
       :style="{ '--navbar-h': isVault ? '36px' : '56px' }"
-      :key="r.fullPath"
     >
       <component :is="Component" />
     </main>
