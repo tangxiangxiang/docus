@@ -566,13 +566,15 @@ main.container {
   display: flex; gap: 4px; align-items: center;
 }
 .vault .file-tree .scope-chip {
-  /* Each chip is a 14px icon plus a small count badge — no text label,
-     so the chip width is bounded by icon + count alone and three of
-     them fit alongside the title in the 40px header. */
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 1px 6px;
+  /* The chip is just an icon now — the descendant count is a small
+     absolute-positioned badge in the bottom-right corner, so the chip
+     itself stays compact (icon-sized) and three of them line up in
+     the 40px header next to the title. */
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 4px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 8px;
   background: transparent;
   color: var(--vs-text-2);
   font-size: 0.68rem;
@@ -604,17 +606,33 @@ main.container {
   display: block;
 }
 .vault .file-tree .scope-chip-count {
+  position: absolute;
+  /* Floats in the bottom-right corner of the chip, just outside the
+     icon. The bg of the chip is the --vs-bg-2, so we re-paint a small
+     patch of it under the badge to keep the badge from sitting on
+     top of the icon edge. */
+  right: -3px;
+  bottom: -3px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 0.6rem;
-  color: var(--vs-text-3);
+  line-height: 1;
+  color: var(--vs-text-1);
   background: var(--vs-bg-3);
+  border: 1px solid var(--vs-bg-2);
   border-radius: 6px;
-  padding: 0 4px;
-  min-width: 14px;
-  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 .vault .file-tree .scope-chip.active .scope-chip-count {
   background: var(--vs-accent);
   color: var(--vs-status-fg, #ffffff);
+  border-color: var(--vs-accent);
 }
 .vault .file-tree .tree {
   list-style: none; padding: 0; margin: 0;
