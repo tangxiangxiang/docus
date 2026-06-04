@@ -5,6 +5,7 @@ import TreeRow from './TreeRow.vue'
 import { useConfirm } from '../../composables/useConfirm'
 import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
+import { blockedMessage, isInZettel } from '../../composables/zettelProtocol'
 import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder } from '../../lib/api'
 import { ICON_NEW_FILE, ICON_NEW_FOLDER } from './icons'
 
@@ -32,25 +33,6 @@ const topLevel = computed<TreeNode[]>(() => {
   if (root && root.kind === 'folder') return root.children
   return []
 })
-
-function isInZettel(path: string | null): boolean {
-  if (!path) return false
-  return path === 'zettel' || path.startsWith('zettel/')
-}
-
-// The three Zettelkasten top-level folders are part of the protocol: they
-// must exist, must keep their names, and cannot be moved or deleted. Users
-// can only add files/sub-folders underneath them.
-const PROTECTED_ROOTS: ReadonlySet<string> = new Set(['inbox', 'literature', 'zettel'])
-function isProtectedRoot(path: string | null): boolean {
-  return !!path && PROTECTED_ROOTS.has(path)
-}
-function protectedRootError(path: string | null, op: 'rename' | 'delete' | 'move'): string {
-  const label = isProtectedRoot(path) ? path! : '顶层目录'
-  if (op === 'rename') return `${label} 是固定目录，不能重命名`
-  if (op === 'delete') return `${label} 是固定目录，不能删除`
-  return `${label} 是固定目录，不能移动`
-}
 
 function loadExpanded(): string[] {
   try {
@@ -100,9 +82,12 @@ async function onRootDrop(e: DragEvent) {
   rootDragDepth.value = 0
   if (!src) return
   // Reject moves of protected roots (the three top-level folders are part
-  // of the Zettelkasten protocol and cannot be re-parented).
-  if (isProtectedRoot(src)) { toast.error(protectedRootError(src, 'move')); return }
-  if (isInZettel(src)) { toast.error('Zettel 是永久笔记，不能移动'); return }
+  // of the Zettelkasten protocol and cannot be re-parented) or anything
+  // inside the read-only zettel/ subtree.
+  {
+    const msg = blockedMessage(src, 'move')
+    if (msg) { toast.error(msg); return }
+  }
   const filename = src.split('/').pop()!
   const targetPath = filename
   if (targetPath === src) return
@@ -151,8 +136,10 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
   // folder `inbox/notes/` also exists must rename the file, not the folder.
   const node = findNode(props.tree, oldPath, kind)
   if (!node) return
-  if (isProtectedRoot(oldPath)) { toast.error(protectedRootError(oldPath, 'rename')); return }
-  if (isInZettel(oldPath)) { toast.error('Zettel 是永久笔记，不能重命名'); return }
+  {
+    const msg = blockedMessage(oldPath, 'rename')
+    if (msg) { toast.error(msg); return }
+  }
   try {
     if (node.kind === 'folder') {
       const parent = oldPath.split('/').slice(0, -1).join('/')
@@ -175,8 +162,10 @@ async function onDelete(p: string, kind: 'file' | 'folder') {
   // deleted (or a confirm dialog would be shown for the wrong target).
   const node = findNode(props.tree, p, kind)
   if (!node) return
-  if (isProtectedRoot(p)) { toast.error(protectedRootError(p, 'delete')); return }
-  if (isInZettel(p)) { toast.error('Zettel 是永久笔记，不能删除'); return }
+  {
+    const msg = blockedMessage(p, 'delete')
+    if (msg) { toast.error(msg); return }
+  }
   const count = node.kind === 'folder' ? countDescendants(node) + 1 : 1
   const ok = await confirm(
     node.kind === 'folder'
@@ -192,8 +181,10 @@ async function onDelete(p: string, kind: 'file' | 'folder') {
 }
 
 async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | 'folder') {
-  if (isProtectedRoot(srcPath)) { toast.error(protectedRootError(srcPath, 'move')); return }
-  if (isInZettel(srcPath)) { toast.error('Zettel 是永久笔记，不能移动'); return }
+  {
+    const msg = blockedMessage(srcPath, 'move')
+    if (msg) { toast.error(msg); return }
+  }
   // The three top-level folders keep their names but their *contents* are
   // fully editable. The one place we still refuse to write is zettel, which
   // is the read-only permanent-notes sink. inbox / literature must remain
@@ -224,7 +215,10 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
 }
 
 async function onCreateIn(folder: string, kind: 'file' | 'folder') {
-  if (isInZettel(folder)) { toast.error('Zettel 是永久笔记，不能直接新建'); return }
+  {
+    const msg = blockedMessage(folder, 'create')
+    if (msg) { toast.error(msg); return }
+  }
   const title = await prompt({
     title: kind === 'file' ? `在 ${folder || 'inbox'} 中新建文件` : `在 ${folder || 'inbox'} 中新建文件夹`,
     placeholder: '名称',
@@ -280,8 +274,6 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :depth="0"
         :current-path="currentPath"
         :expanded-set="expanded"
-        :is-in-zettel="isInZettel(node.path)"
-        :is-protected-root="isProtectedRoot(node.path)"
         @select="onSelect"
         @toggle="onToggle"
         @rename="onRename"

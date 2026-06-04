@@ -2,14 +2,13 @@
 import { ref, computed, nextTick } from 'vue'
 import type { TreeNode } from '../../lib/api'
 import { ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FILE_MD, ICON_CHEVRON } from './icons'
+import { readonlyReason, readonlyHintLabel } from '../../composables/zettelProtocol'
 
 const props = defineProps<{
   node: TreeNode
   depth: number
   currentPath: string | null
   expandedSet: Set<string>
-  isInZettel?: boolean
-  isProtectedRoot?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -32,16 +31,10 @@ const emit = defineEmits<{
 const isFolder = computed(() => props.node.kind === 'folder')
 const isActive = computed(() => !isFolder.value && props.node.path === props.currentPath)
 const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.node.path))
-// Two reasons a node's context menu can hide write actions:
-//  - it's inside the read-only zettel subtree (entire subtree is locked)
-//  - it's itself a protected top-level folder (inbox / literature / zettel),
-//    which can hold children but can't be renamed/deleted/re-parented.
-const readonly = computed(() => !!props.isInZettel || !!props.isProtectedRoot)
-const readonlyReason = computed<'zettel' | 'root' | null>(() => {
-  if (props.isInZettel) return 'zettel'
-  if (props.isProtectedRoot) return 'root'
-  return null
-})
+// Read-only check: the row is in the zettel/ subtree, OR it is one of the
+// three protected top-level folders. The rule lives in zettelProtocol.ts so
+// the same set {inbox, literature, zettel} is not duplicated across files.
+const readonly = computed(() => readonlyReason(props.node.path) !== null)
 
 // --- drag state ---
 const isDragging = ref(false)
@@ -233,10 +226,7 @@ function cancelRename() {
         <button v-if="!readonly" @click="menuAction(startRename)">重命名</button>
         <hr v-if="!readonly" />
         <button v-if="!readonly" class="danger" @click="menuAction(() => emit('delete', node.path))">删除</button>
-        <span v-if="readonly" class="readonly-hint">
-          <template v-if="readonlyReason === 'zettel'">Zettel · 永久笔记</template>
-          <template v-else>顶层目录 · 不可修改</template>
-        </span>
+        <span v-if="readonly" class="readonly-hint">{{ readonlyHintLabel(node.path) }}</span>
       </div>
     </Teleport>
 
@@ -248,8 +238,6 @@ function cancelRename() {
         :depth="depth + 1"
         :current-path="currentPath"
         :expanded-set="expandedSet"
-        :is-in-zettel="isInZettel || (child.path === 'zettel' || child.path.startsWith('zettel/'))"
-        :is-protected-root="child.path === 'inbox' || child.path === 'literature' || child.path === 'zettel'"
         @select="(p) => emit('select', p)"
         @toggle="(p) => emit('toggle', p)"
         @rename="(oldP, n) => emit('rename', oldP, n, child.kind)"
