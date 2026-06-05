@@ -5,6 +5,7 @@ import NavBar from './components/NavBar.vue'
 import ToastHost from './components/ToastHost.vue'
 import ConfirmHost from './components/ConfirmHost.vue'
 import PromptHost from './components/PromptHost.vue'
+import { VaultViewModeKey, type VaultViewMode } from './composables/vault/viewMode'
 
 const route = useRoute()
 const isVault = computed(() => route.meta.fullWidth === true)
@@ -23,6 +24,31 @@ watchEffect(() => {
 const openSearchTick = ref(0)
 function onOpenSearch() { openSearchTick.value++ }
 provide('openSearch', { tick: openSearchTick, trigger: onOpenSearch })
+
+/* View mode for the vault (edit vs read). Persisted to localStorage so
+   the user's preference survives reloads. Defaults to 'edit' — the
+   current split-pane authoring experience. Provided globally so the
+   NavBar (in the chrome) can toggle it and VaultView (in the router
+   view) can react to it. */
+const VIEW_MODE_KEY = 'docus.vault.viewMode'
+
+function readViewMode(): VaultViewMode {
+  try {
+    const raw = localStorage.getItem(VIEW_MODE_KEY)
+    if (raw === 'read' || raw === 'edit') return raw
+  } catch { /* private mode / storage blocked — fall through */ }
+  return 'edit'
+}
+
+const viewMode = ref<VaultViewMode>(readViewMode())
+function setViewMode(m: VaultViewMode) {
+  viewMode.value = m
+  try { localStorage.setItem(VIEW_MODE_KEY, m) } catch { /* ignore */ }
+}
+function toggleViewMode() {
+  setViewMode(viewMode.value === 'edit' ? 'read' : 'edit')
+}
+provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleViewMode })
 </script>
 
 <template>

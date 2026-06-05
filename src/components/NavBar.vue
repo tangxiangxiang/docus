@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useTheme } from '../composables/useTheme'
+import { VaultViewModeKey } from '../composables/vault/viewMode'
 
 defineProps<{ isVault?: boolean }>()
 const emit = defineEmits<{
@@ -19,6 +20,21 @@ const themeTitle = computed<string>(() => {
   const cur = theme.value === 'dark' ? 'Dark' : 'Light'
   return `Theme: ${cur} (click for ${next})`
 })
+
+/* View-mode toggle is provided globally by App.vue; null on routes that
+   don't use the vault (e.g. home / article), in which case the button is
+   hidden. We default to a no-op toggle so consumers can call it freely. */
+const viewModeApi = inject(VaultViewModeKey, null)
+const viewMode = computed(() => viewModeApi?.mode.value ?? 'edit')
+
+/* In edit mode the button invites a switch to read (book icon).
+   In read mode it invites a switch back to edit (pencil icon). */
+const modeIcon = computed<'book-open' | 'pencil'>(() => (viewMode.value === 'edit' ? 'book-open' : 'pencil'))
+const modeTitle = computed<string>(() => {
+  const next = viewMode.value === 'edit' ? 'Read' : 'Edit'
+  return `${next} mode (click to switch)`
+})
+function onToggleViewMode() { viewModeApi?.toggle() }
 </script>
 
 <template>
@@ -50,6 +66,26 @@ const themeTitle = computed<string>(() => {
           <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="7" />
             <line x1="20" y1="20" x2="16.5" y2="16.5" />
+          </svg>
+        </button>
+        <button
+          v-if="isVault"
+          class="mode-toggle"
+          type="button"
+          :title="modeTitle"
+          :aria-label="modeTitle"
+          :aria-pressed="viewMode === 'read'"
+          @click="onToggleViewMode"
+        >
+          <!-- read mode active: show pencil (click to switch back to edit) -->
+          <svg v-if="modeIcon === 'pencil'" aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+          </svg>
+          <!-- edit mode active: show book-open (click to switch to read) -->
+          <svg v-else aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 4h7a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z" />
+            <path d="M22 4h-7a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h8z" />
           </svg>
         </button>
         <button

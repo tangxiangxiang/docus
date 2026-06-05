@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ref, inject, shallowRef, watch } from 'vue'
+import { ref, inject, shallowRef, watch, computed } from 'vue'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { useTagFilter } from '../composables/vault/useTagFilter'
+import { VaultViewModeKey } from '../composables/vault/viewMode'
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import EditorPane from '../components/vault/EditorPane.vue'
 import PreviewPane from '../components/vault/PreviewPane.vue'
+import ReadingPane from '../components/vault/ReadingPane.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
 import Breadcrumb from '../components/vault/Breadcrumb.vue'
@@ -17,6 +19,12 @@ import CommandPalette from '../components/vault/CommandPalette.vue'
    (which lives outside the router view) can ask the vault to open its
    CommandPalette. We watch the tick and call show() each time. */
 const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
+
+/* View mode is provided globally by App.vue (see VaultViewModeKey).
+   Default to 'edit' so this view still renders sensibly if it's ever
+   mounted outside the App provider (e.g. in a unit test harness). */
+const viewModeApi = inject(VaultViewModeKey, null)
+const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
 
 /* ---------- Layout ---------- */
 const {
@@ -43,10 +51,22 @@ const {
 const { activeTagList, toggleTag, clear: clearTagFilter, removeTag } = useTagFilter({ activePanel })
 
 watch(() => navSearch?.tick.value, () => openSearch())
+
+/* The mode toggle only swaps the editor/preview split for a single
+   reading surface — the side panel, activity bar, tabs, breadcrumb,
+   and status bar all stay put so the user can still navigate while
+   reading. So the vault's grid layout is the same in both modes. */
 </script>
 
 <template>
-  <div ref="vaultRef" class="vault" tabindex="0" :style="vaultStyle" @keydown="onKeydown">
+  <div
+    ref="vaultRef"
+    class="vault"
+    :class="{ 'is-read': isReadMode }"
+    tabindex="0"
+    :style="vaultStyle"
+    @keydown="onKeydown"
+  >
     <ActivityBar
       :active-panel="activePanel"
       @select-panel="selectPanel"
@@ -85,7 +105,8 @@ watch(() => navSearch?.tick.value, () => openSearch())
       <EditorTabs :tabs="tabs" :active-path="activePath" @select="selectTab" @close="closeTab" />
       <Breadcrumb :current-path="activePath" />
 
-      <div class="content" :style="contentStyle">
+      <!-- Edit mode: editor + preview side-by-side, draggable mid-splitter. -->
+      <div v-if="!isReadMode" class="content" :style="contentStyle">
         <div
           v-for="t in tabs"
           v-show="t.path === activePath"
@@ -119,6 +140,21 @@ watch(() => navSearch?.tick.value, () => openSearch())
         >
           <PreviewPane v-if="!t.loading && !t.loadError" :raw="t.raw" />
         </div>
+      </div>
+
+      <!-- Read mode: single reading surface in the same slot. The side
+           panel, tabs, breadcrumb, and status bar above/below stay
+           untouched so navigation still works while reading. -->
+      <div v-else class="content reading-content">
+        <div
+          v-for="t in tabs"
+          v-show="t.path === activePath"
+          :key="`r-${t.path}`"
+          class="reading-slot"
+        >
+          <ReadingPane :raw="t.raw" />
+        </div>
+        <div v-if="!tabs.length" class="content-empty">未打开文件。在侧栏选一个或按 <kbd>⌘P</kbd> 新建。</div>
       </div>
     </section>
 
