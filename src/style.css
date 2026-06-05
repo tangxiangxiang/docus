@@ -261,7 +261,7 @@ hr {
 .nav-actions {
   display: inline-flex;
   align-items: center;
-  gap: 3px;            /* search and theme toggle sit close together as a unit */
+  gap: 6px;            /* search and theme toggle sit close together as a unit */
 }
 .nav-search,
 .theme-toggle {
@@ -1450,6 +1450,15 @@ main.container {
 }
 .cm-host .cm-editor { height: 100%; }
 .cm-host .cm-scroller { font-family: var(--mono); }
+/* VS Code's active-line gutter is subtle: the gutter keeps its base
+   bg and only the line number is bumped to the brightest text color.
+   The oneDark theme paints a slab of #2c313a behind the active row
+   which disconnects it from the surrounding gutter; flatten that
+   back to transparent and re-tint the number with the design token. */
+.cm-host .cm-activeLineGutter {
+  background-color: transparent;
+  color: var(--vs-text-1);
+}
 
 .preview-wrap { background: var(--bg); }
 .preview { max-width: 100%; }
