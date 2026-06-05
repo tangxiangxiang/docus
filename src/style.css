@@ -1400,13 +1400,6 @@ main.container {
   margin: 0 auto;
   align-items: flex-start;
 }
-.vault .reading-pane .article.reading {
-  flex: 0 1 720px;
-  min-width: 0;
-  font-size: 1.02rem;
-  line-height: 1.75;
-  padding: 0;
-}
 /* Page navigation (right-side TOC). Sticks to the top of the reading
    pane as the user scrolls. Width is fixed at 220px; on viewports
    too narrow to fit it next to the article, the layout collapses
@@ -1417,6 +1410,12 @@ main.container {
   top: 40px;
   max-height: calc(100vh - 80px);
   overflow: auto;
+  /* The aside can sprout a horizontal scrollbar in a few edge cases
+     (CJK overflow-wrap pushing past 220px, browser zoom rounding,
+     etc.). We never *want* horizontal scroll on the TOC — vertical
+     scroll handles the long-list case, and long heading text should
+     just wrap. */
+  overflow-x: hidden;
   font-size: 0.85rem;
   line-height: 1.5;
   color: var(--vs-text-2);
@@ -1432,26 +1431,39 @@ main.container {
   border-radius: 2px;
 }
 .vault .reading-toc-title {
-  margin: 0 0 12px;
+  margin: 0 0 10px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--vs-border);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--vs-text-1);
+  color: var(--vs-text-3);
 }
 .vault .reading-toc-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  border-left: 1px solid var(--vs-border);
+  /* The "rail" the active indicator sits on. 2px so the active bar
+     reads as an extension of the rail, not a separate border. */
+  border-left: 2px solid var(--vs-border);
+  border-radius: 0 0 0 2px;
+  /* Belt-and-suspenders against horizontal overflow: long CJK heading
+     text combined with `overflow-wrap: anywhere` on the <a> can still
+     push the list wider than its 220px column, which would otherwise
+     introduce a horizontal scrollbar on the parent .reading-toc.
+     We only need to clip the horizontal axis — vertical scroll is
+     handled by .reading-toc's own overflow: auto. */
+  overflow-x: hidden;
 }
 .vault .reading-toc-item {
   /* Items share the same left "rail" — indent levels just push the
      text inward, the left border is on the parent <ul>. */
   position: relative;
   margin: 0;
+  /* Same clip — the active <a> has a -2px margin-left to sit on the
+     rail, which would otherwise nudge the <li> 2px past the column. */
+  overflow: hidden;
 }
 .vault .reading-toc-item a {
   /* Use plain block layout with a max-height clamp rather than
@@ -1463,7 +1475,7 @@ main.container {
      the text outright. Long CJK strings are still allowed to break
      to a second line via `overflow-wrap: anywhere`. */
   display: block;
-  padding: 6px 12px 6px 14px;
+  padding: 5px 12px 5px 16px;
   color: var(--vs-text-2);
   text-decoration: none;
   line-height: 1.45;
@@ -1471,57 +1483,193 @@ main.container {
   max-height: calc(1.45em * 2);
   overflow: hidden;
   overflow-wrap: anywhere;
-  border-left: 2px solid transparent;
-  margin-left: -1px;  /* sit the border on the rail */
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  /* Pin the <a> to the <li>'s width so a `transform` on hover can't
+     nudge it past the column and trigger a horizontal scrollbar. */
+  max-width: 100%;
+  box-sizing: border-box;
+  transition: color 0.15s, background 0.15s;
   border-radius: 0 4px 4px 0;
 }
 .vault .reading-toc-item a:hover {
   color: var(--vs-text-1);
   background: var(--vs-hover-bg);
 }
-/* VitePress-style active indicator: accent-colored border on the
-   left, brightest-text-color in the theme so it stays legible on the
-   accent-tinted background, plus a soft tinted background so the eye
-   snaps to it. We deliberately use `--vs-text-1` for the text (not
-   `--accent`) so the foreground / background contrast is guaranteed
-   in both light and dark vault themes. */
+/* Active state: VSCode-sidebar-style indicator bar on the left.
+   A 3px solid block glued to the item's left edge, slightly inset
+   top/bottom so it doesn't bleed into neighboring items. The accent
+   background still tints the row (kept from before) so the highlight
+   reads as a unit, but the bar itself is the primary marker — it
+   stays put across hover and is the first thing the eye lands on
+   while scanning the TOC. */
 .vault .reading-toc-item.active a {
   color: var(--vs-text-1);
-  border-left-color: var(--vs-accent);
   background: var(--vs-accent-bg);
-  font-weight: 500;
+  font-weight: 600;
 }
-.vault .reading-toc-item.lvl-3 a { padding-left: 26px; }
-.vault .reading-toc-item.lvl-4 a { padding-left: 38px; }
+.vault .reading-toc-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--vs-accent);
+  /* The list's 2px rail is the same color as the border; the bar
+     sits on top of it (not the rail itself), so we don't need a
+     margin to overlap — they're at the same x. */
+  animation: rp-toc-bar-in 0.18s ease-out;
+}
+@keyframes rp-toc-bar-in {
+  from { transform: scaleY(0.3); opacity: 0; }
+  to   { transform: scaleY(1);   opacity: 1; }
+}
+.vault .reading-toc-item.lvl-3 a { padding-left: 24px; }
+.vault .reading-toc-item.lvl-4 a { padding-left: 36px; }
 /* Slight opacity step down for deeper levels so the eye can scan the
    top-level structure first. */
 .vault .reading-toc-item.lvl-3 a { font-size: 0.82rem; }
 .vault .reading-toc-item.lvl-4 a { font-size: 0.8rem; }
+.vault .reading-toc-item.lvl-3 a,
+.vault .reading-toc-item.lvl-4 a { color: var(--vs-text-3); }
+.vault .reading-toc-item.lvl-3.active a,
+.vault .reading-toc-item.lvl-4.active a { color: var(--vs-text-1); }
 
 /* Reading mode gets a touch more vertical air and slightly tighter
    code blocks than the cramped split-pane preview, but stays within
    the vault's existing --vs-* tokens. */
+
+/* Article column — soft 1.6rem baseline and 75ch measure feels more
+   like reading a long-form post than a docs page. */
+.vault .reading-pane .article.reading {
+  flex: 0 1 720px;
+  min-width: 0;
+  max-width: 75ch;
+  font-size: 1.02rem;
+  line-height: 1.75;
+  padding: 0;
+  color: var(--vs-text-1);
+  /* Slightly more space between sibling paragraphs and surrounding
+     content than the preview pane — the preview is reference material,
+     the reading pane is a long-form read. */
+  --rp-flow: 1.1em;
+}
 .vault .reading-pane .article.reading h1:first-child { margin-top: 0; }
+.vault .reading-pane .article.reading h1 {
+  /* Hero treatment for the post title — bigger, tighter, with a subtle
+     gradient-style bottom border that echoes the TOC rail. The H1 is
+     skipped from the TOC on purpose, so this is its main visual hook. */
+  font-size: 2.1rem;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.4em;
+  padding-bottom: 0.5em;
+  border-bottom: 1px solid var(--vs-border);
+}
 .vault .reading-pane .article.reading h2,
 .vault .reading-pane .article.reading h3,
 .vault .reading-pane .article.reading h4 {
-  margin-top: 1.8em;
+  margin: 1.9em 0 0.6em;
   line-height: 1.3;
+  letter-spacing: -0.005em;
   /* Headings are sticky-scroll targets. Add a small top scroll-margin
      so smooth-scroll from the TOC doesn't tuck the heading right under
      the very top edge of the reading pane. */
   scroll-margin-top: 24px;
 }
+.vault .reading-pane .article.reading h2 {
+  font-size: 1.45rem;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--vs-border);
+}
+.vault .reading-pane .article.reading h3 {
+  font-size: 1.18rem;
+  color: var(--vs-text-1);
+}
+.vault .reading-pane .article.reading h4 {
+  font-size: 1rem;
+  color: var(--vs-text-2);
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
 .vault .reading-pane .article.reading p,
 .vault .reading-pane .article.reading ul,
 .vault .reading-pane .article.reading ol,
 .vault .reading-pane .article.reading blockquote {
-  margin: 0.9em 0;
+  margin: var(--rp-flow) 0;
+}
+.vault .reading-pane .article.reading ul,
+.vault .reading-pane .article.reading ol {
+  /* Markdown renders tight bullet lists; the reading column gets a
+     bit more breathing room and softer markers. */
+  padding-left: 1.5em;
+}
+.vault .reading-pane .article.reading li + li { margin-top: 0.35em; }
+/* Inline code: soften the global default — the vault code chips
+   (gray pill on white) are great in docs, but a long read on a
+   light background wants a slightly tinted pill that doesn't fight
+   the prose. */
+.vault .reading-pane .article.reading p code,
+.vault .reading-pane .article.reading li code,
+.vault .reading-pane .article.reading h2 code,
+.vault .reading-pane .article.reading h3 code,
+.vault .reading-pane .article.reading h4 code {
+  font-size: 0.88em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--vs-bg-2);
+  color: var(--vs-text-1);
+  border: 1px solid var(--vs-border);
 }
 .vault .reading-pane .article.reading pre {
   font-size: 0.9em;
   line-height: 1.55;
+  margin: 1.3em 0;
+  background: var(--vs-bg-2);
+  border-color: var(--vs-border);
+}
+.vault .reading-pane .article.reading blockquote {
+  border-left: 3px solid var(--vs-accent);
+  background: var(--vs-bg-2);
+  color: var(--vs-text-2);
+  font-style: italic;
+  padding: 0.6em 1em;
+  border-radius: 0 4px 4px 0;
+}
+.vault .reading-pane .article.reading blockquote p { margin: 0.3em 0; }
+.vault .reading-pane .article.reading a {
+  /* Inherits the global `a` color (--accent), but reading columns
+     benefit from a subtle underline that signals "this jumps" — the
+     preview pane's clean look reads as "this is rendered prose,"
+     the reading pane reads as "this is something I can follow." */
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--vs-border);
+}
+.vault .reading-pane .article.reading a:hover {
+  text-decoration-color: var(--vs-accent);
+  color: var(--vs-accent-hover);
+}
+.vault .reading-pane .article.reading hr {
+  margin: 2.4em auto;
+  width: 4em;
+  border-top: 1px solid var(--vs-border);
+}
+.vault .reading-pane .article.reading table {
+  font-size: 0.95em;
+  border: 1px solid var(--vs-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.vault .reading-pane .article.reading th {
+  background: var(--vs-bg-2);
+  color: var(--vs-text-1);
+}
+.vault .reading-pane .article.reading img {
+  border-radius: 6px;
+  border: 1px solid var(--vs-border);
+  margin: 0.4em 0;
 }
 
 /* Hide the TOC when the article + nav would otherwise overflow the

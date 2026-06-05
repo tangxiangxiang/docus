@@ -22,20 +22,64 @@ const isEmpty = computed(() => !props.raw || !props.raw.trim())
    The observer's root is the .reading-pane scroll container, and we
    shrink its effective rect with a negative bottom rootMargin so a
    heading only "intersects" when it crosses near the top of the
-   visible area. The active section is the topmost currently-intersecting
-   heading in document order; if none intersect (e.g. user scrolled past
-   every heading in view), we fall back to the last-seen id. */
+   visible area.
+
+   The active section is the heading whose top is *closest to (but
+   still above) the trigger line* — i.e. the last heading the reader
+   has scrolled past. This is the VitePress behavior and matches what
+   users expect: while reading a section, the section title is what's
+   highlighted, not the next one. We fall back to the first heading
+   on short docs and to the last heading when the reader scrolls past
+   the final section. */
 
 const articleEl = ref<HTMLElement | null>(null)
 const readingPaneEl = ref<HTMLElement | null>(null)
 const activeId = ref<string>('')
 
 let observer: IntersectionObserver | null = null
-const intersecting = new Set<Element>()
+
+/* After a TOC click, the user-initiated smooth scroll fires many
+   IntersectionObserver ticks on the way down. Without a freeze the
+   active state would flicker across whatever intermediate sections
+   the scroll passes through. We pin the active id for one frame
+   after a click; the observer resumes driving the highlight when
+   the freeze lifts. */
+let freezeActiveUntil = 0
 
 function disconnectObserver() {
   if (observer) { observer.disconnect(); observer = null }
-  intersecting.clear()
+}
+
+function getHeadingEls(): HTMLElement[] {
+  if (!articleEl.value) return []
+  const out: HTMLElement[] = []
+  for (const h of headings.value) {
+    const el = articleEl.value.querySelector<HTMLElement>(`#${cssEscape(h.id)}`)
+    if (el) out.push(el)
+  }
+  return out
+}
+
+function pickActiveId(els: HTMLElement[]): string {
+  if (els.length === 0) return ''
+  const container = readingPaneEl.value
+  if (!container) return els[0].id
+  /* The "trigger line" sits near the top of the reading pane. A
+     heading is considered "above the trigger" once its top has
+     scrolled past it. We bias the line down a touch (16px) so the
+     active state updates right as the next heading reaches the top,
+     not while it's still half-visible from above. */
+  const triggerY = container.getBoundingClientRect().top + 16
+  /* The headings are in document order, so the *last* heading whose
+     top is <= triggerY is the one the reader is currently in. If no
+     heading is past the trigger yet (e.g. we're still above the
+     first h2), highlight the first heading. */
+  let active = els[0]
+  for (const el of els) {
+    if (el.getBoundingClientRect().top <= triggerY) active = el
+    else break
+  }
+  return active.id
 }
 
 /* Build the observer once the article is in the DOM and the headings
@@ -45,38 +89,34 @@ function disconnectObserver() {
 function attachObserver() {
   disconnectObserver()
   if (!articleEl.value || !readingPaneEl.value || headings.value.length === 0) return
+  const els = getHeadingEls()
+  if (els.length === 0) return
+  /* The IntersectionObserver itself is only used to *trigger* a recompute
+     on each scroll-ish tick — the actual active id is chosen from the
+     full heading list above. Using the observer as a "something moved"
+     signal lets us avoid a per-frame scroll listener and keeps the
+     active state correct even when a heading never intersects the
+     trigger zone (e.g. user scrolls fast and skips a whole region). */
   observer = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) intersecting.add(entry.target)
-        else intersecting.delete(entry.target)
-      }
-      if (intersecting.size > 0) {
-        /* Pick the topmost (smallest top within the scroll container)
-           currently-intersecting heading. */
-        const els = Array.from(intersecting) as HTMLElement[]
-        els.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
-        const top = els[0]
-        if (top && top.id) activeId.value = top.id
-      }
+    () => {
+      if (Date.now() < freezeActiveUntil) return
+      activeId.value = pickActiveId(els)
     },
     {
       root: readingPaneEl.value,
-      /* Trigger line sits ~10% from the top of the reading pane — a
-         heading becomes "active" once its top crosses that line. The
-         negative bottom margin means headings way down the page don't
-         count just because they're on screen. */
-      rootMargin: '0px 0px -85% 0px',
+      /* The observer's job is to fire when *any* heading enters or
+         leaves the area near the top of the pane. The negative bottom
+         margin shrinks the effective rect so headings way down the
+         page (still on screen but below the trigger) don't count. */
+      rootMargin: '0px 0px -60% 0px',
       threshold: 0,
     },
   )
-  for (const h of headings.value) {
-    const el = articleEl.value.querySelector<HTMLElement>(`#${cssEscape(h.id)}`)
-    if (el) observer.observe(el)
-  }
-  /* If the article is short enough that no heading is near the top,
-     pick the first heading as a sensible default. */
-  if (!activeId.value && headings.value[0]) activeId.value = headings.value[0].id
+  for (const el of els) observer.observe(el)
+  /* If the article is short enough that no heading ever crosses the
+     trigger zone, or the observer hasn't ticked yet, seed a sensible
+     default so the TOC isn't unhighlighted. */
+  if (!activeId.value) activeId.value = pickActiveId(els)
 }
 
 /* The slugify in ../../lib/markdown.ts allows CJK characters, which
@@ -96,15 +136,24 @@ function onTocClick(e: MouseEvent, id: string) {
   const target = articleEl.value.querySelector<HTMLElement>(`#${cssEscape(id)}`)
   if (!target) return
   e.preventDefault()
+  /* Pin the active id through the smooth-scroll animation. Smooth
+     scrolling on a long doc can take ~600ms; 800ms is a safe upper
+     bound for typical content. If the user scrolls again mid-flight
+     we want the observer to resume — so we *extend* (not replace)
+     the freeze each time the observer would otherwise tick. */
+  freezeActiveUntil = Date.now() + 800
+  activeId.value = id
   target.scrollIntoView({ behavior: 'smooth', block: 'start' })
   /* Update the hash without triggering a navigation; a subsequent
      observer tick will set activeId to the clicked id. */
   if (history.replaceState) history.replaceState(null, '', `#${id}`)
-  activeId.value = id
 }
 
 watch([articleEl, readingPaneEl, headings], () => attachObserver(), { flush: 'post' })
-watch(() => props.raw, () => { activeId.value = '' })
+watch(() => props.raw, () => {
+  activeId.value = ''
+  freezeActiveUntil = 0
+})
 onBeforeUnmount(disconnectObserver)
 </script>
 
