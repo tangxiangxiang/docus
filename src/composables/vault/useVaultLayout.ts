@@ -143,12 +143,13 @@ export function useVaultLayout() {
     aiOpen.value = !aiOpen.value
   }
 
-  function startDrag(host: HTMLElement, which: 'tree' | 'middle', e: PointerEvent) {
+  function startDrag(host: HTMLElement, which: 'tree' | 'middle' | 'ai', e: PointerEvent) {
     e.preventDefault()
     const rect = host.getBoundingClientRect()
     const startX = e.clientX
     const startTree = sidePanelWidth.value
     const startRatio = editorRatio.value
+    const startAi = aiPanelWidth.value
     // Must match the splitter's layout width in .vault .splitter { width: 1px }
     // and the .content flex track the mid-splitter sits in. The 7px hit area
     // (::before) is purely for grabbing and doesn't affect this math.
@@ -159,6 +160,13 @@ export function useVaultLayout() {
       if (which === 'tree') {
         const max = Math.min(600, rect.width - 480)
         sidePanelWidth.value = clamp(startTree + dx, 150, max)
+      } else if (which === 'ai') {
+        // Right-rail drag: dragging the splitter right (positive dx)
+        // grows the AI panel, mirroring the tree case. The track is
+        // right-anchored in the grid, so the natural sign is +dx.
+        // Same max as the tree case: reserve 480px for ab + editor.
+        const max = Math.min(600, rect.width - 480)
+        aiPanelWidth.value = clamp(startAi + dx, 220, max)
       } else {
         const content = host.querySelector<HTMLElement>('.content')
         const total = content ? content.clientWidth - SPLITTER_PX : 0
