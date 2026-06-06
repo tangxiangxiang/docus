@@ -24,7 +24,11 @@ interface Harness {
   activePanel: Ref<string | null>
   sidePanelWidth: Ref<number>
   editorRatio: Ref<number>
+  aiOpen: Ref<boolean>
+  aiPanelWidth: Ref<number>
   selectPanel: (p: 'files' | 'tags') => void
+  toggleAi: () => void
+  vaultStyle: { value: { gridTemplateColumns: string } }
 }
 
 function setup(): Harness {
@@ -36,7 +40,11 @@ function setup(): Harness {
         activePanel: layout.activePanel as Ref<string | null>,
         sidePanelWidth: layout.sidePanelWidth,
         editorRatio: layout.editorRatio,
+        aiOpen: layout.aiOpen,
+        aiPanelWidth: layout.aiPanelWidth,
         selectPanel: layout.selectPanel,
+        toggleAi: layout.toggleAi,
+        vaultStyle: layout.vaultStyle as Harness['vaultStyle'],
       }
       return () => h('div')
     },
@@ -59,6 +67,12 @@ describe('useVaultLayout', () => {
     expect(h.activePanel.value).toBe('files')
     expect(h.sidePanelWidth.value).toBe(260)
     expect(h.editorRatio.value).toBe(1)
+  })
+
+  it('exposes aiOpen=false and aiPanelWidth=320 by default', () => {
+    const h = setup()
+    expect(h.aiOpen.value).toBe(false)
+    expect(h.aiPanelWidth.value).toBe(320)
   })
 
   it('migrates the old fileTreeOpen/fileTreeWidth shape into the new shape', () => {
@@ -124,6 +138,41 @@ describe('useVaultLayout', () => {
     const h = setup()
     h.selectPanel('tags')
     expect(h.activePanel.value).toBe('tags')
+  })
+
+  it('toggleAi flips aiOpen off and on', () => {
+    const h = setup()
+    expect(h.aiOpen.value).toBe(false)
+    h.toggleAi()
+    expect(h.aiOpen.value).toBe(true)
+    h.toggleAi()
+    expect(h.aiOpen.value).toBe(false)
+  })
+
+  it('vaultStyle uses 2 columns when both side and AI panels are closed', () => {
+    const h = setup()
+    h.selectPanel('files') // close the default-open side panel
+    h.toggleAi() // ensure closed
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 1fr')
+  })
+
+  it('vaultStyle adds the side panel columns when active', () => {
+    const h = setup()
+    // default state: side='files', aiOpen=false → 4 columns
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr')
+  })
+
+  it('vaultStyle adds the AI columns when aiOpen=true', () => {
+    const h = setup()
+    h.selectPanel('files') // close side
+    h.toggleAi() // open AI
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 1fr 1px 320px')
+  })
+
+  it('vaultStyle shows all 5 columns when side panel and AI are both open', () => {
+    const h = setup()
+    h.toggleAi() // open AI (side is already 'files' by default)
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr 1px 320px')
   })
 
   it('persists changes back to localStorage in the new shape only', async () => {
