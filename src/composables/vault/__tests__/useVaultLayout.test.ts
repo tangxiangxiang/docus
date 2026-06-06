@@ -190,4 +190,26 @@ describe('useVaultLayout', () => {
     expect(typeof parsed.sidePanelWidth).toBe('number')
     expect(typeof parsed.editorRatio).toBe('number')
   })
+
+  it('persists aiOpen and aiPanelWidth when toggled', async () => {
+    // Closes the gap left by the "persists changes back" test above,
+    // which only checks sidePanelWidth/editorRatio. Without this, a
+    // refactor that drops the new fields from the writer would pass.
+    const h = setup()
+    h.toggleAi()
+    await Promise.resolve()
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as VaultLayout
+    expect(parsed.aiOpen).toBe(true)
+    expect(parsed.aiPanelWidth).toBe(320)
+  })
+
+  it('falls back to aiOpen=false and aiPanelWidth=320 when hydrating the old shape', () => {
+    // Old-shape payload (no aiOpen / aiPanelWidth). The serializer must
+    // default them; otherwise the new fields surface as undefined and
+    // the grid layout silently breaks for users upgrading.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ fileTreeOpen: true, fileTreeWidth: 280 }))
+    const h = setup()
+    expect(h.aiOpen.value).toBe(false)
+    expect(h.aiPanelWidth.value).toBe(320)
+  })
 })
