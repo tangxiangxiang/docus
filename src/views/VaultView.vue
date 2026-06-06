@@ -196,11 +196,6 @@ watch(() => navSearch?.tick.value, () => openSearch())
       </div>
     </section>
 
-    <AiPanel
-      v-if="aiOpen"
-      class="ai-panel-slot"
-      @close="toggleAi"
-    />
     <div
       v-if="aiOpen"
       class="splitter splitter-ai"
@@ -208,6 +203,11 @@ watch(() => navSearch?.tick.value, () => openSearch())
       aria-orientation="vertical"
       title="拖动调整 AI 面板宽度"
       @pointerdown="startDrag(vaultRef!, 'ai', $event)"
+    />
+    <AiPanel
+      v-if="aiOpen"
+      class="ai-panel-slot"
+      @close="toggleAi"
     />
 
     <StatusBar

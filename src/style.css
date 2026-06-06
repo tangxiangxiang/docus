@@ -2279,3 +2279,167 @@ main.container {
   --accent-hover: var(--vs-accent-hover);
   --accent-bg: var(--vs-accent-bg);
 }
+
+/* AI panel — right-rail chat surface. UI-only, matches the chrome
+   heights of the FileTree / TagPanel headers so the three panels
+   swap-read identically. */
+
+.ai-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: var(--vs-bg-1);
+  color: var(--vs-text-1);
+  border-left: 1px solid var(--vs-border);
+  overflow: hidden;
+}
+
+.ai-panel .ai-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 10px 0 12px;
+  background: var(--vs-bg-3);
+  border-bottom: 1px solid var(--vs-border);
+  user-select: none;
+  flex: 0 0 auto;
+}
+
+.ai-panel .ai-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--vs-text-1);
+}
+
+.ai-panel .ai-title-icon {
+  display: inline-flex;
+  color: var(--vs-accent);
+}
+
+.ai-panel .ai-title-text { letter-spacing: 0.02em; }
+
+.ai-panel .ai-close {
+  background: transparent;
+  border: 0;
+  color: var(--vs-text-3);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s, color 0.1s;
+}
+.ai-panel .ai-close:hover {
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
+
+.ai-panel .ai-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-panel .ai-bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+.ai-panel .ai-bubble.assistant {
+  align-self: flex-start;
+  background: var(--vs-bg-2);
+  color: var(--vs-text-1);
+  border-bottom-left-radius: 2px;
+}
+.ai-panel .ai-bubble.user {
+  align-self: flex-end;
+  background: var(--vs-accent);
+  color: #fff;
+  border-bottom-right-radius: 2px;
+}
+
+.ai-panel .ai-composer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--vs-border);
+  background: var(--vs-bg-1);
+}
+
+.ai-panel .ai-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: none;
+  background: var(--vs-bg-2);
+  border: 1px solid var(--vs-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--vs-text-1);
+  line-height: 1.4;
+  outline: none;
+  transition: border-color 0.1s;
+}
+.ai-panel .ai-input:focus { border-color: var(--vs-accent); }
+.ai-panel .ai-input::placeholder { color: var(--vs-text-3); }
+
+.ai-panel .ai-send {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--vs-accent);
+  color: #fff;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.1s, background 0.1s;
+}
+.ai-panel .ai-send:disabled { opacity: 0.35; cursor: not-allowed; }
+.ai-panel .ai-send:hover:not(:disabled) { filter: brightness(1.1); }
+
+/* NavBar AI toggle — matches the read-mode toggle look (soft-filled
+   accent on pressed). */
+.ai-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.ai-toggle:hover { background: var(--bg-soft); color: var(--text-h); }
+.ai-toggle[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.ai-toggle .ai-toggle-icon { display: inline-flex; line-height: 0; }
