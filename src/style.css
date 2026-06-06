@@ -2291,7 +2291,10 @@ main.container {
   height: 100%;
   background: var(--vs-bg-1);
   color: var(--vs-text-1);
-  border-left: 1px solid var(--vs-border);
+  /* The left seam is drawn by the splitter to the left of this panel
+     (box-shadow: inset -1px 0 0 var(--vs-border)), not by the panel
+     itself. Mirrors the convention used by .file-tree / .tag-panel so
+     dragging the splitter doesn't reflow the seam. */
   overflow: hidden;
 }
 
