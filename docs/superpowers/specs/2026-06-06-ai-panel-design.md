@@ -143,6 +143,7 @@ Single localStorage key (`docus.vault.layout`), same as the rest of the vault la
 ## 8. Implementation notes
 
 Implemented across 10 commits. Notable deviations from the original spec:
+- **Drag sign corrected.** §3.1 specified `clamp(startAi - dx, ...)` for the `'ai'` drag branch, but the right-rail track is right-anchored in the grid, so dragging the splitter to the right (positive `dx`) should *grow* the panel, not shrink it. The implementation uses `clamp(startAi + dx, ...)` — same sign as the tree case, with a comment explaining the convention. The `max = min(600, rect.width - 480)` and `[220, max]` clamp range match the spec.
 - The `startDrag` `'ai'` branch uses `min(600, rect.width - 480)` for `max`, same as the tree case. The clamp range is `[220, max]`, matching the spec.
 - The send button is disabled (`:disabled`) when the textarea is empty — a small affordance not called out in §5.
 - The composer uses `<form @submit.prevent="onSend">` so Enter is captured by both `keydown` (for Shift+Enter) and form submission (defensive belt-and-suspenders).
