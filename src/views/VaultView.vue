@@ -49,11 +49,11 @@ const {
 } = useEditorTabs({ selectPanel })
 
 /* ---------- Scope filter (NavBar chips) ---------- */
-// The scope chips live in the NavBar but their counts depend on the
-// vault's tree. Push the latest tree into the composable on every
-// change so the chip badges stay in sync as files are created / moved.
-const { setTree } = useScopeFilter()
-watch(tree, (t) => setTree(t), { immediate: true })
+// useScopeFilter is called here so the singleton state is wired up
+// (the localStorage watcher installs on first call). NavBar reads
+// `activeScope` / `toggleScope` from the same instance, and FileTree
+// filters `topLevel` off the same `activeScope` ref.
+useScopeFilter()
 
 /* ---------- Tag filter ---------- */
 const { activeTagList, toggleTag, clear: clearTagFilter, removeTag } = useTagFilter({ activePanel })

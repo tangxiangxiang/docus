@@ -42,7 +42,7 @@ function onToggleViewMode() { viewModeApi?.toggle() }
 /* Scope filter (Zettelkasten root chips). Owned by the composable so
    FileTree can read the active scope and the chips here can write it.
    Counts are pushed in by VaultView whenever the tree changes. */
-const { activeScope, scopeCounts, toggleScope } = useScopeFilter()
+const { activeScope, toggleScope } = useScopeFilter()
 const SCOPE_ICONS: Record<string, string> = {
   inbox: ICON_SCOPE_INBOX,
   literature: ICON_SCOPE_LITERATURE,
@@ -73,7 +73,6 @@ const SCOPE_ICONS: Record<string, string> = {
         >
           <span class="scope-chip-icon" aria-hidden="true" v-html="SCOPE_ICONS[root]" />
           <span class="scope-chip-label">{{ root }}</span>
-          <span class="scope-chip-count">{{ scopeCounts[root] ?? 0 }}</span>
         </button>
       </div>
       <div class="nav-spacer" />

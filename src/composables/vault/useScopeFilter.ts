@@ -6,9 +6,8 @@
 // — a tiny singleton pattern that keeps the storage key and watchers
 // in one place instead of two.
 
-import { ref, computed, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { PROTECTED_ROOTS } from '../zettelProtocol'
-import type { TreeNode } from '../../lib/api'
 
 const STORAGE_KEY = 'docus.vault.activeScope'
 
@@ -23,25 +22,7 @@ function loadScope(): string | null {
 }
 
 const activeScope = ref<string | null>(loadScope())
-// Held in a module-level ref so the scopeCounts computed re-runs when
-// the tree changes (VaultView pushes the latest tree via setTree).
-const treeRef = ref<TreeNode[]>([])
 let persistenceWired = false
-
-function countDescendantFiles(node: TreeNode): number {
-  if (node.kind === 'file') return 1
-  return (node.children ?? []).reduce((sum, c) => sum + countDescendantFiles(c), 0)
-}
-
-const scopeCounts = computed<Record<string, number>>(() => {
-  const root = treeRef.value[0]
-  if (!root || root.kind !== 'folder') return {}
-  const out: Record<string, number> = {}
-  for (const c of root.children) {
-    if (PROTECTED_ROOTS.has(c.path)) out[c.path] = countDescendantFiles(c)
-  }
-  return out
-})
 
 export function useScopeFilter() {
   if (!persistenceWired && typeof window !== 'undefined') {
@@ -55,9 +36,5 @@ export function useScopeFilter() {
     activeScope.value = activeScope.value === root ? null : root
   }
 
-  function setTree(tree: TreeNode[]) {
-    treeRef.value = tree
-  }
-
-  return { activeScope, scopeCounts, toggleScope, setTree }
+  return { activeScope, toggleScope }
 }
