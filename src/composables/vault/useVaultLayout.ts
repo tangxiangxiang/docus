@@ -104,14 +104,26 @@ export function useVaultLayout() {
 
   const vaultStyle = computed(() => {
     // Rows: editor-area (fills), then a 24px status-bar that spans the
-    // full width. Columns vary depending on whether a side panel is open.
-    // The splitter grid track is 1px (matches .vault .splitter { width: 1px });
-    // the actual grabbable area is wider (7px), but that lives on a
-    // transparent ::before that overflows the layout box.
-    const cols = activePanel.value
-      ? `48px ${sidePanelWidth.value}px 1px 1fr`
-      : '48px 1fr'
-    return { gridTemplateColumns: cols, gridTemplateRows: '1fr 24px' }
+    // full width. Columns vary depending on whether the left side panel
+    // and/or the right AI panel are open. The splitter grid track is
+    // 1px (matches .vault .splitter { width: 1px }); the actual
+    // grabbable area is wider (7px) but that lives on a transparent
+    // ::before that overflows the layout box.
+    //
+    // The four possible column tracks:
+    //   side=off  ai=off → 48px 1fr
+    //   side=on   ai=off → 48px {side}px 1px 1fr
+    //   side=off  ai=on  → 48px 1fr 1px {ai}px
+    //   side=on   ai=on  → 48px {side}px 1px 1fr 1px {ai}px
+    // Trailing space on `left` and leading space on `right` are
+    // load-bearing — they separate the splitter tracks from `1fr` in
+    // the template literal below. Don't normalize the whitespace.
+    const left = activePanel.value ? `${sidePanelWidth.value}px 1px ` : ''
+    const right = aiOpen.value ? ` 1px ${aiPanelWidth.value}px` : ''
+    return {
+      gridTemplateColumns: `48px ${left}1fr${right}`,
+      gridTemplateRows: '1fr 24px',
+    }
   })
   const contentStyle = computed(() => ({
     '--editor-flex': String(editorRatio.value),

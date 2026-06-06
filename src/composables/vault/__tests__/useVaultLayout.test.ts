@@ -152,7 +152,7 @@ describe('useVaultLayout', () => {
   it('vaultStyle uses 2 columns when both side and AI panels are closed', () => {
     const h = setup()
     h.selectPanel('files') // close the default-open side panel
-    h.toggleAi() // ensure closed
+    // aiOpen defaults to false, so no toggle needed
     expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 1fr')
   })
 
