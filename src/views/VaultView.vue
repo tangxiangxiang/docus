@@ -6,6 +6,7 @@ import { useTagFilter } from '../composables/vault/useTagFilter'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import FileTree from '../components/vault/FileTree.vue'
+import AiPanel from '../components/vault/AiPanel.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import EditorPane from '../components/vault/EditorPane.vue'
 import PreviewPane from '../components/vault/PreviewPane.vue'
@@ -33,6 +34,8 @@ const {
   vaultStyle,
   contentStyle,
   selectPanel,
+  toggleAi,
+  aiOpen,
   startDrag,
 } = useVaultLayout()
 
@@ -192,6 +195,20 @@ watch(() => navSearch?.tick.value, () => openSearch())
         </div>
       </div>
     </section>
+
+    <AiPanel
+      v-if="aiOpen"
+      class="ai-panel-slot"
+      @close="toggleAi"
+    />
+    <div
+      v-if="aiOpen"
+      class="splitter splitter-ai"
+      role="separator"
+      aria-orientation="vertical"
+      title="拖动调整 AI 面板宽度"
+      @pointerdown="startDrag(vaultRef!, 'ai', $event)"
+    />
 
     <StatusBar
       class="status-bar-row"
