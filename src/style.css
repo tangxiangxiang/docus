@@ -537,6 +537,10 @@ main.container {
   --vs-hover-bg: #2a2d2e;
   --vs-status-bg: #007acc;
   --vs-status-fg: #ffffff;
+  /* Subtler border for table internals. Between --vs-bg-2 (#252526)
+     and --vs-border (#3c3c3c) so cell dividers read as quiet grid
+     lines instead of a heavy ruled table. */
+  --vs-table-border: #2e2e2e;
 }
 @media (prefers-color-scheme: light) {
   .vault {
@@ -558,6 +562,7 @@ main.container {
     --vs-hover-bg: #ececec;
     --vs-status-bg: #005fb8;
     --vs-status-fg: #ffffff;
+    --vs-table-border: #d8d8d8;
     --code-bg: #f3f4f6;
   }
 }
@@ -1689,15 +1694,13 @@ main.container {
 }
 .vault .reading-pane .article.reading h1:first-child { margin-top: 0; }
 .vault .reading-pane .article.reading h1 {
-  /* Hero treatment for the post title — bigger, tighter, with a subtle
-     gradient-style bottom border that echoes the TOC rail. The H1 is
-     skipped from the TOC on purpose, so this is its main visual hook. */
+  /* Hero treatment for the post title — bigger, tighter. No border /
+     underline so the heading reads as plain text, not a clickable
+     permalink. The id is still there for the TOC to scroll to. */
   font-size: 2.1rem;
   line-height: 1.25;
   letter-spacing: -0.01em;
   margin: 0 0 0.4em;
-  padding-bottom: 0.5em;
-  border-bottom: 1px solid var(--vs-border);
 }
 .vault .reading-pane .article.reading h2,
 .vault .reading-pane .article.reading h3,
@@ -1712,8 +1715,6 @@ main.container {
 }
 .vault .reading-pane .article.reading h2 {
   font-size: 1.45rem;
-  padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--vs-border);
 }
 .vault .reading-pane .article.reading h3 {
   font-size: 1.18rem;
@@ -1724,6 +1725,18 @@ main.container {
   color: var(--vs-text-2);
   text-transform: none;
   letter-spacing: 0.02em;
+}
+/* markdown-it-anchor wraps heading text in <a class="header-anchor">.
+   In read mode the heading should read as plain text — not as a
+   clickable permalink — so the anchor inherits color, drops the
+   text-decoration, and disables hover/focus pointer events. The
+   heading's own id is still there so the page-nav TOC can scroll
+   to it; only the in-place click is suppressed. */
+.vault .reading-pane .article.reading :where(h1, h2, h3, h4) a.header-anchor {
+  color: inherit;
+  text-decoration: none;
+  pointer-events: none;
+  cursor: text;
 }
 .vault .reading-pane .article.reading p,
 .vault .reading-pane .article.reading ul,
@@ -1790,15 +1803,48 @@ main.container {
   border-top: 1px solid var(--vs-border);
 }
 .vault .reading-pane .article.reading table {
+  /* `separate` + `border-spacing: 0` instead of `collapse` so the
+     rounded corners + overflow clip don't eat the cell borders —
+     the classic collapse+radius combo silently drops borders on the
+     outer cells in many engines. Each cell draws its own border
+     here, and the first / last rows get the radius. */
   font-size: 0.95em;
+  border-collapse: separate;
+  border-spacing: 0;
   border: 1px solid var(--vs-border);
   border-radius: 6px;
   overflow: hidden;
+}
+.vault .reading-pane .article.reading th,
+.vault .reading-pane .article.reading td {
+  /* Subtler than --vs-border so the cell dividers read as quiet grid
+     lines; the outer table border (--vs-border) carries the frame. */
+  border: 1px solid var(--vs-table-border);
+  padding: 6px 10px;
 }
 .vault .reading-pane .article.reading th {
   background: var(--vs-bg-2);
   color: var(--vs-text-1);
 }
+/* The shared borders between cells look ugly once every cell has
+   its own border (double lines on interior edges). Drop them on
+   the right and bottom of every cell except the last column / row
+   so the table reads as a single grid. */
+.vault .reading-pane .article.reading th:not(:last-child),
+.vault .reading-pane .article.reading td:not(:last-child) {
+  border-right: 0;
+}
+.vault .reading-pane .article.reading tr:not(:last-child) th,
+.vault .reading-pane .article.reading tr:not(:last-child) td {
+  border-bottom: 0;
+}
+/* Top corners only on the first row's cells; bottom corners only on
+   the last row's. The outer border-radius on the table + overflow:
+   hidden takes care of the rest. */
+.vault .reading-pane .article.reading tr:first-child th:first-child { border-top-left-radius: 6px; }
+.vault .reading-pane .article.reading tr:first-child th:last-child  { border-top-right-radius: 6px; }
+.vault .reading-pane .article.reading tr:last-child  td:first-child { border-bottom-left-radius: 6px; }
+.vault .reading-pane .article.reading tr:last-child  td:last-child  { border-bottom-right-radius: 6px; }
 .vault .reading-pane .article.reading img {
   border-radius: 6px;
   border: 1px solid var(--vs-border);
@@ -2178,6 +2224,7 @@ main.container {
   --vs-bg-3: #dddddd;
   --vs-bg-4: #ececec;
   --vs-border: #e0e0e0;
+  --vs-table-border: #d8d8d8;
   --vs-text-1: #1f1f1f;
   --vs-text-2: #6f6f6f;
   --vs-text-3: #999999;
@@ -2208,6 +2255,7 @@ main.container {
   --vs-bg-3: #333333;
   --vs-bg-4: #2d2d2d;
   --vs-border: #3c3c3c;
+  --vs-table-border: #2e2e2e;
   --vs-text-1: #d4d4d4;
   --vs-text-2: #858585;
   --vs-text-3: #6a6a6a;
