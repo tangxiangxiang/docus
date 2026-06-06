@@ -832,30 +832,56 @@ main.container {
   overflow: hidden;
 }
 .vault .tag-panel header {
-  padding: 10px 14px;
+  /* Mirrors .vault .file-tree header: 36px tall, same chrome rhythm
+     as the navbar / activity-bar / tabs. Title is icon + name (same
+     structure as the FileTree), count pill rides on the right. */
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  height: 36px;
+  box-sizing: border-box;
   font-size: 0.78rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  text-transform: none;
+  letter-spacing: 0.02em;
   color: var(--vs-text-2);
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
-  display: flex;
+}
+.vault .tag-panel header .title {
+  /* Same flex pattern as the FileTree title so both panel headers
+     align identically. */
+  flex-shrink: 0;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
+  color: var(--vs-text-2);
+}
+.vault .tag-panel header .title-text {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.vault .tag-panel header .title-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vs-text-2);
 }
 .vault .tag-panel header .count {
+  /* Small tabular count on the right, pushed to the far edge via
+     the parent gap. Mono so the digits don't jitter when the
+     number changes. */
+  margin-left: auto;
   font-weight: 500;
   font-size: 0.7rem;
   color: var(--vs-text-2);
-  background: var(--vs-bg-3);
-  border-radius: 8px;
-  padding: 1px 7px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
-  text-transform: none;
-  line-height: 1.4;
+  line-height: 1;
 }
 /* Inside the vault the panel's <ul> is a flex item of the column
    panel — `display: block` here overrides the global `.tag-list`
@@ -1018,16 +1044,18 @@ main.container {
   max-height: 55%;
 }
 .vault .tag-panel .results-header {
+  /* Same rhythm as the main header (10px 14px padding, no uppercase)
+     so the two sections stack visually as one continuous panel. */
   padding: 10px 14px;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  text-transform: none;
+  letter-spacing: 0.02em;
   color: var(--vs-text-2);
   background: var(--vs-bg-2);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   flex: 0 0 auto;
 }

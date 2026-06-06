@@ -62,3 +62,13 @@ export const ICON_SCOPE_ZETTEL = `
   <line x1="6" y1="8" x2="10" y2="8.5" transform="rotate(4 4 3)"/>
   <line x1="6" y1="10.5" x2="9" y2="11" transform="rotate(4 4 3)"/>
 </svg>`
+
+// Tag glyph (hashtag). 14×14 line art, matches the file-tree row
+// icons. Used as the panel-title icon in the TagPanel so the header
+// reads the same way as the FileTree's "📁 Explorer" header.
+export const ICON_TAG = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2.5 2.5h4l7 7-4 4-7-7z"/>
+  <line x1="5" y1="5" x2="7" y2="5"/>
+  <line x1="2" y1="8" x2="4" y2="8"/>
+</svg>`

@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import { PROTECTED_ROOTS } from '../../composables/zettelProtocol'
-import { ICON_SEARCH } from './icons'
+import { ICON_SEARCH, ICON_TAG } from './icons'
 
 const props = defineProps<{
   posts: PostSummary[]
@@ -78,7 +78,12 @@ function onFilterKeydown(e: KeyboardEvent) {
 <template>
   <aside class="tag-panel" aria-label="Tags panel">
     <header>
-      <span class="title">Tags</span>
+      <div class="title" role="presentation">
+        <!-- Mirrors the FileTree header (icon + panel name) so the
+             two panels in the activity bar swap read identically. -->
+        <span class="title-icon" v-html="ICON_TAG" aria-hidden="true" />
+        <span class="title-text">Tags</span>
+      </div>
       <span class="count">{{ tagMap.length }}</span>
     </header>
 
