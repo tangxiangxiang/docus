@@ -72,3 +72,12 @@ export const ICON_TAG = `
   <line x1="5" y1="5" x2="7" y2="5"/>
   <line x1="2" y1="8" x2="4" y2="8"/>
 </svg>`
+
+// AI sparkle — 4-point star with a small inner dot. 14×14 line art,
+// matches the file-tree / scope-chip icon set. Used in the AI panel
+// header and the NavBar AI toggle button.
+export const ICON_AI = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M8 1.5l1.4 4.1L13.5 7l-4.1 1.4L8 12.5 6.6 8.4 2.5 7l4.1-1.4z"/>
+  <circle cx="13" cy="13" r="0.6" fill="currentColor" stroke="none"/>
+</svg>`
