@@ -66,6 +66,53 @@ body.vault-mode #app { height: 100%; }
   outline-color: var(--vs-accent);
 }
 
+/* ---------- Global scrollbar ----------
+   Thin line + auto-hide when not in use. Default thumb is nearly
+   transparent (essentially invisible). Becomes readable on hover of
+   the scrollable container or on direct hover of the thumb itself.
+   Covers every overflow:auto region in the app (tree, tabs, tag
+   list, results, reading-toc, preview, palette, ...) without each
+   having to declare its own scrollbar rules. */
+:root {
+  --sb-size: 6px;
+  --sb-radius: 3px;
+  --sb-thumb: rgba(155, 155, 155, 0.22);
+  --sb-thumb-hover: rgba(155, 155, 155, 0.55);
+}
+/* Firefox + standard CSS scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) transparent;
+}
+/* WebKit / Blink / Safari */
+::-webkit-scrollbar {
+  width: var(--sb-size);
+  height: var(--sb-size);
+}
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb);
+  border-radius: var(--sb-radius);
+  transition: background 0.15s;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-thumb-hover);
+}
+/* Lift the thumb to full visibility when the user hovers the
+   scrollable area itself (not just the thin thumb). Targets the
+   known scroll containers so a stray hover on a button doesn't
+   make every scrollbar in the page light up. */
+.tabs:hover::-webkit-scrollbar-thumb,
+.tree:hover::-webkit-scrollbar-thumb,
+.tag-list:hover::-webkit-scrollbar-thumb,
+.results-list:hover::-webkit-scrollbar-thumb,
+.reading-toc:hover::-webkit-scrollbar-thumb,
+.preview-pane .article:hover::-webkit-scrollbar-thumb,
+.palette-list:hover::-webkit-scrollbar-thumb,
+.vault .file-tree .tree:hover::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb-hover);
+}
+
 h1, h2, h3, h4 {
   font-family: var(--sans);
   font-weight: 600;
@@ -1179,20 +1226,13 @@ main.container {
   border-bottom: 1px solid var(--vs-border);
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
-  -ms-overflow-style: -ms-autohiding-scrollbar;
   /* Subtle right-edge fade hints at overflow when more tabs are
      scrolled off-screen. Uses mask so the fade doesn't tint the
-     background — it just fades the tab content into the bar color. */
+     background — it just fades the tab content into the bar color.
+     The scrollbar itself uses the global thin/auto-hide rule. */
   mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
 }
-.tabs::-webkit-scrollbar { height: 4px; }
-.tabs::-webkit-scrollbar-thumb {
-  background: var(--vs-border);
-  border-radius: 2px;
-}
-.tabs::-webkit-scrollbar-track { background: transparent; }
 .tab {
   display: flex;
   align-items: center;
@@ -1520,16 +1560,8 @@ main.container {
   font-size: 0.85rem;
   line-height: 1.5;
   color: var(--vs-text-2);
-  /* Hide the scrollbar in Webkit — the TOC is its own little world
-     and a visible thumb on top of a clean reading surface looks
-     noisy. Users can still scroll with the wheel / trackpad. */
+  /* Scrollbar uses the global thin/auto-hide rule. */
   scrollbar-width: thin;
-  scrollbar-color: var(--vs-border) transparent;
-}
-.vault .reading-toc::-webkit-scrollbar { width: 4px; }
-.vault .reading-toc::-webkit-scrollbar-thumb {
-  background: var(--vs-border);
-  border-radius: 2px;
 }
 .vault .reading-toc-title {
   margin: 0 0 10px;
