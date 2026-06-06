@@ -1,9 +1,11 @@
 // Vault layout state: which side panel is open (Files / Tags / none), the
-// side-panel width, the editor/preview split ratio, and the pointer-based
-// splitter dragging logic. All persisted to localStorage via `useStorage`.
+// side-panel width, the editor/preview split ratio, the right-rail AI
+// panel state, and the pointer-based splitter dragging logic. All
+// persisted to localStorage via `useStorage`.
 //
 // The composable owns:
-//   - the three reactive refs (activePanel, sidePanelWidth, editorRatio)
+//   - the five reactive refs (activePanel, sidePanelWidth, editorRatio,
+//     aiOpen, aiPanelWidth)
 //   - the useStorage hydration + the load-bearing old-schema migration
 //     (fileTreeOpen / fileTreeWidth -> activePanel / sidePanelWidth)
 //   - the two watchers that bridge live refs <-> persisted state
@@ -32,10 +34,12 @@ export interface VaultLayout {
   activePanel: ActivePanel
   sidePanelWidth: number
   editorRatio: number
+  aiOpen: boolean
+  aiPanelWidth: number
 }
 
 const STORAGE_KEY = 'docus.vault.layout'
-const DEFAULTS: VaultLayout = { activePanel: 'files', sidePanelWidth: 260, editorRatio: 1 }
+const DEFAULTS: VaultLayout = { activePanel: 'files', sidePanelWidth: 260, editorRatio: 1, aiOpen: false, aiPanelWidth: 320 }
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
@@ -61,7 +65,13 @@ export function useVaultLayout() {
             ? d.sidePanelWidth
             : typeof d.fileTreeWidth === 'number' ? d.fileTreeWidth : DEFAULTS.sidePanelWidth
           const r = typeof d.editorRatio === 'number' ? d.editorRatio : DEFAULTS.editorRatio
-          return { activePanel: active, sidePanelWidth: w, editorRatio: r } satisfies VaultLayout
+          return {
+            activePanel: active,
+            sidePanelWidth: w,
+            editorRatio: r,
+            aiOpen: typeof d.aiOpen === 'boolean' ? d.aiOpen : DEFAULTS.aiOpen,
+            aiPanelWidth: typeof d.aiPanelWidth === 'number' ? d.aiPanelWidth : DEFAULTS.aiPanelWidth,
+          } satisfies VaultLayout
         } catch {
           return { ...DEFAULTS }
         }
@@ -70,22 +80,26 @@ export function useVaultLayout() {
     },
   })
 
-  // The three live refs mirror the persisted layout. The watchers below
+  // The five live refs mirror the persisted layout. The watchers below
   // keep them in sync in both directions; useStorage is the source of
   // truth for initial hydration, then the refs take over for runtime
   // mutations and we write back on every change.
   const activePanel = ref<ActivePanel>(layout.value.activePanel)
   const sidePanelWidth = ref(layout.value.sidePanelWidth)
   const editorRatio = ref(layout.value.editorRatio)
+  const aiOpen = ref(layout.value.aiOpen)
+  const aiPanelWidth = ref(layout.value.aiPanelWidth)
 
   watch(layout, (v) => {
     activePanel.value = v.activePanel
     sidePanelWidth.value = v.sidePanelWidth
     editorRatio.value = v.editorRatio
+    aiOpen.value = v.aiOpen
+    aiPanelWidth.value = v.aiPanelWidth
   }, { immediate: true, deep: true })
 
-  watch([activePanel, sidePanelWidth, editorRatio], ([ap, w, r]) => {
-    layout.value = { activePanel: ap, sidePanelWidth: w, editorRatio: r }
+  watch([activePanel, sidePanelWidth, editorRatio, aiOpen, aiPanelWidth], ([ap, w, r, ao, aw]) => {
+    layout.value = { activePanel: ap, sidePanelWidth: w, editorRatio: r, aiOpen: ao, aiPanelWidth: aw }
   })
 
   const vaultStyle = computed(() => {
@@ -111,6 +125,10 @@ export function useVaultLayout() {
 
   function selectPanel(panel: SidePanel) {
     activePanel.value = activePanel.value === panel ? null : panel
+  }
+
+  function toggleAi() {
+    aiOpen.value = !aiOpen.value
   }
 
   function startDrag(host: HTMLElement, which: 'tree' | 'middle', e: PointerEvent) {
@@ -154,9 +172,12 @@ export function useVaultLayout() {
     activePanel,
     sidePanelWidth,
     editorRatio,
+    aiOpen,
+    aiPanelWidth,
     vaultStyle,
     contentStyle,
     selectPanel,
+    toggleAi,
     startDrag,
   }
 }
