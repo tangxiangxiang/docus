@@ -139,3 +139,13 @@ Single localStorage key (`docus.vault.layout`), same as the rest of the vault la
 - `pnpm typecheck` passes.
 - `pnpm test` (vitest, 117 tests) passes — no existing test should be touched.
 - Visual smoke check via Puppeteer: with `aiOpen: true`, the panel renders on the right with the three regions; the splitter can be dragged; toggling via the NavBar button hides/shows the panel; toggling view mode keeps the panel visible; page reload preserves `aiOpen` and `aiPanelWidth`.
+
+## 8. Implementation notes
+
+Implemented across 10 commits. Notable deviations from the original spec:
+- The `startDrag` `'ai'` branch uses `min(600, rect.width - 480)` for `max`, same as the tree case. The clamp range is `[220, max]`, matching the spec.
+- The send button is disabled (`:disabled`) when the textarea is empty — a small affordance not called out in §5.
+- The composer uses `<form @submit.prevent="onSend">` so Enter is captured by both `keydown` (for Shift+Enter) and form submission (defensive belt-and-suspenders).
+- The NavBar AI button is `v-if="isVault"` to match the search and view-mode buttons; it never appears outside the vault.
+
+No LLM client or message persistence was added (still in scope §6).
