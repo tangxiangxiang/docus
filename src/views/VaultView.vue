@@ -3,6 +3,7 @@ import { ref, inject, shallowRef, watch, computed } from 'vue'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { useTagFilter } from '../composables/vault/useTagFilter'
+import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
@@ -46,6 +47,13 @@ const {
   tree, posts, tabs, activePath, activeTab, isDirty, activeSize,
   refresh, openPost, closeTab, selectTab, onEditorChange, onKeydown, onCommandPaletteNew,
 } = useEditorTabs({ selectPanel })
+
+/* ---------- Scope filter (NavBar chips) ---------- */
+// The scope chips live in the NavBar but their counts depend on the
+// vault's tree. Push the latest tree into the composable on every
+// change so the chip badges stay in sync as files are created / moved.
+const { setTree } = useScopeFilter()
+watch(tree, (t) => setTree(t), { immediate: true })
 
 /* ---------- Tag filter ---------- */
 const { activeTagList, toggleTag, clear: clearTagFilter, removeTag } = useTagFilter({ activePanel })
@@ -102,7 +110,12 @@ watch(() => navSearch?.tick.value, () => openSearch())
     />
 
     <section class="editor-area">
-      <EditorTabs :tabs="tabs" :active-path="activePath" @select="selectTab" @close="closeTab" />
+      <EditorTabs
+        :tabs="tabs"
+        :active-path="activePath"
+        @select="selectTab"
+        @close="closeTab"
+      />
       <Breadcrumb :current-path="activePath" />
 
       <!-- Edit mode: editor + preview side-by-side, draggable mid-splitter. -->
@@ -121,7 +134,18 @@ watch(() => navSearch?.tick.value, () => openSearch())
             @update:model-value="(val: string) => onEditorChange(t.path, val)"
           />
         </div>
-        <div v-if="!tabs.length" class="content-empty">未打开文件。在侧栏选一个或按 <kbd>⌘P</kbd> 新建。</div>
+        <div v-if="!tabs.length" class="content-empty">
+          <div class="empty-card">
+            <div class="empty-title">No file open</div>
+            <div class="empty-hint">
+              <!-- Each hint item is one flex item so the kbd and its
+                   label stay together when the row wraps. -->
+              <span class="hint-item"><kbd>⌘P</kbd> command palette</span>
+              <span class="dot" aria-hidden="true">·</span>
+              <span class="hint-item"><kbd>⌘B</kbd> toggle sidebar</span>
+            </div>
+          </div>
+        </div>
 
         <div
           v-if="tabs.length"
@@ -154,7 +178,18 @@ watch(() => navSearch?.tick.value, () => openSearch())
         >
           <ReadingPane :raw="t.raw" />
         </div>
-        <div v-if="!tabs.length" class="content-empty">未打开文件。在侧栏选一个或按 <kbd>⌘P</kbd> 新建。</div>
+        <div v-if="!tabs.length" class="content-empty">
+          <div class="empty-card">
+            <div class="empty-title">No file open</div>
+            <div class="empty-hint">
+              <!-- Each hint item is one flex item so the kbd and its
+                   label stay together when the row wraps. -->
+              <span class="hint-item"><kbd>⌘P</kbd> command palette</span>
+              <span class="dot" aria-hidden="true">·</span>
+              <span class="hint-item"><kbd>⌘B</kbd> toggle sidebar</span>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 

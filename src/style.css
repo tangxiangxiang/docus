@@ -185,19 +185,25 @@ hr {
   font-weight: 700;
   font-size: 1.05rem;
   color: var(--text-h);
-  letter-spacing: 0.5px;
+  letter-spacing: 0.2px;
   text-decoration: none;
 }
-.brand:hover { text-decoration: none; }
+.brand:hover { text-decoration: none; color: var(--accent); }
 .brand-logo {
   width: 24px;
   height: 24px;
   display: block;
-  /* SVG carries its own dark stroke; soft glow follows the theme accent. */
-  filter: drop-shadow(0 0 0 transparent);
+  flex-shrink: 0;
+}
+.brand-wordmark {
+  /* Slightly heavier than the nav links so it reads as a brand mark,
+     not as a regular page link. Letter spacing tightened a hair. */
+  font-weight: 700;
+  letter-spacing: -0.2px;
 }
 .navbar.is-vault .brand { font-size: 0.95rem; }
 .navbar.is-vault .brand-logo { width: 20px; height: 20px; }
+.navbar.is-vault .brand-wordmark { font-size: 0.95rem; }
 .nav-links {
   display: flex;
   gap: 22px;
@@ -230,32 +236,9 @@ hr {
 .navbar.is-vault .nav-links a { font-size: 0.85rem; }
 .navbar.is-vault .nav-links .router-link-exact-active::after { bottom: -10px; }
 
-/* VS Code-style top menu bar (shown only in vault mode, sits to the right of the brand) */
-.menu-bar {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  height: 100%;
-}
-.menu-item {
-  padding: 0 8px;
-  height: 100%;
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.78rem;
-  letter-spacing: 0.1px;
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  cursor: default;
-  user-select: none;
-  white-space: nowrap;
-  transition: color 0.12s, background 0.12s;
-}
-.menu-item:hover {
-  color: var(--text-h);
-  background: var(--bg-soft);
-}
+/* (VS Code-style top menu bar removed — buttons were decorative and
+   non-functional. The vault's real navigation lives in the activity
+   bar, command palette (⌘P), and keyboard shortcuts.) */
 
 .nav-spacer { flex: 1; }
 .nav-actions {
@@ -294,6 +277,98 @@ hr {
 .navbar.is-vault .nav-search,
 .navbar.is-vault .theme-toggle,
 .navbar.is-vault .mode-toggle { padding: 4px; }
+
+/* Scope filter chips (Zettelkasten roots: inbox / literature / zettel).
+   Rendered in the navbar in vault mode because the file tree's header
+   is too narrow on 150px sidebars to fit three chips alongside the
+   folder icon. Sits between the brand and the nav-spacer; uses global
+   tokens (--text-muted / --bg-soft / --accent) so it inherits the
+   navbar's light/dark palette naturally. */
+.navbar .scope-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+}
+.navbar .scope-chip {
+  /* Icon + label + small count badge. Padding is a bit wider than the
+     icon-only nav actions to give the text room to breathe; the count
+     badge is absolute-positioned so it doesn't add to the row height. */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.navbar .scope-chip:hover {
+  color: var(--text-h);
+  background: var(--bg-soft);
+  border-color: var(--border);
+}
+.navbar .scope-chip.active {
+  /* Soft filled accent — matches the pressed state of mode-toggle
+     above so all "active" affordances in the navbar read the same. */
+  color: var(--accent);
+  background: var(--bg-soft);
+  border-color: var(--border);
+}
+.navbar .scope-chip-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.navbar .scope-chip-icon :where(svg) {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+.navbar .scope-chip-label {
+  /* Mono so the three names (inbox / literature / zettel) feel like
+     route-like identifiers, matching the file-tree row visual language.
+     Truncates on very narrow viewports rather than wrapping. */
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.navbar .scope-chip-count {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.62rem;
+  line-height: 1;
+  color: var(--text);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.navbar .scope-chip.active .scope-chip-count {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
 
 /* Layout */
 main.container {
@@ -523,33 +598,33 @@ main.container {
 .vault .file-tree header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 12px;
-  height: 40px;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 8px 0 10px;
+  height: 36px;
   box-sizing: border-box;
-  font-size: 0.7rem;
-  font-weight: 400;
+  font-size: 0.78rem;
+  font-weight: 600;
   text-transform: none;
-  letter-spacing: normal;
+  letter-spacing: 0.02em;
   color: var(--vs-text-2);
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
 }
 .vault .file-tree header .title {
-  /* The chip group on the right can grow wider than the title, and
-     flex's default min-width:auto squeezes CJK characters one-per-line
-     instead of letting them overflow. Keep the title at its intrinsic
-     width and let the chips shrink / wrap inside their own group. */
+  /* Folder glyph + panel name. flex-shrink: 0 so CJK characters stay
+     on one line even when the sidebar is at its 150px minimum. */
   flex-shrink: 0;
-  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vs-text-2);
 }
-.vault .file-tree header .scope-chips {
-  /* The chips are sized to fit alongside the title (see the
-     .scope-chip rules below); the container just needs to take
-     whatever space is left and right-align within it. */
-  flex: 0 1 auto;
-  justify-content: flex-end;
+.vault .file-tree header .title-text {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 .vault .file-tree ul { overflow-y: auto; flex: 1; }
 .vault .file-tree li {
@@ -595,78 +670,6 @@ main.container {
 }
 
 /* New recursive tree structure: TreeRow / tree-children / drop targets */
-.vault .file-tree .scope-chips {
-  display: flex; gap: 4px; align-items: center;
-}
-.vault .file-tree .scope-chip {
-  /* The chip is just an icon now — the descendant count is a small
-     absolute-positioned badge in the bottom-right corner, so the chip
-     itself stays compact (icon-sized) and three of them line up in
-     the 40px header next to the title. */
-  position: relative;
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 4px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--vs-text-2);
-  font-size: 0.68rem;
-  font-weight: 400;
-  line-height: 1.4;
-  cursor: pointer;
-  transition: background 100ms, color 100ms, border-color 100ms;
-}
-.vault .file-tree .scope-chip:hover {
-  background: var(--vs-hover-bg);
-  color: var(--vs-text-1);
-}
-.vault .file-tree .scope-chip.active {
-  background: var(--vs-accent-bg);
-  color: var(--vs-accent);
-  border-color: var(--vs-accent);
-}
-.vault .file-tree .scope-chip-icon {
-  display: inline-flex;
-  width: 14px;
-  height: 14px;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.vault .file-tree .scope-chip-icon :where(svg) {
-  width: 14px;
-  height: 14px;
-  display: block;
-}
-.vault .file-tree .scope-chip-count {
-  position: absolute;
-  /* Floats in the bottom-right corner of the chip, just outside the
-     icon. The bg of the chip is the --vs-bg-2, so we re-paint a small
-     patch of it under the badge to keep the badge from sitting on
-     top of the icon edge. */
-  right: -3px;
-  bottom: -3px;
-  min-width: 13px;
-  height: 13px;
-  padding: 0 3px;
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.6rem;
-  line-height: 1;
-  color: var(--vs-text-1);
-  background: var(--vs-bg-3);
-  border: 1px solid var(--vs-bg-2);
-  border-radius: 6px;
-  pointer-events: none;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-}
-.vault .file-tree .scope-chip.active .scope-chip-count {
-  background: var(--vs-accent);
-  color: var(--vs-status-fg, #ffffff);
-  border-color: var(--vs-accent);
-}
 .vault .file-tree .tree {
   list-style: none; padding: 0; margin: 0;
   overflow-y: auto; flex: 1;
@@ -1271,6 +1274,10 @@ main.container {
 .content {
   display: flex;
   min-height: 0;
+  height: 100%;
+  /* `position: relative` so the empty state can absolute-fill the row
+     when no tabs are open (see .content-empty). */
+  position: relative;
   overflow: hidden;
   background: var(--vs-bg-1);
 }
@@ -1295,13 +1302,64 @@ main.container {
   box-sizing: border-box;
 }
 .content-empty {
-  flex: 1;
+  /* Absolute-fill the parent (.content) so the card is always
+     centered in the row regardless of how the surrounding flex /
+     grid sizing decides to resolve. The previous `flex: 1` and
+     `margin: auto` attempts both failed in this nested layout
+     (grid → flex → flex-item), so we just sidestep the whole
+     question by pulling the empty state out of normal flow. */
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--vs-text-3);
-  font-style: italic;
   background: var(--vs-bg-1);
+}
+.content-empty .empty-card {
+  text-align: center;
+  padding: 20px 28px;
+  border-radius: 8px;
+  background: var(--vs-bg-2);
+  max-width: 360px;
+}
+.content-empty .empty-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--vs-text-1);
+  margin-bottom: 6px;
+  font-style: normal;
+}
+.content-empty .empty-hint {
+  font-size: 0.78rem;
+  color: var(--vs-text-2);
+  font-style: normal;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+/* Each hint item is one flex child so the kbd and its label stay
+   glued together when the row wraps (otherwise the kbd drops to one
+   line and the label to the next). */
+.content-empty .empty-hint .hint-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.content-empty .empty-hint .dot { color: var(--vs-text-3); }
+.content-empty kbd {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  padding: 1px 5px;
+  border: 1px solid var(--vs-border);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: var(--vs-bg-1);
+  color: var(--vs-text-1);
+  line-height: 1.2;
 }
 
 /* Splitters inside vault — the visual rule is exactly 1px (the
@@ -1365,6 +1423,46 @@ main.container {
   box-sizing: border-box;
 }
 .vault .preview-pane .article h1:first-child { margin-top: 0; }
+
+/* Heading hierarchy inside the live preview pane. The bare h1/h2/h3
+   from :root is too uniform — the sizes are close enough together
+   that the eye can't tell the levels apart, and there's no color or
+   weight to anchor them. We re-bind: H1 is the document title, H2 a
+   section, H3+ sub-sections. Underline + tighter weight ladder makes
+   the hierarchy read at a glance. */
+.vault .preview-pane .article h1 {
+  font-size: 1.65rem;
+  font-weight: 700;
+  margin: 0.2em 0 0.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--vs-border);
+  color: var(--vs-text-1);
+  letter-spacing: -0.01em;
+}
+.vault .preview-pane .article h2 {
+  font-size: 1.25rem;
+  font-weight: 650;
+  margin: 1.4em 0 0.5em;
+  color: var(--vs-text-1);
+}
+.vault .preview-pane .article h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 1.2em 0 0.4em;
+  color: var(--vs-text-1);
+}
+.vault .preview-pane .article h4 {
+  font-size: 0.92rem;
+  font-weight: 600;
+  margin: 1em 0 0.35em;
+  color: var(--vs-text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.vault .preview-pane .article p { margin: 0.6em 0; line-height: 1.65; }
+.vault .preview-pane .article ul,
+.vault .preview-pane .article ol { padding-left: 1.4em; }
+.vault .preview-pane .article li + li { margin-top: 0.25em; }
 
 /* Reading mode (vault read surface). Reuses the editor-area's grid
    slot (where editor + preview normally live) and swaps the split
@@ -1681,18 +1779,22 @@ main.container {
 }
 
 /* Status Bar — spans the full width of the vault (last grid row,
-   column 1 / -1).  Matches VSCode: 24px tall, accent-colored bg. */
+   column 1 / -1). 24px tall, low-contrast neutral background so the
+   status text reads as a footer affordance, not a brand bar. The
+   saving/error states get a left-edge accent so the moment something
+   actually changes still pops. */
 .status-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--vs-status-bg);
-  color: var(--vs-status-fg);
-  font-size: 0.75rem;
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  font-size: 0.74rem;
   padding: 0 12px;
   user-select: none;
   height: 24px;
   grid-column: 1 / -1;
+  border-top: 1px solid var(--border);
 }
 .sb-left, .sb-right {
   display: flex;
@@ -1700,10 +1802,16 @@ main.container {
   gap: 14px;
 }
 .sb-item { white-space: nowrap; }
-.sb-status[data-status='dirty']::before { content: '● '; }
-.sb-status[data-status='saved']::before { content: '✓ '; }
+.sb-item:first-child { padding-left: 2px; }
+.sb-status { color: var(--text-muted); }
+.sb-status[data-status='dirty']  { color: #d97706; }
+.sb-status[data-status='saved']  { color: var(--text); }
+.sb-status[data-status='saving'] { color: var(--accent); }
+.sb-status[data-status='error']  { color: #dc2626; }
+.sb-status[data-status='dirty']::before  { content: '● '; }
+.sb-status[data-status='saved']::before  { content: '✓ '; }
 .sb-status[data-status='saving']::before { content: '⟳ '; }
-.sb-status[data-status='error']::before { content: '! '; }
+.sb-status[data-status='error']::before  { content: '! '; }
 
 /* Empty / loading state inside vault */
 .vault .empty {
@@ -1774,6 +1882,33 @@ main.container {
 }
 .cm-host .cm-editor { height: 100%; }
 .cm-host .cm-scroller { font-family: var(--mono); }
+/* Light-mode CodeMirror palette. Only applies when the vault is in
+   light theme (the EditorPane skips oneDark in that case). Pulled from
+   the One Light theme so it still feels "code-editor-ish" rather than
+   a plain textarea. */
+.vault .cm-host .cm-editor {
+  background: var(--vs-bg-1);
+  color: var(--vs-text-1);
+}
+.vault .cm-host .cm-gutters {
+  background: var(--vs-bg-1);
+  color: var(--vs-text-3);
+  border-right: 1px solid var(--vs-border);
+}
+.vault .cm-host .cm-cursor { border-left-color: var(--vs-text-1); }
+.vault .cm-host .cm-activeLine { background: var(--vs-hover-bg); }
+.vault .cm-host .cm-activeLineGutter {
+  background-color: transparent;
+  color: var(--vs-text-1);
+}
+.vault .cm-host .cm-content { caret-color: var(--vs-text-1); }
+.vault .cm-host .cm-selectionBackground,
+.vault .cm-host .cm-focused .cm-selectionBackground {
+  background: var(--vs-accent-bg) !important;
+}
+.vault .cm-host .cm-searchMatch { background: rgba(255, 200, 50, 0.35); }
+.vault .cm-host .cm-searchMatch.cm-searchMatch-selected { background: rgba(255, 150, 0, 0.45); }
+
 /* VS Code's active-line gutter is subtle: the gutter keeps its base
    bg and only the line number is bumped to the brightest text color.
    The oneDark theme paints a slab of #2c313a behind the active row

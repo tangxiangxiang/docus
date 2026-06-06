@@ -7,14 +7,7 @@ import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
 import { blockedMessage, isInZettel, PROTECTED_ROOTS } from '../../composables/zettelProtocol'
 import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder } from '../../lib/api'
-import { ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ZETTEL } from './icons'
-
-// Map each Zettelkasten root to the icon shown in its scope chip.
-const SCOPE_ICONS: Record<string, string> = {
-  inbox: ICON_SCOPE_INBOX,
-  literature: ICON_SCOPE_LITERATURE,
-  zettel: ICON_SCOPE_ZETTEL,
-}
+import { useScopeFilter } from '../../composables/vault/useScopeFilter'
 
 const props = withDefaults(defineProps<{
   tree: TreeNode[]
@@ -37,24 +30,12 @@ const { prompt } = usePrompt()
 const toast = useToast()
 
 const STORAGE_KEY = 'docus.vault.expandedPaths'
-const SCOPE_KEY = 'docus.vault.activeScope'
 const expanded = ref<Set<string>>(new Set(loadExpanded()))
 
-// Optional scope filter (the three Zettelkasten root names). When non-null,
-// only that root's subtree is rendered — the other two are hidden. Click the
-// same chip again to clear, or click a different one to switch. Persisted
-// to localStorage so the view is restored on reload.
-const activeScope = ref<string | null>(loadScope())
-function loadScope(): string | null {
-  try {
-    const raw = localStorage.getItem(SCOPE_KEY)
-    return raw && PROTECTED_ROOTS.has(raw) ? raw : null
-  } catch { return null }
-}
-function toggleScope(root: string) {
-  activeScope.value = activeScope.value === root ? null : root
-  try { localStorage.setItem(SCOPE_KEY, activeScope.value ?? '') } catch { /* ignore */ }
-}
+// Scope filter is owned by useScopeFilter (shared with the NavBar that
+// renders the chips). We only read activeScope here — the filter is
+// applied to topLevel below, and the chips live in the NavBar.
+const { activeScope } = useScopeFilter()
 
 // The server returns a single implicit root folder ("content", path "") whose
 // children are the user's top-level folders. We don't surface that synthetic
@@ -75,18 +56,6 @@ const topLevel = computed<TreeNode[]>(() => {
       .filter((n): n is TreeNode => n !== null)
   }
   return children
-})
-
-// Counts per root for the chip badges. Computed off the unfiltered tree so
-// the chips always show real numbers, not "1 / 0 / 0" when scope is active.
-const scopeCounts = computed<Record<string, number>>(() => {
-  const root = props.tree[0]
-  if (!root || root.kind !== 'folder') return {}
-  const out: Record<string, number> = {}
-  for (const c of root.children) {
-    if (PROTECTED_ROOTS.has(c.path)) out[c.path] = countDescendantFiles(c)
-  }
-  return out
 })
 
 // Path -> tags lookup so the tree filter can run in O(n) without scanning
@@ -339,22 +308,17 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
     @dragover="onRootDragOver"
     @drop="onRootDrop"
   >
-    <header>
-      <span class="title">资源管理器</span>
-      <div class="scope-chips" role="tablist" aria-label="范围过滤">
-        <button
-          v-for="root in PROTECTED_ROOTS"
-          :key="root"
-          class="scope-chip"
-          :class="{ active: activeScope === root }"
-          :aria-pressed="activeScope === root"
-          :aria-label="activeScope === root ? `已过滤为 ${root}（再次点击取消）` : `只看 ${root}`"
-          :title="activeScope === root ? `已过滤为 ${root}（再次点击取消）` : `只看 ${root}`"
-          @click="toggleScope(root)"
-        >
-          <span class="scope-chip-icon" aria-hidden="true" v-html="SCOPE_ICONS[root]" />
-          <span class="scope-chip-count">{{ scopeCounts[root] ?? 0 }}</span>
-        </button>
+    <header :aria-label="'File explorer'">
+      <div class="title" role="presentation">
+        <!-- The scope filter chips moved to the NavBar, so the header
+             is just a folder glyph + panel name. Keeps the row from
+             looking like dead space at 36px tall. English label
+             matches the scope / file names below and the VS Code
+             vocabulary this app emulates. -->
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+        </svg>
+        <span class="title-text">Explorer</span>
       </div>
     </header>
     <!-- Active tag filter row. Only shown when at least one tag is

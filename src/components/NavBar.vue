@@ -3,6 +3,9 @@ import { computed, inject } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
+import { useScopeFilter } from '../composables/vault/useScopeFilter'
+import { PROTECTED_ROOTS } from '../composables/zettelProtocol'
+import { ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ZETTEL } from './vault/icons'
 
 defineProps<{ isVault?: boolean }>()
 const emit = defineEmits<{
@@ -35,24 +38,44 @@ const modeTitle = computed<string>(() => {
   return `${next} mode (click to switch)`
 })
 function onToggleViewMode() { viewModeApi?.toggle() }
+
+/* Scope filter (Zettelkasten root chips). Owned by the composable so
+   FileTree can read the active scope and the chips here can write it.
+   Counts are pushed in by VaultView whenever the tree changes. */
+const { activeScope, scopeCounts, toggleScope } = useScopeFilter()
+const SCOPE_ICONS: Record<string, string> = {
+  inbox: ICON_SCOPE_INBOX,
+  literature: ICON_SCOPE_LITERATURE,
+  zettel: ICON_SCOPE_ZETTEL,
+}
 </script>
 
 <template>
   <header :class="['navbar', { 'is-vault': isVault }]">
     <div :class="['navbar-inner', { container: !isVault, 'full-width': isVault }]">
-      <RouterLink to="/" class="brand">
+      <RouterLink to="/" class="brand" aria-label="docus home">
         <img class="brand-logo" src="/public/logo.svg" alt="docus logo" width="24" height="24" />
+        <span class="brand-wordmark">docus</span>
       </RouterLink>
-      <nav v-if="isVault" class="menu-bar" aria-label="Main menu">
-        <button class="menu-item" type="button" tabindex="-1">文件(F)</button>
-        <button class="menu-item" type="button" tabindex="-1">编辑(E)</button>
-        <button class="menu-item" type="button" tabindex="-1">选择(S)</button>
-        <button class="menu-item" type="button" tabindex="-1">查看(V)</button>
-        <button class="menu-item" type="button" tabindex="-1">转到(G)</button>
-        <button class="menu-item" type="button" tabindex="-1">运行(R)</button>
-        <button class="menu-item" type="button" tabindex="-1">终端(T)</button>
-        <button class="menu-item" type="button" tabindex="-1">帮助(H)</button>
-      </nav>
+      <!-- Scope filter: lives in the navbar (the file tree header is too
+           narrow on 150px sidebars). Hidden outside the vault since the
+           rest of the app doesn't have a file tree to filter. -->
+      <div v-if="isVault" class="scope-chips" role="tablist" aria-label="范围过滤">
+        <button
+          v-for="root in PROTECTED_ROOTS"
+          :key="root"
+          class="scope-chip"
+          :class="{ active: activeScope === root }"
+          :aria-pressed="activeScope === root"
+          :aria-label="activeScope === root ? `已过滤为 ${root}（再次点击取消）` : `只看 ${root}`"
+          :title="activeScope === root ? `已过滤为 ${root}（再次点击取消）` : `只看 ${root}`"
+          @click="toggleScope(root)"
+        >
+          <span class="scope-chip-icon" aria-hidden="true" v-html="SCOPE_ICONS[root]" />
+          <span class="scope-chip-label">{{ root }}</span>
+          <span class="scope-chip-count">{{ scopeCounts[root] ?? 0 }}</span>
+        </button>
+      </div>
       <div class="nav-spacer" />
       <div class="nav-actions">
         <button
