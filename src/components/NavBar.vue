@@ -5,7 +5,8 @@ import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { PROTECTED_ROOTS } from '../composables/zettelProtocol'
-import { ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ZETTEL } from './vault/icons'
+import { ICON_AI, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ZETTEL } from './vault/icons'
+import { useVaultLayout } from '../composables/vault/useVaultLayout'
 
 defineProps<{ isVault?: boolean }>()
 const emit = defineEmits<{
@@ -43,6 +44,11 @@ function onToggleViewMode() { viewModeApi?.toggle() }
    FileTree can read the active scope and the chips here can write it.
    Counts are pushed in by VaultView whenever the tree changes. */
 const { activeScope, toggleScope } = useScopeFilter()
+
+/* AI panel toggle. Lives here (not in VaultView) because the button
+   is a sibling of the existing nav-search / mode-toggle, and the
+   useVaultLayout singleton makes this safe. */
+const { aiOpen, toggleAi } = useVaultLayout()
 const SCOPE_ICONS: Record<string, string> = {
   inbox: ICON_SCOPE_INBOX,
   literature: ICON_SCOPE_LITERATURE,
@@ -89,6 +95,17 @@ const SCOPE_ICONS: Record<string, string> = {
             <circle cx="11" cy="11" r="7" />
             <line x1="20" y1="20" x2="16.5" y2="16.5" />
           </svg>
+        </button>
+        <button
+          v-if="isVault"
+          class="ai-toggle"
+          type="button"
+          :title="aiOpen ? 'AI panel (click to close)' : 'AI panel'"
+          :aria-label="aiOpen ? 'AI panel (click to close)' : 'AI panel'"
+          :aria-pressed="aiOpen"
+          @click="toggleAi"
+        >
+          <span class="ai-toggle-icon" aria-hidden="true" v-html="ICON_AI" />
         </button>
         <button
           v-if="isVault"
