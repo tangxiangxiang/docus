@@ -52,7 +52,7 @@ describe('useAiHistory', () => {
 
   describe('loadActive', () => {
     it('with no active session, leaves activeSession null and messages empty', async () => {
-      queue.push({ status: 200, body: { sessionId: null } })
+      queue.push({ status: 200, body: { activeId: null, configured: true } })
       const h = setup()
       await h.api.loadActive()
       expect(h.activeSession.value).toBeNull()
@@ -60,7 +60,7 @@ describe('useAiHistory', () => {
     })
 
     it('with an active session, populates activeSession and messages', async () => {
-      queue.push({ status: 200, body: { sessionId: 42 } })
+      queue.push({ status: 200, body: { activeId: 42, configured: true } })
       queue.push({ status: 200, body: [{ id: 1, sessionId: 42, role: 'user', content: 'hi', createdAt: 100 }] })
       const h = setup()
       await h.api.loadActive()
@@ -72,7 +72,7 @@ describe('useAiHistory', () => {
   describe('sendMessage', () => {
     it('auto-creates a session when none is active, then appends the message', async () => {
       // loadActive: no active
-      queue.push({ status: 200, body: { sessionId: null } })
+      queue.push({ status: 200, body: { activeId: null, configured: true } })
       // createSession
       queue.push({ status: 201, body: { id: 1, title: '', createdAt: 1, updatedAt: 1 } })
       // setActiveSessionId (called inside createSession)
@@ -95,7 +95,7 @@ describe('useAiHistory', () => {
     })
 
     it('replaces the optimistic message with the server response', async () => {
-      queue.push({ status: 200, body: { sessionId: 5 } })
+      queue.push({ status: 200, body: { activeId: 5, configured: true } })
       queue.push({ status: 200, body: [] })
       queue.push({ status: 201, body: { id: 99, sessionId: 5, role: 'user', content: 'hello', createdAt: 3 } })
 

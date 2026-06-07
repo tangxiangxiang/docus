@@ -3,6 +3,7 @@
 // (method, URL, body) and response mapping.
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import * as api from '../ai-api'
+import { streamChat } from '../ai-api'
 
 type FetchCall = { url: string; init: RequestInit }
 
@@ -66,8 +67,8 @@ describe('ai-api', () => {
     expect(JSON.parse(calls[0].init.body as string)).toEqual({ role: 'user', content: 'x' })
   })
 
-  it('getActiveSessionId GETs /api/ai/active', async () => {
-    responses.push({ status: 200, body: { sessionId: 42 } })
+  it('getActiveSessionId returns just the activeId from /api/ai/active', async () => {
+    responses.push({ status: 200, body: { activeId: 42, configured: true } })
     const id = await api.getActiveSessionId()
     expect(calls[0].url).toBe('/api/ai/active')
     expect(id).toBe(42)
@@ -84,5 +85,50 @@ describe('ai-api', () => {
   it('throws with the server error message on a 4xx response', async () => {
     responses.push({ status: 404, body: { error: 'not found' } })
     await expect(api.getActiveSessionId()).rejects.toMatchObject({ status: 404 })
+  })
+})
+
+// Build a Response whose body is a ReadableStream of UTF-8 bytes
+// carrying the given SSE text. Mirrors what Hono's streamSSE
+// actually emits on the wire.
+function sseResponse(events: { event: string; data: unknown }[]): Response {
+  const text = events.map((e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`).join('')
+  const enc = new TextEncoder()
+  return new Response(enc.encode(text), {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  })
+}
+
+describe('streamChat', () => {
+  it('yields typed ChatEvents in order from a streaming SSE response', async () => {
+    const events = [
+      { event: 'user', data: { id: 11 } },
+      { event: 'token', data: { text: 'a' } },
+      { event: 'token', data: { text: 'b' } },
+      { event: 'done', data: { userId: 11, assistantId: 12 } },
+    ]
+    globalThis.fetch = vi.fn(async () => sseResponse(events)) as unknown as typeof fetch
+    const collected: unknown[] = []
+    for await (const ev of streamChat({ sessionId: 1, content: 'x' })) {
+      collected.push(ev)
+    }
+    expect(collected).toEqual([
+      { type: 'user', id: 11 },
+      { type: 'token', text: 'a' },
+      { type: 'token', text: 'b' },
+      { type: 'done', userId: 11, assistantId: 12 },
+    ])
+  })
+
+  it('yields { type: error } on a non-2xx response', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ reason: 'no-api-key' }), { status: 503, headers: { 'content-type': 'application/json' } })
+    ) as unknown as typeof fetch
+    const collected: unknown[] = []
+    for await (const ev of streamChat({ sessionId: 1, content: 'x' })) {
+      collected.push(ev)
+    }
+    expect(collected).toEqual([{ type: 'error', reason: 'no-api-key' }])
   })
 })
