@@ -13,6 +13,7 @@
   "dependencies": {
     "@hono/node-server": "^2.0.4",
     "@vueuse/core": "^14.3.0",
+    "better-sqlite3": "^11.7.0",
     "highlight.js": "^11.10.0",
     "hono": "^4.12.23",
     "markdown-it": "^14.1.0",
@@ -31,6 +32,7 @@
     "@codemirror/view": "^6.43.0",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.12.3",
+    "@types/better-sqlite3": "^7.6.12",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vitest/ui": "^4.1.8",
     "@vue/test-utils": "^2.4.10",
