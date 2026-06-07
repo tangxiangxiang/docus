@@ -1,6 +1,12 @@
 <script setup lang="ts">
-// AI panel — UI only. No props. The close button emits `close` so the
-// parent can decide what to do (typically toggleAi in VaultView).
+// AI panel — UI only. The close button emits `close` so the parent can
+// decide what to do (typically toggleAi in VaultView).
+//
+// Visual layout is inspired by Claude Code in VS Code: a 36px header
+// with icon + label, a flowing message stream (assistant messages
+// show a small avatar + plain text, user messages are right-aligned
+// with a subtle bubble), and a single rounded composer that holds the
+// textarea + send button as one focusable surface.
 //
 // The composer is intentionally inert: pressing Enter logs to the
 // console and clears the textarea. Wiring this to a real LLM is a
@@ -37,7 +43,7 @@ function onKeydown(e: KeyboardEvent) {
     <header class="ai-header">
       <div class="ai-title">
         <span class="ai-title-icon" v-html="ICON_AI" aria-hidden="true" />
-        <span class="ai-title-text">AI</span>
+        <span class="ai-title-text">Claude</span>
       </div>
       <button
         class="ai-close"
@@ -49,27 +55,32 @@ function onKeydown(e: KeyboardEvent) {
     </header>
 
     <div class="ai-messages" role="log" aria-live="polite">
-      <div class="ai-bubble assistant">
-        Hi, I'm your AI assistant. Ask me anything about this vault.
+      <div class="ai-message assistant">
+        <div class="ai-avatar" v-html="ICON_AI" aria-hidden="true" />
+        <div class="ai-bubble">
+          Hi, I'm your AI assistant. Ask me anything about this vault.
+        </div>
       </div>
     </div>
 
     <form class="ai-composer" @submit.prevent="onSend">
-      <textarea
-        v-model="draft"
-        class="ai-input"
-        rows="2"
-        placeholder="Ask AI…"
-        aria-label="Ask AI"
-        @keydown="onKeydown"
-      />
-      <button
-        class="ai-send"
-        type="submit"
-        title="Send (Enter)"
-        aria-label="Send"
-        :disabled="!draft.trim()"
-      >↑</button>
+      <div class="ai-composer-inner">
+        <textarea
+          v-model="draft"
+          class="ai-input"
+          rows="1"
+          placeholder="Ask Claude…"
+          aria-label="Ask Claude"
+          @keydown="onKeydown"
+        />
+        <button
+          class="ai-send"
+          type="submit"
+          title="Send (Enter)"
+          aria-label="Send"
+          :disabled="!draft.trim()"
+        >↑</button>
+      </div>
     </form>
   </aside>
 </template>

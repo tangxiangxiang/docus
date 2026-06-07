@@ -2280,9 +2280,16 @@ main.container {
   --accent-bg: var(--vs-accent-bg);
 }
 
-/* AI panel — right-rail chat surface. UI-only, matches the chrome
-   heights of the FileTree / TagPanel headers so the three panels
-   swap-read identically. */
+/* AI panel — right-rail chat surface. Visual layout follows Claude
+   Code in VS Code: a 36px header (matches FileTree / TagPanel so the
+   three panel headers swap-read identically), a flowing message
+   stream with avatar + plain text for assistant turns and a subtle
+   right-aligned bubble for user turns, and a single rounded composer
+   that hosts the textarea + send button as one focusable surface.
+
+   The left seam is drawn by the splitter to the left of this panel
+   (box-shadow: inset -1px 0 0 var(--vs-border)), not by the panel
+   itself, mirroring the .file-tree / .tag-panel convention. */
 
 .ai-panel {
   display: flex;
@@ -2291,10 +2298,6 @@ main.container {
   height: 100%;
   background: var(--vs-bg-1);
   color: var(--vs-text-1);
-  /* The left seam is drawn by the splitter to the left of this panel
-     (box-shadow: inset -1px 0 0 var(--vs-border)), not by the panel
-     itself. Mirrors the convention used by .file-tree / .tag-panel so
-     dragging the splitter doesn't reflow the seam. */
   overflow: hidden;
 }
 
@@ -2304,8 +2307,8 @@ main.container {
   justify-content: space-between;
   height: 36px;
   box-sizing: border-box;
-  padding: 0 10px 0 12px;
-  background: var(--vs-bg-3);
+  padding: 0 6px 0 12px;
+  background: var(--vs-bg-1);
   border-bottom: 1px solid var(--vs-border);
   user-select: none;
   flex: 0 0 auto;
@@ -2314,18 +2317,22 @@ main.container {
 .ai-panel .ai-title {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 0.78rem;
+  gap: 7px;
+  font-size: 0.82rem;
   font-weight: 600;
   color: var(--vs-text-1);
 }
 
 .ai-panel .ai-title-icon {
   display: inline-flex;
+  width: 16px;
+  height: 16px;
   color: var(--vs-accent);
+  align-items: center;
+  justify-content: center;
 }
 
-.ai-panel .ai-title-text { letter-spacing: 0.02em; }
+.ai-panel .ai-title-text { letter-spacing: -0.005em; }
 
 .ai-panel .ai-close {
   background: transparent;
@@ -2334,9 +2341,9 @@ main.container {
   cursor: pointer;
   font-size: 1rem;
   line-height: 1;
-  width: 20px;
-  height: 20px;
-  border-radius: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2347,71 +2354,116 @@ main.container {
   color: var(--vs-text-1);
 }
 
+/* Message stream. Each turn is a row: avatar (left) + text for
+   assistant, right-aligned bubble for user. Generous gap so the
+   stream reads as a chat, not a tight list. */
 .ai-panel .ai-messages {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 10px;
+  padding: 14px 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
+.ai-panel .ai-message {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+}
+.ai-panel .ai-message.user { flex-direction: row-reverse; }
+
+/* Assistant avatar: 22×22 square with the AI sparkle, accent-tinted.
+   Sized to anchor the message visually without competing with the
+   text. The fill uses `currentColor` so swapping the icon re-tints
+   the whole glyph uniformly. */
+.ai-panel .ai-avatar {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--vs-accent);
+  border-radius: 5px;
+}
+.ai-panel .ai-avatar :where(svg) { width: 16px; height: 16px; display: block; }
+
+/* Assistant text is plain (no background, no padding) so the message
+   stream reads as continuous prose, like a chat transcript, rather
+   than a stack of UI cards. User turns get a subtle bubble so they
+   read as "from me". */
 .ai-panel .ai-bubble {
-  max-width: 85%;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 0.82rem;
-  line-height: 1.45;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--vs-text-1);
   word-wrap: break-word;
   white-space: pre-wrap;
+  min-width: 0;
+  max-width: calc(100% - 30px);
 }
-.ai-panel .ai-bubble.assistant {
-  align-self: flex-start;
+.ai-panel .ai-message.assistant .ai-bubble {
+  background: transparent;
+  padding: 2px 0;
+}
+.ai-panel .ai-message.user .ai-bubble {
   background: var(--vs-bg-2);
-  color: var(--vs-text-1);
-  border-bottom-left-radius: 2px;
-}
-.ai-panel .ai-bubble.user {
-  align-self: flex-end;
-  background: var(--vs-accent);
-  color: #fff;
-  border-bottom-right-radius: 2px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border-bottom-right-radius: 3px;
 }
 
+/* Composer — one rounded container. The textarea fills the middle;
+   the send button is a small accent chip docked to the right edge.
+   The whole container lights up on focus-within (border + 1px ring)
+   so the user sees a single focus state, not two. */
 .ai-panel .ai-composer {
   flex: 0 0 auto;
+  padding: 8px 10px 10px;
+  background: var(--vs-bg-1);
+}
+
+.ai-panel .ai-composer-inner {
   display: flex;
   align-items: flex-end;
-  gap: 6px;
-  padding: 8px 10px;
-  border-top: 1px solid var(--vs-border);
-  background: var(--vs-bg-1);
+  gap: 4px;
+  background: var(--vs-bg-2);
+  border: 1px solid var(--vs-border);
+  border-radius: 12px;
+  padding: 6px 6px 6px 12px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ai-panel .ai-composer-inner:focus-within {
+  border-color: var(--vs-accent);
+  box-shadow: 0 0 0 1px var(--vs-accent);
 }
 
 .ai-panel .ai-input {
   flex: 1 1 auto;
   min-width: 0;
   resize: none;
-  background: var(--vs-bg-2);
-  border: 1px solid var(--vs-border);
-  border-radius: 6px;
-  padding: 6px 8px;
-  font: inherit;
-  font-size: 0.82rem;
+  background: transparent;
+  border: 0;
+  padding: 6px 0;
+  font-family: var(--sans);
+  font-size: 0.85rem;
   color: var(--vs-text-1);
-  line-height: 1.4;
+  line-height: 1.5;
   outline: none;
-  transition: border-color 0.1s;
+  /* Cap the textarea so a wall-of-text paste can't push the send
+     button off-screen. ~6 lines of body copy at the current line-
+     height. */
+  max-height: 160px;
 }
-.ai-panel .ai-input:focus { border-color: var(--vs-accent); }
 .ai-panel .ai-input::placeholder { color: var(--vs-text-3); }
 
 .ai-panel .ai-send {
   flex: 0 0 auto;
   width: 28px;
   height: 28px;
-  border-radius: 50%;
+  border-radius: 6px;
   border: 0;
   background: var(--vs-accent);
   color: #fff;
@@ -2423,8 +2475,8 @@ main.container {
   justify-content: center;
   transition: opacity 0.1s, background 0.1s;
 }
-.ai-panel .ai-send:disabled { opacity: 0.35; cursor: not-allowed; }
-.ai-panel .ai-send:hover:not(:disabled) { filter: brightness(1.1); }
+.ai-panel .ai-send:disabled { opacity: 0.4; cursor: not-allowed; }
+.ai-panel .ai-send:hover:not(:disabled) { background: var(--vs-accent-hover); }
 
 /* NavBar AI toggle — matches the read-mode toggle look (soft-filled
    accent on pressed). */

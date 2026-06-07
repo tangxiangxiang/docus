@@ -69,13 +69,13 @@ Add `toggleAi()` (same shape as `selectPanel`: `aiOpen.value = !aiOpen.value`).
 
 ### 3.2 New file `src/components/vault/AiPanel.vue`
 
-Static presentational component, no props, no emits. Three vertical regions:
+Static presentational component, no props, one `close` emit (so the parent can decide what to do — typically `toggleAi` in `VaultView`). Three vertical regions:
 
-- **Header** (36px, matches FileTree/TagPanel headers): `[ICON_AI] AI` on the left, `[×]` close button on the right. `border-bottom: 1px solid var(--vs-border)`.
-- **Message stream** (flex: 1, scrollable): a single welcome bubble on first render. Static — no message list state, no auto-scroll behavior. The welcome bubble is rendered unconditionally; we don't track "has user sent anything" because nothing is being sent.
-- **Composer** (bottom, ~60px): a `<textarea>` (rows=2) + a circular `↑` send button. Enter triggers submit; Shift+Enter inserts a newline. The submit handler is local to the component and only does `console.debug`.
+- **Header** (36px, matches FileTree/TagPanel headers): `[ICON_AI] Claude` on the left, `[×]` close button on the right. `border-bottom: 1px solid var(--vs-border)`. The title is "Claude" (matches the Claude Code in VS Code reference look) but this is purely visual — the underlying panel is still LLM-agnostic.
+- **Message stream** (flex: 1, scrollable): a single welcome turn on first render, structured as a `<div class="ai-message assistant">` row containing an avatar (the AI sparkle, 22×22, accent-tinted) and a `.ai-bubble` with the welcome text. Static — no message list state, no auto-scroll behavior. The structure leaves room for user turns (which would be a `<div class="ai-message user">` row with a right-aligned bubble) once the LLM client is wired in.
+- **Composer** (bottom): a `<form>` wrapping a single rounded `.ai-composer-inner` container that holds a `<textarea>` (rows=1) + a small accent `↑` send button docked to the right. The whole container lights up on focus-within (border + 1px ring), giving the user one focus state, not two. Enter triggers submit; Shift+Enter inserts a newline. The submit handler is local to the component and only does `console.debug`.
 
-Empty initial messages array; one welcome entry is computed from that array (or rendered directly as a static child). Choosing to render directly keeps the file small and matches the "UI-only" intent.
+Empty initial messages array; one welcome entry is rendered directly (no message list state, no auto-scroll) to keep the file small and match the "UI-only" intent.
 
 ### 3.3 `NavBar.vue` changes
 
@@ -118,12 +118,14 @@ Single localStorage key (`docus.vault.layout`), same as the rest of the vault la
 
 ## 5. Visual / interaction details
 
-- **Header height / divider**: 36px, `border-bottom: 1px solid var(--vs-border)`. Matches the FileTree / TagPanel header so the three panels swap-read identically.
-- **Message bubbles**:
-  - Welcome (assistant): max-width 85%, background `--vs-bg-2`, color `--vs-text-1`, padding 8/12, border-radius 8px, bottom-left radius 2px (small "tail" feel without drawing one).
-  - User (right-aligned): same shape, bottom-right radius 2px, background `--vs-accent`, color white (in both themes).
-- **Composer**: `border-top: 1px solid var(--vs-border)`. Textarea background transparent, focus-within shows `--vs-accent` on the 1px outline of the send button (not the textarea itself, to keep the chrome calm).
-- **Send button**: 28×28, rounded (border-radius 50%), `--vs-accent` background, white `↑` glyph; disabled (greyed) when textarea is empty.
+- **Header height / divider**: 36px, `border-bottom: 1px solid var(--vs-border)`. Matches the FileTree / TagPanel header so the three panels swap-read identically. Header sits on the same `--vs-bg-1` background as the message stream (no contrast stripe between them) — a quieter look than the FileTree's `--vs-bg-3` header.
+- **Message stream**: flowing chat layout, not boxed bubbles. Each turn is a flex row with an avatar on the leading edge and a `.ai-bubble` next to it.
+  - **Assistant** (welcome, default): 22×22 accent-tinted avatar showing the AI sparkle, followed by plain text (no background, no padding) reading `--vs-text-1` at 0.85rem / 1.55 line-height. This makes the assistant's prose read as continuous text rather than a UI card, matching the Claude Code in VS Code look.
+  - **User** (right-aligned): mirror row (`flex-direction: row-reverse`) with the same avatar slot and a subtle bubble — `--vs-bg-2` background, 8/12 padding, 10px radius, bottom-right radius pinched to 3px for a small "tail" feel. No accent fill (avoids the heavy `color: white` inverted look on user messages).
+  - **Row gap**: 12px between turns; the stream has 14/12 padding on the outer container.
+- **Composer**: a single rounded `--vs-bg-2` container (`border-radius: 12px`, 1px `--vs-border`) holding the textarea + send button. The textarea is borderless, transparent, `font-family: var(--sans)`, 0.85rem / 1.5 line-height, capped at `max-height: 160px` (≈6 lines) so a wall-of-text paste can't push the send button off-screen. The send button is a 28×28 square (6px radius, not 50% — matches the Claude Code pill-internal look) docked to the container's right edge.
+- **Composer focus state**: one focus indicator for the whole container — on focus-within, the container's border becomes `--vs-accent` and a 1px `--vs-accent` ring is added via `box-shadow`. The textarea itself drops its own focus styling (no outline) so we never get a double ring.
+- **Send button**: 28×28, `border-radius: 6px`, `--vs-accent` background, white `↑` glyph; opacity 0.4 when disabled (textarea empty), `background: --vs-accent-hover` on hover.
 - **No animation** for the open/close transition. The grid-template-columns change is instant; the panel appears/disappears with the column reflow. This is intentional: animation here would require keyframing the column track, which complicates the splitter math.
 
 ## 6. Out of scope
