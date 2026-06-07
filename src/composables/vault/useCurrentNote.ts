@@ -12,6 +12,7 @@
 import { ref, watch, type Ref } from 'vue'
 import { useRoute, type RouteLocationNormalizedLoaded } from 'vue-router'
 import { getPost } from '../../lib/api'
+import { getLiveTabs, __resetLiveTabsForTesting as _resetLiveTabs } from './useEditorTabs.js'
 
 export interface CurrentNote {
   path: Ref<string | null>
@@ -23,6 +24,7 @@ let _state: CurrentNote | null = null
 // Test-only escape hatch.
 export function __resetForTesting(): void {
   _state = null
+  _resetLiveTabs()
 }
 
 function pathFromRoute(route: RouteLocationNormalizedLoaded): string | null {
@@ -38,8 +40,28 @@ export function useCurrentNote(): CurrentNote {
   const path = ref<string | null>(null)
   const content = ref<string>('')
 
+  const liveTabs = getLiveTabs()
+
+  // Resolve content for a given path. Two-tier fallback:
+  //   1. Live editor buffer (tab.raw) if a tab is open for this path
+  //      and has finished loading. This is what the user has actually
+  //      typed, including unsaved keystrokes.
+  //   2. getPost() — the server-saved version. Used for deep links to
+  //      notes that haven't been opened in a tab yet, and when
+  //      useEditorTabs has never been mounted in this session.
+  async function resolveContent(p: string): Promise<string> {
+    const tab = liveTabs?.value.find((t) => t.path === p)
+    if (tab && !tab.loading) return tab.raw
+    try {
+      const post = await getPost(p)
+      return post.content
+    } catch {
+      return ''
+    }
+  }
+
   watch(
-    () => route.params.path,
+    [() => route.params.path, liveTabs],
     async () => {
       const p = pathFromRoute(route)
       path.value = p
@@ -47,14 +69,9 @@ export function useCurrentNote(): CurrentNote {
         content.value = ''
         return
       }
-      try {
-        const post = await getPost(p)
-        content.value = post.content
-      } catch {
-        content.value = ''
-      }
+      content.value = await resolveContent(p)
     },
-    { immediate: true },
+    { immediate: true, deep: true },
   )
 
   _state = { path, content }
