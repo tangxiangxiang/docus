@@ -11,7 +11,7 @@
 // button while a stream is in flight; there is no Stop button in
 // v1.
 import { onMounted, ref } from 'vue'
-import { ICON_AI } from './icons'
+import { ICON_AI, ICON_HISTORY, ICON_NEW_CHAT } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useCurrentNote } from '../../composables/vault/useCurrentNote'
 import AiSessionPicker from './AiSessionPicker.vue'
@@ -52,6 +52,12 @@ function togglePicker() {
   pickerOpen.value = !pickerOpen.value
 }
 
+async function onNewSession() {
+  if (history.busy.value) return
+  pickerOpen.value = false
+  await history.createSession()
+}
+
 const noteTitle = (path: string | null): string => {
   if (!path) return ''
   // Use the basename minus extension as a friendly title.
@@ -64,19 +70,33 @@ const noteTitle = (path: string | null): string => {
 <template>
   <aside class="ai-panel" aria-label="AI assistant">
     <header class="ai-header">
-      <button
-        class="ai-title"
-        type="button"
-        :title="pickerOpen ? '' : 'Switch session'"
-        @click="togglePicker"
-      >
+      <div class="ai-title">
         <span class="ai-title-icon" v-html="ICON_AI" aria-hidden="true" />
         <span class="ai-title-text">Claude</span>
         <template v-if="history.activeSession.value?.title">
           <span class="ai-title-sep" aria-hidden="true">·</span>
-          <span class="ai-title-session">{{ history.activeSession.value.title }}</span>
+          <span
+            class="ai-title-session"
+            :title="history.activeSession.value.title"
+          >{{ history.activeSession.value.title }}</span>
         </template>
-      </button>
+      </div>
+      <button
+        class="ai-header-btn"
+        type="button"
+        :title="pickerOpen ? 'Close history' : 'Open history'"
+        :aria-label="pickerOpen ? 'Close history' : 'Open history'"
+        :aria-pressed="pickerOpen"
+        @click="togglePicker"
+      ><span v-html="ICON_HISTORY" aria-hidden="true" /></button>
+      <button
+        class="ai-header-btn"
+        type="button"
+        title="New conversation"
+        aria-label="New conversation"
+        :disabled="history.busy.value"
+        @click="onNewSession"
+      ><span v-html="ICON_NEW_CHAT" aria-hidden="true" /></button>
       <span
         v-if="currentNote.path.value"
         class="ai-note-chip"

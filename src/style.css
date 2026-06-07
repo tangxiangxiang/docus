@@ -2304,7 +2304,7 @@ main.container {
 .ai-panel .ai-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 4px;
   height: 36px;
   box-sizing: border-box;
   padding: 0 6px 0 12px;
@@ -2333,6 +2333,49 @@ main.container {
 }
 
 .ai-panel .ai-title-text { letter-spacing: -0.005em; }
+
+.ai-panel .ai-title-session {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vs-text-2);
+  font-weight: 500;
+}
+
+/* Header icon buttons (history, new chat). Match the close button's
+   weight (22px square, transparent background, hover lifts to
+   --vs-hover-bg). The :focus-visible ring is a11y for keyboard nav. */
+.ai-panel .ai-header-btn {
+  background: transparent;
+  border: 0;
+  color: var(--vs-text-3);
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s;
+}
+.ai-panel .ai-header-btn:hover {
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
+.ai-panel .ai-header-btn:focus-visible {
+  outline: 1px solid var(--vs-accent);
+  outline-offset: 1px;
+}
+.ai-panel .ai-header-btn[aria-pressed='true'] {
+  background: var(--vs-active-bg);
+  color: var(--vs-text-1);
+}
+.ai-panel .ai-header-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 .ai-panel .ai-close {
   background: transparent;

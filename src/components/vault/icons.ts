@@ -81,3 +81,20 @@ export const ICON_AI = `
   <path d="M8 1.5l1.4 4.1L13.5 7l-4.1 1.4L8 12.5 6.6 8.4 2.5 7l4.1-1.4z"/>
   <circle cx="13" cy="13" r="0.6" fill="currentColor" stroke="none"/>
 </svg>`
+
+// "History" — clock with a counter-clockwise arrow. 14×14 line art,
+// matches the ICON_AI weight. Opens the session-history picker.
+export const ICON_HISTORY = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2.7 4.2A5.5 5.5 0 1 1 2.5 8"/>
+  <polyline points="2.5 1.5 2.7 4.2 5.4 4"/>
+  <polyline points="8 5 8 8 10 9.5"/>
+</svg>`
+
+// "New chat" — plus in a square. 14×14 line art. Creates a fresh
+// session and switches to it.
+export const ICON_NEW_CHAT = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <line x1="8" y1="3" x2="8" y2="13"/>
+  <line x1="3" y1="8" x2="13" y2="8"/>
+</svg>`
