@@ -350,3 +350,26 @@ Single source of truth on the server (`./data/docus.db`); the client `Ref`s are 
 ## 9. Implementation notes
 
 _Populated after the plan runs. Records deviations from this spec, design changes discovered during build, and any rationale the code itself doesn't explain._
+
+### Implementation summary (filled in after the plan ran)
+
+- 12 tasks, 67 new tests. Total: 192 tests, all green.
+- `better-sqlite3` pinned at `^11.7.0`, `@types/better-sqlite3` at `^7.6.12`. Both build cleanly on macOS arm64; if a future contributor hits a binding error, `npm rebuild better-sqlite3` fixes it.
+- The spec's "module-level singleton (same pattern as `useVaultLayout`)" wording was misleading — `useVaultLayout` is actually call-local refs synced through a shared `useStorage` ref. `useAiHistory` uses a true module-level singleton (the right shape for server-backed state that doesn't have a single source of truth the way the localStorage-backed layout state does).
+- The `ai/routes.ts` handlers call `getDb()` at request time, not at module load — this keeps the sub-router import side-effect-free, lets the existing `app.fetch` integration test work without an on-disk DB, and lets the per-test `vi.mock('../db', ...)` pattern inject an in-memory DB cleanly.
+- `renameSession` silently rejects empty / whitespace-only titles (returns the existing row, no error) so the inline edit input can be lazy — the user can press Enter with no text and nothing breaks. A stricter version could throw, but the picker UI is the only caller and the no-op is the better UX there. The HTTP layer (routes.ts) catches the empty case at the API boundary and returns 400.
+- Auto-title derivation's code-point counting (vs naive `.slice(0, 30)`) caught one real test case: a 30-char message ending with a surrogate-pair emoji would have produced a `?` glyph in the title. The `[...str]` idiom fixes it.
+- `AiSessionPicker` has no direct unit test. The composable tests cover the data layer, and the Vue component is a thin presentational layer on top. A future spec that needs picker-internal logic (e.g. keyboard navigation between rows) should add a component test then.
+- The `useAiHistory` composable's `loadActive` populates a stub `activeSession` (`title: '', createdAt: 0, updatedAt: 0`) when the server returns just an id, so the UI has something to render before the picker opens. The full row (with title) is fetched by `refreshSessions` and patched in place.
+- The `__resetForTesting()` export on the composable is a deliberate testing escape hatch: the module-level singleton would otherwise leak state between test cases. The `__` prefix is the convention for "do not call from production code". An alternative is `vi.resetModules()` in `beforeEach` with re-imports, but the escape hatch is simpler.
+- **Plan-vs-build deltas (bugs caught in the plan during execution, fixed by the implementer):**
+  - **Task 5:** The plan's `vi.hoisted(async () => { await import('../db') })` factory was broken — `vi.hoisted` factories are sync. The implementer made the factory sync and imported `applyMigrations` directly. The mock still works.
+  - **Task 5:** The plan's PATCH `/sessions/:id` handler was missing the trim check (`b.title.trim().length === 0` → 400) — the design spec requires it but the plan's literal code didn't include it. The implementer added the check; the service `renameSession` is intentionally lenient so the API layer is the right place to validate.
+  - **Task 7:** The plan's `jsonInit` helper set `method: 'POST'`, which would have silently set POST on PATCH/PUT calls. The implementer renamed it to `jsonBody` (no method) and let each call site pick its own method.
+  - **Task 7:** The plan's three GET calls had no explicit method, but the test asserts `init.method === 'GET'`. The implementer added explicit `{ method: 'GET' }` to make the test pass without changing it.
+  - **Task 8:** The plan's "auto-creates a session" test queued 3 fetch responses, but `sendMessage` makes 4 fetches when no active session (getActiveSessionId, createSession, setActiveSessionId, appendMessage). The implementer added the 4th response.
+  - **Task 8:** The plan's test file didn't have `// @vitest-environment jsdom`, but `mount()` from `@vue/test-utils` needs a DOM. The implementer added the directive.
+  - **Task 8:** The plan didn't address the singleton-state-leaks-between-tests problem. The implementer added `__resetForTesting()` to clear `_state` in `beforeEach`.
+  - **Plan miscount on test totals:** The plan's running totals said "8 new tests" for Task 3 (actual: 10), "14 new" for Task 4 (actual: 15), "7 new" for Task 8 (actual: 8). The final test count is 192, not the 189 the plan estimated.
+
+  All seven plan-vs-build deltas are documented because future revisions of the plan template should be free of these issues. The corrections themselves are correct per the design spec and the implementer's judgment.
