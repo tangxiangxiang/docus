@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.102.0",
     "@hono/node-server": "^2.0.4",
     "@vueuse/core": "^14.3.0",
     "better-sqlite3": "^11.7.0",
