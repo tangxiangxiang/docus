@@ -4,6 +4,7 @@ import path from 'node:path'
 import matter from 'gray-matter'
 import { filePathFor, folderPathFor, CONTENT_DIR } from './paths.js'
 import { listPostsFlat, buildTree, listSubtreePaths } from './tree.js'
+import aiRoutes from './ai/routes.js'
 import type { PostSummary, PostDetail } from '../src/lib/api.js'
 
 // The server is intentionally not in the type-check graph (no tsconfig include),
@@ -199,5 +200,7 @@ app.delete('/api/folders/*', async (c) => {
   await fs.rm(abs, { recursive: true, force: true })
   return c.json({ deleted: all })
 })
+
+app.route('/api/ai', aiRoutes)
 
 export default app
