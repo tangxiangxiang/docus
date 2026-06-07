@@ -4,20 +4,24 @@ A Vue 3 + TypeScript personal knowledge base built around a small
 Zettelkasten protocol. The vault lives as plain `.md` files under
 `src/content/` and is served by an in-process Hono backend. The editor
 is CodeMirror; the file tree and the right pane (editor + live preview)
-share a VS-Code-style layout.
+share a VS-Code-style layout. A right-side AI chat panel rounds out
+the surface — its history is persisted to a small SQLite database that
+the Hono server opens on startup.
 
 ## Quick start
 
 ```bash
 npm install
 npm run dev          # vite + Hono middleware, http://localhost:5173
-npm test             # vitest, 9 files / 48 tests
+npm test             # vitest, 24 files / 192 tests
 npm run build        # vue-tsc -b && vite build
 ```
 
 The Hono backend (`server/`) is mounted as Vite middleware in dev, so
-no separate process is required. Endpoints are namespaced under
-`/api/...` and documented inline in [server/index.ts](server/index.ts).
+no separate process is required. On first run the server creates
+`data/docus.db` (gitignored) and applies any pending SQL migrations
+from `server/migrations/`. Endpoints are namespaced under `/api/...`
+and documented inline in [server/index.ts](server/index.ts).
 
 ## Repository layout
 
@@ -26,15 +30,18 @@ src/
   views/                 One component per route (Vault, Tags, Article, TagDetail)
   components/
     vault/               FileTree, TreeRow, EditorPane, PreviewPane, EditorTabs,
-                         Breadcrumb, CommandPalette, StatusBar, TagPanel, ActivityBar
+                         Breadcrumb, CommandPalette, StatusBar, TagPanel,
+                         ActivityBar, AiPanel, AiSessionPicker
   composables/           useToast / useConfirm / usePrompt / useTheme
                          (UI singletons)
     zettelProtocol.ts    Pure functions: which paths are read-only / protected
                          and the user-facing error messages
-    vault/               useVaultLayout, useEditorTabs, useTagFilter — the
-                         state and side-effects split out of VaultView.vue
+    vault/               useVaultLayout, useEditorTabs, useTagFilter,
+                         useAiHistory — the state and side-effects split
+                         out of VaultView.vue and AiPanel.vue
   lib/
-    api.ts               Typed fetch wrappers for /api/...
+    api.ts               Typed fetch wrappers for /api/posts, /api/tree, …
+    ai-api.ts            Typed fetch wrappers for /api/ai/*
     search.ts            MiniSearch full-text index, built client-side
     markdown.ts, frontmatter.ts
   content/               The vault itself — three top-level folders
@@ -43,11 +50,16 @@ src/
   router/                vue-router setup (vault uses a splat param)
 
 server/
-  index.ts               All HTTP routes
+  index.ts               Top-level Hono app; mounts the sub-routers
+  db.ts                  better-sqlite3 singleton + applyMigrations runner
+  migrations/            Numbered .sql files, applied transactionally on
+                         startup against data/docus.db
+  ai/                    AI sub-app: sessions / messages / routes
   tree.ts                Filesystem walker -> PostSummary[] / TreeNode[]
   paths.ts               Path validation + filesystem <-> URL mapping
   vite-plugin.ts         Mounts the Hono app as Vite middleware
-  __tests__/             vitest in node mode; tests call app.fetch(req) directly
+  __tests__/             vitest in node mode; tests call app.fetch(req)
+                         directly, with :memory: databases for the AI suite
 
 docs/superpowers/
   specs/                 Design docs (per feature)
@@ -83,17 +95,64 @@ to a path.
 Editor tabs hold unsaved state per file. Edits auto-save 800ms after
 the last keystroke; the debounce lives in `useEditorTabs`. ⌘S saves
 immediately, ⌘W closes the active tab (with a confirm if dirty), ⌘B
-toggles the Files panel.
+toggles the Files panel, the AI button in the NavBar toggles the AI
+panel.
 
-Layout state — which side panel is open, side-panel width, and the
+Layout state — which side panel is open, side-panel widths, the
 editor/preview split ratio — is persisted to `localStorage` under
 `docus.vault.layout`. The serializer is a custom one because the
 schema used to be `{ fileTreeOpen, fileTreeWidth }` and old installs
-still have that shape; reads translate it forward.
+still have that shape; reads translate it forward. AI-specific
+layout keys (`aiOpen`, `aiPanelWidth`) follow the same pattern.
+
+## AI panel
+
+The right rail of the vault hosts a chat panel styled after the
+Claude Code panel in VS Code. Open it from the NavBar button
+between Search and the view-mode toggle; the splitter on the panel's
+right edge resizes it in the same `[220, 600]px` range as the left
+side panel.
+
+The panel is **multi-session**. Each session has an auto-derived
+title (trimmed to 30 code points from the first user message) and
+can be renamed, switched, or deleted from the popover opened by
+clicking the title. The active session id is stored server-side and
+restored on reload. Messages append optimistically: pressing Enter
+inserts the user message immediately and the server's echo replaces
+it once the HTTP response lands.
+
+The composer is `console.debug`-only — sending a message records it
+to the database but does not call any LLM. Wiring a model is a
+separate, future project; the spec marks it explicitly as out of
+scope.
+
+The composable is `useAiHistory` (module-level singleton in
+[src/composables/vault/useAiHistory.ts](src/composables/vault/useAiHistory.ts)).
+Session and message state live in a `ref`-based store; the HTTP wire
+format is defined in
+[src/lib/ai-api.ts](src/lib/ai-api.ts). Both are the only consumers
+of the `/api/ai/*` sub-router.
 
 ## Backend
 
-The backend is a small Hono app with these endpoints:
+The backend is a small Hono app. Most endpoints are stateless and
+read or write files under `src/content/`; the AI sub-router reads
+and writes to a SQLite database.
+
+### Persistence
+
+The server opens `data/docus.db` via `better-sqlite3` on startup
+([server/db.ts](server/db.ts)). The first run applies
+`server/migrations/0001_ai_history.sql`, which creates `sessions`,
+`messages`, and a single-row `settings` table (currently used for
+the active session id). Migrations are tracked by a `schema_version`
+table and applied transactionally; new migrations are numbered files
+dropped into `server/migrations/`. WAL mode is on by default;
+foreign keys are enforced.
+
+### HTTP endpoints
+
+**Vault / filesystem**
 
 | Method | Path                       | Purpose                                     |
 | ------ | -------------------------- | ------------------------------------------- |
@@ -109,9 +168,24 @@ The backend is a small Hono app with these endpoints:
 | DELETE | `/api/folders/<path>`      | Recursive folder delete (requires `?recursive=true`) |
 | GET    | `/api/health`              | `{ ok: true }`                              |
 
-Path validation is in [server/paths.ts](server/paths.ts). Every path
-segment is a lowercase kebab; the server rejects anything that
-resolves outside `src/content/`.
+**AI / SQLite**
+
+| Method | Path                                | Purpose                                     |
+| ------ | ----------------------------------- | ------------------------------------------- |
+| GET    | `/api/ai/sessions`                  | `Session[]` (most-recent first)             |
+| GET    | `/api/ai/sessions/<id>/messages`    | `Message[]` (chronological)                 |
+| POST   | `/api/ai/sessions`                  | Create a session (`{ title? }`)             |
+| PATCH  | `/api/ai/sessions/<id>`             | Rename (`{ title }`)                        |
+| DELETE | `/api/ai/sessions/<id>`             | Delete (cascades messages; clears active if needed) |
+| POST   | `/api/ai/sessions/<id>/messages`    | Append a message (validates role)           |
+| GET    | `/api/ai/active`                    | Active session id (or `null`)               |
+| PUT    | `/api/ai/active`                    | Set active session id (or `null`)           |
+
+Path validation for the filesystem routes is in
+[server/paths.ts](server/paths.ts). The AI sub-router has no
+filesystem involvement; its request bodies are JSON-validated by
+the handlers, and SQL row mappers translate snake_case columns to
+the camelCase wire format declared in `src/lib/ai-api.ts`.
 
 ## Testing
 
@@ -119,37 +193,65 @@ resolves outside `src/content/`.
 npm test
 ```
 
-48 tests across 9 files:
+192 tests across 24 files:
 
-- 6 component tests under `src/components/vault/__tests__/` — cover
-  the file tree, context menu, drag-and-drop, inline rename, and the
-  kind-aware lookup that prevents a same-name file/folder collision
-  from misrouting renames. The composables `useConfirm` / `usePrompt`
-  / `useToast` are `vi.mock`-ed; tree fixtures are inline literals.
-- 3 server tests under `server/__tests__/` — exercise the path
-  validation, the PUT handler, and the tree builder against a
-  temporary `content/` directory.
+- **7 component tests** under `src/components/vault/__tests__/` —
+  cover the file tree, context menu, drag-and-drop, inline rename,
+  the kind-aware lookup that prevents a same-name file/folder
+  collision from misrouting renames, and the tag panel. The
+  composables `useConfirm` / `usePrompt` / `useToast` are
+  `vi.mock`-ed; tree fixtures are inline literals.
+- **5 composable tests** under `src/composables/vault/__tests__/` —
+  cover the editor tabs state machine, the tag filter, the vault
+  layout persistence, the markdown render, and the `useAiHistory`
+  singleton. The AI singleton exposes a `__resetForTesting` export
+  to isolate state between tests.
+- **3 lib tests** under `src/lib/__tests__/` — cover the full-text
+  search index, the AI HTTP wire format, and the AI typed fetch
+  wrappers (`fetch` is `vi.mock`-ed).
+- **1 view test** under `src/views/__tests__/` — covers the Tags
+  view.
+- **8 server tests** under `server/__tests__/` — exercise the path
+  validation, the PUT handler, the tree builder, the SQLite
+  migration runner, the AI sessions and messages services, the AI
+  HTTP sub-router (with `vi.mock` of the DB module), and a smoke
+  test that mounts the full Hono app. The AI suite uses
+  `:memory:` databases via `vi.hoisted` to inject a fresh DB per
+  test.
 
-VaultView itself has no dedicated tests; behavior changes there rely
-on the dev server's manual smoke (open / edit / save / drag).
+VaultView itself has no dedicated tests; behavior changes there
+rely on the dev server's manual smoke (open / edit / save / drag).
 
 ## Conventions
 
 - **Composables** in `src/composables/` follow the singleton-factory
-  pattern when they hold cross-component state (toasts, confirm queue,
-  prompt queue, theme), and the pure-function-module pattern when
-  they are stateless rules (`zettelProtocol.ts`).
+  pattern when they hold cross-component state (toasts, confirm
+  queue, prompt queue, theme, AI history), and the pure-function-
+  module pattern when they are stateless rules (`zettelProtocol.ts`).
 - **The vault composables** (`useVaultLayout`, `useEditorTabs`,
   `useTagFilter`) are per-component factories. Cross-composable
   dependencies are taken as constructor arguments — `useTagFilter({ activePanel })`,
   `useEditorTabs({ selectPanel })` — so the coupling is typed and
   intention-revealing.
-- **Server types** (`PostSummary`, `TreeNode`, `PostDetail`) live in
-  [src/lib/api.ts](src/lib/api.ts) and are imported by both the
-  client and the server. The server is intentionally not in the
-  `tsc` include graph (no `tsconfig.server.json`), but the import
-  direction is `server/ -> src/lib/api` to keep one source of truth
-  for the JSON wire format.
+- **The AI service layer** in `server/ai/` is a flat module of
+  pure functions: each function takes the open `Database` as its
+  first argument and returns plain JS values. The Hono handlers in
+  `server/ai/routes.ts` are the only callers; the service layer
+  has no knowledge of HTTP. This keeps the business logic testable
+  without spinning up a server.
+- **Server types** (`PostSummary`, `TreeNode`, `PostDetail`) live
+  in [src/lib/api.ts](src/lib/api.ts); the AI wire types (`Session`,
+  `Message`) live in [src/lib/ai-api.ts](src/lib/ai-api.ts). Both
+  are imported by the client and the server. The server is
+  intentionally not in the `tsc` include graph (no
+  `tsconfig.server.json`), but the import direction is
+  `server/ -> src/lib/*` to keep one source of truth for each wire
+  format.
+- **Migrations** are forward-only SQL files. Each one must be
+  idempotent on its own (use `CREATE TABLE IF NOT EXISTS`,
+  `CREATE INDEX IF NOT EXISTS`, etc.) and is wrapped in a
+  transaction by the runner. To roll back, write a forward fix —
+  never edit a committed migration.
 
 ## Project history
 
@@ -157,5 +259,8 @@ The detailed design and plan documents for each feature live under
 [docs/superpowers/](docs/superpowers/):
 
 - [specs/](docs/superpowers/specs/) — design intent before code
+  - [`2026-06-06-ai-panel-design.md`](docs/superpowers/specs/2026-06-06-ai-panel-design.md) — right-rail AI panel skeleton
+  - [`2026-06-07-sqlite-ai-history.md`](docs/superpowers/specs/2026-06-07-sqlite-ai-history.md) — SQLite-backed multi-session chat history
 - [plans/](docs/superpowers/plans/) — step-by-step implementation
   plans, often with the commit sequence already chosen
+  - [`2026-06-07-sqlite-ai-history.md`](docs/superpowers/plans/2026-06-07-sqlite-ai-history.md)
