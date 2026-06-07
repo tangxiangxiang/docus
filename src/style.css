@@ -2498,3 +2498,33 @@ main.container {
   color: var(--accent);
 }
 .ai-toggle .ai-toggle-icon { display: inline-flex; line-height: 0; }
+
+/* Clickable session title in the AI panel header. The whole
+   "Claude · {title}" is a button so the user can open the
+   session picker. Inherits the same colors as the rest of the
+   header text; hover gives a subtle background like the close
+   button. */
+.ai-panel .ai-title {
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  margin: 0 -6px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--vs-text-1);
+  letter-spacing: -0.005em;
+}
+.ai-panel .ai-title:hover { background: var(--vs-hover-bg); }
+.ai-panel .ai-title-sep { color: var(--vs-text-3); font-weight: 400; }
+.ai-panel .ai-title-session {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
