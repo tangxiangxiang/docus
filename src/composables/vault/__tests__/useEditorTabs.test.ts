@@ -14,9 +14,9 @@
 // deterministic. The debounce is exercised via vi.useFakeTimers().
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent, h, nextTick, ref, type Ref } from 'vue'
+import { defineComponent, h, nextTick, ref, shallowRef, type Ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 
 // Stubs for the toast / confirm composables. The real ones render a
 // <ToastHost /> / <ConfirmHost /> mounted at <body>; here we just
@@ -44,7 +44,8 @@ function answerConfirm(ok: boolean) {
   confirmResolve = null
 }
 
-import { useEditorTabs } from '../useEditorTabs'
+import { useEditorTabs, getLiveTabs, __setLiveTabsForTesting, __resetLiveTabsForTesting } from '../useEditorTabs'
+import type { Tab } from '../../../components/vault/tabs'
 
 // --- helpers ---------------------------------------------------------------
 
@@ -138,6 +139,72 @@ describe('useEditorTabs', () => {
     vi.restoreAllMocks()
     vi.useRealTimers()
   })
+
+describe('live tabs publish', () => {
+  beforeEach(() => {
+    __resetLiveTabsForTesting()
+  })
+
+  it('returns null from getLiveTabs() before useEditorTabs is mounted', () => {
+    expect(getLiveTabs()).toBeNull()
+  })
+
+  it('returns a ShallowRef<Tab[]> after useEditorTabs is mounted and mirrors tabs.value mutations', async () => {
+    // Stand up a no-op component to host useEditorTabs' router + side-effects.
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/vault/:path(.*)*', name: 'vault', component: { template: '<div/>' } }],
+    })
+    router.push('/tags') // /tags has no pathMatch, so openPost is not called
+    await router.isReady()
+
+    // Stub fetch — useEditorTabs.refresh() calls getTree() and listPosts()
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ tree: [], posts: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    ) as unknown as typeof fetch
+
+    let capturedTabs: any = null
+    const Comp = defineComponent({
+      setup() {
+        const t = useEditorTabs({ selectPanel: () => {} })
+        capturedTabs = t.tabs
+        return () => h('div')
+      },
+    })
+    const wrap = mount(Comp, { global: { plugins: [router] } })
+    await flushPromises()
+
+    // After mount, getLiveTabs() must return a ref that points at the
+    // current tabs array.
+    const live = getLiveTabs()
+    expect(live).not.toBeNull()
+    expect(live!.value).toBe(capturedTabs.value)
+
+    // Mutating tabs.value (simulating openPost / onEditorChange) must
+    // propagate to _liveTabs via the flush:post mirror watch.
+    const newTab: Tab = {
+      path: 'x.md', title: 'x', raw: 'live', originalRaw: '',
+      saveStatus: 'idle', error: null, loadError: null, loading: false,
+    }
+    capturedTabs.value = [newTab]
+    await nextTick()
+    await nextTick() // flush:post runs after the next microtask
+    expect(live!.value).toEqual([newTab])
+
+    wrap.unmount()
+  })
+
+  it('__setLiveTabsForTesting overrides the published ref; __resetLiveTabsForTesting clears it', () => {
+    const fake = shallowRef<Tab[]>([])
+    __setLiveTabsForTesting(fake)
+    expect(getLiveTabs()).toBe(fake)
+    __resetLiveTabsForTesting()
+    expect(getLiveTabs()).toBeNull()
+  })
+})
 
   it('starts with no tabs and no active path', async () => {
     const h = await setup()

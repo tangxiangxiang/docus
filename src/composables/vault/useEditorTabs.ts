@@ -15,7 +15,7 @@
 // 'files', so the composable accepts the layout's selectPanel via the
 // constructor — the dependency is explicit, not a global lookup.
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, shallowRef, watch, type ShallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDebounceFn } from '@vueuse/core'
 import {
@@ -30,6 +30,45 @@ import { useToast } from '../useToast'
 import { useConfirm } from '../useConfirm'
 import type { Tab } from '../../components/vault/tabs'
 import type { SidePanel } from '../../components/vault/ActivityBar.vue'
+
+// ---- live tabs publish ----
+//
+// useEditorTabs is a per-mount composable (it takes `selectPanel` as a
+// constructor arg, so the AI panel can't call it from useCurrentNote).
+// We side-step that by exposing a module-level ref that
+// useEditorTabs publishes to once on mount. useCurrentNote reads it via
+// getLiveTabs() and prefers tab.raw over its getPost fallback. This
+// keeps the editor buffer live without coupling the two composables'
+// function signatures.
+//
+// The mirror watch is `flush: 'post'` so consumers see the same value
+// useEditorTabs saw, not a pre-flush snapshot — that way the AI panel's
+// content never lags the editor by a tick.
+//
+// Test-only escape hatches at the bottom of the block match the
+// __resetForTesting pattern used elsewhere.
+
+let _liveTabs: ShallowRef<Tab[]> | null = null
+let _mirrorStop: (() => void) | null = null
+
+function _teardownMirror() {
+  _mirrorStop?.()
+  _mirrorStop = null
+}
+
+export function getLiveTabs(): ShallowRef<Tab[]> | null {
+  return _liveTabs
+}
+
+export function __setLiveTabsForTesting(ref: ShallowRef<Tab[]> | null): void {
+  _teardownMirror()
+  _liveTabs = ref
+}
+
+export function __resetLiveTabsForTesting(): void {
+  _teardownMirror()
+  _liveTabs = null
+}
 
 export function useEditorTabs(opts: {
   selectPanel: (panel: SidePanel) => void
@@ -245,6 +284,17 @@ export function useEditorTabs(opts: {
       void openPost(p)
     }
   })
+
+  // Publish our tabs ref to the module-level mirror so other
+  // composables (e.g. useCurrentNote) can read it. The watch keeps
+  // _liveTabs.value in lockstep with our local `tabs` ref.
+  _teardownMirror()
+  if (!_liveTabs) _liveTabs = shallowRef<Tab[]>(tabs.value)
+  _mirrorStop = watch(
+    tabs,
+    (v) => { if (_liveTabs) _liveTabs.value = v },
+    { flush: 'post' },
+  )
 
   return {
     tree,
