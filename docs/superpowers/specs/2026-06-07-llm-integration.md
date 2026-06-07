@@ -20,7 +20,7 @@ A successful completion turns the AI panel from a chat-log editor into a working
 | # | Trigger | Result |
 |---|---|---|
 | 1 | Composer is empty and user presses Enter | No-op (the send button is also `:disabled` in this state). |
-| 2 | Composer has text, user presses Enter (no in-flight stream) | User message is appended optimistically. Empty assistant bubble is appended after it. `POST /api/ai/chat` opens. Send button is disabled and replaced by a "Stop" affordance (v1: disabled, not cancellable — see §6). |
+| 2 | Composer has text, user presses Enter (no in-flight stream) | User message is appended optimistically. Empty assistant bubble is appended after it. `POST /api/ai/chat` opens. The send button stays disabled for the duration of the stream. There is no separate "Stop" button in v1 (see §6). |
 | 3 | First token arrives | Assistant bubble is filled with the accumulated text. Subsequent tokens append. |
 | 4 | Stream completes | `done` event arrives; the assistant bubble is finalized with its real DB id. Composer is re-enabled. |
 | 5 | Stream errors mid-way | `error` event arrives; the assistant bubble shows `[error: <reason>]` after the partial content. Composer is re-enabled. The user message is never lost. |
@@ -30,7 +30,7 @@ A successful completion turns the AI panel from a chat-log editor into a working
 | 9 | No note is open (e.g., on `/tags`) | The chip is hidden; the system prompt contains only the base "you're a helpful assistant for a personal knowledge base" line. |
 | 10 | User opens the panel for the first time after a successful send | The active session's `updated_at` is bumped; the picker reorders the session to the top of the list. |
 | 11 | Two tabs of the app are open and one of them sends a message | The other tab does not see the live update mid-session (no realtime sync in v1; see §6). On reload, both see the same state. |
-| 12 | Network drops during a stream | The fetch promise rejects; the assistant bubble is finalized with `[error: network]` and the partial text; the user message is preserved. |
+| 12 | Network drops during a stream | The fetch promise rejects; the assistant bubble is finalized with `[error: network]` and the partial text; the user message is preserved if the server received and persisted the request before the drop. (If the drop happens before the server processes the request, the optimistic user message is lost on reload — acceptable for v1; a localStorage-backed outbox is a future spec.) |
 
 ## 3. Architecture
 
@@ -130,7 +130,9 @@ export function buildSystemPrompt(ctx: ChatContext): string {
 
 `ChatError` is a tagged union — `'no-api-key' | 'not-found' | 'empty' | 'aborted' | 'llm-error'` — defined here, used by the route to map to status codes. The service layer never throws raw `Error`; every failure has a `reason` string.
 
-### 3.4 `server/ai/routes.ts` — add `POST /chat`
+### 3.4 `server/ai/routes.ts` — add `POST /chat` and extend `GET /active`
+
+**New: `POST /chat`** — the streaming endpoint.
 
 ```ts
 // Inside the existing aiRoutes sub-app
@@ -179,11 +181,24 @@ app.post('/chat', async (c) => {
 })
 ```
 
+**Modified: `GET /active`** — the existing endpoint from the prior spec is extended to also report whether the server is configured. This is how the client knows the no-key state on first paint, not after a failed send:
+
+```ts
+app.get('/active', (c) => {
+  return c.json({
+    activeId: getActiveSessionId(getDb()),
+    configured: Boolean(process.env.ANTHROPIC_API_KEY),
+  })
+})
+```
+
+The existing `ActiveSessionId` wire type in `src/lib/ai-api.ts` becomes `{ activeId: number | null; configured: boolean }`. The corresponding `loadActive` in `useAiHistory` reads both fields and stores `configured` on the singleton.
+
 `ChatRequest` is the wire type and is declared in `src/lib/ai-api.ts` (the existing single source of truth for AI wire types). The server's `server/ai/routes.ts` imports the request shape from there for the body cast.
 
 ### 3.5 `server/ai/messages.ts` — no change needed
 
-`appendMessage(db, sessionId, role, content)` from the prior spec already validates `role ∈ {'user', 'assistant'}` and rejects other strings with `invalid-role`. We call it twice: once for the user at the start of `runChat`, once for the assistant at the end. The `appendPair` helper mentioned in the design discussion is **not** added — calling `appendMessage` twice is simpler and the chat flow doesn't need atomicity (the user message is written before the stream starts, so a crash only loses the in-flight assistant text).
+`appendMessage(db, sessionId, role, content)` from the prior spec already validates `role ∈ {'user', 'assistant'}` and rejects other strings with `invalid-role`. We call it twice: once for the user at the start of `runChat`, once for the assistant at the end. The two inserts are not transactional — atomicity is not required because the user message is written before the stream starts, so a crash only loses the in-flight assistant text.
 
 ### 3.6 New dependency: `@anthropic-ai/sdk`
 
@@ -201,7 +216,7 @@ export function useCurrentNote(): {
 }
 ```
 
-The composable derives the path from `useRoute()` (the `/vault/<path>` splat, or `null` if not on the vault). When the path changes, it fetches the post content via the existing `getPost` API and caches it. The AiPanel does not need to call `getPost` itself.
+The composable derives the path from `useRoute()` (the `/vault/<path>` splat, or `null` if not on the vault). Vue Router exposes the splat as `route.params.path`; depending on the route definition, this is either a `string` or a `string[]` — the composable coerces it to a `string` by joining with `/` when it's an array, and falls back to `null` if the splat is empty or the active route is not the vault. When the path changes, the composable fetches the post content via the existing `getPost` API and caches it. The AiPanel does not need to call `getPost` itself.
 
 **Known limitation (v1):** the cached content is the **server-saved** version, not the editor's live unsaved buffer. Because the editor auto-saves 800ms after the last keystroke, there can be a brief window where the AI sees a slightly stale note. This is acceptable for v1; addressing it requires pushing live editor state through `useEditorTabs`, which is a separate spec.
 
@@ -281,14 +296,16 @@ async function sendAndStream(
         optimisticUser.id = event.id
       } else if (event.type === 'token') {
         optimisticAssistant.content += event.text
-        messages.value = [...messages.value]  // shallow trigger
+        messages.value = messages.value.map(m =>
+          m === optimisticAssistant ? { ...m, content: optimisticAssistant.content } : m
+        )
       } else if (event.type === 'done') {
         optimisticAssistant.id = event.assistantId
         messages.value = messages.value.map(m => m === optimisticAssistant ? { ...m, id: event.assistantId } : m)
         await refreshSessions()  // re-fetch so the picker reorders
       } else if (event.type === 'error') {
         optimisticAssistant.content += `\n\n[error: ${event.reason}]`
-        messages.value = messages.value.map(m => m === optimisticAssistant ? { ...m, id: -1 } : m)
+        messages.value = messages.value.map(m => m === optimisticAssistant ? { ...m, id: -1, content: optimisticAssistant.content } : m)
         errorState.value = event.reason
         break
       }
@@ -325,8 +342,8 @@ async function onSend() {
 ```
 
 Template changes:
-- Send button gets `:disabled="!draft.trim() || history.busy.value"`.
-- A persistent banner above the composer shows when `history.errorState.value === 'no-api-key'`: `AI not configured — set ANTHROPIC_API_KEY in the server environment.`
+- Send button gets `:disabled="!draft.trim() || history.busy.value || !history.configured.value"`.
+- A persistent banner above the composer shows when `!history.configured.value`: `AI not configured — set ANTHROPIC_API_KEY in the server environment.` The banner is also shown immediately on first paint if the `/active` response says the server is unconfigured, so the user never has to send once to discover the missing key.
 - A small `📎 <title>` chip in the header (next to the title) shows the current note, hidden when none.
 - The welcome bubble is still the empty state (no messages); messages render as before.
 - The in-flight assistant bubble uses a `cursor: ▍` caret appended to the end while `busy` is true (v1: a CSS-only animated caret using `:after` with `animation: blink 1s steps(2) infinite`). After the stream ends, the caret disappears.
@@ -338,6 +355,7 @@ Template changes:
 | `busy` | `Ref<boolean>` | `useAiHistory` | yes — true while a stream is in flight |
 | `errorState` | `Ref<string \| null>` | `useAiHistory` | yes — last error reason, or `null` |
 | `abortRef` | `Ref<AbortController \| null>` | `useAiHistory` | yes — current stream's controller, for v2 stop button |
+| `configured` | `Ref<boolean>` | `useAiHistory` | yes — false if `ANTHROPIC_API_KEY` is unset, set from the `/active` response on mount |
 | `currentNote.path` | `Ref<string \| null>` | `useCurrentNote` (new) | yes |
 | `currentNote.content` | `Ref<string>` | `useCurrentNote` (new) | yes |
 | `ANTHROPIC_API_KEY` | `process.env` | server | yes — required |
