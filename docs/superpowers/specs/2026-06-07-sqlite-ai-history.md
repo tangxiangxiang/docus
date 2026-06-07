@@ -24,7 +24,7 @@ The AI panel today is UI-only: pressing Enter logs to `console.debug` and clears
 | 4 | Click a session row in the picker | That session becomes active; popover closes; messages reload. |
 | 5 | Click `✎` on a session row | The row becomes an inline input; Enter/blur saves the new title; Esc cancels. |
 | 6 | Click `×` on a session row | Confirm dialog ("Delete this session and its N messages?"); on confirm, session + its messages are deleted. If it was the active session, the panel reverts to the no-active-session state. |
-| 7 | Press Enter in the composer with an empty title | If no active session exists, a new session is created first. The user message is appended (optimistic) and persisted. After the first user message lands, the server auto-derives a title (first 30 chars of the message, ellipsised). The title appears in the header on the next picker open. |
+| 7 | Press Enter in the composer with an empty title | If no active session exists, a new session is created first. The user message is appended (optimistic) and persisted. After the first user message lands, the server auto-derives a title (first 30 Unicode code points of the trimmed message, with `…` appended if longer). The title appears in the header on the next picker open. |
 | 8 | Press Enter in the composer with an active session | The user message is appended to the active session. No LLM reply yet (still UI-only; assistant responses are a future spec). |
 | 9 | Send Shift+Enter in the composer | Inserts a newline; no message is sent. |
 | 10 | Close and reopen the panel | The previously active session (and its messages) reload. Active session is stored server-side, so the choice survives reload + is shared across tabs. |
@@ -124,7 +124,7 @@ All services are plain functions of `(db, ...args) → result`. No class state, 
 3. `SELECT id, title FROM sessions WHERE id = ?`; if not found → `{ ok: false, reason: 'not-found' }`.
 4. `INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)`.
 5. `UPDATE sessions SET updated_at = ? WHERE id = ?`.
-6. If `role === 'user'` **and** `title === ''`: derive title = `content.trim().slice(0, 30)` + (if longer, `'…'`); `UPDATE sessions SET title = ? WHERE id = ?`.
+6. If `role === 'user'` **and** `title === ''`: derive title from the trimmed content, capped at 30 **Unicode code points** (not UTF-16 code units) — code-point counting avoids splitting a surrogate pair mid-emoji. Implementation: `[...content.trim()].slice(0, 30).join('')`, then append `'…'` only if the trimmed content is longer than 30 code points. `UPDATE sessions SET title = ? WHERE id = ?`.
 7. Return `{ ok: true, message: <row> }`.
 
 The whole sequence runs inside one `db.transaction(...)()` so a partial failure can't leave a message without `updated_at` refresh.
@@ -147,6 +147,8 @@ Mounted at `/api/ai` via `app.route('/api/ai', aiRoutes)`. All bodies are JSON. 
 Error semantics:
 - **400** — body missing, required field missing/wrong type, `role` not in enum, `title` is empty string after trim, `sessionId` is not a number or `null`
 - **404** — session id does not exist (for `PATCH` / `DELETE` / `GET .../messages` / `POST .../messages` / `PUT /active` with non-null id)
+
+`POST /sessions/:id/messages` specifically maps the `appendMessage` reasons to HTTP codes: `not-found` → 404, `empty` or `invalid-role` → 400.
 
 ### 3.5 Frontend API client (`src/lib/ai-api.ts`, new)
 
@@ -202,7 +204,7 @@ export function useAiHistory(): {
 
 `loadActive` is the canonical open-panel entry: it fetches `getActiveSessionId()`, then if non-null fetches the messages. If null, `messages` stays empty and the welcome bubble is rendered (existing template branch handles that).
 
-`switchSession` calls `setActiveSessionId(id)` then `listMessages(id)` then assigns both. Errors are logged to `console.error` and re-thrown so the caller can show a toast (the existing `useToasts()` composable) — the spec doesn't define a specific UX for failures, it just sets the hook point.
+`switchSession` calls `setActiveSessionId(id)` then `listMessages(id)` then assigns both. Errors are logged to `console.error` and re-thrown so the caller can show a toast (the existing `useToast()` composable) — the spec doesn't define a specific UX for failures, it just sets the hook point.
 
 ### 3.7 Frontend components
 
