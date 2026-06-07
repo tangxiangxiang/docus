@@ -25,3 +25,8 @@ dist-ssr
 
 # Local data directory (SQLite DB lives here at runtime)
 data/
+
+# Per-developer secrets (see .env.example for the template)
+.env
+.env.local
+.env.*.local

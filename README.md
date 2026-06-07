@@ -217,9 +217,9 @@ foreign keys are enforced.
 | PATCH  | `/api/ai/sessions/<id>`             | Rename (`{ title }`)                        |
 | DELETE | `/api/ai/sessions/<id>`             | Delete (cascades messages; clears active if needed) |
 | POST   | `/api/ai/sessions/<id>/messages`    | Append a message (validates role)           |
-| GET    | `/api/ai/active`                    | `{ activeId, configured }` — `configured` is `false` when `ANTHROPIC_API_KEY` is unset |
+| GET    | `/api/ai/active`                    | `{ activeId, configured }` — `configured` is `false` when no auth env var is set |
 | PUT    | `/api/ai/active`                    | Set active session id (or `null`)           |
-| POST   | `/api/ai/chat`                      | Streaming chat; body is `{ sessionId, content, currentNotePath?, currentNoteContent? }`, response is SSE (`user` / `token` / `done` / `error` events). Returns 503 with `{ reason: 'no-api-key' }` when `ANTHROPIC_API_KEY` is unset. |
+| POST   | `/api/ai/chat`                      | Streaming chat; body is `{ sessionId, content, currentNotePath?, currentNoteContent? }`, response is SSE (`user` / `token` / `done` / `error` events). Returns 503 with `{ reason: 'no-api-key' }` when no auth env var is set. |
 
 Path validation for the filesystem routes is in
 [server/paths.ts](server/paths.ts). The AI sub-router has no
@@ -231,12 +231,15 @@ the camelCase wire format declared in `src/lib/ai-api.ts`.
 
 | Var | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | yes (for chat) | — | Held server-side; the browser never sees it. When unset, `/api/ai/chat` returns 503 and the panel's banner + disabled send button are visible. |
-| `ANTHROPIC_MODEL`   | no  | `claude-sonnet-4-6` | Model id passed to the Messages API. |
+| `ANTHROPIC_API_KEY` | one of these is required for chat | — | The official Anthropic SDK auth-token env var. Held server-side; the browser never sees it. When neither this nor `ANTHROPIC_AUTH_TOKEN` is set, `/api/ai/chat` returns 503 and the panel's banner + disabled send button are visible. |
+| `ANTHROPIC_AUTH_TOKEN` | alternative to `ANTHROPIC_API_KEY` | — | Alt env-var name used by some Anthropic-compatible proxies. The server picks the first non-empty value, so set this instead of (or in addition to) `ANTHROPIC_API_KEY` when using a proxy. |
+| `ANTHROPIC_BASE_URL` | no | `https://api.anthropic.com` | Override the API endpoint. Set when using a proxy that exposes an Anthropic-compatible API. |
+| `ANTHROPIC_MODEL`   | no  | `claude-sonnet-4-6` | Model id passed to the Messages API. Override when the proxy exposes different model names. |
 
 Set them in the shell that runs `npm run dev` (e.g. in a
 `.env.local` loaded by your shell, or via `export ...` in the same
-terminal).
+terminal). A template is at [`.env.example`](.env.example) — copy
+it to `.env` and fill in real values. `.env` is gitignored.
 
 ## Testing
 

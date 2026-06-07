@@ -3,9 +3,15 @@
 //   - pumpStream(stream, onToken, signal?): testable seam. Takes a
 //     MessageStream-shaped object, subscribes to its 'text' and
 //     'error' events, and resolves with the accumulated text.
-//   - streamClaude(opts): high-level. Reads ANTHROPIC_API_KEY from
+//   - streamClaude(opts): high-level. Reads auth + base URL from
 //     process.env, opens a client.messages.stream, delegates to
 //     pumpStream.
+//
+// Auth resolution order: ANTHROPIC_AUTH_TOKEN > ANTHROPIC_API_KEY.
+// This lets proxies that use the alt name (e.g. some Chinese
+// Anthropic-compatible providers) work without renaming.
+// ANTHROPIC_BASE_URL, if set, is forwarded to the SDK so the call
+// hits a proxy instead of the official Anthropic endpoint.
 //
 // The SDK type is opaque (we don't import Anthropic's TS types
 // beyond the constructor), so any object with `on` and
@@ -22,6 +28,16 @@ export type StreamClaudeOpts = {
   model: string
   onToken: (text: string) => void
   signal?: AbortSignal
+}
+
+/**
+ * Resolve the auth token from the process environment, in order:
+ * ANTHROPIC_AUTH_TOKEN, then ANTHROPIC_API_KEY. Returns undefined
+ * if neither is set. Exported so the route layer can reuse the
+ * same check for the `configured` flag.
+ */
+export function resolveApiKey(): string | undefined {
+  return process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY
 }
 
 /**
@@ -62,12 +78,13 @@ export async function pumpStream(
 
 /**
  * Open a streaming Claude call and resolve with the full assistant
- * text. Throws ChatError('no-api-key') if ANTHROPIC_API_KEY is unset.
+ * text. Throws ChatError('no-api-key') if no auth token is set.
  */
 export async function streamClaude(opts: StreamClaudeOpts): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  const apiKey = resolveApiKey()
   if (!apiKey) throw new ChatError('no-api-key')
-  const client = new Anthropic({ apiKey })
+  const baseURL = process.env.ANTHROPIC_BASE_URL
+  const client = new Anthropic(baseURL ? { apiKey, baseURL } : { apiKey })
   const stream = client.messages.stream({
     model: opts.model,
     max_tokens: MAX_TOKENS,

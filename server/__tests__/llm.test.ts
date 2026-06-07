@@ -60,15 +60,18 @@ describe('pumpStream', () => {
 import { streamClaude } from '../ai/llm'
 
 describe('streamClaude', () => {
-  it('throws ChatError(no-api-key) when ANTHROPIC_API_KEY is unset', async () => {
-    const prev = process.env.ANTHROPIC_API_KEY
+  it('throws ChatError(no-api-key) when no auth env var is set', async () => {
+    const prevKey = process.env.ANTHROPIC_API_KEY
+    const prevToken = process.env.ANTHROPIC_AUTH_TOKEN
     delete process.env.ANTHROPIC_API_KEY
+    delete process.env.ANTHROPIC_AUTH_TOKEN
     try {
       await expect(
         streamClaude({ system: 's', messages: [], model: 'm', onToken: () => {} })
       ).rejects.toMatchObject({ reason: 'no-api-key' })
     } finally {
-      if (prev !== undefined) process.env.ANTHROPIC_API_KEY = prev
+      if (prevKey !== undefined) process.env.ANTHROPIC_API_KEY = prevKey
+      if (prevToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = prevToken
     }
   })
 })

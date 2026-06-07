@@ -18,6 +18,7 @@ import * as sessions from './sessions.js'
 import * as messages from './messages.js'
 import { runChat } from './chat.js'
 import { ChatError } from './errors.js'
+import { resolveApiKey } from './llm.js'
 
 function bad(c: any, msg: string, code = 400) {
   return c.json({ error: msg }, code)
@@ -80,7 +81,9 @@ ai.post('/sessions/:id/messages', async (c) => {
 ai.get('/active', (c) =>
   c.json({
     sessionId: sessions.getActiveSessionId(getDb()),
-    configured: Boolean(process.env.ANTHROPIC_API_KEY),
+    configured: Boolean(
+      process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN,
+    ),
   })
 )
 
@@ -101,7 +104,7 @@ ai.put('/active', async (c) => {
 
 // ---- /chat ----
 ai.post('/chat', async (c) => {
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!resolveApiKey()) {
     return c.json({ ok: false, reason: 'no-api-key' }, 503)
   }
   const body = (await c.req.json().catch(() => null)) as

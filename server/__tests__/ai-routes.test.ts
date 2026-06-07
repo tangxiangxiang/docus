@@ -168,15 +168,35 @@ describe('GET /api/ai/active', () => {
     }
   })
 
-  it('reports configured: false when ANTHROPIC_API_KEY is unset', async () => {
-    const prev = process.env.ANTHROPIC_API_KEY
+  it('reports configured: false when neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN is set', async () => {
+    const prevKey = process.env.ANTHROPIC_API_KEY
+    const prevToken = process.env.ANTHROPIC_AUTH_TOKEN
     delete process.env.ANTHROPIC_API_KEY
+    delete process.env.ANTHROPIC_AUTH_TOKEN
     try {
       const r = await call('GET', '/active')
       const body = await r.json() as { configured: boolean }
       expect(body.configured).toBe(false)
     } finally {
-      if (prev !== undefined) process.env.ANTHROPIC_API_KEY = prev
+      if (prevKey !== undefined) process.env.ANTHROPIC_API_KEY = prevKey
+      if (prevToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = prevToken
+    }
+  })
+
+  it('reports configured: true when only ANTHROPIC_AUTH_TOKEN is set', async () => {
+    const prevKey = process.env.ANTHROPIC_API_KEY
+    const prevToken = process.env.ANTHROPIC_AUTH_TOKEN
+    delete process.env.ANTHROPIC_API_KEY
+    process.env.ANTHROPIC_AUTH_TOKEN = 'test-token'
+    try {
+      const r = await call('GET', '/active')
+      const body = await r.json() as { configured: boolean }
+      expect(body.configured).toBe(true)
+    } finally {
+      if (prevKey !== undefined) process.env.ANTHROPIC_API_KEY = prevKey
+      else delete process.env.ANTHROPIC_API_KEY
+      if (prevToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = prevToken
+      else delete process.env.ANTHROPIC_AUTH_TOKEN
     }
   })
 })
@@ -250,10 +270,12 @@ describe('POST /api/ai/chat', () => {
   })
   afterEach(() => {
     delete process.env.ANTHROPIC_API_KEY
+    delete process.env.ANTHROPIC_AUTH_TOKEN
   })
 
-  it('returns 503 when ANTHROPIC_API_KEY is unset', async () => {
+  it('returns 503 when no auth env var is set', async () => {
     delete process.env.ANTHROPIC_API_KEY
+    delete process.env.ANTHROPIC_AUTH_TOKEN
     const r = await call('POST', '/chat', { sessionId: 1, content: 'hi' })
     expect(r.status).toBe(503)
     expect(await r.json()).toEqual({ ok: false, reason: 'no-api-key' })
