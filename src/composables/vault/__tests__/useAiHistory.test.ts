@@ -77,15 +77,16 @@ describe('useAiHistory', () => {
       queue.push({ status: 201, body: { id: 1, title: '', createdAt: 1, updatedAt: 1 } })
       // setActiveSessionId (called inside createSession)
       queue.push({ status: 200, body: { sessionId: 1 } })
-      // appendMessage
-      queue.push({ status: 201, body: { id: 7, sessionId: 1, role: 'user', content: 'x', createdAt: 2 } })
+      // refreshSessions after done
+      queue.push({ status: 200, body: [] })
 
       const h = setup()
       await h.api.loadActive()
       await h.api.sendMessage('x')
       expect(h.activeSession.value?.id).toBe(1)
-      expect(h.messages.value).toHaveLength(1)
-      expect(h.messages.value[0].id).toBe(7) // not the optimistic 0
+      expect(h.messages.value).toHaveLength(2)
+      expect(h.messages.value[0]).toMatchObject({ id: 7, role: 'user', content: 'x' })
+      expect(h.messages.value[1]).toMatchObject({ id: 8, role: 'assistant' })
     })
 
     it('is a no-op for empty / whitespace content', async () => {
@@ -97,14 +98,15 @@ describe('useAiHistory', () => {
     it('replaces the optimistic message with the server response', async () => {
       queue.push({ status: 200, body: { activeId: 5, configured: true } })
       queue.push({ status: 200, body: [] })
-      queue.push({ status: 201, body: { id: 99, sessionId: 5, role: 'user', content: 'hello', createdAt: 3 } })
+      // refreshSessions after done
+      queue.push({ status: 200, body: [] })
 
       const h = setup()
       await h.api.loadActive()
       await h.api.sendMessage('hello')
-      expect(h.messages.value).toHaveLength(1)
-      expect(h.messages.value[0].id).toBe(99)
-      expect(h.messages.value[0].content).toBe('hello')
+      expect(h.messages.value).toHaveLength(2)
+      expect(h.messages.value[0]).toMatchObject({ id: 7, role: 'user', content: 'hello' })
+      expect(h.messages.value[1]).toMatchObject({ id: 8, role: 'assistant' })
     })
   })
 
@@ -127,5 +129,92 @@ describe('useAiHistory', () => {
       expect(h.sessions.value).toHaveLength(1)
       expect(h.sessions.value[0].title).toBe('a')
     })
+  })
+})
+
+// streamChat is mocked at the module boundary. The default mock
+// produces a happy-path event sequence: user id, two tokens, done.
+vi.mock('../../../lib/ai-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../lib/ai-api')>()
+  return {
+    ...actual,
+    streamChat: vi.fn(async function* () {
+      yield { type: 'user', id: 7 }
+      yield { type: 'token', text: 'hi ' }
+      yield { type: 'token', text: 'there' }
+      yield { type: 'done', userId: 7, assistantId: 8 }
+    }),
+  }
+})
+
+describe('sendAndStream', () => {
+  it('optimistically inserts user + assistant, then replaces ids on done', async () => {
+    // loadActive
+    queue.push({ status: 200, body: { activeId: 1, configured: true } })
+    queue.push({ status: 200, body: [] })
+    // refreshSessions after done
+    queue.push({ status: 200, body: [] })
+
+    const h = setup()
+    await h.api.loadActive()
+    await h.api.sendAndStream('hello')
+    expect(h.messages.value).toHaveLength(2)
+    expect(h.messages.value[0]).toMatchObject({ id: 7, role: 'user', content: 'hello' })
+    expect(h.messages.value[1]).toMatchObject({
+      id: 8, role: 'assistant', content: 'hi there',
+    })
+    expect(h.busy.value).toBe(false)
+    expect(h.errorState.value).toBeNull()
+  })
+
+  it('appends [error: ...] to the assistant and sets errorState on error event', async () => {
+    const { streamChat } = await import('../../../lib/ai-api')
+    vi.mocked(streamChat).mockImplementationOnce(async function* () {
+      yield { type: 'user', id: 9 }
+      yield { type: 'token', text: 'partial ' }
+      yield { type: 'error', reason: 'llm-error' }
+    })
+
+    queue.push({ status: 200, body: { activeId: 1, configured: true } })
+    queue.push({ status: 200, body: [] })
+
+    const h = setup()
+    await h.api.loadActive()
+    await h.api.sendAndStream('hi')
+    expect(h.messages.value[0].id).toBe(9)
+    expect(h.messages.value[1].id).toBe(-1)
+    expect(h.messages.value[1].content).toContain('partial ')
+    expect(h.messages.value[1].content).toContain('[error: llm-error]')
+    expect(h.errorState.value).toBe('llm-error')
+  })
+
+  it('is a no-op when called while busy is true', async () => {
+    const { streamChat } = await import('../../../lib/ai-api')
+    // First call: hangs (returns a never-resolving async gen).
+    // Second call: would yield, but should be a no-op.
+    vi.mocked(streamChat)
+      .mockImplementationOnce(async function* () {
+        // hang forever
+        await new Promise(() => {})
+      })
+      .mockImplementationOnce(async function* () {
+        yield { type: 'user', id: 1 }
+        yield { type: 'done', userId: 1, assistantId: 2 }
+      })
+
+    queue.push({ status: 200, body: { activeId: 1, configured: true } })
+    queue.push({ status: 200, body: [] })
+
+    const h = setup()
+    await h.api.loadActive()
+    const p1 = h.api.sendAndStream('first')
+    // Don't await — busy is now true.
+    await h.api.sendAndStream('second')
+    // The second call should not have queued any messages beyond
+    // what the first one already optimistically inserted.
+    expect(h.messages.value.filter((m) => m.content === 'second')).toHaveLength(0)
+    // Clean up: resolve p1 by aborting. (Not strictly needed; the
+    // test will end and vitest will GC the dangling promise.)
+    void p1
   })
 })
