@@ -13,7 +13,7 @@ the Hono server opens on startup.
 ```bash
 npm install
 npm run dev          # vite + Hono middleware, http://localhost:5173
-npm test             # vitest, 24 files / 192 tests
+npm test             # vitest, 27 files / 223 tests
 npm run build        # vue-tsc -b && vite build
 ```
 
@@ -22,6 +22,12 @@ no separate process is required. On first run the server creates
 `data/docus.db` (gitignored) and applies any pending SQL migrations
 from `server/migrations/`. Endpoints are namespaced under `/api/...`
 and documented inline in [server/index.ts](server/index.ts).
+
+The AI panel calls Anthropic's Messages API. The browser never sees
+the key; set `ANTHROPIC_API_KEY` in the server's environment before
+starting `npm run dev`. `ANTHROPIC_MODEL` overrides the default
+(`claude-sonnet-4-6`). When the key is unset, the panel shows a
+banner and the send button is disabled.
 
 ## Repository layout
 
@@ -37,11 +43,13 @@ src/
     zettelProtocol.ts    Pure functions: which paths are read-only / protected
                          and the user-facing error messages
     vault/               useVaultLayout, useEditorTabs, useTagFilter,
-                         useAiHistory — the state and side-effects split
-                         out of VaultView.vue and AiPanel.vue
+                         useAiHistory, useCurrentNote — the state and
+                         side-effects split out of VaultView.vue and
+                         AiPanel.vue
   lib/
     api.ts               Typed fetch wrappers for /api/posts, /api/tree, …
-    ai-api.ts            Typed fetch wrappers for /api/ai/*
+    ai-api.ts            Typed fetch wrappers for /api/ai/*, including
+                         the streamChat SSE parser for /api/ai/chat
     search.ts            MiniSearch full-text index, built client-side
     markdown.ts, frontmatter.ts
   content/               The vault itself — three top-level folders
@@ -54,7 +62,17 @@ server/
   db.ts                  better-sqlite3 singleton + applyMigrations runner
   migrations/            Numbered .sql files, applied transactionally on
                          startup against data/docus.db
-  ai/                    AI sub-app: sessions / messages / routes
+  ai/                    AI sub-app
+    errors.ts            Tagged ChatError union (no-api-key / not-found /
+                         empty / aborted / llm-error)
+    llm.ts               streamClaude(): thin wrapper around
+                         @anthropic-ai/sdk, the only file that knows
+                         about the SDK
+    chat.ts              runChat() orchestrator + buildSystemPrompt();
+                         pure business logic, no HTTP knowledge
+    messages.ts          Append/list messages; validates role ∈ {user, assistant}
+    sessions.ts          Sessions CRUD
+    routes.ts            Hono sub-router; the only place that knows HTTP
   tree.ts                Filesystem walker -> PostSummary[] / TreeNode[]
   paths.ts               Path validation + filesystem <-> URL mapping
   vite-plugin.ts         Mounts the Hono app as Vite middleware
@@ -121,15 +139,36 @@ restored on reload. Messages append optimistically: pressing Enter
 inserts the user message immediately and the server's echo replaces
 it once the HTTP response lands.
 
-The composer is `console.debug`-only — sending a message records it
-to the database but does not call any LLM. Wiring a model is a
-separate, future project; the spec marks it explicitly as out of
-scope.
+The composer calls Anthropic via the server. Pressing Enter opens
+`POST /api/ai/chat`; the server streams tokens back over SSE and the
+panel fills the assistant bubble as they arrive. The user message is
+appended optimistically; the optimistic user id is replaced in place
+once the server echoes its real id, and tokens append to the assistant
+bubble character by character. A blinking caret sits at the end of
+the in-flight bubble and disappears on `done`. Errors during the
+stream finalize the bubble with the partial text plus a
+`[error: <reason>]` marker; the user message is never lost.
+
+The currently open note is sent as system context: the panel header
+shows a `📎 <title>` chip when a note is open (hidden on `/tags` and
+similar), and the next send includes the note's saved content. The
+note is fetched once per path change by
+`useCurrentNote` (module-level singleton in
+[src/composables/vault/useCurrentNote.ts](src/composables/vault/useCurrentNote.ts)),
+which derives the path from the `/vault/<path>` splat and caches
+the server-saved body. The cached content lags the editor's unsaved
+buffer by the 800ms auto-save debounce — acceptable for v1; closing
+that gap is a separate spec.
+
+When `ANTHROPIC_API_KEY` is unset, the panel shows a persistent
+banner above the composer and the send button is disabled. The
+configured state is read from the `/active` response on mount, so
+the banner is visible before the first send.
 
 The composable is `useAiHistory` (module-level singleton in
 [src/composables/vault/useAiHistory.ts](src/composables/vault/useAiHistory.ts)).
 Session and message state live in a `ref`-based store; the HTTP wire
-format is defined in
+format (including the typed `ChatEvent` SSE parser) is defined in
 [src/lib/ai-api.ts](src/lib/ai-api.ts). Both are the only consumers
 of the `/api/ai/*` sub-router.
 
@@ -178,8 +217,9 @@ foreign keys are enforced.
 | PATCH  | `/api/ai/sessions/<id>`             | Rename (`{ title }`)                        |
 | DELETE | `/api/ai/sessions/<id>`             | Delete (cascades messages; clears active if needed) |
 | POST   | `/api/ai/sessions/<id>/messages`    | Append a message (validates role)           |
-| GET    | `/api/ai/active`                    | Active session id (or `null`)               |
+| GET    | `/api/ai/active`                    | `{ activeId, configured }` — `configured` is `false` when `ANTHROPIC_API_KEY` is unset |
 | PUT    | `/api/ai/active`                    | Set active session id (or `null`)           |
+| POST   | `/api/ai/chat`                      | Streaming chat; body is `{ sessionId, content, currentNotePath?, currentNoteContent? }`, response is SSE (`user` / `token` / `done` / `error` events). Returns 503 with `{ reason: 'no-api-key' }` when `ANTHROPIC_API_KEY` is unset. |
 
 Path validation for the filesystem routes is in
 [server/paths.ts](server/paths.ts). The AI sub-router has no
@@ -187,13 +227,24 @@ filesystem involvement; its request bodies are JSON-validated by
 the handlers, and SQL row mappers translate snake_case columns to
 the camelCase wire format declared in `src/lib/ai-api.ts`.
 
+### Environment variables
+
+| Var | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `ANTHROPIC_API_KEY` | yes (for chat) | — | Held server-side; the browser never sees it. When unset, `/api/ai/chat` returns 503 and the panel's banner + disabled send button are visible. |
+| `ANTHROPIC_MODEL`   | no  | `claude-sonnet-4-6` | Model id passed to the Messages API. |
+
+Set them in the shell that runs `npm run dev` (e.g. in a
+`.env.local` loaded by your shell, or via `export ...` in the same
+terminal).
+
 ## Testing
 
 ```bash
 npm test
 ```
 
-192 tests across 24 files:
+223 tests across 27 files:
 
 - **7 component tests** under `src/components/vault/__tests__/` —
   cover the file tree, context menu, drag-and-drop, inline rename,
@@ -201,23 +252,29 @@ npm test
   collision from misrouting renames, and the tag panel. The
   composables `useConfirm` / `usePrompt` / `useToast` are
   `vi.mock`-ed; tree fixtures are inline literals.
-- **5 composable tests** under `src/composables/vault/__tests__/` —
+- **6 composable tests** under `src/composables/vault/__tests__/` —
   cover the editor tabs state machine, the tag filter, the vault
-  layout persistence, the markdown render, and the `useAiHistory`
-  singleton. The AI singleton exposes a `__resetForTesting` export
-  to isolate state between tests.
+  layout persistence, the markdown render, the `useAiHistory`
+  singleton (including the new `sendAndStream` happy / error /
+  busy-guard paths), and the `useCurrentNote` singleton. The AI
+  singletons expose `__resetForTesting` exports to isolate state
+  between tests.
 - **3 lib tests** under `src/lib/__tests__/` — cover the full-text
-  search index, the AI HTTP wire format, and the AI typed fetch
-  wrappers (`fetch` is `vi.mock`-ed).
+  search index, the AI HTTP wire format (including the `streamChat`
+  SSE parser), and the AI typed fetch wrappers (`fetch` is
+  `vi.mock`-ed).
 - **1 view test** under `src/views/__tests__/` — covers the Tags
   view.
-- **8 server tests** under `server/__tests__/` — exercise the path
+- **10 server tests** under `server/__tests__/` — exercise the path
   validation, the PUT handler, the tree builder, the SQLite
   migration runner, the AI sessions and messages services, the AI
-  HTTP sub-router (with `vi.mock` of the DB module), and a smoke
-  test that mounts the full Hono app. The AI suite uses
-  `:memory:` databases via `vi.hoisted` to inject a fresh DB per
-  test.
+  HTTP sub-router (with `vi.mock` of the DB module), the LLM SDK
+  wrapper, the `runChat` / `buildSystemPrompt` orchestrator, and a
+  smoke test that mounts the full Hono app (including a streaming
+  `POST /api/ai/chat` round-trip). The AI suite uses `:memory:`
+  databases via `vi.hoisted` to inject a fresh DB per test, and
+  `streamClaude` is `vi.mock`-ed at the module boundary so the
+  tests don't hit the network.
 
 VaultView itself has no dedicated tests; behavior changes there
 rely on the dev server's manual smoke (open / edit / save / drag).
@@ -237,8 +294,25 @@ rely on the dev server's manual smoke (open / edit / save / drag).
   pure functions: each function takes the open `Database` as its
   first argument and returns plain JS values. The Hono handlers in
   `server/ai/routes.ts` are the only callers; the service layer
-  has no knowledge of HTTP. This keeps the business logic testable
-  without spinning up a server.
+  has no knowledge of HTTP. The LLM wrapper (`server/ai/llm.ts`)
+  is the only file that imports `@anthropic-ai/sdk`; the rest of
+  the module talks to it through the `streamClaude` callback
+  signature, so the SDK can be `vi.mock`-ed at the module
+  boundary in tests. The tagged `ChatError` union (in
+  `server/ai/errors.ts`) is the only error type the service layer
+  throws — every failure has a `reason` string that the route
+  maps to a status code or an SSE `error` event.
+- **Streaming chat wire format.** `POST /api/ai/chat` is
+  server-sent events (`Content-Type: text/event-stream`) with four
+  event types: `user` (saved user row id), `token` (incremental
+  text), `done` (final user + assistant row ids), `error` (a
+  reason string). The server uses Hono's built-in `streamSSE`;
+  the client parser lives in `streamChat` (in
+  [src/lib/ai-api.ts](src/lib/ai-api.ts)) and yields typed
+  `ChatEvent` objects as an `AsyncGenerator`. The composable
+  iterates it and updates the optimistic messages by object
+  identity — that's how in-flight bubbles are distinguished from
+  persisted ones.
 - **Server types** (`PostSummary`, `TreeNode`, `PostDetail`) live
   in [src/lib/api.ts](src/lib/api.ts); the AI wire types (`Session`,
   `Message`) live in [src/lib/ai-api.ts](src/lib/ai-api.ts). Both
@@ -261,6 +335,8 @@ The detailed design and plan documents for each feature live under
 - [specs/](docs/superpowers/specs/) — design intent before code
   - [`2026-06-06-ai-panel-design.md`](docs/superpowers/specs/2026-06-06-ai-panel-design.md) — right-rail AI panel skeleton
   - [`2026-06-07-sqlite-ai-history.md`](docs/superpowers/specs/2026-06-07-sqlite-ai-history.md) — SQLite-backed multi-session chat history
+  - [`2026-06-07-llm-integration.md`](docs/superpowers/specs/2026-06-07-llm-integration.md) — server-proxied Anthropic streaming, note context, no-key banner
 - [plans/](docs/superpowers/plans/) — step-by-step implementation
   plans, often with the commit sequence already chosen
   - [`2026-06-07-sqlite-ai-history.md`](docs/superpowers/plans/2026-06-07-sqlite-ai-history.md)
+  - [`2026-06-07-llm-integration.md`](docs/superpowers/plans/2026-06-07-llm-integration.md)
