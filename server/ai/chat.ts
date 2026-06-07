@@ -75,17 +75,26 @@ export async function runChat(opts: RunChatOpts): Promise<{
   // Write the user message FIRST so a crash mid-stream only loses
   // the in-flight assistant text. See spec §3.5.
   const userResult = messages.appendMessage(opts.db, opts.sessionId, 'user', opts.userContent)
-  if (!userResult.ok) throw new ChatError('empty') // appendMessage rejects on empty; belt-and-suspenders
+  if (!userResult.ok) {
+    throw new ChatError('llm-error', `user persist failed: ${userResult.reason}`)
+  }
   const userId = userResult.message.id
   await opts.onUserId(userId)
 
   let fullText = ''
+  // Wrap onToken so partial streamed text is preserved on the catch
+  // path (e.g. an abort mid-stream). The consumer's onToken still
+  // fires; we just mirror into fullText for the persist-on-fail branch.
+  const onToken = async (text: string) => {
+    fullText += text
+    await opts.onToken(text)
+  }
   try {
     fullText = await streamClaude({
       system,
       messages: convo,
       model: opts.model,
-      onToken: opts.onToken,
+      onToken,
       signal: opts.signal,
     })
   } catch (err) {
@@ -97,17 +106,9 @@ export async function runChat(opts: RunChatOpts): Promise<{
     )
     const assistantId = assistantResult.ok ? assistantResult.message.id : -1
     if (err instanceof ChatError) {
-      // Preserve the assistantId on the error for the route, but the
-      // simpler shape for now is to throw with the reason and let
-      // the route deal with the partial on a best-effort basis.
-      if (err.reason === 'aborted') {
-        // The route maps aborted to a silent return; the partial
-        // assistant row is still useful for the user on reload.
-        throw Object.assign(err, { assistantId })
-      }
-      throw Object.assign(err, { assistantId })
+      throw new ChatError(err.reason, err.message, assistantId)
     }
-    throw new ChatError('llm-error', (err as Error).message)
+    throw new ChatError('llm-error', (err as Error).message, assistantId)
   }
 
   const assistantResult = messages.appendMessage(

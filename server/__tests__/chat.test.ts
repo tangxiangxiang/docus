@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db'
 import { buildSystemPrompt, runChat } from '../ai/chat'
 import { ChatError } from '../ai/errors'
+import { streamClaude } from '../ai/llm'
 
 describe('buildSystemPrompt', () => {
   it('returns the base prompt when no note context is provided', () => {
@@ -67,6 +68,10 @@ function makeSession(db: ReturnType<typeof freshDb>): number {
 }
 
 describe('runChat', () => {
+  beforeEach(() => {
+    vi.mocked(streamClaude).mockReset()
+  })
+
   it('throws ChatError(not-found) when the session does not exist', async () => {
     const db = freshDb()
     const tokens: string[] = []
@@ -137,5 +142,92 @@ describe('runChat', () => {
         system: expect.stringContaining('body'),
       })
     )
+  })
+
+  it('persists partial assistant text and re-throws ChatError(aborted) with assistantId', async () => {
+    vi.mocked(streamClaude).mockImplementationOnce(async ({ onToken }: { onToken: (t: string) => void }) => {
+      onToken('partial ')
+      throw new ChatError('aborted')
+    })
+
+    const db = freshDb()
+    const id = makeSession(db)
+    const tokens: string[] = []
+
+    await expect(
+      runChat({
+        db,
+        sessionId: id,
+        userContent: 'hi',
+        ctx: {},
+        model: 'm',
+        onUserId: () => {},
+        onToken: (t) => { tokens.push(t) },
+      })
+    ).rejects.toMatchObject({ reason: 'aborted', assistantId: expect.any(Number) })
+
+    const rows = db.prepare('SELECT role, content FROM messages WHERE session_id = ? ORDER BY id').all(id) as { role: string; content: string }[]
+    expect(rows).toEqual([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'partial ' },
+    ])
+  })
+
+  it("persists '[stream interrupted]' when no tokens were received and streamClaude throws", async () => {
+    vi.mocked(streamClaude).mockImplementationOnce(async () => {
+      throw new ChatError('llm-error')
+    })
+
+    const db = freshDb()
+    const id = makeSession(db)
+
+    await expect(
+      runChat({
+        db,
+        sessionId: id,
+        userContent: 'hi',
+        ctx: {},
+        model: 'm',
+        onUserId: () => {},
+        onToken: () => {},
+      })
+    ).rejects.toMatchObject({ reason: 'llm-error', assistantId: expect.any(Number) })
+
+    const rows = db.prepare('SELECT role, content FROM messages WHERE session_id = ? ORDER BY id').all(id) as { role: string; content: string }[]
+    expect(rows).toEqual([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: '[stream interrupted]' },
+    ])
+  })
+
+  it('wraps a non-ChatError thrown from streamClaude as ChatError(llm-error)', async () => {
+    vi.mocked(streamClaude).mockImplementationOnce(async () => {
+      throw new Error('boom')
+    })
+
+    const db = freshDb()
+    const id = makeSession(db)
+
+    await expect(
+      runChat({
+        db,
+        sessionId: id,
+        userContent: 'hi',
+        ctx: {},
+        model: 'm',
+        onUserId: () => {},
+        onToken: () => {},
+      })
+    ).rejects.toMatchObject({
+      reason: 'llm-error',
+      assistantId: expect.any(Number),
+      message: expect.stringContaining('boom'),
+    })
+
+    const rows = db.prepare('SELECT role, content FROM messages WHERE session_id = ? ORDER BY id').all(id) as { role: string; content: string }[]
+    expect(rows).toEqual([
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: '[stream interrupted]' },
+    ])
   })
 })

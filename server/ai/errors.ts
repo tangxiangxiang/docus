@@ -11,9 +11,11 @@ export type ChatErrorReason =
 
 export class ChatError extends Error {
   readonly reason: ChatErrorReason
-  constructor(reason: ChatErrorReason, message?: string) {
+  readonly assistantId?: number
+  constructor(reason: ChatErrorReason, message?: string, assistantId?: number) {
     super(message ?? reason)
     this.name = 'ChatError'
     this.reason = reason
+    this.assistantId = assistantId
   }
 }
