@@ -12,9 +12,12 @@
 //     will eventually import this file). The signature is identical
 //     to the helper in ../index.ts.
 import { Hono } from 'hono'
+import { streamSSE } from 'hono/streaming'
 import { getDb } from '../db.js'
 import * as sessions from './sessions.js'
 import * as messages from './messages.js'
+import { runChat } from './chat.js'
+import { ChatError } from './errors.js'
 
 function bad(c: any, msg: string, code = 400) {
   return c.json({ error: msg }, code)
@@ -74,7 +77,12 @@ ai.post('/sessions/:id/messages', async (c) => {
 })
 
 // ---- /active ----
-ai.get('/active', (c) => c.json({ sessionId: sessions.getActiveSessionId(getDb()) }))
+ai.get('/active', (c) =>
+  c.json({
+    sessionId: sessions.getActiveSessionId(getDb()),
+    configured: Boolean(process.env.ANTHROPIC_API_KEY),
+  })
+)
 
 ai.put('/active', async (c) => {
   const body = await c.req.json().catch(() => null) as { sessionId?: unknown } | null
@@ -89,6 +97,66 @@ ai.put('/active', async (c) => {
   }
   sessions.setActiveSessionId(getDb(), id)
   return c.json({ sessionId: id })
+})
+
+// ---- /chat ----
+ai.post('/chat', async (c) => {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return c.json({ ok: false, reason: 'no-api-key' }, 503)
+  }
+  const body = (await c.req.json().catch(() => null)) as
+    | {
+        sessionId?: unknown
+        content?: unknown
+        currentNotePath?: unknown
+        currentNoteContent?: unknown
+      }
+    | null
+  if (
+    !body ||
+    typeof body.sessionId !== 'number' ||
+    typeof body.content !== 'string'
+  ) {
+    return c.json({ ok: false, reason: 'invalid' }, 400)
+  }
+
+  // We don't pre-validate the session here — runChat throws
+  // ChatError('not-found') and the route maps it to an SSE error
+  // event so the client can show a chip rather than a generic 404.
+  return streamSSE(c, async (stream) => {
+    try {
+      const result = await runChat({
+        db: getDb(),
+        sessionId: body.sessionId,
+        userContent: body.content,
+        ctx: {
+          currentNotePath: typeof body.currentNotePath === 'string' ? body.currentNotePath : undefined,
+          currentNoteContent: typeof body.currentNoteContent === 'string' ? body.currentNoteContent : undefined,
+        },
+        model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
+        signal: c.req.raw.signal,
+        onUserId: async (id) => {
+          await stream.writeSSE({ event: 'user', data: JSON.stringify({ id }) })
+        },
+        onToken: async (text) => {
+          await stream.writeSSE({ event: 'token', data: JSON.stringify({ text }) })
+        },
+      })
+      await stream.writeSSE({
+        event: 'done',
+        data: JSON.stringify({ userId: result.userId, assistantId: result.assistantId }),
+      })
+    } catch (err) {
+      if (err instanceof ChatError && err.reason === 'aborted') return
+      const reason = err instanceof ChatError ? err.reason : 'unknown'
+      try {
+        await stream.writeSSE({ event: 'error', data: JSON.stringify({ reason }) })
+      } catch {
+        // The stream may already be closed (client disconnect).
+        // Best-effort: ignore.
+      }
+    }
+  })
 })
 
 export default ai

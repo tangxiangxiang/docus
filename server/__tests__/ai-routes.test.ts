@@ -153,10 +153,31 @@ describe('POST /api/ai/sessions/:id/messages', () => {
 })
 
 describe('GET /api/ai/active', () => {
-  it('returns { sessionId: null } when no active session', async () => {
-    const r = await call('GET', '/active')
-    expect(r.status).toBe(200)
-    expect(await r.json()).toEqual({ sessionId: null })
+  it('returns { sessionId: null, configured: <bool> } when no active session', async () => {
+    const prev = process.env.ANTHROPIC_API_KEY
+    process.env.ANTHROPIC_API_KEY = 'test-key'
+    try {
+      const r = await call('GET', '/active')
+      expect(r.status).toBe(200)
+      const body = await r.json() as { sessionId: number | null; configured: boolean }
+      expect(body.sessionId).toBeNull()
+      expect(body.configured).toBe(true)
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = prev
+    }
+  })
+
+  it('reports configured: false when ANTHROPIC_API_KEY is unset', async () => {
+    const prev = process.env.ANTHROPIC_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
+    try {
+      const r = await call('GET', '/active')
+      const body = await r.json() as { configured: boolean }
+      expect(body.configured).toBe(false)
+    } finally {
+      if (prev !== undefined) process.env.ANTHROPIC_API_KEY = prev
+    }
   })
 })
 
@@ -168,7 +189,8 @@ describe('PUT /api/ai/active', () => {
     expect(await r.json()).toEqual({ sessionId: created.id })
 
     const get = await call('GET', '/active')
-    expect(await get.json()).toEqual({ sessionId: created.id })
+    const getBody = await get.json() as { sessionId: number | null; configured: boolean }
+    expect(getBody.sessionId).toEqual(created.id)
   })
 
   it('clears the active session when sessionId is null', async () => {
@@ -187,5 +209,84 @@ describe('PUT /api/ai/active', () => {
   it('returns 404 when sessionId points to a non-existent session', async () => {
     const r = await call('PUT', '/active', { sessionId: 999 })
     expect(r.status).toBe(404)
+  })
+})
+
+import * as chatModule from '../ai/chat'
+import { ChatError } from '../ai/errors'
+
+// We mock runChat so the route test doesn't drag in the SDK or
+// need a real DB session for the chat flow. The mock emits the
+// expected events: a user id, two tokens, and a done with both ids.
+vi.mock('../ai/chat', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../ai/chat')>()
+  return {
+    ...actual,
+    runChat: vi.fn(async ({ onUserId, onToken }: any) => {
+      await onUserId(101)
+      await onToken('hello ')
+      await onToken('world')
+      return { userId: 101, assistantId: 202, fullText: 'hello world' }
+    }),
+  }
+})
+
+function sseBodyChunks(res: Response): Promise<string[]> {
+  // Read the SSE body as a single string then split on \n\n blocks.
+  return res.text().then((text) => {
+    return text.split('\n\n').filter((b) => b.trim().length > 0)
+  })
+}
+
+function parseEvent(block: string): { event: string; data: string } {
+  const event = (block.match(/^event:\s*(.+)$/m) ?? ['', ''])[1].trim()
+  const data = (block.match(/^data:\s*(.+)$/m) ?? ['', ''])[1].trim()
+  return { event, data }
+}
+
+describe('POST /api/ai/chat', () => {
+  beforeEach(() => {
+    process.env.ANTHROPIC_API_KEY = 'test-key'
+  })
+  afterEach(() => {
+    delete process.env.ANTHROPIC_API_KEY
+  })
+
+  it('returns 503 when ANTHROPIC_API_KEY is unset', async () => {
+    delete process.env.ANTHROPIC_API_KEY
+    const r = await call('POST', '/chat', { sessionId: 1, content: 'hi' })
+    expect(r.status).toBe(503)
+    expect(await r.json()).toEqual({ ok: false, reason: 'no-api-key' })
+  })
+
+  it('returns 400 when the body is invalid', async () => {
+    const r = await call('POST', '/chat', { content: 'hi' })
+    expect(r.status).toBe(400)
+  })
+
+  it('streams user → token* → done in order on success', async () => {
+    // Create a session so the body validates.
+    const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+    const r = await call('POST', '/chat', { sessionId: created.id, content: 'hi' })
+    expect(r.status).toBe(200)
+    expect(r.headers.get('content-type')).toMatch(/text\/event-stream/)
+    const blocks = await sseBodyChunks(r)
+    const events = blocks.map(parseEvent)
+    expect(events.map((e) => e.event)).toEqual(['user', 'token', 'token', 'done'])
+    expect(JSON.parse(events[0].data)).toEqual({ id: 101 })
+    expect(JSON.parse(events[1].data)).toEqual({ text: 'hello ' })
+    expect(JSON.parse(events[2].data)).toEqual({ text: 'world' })
+    expect(JSON.parse(events[3].data)).toEqual({ userId: 101, assistantId: 202 })
+  })
+
+  it('emits an error event when runChat throws not-found', async () => {
+    vi.mocked(chatModule.runChat).mockRejectedValueOnce(new ChatError('not-found'))
+    // 999 is not a real session — the mock throws, so the route
+    // emits the SSE error.
+    const r = await call('POST', '/chat', { sessionId: 999, content: 'hi' })
+    const blocks = await sseBodyChunks(r)
+    const last = parseEvent(blocks[blocks.length - 1])
+    expect(last.event).toBe('error')
+    expect(JSON.parse(last.data)).toEqual({ reason: 'not-found' })
   })
 })
