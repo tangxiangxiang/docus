@@ -3,10 +3,22 @@
 // test does NOT mock getDb, so the first request creates
 // ./data/docus.db on disk; we clean it up in afterAll so the
 // repo's working tree stays clean.
-import { describe, it, expect, afterAll } from 'vitest'
+import { describe, it, expect, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import app from '../index'
+
+vi.mock('../ai/chat', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../ai/chat')>()
+  return {
+    ...actual,
+    runChat: vi.fn(async ({ onUserId, onToken }: any) => {
+      await onUserId(1)
+      await onToken('ok')
+      return { userId: 1, assistantId: 2, fullText: 'ok' }
+    }),
+  }
+})
 
 const DATA_DIR = path.resolve(process.cwd(), 'data')
 
@@ -32,5 +44,30 @@ describe('app mounts /api/ai', () => {
     const r = await app.fetch(req)
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual({ ok: true })
+  })
+})
+
+describe('app mounts /api/ai/chat', () => {
+  beforeEach(() => {
+    process.env.ANTHROPIC_API_KEY = 'test-key'
+  })
+  afterEach(() => {
+    delete process.env.ANTHROPIC_API_KEY
+  })
+
+  it('POST /api/ai/chat returns a text/event-stream response', async () => {
+    // Create a session first.
+    const created = await app.fetch(new Request('http://localhost/api/ai/sessions', { method: 'POST' }))
+    const { id } = await created.json() as { id: number }
+    const r = await app.fetch(new Request('http://localhost/api/ai/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: id, content: 'hi' }),
+    }))
+    expect(r.status).toBe(200)
+    expect(r.headers.get('content-type')).toMatch(/text\/event-stream/)
+    const text = await r.text()
+    expect(text).toContain('event: user')
+    expect(text).toContain('event: done')
   })
 })

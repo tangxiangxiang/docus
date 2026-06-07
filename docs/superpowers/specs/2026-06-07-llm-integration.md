@@ -410,4 +410,40 @@ Target: ~12 new tests, final count ~204.
 
 ## 8. Implementation notes
 
-_Filled in after the spec is implemented. Lists plan-vs-build deltas, link PRs, record what surprised us._
+Implemented across 10 commits on top of the LLM integration plan (`docs/superpowers/plans/2026-06-07-llm-integration.md`).
+
+### Deviations from the original spec
+
+Three deviations, all small and behavior-preserving:
+
+- **`ChatError` lives in its own file (`server/ai/errors.ts`)**, not inside `chat.ts` as the original spec sketch suggested. This avoids a circular import between `llm.ts` (which throws `no-api-key` / `aborted` / `llm-error`) and `chat.ts` (which throws `not-found` / `empty`). The class is identical to the spec sketch; consumers import from the same path.
+
+- **`ChatError` now carries a typed `assistantId?: number` field.** The original spec sketched `Object.assign(err, { assistantId })` to attach the partial assistantId to a re-thrown error. The implementation adds a proper optional `readonly assistantId?: number` to the class (constructor takes it as a third arg) so consumers can do `err.assistantId` type-safely. This was driven by the error-path tests added in Task 4.
+
+- **`runChat`'s catch block mirrors tokens into a local accumulator.** The original sketch had `fullText` set only in the success path (from the `streamClaude` return value), which meant the catch block always wrote `'[stream interrupted]'` even when real partial tokens had streamed. The implementation wraps the consumer's `onToken` to mirror each token into a local `fullText` accumulator, so the catch block can persist the real partial text. This is a behavior fix, not a behavior change; the spec's intent (persist partial on abort) is now correctly implemented.
+
+### Test coverage summary
+
+223 tests across 27 files (was 192 across 24 before this feature).
+
+New files contributing tests:
+- `server/__tests__/chat.test.ts` (11: 4 buildSystemPrompt + 7 runChat)
+- `server/__tests__/llm.test.ts` (5: 4 pumpStream + 1 streamClaude no-key)
+- `server/__tests__/mount.test.ts` (+1: /api/ai/chat smoke)
+- `src/composables/vault/__tests__/useCurrentNote.test.ts` (4)
+- `src/lib/__tests__/ai-api.test.ts` (+2: streamChat happy + error)
+
+Existing files extended:
+- `server/__tests__/ai-routes.test.ts` (+5: 1 /active rewritten, 1 /active added, 4 /chat added)
+- `src/composables/vault/__tests__/useAiHistory.test.ts` (+3: sendAndStream happy + error + busy-guard)
+- `src/composables/vault/__tests__/useAiHistory.test.ts` also had mock-queue bodies updated for the new `/active` wire shape (`{ activeId, configured }`)
+
+### Out of scope (still)
+
+The spec's §6 "out of scope" items remain out of scope:
+- No tool use, no slash commands, no stop button, no live editor context (the known limitation in `useCurrentNote`)
+
+### Other notes
+
+- The `@anthropic-ai/sdk` was pinned to `^0.102.0` (latest at install time) rather than the plan's `^0.40.0` placeholder. The import surface used (`new Anthropic({ apiKey })`, `client.messages.stream({...})` with `text` event and `finalMessage()`) is unchanged in v0.102.0.
+- `npm install` reported 1 high-severity vulnerability at install time (transitive deps in the SDK's tree). Not investigated; the SDK is a server-side runtime dep and the warning is likely pre-existing in the broader ecosystem.
