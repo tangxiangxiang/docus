@@ -2547,30 +2547,7 @@ main.container {
    session picker. Inherits the same colors as the rest of the
    header text; hover gives a subtle background like the close
    button. */
-.ai-panel .ai-title {
-  background: transparent;
-  border: 0;
-  padding: 4px 6px;
-  margin: 0 -6px;
-  border-radius: 4px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--vs-text-1);
-  letter-spacing: -0.005em;
-}
-.ai-panel .ai-title:hover { background: var(--vs-hover-bg); }
 .ai-panel .ai-title-sep { color: var(--vs-text-3); font-weight: 400; }
-.ai-panel .ai-title-session {
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* LLM integration additions (spec §5) */
 .ai-panel .ai-no-key-banner {
@@ -2600,8 +2577,13 @@ main.container {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Push the right-side button group (history, new chat, close) to
+   the far right of the header. Sits on the first button rather than
+   the optional note chip so it works whether or not a note is open. */
+.ai-panel .ai-header-btn:first-of-type {
   margin-left: auto;
-  margin-right: 8px;
 }
 
 .ai-panel .ai-message.assistant.ai-streaming .ai-bubble::after {
