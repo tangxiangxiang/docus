@@ -1,12 +1,19 @@
 <script setup lang="ts">
-// AI panel — UI + persistence. The close button emits `close` so
-// the parent can decide what to do (typically toggleAi in
-// VaultView). The composer appends user messages to the active
-// session via the useAiHistory composable; assistant responses are
-// still a future project (see the design spec §7 Out of scope).
+// AI panel — UI + persistence + LLM. The close button emits `close`
+// so the parent can decide what to do (typically toggleAi in
+// VaultView). The composer sends a user message to the active
+// session via useAiHistory.sendAndStream; the server streams back
+// tokens that fill the assistant bubble in real time.
+//
+// The `configured` flag (from /api/ai/active) determines whether
+// the send button is enabled. When false, a persistent banner
+// explains the missing env var. The `busy` flag disables the send
+// button while a stream is in flight; there is no Stop button in
+// v1.
 import { onMounted, ref } from 'vue'
 import { ICON_AI } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
+import { useCurrentNote } from '../../composables/vault/useCurrentNote'
 import AiSessionPicker from './AiSessionPicker.vue'
 
 const emit = defineEmits<{
@@ -16,18 +23,22 @@ const emit = defineEmits<{
 const draft = ref('')
 const pickerOpen = ref(false)
 const history = useAiHistory()
+const currentNote = useCurrentNote()
 
 onMounted(async () => {
   await history.loadActive()
 })
 
-function onSend() {
+async function onSend() {
   const text = draft.value.trim()
   if (!text) return
+  if (history.busy.value) return
+  if (!history.configured.value) return
   draft.value = '' // clear immediately for snappy UX
-  // eslint-disable-next-line no-console
-  console.debug('[ai] would send', text)
-  void history.sendMessage(text)
+  await history.sendAndStream(text, {
+    path: currentNote.path.value ?? '',
+    content: currentNote.content.value,
+  })
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -39,6 +50,14 @@ function onKeydown(e: KeyboardEvent) {
 
 function togglePicker() {
   pickerOpen.value = !pickerOpen.value
+}
+
+const noteTitle = (path: string | null): string => {
+  if (!path) return ''
+  // Use the basename minus extension as a friendly title.
+  const segs = path.split('/')
+  const last = segs[segs.length - 1] ?? path
+  return last.replace(/\.md$/i, '')
 }
 </script>
 
@@ -58,6 +77,11 @@ function togglePicker() {
           <span class="ai-title-session">{{ history.activeSession.value.title }}</span>
         </template>
       </button>
+      <span
+        v-if="currentNote.path.value"
+        class="ai-note-chip"
+        :title="currentNote.path.value"
+      >📎 {{ noteTitle(currentNote.path.value) }}</span>
       <button
         class="ai-close"
         type="button"
@@ -66,6 +90,12 @@ function togglePicker() {
         @click="emit('close')"
       >×</button>
     </header>
+
+    <div
+      v-if="!history.configured.value"
+      class="ai-no-key-banner"
+      role="status"
+    >AI not configured — set <code>ANTHROPIC_API_KEY</code> in the server environment.</div>
 
     <div class="ai-messages" role="log" aria-live="polite">
       <template v-if="history.messages.value.length === 0">
@@ -81,7 +111,7 @@ function togglePicker() {
           v-for="m in history.messages.value"
           :key="m.id || `${m.sessionId}-${m.createdAt}`"
           class="ai-message"
-          :class="m.role"
+          :class="[m.role, { 'ai-streaming': m.id === 0 || m.id === -1 }]"
         >
           <div
             v-if="m.role === 'assistant'"
@@ -109,7 +139,7 @@ function togglePicker() {
           type="submit"
           title="Send (Enter)"
           aria-label="Send"
-          :disabled="!draft.trim()"
+          :disabled="!draft.trim() || history.busy.value || !history.configured.value"
         >↑</button>
       </div>
     </form>

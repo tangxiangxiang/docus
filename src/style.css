@@ -2528,3 +2528,47 @@ main.container {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* LLM integration additions (spec §5) */
+.ai-panel .ai-no-key-banner {
+  background: var(--vs-bg-3);
+  color: var(--vs-text-2);
+  font-size: 0.8rem;
+  padding: 8px 12px;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--vs-border);
+}
+
+.ai-panel .ai-no-key-banner code {
+  font-family: var(--mono);
+  background: var(--vs-bg-2);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.78rem;
+}
+
+.ai-panel .ai-note-chip {
+  font-size: 0.75rem;
+  color: var(--vs-text-2);
+  background: var(--vs-bg-2);
+  padding: 2px 8px;
+  border-radius: 4px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: auto;
+  margin-right: 8px;
+}
+
+.ai-panel .ai-message.assistant.ai-streaming .ai-bubble::after {
+  content: '▍';
+  display: inline-block;
+  margin-left: 1px;
+  color: var(--vs-accent);
+  animation: ai-cursor-blink 1s steps(2) infinite;
+}
+
+@keyframes ai-cursor-blink {
+  to { opacity: 0; }
+}
