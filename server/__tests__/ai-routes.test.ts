@@ -153,14 +153,14 @@ describe('POST /api/ai/sessions/:id/messages', () => {
 })
 
 describe('GET /api/ai/active', () => {
-  it('returns { sessionId: null, configured: <bool> } when no active session', async () => {
+  it('returns { activeId: null, configured: <bool> } when no active session', async () => {
     const prev = process.env.ANTHROPIC_API_KEY
     process.env.ANTHROPIC_API_KEY = 'test-key'
     try {
       const r = await call('GET', '/active')
       expect(r.status).toBe(200)
-      const body = await r.json() as { sessionId: number | null; configured: boolean }
-      expect(body.sessionId).toBeNull()
+      const body = await r.json() as { activeId: number | null; configured: boolean }
+      expect(body.activeId).toBeNull()
       expect(body.configured).toBe(true)
     } finally {
       if (prev === undefined) delete process.env.ANTHROPIC_API_KEY
@@ -209,8 +209,8 @@ describe('PUT /api/ai/active', () => {
     expect(await r.json()).toEqual({ sessionId: created.id })
 
     const get = await call('GET', '/active')
-    const getBody = await get.json() as { sessionId: number | null; configured: boolean }
-    expect(getBody.sessionId).toEqual(created.id)
+    const getBody = await get.json() as { activeId: number | null; configured: boolean }
+    expect(getBody.activeId).toEqual(created.id)
   })
 
   it('clears the active session when sessionId is null', async () => {

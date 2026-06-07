@@ -80,7 +80,7 @@ ai.post('/sessions/:id/messages', async (c) => {
 // ---- /active ----
 ai.get('/active', (c) =>
   c.json({
-    sessionId: sessions.getActiveSessionId(getDb()),
+    activeId: sessions.getActiveSessionId(getDb()),
     configured: Boolean(
       process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN,
     ),
