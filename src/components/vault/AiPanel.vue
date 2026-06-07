@@ -81,6 +81,11 @@ const noteTitle = (path: string | null): string => {
           >{{ history.activeSession.value.title }}</span>
         </template>
       </div>
+      <span
+        v-if="currentNote.path.value"
+        class="ai-note-chip"
+        :title="currentNote.path.value"
+      >📎 {{ noteTitle(currentNote.path.value) }}</span>
       <button
         class="ai-header-btn"
         type="button"
@@ -97,11 +102,6 @@ const noteTitle = (path: string | null): string => {
         :disabled="history.busy.value"
         @click="onNewSession"
       ><span v-html="ICON_NEW_CHAT" aria-hidden="true" /></button>
-      <span
-        v-if="currentNote.path.value"
-        class="ai-note-chip"
-        :title="currentNote.path.value"
-      >📎 {{ noteTitle(currentNote.path.value) }}</span>
       <button
         class="ai-close"
         type="button"
