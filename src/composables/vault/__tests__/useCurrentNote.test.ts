@@ -1,9 +1,29 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { defineComponent, h } from 'vue'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { defineComponent, h, shallowRef } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { useCurrentNote, __resetForTesting } from '../useCurrentNote'
+import {
+  getLiveTabs,
+  __setLiveTabsForTesting,
+  __resetLiveTabsForTesting,
+} from '../useEditorTabs'
+import type { Tab } from '../../../components/vault/tabs'
+
+function makeTab(overrides: Partial<Tab> = {}): Tab {
+  return {
+    path: 'foo.md',
+    title: 'foo',
+    raw: '',
+    originalRaw: '',
+    saveStatus: 'idle',
+    error: null,
+    loadError: null,
+    loading: false,
+    ...overrides,
+  }
+}
 
 let responses: { status: number; body: unknown }[] = []
 
@@ -71,5 +91,43 @@ describe('useCurrentNote', () => {
     const { note } = await mountAtRoute('/vault/missing.md')
     expect(note.path.value).toBe('missing.md')
     expect(note.content.value).toBe('')
+  })
+})
+
+describe('useCurrentNote — live tab integration', () => {
+  beforeEach(() => {
+    __setLiveTabsForTesting(shallowRef<Tab[]>([]))
+  })
+
+  afterEach(() => {
+    __resetLiveTabsForTesting()
+  })
+
+  it('uses tab.raw when a live tab exists for the route path', async () => {
+    const live = getLiveTabs()!
+    live.value = [makeTab({ path: 'foo.md', raw: 'live content' })]
+    const { note } = await mountAtRoute('/vault/foo.md')
+    expect(note.path.value).toBe('foo.md')
+    expect(note.content.value).toBe('live content')
+  })
+
+  it('falls back to getPost when no live tab exists for the route path', async () => {
+    responses.push({ status: 200, body: { content: 'from-server', frontmatter: {} } })
+    const { note } = await mountAtRoute('/vault/missing.md')
+    expect(note.path.value).toBe('missing.md')
+    expect(note.content.value).toBe('from-server')
+  })
+
+  it('updates content when the live tab.raw mutates (typing)', async () => {
+    const live = getLiveTabs()!
+    live.value = [makeTab({ path: 'foo.md', raw: 'a' })]
+    const { note } = await mountAtRoute('/vault/foo.md')
+    expect(note.content.value).toBe('a')
+
+    // Simulate a keystroke: useEditorTabs would call onEditorChange →
+    // tabs.value = [{ ...prev, raw: 'ab' }] → mirror watch propagates.
+    live.value = [makeTab({ path: 'foo.md', raw: 'ab' })]
+    await flushPromises()
+    expect(note.content.value).toBe('ab')
   })
 })
