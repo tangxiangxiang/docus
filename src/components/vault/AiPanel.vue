@@ -72,7 +72,7 @@ const noteTitle = (path: string | null): string => {
     <header class="ai-header">
       <div class="ai-title">
         <span class="ai-title-icon" v-html="ICON_AI" aria-hidden="true" />
-        <span class="ai-title-text">Claude</span>
+        <span class="ai-title-text">AI</span>
         <template v-if="history.activeSession.value?.title">
           <span class="ai-title-sep" aria-hidden="true">·</span>
           <span
