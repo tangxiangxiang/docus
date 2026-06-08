@@ -2376,6 +2376,16 @@ main.container {
   opacity: 0.4;
   cursor: not-allowed;
 }
+/* The icon SVGs come from v-html inside a wrapping <span>, so without
+   this rule the inline SVG sits on the text baseline and the flex
+   `align-items: center` on the button leaves it visibly off-center.
+   `display: block` removes the baseline; explicit size wins over the
+   inline width/height attrs (which are 14×14 here). */
+.ai-panel .ai-header-btn :where(svg) {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
 
 .ai-panel .ai-close {
   background: transparent;

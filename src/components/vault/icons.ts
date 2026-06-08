@@ -84,11 +84,19 @@ export const ICON_AI = `
 
 // "History" — clock with a counter-clockwise arrow. 14×14 line art,
 // matches the ICON_AI weight. Opens the session-history picker.
+//
+// The visual content is laid out so its y-center sits at 8 within the
+// 0 0 16 16 viewBox — i.e. the geometric center of the viewBox — so
+// this icon and ICON_NEW_CHAT (a centered plus) sit on the same
+// horizontal line when both are centered in the same 22px button.
+// Earlier versions had the counter-clockwise arrow polyline reaching
+// up to y=1.5 which pushed the visual centroid up by half a unit and
+// made the icon look higher than its neighbor.
 export const ICON_HISTORY = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2.7 4.2A5.5 5.5 0 1 1 2.5 8"/>
-  <polyline points="2.5 1.5 2.7 4.2 5.4 4"/>
-  <polyline points="8 5 8 8 10 9.5"/>
+  <path d="M3 5 A5 5 0 1 1 3 11"/>
+  <polyline points="3 3 3 5 5 5"/>
+  <polyline points="8 5 8 8 10.5 9.5"/>
 </svg>`
 
 // "New chat" — plus in a square. 14×14 line art. Creates a fresh
