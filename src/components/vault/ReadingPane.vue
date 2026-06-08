@@ -8,9 +8,29 @@
 
 import { toRef, ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useMarkdownRender } from '../../composables/vault/useMarkdownRender'
+import { getOpenPostForClicks } from '../../composables/vault/useEditorTabs'
+import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 
-const props = defineProps<{ raw: string }>()
-const { html, error: renderError, headings } = useMarkdownRender(toRef(props, 'raw'))
+const props = defineProps<{
+  raw: string
+  /** Resolver for [[wiki]] / [t](path.md) links. See PreviewPane. */
+  resolver?: WikiResolver
+}>()
+const { html, error: renderError, headings } = useMarkdownRender(toRef(props, 'raw'), props.resolver)
+
+/* Same delegated click handler as PreviewPane. Mounted on .article
+   so the right-side page-nav (.reading-toc) keeps its own click
+   handling. */
+function onArticleClick(e: MouseEvent) {
+  if (e.button !== 0) return
+  const target = e.target as HTMLElement | null
+  const a = target?.closest('a.wiki-link') as HTMLAnchorElement | null
+  if (!a) return
+  const dest = a.dataset.target
+  if (!dest) return
+  e.preventDefault()
+  getOpenPostForClicks()?.(dest)
+}
 
 /* True when the active document is empty (no tabs opened, or the
    current tab is still loading). We render a soft placeholder instead
@@ -164,7 +184,7 @@ onBeforeUnmount(disconnectObserver)
     </div>
     <div v-else-if="renderError" class="render-error">{{ renderError }}</div>
     <div v-else class="reading-layout">
-      <article ref="articleEl" class="article reading" v-html="html" />
+      <article ref="articleEl" class="article reading" v-html="html" @click="onArticleClick" />
       <aside v-if="headings.length" class="reading-toc" aria-label="页面导航">
         <h2 class="reading-toc-title">页面导航</h2>
         <ul class="reading-toc-list">

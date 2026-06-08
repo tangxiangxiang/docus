@@ -4,6 +4,7 @@ import path from 'node:path'
 import matter from 'gray-matter'
 import { filePathFor, folderPathFor, CONTENT_DIR } from './paths.js'
 import { listPostsFlat, buildTree, listSubtreePaths } from './tree.js'
+import { getIndex as getLinkIndex } from './linkIndex.js'
 import aiRoutes from './ai/routes.js'
 import type { PostSummary, PostDetail } from '../src/lib/api.js'
 
@@ -51,6 +52,12 @@ app.post('/api/posts', async (c) => {
   const slug = title.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
   const body_text = `---\ntitle: ${title}\ndate: ${today}\ntags: []\nslug: ${slug}\n---\n\n# ${title}\n`
   await fs.writeFile(abs, body_text, 'utf8')
+  // Update the link index AFTER the disk write succeeds. Best-effort:
+  // a failure here just leaves a stale entry; the next rebuild fixes it.
+  try {
+    const idx = await getLinkIndex()
+    idx.applyWrite(body.path, body_text)
+  } catch { /* ignore */ }
   const st = await fs.stat(abs)
   return c.json({
     path: body.path,
@@ -71,6 +78,10 @@ app.put('/api/posts/*', async (c) => {
   const body = await c.req.json().catch(() => null) as { raw?: string } | null
   if (!body || typeof body.raw !== 'string') return bad(c, 'raw required')
   await fs.writeFile(abs, body.raw, 'utf8')
+  try {
+    const idx = await getLinkIndex()
+    idx.applyWrite(splat, body.raw)
+  } catch { /* ignore */ }
   return c.json({ ok: true })
 })
 
@@ -108,6 +119,14 @@ app.patch('/api/posts/*', async (c) => {
   }
   if (await exists(dest)) return bad(c, 'destination exists', 409)
   await fs.rename(src, dest)
+  // Update the link index AFTER the rename succeeds. Read the new
+  // content so the new path's outbound links are extracted against
+  // the post-rename state of the world.
+  try {
+    const idx = await getLinkIndex()
+    const newRaw = await fs.readFile(dest, 'utf8')
+    idx.applyRename(srcPath, destPath, newRaw)
+  } catch { /* ignore */ }
   const st = await fs.stat(dest)
   return c.json({
     path: destPath,
@@ -126,6 +145,10 @@ app.delete('/api/posts/*', async (c) => {
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(abs)) return bad(c, 'not found', 404)
   await fs.unlink(abs)
+  try {
+    const idx = await getLinkIndex()
+    idx.applyDelete(splat)
+  } catch { /* ignore */ }
   return c.json({ ok: true })
 })
 
@@ -182,6 +205,21 @@ app.patch('/api/folders/*', async (c) => {
   await fs.rename(src, dest)
   // Collect affected file paths for client cache refresh.
   const moved = await listSubtreePaths(CONTENT_DIR, body.newPath)
+  // Update the link index. We need the OLD subtree paths (to apply
+  // delete) and the NEW subtree paths + raws (to apply write with
+  // the new source-dir for resolution).
+  try {
+    const idx = await getLinkIndex()
+    const oldPaths = await listSubtreePaths(CONTENT_DIR, srcPath)
+    const pairs = await Promise.all(moved.map(async (newPath) => {
+      const oldPath = srcPath + newPath.slice(body.newPath.length)
+      const newRaw = await fs.readFile(filePathFor(newPath), 'utf8')
+      return { oldPath, newPath, newRaw }
+    }))
+    // Only cascade files that actually existed in the old subtree.
+    const oldSet = new Set(oldPaths)
+    idx.applyFolderRename(pairs.filter((p) => oldSet.has(p.oldPath)))
+  } catch { /* ignore */ }
   return c.json({ path: body.newPath, moved })
 })
 
@@ -198,7 +236,27 @@ app.delete('/api/folders/*', async (c) => {
     return bad(c, 'folder is not empty; pass ?recursive=true to delete', 400)
   }
   await fs.rm(abs, { recursive: true, force: true })
+  try {
+    const idx = await getLinkIndex()
+    idx.applyFolderDelete(all)
+  } catch { /* ignore */ }
   return c.json({ deleted: all })
+})
+
+// Link index endpoints. The full snapshot is what the client uses to
+// render wiki links (for existence checks) and to power the Links
+// panel's outgoing column. Backlinks are computed on demand from the
+// forward map.
+app.get('/api/links/index', async (c) => {
+  const idx = await getLinkIndex()
+  return c.json(idx.snapshot())
+})
+
+app.get('/api/backlinks', async (c) => {
+  const target = c.req.query('path')
+  if (!target) return bad(c, 'path required')
+  const idx = await getLinkIndex()
+  return c.json(idx.getBacklinks(target))
 })
 
 app.route('/api/ai', aiRoutes)

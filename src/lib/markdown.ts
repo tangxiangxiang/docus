@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
 import anchor from 'markdown-it-anchor'
+import { wikiLinkPlugin, type Resolver as WikiResolver } from './wikiLinks'
 
 function escapeHtml(s: string): string {
   return s
@@ -38,11 +39,25 @@ async function buildHighlight(): Promise<HighlightFn> {
 
 let mdPromise: Promise<MarkdownIt> | null = null
 
+// Per-call resolver for wiki links. The MarkdownIt instance is a
+// module-level singleton, but the resolver depends on the
+// currently-mounted link index (which changes as the user edits).
+// Reading the resolver through this mutable ref means the
+// wikiLinkPlugin always sees the latest one without rebuilding
+// the whole pipeline. `useMarkdownRender` (or its caller) sets this
+// before each `render()` call; the test seam
+// `__setMdResolverForTesting` does the same.
+let activeResolver: WikiResolver = (ref) => ({ target: ref })
+
+export function __setMdResolverForTesting(fn: WikiResolver | null): void {
+  activeResolver = fn ?? ((ref) => ({ target: ref }))
+}
+
 async function getMd(): Promise<MarkdownIt> {
   if (mdPromise) return mdPromise
   mdPromise = (async () => {
     const highlight = await buildHighlight()
-    return new MarkdownIt({
+    const md = new MarkdownIt({
       html: false,
       linkify: true,
       typographer: true,
@@ -58,10 +73,18 @@ async function getMd(): Promise<MarkdownIt> {
           s
             .toLowerCase()
             .trim()
-            .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
+            .replace(/[^a-z0-9一-龥]+/g, '-')
             .replace(/^-+|-+$/g, ''),
         permalink: anchor.permalink.headerLink({ safariReaderFix: true }),
       })
+      // Wiki link + standard `.md` link classification. Plugin
+      // signature is `(md, opts) => void` — see wikiLinks.ts for why
+      // currying doesn't work with `md.use`. The resolver reads
+      // `activeResolver` on every call so updates flow through.
+      .use(wikiLinkPlugin, {
+        resolve: (ref: string, anchor?: string) => activeResolver(ref, anchor),
+      })
+    return md
   })()
   return mdPromise
 }

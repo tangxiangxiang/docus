@@ -21,7 +21,7 @@
 // shallowRef published by `useFileChangeBus`; the subscription is set
 // up once in onMounted, alongside the existing data fetch.
 
-import { computed, onMounted, ref, shallowRef, watch, type ShallowRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, type ShallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDebounceFn } from '@vueuse/core'
 import {
@@ -78,6 +78,21 @@ export function __setLiveTabsForTesting(ref: ShallowRef<Tab[]> | null): void {
 export function __resetLiveTabsForTesting(): void {
   _teardownMirror()
   _liveTabs = null
+}
+
+// openPost singleton: the preview/reading panes intercept
+// `a.wiki-link` clicks and need to navigate to the target. They
+// can't import `useEditorTabs` directly (it's a per-mount
+// composable) so we publish the function here and call it from
+// the panes' click handlers. Mirrors the `getLiveTabs` pattern.
+let _openPost: ((path: string) => void) | null = null
+
+export function setOpenPostForClicks(fn: ((path: string) => void) | null): void {
+  _openPost = fn
+}
+
+export function getOpenPostForClicks(): ((path: string) => void) | null {
+  return _openPost
 }
 
 export function useEditorTabs(opts: {
@@ -411,6 +426,13 @@ export function useEditorTabs(opts: {
     (v) => { if (_liveTabs) _liveTabs.value = v },
     { flush: 'post', deep: true },
   )
+
+  // Publish `openPost` so the article surfaces (PreviewPane /
+  // ReadingPane) can navigate wiki-link clicks without prop-drilling.
+  setOpenPostForClicks(openPost)
+  onBeforeUnmount(() => {
+    if (_openPost === openPost) setOpenPostForClicks(null)
+  })
 
   return {
     tree,

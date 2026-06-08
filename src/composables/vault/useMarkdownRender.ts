@@ -13,10 +13,16 @@
 // because the slug rules live in markdown-it's anchor plugin
 // (see ../../lib/markdown.ts); doing it from the same HTML guarantees
 // the TOC links point at ids that actually exist in the article.
+//
+// `resolver` (optional) is forwarded to the wiki-link plugin so
+// [[…]] and [t](path.md) are rendered as `wiki-link` anchors with
+// the right href and `data-missing` flag. When omitted, the default
+// identity resolver in ../../lib/markdown.ts applies.
 
 import { ref, watchEffect, type Ref } from 'vue'
 import { parseDoc } from '../../lib/frontmatter'
-import { render } from '../../lib/markdown'
+import { render, __setMdResolverForTesting } from '../../lib/markdown'
+import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 
 export interface Heading {
   id: string
@@ -84,13 +90,20 @@ function extractHeadings(html: string): Heading[] {
    hides regressions like the `<span>`-wrapped anchor bug. */
 export const __testing__ = { extractHeadings, stripTags }
 
-export function useMarkdownRender(source: Ref<string> | (() => string)): MarkdownRender {
+export function useMarkdownRender(
+  source: Ref<string> | (() => string),
+  resolver?: WikiResolver,
+): MarkdownRender {
   const html = ref<string>('')
   const error = ref<string | null>(null)
   const headings = ref<Heading[]>([])
 
   watchEffect(async () => {
     const raw = typeof source === 'function' ? source() : source.value
+    // Set the resolver BEFORE render() so the wiki-link plugin sees
+    // the latest closure. Passing `null` resets to the identity
+    // (as-written) resolver — useful for tests.
+    __setMdResolverForTesting(resolver ?? null)
     try {
       const { frontmatter, content } = parseDoc(raw)
       const title = typeof frontmatter.title === 'string' ? frontmatter.title.trim() : ''

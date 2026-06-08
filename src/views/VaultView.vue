@@ -4,10 +4,13 @@ import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { useTagFilter } from '../composables/vault/useTagFilter'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
+import { getLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
+import { resolveWikiTarget } from '../lib/linkResolve'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import FileTree from '../components/vault/FileTree.vue'
 import AiPanel from '../components/vault/AiPanel.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
+import LinksPanel from '../components/vault/LinksPanel.vue'
 import EditorPane from '../components/vault/EditorPane.vue'
 import PreviewPane from '../components/vault/PreviewPane.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
@@ -60,6 +63,27 @@ useScopeFilter()
 /* ---------- Tag filter ---------- */
 const { activeTagList, toggleTag, clear: clearTagFilter, removeTag } = useTagFilter({ activePanel })
 
+/* ---------- Bi-directional links ---------- */
+// Mount the file-change-bus subscription so the link index stays
+// fresh as the user (or AI) edits. The initial fetch is triggered
+// by useLinkIndexSubscription's onMounted.
+useLinkIndexSubscription()
+
+// Wiki-link resolver: reads the *current* link index from
+// `useLinkIndex()` so updates flow through (the module-level
+// activeResolver in markdown.ts is set to a closure over this
+// ref on every render). We pass the resolver through a getter
+// function so the panes always see the latest index without
+// having to re-mount.
+const linkIndex = getLinkIndex()
+const wikiResolver = (ref: string, _anchor?: string) => {
+  const allPaths = Array.from(linkIndex.value.paths)
+  return {
+    target: resolveWikiTarget(ref, activePath.value ?? '', allPaths),
+    alias: ref,
+  }
+}
+
 watch(() => navSearch?.tick.value, () => openSearch())
 
 /* The mode toggle only swaps the editor/preview split for a single
@@ -101,6 +125,12 @@ watch(() => navSearch?.tick.value, () => openSearch())
       :path="activePath"
       @select="toggleTag"
       @open="openPost"
+    />
+    <LinksPanel
+      v-else-if="activePanel === 'links'"
+      :path="activePath"
+      :posts="posts"
+      @navigate="openPost"
     />
 
     <div
@@ -164,7 +194,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
           :key="`p-${t.path}`"
           class="preview-pane"
         >
-          <PreviewPane v-if="!t.loading && !t.loadError" :raw="t.raw" />
+          <PreviewPane v-if="!t.loading && !t.loadError" :raw="t.raw" :resolver="wikiResolver" />
         </div>
       </div>
 
@@ -178,7 +208,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
           :key="`r-${t.path}`"
           class="reading-slot"
         >
-          <ReadingPane :raw="t.raw" />
+          <ReadingPane :raw="t.raw" :resolver="wikiResolver" />
         </div>
         <div v-if="!tabs.length" class="content-empty">
           <div class="empty-card">

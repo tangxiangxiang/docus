@@ -106,3 +106,13 @@ export const ICON_NEW_CHAT = `
   <line x1="8" y1="3" x2="8" y2="13"/>
   <line x1="3" y1="8" x2="13" y2="8"/>
 </svg>`
+
+// "Link" — two interlocked rings. 14×14 line art, visually
+// centered in the 16×16 viewBox (centroid at (8, 8)). Used for
+// the Links activity-bar entry. Kept consistent with the
+// ICON_HISTORY / ICON_NEW_CHAT visual weight (1.5px stroke).
+export const ICON_LINKS = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6.5 9.5 A2.5 2.5 0 0 1 6.5 4.5 L8 3 A2.5 2.5 0 0 1 13 3 A2.5 2.5 0 0 1 13 8 L11.5 9.5"/>
+  <path d="M9.5 6.5 A2.5 2.5 0 0 1 9.5 11.5 L8 13 A2.5 2.5 0 0 1 3 13 A2.5 2.5 0 0 1 3 8 L4.5 6.5"/>
+</svg>`

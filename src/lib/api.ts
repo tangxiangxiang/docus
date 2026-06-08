@@ -85,3 +85,34 @@ export async function deleteFolder(path: string, recursive: boolean): Promise<{ 
   const url = '/api/folders/' + splat(path) + (recursive ? '?recursive=true' : '')
   return jsonOrThrow<{ deleted: string[] }>(await fetch(url, { method: 'DELETE' }))
 }
+
+// --- Link index (bi-directional links) ---
+
+export interface Link {
+  target: string
+  alias?: string
+  anchor?: string
+  kind: 'wiki' | 'md'
+}
+
+export interface LinkIndexSnapshot {
+  paths: string[]
+  outgoing: Record<string, Link[]>
+}
+
+export interface BacklinkRecord {
+  source: string
+  alias?: string
+  anchor?: string
+  kind: 'wiki' | 'md'
+}
+
+export async function getLinkIndexSnapshot(): Promise<LinkIndexSnapshot> {
+  return jsonOrThrow<LinkIndexSnapshot>(await fetch('/api/links/index'))
+}
+
+export async function getBacklinks(path: string): Promise<BacklinkRecord[]> {
+  return jsonOrThrow<BacklinkRecord[]>(
+    await fetch('/api/backlinks?path=' + encodeURIComponent(path)),
+  )
+}

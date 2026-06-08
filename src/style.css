@@ -1783,6 +1783,35 @@ main.container {
   text-decoration-color: var(--vs-accent);
   color: var(--vs-accent-hover);
 }
+
+/* Wiki links ([[…]] and [t](path.md)). Distinguished from regular
+   external links by the .wiki-link class the markdown-it plugin
+   emits in src/lib/wikiLinks.ts. The base .vault .article a style
+   already provides color + hover; here we add a subtle underline
+   that reads as "this jumps to another note" and a distinct
+   `wiki-link-missing` state for unresolved targets (dotted
+   underline + muted color so the user can tell at a glance that
+   the link is broken). The accent color is intentionally
+   preserved on hover so a broken link still feels interactive. */
+.vault .article a.wiki-link {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--vs-border);
+}
+.vault .article a.wiki-link:hover {
+  text-decoration-color: var(--vs-accent);
+  color: var(--vs-accent-hover);
+}
+.vault .article a.wiki-link-missing {
+  color: var(--vs-text-2);
+  text-decoration-style: dotted;
+  text-decoration-color: var(--vs-text-2);
+}
+.vault .article a.wiki-link-missing:hover {
+  color: var(--vs-text-1);
+  text-decoration-color: var(--vs-text-1);
+}
 .vault .reading-pane .article.reading hr {
   margin: 2.4em auto;
   width: 4em;
