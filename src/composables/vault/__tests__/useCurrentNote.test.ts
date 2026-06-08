@@ -206,3 +206,104 @@ describe('useCurrentNote — live tab integration', () => {
     wrap.unmount()
   })
 })
+
+// Regression: the production router (src/router/index.ts) declares TWO
+// vault routes — 'vault' for the /vault index and 'vault-doc' for
+// /vault/:pathMatch(.*)* — using the `pathMatch` splat param. The
+// composable was originally written assuming a single 'vault' route
+// with a `path` param (which is what the rest of this test file uses),
+// and silently returned null path and empty content whenever a
+// document was open. The AI panel then sent currentNotePath: '' and
+// the server dropped the note context entirely. This block pins the
+// production router shape so the next refactor can't quietly break
+// it again.
+describe('useCurrentNote — production router config', () => {
+  beforeEach(() => {
+    __setLiveTabsForTesting(shallowRef<Tab[]>([]))
+  })
+
+  afterEach(() => {
+    __resetLiveTabsForTesting()
+  })
+
+  function makeProdRouter() {
+    return createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/vault', name: 'vault', component: { template: '<div/>' } },
+        {
+          path: '/vault/:pathMatch(.*)*',
+          name: 'vault-doc',
+          component: { template: '<div/>' },
+        },
+      ],
+    })
+  }
+
+  async function mountOn(router: ReturnType<typeof makeProdRouter>) {
+    let note: ReturnType<typeof useCurrentNote> | null = null
+    const Comp = defineComponent({
+      setup() {
+        note = useCurrentNote()
+        return () => h('div')
+      },
+    })
+    const wrap = mount(Comp, { global: { plugins: [router] } })
+    await flushPromises()
+    return { note: note!, wrap }
+  }
+
+  it('reads path and content from /vault/:pathMatch (vault-doc route)', async () => {
+    const live = getLiveTabs()!
+    live.value = [makeTab({ path: 'foo.md', raw: 'live content' })]
+
+    const router = makeProdRouter()
+    await router.push('/vault/foo.md')
+    await router.isReady()
+
+    const { note, wrap } = await mountOn(router)
+    expect(note.path.value).toBe('foo.md')
+    expect(note.content.value).toBe('live content')
+
+    wrap.unmount()
+  })
+
+  it('clears path and content when navigating to /vault (no path)', async () => {
+    const live = getLiveTabs()!
+    live.value = [makeTab({ path: 'foo.md', raw: 'live content' })]
+
+    const router = makeProdRouter()
+    await router.push('/vault/foo.md')
+    await router.isReady()
+    const { note, wrap } = await mountOn(router)
+    expect(note.path.value).toBe('foo.md')
+
+    await router.push('/vault')
+    await flushPromises()
+    expect(note.path.value).toBeNull()
+    expect(note.content.value).toBe('')
+
+    wrap.unmount()
+  })
+
+  it('re-resolves when navigating from one doc to another on the prod router', async () => {
+    const live = getLiveTabs()!
+    live.value = [
+      makeTab({ path: 'a.md', raw: 'aaa' }),
+      makeTab({ path: 'b.md', raw: 'bbb' }),
+    ]
+
+    const router = makeProdRouter()
+    await router.push('/vault/a.md')
+    await router.isReady()
+    const { note, wrap } = await mountOn(router)
+    expect(note.content.value).toBe('aaa')
+
+    await router.push('/vault/b.md')
+    await flushPromises()
+    expect(note.path.value).toBe('b.md')
+    expect(note.content.value).toBe('bbb')
+
+    wrap.unmount()
+  })
+})

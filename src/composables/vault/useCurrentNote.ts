@@ -28,10 +28,17 @@ export function __resetForTesting(): void {
 }
 
 function pathFromRoute(route: RouteLocationNormalizedLoaded): string | null {
-  if (route.name !== 'vault') return null
-  const splat = route.params.path
+  // The production router declares TWO vault routes (see src/router/index.ts):
+  //   - 'vault'      for the /vault index (no path)
+  //   - 'vault-doc'  for /vault/:pathMatch(.*)* (a path-bearing URL)
+  // Either way, when a document is open, the path is in params.pathMatch.
+  // Some tests still use a single 'vault' route with a 'path' param — we
+  // accept both param names for the same reason.
+  if (route.name !== 'vault' && route.name !== 'vault-doc') return null
+  const splat = (route.params.path ?? route.params.pathMatch) as
+    | string | string[] | undefined
   if (!splat) return null
-  return Array.isArray(splat) ? splat.join('/') : (splat as string)
+  return Array.isArray(splat) ? splat.join('/') : splat
 }
 
 export function useCurrentNote(): CurrentNote {
@@ -61,7 +68,13 @@ export function useCurrentNote(): CurrentNote {
   }
 
   watch(
-    [() => route.params.path, liveTabs],
+    // fullPath is the safest source: it's a string that vue-router
+    // guarantees changes whenever the URL changes, regardless of which
+    // route record matched or which splat param name it used. The
+    // earlier `() => route.params.path` source was undefined in
+    // production (the splat param is named `pathMatch`), so the watch
+    // never re-fired on navigation.
+    [() => route.fullPath, liveTabs],
     async () => {
       const p = pathFromRoute(route)
       path.value = p
