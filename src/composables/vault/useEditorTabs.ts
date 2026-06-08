@@ -288,12 +288,18 @@ export function useEditorTabs(opts: {
   // Publish our tabs ref to the module-level mirror so other
   // composables (e.g. useCurrentNote) can read it. The watch keeps
   // _liveTabs.value in lockstep with our local `tabs` ref.
+  //
+  // `deep: true` is load-bearing: typing into the editor mutates a tab
+  // property (`tab.raw = val` in onEditorChange), not the array itself.
+  // Without deep, the watch would only fire on array reference changes
+  // (push/splice/whole replacement) and useCurrentNote would keep
+  // returning the stale content from when the tab was opened.
   _teardownMirror()
   if (!_liveTabs) _liveTabs = shallowRef<Tab[]>(tabs.value)
   _mirrorStop = watch(
     tabs,
     (v) => { if (_liveTabs) _liveTabs.value = v },
-    { flush: 'post' },
+    { flush: 'post', deep: true },
   )
 
   return {

@@ -5,6 +5,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { useCurrentNote, __resetForTesting } from '../useCurrentNote'
 import {
+  useEditorTabs,
   getLiveTabs,
   __setLiveTabsForTesting,
   __resetLiveTabsForTesting,
@@ -129,5 +130,79 @@ describe('useCurrentNote — live tab integration', () => {
     live.value = [makeTab({ path: 'foo.md', raw: 'ab' })]
     await flushPromises()
     expect(note.content.value).toBe('ab')
+  })
+
+  // This is the regression test for the bug where the AI panel kept
+  // seeing stale editor content. The previous test above passes
+  // "for the wrong reason" — it reassigns live.value wholesale, which
+  // shallowRef fires on even without the mirror being deep. The
+  // production path is different: useEditorTabs's onEditorChange does
+  // `tab.raw = val` IN PLACE on the reactive proxy, and the mirror
+  // watch in useEditorTabs has to fire to push the change to
+  // getLiveTabs(). So we mount useEditorTabs for real (which sets up
+  // the mirror) and drive onEditorChange.
+  it('updates content when useEditorTabs mutates tab.raw in place (real mirror path)', async () => {
+    // Mount useEditorTabs so the mirror watch is set up. Then mount
+    // useCurrentNote in a sibling component so it picks up the
+    // module-level _liveTabs ref.
+    // refresh() in onMounted fires getTree() and listPosts() in
+    // parallel — two responses consumed up front.
+    responses.push({ status: 200, body: { tree: [], posts: [] } })
+    responses.push({ status: 200, body: { tree: [], posts: [] } })
+    // The third response is for the explicit openPost('foo.md') call
+    // below, which fetches via getPost.
+    responses.push({
+      status: 200,
+      body: {
+        path: 'foo.md', raw: 'a', content: 'a',
+        frontmatter: { title: 'foo' }, size: 1, mtime: 0,
+      },
+    })
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/vault/:path(.*)*', name: 'vault', component: { template: '<div/>' } },
+        { path: '/:catchAll(.*)', name: 'other', component: { template: '<div/>' } },
+      ],
+    })
+    router.push('/vault')
+    await router.isReady()
+
+    let editorApi: ReturnType<typeof useEditorTabs> | null = null
+    let noteApi: ReturnType<typeof useCurrentNote> | null = null
+
+    const Parent = defineComponent({
+      setup() {
+        // NOTE: both composables live in the same setup so they share
+        // the same app instance and the module-level mirror ref.
+        editorApi = useEditorTabs({ selectPanel: () => {} })
+        noteApi = useCurrentNote()
+        return () => h('div')
+      },
+    })
+    const wrap = mount(Parent, { global: { plugins: [router] } })
+    await flushPromises()
+
+    // Open a tab — this goes through useEditorTabs's real openPost
+    // (which calls getPost and assigns tab.raw).
+    await editorApi!.openPost('foo.md')
+    await flushPromises()
+    expect(noteApi!.content.value).toBe('a')
+
+    // The real production path: user types a character. onEditorChange
+    // does `tab.raw = 'ab'` in place. The mirror watch in
+    // useEditorTabs must propagate this to the module-level
+    // getLiveTabs() ref. useCurrentNote's watch on that ref then
+    // re-resolves and updates content.
+    editorApi!.onEditorChange('foo.md', 'ab')
+    await flushPromises()
+    expect(noteApi!.content.value).toBe('ab')
+
+    editorApi!.onEditorChange('foo.md', 'abc')
+    await flushPromises()
+    expect(noteApi!.content.value).toBe('abc')
+
+    wrap.unmount()
   })
 })
