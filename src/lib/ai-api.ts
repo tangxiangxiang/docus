@@ -16,6 +16,29 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   createdAt: number
+  // When the assistant used tools, the server persists a JSON
+  // envelope into `content`. After history load, the client may
+  // rehydrate it into the structured shape for the panel to render
+  // per-tool cards. The SSE stream does not set this — it streams
+  // individual tool_use / tool_result events instead.
+  blocks?: AssistantBlocks
+}
+
+// Structured representation of a tool-using assistant turn. Loaded
+// from the JSON envelope in the DB content column. Kept loose
+// (string-keyed) on purpose — the client doesn't need the full
+// Anthropic content-block shape, just enough to render a tool card.
+export interface AssistantBlocks {
+  v: 1
+  text: string
+  toolCalls: ToolCallRecord[]
+}
+
+export interface ToolCallRecord {
+  id: string
+  name: string
+  input: Record<string, unknown>
+  result: { content: string; is_error: boolean }
 }
 
 export interface ActiveSession {
@@ -30,9 +53,22 @@ export interface ChatRequest {
   currentNoteContent?: string
 }
 
+export type FileChangeKind = 'write' | 'delete' | 'rename'
+
+export interface FileChangeEvent {
+  path: string
+  kind: FileChangeKind
+  newMtime?: number
+  newRaw?: string
+  oldPath?: string
+}
+
 export type ChatEvent =
   | { type: 'user'; id: number }
   | { type: 'token'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
+  | { type: 'file_changed' } & FileChangeEvent
   | { type: 'done'; userId: number; assistantId: number }
   | { type: 'error'; reason: string }
 

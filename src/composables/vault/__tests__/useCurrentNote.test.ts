@@ -207,6 +207,49 @@ describe('useCurrentNote — live tab integration', () => {
   })
 })
 
+// --- file-change bus integration ------------------------------------------
+
+import {
+  publishFileChange,
+  __resetFileChangeBusForTesting,
+} from '../useFileChangeBus'
+
+describe('useCurrentNote — file-change bus', () => {
+  beforeEach(() => {
+    __resetForTesting()
+    __setLiveTabsForTesting(shallowRef<Tab[]>([]))
+    __resetFileChangeBusForTesting()
+  })
+  afterEach(() => {
+    __resetForTesting()
+    __resetFileChangeBusForTesting()
+  })
+
+  it('mirrors an AI write to the active note into content', async () => {
+    responses.push({
+      status: 200,
+      body: { path: 'a.md', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 },
+    })
+    const { note } = await mountAtRoute('/vault/a.md')
+    expect(note.content.value).toBe('A')
+    publishFileChange({ path: 'a.md', kind: 'write', newMtime: 1, newRaw: 'A from AI' })
+    await flushPromises()
+    expect(note.content.value).toBe('A from AI')
+  })
+
+  it('ignores file changes for paths that are not the active note', async () => {
+    responses.push({
+      status: 200,
+      body: { path: 'a.md', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 },
+    })
+    const { note } = await mountAtRoute('/vault/a.md')
+    expect(note.content.value).toBe('A')
+    publishFileChange({ path: 'b.md', kind: 'write', newMtime: 1, newRaw: 'B' })
+    await flushPromises()
+    expect(note.content.value).toBe('A')
+  })
+})
+
 // Regression: the production router (src/router/index.ts) declares TWO
 // vault routes — 'vault' for the /vault index and 'vault-doc' for
 // /vault/:pathMatch(.*)* — using the `pathMatch` splat param. The

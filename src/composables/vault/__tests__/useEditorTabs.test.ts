@@ -526,3 +526,131 @@ describe('live tabs publish', () => {
     expect(h.tabs.value).toHaveLength(0)
   })
 })
+
+// --- file-change bus integration ------------------------------------------
+
+import {
+  publishFileChange,
+  __resetFileChangeBusForTesting,
+} from '../useFileChangeBus'
+
+describe('useEditorTabs — file-change bus', () => {
+  beforeEach(() => {
+    __resetFileChangeBusForTesting()
+    // The confirm mock captures the resolve into a module-level
+    // variable; clear it so each test starts from a clean state.
+    confirmResolve = null
+  })
+  afterEach(() => {
+    __resetFileChangeBusForTesting()
+    confirmResolve = null
+  })
+
+  it('auto-refreshes a clean tab when the bus publishes a write for its path', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/bus-a': () => ({ path: 'bus-a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('bus-a')
+    expect(h.tabs.value[0].raw).toBe('A')
+    publishFileChange({ path: 'bus-a', kind: 'write', newMtime: 100, newRaw: 'A from AI' })
+    await flushPromises()
+    expect(h.tabs.value[0].raw).toBe('A from AI')
+    expect(h.tabs.value[0].serverMtime).toBe(100)
+    // No confirm call should have been queued
+    expect(confirmResolve).toBeNull()
+  })
+
+  it('prompts a dirty tab; 覆盖本地 refreshes, 保留本地 keeps edits', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/bus-b': () => ({ path: 'bus-b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('bus-b')
+    h.onEditorChange('bus-b', 'B modified by user')  // dirty
+    publishFileChange({ path: 'bus-b', kind: 'write', newMtime: 200, newRaw: 'B from AI' })
+    await flushPromises()
+    // Confirm should be pending
+    expect(confirmResolve).not.toBeNull()
+    // User picks 保留本地 (false)
+    answerConfirm(false)
+    await flushPromises()
+    expect(h.tabs.value[0].raw).toBe('B modified by user')
+    expect(h.tabs.value[0].serverMtime).toBe(200)
+    // saveStatus should NOT be reset to idle (still dirty)
+    expect(h.tabs.value[0].saveStatus).toBe('dirty')
+
+    // Second publish, user picks 覆盖 (true)
+    publishFileChange({ path: 'bus-b', kind: 'write', newMtime: 201, newRaw: 'B from AI 2' })
+    await flushPromises()
+    expect(confirmResolve).not.toBeNull()
+    answerConfirm(true)
+    await flushPromises()
+    expect(h.tabs.value[0].raw).toBe('B from AI 2')
+    expect(h.tabs.value[0].serverMtime).toBe(201)
+  })
+
+  it('drops the event while a save is in flight (saveStatus === saving)', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/bus-c': () => ({ path: 'bus-c', raw: 'C', content: 'C', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('bus-c')
+    h.tabs.value[0].saveStatus = 'saving'  // simulate mid-save
+    publishFileChange({ path: 'bus-c', kind: 'write', newMtime: 1, newRaw: 'irrelevant' })
+    await flushPromises()
+    expect(h.tabs.value[0].raw).toBe('C')  // unchanged
+    expect(confirmResolve).toBeNull()
+  })
+
+  it('marks a tab with a loadError on a delete event so the user sees the file is gone', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/bus-d': () => ({ path: 'bus-d', raw: 'D', content: 'D', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('bus-d')
+    publishFileChange({ path: 'bus-d', kind: 'delete' })
+    await flushPromises()
+    expect(h.tabs.value[0].loadError).toMatch(/已被 AI 删除/)
+  })
+
+  it('closes the old tab and opens the new one on a rename event', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/bus-old': () => ({ path: 'bus-old', raw: 'OLD', content: 'OLD', frontmatter: {}, size: 3, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('bus-old')
+    expect(h.tabs.value.map((t) => t.path)).toEqual(['bus-old'])
+    publishFileChange({ path: 'bus-new', kind: 'rename', oldPath: 'bus-old', newMtime: 1, newRaw: 'NEW' })
+    await flushPromises()
+    expect(h.tabs.value.map((t) => t.path)).toEqual(['bus-new'])
+    expect(h.tabs.value[0].raw).toBe('NEW')
+    expect(h.tabs.value[0].serverMtime).toBe(1)
+    expect(h.activePath.value).toBe('bus-new')
+    expect(toastCalls).toContainEqual({ type: 'info', message: 'AI renamed bus-old → bus-new' })
+  })
+
+  it('does not refresh a tab whose path does not match the event', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/bus-e': () => ({ path: 'bus-e', raw: 'E', content: 'E', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('bus-e')
+    publishFileChange({ path: 'unrelated', kind: 'write', newMtime: 1, newRaw: 'X' })
+    await flushPromises()
+    expect(h.tabs.value[0].raw).toBe('E')
+    expect(confirmResolve).toBeNull()
+  })
+})

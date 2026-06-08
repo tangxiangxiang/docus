@@ -12,11 +12,16 @@
 // sendAndStream is the streaming equivalent of sendMessage. It
 // uses the same optimistic-update pattern but iterates the SSE
 // event stream from /api/ai/chat, appending tokens to the
-// assistant message in place.
+// assistant message in place. Tool events (`tool_use` /
+// `tool_result`) accumulate into the assistant message's
+// `blocks.toolCalls` so the panel can render a per-tool card.
+// `file_changed` events are forwarded to the file-change bus so
+// the editor can refresh any open tab.
 import { ref, type Ref } from 'vue'
 import * as api from '../../lib/ai-api.js'
-import type { Session, Message, ChatEvent } from '../../lib/ai-api.js'
+import type { Session, Message, ChatEvent, AssistantBlocks, ToolCallRecord } from '../../lib/ai-api.js'
 import { streamChat } from '../../lib/ai-api.js'
+import { publishFileChange } from './useFileChangeBus.js'
 
 export interface AiHistory {
   // state
@@ -139,7 +144,15 @@ export function useAiHistory(): AiHistory {
       id: 0, sessionId, role: 'user', content: trimmed, createdAt: Date.now(),
     }
     const optimisticAssistant: Message = {
-      id: 0, sessionId, role: 'assistant', content: '', createdAt: Date.now() + 1,
+      id: 0,
+      sessionId,
+      role: 'assistant',
+      content: '',
+      createdAt: Date.now() + 1,
+      // Initialize the structured-blocks field so tool events
+      // have a place to land. The text is kept in sync with
+      // `content` as tokens stream in.
+      blocks: { v: 1, text: '', toolCalls: [] },
     }
     messages.value = [...messages.value, optimisticUser, optimisticAssistant]
 
@@ -178,18 +191,63 @@ export function useAiHistory(): AiHistory {
       optimisticUser.id = event.id
     } else if (event.type === 'token') {
       optimisticAssistant.content += event.text
+      if (optimisticAssistant.blocks) {
+        optimisticAssistant.blocks.text = optimisticAssistant.content
+      }
       messages.value = messages.value.map((m) =>
-        m === optimisticAssistant ? { ...m, content: optimisticAssistant.content } : m
+        m === optimisticAssistant
+          ? { ...m, content: optimisticAssistant.content, blocks: optimisticAssistant.blocks }
+          : m,
       )
+    } else if (event.type === 'tool_use') {
+      if (!optimisticAssistant.blocks) {
+        optimisticAssistant.blocks = { v: 1, text: optimisticAssistant.content, toolCalls: [] }
+      }
+      const tc: ToolCallRecord = {
+        id: event.id,
+        name: event.name,
+        input: event.input,
+        result: { content: '', is_error: false },
+      }
+      optimisticAssistant.blocks.toolCalls.push(tc)
+      messages.value = messages.value.map((m) =>
+        m === optimisticAssistant ? { ...m, blocks: optimisticAssistant.blocks } : m,
+      )
+    } else if (event.type === 'tool_result') {
+      if (optimisticAssistant.blocks) {
+        const tc = optimisticAssistant.blocks.toolCalls.find((t) => t.id === event.tool_use_id)
+        if (tc) {
+          tc.result = { content: event.content, is_error: event.is_error }
+          messages.value = messages.value.map((m) =>
+            m === optimisticAssistant ? { ...m, blocks: optimisticAssistant.blocks } : m,
+          )
+        }
+      }
+    } else if (event.type === 'file_changed') {
+      // Forward to the file-change bus so the editor can refresh
+      // any open tab. We don't mutate the message — the tool card
+      // already shows what the AI did.
+      publishFileChange({
+        path: event.path,
+        kind: event.kind,
+        newMtime: event.newMtime,
+        newRaw: event.newRaw,
+        oldPath: event.oldPath,
+      })
     } else if (event.type === 'done') {
       messages.value = messages.value.map((m) =>
-        m === optimisticAssistant ? { ...m, id: event.assistantId } : m
+        m === optimisticAssistant ? { ...m, id: event.assistantId } : m,
       )
       optimisticAssistant.id = event.assistantId
     } else if (event.type === 'error') {
       optimisticAssistant.content += `\n\n[error: ${event.reason}]`
+      if (optimisticAssistant.blocks) {
+        optimisticAssistant.blocks.text = optimisticAssistant.content
+      }
       messages.value = messages.value.map((m) =>
-        m === optimisticAssistant ? { ...m, id: -1, content: optimisticAssistant.content } : m
+        m === optimisticAssistant
+          ? { ...m, id: -1, content: optimisticAssistant.content, blocks: optimisticAssistant.blocks }
+          : m,
       )
       optimisticAssistant.id = -1
       errorState.value = event.reason

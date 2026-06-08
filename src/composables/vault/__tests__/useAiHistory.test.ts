@@ -217,4 +217,52 @@ describe('sendAndStream', () => {
     // test will end and vitest will GC the dangling promise.)
     void p1
   })
+
+  it('accumulates tool_use / tool_result into the assistant blocks and forwards file_changed to the bus', async () => {
+    const { streamChat } = await import('../../../lib/ai-api')
+    // Reset the mockImplementationOnce queue from previous tests
+    // (the "busy" test leaves a hanging implementation) and re-set
+    // the file-level default before adding our own.
+    vi.mocked(streamChat).mockReset()
+    vi.mocked(streamChat).mockImplementation(async function* () {
+      yield { type: 'user', id: 7 }
+      yield { type: 'token', text: 'hi ' }
+      yield { type: 'token', text: 'there' }
+      yield { type: 'done', userId: 7, assistantId: 8 }
+    })
+    vi.mocked(streamChat).mockImplementationOnce(async function* () {
+      yield { type: 'user', id: 7 }
+      yield { type: 'token', text: '我先看下文件 ' }
+      yield { type: 'tool_use', id: 'toolu_01', name: 'read_file', input: { path: 'a' } }
+      yield { type: 'tool_result', tool_use_id: 'toolu_01', content: 'file body', is_error: false }
+      yield { type: 'file_changed', path: 'a', kind: 'write', newMtime: 1, newRaw: 'file body' }
+      yield { type: 'token', text: '改好了' }
+      yield { type: 'done', userId: 7, assistantId: 8 }
+    })
+
+    queue.push({ status: 200, body: { activeId: 1, configured: true } })
+    queue.push({ status: 200, body: [] })
+    queue.push({ status: 200, body: [] }) // refreshSessions after done
+
+    const { __resetFileChangeBusForTesting, getFileChangeBus } = await import('../useFileChangeBus')
+    __resetFileChangeBusForTesting()
+    const bus = getFileChangeBus()
+
+    const h = setup()
+    await h.api.loadActive()
+    await h.api.sendAndStream('hi')
+    const assistant = h.messages.value[1]
+    expect(assistant.content).toBe('我先看下文件 改好了')
+    expect(assistant.blocks?.toolCalls).toHaveLength(1)
+    expect(assistant.blocks?.toolCalls[0]).toMatchObject({
+      id: 'toolu_01',
+      name: 'read_file',
+      input: { path: 'a' },
+      result: { content: 'file body', is_error: false },
+    })
+    expect(bus.value).toHaveLength(1)
+    expect(bus.value[0]).toMatchObject({ path: 'a', kind: 'write', newMtime: 1, newRaw: 'file body', seq: 1 })
+    expect(h.messages.value[0].id).toBe(7)
+    expect(h.messages.value[1].id).toBe(8)
+  })
 })

@@ -7,12 +7,17 @@
 // Known limitation (see spec §3.7): the content is the SERVER-SAVED
 // version, not the editor's live unsaved buffer. Auto-save debounces
 // 800ms, so this is usually fine, but a freshly typed sentence can
-// be missing for that window. A future spec will route live editor
-// state through useEditorTabs.
+// be missing for that window. The live-tab mirror in useEditorTabs
+// closes most of that window; the file-change bus subscription
+// here additionally keeps `content` in sync with the AI's own
+// writes (e.g. write_file / patch_file / rename_file) so the next
+// AI turn in the same conversation sees the AI's edits without the
+// model having to re-read.
 import { ref, watch, type Ref } from 'vue'
 import { useRoute, type RouteLocationNormalizedLoaded } from 'vue-router'
 import { getPost } from '../../lib/api'
 import { getLiveTabs, __resetLiveTabsForTesting as _resetLiveTabs } from './useEditorTabs.js'
+import { getFileChangeBus } from './useFileChangeBus.js'
 
 export interface CurrentNote {
   path: Ref<string | null>
@@ -48,6 +53,7 @@ export function useCurrentNote(): CurrentNote {
   const content = ref<string>('')
 
   const liveTabs = getLiveTabs()
+  const fileBus = getFileChangeBus()
 
   // Resolve content for a given path. Two-tier fallback:
   //   1. Live editor buffer (tab.raw) if a tab is open for this path
@@ -85,6 +91,33 @@ export function useCurrentNote(): CurrentNote {
       content.value = await resolveContent(p)
     },
     { immediate: true, deep: true },
+  )
+
+  // Mirror AI file-writes into `content` so the next turn in the
+  // same conversation sees the AI's edits without the model having
+  // to re-read. Only the active note is mirrored — the AI panel
+  // already passes currentNote.content to the server, so keeping
+  // this ref accurate is enough to make the model see itself.
+  let lastSeenSeq = 0
+  watch(
+    () => fileBus.value,
+    (events) => {
+      const p = path.value
+      if (!p) return
+      for (const e of events) {
+        if (e.seq <= lastSeenSeq) continue
+        if (e.kind === 'write' && e.path === p && e.newRaw != null) {
+          content.value = e.newRaw
+        } else if (e.kind === 'rename' && e.path === p && e.newRaw != null) {
+          // The active path was just renamed; the route is
+          // expected to follow, but the content update is the
+          // important part for any in-flight reads.
+          content.value = e.newRaw
+        }
+      }
+      lastSeenSeq = events.at(-1)?.seq ?? lastSeenSeq
+    },
+    { flush: 'post' },
   )
 
   _state = { path, content }

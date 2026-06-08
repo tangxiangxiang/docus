@@ -14,6 +14,12 @@
 // they trigger. Cmd-B needs to flip the layout's activePanel to
 // 'files', so the composable accepts the layout's selectPanel via the
 // constructor — the dependency is explicit, not a global lookup.
+//
+// The composable also subscribes to the file-change bus so an AI write
+// to a file the user has open is reflected in the tab (with a confirm
+// prompt if the tab has unsaved local edits). The bus is a module-level
+// shallowRef published by `useFileChangeBus`; the subscription is set
+// up once in onMounted, alongside the existing data fetch.
 
 import { computed, onMounted, ref, shallowRef, watch, type ShallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -28,6 +34,10 @@ import {
 } from '../../lib/api'
 import { useToast } from '../useToast'
 import { useConfirm } from '../useConfirm'
+import {
+  getFileChangeBus,
+  type InternalFileChangeEvent,
+} from './useFileChangeBus.js'
 import type { Tab } from '../../components/vault/tabs'
 import type { SidePanel } from '../../components/vault/ActivityBar.vue'
 
@@ -119,6 +129,7 @@ export function useEditorTabs(opts: {
       error: null,
       loadError: null,
       loading: true,
+      serverMtime: 0,
     }
   }
 
@@ -145,6 +156,7 @@ export function useEditorTabs(opts: {
       tab.raw = post.raw
       tab.originalRaw = post.raw
       tab.title = (post.frontmatter.title as string) || path
+      tab.serverMtime = post.mtime
       tab.loading = false
     } catch (e) {
       tab.loadError = (e as Error).message
@@ -200,6 +212,11 @@ export function useEditorTabs(opts: {
       tab.originalRaw = tab.raw
       tab.saveStatus = 'saved'
       await refresh()
+      // refresh() repopulates `posts` with current mtimes; pick up
+      // the new serverMtime so a later external-change compare (or
+      // just the uniform data flow) sees the post-save value.
+      const post = posts.value.find((p) => p.path === path)
+      if (post) tab.serverMtime = post.mtime
     } catch (e) {
       tab.saveStatus = 'error'
       tab.error = (e as Error).message
@@ -278,7 +295,100 @@ export function useEditorTabs(opts: {
     if (routePath.value) {
       await openPost(routePath.value)
     }
+    // Subscribe to the file-change bus so AI tool writes/deletes/
+    // renames get reflected in any open tab. The bus ref is stable
+    // from module load (so a watcher set up before any publish can
+    // still track it correctly).
+    const fileBus = getFileChangeBus()
+    let lastSeenSeq = 0
+    watch(
+      () => fileBus.value,
+      (events) => {
+        for (const e of events) {
+          if (e.seq <= lastSeenSeq) continue
+          void applyExternalChange(e)
+        }
+        lastSeenSeq = events.at(-1)?.seq ?? lastSeenSeq
+      },
+      { flush: 'post' },
+    )
   })
+
+  // Apply one external file-change event. Mutates the tabs list in
+  // place (the refs are already reactive). Awaits the confirm
+  // prompt for dirty tabs; for renames, closes the old tab (with
+  // its own dirty-confirm) and opens a new one.
+  async function applyExternalChange(e: InternalFileChangeEvent): Promise<void> {
+    if (e.kind === 'rename') {
+      const oldTab = tabs.value.find((t) => t.path === e.oldPath)
+      if (!oldTab) return
+      // closeTab handles its own dirty-confirm. await it so the
+      // open of the new tab happens after the old one is gone.
+      await closeTab(e.oldPath!)
+      if (e.newRaw != null) {
+        // Open the new path directly from the bus payload, no
+        // extra getPost round-trip.
+        const existing = tabs.value.find((t) => t.path === e.path)
+        if (existing) {
+          existing.raw = e.newRaw
+          existing.originalRaw = e.newRaw
+          existing.serverMtime = e.newMtime ?? existing.serverMtime
+        } else {
+          const newTab = makeEmptyTab(e.path)
+          newTab.raw = e.newRaw
+          newTab.originalRaw = e.newRaw
+          newTab.serverMtime = e.newMtime ?? 0
+          newTab.loading = false
+          tabs.value.push(newTab)
+          activePath.value = e.path
+          router.replace(pathToUrl(e.path))
+        }
+      } else {
+        // No payload — fall back to a regular open (will fetch).
+        await openPost(e.path)
+      }
+      toast.info(`AI renamed ${e.oldPath} → ${e.path}`)
+      return
+    }
+
+    // write / delete
+    const tab = tabs.value.find((t) => t.path === e.path)
+    if (!tab) return
+    // A save in flight owns the file until it returns. Drop the
+    // external change on the floor; the user's next edit / save
+    // will pick up the server state.
+    if (tab.saveStatus === 'saving') return
+
+    if (e.kind === 'delete') {
+      // Mark the tab stale: clear the content and let the user
+      // decide. Closing the tab would lose the user's unsaved
+      // edits without consent.
+      tab.loadError = '该文件已被 AI 删除'
+      return
+    }
+
+    // write: tab.dirty tells us whether the user has unsaved
+    // keystrokes. If clean, refresh in place. If dirty, ask.
+    const isDirty = tab.raw !== tab.originalRaw
+    if (isDirty) {
+      const ok = await confirm(
+        `AI 修改了 ${e.path}。是否用新版本覆盖你的未保存内容？`,
+      )
+      if (!ok) {
+        // 保留本地: keep the user's edits, just update mtime so a
+        // later save sees the right baseline.
+        tab.serverMtime = e.newMtime ?? tab.serverMtime
+        return
+      }
+    }
+    if (e.newRaw != null) {
+      tab.raw = e.newRaw
+      tab.originalRaw = e.newRaw
+    }
+    tab.serverMtime = e.newMtime ?? tab.serverMtime
+    tab.saveStatus = 'idle'
+    tab.error = null
+  }
   watch(routePath, (p) => {
     if (p && p !== activePath.value) {
       void openPost(p)
