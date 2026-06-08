@@ -6,27 +6,29 @@ import { ChatError } from '../ai/errors'
 // handlers, finalMessage() returns a promise that resolves on demand.
 function fakeStream() {
   const handlers: Record<string, (arg: any) => void> = {}
-  let resolveFinal!: () => void
-  const finalPromise = new Promise<void>((r) => { resolveFinal = r })
+  let resolveFinal!: (msg: unknown) => void
+  const finalPromise = new Promise<unknown>((r) => { resolveFinal = r })
   return {
     handlers,
     stream: {
       on: (event: string, cb: (arg: any) => void) => { handlers[event] = cb },
       finalMessage: () => finalPromise,
     },
-    resolveFinal: () => resolveFinal(),
+    resolveFinal: (msg: unknown = { content: [], stop_reason: 'end_turn' }) => resolveFinal(msg),
   }
 }
 
 describe('pumpStream', () => {
-  it('accumulates text events and resolves with the full text', async () => {
+  it('accumulates text events and resolves with {text, finalMessage}', async () => {
     const f = fakeStream()
     const onToken = vi.fn()
     const p = pumpStream(f.stream, onToken)
     f.handlers.text('Hello, ')
     f.handlers.text('world!')
-    f.resolveFinal()
-    await expect(p).resolves.toBe('Hello, world!')
+    f.resolveFinal({ content: [{ type: 'text', text: 'Hello, world!' }], stop_reason: 'end_turn' })
+    const result = await p
+    expect(result.text).toBe('Hello, world!')
+    expect(result.finalMessage.stop_reason).toBe('end_turn')
     expect(onToken).toHaveBeenNthCalledWith(1, 'Hello, ')
     expect(onToken).toHaveBeenNthCalledWith(2, 'world!')
   })

@@ -1,6 +1,19 @@
 import path from 'node:path'
 
-export const CONTENT_DIR = path.resolve(process.cwd(), 'src/content')
+// `let` (not `const`) so tests can swap the content dir via
+// `setContentDir`. All call sites (assertSafePath, filePathFor,
+// folderPathFor) read `CONTENT_DIR` inside their function body, so
+// they pick up the current value on each call.
+export let CONTENT_DIR = path.resolve(process.cwd(), 'src/content')
+
+/**
+ * Override the workspace root. Intended for tests that exercise
+ * filesystem helpers against a temp dir. Pass the original
+ * `path.resolve(process.cwd(), 'src/content')` value to restore.
+ */
+export function setContentDir(dir: string): void {
+  CONTENT_DIR = dir
+}
 
 // Every path segment is a lowercase kebab. The full path is one or more such
 // segments joined by `/` — there is no implicit `posts/` prefix anymore, since

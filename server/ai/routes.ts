@@ -16,7 +16,7 @@ import { streamSSE } from 'hono/streaming'
 import { getDb } from '../db.js'
 import * as sessions from './sessions.js'
 import * as messages from './messages.js'
-import { runChat } from './chat.js'
+import { runChat, type ChatEvent } from './chat.js'
 import { ChatError } from './errors.js'
 import { resolveApiKey } from './llm.js'
 
@@ -128,26 +128,69 @@ ai.post('/chat', async (c) => {
   // event so the client can show a chip rather than a generic 404.
   return streamSSE(c, async (stream) => {
     try {
-      const result = await runChat({
+      const ctx = {
+        currentNotePath: typeof body.currentNotePath === 'string' ? body.currentNotePath : undefined,
+        currentNoteContent: typeof body.currentNoteContent === 'string' ? body.currentNoteContent : undefined,
+      }
+      const writeEvent = async (e: ChatEvent) => {
+        switch (e.type) {
+          case 'user':
+            await stream.writeSSE({ event: 'user', data: JSON.stringify({ id: e.id }) })
+            break
+          case 'token':
+            await stream.writeSSE({ event: 'token', data: JSON.stringify({ text: e.text }) })
+            break
+          case 'tool_use':
+            await stream.writeSSE({
+              event: 'tool_use',
+              data: JSON.stringify({ id: e.id, name: e.name, input: e.input }),
+            })
+            break
+          case 'tool_result':
+            await stream.writeSSE({
+              event: 'tool_result',
+              data: JSON.stringify({
+                tool_use_id: e.tool_use_id,
+                content: e.content,
+                is_error: e.is_error,
+              }),
+            })
+            break
+          case 'file_changed':
+            await stream.writeSSE({
+              event: 'file_changed',
+              data: JSON.stringify({
+                path: e.path,
+                kind: e.kind,
+                newMtime: e.newMtime,
+                newRaw: e.newRaw,
+                oldPath: e.oldPath,
+              }),
+            })
+            break
+          case 'done':
+            await stream.writeSSE({
+              event: 'done',
+              data: JSON.stringify({ userId: e.userId, assistantId: e.assistantId }),
+            })
+            break
+          case 'error':
+            await stream.writeSSE({
+              event: 'error',
+              data: JSON.stringify({ reason: e.reason }),
+            })
+            break
+        }
+      }
+
+      await runChat({
         db: getDb(),
         sessionId: body.sessionId,
         userContent: body.content,
-        ctx: {
-          currentNotePath: typeof body.currentNotePath === 'string' ? body.currentNotePath : undefined,
-          currentNoteContent: typeof body.currentNoteContent === 'string' ? body.currentNoteContent : undefined,
-        },
+        ctx,
         model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
         signal: c.req.raw.signal,
-        onUserId: async (id) => {
-          await stream.writeSSE({ event: 'user', data: JSON.stringify({ id }) })
-        },
-        onToken: async (text) => {
-          await stream.writeSSE({ event: 'token', data: JSON.stringify({ text }) })
-        },
-      })
-      await stream.writeSSE({
-        event: 'done',
-        data: JSON.stringify({ userId: result.userId, assistantId: result.assistantId }),
+        onEvent: writeEvent,
       })
     } catch (err) {
       if (err instanceof ChatError && err.reason === 'aborted') return

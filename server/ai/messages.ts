@@ -5,6 +5,12 @@
 // message in an empty-title session) auto-derive a title from the
 // message content. The title derivation uses Unicode code-point
 // counting so a surrogate pair (e.g. an emoji) can't be split.
+//
+// Tool-using assistant turns persist a JSON envelope into the
+// existing `content` column so the schema is unchanged. The
+// envelope is detected by `parseStoredContent` when the history is
+// rehydrated for a follow-up turn — the matching tool_results user
+// turn is synthesized from the envelope (no need to persist it).
 import type { Database as DatabaseT } from 'better-sqlite3'
 import type { Message } from '../../src/lib/ai-api.js'
 
@@ -16,6 +22,55 @@ function rowToMessage(r: any): Message {
     content: r.content,
     createdAt: r.created_at,
   }
+}
+
+// --- JSON envelope for tool-using assistant turns ---------------------------
+
+export type ToolCallRecord = {
+  id: string
+  name: string
+  input: Record<string, unknown>
+  result: { content: string; is_error: boolean }
+}
+
+export type AssistantEnvelope = {
+  v: 1
+  text: string
+  // One entry per LLM round in this assistant turn. Each entry is
+  // the assistant's content blocks for that round (text + tool_use).
+  // Typed as `unknown` to avoid dragging the SDK types into the
+  // persistence layer; the orchestrator casts.
+  rounds: unknown[][]
+  toolCalls: ToolCallRecord[]
+}
+
+export type StoredContent =
+  | { kind: 'envelope'; envelope: AssistantEnvelope }
+  | { kind: 'plain'; text: string }
+
+/**
+ * Try to parse a DB row's `content` as the assistant-envelope shape
+ * `{v:1, text, rounds, toolCalls}`. Returns the envelope if it
+ * matches; otherwise returns the raw text. Safe to call on any
+ * string — never throws.
+ */
+export function parseStoredContent(raw: string): StoredContent {
+  try {
+    const j = JSON.parse(raw)
+    if (
+      j &&
+      j.v === 1 &&
+      typeof j.text === 'string' &&
+      Array.isArray(j.rounds) &&
+      j.rounds.every((r: unknown) => Array.isArray(r)) &&
+      Array.isArray(j.toolCalls)
+    ) {
+      return { kind: 'envelope', envelope: j as AssistantEnvelope }
+    }
+  } catch {
+    // not JSON — fall through
+  }
+  return { kind: 'plain', text: raw }
 }
 
 const MAX_TITLE_CODEPOINTS = 30

@@ -2,10 +2,13 @@
 //
 //   - pumpStream(stream, onToken, signal?): testable seam. Takes a
 //     MessageStream-shaped object, subscribes to its 'text' and
-//     'error' events, and resolves with the accumulated text.
+//     'error' events, and resolves with `{text, finalMessage}` so the
+//     caller can inspect content blocks (incl. tool_use) and
+//     stop_reason after the stream ends.
 //   - streamClaude(opts): high-level. Reads auth + base URL from
-//     process.env, opens a client.messages.stream, delegates to
-//     pumpStream.
+//     process.env, opens a `client.messages.stream`, delegates to
+//     pumpStream. Forwards `tools` and `toolChoice` if the caller
+//     passes them.
 //
 // Auth resolution order: ANTHROPIC_AUTH_TOKEN > ANTHROPIC_API_KEY.
 // This lets proxies that use the alt name (e.g. some Chinese
@@ -16,18 +19,30 @@
 // The SDK type is opaque (we don't import Anthropic's TS types
 // beyond the constructor), so any object with `on` and
 // `finalMessage` is a valid stream — that keeps the test surface
-// small.
+// small. The `finalMessage` return is typed as `unknown` and cast
+// to `Anthropic.Message` in the wrapper.
 import Anthropic from '@anthropic-ai/sdk'
+import type { Message } from '@anthropic-ai/sdk/resources/messages/messages'
 import { ChatError } from './errors.js'
 
 const MAX_TOKENS = 4096
 
+export type StreamResult = {
+  text: string
+  finalMessage: Message
+}
+
 export type StreamClaudeOpts = {
   system: string
-  messages: { role: 'user' | 'assistant'; content: string }[]
+  // Widened from `string` to `string | ContentBlockParam[]` so a
+  // multi-round conversation can echo back tool_use (assistant) and
+  // tool_result (user) content blocks.
+  messages: { role: 'user' | 'assistant'; content: string | unknown[] }[]
   model: string
   onToken: (text: string) => void
   signal?: AbortSignal
+  tools?: Anthropic.Tool[]
+  toolChoice?: Anthropic.ToolChoice
 }
 
 /**
@@ -41,10 +56,11 @@ export function resolveApiKey(): string | undefined {
 }
 
 /**
- * Process an Anthropic MessageStream and resolve with the full
- * assistant text. `onToken` is called for every text delta.
- * Throws ChatError('aborted') on signal abort, ChatError('llm-error')
- * on stream or finalization failure.
+ * Process an Anthropic MessageStream and resolve with the
+ * accumulated text + the final Message (so the caller can inspect
+ * content blocks such as tool_use). `onToken` is called for every
+ * text delta. Throws ChatError('aborted') on signal abort,
+ * ChatError('llm-error') on stream or finalization failure.
  */
 export async function pumpStream(
   stream: {
@@ -53,7 +69,7 @@ export async function pumpStream(
   },
   onToken: (text: string) => void,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<StreamResult> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new ChatError('aborted'))
@@ -68,7 +84,7 @@ export async function pumpStream(
       reject(new ChatError('llm-error', err.message))
     })
     stream.finalMessage()
-      .then(() => resolve(fullText))
+      .then((m) => resolve({ text: fullText, finalMessage: m as Message }))
       .catch((err: Error) => reject(new ChatError('llm-error', err.message)))
     signal?.addEventListener('abort', () => {
       reject(new ChatError('aborted'))
@@ -77,10 +93,12 @@ export async function pumpStream(
 }
 
 /**
- * Open a streaming Claude call and resolve with the full assistant
- * text. Throws ChatError('no-api-key') if no auth token is set.
+ * Open a streaming Claude call and resolve with the final text and
+ * full Message. Throws ChatError('no-api-key') if no auth token is
+ * set, ChatError('aborted') on signal abort, ChatError('llm-error')
+ * on stream or finalization failure.
  */
-export async function streamClaude(opts: StreamClaudeOpts): Promise<string> {
+export async function streamClaude(opts: StreamClaudeOpts): Promise<StreamResult> {
   const apiKey = resolveApiKey()
   if (!apiKey) throw new ChatError('no-api-key')
   const baseURL = process.env.ANTHROPIC_BASE_URL
@@ -89,7 +107,9 @@ export async function streamClaude(opts: StreamClaudeOpts): Promise<string> {
     model: opts.model,
     max_tokens: MAX_TOKENS,
     system: opts.system,
-    messages: opts.messages,
+    messages: opts.messages as Anthropic.MessageParam[],
+    ...(opts.tools ? { tools: opts.tools } : {}),
+    ...(opts.toolChoice ? { tool_choice: opts.toolChoice } : {}),
   })
   return pumpStream(stream, opts.onToken, opts.signal)
 }

@@ -12,9 +12,10 @@ vi.mock('../ai/chat', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../ai/chat')>()
   return {
     ...actual,
-    runChat: vi.fn(async ({ onUserId, onToken }: any) => {
-      await onUserId(1)
-      await onToken('ok')
+    runChat: vi.fn(async ({ onEvent }: any) => {
+      await onEvent({ type: 'user', id: 1 })
+      await onEvent({ type: 'token', text: 'ok' })
+      await onEvent({ type: 'done', userId: 1, assistantId: 2 })
       return { userId: 1, assistantId: 2, fullText: 'ok' }
     }),
   }
