@@ -102,13 +102,6 @@ const noteTitle = (path: string | null): string => {
         :disabled="history.busy.value"
         @click="onNewSession"
       ><span v-html="ICON_NEW_CHAT" aria-hidden="true" /></button>
-      <button
-        class="ai-close"
-        type="button"
-        title="Close panel"
-        aria-label="Close panel"
-        @click="emit('close')"
-      >×</button>
     </header>
 
     <div
