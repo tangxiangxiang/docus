@@ -126,7 +126,8 @@ function toggleToolCard(id: string) {
         type="button"
         :title="pickerOpen ? 'Close history' : 'Open history'"
         :aria-label="pickerOpen ? 'Close history' : 'Open history'"
-        :aria-pressed="pickerOpen"
+        aria-haspopup="dialog"
+        :aria-expanded="pickerOpen"
         @click="togglePicker"
       ><span v-html="ICON_HISTORY" aria-hidden="true" /></button>
       <button

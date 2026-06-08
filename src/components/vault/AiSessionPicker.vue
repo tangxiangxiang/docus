@@ -1,14 +1,27 @@
 <script setup lang="ts">
-// Session picker popover for the AI panel. Renders below the
-// header; lists sessions newest-first, with hover affordances for
-// rename (✎) and delete (×). Closes on outside click and on Esc.
-import { onMounted, onBeforeUnmount, ref } from 'vue'
+// AI session picker — modal Dialog (not a popover). Renders a
+// centered overlay with a backdrop, focuses a known entry point on
+// open, traps Tab inside, and restores focus to the trigger on
+// close. Replaces the older top-anchored popover so the user gets a
+// spacious, scrollable list regardless of AI-panel width.
+//
+// Mounted by the parent (AiPanel) via v-if, so presence == open.
+// Closes on: backdrop click, × button, Esc (unless renaming).
+// Delete uses the shared useConfirm composable so the confirmation
+// matches the rest of the app's destructive prompts instead of the
+// jarring jump to a native window.confirm.
+import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
+import { useConfirm } from '../../composables/useConfirm'
+import { useFocusTrap } from '../../composables/useFocusTrap'
 
 const emit = defineEmits<{ close: [] }>()
 
 const history = useAiHistory()
-const popoverRef = ref<HTMLElement | null>(null)
+const { confirm } = useConfirm()
+const trap = useFocusTrap()
+
+const dialogRef = ref<HTMLElement | null>(null)
 const editingId = ref<number | null>(null)
 const editingTitle = ref('')
 
@@ -34,138 +47,204 @@ function cancelEdit() {
 
 async function onDelete(id: number, title: string) {
   const label = title.trim() || 'this session'
-  // window.confirm is intentional per spec §6 — destructive
-  // confirmations are rare enough that the native dialog is fine.
-  if (!window.confirm(`Delete "${label}" and all its messages?`)) return
+  const ok = await confirm(
+    `Delete "${label}" and all its messages?`,
+    'This cannot be undone.',
+  )
+  if (!ok) return
   await history.deleteSession(id)
 }
 
-function onGlobalPointerDown(e: PointerEvent) {
-  if (!popoverRef.value) return
-  if (!popoverRef.value.contains(e.target as Node)) emit('close')
+async function onSwitch(id: number) {
+  await history.switchSession(id)
+  emit('close')
+}
+
+async function onNewSession() {
+  await history.createSession()
+  await history.refreshSessions()
+  emit('close')
 }
 
 function onKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Tab' && dialogRef.value) {
+    trap.onTab(() => dialogRef.value, e)
+    return
+  }
   if (e.key === 'Escape') {
-    if (editingId.value !== null) cancelEdit()
-    else emit('close')
+    if (editingId.value !== null) {
+      cancelEdit()
+    } else {
+      emit('close')
+    }
   }
 }
 
 onMounted(async () => {
   await history.refreshSessions()
-  document.addEventListener('pointerdown', onGlobalPointerDown)
+  // Capture focus BEFORE the dialog paints so deactivate() can
+  // restore it to the history button in the AI header.
+  trap.activate()
   document.addEventListener('keydown', onKeyDown)
+  await nextTick()
+  // Default focus: the dialog itself (tabindex=-1 on the box). This
+  // keeps the user inside the trap without biasing them toward
+  // either the destructive delete or the new-session button.
+  dialogRef.value?.focus()
 })
 
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onGlobalPointerDown)
+onBeforeUnmount(async () => {
   document.removeEventListener('keydown', onKeyDown)
+  await trap.deactivate()
 })
 </script>
 
 <template>
-  <div ref="popoverRef" class="ai-session-picker" role="dialog" aria-label="AI sessions">
-    <header class="ai-sp-header">
-      <span class="ai-sp-title">Sessions</span>
-      <button
-        class="ai-sp-new"
-        type="button"
-        title="New session"
-        aria-label="New session"
-        @click="async () => { await history.createSession(); await history.refreshSessions() }"
-      >+</button>
-    </header>
-
-    <ul class="ai-sp-list">
-      <li
-        v-for="s in history.sessions.value"
-        :key="s.id"
-        class="ai-sp-row"
-        :class="{ active: history.activeSession.value?.id === s.id }"
-        @click="async () => { await history.switchSession(s.id); emit('close') }"
+  <Teleport to="body">
+    <div
+      class="ai-sp-backdrop"
+      @click.self="emit('close')"
+    >
+      <div
+        ref="dialogRef"
+        class="ai-sp-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="AI sessions"
+        tabindex="-1"
       >
-        <span class="ai-sp-dot" aria-hidden="true" />
-        <template v-if="editingId === s.id">
-          <input
-            v-model="editingTitle"
-            class="ai-sp-input"
-            autofocus
-            @keydown.enter="commitEdit"
-            @keydown.esc="cancelEdit"
-            @blur="commitEdit"
-            @click.stop
-          />
-        </template>
-        <template v-else>
-          <span class="ai-sp-name">{{ s.title || 'New session' }}</span>
-          <span class="ai-sp-actions" @click.stop>
-            <button
-              class="ai-sp-action"
-              type="button"
-              title="Rename"
-              aria-label="Rename"
-              @click.stop="startEdit(s.id, s.title)"
-            >✎</button>
-            <button
-              class="ai-sp-action danger"
-              type="button"
-              title="Delete"
-              aria-label="Delete"
-              @click.stop="onDelete(s.id, s.title)"
-            >×</button>
-          </span>
-        </template>
-      </li>
-      <li v-if="history.sessions.value.length === 0" class="ai-sp-empty">
-        No sessions yet. Send a message or click + to start one.
-      </li>
-    </ul>
-  </div>
+        <header class="ai-sp-header">
+          <span class="ai-sp-title">AI sessions</span>
+          <button
+            class="ai-sp-close"
+            type="button"
+            title="Close"
+            aria-label="Close"
+            @click="emit('close')"
+          >×</button>
+        </header>
+
+        <ul class="ai-sp-list" role="listbox" aria-label="Sessions">
+          <li
+            v-for="s in history.sessions.value"
+            :key="s.id"
+            class="ai-sp-row"
+            :class="{ active: history.activeSession.value?.id === s.id }"
+            role="option"
+            :aria-selected="history.activeSession.value?.id === s.id"
+            @click="onSwitch(s.id)"
+          >
+            <span class="ai-sp-dot" aria-hidden="true" />
+            <template v-if="editingId === s.id">
+              <input
+                v-model="editingTitle"
+                class="ai-sp-input"
+                autofocus
+                @keydown.enter="commitEdit"
+                @keydown.esc="cancelEdit"
+                @blur="commitEdit"
+                @click.stop
+              />
+            </template>
+            <template v-else>
+              <span class="ai-sp-name">{{ s.title || 'New session' }}</span>
+              <span class="ai-sp-actions" @click.stop>
+                <button
+                  class="ai-sp-action"
+                  type="button"
+                  title="Rename"
+                  aria-label="Rename"
+                  @click.stop="startEdit(s.id, s.title)"
+                >✎</button>
+                <button
+                  class="ai-sp-action danger"
+                  type="button"
+                  title="Delete"
+                  aria-label="Delete"
+                  @click.stop="onDelete(s.id, s.title)"
+                >×</button>
+              </span>
+            </template>
+          </li>
+          <li v-if="history.sessions.value.length === 0" class="ai-sp-empty">
+            No sessions yet. Send a message or click + below to start one.
+          </li>
+        </ul>
+
+        <footer class="ai-sp-footer">
+          <button
+            class="ai-sp-new"
+            type="button"
+            @click="onNewSession"
+          >+ New session</button>
+        </footer>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
-.ai-session-picker {
-  position: absolute;
-  top: 36px;
-  left: 0;
-  right: 0;
-  z-index: 1;
-  background: var(--vs-bg-1);
-  border-bottom: 1px solid var(--vs-border);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  max-height: 280px;
+/* Backdrop + dialog follow the same visual language as
+   .confirm-backdrop / .confirm-dialog (style.css ~line 2031) so the
+   picker feels like a native part of the app, not a third-party
+   modal. Dialog is sized for ~10 rows; the list scrolls past that.
+   IMPORTANT: this component is teleported to <body>, so it escapes
+   the .vault scope. The vault's --vs-* variables (--vs-bg-1 etc.)
+   are defined on .vault and DON'T cascade here — using them would
+   resolve to the empty initial value and the dialog would render
+   transparent. Use the global --bg / --text / --border / --accent
+   tokens instead, the same ones ConfirmHost uses. */
+.ai-sp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: ai-sp-fade-in 0.14s ease;
+}
+.ai-sp-dialog {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(80vh, 600px);
   display: flex;
   flex-direction: column;
+  outline: none;
+  animation: ai-sp-pop-in 0.14s ease;
 }
 .ai-sp-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--vs-border);
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
 }
 .ai-sp-title {
-  font-size: 0.78rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--vs-text-2);
+  color: var(--text);
 }
-.ai-sp-new {
+.ai-sp-close {
   background: transparent;
   border: 0;
-  color: var(--vs-text-2);
-  width: 22px;
-  height: 22px;
+  color: var(--text-muted);
+  width: 24px;
+  height: 24px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 1.1rem;
   line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
-.ai-sp-new:hover { background: var(--vs-hover-bg); color: var(--vs-text-1); }
+.ai-sp-close:hover { background: var(--bg-soft); color: var(--text); }
+
 .ai-sp-list {
   list-style: none;
   margin: 0;
@@ -177,22 +256,22 @@ onBeforeUnmount(() => {
 .ai-sp-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  font-size: 0.85rem;
-  color: var(--vs-text-1);
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 0.88rem;
+  color: var(--text);
   cursor: pointer;
 }
-.ai-sp-row:hover { background: var(--vs-hover-bg); }
-.ai-sp-row.active { background: var(--vs-active-bg); }
+.ai-sp-row:hover { background: var(--bg-soft); }
+.ai-sp-row.active { background: var(--accent-bg); }
 .ai-sp-dot {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: transparent;
   flex-shrink: 0;
 }
-.ai-sp-row.active .ai-sp-dot { background: var(--vs-accent); }
+.ai-sp-row.active .ai-sp-dot { background: var(--accent); }
 .ai-sp-name {
   flex: 1;
   min-width: 0;
@@ -210,9 +289,9 @@ onBeforeUnmount(() => {
 .ai-sp-action {
   background: transparent;
   border: 0;
-  color: var(--vs-text-2);
-  width: 20px;
-  height: 20px;
+  color: var(--text-muted);
+  width: 22px;
+  height: 22px;
   border-radius: 3px;
   cursor: pointer;
   font-size: 0.9rem;
@@ -221,24 +300,52 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
 }
-.ai-sp-action:hover { background: var(--vs-bg-3); color: var(--vs-text-1); }
+.ai-sp-action:hover { background: var(--bg-soft); color: var(--text); }
 .ai-sp-action.danger:hover { color: #e06060; }
 .ai-sp-input {
   flex: 1;
   min-width: 0;
-  background: var(--vs-bg-1);
-  border: 1px solid var(--vs-accent);
+  background: var(--bg);
+  border: 1px solid var(--accent);
   border-radius: 3px;
-  color: var(--vs-text-1);
+  color: var(--text);
   font: inherit;
-  font-size: 0.85rem;
-  padding: 1px 6px;
+  font-size: 0.88rem;
+  padding: 2px 6px;
   outline: none;
 }
 .ai-sp-empty {
-  padding: 14px 12px;
-  font-size: 0.85rem;
-  color: var(--vs-text-3);
+  padding: 18px 14px;
+  font-size: 0.88rem;
+  color: var(--text-muted);
   font-style: italic;
+  text-align: center;
+}
+
+.ai-sp-footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+.ai-sp-new {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+}
+.ai-sp-new:hover { background: var(--bg-soft); border-color: var(--text-muted); }
+
+@keyframes ai-sp-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes ai-sp-pop-in {
+  from { transform: scale(0.96); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
 }
 </style>
