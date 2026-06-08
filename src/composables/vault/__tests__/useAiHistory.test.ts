@@ -265,4 +265,55 @@ describe('sendAndStream', () => {
     expect(h.messages.value[0].id).toBe(7)
     expect(h.messages.value[1].id).toBe(8)
   })
+
+  it('stop() aborts an in-flight stream, clears busy, and tags the assistant with [aborted]', async () => {
+    const { streamChat } = await import('../../../lib/ai-api')
+    vi.mocked(streamChat).mockReset()
+    // The mock has to honor the AbortSignal: when stop() fires,
+    // useAiHistory's AbortController rejects the signal, and the
+    // in-flight generator's hang needs to bail out at that point.
+    // In production streamChat passes the signal to fetch (which
+    // raises AbortError on abort); here we replicate that by
+    // listening to the signal ourselves.
+    vi.mocked(streamChat).mockImplementation(async function* (_req, signal) {
+      yield { type: 'user', id: 7 }
+      yield { type: 'token', text: 'partial' }
+      await new Promise<void>((_resolve, reject) => {
+        if (signal?.aborted) {
+          reject(new DOMException('aborted', 'AbortError'))
+          return
+        }
+        signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+      })
+    })
+
+    queue.push({ status: 200, body: { activeId: 1, configured: true } })
+    queue.push({ status: 200, body: [] })
+
+    const h = setup()
+    await h.api.loadActive()
+    const p = h.api.sendAndStream('hi')
+    // Give the microtask queue a chance to enter the streamChat
+    // generator and start hanging.
+    await Promise.resolve()
+    expect(h.busy.value).toBe(true)
+
+    h.api.stop()
+    await p
+
+    expect(h.busy.value).toBe(false)
+    const assistant = h.messages.value[1]
+    expect(assistant.id).toBe(-1)
+    expect(assistant.content).toContain('partial')
+    expect(assistant.content).toContain('[aborted]')
+    // No errorState — abort is a user action, not an error.
+    expect(h.errorState.value).toBeNull()
+  })
+
+  it('stop() is a no-op when nothing is in flight', async () => {
+    const h = setup()
+    // Just call it. Should not throw, should not flip busy.
+    h.api.stop()
+    expect(h.busy.value).toBe(false)
+  })
 })

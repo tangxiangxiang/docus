@@ -2516,6 +2516,17 @@ main.container {
 }
 .ai-panel .ai-send:disabled { opacity: 0.4; cursor: not-allowed; }
 .ai-panel .ai-send:hover:not(:disabled) { background: var(--vs-accent-hover); }
+/* The button doubles as Stop while a stream is in flight. The red
+   shift makes the destructive semantics obvious at a glance, and
+   the box glyph (■) is intentionally different from the arrow (↑)
+   so a power user recognizes the toggle from across the panel. */
+.ai-panel .ai-send.ai-send-busy {
+  background: var(--ai-error, #c14545);
+  color: #fff;
+}
+.ai-panel .ai-send.ai-send-busy:hover {
+  background: #d85555;
+}
 
 /* NavBar AI toggle — matches the read-mode toggle look (soft-filled
    accent on pressed). */

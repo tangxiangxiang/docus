@@ -42,15 +42,27 @@ export interface AiHistory {
   deleteSession(id: number): Promise<void>
   sendMessage(content: string): Promise<void>
   sendAndStream(text: string, currentNote?: { path: string; content: string }): Promise<void>
+  // Cancel the in-flight stream. No-op when nothing is running.
+  // The AbortController lives in sendAndStream's closure so the
+  // composable's singleton interface doesn't have to expose the
+  // controller itself; stop() is the only handle the UI needs.
+  stop(): void
 }
 
 let _state: AiHistory | null = null
+
+// The currently in-flight AbortController (or null when nothing is
+// streaming). Stored in module scope so stop() in the returned
+// closure can reach the same controller that sendAndStream created,
+// without leaking the controller into the public interface.
+let _activeController: AbortController | null = null
 
 // Test-only escape hatch: reset the singleton so each test starts
 // from a clean slate. Not exported in the public type — tests reach
 // for it via a re-export declared in __tests__.
 export function __resetForTesting(): void {
   _state = null
+  _activeController = null
 }
 
 export function useAiHistory(): AiHistory {
@@ -159,6 +171,7 @@ export function useAiHistory(): AiHistory {
     busy.value = true
     errorState.value = null
     const ac = new AbortController()
+    _activeController = ac
 
     try {
       for await (const event of streamChat(
@@ -174,9 +187,37 @@ export function useAiHistory(): AiHistory {
         if (event.type === 'done' || event.type === 'error') break
       }
       await refreshSessions()
+    } catch (e) {
+      // Abort is the expected path when the user clicks Stop; surface
+      // it as a quiet "[aborted]" tag on the assistant bubble and
+      // move on. Other errors are rethrown so the existing
+      // finally (which clears busy) still runs, but the catch
+      // block doesn't swallow them silently.
+      if (ac.signal.aborted) {
+        optimisticAssistant.content += '\n\n[aborted]'
+        if (optimisticAssistant.blocks) {
+          optimisticAssistant.blocks.text = optimisticAssistant.content
+        }
+        messages.value = messages.value.map((m) =>
+          m === optimisticAssistant
+            ? { ...m, id: -1, content: optimisticAssistant.content, blocks: optimisticAssistant.blocks }
+            : m,
+        )
+        optimisticAssistant.id = -1
+      } else {
+        throw e
+      }
     } finally {
+      _activeController = null
       busy.value = false
     }
+  }
+
+  function stop(): void {
+    // Just trigger the signal; the catch above handles the
+    // visible side-effect. No busy-flag manipulation here —
+    // that's the for-await's finally's job.
+    _activeController?.abort()
   }
 
   function applyEvent(
@@ -270,6 +311,7 @@ export function useAiHistory(): AiHistory {
     deleteSession,
     sendMessage,
     sendAndStream,
+    stop,
   }
   return _state
 }

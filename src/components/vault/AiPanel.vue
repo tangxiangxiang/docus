@@ -7,9 +7,13 @@
 //
 // The `configured` flag (from /api/ai/active) determines whether
 // the send button is enabled. When false, a persistent banner
-// explains the missing env var. The `busy` flag disables the send
-// button while a stream is in flight; there is no Stop button in
-// v1.
+// explains the missing env var.
+//
+// The send button is a single toggle: when idle, it sends (type=
+// submit so Enter still triggers it); when busy, it stops the
+// in-flight stream (type=button, distinct color/icon so the
+// destructive nature reads visually). See useAiHistory.stop() for
+// the AbortController plumbing.
 //
 // Tool cards: when the assistant message carries tool calls
 // (m.blocks?.toolCalls), each call is rendered as a card with the
@@ -49,6 +53,20 @@ async function onSend() {
     path: currentNote.path.value ?? '',
     content: currentNote.content.value,
   })
+}
+
+function onStop() {
+  // Triggers AbortController inside sendAndStream; the stream
+  // ends, the for-await exits, busy flips to false, and the
+  // assistant message gets an [aborted] tag.
+  history.stop()
+}
+
+function onSendOrStop() {
+  // Single button, two behaviors. The form's @submit still routes
+  // Enter through onSend(), so this handler only governs clicks.
+  if (history.busy.value) onStop()
+  else onSend()
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -215,11 +233,13 @@ function toggleToolCard(id: string) {
         />
         <button
           class="ai-send"
-          type="submit"
-          title="Send (Enter)"
-          aria-label="Send"
-          :disabled="!draft.trim() || history.busy.value || !history.configured.value"
-        >↑</button>
+          :class="{ 'ai-send-busy': history.busy.value }"
+          type="button"
+          :title="history.busy.value ? 'Stop' : 'Send (Enter)'"
+          :aria-label="history.busy.value ? 'Stop' : 'Send'"
+          :disabled="!history.busy.value && (!draft.trim() || !history.configured.value)"
+          @click="onSendOrStop"
+        >{{ history.busy.value ? '■' : '↑' }}</button>
       </div>
     </form>
 
