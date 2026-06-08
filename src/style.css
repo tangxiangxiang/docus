@@ -1194,11 +1194,14 @@ main.container {
 
 /* Editor Area */
 .editor-area {
-  /* Status bar used to live here as a 4th row, but it now spans the
-     full vault width at the bottom (see .status-bar).  The remaining
-     rows are breadcrumb, tabs, and the editor/preview split. */
+  /* Status bar used to live here as a 3rd row, but it now spans the
+     full vault width at the bottom (see .status-bar) and absorbs
+     the document path that used to live in its own breadcrumb row
+     above the content. The remaining rows are tabs and the
+     editor/preview split; the 1fr row gets the ~22px the breadcrumb
+     used to occupy. */
   display: grid;
-  grid-template-rows: 36px 22px minmax(0, 1fr);
+  grid-template-rows: 36px minmax(0, 1fr);
   background: var(--vs-bg-1);
   color: var(--vs-text-1);
   min-width: 0;
@@ -1206,23 +1209,6 @@ main.container {
   height: 100%;
   overflow: hidden;
 }
-
-/* Breadcrumb */
-.breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 14px;
-  font-size: 0.75rem;
-  color: var(--vs-text-3);
-  background: var(--vs-bg-1);
-  border-bottom: 1px solid var(--vs-border);
-  user-select: none;
-}
-.bc-segment { color: var(--vs-text-2); }
-.bc-sep { color: var(--vs-text-3); }
-.bc-current { color: var(--vs-text-1); }
-.bc-placeholder { color: var(--vs-text-3); font-style: italic; }
 
 /* Tabs */
 .tabs {
@@ -1514,9 +1500,9 @@ main.container {
 
 /* Reading mode (vault read surface). Reuses the editor-area's grid
    slot (where editor + preview normally live) and swaps the split
-   for a single centered column. The side panel, tabs, breadcrumb,
-   and status bar above/below are unchanged — only the .content
-   inside .editor-area differs. */
+   for a single centered column. The side panel, tabs, and status
+   bar (which carries the path) above/below are unchanged — only
+   the .content inside .editor-area differs. */
 .vault .content.reading-content {
   background: var(--vs-bg-1);
   color: var(--vs-text-1);

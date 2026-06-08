@@ -5,8 +5,9 @@ defineProps<{ tabs: Tab[]; activePath: string | null }>()
 const emit = defineEmits<{ select: [path: string]; close: [path: string] }>()
 
 /* The tab label is just the file's basename, not the full path —
-   the breadcrumb below carries the full path. The tooltip on the
-   tab keeps the path available on hover for power users. */
+   the status bar footer now carries the full path (formerly a
+   breadcrumb row above the editor). The tooltip on the tab keeps
+   the path available on hover for power users. */
 function basename(p: string): string {
   const i = p.lastIndexOf('/')
   return i >= 0 ? p.slice(i + 1) : p

@@ -13,7 +13,6 @@ import PreviewPane from '../components/vault/PreviewPane.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
-import Breadcrumb from '../components/vault/Breadcrumb.vue'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
 
@@ -64,9 +63,10 @@ const { activeTagList, toggleTag, clear: clearTagFilter, removeTag } = useTagFil
 watch(() => navSearch?.tick.value, () => openSearch())
 
 /* The mode toggle only swaps the editor/preview split for a single
-   reading surface — the side panel, activity bar, tabs, breadcrumb,
-   and status bar all stay put so the user can still navigate while
-   reading. So the vault's grid layout is the same in both modes. */
+   reading surface — the side panel, activity bar, tabs, and status
+   bar (which now also carries the document path) all stay put so
+   the user can still navigate while reading. So the vault's grid
+   layout is the same in both modes. */
 </script>
 
 <template>
@@ -119,7 +119,6 @@ watch(() => navSearch?.tick.value, () => openSearch())
         @select="selectTab"
         @close="closeTab"
       />
-      <Breadcrumb :current-path="activePath" />
 
       <!-- Edit mode: editor + preview side-by-side, draggable mid-splitter. -->
       <div v-if="!isReadMode" class="content" :style="contentStyle">
@@ -170,8 +169,8 @@ watch(() => navSearch?.tick.value, () => openSearch())
       </div>
 
       <!-- Read mode: single reading surface in the same slot. The side
-           panel, tabs, breadcrumb, and status bar above/below stay
-           untouched so navigation still works while reading. -->
+           panel, tabs, and status bar above/below stay untouched so
+           navigation still works while reading. -->
       <div v-else class="content reading-content">
         <div
           v-for="t in tabs"
