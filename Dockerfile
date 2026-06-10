@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # docus 的多阶段构建 —— 一个 Vue 3 + Hono 个人知识库。
 #
 # 阶段 1（deps）：安装全部依赖（包括 devDependencies），因为后面要跑 `vite build`。
@@ -8,6 +9,12 @@
 # 阶段 3（runtime）：只拷入产线 node_modules、预构建好的 dist/、server/ 源码、tsx
 #（用来跑 server/prod.ts）。以非 root 用户身份运行，单端口同时服务 SPA 和
 # Hono 的 /api/* 接口。
+#
+# 构建加速要点：
+# - `RUN --mount=type=cache,...` 是 BuildKit 的缓存挂载，挂载点的内容**不进入最终镜像**，
+#   只存在构建缓存里，多次构建之间共享。改 apt 源、换依赖都不需要 `--no-cache`。
+# - 之前 `rm -rf /var/lib/apt/lists/*` 是为了压小镜像；现在那目录挂在 cache mount 上，
+#   不进镜像，留着反而能跨构建复用索引。
 
 # ---------- 1. 安装依赖 ----------
 FROM node:22-bookworm-slim AS deps
@@ -22,7 +29,10 @@ FROM node:22-bookworm-slim AS deps
 # 会把它当成结束分隔符，模式就被截断了。
 # 源用 http 而非 https：bookworm-slim 不带 ca-certificates，HTTPS 校验过不去；
 # 包有 GPG 签名，apt 验签不靠 TLS，构建期用 HTTP 是安全的。
-RUN set -e; \
+# sharing=locked 防止并发构建写到同一缓存造成损坏。
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    set -e; \
     for f in /etc/apt/sources.list \
              /etc/apt/sources.list.d/debian.sources \
              /etc/apt/sources.list.d/*.list \
@@ -32,16 +42,19 @@ RUN set -e; \
         fi; \
     done; \
     apt-get update \
- && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends python3 make g++ ca-certificates
 
 WORKDIR /app
 
 # 用 lockfile 安装，确保产线镜像可复现。
 # `--ignore-scripts` 会跳过 better-sqlite3 的原生编译 —— 如果后面再补一次带工具链
 # 的安装也行，但直接在这里让 install 脚本跑更简单，runtime 阶段拷过去就是一份能跑的工作目录。
+# cache mount /root/.npm 跨构建复用下载的包（不会复用编译产物 —— npm ci 总是清空 node_modules
+# 再装，所以 better-sqlite3 的 node-gyp 每次都要重跑。优化它要换包管理器（pnpm）或自维护一份
+# node_modules 基础镜像，超出本 Dockerfile 范围）。
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 # ---------- 2. 构建前端 ----------
 FROM deps AS build
@@ -63,7 +76,9 @@ FROM node:22-bookworm-slim AS runtime
 # tini 提供正确的 SIGTERM/SIGINT 处理，这样 `docker stop` 时 Node 进程不会被半路截断。
 # ca-certificates 让 Node 调用 Anthropic API 时能正常校验 TLS 证书。
 # 同上：apt 源换成阿里云镜像，覆盖所有可能的源文件位置。
-RUN set -e; \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    set -e; \
     for f in /etc/apt/sources.list \
              /etc/apt/sources.list.d/debian.sources \
              /etc/apt/sources.list.d/*.list \
@@ -73,8 +88,7 @@ RUN set -e; \
         fi; \
     done; \
     apt-get update \
- && apt-get install -y --no-install-recommends tini ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends tini ca-certificates
 
 ENV NODE_ENV=production \
     PORT=3000 \
