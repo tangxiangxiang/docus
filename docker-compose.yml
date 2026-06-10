@@ -1,11 +1,10 @@
-# docus — production deployment.
+# docus —— 生产部署。
 #
 #   docker compose up -d --build
 #
-# Persists the SQLite database (./data) and the markdown vault
-# (./src/content) on the host. Secrets (ANTHROPIC_*) are read from
-# the host's .env file — see .env.example for the supported variables
-# and rename a copy to .env before bringing the stack up.
+# SQLite 数据库（./data）和 markdown 笔记库（./src/content）都持久化在宿主机上。
+# 密钥（ANTHROPIC_*）从宿主机的 .env 文件读 —— 可配置的变量见 .env.example，
+# 启动前把它的副本改名为 .env。
 
 services:
   docus:
@@ -16,9 +15,8 @@ services:
     container_name: docus
     restart: unless-stopped
 
-    # Single port for both the SPA and /api/*. The Hono prod entry
-    # point (server/prod.ts) routes /api/* to the app and falls back
-    # to index.html for SPA history-mode navigations.
+    # SPA 和 /api/* 走同一个端口。Hono 产线入口（server/prod.ts）把 /api/* 路由到 app，
+    # 其它路径回落到 index.html（SPA history 模式需要）。
     ports:
       - "${DOCS_PORT:-3000}:3000"
 
@@ -29,21 +27,17 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOST: "0.0.0.0"
-      # Pass through LLM config; values from .env already populate the
-      # process, but listing them here makes the contract explicit.
+      # 透传 LLM 配置：.env 里其实已经把这些值注入进程了，这里再列一遍是把契约写明确。
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
 
     volumes:
-      # SQLite database + WAL live outside the image so a container
-      # recreate doesn't wipe chat history.
+      # SQLite 数据库 + WAL 放在镜像外面，容器重建时不会把聊天记录一起清掉。
       - docus-data:/app/data
-      # The vault itself: a named volume keeps notes decoupled from
-      # the host filesystem. Bind-mount ./src/content instead if you
-      # want to edit notes with your local editor — see the
-      # "Bind-mount for live editing" block below for the swap.
+      # 笔记库本体：用命名卷让笔记和宿主机文件系统解耦。如果想用本地编辑器直接改笔记，
+      # 可以换成 bind mount ./src/content —— 切换方法见下面"实时编辑模式"块。
       - docus-content:/app/src/content
 
     healthcheck:
@@ -59,8 +53,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-    # Belt-and-braces hardening: drop capabilities, mark FS read-only
-    # except for the two writable paths, then re-open those.
+    # 多重加固：降权、把根 FS 设成只读（除了那两条可写路径），再把可写路径重新打开。
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -73,14 +66,15 @@ volumes:
   docus-content:
 
 # ---------------------------------------------------------------------------
-# Bind-mount for live editing
+# 实时编辑模式（把笔记库挂回宿主机）
 # ---------------------------------------------------------------------------
-# If you'd rather keep the vault on the host (e.g. so your editor
-# writes to it directly), replace the `docus-content:/app/src/content`
-# line above with:
+# 如果你更想把笔记库放在宿主机上（比如方便本地编辑器直接写入），把上面这行：
+#
+#     - docus-content:/app/src/content
+#
+# 替换成：
 #
 #     - ./src/content:/app/src/content:rw
 #
-# The container will still seed an empty ./src/content if you haven't
-# created one yet — `mkdir -p src/content` first.
+# 容器如果发现 ./src/content 不存在会自己建一个空目录 —— 提前 `mkdir -p src/content` 也行。
 # ---------------------------------------------------------------------------
