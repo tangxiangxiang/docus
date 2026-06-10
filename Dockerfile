@@ -18,13 +18,15 @@ FROM node:22-bookworm-slim AS deps
 # 单这一步就要 10+ 分钟。换回官方源只需把镜像 URL 改回 https://deb.debian.org。
 # 用 for 循环覆盖所有可能的 apt 源文件位置（新 deb822 格式和老 one-line 格式都试），
 # 之前只 sed /etc/apt/sources.list 和 *.sources 时碰到其它位置会静默失败。
+# 分隔符用 # 而不是 |：GNU sed 的 s-命令不会跳过 (deb|security) 里的 |，
+# 会把它当成结束分隔符，模式就被截断了。
 RUN set -e; \
     for f in /etc/apt/sources.list \
              /etc/apt/sources.list.d/debian.sources \
              /etc/apt/sources.list.d/*.list \
              /etc/apt/sources.list.d/*.sources; do \
         if [ -f "$f" ]; then \
-            sed -i -E 's|https?://(deb|security)\.debian\.org|https://mirrors.aliyun.com|g' "$f"; \
+            sed -i -E 's#https?://(deb|security)\.debian\.org#https://mirrors.aliyun.com#g' "$f"; \
         fi; \
     done; \
     apt-get update \
@@ -65,7 +67,7 @@ RUN set -e; \
              /etc/apt/sources.list.d/*.list \
              /etc/apt/sources.list.d/*.sources; do \
         if [ -f "$f" ]; then \
-            sed -i -E 's|https?://(deb|security)\.debian\.org|https://mirrors.aliyun.com|g' "$f"; \
+            sed -i -E 's#https?://(deb|security)\.debian\.org#https://mirrors.aliyun.com#g' "$f"; \
         fi; \
     done; \
     apt-get update \
