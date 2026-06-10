@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "start": "tsx server/prod.ts",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

@@ -1,0 +1,86 @@
+# docus — production deployment.
+#
+#   docker compose up -d --build
+#
+# Persists the SQLite database (./data) and the markdown vault
+# (./src/content) on the host. Secrets (ANTHROPIC_*) are read from
+# the host's .env file — see .env.example for the supported variables
+# and rename a copy to .env before bringing the stack up.
+
+services:
+  docus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: docus:latest
+    container_name: docus
+    restart: unless-stopped
+
+    # Single port for both the SPA and /api/*. The Hono prod entry
+    # point (server/prod.ts) routes /api/* to the app and falls back
+    # to index.html for SPA history-mode navigations.
+    ports:
+      - "${DOCS_PORT:-3000}:3000"
+
+    env_file:
+      - .env
+
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      # Pass through LLM config; values from .env already populate the
+      # process, but listing them here makes the contract explicit.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+
+    volumes:
+      # SQLite database + WAL live outside the image so a container
+      # recreate doesn't wipe chat history.
+      - docus-data:/app/data
+      # The vault itself: a named volume keeps notes decoupled from
+      # the host filesystem. Bind-mount ./src/content instead if you
+      # want to edit notes with your local editor — see the
+      # "Bind-mount for live editing" block below for the swap.
+      - docus-content:/app/src/content
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Belt-and-braces hardening: drop capabilities, mark FS read-only
+    # except for the two writable paths, then re-open those.
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "1000:1000"
+
+volumes:
+  docus-data:
+  docus-content:
+
+# ---------------------------------------------------------------------------
+# Bind-mount for live editing
+# ---------------------------------------------------------------------------
+# If you'd rather keep the vault on the host (e.g. so your editor
+# writes to it directly), replace the `docus-content:/app/src/content`
+# line above with:
+#
+#     - ./src/content:/app/src/content:rw
+#
+# The container will still seed an empty ./src/content if you haven't
+# created one yet — `mkdir -p src/content` first.
+# ---------------------------------------------------------------------------
