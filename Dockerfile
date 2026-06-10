@@ -16,8 +16,17 @@ FROM node:22-bookworm-slim AS deps
 # 不装这几个，`npm ci` 在尝试装可选依赖时会失败。
 # 顺手把 apt 源换成阿里云镜像：默认的 deb.debian.org 在国内极慢，
 # 单这一步就要 10+ 分钟。换回官方源只需把镜像 URL 改回 https://deb.debian.org。
-RUN sed -i -E 's|https?://(deb|security)\.debian\.org|https://mirrors.aliyun.com|g' \
-        /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true ; \
+# 用 for 循环覆盖所有可能的 apt 源文件位置（新 deb822 格式和老 one-line 格式都试），
+# 之前只 sed /etc/apt/sources.list 和 *.sources 时碰到其它位置会静默失败。
+RUN set -e; \
+    for f in /etc/apt/sources.list \
+             /etc/apt/sources.list.d/debian.sources \
+             /etc/apt/sources.list.d/*.list \
+             /etc/apt/sources.list.d/*.sources; do \
+        if [ -f "$f" ]; then \
+            sed -i -E 's|https?://(deb|security)\.debian\.org|https://mirrors.aliyun.com|g' "$f"; \
+        fi; \
+    done; \
     apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
  && rm -rf /var/lib/apt/lists/*
@@ -49,9 +58,16 @@ FROM node:22-bookworm-slim AS runtime
 
 # tini 提供正确的 SIGTERM/SIGINT 处理，这样 `docker stop` 时 Node 进程不会被半路截断。
 # ca-certificates 让 Node 调用 Anthropic API 时能正常校验 TLS 证书。
-# 同上：apt 源换成阿里云镜像。
-RUN sed -i -E 's|https?://(deb|security)\.debian\.org|https://mirrors.aliyun.com|g' \
-        /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true ; \
+# 同上：apt 源换成阿里云镜像，覆盖所有可能的源文件位置。
+RUN set -e; \
+    for f in /etc/apt/sources.list \
+             /etc/apt/sources.list.d/debian.sources \
+             /etc/apt/sources.list.d/*.list \
+             /etc/apt/sources.list.d/*.sources; do \
+        if [ -f "$f" ]; then \
+            sed -i -E 's|https?://(deb|security)\.debian\.org|https://mirrors.aliyun.com|g' "$f"; \
+        fi; \
+    done; \
     apt-get update \
  && apt-get install -y --no-install-recommends tini ca-certificates \
  && rm -rf /var/lib/apt/lists/*
