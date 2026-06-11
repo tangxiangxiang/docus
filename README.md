@@ -330,6 +330,40 @@ rely on the dev server's manual smoke (open / edit / save / drag).
   transaction by the runner. To roll back, write a forward fix —
   never edit a committed migration.
 
+## Deployment
+
+Production runs in a single Docker container that hosts both the
+prebuilt SPA (`dist/`) and the Hono `/api/*` backend on one port
+(3000), backed by SQLite via `better-sqlite3` and an
+Anthropic-compatible LLM proxy.
+
+```bash
+cp .env.example .env
+$EDITOR .env
+docker compose up -d --build
+open http://localhost:3000
+```
+
+The Dockerfile is a three-stage build: `deps` installs everything
+and compiles the `better-sqlite3` native module against the
+in-container toolchain (avoids host-ABI prebuilds); `build` runs
+`vue-tsc -b` and `vite build`; `runtime` copies just the
+production `node_modules`, `dist/`, and `server/` into a
+`node:22-bookworm-slim` with `tini` for proper SIGTERM and a
+non-root user. Two named volumes persist state: `docus-data`
+(SQLite + WAL — chat history) and `docus-content` (the markdown
+vault). `/api/health` is wired into the Docker `HEALTHCHECK` and
+into `docker-compose.yml`'s `healthcheck:`. `apt` is mirrored to
+`mirrors.aliyun.com` and `/var/{cache,lib}/apt` plus `/root/.npm`
+are BuildKit cache mounts, so the second build skips the download
+and only re-runs the `better-sqlite3` native compile.
+
+Full operator runbook — env vars, the `read_only` / non-root /
+`no-new-privileges` hardening, port configuration, troubleshooting
+(ABI mismatches, "AI not configured" banner, SPA 404, port
+collisions), and switching the vault to a host bind-mount for live
+editing — is in [DEPLOY.md](DEPLOY.md).
+
 ## Project history
 
 The detailed design and plan documents for each feature live under
