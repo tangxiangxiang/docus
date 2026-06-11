@@ -26,7 +26,8 @@ export interface PostDetail {
 
 async function jsonOrThrow<T>(r: Response): Promise<T> {
   if (!r.ok) {
-    const body = await r.json().catch(() => ({ error: r.statusText }))
+    // See ai-api.ts: no error-body schema, cast to the shape we read.
+    const body = (await r.json().catch(() => ({ error: r.statusText }))) as { error?: string }
     throw Object.assign(new Error(body.error ?? `HTTP ${r.status}`), { status: r.status, body })
   }
   return r.json() as Promise<T>

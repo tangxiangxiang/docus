@@ -22,6 +22,7 @@ function makeTab(overrides: Partial<Tab> = {}): Tab {
     error: null,
     loadError: null,
     loading: false,
+    serverMtime: 0,
     ...overrides,
   }
 }

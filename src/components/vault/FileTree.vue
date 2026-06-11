@@ -5,7 +5,7 @@ import TreeRow from './TreeRow.vue'
 import { useConfirm } from '../../composables/useConfirm'
 import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
-import { blockedMessage, isInZettel, PROTECTED_ROOTS } from '../../composables/zettelProtocol'
+import { blockedMessage, isInZettel } from '../../composables/zettelProtocol'
 import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder } from '../../lib/api'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
 
@@ -173,18 +173,6 @@ function findNode(nodes: TreeNode[], path: string, kind?: 'file' | 'folder'): Tr
 function countDescendants(n: TreeNode): number {
   if (n.kind !== 'folder') return 0
   return n.children.reduce((acc, c) => acc + 1 + countDescendants(c), 0)
-}
-// File-only descendant count for the scope chips. Folders are organizational
-// scaffolding, not content — a chip showing `zettel 12` should read as
-// "12 permanent notes", not "12 children including N subfolders". The
-// folder-aware countDescendants above stays as-is because onDelete still
-// uses it to show "N items will be removed" on folder delete.
-function countDescendantFiles(n: TreeNode): number {
-  if (n.kind !== 'folder') return 0
-  return n.children.reduce(
-    (acc, c) => acc + (c.kind === 'file' ? 1 : 0) + countDescendantFiles(c),
-    0,
-  )
 }
 
 // --- row event handlers ---

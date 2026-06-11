@@ -21,7 +21,7 @@
 import { promises as fs } from 'node:fs'
 import { listPostsFlat } from './tree.js'
 import { CONTENT_DIR, filePathFor } from './paths.js'
-import { resolveWikiTarget } from '../src/lib/linkResolve.js'
+import { resolveWikiTarget } from './linkResolve.ts'
 
 export interface Link {
   /** Resolved vault path (no .md extension, no #anchor). */

@@ -111,5 +111,9 @@ export async function streamClaude(opts: StreamClaudeOpts): Promise<StreamResult
     ...(opts.tools ? { tools: opts.tools } : {}),
     ...(opts.toolChoice ? { tool_choice: opts.toolChoice } : {}),
   })
-  return pumpStream(stream, opts.onToken, opts.signal)
+  // The SDK's MessageStream uses a generic event-name signature; pumpStream
+  // intentionally accepts a looser duck-typed shape so tests can pass a
+  // minimal stub without wiring the full event map. The runtime shape is
+  // compatible (it's the same class), so the cast is safe.
+  return pumpStream(stream as unknown as Parameters<typeof pumpStream>[0], opts.onToken, opts.signal)
 }

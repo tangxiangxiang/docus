@@ -11,6 +11,8 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import app from './index.ts'
+import { CONTENT_DIR } from './paths.ts'
+import { ensureInitialFolders } from './seed.ts'
 
 const PORT = Number(process.env.PORT ?? 3000)
 const HOST = process.env.HOST ?? '0.0.0.0'
@@ -40,6 +42,13 @@ app.get('*', async (c) => {
   const html = await getIndexHtml()
   return c.html(html)
 })
+
+// Seed the three Zettelkasten spec folders (inbox / literature / zettel)
+// before the HTTP server starts accepting requests. Idempotent — existing
+// folders and files are left alone; only missing roots are created.
+// See server/seed.ts for the rationale.
+await ensureInitialFolders(CONTENT_DIR)
+console.log(`[docus] content dir: ${CONTENT_DIR}`)
 
 serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
   console.log(`[docus] listening on http://${info.address}:${info.port}`)

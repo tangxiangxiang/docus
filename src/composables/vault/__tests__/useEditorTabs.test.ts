@@ -70,7 +70,7 @@ interface Harness {
   onKeydown: (e: KeyboardEvent) => void
   onCommandPaletteNew: (t: string) => Promise<void>
   activePath: Ref<string | null>
-  tabs: Ref<{ path: string; raw: string; originalRaw: string; saveStatus: string; loadError: string | null }[]>
+  tabs: Ref<{ path: string; raw: string; originalRaw: string; saveStatus: string; loadError: string | null; serverMtime?: number }[]>
   // The selectPanel spy is captured separately because the composable
   // receives it as a constructor arg and doesn't return it.
   selectPanel: ReturnType<typeof vi.fn>
@@ -188,6 +188,7 @@ describe('live tabs publish', () => {
     const newTab: Tab = {
       path: 'x.md', title: 'x', raw: 'live', originalRaw: '',
       saveStatus: 'idle', error: null, loadError: null, loading: false,
+      serverMtime: 0,
     }
     capturedTabs.value = [newTab]
     await nextTick()

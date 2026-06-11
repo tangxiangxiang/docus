@@ -18,7 +18,6 @@ import {
   CONTENT_DIR,
   filePathFor,
   folderPathFor,
-  assertSafePath,
 } from '../paths.js'
 
 export type ToolContext = { signal: AbortSignal }

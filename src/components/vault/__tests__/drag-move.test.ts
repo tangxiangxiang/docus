@@ -57,8 +57,6 @@ describe('FileTree drag-move (sub-documents)', () => {
     await testFolder.find('.chevron').trigger('click')
     await w.vm.$nextTick()
 
-    const fileRow = rowByLabel(w.findAll('li.tree-row'), 'test1')
-
     // Fire a drop on the inbox row directly. This is what would happen if the
     // user dragged the file from inbox/test/ up to the inbox row in the tree.
     await inbox.trigger('drop', {

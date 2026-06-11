@@ -122,6 +122,9 @@ ai.post('/chat', async (c) => {
   ) {
     return c.json({ ok: false, reason: 'invalid' }, 400)
   }
+  // Bind to locals so the narrowed types survive into runChat().
+  const sessionId = body.sessionId
+  const userContent = body.content
 
   // We don't pre-validate the session here — runChat throws
   // ChatError('not-found') and the route maps it to an SSE error
@@ -185,8 +188,8 @@ ai.post('/chat', async (c) => {
 
       await runChat({
         db: getDb(),
-        sessionId: body.sessionId,
-        userContent: body.content,
+        sessionId,
+        userContent,
         ctx,
         model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
         signal: c.req.raw.signal,

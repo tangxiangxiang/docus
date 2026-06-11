@@ -19,11 +19,8 @@
 // buildSystemPrompt is a free function so the tests can exercise
 // it without standing up an SDK mock.
 import type { Database as DatabaseT } from 'better-sqlite3'
-import type Anthropic from '@anthropic-ai/sdk'
 import type {
-  ContentBlock,
   ContentBlockParam,
-  Message,
   MessageParam,
   ToolUseBlock,
 } from '@anthropic-ai/sdk/resources/messages/messages'
@@ -165,7 +162,11 @@ export async function runChat(opts: RunChatOpts): Promise<{
 
       const result = await streamClaude({
         system,
-        messages: convo,
+        // `convo` is built from MessageParam[] but only ever receives
+        // 'user' | 'assistant' pushes (see buildConvoFromHistory +
+        // the synth-tool-results turn above), so the widened role
+        // union is safe to narrow here for streamClaude's signature.
+        messages: convo as { role: 'user' | 'assistant'; content: string | unknown[] }[],
         model: opts.model,
         onToken: async (text) => {
           fullText += text

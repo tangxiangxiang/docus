@@ -13,10 +13,11 @@ import type { PostSummary } from '../api'
 
 const post: PostSummary = {
   path: 'inbox/markdown-syntax',
-  name: 'markdown-syntax',
   title: 'H1',                    // title comes from the first H1 of the body
+  date: '',
   tags: ['markdown', 'reference'],
   summary: 'Headings, lists, code, links — the essentials.',
+  size: 0,
   mtime: 0,
 }
 

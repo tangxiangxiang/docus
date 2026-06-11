@@ -195,6 +195,7 @@ app.patch('/api/folders/*', async (c) => {
 
   const body = await c.req.json().catch(() => null) as { newPath?: string } | null
   if (!body || typeof body.newPath !== 'string') return bad(c, 'newPath required')
+  const newPath = body.newPath
   // Validate: newPath parent must match srcPath parent, only last segment differs.
   const srcParent = path.dirname(srcPath)
   const newParent = path.dirname(body.newPath)
@@ -204,7 +205,7 @@ app.patch('/api/folders/*', async (c) => {
   if (await exists(dest)) return bad(c, 'destination exists', 409)
   await fs.rename(src, dest)
   // Collect affected file paths for client cache refresh.
-  const moved = await listSubtreePaths(CONTENT_DIR, body.newPath)
+  const moved = await listSubtreePaths(CONTENT_DIR, newPath)
   // Update the link index. We need the OLD subtree paths (to apply
   // delete) and the NEW subtree paths + raws (to apply write with
   // the new source-dir for resolution).
@@ -212,7 +213,7 @@ app.patch('/api/folders/*', async (c) => {
     const idx = await getLinkIndex()
     const oldPaths = await listSubtreePaths(CONTENT_DIR, srcPath)
     const pairs = await Promise.all(moved.map(async (newPath) => {
-      const oldPath = srcPath + newPath.slice(body.newPath.length)
+      const oldPath = srcPath + newPath.slice(newPath.length)
       const newRaw = await fs.readFile(filePathFor(newPath), 'utf8')
       return { oldPath, newPath, newRaw }
     }))

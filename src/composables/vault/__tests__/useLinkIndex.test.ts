@@ -3,7 +3,7 @@
 // global.fetch so the test exercises the full refresh + bus
 // debounce flow without hitting the network.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { defineComponent, h, nextTick } from 'vue'
+import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 import {
   getLinkIndex,

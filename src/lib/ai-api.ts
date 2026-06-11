@@ -74,7 +74,11 @@ export type ChatEvent =
 
 async function jsonOrThrow<T>(r: Response): Promise<T> {
   if (!r.ok) {
-    const body = await r.json().catch(() => ({ error: r.statusText }))
+    // The success path is strongly typed (Promise<T>); the failure path
+    // reads `body.error` from whatever the server returned. We don't
+    // have a schema for error bodies, so cast to the loose shape we
+    // actually consume.
+    const body = (await r.json().catch(() => ({ error: r.statusText }))) as { error?: string }
     throw Object.assign(new Error(body.error ?? `HTTP ${r.status}`), { status: r.status, body })
   }
   return r.json() as Promise<T>

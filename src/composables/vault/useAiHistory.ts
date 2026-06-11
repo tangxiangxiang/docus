@@ -19,7 +19,7 @@
 // the editor can refresh any open tab.
 import { ref, type Ref } from 'vue'
 import * as api from '../../lib/ai-api.js'
-import type { Session, Message, ChatEvent, AssistantBlocks, ToolCallRecord } from '../../lib/ai-api.js'
+import type { Session, Message, ChatEvent, ToolCallRecord } from '../../lib/ai-api.js'
 import { streamChat } from '../../lib/ai-api.js'
 import { publishFileChange } from './useFileChangeBus.js'
 

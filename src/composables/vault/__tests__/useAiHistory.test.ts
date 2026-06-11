@@ -9,9 +9,11 @@ import { useAiHistory, __resetForTesting, type AiHistory } from '../useAiHistory
 
 interface Harness {
   activeSession: Ref<{ id: number; title: string; createdAt: number; updatedAt: number } | null>
-  messages: Ref<{ id: number; sessionId: number; role: 'user' | 'assistant'; content: string; createdAt: number }[]>
+  messages: Ref<{ id: number; sessionId: number; role: 'user' | 'assistant'; content: string; createdAt: number; blocks?: { v: 1; text: string; toolCalls: { id: string; name: string; input: Record<string, unknown>; result: { content: string; is_error: boolean } }[] } }[]>
   sessions: Ref<{ id: number; title: string; createdAt: number; updatedAt: number }[]>
   isLoading: Ref<boolean>
+  busy: Ref<boolean>
+  errorState: Ref<string | null>
   api: AiHistory
 }
 

@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import fsSync from 'node:fs'
 import path from 'node:path'
 import matter from 'gray-matter'
 import { CONTENT_DIR } from './paths.js'
@@ -15,15 +16,16 @@ async function* walk(
   dir: string,
   prefix: string,
 ): AsyncGenerator<{ abs: string; rel: string; isDir: boolean }> {
-  let entries: Awaited<ReturnType<typeof fs.readdir>>
+  let entries: import('node:fs').Dirent[]
   try {
     entries = await fs.readdir(dir, { withFileTypes: true })
   } catch {
     return
   }
   for (const entry of entries) {
-    const abs = path.join(dir, entry.name)
-    const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+    const name = entry.name.toString()
+    const abs = path.join(dir, name)
+    const rel = prefix ? `${prefix}/${name}` : name
     if (entry.isDirectory()) {
       yield { abs, rel, isDir: true }
       yield* walk(abs, rel)
@@ -50,7 +52,6 @@ function readFrontmatter(file: string): { tags: string[]; firstHeading: string |
   // the content anyway. Returning defaults on any parse error keeps the list
   // endpoint resilient to a single corrupt file.
   try {
-    const fsSync = require('node:fs') as typeof import('node:fs')
     const text = fsSync.readFileSync(file, 'utf8')
     const parsed = matter(text)
     const tags = Array.isArray(parsed.data.tags)
@@ -63,7 +64,7 @@ function readFrontmatter(file: string): { tags: string[]; firstHeading: string |
   }
 }
 
-function titleFromFile(file: string, fallback: string, firstHeading: string | null): string {
+function titleFromFile(_file: string, fallback: string, firstHeading: string | null): string {
   if (firstHeading) return firstHeading
   return fallback
 }
