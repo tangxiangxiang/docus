@@ -172,6 +172,15 @@ function updateCard(index: number, patch: Partial<Card>) {
 function removeCard(index: number) {
   if (review.phase.value.kind !== 'review') return
   review.phase.value.cards.splice(index, 1)
+  // Rebuild `selected` to match the surviving indices. Without
+  // this, indices ≥ the removed one are stale and would point at
+  // the wrong cards (the watcher on phase.kind doesn't re-fire on
+  // a splice because `kind` doesn't change).
+  selected.value = new Set(
+    [...selected.value]
+      .filter((i) => i !== index)
+      .map((i) => (i > index ? i - 1 : i))
+  )
   // If we just removed the last card, drop back to chat. The
   // empty-state UX: the 写入 button is disabled, but a cardless
   // review state is a weird dead-end so we close it.
@@ -190,6 +199,10 @@ function addBlankCard() {
     source: path,
     splitMode: mode,
   })
+  // The new card defaults to selected. The phase.kind watcher
+  // doesn't re-fire on push, so we update `selected` directly.
+  const newIndex = review.phase.value.cards.length - 1
+  selected.value = new Set([...selected.value, newIndex])
 }
 
 // `selected` is a Set<number> of card indices. We keep it as a
