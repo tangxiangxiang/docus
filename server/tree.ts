@@ -45,26 +45,65 @@ function nameFromPath(p: string): string {
   return p.split('/').pop()!
 }
 
-function readFrontmatter(file: string): { tags: string[]; firstHeading: string | null } {
+export function readFrontmatter(file: string): {
+  tags: string[]
+  firstHeading: string | null
+  title: string | null
+  created: string | null
+  updated: string | null
+} {
   // Sync read is fine here — files are small and this only runs in tree-builder paths.
-  // We use this for the cheap frontmatter fields (tags) and the first H1 — the
-  // full gray-matter parse is reserved for the single-file GET where we have
-  // the content anyway. Returning defaults on any parse error keeps the list
-  // endpoint resilient to a single corrupt file.
+  // We use this for the cheap frontmatter fields (tags, title, created, updated) and the
+  // first H1 — the full gray-matter parse is reserved for the single-file GET
+  // where we have the content anyway. Returning defaults on any parse error
+  // keeps the list endpoint resilient to a single corrupt file.
   try {
     const text = fsSync.readFileSync(file, 'utf8')
     const parsed = matter(text)
     const tags = Array.isArray(parsed.data.tags)
       ? (parsed.data.tags as unknown[]).filter((t): t is string => typeof t === 'string')
       : []
+    const rawTitle = parsed.data.title
+    const title = typeof rawTitle === 'string' && rawTitle.trim() ? rawTitle.trim() : null
+    // `created` is the new name; fall back to legacy `date` for older notes
+    // that haven't been migrated. Both are optional. YAML parses unquoted
+    // `YYYY-MM-DD` as a Date, so we handle that case too — round-trip
+    // via toISOString gives us a stable `YYYY-MM-DD` string.
+    const rawCreated = parsed.data.created ?? parsed.data.date
+    let created: string | null = null
+    if (typeof rawCreated === 'string' && rawCreated.trim()) {
+      created = rawCreated.trim()
+    } else if (rawCreated instanceof Date && !isNaN(rawCreated.getTime())) {
+      created = rawCreated.toISOString().slice(0, 10)
+    }
+    // `updated` is the last-content-save date the server maintains in the
+    // frontmatter (see server/frontmatter.ts). New files get it on create;
+    // existing files may not have it yet — callers should fall back to
+    // filesystem mtime when this is null.
+    const rawUpdated = parsed.data.updated
+    let updated: string | null = null
+    if (typeof rawUpdated === 'string' && rawUpdated.trim()) {
+      updated = rawUpdated.trim()
+    } else if (rawUpdated instanceof Date && !isNaN(rawUpdated.getTime())) {
+      updated = rawUpdated.toISOString().slice(0, 10)
+    }
     const m = /^#\s+(.+)$/m.exec(text)
-    return { tags, firstHeading: m ? m[1].trim() : null }
+    return { tags, firstHeading: m ? m[1].trim() : null, title, created, updated }
   } catch {
-    return { tags: [], firstHeading: null }
+    return { tags: [], firstHeading: null, title: null, created: null, updated: null }
   }
 }
 
-function titleFromFile(_file: string, fallback: string, firstHeading: string | null): string {
+function titleFromFile(
+  _file: string,
+  fallback: string,
+  firstHeading: string | null,
+  fmTitle: string | null,
+): string {
+  // Resolution order: frontmatter.title → body's first H1 → filename.
+  // Keeps the file tree in sync with the editor tab title (see
+  // useEditorTabs.ts) and the H1 fallback in useMarkdownRender.ts.
+  if (fmTitle) return fmTitle
   if (firstHeading) return firstHeading
   return fallback
 }
@@ -82,8 +121,12 @@ export async function listPostsFlat(
     const fm = readFrontmatter(entry.abs)
     out.push({
       path: p,
-      title: titleFromFile(entry.abs, name, fm.firstHeading),
-      date: '',
+      title: titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
+      created: fm.created ?? '',
+      // Frontmatter `updated` is the source of truth (set by the server on
+      // each save). Files that don't have it yet — typically never-saved
+      // notes from before this field existed — fall back to mtime.
+      updated: fm.updated ?? new Date(stat.mtimeMs).toISOString().slice(0, 10),
       tags: fm.tags,
       size: stat.size,
       mtime: stat.mtimeMs,
@@ -159,7 +202,7 @@ export async function buildTree(
         kind: 'file',
         name,
         path: p,
-        title: titleFromFile(entry.abs, name, fm.firstHeading),
+        title: titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
         mtime: stat.mtimeMs,
       })
     }

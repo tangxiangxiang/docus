@@ -40,7 +40,8 @@ describe('FileTree drag-move (sub-documents)', () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
       path: 'inbox/test1',
       title: 'test1',
-      date: '',
+      created: '',
+      updated: '',
       tags: [],
       size: 0,
       mtime: 0,
@@ -77,7 +78,7 @@ describe('FileTree drag-move (sub-documents)', () => {
 
   it('still blocks moves into zettel (permanent notes are read-only)', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'zettel/test1', title: 'test1', date: '', tags: [], size: 0, mtime: 0,
+      path: 'zettel/test1', title: 'test1', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
@@ -109,7 +110,7 @@ describe('FileTree drag-move (sub-documents)', () => {
 
   it('blocks moves of a protected root itself (cannot re-parent inbox)', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'literature/inbox', title: 'inbox', date: '', tags: [], size: 0, mtime: 0,
+      path: 'literature/inbox', title: 'inbox', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()

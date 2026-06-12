@@ -1,12 +1,15 @@
 // Smoke test: hit the AI sub-router through the real `app` to
 // confirm server/index.ts mounts it correctly at /api/ai. This
 // test does NOT mock getDb, so the first request creates
-// ./data/docus.db on disk; we clean it up in afterAll so the
-// repo's working tree stays clean.
-import { describe, it, expect, afterAll, beforeEach, afterEach, vi } from 'vitest'
+// ./data/docus.db on disk; we wipe the data dir before the file's
+// first test (a previous run may have left session rows behind)
+// and again after the file's last test so the repo's working tree
+// stays clean.
+import { describe, it, expect, afterAll, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import app from '../index'
+import { __resetDbForTesting } from '../db'
 
 vi.mock('../ai/chat', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../ai/chat')>()
@@ -24,10 +27,20 @@ vi.mock('../ai/chat', async (importOriginal) => {
 const DATA_DIR = path.resolve(process.cwd(), 'data')
 
 describe('app mounts /api/ai', () => {
+  beforeAll(async () => {
+    // A previous run may have left session rows in ./data/docus.db
+    // (e.g. the test was killed before afterAll ran). Reset both
+    // the cached connection and the on-disk file so the first
+    // assertion in this file starts from a clean slate.
+    __resetDbForTesting()
+    await fs.rm(DATA_DIR, { recursive: true, force: true })
+  })
+
   afterAll(async () => {
     // Tear down the on-disk DB that the first request created.
     // The data/ dir is gitignored, but we still want it gone so
     // the next test run starts clean.
+    __resetDbForTesting()
     await fs.rm(DATA_DIR, { recursive: true, force: true })
   })
 

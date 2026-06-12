@@ -1,7 +1,13 @@
 export interface PostSummary {
   path: string            // e.g. "hello-world" or "notes/draft" or "archive/2024/old" — relative to src/content/, no implicit prefix
   title: string
-  date: string
+  /** Frontmatter `created` field (YYYY-MM-DD, UTC). Falls back to the
+   *  legacy `date` field for older notes; empty string if neither is set. */
+  created: string
+  /** File mtime formatted as YYYY-MM-DD in UTC. Same source as `mtime`
+   *  (the canonical ms-since-epoch integer) but human-readable for
+   *  archive views. */
+  updated: string
   tags: string[]
   summary?: string
   size: number

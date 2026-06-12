@@ -78,3 +78,18 @@ export function getDb(): DatabaseT {
   applyMigrations(_db)
   return _db
 }
+
+/**
+ * Test-only escape hatch: close the cached connection and forget it
+ * so the next `getDb()` opens a fresh one. Use this in test
+ * `beforeAll`/`beforeEach` after deleting the on-disk file so the
+ * cached handle doesn't survive the rm. The on-disk file is NOT
+ * deleted by this function — callers that want a clean slate should
+ * `fs.rm(DATA_DIR, { recursive: true, force: true })` as well.
+ */
+export function __resetDbForTesting(): void {
+  if (_db) {
+    _db.close()
+    _db = null
+  }
+}

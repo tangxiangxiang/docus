@@ -335,7 +335,8 @@ describe('live tabs publish', () => {
       'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
       'PUT /api/posts/a': (body) => {
         putBody = body as { raw: string }
-        return { path: 'a', title: 'A', date: '', tags: [], size: 1, mtime: 0 }
+        // Server echoes the post-bump raw; mock returns the same shape.
+        return { ok: true, raw: putBody.raw }
       },
     }))
     const h = await setup()
@@ -384,7 +385,7 @@ describe('live tabs publish', () => {
       'GET /api/tree': () => [],
       'GET /api/posts': () => [],
       'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
-      'PUT /api/posts/a': () => { putCount++; return { path: 'a', title: 'A', date: '', tags: [], size: 1, mtime: 0 } },
+      'PUT /api/posts/a': () => { putCount++; return { ok: true, raw: 'A3' } },
     }))
     const h = await setup()
     await h.openPost('a')
@@ -435,7 +436,7 @@ describe('live tabs publish', () => {
       'GET /api/tree': () => [],
       'GET /api/posts': () => [],
       'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
-      'PUT /api/posts/a': () => { saved++; return { path: 'a', title: 'A', date: '', tags: [], size: 1, mtime: 0 } },
+      'PUT /api/posts/a': () => { saved++; return { ok: true, raw: 'A modified' } },
     }))
     const h = await setup()
     await h.openPost('a')
@@ -504,7 +505,7 @@ describe('live tabs publish', () => {
       'GET /api/posts/new-note': () => ({ path: 'new-note', raw: '', content: '', frontmatter: {}, size: 0, mtime: 0 }),
       'POST /api/posts': (body) => {
         created = body as { path: string; title?: string }
-        return { path: 'new-note', title: 'New Note', date: '', tags: [], size: 0, mtime: 0 }
+        return { path: 'new-note', title: 'New Note', created: '', updated: '', tags: [], size: 0, mtime: 0 }
       },
     }))
     const h = await setup()

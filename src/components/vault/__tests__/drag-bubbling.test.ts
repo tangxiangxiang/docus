@@ -97,7 +97,7 @@ describe('FileTree full drag flow (with bubbling)', () => {
   it('end-to-end: dragging markdown-syntax onto test results in the right PATCH', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
       path: 'inbox/test/markdown-syntax', title: 'markdown-syntax',
-      date: '', tags: [], size: 0, mtime: 0,
+      created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()

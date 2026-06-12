@@ -62,7 +62,7 @@ describe('FileTree rename collision (file and folder share a path)', () => {
   it('renaming the FILE calls patchPost, not renameFolder (does not rename the sibling folder)', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
       path: 'inbox/notes-v2', title: 'notes-v2',
-      date: '', tags: [], size: 0, mtime: 0,
+      created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
     const renameFolderSpy = vi.spyOn(api, 'renameFolder')
 

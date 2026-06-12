@@ -30,6 +30,60 @@ describe('listPostsFlat', () => {
       'notes/draft',
     ])
   })
+
+  it('reads `created` from frontmatter and falls back to mtime for `updated`', async () => {
+    // File has no `updated` in frontmatter — covers the migration case
+    // for notes that were never saved through the API.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tree-dates-'))
+    const file = path.join(dir, 'stub.md')
+    await fs.writeFile(
+      file,
+      '---\ntitle: Dated\ncreated: 2026-01-15\n---\n\nBody\n',
+    )
+    // Pin mtime so the formatted `updated` is deterministic
+    const mtimeMs = Date.UTC(2026, 2, 20, 12, 0, 0)
+    await fs.utimes(file, mtimeMs / 1000, mtimeMs / 1000)
+
+    const posts = await listPostsFlat(dir)
+    expect(posts).toHaveLength(1)
+    expect(posts[0]!.created).toBe('2026-01-15')
+    expect(posts[0]!.updated).toBe('2026-03-20')
+    expect(posts[0]!.mtime).toBe(mtimeMs)
+
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
+  it('reads `updated` from frontmatter when present, ignoring mtime', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tree-fm-updated-'))
+    const file = path.join(dir, 'stub.md')
+    await fs.writeFile(
+      file,
+      '---\ntitle: Dated\ncreated: 2026-01-15\nupdated: 2026-02-10\n---\n\nBody\n',
+    )
+    // mtime set to something completely different from `updated` —
+    // the frontmatter value should win.
+    const mtimeMs = Date.UTC(2030, 0, 1, 0, 0, 0)
+    await fs.utimes(file, mtimeMs / 1000, mtimeMs / 1000)
+
+    const posts = await listPostsFlat(dir)
+    expect(posts[0]!.created).toBe('2026-01-15')
+    expect(posts[0]!.updated).toBe('2026-02-10')
+    expect(posts[0]!.mtime).toBe(mtimeMs)
+
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
+  it('falls back to legacy `date` field for back-compat', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tree-legacy-'))
+    await fs.writeFile(
+      path.join(dir, 'old.md'),
+      '---\ntitle: Old\ndate: 2025-12-01\n---\n\nBody\n',
+    )
+    const posts = await listPostsFlat(dir)
+    expect(posts).toHaveLength(1)
+    expect(posts[0]!.created).toBe('2025-12-01')
+    await fs.rm(dir, { recursive: true, force: true })
+  })
 })
 
 describe('buildTree', () => {
@@ -77,6 +131,24 @@ describe('buildTree', () => {
     expect(tree).toEqual([
       { kind: 'folder', name: 'content', path: '', children: [] },
     ])
+  })
+
+  it('prefers frontmatter.title over the first H1 and the filename', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tree-fm-'))
+    await fs.writeFile(
+      path.join(dir, 'stub.md'),
+      '---\ntitle: Display Title\n---\n\n# Body Heading\n',
+    )
+    const posts = await listPostsFlat(dir)
+    expect(posts).toHaveLength(1)
+    expect(posts[0]!.title).toBe('Display Title')
+
+    const tree = await buildTree(dir)
+    const file = tree[0]!.children[0]!
+    expect(file.kind).toBe('file')
+    if (file.kind === 'file') expect(file.title).toBe('Display Title')
+
+    await fs.rm(dir, { recursive: true, force: true })
   })
 })
 

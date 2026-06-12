@@ -31,7 +31,8 @@ const SAMPLE_POSTS: PostSummary[] = [
   {
     path: 'inbox/markdown-syntax',
     title: 'Markdown syntax',
-    date: '',
+    created: '',
+  updated: '',
     tags: ['markdown', 'reference'],
     size: 100,
     mtime: 0,
@@ -39,7 +40,8 @@ const SAMPLE_POSTS: PostSummary[] = [
   {
     path: 'inbox/typescript-utility-types',
     title: 'TS utility types',
-    date: '',
+    created: '',
+  updated: '',
     tags: ['typescript', 'reference'],
     size: 100,
     mtime: 0,
@@ -47,7 +49,8 @@ const SAMPLE_POSTS: PostSummary[] = [
   {
     path: 'zettel/derivation',
     title: 'Derivation',
-    date: '',
+    created: '',
+  updated: '',
     tags: ['math'],
     size: 100,
     mtime: 0,

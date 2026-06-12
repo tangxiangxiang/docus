@@ -217,6 +217,11 @@ export function useEditorTabs(opts: {
     }
     tab.saveStatus = 'saving'
     tab.error = null
+    // Capture the version we sent so we can tell on response whether
+    // the user kept typing during the PUT round-trip. If so, their
+    // latest keystrokes win and we DON'T overwrite with the server's
+    // bumped raw (which would lose those keystrokes).
+    const sentVersion = tab.raw
     try {
       const r = await fetch('/api/posts/' + encodeURI(path), {
         method: 'PUT',
@@ -224,7 +229,19 @@ export function useEditorTabs(opts: {
         body: JSON.stringify({ raw: tab.raw }),
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      tab.originalRaw = tab.raw
+      const data = (await r.json()) as { ok: true; raw: string }
+      if (tab.raw === sentVersion) {
+        // No keystrokes landed during the round-trip — adopt the
+        // server's bumped version (which now has the new `updated:`
+        // line) so the editor's frontmatter matches the on-disk file.
+        tab.raw = data.raw
+        tab.originalRaw = data.raw
+      } else {
+        // The user kept typing. Their buffer is the source of truth;
+        // just mark it as the new saved baseline. The next debounced
+        // save will pick up the bumped `updated:` on disk.
+        tab.originalRaw = tab.raw
+      }
       tab.saveStatus = 'saved'
       await refresh()
       // refresh() repopulates `posts` with current mtimes; pick up

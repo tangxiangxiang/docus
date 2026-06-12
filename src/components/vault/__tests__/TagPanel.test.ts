@@ -10,10 +10,10 @@ import TagPanel from '../TagPanel.vue'
 import type { PostSummary } from '../../../lib/api'
 
 const POSTS: PostSummary[] = [
-  { path: 'inbox/markdown-syntax',     title: 'Markdown syntax',     date: '', tags: ['markdown', 'reference'], size: 100, mtime: 0 },
-  { path: 'inbox/typescript-utility-types', title: 'TS utility types', date: '', tags: ['typescript', 'reference'], size: 100, mtime: 0 },
-  { path: 'zettel/derivation',         title: 'Derivation',          date: '', tags: ['math'],                    size: 100, mtime: 0 },
-  { path: 'inbox/notes/draft',         title: 'Draft',               date: '', tags: ['reference', 'draft'],      size: 100, mtime: 0 },
+  { path: 'inbox/markdown-syntax',     title: 'Markdown syntax',     created: '', updated: '', tags: ['markdown', 'reference'], size: 100, mtime: 0 },
+  { path: 'inbox/typescript-utility-types', title: 'TS utility types', created: '', updated: '', tags: ['typescript', 'reference'], size: 100, mtime: 0 },
+  { path: 'zettel/derivation',         title: 'Derivation',          created: '', updated: '', tags: ['math'],                    size: 100, mtime: 0 },
+  { path: 'inbox/notes/draft',         title: 'Draft',               created: '', updated: '', tags: ['reference', 'draft'],      size: 100, mtime: 0 },
 ]
 
 function mountPanel(props: { activeTags?: string[]; path?: string | null; posts?: PostSummary[] } = {}) {

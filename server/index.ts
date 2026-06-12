@@ -3,8 +3,9 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import matter from 'gray-matter'
 import { filePathFor, folderPathFor, CONTENT_DIR } from './paths.js'
-import { listPostsFlat, buildTree, listSubtreePaths } from './tree.js'
+import { listPostsFlat, buildTree, listSubtreePaths, readFrontmatter } from './tree.js'
 import { getIndex as getLinkIndex } from './linkIndex.js'
+import { bumpUpdatedInFrontmatter } from './frontmatter.js'
 import aiRoutes from './ai/routes.js'
 import type { PostSummary, PostDetail } from '../src/lib/api.js'
 
@@ -49,8 +50,10 @@ app.post('/api/posts', async (c) => {
   await fs.mkdir(path.dirname(abs), { recursive: true })
   const title = body.title ?? body.path.split('/').pop()!
   const today = new Date().toISOString().slice(0, 10)
-  const slug = title.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
-  const body_text = `---\ntitle: ${title}\ndate: ${today}\ntags: []\nslug: ${slug}\n---\n\n# ${title}\n`
+  // No `slug:` field on purpose: the file's relative path under src/content/
+  // is the canonical access path. Writing a derived slug here would just
+  // duplicate it and risk drifting from the actual file location.
+  const body_text = `---\ntitle: ${title}\ncreated: ${today}\nupdated: ${today}\ntags: []\n---\n\n# ${title}\n`
   await fs.writeFile(abs, body_text, 'utf8')
   // Update the link index AFTER the disk write succeeds. Best-effort:
   // a failure here just leaves a stale entry; the next rebuild fixes it.
@@ -62,7 +65,8 @@ app.post('/api/posts', async (c) => {
   return c.json({
     path: body.path,
     title,
-    date: today,
+    created: today,
+    updated: today,
     tags: [],
     size: st.size,
     mtime: st.mtimeMs,
@@ -70,6 +74,15 @@ app.post('/api/posts', async (c) => {
 })
 
 // PUT a file (save raw content). Body: { raw: string }
+// The server bumps the frontmatter `updated` field on every save so
+// the field stays useful as a "last content edit" date that survives
+// renames, sync, and external editor saves. Body content is preserved
+// verbatim — only the `updated:` line in the frontmatter changes.
+//
+// The response carries the post-bump `raw` so the client can refresh
+// its editor buffer to match what's now on disk. Without this, the
+// editor's `tab.raw` would keep showing the user's pre-bump version
+// (with the old `updated:` line) until they manually reload.
 app.put('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
   let abs: string
@@ -77,12 +90,14 @@ app.put('/api/posts/*', async (c) => {
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const body = await c.req.json().catch(() => null) as { raw?: string } | null
   if (!body || typeof body.raw !== 'string') return bad(c, 'raw required')
-  await fs.writeFile(abs, body.raw, 'utf8')
+  const today = new Date().toISOString().slice(0, 10)
+  const bumped = bumpUpdatedInFrontmatter(body.raw, today)
+  await fs.writeFile(abs, bumped, 'utf8')
   try {
     const idx = await getLinkIndex()
-    idx.applyWrite(splat, body.raw)
+    idx.applyWrite(splat, bumped)
   } catch { /* ignore */ }
-  return c.json({ ok: true })
+  return c.json({ ok: true, raw: bumped })
 })
 
 // PATCH a file: rename within folder (name) or move (targetPath). Exactly one.
@@ -122,16 +137,21 @@ app.patch('/api/posts/*', async (c) => {
   // Update the link index AFTER the rename succeeds. Read the new
   // content so the new path's outbound links are extracted against
   // the post-rename state of the world.
+  const st = await fs.stat(dest)
+  const fm = readFrontmatter(dest)
   try {
     const idx = await getLinkIndex()
     const newRaw = await fs.readFile(dest, 'utf8')
     idx.applyRename(srcPath, destPath, newRaw)
   } catch { /* ignore */ }
-  const st = await fs.stat(dest)
   return c.json({
     path: destPath,
     title: destPath.split('/').pop()!,
-    date: '',
+    created: fm.created ?? '',
+    // Rename doesn't touch content, so the frontmatter `updated` is
+    // unchanged. Fall back to mtime for files that haven't been
+    // saved through the API yet (and so don't have the field).
+    updated: fm.updated ?? new Date(st.mtimeMs).toISOString().slice(0, 10),
     tags: [],
     size: st.size,
     mtime: st.mtimeMs,

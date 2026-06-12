@@ -1,8 +1,9 @@
 ---
 title: TypeScript utility types I use most
-date: "2026-01-05"
+created: "2026-01-05"
 tags: [typescript, reference]
 summary: Partial, Pick, Omit, Readonly, Record — the workhorses.
+updated: 2026-06-12
 ---
 
 - `Partial<T>` — all properties optional

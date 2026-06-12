@@ -34,7 +34,7 @@ describe('FileTree inline rename (Enter + blur double-fire)', () => {
   it('committing a rename via Enter does NOT double-emit when the input is removed (the actual cause of "rename succeeded, toast says failed")', async () => {
     // Simulate the round-trip so the move is observable without a server.
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'inbox/final', title: 'final', date: '', tags: [], size: 0, mtime: 0,
+      path: 'inbox/final', title: 'final', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
 
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
