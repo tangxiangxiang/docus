@@ -24,7 +24,6 @@ import type {
   MessageParam,
   ToolUseBlock,
 } from '@anthropic-ai/sdk/resources/messages/messages'
-import type { NoteAttachment } from '../../src/lib/ai-api.js'
 import { ChatError } from './errors.js'
 import { streamClaude } from './llm.js'
 import { TOOL_DEFINITIONS, executeToolCall } from './tools.js'
@@ -57,13 +56,11 @@ const TOOLS_SECTION = `
 
 // System prompt only carries situational context — the *path* of
 // the note the user is reading, so the model knows what's on
-// screen and can use read_file if it wants to see more. The actual
-// note body only enters the conversation when the user explicitly
-// hits the 📎 toggle, which composes it into the user message
-// itself (see noteAttachment on the user message row). This keeps
-// the system prompt from silently bloatng on every turn and keeps
-// a long note from being silently truncated with no signal to the
-// user that it happened.
+// screen and can use read_file if it wants to see the body. The
+// body itself is not inlined (a long note would silently bloat
+// every turn, or worse, get silently truncated with no signal to
+// the user). The model uses the read_file tool to fetch content
+// on demand.
 export function buildSystemPrompt(ctx: {
   currentNotePath?: string
 }): string {
@@ -111,14 +108,6 @@ export type RunChatOpts = {
   // Nested `ctx` matches the original signature (and the route
   // layer in routes.ts that builds it from the request body).
   ctx: ChatContext
-  // Metadata for the "📎 attach current note" toggle. When the
-  // toggle is on, the client composes the user-content string with
-  // the note body inline (in an <attached_note> block, truncated
-  // at 20K codepoints with a marker) and we persist the same
-  // metadata here so the UI can render a truncation banner on
-  // history reload. Server-side this is just persistence; the
-  // model already saw the attached body in `userContent`.
-  noteAttachment?: NoteAttachment
   onEvent: (e: ChatEvent) => void | Promise<void>
 } & RunChatDeps
 
@@ -144,7 +133,6 @@ export async function runChat(opts: RunChatOpts): Promise<{
     opts.sessionId,
     'user',
     opts.userContent,
-    opts.noteAttachment,
   )
   if (!userResult.ok) {
     throw new ChatError('llm-error', `user persist failed: ${userResult.reason}`)

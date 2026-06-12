@@ -19,34 +19,9 @@ import * as messages from './messages.js'
 import { runChat, type ChatEvent } from './chat.js'
 import { ChatError } from './errors.js'
 import { resolveApiKey } from './llm.js'
-import type { NoteAttachment } from '../../src/lib/ai-api.js'
 
 function bad(c: any, msg: string, code = 400) {
   return c.json({ error: msg }, code)
-}
-
-// Defensive parser for the optional noteAttachment in the chat
-// request body. We only accept the well-formed shape; anything else
-// silently degrades to undefined so a bad client doesn't crash the
-// stream. The shape mirrors src/lib/ai-api.NoteAttachment exactly —
-// keep the two in sync.
-function parseNoteAttachment(raw: unknown): NoteAttachment | undefined {
-  if (!raw || typeof raw !== 'object') return undefined
-  const j = raw as Record<string, unknown>
-  if (
-    typeof j.path === 'string' &&
-    typeof j.truncated === 'boolean' &&
-    Number.isFinite(j.originalCodepoints) &&
-    Number.isFinite(j.attachedCodepoints)
-  ) {
-    return {
-      path: j.path,
-      truncated: j.truncated,
-      originalCodepoints: j.originalCodepoints as number,
-      attachedCodepoints: j.attachedCodepoints as number,
-    }
-  }
-  return undefined
 }
 
 const ai = new Hono()
@@ -137,7 +112,6 @@ ai.post('/chat', async (c) => {
         sessionId?: unknown
         content?: unknown
         currentNotePath?: unknown
-        noteAttachment?: unknown
       }
     | null
   if (
@@ -159,11 +133,6 @@ ai.post('/chat', async (c) => {
       const ctx = {
         currentNotePath: typeof body.currentNotePath === 'string' ? body.currentNotePath : undefined,
       }
-      // noteAttachment is optional client metadata. We only accept
-      // the well-formed shape (matches src/lib/ai-api.NoteAttachment)
-      // — anything else is silently dropped so a malformed request
-      // body doesn't crash the stream.
-      const noteAttachment = parseNoteAttachment(body.noteAttachment)
       const writeEvent = async (e: ChatEvent) => {
         switch (e.type) {
           case 'user':
@@ -220,7 +189,6 @@ ai.post('/chat', async (c) => {
         sessionId,
         userContent,
         ctx,
-        ...(noteAttachment ? { noteAttachment } : {}),
         model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
         signal: c.req.raw.signal,
         onEvent: writeEvent,

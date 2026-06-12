@@ -12,31 +12,7 @@
 // rehydrated for a follow-up turn — the matching tool_results user
 // turn is synthesized from the envelope (no need to persist it).
 import type { Database as DatabaseT } from 'better-sqlite3'
-import type { Message, NoteAttachment } from '../../src/lib/ai-api.js'
-
-// The note_attachment column is JSON; old rows and assistant rows are
-// NULL. Parsing is forgiving — a malformed blob just becomes
-// `undefined` rather than blowing up history load. The shape is
-// pinned in src/lib/ai-api.ts (NoteAttachment) and should be the
-// only place to look for what's valid.
-function parseNoteAttachment(raw: string | null): NoteAttachment | undefined {
-  if (!raw) return undefined
-  try {
-    const j = JSON.parse(raw)
-    if (
-      j &&
-      typeof j.path === 'string' &&
-      typeof j.truncated === 'boolean' &&
-      Number.isFinite(j.originalCodepoints) &&
-      Number.isFinite(j.attachedCodepoints)
-    ) {
-      return j as NoteAttachment
-    }
-  } catch {
-    // fall through
-  }
-  return undefined
-}
+import type { Message } from '../../src/lib/ai-api.js'
 
 function rowToMessage(r: any): Message {
   return {
@@ -45,7 +21,6 @@ function rowToMessage(r: any): Message {
     role: r.role,
     content: r.content,
     createdAt: r.created_at,
-    noteAttachment: parseNoteAttachment(r.note_attachment),
   }
 }
 
@@ -122,7 +97,7 @@ export function listMessages(db: DatabaseT, sessionId: number): Message[] | null
   const sess = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId)
   if (!sess) return null
   const rows = db.prepare(
-    'SELECT id, session_id, role, content, created_at, note_attachment FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC'
+    'SELECT id, session_id, role, content, created_at FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC'
   ).all(sessionId)
   return rows.map(rowToMessage)
 }
@@ -131,15 +106,11 @@ type AppendResult =
   | { ok: true; message: Message }
   | { ok: false; reason: 'not-found' | 'empty' | 'invalid-role' }
 
-// noteAttachment is only meaningful for user messages (the toggle
-// lives on the user-side composer). Passing it for an assistant row
-// is silently ignored — the column is left NULL.
 export function appendMessage(
   db: DatabaseT,
   sessionId: number,
   role: 'user' | 'assistant',
   content: string,
-  noteAttachment?: NoteAttachment,
 ): AppendResult {
   // Validation before the transaction so the no-op cases don't
   // open a write transaction at all.
@@ -157,19 +128,15 @@ export function appendMessage(
     if (!sess) return { ok: false as const, reason: 'not-found' as const }
 
     const now = Date.now()
-    // Store the metadata as JSON. NULL when not provided so the
-    // existing assistant rows stay slim.
-    const noteJson = role === 'user' && noteAttachment ? JSON.stringify(noteAttachment) : null
     const info = db.prepare(
-      'INSERT INTO messages (session_id, role, content, created_at, note_attachment) VALUES (?, ?, ?, ?, ?)'
-    ).run(sessionId, role, content, now, noteJson)
+      'INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)'
+    ).run(sessionId, role, content, now)
     const message: Message = {
       id: Number(info.lastInsertRowid),
       sessionId,
       role,
       content,
       createdAt: now,
-      noteAttachment: role === 'user' ? noteAttachment : undefined,
     }
 
     // Refresh updated_at. If this is the first user message in an

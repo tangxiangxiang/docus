@@ -22,23 +22,6 @@ export interface Message {
   // per-tool cards. The SSE stream does not set this — it streams
   // individual tool_use / tool_result events instead.
   blocks?: AssistantBlocks
-  // Set on user messages sent with the 📎 toggle on. Carries the
-  // original note path + size info so the UI can render a
-  // truncation banner above the user bubble, both during the
-  // in-flight turn and on history reload. The actual note body is
-  // already in `content` (in an <attached_note> block, truncated at
-  // 20K codepoints if needed).
-  noteAttachment?: NoteAttachment
-}
-
-// Metadata for the 📎 toggle on a user message. Pinned to the same
-// shape the server stores in `messages.note_attachment` — keep the
-// two in sync (see server/ai/messages.ts and server/ai/routes.ts).
-export interface NoteAttachment {
-  path: string
-  truncated: boolean
-  originalCodepoints: number
-  attachedCodepoints: number
 }
 
 // Structured representation of a tool-using assistant turn. Loaded
@@ -65,19 +48,10 @@ export interface ActiveSession {
 
 export interface ChatRequest {
   sessionId: number
-  // The fully-composed user content. When the 📎 toggle is on, the
-  // client has already inlined the current note into this string
-  // (in an <attached_note> block, truncated at 20K codepoints if
-  // needed). The server doesn't see the note body separately —
-  // there's no `currentNoteContent` field anymore.
   content: string
   // For the system prompt line "The user is currently reading: …".
   // The model can call read_file if it wants to see the body.
   currentNotePath?: string
-  // Per-message metadata. When present, the server persists it
-  // alongside the user message row so history reload can rehydrate
-  // the truncation banner.
-  noteAttachment?: NoteAttachment
 }
 
 export type FileChangeKind = 'write' | 'delete' | 'rename'

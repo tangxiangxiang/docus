@@ -22,7 +22,6 @@ import * as api from '../../lib/ai-api.js'
 import type { Session, Message, ChatEvent, ToolCallRecord } from '../../lib/ai-api.js'
 import { streamChat } from '../../lib/ai-api.js'
 import { publishFileChange } from './useFileChangeBus.js'
-import { composeUserMessage } from './noteAttachment.js'
 
 export interface AiHistory {
   // state
@@ -42,10 +41,7 @@ export interface AiHistory {
   renameSession(id: number, title: string): Promise<void>
   deleteSession(id: number): Promise<void>
   sendMessage(content: string): Promise<void>
-  sendAndStream(
-    text: string,
-    opts?: { path?: string; content?: string; attach?: boolean },
-  ): Promise<void>
+  sendAndStream(text: string, opts?: { path?: string }): Promise<void>
   // Cancel the in-flight stream. No-op when nothing is running.
   // The AbortController lives in sendAndStream's closure so the
   // composable's singleton interface doesn't have to expose the
@@ -142,7 +138,7 @@ export function useAiHistory(): AiHistory {
 
   async function sendAndStream(
     text: string,
-    opts?: { path?: string; content?: string; attach?: boolean },
+    opts?: { path?: string },
   ): Promise<void> {
     const trimmed = text.trim()
     if (!trimmed) return
@@ -154,32 +150,14 @@ export function useAiHistory(): AiHistory {
     }
     const sessionId = activeSession.value.id
 
-    // Compose the final user message + attachment metadata up front.
-    // When the toggle is on, the note body is inlined into the
-    // user content as an <attached_note> block; the model sees it
-    // in the user message itself, not in the system prompt. When
-    // off, the user content is the verbatim typed text and
-    // noteAttachment is undefined (server skips the column).
-    const { userContent, noteAttachment } = composeUserMessage({
-      text: trimmed,
-      path: opts?.attach ? opts.path ?? '' : '',
-      content: opts?.attach ? opts.content ?? '' : '',
-    })
-
     // Optimistic insert: user message (id 0) + empty assistant (id 0).
     // Object identity is the in-flight discriminator (see spec §3.9).
-    // The user message shows the FULL composed text (including the
-    // attached note block) so the user sees exactly what was sent.
-    // noteAttachment is set immediately so the truncation banner
-    // appears on the optimistic bubble without waiting for the
-    // server's `user` event (which only carries the row id).
     const optimisticUser: Message = {
       id: 0,
       sessionId,
       role: 'user',
-      content: userContent,
+      content: trimmed,
       createdAt: Date.now(),
-      ...(noteAttachment ? { noteAttachment } : {}),
     }
     const optimisticAssistant: Message = {
       id: 0,
@@ -203,12 +181,11 @@ export function useAiHistory(): AiHistory {
       for await (const event of streamChat(
         {
           sessionId,
-          content: userContent,
-          // currentNotePath is still useful even with the toggle
-          // off — the system prompt mentions what's on screen, so
-          // the model knows it can use read_file if it wants to.
+          content: trimmed,
+          // currentNotePath is what populates the system-prompt
+          // line "The user is currently reading: …" so the model
+          // knows it can use read_file if it wants the body.
           currentNotePath: opts?.path,
-          ...(noteAttachment ? { noteAttachment } : {}),
         },
         ac.signal,
       )) {

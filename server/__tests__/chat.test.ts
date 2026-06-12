@@ -152,53 +152,6 @@ describe('runChat', () => {
     expect(systemArg).not.toContain(sentinel)
   })
 
-  it('persists noteAttachment on the user message when provided', async () => {
-    const db = freshDb()
-    const id = makeSession(db)
-    await runChat({
-      db, sessionId: id,
-      userContent: 'hi <attached_note path="zettel/note.md">body</attached_note>',
-      ctx: { currentNotePath: 'zettel/note.md' },
-      model: 'm', signal: undefined, onEvent: () => {},
-      noteAttachment: {
-        path: 'zettel/note.md',
-        truncated: true,
-        originalCodepoints: 35_000,
-        attachedCodepoints: 20_000,
-      },
-    })
-    const row = db.prepare(
-      'SELECT role, content, note_attachment FROM messages WHERE session_id = ? AND role = ?'
-    ).get(id, 'user') as { role: string; content: string; note_attachment: string }
-    expect(row.content).toContain('<attached_note path="zettel/note.md">')
-    expect(JSON.parse(row.note_attachment)).toEqual({
-      path: 'zettel/note.md',
-      truncated: true,
-      originalCodepoints: 35_000,
-      attachedCodepoints: 20_000,
-    })
-  })
-
-  it('does not write note_attachment on assistant messages', async () => {
-    const db = freshDb()
-    const id = makeSession(db)
-    await runChat({
-      db, sessionId: id, userContent: 'hi',
-      ctx: { currentNotePath: 'zettel/note.md' },
-      model: 'm', signal: undefined, onEvent: () => {},
-      // Defense: a caller passing noteAttachment at the top level
-      // must not have it leak onto the assistant row.
-      noteAttachment: {
-        path: 'zettel/note.md', truncated: false,
-        originalCodepoints: 1, attachedCodepoints: 1,
-      },
-    })
-    const row = db.prepare(
-      'SELECT note_attachment FROM messages WHERE session_id = ? AND role = ?'
-    ).get(id, 'assistant') as { note_attachment: string | null }
-    expect(row.note_attachment).toBeNull()
-  })
-
   it('forwards tools and tool_choice to streamClaude', async () => {
     const db = freshDb()
     const id = makeSession(db)
