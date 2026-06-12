@@ -163,7 +163,23 @@ function onTocClick(e: MouseEvent, id: string) {
      the freeze each time the observer would otherwise tick. */
   freezeActiveUntil = Date.now() + 800
   activeId.value = id
-  target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  /* Scroll the .reading-pane explicitly instead of letting
+     scrollIntoView cascade up the ancestor chain. When the body
+     is overflow:hidden but its content is 1-2px taller than the
+     viewport, scrollIntoView would otherwise set bodyScrollTop
+     and shift the entire layout under the sticky navbar — which
+     makes the active-tab bar visually disappear until the next
+     layout pass. Scrolling the reading-pane directly keeps the
+     body locked. */
+  const pane = readingPaneEl.value
+  if (pane) {
+    const paneRect = pane.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    const top = targetRect.top - paneRect.top + pane.scrollTop
+    pane.scrollTo({ top, behavior: 'smooth' })
+  } else {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
   /* Update the hash without triggering a navigation; a subsequent
      observer tick will set activeId to the clicked id. */
   if (history.replaceState) history.replaceState(null, '', `#${id}`)
