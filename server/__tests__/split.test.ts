@@ -6,7 +6,10 @@
 // under /api/ai — see how ai-routes.test.ts wires this up. We follow
 // that pattern: import the sub-router directly and call it with a
 // mock Request.
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
 import aiRoutes from '../ai/routes.js'
 
 // Stub the SDK so we don't need an API key in tests. The stub is
@@ -21,11 +24,42 @@ vi.mock('@anthropic-ai/sdk', () => {
   }
 })
 
+// Per-test temp dir for the source note. The happy-path test
+// historically read /Users/txx/docus/src/content/inbox/init.md off
+// the dev vault, which made it fragile (the test would fail in CI
+// or a clean clone where that file isn't seeded). Mocking
+// filePathFor to redirect into this temp dir makes the test
+// self-contained.
+//
+// `tmpRoot` is referenced inside the mock factory, which vitest
+// hoists above this assignment — but the factory is a function
+// that runs per-import, so it reads `tmpRoot` lazily. As long as
+// beforeEach assigns it before any test runs, this is safe.
+let tmpRoot: string
+
+vi.mock('../paths.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../paths.js')>()
+  return {
+    ...mod,
+    filePathFor: (p: string) => path.join(tmpRoot, p + '.md'),
+  }
+})
+
 // Stub the env so resolveApiKey() returns something — otherwise
 // runSplit short-circuits with 'no-api-key' before reaching the SDK.
-beforeEach(() => {
+beforeEach(async () => {
   process.env.ANTHROPIC_API_KEY = 'test-key'
   messagesCreate.mockReset()
+  // Create a temp content dir and seed the source note the
+  // happy-path test reads. filePathFor('inbox/init') is mocked to
+  // return tmpRoot/inbox/init.md, so we need to seed that file.
+  tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-split-test-'))
+  await fs.mkdir(path.join(tmpRoot, 'inbox'), { recursive: true })
+  await fs.writeFile(path.join(tmpRoot, 'inbox', 'init.md'), '# test\n', 'utf8')
+})
+
+afterEach(async () => {
+  await fs.rm(tmpRoot, { recursive: true, force: true })
 })
 
 // Helper: build a POST request with a JSON body.
