@@ -53,7 +53,14 @@ app.post('/api/posts', async (c) => {
   // No `slug:` field on purpose: the file's relative path under src/content/
   // is the canonical access path. Writing a derived slug here would just
   // duplicate it and risk drifting from the actual file location.
-  const body_text = `---\ntitle: ${title}\ncreated: ${today}\nupdated: ${today}\ntags: []\n---\n\n# ${title}\n`
+  //
+  // `summary: ''` is included as a placeholder so the line is visible in
+  // the editor and the user knows the field exists (the client search
+  // index ranks `summary` at boost=1). gray-matter parses the empty
+  // quoted value as '', which readFrontmatter treats as null and surfaces
+  // as `summary: ''` in the API response — same as a missing field, but
+  // the on-disk file is self-documenting.
+  const body_text = `---\ntitle: ${title}\ncreated: ${today}\nupdated: ${today}\ntags: []\nsummary: ''\n---\n\n# ${title}\n`
   await fs.writeFile(abs, body_text, 'utf8')
   // Update the link index AFTER the disk write succeeds. Best-effort:
   // a failure here just leaves a stale entry; the next rebuild fixes it.
