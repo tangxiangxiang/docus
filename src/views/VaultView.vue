@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, shallowRef, watch, computed } from 'vue'
+import { ref, inject, shallowRef, watch, computed, provide } from 'vue'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useSplitReview } from '../composables/vault/useSplitReview'
 import { splitNote, type SplitMode } from '../lib/ai-api'
@@ -45,6 +45,10 @@ const {
 } = useVaultLayout()
 
 const review = useSplitReview()
+// Provide the same instance to AiPanel so the tree-menu path
+// (this function) and the /split slash command (handled in
+// AiPanel) share state — the panel re-renders when we mutate.
+provide('splitReview', review)
 const toast = useToast()
 
 // Lives in VaultView (not the composable) so the string `ref="vaultRef"`
@@ -263,6 +267,8 @@ watch(() => navSearch?.tick.value, () => openSearch())
       v-if="aiOpen"
       class="ai-panel-slot"
       @close="toggleAi"
+      @split-request="splitCard"
+      @refresh-tree="refresh"
     />
 
     <StatusBar

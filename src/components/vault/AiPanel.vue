@@ -20,20 +20,29 @@
 // tool name, an icon, a status pill (ok / error / pending), and
 // the result text. read_file / list_files cards are collapsed by
 // default to keep the panel compact; the user can expand them.
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch, computed, inject } from 'vue'
 import { ICON_AI, ICON_HISTORY, ICON_NEW_CHAT } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useCurrentNote } from '../../composables/vault/useCurrentNote'
+import { useSplitReview } from '../../composables/vault/useSplitReview'
+import { writeDraftBatch, type Card, type SplitMode } from '../../lib/ai-api'
 import AiSessionPicker from './AiSessionPicker.vue'
 
 const emit = defineEmits<{
   close: []
+  'split-request': [path: string, mode: SplitMode]
+  'refresh-tree': []
 }>()
 
 const draft = ref('')
 const pickerOpen = ref(false)
 const history = useAiHistory()
 const currentNote = useCurrentNote()
+
+// Injected by VaultView. Default to a fresh local instance if the panel
+// ever renders without a provider (defensive — keeps the panel functional
+// in isolation, e.g. in a test harness).
+const review = inject<ReturnType<typeof useSplitReview> | null>('splitReview', null) ?? useSplitReview()
 
 // Per-card expanded state for read_file / list_files (which tend
 // to have long payloads). Other tools are always shown in full.
@@ -48,6 +57,15 @@ async function onSend() {
   if (!text) return
   if (history.busy.value) return
   if (!history.configured.value) return
+  // Slash commands are intercepted before the regular chat path so
+  // "/split inbox" doesn't go to Claude as a regular user message.
+  if (text.startsWith('/')) {
+    const handled = await trySlashCommand(text)
+    if (handled) {
+      draft.value = ''
+      return
+    }
+  }
   draft.value = '' // clear immediately for snappy UX
   await history.sendAndStream(text, {
     path: currentNote.path.value ?? '',
@@ -85,6 +103,37 @@ async function onNewSession() {
   await history.createSession()
 }
 
+// Lightweight slash command: if the user types "/split" (with or
+// without "inbox"/"literature" suffix) and the panel is not busy,
+// route to the same splitCard flow that the tree menu uses.
+//
+// We only handle the parsing here — the actual LLM call lives in
+// VaultView.splitCard, which the panel reaches by emitting a
+// 'split-request' event the parent listens for. The parent sets the
+// review state, the panel re-renders.
+async function trySlashCommand(text: string): Promise<boolean> {
+  const m = text.match(/^\/split(?:\s+(inbox|literature))?\s*$/i)
+  if (!m) return false
+  // Slash command: we don't have a path yet, so we ask the user
+  // which note to split by reading the currently active note.
+  // If no note is open, we surface a hint.
+  const path = currentNote.path.value
+  if (!path) return false
+  const explicitMode = (m[1]?.toLowerCase() as SplitMode | undefined)
+  // If the user passed an explicit mode, honor it. Otherwise infer
+  // from the path prefix — same rule the tree menu uses.
+  const mode: SplitMode = explicitMode
+    ?? (path.startsWith('literature/') ? 'literature' : 'inbox')
+  if (!path.startsWith('inbox/') && !path.startsWith('literature/')) {
+    return false
+  }
+  review.setLoading(path, mode)
+  // The actual fetch happens in VaultView's splitCard; we trigger
+  // it by emitting. The parent handles it.
+  emit('split-request', path, mode)
+  return true
+}
+
 // Inline SVG glyphs for each tool. Kept small and monochrome so
 // they pick up the surrounding text color via currentColor.
 const TOOL_ICONS: Record<string, string> = {
@@ -109,6 +158,98 @@ function truncateForCard(s: string): string {
 function toggleToolCard(id: string) {
   expandedToolCards[id] = !expandedToolCards[id]
 }
+
+// Card-edit handlers. The review surface uses v-model on each
+// field, so the handlers are simple: set, splice, push.
+
+function updateCard(index: number, patch: Partial<Card>) {
+  if (review.phase.value.kind !== 'review') return
+  const card = review.phase.value.cards[index]
+  if (!card) return
+  Object.assign(card, patch)
+}
+
+function removeCard(index: number) {
+  if (review.phase.value.kind !== 'review') return
+  review.phase.value.cards.splice(index, 1)
+  // If we just removed the last card, drop back to chat. The
+  // empty-state UX: the 写入 button is disabled, but a cardless
+  // review state is a weird dead-end so we close it.
+  if (review.phase.value.cards.length === 0) review.reset()
+}
+
+function addBlankCard() {
+  if (review.phase.value.kind !== 'review') return
+  const mode = review.phase.value.mode
+  const path = currentNote.path.value ?? 'inbox/unknown'
+  review.phase.value.cards.push({
+    title: '新卡片',
+    body: '',
+    tags: [],
+    slug: 'new-card',
+    source: path,
+    splitMode: mode,
+  })
+}
+
+// `selected` is a Set<number> of card indices. We keep it as a
+// local reactive Set (not part of the composable) because it's
+// purely UI state — the server doesn't care which cards are
+// selected, only which cards the user submitted.
+const selected = ref<Set<number>>(new Set())
+
+// Reset selection whenever we enter a new review (the cards are
+// new instances, so old indices don't apply).
+watch(() => review.phase.value, (p) => {
+  if (p.kind === 'review') {
+    selected.value = new Set(p.cards.map((_, i) => i))
+  } else {
+    selected.value = new Set()
+  }
+}, { immediate: true, deep: true })
+
+function toggleCard(index: number) {
+  if (selected.value.has(index)) selected.value.delete(index)
+  else selected.value.add(index)
+  selected.value = new Set(selected.value)
+}
+
+const writableCards = computed<Card[]>(() => {
+  if (review.phase.value.kind !== 'review') return []
+  return review.phase.value.cards.filter((_, i) => selected.value.has(i))
+})
+
+const writeStatus = ref<{ written: number; skipped: number; failed: number } | null>(null)
+
+async function onWrite() {
+  if (review.phase.value.kind !== 'review') return
+  if (writableCards.value.length === 0) return
+  writeStatus.value = null
+  try {
+    const res = await writeDraftBatch({ cards: writableCards.value })
+    writeStatus.value = {
+      written: res.written.length,
+      skipped: res.skipped.length,
+      failed: res.failed.length,
+    }
+    emit('refresh-tree')
+  } catch (err: any) {
+    writeStatus.value = { written: 0, skipped: 0, failed: writableCards.value.length }
+  }
+}
+
+// Whenever the review phase changes to 'review', initialize a
+// `tagsInput: string` field on each card so the v-model input
+// has a string to bind to. We do this in AiPanel (not the
+// composable) because the tags stringification is a UI detail
+// — the server only sees the array.
+watch(() => review.phase.value, (p) => {
+  if (p.kind === 'review') {
+    for (const card of p.cards) {
+      ;(card as any).tagsInput = card.tags.join(', ')
+    }
+  }
+}, { immediate: true, deep: true })
 </script>
 
 <template>
@@ -150,86 +291,195 @@ function toggleToolCard(id: string) {
       role="status"
     >AI not configured — set <code>ANTHROPIC_API_KEY</code> in the server environment.</div>
 
-    <div class="ai-messages" role="log" aria-live="polite">
-      <template v-if="history.messages.value.length === 0">
-        <div class="ai-message assistant">
-          <div class="ai-avatar" v-html="ICON_AI" aria-hidden="true" />
-          <div class="ai-bubble">
-            Hi, I'm your AI assistant. Ask me anything about this vault.
-          </div>
-        </div>
-      </template>
-      <template v-else>
-        <div
-          v-for="m in history.messages.value"
-          :key="m.id || `${m.sessionId}-${m.createdAt}`"
-          class="ai-message"
-          :class="[m.role, { 'ai-streaming': m.id === 0 || m.id === -1 }]"
+    <!-- Review surface: shown when useSplitReview.phase is 'review'.
+         The chat surface is hidden (not stacked) so the user isn't
+         looking at two parallel UIs. Closing the review drops back
+         to the chat surface exactly as it was. -->
+    <div
+      v-if="review.phase.value.kind === 'review'"
+      class="ai-review"
+      role="region"
+      aria-label="Split review"
+    >
+      <div class="ai-review-header">
+        <span class="ai-review-title">
+          ✂️ 拆分预览
+          <span class="ai-review-mode">· {{ review.phase.value.kind === 'review' ? review.phase.value.mode : '' }}</span>
+        </span>
+        <span class="ai-review-count">{{ writableCards.length }} / {{ review.phase.value.kind === 'review' ? review.phase.value.cards.length : 0 }} 选中</span>
+      </div>
+
+      <ul class="ai-review-list">
+        <li
+          v-for="(card, i) in (review.phase.value.kind === 'review' ? review.phase.value.cards : [])"
+          :key="i"
+          class="ai-review-card"
         >
-          <div
-            v-if="m.role === 'assistant'"
-            class="ai-avatar"
-            v-html="ICON_AI"
-            aria-hidden="true"
-          />
-          <div class="ai-bubble">
-            <div v-if="m.content" class="ai-text">{{ m.content }}</div>
-            <div
-              v-for="tc in m.blocks?.toolCalls ?? []"
-              :key="tc.id"
-              class="ai-tool-card"
-              :class="{ 'ai-tool-error': tc.result.is_error }"
-            >
-              <div class="ai-tool-header">
-                <span class="ai-tool-icon" v-html="iconForTool(tc.name)" aria-hidden="true" />
-                <span class="ai-tool-name">{{ tc.name }}</span>
-                <span v-if="tc.result.is_error" class="ai-tool-pill ai-tool-pill-error">error</span>
-                <span v-else-if="tc.result.content" class="ai-tool-pill ai-tool-pill-ok">ok</span>
-                <span v-else class="ai-tool-pill ai-tool-pill-pending">…</span>
-              </div>
-              <pre
-                v-if="tc.result.content && (tc.name === 'read_file' || tc.name === 'list_files') && !expandedToolCards[tc.id]"
-                class="ai-tool-result ai-tool-collapsed"
-              ><code>{{ truncateForCard(tc.result.content) }}</code></pre>
-              <pre
-                v-else-if="tc.result.content"
-                class="ai-tool-result"
-              ><code>{{ tc.result.content }}</code></pre>
-              <button
-                v-if="tc.result.content && (tc.name === 'read_file' || tc.name === 'list_files')"
-                type="button"
-                class="ai-tool-toggle"
-                @click="toggleToolCard(tc.id)"
-              >{{ expandedToolCards[tc.id] ? '收起' : '展开' }}</button>
-            </div>
+          <label class="ai-review-check">
+            <input
+              type="checkbox"
+              :checked="selected.has(i)"
+              @change="toggleCard(i)"
+            />
+          </label>
+          <div class="ai-review-fields">
+            <input
+              v-model="card.title"
+              class="ai-review-title-input"
+              placeholder="标题"
+              @input="updateCard(i, { title: ($event.target as HTMLInputElement).value })"
+            />
+            <input
+              v-model="card.slug"
+              class="ai-review-slug-input"
+              placeholder="slug"
+              :title="'将作为 zettel/draft/' + card.slug + '.md 的文件名'"
+              @input="updateCard(i, { slug: ($event.target as HTMLInputElement).value })"
+            />
+            <textarea
+              v-model="card.body"
+              class="ai-review-body"
+              rows="4"
+              placeholder="正文 (Markdown)"
+              @input="updateCard(i, { body: ($event.target as HTMLTextAreaElement).value })"
+            />
+            <input
+              v-model="(card as any).tagsInput"
+              class="ai-review-tags"
+              placeholder="tag, tag, tag"
+              @input="updateCard(i, { tags: (($event.target as HTMLInputElement).value).split(',').map((s) => s.trim()).filter(Boolean) })"
+            />
           </div>
-        </div>
-      </template>
+          <button
+            type="button"
+            class="ai-review-remove"
+            :aria-label="'删除卡片 ' + card.title"
+            @click="removeCard(i)"
+          >×</button>
+        </li>
+      </ul>
+
+      <div class="ai-review-actions">
+        <button
+          type="button"
+          class="ai-review-add"
+          @click="addBlankCard"
+        >+ 新增卡片</button>
+        <button
+          type="button"
+          class="ai-review-cancel"
+          @click="review.reset()"
+        >取消</button>
+        <button
+          type="button"
+          class="ai-review-write"
+          :disabled="writableCards.length === 0"
+          @click="onWrite"
+        >📥 写入 zettel/draft/</button>
+      </div>
+
+      <div v-if="writeStatus" class="ai-review-status" role="status">
+        ✓ 已写入 {{ writeStatus.written }} 张,
+        失败 {{ writeStatus.failed }} 张
+        <span v-if="writeStatus.failed > 0">(检查控制台)</span>
+      </div>
     </div>
 
-    <form class="ai-composer" @submit.prevent="onSend">
-      <div class="ai-composer-inner">
-        <textarea
-          v-model="draft"
-          class="ai-input"
-          rows="1"
-          placeholder="Ask Claude…"
-          aria-label="Ask Claude"
-          @keydown="onKeydown"
-        />
-        <button
-          class="ai-send"
-          :class="{ 'ai-send-busy': history.busy.value }"
-          type="button"
-          :title="history.busy.value ? 'Stop' : 'Send (Enter)'"
-          :aria-label="history.busy.value ? 'Stop' : 'Send'"
-          :disabled="!history.busy.value && (!draft.trim() || !history.configured.value)"
-          @click="onSendOrStop"
-        >{{ history.busy.value ? '■' : '↑' }}</button>
-      </div>
-    </form>
+    <template v-else>
+      <!-- Loading / error banner: shown above the chat surface so
+           the user gets feedback even if the chat is empty. -->
+      <div
+        v-if="review.phase.value.kind === 'loading'"
+        class="ai-review-banner"
+        role="status"
+      >✂️ 正在拆分为原子卡…</div>
+      <div
+        v-else-if="review.phase.value.kind === 'error'"
+        class="ai-review-banner ai-review-banner-error"
+        role="alert"
+      >{{ review.phase.value.reason }}</div>
 
-    <AiSessionPicker v-if="pickerOpen" @close="pickerOpen = false" />
+      <div class="ai-messages" role="log" aria-live="polite">
+        <template v-if="history.messages.value.length === 0">
+          <div class="ai-message assistant">
+            <div class="ai-avatar" v-html="ICON_AI" aria-hidden="true" />
+            <div class="ai-bubble">
+              Hi, I'm your AI assistant. Ask me anything about this vault.
+            </div>
+          </div>
+        </template>
+        <template v-else>
+          <div
+            v-for="m in history.messages.value"
+            :key="m.id || `${m.sessionId}-${m.createdAt}`"
+            class="ai-message"
+            :class="[m.role, { 'ai-streaming': m.id === 0 || m.id === -1 }]"
+          >
+            <div
+              v-if="m.role === 'assistant'"
+              class="ai-avatar"
+              v-html="ICON_AI"
+              aria-hidden="true"
+            />
+            <div class="ai-bubble">
+              <div v-if="m.content" class="ai-text">{{ m.content }}</div>
+              <div
+                v-for="tc in m.blocks?.toolCalls ?? []"
+                :key="tc.id"
+                class="ai-tool-card"
+                :class="{ 'ai-tool-error': tc.result.is_error }"
+              >
+                <div class="ai-tool-header">
+                  <span class="ai-tool-icon" v-html="iconForTool(tc.name)" aria-hidden="true" />
+                  <span class="ai-tool-name">{{ tc.name }}</span>
+                  <span v-if="tc.result.is_error" class="ai-tool-pill ai-tool-pill-error">error</span>
+                  <span v-else-if="tc.result.content" class="ai-tool-pill ai-tool-pill-ok">ok</span>
+                  <span v-else class="ai-tool-pill ai-tool-pill-pending">…</span>
+                </div>
+                <pre
+                  v-if="tc.result.content && (tc.name === 'read_file' || tc.name === 'list_files') && !expandedToolCards[tc.id]"
+                  class="ai-tool-result ai-tool-collapsed"
+                ><code>{{ truncateForCard(tc.result.content) }}</code></pre>
+                <pre
+                  v-else-if="tc.result.content"
+                  class="ai-tool-result"
+                ><code>{{ tc.result.content }}</code></pre>
+                <button
+                  v-if="tc.result.content && (tc.name === 'read_file' || tc.name === 'list_files')"
+                  type="button"
+                  class="ai-tool-toggle"
+                  @click="toggleToolCard(tc.id)"
+                >{{ expandedToolCards[tc.id] ? '收起' : '展开' }}</button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <form class="ai-composer" @submit.prevent="onSend">
+        <div class="ai-composer-inner">
+          <textarea
+            v-model="draft"
+            class="ai-input"
+            rows="1"
+            placeholder="Ask Claude… (or /split to break a note into atomic cards)"
+            aria-label="Ask Claude"
+            @keydown="onKeydown"
+          />
+          <button
+            class="ai-send"
+            :class="{ 'ai-send-busy': history.busy.value }"
+            type="button"
+            :title="history.busy.value ? 'Stop' : 'Send (Enter)'"
+            :aria-label="history.busy.value ? 'Stop' : 'Send'"
+            :disabled="!history.busy.value && (!draft.trim() || !history.configured.value)"
+            @click="onSendOrStop"
+          >{{ history.busy.value ? '■' : '↑' }}</button>
+        </div>
+      </form>
+
+      <AiSessionPicker v-if="pickerOpen" @close="pickerOpen = false" />
+    </template>
   </aside>
 </template>
 
@@ -318,5 +568,149 @@ function toggleToolCard(id: string) {
 }
 .ai-tool-toggle:hover {
   text-decoration: underline;
+}
+
+/* Split review surface. Layout: header → card list → action bar.
+   Cards are a flex row: checkbox | fields | remove. Fields stack
+   vertically inside their column. We keep the styles local to
+   AiPanel.vue so they don't leak into other components. */
+.ai-review {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.ai-review-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ai-border, #3a3f4b);
+  font-size: 0.9em;
+}
+.ai-review-title { font-weight: 600; }
+.ai-review-mode {
+  margin-left: 4px;
+  font-weight: 400;
+  color: var(--ai-muted, #8a93a6);
+}
+.ai-review-count {
+  font-size: 0.85em;
+  color: var(--ai-muted, #8a93a6);
+}
+.ai-review-list {
+  flex: 1;
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+  overflow-y: auto;
+}
+.ai-review-card {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--ai-border, #3a3f4b);
+  border-radius: 6px;
+  background: var(--ai-tool-bg, rgba(255, 255, 255, 0.03));
+}
+.ai-review-card:last-child { margin-bottom: 0; }
+.ai-review-check {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 8px;
+}
+.ai-review-fields {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ai-review-title-input,
+.ai-review-slug-input,
+.ai-review-tags,
+.ai-review-body {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--ai-border, #3a3f4b);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.18);
+  color: inherit;
+  font-family: inherit;
+  font-size: 0.9em;
+  box-sizing: border-box;
+}
+.ai-review-title-input { font-weight: 600; }
+.ai-review-slug-input {
+  font-family: var(--ai-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.8em;
+  color: var(--ai-muted, #8a93a6);
+}
+.ai-review-body {
+  resize: vertical;
+  font-size: 0.85em;
+  min-height: 60px;
+}
+.ai-review-tags { font-size: 0.8em; }
+.ai-review-remove {
+  align-self: flex-start;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--ai-border, #3a3f4b);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ai-muted, #8a93a6);
+  cursor: pointer;
+  font-size: 1em;
+  line-height: 1;
+}
+.ai-review-remove:hover { color: var(--ai-error, #c14545); }
+.ai-review-actions {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--ai-border, #3a3f4b);
+}
+.ai-review-add,
+.ai-review-cancel,
+.ai-review-write {
+  padding: 6px 10px;
+  border: 1px solid var(--ai-border, #3a3f4b);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+.ai-review-write {
+  margin-left: auto;
+  background: var(--ai-accent, #7aa2f7);
+  color: #0d0f14;
+  border-color: var(--ai-accent, #7aa2f7);
+}
+.ai-review-write:disabled {
+  background: var(--ai-muted, #8a93a6);
+  border-color: var(--ai-muted, #8a93a6);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.ai-review-status {
+  padding: 8px 12px;
+  font-size: 0.85em;
+  color: var(--ai-ok, #6ec486);
+  border-top: 1px solid var(--ai-border, #3a3f4b);
+}
+.ai-review-banner {
+  padding: 8px 12px;
+  background: rgba(122, 162, 247, 0.12);
+  color: var(--ai-accent, #7aa2f7);
+  font-size: 0.85em;
+  border-bottom: 1px solid var(--ai-border, #3a3f4b);
+}
+.ai-review-banner-error {
+  background: rgba(193, 69, 69, 0.12);
+  color: var(--ai-error, #c14545);
 }
 </style>
