@@ -7,6 +7,7 @@ import { listPostsFlat, buildTree, listSubtreePaths, readFrontmatter } from './t
 import { getIndex as getLinkIndex } from './linkIndex.js'
 import { bumpUpdatedInFrontmatter } from './frontmatter.js'
 import aiRoutes from './ai/routes.js'
+import zettelRoutes from './zettel.js'
 import type { PostSummary, PostDetail } from '../src/lib/api.js'
 
 // The server is intentionally not in the type-check graph (no tsconfig include),
@@ -295,5 +296,6 @@ app.get('/api/backlinks', async (c) => {
 })
 
 app.route('/api/ai', aiRoutes)
+app.route('/api/zettel', zettelRoutes)
 
 export default app
