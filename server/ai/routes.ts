@@ -13,10 +13,13 @@
 //     to the helper in ../index.ts.
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
+import { promises as fs } from 'node:fs'
 import { getDb } from '../db.js'
+import { filePathFor } from '../paths.js'
 import * as sessions from './sessions.js'
 import * as messages from './messages.js'
 import { runChat, type ChatEvent } from './chat.js'
+import { runSplit } from './split.js'
 import { ChatError } from './errors.js'
 import { resolveApiKey } from './llm.js'
 
@@ -204,6 +207,61 @@ ai.post('/chat', async (c) => {
       }
     }
   })
+})
+
+// ---- /split ----
+// Synchronous non-streaming call: the client renders a loading state
+// while we wait (5-15s typical), then displays the result in the AI
+// panel's review surface. We only accept paths under inbox/ or
+// literature/ — splitting notes from any other directory is a spec
+// violation, and the error makes that explicit at the boundary.
+ai.post('/split', async (c) => {
+  if (!resolveApiKey()) {
+    return c.json({ error: 'AI not configured (ANTHROPIC_API_KEY missing)' }, 503)
+  }
+  const body = await c.req.json().catch(() => null) as
+    | { path?: unknown; mode?: unknown }
+    | null
+  if (
+    !body ||
+    typeof body.path !== 'string' ||
+    (body.mode !== 'inbox' && body.mode !== 'literature')
+  ) {
+    return c.json({ error: 'path (string) and mode (inbox|literature) required' }, 400)
+  }
+  const path = body.path
+  const mode = body.mode as 'inbox' | 'literature'
+
+  if (!path.startsWith('inbox/') && !path.startsWith('literature/')) {
+    return c.json({ error: 'split is only supported for inbox/ and literature/ notes' }, 400)
+  }
+
+  // Read the source note. We reuse filePathFor to enforce the same
+  // path-safety check the rest of the API uses (no absolute paths,
+  // no .., etc.). 404 here maps cleanly to "the note you clicked
+  // doesn't exist anymore" — a real failure mode if the user
+  // right-clicked a tree row that has since been deleted.
+  let abs: string
+  try { abs = filePathFor(path) } catch (e: any) {
+    return c.json({ error: e.message }, 400)
+  }
+  let raw: string
+  try { raw = await fs.readFile(abs, 'utf8') } catch {
+    return c.json({ error: 'source note not found' }, 404)
+  }
+
+  try {
+    const cards = await runSplit({ path, mode, raw, signal: c.req.raw.signal })
+    return c.json({ cards })
+  } catch (err) {
+    if (err instanceof ChatError) {
+      if (err.reason === 'parse-failed') return c.json({ error: 'parse-failed', reason: err.message }, 502)
+      if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499)
+      if (err.reason === 'no-api-key') return c.json({ error: 'AI not configured' }, 503)
+      return c.json({ error: 'llm-error', reason: err.message }, 502)
+    }
+    return c.json({ error: 'unknown' }, 500)
+  }
 })
 
 export default ai
