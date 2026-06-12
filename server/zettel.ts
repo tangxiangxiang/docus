@@ -19,10 +19,8 @@
 import { Hono } from 'hono'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { filePathFor } from './paths.js'
+import { filePathFor, SEGMENT_RE } from './paths.js'
 import type { Card } from '../src/lib/ai-api.js'
-
-const SEGMENT_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
 
 const zettel = new Hono()
 

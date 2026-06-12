@@ -191,11 +191,18 @@ function addBlankCard() {
   if (review.phase.value.kind !== 'review') return
   const mode = review.phase.value.mode
   const path = currentNote.path.value ?? 'inbox/unknown'
+  // Avoid the obvious collision: two clicks of "+ 新增卡片"
+  // would otherwise produce two cards with slug "new-card",
+  // and the batch route would silently rename one to "new-card-2".
+  // Pick a slug that's not already in the current list.
+  const existing = new Set(review.phase.value.cards.map((c) => c.slug))
+  let slug = 'new-card'
+  for (let i = 2; existing.has(slug); i++) slug = 'new-card-' + i
   review.phase.value.cards.push({
     title: '新卡片',
     body: '',
     tags: [],
-    slug: 'new-card',
+    slug,
     source: path,
     splitMode: mode,
   })
