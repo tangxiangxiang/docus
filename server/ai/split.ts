@@ -101,7 +101,7 @@ function parseCards(raw: string): ModelCard[] {
 }
 
 /** Run the split. Returns 1-12 Card[] (truncated if the model overshoots).
- *  Throws ChatError('no-api-key') | ChatError('parse-failed') | ChatError('llm-error'). */
+ *  Throws ChatError('no-api-key') | ChatError('parse-failed') | ChatError('aborted') | ChatError('llm-error'). */
 export async function runSplit(opts: {
   path: string
   mode: SplitMode
