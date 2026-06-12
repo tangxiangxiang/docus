@@ -23,6 +23,7 @@ const emit = defineEmits<{
   refresh: []
   'clear-tag-filter': []
   'remove-tag': [tag: string]
+  'split-card': [path: string, mode: 'inbox' | 'literature']
 }>()
 
 const { confirm } = useConfirm()
@@ -263,6 +264,18 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
   }
 }
 
+async function onSplitCard(path: string) {
+  // The mode is derived from the path prefix — we don't ask the
+  // user. The right-click context is unambiguous: a file under
+  // inbox/ is inbox mode, under literature/ is literature mode.
+  // The slash-command form in the AI panel lets the user pick, but
+  // here the path IS the choice.
+  const mode: 'inbox' | 'literature' = path.startsWith('literature/') || path === 'literature'
+    ? 'literature'
+    : 'inbox'
+  emit('split-card', path, mode)
+}
+
 async function onCreateIn(folder: string, kind: 'file' | 'folder') {
   {
     const msg = blockedMessage(folder, 'create')
@@ -348,6 +361,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @delete="onDelete"
         @move="onMove"
         @create-in="onCreateIn"
+        @split-card="onSplitCard"
       />
     </ul>
     <p v-else-if="activeTags.length" class="empty">没有匹配这些 tag 的文件。</p>

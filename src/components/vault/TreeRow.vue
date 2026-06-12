@@ -30,6 +30,10 @@ const emit = defineEmits<{
   delete: [path: string, kind: 'file' | 'folder']
   move: [srcPath: string, targetFolder: string, srcKind: 'file' | 'folder']
   'create-in': [folder: string, kind: 'file' | 'folder']
+  // File only: 'split-card' with the file's path. The parent
+  // (FileTree) maps this to a mode (inbox|literature) based on the
+  // path prefix and forwards to VaultView's splitCard action.
+  'split-card': [path: string]
 }>()
 
 const isFolder = computed(() => props.node.kind === 'folder')
@@ -59,6 +63,16 @@ const canCreateChildRow = computed(() => canCreateChild(props.node.path))
 // `readonlyHint` is the single-line footer that appears when the row is
 // read-only in any sense. Reused for both menu states.
 const readonlyHint = computed(() => readonlyHintLabel(props.node.path))
+
+// True for files under inbox/ or literature/. The split-card menu
+// item is gated on this — the server route also enforces it, but
+// hiding it in the menu avoids the "click then 400" round-trip.
+const canSplit = computed(() =>
+  !isFolder.value && (
+    props.node.path.startsWith('inbox/') || props.node.path === 'inbox' ||
+    props.node.path.startsWith('literature/') || props.node.path === 'literature'
+  )
+)
 
 // --- drag state ---
 const isDragging = ref(false)
@@ -273,6 +287,7 @@ function cancelRename() {
         </template>
         <button v-if="canModifyRow" @click="menuAction(startRename)">重命名</button>
         <hr v-if="canModifyRow" />
+        <button v-if="canSplit" @click="menuAction(() => emit('split-card', node.path))">📤 拆为原子卡</button>
         <button v-if="canModifyRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))">删除</button>
         <span v-if="!canModifyRow || (isFolder && !canCreateChildRow)" class="readonly-hint">{{ readonlyHint }}</span>
       </div>
@@ -292,6 +307,7 @@ function cancelRename() {
         @delete="(p) => emit('delete', p, child.kind)"
         @move="(src, folder, srcKind) => emit('move', src, folder, srcKind)"
         @create-in="(folder, kind) => emit('create-in', folder, kind)"
+        @split-card="(p) => emit('split-card', p)"
       />
     </ul>
   </li>

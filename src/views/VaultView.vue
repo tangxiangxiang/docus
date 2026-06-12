@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, inject, shallowRef, watch, computed } from 'vue'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
+import { useSplitReview } from '../composables/vault/useSplitReview'
+import { splitNote, type SplitMode } from '../lib/ai-api'
+import { useToast } from '../composables/useToast'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { useTagFilter } from '../composables/vault/useTagFilter'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
@@ -41,11 +44,33 @@ const {
   startDrag,
 } = useVaultLayout()
 
+const review = useSplitReview()
+const toast = useToast()
+
 // Lives in VaultView (not the composable) so the string `ref="vaultRef"`
 // template binding resolves cleanly. startDrag takes the host as a parameter.
 const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 function openSearch() { paletteRef.value?.show() }
+
+async function splitCard(path: string, mode: SplitMode) {
+  review.setLoading(path, mode)
+  // Make sure the AI panel is visible — the user might have
+  // dismissed it. VaultView's aiOpen lives in useVaultLayout.
+  if (!aiOpen.value) toggleAi()
+  try {
+    const { cards } = await splitNote({ path, mode })
+    if (cards.length === 0) {
+      review.setError('没有识别出独立的原子想法')
+      toast.info('没有识别出独立的原子想法')
+      return
+    }
+    review.setReview(mode, cards)
+  } catch (err: any) {
+    review.setError(err.message ?? '拆分失败')
+    toast.error('拆分失败: ' + (err.message ?? '未知错误'))
+  }
+}
 
 /* ---------- Tabs / save / route sync ---------- */
 const {
@@ -117,6 +142,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
       @refresh="refresh"
       @clear-tag-filter="clearTagFilter"
       @remove-tag="removeTag"
+      @split-card="splitCard"
     />
     <TagPanel
       v-else-if="activePanel === 'tags'"
