@@ -193,11 +193,17 @@ onBeforeUnmount(async () => {
    are defined on .vault and DON'T cascade here — using them would
    resolve to the empty initial value and the dialog would render
    transparent. Use the global --bg / --text / --border / --accent
-   tokens instead, the same ones ConfirmHost uses. */
+   tokens instead, the same ones ConfirmHost uses.
+   z-index is intentionally BELOW confirm-host / prompt-host: the
+   picker can fire confirm() / prompt() and those dialogs must sit
+   on top of it, otherwise the confirmation is hidden behind the
+   picker's backdrop. With same z-index, the later-rendered element
+   (picker, mounted on demand) would cover the earlier-rendered
+   confirm. */
 .ai-sp-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 9998;
+  z-index: 9996;
   background: rgba(0, 0, 0, 0.35);
   display: flex;
   align-items: center;

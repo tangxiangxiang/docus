@@ -2020,6 +2020,9 @@ main.container {
 }
 
 /* ---------- Toast ---------- */
+/* Top of the modal stack — toasts are non-blocking feedback and
+   should sit above any confirm/prompt/picker. The host itself is
+   pointer-events: none, so it doesn't trap clicks. */
 .toast-host {
   position: fixed;
   bottom: 24px;
@@ -2027,7 +2030,7 @@ main.container {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  z-index: 9999;
+  z-index: 10000;
   pointer-events: none;
 }
 .toast {
@@ -2051,7 +2054,10 @@ main.container {
 .toast-leave-to   { opacity: 0; transform: translateX(20px); }
 
 /* ---------- Confirm ---------- */
-.confirm-host { position: relative; z-index: 9998; }
+/* confirm-host sits ABOVE prompt-host (9998) so a confirm opened
+   from inside a prompt is visible. The picker backdrop (9996) and
+   the prompt backdrop (9998) both stay below it. */
+.confirm-host { position: relative; z-index: 9999; }
 .confirm-backdrop {
   position: fixed;
   inset: 0;
