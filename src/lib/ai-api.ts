@@ -184,3 +184,59 @@ export async function* streamChat(
     }
   }
 }
+
+// --- AI split-to-draft (atomic card generation) ---
+
+/** A single atomic zettel card proposed by the model. The `source`
+ *  and `splitMode` fields are filled by the server, not the model —
+ *  we don't want the model to be able to attribute a card to a
+ *  different source note than the one the user clicked on. */
+export interface Card {
+  title: string
+  body: string
+  tags: string[]
+  /** A slug for the future filename (e.g. "domain-events-as-decoupling-boundary").
+   *  Server validates against SEGMENT_RE. Conflicts get -2, -3, ... suffix. */
+  slug: string
+  source: string
+  splitMode: 'inbox' | 'literature'
+}
+
+export type SplitMode = 'inbox' | 'literature'
+
+export interface SplitRequest {
+  path: string         // e.g. "inbox/init" (no .md)
+  mode: SplitMode
+}
+
+export interface SplitResponse {
+  cards: Card[]
+}
+
+export interface WriteDraftBatchRequest {
+  cards: Card[]
+}
+
+export interface WriteDraftBatchResponse {
+  written: { slug: string; path: string }[]
+  skipped: { slug: string; reason: string }[]
+  failed:  { slug: string; reason: string }[]
+}
+
+/** Ask Claude to split a long note into atomic zettel cards.
+ *  Synchronous, non-streaming; latency is ~5-15s for a 2000-word note. */
+export async function splitNote(req: SplitRequest): Promise<SplitResponse> {
+  return jsonOrThrow<SplitResponse>(await fetch('/api/ai/split', {
+    method: 'POST', ...jsonBody(req),
+  }))
+}
+
+/** Write a batch of cards to src/content/zettel/draft/.
+ *  Per-card status: written (with the final path), skipped, or failed. */
+export async function writeDraftBatch(
+  req: WriteDraftBatchRequest,
+): Promise<WriteDraftBatchResponse> {
+  return jsonOrThrow<WriteDraftBatchResponse>(await fetch('/api/zettel/draft/batch', {
+    method: 'POST', ...jsonBody(req),
+  }))
+}
