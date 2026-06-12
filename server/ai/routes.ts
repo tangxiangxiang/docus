@@ -256,7 +256,7 @@ ai.post('/split', async (c) => {
   } catch (err) {
     if (err instanceof ChatError) {
       if (err.reason === 'parse-failed') return c.json({ error: 'parse-failed', reason: err.message }, 502)
-      if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499)
+      if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499 as any)
       if (err.reason === 'no-api-key') return c.json({ error: 'AI not configured' }, 503)
       return c.json({ error: 'llm-error', reason: err.message }, 502)
     }
