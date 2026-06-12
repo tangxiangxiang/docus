@@ -24,6 +24,7 @@ import type {
   MessageParam,
   ToolUseBlock,
 } from '@anthropic-ai/sdk/resources/messages/messages'
+import type { NoteAttachment } from '../../src/lib/ai-api.js'
 import { ChatError } from './errors.js'
 import { streamClaude } from './llm.js'
 import { TOOL_DEFINITIONS, executeToolCall } from './tools.js'
@@ -54,30 +55,29 @@ const TOOLS_SECTION = `
 - 工具调用一旦执行就生效, 中途中断不会回滚已完成的部分
 - 路径必须相对 src/content/, 不要用绝对路径或 ..`
 
-const MAX_NOTE_CODEPOINTS = 20_000
-
+// System prompt only carries situational context — the *path* of
+// the note the user is reading, so the model knows what's on
+// screen and can use read_file if it wants to see more. The actual
+// note body only enters the conversation when the user explicitly
+// hits the 📎 toggle, which composes it into the user message
+// itself (see noteAttachment on the user message row). This keeps
+// the system prompt from silently bloatng on every turn and keeps
+// a long note from being silently truncated with no signal to the
+// user that it happened.
 export function buildSystemPrompt(ctx: {
   currentNotePath?: string
-  currentNoteContent?: string
 }): string {
   const tools = TOOLS_SECTION
   if (!ctx.currentNotePath) {
     return `${BASE_SYSTEM_PROMPT}${tools}`
   }
-  const raw = ctx.currentNoteContent ?? ''
-  const cps = [...raw]
-  if (cps.length <= MAX_NOTE_CODEPOINTS) {
-    return `${BASE_SYSTEM_PROMPT}\n\nThe user is currently reading: ${ctx.currentNotePath}\n\n${raw}${tools}`
-  }
-  const truncated = cps.slice(0, MAX_NOTE_CODEPOINTS).join('')
-  return `${BASE_SYSTEM_PROMPT}\n\nThe user is currently reading: ${ctx.currentNotePath}\n\n${truncated}\n\n[... truncated; full file at ${ctx.currentNotePath} ...]${tools}`
+  return `${BASE_SYSTEM_PROMPT}\n\nThe user is currently reading: ${ctx.currentNotePath}\n\nIf you need to see its contents, use read_file — do not assume the file's text is in this prompt.${tools}`
 }
 
 // ---- runChat ----
 
 export type ChatContext = {
   currentNotePath?: string
-  currentNoteContent?: string
 }
 
 // Single event type that the orchestrator emits to the route. The
@@ -111,6 +111,14 @@ export type RunChatOpts = {
   // Nested `ctx` matches the original signature (and the route
   // layer in routes.ts that builds it from the request body).
   ctx: ChatContext
+  // Metadata for the "📎 attach current note" toggle. When the
+  // toggle is on, the client composes the user-content string with
+  // the note body inline (in an <attached_note> block, truncated
+  // at 20K codepoints with a marker) and we persist the same
+  // metadata here so the UI can render a truncation banner on
+  // history reload. Server-side this is just persistence; the
+  // model already saw the attached body in `userContent`.
+  noteAttachment?: NoteAttachment
   onEvent: (e: ChatEvent) => void | Promise<void>
 } & RunChatDeps
 
@@ -131,7 +139,13 @@ export async function runChat(opts: RunChatOpts): Promise<{
 
   // Persist the user message FIRST so a crash mid-stream only loses
   // the in-flight assistant text. See spec §3.5.
-  const userResult = messages.appendMessage(opts.db, opts.sessionId, 'user', opts.userContent)
+  const userResult = messages.appendMessage(
+    opts.db,
+    opts.sessionId,
+    'user',
+    opts.userContent,
+    opts.noteAttachment,
+  )
   if (!userResult.ok) {
     throw new ChatError('llm-error', `user persist failed: ${userResult.reason}`)
   }

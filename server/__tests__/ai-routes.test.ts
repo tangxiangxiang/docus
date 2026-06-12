@@ -312,4 +312,56 @@ describe('POST /api/ai/chat', () => {
     expect(last.event).toBe('error')
     expect(JSON.parse(last.data)).toEqual({ reason: 'not-found' })
   })
+
+  it('forwards noteAttachment from the request body into runChat opts', async () => {
+    const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+    await call('POST', '/chat', {
+      sessionId: created.id,
+      content: 'hi',
+      currentNotePath: 'inbox/foo.md',
+      noteAttachment: {
+        path: 'inbox/foo.md',
+        truncated: true,
+        originalCodepoints: 35_000,
+        attachedCodepoints: 20_000,
+      },
+    })
+    expect(vi.mocked(chatModule.runChat)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        noteAttachment: {
+          path: 'inbox/foo.md',
+          truncated: true,
+          originalCodepoints: 35_000,
+          attachedCodepoints: 20_000,
+        },
+      }),
+    )
+  })
+
+  it('drops a malformed noteAttachment silently (no crash, no noteAttachment on the call)', async () => {
+    const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+    await call('POST', '/chat', {
+      sessionId: created.id,
+      content: 'hi',
+      // All the wrong types — a client that sent garbage shouldn't
+      // crash the stream.
+      noteAttachment: { path: 42, truncated: 'yes', originalCodepoints: 'x' },
+    })
+    const lastCall = vi.mocked(chatModule.runChat).mock.calls.at(-1)![0]
+    expect(lastCall.noteAttachment).toBeUndefined()
+  })
+
+  it('does not pass noteAttachment when the field is absent', async () => {
+    const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+    await call('POST', '/chat', {
+      sessionId: created.id,
+      content: 'hi',
+      currentNotePath: 'inbox/foo.md',
+      // No noteAttachment on the wire.
+    })
+    const lastCall = vi.mocked(chatModule.runChat).mock.calls.at(-1)![0]
+    expect(lastCall.noteAttachment).toBeUndefined()
+    // currentNotePath is still forwarded (used by the system prompt).
+    expect(lastCall.ctx).toEqual({ currentNotePath: 'inbox/foo.md' })
+  })
 })

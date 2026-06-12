@@ -137,6 +137,60 @@ describe('messages service', () => {
       expect(title.startsWith('a'.repeat(30))).toBe(true)
       expect(title.endsWith('…')).toBe(true)
     })
+
+    it('persists noteAttachment on user messages and surfaces it on listMessages', () => {
+      const s = sessions.createSession(db)
+      const r = messages.appendMessage(db, s.id, 'user', 'hi', {
+        path: 'inbox/foo.md',
+        truncated: true,
+        originalCodepoints: 35_000,
+        attachedCodepoints: 20_000,
+      })
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      expect(r.message.noteAttachment).toEqual({
+        path: 'inbox/foo.md',
+        truncated: true,
+        originalCodepoints: 35_000,
+        attachedCodepoints: 20_000,
+      })
+
+      // Round-trip: read it back from listMessages and confirm the
+      // banner metadata survives history reload.
+      const list = messages.listMessages(db, s.id)!
+      expect(list[0].noteAttachment).toEqual({
+        path: 'inbox/foo.md',
+        truncated: true,
+        originalCodepoints: 35_000,
+        attachedCodepoints: 20_000,
+      })
+    })
+
+    it('omits noteAttachment on user messages when none is provided', () => {
+      const s = sessions.createSession(db)
+      const r = messages.appendMessage(db, s.id, 'user', 'plain')
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      expect(r.message.noteAttachment).toBeUndefined()
+      expect(messages.listMessages(db, s.id)![0].noteAttachment).toBeUndefined()
+    })
+
+    it('ignores noteAttachment on assistant messages (column stays NULL)', () => {
+      const s = sessions.createSession(db)
+      messages.appendMessage(db, s.id, 'user', 'q')
+      // Even if a caller mistakenly passes noteAttachment for an
+      // assistant row, the column is left NULL and the returned
+      // Message has no noteAttachment.
+      const r = messages.appendMessage(db, s.id, 'assistant', 'a', {
+        path: 'inbox/x.md', truncated: false,
+        originalCodepoints: 1, attachedCodepoints: 1,
+      })
+      expect(r.ok).toBe(true)
+      if (!r.ok) return
+      expect(r.message.noteAttachment).toBeUndefined()
+      const row = db.prepare('SELECT note_attachment FROM messages WHERE id = ?').get(r.message.id) as { note_attachment: string | null }
+      expect(row.note_attachment).toBeNull()
+    })
   })
 
   describe('ON DELETE CASCADE (cross-service)', () => {

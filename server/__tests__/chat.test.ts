@@ -13,34 +13,30 @@ describe('buildSystemPrompt', () => {
     expect(out).toContain('read_file')
   })
 
-  it('appends the current note path and content when ctx has both', () => {
-    const out = buildSystemPrompt({
-      currentNotePath: 'zettel/foo.md',
-      currentNoteContent: 'hello world',
-    })
+  it('mentions the open note by path and tells the model to use read_file for the body', () => {
+    const out = buildSystemPrompt({ currentNotePath: 'zettel/foo.md' })
     expect(out).toContain('zettel/foo.md')
-    expect(out).toContain('hello world')
+    // The system prompt no longer carries the body; the model is
+    // pointed at read_file instead. This is the whole point of the
+    // 📎 toggle change — we don't silently bloat the system
+    // prompt with the note body on every turn.
+    expect(out).toContain('read_file')
+    expect(out).not.toContain('hello world')
     expect(out.startsWith("You're a helpful assistant")).toBe(true)
   })
 
-  it('truncates content at 20_000 chars and appends a marker', () => {
-    const big = 'a'.repeat(25_000)
+  it('does not include any note body in the system prompt (only path)', () => {
+    // Regression guard: even if a caller mistakenly passes
+    // currentNoteContent in the ctx, the system prompt must not
+    // include it. The body now lives in the user message instead.
     const out = buildSystemPrompt({
-      currentNotePath: 'zettel/big.md',
-      currentNoteContent: big,
+      currentNotePath: 'zettel/foo.md',
+      // @ts-expect-error — TS would reject this; the test pins
+      // the runtime behavior that the field is ignored.
+      currentNoteContent: 'SENTINEL_NOTE_BODY_99',
     })
-    expect(out).toContain('a'.repeat(20_000))
-    expect(out).not.toContain('a'.repeat(20_001))
-    expect(out).toContain('[... truncated; full file at zettel/big.md ...]')
-  })
-
-  it('does not truncate when content is exactly 20_000 chars', () => {
-    const exact = 'b'.repeat(20_000)
-    const out = buildSystemPrompt({
-      currentNotePath: 'zettel/exact.md',
-      currentNoteContent: exact,
-    })
-    expect(out).not.toContain('truncated')
+    expect(out).not.toContain('SENTINEL_NOTE_BODY_99')
+    expect(out).toContain('zettel/foo.md')
   })
 })
 
@@ -134,24 +130,73 @@ describe('runChat', () => {
     ])
   })
 
-  it('passes the current note path + content into the system prompt', async () => {
+  it('passes the current note path into the system prompt but not the body', async () => {
+    const db = freshDb()
+    const id = makeSession(db)
+    // A unique sentinel that wouldn't appear in any tool
+    // description or default prompt text. Asserting the system
+    // prompt doesn't contain it pins that the note body was NOT
+    // inlined into the system prompt (the previous bug).
+    const sentinel = 'SENTINEL_NOTE_BODY_42_XYZ'
+    await runChat({
+      db, sessionId: id, userContent: 'hi',
+      ctx: { currentNotePath: 'zettel/note.md', /* legacy field */ currentNoteContent: sentinel } as any,
+      model: 'm', signal: undefined, onEvent: () => {},
+    })
+    const systemArg = vi.mocked(streamClaude).mock.calls[0][0].system as string
+    expect(systemArg).toContain('zettel/note.md')
+    // The body must not be in the system prompt. We check the
+    // sentinel (not the literal word "body") so the assertion
+    // doesn't trip on the word "body" appearing in the read_file
+    // tool description.
+    expect(systemArg).not.toContain(sentinel)
+  })
+
+  it('persists noteAttachment on the user message when provided', async () => {
+    const db = freshDb()
+    const id = makeSession(db)
+    await runChat({
+      db, sessionId: id,
+      userContent: 'hi <attached_note path="zettel/note.md">body</attached_note>',
+      ctx: { currentNotePath: 'zettel/note.md' },
+      model: 'm', signal: undefined, onEvent: () => {},
+      noteAttachment: {
+        path: 'zettel/note.md',
+        truncated: true,
+        originalCodepoints: 35_000,
+        attachedCodepoints: 20_000,
+      },
+    })
+    const row = db.prepare(
+      'SELECT role, content, note_attachment FROM messages WHERE session_id = ? AND role = ?'
+    ).get(id, 'user') as { role: string; content: string; note_attachment: string }
+    expect(row.content).toContain('<attached_note path="zettel/note.md">')
+    expect(JSON.parse(row.note_attachment)).toEqual({
+      path: 'zettel/note.md',
+      truncated: true,
+      originalCodepoints: 35_000,
+      attachedCodepoints: 20_000,
+    })
+  })
+
+  it('does not write note_attachment on assistant messages', async () => {
     const db = freshDb()
     const id = makeSession(db)
     await runChat({
       db, sessionId: id, userContent: 'hi',
-      ctx: { currentNotePath: 'zettel/note.md', currentNoteContent: 'body' },
+      ctx: { currentNotePath: 'zettel/note.md' },
       model: 'm', signal: undefined, onEvent: () => {},
+      // Defense: a caller passing noteAttachment at the top level
+      // must not have it leak onto the assistant row.
+      noteAttachment: {
+        path: 'zettel/note.md', truncated: false,
+        originalCodepoints: 1, attachedCodepoints: 1,
+      },
     })
-    expect(vi.mocked(streamClaude)).toHaveBeenCalledWith(
-      expect.objectContaining({
-        system: expect.stringContaining('zettel/note.md'),
-      })
-    )
-    expect(vi.mocked(streamClaude)).toHaveBeenCalledWith(
-      expect.objectContaining({
-        system: expect.stringContaining('body'),
-      })
-    )
+    const row = db.prepare(
+      'SELECT note_attachment FROM messages WHERE session_id = ? AND role = ?'
+    ).get(id, 'assistant') as { note_attachment: string | null }
+    expect(row.note_attachment).toBeNull()
   })
 
   it('forwards tools and tool_choice to streamClaude', async () => {
