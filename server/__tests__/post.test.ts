@@ -35,10 +35,12 @@ describe('POST /api/posts', () => {
     const onDisk = await fs.readFile(TEST_ABS, 'utf8')
     // The template is fixed: title/created/updated/tags/summary in
     // that order, all on their own lines, with a single H1 body. The
-    // `summary: ''` placeholder is the only new line vs. the pre-7bbf692
-    // template — see the comment in server/index.ts for the rationale.
+    // bare `summary:` (no value) placeholder is the only new line vs.
+    // the pre-7bbf692 template — see the comment in server/index.ts
+    // for the rationale. gray-matter parses it as null, so the API
+    // response surfaces `summary: ''` (same as a missing field).
     expect(onDisk).toBe(
-      `---\ntitle: Smoke\ncreated: ${today}\nupdated: ${today}\ntags: []\nsummary: ''\n---\n\n# Smoke\n`,
+      `---\ntitle: Smoke\ncreated: ${today}\nupdated: ${today}\ntags: []\nsummary:\n---\n\n# Smoke\n`,
     )
 
     // The response mirrors the same shape and includes `summary: ''` —
