@@ -97,7 +97,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
   <div
     ref="vaultRef"
     class="vault"
-    :class="{ 'is-read': isReadMode }"
+    :class="{ 'is-read': isReadMode, 'ai-open': aiOpen }"
     tabindex="0"
     :style="vaultStyle"
     @keydown="onKeydown"
