@@ -8,6 +8,7 @@ export type ChatErrorReason =
   | 'empty'
   | 'aborted'
   | 'llm-error'
+  | 'parse-failed'
 
 export class ChatError extends Error {
   readonly reason: ChatErrorReason
