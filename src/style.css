@@ -607,7 +607,6 @@ main.container {
 .ab-btn:hover { color: var(--vs-text-1); background: var(--vs-hover-bg); }
 .ab-btn.active {
   color: var(--vs-text-1);
-  border-left-color: var(--vs-accent);
   background: var(--vs-hover-bg);
 }
 
