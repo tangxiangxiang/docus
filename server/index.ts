@@ -68,6 +68,9 @@ app.post('/api/posts', async (c) => {
     created: today,
     updated: today,
     tags: [],
+    // Newly created files have no summary — the user can add one to the
+    // frontmatter after, and it'll flow through on the next GET /api/posts.
+    summary: '',
     size: st.size,
     mtime: st.mtimeMs,
   } satisfies PostSummary, 201)
@@ -153,6 +156,9 @@ app.patch('/api/posts/*', async (c) => {
     // saved through the API yet (and so don't have the field).
     updated: fm.updated ?? new Date(st.mtimeMs).toISOString().slice(0, 10),
     tags: [],
+    // Rename/move preserves frontmatter verbatim, so the dest file's
+    // summary (if any) is the same as the src's.
+    summary: fm.summary ?? '',
     size: st.size,
     mtime: st.mtimeMs,
   } satisfies PostSummary)

@@ -84,6 +84,36 @@ describe('listPostsFlat', () => {
     expect(posts[0]!.created).toBe('2025-12-01')
     await fs.rm(dir, { recursive: true, force: true })
   })
+
+  it('reads `summary` from frontmatter and defaults to "" when missing', async () => {
+    // Two files in one dir so we can also verify the per-file shape
+    // (one populated, one absent) without coupling to a single fixture.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tree-summary-'))
+    await fs.writeFile(
+      path.join(dir, 'a.md'),
+      '---\ntitle: A\nsummary: Two-line summary here.\n---\n\nbody\n',
+    )
+    await fs.writeFile(
+      path.join(dir, 'b.md'),
+      '---\ntitle: B\n---\n\nbody\n',
+    )
+    const posts = await listPostsFlat(dir)
+    const byPath = Object.fromEntries(posts.map((p) => [p.path, p]))
+    expect(byPath['a']!.summary).toBe('Two-line summary here.')
+    expect(byPath['b']!.summary).toBe('')
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
+  it('trims surrounding whitespace from `summary`', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tree-summary-trim-'))
+    await fs.writeFile(
+      path.join(dir, 'stub.md'),
+      '---\ntitle: T\nsummary:   spacy   \n---\n\nbody\n',
+    )
+    const posts = await listPostsFlat(dir)
+    expect(posts[0]!.summary).toBe('spacy')
+    await fs.rm(dir, { recursive: true, force: true })
+  })
 })
 
 describe('buildTree', () => {

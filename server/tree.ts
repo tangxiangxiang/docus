@@ -51,6 +51,7 @@ export function readFrontmatter(file: string): {
   title: string | null
   created: string | null
   updated: string | null
+  summary: string | null
 } {
   // Sync read is fine here — files are small and this only runs in tree-builder paths.
   // We use this for the cheap frontmatter fields (tags, title, created, updated) and the
@@ -88,9 +89,17 @@ export function readFrontmatter(file: string): {
       updated = rawUpdated.toISOString().slice(0, 10)
     }
     const m = /^#\s+(.+)$/m.exec(text)
-    return { tags, firstHeading: m ? m[1].trim() : null, title, created, updated }
+    // `summary` is a free-form blurb (usually 1-2 sentences) the author writes
+    // for the search index and result list. The client's minisearch ranks
+    // summary hits at boost=1, so empty/missing frontmatter means the note
+    // never surfaces on a body-free search — see src/lib/search.ts. Keep this
+    // field symmetric with title/created/updated: null when absent, trimmed
+    // string when present, so callers can `?? ''` once at the API boundary.
+    const rawSummary = parsed.data.summary
+    const summary = typeof rawSummary === 'string' && rawSummary.trim() ? rawSummary.trim() : null
+    return { tags, firstHeading: m ? m[1].trim() : null, title, created, updated, summary }
   } catch {
-    return { tags: [], firstHeading: null, title: null, created: null, updated: null }
+    return { tags: [], firstHeading: null, title: null, created: null, updated: null, summary: null }
   }
 }
 
@@ -128,6 +137,11 @@ export async function listPostsFlat(
       // notes from before this field existed — fall back to mtime.
       updated: fm.updated ?? new Date(stat.mtimeMs).toISOString().slice(0, 10),
       tags: fm.tags,
+      // Pass the frontmatter summary through to the client search index.
+      // The client's `?? ''` in src/lib/search.ts would silently swallow
+      // undefined; surfacing `''` here matches the type and makes the
+      // "no summary" case observable in the API response.
+      summary: fm.summary ?? '',
       size: stat.size,
       mtime: stat.mtimeMs,
     })
