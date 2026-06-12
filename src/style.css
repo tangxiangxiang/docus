@@ -1547,6 +1547,26 @@ main.container {
   /* Scrollbar uses the global thin/auto-hide rule. */
   scrollbar-width: thin;
 }
+
+/* AI panel open: hide the right-side "页面导航" TOC and let the
+   article expand right into the space it used to occupy. The
+   original reading-layout max-width (720 article + 32 gap + 220
+   TOC = 972px) is unchanged — with the TOC removed, the article
+   flex-grows to fill the same total width its row was already
+   sized for. The 75ch readability cap is lifted while AI is open
+   because the user has actively chosen to give up the right rail. */
+.vault.ai-open .reading-toc {
+  display: none;
+}
+.vault.ai-open .reading-layout .article.reading {
+  /* flex: 0 1 720px → flex: 1 1 720px: allow growth into the
+     freed 220 + 32 = 252px of horizontal space. */
+  flex: 1 1 720px;
+  /* Lift the 75ch cap so the article can actually fill the row
+     (the cap is ~612px in English and would otherwise clip the
+     article at its original width even with flex-grow set). */
+  max-width: none;
+}
 .vault .reading-toc-title {
   margin: 0 0 10px;
   padding-bottom: 8px;
