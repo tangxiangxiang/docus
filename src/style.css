@@ -1216,12 +1216,6 @@ main.container {
   border-bottom: 1px solid var(--vs-border);
   overflow-x: auto;
   overflow-y: hidden;
-  /* Subtle right-edge fade hints at overflow when more tabs are
-     scrolled off-screen. Uses mask so the fade doesn't tint the
-     background — it just fades the tab content into the bar color.
-     The scrollbar itself uses the global thin/auto-hide rule. */
-  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
 }
 .tab {
   display: flex;
