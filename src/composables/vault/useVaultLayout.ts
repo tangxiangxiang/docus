@@ -59,7 +59,7 @@ export function useVaultLayout() {
           const d = JSON.parse(raw) as Record<string, unknown>
           const ap = d.activePanel
           let active: ActivePanel = null
-          if (ap === 'files' || ap === 'tags' || ap === null) active = ap as ActivePanel
+          if (ap === 'files' || ap === 'tags' || ap === 'links' || ap === 'graph' || ap === null) active = ap as ActivePanel
           else if (typeof d.fileTreeOpen === 'boolean') active = d.fileTreeOpen ? 'files' : null
           const w = typeof d.sidePanelWidth === 'number'
             ? d.sidePanelWidth
