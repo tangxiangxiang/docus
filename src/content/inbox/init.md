@@ -1,7 +1,7 @@
 ---
 title: init
 created: 2026-06-11
-updated: 2026-06-12
+updated: 2026-06-13
 tags: [meta, getting-started]
 summary: 这是 docus 知识库的第一篇笔记 —— 介绍 frontmatter 字段和写作建议。
 ---
@@ -29,6 +29,7 @@ created: 2026-06-11     # 创建日期(UTC `YYYY-MM-DD`),新文件自动填
 updated: 2026-06-11     # 最后内容修改日期(UTC `YYYY-MM-DD`),每次保存自动 bump;重命名/移动不更新
 tags: [meta, getting-started]   # 标签数组,可用于归类
 summary: 一两句话简介      # 可选;空字符串占位,新文件自动填;搜索会用到
+source: inbox/init         # 可选;zettel 卡片专属,记录该卡片拆自哪篇笔记的访问路径
 ---
 ```
 
@@ -37,6 +38,7 @@ summary: 一两句话简介      # 可选;空字符串占位,新文件自动填;
 - `updated`:最后内容修改日期,UTC `YYYY-MM-DD`;服务端在每次 PUT 时自动 bump,外部编辑器/重命名不会动它
 - `tags`:多个标签用数组形式,后面可以按标签筛选
 - `summary`:一两句话描述,客户端搜索会按这个字段建索引(boost=1);新文件会有一个空占位行,填了就有用
+- `source`:zettel 卡片拆出时由 AI 写入,记录来源笔记的访问路径(如 `inbox/init`),便于回溯;`inbox/`、`literature/` 下的原文在树右键选「拆为原子卡」,或在 AI 面板用 `/split` 命令,都会触发这个字段;非 zettel 笔记不需要
 
 > 访问路径不在 frontmatter 里 —— 它就是文件在 `src/content/` 下的相对路径(去掉 `.md` 后缀),由文件系统决定,无法通过 frontmatter 覆盖。
 
