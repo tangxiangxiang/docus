@@ -31,10 +31,13 @@ function stripMd(name: string): string {
       @auxclick.middle="emit('close', t.path)"
     >
       <span class="tab-dot" :class="{ dirty: t.saveStatus === 'dirty' }" />
-      <!-- tab.title is the frontmatter title when present, otherwise the
-           raw path (set by useEditorTabs). We normalise both down to a
-           filename-only display. -->
-      <span class="tab-title">{{ t.title === t.path ? stripMd(basename(t.path)) : t.title }}</span>
+      <!-- Tab label is the filename (no .md), period. The frontmatter
+           title still lives on Tab.title and surfaces in the hover
+           tooltip (line above), but tabs are a navigation surface —
+           they should anchor on the stable identifier (filename),
+           not the variable display field (title), or some notes
+           show one and some show the other. -->
+      <span class="tab-title">{{ stripMd(basename(t.path)) }}</span>
       <button
         class="tab-close"
         title="关闭"
