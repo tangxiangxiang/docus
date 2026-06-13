@@ -97,6 +97,43 @@ vi.mock('markmap-view', () => ({
   deriveOptions: () => ({}),
 }))
 
+/* Captured `ResizeObserver` callback registry: MarkMap.vue installs
+   a ResizeObserver on the widget wrapper to detect a tab being
+   hidden (display:none collapses the wrapper to 0×0). jsdom ships
+   a `ResizeObserver` that never fires on its own, so we replace
+   it with a manual-fire stub for the hidden-host tests. Each
+   `observe` call registers a callback; tests can then simulate a
+   size change by calling `fireAll()` after flipping the
+   clientWidth. The production code path is unchanged — it still
+   uses the global `ResizeObserver`. */
+interface FakeResizeObserver {
+  cb: ResizeObserverCallback
+  target: Element
+}
+const g3 = globalThis as typeof globalThis & { __resizeObserverRegistry?: FakeResizeObserver[] }
+g3.__resizeObserverRegistry = []
+globalThis.ResizeObserver = class {
+  private cb: ResizeObserverCallback
+  constructor(cb: ResizeObserverCallback) {
+    this.cb = cb
+  }
+  observe(target: Element) {
+    g3.__resizeObserverRegistry!.push({ cb: this.cb, target })
+  }
+  unobserve() { /* no-op for the test */ }
+  disconnect() {
+    g3.__resizeObserverRegistry = g3.__resizeObserverRegistry!.filter(
+      (r) => r.cb !== this.cb,
+    )
+  }
+} as unknown as typeof ResizeObserver
+
+function fireResizeObservers() {
+  for (const r of g3.__resizeObserverRegistry!) {
+    r.cb([], r.target as unknown as ResizeObserver)
+  }
+}
+
 // Import AFTER the mocks are registered.
 // (Static imports above — vi.mock() is hoisted by vitest, so the
 // mocked module factories take effect by the time the import
@@ -356,6 +393,60 @@ describe('MarkMap lock toggle', () => {
     })
 
     set('light')
+    unmount()
+  })
+})
+
+describe('MarkMap hidden host teardown', () => {
+  it('destroys the markmap instance when its wrapper collapses to 0×0 (e.g. v-show on an inactive tab)', async () => {
+    /* Regression for the 30-times-reported
+         <g> attribute transform: Expected number, "translate(NaN,NaN) scale(N…"
+       on document switch.
+
+       Mechanism: in the vault, every tab keeps its PreviewPane in
+       the DOM (v-show on the preview-pane, not v-if). When the
+       user switches away from the markmap tab, the active
+       preview-pane flips to `display: none` and the widget wrapper
+       collapses to 0×0. markmap's own internal ResizeObserver
+       notices the foreignObject collapse and re-runs renderData()
+       → fit(); fit() on a 0×0 svg produces
+       `translate(NaN,NaN) scale(NaN)` and d3-zoom's transition
+       writes that string on every animation frame for its
+       duration — ~30 frames, one console warning per frame.
+
+       The fix is to observe the *wrapper* in MarkMap.vue and
+       teardown the markmap instance the moment the wrapper
+       becomes 0×0. The next time it gets a real size (the tab is
+       reactivated), scheduleMount rebuilds the instance. */
+    const { unmount, host } = mountStandalone()
+    await settle()
+    expect(g.__markmapTest!.createCalls.length).toBe(1)
+    expect(g.__markmapTest!.destroyCalls.length).toBe(0)
+
+    /* Simulate the v-show flip: the wrapper goes to 0×0. In a real
+       browser this also collapses clientWidth on the svg; we
+       stub that explicitly because jsdom's layout is 0. */
+    const svg = host.querySelector<SVGSVGElement>('svg.markmap-svg')!
+    Object.defineProperty(svg, 'clientWidth', { configurable: true, value: 0 })
+    fireResizeObservers()
+    await settle()
+
+    /* The markmap instance was destroyed — the in-flight fit()
+       transition is dropped with it, so the 30 transform-NaN
+       warnings stop. */
+    expect(g.__markmapTest!.destroyCalls.length).toBeGreaterThanOrEqual(1)
+
+    /* Simulate the user switching back to the markmap tab:
+       v-show flips to true, layout re-flows, clientWidth > 0. */
+    Object.defineProperty(svg, 'clientWidth', { configurable: true, value: 800 })
+    fireResizeObservers()
+    await settle()
+
+    /* A fresh markmap instance was created to replace the
+       destroyed one. The user sees the diagram again, this time
+       with the host's real dimensions. */
+    expect(g.__markmapTest!.createCalls.length).toBe(2)
+
     unmount()
   })
 })

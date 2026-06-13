@@ -46,7 +46,7 @@ if (typeof window !== 'undefined') {
   })
 }
 
-import { createApp, h, defineComponent, nextTick } from 'vue'
+import { createApp, h, defineComponent } from 'vue'
 import Mermaid from '../Mermaid.vue'
 import { useTheme } from '../../composables/useTheme'
 

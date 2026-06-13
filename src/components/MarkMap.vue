@@ -91,7 +91,34 @@ let pendingRemount = false
    The size gate skips the call when clientWidth is 0; a
    ResizeObserver fires scheduleMount once the host gets a real
    size. The first mount is also rAF-deferred so the layout has
-   had a chance to settle (analogous to the mermaid fix). */
+   had a chance to settle (analogous to the mermaid fix).
+
+   Hidden-host teardown: when the *parent* surface (a tab that's
+   not active, a collapsed split pane, etc.) is set to
+   `display: none` the widget stays in the DOM but its wrapper
+   collapses to 0×0. markmap's own ResizeObserver (the
+   `_observer` on foreignObject firstChild, 100ms debounced) sees
+   the collapse and re-runs `renderData()`, which ends with
+   `n && this.fit()` — and `fit()` does
+
+       const m = Math.min(n / d * o, s / p * o, t)
+
+   on a 0×0 svg. n / d is 0 / 0 → NaN; Math.min(NaN, …) = NaN;
+   the resulting transform string `translate(NaN,NaN) scale(NaN)`
+   is then written by d3-zoom's transition on every animation
+   frame for the transition's duration, producing the same
+   `<g> attribute transform: Expected number` warning once per
+   frame (~30 per `autoFit` transition).
+
+   This isn't caught by the svg-level size gate because the
+   markmap instance was already created when the host was
+   visible — the gate only blocks the *initial* create. The
+   fix is to observe the wrapper element (not the svg) and
+   actively destroy the markmap instance the moment the wrapper
+   collapses to 0×0, then schedule a fresh mount when it
+   becomes visible again. destroy() synchronously drops the
+   in-flight fit() transition — Chrome stops logging the
+   transform-NaN warning the next animation frame. */
 let resizeObserver: ResizeObserver | null = null
 let rafId = 0
 
@@ -113,6 +140,18 @@ function scheduleMount() {
   })
 }
 
+/* Drop the active markmap instance and clear any leftover svg
+   children. Used both on theme-change (we want a fresh instance
+   so the cached link colors re-resolve) and on hide (we want
+   the in-flight fit() transition to stop so it can't write a
+   `translate(NaN,NaN)` transform to a 0×0 svg). */
+function teardownInstance() {
+  mm?.destroy?.()
+  mm = null
+  const svg = svgRef.value
+  if (svg) while (svg.firstChild) svg.removeChild(svg.firstChild)
+}
+
 async function mountMarkmap() {
   if (mountPromise) {
     /* Another mount is in flight; queue a follow-up so the *latest*
@@ -120,6 +159,12 @@ async function mountMarkmap() {
     pendingRemount = true
     return mountPromise
   }
+  /* If the RO + the onMounted rAF both fire on the first
+     paint, we'd otherwise queue two mounts back to back. The
+     second sees an already-built markmap and short-circuits.
+     Theme changes go through `watch(theme, ...)` which calls
+     `teardownInstance()` first, so they always re-mount. */
+  if (mm) return
   mountPromise = (async () => {
     /* svgRef may not be bound yet if the watcher fires between
        component setup and the first onMounted — `onMounted` retries
@@ -137,9 +182,7 @@ async function mountMarkmap() {
        Destroying is the only way to detach d3's mouse listeners;
        just calling mm.fit() with new opts wouldn't re-tint existing
        link strokes (markmap caches the resolved color per node). */
-    mm?.destroy?.()
-    mm = null
-    while (svg.firstChild) svg.removeChild(svg.firstChild)
+    teardownInstance()
     try {
       const [{ Transformer }, { Markmap, loadCSS, loadJS, deriveOptions }] =
         await Promise.all([import('markmap-lib'), import('markmap-view')])
@@ -191,13 +234,45 @@ onMounted(() => {
   /* rAF-defer the first mount: by the next frame the host has
      been laid out, so clientWidth is accurate. Then the
      ResizeObserver catches any later visibility change (tab
-     switch, split open, etc.) and re-runs scheduleMount. */
+     switch, split open, etc.) and re-runs scheduleMount.
+
+     We observe the WRAPPER, not the svg, so we get notified when
+     the *parent* surface (e.g. the v-show'ed preview-pane for an
+     inactive tab) flips to `display: none`. The wrapper collapsing
+     to 0×0 is the signal that the active markmap instance must be
+     torn down — see the comment near `let resizeObserver` for the
+     full chain. The svg-level gate only blocks the *initial* mount;
+     the wrapper-level observation handles the *ongoing* case where
+     an instance is alive in a host that has gone 0×0. */
   scheduleMount()
-  if (svgRef.value && typeof ResizeObserver !== 'undefined') {
+  const observeTarget = wrapperRef.value
+  if (observeTarget && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => {
-      if (hasNonZeroSize()) scheduleMount()
+      if (hasNonZeroSize()) {
+        /* Only kick a mount when we don't already have one. The
+           ResizeObserver fires for every layout tick where the
+           size *changes* — not on initial subscribe — so a
+           theme change plus a hide/show cycle in quick
+           succession won't trigger a redundant rebuild while a
+           mount is already alive. Theme-change rebuilds go
+           through the explicit `watch(theme, ...)` path. */
+        if (!mm) scheduleMount()
+      } else if (mm) {
+        /* The wrapper (or any ancestor) is 0×0 — typically the
+           tab was hidden via v-show, or a split pane was
+           collapsed. The markmap instance is still alive on a
+           0×0 host; its own ResizeObserver will tick
+           renderData() → fit(), and fit() on a 0×0 svg produces
+           `translate(NaN,NaN) scale(NaN)` which Chrome logs once
+           per animation frame. Tear the instance down
+           synchronously so the in-flight transition is dropped
+           and the warnings stop. The next time the wrapper gets
+           a real size, scheduleMount() recreates the instance
+           from scratch. */
+        teardownInstance()
+      }
     })
-    resizeObserver.observe(svgRef.value)
+    resizeObserver.observe(observeTarget)
   }
   document.addEventListener('fullscreenchange', onFullscreenChange)
   /* If the user entered fullscreen before mount finished, the
@@ -208,9 +283,14 @@ onMounted(() => {
 
 /* Theme flip → drop the old instance, build a new one on the same
    svg. The svg is kept stable (no :key) so wrapper-level state
-   (fullscreen, scroll) survives. Routed through scheduleMount so
-   the rAF + size-gate + isConnected check applies. */
-watch(theme, () => scheduleMount())
+   (fullscreen, scroll) survives. We tear down first so the
+   `if (mm) return` short-circuit in mountMarkmap doesn't skip
+   the rebuild, then routed through scheduleMount so the rAF +
+   size-gate + isConnected check applies. */
+watch(theme, () => {
+  teardownInstance()
+  scheduleMount()
+})
 
 /* Lock toggle → flip pan/zoom in place. setOptions() updates markmap's
    internal option map and the next pointer event consults the new
