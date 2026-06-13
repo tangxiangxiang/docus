@@ -3,8 +3,57 @@
 // primes its body cache from this field; if it is missing, body-only
 // queries (e.g. "H3" inside a doc whose title is the first H1) silently
 // return zero hits because the cache ends up as empty strings.
-import { describe, it, expect } from 'vitest'
+//
+// We seed a fixture note in a temp dir and vi.mock filePathFor to point
+// at it — same pattern split.test.ts uses. The test is self-contained
+// and doesn't depend on any real file under src/content/.
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
 import app from '../index'
+
+// `tmpRoot` is referenced inside the mock factory, which vitest hoists
+// above this assignment — but the factory is a function that runs
+// per-import, so it reads `tmpRoot` lazily. As long as beforeEach
+// assigns it before any test runs, this is safe.
+let tmpRoot: string
+
+vi.mock('../paths.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../paths.js')>()
+  return {
+    ...mod,
+    filePathFor: (p: string) => path.join(tmpRoot, p + '.md'),
+  }
+})
+
+const FIXTURE_PATH = 'inbox/markdown-syntax'
+const FIXTURE_BODY = [
+  '---',
+  'title: Markdown syntax quick reference',
+  'created: 2026-03-10',
+  'updated: 2026-03-10',
+  'tags: [markdown, reference]',
+  'summary: Headings, lists, code, links — the essentials.',
+  '---',
+  '',
+  '# H1',
+  '## H2',
+  '### H3',
+  '',
+  'body content here.',
+  '',
+].join('\n')
+
+beforeEach(async () => {
+  tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-get-post-test-'))
+  await fs.mkdir(path.join(tmpRoot, 'inbox'), { recursive: true })
+  await fs.writeFile(path.join(tmpRoot, 'inbox', 'markdown-syntax.md'), FIXTURE_BODY, 'utf8')
+})
+
+afterEach(async () => {
+  await fs.rm(tmpRoot, { recursive: true, force: true })
+})
 
 async function get(urlPath: string) {
   const req = new Request(`http://localhost${urlPath}`)
@@ -13,7 +62,7 @@ async function get(urlPath: string) {
 
 describe('GET /api/posts/*', () => {
   it('returns the markdown body with frontmatter stripped under `content`', async () => {
-    const r = await get('/api/posts/inbox/markdown-syntax')
+    const r = await get('/api/posts/' + FIXTURE_PATH)
     expect(r.status).toBe(200)
     const body = await r.json() as { raw: string; content: string; frontmatter: unknown }
     // raw is the on-disk file (frontmatter + body, intact). Windows
