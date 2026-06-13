@@ -1455,16 +1455,27 @@ main.container {
    from :root is too uniform — the sizes are close enough together
    that the eye can't tell the levels apart, and there's no color or
    weight to anchor them. We re-bind: H1 is the document title, H2 a
-   section, H3+ sub-sections. Underline + tighter weight ladder makes
-   the hierarchy read at a glance. */
+   section, H3+ sub-sections. A tighter weight ladder makes the
+   hierarchy read at a glance.
+
+   The underline is scoped to the FIRST h1 only — the title. The
+   first h1 is always the title because useMarkdownRender either
+   prepends `# ${frontmatter.title}` to the body (when the body
+   doesn't already start with an h1) or the body's own first h1
+   acts as the title. Later in-body h1s are rare (most notes use
+   h2+ for sections) but when present they get the same size/weight
+   as the title, just without the underline — otherwise the
+   underline reads as a section divider, not a title marker. */
 .vault .preview-pane .article h1 {
   font-size: 1.65rem;
   font-weight: 700;
   margin: 0.2em 0 0.6em;
   padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--vs-border);
   color: var(--vs-text-1);
   letter-spacing: -0.01em;
+}
+.vault .preview-pane .article h1:first-of-type {
+  border-bottom: 1px solid var(--vs-border);
 }
 .vault .preview-pane .article h2 {
   font-size: 1.25rem;
