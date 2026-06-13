@@ -50,21 +50,21 @@ async function exists(p: string): Promise<boolean> {
 }
 
 function renderCard(card: Card, today: string): string {
-  // The `summary:` line is included with no value (placeholder) so
-  // it's visible in the editor and the user knows the field exists
-  // — same convention as POST /api/posts (see server/index.ts:64).
-  // The first sentence of the body goes in if it's a clean one-liner.
-  const firstSentence = card.body.split(/[.!?。！？]\s/)[0]?.trim() ?? ''
-  const summary = firstSentence.length > 0 && firstSentence.length < 200 ? firstSentence : ''
+  // Zettel frontmatter is intentionally minimal: title + dates +
+  // tags + provenance (source, splitMode). No `summary:` field —
+  // zettel are atomic by definition, the title + body are the
+  // complete card, and forcing a one-line summary out of the
+  // body either produces a placeholder line that conveys nothing
+  // or a fragile regex extraction that splits on the wrong
+  // punctuation. If the user wants an explicit summary they
+  // can add one by hand to a non-draft card.
   const tagsYaml = card.tags.length ? '[' + card.tags.join(', ') + ']' : '[]'
-  const summaryLine = summary ? `summary: ${summary}\n` : 'summary:\n'
   return [
     '---',
     `title: ${card.title}`,
     `created: ${today}`,
     `updated: ${today}`,
     `tags: ${tagsYaml}`,
-    summaryLine.trimEnd(),
     `source: ${card.source}`,
     `splitMode: ${card.splitMode}`,
     '---',
