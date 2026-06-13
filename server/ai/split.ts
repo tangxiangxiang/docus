@@ -59,7 +59,9 @@ function buildUserPrompt(mode: SplitMode, path: string, raw: string): string {
 }
 
 /** Raw shape the model is told to produce. The server fills `source`
- *  and `splitMode` so the model cannot claim a different origin. */
+ *  so the model cannot claim a different origin. (We used to also
+ *  fill a redundant `splitMode` field; the first path segment of
+ *  `source` already encodes the mode for every supported source.) */
 type ModelCard = Pick<Card, 'title' | 'body' | 'tags' | 'slug'>
 
 function parseCards(raw: string): ModelCard[] {
@@ -140,5 +142,5 @@ export async function runSplit(opts: {
     .join('')
   const parsed = parseCards(text)
   const limited = parsed.slice(0, MAX_CARDS)
-  return limited.map((m) => ({ ...m, source: opts.path, splitMode: opts.mode }))
+  return limited.map((m) => ({ ...m, source: opts.path }))
 }

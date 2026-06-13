@@ -84,12 +84,11 @@ describe('POST /api/ai/split', () => {
     })
     const res = await aiRoutes.request(postJson('/split', { path: 'inbox/init', mode: 'inbox' }))
     expect(res.status).toBe(200)
-    const body = await res.json() as { cards: Array<{ slug: string; source: string; splitMode: string }> }
+    const body = await res.json() as { cards: Array<{ slug: string; source: string }> }
     expect(body.cards).toHaveLength(2)
     expect(body.cards[0]).toMatchObject({
       slug: 'cards-are-atomic',
       source: 'inbox/init',
-      splitMode: 'inbox',
     })
   })
 

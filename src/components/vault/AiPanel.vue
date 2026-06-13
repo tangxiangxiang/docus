@@ -189,7 +189,6 @@ function removeCard(index: number) {
 
 function addBlankCard() {
   if (review.phase.value.kind !== 'review') return
-  const mode = review.phase.value.mode
   const path = currentNote.path.value ?? 'inbox/unknown'
   // Avoid the obvious collision: two clicks of "+ 新增卡片"
   // would otherwise produce two cards with slug "new-card",
@@ -204,7 +203,6 @@ function addBlankCard() {
     tags: [],
     slug,
     source: path,
-    splitMode: mode,
   })
   // The new card defaults to selected. The phase.kind watcher
   // doesn't re-fire on push, so we update `selected` directly.

@@ -42,9 +42,9 @@ describe('POST /api/zettel/draft/batch', () => {
   it('writes 3 cards to zettel/draft/ and reports all as written', async () => {
     const res = await zettelRoutes.request(postJson({
       cards: [
-        { title: 'Card 1', body: 'Body 1', tags: ['a'], slug: 'card-1', source: 'inbox/init', splitMode: 'inbox' },
-        { title: 'Card 2', body: 'Body 2', tags: ['b'], slug: 'card-2', source: 'inbox/init', splitMode: 'inbox' },
-        { title: 'Card 3', body: 'Body 3', tags: ['c'], slug: 'card-3', source: 'inbox/init', splitMode: 'inbox' },
+        { title: 'Card 1', body: 'Body 1', tags: ['a'], slug: 'card-1', source: 'inbox/init' },
+        { title: 'Card 2', body: 'Body 2', tags: ['b'], slug: 'card-2', source: 'inbox/init' },
+        { title: 'Card 3', body: 'Body 3', tags: ['c'], slug: 'card-3', source: 'inbox/init' },
       ],
     }))
     expect(res.status).toBe(200)
@@ -56,17 +56,17 @@ describe('POST /api/zettel/draft/batch', () => {
     expect(raw1).toMatch(/^---\n/)
     expect(raw1).toMatch(/title: Card 1/)
     expect(raw1).toMatch(/source: inbox\/init/)
-    expect(raw1).toMatch(/splitMode: inbox/)
+    
   })
 
   it('appends -2, -3 suffix on slug collision', async () => {
     // First write
     await zettelRoutes.request(postJson({
-      cards: [{ title: 'a', body: 'b', tags: [], slug: 'dup', source: 'inbox/init', splitMode: 'inbox' }],
+      cards: [{ title: 'a', body: 'b', tags: [], slug: 'dup', source: 'inbox/init' }],
     }))
     // Second write with the same slug
     const res = await zettelRoutes.request(postJson({
-      cards: [{ title: 'a', body: 'b', tags: [], slug: 'dup', source: 'inbox/init', splitMode: 'inbox' }],
+      cards: [{ title: 'a', body: 'b', tags: [], slug: 'dup', source: 'inbox/init' }],
     }))
     const body = await res.json() as { written: Array<{ slug: string; path: string }> }
     expect(body.written).toHaveLength(1)
@@ -76,7 +76,7 @@ describe('POST /api/zettel/draft/batch', () => {
 
   it('reports an invalid slug in failed[] (does not abort the batch)', async () => {
     const res = await zettelRoutes.request(postJson({
-      cards: [{ title: 'x', body: 'y', tags: [], slug: 'BadSlug', source: 'inbox/init', splitMode: 'inbox' }],
+      cards: [{ title: 'x', body: 'y', tags: [], slug: 'BadSlug', source: 'inbox/init' }],
     }))
     expect(res.status).toBe(200)
     const body = await res.json() as { written: unknown[]; failed: Array<{ slug: string; reason: string }> }
@@ -92,7 +92,7 @@ describe('POST /api/zettel/draft/batch', () => {
 
   it('includes created and updated dates in frontmatter', async () => {
     const res = await zettelRoutes.request(postJson({
-      cards: [{ title: 't', body: 'b', tags: [], slug: 's', source: 'inbox/init', splitMode: 'inbox' }],
+      cards: [{ title: 't', body: 'b', tags: [], slug: 's', source: 'inbox/init' }],
     }))
     const raw = await fs.readFile(path.join(tmpRoot, 'zettel', 'draft', 's.md'), 'utf8')
     const today = new Date().toISOString().slice(0, 10)

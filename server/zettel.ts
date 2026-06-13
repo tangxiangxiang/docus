@@ -51,13 +51,12 @@ async function exists(p: string): Promise<boolean> {
 
 function renderCard(card: Card, today: string): string {
   // Zettel frontmatter is intentionally minimal: title + dates +
-  // tags + provenance (source, splitMode). No `summary:` field —
-  // zettel are atomic by definition, the title + body are the
-  // complete card, and forcing a one-line summary out of the
-  // body either produces a placeholder line that conveys nothing
-  // or a fragile regex extraction that splits on the wrong
-  // punctuation. If the user wants an explicit summary they
-  // can add one by hand to a non-draft card.
+  // tags + provenance (`source`). No `summary:` field (zettel are
+  // atomic — title + body are the complete card), no `splitMode:`
+  // field (the first path segment of `source` already encodes the
+  // mode for every supported source, e.g. `inbox/init` → inbox
+  // mode). If the user wants an explicit summary or mode marker
+  // they can add one by hand to a non-draft card.
   const tagsYaml = card.tags.length ? '[' + card.tags.join(', ') + ']' : '[]'
   return [
     '---',
@@ -66,7 +65,6 @@ function renderCard(card: Card, today: string): string {
     `updated: ${today}`,
     `tags: ${tagsYaml}`,
     `source: ${card.source}`,
-    `splitMode: ${card.splitMode}`,
     '---',
     '',
     `# ${card.title}`,
@@ -90,8 +88,7 @@ zettel.post('/draft/batch', async (c) => {
     if (!card || typeof card !== 'object' ||
         typeof card.title !== 'string' || typeof card.body !== 'string' ||
         !Array.isArray(card.tags) || typeof card.slug !== 'string' ||
-        typeof card.source !== 'string' ||
-        (card.splitMode !== 'inbox' && card.splitMode !== 'literature')) {
+        typeof card.source !== 'string') {
       result.failed.push({ slug: String((card as any)?.slug ?? '?'), reason: 'shape' })
       continue
     }

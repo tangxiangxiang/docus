@@ -188,9 +188,13 @@ export async function* streamChat(
 // --- AI split-to-draft (atomic card generation) ---
 
 /** A single atomic zettel card proposed by the model. The `source`
- *  and `splitMode` fields are filled by the server, not the model —
- *  we don't want the model to be able to attribute a card to a
- *  different source note than the one the user clicked on. */
+ *  field is filled by the server, not the model — we don't want
+ *  the model to be able to attribute a card to a different
+ *  source note than the one the user clicked on. The split mode
+ *  is intentionally not on the card: it was redundant with
+ *  `source` (whose first path segment is the mode for every
+ *  currently-supported source), and removing it keeps the
+ *  frontmatter minimal. */
 export interface Card {
   title: string
   body: string
@@ -199,7 +203,6 @@ export interface Card {
    *  Server validates against SEGMENT_RE. Conflicts get -2, -3, ... suffix. */
   slug: string
   source: string
-  splitMode: 'inbox' | 'literature'
 }
 
 export type SplitMode = 'inbox' | 'literature'
