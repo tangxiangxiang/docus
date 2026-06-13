@@ -78,6 +78,41 @@ let mm: MmInstance | null = null
 let mountPromise: Promise<void> | null = null
 let pendingRemount = false
 
+/* Two layout gates on top of the isConnected check (see inside
+   mountMarkmap). The d3 force layout that markmap kicks off reads
+   the host svg's clientWidth to compute initial node positions;
+   if the host is 0×0 — typically because the article just had
+   v-html replace its body during a document switch, and the new
+   host hasn't been laid out yet — d3 produces
+   `transform="translate(NaN,NaN) …"`, which the browser logs as
+
+     <g> attribute transform: Expected number, "translate(NaN,NaN) scale(N…"
+
+   The size gate skips the call when clientWidth is 0; a
+   ResizeObserver fires scheduleMount once the host gets a real
+   size. The first mount is also rAF-deferred so the layout has
+   had a chance to settle (analogous to the mermaid fix). */
+let resizeObserver: ResizeObserver | null = null
+let rafId = 0
+
+function hasNonZeroSize(): boolean {
+  const el = svgRef.value
+  if (!el) return false
+  return el.isConnected && el.clientWidth > 0
+}
+
+function scheduleMount() {
+  /* Coalesce: a theme toggle + a code edit + a ResizeObserver
+     tick all landing in the same frame produce one mount, not
+     many. The rAF also guarantees we're past the first paint
+     for the host. */
+  if (rafId) return
+  rafId = requestAnimationFrame(() => {
+    rafId = 0
+    void mountMarkmap()
+  })
+}
+
 async function mountMarkmap() {
   if (mountPromise) {
     /* Another mount is in flight; queue a follow-up so the *latest*
@@ -91,6 +126,12 @@ async function mountMarkmap() {
        us right after the svg is attached. */
     const svg = svgRef.value
     if (!svg) return
+    /* The host might be 0×0 if the article was just re-rendered
+       (v-html replaced the body during a document switch) and
+       the browser hasn't laid it out yet. Skipping here is safe:
+       the ResizeObserver below will re-run scheduleMount once
+       the host gets a real size. */
+    if (!svg.isConnected || svg.clientWidth === 0) return
     mountError.value = null
     /* Drop the previous instance and any svg children it appended.
        Destroying is the only way to detach d3's mouse listeners;
@@ -147,7 +188,17 @@ async function mountMarkmap() {
 }
 
 onMounted(() => {
-  void mountMarkmap()
+  /* rAF-defer the first mount: by the next frame the host has
+     been laid out, so clientWidth is accurate. Then the
+     ResizeObserver catches any later visibility change (tab
+     switch, split open, etc.) and re-runs scheduleMount. */
+  scheduleMount()
+  if (svgRef.value && typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => {
+      if (hasNonZeroSize()) scheduleMount()
+    })
+    resizeObserver.observe(svgRef.value)
+  }
   document.addEventListener('fullscreenchange', onFullscreenChange)
   /* If the user entered fullscreen before mount finished, the
      document.fullscreenElement might already be our wrapper; reflect
@@ -157,8 +208,9 @@ onMounted(() => {
 
 /* Theme flip → drop the old instance, build a new one on the same
    svg. The svg is kept stable (no :key) so wrapper-level state
-   (fullscreen, scroll) survives. */
-watch(theme, () => { void mountMarkmap() })
+   (fullscreen, scroll) survives. Routed through scheduleMount so
+   the rAF + size-gate + isConnected check applies. */
+watch(theme, () => scheduleMount())
 
 /* Lock toggle → flip pan/zoom in place. setOptions() updates markmap's
    internal option map and the next pointer event consults the new
@@ -179,6 +231,9 @@ function toggleLock() {
 }
 
 onBeforeUnmount(() => {
+  if (rafId) { cancelAnimationFrame(rafId); rafId = 0 }
+  resizeObserver?.disconnect()
+  resizeObserver = null
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   mm?.destroy?.()
   mm = null

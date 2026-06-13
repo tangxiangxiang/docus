@@ -109,6 +109,15 @@ function mountStandalone(): { host: HTMLDivElement; unmount: () => void } {
     setup() { return () => h(MarkMap, { content: '# Root\n## Branch' }) },
   }))
   app.mount(host)
+  /* jsdom doesn't implement layout; clientWidth is 0 on every
+     element, which would cause MarkMap's size gate to skip the
+     mount. Stub a real width on the .markmap-svg child so the
+     gate passes — mirrors what a real browser reports for a
+     visible element. */
+  const svg = host.querySelector<SVGSVGElement>('svg.markmap-svg')
+  if (svg) {
+    Object.defineProperty(svg, 'clientWidth', { configurable: true, value: 800 })
+  }
   return { host, unmount: () => { app.unmount(); host.remove() } }
 }
 
