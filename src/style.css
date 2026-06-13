@@ -2723,3 +2723,22 @@ main.container {
 @keyframes ai-cursor-blink {
   to { opacity: 0; }
 }
+
+/* Knowledge-graph surface: fills the same grid cell the editor /
+   preview split occupies in edit mode, and the reading surface
+   in read mode. The v-if (not v-show) on the parent means the
+   canvas is destroyed when the user clicks another ActivityBar
+   button, so we don't pay the d3-force boot cost on every tab
+   flip. */
+.vault .content.content-graph {
+  /* Override the flex split vars — graph wants all the space
+     for itself, no editor/preview ratio. */
+  --editor-flex: 0;
+  --preview-flex: 0;
+  display: block;
+  /* Match the other .content blocks' height: fills the
+     grid track between EditorTabs and StatusBar. */
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}

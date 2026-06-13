@@ -17,6 +17,7 @@ import LinksPanel from '../components/vault/LinksPanel.vue'
 import EditorPane from '../components/vault/EditorPane.vue'
 import PreviewPane from '../components/vault/PreviewPane.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
+import KnowledgeGraph from '../components/vault/KnowledgeGraph.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
 import StatusBar from '../components/vault/StatusBar.vue'
@@ -180,8 +181,20 @@ watch(() => navSearch?.tick.value, () => openSearch())
         @close="closeTab"
       />
 
+      <!-- Graph mode: replaces the entire edit / read surface with
+           the knowledge-graph canvas. Tabs, ActivityBar, side panel,
+           AI panel, and StatusBar are untouched — the user keeps
+           all their navigation context. The graph component reads
+           from the link index singleton and dispatches node clicks
+           through the same openPost singleton the wiki-link
+           renderer uses. Checked first so the read/edit branches
+           below stay the unchanged original. -->
+      <div v-if="activePanel === 'graph'" class="content content-graph">
+        <KnowledgeGraph />
+      </div>
+
       <!-- Edit mode: editor + preview side-by-side, draggable mid-splitter. -->
-      <div v-if="!isReadMode" class="content" :style="contentStyle">
+      <div v-else-if="!isReadMode" class="content" :style="contentStyle">
         <div
           v-for="t in tabs"
           v-show="t.path === activePath"
