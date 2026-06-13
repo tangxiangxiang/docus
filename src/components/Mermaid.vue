@@ -95,13 +95,23 @@ function hasNonZeroSize(): boolean {
 
 function scheduleRender() {
   /* Coalesce: a theme toggle + a code edit landing in the same
-     tick should produce one render, not two. The rAF also
-     guarantees we're past the first paint, so width is
-     accurate. */
+     tick should produce one render, not two.
+
+     Two rAFs in a row, not one. The first rAF lets the current
+     frame's JS settle (e.g. the theme ref's downstream effects
+     have finished mutating the DOM); the second rAF lets the
+     browser commit the resulting paint. mermaid's layout engine
+     reads the document at render time — if we run on the same
+     frame the theme was toggled, the layout sees a half-painted
+     state and produces `<g transform="translate(NaN,NaN) …">`.
+     A double rAF puts the render in a fresh frame AFTER the
+     paint, which is what the size gate alone can't do. */
   if (rafId) return
   rafId = requestAnimationFrame(() => {
-    rafId = 0
-    void render()
+    rafId = requestAnimationFrame(() => {
+      rafId = 0
+      void render()
+    })
   })
 }
 
@@ -109,6 +119,21 @@ async function render() {
   if (!containerRef.value) return
   if (!hasNonZeroSize()) return
   renderError.value = null
+  /* `document.fonts.ready` resolves once all currently-loading
+     fonts have loaded. Mermaid measures text via the canvas
+     during layout; if a font with non-Latin glyphs (e.g. the
+     system Chinese font used by the demo) hasn't loaded yet,
+     the measurement returns 0 width and downstream positions
+     can come out as NaN. We race with a 500ms timeout because
+     some environments (jsdom, browsers that hang on a missing
+     font) never resolve this promise — we'd rather render with
+     a stale font metric than block forever. */
+  if (typeof document !== 'undefined' && (document as Document).fonts && typeof (document as Document).fonts.ready?.then === 'function') {
+    await Promise.race([
+      (document as Document).fonts.ready.catch(() => undefined),
+      new Promise<void>((r) => setTimeout(r, 500)),
+    ])
+  }
   try {
     const mermaid = await getMermaid()
     mermaid.initialize({
@@ -119,16 +144,28 @@ async function render() {
     /* mermaid needs a unique id per render — it appends to
        `dompurify`-scrubbed nodes and the previous `<svg id="...">`
        still being in the document would collide. Date.now() is
-       fine because we only ever have a handful of widgets. */
-    const id = `mermaid-${++mermaidRenderCount}-${Date.now()}`
-    const result = await mermaid.render(id, props.code)
-    const svg = typeof result === 'string' ? result : result.svg
-    /* Last-line defense: if mermaid's layout produced a NaN
-       transform, refuse to inject the broken svg (the browser
-       would log the parser error AND the diagram would be
-       invisible). The ResizeObserver will retry once the host
-       gets a real size; if it persists, the error message tells
-       the user what to do. */
+       fine because we only ever have a handful of widgets.
+
+       We retry up to 3 times if the layout produces NaN. The
+       retry path is mostly defensive: in practice the
+       combination of size-gate + double-rAF + fonts.ready
+       should yield a clean svg on the first try. The retry
+       exists for the rare case where mermaid's internal d3
+       simulation gets a bad initial RNG seed and the first
+       layout iteration produces degenerate positions; the
+       second pass uses a different id so the module-level
+       cache is fresh. */
+    let svg = ''
+    let bindFns: ((el: HTMLElement) => void) | undefined
+    const MAX_ATTEMPTS = 3
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const id = `mermaid-${++mermaidRenderCount}-${Date.now()}-${attempt}`
+      const result = await mermaid.render(id, props.code)
+      svg = typeof result === 'string' ? result : result.svg
+      if (typeof result === 'object') bindFns = result.bindFunctions
+      if (!/translate\(NaN/.test(svg)) break
+      /* else: try again with a fresh id */
+    }
     if (/translate\(NaN/.test(svg)) {
       renderError.value = 'mermaid 布局异常（容器未正确布局或图表含无效字符），请稍后重试'
       /* Leave the container empty so the broken svg never
@@ -138,10 +175,10 @@ async function render() {
     }
     containerRef.value.innerHTML = svg
     /* bindFunctions wires up click handlers / tooltips for
-       interactive diagrams (e.g. classDiagram clickable nodes). */
-    if (typeof result === 'object' && result.bindFunctions && containerRef.value) {
-      result.bindFunctions(containerRef.value)
-    }
+       interactive diagrams (e.g. classDiagram clickable nodes).
+       We use the bindFns from the successful attempt — the
+       loop variable always reflects the last iteration. */
+    if (bindFns && containerRef.value) bindFns(containerRef.value)
   } catch (e) {
     renderError.value = (e as Error).message
     if (containerRef.value) {

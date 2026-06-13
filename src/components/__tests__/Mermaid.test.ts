@@ -60,9 +60,12 @@ interface MermaidTestCounters {
   initializeCalls: Array<Record<string, unknown>>
   renderCalls: Array<{ id: string; code: string }>
   /* `null` = "use the default stub svg" (clean). A non-null
-     string is the svg that the mocked `render` will return for
-     this test — used to simulate mermaid's NaN output. */
-  overrideSvg: string | null
+     string is the svg that the mocked `render` will return.
+     If it's an array, the i-th render() call returns the i-th
+     entry (or the last entry if the index exceeds the array
+     length) — used to simulate mermaid's NaN-then-clean
+     sequence for the retry test. */
+  overrideSvg: string | string[] | null
   bindFunctionCalls: number
 }
 const g = globalThis as typeof globalThis & { __mermaidTest?: MermaidTestCounters }
@@ -84,13 +87,20 @@ vi.mock('mermaid', () => ({
     },
     async render(id: string, code: string) {
       const t = (globalThis as typeof globalThis & { __mermaidTest?: MermaidTestCounters }).__mermaidTest
-      if (t) t.renderCalls.push({ id, code })
-      const svg = t?.overrideSvg ?? cleanStubSvg(id, code)
+      if (!t) return { svg: '', bindFunctions() { /* */ } }
+      t.renderCalls.push({ id, code })
+      const override = t.overrideSvg
+      let svg: string
+      if (Array.isArray(override)) {
+        const i = Math.min(t.renderCalls.length - 1, override.length - 1)
+        svg = override[i] ?? cleanStubSvg(id, code)
+      } else {
+        svg = override ?? cleanStubSvg(id, code)
+      }
       return {
         svg,
         bindFunctions() {
-          const t2 = (globalThis as typeof globalThis & { __mermaidTest?: MermaidTestCounters }).__mermaidTest
-          if (t2) t2.bindFunctionCalls += 1
+          t.bindFunctionCalls += 1
         },
       }
     },
@@ -129,9 +139,15 @@ function mountStandalone(): { host: HTMLDivElement; unmount: () => void } {
    macrotask turns to let the mermaid dynamic import resolve and
    the render() call land. The rAF that Mermaid.vue uses for the
    first render also needs a frame. */
-async function settle(rounds = 20) {
+async function settle(rounds = 5) {
+  /* jsdom's `requestAnimationFrame` is polyfilled as
+     `setTimeout(cb, 16)`. Mermaid.vue's scheduleRender queues
+     a DOUBLE rAF (to let a pending theme-toggle paint settle
+     before the layout-sensitive render). Total wait = 2 × 16ms
+     = 32ms. 5 × 20ms = 100ms gives us comfortable headroom for
+     the dynamic import + the mermaid mock to land too. */
   for (let i = 0; i < rounds; i++) {
-    await new Promise<void>((r) => setTimeout(r, 0))
+    await new Promise<void>((r) => setTimeout(r, 20))
   }
 }
 
@@ -264,17 +280,20 @@ describe('Mermaid NaN-detection fallback', () => {
          <g> attribute transform: Expected number, "translate(NaN,NaN) scale(N…"
 
        and the diagram is invisible. Mermaid.vue scans the
-       returned string and refuses to inject it; the ResizeObserver
-       will retry once the host gets a real size, and the
-       renderError message tells the user what to do. */
+       returned string, refuses to inject it, and surfaces a
+       friendly error in its place. Mermaid.vue also retries up
+       to 3 times (with a fresh id each attempt, so the module-
+       level cache is fresh) before giving up — the retry
+       handles the rare case where mermaid's d3 simulation
+       gets a bad initial RNG seed. */
     g.__mermaidTest!.overrideSvg =
       '<svg data-mock-svg><g class="node" transform="translate(NaN,NaN) scale(1)"><rect/></g></svg>'
 
     const { unmount, host } = mountStandalone()
     await settle()
 
-    /* render was called, but the broken svg was NOT injected. */
-    expect(g.__mermaidTest!.renderCalls.length).toBe(1)
+    /* All 3 retry attempts landed; none produced a clean svg. */
+    expect(g.__mermaidTest!.renderCalls.length).toBe(3)
     const container = host.querySelector<HTMLElement>('.mermaid-svg')!
     expect(container.querySelector('svg[data-mock-svg]')).toBeNull()
     expect(container.innerHTML).toBe('')
@@ -285,6 +304,33 @@ describe('Mermaid NaN-detection fallback', () => {
 
     /* bindFunctions was NOT called — there is no svg to bind to. */
     expect(g.__mermaidTest!.bindFunctionCalls).toBe(0)
+
+    unmount()
+  })
+
+  it('uses the first clean svg when the retry succeeds after a NaN attempt', async () => {
+    /* Retry path: first mermaid.render() returns NaN, second
+       returns clean. Mermaid.vue's retry loop should break on
+       the clean svg and inject it — no error shown, no
+       further attempts. */
+    g.__mermaidTest!.overrideSvg = [
+      '<svg data-mock-svg data-broken><g transform="translate(NaN,NaN) scale(1)"></g></svg>',
+      cleanStubSvg('retry', 'graph TD\n  A --> B'),
+    ]
+
+    const { unmount, host } = mountStandalone()
+    await settle()
+
+    /* Exactly 2 attempts — the loop broke on the clean one. */
+    expect(g.__mermaidTest!.renderCalls.length).toBe(2)
+    const svgEl = host.querySelector('svg[data-mock-svg]')
+    expect(svgEl).toBeTruthy()
+    expect(svgEl!.getAttribute('data-broken')).toBeNull()
+    /* No error message — the retry succeeded. */
+    const errorEl = host.querySelector<HTMLElement>('.mermaid-error')
+    expect(errorEl).toBeFalsy()
+    /* bindFunctions ran once for the successful svg. */
+    expect(g.__mermaidTest!.bindFunctionCalls).toBe(1)
 
     unmount()
   })
