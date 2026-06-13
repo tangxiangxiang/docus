@@ -1,0 +1,151 @@
+// @vitest-environment jsdom
+// Tests for useGraphData — the pure projection from the server's
+// LinkIndexSnapshot down to force-graph's {nodes, links} shape,
+// restricted to the zettel/ subtree.
+//
+// The composable is fully reactive: it reads `getLinkIndex()` (a
+// module-level ShallowRef populated by useLinkIndexSubscription),
+// and returns a computed graphData that recomputes on every link
+// index change. That means the test only needs to mutate the
+// singleton ref to drive it — no fetches, no Vue components.
+import { describe, it, expect, beforeEach } from 'vitest'
+import { getLinkIndex, __resetLinkIndexForTesting } from '../useLinkIndex'
+import { useGraphData } from '../useGraphData'
+
+function setIndex(state: { paths: string[]; outgoing: Record<string, Array<{ target: string; alias?: string; anchor?: string; kind: 'wiki' | 'md' }>> }) {
+  getLinkIndex().value = {
+    paths: new Set(state.paths),
+    outgoing: state.outgoing,
+    lastFetched: 0,
+  }
+}
+
+beforeEach(() => {
+  __resetLinkIndexForTesting()
+})
+
+describe('useGraphData — zettel filter', () => {
+  it('only includes nodes under zettel/', () => {
+    setIndex({
+      paths: ['zettel/init', 'zettel/alpha', 'zettel/draft/beta', 'inbox/todo', 'literature/book'],
+      outgoing: {},
+    })
+    const ids = useGraphData().value.nodes.map((n) => n.id).sort()
+    expect(ids).toEqual(['zettel/alpha', 'zettel/draft/beta', 'zettel/init'])
+  })
+
+  it('includes zettel/draft/ in the zettel/ subtree', () => {
+    /* The spec says the graph is the zettel/ subtree, which INCLUDES
+       zettel/draft/. A future change that excludes draft would need
+       a separate flag; pin "include draft" here so a refactor that
+       silently drops it is caught. */
+    setIndex({
+      paths: ['zettel/init', 'zettel/draft/new-card'],
+      outgoing: {},
+    })
+    const ids = useGraphData().value.nodes.map((n) => n.id)
+    expect(ids).toContain('zettel/draft/new-card')
+  })
+
+  it('drops wiki links that point outside the zettel/ subtree', () => {
+    setIndex({
+      paths: ['zettel/a', 'zettel/b', 'inbox/c'],
+      outgoing: {
+        'zettel/a': [
+          { target: 'zettel/b', kind: 'wiki' },
+          { target: 'inbox/c', kind: 'wiki' }, // cross-tree — must be filtered
+        ],
+        'zettel/b': [],
+      },
+    })
+    const links = useGraphData().value.links
+    expect(links).toHaveLength(1)
+    expect(links[0]).toEqual({ source: 'zettel/a', target: 'zettel/b' })
+  })
+
+  it('drops non-wiki (md) links entirely', () => {
+    /* docus distinguishes [[wiki]] from [text](file.md) in the link
+       index. The knowledge graph shows knowledge connections (wiki
+       links), not arbitrary markdown links. A regular [b](b.md)
+       link in a zettel note should NOT appear in the graph. */
+    setIndex({
+      paths: ['zettel/a', 'zettel/b'],
+      outgoing: {
+        'zettel/a': [
+          { target: 'zettel/b', kind: 'md' },
+        ],
+      },
+    })
+    expect(useGraphData().value.links).toEqual([])
+  })
+
+  it('keeps isolated nodes (no edges in, no edges out)', () => {
+    /* A freshly-written zettel note may have no links yet. The
+       user should still see it on the graph as an isolated dot
+       so they know it exists. */
+    setIndex({
+      paths: ['zettel/lonely', 'zettel/init'],
+      outgoing: {
+        'zettel/init': [{ target: 'zettel/lonely', kind: 'wiki' }],
+      },
+    })
+    const nodes = useGraphData().value.nodes
+    expect(nodes).toHaveLength(2)
+    const lonely = nodes.find((n) => n.id === 'zettel/lonely')!
+    expect(lonely).toBeDefined()
+  })
+})
+
+describe('useGraphData — node sizing', () => {
+  it('marks root-like nodes (no incoming links) as val=24', () => {
+    setIndex({
+      paths: ['zettel/root', 'zettel/child'],
+      outgoing: {
+        'zettel/root': [{ target: 'zettel/child', kind: 'wiki' }],
+      },
+    })
+    const root = useGraphData().value.nodes.find((n) => n.id === 'zettel/root')!
+    expect(root.val).toBe(24)
+  })
+
+  it('marks leaf nodes (no outgoing links) as val=12', () => {
+    setIndex({
+      paths: ['zettel/root', 'zettel/leaf'],
+      outgoing: {
+        'zettel/root': [{ target: 'zettel/leaf', kind: 'wiki' }],
+      },
+    })
+    const leaf = useGraphData().value.nodes.find((n) => n.id === 'zettel/leaf')!
+    expect(leaf.val).toBe(12)
+  })
+
+  it('marks middle nodes (incoming and outgoing) as val=16', () => {
+    setIndex({
+      paths: ['zettel/a', 'zettel/b', 'zettel/c'],
+      outgoing: {
+        'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }],
+        'zettel/b': [{ target: 'zettel/c', kind: 'wiki' }],
+      },
+    })
+    const b = useGraphData().value.nodes.find((n) => n.id === 'zettel/b')!
+    expect(b.val).toBe(16)
+  })
+})
+
+describe('useGraphData — reactiveness', () => {
+  it('recomputes when the link index ref changes', () => {
+    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    expect(useGraphData().value.nodes).toHaveLength(1)
+
+    setIndex({
+      paths: ['zettel/a', 'zettel/b', 'zettel/c'],
+      outgoing: {
+        'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }],
+        'zettel/b': [{ target: 'zettel/c', kind: 'wiki' }],
+      },
+    })
+    const next = useGraphData().value
+    expect(next.nodes).toHaveLength(3)
+    expect(next.links).toHaveLength(2)
+  })
+})
