@@ -51,4 +51,30 @@ describe('markdown render()', () => {
     expect(html).toContain('class="hljs"')
     expect(html).not.toContain('class="markmap-mount"')
   })
+
+  it('emits a mermaid-mount placeholder for ```mermaid fences', async () => {
+    const html = await render([
+      '```mermaid',
+      'graph TD',
+      '  A --> B',
+      '```',
+    ].join('\n'))
+    expect(html).toContain('class="mermaid-mount"')
+    expect(html).toContain('data-content="')
+    /* Source survives attribute-encoding (sans the leading "graph"
+       line, which is plain ASCII and needs no escaping). */
+    expect(html).toContain('graph TD')
+    /* Must not be confused with the markmap fence. */
+    expect(html).not.toContain('class="markmap-mount"')
+  })
+
+  it('does not treat ```merm (a similar-looking lang) as mermaid', async () => {
+    const html = await render([
+      '```merm',
+      'graph TD',
+      '  A --> B',
+      '```',
+    ].join('\n'))
+    expect(html).not.toContain('class="mermaid-mount"')
+  })
 })

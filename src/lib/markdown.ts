@@ -16,14 +16,14 @@ interface HighlightFn {
   (str: string, lang: string): string
 }
 
-/* HTML-attribute-encode for the markmap placeholder. We can't just
-   JSON.stringify (we'd get literal " around the whole string and
-   have to double-encode), and we can't use the more general
-   escapeHtml (single-quotes inside an unquoted attribute would
-   be fine, but inside `data-content="..."` the only character
-   that NEEDS encoding is the double quote itself). Keep the
-   encoding local to the markmap fence. */
-function encodeMarkmapAttr(s: string): string {
+/* HTML-attribute-encode for the markmap / mermaid placeholders. We
+   can't just JSON.stringify (we'd get literal " around the whole
+   string and have to double-encode), and we can't use the more
+   general escapeHtml (single-quotes inside an unquoted attribute
+   would be fine, but inside `data-content="..."` the only
+   character that NEEDS encoding is the double quote itself). Keep
+   the encoding local to the dynamic-fence rules. */
+function encodeMountAttr(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
@@ -52,7 +52,17 @@ async function buildHighlight(): Promise<HighlightFn> {
        viewport, and we want the same interactive controls
        (fullscreen, reset) the reference VitePress build had. */
     if (lang === 'markmap') {
-      return `<div class="markmap-mount" data-content="${encodeMarkmapAttr(str)}"></div>`
+      return `<div class="markmap-mount" data-content="${encodeMountAttr(str)}"></div>`
+    }
+    /* ```mermaid → placeholder div. Same post-mount pattern as
+       markmap: a div with the source on data-content, and
+       useMermaidMount replaces it with a `<Mermaid :code="...">`
+       app instance. We don't render the diagram inline because
+       mermaid's API is async (it lazy-loads its layout engines
+       per diagram type) and the post-mount flow already handles
+       lifecycle / theme switches cleanly. */
+    if (lang === 'mermaid') {
+      return `<div class="mermaid-mount" data-content="${encodeMountAttr(str)}"></div>`
     }
     if (lang && hljs.getLanguage(lang)) {
       try {

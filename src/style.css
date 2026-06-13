@@ -2262,6 +2262,30 @@ main.container {
   margin: 0;
 }
 
+/* ---------- Mermaid mount host ----------
+   The ```mermaid``` fence in src/lib/markdown.ts emits a
+   `<div class="mermaid-mount">` placeholder; useMermaidMount
+   replaces it with a `<div class="mermaid-widget-host">` and
+   mounts a full Mermaid widget (svg + error fallback) into that
+   host. Mirror of the markmap host rules above: undo the
+   article's typography overrides so mermaid's own font sizing
+   wins, and strip margins so the widget doesn't double-space with
+   the surrounding paragraphs. */
+.article .mermaid-widget-host {
+  display: block;
+  font-size: 1em;
+  line-height: normal;
+  margin: 0;
+}
+.article .mermaid-widget-host > * {
+  margin: 0;
+}
+.article .mermaid-mount {
+  display: block;
+  min-height: 80px;
+  margin: 0;
+}
+
 /* ---------- User-forced theme (data-theme on <html>) ----------
    Higher specificity than the prefers-color-scheme media query
    (`:root[data-theme=X]` beats `:root` inside `@media`), so when the

@@ -9,6 +9,7 @@
 import { toRef, ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useMarkdownRender } from '../../composables/vault/useMarkdownRender'
 import { useMarkmapMount } from '../../composables/useMarkmapMount'
+import { useMermaidMount } from '../../composables/useMermaidMount'
 import { getOpenPostForClicks } from '../../composables/vault/useEditorTabs'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 
@@ -57,10 +58,11 @@ const articleEl = ref<HTMLElement | null>(null)
 const readingPaneEl = ref<HTMLElement | null>(null)
 const activeId = ref<string>('')
 
-/* Mount ```markmap``` placeholders as live widgets (same pipeline
-   as PreviewPane — the article is the same v-html surface, just
-   with a different surrounding layout). */
+/* Mount ```markmap``` and ```mermaid``` placeholders as live widgets
+   (same pipeline as PreviewPane — the article is the same v-html
+   surface, just with a different surrounding layout). */
 useMarkmapMount(articleEl)
+useMermaidMount(articleEl)
 
 let observer: IntersectionObserver | null = null
 

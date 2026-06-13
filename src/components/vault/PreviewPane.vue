@@ -2,6 +2,7 @@
 import { toRef, ref } from 'vue'
 import { useMarkdownRender } from '../../composables/vault/useMarkdownRender'
 import { useMarkmapMount } from '../../composables/useMarkmapMount'
+import { useMermaidMount } from '../../composables/useMermaidMount'
 import { getOpenPostForClicks } from '../../composables/vault/useEditorTabs'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 
@@ -15,10 +16,11 @@ const props = defineProps<{
 
 const { html, error: renderError } = useMarkdownRender(toRef(props, 'raw'), props.resolver)
 const articleEl = ref<HTMLElement | null>(null)
-/* Replace any ```markmap``` placeholder divs v-html just dropped in
-   with live, interactive MarkMap widgets. See
-   ../../composables/useMarkmapMount.ts for the lifecycle. */
+/* Replace any ```markmap``` / ```mermaid``` placeholder divs v-html
+   just dropped in with live, interactive widgets. See the two
+   composables for the lifecycle. */
 useMarkmapMount(articleEl)
+useMermaidMount(articleEl)
 
 /* Delegated click handler for wiki-link anchors. We mount this on
    the .article root (not on VaultView) so it only catches links

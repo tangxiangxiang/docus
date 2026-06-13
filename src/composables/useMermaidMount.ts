@@ -1,0 +1,111 @@
+// Post-mount enhancement for `.mermaid-mount` placeholders emitted by
+// the ```mermaid``` fence in src/lib/markdown.ts. v-html gives us a
+// string → DOM injection with no opportunity to splice Vue components
+// in, so the model is:
+//
+//   1. markdown-it emits a div with the source in `data-content`
+//   2. v-html injects that div into the article body
+//   3. this composable watches the article + html refs, finds
+//      un-mounted `.mermaid-mount` divs, and mounts a Mermaid Vue
+//      app at each placeholder's position
+//   4. when html changes (new doc / re-render), the old placeholders
+//      are removed by Vue and we unmount the orphaned apps
+//
+// Mirror of useMarkmapMount. We use a separate composable (rather
+// than merging the two) so each keeps a simple, single-purpose
+// selector and the mount lifecycle for one type of widget doesn't
+// run when the other type isn't present. They could be unified
+// behind a generic `useDynamicMount(articleEl, { selector, ... })`
+// helper, but the indirection has not yet paid for itself.
+
+import { createApp, onBeforeUnmount, watch, type App, type Ref } from 'vue'
+import Mermaid from '../components/Mermaid.vue'
+
+interface MountedDiagram {
+  /** The fresh wrapper div that replaced the placeholder. The Vue
+   *  app is mounted into this div. We keep the ref so we can find
+   *  it again on the next scan (it's now the article's
+   *  `.mermaid-widget` child, not a `.mermaid-mount` placeholder). */
+  host: HTMLDivElement
+  app: App
+}
+
+const SELECTOR = '.mermaid-mount:not([data-mermaid-mounted])'
+
+export function useMermaidMount(articleEl: Ref<HTMLElement | null>) {
+  const widgets = new Map<HTMLDivElement, MountedDiagram>()
+
+  function mountAll() {
+    const root = articleEl.value
+    if (!root) return
+    /* Snapshot so DOM mutations during the loop don't trip the
+       live HTMLCollection. */
+    const placeholders = Array.from(root.querySelectorAll<HTMLDivElement>(SELECTOR))
+    for (const ph of placeholders) {
+      const code = ph.dataset.content ?? ''
+      const host = document.createElement('div')
+      host.className = 'mermaid-widget-host'
+      ph.replaceWith(host)
+      const app = createApp(Mermaid, { code })
+      app.mount(host)
+      widgets.set(host, { host, app })
+    }
+  }
+
+  function unmountOrphans() {
+    const root = articleEl.value
+    for (const [host, w] of widgets) {
+      /* A widget is orphaned when its host div is no longer in the
+         article. This happens on every re-render — v-html wipes
+         the article body and re-injects, so the old hosts
+         disappear along with the placeholders they replaced. */
+      if (!root || !root.contains(host)) {
+        w.app.unmount()
+        widgets.delete(host)
+      }
+    }
+  }
+
+  /* A MutationObserver fires on every childList change inside the
+     article, which is exactly when v-html swaps in fresh
+     placeholders (or the user types and the preview re-renders).
+     Each tick: drop orphaned hosts from the previous render, then
+     mount whatever placeholders are now present. We watch the
+     article ref separately so a brand-new element (component
+     remount, route change) gets observed and the old observer is
+     disconnected. */
+  let observer: MutationObserver | null = null
+
+  function attachObserver(el: HTMLElement) {
+    observer?.disconnect()
+    /* Run an initial scan: the placeholders that arrived via the
+       most recent v-html are already in the DOM by the time we
+       get here, so without the immediate scan the user would see
+       a one-frame flash of empty widgets. */
+    unmountOrphans()
+    mountAll()
+    observer = new MutationObserver(() => { unmountOrphans(); mountAll() })
+    observer.observe(el, { childList: true, subtree: true })
+  }
+
+  function detachObserver() {
+    observer?.disconnect()
+    observer = null
+  }
+
+  /* `watch(articleEl, ...)` doesn't fire on innerHTML re-renders —
+     the same element keeps the same ref. The MutationObserver is
+     the only reliable trigger; the watch is here just to
+     (re)attach the observer when the article element identity
+     changes (route change, v-if toggle, etc.). */
+  watch(articleEl, (el, _prev, onCleanup) => {
+    if (el) attachObserver(el)
+    else detachObserver()
+    onCleanup(detachObserver)
+  }, { immediate: true, flush: 'post' })
+
+  onBeforeUnmount(() => {
+    for (const w of widgets.values()) w.app.unmount()
+    widgets.clear()
+  })
+}
