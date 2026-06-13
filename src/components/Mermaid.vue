@@ -106,8 +106,47 @@ function themeVars(): Record<string, string> {
   }
 }
 
+/* Mermaid's layout engine measures the container with
+   getBoundingClientRect / clientWidth; if the host is 0×0 when
+   render() runs (a hidden tab, a collapsed split, an unsplit
+   vault preview), the math produces `translate(NaN, NaN)` in the
+   output svg, which the browser then rejects with:
+
+     <g> attribute transform: Expected number, "translate(NaN,NaN) scale(N…"
+
+   The fix is a two-part gate: (1) defer the first render one
+   animation frame so layout has settled, and (2) skip the
+   render entirely if the container still has no width. A
+   ResizeObserver re-runs render() once the container gets a
+   real size (tab switch, split toggle, window resize). */
+let resizeObserver: ResizeObserver | null = null
+let rafId = 0
+
+function hasNonZeroSize(): boolean {
+  const el = containerRef.value
+  if (!el) return false
+  /* jsdom doesn't implement layout and returns 0 for clientWidth
+     on every element. The real-browser case is: 0 (hidden) or
+     >0 (visible) — never NaN. So `clientWidth > 0` is a clean
+     gate. */
+  return el.clientWidth > 0
+}
+
+function scheduleRender() {
+  /* Coalesce: a theme toggle + a code edit landing in the same
+     tick should produce one render, not two. The rAF also
+     guarantees we're past the first paint, so clientWidth is
+     accurate. */
+  if (rafId) return
+  rafId = requestAnimationFrame(() => {
+    rafId = 0
+    void render()
+  })
+}
+
 async function render() {
   if (!containerRef.value) return
+  if (!hasNonZeroSize()) return
   renderError.value = null
   try {
     const mermaid = await getMermaid()
@@ -138,20 +177,40 @@ async function render() {
   }
 }
 
-onMounted(() => { void render() })
+onMounted(() => {
+  scheduleRender()
+  /* ResizeObserver re-renders on visibility changes (tab switch,
+     split open, accordion expand). It only fires scheduleRender
+     when the container has a real size — a 0×0 tick during a
+     collapse doesn't re-trigger a doomed render. Feature-detect:
+     ResizeObserver may be missing in old test environments. */
+  if (containerRef.value && typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => {
+      if (hasNonZeroSize()) scheduleRender()
+    })
+    resizeObserver.observe(containerRef.value)
+  }
+})
+
 onBeforeUnmount(() => {
+  if (rafId) { cancelAnimationFrame(rafId); rafId = 0 }
+  resizeObserver?.disconnect()
+  resizeObserver = null
   /* Clear the rendered svg so the DOMPurify-scrubbed nodes don't
      outlive the component (especially during HMR). */
   if (containerRef.value) containerRef.value.innerHTML = ''
 })
 
-/* Theme flip → re-render so the diagram re-tints. We use the same
-   data-theme → mermaid-theme mapping as the initial render. */
-watch(theme, () => { void render() })
+/* Theme flip → re-render so the diagram re-tints. We go through
+   scheduleRender so the render is gated on a non-zero size —
+   a theme toggle while the widget is hidden (in a background
+   tab) won't paint a broken svg. The ResizeObserver will
+   re-trigger once the tab becomes visible. */
+watch(theme, () => scheduleRender())
 
 /* props.code change (e.g. the markdown source was edited) → re-
    render. */
-watch(() => props.code, () => { void render() })
+watch(() => props.code, () => scheduleRender())
 </script>
 
 <template>

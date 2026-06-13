@@ -99,6 +99,15 @@ function mountStandalone(): { host: HTMLDivElement; unmount: () => void } {
     setup() { return () => h(Mermaid, { code: 'graph TD\n  A --> B' }) },
   }))
   app.mount(host)
+  /* jsdom doesn't implement layout; clientWidth is 0 on every
+     element, which would cause Mermaid's render guard to skip
+     the render (and the test to see zero calls). Stub a real
+     width on the .mermaid-svg container so the gate passes —
+     mirrors what a real browser reports for a visible element. */
+  const container = host.querySelector<HTMLElement>('.mermaid-svg')
+  if (container) {
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 800 })
+  }
   return { host, unmount: () => { app.unmount(); host.remove() } }
 }
 
@@ -205,5 +214,46 @@ describe('Mermaid mount + render', () => {
 
     set('light')
     unmount()
+  })
+
+  it('skips render when the container has zero width (tab hidden / collapsed pane)', async () => {
+    /* Regression test for `<g transform="translate(NaN,NaN) …">`:
+       when mermaid.render() is called on a 0×0 container (a
+       hidden tab, a collapsed vault split), the layout engine
+       produces NaN coordinates that the browser then rejects.
+       Mermaid.vue gates render() on a non-zero clientWidth and
+       re-tries via ResizeObserver once the container gets one. */
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const app = createApp(defineComponent({
+      setup() { return () => h(Mermaid, { code: 'graph TD\n  A --> B' }) },
+    }))
+    app.mount(host)
+
+    /* No clientWidth stub — this element is "hidden" from the
+       perspective of Mermaid's render gate. */
+    await settle()
+    expect(g.__mermaidTest!.renderCalls.length).toBe(0)
+
+    /* Now make the container visible (simulating a tab switch /
+       split open). The ResizeObserver should re-trigger render
+       — but ResizeObserver doesn't fire synchronously in jsdom,
+       so we exercise the same code path by calling scheduleRender
+       indirectly: flip the theme, which goes through scheduleRender
+       and checks size. */
+    const container = host.querySelector<HTMLElement>('.mermaid-svg')!
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 800 })
+
+    useTheme().set('dark')
+    await settle()
+    expect(g.__mermaidTest!.renderCalls.length).toBe(1)
+    /* The render that finally ran used the new dark theme (it
+       went through the same scheduleRender path as a real
+       visibility change). */
+    expect(g.__mermaidTest!.initializeCalls.at(-1)?.theme).toBe('dark')
+
+    useTheme().set('light')
+    app.unmount()
+    host.remove()
   })
 })
