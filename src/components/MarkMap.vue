@@ -102,11 +102,29 @@ async function mountMarkmap() {
     try {
       const [{ Transformer }, { Markmap, loadCSS, loadJS, deriveOptions }] =
         await Promise.all([import('markmap-lib'), import('markmap-view')])
+      /* If the article was re-rendered while we were awaiting
+         imports (e.g. the user switched documents in the vault),
+         the host is no longer in the document — v-html has
+         already replaced the article body. The captured `svg`
+         is detached but still has child nodes we just cleared
+         in the lines above. Running Markmap.create on a detached
+         svg starts d3's force simulation on a ghost element and
+         produces `<g transform="translate(NaN,NaN) …">`, which
+         the browser logs as
+
+           <g> attribute transform: Expected number, "translate(NaN,NaN) scale(N…"
+
+         The fix is to bail out as soon as we notice the svg
+         has been detached. The new widget for the next document
+         will get its own mountMarkmap call from its own onMounted;
+         this one is finished. */
+      if (!svg.isConnected) return
       const transformer = new Transformer()
       const { root, features } = transformer.transform(props.content)
       const { styles, scripts } = transformer.getUsedAssets(features)
       if (styles) loadCSS(styles)
       if (scripts) loadJS(scripts, { getMarkmap: () => ({ Markmap, deriveOptions }) })
+      if (!svg.isConnected) return
       mm = Markmap.create(svg, {
         autoFit: true,
         color: colorForNode,

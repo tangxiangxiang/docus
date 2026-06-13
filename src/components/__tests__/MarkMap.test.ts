@@ -224,6 +224,51 @@ describe('MarkMap theme switch', () => {
     set('light')
     unmount()
   })
+
+  it('does not call Markmap.create on a host that was detached mid-mount (document switch)', async () => {
+    /* Regression for the user-reported bug: when the user
+       switches documents in the vault, v-html replaces the
+       article body while a previous markmap's `mountMarkmap`
+       is still awaiting the markmap-lib / markmap-view
+       dynamic imports. The await resolves and the captured
+       `svg` is now a detached DOM node. The old code went
+       ahead and called Markmap.create() on the detached svg,
+       kicking off a d3 force simulation on a ghost element
+       and producing
+
+         <g> attribute transform: Expected number, "translate(NaN,NaN) scale(N…"
+
+       MarkMap.vue's fix is to bail out (svg.isConnected check)
+       before Markmap.create. */
+
+    /* Defer the dynamic import by intercepting it. The test's
+       vi.mock('markmap-lib' | 'markmap-view') factories return
+       synchronously, so we have no natural delay. Instead we
+       mount the widget, immediately detach the host from the
+       document (simulating v-html's innerHTML replacement),
+       and then wait long enough for the (mocked) imports to
+       resolve. The mock's create() should NOT be called. */
+    const { unmount, host } = mountStandalone()
+    /* The widget lives inside the test host. Detach the
+       widget's host div from the document. We have to find the
+       markmap-widget-host child of the test host. */
+    const widgetHost = host.querySelector<HTMLElement>('.markmap-widget')
+    expect(widgetHost).toBeTruthy()
+    /* document.body.appendChild of host gave it a parent. We
+       just remove the widget host — its svg is now detached. */
+    widgetHost!.remove()
+
+    /* The mock factories are synchronous; the await Promise.all
+       still needs a microtask + macrotask to drain. settle()
+       gives it 100ms of real time, which is enough for both
+       rAFs (in onMounted) and the dynamic-import resolution. */
+    await settle()
+
+    /* markmap.create was never called on the detached svg. */
+    expect(g.__markmapTest!.createCalls.length).toBe(0)
+
+    unmount()
+  })
 })
 
 describe('MarkMap lock toggle', () => {
