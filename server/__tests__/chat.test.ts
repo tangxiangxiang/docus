@@ -8,7 +8,11 @@ import { streamClaude, type StreamResult } from '../ai/llm'
 describe('buildSystemPrompt', () => {
   it('returns the base prompt (no note context) followed by the tools section', () => {
     const out = buildSystemPrompt({})
-    expect(out.startsWith("You're a helpful assistant for a personal knowledge base.")).toBe(true)
+    // BASE_SYSTEM_PROMPT is now loaded from server/ai/prompt.md —
+    // a Markdown file describing docus file layout, frontmatter,
+    // and writing conventions. The first line of that file is the
+    // H1 we assert on here.
+    expect(out.startsWith('# docus: AI assistant context')).toBe(true)
     expect(out).toContain('## 你可以修改工作区里的文件')
     expect(out).toContain('read_file')
   })
@@ -22,7 +26,7 @@ describe('buildSystemPrompt', () => {
     // prompt with the note body on every turn.
     expect(out).toContain('read_file')
     expect(out).not.toContain('hello world')
-    expect(out.startsWith("You're a helpful assistant")).toBe(true)
+    expect(out.startsWith('# docus: AI assistant context')).toBe(true)
   })
 
   it('does not include any note body in the system prompt (only path)', () => {

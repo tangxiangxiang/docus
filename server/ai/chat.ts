@@ -24,6 +24,8 @@ import type {
   MessageParam,
   ToolUseBlock,
 } from '@anthropic-ai/sdk/resources/messages/messages'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { ChatError } from './errors.js'
 import { streamClaude } from './llm.js'
 import { TOOL_DEFINITIONS, executeToolCall } from './tools.js'
@@ -31,8 +33,19 @@ import { parseStoredContent, type ToolCallRecord } from './messages.js'
 import * as messages from './messages.js'
 import * as sessions from './sessions.js'
 
-const BASE_SYSTEM_PROMPT =
-  "You're a helpful assistant for a personal knowledge base."
+// The docus context prompt (file layout, frontmatter schema, writing
+// conventions) lives in ./prompt.md so it's easy to edit as a
+// human-readable Markdown file. We read it once at module init — the
+// content is static; if it changes, restart the server.
+//
+// import.meta.dirname is the directory of this source file, so the
+// resolved path works from both runtime (server compiled to
+// dist/ai/chat.js) and tests (server/ai/chat.ts) without any
+// indirection.
+const BASE_SYSTEM_PROMPT = readFileSync(
+  path.join(import.meta.dirname, 'prompt.md'),
+  'utf8',
+)
 
 const TOOLS_SECTION = `
 
