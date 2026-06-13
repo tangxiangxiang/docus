@@ -1,20 +1,27 @@
 // @vitest-environment jsdom
 // Tests for the Mermaid.vue component.
 //
-// Two axes:
+// Three axes:
 //
-//   1. Source-level: the component's CSS rebinds mermaid's
-//      hard-coded dark-mode colors to docus tokens, so the diagram
-//      tracks data-theme instead of being illegible on a dark
-//      article background. JSDOM doesn't apply the cascade, so we
-//      assert the rule by reading the .vue file as text — same
-//      pattern as the MarkMap text-color test.
+//   1. Source-level: the component uses mermaid's built-in
+//      `default` / `dark` themes (NOT a custom themeVariables
+//      object). Custom themeVariables interact badly with
+//      mermaid's internal layout and can produce
+//      `<g transform="translate(NaN,NaN) …">` in the output —
+//      see the regression in test #3. The source check pins the
+//      call shape: no themeVariables, just theme name.
 //
 //   2. Behavior: mounting the component (with a stubbed mermaid
 //      module) calls `mermaid.initialize` with the active theme
 //      and `mermaid.render` with the supplied code, then injects
 //      the returned svg into the container. A theme switch calls
 //      render a second time with the new theme.
+//
+//   3. NaN regression: if mermaid returns an svg containing
+//      `translate(NaN`, Mermaid.vue refuses to inject it (the
+//      browser would log a parser error AND the diagram would be
+//      invisible). The ResizeObserver path retries once the host
+//      gets a real size.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -39,7 +46,7 @@ if (typeof window !== 'undefined') {
   })
 }
 
-import { createApp, h, defineComponent } from 'vue'
+import { createApp, h, defineComponent, nextTick } from 'vue'
 import Mermaid from '../Mermaid.vue'
 import { useTheme } from '../../composables/useTheme'
 
@@ -52,21 +59,22 @@ import { useTheme } from '../../composables/useTheme'
 interface MermaidTestCounters {
   initializeCalls: Array<Record<string, unknown>>
   renderCalls: Array<{ id: string; code: string }>
-  /* The svg strings the mocked `render` returns. We use a small
-     stub svg that contains a recognizable token so the test can
-     assert it landed in the container. */
-  renderResults: string[]
-  /* The bindFunctions argument passed to the most recent render,
-     so the test can verify that clickable-diagram wiring runs. */
+  /* `null` = "use the default stub svg" (clean). A non-null
+     string is the svg that the mocked `render` will return for
+     this test — used to simulate mermaid's NaN output. */
+  overrideSvg: string | null
   bindFunctionCalls: number
 }
 const g = globalThis as typeof globalThis & { __mermaidTest?: MermaidTestCounters }
 g.__mermaidTest = {
   initializeCalls: [],
   renderCalls: [],
-  renderResults: [],
+  overrideSvg: null,
   bindFunctionCalls: 0,
 }
+
+const cleanStubSvg = (id: string, code: string) =>
+  `<svg data-mock-svg data-id="${id}"><text>${code}</text></svg>`
 
 vi.mock('mermaid', () => ({
   default: {
@@ -76,13 +84,10 @@ vi.mock('mermaid', () => ({
     },
     async render(id: string, code: string) {
       const t = (globalThis as typeof globalThis & { __mermaidTest?: MermaidTestCounters }).__mermaidTest
-      if (t) {
-        t.renderCalls.push({ id, code })
-        const svg = `<svg data-mock-svg data-id="${id}"><text>${code}</text></svg>`
-        t.renderResults.push(svg)
-      }
+      if (t) t.renderCalls.push({ id, code })
+      const svg = t?.overrideSvg ?? cleanStubSvg(id, code)
       return {
-        svg: `<svg data-mock-svg data-id="${id}"><text>${code}</text></svg>`,
+        svg,
         bindFunctions() {
           const t2 = (globalThis as typeof globalThis & { __mermaidTest?: MermaidTestCounters }).__mermaidTest
           if (t2) t2.bindFunctionCalls += 1
@@ -92,6 +97,20 @@ vi.mock('mermaid', () => ({
   },
 }))
 
+/* Stub the layout-reading getters on the .mermaid-svg container
+   so Mermaid.vue's `hasNonZeroSize()` gate passes — jsdom doesn't
+   implement layout and returns 0 for both. Real browsers report
+   a positive number for a visible element, which is what we
+   approximate here. */
+function stubLayout(el: HTMLElement, width: number): void {
+  Object.defineProperty(el, 'clientWidth', { configurable: true, value: width })
+  el.getBoundingClientRect = () => ({
+    x: 0, y: 0, top: 0, left: 0, right: width, bottom: 100,
+    width, height: 100,
+    toJSON() { return this },
+  })
+}
+
 function mountStandalone(): { host: HTMLDivElement; unmount: () => void } {
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -99,15 +118,8 @@ function mountStandalone(): { host: HTMLDivElement; unmount: () => void } {
     setup() { return () => h(Mermaid, { code: 'graph TD\n  A --> B' }) },
   }))
   app.mount(host)
-  /* jsdom doesn't implement layout; clientWidth is 0 on every
-     element, which would cause Mermaid's render guard to skip
-     the render (and the test to see zero calls). Stub a real
-     width on the .mermaid-svg container so the gate passes —
-     mirrors what a real browser reports for a visible element. */
   const container = host.querySelector<HTMLElement>('.mermaid-svg')
-  if (container) {
-    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 800 })
-  }
+  if (container) stubLayout(container, 800)
   return { host, unmount: () => { app.unmount(); host.remove() } }
 }
 
@@ -115,7 +127,8 @@ function mountStandalone(): { host: HTMLDivElement; unmount: () => void } {
    microtask chain that includes a dynamic import() of a previously
    uncached module. The settle() helper gives the test a few
    macrotask turns to let the mermaid dynamic import resolve and
-   the render() call land. */
+   the render() call land. The rAF that Mermaid.vue uses for the
+   first render also needs a frame. */
 async function settle(rounds = 20) {
   for (let i = 0; i < rounds; i++) {
     await new Promise<void>((r) => setTimeout(r, 0))
@@ -127,41 +140,31 @@ beforeEach(() => {
   if (t) {
     t.initializeCalls.length = 0
     t.renderCalls.length = 0
-    t.renderResults.length = 0
+    t.overrideSvg = null
     t.bindFunctionCalls = 0
   }
+  /* Force a clean theme between tests — useTheme is a module
+     singleton and previous tests may have flipped it to dark. */
+  useTheme().set('light')
 })
 
-describe('Mermaid theme variables rebind to docus tokens', () => {
-  it('passes a themeVariables map on initialize (not a hard-coded color)', () => {
-    /* The original bug: mermaid's `default` and `dark` themes ship
-       with hard-coded hex colors that don't follow docus tokens.
-       On the article's dark background, the default theme paints
-       light text on a light box and is illegible. The fix in
-       Mermaid.vue passes a `themeVariables` object to
-       mermaid.initialize() that overrides the offending keys with
-       docus-derived values. We pin the call shape here — the test
-       would still pass if a future refactor only set the theme
-       name, but the assertion on `themeVariables` keys makes the
-       rebinding explicit. */
+describe('Mermaid uses built-in themes (no custom themeVariables)', () => {
+  it('does not pass themeVariables to mermaid.initialize', () => {
+    /* Custom themeVariables can interact badly with mermaid's
+       internal layout and produce `<g transform="translate(NaN,NaN) …">`
+       in the output. We pin the call shape here: mermaid
+       receives only the theme name and securityLevel, never a
+       themeVariables object. Theme integration is done via CSS
+       overrides on the generated svg (see style.css). */
     const src = readFileSync(
       resolve(__dirname, '..', 'Mermaid.vue'),
       'utf8',
     )
-    /* themeVariables object literal exists and is forwarded to
-       initialize. Both the dark and light branches must be
-       present — the bug would be hard-coding one theme and
-       forgetting the other. */
-    expect(src).toContain('themeVariables')
-    /* Keys we know mermaid hard-codes and that visibly clash on
-       the docus article. The list lives in `themeVars()` in
-       Mermaid.vue; if you remove a key here, also remove it
-       there (or you'll re-introduce a hard-coded color in
-       whichever theme doesn't override it). */
-    expect(src).toContain('primaryTextColor')
-    expect(src).toContain('lineColor')
-    expect(src).toContain('actorBkg')
-    expect(src).toContain('signalColor')
+    expect(src).not.toMatch(/themeVariables\s*:/)
+    expect(src).not.toMatch(/function\s+themeVars\b/)
+    /* The two built-in theme names are still wired up. */
+    expect(src).toContain("'dark'")
+    expect(src).toContain("'default'")
   })
 })
 
@@ -177,8 +180,10 @@ describe('Mermaid mount + render', () => {
     expect(g.__mermaidTest!.initializeCalls[0]).toMatchObject({
       theme: 'default',
       startOnLoad: false,
+      securityLevel: 'strict',
     })
-    expect(g.__mermaidTest!.initializeCalls[0]).toHaveProperty('themeVariables')
+    /* themeVariables must NOT be in the call — see source test. */
+    expect(g.__mermaidTest!.initializeCalls[0]).not.toHaveProperty('themeVariables')
     expect(g.__mermaidTest!.renderCalls.length).toBe(1)
     expect(g.__mermaidTest!.renderCalls[0].code).toBe('graph TD\n  A --> B')
 
@@ -207,10 +212,6 @@ describe('Mermaid mount + render', () => {
     expect(g.__mermaidTest!.renderCalls.length).toBe(2)
     const lastInit = g.__mermaidTest!.initializeCalls.at(-1)
     expect(lastInit?.theme).toBe('dark')
-    /* The themeVariables object is present (and differs from
-       light). We don't snapshot its exact values — those live in
-       Mermaid.vue and a future refactor is free to tune them as
-       long as the dark/light split stays. */
 
     set('light')
     unmount()
@@ -221,7 +222,7 @@ describe('Mermaid mount + render', () => {
        when mermaid.render() is called on a 0×0 container (a
        hidden tab, a collapsed vault split), the layout engine
        produces NaN coordinates that the browser then rejects.
-       Mermaid.vue gates render() on a non-zero clientWidth and
+       Mermaid.vue gates render() on a non-zero width and
        re-tries via ResizeObserver once the container gets one. */
     const host = document.createElement('div')
     document.body.appendChild(host)
@@ -230,30 +231,61 @@ describe('Mermaid mount + render', () => {
     }))
     app.mount(host)
 
-    /* No clientWidth stub — this element is "hidden" from the
+    /* No layout stub — this element is "hidden" from the
        perspective of Mermaid's render gate. */
     await settle()
     expect(g.__mermaidTest!.renderCalls.length).toBe(0)
 
     /* Now make the container visible (simulating a tab switch /
-       split open). The ResizeObserver should re-trigger render
-       — but ResizeObserver doesn't fire synchronously in jsdom,
-       so we exercise the same code path by calling scheduleRender
-       indirectly: flip the theme, which goes through scheduleRender
-       and checks size. */
+       split open). ResizeObserver doesn't fire synchronously in
+       jsdom, so we exercise the same code path by flipping the
+       theme, which goes through scheduleRender and checks size. */
     const container = host.querySelector<HTMLElement>('.mermaid-svg')!
-    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 800 })
+    stubLayout(container, 800)
 
     useTheme().set('dark')
     await settle()
     expect(g.__mermaidTest!.renderCalls.length).toBe(1)
-    /* The render that finally ran used the new dark theme (it
-       went through the same scheduleRender path as a real
-       visibility change). */
     expect(g.__mermaidTest!.initializeCalls.at(-1)?.theme).toBe('dark')
 
     useTheme().set('light')
     app.unmount()
     host.remove()
+  })
+})
+
+describe('Mermaid NaN-detection fallback', () => {
+  it('refuses to inject an svg containing translate(NaN and shows a friendly error', async () => {
+    /* Defense-in-depth: if the size gate ever fails to catch a
+       0×0 host (e.g. a parent with a CSS transform that
+       collapses layout), mermaid's output can contain
+       `<g transform="translate(NaN,NaN) …">`. The browser logs
+
+         <g> attribute transform: Expected number, "translate(NaN,NaN) scale(N…"
+
+       and the diagram is invisible. Mermaid.vue scans the
+       returned string and refuses to inject it; the ResizeObserver
+       will retry once the host gets a real size, and the
+       renderError message tells the user what to do. */
+    g.__mermaidTest!.overrideSvg =
+      '<svg data-mock-svg><g class="node" transform="translate(NaN,NaN) scale(1)"><rect/></g></svg>'
+
+    const { unmount, host } = mountStandalone()
+    await settle()
+
+    /* render was called, but the broken svg was NOT injected. */
+    expect(g.__mermaidTest!.renderCalls.length).toBe(1)
+    const container = host.querySelector<HTMLElement>('.mermaid-svg')!
+    expect(container.querySelector('svg[data-mock-svg]')).toBeNull()
+    expect(container.innerHTML).toBe('')
+    /* The friendly error is shown. */
+    const errorEl = host.querySelector<HTMLElement>('.mermaid-error')
+    expect(errorEl).toBeTruthy()
+    expect(errorEl!.textContent).toMatch(/布局异常/)
+
+    /* bindFunctions was NOT called — there is no svg to bind to. */
+    expect(g.__mermaidTest!.bindFunctionCalls).toBe(0)
+
+    unmount()
   })
 })

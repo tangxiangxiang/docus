@@ -16,6 +16,17 @@
 // looks for `.mermaid` selectors in the document and re-renders
 // everything. We want per-instance control so a theme switch only
 // re-renders the widget the user is looking at.
+//
+// Theme integration: we use mermaid's built-in `default` and
+// `dark` themes (the only stable surface for color tokens).
+// Earlier we passed a custom `themeVariables` map to rebind
+// specific keys to docus tokens, but unknown keys in
+// `themeVariables` interact badly with mermaid's internal
+// layout and can produce `<g transform="translate(NaN,NaN) …">`
+// in the output. The safer path is: ship mermaid's two built-in
+// themes and override their actual color values via CSS in
+// style.css (e.g. targeting the generated svg's `fill` /
+// `stroke` rules).
 
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useTheme } from '../composables/useTheme'
@@ -31,9 +42,8 @@ const renderError = ref<string | null>(null)
 
 /* Module-scope so we only pay the dynamic-import + JSDOM
    initialization once across all mermaid widgets on the page.
-   `mermaid` is typed loosely because the published typings don't
-   surface the `themeVariables` overload we use for docus token
-   rebinding — see MERMAID_THEME_VARS below. */
+   `mermaid` is typed loosely because the published typings
+   don't surface all of the d.ts we use. */
 let mermaidModule: { default: MermaidNS } | null = null
 let mermaidRenderCount = 0
 
@@ -50,74 +60,25 @@ async function getMermaid(): Promise<MermaidNS> {
   return mermaidModule.default
 }
 
-/* Light/dark theme variable overrides. mermaid exposes a `themeVariables`
-   object on its initialize() config — keys map 1:1 to mermaid's
-   internal CSS variables. We rebind the ones that ship as hard
-   hexes in the default palette so the diagram tracks docus
-   tokens. The full variable list lives in mermaid's
-   themeVariables type; the ones we override here are the ones
-   that visibly clash with a dark background in dark mode. */
-function themeVars(): Record<string, string> {
-  if (theme.value === 'dark') {
-    return {
-      background: 'transparent',
-      primaryColor: '#1f2937',
-      primaryTextColor: '#e5e7eb',
-      primaryBorderColor: '#374151',
-      lineColor: '#9ca3af',
-      secondaryColor: '#111827',
-      tertiaryColor: '#0b1220',
-      noteBkgColor: '#1f2937',
-      noteTextColor: '#e5e7eb',
-      noteBorderColor: '#374151',
-      actorBkg: '#1f2937',
-      actorBorder: '#374151',
-      actorTextColor: '#e5e7eb',
-      actorLineColor: '#9ca3af',
-      signalColor: '#e5e7eb',
-      signalTextColor: '#e5e7eb',
-      labelBoxBkgColor: '#1f2937',
-      labelBoxBorderColor: '#374151',
-      labelTextColor: '#e5e7eb',
-      loopTextColor: '#e5e7eb',
-    }
-  }
-  return {
-    background: 'transparent',
-    primaryColor: '#ffffff',
-    primaryTextColor: '#1f2937',
-    primaryBorderColor: '#d1d5db',
-    lineColor: '#6b7280',
-    secondaryColor: '#f3f4f6',
-    tertiaryColor: '#f9fafb',
-    noteBkgColor: '#fffbeb',
-    noteTextColor: '#92400e',
-    noteBorderColor: '#fcd34d',
-    actorBkg: '#ffffff',
-    actorBorder: '#d1d5db',
-    actorTextColor: '#1f2937',
-    actorLineColor: '#6b7280',
-    signalColor: '#1f2937',
-    signalTextColor: '#1f2937',
-    labelBoxBkgColor: '#ffffff',
-    labelBoxBorderColor: '#d1d5db',
-    labelTextColor: '#1f2937',
-    loopTextColor: '#1f2937',
-  }
-}
-
-/* Mermaid's layout engine measures the container with
-   getBoundingClientRect / clientWidth; if the host is 0×0 when
-   render() runs (a hidden tab, a collapsed split, an unsplit
-   vault preview), the math produces `translate(NaN, NaN)` in the
-   output svg, which the browser then rejects with:
-
+/* Mermaid's layout occasionally emits
+   `transform="translate(NaN,NaN) …"` in its output. The browser
+   then logs
      <g> attribute transform: Expected number, "translate(NaN,NaN) scale(N…"
+   when parsing the svg. This is NOT a JS throw — mermaid.render
+   returns the string and the warning surfaces from the svg
+   parser, so a try/catch around render() does nothing. The
+   fix is a defense in depth:
 
-   The fix is a two-part gate: (1) defer the first render one
-   animation frame so layout has settled, and (2) skip the
-   render entirely if the container still has no width. A
-   ResizeObserver re-runs render() once the container gets a
+     1. Don't call render() on a 0-sized container — the layout
+        engine needs real dimensions to compute positions. We
+        check both `getBoundingClientRect()` (which catches
+        transform-scaled ancestors) and `clientWidth` (which is
+        cheap).
+     2. Defer the first render one rAF so layout has settled.
+     3. Detect NaN in the returned svg string and refuse to
+        inject the broken svg; show a friendly error instead.
+
+   A ResizeObserver re-runs render() once the container gets a
    real size (tab switch, split toggle, window resize). */
 let resizeObserver: ResizeObserver | null = null
 let rafId = 0
@@ -125,17 +86,17 @@ let rafId = 0
 function hasNonZeroSize(): boolean {
   const el = containerRef.value
   if (!el) return false
-  /* jsdom doesn't implement layout and returns 0 for clientWidth
-     on every element. The real-browser case is: 0 (hidden) or
-     >0 (visible) — never NaN. So `clientWidth > 0` is a clean
-     gate. */
-  return el.clientWidth > 0
+  /* jsdom doesn't implement layout; both getters return 0 in
+     tests. The real-browser case is 0 (hidden) or >0 (visible)
+     — never NaN — so `> 0` is a clean gate. */
+  const rect = el.getBoundingClientRect()
+  return rect.width > 0 && el.clientWidth > 0
 }
 
 function scheduleRender() {
   /* Coalesce: a theme toggle + a code edit landing in the same
      tick should produce one render, not two. The rAF also
-     guarantees we're past the first paint, so clientWidth is
+     guarantees we're past the first paint, so width is
      accurate. */
   if (rafId) return
   rafId = requestAnimationFrame(() => {
@@ -153,7 +114,6 @@ async function render() {
     mermaid.initialize({
       startOnLoad: false,
       theme: theme.value === 'dark' ? 'dark' : 'default',
-      themeVariables: themeVars(),
       securityLevel: 'strict',
     })
     /* mermaid needs a unique id per render — it appends to
@@ -163,6 +123,19 @@ async function render() {
     const id = `mermaid-${++mermaidRenderCount}-${Date.now()}`
     const result = await mermaid.render(id, props.code)
     const svg = typeof result === 'string' ? result : result.svg
+    /* Last-line defense: if mermaid's layout produced a NaN
+       transform, refuse to inject the broken svg (the browser
+       would log the parser error AND the diagram would be
+       invisible). The ResizeObserver will retry once the host
+       gets a real size; if it persists, the error message tells
+       the user what to do. */
+    if (/translate\(NaN/.test(svg)) {
+      renderError.value = 'mermaid 布局异常（容器未正确布局或图表含无效字符），请稍后重试'
+      /* Leave the container empty so the broken svg never
+         reaches the parser. */
+      containerRef.value.innerHTML = ''
+      return
+    }
     containerRef.value.innerHTML = svg
     /* bindFunctions wires up click handlers / tooltips for
        interactive diagrams (e.g. classDiagram clickable nodes). */
@@ -236,11 +209,20 @@ watch(() => props.code, () => scheduleRender())
 }
 
 .mermaid-svg {
-  display: flex;
-  justify-content: center;
+  /* Block layout with `text-align: center` (rather than flex)
+     so the svg's intrinsic width is preserved — a flex
+     container can collapse a single svg child to 0 if the
+     svg has no explicit width attribute, which feeds mermaid
+     a 0×0 box and produces the `translate(NaN, NaN)` svg. */
+  display: block;
+  text-align: center;
   width: 100%;
+  /* Safety net: even if the host hasn't been laid out yet,
+     this gives mermaid a real height to work with. */
+  min-height: 120px;
 }
 .mermaid-svg :deep(svg) {
+  display: inline-block;
   max-width: 100%;
   height: auto;
 }
