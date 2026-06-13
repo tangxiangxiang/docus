@@ -1761,15 +1761,22 @@ main.container {
   padding-left: 1.5em;
 }
 .vault .reading-pane .article.reading li + li { margin-top: 0.35em; }
-/* Inline code: soften the global default — the vault code chips
-   (gray pill on white) are great in docs, but a long read on a
-   light background wants a slightly tinted pill that doesn't fight
-   the prose. */
-.vault .reading-pane .article.reading p code,
-.vault .reading-pane .article.reading li code,
-.vault .reading-pane .article.reading h2 code,
-.vault .reading-pane .article.reading h3 code,
-.vault .reading-pane .article.reading h4 code {
+/* Vault code styling. The global `code` and `pre` defaults use
+   hardcoded gray chips and `--code-bg` — fine for the docs but
+   reads as "uncoded" against the vault's themed chrome. The
+   reading pane and the live preview pane both render the same
+   .article HTML, so we scope the vault look to `.vault .article`
+   and let the global default stick for the public reading view
+   (where the long-form typography already lives in a different
+   cascade). The 1px border on inline code is what makes the
+   reading mode's "chip" feel — applying it vault-wide keeps the
+   two views visually consistent. */
+.vault .article p code,
+.vault .article li code,
+.vault .article h1 code,
+.vault .article h2 code,
+.vault .article h3 code,
+.vault .article h4 code {
   font-size: 0.88em;
   padding: 1px 6px;
   border-radius: 4px;
@@ -1777,7 +1784,7 @@ main.container {
   color: var(--vs-text-1);
   border: 1px solid var(--vs-border);
 }
-.vault .reading-pane .article.reading pre {
+.vault .article pre {
   font-size: 0.9em;
   line-height: 1.55;
   margin: 1.3em 0;
