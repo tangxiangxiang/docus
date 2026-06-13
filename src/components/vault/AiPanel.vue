@@ -245,17 +245,29 @@ async function onWrite() {
   if (review.phase.value.kind !== 'review') return
   if (writableCards.value.length === 0) return
   writeStatus.value = null
+  let res: { written: unknown[]; skipped: unknown[]; failed: unknown[] }
   try {
-    const res = await writeDraftBatch({ cards: writableCards.value })
-    writeStatus.value = {
-      written: res.written.length,
-      skipped: res.skipped.length,
-      failed: res.failed.length,
-    }
-    emit('refresh-tree')
+    res = await writeDraftBatch({ cards: writableCards.value })
   } catch (err: any) {
+    // Network/parse failure: stay on the review surface so the user
+    // can retry. (Per-card failures inside `res.failed` are
+    // already non-fatal and would have been reported in
+    // `written`/`failed` below.)
     writeStatus.value = { written: 0, skipped: 0, failed: writableCards.value.length }
+    return
   }
+  writeStatus.value = {
+    written: res.written.length,
+    skipped: res.skipped.length,
+    failed: res.failed.length,
+  }
+  emit('refresh-tree')
+  // Drop back to the chat surface. The toast (set in VaultView via
+  // the same refresh flow) tells the user the write happened; the
+  // review surface staying open would be a dead-end. If the user
+  // wants to write more cards from the same note, they can
+  // /split again.
+  review.reset()
 }
 
 // Whenever the review phase changes to 'review', initialize a
