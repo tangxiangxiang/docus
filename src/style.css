@@ -2233,6 +2233,35 @@ main.container {
 .article .task-list-item input[type='checkbox'] { margin-right: 0.4em; }
 .article ul.contains-task-list { padding-left: 1.2em; }
 
+/* ---------- Markmap mount host ----------
+   The ```markmap``` fence in src/lib/markdown.ts emits a
+   `<div class="markmap-mount">` placeholder; useMarkmapMount replaces
+   it with a `<div class="markmap-widget-host">` and mounts a
+   full MarkMap widget (svg + toolbar) into that host. We isolate
+   the host from the article's typography (font-size: 0.9em) and
+   block-flow rules so the markmap's own SVG sizing isn't squeezed
+   by surrounding text. The widget's internal styles are scoped to
+   MarkMap.vue; this is just the bridge. */
+.article .markmap-widget-host {
+  display: block;
+  font-size: 1em;        /* undo the .article 0.9em */
+  line-height: normal;   /* undo .article line-height: 1.6 */
+  margin: 0;
+}
+.article .markmap-widget-host > * {
+  margin: 0;
+}
+/* The mount placeholder itself, in the brief window before
+   useMarkmapMount replaces it. We give it a min-height to avoid
+   layout shift when the SVG arrives, but no border / background —
+   the surrounding markmap-widget styling is also borderless
+   (floating on the article bg), so a frame here would flash. */
+.article .markmap-mount {
+  display: block;
+  min-height: 120px;
+  margin: 0;
+}
+
 /* ---------- User-forced theme (data-theme on <html>) ----------
    Higher specificity than the prefers-color-scheme media query
    (`:root[data-theme=X]` beats `:root` inside `@media`), so when the

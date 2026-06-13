@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { toRef } from 'vue'
+import { toRef, ref } from 'vue'
 import { useMarkdownRender } from '../../composables/vault/useMarkdownRender'
+import { useMarkmapMount } from '../../composables/useMarkmapMount'
 import { getOpenPostForClicks } from '../../composables/vault/useEditorTabs'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 
@@ -13,6 +14,11 @@ const props = defineProps<{
 }>()
 
 const { html, error: renderError } = useMarkdownRender(toRef(props, 'raw'), props.resolver)
+const articleEl = ref<HTMLElement | null>(null)
+/* Replace any ```markmap``` placeholder divs v-html just dropped in
+   with live, interactive MarkMap widgets. See
+   ../../composables/useMarkmapMount.ts for the lifecycle. */
+useMarkmapMount(articleEl)
 
 /* Delegated click handler for wiki-link anchors. We mount this on
    the .article root (not on VaultView) so it only catches links
@@ -34,5 +40,5 @@ function onArticleClick(e: MouseEvent) {
 
 <template>
   <div v-if="renderError" class="render-error">{{ renderError }}</div>
-  <div v-else class="article preview" v-html="html" @click="onArticleClick" />
+  <div v-else ref="articleEl" class="article preview" v-html="html" @click="onArticleClick" />
 </template>

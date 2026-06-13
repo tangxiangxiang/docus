@@ -15,10 +15,13 @@ function readSaved(): Theme {
     /* private mode / storage blocked — fall through */
   }
   /* No persisted choice — defer to prefers-color-scheme via the media
-     query in style.css, which paints the right palette immediately. */
-  return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
-    ? 'dark'
-    : 'light'
+     query in style.css, which paints the right palette immediately.
+     matchMedia isn't available in every test environment (jsdom
+     doesn't ship it) so we feature-detect rather than assume. */
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return 'light'
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
 const theme = ref<Theme>(readSaved())

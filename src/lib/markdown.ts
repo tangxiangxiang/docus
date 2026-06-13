@@ -16,6 +16,21 @@ interface HighlightFn {
   (str: string, lang: string): string
 }
 
+/* HTML-attribute-encode for the markmap placeholder. We can't just
+   JSON.stringify (we'd get literal " around the whole string and
+   have to double-encode), and we can't use the more general
+   escapeHtml (single-quotes inside an unquoted attribute would
+   be fine, but inside `data-content="..."` the only character
+   that NEEDS encoding is the double quote itself). Keep the
+   encoding local to the markmap fence. */
+function encodeMarkmapAttr(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 async function buildHighlight(): Promise<HighlightFn> {
   const [{ default: hljs }] = await Promise.all([
     import('highlight.js'),
@@ -29,6 +44,16 @@ async function buildHighlight(): Promise<HighlightFn> {
     import('../hljs-dark.css'),
   ])
   return (str: string, lang: string) => {
+    /* ```markmap → placeholder div. The real widget is mounted by
+       useMarkmapMount (in components that v-html the rendered
+       output: PreviewPane, ReadingPane, Article). We emit a div
+       with the source in data-content rather than rendering the
+       tree server-side because markmap's layout depends on the
+       viewport, and we want the same interactive controls
+       (fullscreen, reset) the reference VitePress build had. */
+    if (lang === 'markmap') {
+      return `<div class="markmap-mount" data-content="${encodeMarkmapAttr(str)}"></div>`
+    }
     if (lang && hljs.getLanguage(lang)) {
       try {
         return `<pre class="hljs"><code>${
