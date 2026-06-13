@@ -17,12 +17,17 @@ interface HighlightFn {
 }
 
 async function buildHighlight(): Promise<HighlightFn> {
-  const [{ default: hljs }, { default: theme }] = await Promise.all([
+  const [{ default: hljs }] = await Promise.all([
     import('highlight.js'),
-    import('highlight.js/styles/atom-one-dark.css'),
+    // github.css is the unconditional base — its plain `.hljs-*`
+    // selectors are overridden by the scoped rules in
+    // ./hljs-dark.css whenever the page is in dark mode. See that
+    // file for the prefers-color-scheme + [data-theme='dark']
+    // dual-scoping that makes a user-forced light win over a dark
+    // OS preference.
+    import('highlight.js/styles/github.css'),
+    import('../hljs-dark.css'),
   ])
-  // 防止 vite tree-shake 掉 CSS 副作用 import
-  void theme
   return (str: string, lang: string) => {
     if (lang && hljs.getLanguage(lang)) {
       try {
