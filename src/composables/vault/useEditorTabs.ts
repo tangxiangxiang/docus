@@ -95,6 +95,12 @@ export function getOpenPostForClicks(): ((path: string) => void) | null {
   return _openPost
 }
 
+/** Test-only: replace the click-time openPost handler (passing
+ *  null clears it). Mirrors `__setLiveTabsForTesting`. */
+export function __resetOpenPostForClicks(fn: ((path: string) => void) | null): void {
+  setOpenPostForClicks(fn)
+}
+
 export function useEditorTabs(opts: {
   selectPanel: (panel: SidePanel) => void
 }) {
