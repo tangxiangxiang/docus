@@ -53,9 +53,14 @@ import { useTheme } from '../../composables/useTheme'
    `const createCalls = …` line below would otherwise run — but
    we keep the arrays on globalThis so the factory (which hoists
    above the const) and the test code see the same instance. */
-interface MarkmapTestCounters { createCalls: SVGSVGElement[]; destroyCalls: number[] }
+interface MarkmapTestCounters {
+  createCalls: SVGSVGElement[]
+  createOptions: Array<Record<string, unknown>>
+  destroyCalls: number[]
+  setOptionsCalls: Array<Record<string, unknown>>
+}
 const g = globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }
-g.__markmapTest = { createCalls: [], destroyCalls: [] }
+g.__markmapTest = { createCalls: [], createOptions: [], destroyCalls: [], setOptionsCalls: [] }
 
 vi.mock('markmap-lib', () => ({
   Transformer: class {
@@ -68,15 +73,22 @@ vi.mock('markmap-lib', () => ({
 
 vi.mock('markmap-view', () => ({
   Markmap: {
-    create(svg: SVGSVGElement) {
+    create(svg: SVGSVGElement, opts?: Record<string, unknown>) {
       const t = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
-      if (t) t.createCalls.push(svg)
+      if (t) {
+        t.createCalls.push(svg)
+        t.createOptions.push({ ...(opts ?? {}) })
+      }
       return {
         destroy() {
           const t2 = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
           if (t2) t2.destroyCalls.push(t2.createCalls.length)
         },
         fit() { /* no-op for the test */ },
+        setOptions(opts: Record<string, unknown>) {
+          const t2 = (globalThis as typeof globalThis & { __markmapTest?: MarkmapTestCounters }).__markmapTest
+          if (t2) t2.setOptionsCalls.push({ ...opts })
+        },
       }
     },
   },
@@ -115,7 +127,9 @@ beforeEach(() => {
   const t = g.__markmapTest
   if (t) {
     t.createCalls.length = 0
+    t.createOptions.length = 0
     t.destroyCalls.length = 0
+    t.setOptionsCalls.length = 0
   }
 })
 
@@ -207,6 +221,86 @@ describe('MarkMap theme switch', () => {
     /* Each rebuild destroys the previous instance. */
     expect(g.__markmapTest!.destroyCalls.length).toBeGreaterThanOrEqual(2)
     /* Reset the global theme so other tests start from a known state. */
+    set('light')
+    unmount()
+  })
+})
+
+describe('MarkMap lock toggle', () => {
+  it('mounts locked by default and unlocks via setOptions on click', async () => {
+    const { unmount, host } = mountStandalone()
+    await settle()
+
+    /* Default is locked: the initial Markmap.create receives
+       pan: false, zoom: false. The bug would be either forgetting
+       to pass these (markmap defaults to pan: true) or wiring the
+       lock button to a no-op. */
+    expect(g.__markmapTest!.createCalls.length).toBe(1)
+    expect(g.__markmapTest!.createOptions[0]).toMatchObject({
+      pan: false,
+      zoom: false,
+    })
+
+    /* The toolbar lock button is rendered and starts in the
+       locked state. data-locked is the hook the test uses to find
+       the button — keep it in sync with the template. */
+    const lockBtn = host.querySelector<HTMLButtonElement>('button.markmap-lock-btn')
+    expect(lockBtn).toBeTruthy()
+    expect(lockBtn!.dataset.locked).toBe('true')
+
+    /* Click → unlock. setOptions() should be called with
+       pan: true, zoom: true. We deliberately do NOT expect a
+       Markmap.create rebuild — setOptions is the in-place path. */
+    lockBtn!.click()
+    await settle()
+    expect(g.__markmapTest!.createCalls.length).toBe(1)
+    expect(g.__markmapTest!.setOptionsCalls).toContainEqual({
+      pan: true,
+      zoom: true,
+    })
+    expect(lockBtn!.dataset.locked).toBe('false')
+
+    /* Click again → re-lock. */
+    lockBtn!.click()
+    await settle()
+    expect(g.__markmapTest!.setOptionsCalls).toContainEqual({
+      pan: false,
+      zoom: false,
+    })
+    expect(lockBtn!.dataset.locked).toBe('true')
+
+    /* Reset the global theme so other tests start from a known state. */
+    useTheme().set('light')
+    unmount()
+  })
+
+  it('preserves the lock state across a theme switch (rebuild keeps pan/zoom flags)', async () => {
+    const { unmount, host } = mountStandalone()
+    await settle()
+    expect(g.__markmapTest!.createOptions[0]).toMatchObject({
+      pan: false,
+      zoom: false,
+    })
+
+    /* Unlock first. */
+    const lockBtn = host.querySelector<HTMLButtonElement>('button.markmap-lock-btn')!
+    lockBtn.click()
+    await settle()
+    expect(g.__markmapTest!.setOptionsCalls).toContainEqual({ pan: true, zoom: true })
+
+    /* Now flip the theme. mountMarkmap() rebuilds from scratch
+       and must read the *current* isLocked.value when calling
+       Markmap.create — i.e. the new tree should be unlocked, not
+       snapped back to the initial locked state. */
+    const { set } = useTheme()
+    set(useTheme().theme.value === 'dark' ? 'light' : 'dark')
+    await settle()
+    expect(g.__markmapTest!.createCalls.length).toBe(2)
+    expect(g.__markmapTest!.createOptions[1]).toMatchObject({
+      pan: true,
+      zoom: true,
+    })
+
     set('light')
     unmount()
   })

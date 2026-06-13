@@ -28,6 +28,14 @@ const wrapperRef = ref<HTMLDivElement | null>(null)
 const svgRef = ref<SVGSVGElement | null>(null)
 const isFullscreen = ref(false)
 const mountError = ref<string | null>(null)
+/* Pan/zoom gate. Default is locked — the markmap is read-only out of
+   the box; the user has to click the toolbar lock to drag/zoom it.
+   The lock is *pan/zoom*, not node-level drag, because markmap
+   itself doesn't expose a node-drag handler (it only pans the
+   canvas). The d3 listeners consult this option on every pointer
+   event, so flipping it via setOptions() takes effect mid-gesture
+   on the next event tick. */
+const isLocked = ref(true)
 
 /* Light/dark palettes for the markmap node-link tree. The colors
    mirror the project's accent (`--vs-accent`) and a small
@@ -102,6 +110,8 @@ async function mountMarkmap() {
       mm = Markmap.create(svg, {
         autoFit: true,
         color: colorForNode,
+        pan: !isLocked.value,
+        zoom: !isLocked.value,
       }, root) as unknown as MmInstance
     } catch (e) {
       mountError.value = (e as Error).message
@@ -131,6 +141,24 @@ onMounted(() => {
    svg. The svg is kept stable (no :key) so wrapper-level state
    (fullscreen, scroll) survives. */
 watch(theme, () => { void mountMarkmap() })
+
+/* Lock toggle → flip pan/zoom in place. setOptions() updates markmap's
+   internal option map and the next pointer event consults the new
+   flags, so the user feels the change immediately. Falling back to
+   a full rebuild is fine if a future markmap drops setOptions —
+   the rebuild path is the one we already exercise on theme change. */
+watch(isLocked, (locked) => {
+  const inst = mm as (MmInstance & { setOptions?: (o: Record<string, unknown>) => void }) | null
+  if (inst?.setOptions) {
+    inst.setOptions({ pan: !locked, zoom: !locked })
+  } else {
+    void mountMarkmap()
+  }
+})
+
+function toggleLock() {
+  isLocked.value = !isLocked.value
+}
 
 onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFullscreenChange)
@@ -172,6 +200,22 @@ function resetView() {
     <svg ref="svgRef" class="markmap-svg" />
     <div class="markmap-toolbar-area">
       <div class="markmap-toolbar">
+        <button
+          @click="toggleLock"
+          :title="isLocked ? '解锁后可拖动' : '锁定后不可拖动'"
+          :aria-label="isLocked ? '解锁后可拖动' : '锁定后不可拖动'"
+          class="markmap-lock-btn"
+          :data-locked="isLocked ? 'true' : 'false'"
+        >
+          <svg v-if="isLocked" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+          </svg>
+        </button>
         <button @click="resetView" title="重置视图" aria-label="重置视图">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
