@@ -60,7 +60,7 @@ const SCOPE_ICONS: Record<string, string> = {
   <header :class="['navbar', { 'is-vault': isVault }]">
     <div :class="['navbar-inner', { container: !isVault, 'full-width': isVault }]">
       <RouterLink to="/" class="brand" aria-label="docus home">
-        <img class="brand-logo" src="/public/logo.svg" alt="docus logo" width="24" height="24" />
+        <img class="brand-logo" src="/logo.svg" alt="docus logo" width="24" height="24" />
         <span class="brand-wordmark">docus</span>
       </RouterLink>
       <!-- Scope filter: lives in the navbar (the file tree header is too
