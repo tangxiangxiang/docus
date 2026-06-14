@@ -256,7 +256,10 @@ describe('useVaultLayout', () => {
     // is the contract KnowledgeGraph relies on.
     expect(getSelectPanelForClicks()).toBeNull()
     const captured: string[] = []
-    const fn = (p: 'files' | 'tags') => { captured.push(p) }
+    /* The slot's signature is `SidePanel` (4 values: files/tags/links/graph)
+       so test consumers must accept the full union. Narrowing it here
+       would be a lie about the API surface KnowledgeGraph relies on. */
+    const fn = (p: 'files' | 'tags' | 'links' | 'graph') => { captured.push(p) }
     setSelectPanelForClicks(fn)
     expect(getSelectPanelForClicks()).toBe(fn)
     // The "child" can call it — it runs, even if it has no effect
