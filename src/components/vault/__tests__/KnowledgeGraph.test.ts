@@ -56,6 +56,12 @@ interface FakeGraph {
   nodeVal: ReturnType<typeof vi.fn>
   nodeCanvasObject: ReturnType<typeof vi.fn>
   linkColor: ReturnType<typeof vi.fn>
+  /* Custom link renderer. The component draws lines itself via
+     `linkCanvasObject` instead of relying on force-graph's
+     `linkColor` setter (which the user observed not actually
+     repainting the canvas in dark mode). */
+  linkCanvasObject: ReturnType<typeof vi.fn>
+  linkCanvasObjectMode: ReturnType<typeof vi.fn>
   onNodeClick: ReturnType<typeof vi.fn>
   zoomToFit: ReturnType<typeof vi.fn>
   /* Camera controls. The component uses these to pin a fixed
@@ -125,6 +131,8 @@ vi.mock('force-graph', () => ({
         return g
       }),
       linkColor: vi.fn().mockReturnThis(),
+      linkCanvasObject: vi.fn().mockReturnThis(),
+      linkCanvasObjectMode: vi.fn().mockReturnThis(),
       onNodeClick: vi.fn((cb: (n: unknown) => void) => {
         g._lastOnNodeClick = cb
         return g
@@ -271,6 +279,33 @@ describe('KnowledgeGraph — wiring', () => {
     expect(graphs[0]._destructor).not.toHaveBeenCalled()
     unmount()
     expect(graphs[0]._destructor).toHaveBeenCalledTimes(1)
+  })
+
+  it('replaces the default link rendering with a custom canvas callback so the link stroke color is fully under our control', async () => {
+    /* force-graph reads `linkCanvasObjectMode` through
+       `accessor-fn`, which interprets a STRING arg as a
+       property name on the link object — same trap as
+       `linkColor`. Passing the bare string 'replace' makes
+       the accessor `link => link['replace']`, which returns
+       undefined for our link objects; the replace branch
+       never fires and the default paintLinks pass uses
+       `rgba(0,0,0,0.15)`. We pass a function
+       `() => 'replace'` so accessor-fn invokes it and
+       returns the literal string. The user reported a
+       faint grey line that wouldn't go away — this was
+       the cause. This test pins the function form. */
+    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    const { unmount } = mountStandalone()
+    await settle()
+    const modeArg = graphs[0].linkCanvasObjectMode.mock.calls[0]?.[0]
+    expect(typeof modeArg).toBe('function')
+    expect((modeArg as () => string)()).toBe('replace')
+    expect(graphs[0].linkCanvasObject).toHaveBeenCalled()
+    /* The mock is `mockReturnThis` rather than capturing the
+       callback, so we can't drive the renderer directly here.
+       The "re-installs the link renderer on theme change" test
+       below covers the re-installation path. */
+    unmount()
   })
 
   it('loosens charge and tightens center so edgeless nodes stay near the center', async () => {
@@ -424,6 +459,25 @@ describe('KnowledgeGraph — theme switch', () => {
        more (re-install on every reactive tick) — the load-
        bearing assertion is "at least one more than before". */
     expect(graphs[0].nodeCanvasObject.mock.calls.length).toBeGreaterThan(callsBefore)
+    useTheme().set('light')
+    unmount()
+  })
+
+  it('re-installs the link renderer so the new stroke color takes effect', async () => {
+    /* Symmetric to the nodeCanvasObject re-install test. The
+       link renderer captures `colors.value` by closure, so
+       theme changes need a fresh closure with the new
+       linkColor. Without this re-install, switching to dark
+       mode would keep the line painted in the light-mode
+       color (or whatever the first closure captured). */
+    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    const { unmount } = mountStandalone()
+    await settle()
+    const callsBefore = graphs[0].linkCanvasObject.mock.calls.length
+
+    useTheme().set('dark')
+    await settle()
+    expect(graphs[0].linkCanvasObject.mock.calls.length).toBeGreaterThan(callsBefore)
     useTheme().set('light')
     unmount()
   })

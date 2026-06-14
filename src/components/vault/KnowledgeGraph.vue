@@ -57,7 +57,17 @@ interface ForceGraphInstance {
   nodeLabel: (k: string) => ForceGraphInstance
   nodeVal: (k: string) => ForceGraphInstance
   nodeCanvasObject: (cb: (node: { id: string; title: string; val: number; x?: number; y?: number }, ctx: CanvasRenderingContext2D, scale: number) => void) => ForceGraphInstance
-  linkColor: (c: string) => ForceGraphInstance
+  linkColor: (c: string | ((link: { source: unknown; target: unknown }) => string | null | undefined)) => ForceGraphInstance
+  /* Custom link renderer. We use this instead of `linkColor`
+     because the user reported the `linkColor` setter not
+     actually painting the lines on a dark canvas — likely an
+     interaction with force-graph's kapsule state where
+     `state.linkColor` doesn't get read on every paint. Drawing
+     the line ourselves in `installLinkRenderer` makes the color
+     a function of the canvas context we control, not the
+     library's internal state. */
+  linkCanvasObject: (cb: (link: { source: { x: number; y: number }; target: { x: number; y: number } }, ctx: CanvasRenderingContext2D, scale: number) => void) => ForceGraphInstance
+  linkCanvasObjectMode: (mode: string | (() => 'replace' | 'before' | 'after')) => ForceGraphInstance
   onNodeClick: (cb: (node: { id: string; path: string }) => void) => ForceGraphInstance
   zoomToFit: (duration: number, padding: number) => ForceGraphInstance
   /* Camera controls. force-graph uses (zoom, centerAt) for the
@@ -101,9 +111,21 @@ const colors = computed(() => {
   const dark = theme.value === 'dark'
   return {
     bg: dark ? '#0A0E1A' : '#FAFAFA',
-    nodeFill: dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+    /* Solid ball — the node is the focal element. The fill is
+       fully opaque; the stroke is still drawn at 1.5/globalScale
+       (visible as a subtle inner edge), but the ball itself
+       reads as a single solid disc on top of the bg. */
+    nodeFill: dark ? 'rgba(255,255,255)' : 'rgba(0,0,0)',
     nodeStroke: dark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)',
-    linkColor: dark ? 'rgba(140,180,255,0.35)' : 'rgba(70,100,180,0.30)',
+    /* Link stroke — deliberately low-alpha so the line
+       recedes and the solid node balls read as the focal
+       element. We use a function (not a string) because
+       force-graph's `linkColor` setter routes through
+       `accessor-fn`, which would treat the literal `'…'`
+       as a property name on the link object (see
+       `installLinkRenderer` for the same trap on
+       `linkCanvasObjectMode`). */
+    linkColorFn: () => (dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'),
     text: dark ? '#E2E8F0' : '#1F2937',
   }
 })
@@ -140,6 +162,57 @@ function installCanvasCallback(g: ForceGraphInstance) {
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
     ctx.fillText(node.title, node.x ?? 0, (node.y ?? 0) + r + 2 / globalScale)
+  })
+}
+
+/* Custom link renderer — draws each edge as a straight
+   canvas line using `colors.value.linkColor` as the stroke.
+   This replaces force-graph's default `paintLinks` path so
+   the color is set by us, not by the library's `linkColor`
+   accessor. See the comment on the `linkColor` entry in
+   the `colors` computed for why we don't trust the accessor.
+
+   The mode is 'replace' so force-graph's default stroke pass
+   is skipped; otherwise we'd double-draw each link (once
+   dim, once bright) and the visual weight would be wrong.
+
+   We snapshot `colors.value` at install time for the same
+   reason as `installCanvasCallback` — force-graph holds the
+   callback for the lifetime of the instance, and the theme
+   watcher re-installs this function on every theme change.
+   */
+function installLinkRenderer(g: ForceGraphInstance) {
+  const c = colors.value
+  /* Function form, NOT the string 'replace'. force-graph reads
+     `linkCanvasObjectMode` through `accessor-fn` (same trap as
+     `linkColor`): a string is treated as a property name on
+     the link object. `link['replace']` is `undefined` for our
+     link objects, so the `replace` branch was never taken —
+     every link fell into the default-paint bucket and was
+     rendered with force-graph's fallback `rgba(0,0,0,0.15)`.
+     That's the dim grey line the user has been seeing. */
+  g.linkCanvasObjectMode(() => 'replace')
+  g.linkCanvasObject((link, ctx, globalScale) => {
+    const start = link.source
+    const end = link.target
+    /* force-graph only resolves `source` / `target` from string
+       ids to node objects once the simulation has placed the
+       nodes. Before that (and after the simulation has been
+       torn down) the link has no x/y to draw to, and we skip
+       the stroke. */
+    if (!start || !end || typeof start.x !== 'number' || typeof end.x !== 'number') return
+    ctx.beginPath()
+    ctx.moveTo(start.x, start.y)
+    ctx.lineTo(end.x, end.y)
+    ctx.strokeStyle = c.linkColorFn()
+    /* 1px in canvas space, scaled down as the user zooms in.
+       This matches force-graph's default linkWidth: a single
+       anti-aliased line that reads as ~1px on screen at the
+       resting zoom. We don't need to over-thicken because the
+       stroke color is full-alpha (no transparency to lose in
+       AA mixing). */
+    ctx.lineWidth = 1 / globalScale
+    ctx.stroke()
   })
 }
 
@@ -194,7 +267,6 @@ async function mountGraph() {
    .nodeId('id')
    .nodeLabel('title')
    .nodeVal('val')
-   .linkColor(colors.value.linkColor)
   /* Tighten the default charge + center forces so an edgeless graph
      (the common zettel/ draft state where a few notes have no links
      yet) doesn't fling its nodes to opposite corners. force-graph
@@ -241,6 +313,7 @@ async function mountGraph() {
     center.strength(CENTER_STRENGTH)
   }
   installCanvasCallback(g)
+  installLinkRenderer(g)
   g.onNodeClick((node) => {
     /* `getOpenPostForClicks` is the same singleton
        PreviewPane / ReadingPane use for wiki-link clicks. If
@@ -347,15 +420,17 @@ watch(graphData, (next) => {
   })
 })
 
-/* Theme switch — re-install the canvas callback so the new
+/* Theme switch — re-install the canvas callbacks so the new
    colors paint. force-graph doesn't watch the closure's
    internal refs; it would keep using the old palette until the
-   callback is replaced. linkColor is stored as a string on the
-   library's state, so it must also be re-set. */
+   callbacks are replaced. Both `nodeCanvasObject` and
+   `linkCanvasObject` are installed at construction time and
+   capture `colors.value` by closure, so swapping in the new
+   palette means swapping in new function instances. */
 watch(theme, () => {
   if (graph) {
     installCanvasCallback(graph)
-    graph.linkColor(colors.value.linkColor)
+    installLinkRenderer(graph)
   }
 })
 </script>
