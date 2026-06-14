@@ -181,20 +181,36 @@ async function mountGraph() {
    .nodeLabel('title')
    .nodeVal('val')
    .linkColor(colors.value.linkColor)
-  /* Tighten the default charge force so an edgeless graph (the
-     common zettel/ draft state where a few notes have no links
+  /* Tighten the default charge + center forces so an edgeless graph
+     (the common zettel/ draft state where a few notes have no links
      yet) doesn't fling its nodes to opposite corners. force-graph
-     registers forceManyBody with strength=-30 by default, which
-     dwarfs the built-in forceCenter (strength=0.1) in the no-link
-     case: two isolated nodes end up pinned at ~30px away from the
-     centroid in opposite directions, reading as "far apart on the
-     canvas". At -10 the center pull wins for edgeless layouts and
-     hub-and-spoke graphs barely notice (the link force dominates
-     anyway). If a future test pins a specific charge strength,
-     extract the constant. */
+     pre-registers forceManyBody (strength=-30) and forceCenter
+     (strength=0.1). With defaults the charge is 300x stronger than
+     the center pull, so 2 isolated nodes drift to ~30px from the
+     centroid in opposite directions and read as "far apart on the
+     canvas".
+
+     First pass (commit 049616c) cut charge to -10. That was
+     enough for "looks balanced" but the user still felt the gap
+     was too aggressive — at -10 the 2-node equilibrium is still
+     ~10px apart, which on a wide canvas reads as "two distinct
+     dots, one on each side". At -3 the built-in forceCenter is
+     dominant in the no-link case: the nodes are pulled close to
+     the centroid, only held apart by their own charge. Bumping
+     center to 0.3 (3x default) makes that pull decisive without
+     distorting linked layouts — the link force still anchors
+     connected clusters, and the center only prevents the entire
+     graph from drifting off-axis. Numbers extracted to constants
+     so the next tuning round doesn't need a new test. */
+  const CHARGE_STRENGTH = -3
+  const CENTER_STRENGTH = 0.3
   const charge = g.d3Force('charge') as { strength?: (n: number) => unknown } | null
   if (charge && typeof charge.strength === 'function') {
-    charge.strength(-10)
+    charge.strength(CHARGE_STRENGTH)
+  }
+  const center = g.d3Force('center') as { strength?: (n: number) => unknown } | null
+  if (center && typeof center.strength === 'function') {
+    center.strength(CENTER_STRENGTH)
   }
   installCanvasCallback(g)
   g.onNodeClick((node) => {

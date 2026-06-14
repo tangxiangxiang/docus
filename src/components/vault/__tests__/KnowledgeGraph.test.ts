@@ -251,23 +251,25 @@ describe('KnowledgeGraph — wiring', () => {
     expect(graphs[0]._destructor).toHaveBeenCalledTimes(1)
   })
 
-  it('loosens the default charge force so edgeless nodes stay near the center', async () => {
-    /* force-graph wires forceManyBody() with strength=-30 by
-       default. That repels nodes too aggressively when there are
-       no links to anchor them (the typical zettel/ draft state —
-       2 isolated nodes drift to opposite corners and read as
-       "they're far apart" in the panel). The component overrides
-       the 'charge' force to -10 so the built-in forceCenter wins
-       for edgeless layouts and link force still dominates when
-       edges exist. This is the regression guard: if someone deletes
-       the .d3Force('charge').strength(-10) line, two isolated
-       zettels will fly apart again. */
+  it('loosens charge and tightens center so edgeless nodes stay near the center', async () => {
+    /* force-graph wires forceManyBody() (charge, default -30) and
+       forceCenter() (center, default 0.1). With defaults the
+       charge repels isolated nodes to opposite canvas corners.
+       The component overrides charge to -3 and center to 0.3 so
+       the center pull wins for edgeless layouts (2 isolated
+       zettels stay near the centroid) and link force still
+       dominates when edges exist (hub-and-spoke graphs barely
+       notice). This is the regression guard: deleting either
+       override sends 2-3 isolated zettels back to the corners. */
     setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     expect(graphs[0].d3Force).toHaveBeenCalledWith('charge')
+    expect(graphs[0].d3Force).toHaveBeenCalledWith('center')
     const charge = graphs[0]._d3Forces.get('charge')!
-    expect(charge.strength).toHaveBeenCalledWith(-10)
+    const center = graphs[0]._d3Forces.get('center')!
+    expect(charge.strength).toHaveBeenCalledWith(-3)
+    expect(center.strength).toHaveBeenCalledWith(0.3)
     unmount()
   })
 })
