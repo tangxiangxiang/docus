@@ -58,6 +58,14 @@ interface FakeGraph {
   linkColor: ReturnType<typeof vi.fn>
   onNodeClick: ReturnType<typeof vi.fn>
   zoomToFit: ReturnType<typeof vi.fn>
+  /* d3Force is the escape hatch force-graph exposes for tweaking
+     d3-force-3d forces (link, charge, center, dagRadial). The
+     component uses it on the 'charge' slot to lower the default
+     -30 strength — see KnowledgeGraph.mountGraph. We mock it as
+     a name-keyed map so the test can assert specific forces
+     were mutated. */
+  _d3Forces: Map<string, { strength: ReturnType<typeof vi.fn> }>
+  d3Force: ReturnType<typeof vi.fn>
   _destructor: ReturnType<typeof vi.fn>
   /* Closure of the last nodeCanvasObject arg, so theme/click tests
      can drive it without re-asserting the wiring. */
@@ -111,6 +119,20 @@ vi.mock('force-graph', () => ({
         return g
       }),
       zoomToFit: vi.fn(),
+      /* force-graph pre-registers four forces (link, charge, center,
+         dagRadial). The component only touches 'charge', but we
+         seed all four with strength() spies so a future expansion
+         (e.g. weakening the center force, enabling dagRadial) can
+         assert against them without re-mocking. */
+      _d3Forces: new Map([
+        ['link', { strength: vi.fn().mockReturnThis() }],
+        ['charge', { strength: vi.fn().mockReturnThis() }],
+        ['center', { strength: vi.fn().mockReturnThis() }],
+        ['dagRadial', { strength: vi.fn().mockReturnThis() }],
+      ]),
+      d3Force: vi.fn(function (this: FakeGraph, name: string) {
+        return this._d3Forces.get(name)
+      }),
       _destructor: vi.fn(),
     }
     graphs.push(g)
@@ -227,6 +249,26 @@ describe('KnowledgeGraph — wiring', () => {
     expect(graphs[0]._destructor).not.toHaveBeenCalled()
     unmount()
     expect(graphs[0]._destructor).toHaveBeenCalledTimes(1)
+  })
+
+  it('loosens the default charge force so edgeless nodes stay near the center', async () => {
+    /* force-graph wires forceManyBody() with strength=-30 by
+       default. That repels nodes too aggressively when there are
+       no links to anchor them (the typical zettel/ draft state —
+       2 isolated nodes drift to opposite corners and read as
+       "they're far apart" in the panel). The component overrides
+       the 'charge' force to -10 so the built-in forceCenter wins
+       for edgeless layouts and link force still dominates when
+       edges exist. This is the regression guard: if someone deletes
+       the .d3Force('charge').strength(-10) line, two isolated
+       zettels will fly apart again. */
+    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: {} })
+    const { unmount } = mountStandalone()
+    await settle()
+    expect(graphs[0].d3Force).toHaveBeenCalledWith('charge')
+    const charge = graphs[0]._d3Forces.get('charge')!
+    expect(charge.strength).toHaveBeenCalledWith(-10)
+    unmount()
   })
 })
 

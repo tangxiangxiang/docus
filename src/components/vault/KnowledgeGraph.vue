@@ -60,6 +60,12 @@ interface ForceGraphInstance {
   linkColor: (c: string) => ForceGraphInstance
   onNodeClick: (cb: (node: { id: string; path: string }) => void) => ForceGraphInstance
   zoomToFit: (duration: number, padding: number) => ForceGraphInstance
+  /* Exposes the d3-force-3d simulation forces for fine-tuning.
+     force-graph pre-registers four: 'link' (forceLink),
+     'charge' (forceManyBody), 'center' (forceCenter, strength 0.1),
+     and 'dagRadial' (null until DAG mode is on). We only mutate
+     'charge' below — see mountGraph for why. */
+  d3Force: (name: string) => unknown
   _destructor: () => void
 }
 
@@ -175,6 +181,21 @@ async function mountGraph() {
    .nodeLabel('title')
    .nodeVal('val')
    .linkColor(colors.value.linkColor)
+  /* Tighten the default charge force so an edgeless graph (the
+     common zettel/ draft state where a few notes have no links
+     yet) doesn't fling its nodes to opposite corners. force-graph
+     registers forceManyBody with strength=-30 by default, which
+     dwarfs the built-in forceCenter (strength=0.1) in the no-link
+     case: two isolated nodes end up pinned at ~30px away from the
+     centroid in opposite directions, reading as "far apart on the
+     canvas". At -10 the center pull wins for edgeless layouts and
+     hub-and-spoke graphs barely notice (the link force dominates
+     anyway). If a future test pins a specific charge strength,
+     extract the constant. */
+  const charge = g.d3Force('charge') as { strength?: (n: number) => unknown } | null
+  if (charge && typeof charge.strength === 'function') {
+    charge.strength(-10)
+  }
   installCanvasCallback(g)
   g.onNodeClick((node) => {
     /* `getOpenPostForClicks` is the same singleton
