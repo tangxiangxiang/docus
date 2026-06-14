@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, inject, shallowRef, watch, computed, provide } from 'vue'
-import { useVaultLayout } from '../composables/vault/useVaultLayout'
+import { ref, inject, shallowRef, watch, computed, provide, onMounted, onBeforeUnmount } from 'vue'
+import { useVaultLayout, setSelectPanelForClicks } from '../composables/vault/useVaultLayout'
 import { useSplitReview } from '../composables/vault/useSplitReview'
 import { splitNote, type SplitMode } from '../lib/ai-api'
 import { useToast } from '../composables/useToast'
@@ -58,6 +58,17 @@ const toast = useToast()
 const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 function openSearch() { paletteRef.value?.show() }
+
+/* Publish our selectPanel to children that need to close the graph
+   panel from inside the editor area (KnowledgeGraph's node-click
+   handler). VaultView is the one and only owner of the layout
+   state, so this is the right place to register. */
+onMounted(() => {
+  setSelectPanelForClicks(selectPanel)
+})
+onBeforeUnmount(() => {
+  setSelectPanelForClicks(null)
+})
 
 async function splitCard(path: string, mode: SplitMode) {
   review.setLoading(path, mode)

@@ -43,6 +43,7 @@ import { onMounted, onBeforeUnmount, ref, watch, computed } from 'vue'
 import { useTheme } from '../../composables/useTheme'
 import { useGraphData } from '../../composables/vault/useGraphData'
 import { getOpenPostForClicks } from '../../composables/vault/useEditorTabs'
+import { getSelectPanelForClicks } from '../../composables/vault/useVaultLayout'
 
 /* Minimal structural type for the force-graph instance. We don't
    import force-graph's types (the d.ts is large and ties to
@@ -88,6 +89,8 @@ const colors = computed(() => {
 
 let graph: ForceGraphInstance | null = null
 let resizeObserver: ResizeObserver | null = null
+let zoomToFitTimer: number | null = null
+const loadError = ref<string | null>(null)
 
 function installCanvasCallback(g: ForceGraphInstance) {
   /* Close over the current `colors` ref so a theme switch can
@@ -114,8 +117,19 @@ function installCanvasCallback(g: ForceGraphInstance) {
   })
 }
 
+/* `mountGraph` runs in two situations:
+   1. onMounted — the first attempt to set up the canvas.
+   2. link-index landed after mount with an empty initial
+      state — the watcher below re-invokes it.
+   Concurrent calls are safe: we set `graph` to a sentinel
+   *before* the dynamic import so a second call hitting the
+   `if (graph) return` guard short-circuits even if it lands
+   while the first call is still awaiting the chunk. The
+   sentinel is `true`; we replace it with the real instance
+   once `new Ctor(el)` returns. */
+let mountInFlight = false
 async function mountGraph() {
-  if (graph) return
+  if (graph || mountInFlight) return
   const el = containerRef.value
   if (!el) return
   /* Skip mount for an empty zettel set — force-graph renders a
@@ -123,18 +137,31 @@ async function mountGraph() {
      one-line "no notes" message. The early return is what the
      test pins in the empty-state describe block. */
   if (graphData.value.nodes.length === 0) return
+  mountInFlight = true
 
   /* Dynamic import keeps force-graph + d3 out of the main
      bundle. After the first import, subsequent mounts reuse the
-     cached module. */
-  const mod = await import('force-graph')
-  /* force-graph's default export is a kapsule factory; its
-     TS types don't narrow to our minimal interface, so we cast
-     through `unknown` to avoid the overlap warning vue-tsc
-     raises for the direct cast. */
-  const Ctor = (mod.default ?? mod) as unknown as ForceGraphCtor
-  const g = new Ctor(el)
+     cached module. The whole import + construct path is wrapped in
+     try/catch — a failed chunk (most realistic in production) makes
+     the dynamic import reject; a corrupt module (e.g. a bad
+     transform) makes `new Ctor(el)` throw synchronously. Both
+     surface as the same load-error UI. */
+  let g: ForceGraphInstance
+  try {
+    const mod = await import('force-graph')
+    /* force-graph's default export is a kapsule factory; its TS
+       types don't narrow to our minimal interface, so we cast
+       through `unknown` to avoid the overlap warning vue-tsc
+       raises for the direct cast. */
+    const Ctor = (mod.default ?? mod) as unknown as ForceGraphCtor
+    g = new Ctor(el)
+  } catch (err) {
+    mountInFlight = false
+    loadError.value = err instanceof Error ? err.message : String(err)
+    return
+  }
   graph = g
+  mountInFlight = false
 
   g.width(el.clientWidth || 800)
    .height(el.clientHeight || 600)
@@ -150,8 +177,16 @@ async function mountGraph() {
        registered an opener (e.g. in a test), the call is a
        no-op — better than crashing. */
     const open = getOpenPostForClicks()
-    if (!open) return
-    open(node.path)
+    if (open) open(node.path)
+    /* The spec says clicking a node should close the graph
+       panel and reveal the editor. Without this the user lands
+       in graph mode with the editor tab open underneath, which
+       is the wrong affordance. selectPanel is registered by
+       VaultView onMounted; if the graph mounted first (e.g. in
+       a test) the getter returns null and the panel stays
+       open — same no-crash guarantee as openPost above. */
+    const select = getSelectPanelForClicks()
+    if (select) select('files')
   })
   g.graphData({
     nodes: graphData.value.nodes.slice(),
@@ -175,8 +210,15 @@ async function mountGraph() {
   /* Center the graph on first paint. force-graph's layout is
      randomized; without a zoomToFit the user lands on a corner
      of the canvas. 800ms gives the simulation enough warmup
-     ticks for the layout to settle. */
-  setTimeout(() => { graph?.zoomToFit(400, 50) }, 800)
+     ticks for the layout to settle. We track the timer so a
+     fast unmount (panel-switch) can cancel it — otherwise the
+     optional-chain `graph?` check hides the bug but the
+     dangling timer keeps the closure alive longer than
+     needed. */
+  zoomToFitTimer = window.setTimeout(() => {
+    zoomToFitTimer = null
+    graph?.zoomToFit(400, 50)
+  }, 800)
 }
 
 onMounted(() => {
@@ -184,6 +226,10 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (zoomToFitTimer !== null) {
+    clearTimeout(zoomToFitTimer)
+    zoomToFitTimer = null
+  }
   resizeObserver?.disconnect()
   resizeObserver = null
   /* kapsule exposes the destructor as `_destructor` (see
@@ -198,25 +244,29 @@ onBeforeUnmount(() => {
 /* Push new data into force-graph on every link index change.
    The library's onChange handler restarts the simulation with
    the fresh node/link set, so a new [[wiki]] link added in the
-   editor shows up here within one debounce. */
+   editor shows up here within one debounce. `graphData` is a
+   ComputedRef, so deep-watching its value is a no-op — Vue
+   re-evaluates the computed wholesale on dependency change. */
 watch(graphData, (next) => {
   if (!graph) {
     /* Mount raced with the first link index fetch — the empty
        state guard in mountGraph() prevented initial setup. Try
-       again now that we have data. */
-    if (next.nodes.length > 0) void mountGraph()
+       again now that we have data. mountGraph's own empty
+       guard handles the still-empty case. */
+    void mountGraph()
     return
   }
   graph.graphData({
     nodes: next.nodes.slice(),
     links: next.links.slice(),
   })
-}, { deep: true })
+})
 
 /* Theme switch — re-install the canvas callback so the new
    colors paint. force-graph doesn't watch the closure's
    internal refs; it would keep using the old palette until the
-   callback is replaced. */
+   callback is replaced. linkColor is stored as a string on the
+   library's state, so it must also be re-set. */
 watch(theme, () => {
   if (graph) {
     installCanvasCallback(graph)
@@ -226,8 +276,21 @@ watch(theme, () => {
 </script>
 
 <template>
-  <div ref="containerRef" class="kg-wrap" :data-theme="theme">
-    <div v-if="graphData.nodes.length === 0" class="kg-empty">
+  <div
+    ref="containerRef"
+    class="kg-wrap"
+    :data-theme="theme"
+    role="img"
+    aria-label="Knowledge graph"
+  >
+    <div v-if="loadError" class="kg-empty" role="alert" aria-live="polite">
+      图谱加载失败：{{ loadError }}
+    </div>
+    <div
+      v-else-if="graphData.nodes.length === 0"
+      class="kg-empty"
+      aria-live="polite"
+    >
       还没有 zettel 笔记，先去 inbox 写一条吧。
     </div>
   </div>

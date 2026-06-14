@@ -41,6 +41,7 @@ import KnowledgeGraph from '../KnowledgeGraph.vue'
 import { useTheme } from '../../../composables/useTheme'
 import { __resetLinkIndexForTesting, getLinkIndex } from '../../../composables/vault/useLinkIndex'
 import { __resetOpenPostForClicks } from '../../../composables/vault/useEditorTabs'
+import { __resetSelectPanelForClicks, setSelectPanelForClicks } from '../../../composables/vault/useVaultLayout'
 
 /* Force-graph instance shape we expose to the test. The real
    library has dozens of methods; we capture just the ones the
@@ -74,8 +75,24 @@ const graphs: FakeGraph[] = []
    path in production. In the test we treat it as a function
    that returns the chainable; the `new` call still works
    because the function ignores `this` and returns the chainable. */
+/* When `failNextImport` is set, the next time the mock is
+   `new`-invoked it throws synchronously, simulating a corrupt
+   force-graph module / failed `init()` path. The component's
+   try/catch around `await import + new Ctor` should catch it and
+   render the load-error empty state. We attach the throw to the
+   constructor call rather than to the import itself because
+   vitest's module-factory errors are reported as unhandled even
+   when the consumer awaits + catches — putting the throw on the
+   ctor keeps the error on a path the SUT visibly handles. */
+let failNextImport: Error | null = null
+
 vi.mock('force-graph', () => ({
   default: function FakeForceGraph() {
+    if (failNextImport) {
+      const err = failNextImport
+      failNextImport = null
+      throw err
+    }
     const g: FakeGraph = {
       _id: 'g-' + (++_graphId),
       graphData: vi.fn().mockReturnThis(),
@@ -137,6 +154,10 @@ function mountStandalone() {
   /* Install a fake openPost so onNodeClick can call it. */
   let lastOpened: string | null = null
   __resetOpenPostForClicks((p: string) => { lastOpened = p })
+  /* Install a fake selectPanel so onNodeClick can close the graph
+     panel. Mirrors what VaultView does onMounted. */
+  let lastPanel: string | null = null
+  setSelectPanelForClicks((p: string) => { lastPanel = p })
   const app = createApp(defineComponent({
     setup() { return () => h(KnowledgeGraph) },
   }))
@@ -147,7 +168,13 @@ function mountStandalone() {
   return {
     host,
     lastOpened: () => lastOpened,
-    unmount: () => { app.unmount(); host.remove(); __resetOpenPostForClicks(null) },
+    lastPanel: () => lastPanel,
+    unmount: () => {
+      app.unmount()
+      host.remove()
+      __resetOpenPostForClicks(null)
+      __resetSelectPanelForClicks()
+    },
   }
 }
 
@@ -159,9 +186,11 @@ async function settle(rounds = 8) {
 
 beforeEach(() => {
   __resetLinkIndexForTesting()
+  __resetSelectPanelForClicks()
   useTheme().set('light')
   graphs.length = 0
   roRegistry.length = 0
+  failNextImport = null
 })
 
 describe('KnowledgeGraph — wiring', () => {
@@ -249,6 +278,25 @@ describe('KnowledgeGraph — node click', () => {
     expect(() => graphs[0]._lastOnNodeClick!({ id: 'zettel/a', path: 'zettel/a' })).not.toThrow()
     unmount()
   })
+
+  it('closes the graph panel by calling selectPanel("files") on node click', async () => {
+    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    const { unmount, lastPanel } = mountStandalone()
+    await settle()
+    graphs[0]._lastOnNodeClick!({ id: 'zettel/a', path: 'zettel/a' })
+    await nextTick()
+    expect(lastPanel()).toBe('files')
+    unmount()
+  })
+
+  it('does not crash if selectPanel is not registered yet', async () => {
+    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    const { unmount } = mountStandalone()
+    await settle()
+    __resetSelectPanelForClicks()
+    expect(() => graphs[0]._lastOnNodeClick!({ id: 'zettel/a', path: 'zettel/a' })).not.toThrow()
+    unmount()
+  })
 })
 
 describe('KnowledgeGraph — theme switch', () => {
@@ -281,6 +329,22 @@ describe('KnowledgeGraph — empty state', () => {
        spin up for an empty graph). */
     expect(graphs).toHaveLength(0)
     expect(host.textContent).toMatch(/zettel|还没有|写一条/)
+    unmount()
+  })
+})
+
+describe('KnowledgeGraph — load error', () => {
+  it('surfaces a friendly message when the force-graph import fails', async () => {
+    failNextImport = new Error('mocked chunk failure')
+    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    const { unmount, host } = mountStandalone()
+    await settle()
+    /* No graph was instantiated — the import threw and the
+       component caught it. The user sees the error message
+       instead of a blank canvas. */
+    expect(graphs).toHaveLength(0)
+    expect(host.textContent).toMatch(/图谱加载失败/)
+    expect(host.textContent).toMatch(/mocked chunk failure/)
     unmount()
   })
 })

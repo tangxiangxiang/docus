@@ -23,6 +23,16 @@
 // The `useStorage` key ('docus.vault.layout') and the migration shape
 // must NOT change — existing users' localStorage has the new shape, and
 // older installs may still have {fileTreeOpen, fileTreeWidth}.
+//
+// Cross-component call into the layout:
+//   useVaultLayout is a per-mount composable — every call creates its
+//   own activePanel ref, which means a child component invoking
+//   `useVaultLayout()` would get a SECOND, disconnected set of refs.
+//   The child (KnowledgeGraph.vue, when a node is clicked) needs to
+//   tell the parent vault to switch panels, so we publish the parent's
+//   selectPanel via a module-level slot. The same pattern is used for
+//   openPost in useEditorTabs. This avoids the cycle of having the
+//   child import the parent's layout instance.
 
 import { computed, ref, watch } from 'vue'
 import { useStorage } from '@vueuse/core'
@@ -40,6 +50,25 @@ export interface VaultLayout {
 
 const STORAGE_KEY = 'docus.vault.layout'
 const DEFAULTS: VaultLayout = { activePanel: 'files', sidePanelWidth: 260, editorRatio: 1, aiOpen: false, aiPanelWidth: 320 }
+
+/* Cross-component call slot. See the comment block at the top of the
+   file for the full reasoning. Set once by the first useVaultLayout()
+   call (which is the parent's), and read by child components that need
+   to switch the activity-bar panel (e.g. KnowledgeGraph closing the
+   graph panel when a node is clicked). */
+let _selectPanelForClicks: ((panel: SidePanel) => void) | null = null
+
+export function setSelectPanelForClicks(fn: ((panel: SidePanel) => void) | null): void {
+  _selectPanelForClicks = fn
+}
+
+export function getSelectPanelForClicks(): ((panel: SidePanel) => void) | null {
+  return _selectPanelForClicks
+}
+
+export function __resetSelectPanelForClicks(): void {
+  _selectPanelForClicks = null
+}
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
@@ -155,6 +184,16 @@ export function useVaultLayout() {
 
   function selectPanel(panel: SidePanel) {
     activePanel.value = activePanel.value === panel ? null : panel
+  }
+
+  /* Module-level slot for cross-component calls into the parent's
+     selectPanel. KnowledgeGraph (a child of the editor area) registers
+     nothing here — it reads via getSelectPanelForClicks() at click
+     time. VaultView calls setSelectPanelForClicks(selectPanel) inside
+     its setup so the registered fn is the SAME closure the template
+     bound to the activity bar buttons. */
+  if (!_selectPanelForClicks) {
+    _selectPanelForClicks = selectPanel
   }
 
   function toggleAi() {

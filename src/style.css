@@ -2731,13 +2731,8 @@ main.container {
    button, so we don't pay the d3-force boot cost on every tab
    flip. */
 .vault .content.content-graph {
-  /* Override the flex split vars — graph wants all the space
-     for itself, no editor/preview ratio. */
-  --editor-flex: 0;
-  --preview-flex: 0;
+  /* Graph owns the full editor surface; no editor/preview split. */
   display: block;
-  /* Match the other .content blocks' height: fills the
-     grid track between EditorTabs and StatusBar. */
   height: 100%;
   min-height: 0;
   overflow: hidden;

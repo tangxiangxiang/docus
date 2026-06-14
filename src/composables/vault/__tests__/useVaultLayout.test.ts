@@ -16,17 +16,24 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { defineComponent, h, type Ref } from 'vue'
 import { mount } from '@vue/test-utils'
-import { useVaultLayout, type VaultLayout } from '../useVaultLayout'
+import {
+  useVaultLayout,
+  setSelectPanelForClicks,
+  getSelectPanelForClicks,
+  __resetSelectPanelForClicks,
+  type VaultLayout,
+} from '../useVaultLayout'
 
 const STORAGE_KEY = 'docus.vault.layout'
 
 interface Harness {
   activePanel: Ref<string | null>
+  sidePanelOpen: Ref<boolean>
   sidePanelWidth: Ref<number>
   editorRatio: Ref<number>
   aiOpen: Ref<boolean>
   aiPanelWidth: Ref<number>
-  selectPanel: (p: 'files' | 'tags') => void
+  selectPanel: (p: 'files' | 'tags' | 'links' | 'graph') => void
   toggleAi: () => void
   vaultStyle: { value: { gridTemplateColumns: string } }
 }
@@ -38,6 +45,7 @@ function setup(): Harness {
       const layout = useVaultLayout()
       captured = {
         activePanel: layout.activePanel as Ref<string | null>,
+        sidePanelOpen: layout.sidePanelOpen as Ref<boolean>,
         sidePanelWidth: layout.sidePanelWidth,
         editorRatio: layout.editorRatio,
         aiOpen: layout.aiOpen,
@@ -56,6 +64,7 @@ function setup(): Harness {
 describe('useVaultLayout', () => {
   beforeEach(() => {
     localStorage.clear()
+    __resetSelectPanelForClicks()
   })
 
   afterEach(() => {
@@ -211,5 +220,51 @@ describe('useVaultLayout', () => {
     const h = setup()
     expect(h.aiOpen.value).toBe(false)
     expect(h.aiPanelWidth.value).toBe(320)
+  })
+
+  it('sidePanelOpen is true for files/tags/links and false for graph and null', () => {
+    const h = setup()
+    // default: 'files' is a side panel
+    expect(h.sidePanelOpen.value).toBe(true)
+    h.selectPanel('tags')
+    expect(h.sidePanelOpen.value).toBe(true)
+    h.selectPanel('links')
+    expect(h.sidePanelOpen.value).toBe(true)
+    h.selectPanel('graph')
+    // graph is a body mode, not a side panel
+    expect(h.sidePanelOpen.value).toBe(false)
+    h.selectPanel('graph') // toggle off -> null
+    expect(h.activePanel.value).toBeNull()
+    expect(h.sidePanelOpen.value).toBe(false)
+  })
+
+  it('vaultStyle uses 2 columns when activePanel is graph (no side panel)', () => {
+    // Regression: the graph panel is rendered inside .editor-area, not
+    // next to the activity bar. If the side-panel track were emitted
+    // for graph mode, .editor-area would shrink to 1px and the
+    // force-graph canvas would have nowhere to render.
+    const h = setup()
+    h.selectPanel('graph')
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 1fr')
+  })
+
+  it('publishes selectPanel via the cross-component slot, callable from any consumer', () => {
+    // The KnowledgeGraph child component lives in the editor area and
+    // cannot import VaultView's layout instance. It calls the
+    // registered selectPanel to close the graph panel on node click.
+    // We verify the slot is writable, readable, and clearable, which
+    // is the contract KnowledgeGraph relies on.
+    expect(getSelectPanelForClicks()).toBeNull()
+    const captured: string[] = []
+    const fn = (p: 'files' | 'tags') => { captured.push(p) }
+    setSelectPanelForClicks(fn)
+    expect(getSelectPanelForClicks()).toBe(fn)
+    // The "child" can call it — it runs, even if it has no effect
+    // on a state the parent doesn't own.
+    getSelectPanelForClicks()!('files')
+    expect(captured).toEqual(['files'])
+    // Reset is honored — the next reader gets null and won't crash.
+    __resetSelectPanelForClicks()
+    expect(getSelectPanelForClicks()).toBeNull()
   })
 })
