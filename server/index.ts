@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import matter from 'gray-matter'
-import { filePathFor, folderPathFor, CONTENT_DIR } from './paths.js'
+import { filePathFor, folderPathFor, CONTENT_DIR, isValidPathSyntax, isValidSegment } from './paths.js'
 import { listPostsFlat, buildTree, listSubtreePaths, readFrontmatter } from './tree.js'
 import { getIndex as getLinkIndex } from './linkIndex.js'
 import { bumpUpdatedInFrontmatter } from './frontmatter.js'
@@ -15,8 +15,6 @@ import type { PostSummary, PostDetail } from '../src/lib/api.js'
 // types that the client uses means there is a single source of truth for the
 // JSON contract — and the previous local copy was already drifting (missing
 // `summary?: string`), so a shared import also fixes a latent type bug.
-
-const SEGMENT_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
 
 const app = new Hono()
 
@@ -42,8 +40,8 @@ app.get('/api/posts', async (c) => {
 app.post('/api/posts', async (c) => {
   const body = await c.req.json().catch(() => null) as { path?: string; title?: string } | null
   if (!body || typeof body.path !== 'string') return bad(c, 'path required')
-  if (!SEGMENT_RE.test(body.path.split('/').pop() ?? '')) {
-    return bad(c, 'invalid final segment')
+  if (!isValidPathSyntax(body.path)) {
+    return bad(c, 'invalid path syntax')
   }
   let abs: string
   try { abs = filePathFor(body.path) } catch (e: any) { return bad(c, e.message) }
@@ -131,7 +129,7 @@ app.patch('/api/posts/*', async (c) => {
   let dest: string
   let destPath: string
   if (body.name !== undefined) {
-    if (!SEGMENT_RE.test(body.name)) return bad(c, 'invalid name')
+    if (!isValidSegment(body.name)) return bad(c, 'invalid name')
     const parent = path.dirname(src)
     dest = path.join(parent, body.name + '.md')
     const parentRel = path.dirname(srcPath)
@@ -210,8 +208,8 @@ app.get('/api/posts/*', async (c) => {
 app.post('/api/folders', async (c) => {
   const body = await c.req.json().catch(() => null) as { path?: string } | null
   if (!body || typeof body.path !== 'string') return bad(c, 'path required')
-  if (!body.path.split('/').every((seg) => SEGMENT_RE.test(seg))) {
-    return bad(c, 'invalid segment')
+  if (!isValidPathSyntax(body.path)) {
+    return bad(c, 'invalid path syntax')
   }
   let abs: string
   try { abs = folderPathFor(body.path) } catch (e: any) { return bad(c, e.message) }

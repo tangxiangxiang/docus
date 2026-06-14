@@ -19,7 +19,7 @@
 import { Hono } from 'hono'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { filePathFor, SEGMENT_RE } from './paths.js'
+import { filePathFor, SLUG_RE } from './paths.js'
 import type { Card } from '../src/lib/ai-api.js'
 
 const zettel = new Hono()
@@ -92,7 +92,7 @@ zettel.post('/draft/batch', async (c) => {
       result.failed.push({ slug: String((card as any)?.slug ?? '?'), reason: 'shape' })
       continue
     }
-    if (!SEGMENT_RE.test(card.slug)) {
+    if (!SLUG_RE.test(card.slug)) {
       result.failed.push({ slug: card.slug, reason: 'invalid slug' })
       continue
     }
