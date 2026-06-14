@@ -76,19 +76,44 @@ export function useGraphData(): ComputedRef<GraphData> {
       }
     }
 
-    /* Stage 3: derive node `val` (force-graph's size weight) from
-       degree. Center-like (no incoming): big. Leaf (no outgoing):
-       small. Middle: medium. Isolated nodes (no in, no out) fall
-       through with the medium default — they're still visible,
-       just not over-emphasized. */
+    /* Stage 3: derive node `val` (force-graph's size weight, which
+       the canvas callback uses as the draw radius in pixels at
+       scale=1 — see KnowledgeGraph.installCanvasCallback).
+
+       The previous version binned nodes into three hard-coded sizes
+       (root=24, middle=16, leaf=12), which meant every root-of-tree
+       page drew the same big circle regardless of how dense its
+       outgoing links actually were, and hub notes (high in-degree)
+       were visually indistinguishable from quiet middle notes. The
+       user complaint: "中间的圆太大了" — the central dot dominates
+       the graph and obscures surrounding structure.
+
+       New formula follows Obsidian's graph view: scale the radius
+       with sqrt(degree) (so 4x more links = 2x larger dot, not 4x),
+       keep an isolated-node floor (otherwise zero-degree zettels
+       disappear entirely), and cap the maximum so a runaway hub
+       (an inbox page that every other note links to) doesn't
+       dwarf its neighbors. The numbers are tuned to land in the
+       8..18 px band at globalScale=1, which reads cleanly at the
+       default zoom and stays legible when the user zooms out.
+
+         total=0   → 8   (isolated)
+         total=1   → 11
+         total=2   → 12
+         total=4   → 14
+         total=9   → 17
+         total≥11  → 18  (cap) */
+    const BASE = 8
+    const COEFF = 3
+    const MAX = 18
+    const valOf = (total: number) =>
+      total === 0 ? BASE : Math.min(MAX, BASE + Math.round(COEFF * Math.sqrt(total)))
+
     const nodes: GraphNode[] = []
     for (const id of zettelNodes) {
       const inD = inDegree.get(id) ?? 0
       const outD = outDegree.get(id) ?? 0
-      let val = 16
-      if (inD === 0 && outD > 0) val = 24
-      else if (outD === 0 && inD > 0) val = 12
-      nodes.push({ id, path: id, title: titleFromPath(id), val })
+      nodes.push({ id, path: id, title: titleFromPath(id), val: valOf(inD + outD) })
     }
     /* Sort by id so the layout is stable across re-runs. Without
        this, Set iteration order + outgoing key order produces a
