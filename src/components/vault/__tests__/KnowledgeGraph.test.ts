@@ -58,6 +58,11 @@ interface FakeGraph {
   linkColor: ReturnType<typeof vi.fn>
   onNodeClick: ReturnType<typeof vi.fn>
   zoomToFit: ReturnType<typeof vi.fn>
+  /* Camera controls. The component uses these to pin a fixed
+     zoom + center instead of calling zoomToFit, which would
+     make a 2-node edgeless cluster fill the canvas. */
+  zoom: ReturnType<typeof vi.fn>
+  centerAt: ReturnType<typeof vi.fn>
   /* d3Force is the escape hatch force-graph exposes for tweaking
      d3-force-3d forces (link, charge, center, dagRadial). The
      component uses it on the 'charge' slot to lower the default
@@ -119,6 +124,12 @@ vi.mock('force-graph', () => ({
         return g
       }),
       zoomToFit: vi.fn(),
+      /* Camera controls are chainable in force-graph (return `this`).
+         We expose them as mockReturnThis so a chain like
+         g.zoom(k).centerAt(...) works in the implementation without
+         the test having to wire up a return. */
+      zoom: vi.fn().mockReturnThis(),
+      centerAt: vi.fn().mockReturnThis(),
       /* force-graph pre-registers four forces (link, charge, center,
          dagRadial). The component only touches 'charge', but we
          seed all four with strength() spies so a future expansion
@@ -255,12 +266,15 @@ describe('KnowledgeGraph — wiring', () => {
     /* force-graph wires forceManyBody() (charge, default -30) and
        forceCenter() (center, default 0.1). With defaults the
        charge repels isolated nodes to opposite canvas corners.
-       The component overrides charge to -3 and center to 0.3 so
-       the center pull wins for edgeless layouts (2 isolated
-       zettels stay near the centroid) and link force still
-       dominates when edges exist (hub-and-spoke graphs barely
-       notice). This is the regression guard: deleting either
-       override sends 2-3 isolated zettels back to the corners. */
+       The component overrides charge to -1 and center to 2.0 so
+       the 2-node equilibrium in simulation space is ~1 sim unit
+       (close enough to read as a cluster). Just shrinking the
+       equilibrium isn't enough — the camera is also pinned (see
+       the next test) because force-graph's zoomToFit would
+       otherwise scale a 1-unit bbox to fill the canvas and push
+       the two nodes to opposite edges. This is the regression
+       guard: deleting the force overrides sends the equilibrium
+       back to ~4.5 sim units. */
     setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
@@ -268,8 +282,30 @@ describe('KnowledgeGraph — wiring', () => {
     expect(graphs[0].d3Force).toHaveBeenCalledWith('center')
     const charge = graphs[0]._d3Forces.get('charge')!
     const center = graphs[0]._d3Forces.get('center')!
-    expect(charge.strength).toHaveBeenCalledWith(-3)
-    expect(center.strength).toHaveBeenCalledWith(0.3)
+    expect(charge.strength).toHaveBeenCalledWith(-1)
+    expect(center.strength).toHaveBeenCalledWith(2.0)
+    unmount()
+  })
+
+  it('pins a fixed zoom + center so 2-node edgeless clusters render as a small cluster', async () => {
+    /* Even with the simulation-space equilibrium at d=1.0, a
+       naive call to g.zoomToFit() would scale the bounding box
+       (~1 sim unit across for 2 nodes) to fill the canvas —
+       2 nodes at opposite edges of the bbox end up at opposite
+       edges of the canvas, reading as "they're far apart" even
+       though the simulation is converged. The component pins
+       zoom=50 (1 sim unit = 50px) and centers at (0, 0) so a
+       2-node cluster renders as ~50px and a 30-node cluster
+       renders as ~1000px (fits 1280px canvas with padding). This
+       is the regression guard: if someone swaps in a zoomToFit
+       call here, 2-node edgeless graphs go back to "two dots at
+       the canvas edges". */
+    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: {} })
+    const { unmount } = mountStandalone()
+    await settle()
+    expect(graphs[0].zoom).toHaveBeenCalledWith(50)
+    expect(graphs[0].centerAt).toHaveBeenCalledWith(0, 0, 0)
+    expect(graphs[0].zoomToFit).not.toHaveBeenCalled()
     unmount()
   })
 })

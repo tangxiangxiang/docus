@@ -60,6 +60,13 @@ interface ForceGraphInstance {
   linkColor: (c: string) => ForceGraphInstance
   onNodeClick: (cb: (node: { id: string; path: string }) => void) => ForceGraphInstance
   zoomToFit: (duration: number, padding: number) => ForceGraphInstance
+  /* Camera controls. force-graph uses (zoom, centerAt) for the
+     resting position; the setTimeout in mountGraph calls these
+     once the simulation has settled (replacing the old
+     zoomToFit, which made small edgeless clusters fill the
+     canvas and read as "two notes far apart"). */
+  zoom: (k: number) => ForceGraphInstance
+  centerAt: (x: number, y: number, ms: number) => ForceGraphInstance
   /* Exposes the d3-force-3d simulation forces for fine-tuning.
      force-graph pre-registers four: 'link' (forceLink),
      'charge' (forceManyBody), 'center' (forceCenter, strength 0.1),
@@ -95,7 +102,6 @@ const colors = computed(() => {
 
 let graph: ForceGraphInstance | null = null
 let resizeObserver: ResizeObserver | null = null
-let zoomToFitTimer: number | null = null
 const loadError = ref<string | null>(null)
 
 function installCanvasCallback(g: ForceGraphInstance) {
@@ -190,20 +196,31 @@ async function mountGraph() {
      centroid in opposite directions and read as "far apart on the
      canvas".
 
-     First pass (commit 049616c) cut charge to -10. That was
-     enough for "looks balanced" but the user still felt the gap
-     was too aggressive — at -10 the 2-node equilibrium is still
-     ~10px apart, which on a wide canvas reads as "two distinct
-     dots, one on each side". At -3 the built-in forceCenter is
-     dominant in the no-link case: the nodes are pulled close to
-     the centroid, only held apart by their own charge. Bumping
-     center to 0.3 (3x default) makes that pull decisive without
-     distorting linked layouts — the link force still anchors
-     connected clusters, and the center only prevents the entire
-     graph from drifting off-axis. Numbers extracted to constants
-     so the next tuning round doesn't need a new test. */
-  const CHARGE_STRENGTH = -3
-  const CENTER_STRENGTH = 0.3
+     Two commits so far (049616c charge=-10 → 0472101 charge=-3 +
+     center=0.3) made the *simulation-space* equilibrium tighter,
+     but force-graph's zoomToFit then scaled that small cluster to
+     fill the canvas — 2 nodes at sim-space d=4.5 still rendered
+     ~900px apart on a 1280px canvas. So this pass does two things:
+
+     1. Re-balance to make the 2-node equilibrium ~1 sim unit
+        (charge=-1, center=2.0 → a²=0.25 → a=0.5 → d=1.0). Math
+        uses the d3-force-3d formula `vx += (treeNode.x - node.x)
+        * value * alpha / l` with l = squared distance, so the
+        charge contribution to vx scales as value/(2·a·alpha) and
+        the center contribution as -center·a·alpha; solving
+        value/(2·a) = center·a gives a² = -value/(2·center).
+        With value=-1, center=2: a²=0.25, a=0.5, d=1.0.
+     2. Skip zoomToFit entirely (see the camera setup below) and
+        pin a fixed zoom so a 1-sim-unit cluster renders as
+        ~50px on the canvas — close enough to read as a cluster,
+        distinct enough to see two dots. For larger graphs the
+        fixed zoom still works because the center force compresses
+        multi-node layouts to ~20 sim units across, which is
+        1000px at zoom=50 (fits the 1280px canvas with some
+        padding). */
+  const CHARGE_STRENGTH = -1
+  const CENTER_STRENGTH = 2.0
+  const FIXED_ZOOM = 50
   const charge = g.d3Force('charge') as { strength?: (n: number) => unknown } | null
   if (charge && typeof charge.strength === 'function') {
     charge.strength(CHARGE_STRENGTH)
@@ -231,6 +248,21 @@ async function mountGraph() {
     const select = getSelectPanelForClicks()
     if (select) select('files')
   })
+  /* Pin a fixed camera instead of calling force-graph's zoomToFit.
+     zoomToFit scales the simulation's bounding box to fill the
+     canvas, which for a 2-node edgeless graph (bbox ~1 sim unit
+     across) zooms the camera in so far that the two nodes end
+     up at the canvas edges — the user reads that as "they're far
+     apart" even though the simulation itself is converged at a
+     tight d=1.0. FIXED_ZOOM (1 sim unit = 50 canvas pixels)
+     gives a 2-node cluster of ~50px and a 30-node cluster of
+     ~1000px (fits 1280 with padding). The user can still wheel-
+     zoom in/out to inspect; the fixed zoom is just the resting
+     position. Camera is set synchronously — the simulation runs
+     via rAF, so by the first paint nodes have already moved off
+     their initial (0,0) coincidence point. */
+  g.zoom(FIXED_ZOOM)
+  g.centerAt(0, 0, 0)
   g.graphData({
     nodes: graphData.value.nodes.slice(),
     links: graphData.value.links.slice(),
@@ -249,19 +281,6 @@ async function mountGraph() {
     })
     resizeObserver.observe(el)
   }
-
-  /* Center the graph on first paint. force-graph's layout is
-     randomized; without a zoomToFit the user lands on a corner
-     of the canvas. 800ms gives the simulation enough warmup
-     ticks for the layout to settle. We track the timer so a
-     fast unmount (panel-switch) can cancel it — otherwise the
-     optional-chain `graph?` check hides the bug but the
-     dangling timer keeps the closure alive longer than
-     needed. */
-  zoomToFitTimer = window.setTimeout(() => {
-    zoomToFitTimer = null
-    graph?.zoomToFit(400, 50)
-  }, 800)
 }
 
 onMounted(() => {
@@ -269,10 +288,6 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  if (zoomToFitTimer !== null) {
-    clearTimeout(zoomToFitTimer)
-    zoomToFitTimer = null
-  }
   resizeObserver?.disconnect()
   resizeObserver = null
   /* kapsule exposes the destructor as `_destructor` (see
