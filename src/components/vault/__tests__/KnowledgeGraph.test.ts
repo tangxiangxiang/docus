@@ -67,11 +67,15 @@ interface FakeGraph {
 let _graphId = 0
 const graphs: FakeGraph[] = []
 
-/* Mocked force-graph module. We capture each `forceGraph()(el)`
+/* Mocked force-graph module. We capture each `new forceGraph()(el)`
    call into the `graphs` array, returning a fresh chainable
-   FakeGraph every time. */
+   FakeGraph every time. The export is a class-like construct
+   (kapsule comp): invoking it with `new` runs the real init
+   path in production. In the test we treat it as a function
+   that returns the chainable; the `new` call still works
+   because the function ignores `this` and returns the chainable. */
 vi.mock('force-graph', () => ({
-  default: () => {
+  default: function FakeForceGraph() {
     const g: FakeGraph = {
       _id: 'g-' + (++_graphId),
       graphData: vi.fn().mockReturnThis(),
@@ -112,6 +116,12 @@ const roRegistry: Array<{ cb: ResizeObserverCallback; target: Element }> = []
 function fireResizeObservers() {
   for (const r of roRegistry) r.cb([], r.target as unknown as ResizeObserver)
 }
+/* fireResizeObservers is exported for future tests that may need
+   to drive a ResizeObserver tick; right now the wiring tests
+   don't need it (graph.width / .height are mocked as chainable
+   no-ops). Keep the helper accessible so the next regression
+   (e.g. a real-width path test) doesn't have to redefine it. */
+void fireResizeObservers
 
 function setIndex(state: { paths: string[]; outgoing: Record<string, Array<{ target: string; kind: 'wiki' | 'md' }>> }) {
   getLinkIndex().value = {

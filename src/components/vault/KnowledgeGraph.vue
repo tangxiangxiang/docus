@@ -62,6 +62,13 @@ interface ForceGraphInstance {
   _destructor: () => void
 }
 
+/* The force-graph default export is a kapsule "comp" — it has to
+   be invoked with `new` (class-mode) to actually run the
+   component's `init()`. Plain function call leaves `init`
+   unrun, and no canvas ever lands in the container. Caught the
+   hard way: 30s hang on first graph-panel click in dev. */
+type ForceGraphCtor = new (el: HTMLElement) => ForceGraphInstance
+
 const containerRef = ref<HTMLDivElement | null>(null)
 const graphData = useGraphData()
 const { theme } = useTheme()
@@ -121,8 +128,12 @@ async function mountGraph() {
      bundle. After the first import, subsequent mounts reuse the
      cached module. */
   const mod = await import('force-graph')
-  const factory = (mod.default ?? mod) as (el: HTMLElement) => ForceGraphInstance
-  const g = factory(el)
+  /* force-graph's default export is a kapsule factory; its
+     TS types don't narrow to our minimal interface, so we cast
+     through `unknown` to avoid the overlap warning vue-tsc
+     raises for the direct cast. */
+  const Ctor = (mod.default ?? mod) as unknown as ForceGraphCtor
+  const g = new Ctor(el)
   graph = g
 
   g.width(el.clientWidth || 800)
@@ -215,11 +226,10 @@ watch(theme, () => {
 </script>
 
 <template>
-  <div class="kg-wrap" :data-theme="theme">
+  <div ref="containerRef" class="kg-wrap" :data-theme="theme">
     <div v-if="graphData.nodes.length === 0" class="kg-empty">
       还没有 zettel 笔记，先去 inbox 写一条吧。
     </div>
-    <div v-else ref="containerRef" class="kg-canvas" />
   </div>
 </template>
 
@@ -229,6 +239,14 @@ watch(theme, () => {
   height: 100%;
   position: relative;
   background: var(--vs-bg-1);
+}
+/* force-graph injects a <canvas> as a direct child of the
+   element we hand it. The ref lives on .kg-wrap, so the canvas
+   lands here. */
+.kg-wrap > canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
 }
 .kg-wrap[data-theme='dark'] {
   background: #0A0E1A;
