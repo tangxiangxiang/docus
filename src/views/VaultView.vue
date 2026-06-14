@@ -185,8 +185,12 @@ watch(() => navSearch?.tick.value, () => openSearch())
       @pointerdown="startDrag(vaultRef!, 'tree', $event)"
     />
 
-    <section class="editor-area">
+    <section
+      class="editor-area"
+      :class="{ 'is-read': isReadMode, 'ai-open': aiOpen, 'is-graph': activePanel === 'graph' }"
+    >
       <EditorTabs
+        v-if="activePanel !== 'graph'"
         :tabs="tabs"
         :active-path="activePath"
         @select="selectTab"
@@ -194,13 +198,16 @@ watch(() => navSearch?.tick.value, () => openSearch())
       />
 
       <!-- Graph mode: replaces the entire edit / read surface with
-           the knowledge-graph canvas. Tabs, ActivityBar, side panel,
-           AI panel, and StatusBar are untouched — the user keeps
-           all their navigation context. The graph component reads
-           from the link index singleton and dispatches node clicks
-           through the same openPost singleton the wiki-link
-           renderer uses. Checked first so the read/edit branches
-           below stay the unchanged original. -->
+           the knowledge-graph canvas. The EditorTabs row is also
+           hidden (see the v-if above + the .editor-area.is-graph
+           grid override in style.css) so the canvas gets the full
+           editor height. ActivityBar, side panel, AI panel, and
+           StatusBar stay put — the user keeps navigation context
+           for everything except the per-tab switcher. The graph
+           component reads from the link index singleton and
+           dispatches node clicks through the same openPost
+           singleton the wiki-link renderer uses. Checked first so
+           the read/edit branches below stay the unchanged original. -->
       <div v-if="activePanel === 'graph'" class="content content-graph">
         <KnowledgeGraph />
       </div>

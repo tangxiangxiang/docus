@@ -93,24 +93,30 @@ let zoomToFitTimer: number | null = null
 const loadError = ref<string | null>(null)
 
 function installCanvasCallback(g: ForceGraphInstance) {
-  /* Close over the current `colors` ref so a theme switch can
-     re-install this callback and the next frame uses the new
-     palette. The closure captures `colors.value` at paint time,
-     not at install time — that's what we want. */
+  /* Snapshot the colors object at install time. force-graph's
+     nodeCanvasObject runs at 60fps for every node during d3-force
+     simulation, and the previous version dereferenced `colors.value`
+     (a Vue reactive proxy) on every paint. Snapshotting once per
+     install is the same closure cost (the theme watcher re-installs
+     the callback on every theme change — the test pins that), but
+     eliminates per-paint reactive-proxy access. For a 1k-node
+     graph at 60fps that's ~60k proxy derefs/sec saved during the
+     warmup window. */
+  const c = colors.value
   g.nodeCanvasObject((node, ctx, globalScale) => {
     const r = node.val / globalScale
     ctx.beginPath()
     ctx.arc(node.x ?? 0, node.y ?? 0, r, 0, 2 * Math.PI, false)
-    ctx.fillStyle = colors.value.nodeFill
+    ctx.fillStyle = c.nodeFill
     ctx.fill()
     ctx.lineWidth = 1.5 / globalScale
-    ctx.strokeStyle = colors.value.nodeStroke
+    ctx.strokeStyle = c.nodeStroke
     ctx.stroke()
     /* Label below the dot. We use the title (not the path) so
        the visual matches the in-editor display. */
     const fontSize = 12 / globalScale
     ctx.font = `${fontSize}px Inter, "Noto Sans SC", sans-serif`
-    ctx.fillStyle = colors.value.text
+    ctx.fillStyle = c.text
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
     ctx.fillText(node.title, node.x ?? 0, (node.y ?? 0) + r + 2 / globalScale)
