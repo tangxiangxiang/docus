@@ -73,6 +73,14 @@ interface ForceGraphInstance {
      and 'dagRadial' (null until DAG mode is on). We only mutate
      'charge' below — see mountGraph for why. */
   d3Force: (name: string) => unknown
+  /* Hard-stop conditions for the simulation. force-graph's
+     defaults are Infinity, meaning the simulation only stops
+     when alpha drops below alphaMin (~5s at 60fps). We override
+     these to 1.5s / 150 ticks to kill the long-tail jitter that
+     would otherwise keep re-rendering the canvas after the
+     positions have visually converged. */
+  cooldownTime: (ms: number) => ForceGraphInstance
+  cooldownTicks: (ticks: number) => ForceGraphInstance
   _destructor: () => void
 }
 
@@ -196,31 +204,34 @@ async function mountGraph() {
      centroid in opposite directions and read as "far apart on the
      canvas".
 
-     Two commits so far (049616c charge=-10 → 0472101 charge=-3 +
-     center=0.3) made the *simulation-space* equilibrium tighter,
-     but force-graph's zoomToFit then scaled that small cluster to
-     fill the canvas — 2 nodes at sim-space d=4.5 still rendered
-     ~900px apart on a 1280px canvas. So this pass does two things:
+     Three iterations got us here:
+       1. 049616c charge=-10 — simulation tightened but the camera
+          (zoomToFit) was still the dominant visual.
+       2. 0472101 charge=-3 + center=0.3 — slightly tighter
+          equilibrium, still using zoomToFit.
+       3. fbd6004 charge=-1 + center=2.0 + fixed zoom=50 — first
+          pass at skipping zoomToFit, but center=2.0 (20x default)
+          made the spring too stiff: the simulation overshot the
+          equilibrium, oscillated visibly for ~1.5s (rendered as
+          "flickering"), and the Barnes-Hut quadtree even briefly
+          rendered some isolated nodes twice (Barnes-Hut
+          aggregates coincident subtrees during the first few
+          ticks, then collapses them as the cluster separates).
 
-     1. Re-balance to make the 2-node equilibrium ~1 sim unit
-        (charge=-1, center=2.0 → a²=0.25 → a=0.5 → d=1.0). Math
-        uses the d3-force-3d formula `vx += (treeNode.x - node.x)
-        * value * alpha / l` with l = squared distance, so the
-        charge contribution to vx scales as value/(2·a·alpha) and
-        the center contribution as -center·a·alpha; solving
-        value/(2·a) = center·a gives a² = -value/(2·center).
-        With value=-1, center=2: a²=0.25, a=0.5, d=1.0.
-     2. Skip zoomToFit entirely (see the camera setup below) and
-        pin a fixed zoom so a 1-sim-unit cluster renders as
-        ~50px on the canvas — close enough to read as a cluster,
-        distinct enough to see two dots. For larger graphs the
-        fixed zoom still works because the center force compresses
-        multi-node layouts to ~20 sim units across, which is
-        1000px at zoom=50 (fits the 1280px canvas with some
-        padding). */
+     This pass (4th) keeps the camera pinned at zoom=50, but
+     pulls center back to 0.3 (3x default — stiff enough to
+     beat the charge in an edgeless graph, soft enough to
+     converge in a few ticks without overshoot). The 2-node
+     equilibrium at d=2.58 sim units → 129px on canvas, which
+     still reads as a tight cluster at the user-visible scale.
+     The `cooldownTime`/`cooldownTicks` calls below stop the
+     simulation after 1.5s / 150 ticks regardless of alpha
+     decay, so any residual jitter dies out cleanly. */
   const CHARGE_STRENGTH = -1
-  const CENTER_STRENGTH = 2.0
+  const CENTER_STRENGTH = 0.3
   const FIXED_ZOOM = 50
+  const COOLDOWN_TIME_MS = 1500
+  const COOLDOWN_TICKS = 150
   const charge = g.d3Force('charge') as { strength?: (n: number) => unknown } | null
   if (charge && typeof charge.strength === 'function') {
     charge.strength(CHARGE_STRENGTH)
@@ -260,9 +271,25 @@ async function mountGraph() {
      zoom in/out to inspect; the fixed zoom is just the resting
      position. Camera is set synchronously — the simulation runs
      via rAF, so by the first paint nodes have already moved off
-     their initial (0,0) coincidence point. */
+     their initial (0,0) coincidence point.
+
+     cooldownTime / cooldownTicks stop the simulation after 1.5s
+     OR 150 ticks (whichever first) regardless of alpha decay.
+     force-graph's defaults are Infinity for both, so the
+     simulation only stops when alpha drops below alphaMin
+     (~5s at 60fps). With our tight force balance the
+     equilibrium is reached in ~50 ticks, but residual jitter
+     can persist for another second as alpha cools. The hard
+     stop at 1.5s kills the long tail — the canvas then freezes
+     at the converged positions, no more re-renders. The
+     150-tick guard catches the edge case where the
+     simulation hasn't actually been ticking (e.g. test env
+     with rAF paused): the timer alone might never elapse
+     relative to simulation time. */
   g.zoom(FIXED_ZOOM)
   g.centerAt(0, 0, 0)
+  g.cooldownTime(COOLDOWN_TIME_MS)
+  g.cooldownTicks(COOLDOWN_TICKS)
   g.graphData({
     nodes: graphData.value.nodes.slice(),
     links: graphData.value.links.slice(),

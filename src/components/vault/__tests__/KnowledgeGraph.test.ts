@@ -63,6 +63,12 @@ interface FakeGraph {
      make a 2-node edgeless cluster fill the canvas. */
   zoom: ReturnType<typeof vi.fn>
   centerAt: ReturnType<typeof vi.fn>
+  /* Hard-stop conditions for the simulation. The component
+     sets these to 1500ms / 150 ticks so the simulation stops
+     after the layout has converged, preventing long-tail
+     re-renders (which read as "flickering" on the canvas). */
+  cooldownTime: ReturnType<typeof vi.fn>
+  cooldownTicks: ReturnType<typeof vi.fn>
   /* d3Force is the escape hatch force-graph exposes for tweaking
      d3-force-3d forces (link, charge, center, dagRadial). The
      component uses it on the 'charge' slot to lower the default
@@ -130,6 +136,11 @@ vi.mock('force-graph', () => ({
          the test having to wire up a return. */
       zoom: vi.fn().mockReturnThis(),
       centerAt: vi.fn().mockReturnThis(),
+      /* cooldownTime and cooldownTicks are also chainable. The
+         test asserts the exact ms/tick values to lock the
+         hard-stop behavior in. */
+      cooldownTime: vi.fn().mockReturnThis(),
+      cooldownTicks: vi.fn().mockReturnThis(),
       /* force-graph pre-registers four forces (link, charge, center,
          dagRadial). The component only touches 'charge', but we
          seed all four with strength() spies so a future expansion
@@ -266,15 +277,14 @@ describe('KnowledgeGraph — wiring', () => {
     /* force-graph wires forceManyBody() (charge, default -30) and
        forceCenter() (center, default 0.1). With defaults the
        charge repels isolated nodes to opposite canvas corners.
-       The component overrides charge to -1 and center to 2.0 so
-       the 2-node equilibrium in simulation space is ~1 sim unit
-       (close enough to read as a cluster). Just shrinking the
-       equilibrium isn't enough — the camera is also pinned (see
-       the next test) because force-graph's zoomToFit would
-       otherwise scale a 1-unit bbox to fill the canvas and push
-       the two nodes to opposite edges. This is the regression
-       guard: deleting the force overrides sends the equilibrium
-       back to ~4.5 sim units. */
+       The component overrides charge to -1 and center to 0.3
+       (3x default — strong enough to win the 2-node tug-of-war,
+       soft enough that the spring doesn't overshoot the
+       equilibrium and oscillate). Earlier passes tried center
+       values up to 2.0 (20x default) and the user reported
+       "flickering" — the Barnes-Hut quadtree even briefly
+       rendered isolated nodes twice during the warmup tick
+       chain. 0.3 is the sweet spot. */
     setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
@@ -283,29 +293,49 @@ describe('KnowledgeGraph — wiring', () => {
     const charge = graphs[0]._d3Forces.get('charge')!
     const center = graphs[0]._d3Forces.get('center')!
     expect(charge.strength).toHaveBeenCalledWith(-1)
-    expect(center.strength).toHaveBeenCalledWith(2.0)
+    expect(center.strength).toHaveBeenCalledWith(0.3)
     unmount()
   })
 
   it('pins a fixed zoom + center so 2-node edgeless clusters render as a small cluster', async () => {
-    /* Even with the simulation-space equilibrium at d=1.0, a
-       naive call to g.zoomToFit() would scale the bounding box
-       (~1 sim unit across for 2 nodes) to fill the canvas —
-       2 nodes at opposite edges of the bbox end up at opposite
-       edges of the canvas, reading as "they're far apart" even
-       though the simulation is converged. The component pins
-       zoom=50 (1 sim unit = 50px) and centers at (0, 0) so a
-       2-node cluster renders as ~50px and a 30-node cluster
-       renders as ~1000px (fits 1280px canvas with padding). This
-       is the regression guard: if someone swaps in a zoomToFit
-       call here, 2-node edgeless graphs go back to "two dots at
-       the canvas edges". */
+    /* Even with the simulation-space equilibrium at d=2.58
+       (charge=-1, center=0.3), a naive call to g.zoomToFit()
+       would scale the bounding box to fill the canvas — 2 nodes
+       at opposite edges of the bbox end up at opposite edges of
+       the canvas, reading as "they're far apart" even though
+       the simulation is converged. The component pins zoom=50
+       (1 sim unit = 50px) and centers at (0, 0) so a 2-node
+       cluster renders as ~129px and a 30-node cluster renders
+       as ~1000px (fits 1280px canvas with padding). This is the
+       regression guard: if someone swaps in a zoomToFit call
+       here, 2-node edgeless graphs go back to "two dots at the
+       canvas edges". */
     setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     expect(graphs[0].zoom).toHaveBeenCalledWith(50)
     expect(graphs[0].centerAt).toHaveBeenCalledWith(0, 0, 0)
     expect(graphs[0].zoomToFit).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('hard-stops the simulation so the canvas stops re-rendering once the layout converges', async () => {
+    /* force-graph defaults to cooldownTime=Infinity and
+       cooldownTicks=Infinity, so the simulation only stops when
+       alpha decays below alphaMin (~5s at 60fps). Even after the
+       positions visually converge, residual jitter can keep
+       re-rendering the canvas until alpha cools — the user
+       reads that as "flickering" for 1-2 seconds. The component
+       pins cooldownTime=1500ms and cooldownTicks=150 so the
+       simulation stops as soon as either threshold is hit,
+       freezing the canvas at the converged layout. This is the
+       regression guard: removing either line means the flicker
+       comes back. */
+    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: {} })
+    const { unmount } = mountStandalone()
+    await settle()
+    expect(graphs[0].cooldownTime).toHaveBeenCalledWith(1500)
+    expect(graphs[0].cooldownTicks).toHaveBeenCalledWith(150)
     unmount()
   })
 })
