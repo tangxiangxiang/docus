@@ -37,6 +37,7 @@ const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
 /* ---------- Layout ---------- */
 const {
   activePanel,
+  sidePanelOpen,
   vaultStyle,
   contentStyle,
   selectPanel,
@@ -165,7 +166,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
     />
 
     <div
-      v-show="activePanel"
+      v-show="sidePanelOpen"
       class="splitter"
       role="separator"
       aria-orientation="vertical"

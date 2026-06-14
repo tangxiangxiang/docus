@@ -85,6 +85,16 @@ export function useVaultLayout() {
   // truth for initial hydration, then the refs take over for runtime
   // mutations and we write back on every change.
   const activePanel = ref<ActivePanel>(layout.value.activePanel)
+  /* The "side panel" is the file tree / tag panel / links panel. Graph
+     mode does NOT count — the graph panel is rendered inside
+     .editor-area, not next to the activity bar, so it must not steal a
+     grid column from the editor surface. Exposed as a top-level ref
+     so the template can use it for the side-splitter's v-show. */
+  const sidePanelOpen = computed(() =>
+    activePanel.value === 'files' ||
+    activePanel.value === 'tags' ||
+    activePanel.value === 'links',
+  )
   const sidePanelWidth = ref(layout.value.sidePanelWidth)
   const editorRatio = ref(layout.value.editorRatio)
   const aiOpen = ref(layout.value.aiOpen)
@@ -110,6 +120,14 @@ export function useVaultLayout() {
     // grabbable area is wider (7px) but that lives on a transparent
     // ::before that overflows the layout box.
     //
+    // The "side panel" is only the file tree / tag panel / links panel.
+    // `activePanel === 'graph'` does NOT mean a side panel is open — the
+    // graph replaces the editor surface inside .editor-area (it lives in
+    // the `1fr` column, not next to the activity bar). Treating graph as
+    // a side panel would push .editor-area into a 1px column and the
+    // force-graph canvas would have nowhere to render. So the left track
+    // is keyed on the three side-panel modes, not on `activePanel`.
+    //
     // The four possible column tracks:
     //   side=off  ai=off → 48px 1fr
     //   side=on   ai=off → 48px {side}px 1px 1fr
@@ -118,7 +136,7 @@ export function useVaultLayout() {
     // Trailing space on `left` and leading space on `right` are
     // load-bearing — they separate the splitter tracks from `1fr` in
     // the template literal below. Don't normalize the whitespace.
-    const left = activePanel.value ? `${sidePanelWidth.value}px 1px ` : ''
+    const left = sidePanelOpen.value ? `${sidePanelWidth.value}px 1px ` : ''
     const right = aiOpen.value ? ` 1px ${aiPanelWidth.value}px` : ''
     return {
       gridTemplateColumns: `48px ${left}1fr${right}`,
@@ -190,6 +208,7 @@ export function useVaultLayout() {
 
   return {
     activePanel,
+    sidePanelOpen,
     sidePanelWidth,
     editorRatio,
     aiOpen,
