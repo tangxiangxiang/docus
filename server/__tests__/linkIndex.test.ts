@@ -154,6 +154,55 @@ describe('extractLinks', () => {
     expect(links.map((l) => l.target).sort()).toEqual(['hello', 'notes/draft'])
   })
 
+  it('dedupes repeated wiki links to the same target+anchor', () => {
+    // Same target, no anchor — the second occurrence is a slip.
+    const links = extractLinks(
+      'see [[hello]] then [[hello]] again',
+      'notes/draft',
+      allPaths,
+    )
+    expect(links).toHaveLength(1)
+    expect(links[0].target).toBe('hello')
+  })
+
+  it('dedupes across wiki and md syntaxes pointing to the same target+anchor', () => {
+    // Author wrote the link twice using different syntaxes — we
+    // should only index it once, keeping the first occurrence (the
+    // wiki form, with its alias if any).
+    const links = extractLinks(
+      'see [[hello]] and [h](hello.md) again',
+      'notes/draft',
+      allPaths,
+    )
+    expect(links).toHaveLength(1)
+    expect(links[0].target).toBe('hello')
+    expect(links[0].kind).toBe('wiki')
+  })
+
+  it('keeps links that differ in anchor (intentional, not a duplicate)', () => {
+    // Same target, two different anchors — these are distinct
+    // references in the doc, so we keep both.
+    const links = extractLinks(
+      'see [[hello#top]] and [[hello#bottom]]',
+      'notes/draft',
+      allPaths,
+    )
+    expect(links).toHaveLength(2)
+    expect(links.map((l) => l.anchor).sort()).toEqual(['bottom', 'top'])
+  })
+
+  it('dedupes on first occurrence, preserving that occurrence’s alias', () => {
+    // First mention has an alias; second doesn’t. After dedup, the
+    // alias from the first mention should win.
+    const links = extractLinks(
+      'see [[hello|greeting]] and [[hello]] again',
+      'notes/draft',
+      allPaths,
+    )
+    expect(links).toHaveLength(1)
+    expect(links[0].alias).toBe('greeting')
+  })
+
   it('strips trailing .md from md-link hrefs before resolving', () => {
     const links = extractLinks('see [t](hello.md)', 'notes/draft', allPaths)
     expect(links).toHaveLength(1)

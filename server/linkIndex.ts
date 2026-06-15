@@ -90,7 +90,13 @@ function isExternalHref(href: string): boolean {
  *  is needed for same-dir resolution; `allPaths` is the set of known
  *  vault paths used by the resolver. Broken links (target not in
  *  `allPaths`) are silently dropped — the renderer uses `hasPath` to
- *  mark them as missing in the UI. */
+ *  mark them as missing in the UI.
+ *
+ *  Duplicates (same target + anchor, regardless of syntax or alias)
+ *  are collapsed to the first occurrence, in document order. The
+ *  LinksPanel and the wiki-link renderer should never show the same
+ *  destination twice from the same source file — that's almost
+ *  always an authoring slip, not an intentional annotation. */
 export function extractLinks(
   raw: string,
   sourcePath: string,
@@ -98,6 +104,7 @@ export function extractLinks(
 ): Link[] {
   const body = stripCode(stripFrontmatter(raw))
   const out: Link[] = []
+  const seen = new Set<string>()
 
   // Wiki links
   for (const m of body.matchAll(WIKI_LINK_RE)) {
@@ -107,6 +114,9 @@ export function extractLinks(
     const alias = m[3]?.trim() || undefined
     const resolved = resolveWikiTarget(ref, sourcePath, allPaths)
     if (!resolved) continue
+    const key = resolved + '\0' + (anchor ?? '')
+    if (seen.has(key)) continue
+    seen.add(key)
     out.push({ target: resolved, alias, anchor, kind: 'wiki' })
   }
 
@@ -125,6 +135,9 @@ export function extractLinks(
     if (!cleanPath) continue
     const resolved = resolveWikiTarget(cleanPath, sourcePath, allPaths)
     if (!resolved) continue
+    const key = resolved + '\0' + (anchor ?? '')
+    if (seen.has(key)) continue
+    seen.add(key)
     out.push({ target: resolved, alias: text, anchor, kind: 'md' })
   }
 
@@ -220,10 +233,10 @@ export class LinkIndex {
     for (const { newPath, newRaw } of oldToNew) this.applyWrite(newPath, newRaw)
   }
 
-  /** Reverse lookup. Returns one record per source file (the first
-   *  matching link wins if a file has multiple links to the same
-   *  target — alias/anchor may differ per occurrence but the source
-   *  path is unique in the result). */
+  /** Reverse lookup. Returns one record per source file. The forward
+   *  map already dedupes on (target, anchor) per source via
+   *  `extractLinks`, so a source that links to the same target twice
+   *  appears here only once. */
   getBacklinks(target: string): BacklinkRecord[] {
     const out: BacklinkRecord[] = []
     for (const [source, links] of this.forward) {
