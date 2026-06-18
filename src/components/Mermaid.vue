@@ -37,15 +37,64 @@ const props = defineProps<{
 }>()
 
 const { theme } = useTheme()
+const wrapperRef = ref<HTMLDivElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
 const renderError = ref<string | null>(null)
+/* Fullscreen toggle state. The browser owns the actual fullscreen
+   bit on `document.fullscreenElement`; we just mirror it into a
+   ref so the toolbar icon can flip between enter / exit and so
+   the watch below doesn't have to touch the DOM. */
+const isFullscreen = ref(false)
 
-/* Module-scope so we only pay the dynamic-import + JSDOM
-   initialization once across all mermaid widgets on the page.
-   `mermaid` is typed loosely because the published typings
-   don't surface all of the d.ts we use. */
+/* Per-instance cache so each widget only triggers the dynamic
+   import once. The browser's module loader also caches by URL,
+   so the actual cost on subsequent imports (different widget, or
+   HMR after this instance is destroyed) is negligible — just a
+   microtask. `mermaid` is typed loosely because the published
+   typings don't surface all of the d.ts we use. */
 let mermaidModule: { default: MermaidNS } | null = null
 let mermaidRenderCount = 0
+
+/* svg-pan-zoom: lazy-loaded only when the first diagram actually
+   renders, so the library stays out of the main bundle. The
+   shape mirrors `mermaidModule` — dynamic import → `{ default: fn }`.
+
+   We track the active instance because re-renders happen on
+   theme toggle, code edit, and ResizeObserver ticks. svg-pan-zoom
+   attaches mousedown / wheel / touch listeners directly to the
+   svg element; without an explicit destroy(), detaching the svg
+   (via innerHTML = '') leaves those listeners alive on a
+   detached node. The built-in control-icons cluster is disabled
+   below so we don't have to worry about leftover icon DOM.
+
+   The toolbar buttons (zoom in / out / reset / fullscreen) need
+   a thin slice of the public API — the methods we list here are
+   the only ones called from outside. `reset()` fits + centers in
+   one call, which is what we want after a fullscreen toggle too. */
+interface SvgPanZoomInstance {
+  destroy: () => void
+  zoomIn: () => void
+  zoomOut: () => void
+  reset: () => void
+  /* `resize()` re-measures the svg element's bounding rect and
+     pushes the new dimensions into svg-pan-zoom's internal
+     cache. svg-pan-zoom's other methods (reset, fit, …) read
+     from that cache, not from the live DOM, so we have to call
+     resize() before reset() whenever the svg's display size
+     changes — currently that's just the fullscreen toggle. */
+  resize: () => void
+}
+type SvgPanZoomFn = (svg: SVGSVGElement, opts?: Record<string, unknown>) => SvgPanZoomInstance
+let panZoomModule: { default: SvgPanZoomFn } | null = null
+let panZoomInstance: SvgPanZoomInstance | null = null
+
+/* Render-generation counter. Incremented at the top of every
+   render() pass. Captured by each pending getSvgPanZoom()
+   callback so that a late resolution — which started against
+   an svgEl that has since been wiped by a newer render — is
+   discarded instead of binding a pan/zoom instance to a
+   detached element. */
+let renderGeneration = 0
 
 interface MermaidRenderResult { svg: string; bindFunctions?: (el: HTMLElement) => void }
 interface MermaidNS {
@@ -58,6 +107,13 @@ async function getMermaid(): Promise<MermaidNS> {
     mermaidModule = await import('mermaid')
   }
   return mermaidModule.default
+}
+
+async function getSvgPanZoom(): Promise<SvgPanZoomFn> {
+  if (!panZoomModule) {
+    panZoomModule = (await import('svg-pan-zoom')) as unknown as { default: SvgPanZoomFn }
+  }
+  return panZoomModule.default
 }
 
 /* Mermaid's layout occasionally emits
@@ -118,6 +174,11 @@ function scheduleRender() {
 async function render() {
   if (!containerRef.value) return
   if (!hasNonZeroSize()) return
+  /* Bump the generation at the top of every render so any
+     pending getSvgPanZoom() callback from a previous render can
+     detect it has been superseded and bail out. See the
+     `renderGeneration` declaration above for the full rationale. */
+  const myGen = ++renderGeneration
   renderError.value = null
   /* `document.fonts.ready` resolves once all currently-loading
      fonts have loaded. Mermaid measures text via the canvas
@@ -173,18 +234,108 @@ async function render() {
       containerRef.value.innerHTML = ''
       return
     }
+    /* Tear down any prior svg-pan-zoom instance before we wipe
+       the container. The instance holds listeners on the old
+       svg element and DOM control icons inside the container;
+       replacing innerHTML detaches the svg but doesn't release
+       the listeners, so an explicit destroy() is required. */
+    panZoomInstance?.destroy()
+    panZoomInstance = null
     containerRef.value.innerHTML = svg
     /* bindFunctions wires up click handlers / tooltips for
        interactive diagrams (e.g. classDiagram clickable nodes).
        We use the bindFns from the successful attempt — the
        loop variable always reflects the last iteration. */
     if (bindFns && containerRef.value) bindFns(containerRef.value)
+    /* Mermaid's svg has no native pan/zoom — drag/zoom is what
+       other sites add via svg-pan-zoom. We dynamic-import the
+       module so it stays out of the main bundle until a diagram
+       actually renders, and we tag the svg via `dataset` so a
+       stray double-render (HMR, ResizeObserver) can't bind a
+       second instance to the same element. Failure to load the
+       module is swallowed: a render that's visible but not
+       draggable is still better than throwing here. */
+    const svgEl = containerRef.value.querySelector('svg')
+    if (svgEl && !svgEl.dataset.panZoomBound) {
+      svgEl.dataset.panZoomBound = '1'
+      void getSvgPanZoom().then((svgPanZoom) => {
+        /* Two failure modes we have to filter out here:
+           1. The component unmounted while the dynamic import
+              was in flight — `containerRef.value` was nulled by
+              Vue.
+           2. A newer render() started after this querySelector
+              captured `svgEl`. The container was wiped and a new
+              svg inserted. `svgEl` is now detached. The
+              generation guard catches this: only the most recent
+              render's `.then` may bind. The previous render's
+              `panZoomInstance?.destroy()` at the top of the
+              newer render already ran (or no-op'd, if this very
+              `.then` is the one that produced the instance —
+              which is the common case on first render).
+           Without this guard, the late callback would overwrite
+           `panZoomInstance` with an instance bound to a detached
+           svg, and the earlier one (if any) would leak. */
+        if (!containerRef.value) return
+        if (myGen !== renderGeneration) return
+        panZoomInstance = svgPanZoom(svgEl as SVGSVGElement, {
+          zoomEnabled: true,
+          /* We render our own toolbar (zoom-in / zoom-out / reset /
+             fullscreen) below the widget; svg-pan-zoom's built-in
+             +/-/reset cluster would double up with it and the
+             library's hardcoded `fill: black` would also fight the
+             docus theme tokens. Keep it off. */
+          controlIconsEnabled: false,
+          fit: true,
+          center: true,
+          minZoom: 0.5,
+          maxZoom: 10,
+        })
+      }).catch(() => { /* diagram still renders, just no drag/zoom */ })
+    }
   } catch (e) {
     renderError.value = (e as Error).message
     if (containerRef.value) {
       containerRef.value.innerHTML = `<pre class="mermaid-error-pre">${(e as Error).message}</pre>`
     }
   }
+}
+
+/* ---- Toolbar actions ----
+   Mirror of MarkMap.vue's toolbar: the buttons are dumb delegates
+   to the svg-pan-zoom instance. Each method is a one-liner that
+   guards against the (brief) window between component mount and
+   the async dynamic-import resolving, where `panZoomInstance` is
+   still null. The buttons just no-op in that window — by the time
+   the widget is visible to the user, the instance is up. */
+function zoomIn() {
+  panZoomInstance?.zoomIn()
+}
+function zoomOut() {
+  panZoomInstance?.zoomOut()
+}
+function resetView() {
+  /* svg-pan-zoom's `reset()` is "fit + center" — same as the
+     initial render state. We use it for the explicit reset button
+     AND after a fullscreen toggle, since the wrapper's box size
+     changes and the cached viewport stops matching. */
+  panZoomInstance?.reset()
+}
+
+function toggleFullscreen() {
+  if (!wrapperRef.value) return
+  if (document.fullscreenElement) {
+    void document.exitFullscreen().catch(() => { /* user denied; harmless */ })
+  } else {
+    void wrapperRef.value.requestFullscreen().catch(() => { /* user denied; harmless */ })
+  }
+}
+function onFullscreenChange() {
+  /* Mirror the browser's fullscreen state into our ref. We compare
+     against `wrapperRef.value` rather than checking the boolean
+     directly because the user might have fullscreened another
+     element (a video player, etc.) and we want our icon to reflect
+     "this widget is *not* the fullscreen element". */
+  isFullscreen.value = document.fullscreenElement === wrapperRef.value
 }
 
 onMounted(() => {
@@ -200,15 +351,34 @@ onMounted(() => {
     })
     resizeObserver.observe(containerRef.value)
   }
+  /* Watch the document-level fullscreenchange event so the toolbar
+     icon stays in sync if the user presses Esc or right-clicks
+     "Exit fullscreen" from the browser chrome. */
+  document.addEventListener('fullscreenchange', onFullscreenChange)
+  /* If fullscreen was entered before mount finished, sync up the
+     initial icon state. */
+  onFullscreenChange()
 })
 
 onBeforeUnmount(() => {
   if (rafId) { cancelAnimationFrame(rafId); rafId = 0 }
   resizeObserver?.disconnect()
   resizeObserver = null
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
+  /* Destroy the pan/zoom instance first — it holds listeners on
+     the svg and control-icon DOM nodes inside the container.
+     Clearing innerHTML below detaches those nodes but doesn't
+     release the listeners, so destroy() has to run before. */
+  panZoomInstance?.destroy()
+  panZoomInstance = null
   /* Clear the rendered svg so the DOMPurify-scrubbed nodes don't
      outlive the component (especially during HMR). */
   if (containerRef.value) containerRef.value.innerHTML = ''
+  /* If WE are the fullscreen element at unmount time, exit so the
+     browser doesn't keep the body locked for the next mount. */
+  if (document.fullscreenElement === wrapperRef.value) {
+    void document.exitFullscreen().catch(() => { /* user denied; harmless */ })
+  }
 })
 
 /* Theme flip → re-render so the diagram re-tints. We go through
@@ -221,13 +391,125 @@ watch(theme, () => scheduleRender())
 /* props.code change (e.g. the markdown source was edited) → re-
    render. */
 watch(() => props.code, () => scheduleRender())
+
+/* Fullscreen toggle → resize the svg inline + flip preserveAspectRatio
+   + re-fit svg-pan-zoom.
+
+   Why inline style instead of CSS:
+   The svg is inserted into `.mermaid-svg` via innerHTML by
+   mermaid.render(), so it does NOT carry Vue's [data-v-xxx]
+   scope attribute. A scoped selector targeting it has to go
+   through `:deep()`, and in practice `.mermaid-widget:fullscreen
+   .mermaid-svg :deep(svg) { width: 100% }` doesn't always apply
+   on Chromium — possibly because mermaid 11 sets an inline
+   `width="…"` presentation attribute that survives the scoped
+   selector, or because the `:deep()` chain drops the data-v at
+   exactly the wrong specificity boundary. Either way the svg
+   stays at its intrinsic dimensions while its container goes
+   fullscreen — visibly "small horizontally" even though the
+   svg's outer container is the viewport. Inline `style.width =
+   '100%'` has specificity (1,0,0,0) — it beats every CSS selector
+   AND every presentation attribute — so this is the only knob
+   that's guaranteed to take effect. The CSS still sets
+   `.mermaid-svg` itself to 100% × 100%, which is reliable; this
+   script handles the inner svg specifically.
+
+   preserveAspectRatio flip:
+   mermaid emits the svg with `preserveAspectRatio="xMidYMid meet"`
+   by default — "scale uniformly to FIT inside the box, leaving
+   letterbox space on whichever axis doesn't fit". Once the svg
+   IS filling the viewport, a diagram whose intrinsic aspect
+   differs (e.g. 4:3 inside a 16:9 viewport) would still look
+   narrow — `meet` keeps the diagram at its natural aspect and
+   letterboxes the rest. We flip to `xMidYMid slice` ("scale
+   uniformly to FILL, cropping the longer axis") in fullscreen
+   so the diagram visually fills the viewport; the user can pan
+   via svg-pan-zoom to reach any cropped edges, or zoom out to
+   see the whole thing. On exit we restore mermaid's default.
+
+   svg-pan-zoom caches the svg's bounding rect at bind time; on
+   the fullscreen transition the cache goes stale. resize() reads
+   the current rect and pushes it into the cache; reset() (fit +
+   center) then operates against the new size. Without resize()
+   the diagram would stay at the pre-fullscreen scale because
+   reset() reads from the cache. Order matters: resize() FIRST,
+   then reset().
+
+   ResizeObserver doesn't reliably fire across the fullscreen
+   transition in every browser (only this widget re-layouts, not
+   the article), so a dedicated watcher is needed. */
+watch(isFullscreen, (fs) => {
+  const svg = containerRef.value?.querySelector('svg')
+  if (svg) {
+    if (fs) {
+      svg.style.width = '100%'
+      svg.style.height = '100%'
+      svg.style.maxWidth = 'none'
+      svg.style.minHeight = '0'
+      svg.setAttribute('preserveAspectRatio', 'xMidYMid slice')
+    } else {
+      svg.style.width = ''
+      svg.style.height = ''
+      svg.style.maxWidth = ''
+      svg.style.minHeight = ''
+      svg.removeAttribute('preserveAspectRatio')
+    }
+  }
+  panZoomInstance?.resize()
+  panZoomInstance?.reset()
+})
 </script>
 
 <template>
-  <div class="mermaid-widget">
+  <div ref="wrapperRef" class="mermaid-widget">
     <div ref="containerRef" class="mermaid-svg" />
     <div v-if="renderError" class="mermaid-error">
       图表渲染失败:{{ renderError }}
+    </div>
+    <!-- Toolbar: reveals on hover, mirrors MarkMap.vue's
+         `.markmap-toolbar-area` pattern. The four buttons
+         delegate to svg-pan-zoom via the panZoomInstance held
+         in script setup. Inline SVG icons use `currentColor`
+         so they pick up the article's `--text` and follow the
+         theme. -->
+    <div class="mermaid-toolbar-area">
+      <div class="mermaid-toolbar">
+        <button @click="zoomOut" title="缩小" aria-label="缩小">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            <line x1="8" y1="11" x2="14" y2="11" />
+          </svg>
+        </button>
+        <button @click="zoomIn" title="放大" aria-label="放大">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            <line x1="11" y1="8" x2="11" y2="14" />
+            <line x1="8" y1="11" x2="14" y2="11" />
+          </svg>
+        </button>
+        <button @click="resetView" title="重置视图" aria-label="重置视图">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+            <path d="M16 16h5v5" />
+          </svg>
+        </button>
+        <button
+          @click="toggleFullscreen"
+          :title="isFullscreen ? '退出全屏' : '全屏'"
+          :aria-label="isFullscreen ? '退出全屏' : '全屏'"
+        >
+          <svg v-if="isFullscreen" width="16" height="16" viewBox="0 0 1024 1024" fill="currentColor">
+            <path d="M384 128h-85.33v170.67H128V384h256zM896 384v-85.33H725.33V128H640v256zM725.33 725.33H896V640H640v256h85.33zM298.67 896H384V640H128v85.33h170.67z" />
+          </svg>
+          <svg v-else width="16" height="16" viewBox="0 0 1024 1024" fill="currentColor">
+            <path d="M128 384h85.33V213.33H384V128H128zM640 128v85.33h170.67V384H896V128zM810.67 810.67H640V896h256V640h-85.33zM213.33 640H128v256h256v-85.33H213.33z" />
+          </svg>
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -262,6 +544,92 @@ watch(() => props.code, () => scheduleRender())
   display: inline-block;
   max-width: 100%;
   height: auto;
+}
+
+/* ---- Toolbar ----
+   Mirror of MarkMap.vue's `.markmap-toolbar-area` /
+   `.markmap-toolbar` pattern: the area is absolutely positioned
+   at bottom-right, hidden by default, and reveals on
+   `.mermaid-widget:hover` (or while a child has focus, so
+   keyboard users can tab to a button and have it stay visible).
+   We use the same `--vs-bg-1` / `--vs-border` / `--vs-text-1` /
+   `--vs-hover-bg` tokens that markmap does, so the toolbar
+   reads as part of the same UI family across widgets. */
+.mermaid-toolbar-area {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.mermaid-widget:hover .mermaid-toolbar-area,
+.mermaid-toolbar-area:focus-within { opacity: 1; }
+
+.mermaid-toolbar {
+  display: flex;
+  gap: 4px;
+  background: var(--vs-bg-1);
+  border: 1px solid var(--vs-border);
+  border-radius: 6px;
+  padding: 2px;
+}
+.mermaid-toolbar button {
+  border: none;
+  background: transparent;
+  color: var(--vs-text-1);
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+.mermaid-toolbar button:hover {
+  background: var(--vs-hover-bg);
+}
+
+/* ---- Fullscreen overrides ----
+   The widget itself becomes the fullscreen element. The wrapper
+   and `.mermaid-svg` get explicit 100% × 100% sizing here —
+   reliable for those, because they DO carry Vue's [data-v-xxx]
+   scope attribute and the scoped selector matches them.
+
+   The svg element INSIDE `.mermaid-svg` is handled separately
+   by JS — see the `watch(isFullscreen, ...)` handler. mermaid
+   injects that svg via innerHTML, so it doesn't carry the scope
+   attribute, and the scoped `:deep()` selector chain
+   (`.mermaid-widget:fullscreen .mermaid-svg :deep(svg)`) doesn't
+   take effect on Chromium in practice. JS sets inline
+   `style.width = '100%'`, whose specificity (1,0,0,0) beats any
+   selector or presentation attribute. The CSS rule below for
+   the inner svg is kept as a fallback / intent-document.
+
+   Padding goes away in fullscreen (no 12px gutters around the
+   diagram) and `overflow-x: auto` becomes `overflow: hidden` so
+   the diagram doesn't push a horizontal scrollbar when its
+   intrinsic width is wider than the viewport. The background
+   matches `--bg` so the letterbox area blends with the diagram's
+   own background instead of peeking through to the article's
+   `--bg-2`. */
+.mermaid-widget:fullscreen {
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+.mermaid-widget:fullscreen .mermaid-svg {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.mermaid-widget:fullscreen .mermaid-svg :deep(svg) {
+  /* Fallback only — see the JS path in `watch(isFullscreen, ...)`
+     for the rule that actually applies on Chromium. */
+  width: 100%;
+  height: 100%;
+  max-width: none;
 }
 
 .mermaid-error {

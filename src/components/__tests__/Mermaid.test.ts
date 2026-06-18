@@ -68,12 +68,31 @@ interface MermaidTestCounters {
   overrideSvg: string | string[] | null
   bindFunctionCalls: number
 }
-const g = globalThis as typeof globalThis & { __mermaidTest?: MermaidTestCounters }
+interface SvgPanZoomInstanceSpy {
+  destroy: ReturnType<typeof vi.fn>
+  zoomIn: ReturnType<typeof vi.fn>
+  zoomOut: ReturnType<typeof vi.fn>
+  reset: ReturnType<typeof vi.fn>
+  resize: ReturnType<typeof vi.fn>
+}
+interface SvgPanZoomTestCounters {
+  /* One entry per call to svgPanZoom(svg, opts). Mermaid.vue's
+     bind path runs once per fresh svg, so the count equals the
+     number of successful renders. */
+  constructCalls: Array<{ svg: SVGSVGElement; opts: Record<string, unknown> | undefined; instance: SvgPanZoomInstanceSpy }>
+}
+const g = globalThis as typeof globalThis & {
+  __mermaidTest?: MermaidTestCounters
+  __svgPanZoomTest?: SvgPanZoomTestCounters
+}
 g.__mermaidTest = {
   initializeCalls: [],
   renderCalls: [],
   overrideSvg: null,
   bindFunctionCalls: 0,
+}
+g.__svgPanZoomTest = {
+  constructCalls: [],
 }
 
 const cleanStubSvg = (id: string, code: string) =>
@@ -106,6 +125,27 @@ vi.mock('mermaid', () => ({
     },
   },
 }))
+
+vi.mock('svg-pan-zoom', () => {
+  /* The real svg-pan-zoom module's default export is a factory
+     that takes an svg + options and returns an instance. We
+     mimic that shape, then expose spies on every method so
+     tests can assert on what Mermaid.vue called. */
+  return {
+    default: vi.fn((svg: SVGSVGElement, opts?: Record<string, unknown>) => {
+      const t = (globalThis as typeof globalThis & { __svgPanZoomTest?: SvgPanZoomTestCounters }).__svgPanZoomTest
+      const instance: SvgPanZoomInstanceSpy = {
+        destroy: vi.fn(),
+        zoomIn: vi.fn(),
+        zoomOut: vi.fn(),
+        reset: vi.fn(),
+        resize: vi.fn(),
+      }
+      if (t) t.constructCalls.push({ svg, opts, instance })
+      return instance
+    }),
+  }
+})
 
 /* Stub the layout-reading getters on the .mermaid-svg container
    so Mermaid.vue's `hasNonZeroSize()` gate passes — jsdom doesn't
@@ -159,6 +199,8 @@ beforeEach(() => {
     t.overrideSvg = null
     t.bindFunctionCalls = 0
   }
+  const pt = g.__svgPanZoomTest
+  if (pt) pt.constructCalls.length = 0
   /* Force a clean theme between tests — useTheme is a module
      singleton and previous tests may have flipped it to dark. */
   useTheme().set('light')
@@ -333,5 +375,186 @@ describe('Mermaid NaN-detection fallback', () => {
     expect(g.__mermaidTest!.bindFunctionCalls).toBe(1)
 
     unmount()
+  })
+})
+
+describe('Mermaid svg-pan-zoom integration', () => {
+  /* Helper: install a controllable fullscreenElement getter +
+     a spy for requestFullscreen on the widget wrapper, scoped to
+     one test. Restores the original descriptor in `finally` so
+     subsequent tests start with a clean Document. */
+  async function withFullscreenMocks<T>(
+    host: HTMLElement,
+    fn: (ctx: {
+      requestFullscreenSpy: ReturnType<typeof vi.fn>
+      setFullscreenElement: (el: Element | null) => void
+      fireFullscreenChange: () => void
+    }) => Promise<T>,
+  ): Promise<T> {
+    const wrapper = host.querySelector<HTMLElement>('.mermaid-widget')!
+    const origFsDescriptor = Object.getOwnPropertyDescriptor(document, 'fullscreenElement')
+    const origRequestFullscreen = wrapper.requestFullscreen
+    const requestFullscreenSpy = vi.fn().mockResolvedValue(undefined)
+    let fsElement: Element | null = null
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      get: () => fsElement,
+    })
+    wrapper.requestFullscreen = requestFullscreenSpy
+    try {
+      return await fn({
+        requestFullscreenSpy,
+        setFullscreenElement: (el) => { fsElement = el },
+        fireFullscreenChange: () => { document.dispatchEvent(new Event('fullscreenchange')) },
+      })
+    } finally {
+      if (origFsDescriptor) {
+        Object.defineProperty(document, 'fullscreenElement', origFsDescriptor)
+      } else {
+        delete (document as { fullscreenElement?: unknown }).fullscreenElement
+      }
+      wrapper.requestFullscreen = origRequestFullscreen
+    }
+  }
+
+  it('binds svg-pan-zoom to the rendered svg on first render', async () => {
+    const { unmount } = mountStandalone()
+    await settle()
+
+    expect(g.__svgPanZoomTest!.constructCalls.length).toBe(1)
+    const { svg, opts } = g.__svgPanZoomTest!.constructCalls[0]
+    expect(svg.tagName.toLowerCase()).toBe('svg')
+    /* The dataset flag the component stamps on the svg prevents
+       a stray double-render (HMR, ResizeObserver) from binding
+       a second instance to the same element. */
+    expect(svg.dataset.panZoomBound).toBe('1')
+    /* The library's control-icons cluster is disabled — we ship
+       our own toolbar instead. */
+    expect(opts?.controlIconsEnabled).toBe(false)
+    /* minZoom / maxZoom match the comment about zoom bounds. */
+    expect(opts?.minZoom).toBe(0.5)
+    expect(opts?.maxZoom).toBe(10)
+
+    unmount()
+  })
+
+  it('routes toolbar button clicks to the panZoom instance methods', async () => {
+    const { unmount, host } = mountStandalone()
+    await settle()
+    const instance = g.__svgPanZoomTest!.constructCalls[0].instance
+
+    const toolbar = host.querySelector<HTMLElement>('.mermaid-toolbar')!
+    const zoomIn = toolbar.querySelector<HTMLButtonElement>('button[aria-label="放大"]')!
+    const zoomOut = toolbar.querySelector<HTMLButtonElement>('button[aria-label="缩小"]')!
+    const reset = toolbar.querySelector<HTMLButtonElement>('button[aria-label="重置视图"]')!
+
+    zoomIn.click()
+    zoomOut.click()
+    reset.click()
+
+    /* Each button delegated to its matching method on the
+       panZoom instance, exactly once. */
+    expect(instance.zoomIn).toHaveBeenCalledTimes(1)
+    expect(instance.zoomOut).toHaveBeenCalledTimes(1)
+    expect(instance.reset).toHaveBeenCalledTimes(1)
+
+    unmount()
+  })
+
+  it('destroys the prior svg-pan-zoom instance when re-rendering', async () => {
+    const { unmount } = mountStandalone()
+    await settle()
+    expect(g.__svgPanZoomTest!.constructCalls.length).toBe(1)
+    const old = g.__svgPanZoomTest!.constructCalls[0].instance
+    expect(old.destroy).not.toHaveBeenCalled()
+
+    /* Force a re-render via theme change. Mermaid.vue tears down
+       the old pan/zoom instance (its listeners point at the
+       soon-to-be-detached svg) before swapping innerHTML, then
+       binds a fresh one to the new svg. */
+    useTheme().set('dark')
+    await settle()
+
+    expect(g.__svgPanZoomTest!.constructCalls.length).toBe(2)
+    expect(old.destroy).toHaveBeenCalledTimes(1)
+
+    useTheme().set('light')
+    unmount()
+  })
+
+  it('calls resize + reset on the panZoom instance when fullscreen state flips', async () => {
+    const { unmount, host } = mountStandalone()
+    await settle()
+    const instance = g.__svgPanZoomTest!.constructCalls[0].instance
+
+    await withFullscreenMocks(host, async ({ setFullscreenElement, fireFullscreenChange }) => {
+      const wrapper = host.querySelector<HTMLElement>('.mermaid-widget')!
+      const fsButton = host.querySelector<HTMLButtonElement>('button[aria-label="全屏"]')!
+      fsButton.click()
+
+      /* resize + reset haven't fired yet — they trigger off the
+         fullscreenchange event after the browser commits. */
+      expect(instance.resize).not.toHaveBeenCalled()
+
+      /* Simulate the browser committing fullscreen + firing the
+         event. onFullscreenChange reads document.fullscreenElement
+         and updates isFullscreen, the watcher consumes that and
+         calls resize + reset on the panZoom instance. */
+      setFullscreenElement(wrapper)
+      fireFullscreenChange()
+      await settle()
+
+      expect(instance.resize).toHaveBeenCalledTimes(1)
+      expect(instance.reset).toHaveBeenCalledTimes(1)
+    })
+
+    unmount()
+  })
+
+  it('swaps the fullscreen button icon when entering and exiting fullscreen', async () => {
+    const { unmount, host } = mountStandalone()
+    await settle()
+
+    const fsButton = host.querySelector<HTMLButtonElement>('button[aria-label="全屏"]')!
+    expect(fsButton.getAttribute('aria-label')).toBe('全屏')
+    expect(fsButton.getAttribute('title')).toBe('全屏')
+
+    await withFullscreenMocks(host, async ({ setFullscreenElement, fireFullscreenChange }) => {
+      const wrapper = host.querySelector<HTMLElement>('.mermaid-widget')!
+      setFullscreenElement(wrapper)
+      fireFullscreenChange()
+      await settle()
+
+      /* After the fullscreenchange event with us as the
+         fullscreen element, the button flips to "exit". */
+      expect(fsButton.getAttribute('aria-label')).toBe('退出全屏')
+      expect(fsButton.getAttribute('title')).toBe('退出全屏')
+
+      /* When we exit, the button flips back. */
+      setFullscreenElement(null)
+      fireFullscreenChange()
+      await settle()
+
+      expect(fsButton.getAttribute('aria-label')).toBe('全屏')
+    })
+
+    unmount()
+  })
+
+  it('source-level: guards the bind with a render-generation check', () => {
+    /* Behavioral coverage of the render-generation guard is
+       fragile in jsdom (the svg-pan-zoom dynamic import resolves
+       as a microtask, making it hard to stage "two renders in
+       before the .then fires"). Instead we pin the
+       implementation: a regression that drops the guard would
+       re-introduce a memory leak (orphan panZoom instance
+       bound to a detached svg). The two markers below are
+       what the bind path reads at runtime. */
+    const src = readFileSync(
+      resolve(__dirname, '..', 'Mermaid.vue'),
+      'utf8',
+    )
+    expect(src).toMatch(/renderGeneration/)
+    expect(src).toMatch(/myGen\s*!==\s*renderGeneration/)
   })
 })
