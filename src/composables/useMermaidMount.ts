@@ -73,24 +73,62 @@ export function useMermaidMount(articleEl: Ref<HTMLElement | null>) {
      mount whatever placeholders are now present. We watch the
      article ref separately so a brand-new element (component
      remount, route change) gets observed and the old observer is
-     disconnected. */
+     disconnected.
+
+     Editor-side throttle: in PreviewPane, the article ref is
+     bound to a live markdown preview that re-renders on every
+     keystroke. The MutationObserver fires per keystroke, and
+     `mountAll` does a `createApp` + `mount` per placeholder
+     per tick — fast in absolute terms, but a 10-char/second
+     typing burst creates ~10 Vue apps per second that each
+     need to do their own async mermaid render. We coalesce
+     bursts with a trailing debounce: each mutation resets the
+     timer; the actual mountAll only runs once the user pauses
+     for THROTTLE_MS. The initial attach (no prior mutations)
+     still runs immediately so the first paint after v-html
+     doesn't flash empty widgets. Reading-mode callers
+     (Article, ReadingPane) hit the immediate path too, since
+     their v-html settles in a single mutation burst. */
   let observer: MutationObserver | null = null
+  let mountThrottleTimer: ReturnType<typeof setTimeout> | null = null
+  const THROTTLE_MS = 60
+
+  function scheduleMount() {
+    if (mountThrottleTimer !== null) {
+      clearTimeout(mountThrottleTimer)
+    }
+    mountThrottleTimer = setTimeout(() => {
+      mountThrottleTimer = null
+      unmountOrphans()
+      mountAll()
+    }, THROTTLE_MS)
+  }
+
+  function cancelScheduledMount() {
+    if (mountThrottleTimer !== null) {
+      clearTimeout(mountThrottleTimer)
+      mountThrottleTimer = null
+    }
+  }
 
   function attachObserver(el: HTMLElement) {
     observer?.disconnect()
     /* Run an initial scan: the placeholders that arrived via the
        most recent v-html are already in the DOM by the time we
        get here, so without the immediate scan the user would see
-       a one-frame flash of empty widgets. */
+       a one-frame flash of empty widgets. The initial path stays
+       synchronous on purpose — by definition there's no pending
+       keystroke that could supersede this batch. */
     unmountOrphans()
     mountAll()
-    observer = new MutationObserver(() => { unmountOrphans(); mountAll() })
+    observer = new MutationObserver(() => { scheduleMount() })
     observer.observe(el, { childList: true, subtree: true })
   }
 
   function detachObserver() {
     observer?.disconnect()
     observer = null
+    cancelScheduledMount()
   }
 
   /* `watch(articleEl, ...)` doesn't fire on innerHTML re-renders —
@@ -105,6 +143,10 @@ export function useMermaidMount(articleEl: Ref<HTMLElement | null>) {
   }, { immediate: true, flush: 'post' })
 
   onBeforeUnmount(() => {
+    /* Stop any pending throttled mount — otherwise a
+       destroy()-then-tick sequence could call mountAll on a
+       detached tree. */
+    cancelScheduledMount()
     for (const w of widgets.values()) w.app.unmount()
     widgets.clear()
   })

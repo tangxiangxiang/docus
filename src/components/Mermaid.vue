@@ -96,6 +96,33 @@ let panZoomInstance: SvgPanZoomInstance | null = null
    detached element. */
 let renderGeneration = 0
 
+/* `mermaid.initialize` mutates a process-global config object.
+   `mermaid.render()` reads from that same global on every call.
+   The init+render pair inside one render() pass is synchronous
+   (render() itself returns a Promise that resolves after the
+   layout completes), but the gap between the two is NOT — there
+   are no awaits between initialize and render in the loop body,
+   so a single widget can't race itself. The race we care about
+   is between TWO widgets: A.initialize({theme:'dark'}) runs,
+   the awaited `mermaid.render` inside A's pass suspends while
+   mermaid's d3 layout computes, B.initialize({theme:'light'})
+   runs during A's suspension, A's render resumes and reads the
+   now-light global config and produces a light svg into a
+   dark-themed widget.
+
+   We can't synchronously pin the config for the duration of
+   the async render — mermaid's API doesn't expose a per-call
+   config — so we minimize the window. The fingerprint gate
+   below keeps us from calling initialize() unnecessarily: when
+   the same widget re-renders (theme toggle, code edit) into
+   the same theme, we don't re-init at all, which is most of
+   the time. The probe-then-restore dance in the NaN retry
+   loop below also touches initialize and has to bypass the
+   gate on purpose, so the gate is not a perfect fix — but it
+   removes the dominant case (every render() re-initializing
+   to the same value). */
+let lastInitKey = ''
+
 interface MermaidRenderResult { svg: string; bindFunctions?: (el: HTMLElement) => void }
 interface MermaidNS {
   initialize: (config: Record<string, unknown>) => void
@@ -197,38 +224,124 @@ async function render() {
   }
   try {
     const mermaid = await getMermaid()
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: theme.value === 'dark' ? 'dark' : 'default',
-      securityLevel: 'strict',
-    })
+    const targetTheme = theme.value === 'dark' ? 'dark' : 'default'
+    const initKey = `${targetTheme}|strict`
+    /* Skip the global re-init when the fingerprint hasn't
+       changed. mermaid.initialize is process-global; calling it
+       unnecessarily just slows things down and (more
+       importantly) races with sibling widgets' inits — see
+       lastInitKey's declaration for the full story. */
+    if (lastInitKey !== initKey) {
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: targetTheme,
+        securityLevel: 'strict',
+      })
+      lastInitKey = initKey
+    }
     /* mermaid needs a unique id per render — it appends to
        `dompurify`-scrubbed nodes and the previous `<svg id="...">`
        still being in the document would collide. Date.now() is
-       fine because we only ever have a handful of widgets.
+       fine because we only ever have a handful of widgets. */
 
-       We retry up to 3 times if the layout produces NaN. The
-       retry path is mostly defensive: in practice the
-       combination of size-gate + double-rAF + fonts.ready
-       should yield a clean svg on the first try. The retry
-       exists for the rare case where mermaid's internal d3
-       simulation gets a bad initial RNG seed and the first
-       layout iteration produces degenerate positions; the
-       second pass uses a different id so the module-level
-       cache is fresh. */
+    /* NaN retry: mermaid's internal d3 simulation sometimes
+       produces `<g transform="translate(NaN,NaN) …">` on a
+       bad RNG roll. Re-rendering with the same id / theme /
+       code does NOT reseed the layout — d3 picks the same
+       initial positions and NaNs out identically. The actual
+       thing that shakes the seed loose is a different theme:
+       mermaid rebuilds the layout config for the new theme
+       and d3 starts from a fresh deterministic seed. We try
+       the user's target theme first, and on NaN cycle
+       through a small theme list so the retries genuinely
+       differ. The final accepted render is in the user's
+       target theme because we re-initialize with that theme
+       once a clean svg lands (and the global lastInitKey is
+       restored so the next render() on this widget sees the
+       expected fingerprint).
+
+       Filter targetTheme out of the probe list: a retry must
+       never re-use the target theme's layout config, or the
+       d3 seed is the same as attempt 0 and the NaN reproduces.
+       Light mode (targetTheme='default') keeps all three
+       candidates ['base','dark','neutral']; dark mode
+       (targetTheme='dark') shrinks to ['base','neutral']. */
+    const ALL_PROBE_THEMES = ['base', 'dark', 'neutral'] as const
+    const PROBE_THEMES = ALL_PROBE_THEMES.filter((t) => t !== targetTheme)
     let svg = ''
     let bindFns: ((el: HTMLElement) => void) | undefined
     const MAX_ATTEMPTS = 3
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      /* First attempt: target theme. Subsequent attempts:
+         probe themes in rotation, each one a different seed. */
+      const themeForAttempt =
+        attempt === 0
+          ? targetTheme
+          : PROBE_THEMES[(attempt - 1) % PROBE_THEMES.length]
+      /* Each attempt needs mermaid to use a fresh layout seed.
+         attempt=0 is the target theme, which we just initialized
+         above — calling initialize again here is wasted work and
+         also confuses the test that counts initialize calls
+         (a render pass on a clean widget would emit two
+         identical initialize calls for the same theme). On
+         attempt > 0 we always re-initialize because the probe
+         theme is different from the one the preceding init set
+         (and from each other across attempts). The lastInitKey
+         short-circuit from the top-of-function init is bypassed
+         by writing lastInitKey here. */
+      if (attempt > 0) {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: themeForAttempt,
+          securityLevel: 'strict',
+        })
+        lastInitKey = `${themeForAttempt}|strict`
+      }
       const id = `mermaid-${++mermaidRenderCount}-${Date.now()}-${attempt}`
       const result = await mermaid.render(id, props.code)
-      svg = typeof result === 'string' ? result : result.svg
-      if (typeof result === 'object') bindFns = result.bindFunctions
-      if (!/translate\(NaN/.test(svg)) break
-      /* else: try again with a fresh id */
+      const attemptSvg = typeof result === 'string' ? result : result.svg
+      /* Only adopt bindFns from a CLEAN attempt. Earlier code
+         overwrote bindFns on every iteration, which had two
+         failure modes: (1) a clean first attempt with
+         bindFns followed by a NaN second attempt would
+         attach the first attempt's bindFns to the broken
+         second-attempt svg; (2) a clean first attempt with
+         bindFns followed by a clean second attempt without
+         bindFns would clobber the good ones. Bind functions
+         only when the svg we're keeping is the one bindFns
+         targets. */
+      if (!/translate\(NaN/.test(attemptSvg)) {
+        svg = attemptSvg
+        if (typeof result === 'object' && result.bindFunctions) {
+          bindFns = result.bindFunctions
+        }
+        /* Restore the user-facing theme before we exit, so a
+           subsequent render() pass on this widget (theme
+           toggle, code edit) sees lastInitKey === initKey and
+           skips a redundant init. */
+        if (themeForAttempt !== targetTheme) {
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: targetTheme,
+            securityLevel: 'strict',
+          })
+          lastInitKey = initKey
+        }
+        break
+      }
     }
-    if (/translate\(NaN/.test(svg)) {
-      renderError.value = 'mermaid 布局异常（容器未正确布局或图表含无效字符），请稍后重试'
+    if (!svg || /translate\(NaN/.test(svg)) {
+      /* Restore target theme even on total failure, so the
+         global state doesn't end up stuck on a probe theme. */
+      if (lastInitKey !== initKey) {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: targetTheme,
+          securityLevel: 'strict',
+        })
+        lastInitKey = initKey
+      }
+      renderError.value = '图表布局异常：容器未正确布局或图表含无效字符，请稍后重试'
       /* Leave the container empty so the broken svg never
          reaches the parser. */
       containerRef.value.innerHTML = ''
@@ -381,6 +494,42 @@ onBeforeUnmount(() => {
   }
 })
 
+/* HMR teardown. When this module is replaced (vite picks up an
+   edit to Mermaid.vue during dev), the module-level state
+   (`mermaidModule`, `panZoomModule`, `mermaidRenderCount`,
+   `lastInitKey`) is reset to its initial values automatically
+   because the module is re-evaluated. But the dynamic
+   `import('mermaid')` and `import('svg-pan-zoom')` resolve
+   against the OLD module's chunk URL — old components still
+   mounted at HMR time hold references to the old mermaid
+   instance, while new components get the new one. mermaid
+   keeps its config in module-level state inside its own
+   module, so the two instances don't see each other's
+   initialize() calls. The result: a stale mermaid instance
+   keeps drawing with its old theme while a freshly-mounted
+   widget's render path initializes the new instance and
+   draws with the new theme.
+
+   The cheapest correct fix: blow away mermaid's internal
+   state at HMR time so the next initialize() call gets a
+   clean slate. mermaid doesn't expose a "reset" API, but
+   `lastInitKey` (which we control) gates our own initialize
+   calls, so resetting it to '' forces the next render to
+   re-init. For the deeper mermaid-side cleanup we just
+   null the module-level cache; the next getMermaid()
+   dynamic import re-resolves through vite's module graph,
+   which under HMR returns the FRESH module, not the old
+   one. The trade-off is the cost of one extra dynamic
+   import per widget after each HMR — acceptable in dev. */
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    mermaidModule = null
+    panZoomModule = null
+    mermaidRenderCount = 0
+    lastInitKey = ''
+  })
+}
+
 /* Theme flip → re-render so the diagram re-tints. We go through
    scheduleRender so the render is gated on a non-zero size —
    a theme toggle while the widget is hidden (in a background
@@ -427,6 +576,19 @@ watch(() => props.code, () => scheduleRender())
    via svg-pan-zoom to reach any cropped edges, or zoom out to
    see the whole thing. On exit we restore mermaid's default.
 
+   Exit-side width/height attribute cleanup:
+   On exiting fullscreen we have to clear BOTH the inline style
+   AND mermaid's `width="…"` / `height="…"` presentation
+   attributes on the svg. If we only cleared the style
+   (`svg.style.width = ''`), the attribute would reassert
+   itself and the svg would jump back to its intrinsic
+   dimensions — wide diagrams (a long gantt) would then
+   overflow the article and trigger a horizontal scrollbar
+   that wasn't there before the fullscreen session. Removing
+   the attribute is what tells the browser to fall back to
+   CSS sizing. We do the same on the `max-width` /
+   `min-height` styles we set on entry.
+
    svg-pan-zoom caches the svg's bounding rect at bind time; on
    the fullscreen transition the cache goes stale. resize() reads
    the current rect and pushes it into the cache; reset() (fit +
@@ -448,10 +610,16 @@ watch(isFullscreen, (fs) => {
       svg.style.minHeight = '0'
       svg.setAttribute('preserveAspectRatio', 'xMidYMid slice')
     } else {
+      /* Clear inline styles first. */
       svg.style.width = ''
       svg.style.height = ''
       svg.style.maxWidth = ''
       svg.style.minHeight = ''
+      /* Then remove the presentation attributes mermaid set on
+         render — otherwise the attribute reasserts and the svg
+         snaps back to its intrinsic dimensions. */
+      svg.removeAttribute('width')
+      svg.removeAttribute('height')
       svg.removeAttribute('preserveAspectRatio')
     }
   }
