@@ -527,13 +527,15 @@ main.container {
 }
 .vault .file-tree header .title {
   /* Folder glyph + panel name. flex-shrink: 0 so CJK characters stay
-     on one line even when the sidebar is at its 150px minimum. */
+     on one line even when the sidebar is at its 150px minimum.
+     Height matches .ab-btn (36px) so the panel-title row is flush with
+     the first activity-bar button on the left. */
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 0 8px 0 10px;
-  height: 28px;
+  height: 36px;
   box-sizing: border-box;
   font-size: 0.78rem;
   font-weight: 600;
