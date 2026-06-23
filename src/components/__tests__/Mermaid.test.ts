@@ -74,6 +74,15 @@ interface SvgPanZoomInstanceSpy {
   zoomOut: ReturnType<typeof vi.fn>
   reset: ReturnType<typeof vi.fn>
   resize: ReturnType<typeof vi.fn>
+  /* Lock path uses the explicit enable / disable methods
+     (setOptions doesn't reliably re-bind pointer listeners in
+     svg-pan-zoom 3.6.x). All optional so existing tests that
+     don't touch the lock path keep passing — the watch
+     fall-throughs to a no-op when the method is missing. */
+  enablePan?: ReturnType<typeof vi.fn>
+  disablePan?: ReturnType<typeof vi.fn>
+  enableZoom?: ReturnType<typeof vi.fn>
+  disableZoom?: ReturnType<typeof vi.fn>
 }
 interface SvgPanZoomTestCounters {
   /* One entry per call to svgPanZoom(svg, opts). Mermaid.vue's

@@ -45,6 +45,14 @@ const renderError = ref<string | null>(null)
    ref so the toolbar icon can flip between enter / exit and so
    the watch below doesn't have to touch the DOM. */
 const isFullscreen = ref(false)
+/* Pan/zoom lock. Defaults to locked — the markmap convention: the
+   diagram is read-only by default; the user has to click the
+   toolbar lock to drag/scroll-zoom it. The lock is purely about
+   mouse interaction; the explicit toolbar zoom buttons (zoomIn /
+   zoomOut) bypass `zoomEnabled` and still work even when locked,
+   matching the markmap tooltip's "解锁后可拖动" wording — only
+   drag is gated, not explicit button presses. */
+const isLocked = ref(true)
 
 /* Per-instance cache so each widget only triggers the dynamic
    import once. The browser's module loader also caches by URL,
@@ -67,10 +75,21 @@ let mermaidRenderCount = 0
    detached node. The built-in control-icons cluster is disabled
    below so we don't have to worry about leftover icon DOM.
 
-   The toolbar buttons (zoom in / out / reset / fullscreen) need
-   a thin slice of the public API — the methods we list here are
-   the only ones called from outside. `reset()` fits + centers in
-   one call, which is what we want after a fullscreen toggle too. */
+   The toolbar buttons (zoom in / out / reset / lock / fullscreen)
+   need a thin slice of the public API — the methods we list here
+   are the only ones called from outside. `reset()` fits + centers
+   in one call, which is what we want after a fullscreen toggle
+   too. The lock path uses `enablePan`/`disablePan` +
+   `enableZoom`/`disableZoom` rather than `setOptions` because
+   svg-pan-zoom's `setOptions` doesn't reliably re-bind the
+   pointer event listeners across the 3.6.x line — the option
+   flag flips but the listeners stay live. The explicit enable/
+   disable methods are what svg-pan-zoom documents for live
+   toggling, so we go through them. All marked optional because
+   older svg-pan-zoom builds may not expose them; on those
+   versions the lock is a UI hint only (icon flips but drag
+   remains enabled), and the lock button's tooltip makes the
+   state honest. */
 interface SvgPanZoomInstance {
   destroy: () => void
   zoomIn: () => void
@@ -83,6 +102,11 @@ interface SvgPanZoomInstance {
      resize() before reset() whenever the svg's display size
      changes — currently that's just the fullscreen toggle. */
   resize: () => void
+  enablePan?: () => void
+  disablePan?: () => void
+  enableZoom?: () => void
+  disableZoom?: () => void
+  setOptions?: (options: Record<string, unknown>) => void
 }
 type SvgPanZoomFn = (svg: SVGSVGElement, opts?: Record<string, unknown>) => SvgPanZoomInstance
 let panZoomModule: { default: SvgPanZoomFn } | null = null
@@ -431,10 +455,10 @@ async function render() {
         panZoomInstance = svgPanZoom(svgEl as SVGSVGElement, {
           zoomEnabled: true,
           /* We render our own toolbar (zoom-in / zoom-out / reset /
-             fullscreen) below the widget; svg-pan-zoom's built-in
-             +/-/reset cluster would double up with it and the
-             library's hardcoded `fill: black` would also fight the
-             docus theme tokens. Keep it off. */
+             lock / fullscreen) below the widget; svg-pan-zoom's
+             built-in +/-/reset cluster would double up with it and
+             the library's hardcoded `fill: black` would also fight
+             the docus theme tokens. Keep it off. */
           controlIconsEnabled: false,
           /* `fit: true, center: true` — mirror of MarkMap's
              `autoFit: true`. The widget now has a fixed 480px
@@ -449,6 +473,24 @@ async function render() {
           minZoom: 0.5,
           maxZoom: 10,
         })
+        /* Apply the current lock state to the freshly-bound
+           svg-pan-zoom instance. svg-pan-zoom defaults
+           pan/zoom-enabled to true; the lock defaults to locked,
+           so without this apply the widget would render already
+           draggable on first paint, contradicting the toolbar's
+           locked icon. We use the explicit enable / disable
+           methods (not setOptions) because setOptions doesn't
+           reliably re-bind the pointer listeners on svg-pan-zoom
+           3.6.x — the option flag updates internally but the
+           listeners stay live. The explicit methods are what
+           svg-pan-zoom documents for live toggling. */
+        if (isLocked.value) {
+          panZoomInstance.disablePan?.()
+          panZoomInstance.disableZoom?.()
+        } else {
+          panZoomInstance.enablePan?.()
+          panZoomInstance.enableZoom?.()
+        }
       }).catch(() => { /* diagram still renders, just no drag/zoom */ })
     }
   } catch (e) {
@@ -478,6 +520,10 @@ function resetView() {
      AND after a fullscreen toggle, since the wrapper's box size
      changes and the cached viewport stops matching. */
   panZoomInstance?.reset()
+}
+
+function toggleLock() {
+  isLocked.value = !isLocked.value
 }
 
 function toggleFullscreen() {
@@ -672,6 +718,24 @@ watch(isFullscreen, (fs) => {
   panZoomInstance?.resize()
   panZoomInstance?.reset()
 })
+
+/* Lock toggle → flip svg-pan-zoom's pan/zoom listeners in place.
+   Mirrors MarkMap.vue's `watch(isLocked, ...)` path: the change
+   takes effect immediately because the explicit enable / disable
+   methods directly add or remove the pointer listeners, not just
+   an option flag. Remount-fallback (the markmap path) would be
+   too expensive here — re-mounting re-runs mermaid.render, which
+   is a full d3 layout pass, vs. markmap's local redraw. */
+watch(isLocked, () => {
+  if (!panZoomInstance) return
+  if (isLocked.value) {
+    panZoomInstance.disablePan?.()
+    panZoomInstance.disableZoom?.()
+  } else {
+    panZoomInstance.enablePan?.()
+    panZoomInstance.enableZoom?.()
+  }
+})
 </script>
 
 <template>
@@ -681,13 +745,37 @@ watch(isFullscreen, (fs) => {
       图表渲染失败:{{ renderError }}
     </div>
     <!-- Toolbar: reveals on hover, mirrors MarkMap.vue's
-         `.markmap-toolbar-area` pattern. The four buttons
+         `.markmap-toolbar-area` pattern. The five buttons
          delegate to svg-pan-zoom via the panZoomInstance held
          in script setup. Inline SVG icons use `currentColor`
          so they pick up the article's `--text` and follow the
          theme. -->
     <div class="mermaid-toolbar-area">
       <div class="mermaid-toolbar">
+        <!-- Lock button: matches MarkMap.vue's `markmap-lock-btn`
+             (first slot in the toolbar, same icons, same
+             tooltip/aria wording). `data-locked` is exposed on
+             the element so a future style override (e.g. a
+             tinted background when unlocked) can target the
+             state via attribute selector; currently the button
+             inherits from `.mermaid-toolbar button` and only the
+             icon changes. -->
+        <button
+          @click="toggleLock"
+          :title="isLocked ? '解锁后可拖动' : '锁定后不可拖动'"
+          :aria-label="isLocked ? '解锁后可拖动' : '锁定后不可拖动'"
+          class="mermaid-lock-btn"
+          :data-locked="isLocked ? 'true' : 'false'"
+        >
+          <svg v-if="isLocked" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+          </svg>
+        </button>
         <button @click="zoomOut" title="缩小" aria-label="缩小">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8" />
