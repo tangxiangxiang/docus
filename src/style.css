@@ -549,26 +549,18 @@ main.container {
   white-space: nowrap;
 }
 .vault .file-tree ul { overflow-y: auto; flex: 1; }
-.vault .file-tree li {
-  padding: 4px 14px;
-  border-bottom: 0;
-  font-size: 0.88rem;
-  color: var(--vs-text-1);
-  border-left: 2px solid transparent;
-}
-.vault .file-tree li.active {
-  background: var(--vs-active-bg);
-  border-left-color: var(--vs-accent);
-}
-.vault .file-tree li:hover { background: var(--vs-hover-bg); }
-.vault .file-tree .entry {
-  color: inherit;
-  font-size: inherit;
-}
-.vault .file-tree .entry-date {
-  font-size: 0.7rem;
-  color: var(--vs-text-3);
-}
+/* The old `.file-tree li` / `.file-tree li.active` / `.file-tree li:hover`
+   / `.entry` / `.entry-date` block was deleted: it predated the
+   recursive `.tree-row` structure and targeted every `<li>` inside the
+   file tree with a flat-list background and a hover that painted the
+   whole `<li>` — including any nested `.tree-children`. The current
+   structure is `.tree-row` (flex container) → `.row-line` (visible
+   line) + `.tree-children` (nested list, on a separate flex line).
+   The active / hover backgrounds now live on `.row-line::before`
+   (see further down), so the `<li>`-level rules would only ever
+   re-introduce the bleed they were originally causing. No `.entry`
+   class is rendered anywhere; that whole section was dead code
+   left behind when the flat list was replaced. */
 .vault .file-tree .actions button {
   color: var(--vs-text-2);
   background: transparent;
@@ -602,8 +594,7 @@ main.container {
   min-width: 100%;
 }
 .vault .file-tree .tree-row {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
-  padding: 2px 8px 2px calc(8px + var(--depth, 0) * 8px);
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: 0;
   cursor: default; user-select: none;
   position: relative;
   color: var(--vs-text-1);
@@ -611,12 +602,38 @@ main.container {
   line-height: 1.4;
   border-left: 2px solid transparent;
 }
-/* Full-width hover/active background that extends through the indent area
-   on the left, so deep rows don't show a gap between the file-tree's edge
-   and the active highlight. The 2px accent strip on the row's own
-   border-left stays at a consistent width and is just recoloured when
-   active, while the background spans the full row width. */
-.vault .file-tree .tree-row::before {
+/* `.row-line` is the visible row strip (chevron + icon + name/rename
+   input). It's a sibling of `.tree-children` inside `.tree-row`, NOT
+   a parent. The hover / active / drop-target background paints here,
+   not on `.tree-row` itself, so hovering an expanded folder row
+   highlights ONLY the line — the children <ul> below stays neutral
+   (its own rows highlight when the user hovers them directly). The
+   `.tree-row > *` rule that previously promoted direct children to
+   `position: relative; z-index: 1` so they'd paint above the
+   `::before` has been split: `.row-line > *` now does the same for
+   line-internal content, and `.tree-children` is at z-index 0 by
+   default (it doesn't need to be above the line's `::before` — they
+   don't overlap). */
+.vault .file-tree .row-line {
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 4px;
+  flex: 1 1 auto;
+  position: relative;
+  padding: 2px 8px 2px calc(8px + var(--depth, 0) * 8px);
+  /* No `min-width: 0` here — that would let `.row-line` shrink to 0,
+     which combined with `flex: 1` (basis 0%) lets it sit on the same
+     flex line as `.tree-children` (basis 100%) without wrapping.
+     With the default `min-width: auto`, `.row-line`'s hypothetical
+     main size is its content width, the sum with `.tree-children`
+     overflows the line, and flex-wrap pushes `.tree-children` down
+     to a second line — exactly what we want. */
+}
+/* Full-width hover/active background that extends through the indent
+   area on the left, so deep rows don't show a gap between the
+   file-tree's edge and the active highlight. The 2px accent strip on
+   the row's own border-left stays at a consistent width and is just
+   recoloured when active, while the background spans the full row
+   width of the LINE (not the children <ul> below it). */
+.vault .file-tree .row-line::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -624,15 +641,15 @@ main.container {
   pointer-events: none;
   z-index: 0;
 }
-.vault .file-tree .tree-row:hover::before { background: var(--vs-hover-bg); }
+.vault .file-tree .row-line:hover::before { background: var(--vs-hover-bg); }
 .vault .file-tree .tree-row.active {
   border-left-color: var(--vs-accent);
 }
-.vault .file-tree .tree-row.active::before { background: var(--vs-active-bg); }
-.vault .file-tree .tree-row > * { position: relative; z-index: 1; }
+.vault .file-tree .tree-row.active .row-line::before { background: var(--vs-active-bg); }
+.vault .file-tree .row-line > * { position: relative; z-index: 1; }
 .vault .file-tree .tree-row[draggable] { cursor: grab; }
 .vault .file-tree .tree-row.dragging { opacity: 0.4; }
-.vault .file-tree .tree-row.drop-target::before { background: var(--vs-active-bg); }
+.vault .file-tree .tree-row.drop-target .row-line::before { background: var(--vs-active-bg); }
 .vault .file-tree.drop-target-root {
   box-shadow: inset 0 2px 0 0 var(--vs-accent);
 }

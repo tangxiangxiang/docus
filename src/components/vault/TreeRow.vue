@@ -227,42 +227,55 @@ function cancelRename() {
     @drop="onDrop"
     @contextmenu="showMenu"
   >
-    <span
-      v-if="isFolder"
-      class="chevron"
-      :class="{ expanded: isExpanded }"
-      :aria-hidden="true"
-      @click.stop="emit('toggle', node.path)"
-      v-html="ICON_CHEVRON"
-    />
-    <span v-else class="chevron-spacer" />
-
-    <span class="row-icon" v-if="isFolder" :aria-hidden="true" v-html="isExpanded ? ICON_FOLDER_OPEN : ICON_FOLDER" />
-    <span class="row-icon" v-else :aria-hidden="true" v-html="ICON_FILE_MD" />
-
-    <template v-if="renaming">
-      <input
-        :id="'docus-rename-input-' + node.path"
-        v-model="renameValue"
-        class="rename-input"
-        @keydown.enter="commitRename"
-        @keydown.escape="cancelRename"
-        @blur="commitRename"
-        @click.stop
+    <!-- .row-line is the *row's visible content* — chevron + icon +
+         name (or the rename input). It is a sibling of .tree-children,
+         NOT a parent. The hover/active background lives on .row-line
+         via ::before; without this split, hovering an expanded folder
+         row would paint the gray ::before across the entire <li>,
+         which contains the .tree-children <ul> below — and since the
+         child rows are transparent, the gray bleeds through and the
+         whole "folder + children" panel reads as one hovered block.
+         Splitting the line out confines the highlight to the line
+         itself; the children area stays neutral until the user
+         actually hovers a child row. -->
+    <div class="row-line">
+      <span
+        v-if="isFolder"
+        class="chevron"
+        :class="{ expanded: isExpanded }"
+        :aria-hidden="true"
+        @click.stop="emit('toggle', node.path)"
+        v-html="ICON_CHEVRON"
       />
-    </template>
-    <template v-else>
-      <!-- Button, not anchor. A folder row toggles (not navigates) and
-           a file row opens in the same SPA (not a new tab). Using an
-           anchor with href="#" would pollute browser history on every
-           click and confuse screen readers announcing "link" for what
-           is really an activation. -->
-      <button
-        type="button"
-        class="row-name"
-        @click="isFolder ? emit('toggle', node.path) : emit('select', node.path)"
-      >{{ node.name }}</button>
-    </template>
+      <span v-else class="chevron-spacer" />
+
+      <span class="row-icon" v-if="isFolder" :aria-hidden="true" v-html="isExpanded ? ICON_FOLDER_OPEN : ICON_FOLDER" />
+      <span class="row-icon" v-else :aria-hidden="true" v-html="ICON_FILE_MD" />
+
+      <template v-if="renaming">
+        <input
+          :id="'docus-rename-input-' + node.path"
+          v-model="renameValue"
+          class="rename-input"
+          @keydown.enter="commitRename"
+          @keydown.escape="cancelRename"
+          @blur="commitRename"
+          @click.stop
+        />
+      </template>
+      <template v-else>
+        <!-- Button, not anchor. A folder row toggles (not navigates) and
+             a file row opens in the same SPA (not a new tab). Using an
+             anchor with href="#" would pollute browser history on every
+             click and confuse screen readers announcing "link" for what
+             is really an activation. -->
+        <button
+          type="button"
+          class="row-name"
+          @click="isFolder ? emit('toggle', node.path) : emit('select', node.path)"
+        >{{ node.name }}</button>
+      </template>
+    </div>
 
     <Teleport to="body">
       <div
