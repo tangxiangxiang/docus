@@ -2,7 +2,7 @@
 title: 主生产计划
 created: 2026-06-15
 updated: 2026-06-15
-tags: [ERP, planning, MPS]
+tags: [erp, planning, mps]
 source: 
 ---
 

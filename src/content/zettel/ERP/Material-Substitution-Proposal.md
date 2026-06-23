@@ -2,7 +2,7 @@
 title: 物料替代建议：解决缺料问题的关键方案
 created: 2026-06-15
 updated: 2026-06-15
-tags: [ERP, planning, MPS]
+tags: [erp, planning, mps]
 source: 
 ---
 
