@@ -233,4 +233,54 @@ describe('FileTree search input', () => {
     expect(w.text()).toContain('没有匹配')
     expect(w.text()).toContain('xyznomatch')
   })
+
+  it('renders active-tag chips INSIDE the search row, not as a separate bar', () => {
+    const w = mount(FileTree, {
+      props: { tree: TREE, posts: POSTS, currentPath: null, activeTags: ['greeting', 'book'] },
+    })
+    // No .tag-filter-bar wrapper exists anymore — chips are merged into
+    // the search row.
+    expect(w.find('.tag-filter-bar').exists()).toBe(false)
+    expect(w.find('.tag-filter-clear').exists()).toBe(false)
+    // The chips live inside .search, before the input. Verify by
+    // checking that the search row contains them and that the input
+    // also lives inside it.
+    const search = w.find('.search')
+    expect(search.exists()).toBe(true)
+    expect(search.findAll('.tag-filter-chip')).toHaveLength(2)
+    expect(search.find('.search-input').exists()).toBe(true)
+    // DOM order: chips appear before the input.
+    const all = search.element.children
+    const chipIdx = [...all].findIndex((el) => el.classList.contains('tag-filter-chip'))
+    const inputIdx = [...all].findIndex((el) => el.classList.contains('search-input'))
+    expect(chipIdx).toBeGreaterThanOrEqual(0)
+    expect(inputIdx).toBeGreaterThan(chipIdx)
+  })
+
+  it('emits remove-tag with the chip text when its × is clicked', async () => {
+    const w = mount(FileTree, {
+      props: { tree: TREE, posts: POSTS, currentPath: null, activeTags: ['greeting'] },
+    })
+    const chipX = w.find('.tag-filter-chip-x')
+    expect(chipX.exists()).toBe(true)
+    await chipX.trigger('click')
+    expect(w.emitted('remove-tag')).toEqual([['greeting']])
+  })
+
+  it('does not emit clear-tag-filter (the global clear-all was removed)', async () => {
+    // The "清除" button is gone — clearing all tags is now an N-click
+    // operation via individual chip × buttons. Pin this behavior so a
+    // future refactor doesn't reintroduce a global clear without a
+    // matching UI affordance.
+    const w = mount(FileTree, {
+      props: { tree: TREE, posts: POSTS, currentPath: null, activeTags: ['greeting', 'book'] },
+    })
+    expect(w.find('.tag-filter-clear').exists()).toBe(false)
+    // Triggering every chip × should not produce a clear-tag-filter
+    // event — the parent never sees it.
+    for (const x of w.findAll('.tag-filter-chip-x')) await x.trigger('click')
+    expect(w.emitted('clear-tag-filter')).toBeUndefined()
+    // remove-tag should have fired exactly once per chip.
+    expect(w.emitted('remove-tag')).toEqual([['greeting'], ['book']])
+  })
 })

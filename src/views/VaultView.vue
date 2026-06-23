@@ -142,7 +142,7 @@ const {
 useScopeFilter()
 
 /* ---------- Tag filter ---------- */
-const { activeTagList, toggleTag, clear: clearTagFilter, removeTag } = useTagFilter({ activePanel })
+const { activeTagList, toggleTag, removeTag } = useTagFilter({ activePanel })
 
 /* ---------- Bi-directional links ---------- */
 // Mount the file-change-bus subscription so the link index stays
@@ -196,7 +196,6 @@ watch(() => navSearch?.tick.value, () => openSearch())
       :current-path="activePath"
       @select="openPost"
       @refresh="refresh"
-      @clear-tag-filter="clearTagFilter"
       @remove-tag="removeTag"
       @split-card="splitCard"
     />

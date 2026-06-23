@@ -548,12 +548,13 @@ main.container {
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
-/* Always-on search input lives below the title row. Same icon + input
-   + clear-x chrome as TagPanel's tag-filter, so the two panel headers
-   read as siblings. AND-composes with the active-tag chip row below
-   the header. */
+/* Always-on search input lives below the title row. Icon + active-tag
+   chips + input + clear-x all share one flex row; chips wrap to a
+   second line when there are too many to fit alongside the input.
+   AND-composes with the chip filters inlined to the left of the input. */
 .vault .file-tree header .search {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 4px 8px 6px 10px;
@@ -569,8 +570,12 @@ main.container {
   color: var(--vs-text-3);
 }
 .vault .file-tree header .search-input {
-  flex: 1 1 auto;
-  min-width: 0;
+  /* `flex: 1 1 120px` + `min-width: 120px` keeps the input usable even
+     when chips consume most of the row: with the floor set, the input
+     wraps to a new flex line instead of being squeezed into a few px
+     wide sliver. With zero chips, the input still fills the row. */
+  flex: 1 1 120px;
+  min-width: 120px;
   background: transparent;
   border: 0;
   outline: none;
@@ -772,26 +777,9 @@ main.container {
   padding: 12px; color: var(--vs-text-3); font-size: 0.85rem;
 }
 
-/* Active-tag filter bar. Sits between the file-tree header and the
-   scrollable tree. Each chip has a × so the user can drop a single
-   tag; the trailing "清除" empties the whole set in one click. */
-.vault .file-tree .tag-filter-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--vs-border);
-  background: var(--vs-bg-2);
-}
-.vault .file-tree .tag-filter-label {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--vs-text-3);
-  font-weight: 600;
-  margin-right: 2px;
-}
+/* Active-tag chip. Now lives inside the header search row (between
+   the icon and the input), wrapping to a second line when many tags
+   are active. The × removes that single tag from the active set. */
 .vault .file-tree .tag-filter-chip {
   display: inline-flex;
   align-items: center;
@@ -821,20 +809,6 @@ main.container {
   justify-content: center;
 }
 .vault .file-tree .tag-filter-chip-x:hover {
-  background: var(--vs-hover-bg);
-  color: var(--vs-text-1);
-}
-.vault .file-tree .tag-filter-clear {
-  margin-left: auto;
-  padding: 2px 8px;
-  background: transparent;
-  border: 0;
-  color: var(--vs-text-2);
-  font-size: 0.72rem;
-  cursor: pointer;
-  border-radius: 4px;
-}
-.vault .file-tree .tag-filter-clear:hover {
   background: var(--vs-hover-bg);
   color: var(--vs-text-1);
 }

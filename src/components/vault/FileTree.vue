@@ -22,7 +22,6 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   select: [path: string]
   refresh: []
-  'clear-tag-filter': []
   'remove-tag': [tag: string]
   'split-card': [path: string, mode: 'inbox' | 'literature']
 }>()
@@ -406,9 +405,25 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
       </div>
       <!-- Always-on search input. Filters the tree by file name /
            title / summary (case-insensitive, contains) and AND-composes
-           with the active-tag chips below. Empty input is a no-op. -->
+           with the active-tag chips inlined to the left of the input.
+           Empty input is a no-op. When multiple tags are selected,
+           the chips wrap to a second line and the input follows them;
+           the icon + each chip + the input all share one flex row. -->
       <div class="search">
         <span class="search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
+        <span
+          v-for="tag in activeTags"
+          :key="tag"
+          class="tag-filter-chip"
+        >
+          <span class="tag-filter-chip-name">#{{ tag }}</span>
+          <button
+            class="tag-filter-chip-x"
+            :aria-label="`移除过滤 ${tag}`"
+            :title="`移除过滤 ${tag}`"
+            @click="emit('remove-tag', tag)"
+          >×</button>
+        </span>
         <input
           v-model="query"
           class="search-input"
@@ -426,31 +441,6 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         >×</button>
       </div>
     </header>
-    <!-- Active tag filter row. Only shown when at least one tag is
-         selected. Each chip exposes its own × so the user can drop a
-         single tag without clearing the whole filter, and the trailing
-         "clear" button empties the set in one click. -->
-    <div v-if="activeTags.length" class="tag-filter-bar" role="status" aria-live="polite">
-      <span class="tag-filter-label">已过滤</span>
-      <span
-        v-for="tag in activeTags"
-        :key="tag"
-        class="tag-filter-chip"
-      >
-        <span class="tag-filter-chip-name">#{{ tag }}</span>
-        <button
-          class="tag-filter-chip-x"
-          :aria-label="`移除过滤 ${tag}`"
-          :title="`移除过滤 ${tag}`"
-          @click="emit('remove-tag', tag)"
-        >×</button>
-      </span>
-      <button
-        class="tag-filter-clear"
-        title="清除所有 tag 过滤"
-        @click="emit('clear-tag-filter')"
-      >清除</button>
-    </div>
     <ul v-if="topLevel.length" class="tree" role="tree">
       <TreeRow
         v-for="node in topLevel"
