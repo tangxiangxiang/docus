@@ -250,37 +250,6 @@ hr {
 .navbar.is-vault .brand { font-size: 0.95rem; }
 .navbar.is-vault .brand-logo { width: 20px; height: 20px; }
 .navbar.is-vault .brand-wordmark { font-size: 0.95rem; }
-.nav-links {
-  display: flex;
-  gap: 22px;
-}
-.nav-links a {
-  position: relative;
-  color: var(--text-muted);
-  font-size: 0.92rem;
-  text-decoration: none;
-  padding: 4px 0;
-  transition: color 0.15s;
-}
-.nav-links a:hover { color: var(--text-h); }
-.nav-links .router-link-exact-active { color: var(--text-h); }
-.nav-links .router-link-exact-active::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -18px;
-  height: 2px;
-  background: var(--accent);
-  border-radius: 2px;
-  animation: navUnderline 0.2s ease;
-}
-@keyframes navUnderline {
-  from { transform: scaleX(0); }
-  to   { transform: scaleX(1); }
-}
-.navbar.is-vault .nav-links a { font-size: 0.85rem; }
-.navbar.is-vault .nav-links .router-link-exact-active::after { bottom: -10px; }
 
 /* (VS Code-style top menu bar removed — buttons were decorative and
    non-functional. The vault's real navigation lives in the activity
@@ -397,12 +366,6 @@ main.container {
   padding-bottom: 64px;
 }
 
-/* Home */
-.home .lead {
-  color: var(--text-muted);
-  font-size: 1.1rem;
-}
-
 /* Post list */
 .post-list {
   display: flex;
@@ -410,83 +373,17 @@ main.container {
   gap: 16px;
   margin-top: 20px;
 }
-.post-card {
-  padding: 16px 20px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  transition: border-color 0.2s, transform 0.2s;
-}
-.post-card:hover {
-  border-color: var(--accent);
-  transform: translateY(-1px);
-}
-.post-card h3 {
-  margin: 0 0 6px;
-  font-size: 1.15rem;
-}
-.post-card h3 a {
-  color: var(--text-h);
-}
-.post-card h3 a:hover { color: var(--accent); text-decoration: none; }
-.post-card .meta {
-  margin: 0 0 6px;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.post-card .summary {
-  margin: 6px 0 0;
-  color: var(--text);
-}
-.tag {
-  color: var(--accent);
+.post-list .path {
+  display: block;
   font-family: var(--mono);
-  font-size: 0.85em;
-}
-.tag:hover { text-decoration: underline; }
-
-/* Post detail */
-.post-detail h1 { margin-top: 0; }
-.post-detail .meta {
+  font-size: 0.78rem;
   color: var(--text-muted);
-  font-size: 0.9rem;
-  margin-top: -0.4em;
-}
-.post-detail .back {
-  margin-top: 2em;
-  padding-top: 1em;
-  border-top: 1px solid var(--border);
+  margin-top: 2px;
 }
 
 /* Article (rendered markdown) */
 .article :first-child { margin-top: 0; }
 .article img { max-width: 100%; height: auto; }
-
-/* Archives */
-.archive-year { margin-top: 24px; }
-.archive-year h2 {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 6px;
-}
-.archive-year ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.archive-year li {
-  display: flex;
-  justify-content: space-between;
-  padding: 6px 0;
-  border-bottom: 1px dashed var(--border);
-}
-.archive-year .date {
-  color: var(--text-muted);
-  font-family: var(--mono);
-  font-size: 0.85em;
-}
 
 /* Tags */
 .tag-list {
@@ -1806,53 +1703,6 @@ main.container {
   flex-direction: column;
 }
 
-.pane-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.85rem;
-  background: var(--bg-soft);
-  min-height: 36px;
-}
-.pane-header .filename {
-  font-family: var(--mono);
-  color: var(--text-h);
-}
-.pane-header .spacer { flex: 1; }
-.pane-header .status {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-.pane-header .status[data-status='dirty'] { color: #d97706; }
-.pane-header .status[data-status='saving'] { color: #2563eb; }
-.pane-header .status[data-status='saved'] { color: #059669; }
-.pane-header .status[data-status='error'] { color: #dc2626; }
-.pane-header .save-btn {
-  font-size: 0.8rem;
-  padding: 3px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--text-h);
-  cursor: pointer;
-}
-.pane-header .save-btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.pane-header .save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.editor-wrap, .preview-wrap {
-  flex: 1;
-  overflow: auto;
-  padding: 12px 18px;
-}
-.editor-wrap .empty, .preview-wrap .empty {
-  padding: 24px 0;
-  text-align: center;
-}
 .cm-host {
   height: 100%;
   font-size: 0.9rem;
@@ -1896,7 +1746,6 @@ main.container {
   color: var(--vs-text-1);
 }
 
-.preview-wrap { background: var(--bg); }
 .preview { max-width: 100%; }
 .render-error {
   color: #dc2626;

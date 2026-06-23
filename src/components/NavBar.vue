@@ -26,7 +26,7 @@ const themeTitle = computed<string>(() => {
 })
 
 /* View-mode toggle is provided globally by App.vue; null on routes that
-   don't use the vault (e.g. home / article), in which case the button is
+   don't use the vault (e.g. /tags), in which case the button is
    hidden. We default to a no-op toggle so consumers can call it freely. */
 const viewModeApi = inject(VaultViewModeKey, null)
 const viewMode = computed(() => viewModeApi?.mode.value ?? 'edit')

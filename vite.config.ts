@@ -1,11 +1,10 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import { mdPlugin } from './src/vite-plugin-md'
 import { serverPlugin } from './server/vite-plugin'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [vue(), mdPlugin(), serverPlugin()],
+  plugins: [vue(), serverPlugin()],
   /* Vite's static-analysis pass in dev mode walks the import graph
      once at startup. Dynamic imports whose string argument is a
      bare specifier (e.g. `await import('force-graph')`) are NOT

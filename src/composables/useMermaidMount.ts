@@ -87,7 +87,7 @@ export function useMermaidMount(articleEl: Ref<HTMLElement | null>) {
      for THROTTLE_MS. The initial attach (no prior mutations)
      still runs immediately so the first paint after v-html
      doesn't flash empty widgets. Reading-mode callers
-     (Article, ReadingPane) hit the immediate path too, since
+     (ReadingPane) hit the immediate path too, since
      their v-html settles in a single mutation burst. */
   let observer: MutationObserver | null = null
   let mountThrottleTimer: ReturnType<typeof setTimeout> | null = null
