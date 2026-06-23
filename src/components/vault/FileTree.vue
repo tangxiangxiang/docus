@@ -8,6 +8,7 @@ import { useToast } from '../../composables/useToast'
 import { blockedMessage, isInZettel } from '../../composables/zettelProtocol'
 import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder } from '../../lib/api'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
+import { ICON_SEARCH } from './icons'
 
 const props = withDefaults(defineProps<{
   tree: TreeNode[]
@@ -56,6 +57,14 @@ const topLevel = computed<TreeNode[]>(() => {
       .map((c) => filterByTags(c, tagFilterSet.value))
       .filter((n): n is TreeNode => n !== null)
   }
+  // Free-text query is AND-composed with the tag filter — both must pass.
+  // filterByQuery is a no-op when the query is empty, so the cost on the
+  // unfiltered path is one tree walk that returns nodes unchanged.
+  if (query.value) {
+    children = children
+      .map((c) => filterByQuery(c, query.value))
+      .filter((n): n is TreeNode => n !== null)
+  }
   return children
 })
 
@@ -82,6 +91,81 @@ function filterByTags(node: TreeNode, tags: Set<string>): TreeNode | null {
     .filter((n): n is TreeNode => n !== null)
   if (kids.length === 0) return null
   return { ...node, children: kids }
+}
+
+// Free-text search query. Always-on input in the panel header. Empty
+// string means no filter; the query is matched case-insensitively against
+// each file's basename, title, and summary (and against folder names,
+// which keeps a folder's full subtree visible — the typical "scope to a
+// folder by typing its name" workflow). Composes AND with the tag filter
+// above: a file passes only if BOTH the tag set and the query let it
+// through.
+const query = ref('')
+
+// Summary join. Title already lives on TreeNode (file variant); summary
+// does not — it's only on PostSummary. We index by path so the filter
+// below can look it up in O(1) per file instead of scanning props.posts
+// at every node.
+const summaryByPath = computed<Map<string, string>>(() => {
+  const m = new Map<string, string>()
+  for (const p of props.posts) m.set(p.path, p.summary ?? '')
+  return m
+})
+
+function filterByQuery(node: TreeNode, q: string): TreeNode | null {
+  if (!q) return node
+  const needle = q.toLowerCase()
+  if (node.kind === 'file') {
+    const summary = summaryByPath.value.get(node.path) ?? ''
+    const hay = `${node.name}\n${node.title}\n${summary}`.toLowerCase()
+    return hay.includes(needle) ? node : null
+  }
+  // Folder matches on its own name — typing "zettel" then keeps the
+  // entire zettel subtree visible. Otherwise recurse and keep the
+  // folder only if it has a matching descendant.
+  if (node.name.toLowerCase().includes(needle)) return node
+  const kids = node.children
+    .map((c) => filterByQuery(c, q))
+    .filter((n): n is TreeNode => n !== null)
+  if (kids.length === 0) return null
+  return { ...node, children: kids }
+}
+
+// When a search is active, force every folder in the *filtered* tree to
+// be expanded so the user sees the matches without clicking through.
+// We don't write to `expanded` itself — that set is persisted to
+// localStorage and represents the user's deliberate collapse state. The
+// search-time override is layered on top via `effectiveExpanded`, and
+// disappears the moment the query clears, restoring the saved layout.
+const searchForcedExpanded = computed<Set<string> | null>(() => {
+  if (!query.value) return null
+  const set = new Set<string>()
+  const walk = (n: TreeNode) => {
+    if (n.kind !== 'folder') return
+    set.add(n.path)
+    for (const c of n.children) walk(c)
+  }
+  for (const n of topLevel.value) walk(n)
+  return set
+})
+const effectiveExpanded = computed<Set<string>>(() => {
+  const base = expanded.value
+  const over = searchForcedExpanded.value
+  if (!over) return base
+  const u = new Set(base)
+  for (const p of over) u.add(p)
+  return u
+})
+
+function onQueryKeydown(e: KeyboardEvent) {
+  // Esc inside the search box clears the query but does NOT propagate,
+  // so the vault's global Esc handler (which closes panels / tabs)
+  // doesn't fire on the same keypress. Mirrors the same escape on
+  // TagPanel's tag-filter input.
+  if (e.key === 'Escape' && query.value) {
+    e.stopPropagation()
+    query.value = ''
+  }
 }
 
 function loadExpanded(): string[] {
@@ -312,14 +396,34 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
     <header :aria-label="'File explorer'">
       <div class="title" role="presentation">
         <!-- The scope filter chips moved to the NavBar, so the header
-             is just a folder glyph + panel name. Keeps the row from
-             looking like dead space at 36px tall. English label
-             matches the scope / file names below and the VS Code
-             vocabulary this app emulates. -->
+             is just a folder glyph + panel name. English label matches
+             the scope / file names below and the VS Code vocabulary
+             this app emulates. -->
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
         </svg>
         <span class="title-text">Explorer</span>
+      </div>
+      <!-- Always-on search input. Filters the tree by file name /
+           title / summary (case-insensitive, contains) and AND-composes
+           with the active-tag chips below. Empty input is a no-op. -->
+      <div class="search">
+        <span class="search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
+        <input
+          v-model="query"
+          class="search-input"
+          type="text"
+          placeholder="搜索文件名 / 标题 / 摘要…"
+          aria-label="搜索文件"
+          @keydown="onQueryKeydown"
+        />
+        <button
+          v-if="query"
+          class="search-clear-x"
+          title="清空搜索"
+          aria-label="清空搜索"
+          @click="query = ''"
+        >×</button>
       </div>
     </header>
     <!-- Active tag filter row. Only shown when at least one tag is
@@ -354,7 +458,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :node="node"
         :depth="0"
         :current-path="currentPath"
-        :expanded-set="expanded"
+        :expanded-set="effectiveExpanded"
         @select="onSelect"
         @toggle="onToggle"
         @rename="onRename"
@@ -364,6 +468,8 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @split-card="onSplitCard"
       />
     </ul>
+    <p v-else-if="query && activeTags.length" class="empty">没有同时匹配 tag 和 “{{ query }}” 的文件。</p>
+    <p v-else-if="query" class="empty">没有匹配 “{{ query }}” 的文件。</p>
     <p v-else-if="activeTags.length" class="empty">没有匹配这些 tag 的文件。</p>
     <p v-else class="empty">还没有文件。</p>
   </aside>

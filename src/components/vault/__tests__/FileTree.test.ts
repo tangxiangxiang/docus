@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import FileTree from '../FileTree.vue'
-import type { TreeNode } from '../../../lib/api'
+import type { PostSummary, TreeNode } from '../../../lib/api'
 import { installDialogMocks } from '../../../__test-helpers__/dialogs'
 
 installDialogMocks()
@@ -93,5 +93,144 @@ describe('FileTree', () => {
     const stored = JSON.parse(localStorage.getItem('docus.vault.expandedPaths') ?? '[]')
     expect(stored).toContain('inbox')
     expect(stored).toContain('inbox/notes')
+  })
+})
+
+// Posts backing the search-input tests. Title and summary are the
+// fields the search input matches against (besides the filename on the
+// tree node itself), so each test case targets a different field:
+//   - hello  → matched by basename ("hello")
+//   - draft  → matched only by summary ("rough notes")
+//   - ahrens → matched only by title ("Ahrens 2017")
+const POSTS: PostSummary[] = [
+  { path: 'inbox/hello',         title: 'Hello',          tags: ['greeting'],         summary: 'a warm greeting',  created: '2026-01-01', updated: '2026-01-01', size: 0, mtime: 0 },
+  { path: 'inbox/notes/draft',   title: 'Draft',          tags: [],                   summary: 'rough notes',      created: '2026-01-02', updated: '2026-01-02', size: 0, mtime: 0 },
+  { path: 'literature/ahrens-2017', title: 'Ahrens 2017', tags: ['book'],             summary: 'on smart notes',   created: '2026-01-03', updated: '2026-01-03', size: 0, mtime: 0 },
+]
+
+describe('FileTree search input', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('renders an always-on search input in the header', () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    const input = w.find('.search-input')
+    expect(input.exists()).toBe(true)
+    expect(input.attributes('placeholder')).toContain('搜索')
+  })
+
+  it('does not filter anything when the query is empty', () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    // No input value, so the inbox / literature / zettel folders all
+    // render as collapsed top-level rows.
+    expect(w.text()).toContain('inbox')
+    expect(w.text()).toContain('literature')
+    expect(w.text()).toContain('zettel')
+  })
+
+  it('hides the clear-× button until the query is non-empty', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    expect(w.find('.search-clear-x').exists()).toBe(false)
+    await w.find('.search-input').setValue('hello')
+    expect(w.find('.search-clear-x').exists()).toBe(true)
+  })
+
+  it('matches by file basename (case-insensitive)', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('HELLO')
+    // hello is in inbox; the folder auto-expands so the file is visible.
+    expect(w.text()).toContain('hello')
+    expect(w.text()).not.toContain('ahrens')
+  })
+
+  it('matches by title even when the basename does not contain the query', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('ahrens')
+    expect(w.text()).toContain('ahrens-2017')
+  })
+
+  it('matches by summary even when filename + title do not contain the query', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('rough')
+    expect(w.text()).toContain('draft')
+    // And 'warm' only appears in hello's summary, not in any title or basename.
+    await w.find('.search-input').setValue('warm')
+    expect(w.text()).toContain('hello')
+  })
+
+  it('keeps an entire folder visible when the folder name matches', async () => {
+    // 'zettel' as a query keeps all zettel/* children, even though
+    // none of their names/titles/summaries contain 'zettel'. This is
+    // the "scope to a folder by typing its name" workflow.
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('zettel')
+    expect(w.text()).toContain('zettelkasten-intro')
+    // inbox is hidden because its folder name doesn't match 'zettel'
+    // and no descendant matches.
+    expect(w.text()).not.toContain('hello')
+  })
+
+  it('clears the query via the × button', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    const input = w.find('.search-input')
+    await input.setValue('hello')
+    expect((input.element as HTMLInputElement).value).toBe('hello')
+    await w.find('.search-clear-x').trigger('click')
+    expect((input.element as HTMLInputElement).value).toBe('')
+    // After clearing, the inbox folder is collapsed again (the
+    // search-forced expansion is layered on top of `expanded`, but
+    // it does not write to `expanded` — and since `expanded` is
+    // also empty here, the folder goes back to collapsed).
+    expect(w.text()).toContain('inbox')
+    expect(w.text()).not.toContain('hello')
+  })
+
+  it('clears the query on Escape', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    const input = w.find('.search-input')
+    await input.setValue('hello')
+    await input.trigger('keydown', { key: 'Escape' })
+    expect((input.element as HTMLInputElement).value).toBe('')
+  })
+
+  it('auto-expands ancestor folders when a search is active', async () => {
+    // inbox is collapsed by default (no localStorage entry). When the
+    // user types a query that matches a file inside it, the folder
+    // should auto-expand so the match is visible without an extra click.
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    expect(w.text()).not.toContain('hello')
+    await w.find('.search-input').setValue('hello')
+    expect(w.text()).toContain('hello')
+    // Search-forced expansion must NOT mutate the persisted set — the
+    // user's collapse decision survives across searches.
+    const stored = JSON.parse(localStorage.getItem('docus.vault.expandedPaths') ?? '[]')
+    expect(stored).not.toContain('inbox')
+  })
+
+  it('combines with active-tag chips via AND (tag OR, then AND with query)', async () => {
+    // activeTags=['greeting']: hello passes (it has the tag); draft and
+    // ahrens are filtered out by the tag filter before the query runs.
+    // Then query='hello' would pass hello again — visible.
+    // Then query='ahrens': hello doesn't match by name/title/summary,
+    // and ahrens is already gone from the tag filter, so nothing
+    // passes — the empty-state branch should mention the tag+query
+    // combination.
+    const w = mount(FileTree, {
+      props: { tree: TREE, posts: POSTS, currentPath: null, activeTags: ['greeting'] },
+    })
+    await w.find('.search-input').setValue('hello')
+    expect(w.text()).toContain('hello')
+    expect(w.text()).not.toContain('draft')
+
+    await w.find('.search-input').setValue('ahrens')
+    expect(w.text()).toContain('没有同时匹配')
+  })
+
+  it('shows an empty state when no file matches the query', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('xyznomatch')
+    expect(w.text()).toContain('没有匹配')
+    expect(w.text()).toContain('xyznomatch')
   })
 })

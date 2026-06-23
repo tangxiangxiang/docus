@@ -519,17 +519,9 @@ main.container {
 }
 .vault .file-tree header {
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
-  padding: 0 8px 0 10px;
-  height: 36px;
-  box-sizing: border-box;
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: 0.02em;
-  color: var(--vs-text-2);
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
 }
@@ -540,6 +532,12 @@ main.container {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  padding: 0 8px 0 10px;
+  height: 28px;
+  box-sizing: border-box;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--vs-text-2);
 }
 .vault .file-tree header .title-text {
@@ -547,6 +545,60 @@ main.container {
   font-weight: 600;
   letter-spacing: 0.02em;
   white-space: nowrap;
+}
+/* Always-on search input lives below the title row. Same icon + input
+   + clear-x chrome as TagPanel's tag-filter, so the two panel headers
+   read as siblings. AND-composes with the active-tag chip row below
+   the header. */
+.vault .file-tree header .search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 6px 10px;
+}
+.vault .file-tree header .search-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--vs-text-3);
+}
+.vault .file-tree header .search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--vs-text-1);
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 2px 0;
+  line-height: 1.4;
+}
+.vault .file-tree header .search-input::placeholder {
+  color: var(--vs-text-3);
+}
+.vault .file-tree header .search-clear-x {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--vs-text-2);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.vault .file-tree header .search-clear-x:hover {
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
 }
 .vault .file-tree ul { overflow-y: auto; flex: 1; }
 /* The old `.file-tree li` / `.file-tree li.active` / `.file-tree li:hover`
