@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, inject, shallowRef, watch, computed, provide, onMounted, onBeforeUnmount } from 'vue'
 import { useVaultLayout, setSelectPanelForClicks } from '../composables/vault/useVaultLayout'
+import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
 import { useSplitReview } from '../composables/vault/useSplitReview'
 import { splitNote, type SplitMode } from '../lib/ai-api'
 import { useToast } from '../composables/useToast'
@@ -13,11 +14,11 @@ import { VaultViewModeKey } from '../composables/vault/viewMode'
 import FileTree from '../components/vault/FileTree.vue'
 import AiPanel from '../components/vault/AiPanel.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
-import LinksPanel from '../components/vault/LinksPanel.vue'
 import EditorPane from '../components/vault/EditorPane.vue'
 import PreviewPane from '../components/vault/PreviewPane.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
 import KnowledgeGraph from '../components/vault/KnowledgeGraph.vue'
+import TocPanel from '../components/vault/TocPanel.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
 import StatusBar from '../components/vault/StatusBar.vue'
@@ -34,17 +35,55 @@ const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => 
 const viewModeApi = inject(VaultViewModeKey, null)
 const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
 
-/* ---------- Layout ---------- */
+/* ---------- Layout ----------
+   tocGate is declared first as `let` so useVaultLayout can close over
+   it via a getter. The actual function body reads `isReadMode` and
+   `activePanel`, both of which are declared further down — but the
+   closure body is lazy: vaultStyle only invokes tocGate() when it
+   first reads its computed (after setup has finished), so the late
+   bindings are live by then. The `?? true` fallback covers the brief
+   window before the real gate is wired in below. */
+let tocGate: () => boolean = () => true
+
 const {
   activePanel,
   sidePanelOpen,
+  sidePanelWidth,
+  editorRatio,
+  aiPanelWidth,
   vaultStyle,
   contentStyle,
   selectPanel,
   toggleAi,
   aiOpen,
-  startDrag,
-} = useVaultLayout()
+  tocPanelWidth,
+} = useVaultLayout({ tocGate: () => tocGate() })
+
+/* Splitter drag lives in its own composable — it mutates the same
+   width/ratio refs useVaultLayout returns, so the grid updates
+   synchronously as the user drags. */
+const { startDrag } = useSplitterDrag({
+  sidePanelWidth,
+  editorRatio,
+  aiPanelWidth,
+  tocPanelWidth,
+})
+
+/* Right-rail visibility: the rail is a read-mode affordance and
+   shows whenever the user is in read mode AND the AI panel is closed
+   AND we're not in graph mode. Graph mode replaces the editor area
+   entirely (force-graph canvas takes the full body), so the rail
+   must hide — otherwise an empty 320px column would sit on the right
+   of the graph. The rail hosts both the TOC (which has its own
+   hasHeadings gate inside TocPanel) and the Links panel — a document
+   with links but no headings still gets the rail with just the Links
+   half populated. The same gate drives the grid track (via tocGate)
+   and the v-if (via tocVisible) so they stay in lockstep. */
+const tocPanelEnabled = computed(
+  () => isReadMode.value && activePanel.value !== 'graph',
+)
+const tocVisible = computed(() => tocPanelEnabled.value && !aiOpen.value)
+tocGate = () => tocPanelEnabled.value
 
 const review = useSplitReview()
 // Provide the same instance to AiPanel so the tree-menu path
@@ -139,7 +178,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
   <div
     ref="vaultRef"
     class="vault"
-    :class="{ 'is-read': isReadMode, 'ai-open': aiOpen }"
+    :class="{ 'is-read': isReadMode, 'ai-open': aiOpen, 'toc-open': tocVisible }"
     tabindex="0"
     :style="vaultStyle"
     @keydown="onKeydown"
@@ -168,12 +207,6 @@ watch(() => navSearch?.tick.value, () => openSearch())
       :path="activePath"
       @select="toggleTag"
       @open="openPost"
-    />
-    <LinksPanel
-      v-else-if="activePanel === 'links'"
-      :path="activePath"
-      :posts="posts"
-      @navigate="openPost"
     />
 
     <div
@@ -286,6 +319,22 @@ watch(() => navSearch?.tick.value, () => openSearch())
         </div>
       </div>
     </section>
+
+    <div
+      v-if="tocVisible"
+      class="splitter splitter-toc"
+      role="separator"
+      aria-orientation="vertical"
+      title="拖动调整目录宽度"
+      @pointerdown="startDrag(vaultRef!, 'toc', $event)"
+    />
+    <TocPanel
+      v-if="tocVisible"
+      class="toc-panel-slot"
+      :path="activePath"
+      :posts="posts"
+      @link-navigate="openPost"
+    />
 
     <div
       v-if="aiOpen"

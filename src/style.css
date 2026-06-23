@@ -106,7 +106,6 @@ body.vault-mode #app { height: 100%; }
 .tree:hover::-webkit-scrollbar-thumb,
 .tag-list:hover::-webkit-scrollbar-thumb,
 .results-list:hover::-webkit-scrollbar-thumb,
-.reading-toc:hover::-webkit-scrollbar-thumb,
 .preview-pane .article:hover::-webkit-scrollbar-thumb,
 .palette-list:hover::-webkit-scrollbar-thumb,
 .vault .file-tree .tree:hover::-webkit-scrollbar-thumb {
@@ -1533,163 +1532,14 @@ main.container {
   padding: 40px 24px 80px;
   box-sizing: border-box;
 }
-/* Two-column layout: centered article on the left, sticky page-nav
-   on the right (VitePress-style). Cap the total width so on very
-   wide viewports the article + TOC don't drift too far apart. On
-   narrow viewports the TOC collapses (max-width: 0). */
+/* Single-column centered article. The page-nav (TOC) is now a
+   separate left-side vault grid column (TocPanel.vue), not an
+   inline child of the reading layout. */
 .vault .reading-layout {
   display: flex;
-  gap: 32px;
-  max-width: calc(720px + 32px + 220px);
+  max-width: 720px;
   margin: 0 auto;
-  align-items: flex-start;
 }
-/* Page navigation (right-side TOC). Sticks to the top of the reading
-   pane as the user scrolls. Width is fixed at 220px; on viewports
-   too narrow to fit it next to the article, the layout collapses
-   (the aside has flex: 0 0 0 below). */
-.vault .reading-toc {
-  flex: 0 0 220px;
-  position: sticky;
-  top: 40px;
-  max-height: calc(100vh - 80px);
-  overflow: auto;
-  /* The aside can sprout a horizontal scrollbar in a few edge cases
-     (CJK overflow-wrap pushing past 220px, browser zoom rounding,
-     etc.). We never *want* horizontal scroll on the TOC — vertical
-     scroll handles the long-list case, and long heading text should
-     just wrap. */
-  overflow-x: hidden;
-  font-size: 0.85rem;
-  line-height: 1.5;
-  color: var(--vs-text-2);
-  /* Scrollbar uses the global thin/auto-hide rule. */
-  scrollbar-width: thin;
-}
-
-/* AI panel open: hide the right-side "页面导航" TOC and let the
-   article expand right into the space it used to occupy. The
-   original reading-layout max-width (720 article + 32 gap + 220
-   TOC = 972px) is unchanged — with the TOC removed, the article
-   flex-grows to fill the same total width its row was already
-   sized for. The 75ch readability cap is lifted while AI is open
-   because the user has actively chosen to give up the right rail. */
-.vault.ai-open .reading-toc {
-  display: none;
-}
-.vault.ai-open .reading-layout .article.reading {
-  /* flex: 0 1 720px → flex: 1 1 720px: allow growth into the
-     freed 220 + 32 = 252px of horizontal space. */
-  flex: 1 1 720px;
-  /* Lift the 75ch cap so the article can actually fill the row
-     (the cap is ~612px in English and would otherwise clip the
-     article at its original width even with flex-grow set). */
-  max-width: none;
-}
-.vault .reading-toc-title {
-  margin: 0 0 10px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--vs-border);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--vs-text-3);
-}
-.vault .reading-toc-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  /* The "rail" the active indicator sits on. 2px so the active bar
-     reads as an extension of the rail, not a separate border. */
-  border-left: 2px solid var(--vs-border);
-  border-radius: 0 0 0 2px;
-  /* Belt-and-suspenders against horizontal overflow: long CJK heading
-     text combined with `overflow-wrap: anywhere` on the <a> can still
-     push the list wider than its 220px column, which would otherwise
-     introduce a horizontal scrollbar on the parent .reading-toc.
-     We only need to clip the horizontal axis — vertical scroll is
-     handled by .reading-toc's own overflow: auto. */
-  overflow-x: hidden;
-}
-.vault .reading-toc-item {
-  /* Items share the same left "rail" — indent levels just push the
-     text inward, the left border is on the parent <ul>. */
-  position: relative;
-  margin: 0;
-  /* Same clip — the active <a> has a -2px margin-left to sit on the
-     rail, which would otherwise nudge the <li> 2px past the column. */
-  overflow: hidden;
-}
-.vault .reading-toc-item a {
-  /* Use plain block layout with a max-height clamp rather than
-     `display: -webkit-box; -webkit-line-clamp: N`. The webkit-box
-     approach collapses the box to zero height in some Chromium
-     configurations when the link lives inside a flex column, which
-     hides the heading text entirely. The max-height trick is less
-     precise (it'll clip mid-line of a long word) but it never hides
-     the text outright. Long CJK strings are still allowed to break
-     to a second line via `overflow-wrap: anywhere`. */
-  display: block;
-  padding: 5px 12px 5px 16px;
-  color: var(--vs-text-2);
-  text-decoration: none;
-  line-height: 1.45;
-  min-height: 1.45em;
-  max-height: calc(1.45em * 2);
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  /* Pin the <a> to the <li>'s width so a `transform` on hover can't
-     nudge it past the column and trigger a horizontal scrollbar. */
-  max-width: 100%;
-  box-sizing: border-box;
-  transition: color 0.15s, background 0.15s;
-  border-radius: 0 4px 4px 0;
-}
-.vault .reading-toc-item a:hover {
-  color: var(--vs-text-1);
-  background: var(--vs-hover-bg);
-}
-/* Active state: VSCode-sidebar-style indicator bar on the left.
-   A 3px solid block glued to the item's left edge, slightly inset
-   top/bottom so it doesn't bleed into neighboring items. The accent
-   background still tints the row (kept from before) so the highlight
-   reads as a unit, but the bar itself is the primary marker — it
-   stays put across hover and is the first thing the eye lands on
-   while scanning the TOC. */
-.vault .reading-toc-item.active a {
-  color: var(--vs-text-1);
-  background: var(--vs-accent-bg);
-  font-weight: 600;
-}
-.vault .reading-toc-item.active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 4px;
-  bottom: 4px;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
-  background: var(--vs-accent);
-  /* The list's 2px rail is the same color as the border; the bar
-     sits on top of it (not the rail itself), so we don't need a
-     margin to overlap — they're at the same x. */
-  animation: rp-toc-bar-in 0.18s ease-out;
-}
-@keyframes rp-toc-bar-in {
-  from { transform: scaleY(0.3); opacity: 0; }
-  to   { transform: scaleY(1);   opacity: 1; }
-}
-.vault .reading-toc-item.lvl-3 a { padding-left: 24px; }
-.vault .reading-toc-item.lvl-4 a { padding-left: 36px; }
-/* Slight opacity step down for deeper levels so the eye can scan the
-   top-level structure first. */
-.vault .reading-toc-item.lvl-3 a { font-size: 0.82rem; }
-.vault .reading-toc-item.lvl-4 a { font-size: 0.8rem; }
-.vault .reading-toc-item.lvl-3 a,
-.vault .reading-toc-item.lvl-4 a { color: var(--vs-text-3); }
-.vault .reading-toc-item.lvl-3.active a,
-.vault .reading-toc-item.lvl-4.active a { color: var(--vs-text-1); }
 
 /* Reading mode gets a touch more vertical air and slightly tighter
    code blocks than the cramped split-pane preview, but stays within
@@ -1903,14 +1753,6 @@ main.container {
   border-radius: 6px;
   border: 1px solid var(--vs-border);
   margin: 0.4em 0;
-}
-
-/* Hide the TOC when the article + nav would otherwise overflow the
-   viewport. The breakpoint is the layout's max-width plus the
-   reading-pane's horizontal padding (24 * 2). */
-@media (max-width: 1024px) {
-  .vault .reading-toc { display: none; }
-  .vault .reading-layout { max-width: 720px; }
 }
 
 /* Status Bar — spans the full width of the vault (last grid row,

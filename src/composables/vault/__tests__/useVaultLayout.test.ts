@@ -14,13 +14,14 @@
 // don't accidentally break the writer.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { defineComponent, h, type Ref } from 'vue'
+import { defineComponent, h, ref, watch, type Ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import {
   useVaultLayout,
   setSelectPanelForClicks,
   getSelectPanelForClicks,
   __resetSelectPanelForClicks,
+  __resetVaultLayoutState,
   type VaultLayout,
 } from '../useVaultLayout'
 
@@ -33,16 +34,17 @@ interface Harness {
   editorRatio: Ref<number>
   aiOpen: Ref<boolean>
   aiPanelWidth: Ref<number>
-  selectPanel: (p: 'files' | 'tags' | 'links' | 'graph') => void
+  tocPanelWidth: Ref<number>
+  selectPanel: (p: 'files' | 'tags' | 'graph') => void
   toggleAi: () => void
   vaultStyle: { value: { gridTemplateColumns: string } }
 }
 
-function setup(): Harness {
+function setup(opts: { tocGate?: () => boolean } = {}): Harness {
   let captured: Harness | null = null
   const Comp = defineComponent({
     setup() {
-      const layout = useVaultLayout()
+      const layout = useVaultLayout(opts)
       captured = {
         activePanel: layout.activePanel as Ref<string | null>,
         sidePanelOpen: layout.sidePanelOpen as Ref<boolean>,
@@ -50,6 +52,7 @@ function setup(): Harness {
         editorRatio: layout.editorRatio,
         aiOpen: layout.aiOpen,
         aiPanelWidth: layout.aiPanelWidth,
+        tocPanelWidth: layout.tocPanelWidth,
         selectPanel: layout.selectPanel,
         toggleAi: layout.toggleAi,
         vaultStyle: layout.vaultStyle as Harness['vaultStyle'],
@@ -65,6 +68,7 @@ describe('useVaultLayout', () => {
   beforeEach(() => {
     localStorage.clear()
     __resetSelectPanelForClicks()
+    __resetVaultLayoutState()
   })
 
   afterEach(() => {
@@ -82,6 +86,14 @@ describe('useVaultLayout', () => {
     const h = setup()
     expect(h.aiOpen.value).toBe(false)
     expect(h.aiPanelWidth.value).toBe(320)
+  })
+
+  it('exposes tocPanelWidth=320 by default (matching the AI panel width)', () => {
+    // The TOC panel's *visibility* is no longer a persisted ref — it's
+    // derived from view-mode + headings + AI panel state in VaultView.
+    // Only the user's preferred width is persisted.
+    const h = setup()
+    expect(h.tocPanelWidth.value).toBe(320)
   })
 
   it('migrates the old fileTreeOpen/fileTreeWidth shape into the new shape', () => {
@@ -158,17 +170,78 @@ describe('useVaultLayout', () => {
     expect(h.aiOpen.value).toBe(false)
   })
 
-  it('vaultStyle uses 2 columns when both side and AI panels are closed', () => {
+  it('vaultStyle uses 4 columns when side=off, ai=off, tocGate=true (default)', () => {
     const h = setup()
     h.selectPanel('files') // close the default-open side panel
-    // aiOpen defaults to false, so no toggle needed
-    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 1fr')
+    // aiOpen defaults to false; tocGate defaults to ref(true) in the
+    // harness so the TOC track is emitted.
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 1fr 1px 320px')
   })
 
   it('vaultStyle adds the side panel columns when active', () => {
     const h = setup()
-    // default state: side='files', aiOpen=false → 4 columns
+    // default state: side='files', aiOpen=false, tocGate=true.
+    // Side and TOC coexist on opposite rails — combined ~580px
+    // leaves plenty of room for the editor area. VaultView passes
+    // tocPanelEnabled (read mode + has headings) as the gate in
+    // production, so the track only appears when the panel renders.
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr 1px 320px')
+  })
+
+  it('vaultStyle elides the TOC track when the external gate is false', () => {
+    // Regression: edit mode means tocGate=false, and the TOC panel
+    // would be v-if'd off. Without the gate plumbing, vaultStyle
+    // would emit a 320px column even when <TocPanel> doesn't render,
+    // leaving a gray strip on the right.
+    const h = setup({ tocGate: () => false })
+    // default: side='files', aiOpen=false, gate=false → no toc track
     expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr')
+  })
+
+  it('vaultStyle reactively follows the gate after construction', async () => {
+    // Mirrors the production transition: user opens the app in edit
+    // mode (gate=false), then switches to read mode with headings
+    // (gate=true). The TOC track must appear without remount.
+    const gate = ref(false)
+    let layout: ReturnType<typeof useVaultLayout> | null = null
+    const Comp = defineComponent({
+      setup() {
+        layout = useVaultLayout({ tocGate: () => gate.value })
+        return () => h('div')
+      },
+    })
+    mount(Comp)
+    // initial: gate=false → no toc track
+    expect(layout!.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr')
+    // gate flips true → next read of vaultStyle must recompute
+    gate.value = true
+    await Promise.resolve()
+    expect(layout!.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr 1px 320px')
+    // gate flips false again → toc track gone
+    gate.value = false
+    await Promise.resolve()
+    expect(layout!.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr')
+  })
+
+  it('vaultStyle emits the TOC track when side panel is closed', () => {
+    const h = setup()
+    h.selectPanel('files') // close side
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 1fr 1px 320px')
+  })
+
+  it('vaultStyle coexists side panel and TOC track (side=on, gate=true, ai=off)', () => {
+    const h = setup()
+    // default: side='files', aiOpen=false, gate=true
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr 1px 320px')
+  })
+
+  it('vaultStyle suppresses the TOC track when AI panel opens', () => {
+    // AI panel and TOC share the right rail — only one may be open.
+    // vaultStyle's `!aiOpen` clause elides the toc track when AI opens.
+    const h = setup()
+    h.selectPanel('files') // close side so toc would otherwise be visible
+    h.toggleAi()           // open AI
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 1fr 1px 320px')
   })
 
   it('vaultStyle adds the AI columns when aiOpen=true', () => {
@@ -228,8 +301,6 @@ describe('useVaultLayout', () => {
     expect(h.sidePanelOpen.value).toBe(true)
     h.selectPanel('tags')
     expect(h.sidePanelOpen.value).toBe(true)
-    h.selectPanel('links')
-    expect(h.sidePanelOpen.value).toBe(true)
     h.selectPanel('graph')
     // graph is a body mode, not a side panel
     expect(h.sidePanelOpen.value).toBe(false)
@@ -238,14 +309,16 @@ describe('useVaultLayout', () => {
     expect(h.sidePanelOpen.value).toBe(false)
   })
 
-  it('vaultStyle uses 2 columns when activePanel is graph (no side panel)', () => {
+  it('vaultStyle emits 4 columns when activePanel is graph (no side panel, TOC on)', () => {
     // Regression: the graph panel is rendered inside .editor-area, not
     // next to the activity bar. If the side-panel track were emitted
     // for graph mode, .editor-area would shrink to 1px and the
-    // force-graph canvas would have nowhere to render.
+    // force-graph canvas would have nowhere to render. The TOC track
+    // is on the right of editor-area, so the graph canvas inside the
+    // 1fr column still has the full width to itself.
     const h = setup()
     h.selectPanel('graph')
-    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 1fr')
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 1fr 1px 320px')
   })
 
   it('publishes selectPanel via the cross-component slot, callable from any consumer', () => {
@@ -256,10 +329,10 @@ describe('useVaultLayout', () => {
     // is the contract KnowledgeGraph relies on.
     expect(getSelectPanelForClicks()).toBeNull()
     const captured: string[] = []
-    /* The slot's signature is `SidePanel` (4 values: files/tags/links/graph)
+    /* The slot's signature is `SidePanel` (3 values: files/tags/graph)
        so test consumers must accept the full union. Narrowing it here
        would be a lie about the API surface KnowledgeGraph relies on. */
-    const fn = (p: 'files' | 'tags' | 'links' | 'graph') => { captured.push(p) }
+    const fn = (p: 'files' | 'tags' | 'graph') => { captured.push(p) }
     setSelectPanelForClicks(fn)
     expect(getSelectPanelForClicks()).toBe(fn)
     // The "child" can call it — it runs, even if it has no effect

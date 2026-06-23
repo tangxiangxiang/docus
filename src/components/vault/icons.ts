@@ -116,3 +116,16 @@ export const ICON_LINKS = `
   <path d="M6.5 9.5 A2.5 2.5 0 0 1 6.5 4.5 L8 3 A2.5 2.5 0 0 1 13 3 A2.5 2.5 0 0 1 13 8 L11.5 9.5"/>
   <path d="M9.5 6.5 A2.5 2.5 0 0 1 9.5 11.5 L8 13 A2.5 2.5 0 0 1 3 13 A2.5 2.5 0 0 1 3 8 L4.5 6.5"/>
 </svg>`
+
+// "TOC" — a vertical stack of three lines, the universal "outline"
+// glyph. 14×14 line art in the same 1.5px stroke as ICON_LINKS so
+// the two halves of the right-rail panel read as a matched pair.
+export const ICON_TOC = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <line x1="3" y1="4"  x2="5.5" y2="4"  />
+  <line x1="3" y1="8"  x2="5.5" y2="8"  />
+  <line x1="3" y1="12" x2="5.5" y2="12" />
+  <line x1="7" y1="4"  x2="13"  y2="4"  />
+  <line x1="7" y1="8"  x2="13"  y2="8"  />
+  <line x1="7" y1="12" x2="13"  y2="12" />
+</svg>`
