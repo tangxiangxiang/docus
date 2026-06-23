@@ -355,6 +355,44 @@ async function render() {
     panZoomInstance?.destroy()
     panZoomInstance = null
     containerRef.value.innerHTML = svg
+    /* Force the inserted svg to fill the fixed-height widget AND
+       center its content. mermaid emits the svg with several pieces
+       of inline metadata that all fight our CSS sizing:
+
+         1. Intrinsic `width="W" height="H"` attributes from the
+            layout engine.
+         2. An inline `style="…"` block — typically including
+            `max-width: <Wpx>`, which pins the SVG to its intrinsic
+            width regardless of our CSS `width: 100%` rule. Inline
+            style has CSS specificity (1,0,0,0); our scoped selector
+            `.mermaid-svg :deep(svg)` compiles to (0,2,1). The inline
+            style wins, so the SVG stays at intrinsic width even
+            though the CSS rule *looks* correct in DevTools' Styles
+            panel.
+         3. A `preserveAspectRatio` that depends on diagram type and
+            `useMaxWidth` — some diagram types emit
+            `xMinYMid meet` (left-align), not `xMidYMid meet`.
+
+       Fix: strip the attributes, clear the inline width/height/
+       max-width that pin the SVG, then write our own inline
+       width/height (inline beats anything else) and force
+       `preserveAspectRatio="xMidYMid meet"`. MarkMap's svg doesn't
+       need this because markmap's own `autoFit` runs on the same
+       pass that creates the SVG; mermaid hands us a finished string
+       that we have to retrofit. */
+    const insertedSvg = containerRef.value.querySelector('svg')
+    if (insertedSvg) {
+      insertedSvg.removeAttribute('width')
+      insertedSvg.removeAttribute('height')
+      insertedSvg.style.width = '100%'
+      insertedSvg.style.height = '100%'
+      /* mermaid sets `max-width: <intrinsic px>` inline — that's
+         the specific culprit pinning the SVG to its intrinsic
+         width when the column is wider than the layout. Clear it
+         so our 100% can take over. */
+      insertedSvg.style.maxWidth = 'none'
+      insertedSvg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+    }
     /* bindFunctions wires up click handlers / tooltips for
        interactive diagrams (e.g. classDiagram clickable nodes).
        We use the bindFns from the successful attempt — the
@@ -398,6 +436,14 @@ async function render() {
              library's hardcoded `fill: black` would also fight the
              docus theme tokens. Keep it off. */
           controlIconsEnabled: false,
+          /* `fit: true, center: true` — mirror of MarkMap's
+             `autoFit: true`. The widget now has a fixed 480px
+             height (matching markmap's footprint), the svg fills
+             100% × 100%, and svg-pan-zoom scales the inner content
+             to fit that box. `center` puts the diagram in the
+             middle when the diagram's aspect doesn't match the
+             container's (letterbox). `reset()` re-runs this same
+             fit+center. */
           fit: true,
           center: true,
           minZoom: 0.5,
@@ -686,32 +732,37 @@ watch(isFullscreen, (fs) => {
 .mermaid-widget {
   position: relative;
   width: 100%;
+  /* Fixed-height container, mirroring MarkMap.vue's `.markmap-widget`.
+     mermaid's render emits an svg with a viewBox; with the widget at
+     a known size and the svg stretched to 100% × 100%, the svg's
+     `preserveAspectRatio="xMidYMid meet"` (mermaid's default) fits the
+     diagram inside the box, centered, with letterbox on the long axis
+     if the diagram's aspect doesn't match. The alternative —
+     `height: auto` on the svg — lets the article expand to whatever
+     the diagram's intrinsic aspect wants, which is unpredictable
+     across diagrams (a 6-node flowchart can blow the column out to
+     1500px tall) and makes the article's overall rhythm erratic. */
+  height: 480px;
   margin: 0;
-  padding: 0.75rem 0;
-  /* Like the markmap, no outer frame — the diagram floats on the
-     article background. `overflow-x: auto` lets wide diagrams
-     (e.g. long sequence diagrams) scroll horizontally instead of
-     breaking the article layout. */
-  overflow-x: auto;
+  /* Like the markmap, no outer frame. `overflow: hidden` clips any
+     letterbox / over-pan inside the widget box. */
+  overflow: hidden;
 }
 
 .mermaid-svg {
-  /* Block layout with `text-align: center` (rather than flex)
-     so the svg's intrinsic width is preserved — a flex
-     container can collapse a single svg child to 0 if the
-     svg has no explicit width attribute, which feeds mermaid
-     a 0×0 box and produces the `translate(NaN, NaN)` svg. */
   display: block;
-  text-align: center;
   width: 100%;
-  /* Safety net: even if the host hasn't been laid out yet,
-     this gives mermaid a real height to work with. */
-  min-height: 120px;
+  height: 100%;
 }
 .mermaid-svg :deep(svg) {
-  display: inline-block;
-  max-width: 100%;
-  height: auto;
+  /* Fill the fixed-height container. mermaid's viewBox + the svg's
+     default `preserveAspectRatio="xMidYMid meet"` does the actual
+     fitting — content scales to fit the box, centered, no crop.
+     svg-pan-zoom (`fit: true, center: true`) applies a transform
+     that mirrors this; the two layers agree on the scale. */
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* ---- Toolbar ----
