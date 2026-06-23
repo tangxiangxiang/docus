@@ -486,4 +486,14 @@ function resetView() {
   --markmap-code-color: var(--vs-text-1);
   --markmap-highlight-bg: var(--vs-active-bg);
 }
+
+/* ---- Fullscreen overrides ----
+   The widget itself becomes the fullscreen element. Without an
+   explicit background the widget is transparent and the browser's
+   default fullscreen backdrop (gray) shows through, which is
+   especially jarring in light theme. Set the background to match
+   the article surface so the tree area blends seamlessly. */
+.markmap-widget:fullscreen {
+  background: var(--bg);
+}
 </style>
