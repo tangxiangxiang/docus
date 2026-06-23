@@ -7,12 +7,21 @@ import {
   canCreateChild,
   readonlyHintLabel,
 } from '../../composables/zettelProtocol'
+import type { MatchInfo } from './FileTree.vue'
 
 const props = defineProps<{
   node: TreeNode
   depth: number
   currentPath: string | null
   expandedSet: Set<string>
+  // Path → per-file match annotation from FileTree's search filter.
+  // The whole map (not just this row's entry) is passed so the
+  // recursive child rows can look up their own paths without
+  // threading individual matchInfo props through the recursion.
+  // Files kept only because an ancestor folder matched by name are
+  // absent from the map, and the lookup correctly returns undefined
+  // for them — no tooltip on those rows.
+  matchedFields?: Map<string, MatchInfo>
 }>()
 
 const emit = defineEmits<{
@@ -73,6 +82,27 @@ const canSplit = computed(() =>
     props.node.path.startsWith('literature/') || props.node.path === 'literature'
   )
 )
+
+// Native browser tooltip on the filename button. Only emitted for
+// files that matched the search query themselves (not for files kept
+// because an ancestor folder matched by name — those are absent from
+// the map, and Vue strips the attribute when the computed returns
+// undefined). Folders are never annotated: a folder kept because its
+// name matched is a scope expansion, not a "match", and a tooltip
+// would just say "folder name" which is already visible on screen.
+const matchTooltip = computed<string | undefined>(() => {
+  const m = props.matchedFields?.get(props.node.path)
+  if (!m) return undefined
+  const fields: string[] = []
+  // User-facing labels are "filename" (not "name") so the tooltip
+  // matches the field the user thinks in terms of; "node.name" is the
+  // internal TreeNode property name.
+  if (m.name) fields.push('filename')
+  if (m.title) fields.push('title')
+  if (m.summary) fields.push('summary')
+  if (!fields.length) return undefined
+  return `Matched in: ${fields.join(', ')}`
+})
 
 // --- drag state ---
 const isDragging = ref(false)
@@ -268,10 +298,16 @@ function cancelRename() {
              a file row opens in the same SPA (not a new tab). Using an
              anchor with href="#" would pollute browser history on every
              click and confuse screen readers announcing "link" for what
-             is really an activation. -->
+             is really an activation.
+             The native `title` is bound to `matchTooltip`: when the
+             file matched the search query by name/title/summary, the
+             tooltip names which fields matched; when the file is in
+             the tree for another reason (folder-name match, or no
+             query active), the attribute is omitted entirely. -->
         <button
           type="button"
           class="row-name"
+          :title="matchTooltip"
           @click="isFolder ? emit('toggle', node.path) : emit('select', node.path)"
         >{{ node.name }}</button>
       </template>
@@ -314,6 +350,7 @@ function cancelRename() {
         :depth="depth + 1"
         :current-path="currentPath"
         :expanded-set="expandedSet"
+        :matched-fields="matchedFields"
         @select="(p) => emit('select', p)"
         @toggle="(p) => emit('toggle', p)"
         @rename="(oldP, n) => emit('rename', oldP, n, child.kind)"

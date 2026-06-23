@@ -130,6 +130,39 @@ function filterByQuery(node: TreeNode, q: string): TreeNode | null {
   return { ...node, children: kids }
 }
 
+// Per-file match annotation, derived by re-walking the already-filtered
+// tree. Each entry names the fields whose text contained the query, so
+// TreeRow can render a native tooltip like "Matched in: filename,
+// summary". Folder-name matches are NOT annotated — a folder kept
+// because the user typed its name is a scope expansion, not a "match",
+// and adding a tooltip there would be noise. The derived map is empty
+// when the query is empty, so TreeRow's `matchInfo?` prop stays unset
+// and Vue strips the `title` attribute entirely.
+export interface MatchInfo {
+  name?: boolean
+  title?: boolean
+  summary?: boolean
+}
+const matchedFields = computed<Map<string, MatchInfo>>(() => {
+  if (!query.value) return new Map()
+  const needle = query.value.toLowerCase()
+  const m = new Map<string, MatchInfo>()
+  const walk = (node: TreeNode) => {
+    if (node.kind !== 'file') {
+      for (const c of node.children) walk(c)
+      return
+    }
+    const summary = summaryByPath.value.get(node.path) ?? ''
+    const info: MatchInfo = {}
+    if (node.name.toLowerCase().includes(needle)) info.name = true
+    if (node.title.toLowerCase().includes(needle)) info.title = true
+    if (summary.toLowerCase().includes(needle)) info.summary = true
+    if (info.name || info.title || info.summary) m.set(node.path, info)
+  }
+  for (const n of topLevel.value) walk(n)
+  return m
+})
+
 // When a search is active, force every folder in the *filtered* tree to
 // be expanded so the user sees the matches without clicking through.
 // We don't write to `expanded` itself — that set is persisted to
@@ -449,6 +482,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :depth="0"
         :current-path="currentPath"
         :expanded-set="effectiveExpanded"
+        :matched-fields="matchedFields"
         @select="onSelect"
         @toggle="onToggle"
         @rename="onRename"
