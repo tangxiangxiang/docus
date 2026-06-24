@@ -45,18 +45,24 @@ export function useSplitterDrag(targets: SplitterTargets) {
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
       if (which === 'tree') {
+        /* Left-anchored column (`.vault` grid template starts with
+           `48px {side}px …`). The splitter is the column's RIGHT
+           edge, so dragging right (positive dx) moves that edge
+           outward → panel grows. */
         const max = Math.min(600, rect.width - 480)
         targets.sidePanelWidth.value = clamp(startTree + dx, 150, max)
       } else if (which === 'toc') {
+        /* Right-anchored column (grid template ends with `… 1fr 1px
+           {toc}px`). The splitter is the column's LEFT edge, and
+           the right edge is the vault's right border — fixed.
+           Dragging right (positive dx) moves the left edge right →
+           column shrinks. So we SUBTRACT dx. */
         const max = Math.min(400, rect.width - 480)
-        targets.tocPanelWidth.value = clamp(startToc + dx, 180, max)
+        targets.tocPanelWidth.value = clamp(startToc - dx, 180, max)
       } else if (which === 'ai') {
-        // Right-rail drag: dragging the splitter right (positive dx)
-        // grows the AI panel, mirroring the tree case. The track is
-        // right-anchored in the grid, so the natural sign is +dx.
-        // Same max as the tree case: reserve 480px for ab + editor.
+        /* Same right-anchored geometry as toc — subtract dx. */
         const max = Math.min(600, rect.width - 480)
-        targets.aiPanelWidth.value = clamp(startAi + dx, 220, max)
+        targets.aiPanelWidth.value = clamp(startAi - dx, 220, max)
       } else {
         const content = host.querySelector<HTMLElement>('.content')
         const total = content ? content.clientWidth - SPLITTER_PX : 0
