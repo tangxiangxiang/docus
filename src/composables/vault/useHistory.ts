@@ -65,6 +65,11 @@ export interface HistoryState {
   selectFile(path: string, opts?: { oldRef?: string; newRef?: string }): Promise<void>
   loadDiffForSelection(): Promise<void>
   createCommit(paths: string[], message: string): Promise<CommitResult | null>
+  // Restore a file's on-disk content to its blob at `ref`. After
+  // success, status is reloaded and a file-change event is fired so
+  // any open editor tab sees the new content. Returns false on
+  // failure (the error is on `error`).
+  restoreFile(path: string, ref: string): Promise<boolean>
   // Toggle a dirty file in/out of the next commit. `paths` is the
   // caller's working set; we just flip membership in it.
   toggleDirty(path: string, selected: Set<string>): void
@@ -190,6 +195,45 @@ function toggleDirty(path: string, selected: Set<string>): void {
   else selected.add(path)
 }
 
+/**
+ * Overwrite the on-disk copy of `path` with the blob at `ref`. After
+ * success, fires a file-change event so any open editor tab refreshes
+ * (the editor reads the file from disk on its own tab-self-save
+ * callback) and refreshes status so the dirty list reflects the new
+ * state. Does NOT commit — the user is meant to review the diff, then
+ * commit via the normal composer flow.
+ */
+async function restoreFile(path: string, ref: string): Promise<boolean> {
+  _busy.value = true
+  try {
+    await api.restoreFile(path, ref)
+    _error.value = null
+    // Tell the file-change bus something changed on disk. The bus
+    // doesn't carry the new content — the editor tab that owns the
+    // file will re-read it from disk on the next self-save tick.
+    publishFileChange({
+      path,
+      kind: 'write',
+      newMtime: Date.now(),
+      newRaw: undefined,
+    })
+    await refreshStatus()
+    // If the diff view was showing this file, reload it — after
+    // restore the old/new refs might compare the new content (which
+    // is now the same as what was at `ref`), so the user sees the
+    // diff collapse to "no changes". They can pick a new pair.
+    if (_selectedFile.value === path) {
+      await loadDiffForSelection()
+    }
+    return true
+  } catch (e: any) {
+    _error.value = e?.message ?? 'restore failed'
+    return false
+  } finally {
+    _busy.value = false
+  }
+}
+
 const dirtyCount = computed(() => _status.value.length)
 
 export function useHistory(): HistoryState {
@@ -251,6 +295,7 @@ export function useHistory(): HistoryState {
     selectFile,
     loadDiffForSelection,
     createCommit,
+    restoreFile,
     toggleDirty,
   }
 }

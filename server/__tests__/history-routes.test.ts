@@ -279,3 +279,95 @@ describe('graceful degradation when git is unavailable', () => {
     }
   })
 })
+
+describe('POST /api/history/restore', () => {
+  // Body: { path, ref }. Returns { path, ref } on success.
+  // - 400 if path or ref missing
+  // - 404 if the file does not exist at ref (rawAt pre-check)
+  // - 503 when git is unavailable
+  // - 200 + on-disk overwrite otherwise
+  beforeEach(async () => {
+    // /capability triggers ensureRepo which writes .gitignore /
+    // .gitattributes — same idempotent setup the other tests rely on.
+    await call('GET', '/capability')
+    await configureGitUser()
+  })
+
+  it('overwrites the working-tree file with the content at ref', async () => {
+    await write('note.md', 'v1\n')
+    const c1 = await call('POST', '/commits', { paths: ['note.md'], message: 'v1' })
+    expect(c1.status).toBe(201)
+    const sha1 = (await c1.json() as { sha: string }).sha
+    await write('note.md', 'v2\n')
+    const c2 = await call('POST', '/commits', { paths: ['note.md'], message: 'v2' })
+    expect(c2.status).toBe(201)
+
+    const r = await call('POST', '/restore', { path: 'note.md', ref: sha1 })
+    expect(r.status).toBe(200)
+    const body = await r.json() as { path: string; ref: string }
+    expect(body.path).toBe('note.md')
+    expect(body.ref).toBe(sha1)
+    // On-disk content is now v1
+    const onDisk = await fs.readFile(path.join(root, 'note.md'), 'utf8')
+    expect(onDisk).toBe('v1\n')
+    // HEAD is unchanged — restore does not touch the branch
+    const gitMod = await import('../history/git.js')
+    expect(await gitMod.rawAt(root, 'HEAD', 'note.md')).toBe('v2\n')
+  })
+
+  it('returns 400 when path is missing', async () => {
+    const r = await call('POST', '/restore', { ref: 'HEAD' })
+    expect(r.status).toBe(400)
+    const body = await r.json() as { error: string }
+    expect(body.error).toMatch(/path/i)
+  })
+
+  it('returns 400 when ref is missing', async () => {
+    const r = await call('POST', '/restore', { path: 'note.md' })
+    expect(r.status).toBe(400)
+    const body = await r.json() as { error: string }
+    expect(body.error).toMatch(/ref/i)
+  })
+
+  it('returns 404 when the file does not exist at the requested ref', async () => {
+    await write('a.md', 'one\n')
+    await call('POST', '/commits', { paths: ['a.md'], message: 'init' })
+    // 'never-existed.md' was never committed
+    const r = await call('POST', '/restore', { path: 'never-existed.md', ref: 'HEAD' })
+    expect(r.status).toBe(404)
+    const body = await r.json() as { error: string }
+    expect(body.error).toMatch(/does not exist/i)
+  })
+
+  it('returns 404 for a bad revision', async () => {
+    await write('a.md', 'one\n')
+    await call('POST', '/commits', { paths: ['a.md'], message: 'init' })
+    const r = await call('POST', '/restore', {
+      path: 'a.md',
+      ref: 'deadbeef'.repeat(5),
+    })
+    expect(r.status).toBe(404)
+  })
+
+  it('returns 503 when git is unavailable', async () => {
+    const gitMod = await import('../history/git.js')
+    const spy = vi.spyOn(gitMod, 'run').mockImplementation(async () => {
+      throw new gitMod.GitUnavailableError(new Error('ENOENT'))
+    })
+    // The parent beforeEach's GET /capability already populated
+    // `_gitAvailable = true` via the real git. probeGit() caches
+    // that result, so without resetting here the route would skip
+    // the 503 branch and hit the mocked git.run inside ensureRepo /
+    // rawAt / restoreFile, which throws GitUnavailableError and
+    // surfaces as a 500 instead. Reset AFTER installing the spy so
+    // the next probe runs against the mock.
+    __resetGitCapabilityForTesting()
+    try {
+      const r = await call('POST', '/restore', { path: 'a.md', ref: 'HEAD' })
+      expect(r.status).toBe(503)
+    } finally {
+      spy.mockRestore()
+      __resetGitCapabilityForTesting()
+    }
+  })
+})

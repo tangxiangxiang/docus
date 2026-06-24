@@ -19,6 +19,7 @@ vi.mock('../lib/history-api', async () => {
     getLog: vi.fn().mockResolvedValue({ commits: [] }),
     getDiff: vi.fn(),
     createCommit: vi.fn(),
+    restoreFile: vi.fn(),
   }
 })
 
@@ -49,6 +50,19 @@ describe('DiffView empty state', () => {
   })
 })
 
+// Module-level helper: pre-populate the singleton's currentDiff via
+// the public composable action. Used by both the row-pairing tests
+// (which render diff content) and the restore-button tests (which
+// need a non-empty diff so the button shows up). Hoisted to module
+// scope so multiple `describe` blocks can share it.
+async function loadDiffWith(diff: api.FileDiff, file = 'inbox/a.md') {
+  vi.mocked(api.getDiff).mockResolvedValue({
+    path: file, oldRef: 'HEAD~1', newRef: 'HEAD', diff,
+  })
+  const h = useHistory()
+  await h.selectFile(file, { oldRef: 'HEAD~1', newRef: 'HEAD' })
+}
+
 describe('DiffView row pairing', () => {
   // Pre-populate the singleton's currentDiff via a direct write —
   // we don't want to round-trip through the mocked api just to
@@ -56,17 +70,6 @@ describe('DiffView row pairing', () => {
   // ref is module-scoped, and `useHistory()` returns it; we just
   // call `selectFile` to set the file, then poke the ref via the
   // public action `loadDiffForSelection` after stubbing the api.
-  async function loadDiffWith(diff: api.FileDiff, file = 'inbox/a.md') {
-    vi.mocked(api.getDiff).mockResolvedValue({
-      path: file, oldRef: 'HEAD~1', newRef: 'HEAD', diff,
-    })
-    const h = useHistory()
-    await h.selectFile(file, { oldRef: 'HEAD~1', newRef: 'HEAD' })
-    // selectFile already calls loadDiffForSelection, but we re-call
-    // for clarity in case the test wants to override the mock
-    // result post-selectFile. (No-op if the mock is already set.)
-    return h
-  }
 
   it('renders one row per equal op with line numbers on both sides', async () => {
     await loadDiffWith({
@@ -185,5 +188,78 @@ describe('DiffView row pairing', () => {
     expect(rows[1].classes()).toContain('is-edit')
     // Last row: only an add (left blank, right has 'a3')
     expect(rows[2].classes()).toContain('is-add')
+  })
+})
+
+describe('DiffView restore button', () => {
+  // The restore button is destructive: it overwrites the on-disk
+  // file via `git checkout <ref> -- <path>`. We confirm with a
+  // native window.confirm() and only call the composable action
+  // when the user accepts. These tests stub window.confirm and
+  // spy on the composable's restoreFile to verify the flow.
+  async function loadDiffWithOneRemove() {
+    await loadDiffWith({
+      ops: [
+        { op: 'remove', oldLine: 1, newLine: null, text: 'gone' },
+        { op: 'add', oldLine: null, newLine: 1, text: 'fresh' },
+      ],
+      stats: { added: 1, removed: 1, equal: 0 },
+    })
+  }
+
+  it('renders the Restore old version button when a diff is loaded', async () => {
+    await loadDiffWithOneRemove()
+    const wrapper = renderDiffView()
+    await flushPromises()
+    const btn = wrapper.find('.diff-restore-btn')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toBe('Restore old version')
+  })
+
+  it('hides the button when the diff is empty (no-op would be confusing)', async () => {
+    await loadDiffWith({ ops: [], stats: { added: 0, removed: 0, equal: 0 } })
+    const wrapper = renderDiffView()
+    await flushPromises()
+    expect(wrapper.find('.diff-restore-btn').exists()).toBe(false)
+  })
+
+  it('hides the button when no file is selected', () => {
+    const wrapper = renderDiffView()
+    expect(wrapper.find('.diff-restore-btn').exists()).toBe(false)
+  })
+
+  it('does NOT call restoreFile when the user cancels the confirm dialog', async () => {
+    await loadDiffWithOneRemove()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    try {
+      const wrapper = renderDiffView()
+      await flushPromises()
+      await wrapper.find('.diff-restore-btn').trigger('click')
+      // The composable's restoreFile is mocked at the module level;
+      // it should NOT have been invoked because confirm returned
+      // false.
+      expect(api.restoreFile).not.toHaveBeenCalled()
+    } finally {
+      confirmSpy.mockRestore()
+    }
+  })
+
+  it('calls restoreFile when the user accepts the confirm dialog', async () => {
+    await loadDiffWithOneRemove()
+    vi.mocked(api.restoreFile).mockResolvedValue({ path: 'inbox/a.md', ref: 'HEAD~1' })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      const wrapper = renderDiffView()
+      await flushPromises()
+      await wrapper.find('.diff-restore-btn').trigger('click')
+      // The click triggers an async chain (confirm → composable →
+      // fetch). flush twice so the awaited restoreFile mock
+      // resolves before we assert.
+      await flushPromises()
+      await flushPromises()
+      expect(api.restoreFile).toHaveBeenCalledWith('inbox/a.md', 'HEAD~1')
+    } finally {
+      confirmSpy.mockRestore()
+    }
   })
 })

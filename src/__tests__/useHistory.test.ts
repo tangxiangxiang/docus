@@ -13,6 +13,7 @@ vi.mock('../lib/history-api', async () => {
     getLog: vi.fn(),
     getDiff: vi.fn(),
     createCommit: vi.fn(),
+    restoreFile: vi.fn(),
   }
 })
 
@@ -140,6 +141,24 @@ describe('useHistory singleton', () => {
     expect(set.has('a.md')).toBe(true)
     h.toggleDirty('a.md', set)
     expect(set.has('a.md')).toBe(false)
+  })
+
+  it('restoreFile calls the API and returns true on success', async () => {
+    vi.mocked(api.restoreFile).mockResolvedValueOnce({ path: 'a.md', ref: 'HEAD~1' })
+    // After restore the composable refreshes status; mock it to no-op.
+    const h = useHistory()
+    const r = await h.restoreFile('a.md', 'HEAD~1')
+    expect(r).toBe(true)
+    expect(api.restoreFile).toHaveBeenCalledWith('a.md', 'HEAD~1')
+    expect(h.error.value).toBeNull()
+  })
+
+  it('restoreFile surfaces the server error and returns false on failure', async () => {
+    vi.mocked(api.restoreFile).mockRejectedValueOnce(new Error('file does not exist at ref HEAD'))
+    const h = useHistory()
+    const r = await h.restoreFile('a.md', 'HEAD')
+    expect(r).toBe(false)
+    expect(h.error.value).toMatch(/does not exist at ref/)
   })
 })
 

@@ -747,6 +747,40 @@ main.container {
   font-size: 0.72rem;
   color: var(--vs-text-3);
 }
+/* Header actions slot — currently just the restore button, but
+   flex:0 + gap means we can drop in a swap-refs / view-as-unified
+   button without breaking the layout. */
+.diff-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+/* Restore old version: subtle outline so it doesn't compete with
+   the diff stats for attention. Hover lifts to accent; disabled
+   dims. The destructive intent is clear from the tooltip + the
+   confirm() dialog, not from a red button. */
+.diff-restore-btn {
+  appearance: none;
+  background: transparent;
+  color: var(--vs-text-2);
+  border: 1px solid var(--vs-border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-family: var(--vs-ui);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.diff-restore-btn:hover:not(:disabled) {
+  background: var(--vs-bg-3);
+  color: var(--vs-text-1);
+  border-color: var(--vs-text-3);
+}
+.diff-restore-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .diff-loading,
 .diff-empty {
   flex: 1;

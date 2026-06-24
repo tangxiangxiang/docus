@@ -121,3 +121,27 @@ export async function createCommit(paths: string[], message: string): Promise<Co
   }
   return r.json()
 }
+
+// --- Restore ---------------------------------------------------------------
+
+/**
+ * Overwrite the on-disk `path` with its content at `ref`. Does NOT
+ * create a commit — the change sits in the working tree after this
+ * call returns, and the user can commit it via the normal flow.
+ *
+ * Throws on 404 (file does not exist at ref) or 503 (git missing);
+ * the message comes from the server's `{ error }` body so the UI
+ * can show it verbatim.
+ */
+export async function restoreFile(path: string, ref: string): Promise<{ path: string; ref: string }> {
+  const r = await fetch('/api/history/restore', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path, ref }),
+  })
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({} as any))
+    throw new Error(body?.error ?? `restoreFile failed: ${r.status}`)
+  }
+  return r.json()
+}

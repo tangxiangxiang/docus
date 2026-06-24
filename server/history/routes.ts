@@ -209,4 +209,56 @@ history.post('/commits', async (c) => {
   }
 })
 
+// ---- /restore ----
+// Overwrite a single file's working-tree content with the blob at
+// `ref`. The file's git history is NOT touched — only the on-disk
+// version changes, so the user gets the diff they were looking at
+// as the new working state and can commit it themselves.
+//
+// Body: { path: string, ref: string }
+// The caller is responsible for confirming the destructive overwrite
+// in the UI; we don't gate on a `confirm` flag here because the UI
+// already has the diff on screen, so the user has seen what they're
+// about to replace.
+//
+// Returns: { path, ref } on success. 404 if the file does not exist
+// at that ref, 400 if the path/ref is malformed / missing.
+history.post('/restore', async (c) => {
+  if (!(await probeGit())) return bad(c, 'git not available', 503)
+  const body = await c.req.json().catch(() => null) as
+    | { path?: unknown; ref?: unknown }
+    | null
+  if (!body) return bad(c, 'body required')
+  if (typeof body.path !== 'string' || body.path.length === 0) {
+    return bad(c, 'path required')
+  }
+  if (typeof body.ref !== 'string' || body.ref.length === 0) {
+    return bad(c, 'ref required')
+  }
+  try {
+    await ensureRepo(repoRoot())
+    // Pre-check: confirm the file exists at that ref so we can return
+    // a clean 404 instead of a generic git error. Cheaper than parsing
+    // git checkout's stderr in every error path.
+    const exists = await git.rawAt(repoRoot(), body.ref, body.path)
+    if (exists === null) {
+      return bad(c, `file does not exist at ref ${body.ref}`, 404)
+    }
+    await git.restoreFile(repoRoot(), body.ref, body.path)
+    return c.json({ path: body.path, ref: body.ref })
+  } catch (e: any) {
+    const msg = e.message ?? 'restore failed'
+    // git checkout's "pathspec ... did not match" / "invalid reference"
+    // both surface here as git stderr. The pre-check above catches
+    // most not-found cases, but a race between rawAt and checkout
+    // can still slip through (e.g. someone ran `git rm` in another
+    // shell). Treat "did not match" / "invalid" as 4xx rather than
+    // 500 — they're user-recoverable, not server faults.
+    if (/did not match/i.test(msg) || /invalid reference/i.test(msg) || /bad revision/i.test(msg)) {
+      return bad(c, msg, 404)
+    }
+    return bad(c, msg, 500)
+  }
+})
+
 export default history

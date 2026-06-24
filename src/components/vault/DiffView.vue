@@ -23,9 +23,40 @@
    would break the row-pairing invariant in the remove/add gaps. */
 import { computed } from 'vue'
 import { useHistory } from '../../composables/vault/useHistory.js'
+import { useToast } from '../../composables/useToast.js'
 import type { DiffOp } from '../../lib/history-api.js'
 
 const h = useHistory()
+const toast = useToast()
+
+/**
+ * The restore button only makes sense when the two refs actually
+ * differ. If they match, the file is already at the old version —
+ * restoring would be a no-op (and confusing). `rows` is computed
+ * elsewhere and reflects the paired rows the renderer shows.
+ */
+const canRestore = computed(() => rows.value.length > 0)
+
+async function onRestore() {
+  const file = h.selectedFile.value
+  const ref = h.selectedOldRef.value
+  if (!file) return
+  // Native confirm: this is destructive and we don't want to ship a
+  // modal component just for this. The user has the diff on screen
+  // already, so they know what they're about to overwrite.
+  const ok = typeof window !== 'undefined'
+    && window.confirm(
+      `Overwrite "${file}" with the ${ref.slice(0, 7)} version?\n\n`
+      + 'Any unsaved edits to this file will be lost.',
+    )
+  if (!ok) return
+  const success = await h.restoreFile(file, ref)
+  if (success) {
+    toast.success(`Restored ${file} to ${ref.slice(0, 7)}`)
+  } else {
+    toast.error(`Restore failed: ${h.error.value ?? 'unknown error'}`)
+  }
+}
 
 /**
  * Pair the raw ops into "rows" for side-by-side rendering. The
@@ -105,6 +136,23 @@ const hasDiff = computed(() => h.selectedFile.value !== null)
           <span class="diff-ref">{{ h.selectedOldRef.value.slice(0, 7) }}</span>
           <span class="diff-ref-sep">→</span>
           <span class="diff-ref">{{ h.selectedNewRef.value.slice(0, 7) }}</span>
+        </div>
+        <!-- Restore: overwrite the on-disk file with the OLD ref's
+             version. Only shown when there's something to restore
+             (i.e. the old side differs from the new side — when
+             they're identical the diff is empty and the button would
+             be a no-op anyway, but we still gate it for clarity).
+             We confirm with a native dialog because this is genuinely
+             destructive: the working tree is overwritten and any
+             unsaved local edits to that file are lost. -->
+        <div class="diff-actions">
+          <button
+            v-if="canRestore"
+            class="diff-restore-btn"
+            :disabled="h.busy.value"
+            :title="`Overwrite ${h.selectedFile.value} with the ${h.selectedOldRef.value.slice(0, 7)} version`"
+            @click="onRestore"
+          >Restore old version</button>
         </div>
       </header>
 

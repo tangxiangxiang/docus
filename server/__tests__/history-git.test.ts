@@ -283,3 +283,56 @@ describe('CRLF safety', () => {
     expect(read).toBe(body)
   })
 })
+
+describe('restoreFile', () => {
+  // Overwrite the working-tree copy of a file with its blob at an
+  // older ref. Used by the L3 "Restore old version" button on the
+  // diff view. Does NOT touch the index or HEAD — the change sits
+  // in the working tree so the user can review and commit.
+  beforeEach(initAndSeed)
+
+  it('overwrites the working-tree copy with the old ref\'s content', async () => {
+    await write('note.md', 'v1 content\n')
+    const r1 = await git.addAndCommit(root, ['note.md'], 'v1')
+    await write('note.md', 'v2 content\n')
+    await git.addAndCommit(root, ['note.md'], 'v2')
+
+    await git.restoreFile(root, r1.sha, 'note.md')
+    const onDisk = await fs.readFile(path.join(root, 'note.md'), 'utf8')
+    expect(onDisk).toBe('v1 content\n')
+    // HEAD is unchanged — we restored the working tree, not the branch.
+    expect(await git.rawAt(root, 'HEAD', 'note.md')).toBe('v2 content\n')
+  })
+
+  it('is a no-op when the file is already at that ref (idempotent)', async () => {
+    await write('note.md', 'stable\n')
+    const r = await git.addAndCommit(root, ['note.md'], 'stable')
+    await git.restoreFile(root, r.sha, 'note.md')
+    expect(await fs.readFile(path.join(root, 'note.md'), 'utf8')).toBe('stable\n')
+  })
+
+  it('throws when the ref does not exist (bad revision)', async () => {
+    await write('note.md', 'content\n')
+    await git.addAndCommit(root, ['note.md'], 'init')
+    // The exact stderr phrasing differs across git versions — we just
+    // need to know git refused. Modern git says "fatal: bad revision"
+    // or "fatal: unknown revision"; slightly newer ones say
+    // "fatal: unable to read tree". Match any of them.
+    await expect(
+      git.restoreFile(root, 'deadbeef'.repeat(5), 'note.md'),
+    ).rejects.toThrow(/bad revision|unknown revision|unable to read tree/i)
+  })
+
+  it('throws when the file does not exist at that ref', async () => {
+    // file exists at HEAD, but doesn't exist in the empty initial
+    // state. We use `git stash`-style: write + commit file, then
+    // restore from before the file existed — except that's the
+    // initial commit. Easier: try restoring a path that was never
+    // committed at all.
+    await write('note.md', 'init\n')
+    await git.addAndCommit(root, ['note.md'], 'init')
+    await expect(
+      git.restoreFile(root, 'HEAD', 'never-existed.md'),
+    ).rejects.toThrow(/did not match|pathspec/i)
+  })
+})

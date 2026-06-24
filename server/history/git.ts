@@ -332,3 +332,31 @@ export async function addAndCommit(
     : paths
   return { sha: head.stdout.trim(), filesCommitted }
 }
+
+// --- Restore --------------------------------------------------------------
+
+/**
+ * Restore a single file to its content at `ref`. Implemented via
+ * `git checkout <ref> -- <path>` — this overwrites the working-tree
+ * copy with the blob at `<ref>` and leaves the index / HEAD alone.
+ *
+ * The caller is expected to validate `path` and `ref`. We pass them
+ * through to git verbatim, separated by `--` so a path that starts
+ * with `-` is safe.
+ *
+ * Throws if git refuses (e.g. the ref is bad or the file does not
+ * exist at that ref). The caller maps that to 4xx.
+ */
+export async function restoreFile(
+  repoRoot: string,
+  ref: string,
+  path: string,
+): Promise<void> {
+  const r = await run(repoRoot, ['checkout', ref, '--', path])
+  if (r.status !== 0) {
+    // "error: pathspec ... did not match any file(s) known to git"
+    // and "fatal: invalid reference" both end up here. Surface the
+    // raw stderr — the route maps it to a 4xx.
+    throw new Error(r.stderr.trim() || `git checkout failed (exit ${r.status})`)
+  }
+}
