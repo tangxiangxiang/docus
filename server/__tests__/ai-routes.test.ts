@@ -122,6 +122,56 @@ describe('GET /api/ai/sessions/:id/messages', () => {
     const r = await call('GET', '/sessions/999/messages')
     expect(r.status).toBe(404)
   })
+
+  it('rehydrates a persisted tool envelope into content+blocks, hiding the raw envelope string', async () => {
+    // Regression: a tool-using assistant turn is stored as a JSON
+    // envelope in the `content` column. Without rehydration the API
+    // would return that raw string and the panel would render JSON
+    // instead of the bubble text. The streaming code path also
+    // produces content+blocks in memory, so the response shape
+    // here matches what the client sees during a live turn.
+    const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+    const envelope = JSON.stringify({
+      v: 1,
+      text: 'I read the file.',
+      rounds: [[{ type: 'text', text: 'I read the file.' }]],
+      toolCalls: [
+        { id: 't1', name: 'read_file', input: { path: 'foo' }, result: { content: '...', is_error: false } },
+      ],
+    })
+    // Insert directly to simulate the chat orchestrator's write
+    // path (appendMessage would happily accept the JSON string, but
+    // the read-path test is the one that matters here).
+    testDbRef.value!
+      .prepare('INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)')
+      .run(created.id, 'assistant', envelope, Date.now())
+
+    const r = await call('GET', `/sessions/${created.id}/messages`)
+    expect(r.status).toBe(200)
+    const list = await r.json() as Array<{ role: string; content: string; blocks?: unknown }>
+    expect(list).toHaveLength(1)
+    expect(list[0].role).toBe('assistant')
+    expect(list[0].content).toBe('I read the file.')
+    expect(list[0].blocks).toEqual({
+      v: 1,
+      text: 'I read the file.',
+      toolCalls: [
+        { id: 't1', name: 'read_file', input: { path: 'foo' }, result: { content: '...', is_error: false } },
+      ],
+    })
+    // The `rounds` field is server-internal and must not leak
+    // through the API response.
+    expect((list[0].blocks as any).rounds).toBeUndefined()
+  })
+
+  it('leaves a plain assistant message without a blocks field', async () => {
+    const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+    await call('POST', `/sessions/${created.id}/messages`, { role: 'assistant', content: 'plain reply' })
+    const r = await call('GET', `/sessions/${created.id}/messages`)
+    const list = await r.json() as Array<{ content: string; blocks?: unknown }>
+    expect(list[0].content).toBe('plain reply')
+    expect(list[0].blocks).toBeUndefined()
+  })
 })
 
 describe('POST /api/ai/sessions/:id/messages', () => {

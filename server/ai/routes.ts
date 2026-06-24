@@ -22,9 +22,31 @@ import { runChat, type ChatEvent } from './chat.js'
 import { runSplit } from './split.js'
 import { ChatError } from './errors.js'
 import { resolveApiKey } from './llm.js'
+import type { Message, AssistantBlocks } from '../../src/lib/ai-api.js'
 
 function bad(c: any, msg: string, code = 400) {
   return c.json({ error: msg }, code)
+}
+
+// Tool-using assistant turns persist as a JSON envelope in the
+// `content` column (see server/ai/chat.ts). On the wire, the client
+// expects the same shape the streaming code path produces in
+// memory: plain text in `content` and the structured envelope
+// (minus the server-internal `rounds` field) in `blocks`. The
+// storage layer keeps the raw envelope so buildConvoFromHistory
+// can still rebuild the SDK convo including `rounds`; this
+// transform is a presentation concern, so it lives in the API
+// layer, not the storage layer.
+function rehydrateForClient(m: Message): Message {
+  if (m.role !== 'assistant') return m
+  const parsed = messages.parseStoredContent(m.content)
+  if (parsed.kind !== 'envelope') return m
+  const blocks: AssistantBlocks = {
+    v: 1,
+    text: parsed.envelope.text,
+    toolCalls: parsed.envelope.toolCalls,
+  }
+  return { ...m, content: parsed.envelope.text, blocks }
 }
 
 const ai = new Hono()
@@ -64,7 +86,7 @@ ai.get('/sessions/:id/messages', (c) => {
   if (!Number.isInteger(id) || id <= 0) return bad(c, 'invalid id')
   const list = messages.listMessages(getDb(), id)
   if (list === null) return bad(c, 'not found', 404)
-  return c.json(list)
+  return c.json(list.map(rehydrateForClient))
 })
 
 ai.post('/sessions/:id/messages', async (c) => {
