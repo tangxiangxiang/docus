@@ -14,8 +14,10 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",
     "@hono/node-server": "^2.0.4",
+    "@types/diff": "^7.0.2",
     "@vueuse/core": "^14.3.0",
     "better-sqlite3": "^11.7.0",
+    "diff": "^9.0.0",
     "dotenv": "^17.4.2",
     "force-graph": "^1.51.4",
     "gray-matter": "^4.0.3",
