@@ -126,23 +126,6 @@ function togglePicker() {
   pickerOpen.value = !pickerOpen.value
 }
 
-/* Slash-command toolbar button: quick way to start a `/…` command
-   without typing the slash manually. We prepend `/` if missing
-   (preserving whatever the user had already typed after a leading
-   non-slash char) and drop the caret at the end. The autocomplete
-   itself is just typing-driven — there is no popover; future slash
-   commands can land in trySlashCommand() above. */
-function onSlashClick() {
-  const el = inputEl.value
-  if (!el) return
-  if (!draft.value.startsWith('/')) {
-    draft.value = '/' + draft.value
-  }
-  el.focus()
-  const len = el.value.length
-  el.setSelectionRange(len, len)
-}
-
 async function onNewSession() {
   if (history.busy.value) return
   pickerOpen.value = false
@@ -550,13 +533,6 @@ watch(() => review.phase.value, (p) => {
           />
           <div class="ai-toolbar">
             <div class="ai-toolbar-left">
-              <button
-                type="button"
-                class="ai-toolbar-btn"
-                title="Slash commands"
-                aria-label="Slash commands"
-                @click="onSlashClick"
-              >/</button>
               <!-- Current-note context chip. The AI panel already
                    passes currentNote.path into sendAndStream, so
                    the chip is informational — it tells the user

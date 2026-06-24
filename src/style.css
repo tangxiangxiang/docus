@@ -2418,38 +2418,6 @@ main.container {
   flex: 0 0 auto;
 }
 
-/* Slash-command toolbar button. A bare "/" character is the
-   shortest possible affordance — it mirrors how the command
-   itself is typed and reads as keyboard-friendly. The mono
-   font + bold weight make the slash unambiguous at small sizes
-   (a sans-serif "/" can look like a typo at 11px). */
-.ai-panel .ai-toolbar-btn {
-  width: 22px;
-  height: 22px;
-  border: 0;
-  background: transparent;
-  color: var(--vs-text-3);
-  border-radius: 4px;
-  cursor: pointer;
-  font-family: var(--mono);
-  font-size: 0.85rem;
-  font-weight: 600;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: background 0.1s, color 0.1s;
-}
-.ai-panel .ai-toolbar-btn:hover {
-  background: var(--vs-hover-bg);
-  color: var(--vs-text-1);
-}
-.ai-panel .ai-toolbar-btn:focus-visible {
-  outline: 1px solid var(--vs-text-3);
-  outline-offset: 1px;
-}
-
 /* Current-note context chip. File icon + path, ellipsized with
    the full path on hover via the title attribute. Mono font
    reads better for paths than the body sans (separators and
