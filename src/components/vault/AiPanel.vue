@@ -526,7 +526,7 @@ watch(() => review.phase.value, (p) => {
             ref="inputEl"
             v-model="draft"
             class="ai-input"
-            placeholder="Ask Claude… (or /split to break a note into atomic cards)"
+            placeholder="Ask Claude…"
             aria-label="Ask Claude"
             @keydown="onKeydown"
             @input="autoresize"
