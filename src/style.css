@@ -2330,29 +2330,33 @@ main.container {
   border-bottom-right-radius: 3px;
 }
 
-/* Composer — one rounded container. The textarea fills the middle;
-   the send button is a small accent chip docked to the right edge.
-   The whole container lights up on focus-within (border + 1px ring)
-   so the user sees a single focus state, not two. */
+/* Composer — clean minimal container. The textarea fills the middle;
+   the send button is a coral accent chip docked to the right edge
+   (vivid against the muted chrome around it so the primary action
+   is unmistakable). The whole container lights up on focus-within
+   via a subtle border + faint coral ring — the user sees a single
+   focus state, not two. Visual language tracks the Claude Code CLI
+   composer: light card surface, prominent primary button, breathing
+   room around the text. */
 .ai-panel .ai-composer {
   flex: 0 0 auto;
-  padding: 8px 10px 10px;
+  padding: 8px 12px 12px;
   background: var(--vs-bg-1);
 }
 
 .ai-panel .ai-composer-inner {
   display: flex;
   align-items: flex-end;
-  gap: 4px;
+  gap: 6px;
   background: var(--vs-bg-2);
   border: 1px solid var(--vs-border);
-  border-radius: 12px;
-  padding: 6px 6px 6px 12px;
+  border-radius: 10px;
+  padding: 7px 7px 7px 13px;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .ai-panel .ai-composer-inner:focus-within {
-  border-color: var(--vs-accent);
-  box-shadow: 0 0 0 1px var(--vs-accent);
+  border-color: var(--vs-text-3);
+  box-shadow: 0 0 0 3px rgba(255, 122, 89, 0.12);
 }
 
 .ai-panel .ai-input {
@@ -2361,22 +2365,21 @@ main.container {
   /* JS in AiPanel.vue resizes this textarea to fit its content
      (autoresize() in the component). height is set inline; min-
      height keeps an empty field visible at one line, and the
-     autoresize cap (200px ≈ 9 lines at line-height:1.55) prevents
-     the composer from squeezing the message stream when someone
-     pastes a wall of text. When content exceeds the cap, autoresize
-     flips overflow-y to auto and the (transparent) scrollbar below
+     autoresize cap (200px ≈ 9 lines) prevents the composer from
+     squeezing the message stream. At the cap, autoresize flips
+     overflow-y to auto and the (transparent) scrollbar below
      takes over — so a huge paste is still scrollable inside the
      input, but the panel reads as scrollbar-free at a glance. */
   resize: none;
   background: transparent;
   border: 0;
-  padding: 8px 2px;
+  padding: 7px 0;
   font-family: var(--sans);
-  font-size: 0.92rem;
+  font-size: 0.95rem;
   color: var(--vs-text-1);
-  line-height: 1.55;
+  line-height: 1.5;
   outline: none;
-  min-height: 22px;
+  min-height: 24px;
   overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -2386,11 +2389,11 @@ main.container {
 
 .ai-panel .ai-send {
   flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   border: 0;
-  background: var(--vs-accent);
+  background: #ff7a59;
   color: #fff;
   font-size: 0.95rem;
   line-height: 1;
@@ -2398,20 +2401,39 @@ main.container {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: opacity 0.1s, background 0.1s;
+  transition: background 0.12s, transform 0.12s, box-shadow 0.12s;
+  /* Slight outer glow so the button lifts off the muted card
+     surface — the same trick used by the Claude Code CLI send
+     button. Box-shadow instead of border because border eats
+     into the 30px box and shifts the icon. */
+  box-shadow: 0 1px 2px rgba(255, 122, 89, 0.35);
 }
-.ai-panel .ai-send:disabled { opacity: 0.4; cursor: not-allowed; }
-.ai-panel .ai-send:hover:not(:disabled) { background: var(--vs-accent-hover); }
-/* The button doubles as Stop while a stream is in flight. The red
-   shift makes the destructive semantics obvious at a glance, and
-   the box glyph (■) is intentionally different from the arrow (↑)
-   so a power user recognizes the toggle from across the panel. */
+.ai-panel .ai-send:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.ai-panel .ai-send:hover:not(:disabled) {
+  background: #ff8c70;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 5px rgba(255, 122, 89, 0.4);
+}
+.ai-panel .ai-send:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(255, 122, 89, 0.35);
+}
+/* The button doubles as Stop while a stream is in flight. A
+   slightly deeper red makes the destructive semantics obvious at
+   a glance, and the box glyph (■) is intentionally different
+   from the arrow (↑) so a power user recognizes the toggle from
+   across the panel. */
 .ai-panel .ai-send.ai-send-busy {
-  background: var(--ai-error, #c14545);
-  color: #fff;
+  background: #e85a4f;
+  box-shadow: 0 1px 2px rgba(232, 90, 79, 0.35);
 }
 .ai-panel .ai-send.ai-send-busy:hover {
-  background: #d85555;
+  background: #f06a5f;
+  box-shadow: 0 2px 5px rgba(232, 90, 79, 0.4);
 }
 
 /* NavBar AI toggle — matches the read-mode toggle look (soft-filled
