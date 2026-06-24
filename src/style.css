@@ -1189,11 +1189,13 @@ main.container {
   cursor: pointer;
   user-select: none;
   position: relative;
-  /* 80px minimum so a tab is always readable (dot + truncated title +
-     close button). Without this, min-width: 0 on a flex item lets the
-     tab shrink to 0 and disappears once the row overflows. */
-  min-width: 80px;
-  max-width: 180px;
+  /* Fixed 100px width so all tabs are visually uniform — long titles
+     truncate with ellipsis (.tab-title below) instead of stretching
+     the tab. 9 tabs × 100px = 900px fits in the typical editor column
+     on 1280px+ viewports without horizontal scroll; opening more than
+     9 is blocked by useEditorTabs' hard cap (TAB_HARD_LIMIT). */
+  flex: 0 0 100px;
+  min-width: 100px;
   /* 1px right border + 1px left padding tweak keeps the divider
      visually centered between adjacent tabs, so the bar reads as
      "separate tabs" instead of a continuous strip. The rightmost tab

@@ -41,6 +41,23 @@ import {
 import type { Tab } from '../../components/vault/tabs'
 import type { SidePanel } from '../../components/vault/ActivityBar.vue'
 
+/* Tab-count limits. vault is a personal Zettelkasten — heavy
+   multi-tab editing (20+ tabs) signals the user should be using
+   command palette / search, not cycling through tabs. Two thresholds:
+   - TAB_SOFT_LIMIT (6): past this, each new open emits a soft
+     reminder toast. Opening still succeeds — the user might have a
+     legitimate reason to hold many tabs open briefly.
+   - TAB_HARD_LIMIT (9): opening refuses. The user must close a tab
+     first. Picked to leave ~3 tabs of headroom between the soft
+     nudge and the hard wall, so the nudge has time to land before
+     the wall arrives.
+   The 9 hard cap also matches the visual budget: tabs are 100px wide
+   (see .tab in style.css), so 9 × 100 = 900px fits inside the
+   typical editor column on 1280px+ viewports without horizontal
+   scrolling. */
+const TAB_SOFT_LIMIT = 6
+const TAB_HARD_LIMIT = 9
+
 // ---- live tabs publish ----
 //
 // useEditorTabs is a per-mount composable (it takes `selectPanel` as a
@@ -160,6 +177,20 @@ export function useEditorTabs(opts: {
       activePath.value = path
       router.replace(pathToUrl(path))
       return
+    }
+    // Hard cap: refuse the open entirely. We don't try LRU eviction
+    // because (a) the user's mental model of "I'm opening X" is more
+    // important than the auto-close of some other Y, and (b) we'd
+    // risk evicting a tab the user is mid-edit on.
+    if (tabs.value.length >= TAB_HARD_LIMIT) {
+      toast.error(`标签页已达上限 (${TAB_HARD_LIMIT}),请先关闭一些`)
+      return
+    }
+    // Soft cap: still open, but nudge. We don't deduplicate the
+    // toast per-call — a fresh open really is a fresh decision
+    // point, and spamming would be worse than a missed nudge.
+    if (tabs.value.length >= TAB_SOFT_LIMIT) {
+      toast.info('标签页较多,建议关闭不常用的 (按 ⌘P 用命令面板更快)')
     }
     // The confirm() must run *before* any tab mutation, so an in-flight
     // click can't interleave with another openPost and leave the tabs
