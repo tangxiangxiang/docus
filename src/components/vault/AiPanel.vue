@@ -63,9 +63,15 @@ const expandedToolCards = reactive<Record<string, boolean>>({})
 
    Setting height:'auto' first is the standard textarea autoresize
    trick — without it scrollHeight reflects the *current* height
-   and never grows. */
+   and never grows.
+
+   The template pins `rows="1"`. Without it, an empty textarea in
+   WebKit/Blink reports a 2-row scrollHeight (~60px) and autoresize
+   writes that to the inline height, overriding CSS min-height. The
+   explicit 1-row attribute makes the empty-state scrollHeight
+   match the 40px floor we want. */
 const inputEl = ref<HTMLTextAreaElement | null>(null)
-const INPUT_MAX_H = 200
+const INPUT_MAX_H = 160
 function autoresize() {
   const el = inputEl.value
   if (!el) return
@@ -526,6 +532,7 @@ watch(() => review.phase.value, (p) => {
             ref="inputEl"
             v-model="draft"
             class="ai-input"
+            rows="1"
             placeholder="Ask Claude…"
             aria-label="Ask Claude"
             @keydown="onKeydown"

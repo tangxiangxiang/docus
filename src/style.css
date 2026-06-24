@@ -2339,7 +2339,7 @@ main.container {
    focus-within via a single subtle border + faint coral ring. */
 .ai-panel .ai-composer {
   flex: 0 0 auto;
-  padding: 8px 12px 12px;
+  padding: 8px 12px 10px;
   background: var(--vs-bg-1);
 }
 
@@ -2362,26 +2362,27 @@ main.container {
   width: 100%;
   box-sizing: border-box;
   /* JS in AiPanel.vue resizes this textarea to fit its content
-     (autoresize() in the component). height is set inline; min-
-     height keeps an empty field visible at one line, and the
-     autoresize cap (200px ≈ 9 lines) prevents the composer from
-     squeezing the message stream. At the cap, autoresize flips
-     overflow-y to auto and the (transparent) scrollbar below
-     takes over — so a huge paste is still scrollable inside the
-     input, but the panel reads as scrollbar-free at a glance. */
+     (autoresize() in the component). min-height is the empty-
+     state floor — matches the toolbar row so the two halves read
+     as equal-weight layers. autoresize() writes an inline height
+     that overrides this as content grows, capped at INPUT_MAX_H
+     (160px ≈ 6 lines); at the cap the field flips to
+     overflow-y:auto with a transparent scrollbar so a huge paste
+     is still scrollable inside, but the panel reads as scrollbar-
+     free at a glance. */
   resize: none;
   background: transparent;
   border: 0;
   /* Padding is asymmetric — extra horizontal so long words have
-     breathing room from the card edges, modest vertical so the
-     cursor sits comfortably below the top border. */
-  padding: 12px 14px 10px;
+     breathing room from the card edges, generous vertical so the
+     placeholder sits centered with breathing room. */
+  padding: 11px 14px 9px;
   font-family: var(--sans);
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   color: var(--vs-text-1);
-  line-height: 1.5;
+  line-height: 1.4;
   outline: none;
-  min-height: 28px;
+  min-height: 40px;
   overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -2392,16 +2393,17 @@ main.container {
 /* Toolbar — the action row below the input. Two layers reading
    as one card: the thin top border (inherited from the card's
    own divider logic below) separates the input from the toolbar
-   without adding a second visual surface. min-height keeps the
-   row comfortable even with no path chip. */
+   without adding a second visual surface. height matches .ai-input
+   so the two halves read as exactly equal-height layers. */
 .ai-panel .ai-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 8px 6px 10px;
+  padding: 4px 6px 4px 12px;
   border-top: 1px solid var(--vs-border);
-  min-height: 40px;
+  height: 40px;
+  box-sizing: border-box;
 }
 .ai-panel .ai-toolbar-left {
   display: flex;
@@ -2462,7 +2464,7 @@ main.container {
 .ai-panel .ai-send {
   flex: 0 0 auto;
   width: 30px;
-  height: 30px;
+  height: 32px;
   border-radius: 8px;
   border: 0;
   background: #ff7a59;
@@ -2477,7 +2479,7 @@ main.container {
   /* Slight outer glow so the button lifts off the muted card
      surface — the same trick used by the Claude Code CLI send
      button. Box-shadow instead of border because border eats
-     into the 30px box and shifts the icon. */
+     into the 30x32 box and shifts the icon. */
   box-shadow: 0 1px 2px rgba(255, 122, 89, 0.35);
 }
 .ai-panel .ai-send:disabled {
