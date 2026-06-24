@@ -82,8 +82,8 @@ function onLinkNavigate(p: string) {
             :title="h.text"
             @click.prevent="onTocClick(h.id)"
           >
-            <span class="toc-panel-link-text">{{ h.text }}</span>
             <span class="toc-panel-link-level" aria-hidden="true">H{{ h.level }}</span>
+            <span class="toc-panel-link-text">{{ h.text }}</span>
           </a>
         </li>
       </ul>
