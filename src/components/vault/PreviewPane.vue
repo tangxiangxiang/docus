@@ -38,6 +38,19 @@ function onArticleClick(e: MouseEvent) {
   e.preventDefault()
   getOpenPostForClicks()?.(dest)
 }
+
+/* Expose the article element so the parent's edit-mode scroll-sync
+   composable can identify the rendered body. Note: the actual
+   scroll container is the .preview-pane wrapper (overflow:auto in
+   style.css under .vault scope, plus min-height:100% on .article
+   means the article itself never has internal overflow). We expose
+   articleEl here only for symmetry with EditorPane's getScrollEl;
+   the composable queries .preview-pane directly. Kept on the
+   component for now in case future tooling needs the rendered
+   root. */
+defineExpose({
+  el: articleEl,
+})
 </script>
 
 <template>

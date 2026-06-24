@@ -2,6 +2,7 @@
 import { ref, inject, shallowRef, watch, computed, provide, onMounted, onBeforeUnmount } from 'vue'
 import { useVaultLayout, setSelectPanelForClicks } from '../composables/vault/useVaultLayout'
 import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
+import { useEditorPreviewScrollSync } from '../composables/vault/useEditorPreviewScrollSync'
 import { useSplitReview } from '../composables/vault/useSplitReview'
 import { splitNote, type SplitMode } from '../lib/ai-api'
 import { useToast } from '../composables/useToast'
@@ -134,6 +135,13 @@ const {
   refresh, openPost, closeTab, closeMany, selectTab, onEditorChange, onKeydown, onCommandPaletteNew,
 } = useEditorTabs({ selectPanel })
 
+/* Mirror the editor's scroll position onto the preview pane (and
+   vice versa) so the two stay aligned as the user scrolls in edit
+   mode. Read-only at the VaultView level — the composable finds the
+   right scroll containers inside the vault root via data-path
+   selectors. Wired after useEditorTabs because we need activePath. */
+useEditorPreviewScrollSync({ vaultRoot: vaultRef, activePath })
+
 /* ---------- Scope filter (NavBar chips) ---------- */
 // useScopeFilter is called here so the singleton state is wired up
 // (the localStorage watcher installs on first call). NavBar reads
@@ -252,6 +260,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
           v-show="t.path === activePath"
           :key="t.path"
           class="editor-pane"
+          :data-path="t.path"
         >
           <div v-if="t.loading" class="empty">正在加载 {{ t.path }}…</div>
           <div v-else-if="t.loadError" class="empty error">{{ t.loadError }}</div>
@@ -288,6 +297,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
           v-show="t.path === activePath"
           :key="`p-${t.path}`"
           class="preview-pane"
+          :data-path="t.path"
         >
           <PreviewPane v-if="!t.loading && !t.loadError" :raw="t.raw" :resolver="wikiResolver" />
         </div>

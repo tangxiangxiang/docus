@@ -102,6 +102,13 @@ defineExpose({
   focus() {
     view?.focus()
   },
+  /* CodeMirror's scroll container is `.cm-scroller` (not the host
+     div). Expose it so the parent (VaultView's edit-mode scroll-sync
+     composable) can attach a passive scroll listener and mirror the
+     preview pane. Returns null until the view has mounted. */
+  getScrollEl(): HTMLElement | null {
+    return view?.scrollDOM ?? null
+  },
 })
 </script>
 
