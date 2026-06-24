@@ -2330,38 +2330,37 @@ main.container {
   border-bottom-right-radius: 3px;
 }
 
-/* Composer — clean minimal container. The textarea fills the middle;
-   the send button is a coral accent chip docked to the right edge
-   (vivid against the muted chrome around it so the primary action
-   is unmistakable). The whole container lights up on focus-within
-   via a subtle border + faint coral ring — the user sees a single
-   focus state, not two. Visual language tracks the Claude Code CLI
-   composer: light card surface, prominent primary button, breathing
-   room around the text. */
+/* Composer — two-layer card. The input sits on top as a clean
+   text field; the toolbar (slash shortcut, current-note context,
+   send button) sits below as a separate row, divided from the
+   input by a thin top border. Matches the Claude Code CLI
+   composer where the file/action/send row is visually
+   independent of the input area. The whole card lights up on
+   focus-within via a single subtle border + faint coral ring. */
 .ai-panel .ai-composer {
   flex: 0 0 auto;
   padding: 8px 12px 12px;
   background: var(--vs-bg-1);
 }
 
-.ai-panel .ai-composer-inner {
+.ai-panel .ai-composer-card {
   display: flex;
-  align-items: flex-end;
-  gap: 6px;
+  flex-direction: column;
   background: var(--vs-bg-2);
   border: 1px solid var(--vs-border);
   border-radius: 10px;
-  padding: 7px 7px 7px 13px;
+  overflow: hidden;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
-.ai-panel .ai-composer-inner:focus-within {
+.ai-panel .ai-composer-card:focus-within {
   border-color: var(--vs-text-3);
   box-shadow: 0 0 0 3px rgba(255, 122, 89, 0.12);
 }
 
 .ai-panel .ai-input {
-  flex: 1 1 auto;
-  min-width: 0;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
   /* JS in AiPanel.vue resizes this textarea to fit its content
      (autoresize() in the component). height is set inline; min-
      height keeps an empty field visible at one line, and the
@@ -2373,19 +2372,124 @@ main.container {
   resize: none;
   background: transparent;
   border: 0;
-  padding: 7px 0;
+  /* Padding is asymmetric — extra horizontal so long words have
+     breathing room from the card edges, modest vertical so the
+     cursor sits comfortably below the top border. */
+  padding: 12px 14px 10px;
   font-family: var(--sans);
   font-size: 0.95rem;
   color: var(--vs-text-1);
   line-height: 1.5;
   outline: none;
-  min-height: 24px;
+  min-height: 28px;
   overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
 .ai-panel .ai-input::-webkit-scrollbar { width: 0; background: transparent; }
 .ai-panel .ai-input::placeholder { color: var(--vs-text-3); }
+
+/* Toolbar — the action row below the input. Two layers reading
+   as one card: the thin top border (inherited from the card's
+   own divider logic below) separates the input from the toolbar
+   without adding a second visual surface. min-height keeps the
+   row comfortable even with no path chip. */
+.ai-panel .ai-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-top: 1px solid var(--vs-border);
+  min-height: 40px;
+}
+.ai-panel .ai-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.ai-panel .ai-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+/* Slash-command toolbar button. A bare "/" character is the
+   shortest possible affordance — it mirrors how the command
+   itself is typed and reads as keyboard-friendly. The mono
+   font + bold weight make the slash unambiguous at small sizes
+   (a sans-serif "/" can look like a typo at 11px). */
+.ai-panel .ai-toolbar-btn {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: var(--vs-text-3);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s;
+}
+.ai-panel .ai-toolbar-btn:hover {
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
+.ai-panel .ai-toolbar-btn:focus-visible {
+  outline: 1px solid var(--vs-text-3);
+  outline-offset: 1px;
+}
+
+/* Current-note context chip. File icon + path, ellipsized with
+   the full path on hover via the title attribute. Mono font
+   reads better for paths than the body sans (separators and
+   hyphens are visually distinct). The empty-state copy is
+   italic so the user can tell at a glance that no note is
+   open vs. an open one they didn't notice. */
+.ai-panel .ai-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--vs-text-2);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1;
+}
+.ai-panel .ai-context-icon {
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+  color: var(--vs-text-3);
+  flex-shrink: 0;
+}
+.ai-panel .ai-context-icon :where(svg) {
+  display: block;
+  width: 12px;
+  height: 12px;
+}
+.ai-panel .ai-context-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+.ai-panel .ai-context-empty {
+  font-style: italic;
+  color: var(--vs-text-3);
+  font-family: var(--sans);
+  font-size: 0.78rem;
+}
 
 .ai-panel .ai-send {
   flex: 0 0 auto;

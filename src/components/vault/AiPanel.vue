@@ -21,7 +21,7 @@
 // the result text. read_file / list_files cards are collapsed by
 // default to keep the panel compact; the user can expand them.
 import { onMounted, reactive, ref, watch, computed, inject } from 'vue'
-import { ICON_AI, ICON_HISTORY, ICON_NEW_CHAT } from './icons'
+import { ICON_AI, ICON_HISTORY, ICON_NEW_CHAT, ICON_FILE_MD } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useCurrentNote } from '../../composables/vault/useCurrentNote'
 import { useSplitReview } from '../../composables/vault/useSplitReview'
@@ -124,6 +124,23 @@ function onKeydown(e: KeyboardEvent) {
 
 function togglePicker() {
   pickerOpen.value = !pickerOpen.value
+}
+
+/* Slash-command toolbar button: quick way to start a `/…` command
+   without typing the slash manually. We prepend `/` if missing
+   (preserving whatever the user had already typed after a leading
+   non-slash char) and drop the caret at the end. The autocomplete
+   itself is just typing-driven — there is no popover; future slash
+   commands can land in trySlashCommand() above. */
+function onSlashClick() {
+  const el = inputEl.value
+  if (!el) return
+  if (!draft.value.startsWith('/')) {
+    draft.value = '/' + draft.value
+  }
+  el.focus()
+  const len = el.value.length
+  el.setSelectionRange(len, len)
 }
 
 async function onNewSession() {
@@ -516,7 +533,12 @@ watch(() => review.phase.value, (p) => {
       </div>
 
       <form class="ai-composer" @submit.prevent="onSend">
-        <div class="ai-composer-inner">
+        <!-- Two-layer card: the input sits on top, the toolbar
+             (slash shortcut + current-note context + send button)
+             sits below as a separate row. The thin top border on
+             the toolbar is what makes the two halves read as
+             distinct layers, matching the Claude Code CLI composer. -->
+        <div class="ai-composer-card">
           <textarea
             ref="inputEl"
             v-model="draft"
@@ -526,15 +548,45 @@ watch(() => review.phase.value, (p) => {
             @keydown="onKeydown"
             @input="autoresize"
           />
-          <button
-            class="ai-send"
-            :class="{ 'ai-send-busy': history.busy.value }"
-            type="button"
-            :title="history.busy.value ? 'Stop' : 'Send (Enter)'"
-            :aria-label="history.busy.value ? 'Stop' : 'Send'"
-            :disabled="!history.busy.value && (!draft.trim() || !history.configured.value)"
-            @click="onSendOrStop"
-          >{{ history.busy.value ? '■' : '↑' }}</button>
+          <div class="ai-toolbar">
+            <div class="ai-toolbar-left">
+              <button
+                type="button"
+                class="ai-toolbar-btn"
+                title="Slash commands"
+                aria-label="Slash commands"
+                @click="onSlashClick"
+              >/</button>
+              <!-- Current-note context chip. The AI panel already
+                   passes currentNote.path into sendAndStream, so
+                   the chip is informational — it tells the user
+                   which note will be sent as context for the next
+                   message. We keep the full path on hover (via
+                   title) and ellipsize in the visible label. -->
+              <span
+                v-if="currentNote.path.value"
+                class="ai-context"
+                :title="currentNote.path.value"
+              >
+                <span class="ai-context-icon" v-html="ICON_FILE_MD" aria-hidden="true" />
+                <span class="ai-context-path">{{ currentNote.path.value }}</span>
+              </span>
+              <span v-else class="ai-context ai-context-empty">
+                no document
+              </span>
+            </div>
+            <div class="ai-toolbar-right">
+              <button
+                class="ai-send"
+                :class="{ 'ai-send-busy': history.busy.value }"
+                type="button"
+                :title="history.busy.value ? 'Stop' : 'Send (Enter)'"
+                :aria-label="history.busy.value ? 'Stop' : 'Send'"
+                :disabled="!history.busy.value && (!draft.trim() || !history.configured.value)"
+                @click="onSendOrStop"
+              >{{ history.busy.value ? '■' : '↑' }}</button>
+            </div>
+          </div>
         </div>
       </form>
 
