@@ -157,7 +157,7 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
           const d = JSON.parse(raw) as Record<string, unknown>
           const ap = d.activePanel
           let active: ActivePanel = null
-          if (ap === 'files' || ap === 'tags' || ap === 'graph' || ap === null) active = ap as ActivePanel
+          if (ap === 'files' || ap === 'tags' || ap === 'graph' || ap === 'history' || ap === null) active = ap as ActivePanel
           else if (typeof d.fileTreeOpen === 'boolean') active = d.fileTreeOpen ? 'files' : null
           const w = typeof d.sidePanelWidth === 'number'
             ? d.sidePanelWidth
@@ -211,7 +211,8 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
      so the template can use it for the side-splitter's v-show. */
   const sidePanelOpen = computed(() =>
     _activePanel.value === 'files' ||
-    _activePanel.value === 'tags',
+    _activePanel.value === 'tags' ||
+    _activePanel.value === 'history',
   )
   const activePanel: Ref<ActivePanel> = _activePanel
   const sidePanelWidth: Ref<number> = _sidePanelWidth

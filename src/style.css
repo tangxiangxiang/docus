@@ -487,6 +487,37 @@ main.container {
   gap: 0;
   border-right: 1px solid var(--vs-border);
 }
+
+/* History panel placeholder. The real git-history browser will
+   replace this section; for now we render a single-column shell
+   matching the file-tree / tag-panel visual language (bg + border +
+   36px title row) so the activity-bar button has something to show. */
+.vault .side-panel-history {
+  display: flex;
+  flex-direction: column;
+  background: var(--vs-bg-1);
+  border-right: 1px solid var(--vs-border);
+  overflow: hidden;
+}
+.vault .side-panel-history .side-panel-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  height: 36px;
+  box-sizing: border-box;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--vs-text-2);
+  background: var(--vs-bg-2);
+  border-bottom: 1px solid var(--vs-border);
+}
+.vault .side-panel-history .side-panel-empty {
+  padding: 12px 10px;
+  font-size: 0.8rem;
+  color: var(--vs-text-3);
+}
 .ab-btn {
   width: 100%;
   height: 36px;

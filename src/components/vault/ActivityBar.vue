@@ -1,8 +1,13 @@
 <script setup lang="ts">
-/* The three activity-bar buttons drive the three side panels. Links
-   used to be one of them (a 4-button row); it has been moved to live
-   below the TOC in the read-mode right rail, so it's gone from here. */
-export type SidePanel = 'files' | 'tags' | 'graph'
+/* The activity-bar buttons drive the side panels. Links used to be
+   one of them (a 4-button row); it has been moved to live below the
+   TOC in the read-mode right rail, so it's gone from here.
+
+   `history` is a placeholder for an upcoming git-history-style
+   browser (commits, diff, restore). For now it just opens a side
+   panel slot — the panel itself is rendered as an empty placeholder
+   in VaultView and the real implementation will replace that block. */
+export type SidePanel = 'files' | 'tags' | 'graph' | 'history'
 
 defineProps<{ activePanel: SidePanel | null }>()
 const emit = defineEmits<{
@@ -52,6 +57,25 @@ const emit = defineEmits<{
         <line x1="6.5" y1="7" x2="10.5" y2="16.5" />
         <line x1="17.5" y1="7" x2="13.5" y2="16.5" />
         <line x1="7" y1="6" x2="17" y2="6" />
+      </svg>
+    </button>
+    <button
+      class="ab-btn"
+      :class="{ active: activePanel === 'history' }"
+      title="History"
+      :aria-pressed="activePanel === 'history'"
+      @click="emit('select-panel', 'history')"
+    >
+      <!-- Git-history icon: three commit dots connected by a curve.
+           Visual language of "log / timeline" — distinct from the
+           graph (network) and history (clock) glyphs already used
+           elsewhere. 22x22, same stroke weight as the others. -->
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6" cy="5" r="1.6" fill="currentColor" stroke="none" />
+        <circle cx="6" cy="19" r="1.6" fill="currentColor" stroke="none" />
+        <circle cx="17" cy="12" r="1.6" fill="currentColor" stroke="none" />
+        <line x1="6" y1="6.5" x2="6" y2="17.5" />
+        <path d="M6 12 C 10 12, 12 12, 15.4 12" />
       </svg>
     </button>
   </aside>

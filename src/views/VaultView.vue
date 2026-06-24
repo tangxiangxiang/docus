@@ -215,6 +215,18 @@ watch(() => navSearch?.tick.value, () => openSearch())
       @select="toggleTag"
       @open="openPost"
     />
+    <!-- History panel: placeholder. The activity-bar button is in
+         place; the real git-history browser lands in a follow-up.
+         Renders an empty side-panel slot of the same width as the
+         file tree so the layout reserves the column correctly. -->
+    <section
+      v-else-if="activePanel === 'history'"
+      class="side-panel side-panel-history"
+      aria-label="History"
+    >
+      <header class="side-panel-header">History</header>
+      <div class="side-panel-empty">Coming soon.</div>
+    </section>
 
     <div
       v-show="sidePanelOpen"
