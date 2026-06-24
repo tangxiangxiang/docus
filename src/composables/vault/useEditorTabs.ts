@@ -186,11 +186,15 @@ export function useEditorTabs(opts: {
     await refresh()
   }
 
-  async function closeTab(path: string) {
+  async function closeTab(path: string, opts?: { skipDirtyCheck?: boolean }): Promise<void> {
     const idx = tabs.value.findIndex((t) => t.path === path)
     if (idx === -1) return
     const tab = tabs.value[idx]
-    if (tab.raw !== tab.originalRaw) {
+    // The dirty check is the only prompt-driven path in closeTab. The
+    // batched closeMany() shows ONE prompt covering all dirty tabs in
+    // the batch up front, then calls back into closeTab with
+    // skipDirtyCheck: true so we don't N-prompt the user.
+    if (!opts?.skipDirtyCheck && tab.raw !== tab.originalRaw) {
       const ok = await confirm(`放弃对 "${tab.path}" 的未保存修改?`)
       if (!ok) return
     }
@@ -203,6 +207,41 @@ export function useEditorTabs(opts: {
       } else {
         router.replace('/vault')
       }
+    }
+  }
+
+  // Batched close used by the right-click "Close Others / Close to the
+  // Right / Close All" menu. Shows ONE prompt if any tab in the batch
+  // is dirty (listing the count), then closes everything in descending
+  // tab-index order so the active-tab-jumps-left logic in closeTab
+  // produces the expected "we moved left" navigation for every removal
+  // (and the indices we sorted on stay stable until the actual splice).
+  async function closeMany(paths: string[]): Promise<void> {
+    if (paths.length === 0) return
+    const valid = paths.filter((p) => tabs.value.some((t) => t.path === p))
+    if (valid.length === 0) return
+    const dirty = valid.filter((p) => {
+      const t = tabs.value.find((tab) => tab.path === p)
+      return t && t.raw !== t.originalRaw
+    })
+    if (dirty.length > 0) {
+      const ok = await confirm(
+        dirty.length === 1
+          ? `放弃对 "${dirty[0]}" 的未保存修改?`
+          : `${dirty.length} 个 tab 有未保存修改,确定要全部关闭吗?`,
+      )
+      if (!ok) return
+    }
+    // Snapshot indices in the comparator (sort runs BEFORE any splice),
+    // then close from highest index down so each removal leaves the
+    // remaining indices consistent with what the next iteration reads.
+    const sorted = [...valid].sort((a, b) => {
+      const ia = tabs.value.findIndex((t) => t.path === a)
+      const ib = tabs.value.findIndex((t) => t.path === b)
+      return ib - ia
+    })
+    for (const p of sorted) {
+      await closeTab(p, { skipDirtyCheck: true })
     }
   }
 
@@ -468,6 +507,7 @@ export function useEditorTabs(opts: {
     refresh,
     openPost,
     closeTab,
+    closeMany,
     selectTab,
     onEditorChange,
     doSaveNow,

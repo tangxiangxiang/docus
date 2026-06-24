@@ -327,6 +327,84 @@ describe('live tabs publish', () => {
     expect(h.tabs.value).toHaveLength(0)
   })
 
+  it('closeMany closes all listed tabs in reverse-index order so the active jump is consistent', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/b': () => ({ path: 'b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/c': () => ({ path: 'c', raw: 'C', content: 'C', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    await h.openPost('b')
+    await h.openPost('c')
+    expect(h.tabs.value.map((t) => t.path)).toEqual(['a', 'b', 'c'])
+    await h.closeMany(['a', 'b', 'c'])
+    expect(h.tabs.value).toEqual([])
+    // No active tab left → router replaced to /vault.
+    expect(h.activePath.value).toBeNull()
+  })
+
+  it('closeMany shows ONE prompt for a batch with multiple dirty tabs (not N)', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/b': () => ({ path: 'b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/c': () => ({ path: 'c', raw: 'C', content: 'C', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    await h.openPost('b')
+    await h.openPost('c')
+    h.onEditorChange('a', 'A modified')
+    h.onEditorChange('b', 'B modified')
+    // c stays clean
+    const closePromise = h.closeMany(['a', 'b', 'c'])
+    await Promise.resolve()
+    await Promise.resolve()
+    // ONE confirm covering both dirty tabs.
+    answerConfirm(true)
+    await closePromise
+    expect(h.tabs.value).toEqual([])
+  })
+
+  it('closeMany aborts entirely when the user declines the dirty prompt', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/b': () => ({ path: 'b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    await h.openPost('b')
+    h.onEditorChange('a', 'A modified')
+    const closePromise = h.closeMany(['a', 'b'])
+    await Promise.resolve()
+    await Promise.resolve()
+    answerConfirm(false)                          // user says no
+    await closePromise
+    // BOTH tabs stay — the batch is all-or-nothing on the dirty prompt.
+    expect(h.tabs.value.map((t) => t.path)).toEqual(['a', 'b'])
+  })
+
+  it('closeMany skips the dirty prompt when no tab in the batch is dirty', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/b': () => ({ path: 'b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    await h.openPost('b')
+    // No edits — both clean.
+    await h.closeMany(['a', 'b'])
+    expect(h.tabs.value).toEqual([])
+  })
+
   it('doSave sends PUT and flips saveStatus idle → saving → saved', async () => {
     let putBody: { raw: string } | null = null
     vi.stubGlobal('fetch', stubFetch({

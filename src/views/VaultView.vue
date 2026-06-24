@@ -131,7 +131,7 @@ async function splitCard(path: string, mode: SplitMode) {
 /* ---------- Tabs / save / route sync ---------- */
 const {
   tree, posts, tabs, activePath, activeTab, isDirty, activeSize,
-  refresh, openPost, closeTab, selectTab, onEditorChange, onKeydown, onCommandPaletteNew,
+  refresh, openPost, closeTab, closeMany, selectTab, onEditorChange, onKeydown, onCommandPaletteNew,
 } = useEditorTabs({ selectPanel })
 
 /* ---------- Scope filter (NavBar chips) ---------- */
@@ -227,6 +227,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
         :active-path="activePath"
         @select="selectTab"
         @close="closeTab"
+        @close-many="closeMany"
       />
 
       <!-- Graph mode: replaces the entire edit / read surface with
