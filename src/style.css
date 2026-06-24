@@ -2358,20 +2358,30 @@ main.container {
 .ai-panel .ai-input {
   flex: 1 1 auto;
   min-width: 0;
+  /* JS in AiPanel.vue resizes this textarea to fit its content
+     (autoresize() in the component). height is set inline; min-
+     height keeps an empty field visible at one line, and the
+     autoresize cap (200px ≈ 9 lines at line-height:1.55) prevents
+     the composer from squeezing the message stream when someone
+     pastes a wall of text. When content exceeds the cap, autoresize
+     flips overflow-y to auto and the (transparent) scrollbar below
+     takes over — so a huge paste is still scrollable inside the
+     input, but the panel reads as scrollbar-free at a glance. */
   resize: none;
   background: transparent;
   border: 0;
-  padding: 6px 0;
+  padding: 8px 2px;
   font-family: var(--sans);
-  font-size: 0.85rem;
+  font-size: 0.92rem;
   color: var(--vs-text-1);
-  line-height: 1.5;
+  line-height: 1.55;
   outline: none;
-  /* Cap the textarea so a wall-of-text paste can't push the send
-     button off-screen. ~6 lines of body copy at the current line-
-     height. */
-  max-height: 160px;
+  min-height: 22px;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
+.ai-panel .ai-input::-webkit-scrollbar { width: 0; background: transparent; }
 .ai-panel .ai-input::placeholder { color: var(--vs-text-3); }
 
 .ai-panel .ai-send {

@@ -48,9 +48,38 @@ const review = inject<ReturnType<typeof useSplitReview> | null>('splitReview', n
 // to have long payloads). Other tools are always shown in full.
 const expandedToolCards = reactive<Record<string, boolean>>({})
 
+/* Composer auto-grow. The textarea is sized to its content (up to
+   INPUT_MAX_H) so a short prompt is one line tall and a multi-line
+   paste expands naturally — no internal scrollbar at the sizes
+   people actually type. At the cap we flip to overflow-y:auto so a
+   wall-of-text paste is still keyboard- / wheel-scrollable inside
+   the field; the scrollbar itself is rendered transparent in
+   style.css, so the input reads as scrollbar-free at a glance.
+
+   - @input fires it on every keystroke (instant feedback while typing)
+   - watch(draft) catches programmatic clears (after onSend sets
+     draft.value = '') so the field collapses back to one line
+   - onMounted fires the initial size for the empty state
+
+   Setting height:'auto' first is the standard textarea autoresize
+   trick — without it scrollHeight reflects the *current* height
+   and never grows. */
+const inputEl = ref<HTMLTextAreaElement | null>(null)
+const INPUT_MAX_H = 200
+function autoresize() {
+  const el = inputEl.value
+  if (!el) return
+  el.style.height = 'auto'
+  const natural = el.scrollHeight
+  el.style.height = Math.min(natural, INPUT_MAX_H) + 'px'
+  el.style.overflowY = natural > INPUT_MAX_H ? 'auto' : 'hidden'
+}
+
 onMounted(async () => {
   await history.loadActive()
+  autoresize()
 })
+watch(draft, () => autoresize())
 
 async function onSend() {
   const text = draft.value.trim()
@@ -489,12 +518,13 @@ watch(() => review.phase.value, (p) => {
       <form class="ai-composer" @submit.prevent="onSend">
         <div class="ai-composer-inner">
           <textarea
+            ref="inputEl"
             v-model="draft"
             class="ai-input"
-            rows="1"
             placeholder="Ask Claude… (or /split to break a note into atomic cards)"
             aria-label="Ask Claude"
             @keydown="onKeydown"
+            @input="autoresize"
           />
           <button
             class="ai-send"
