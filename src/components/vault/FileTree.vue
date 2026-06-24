@@ -59,9 +59,9 @@ const topLevel = computed<TreeNode[]>(() => {
   // Free-text query is AND-composed with the tag filter — both must pass.
   // filterByQuery is a no-op when the query is empty, so the cost on the
   // unfiltered path is one tree walk that returns nodes unchanged.
-  if (query.value) {
+  if (effectiveQuery.value) {
     children = children
-      .map((c) => filterByQuery(c, query.value))
+      .map((c) => filterByQuery(c, effectiveQuery.value))
       .filter((n): n is TreeNode => n !== null)
   }
   return children
@@ -92,14 +92,32 @@ function filterByTags(node: TreeNode, tags: Set<string>): TreeNode | null {
   return { ...node, children: kids }
 }
 
-// Free-text search query. Always-on input in the panel header. Empty
-// string means no filter; the query is matched case-insensitively against
-// each file's basename, title, and summary (and against folder names,
-// which keeps a folder's full subtree visible — the typical "scope to a
-// folder by typing its name" workflow). Composes AND with the tag filter
-// above: a file passes only if BOTH the tag set and the query let it
-// through.
-const query = ref('')
+// Free-text search query, split into typed tag chips + content text.
+// The two pieces render differently in the header:
+//   - `tagTokens` shows up as #tag chip pills (same visual as the
+//     activeTags chips that come from clicking a tag in TagPanel)
+//   - `contentText` is what stays in the native <input>
+// Both feed `effectiveQuery` (joined with a space) which the parser
+// splits back into tag/content tokens for filterByQuery. Empty input
+// + empty tagTokens = no filter. Composes AND with the tag filter
+// above: a file passes only if the activeTag set, the typed tag
+// tokens, AND the content tokens all let it through.
+//
+// Token extraction happens in `onContentInput`: any `#name` followed
+// by whitespace OR end-of-input becomes a chip immediately. The
+// end-of-input case means typing `#meta` alone (no trailing space)
+// still chips — matches the user's mental model of "I typed a tag,
+// that should be a chip now".
+const contentText = ref('')
+const tagTokens = ref<string[]>([])
+
+const effectiveQuery = computed(() => {
+  const parts: string[] = []
+  for (const t of tagTokens.value) parts.push('#' + t)
+  const ct = contentText.value.trim()
+  if (ct) parts.push(ct)
+  return parts.join(' ')
+})
 
 // Summary join. Title already lives on TreeNode (file variant); summary
 // does not — it's only on PostSummary. We index by path so the filter
@@ -188,7 +206,7 @@ export interface MatchInfo {
   tag?: boolean
 }
 const matchedFields = computed<Map<string, MatchInfo>>(() => {
-  const parsed = parseQuery(query.value)
+  const parsed = parseQuery(effectiveQuery.value)
   if (parsed.tagTokens.length === 0 && parsed.contentTokens.length === 0) return new Map()
   const m = new Map<string, MatchInfo>()
   const walk = (node: TreeNode) => {
@@ -232,7 +250,7 @@ const matchedFields = computed<Map<string, MatchInfo>>(() => {
 // search-time override is layered on top via `effectiveExpanded`, and
 // disappears the moment the query clears, restoring the saved layout.
 const searchForcedExpanded = computed<Set<string> | null>(() => {
-  if (!query.value) return null
+  if (!effectiveQuery.value) return null
   const set = new Set<string>()
   const walk = (n: TreeNode) => {
     if (n.kind !== 'folder') return
@@ -251,14 +269,56 @@ const effectiveExpanded = computed<Set<string>>(() => {
   return u
 })
 
+// Extract `#token`s out of the input value into `tagTokens`. A token
+// is only extracted when it's complete: preceded by start-of-input
+// or whitespace AND followed by whitespace. `#meta ` (with trailing
+// space) becomes a chip; `#meta` typed alone stays as text in the
+// input — the user hasn't committed the token yet (they might be
+// about to type `#metadata`, etc). To commit a trailing token, the
+// user types a space (or Esc clears everything). Tokens are matched
+// as `[a-z0-9-]+` after the `#`; characters outside that set abort
+// the match. Cursor is placed at the end of the stripped value so
+// the user can continue typing seamlessly without manually
+// repositioning.
+function onContentInput(e: Event) {
+  const input = e.target as HTMLInputElement
+  const value = input.value
+  const tokenRe = /(?:^|\s)(#[\w-]+)(?=\s)/g
+  const extracted: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = tokenRe.exec(value)) !== null) {
+    const tag = m[1].slice(1).toLowerCase()
+    if (tag && !tagTokens.value.includes(tag) && !extracted.includes(tag)) {
+      extracted.push(tag)
+    }
+  }
+  if (extracted.length > 0) {
+    tagTokens.value = [...tagTokens.value, ...extracted]
+  }
+  const newValue = value.replace(tokenRe, '').replace(/^\s+/, '')
+  contentText.value = newValue
+  input.value = newValue
+  input.setSelectionRange(newValue.length, newValue.length)
+}
+
+function removeTypedToken(tag: string) {
+  tagTokens.value = tagTokens.value.filter((t) => t !== tag)
+}
+
+function clearContentText() {
+  contentText.value = ''
+}
+
 function onQueryKeydown(e: KeyboardEvent) {
-  // Esc inside the search box clears the query but does NOT propagate,
-  // so the vault's global Esc handler (which closes panels / tabs)
+  // Esc inside the search box clears BOTH the typed tag chips and the
+  // content text — the full search state — but does NOT propagate, so
+  // the vault's global Esc handler (which closes panels / tabs)
   // doesn't fire on the same keypress. Mirrors the same escape on
   // TagPanel's tag-filter input.
-  if (e.key === 'Escape' && query.value) {
+  if (e.key === 'Escape' && (contentText.value || tagTokens.value.length)) {
     e.stopPropagation()
-    query.value = ''
+    contentText.value = ''
+    tagTokens.value = []
   }
 }
 
@@ -500,15 +560,20 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
       </div>
       <!-- Always-on search input. Filters the tree by file name /
            title / summary (case-insensitive, contains) and AND-composes
-           with the active-tag chips inlined to the left of the input.
-           Empty input is a no-op. When multiple tags are selected,
-           the chips wrap to a second line and the input follows them;
-           the icon + each chip + the input all share one flex row. -->
+           with the tag chips inlined to the left of the input. Tag
+           chips come from two sources:
+             1. `activeTags` — tags clicked in TagPanel, persisted in
+                useTagFilter; × removes via `remove-tag` emit.
+             2. `tagTokens`  — `#tag` tokens extracted from typed input
+                on whitespace/end boundaries; × removes locally.
+           The native input only ever shows the content portion (after
+           tag extraction), so the user sees their typed tags as styled
+           chips and their plain search text in the input. -->
       <div class="search">
         <span class="search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
         <span
           v-for="tag in activeTags"
-          :key="tag"
+          :key="`active-${tag}`"
           class="tag-filter-chip"
         >
           <span class="tag-filter-chip-name">#{{ tag }}</span>
@@ -519,20 +584,34 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
             @click="emit('remove-tag', tag)"
           >×</button>
         </span>
+        <span
+          v-for="tag in tagTokens"
+          :key="`typed-${tag}`"
+          class="tag-filter-chip"
+        >
+          <span class="tag-filter-chip-name">#{{ tag }}</span>
+          <button
+            class="tag-filter-chip-x"
+            :aria-label="`移除输入标签 ${tag}`"
+            :title="`移除输入标签 ${tag}`"
+            @click="removeTypedToken(tag)"
+          >×</button>
+        </span>
         <input
-          v-model="query"
+          v-model="contentText"
           class="search-input"
           type="text"
           placeholder="Search by name / title / summary… (#tag)"
           aria-label="搜索文件"
+          @input="onContentInput"
           @keydown="onQueryKeydown"
         />
         <button
-          v-if="query"
+          v-if="contentText"
           class="search-clear-x"
           title="清空搜索"
           aria-label="清空搜索"
-          @click="query = ''"
+          @click="clearContentText"
         >×</button>
       </div>
     </header>
@@ -554,8 +633,8 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @split-card="onSplitCard"
       />
     </ul>
-    <p v-else-if="query && activeTags.length" class="empty">没有同时匹配 tag 和 “{{ query }}” 的文件。</p>
-    <p v-else-if="query" class="empty">没有匹配 “{{ query }}” 的文件。</p>
+    <p v-else-if="effectiveQuery && activeTags.length" class="empty">没有同时匹配 tag 和 “{{ effectiveQuery }}” 的文件。</p>
+    <p v-else-if="effectiveQuery" class="empty">没有匹配 “{{ effectiveQuery }}” 的文件。</p>
     <p v-else-if="activeTags.length" class="empty">没有匹配这些 tag 的文件。</p>
     <p v-else class="empty">还没有文件。</p>
   </aside>

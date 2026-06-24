@@ -419,6 +419,123 @@ describe('FileTree search input', () => {
     const btn = w.findAll('.row-name').find((b: any) => b.text() === 'hello')
     expect(btn?.attributes('title')).toBe('Matched in: summary, tags')
   })
+
+  // --- typed #tag → chip styling ------------------------------------------
+  // Typing `#tag` extracts the token into a chip rather than leaving
+  // it as plain text in the input. The chip uses the same
+  // `.tag-filter-chip` class as the clicked-tags chips (typed and
+  // clicked chips coexist in the same row). × on a typed chip removes
+  // it; the input keeps whatever content portion is left after
+  // extraction.
+
+  it('typing "#meta " (with trailing space) extracts the token to a chip', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#meta ')
+    // The token is extracted: the input is now empty.
+    expect((w.find('.search-input').element as HTMLInputElement).value).toBe('')
+    // And a chip labeled #meta appears in the search row.
+    const chips = w.findAll('.search .tag-filter-chip')
+    expect(chips).toHaveLength(1)
+    expect(chips[0].text()).toContain('#meta')
+  })
+
+  it('typed chips use the same .tag-filter-chip class as clicked-tag chips', async () => {
+    const w = mount(FileTree, {
+      props: { tree: TREE, posts: POSTS, currentPath: null, activeTags: ['greeting'] },
+    })
+    // Trailing space triggers extraction so the typed chip appears.
+    await w.find('.search-input').setValue('#meta ')
+    // 1 clicked chip + 1 typed chip, both .tag-filter-chip.
+    const chips = w.findAll('.search .tag-filter-chip')
+    expect(chips).toHaveLength(2)
+    for (const c of chips) {
+      expect(c.classes()).toContain('tag-filter-chip')
+      expect(c.find('.tag-filter-chip-x').exists()).toBe(true)
+    }
+  })
+
+  it('× on a typed chip removes it WITHOUT emitting remove-tag (typed chips are local state)', async () => {
+    const w = mount(FileTree, {
+      props: { tree: TREE, posts: POSTS, currentPath: null, activeTags: ['greeting'] },
+    })
+    await w.find('.search-input').setValue('#meta ')
+    expect(w.findAll('.search .tag-filter-chip')).toHaveLength(2)
+    // The typed chip is the second one (after the active 'greeting').
+    const typedChip = w.findAll('.search .tag-filter-chip').find((c) => c.text().includes('#meta'))!
+    await typedChip.find('.tag-filter-chip-x').trigger('click')
+    // Typed 'meta' is gone. The active 'greeting' chip stays rendered
+    // (removing it is the parent's job, via the remove-tag emit which
+    // we assert below is NOT fired here).
+    const remaining = w.findAll('.search .tag-filter-chip').map((c) => c.text())
+    expect(remaining.some((t) => t.includes('#meta'))).toBe(false)
+    expect(remaining.some((t) => t.includes('#greeting'))).toBe(true)
+    // Critical: clicking × on a typed chip must NOT emit remove-tag.
+    // remove-tag is the parent's hook for activeTagFilter changes;
+    // typed chips are independent local state, so emit-side-effect
+    // would let them mutate the parent's persistent tag filter by
+    // accident.
+    expect(w.emitted('remove-tag')).toBeUndefined()
+  })
+
+  it('× on a clicked (active) chip DOES emit remove-tag (existing behavior preserved)', async () => {
+    const w = mount(FileTree, {
+      props: { tree: TREE, posts: POSTS, currentPath: null, activeTags: ['greeting'] },
+    })
+    const activeChip = w.findAll('.search .tag-filter-chip').find((c) => c.text().includes('#greeting'))!
+    await activeChip.find('.tag-filter-chip-x').trigger('click')
+    expect(w.emitted('remove-tag')).toEqual([['greeting']])
+  })
+
+  it('extraction fires on whitespace boundary: "#meta " leaves chip + empty input', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#meta ')
+    expect((w.find('.search-input').element as HTMLInputElement).value).toBe('')
+    expect(w.findAll('.search .tag-filter-chip').map((c) => c.text())).toEqual(
+      expect.arrayContaining([expect.stringContaining('#meta')]),
+    )
+  })
+
+  it('extraction of a token preserves following content: "#meta draft" → chip + "draft" in input', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#meta draft')
+    expect((w.find('.search-input').element as HTMLInputElement).value).toBe('draft')
+    expect(w.findAll('.search .tag-filter-chip').map((c) => c.text())).toEqual(
+      expect.arrayContaining([expect.stringContaining('#meta')]),
+    )
+  })
+
+  it('a partial tag (no trailing whitespace) stays as text in the input', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    // User is mid-typing — `#met` could become `#meta` or `#metadata`.
+    // Token only chips once whitespace follows, so this stays as text.
+    await w.find('.search-input').setValue('#met')
+    expect((w.find('.search-input').element as HTMLInputElement).value).toBe('#met')
+    expect(w.findAll('.search .tag-filter-chip')).toHaveLength(0)
+  })
+
+  it('"#meta" alone (no trailing space) stays as text — user has not committed the token yet', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#meta')
+    expect(w.findAll('.search .tag-filter-chip')).toHaveLength(0)
+    expect((w.find('.search-input').element as HTMLInputElement).value).toBe('#meta')
+  })
+
+  it('multiple typed tokens each become their own chip when followed by whitespace', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#meta #planning extra')
+    expect(w.findAll('.search .tag-filter-chip')).toHaveLength(2)
+    expect((w.find('.search-input').element as HTMLInputElement).value).toBe('extra')
+  })
+
+  it('Esc clears BOTH typed chips and content text', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#meta draft')
+    expect(w.findAll('.search .tag-filter-chip')).toHaveLength(1)
+    expect((w.find('.search-input').element as HTMLInputElement).value).toBe('draft')
+    await w.find('.search-input').trigger('keydown', { key: 'Escape' })
+    expect(w.findAll('.search .tag-filter-chip')).toHaveLength(0)
+    expect((w.find('.search-input').element as HTMLInputElement).value).toBe('')
+  })
 })
 
   it('renders active-tag chips INSIDE the search row, not as a separate bar', () => {
