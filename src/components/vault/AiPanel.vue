@@ -39,6 +39,33 @@ const pickerOpen = ref(false)
 const history = useAiHistory()
 const currentNote = useCurrentNote()
 
+/* Slash-command palette. Open via the "/" toolbar button; clicking
+   an entry fills the input with the command's invocation (e.g.
+   "/split") and closes the palette. Each entry has:
+     - command:    the literal text inserted at the cursor (with a
+                   trailing space for parameterised commands so the
+                   user can type the args immediately)
+     - params:     optional hint shown next to the command name in
+                   the palette (not inserted into the input — it's
+                   there to remind the user what the command takes)
+     - description: one-line explanation, displayed under the name
+   Keep this list the source of truth — trySlashCommand() above
+   already knows how to parse /split, so adding a new command is
+   one entry here plus one branch in the dispatcher. */
+interface SlashCommand {
+  command: string
+  description: string
+  params?: string
+}
+const SLASH_COMMANDS: SlashCommand[] = [
+  {
+    command: '/split',
+    description: '把当前文档拆分为原子卡片',
+    params: ' [inbox|literature]',
+  },
+]
+const commandsOpen = ref(false)
+
 // Injected by VaultView. Default to a fresh local instance if the panel
 // ever renders without a provider (defensive — keeps the panel functional
 // in isolation, e.g. in a test harness).
@@ -126,22 +153,46 @@ function togglePicker() {
   pickerOpen.value = !pickerOpen.value
 }
 
-/* Slash-command toolbar button: quick way to start a `/…` command
-   without typing the slash manually. We prepend `/` if missing
-   (preserving whatever the user had already typed after a leading
-   non-slash char) and drop the caret at the end. The autocomplete
-   itself is just typing-driven — there is no popover; future slash
-   commands can land in trySlashCommand() above. */
-function onSlashClick() {
+/* Slash-command toolbar button toggles a small palette above the
+   composer. applyCommand() fills the input with the entry's
+   invocation and refocuses the input; the palette closes itself.
+   Click-outside (document-level capture listener) closes the
+   palette when the user clicks anywhere else; the listener is
+   installed lazily only while the palette is open, so it adds
+   no overhead when the panel is idle. */
+function toggleCommands() {
+  commandsOpen.value = !commandsOpen.value
+}
+
+function applyCommand(cmd: SlashCommand) {
+  draft.value = cmd.command + (cmd.params ? ' ' : '')
+  commandsOpen.value = false
   const el = inputEl.value
   if (!el) return
-  if (!draft.value.startsWith('/')) {
-    draft.value = '/' + draft.value
-  }
   el.focus()
   const len = el.value.length
   el.setSelectionRange(len, len)
 }
+
+function onDocumentClick(e: MouseEvent) {
+  if (!commandsOpen.value) return
+  const target = e.target as HTMLElement | null
+  if (!target) return
+  // Click inside the palette itself is handled by its own
+  // menuitem buttons (which call applyCommand). Click on the
+  // trigger toggles via toggleCommands and shouldn't double-close.
+  if (target.closest('.ai-commands, .ai-toolbar-btn')) return
+  commandsOpen.value = false
+}
+
+watch(commandsOpen, (open) => {
+  if (open) document.addEventListener('click', onDocumentClick, { capture: true })
+  else document.removeEventListener('click', onDocumentClick, { capture: true } as any)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocumentClick, { capture: true } as any)
+})
 
 async function onNewSession() {
   if (history.busy.value) return
@@ -550,12 +601,18 @@ watch(() => review.phase.value, (p) => {
           />
           <div class="ai-toolbar">
             <div class="ai-toolbar-left">
+              <!-- Slash-command palette trigger. Active state
+                   stays visually distinct so the user can tell
+                   the palette is open without looking down at it. -->
               <button
                 type="button"
                 class="ai-toolbar-btn"
+                :class="{ 'ai-toolbar-btn-active': commandsOpen }"
                 title="Slash commands"
                 aria-label="Slash commands"
-                @click="onSlashClick"
+                :aria-expanded="commandsOpen"
+                aria-haspopup="menu"
+                @click="toggleCommands"
               >/</button>
               <!-- Current-note context chip. The AI panel already
                    passes currentNote.path into sendAndStream, so
@@ -587,6 +644,32 @@ watch(() => review.phase.value, (p) => {
               >{{ history.busy.value ? '■' : '↑' }}</button>
             </div>
           </div>
+        </div>
+
+        <!-- Slash-command palette. Lives OUTSIDE the card because
+             the card has overflow:hidden to keep its rounded
+             corners clean — putting the popover inside would
+             clip it. Anchored to .ai-composer (which is
+             position:relative) so it floats just above the
+             "/" trigger. -->
+        <div
+          v-if="commandsOpen"
+          class="ai-commands"
+          role="menu"
+        >
+          <button
+            v-for="cmd in SLASH_COMMANDS"
+            :key="cmd.command"
+            type="button"
+            class="ai-command"
+            role="menuitem"
+            @click="applyCommand(cmd)"
+          >
+            <span class="ai-command-name">
+              {{ cmd.command }}<span v-if="cmd.params" class="ai-command-params">{{ cmd.params }}</span>
+            </span>
+            <span class="ai-command-desc">{{ cmd.description }}</span>
+          </button>
         </div>
       </form>
 
