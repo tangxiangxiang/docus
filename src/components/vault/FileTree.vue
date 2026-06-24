@@ -112,17 +112,32 @@ const summaryByPath = computed<Map<string, string>>(() => {
 })
 
 function filterByQuery(node: TreeNode, q: string): TreeNode | null {
-  if (!q) return node
-  const needle = q.toLowerCase()
+  const parsed = parseQuery(q)
+  if (parsed.tagTokens.length === 0 && parsed.contentTokens.length === 0) return node
   if (node.kind === 'file') {
     const summary = summaryByPath.value.get(node.path) ?? ''
-    const hay = `${node.name}\n${node.title}\n${summary}`.toLowerCase()
-    return hay.includes(needle) ? node : null
+    const tags = postsByPath.value.get(node.path) ?? new Set<string>()
+    // AND across all tokens; OR within a tag token's matches (a file
+    // passes if any of its tags contains the needle as a substring).
+    const tagOk = parsed.tagTokens.every((needle) =>
+      [...tags].some((tag) => tag.toLowerCase().includes(needle)),
+    )
+    if (!tagOk) return null
+    const contentOk = parsed.contentTokens.every((needle) => {
+      const hay = `${node.name}\n${node.title}\n${summary}`.toLowerCase()
+      return hay.includes(needle)
+    })
+    if (!contentOk) return null
+    return node
   }
-  // Folder matches on its own name — typing "zettel" then keeps the
-  // entire zettel subtree visible. Otherwise recurse and keep the
-  // folder only if it has a matching descendant.
-  if (node.name.toLowerCase().includes(needle)) return node
+  // Folder: a folder can satisfy content tokens via its own name
+  // (typing "zettel" → entire zettel subtree kept), but tag tokens
+  // can only match file-level data, so they always recurse. Keeping
+  // any content token matching the folder's own name is enough; the
+  // AND with tag tokens happens during the descendant walk.
+  if (parsed.contentTokens.some((needle) => node.name.toLowerCase().includes(needle))) {
+    return node
+  }
   const kids = node.children
     .map((c) => filterByQuery(c, q))
     .filter((n): n is TreeNode => n !== null)
@@ -130,22 +145,51 @@ function filterByQuery(node: TreeNode, q: string): TreeNode | null {
   return { ...node, children: kids }
 }
 
+// Parse a free-text query into two token lists. Tokens starting with
+// `#` are tag tokens (the `#` is stripped, rest lowercased); the rest
+// are content tokens matched against filename / title / summary. Empty
+// tokens (just `#` or whitespace) are dropped. All tokens AND with
+// each other; within a tag token, any of the file's tags containing
+// the needle as a substring passes (consistent with TagPanel's
+// tag-list filter, which also uses substring).
+interface ParsedQuery {
+  tagTokens: string[]
+  contentTokens: string[]
+}
+function parseQuery(q: string): ParsedQuery {
+  const tokens = q.trim().split(/\s+/).filter(Boolean)
+  const tagTokens: string[] = []
+  const contentTokens: string[] = []
+  for (const t of tokens) {
+    if (t.startsWith('#')) {
+      const tag = t.slice(1).toLowerCase()
+      if (tag) tagTokens.push(tag)
+    } else {
+      contentTokens.push(t.toLowerCase())
+    }
+  }
+  return { tagTokens, contentTokens }
+}
+
 // Per-file match annotation, derived by re-walking the already-filtered
 // tree. Each entry names the fields whose text contained the query, so
 // TreeRow can render a native tooltip like "Matched in: filename,
-// summary". Folder-name matches are NOT annotated — a folder kept
-// because the user typed its name is a scope expansion, not a "match",
-// and adding a tooltip there would be noise. The derived map is empty
-// when the query is empty, so TreeRow's `matchInfo?` prop stays unset
-// and Vue strips the `title` attribute entirely.
+// summary". Tag matches are reported as `tag: true` and rendered as
+// "tags" in the tooltip. Folder-name matches are NOT annotated — a
+// folder kept because the user typed its name is a scope expansion,
+// not a "match", and adding a tooltip there would be noise. The
+// derived map is empty when the query is empty, so TreeRow's
+// `matchInfo?` prop stays unset and Vue strips the `title` attribute
+// entirely.
 export interface MatchInfo {
   name?: boolean
   title?: boolean
   summary?: boolean
+  tag?: boolean
 }
 const matchedFields = computed<Map<string, MatchInfo>>(() => {
-  if (!query.value) return new Map()
-  const needle = query.value.toLowerCase()
+  const parsed = parseQuery(query.value)
+  if (parsed.tagTokens.length === 0 && parsed.contentTokens.length === 0) return new Map()
   const m = new Map<string, MatchInfo>()
   const walk = (node: TreeNode) => {
     if (node.kind !== 'file') {
@@ -153,11 +197,29 @@ const matchedFields = computed<Map<string, MatchInfo>>(() => {
       return
     }
     const summary = summaryByPath.value.get(node.path) ?? ''
+    const tags = postsByPath.value.get(node.path) ?? new Set<string>()
     const info: MatchInfo = {}
-    if (node.name.toLowerCase().includes(needle)) info.name = true
-    if (node.title.toLowerCase().includes(needle)) info.title = true
-    if (summary.toLowerCase().includes(needle)) info.summary = true
-    if (info.name || info.title || info.summary) m.set(node.path, info)
+    // A file only reaches this walk if it already passed filterByQuery
+    // — i.e. all tag needles hit at least one tag. So `info.tag` is a
+    // simple boolean of "the query had any tag tokens AND this file
+    // satisfied all of them" — we don't need to re-check per-tag.
+    if (parsed.tagTokens.length > 0) {
+      const tagOk = parsed.tagTokens.every((needle) =>
+        [...tags].some((tag) => tag.toLowerCase().includes(needle)),
+      )
+      if (tagOk) info.tag = true
+    }
+    if (parsed.contentTokens.length > 0) {
+      const nameLc = node.name.toLowerCase()
+      const titleLc = node.title.toLowerCase()
+      const summaryLc = summary.toLowerCase()
+      for (const needle of parsed.contentTokens) {
+        if (nameLc.includes(needle)) info.name = true
+        if (titleLc.includes(needle)) info.title = true
+        if (summaryLc.includes(needle)) info.summary = true
+      }
+    }
+    if (info.tag || info.name || info.title || info.summary) m.set(node.path, info)
   }
   for (const n of topLevel.value) walk(n)
   return m
@@ -461,7 +523,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
           v-model="query"
           class="search-input"
           type="text"
-          placeholder="Search by name / title / summary…"
+          placeholder="Search by name / title / summary… (#tag)"
           aria-label="搜索文件"
           @keydown="onQueryKeydown"
         />

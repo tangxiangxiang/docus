@@ -100,6 +100,7 @@ const matchTooltip = computed<string | undefined>(() => {
   if (m.name) fields.push('filename')
   if (m.title) fields.push('title')
   if (m.summary) fields.push('summary')
+  if (m.tag) fields.push('tags')
   if (!fields.length) return undefined
   return `Matched in: ${fields.join(', ')}`
 })

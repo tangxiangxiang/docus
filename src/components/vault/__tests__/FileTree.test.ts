@@ -118,6 +118,9 @@ describe('FileTree search input', () => {
     const input = w.find('.search-input')
     expect(input.exists()).toBe(true)
     expect(input.attributes('placeholder')).toContain('Search')
+    // The placeholder also hints at the #tag token syntax, since
+    // both modes are reachable from the same input.
+    expect(input.attributes('placeholder')).toContain('#tag')
   })
 
   it('does not filter anything when the query is empty', () => {
@@ -336,6 +339,88 @@ describe('FileTree search input', () => {
     expect(btn === undefined || btn.attributes('title') === undefined).toBe(true)
   })
 
+  // --- #tag token syntax ---------------------------------------------------
+  // The `#` prefix flips a token from "match name/title/summary" to
+  // "match the file's tags". Tokens are space-separated and AND'd.
+  // Empty `#` (no name) is dropped.
+  //
+  // Recall POSTS fixture (FileTree.test.ts:105):
+  //   inbox/hello         tags=[greeting]
+  //   inbox/notes/draft   tags=[]
+  //   literature/ahrens-2017  tags=[book]
+
+  it('#meta alone matches only files whose tags contain "meta"', async () => {
+    // None of the POSTS fixture has a "meta" tag, so all files are
+    // filtered out — the empty-state branch shows.
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#meta')
+    expect(w.text()).toContain('没有匹配')
+    expect(w.text()).toContain('#meta')
+  })
+
+  it('#greeting matches the file tagged "greeting"', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#greeting')
+    expect(w.text()).toContain('hello')
+    // draft has no tags, ahrens-2017 has [book] — both excluded.
+    expect(w.text()).not.toContain('draft')
+    expect(w.text()).not.toContain('ahrens-2017')
+  })
+
+  it('a #tag query does NOT match files where the tag appears in name/title/summary', async () => {
+    // ahrens-2017 has [book]. With a #book query we want ONLY tag
+    // matching; hello has summary "a warm greeting" with no "book",
+    // and draft has neither, so hello and draft are correctly
+    // excluded even though the bare word "book" could conceivably
+    // appear in any future content.
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#book')
+    expect(w.text()).toContain('ahrens-2017')
+    expect(w.text()).not.toContain('hello')
+    expect(w.text()).not.toContain('draft')
+  })
+
+  it('mixing a #tag token and a content token ANDs both', async () => {
+    // hello has [greeting] AND summary "a warm greeting" (contains
+    // "warm"). The AND means only hello passes — draft has neither,
+    // ahrens-2017 has [book] (fails #greeting) and summary "on smart
+    // notes" (no "warm").
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#greeting warm')
+    expect(w.text()).toContain('hello')
+    expect(w.text()).not.toContain('draft')
+    expect(w.text()).not.toContain('ahrens-2017')
+  })
+
+  it('a bare "#" with no tag name is ignored (no filter applied)', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#')
+    // Nothing got filtered out, all three top-level folders visible.
+    expect(w.text()).toContain('inbox')
+    expect(w.text()).toContain('literature')
+    expect(w.text()).toContain('zettel')
+  })
+
+  it('the #tag tooltip says "Matched in: tags"', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#greeting')
+    const btn = w.findAll('.row-name').find((b: any) => b.text() === 'hello')
+    expect(btn?.attributes('title')).toBe('Matched in: tags')
+  })
+
+  it('mixed query tooltip lists "tags" alongside content fields', async () => {
+    // hello: tag=greeting (hits #greeting), summary contains "warm"
+    // (hits "warm"). Tooltip lists fields in TreeRow's natural order
+    // (filename, title, summary, tags) — content fields before the
+    // tag because both are matched and the ordering is the file's
+    // "how was it identified" sequence.
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('#greeting warm')
+    const btn = w.findAll('.row-name').find((b: any) => b.text() === 'hello')
+    expect(btn?.attributes('title')).toBe('Matched in: summary, tags')
+  })
+})
+
   it('renders active-tag chips INSIDE the search row, not as a separate bar', () => {
     const w = mount(FileTree, {
       props: { tree: TREE, posts: POSTS, currentPath: null, activeTags: ['greeting', 'book'] },
@@ -385,4 +470,3 @@ describe('FileTree search input', () => {
     // remove-tag should have fired exactly once per chip.
     expect(w.emitted('remove-tag')).toEqual([['greeting'], ['book']])
   })
-})
