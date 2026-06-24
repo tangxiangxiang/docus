@@ -3,16 +3,19 @@
    one of them (a 4-button row); it has been moved to live below the
    TOC in the read-mode right rail, so it's gone from here.
 
-   `history` is a placeholder for an upcoming git-history-style
-   browser (commits, diff, restore). For now it just opens a side
-   panel slot — the panel itself is rendered as an empty placeholder
-   in VaultView and the real implementation will replace that block. */
+   The History button carries a small numeric badge when there are
+   dirty files in the working tree. The count comes from the
+   useHistory singleton (which subscribes to the file-change bus)
+   so the badge updates live as the user saves tabs. */
+import { useHistory } from '../../composables/vault/useHistory.js'
 export type SidePanel = 'files' | 'tags' | 'graph' | 'history'
 
 defineProps<{ activePanel: SidePanel | null }>()
 const emit = defineEmits<{
   'select-panel': [panel: SidePanel]
 }>()
+
+const h = useHistory()
 </script>
 
 <template>
@@ -77,6 +80,11 @@ const emit = defineEmits<{
         <line x1="6" y1="6.5" x2="6" y2="17.5" />
         <path d="M6 12 C 10 12, 12 12, 15.4 12" />
       </svg>
+      <span
+        v-if="h.dirtyCount.value > 0"
+        class="ab-badge"
+        :aria-label="`${h.dirtyCount.value} changed files`"
+      >{{ h.dirtyCount.value }}</span>
     </button>
   </aside>
 </template>

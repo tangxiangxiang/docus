@@ -488,10 +488,9 @@ main.container {
   border-right: 1px solid var(--vs-border);
 }
 
-/* History panel placeholder. The real git-history browser will
-   replace this section; for now we render a single-column shell
-   matching the file-tree / tag-panel visual language (bg + border +
-   36px title row) so the activity-bar button has something to show. */
+/* History panel: a tall column split into three scrollable
+   sections (composer, changes, timeline). The composer echoes the
+   ai-composer's compact 40px-input + 40px-toolbar look. */
 .vault .side-panel-history {
   display: flex;
   flex-direction: column;
@@ -513,10 +512,313 @@ main.container {
   background: var(--vs-bg-2);
   border-bottom: 1px solid var(--vs-border);
 }
-.vault .side-panel-history .side-panel-empty {
+
+/* === HistoryPanel (real, replaces the old placeholder) === */
+.history-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--vs-bg-1);
+  border-right: 1px solid var(--vs-border);
+  overflow: hidden;
+  height: 100%;
+}
+.history-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 10px;
+  height: 36px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--vs-border);
+  background: var(--vs-bg-2);
+  color: var(--vs-text-2);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.history-subtitle {
+  font-weight: 400;
+  color: var(--vs-text-3);
+  font-size: 0.7rem;
+}
+.history-empty,
+.history-empty-inline {
   padding: 12px 10px;
   font-size: 0.8rem;
   color: var(--vs-text-3);
+}
+.history-empty .empty-title { font-weight: 600; color: var(--vs-text-2); margin-bottom: 4px; }
+
+.history-composer {
+  flex-shrink: 0;
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--vs-border);
+  background: var(--vs-bg-1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.history-composer-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  background: var(--vs-bg-2);
+  border: 1px solid var(--vs-border);
+  border-radius: 8px;
+  padding: 10px 12px 8px;
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  color: var(--vs-text-1);
+  line-height: 1.4;
+  outline: none;
+  min-height: 40px;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.history-composer-input:focus {
+  border-color: var(--vs-text-3);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-accent) 18%, transparent);
+}
+.history-composer-input::-webkit-scrollbar { width: 0; background: transparent; }
+.history-composer-input::placeholder { color: var(--vs-text-3); }
+.history-commit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 0;
+  background: var(--vs-accent);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, opacity 0.12s;
+}
+.history-commit-btn:hover:not(:disabled) { background: var(--vs-accent-hover); }
+.history-commit-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.history-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.history-section + .history-section { border-top: 1px solid var(--vs-border); }
+.history-section-title {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--vs-text-3);
+  background: var(--vs-bg-1);
+}
+.history-dirty,
+.history-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  max-height: 240px;
+  min-height: 0;
+}
+.history-dirty-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  color: var(--vs-text-1);
+  cursor: pointer;
+}
+.history-dirty-row:hover { background: var(--vs-hover-bg); }
+.history-dirty-row.selected { background: color-mix(in srgb, var(--vs-accent) 10%, transparent); }
+.history-dirty-path {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+.history-dirty-status {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--vs-text-3);
+  min-width: 12px;
+  text-align: right;
+}
+
+.history-commit-row {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--vs-border);
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.history-commit-row:hover { background: var(--vs-hover-bg); }
+.history-commit-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.history-commit-sha {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--vs-text-3);
+}
+.history-commit-when {
+  font-size: 0.7rem;
+  color: var(--vs-text-3);
+}
+.history-commit-subject {
+  color: var(--vs-text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-commit-files {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--vs-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.history-error {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+  color: var(--vs-text-1);
+  font-size: 0.78rem;
+  border-top: 1px solid var(--vs-border);
+}
+
+/* === DiffView === */
+.diff-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--vs-bg-1);
+  overflow: hidden;
+}
+.diff-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--vs-border);
+  background: var(--vs-bg-2);
+  font-size: 0.78rem;
+  color: var(--vs-text-2);
+}
+.diff-path {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--vs-text-1);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diff-stats {
+  display: flex;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+.diff-stat-add { color: #16a34a; }
+.diff-stat-del { color: #dc2626; }
+.diff-stat-eq  { color: var(--vs-text-3); }
+.diff-refs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--vs-text-3);
+}
+.diff-loading,
+.diff-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--vs-text-3);
+  font-size: 0.85rem;
+}
+.diff-empty .empty-title { font-weight: 600; color: var(--vs-text-2); margin-bottom: 4px; }
+
+.diff-table {
+  flex: 1;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  background: var(--vs-bg-1);
+}
+.diff-row {
+  display: grid;
+  grid-template-columns: 56px 1fr 56px 1fr;
+  align-items: stretch;
+}
+.diff-row-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--vs-bg-2);
+  color: var(--vs-text-3);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--vs-border);
+}
+.diff-cell {
+  padding: 0 8px;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: clip;
+}
+.diff-cell-num {
+  text-align: right;
+  color: var(--vs-text-3);
+  user-select: none;
+  background: var(--vs-bg-2);
+  border-right: 1px solid var(--vs-border);
+}
+.diff-row.is-add .diff-cell-num:nth-child(3) { color: #16a34a; }
+.diff-row.is-del .diff-cell-num:nth-child(1) { color: #dc2626; }
+.diff-row.is-add .diff-cell-text:nth-child(2) { background: color-mix(in srgb, #16a34a 12%, transparent); }
+.diff-row.is-add .diff-cell-text:nth-child(4) { background: color-mix(in srgb, #16a34a 12%, transparent); }
+.diff-row.is-del .diff-cell-text:nth-child(2) { background: color-mix(in srgb, #dc2626 12%, transparent); }
+.diff-row.is-del .diff-cell-text:nth-child(4) { background: color-mix(in srgb, #dc2626 12%, transparent); }
+.diff-row.is-edit .diff-cell-text:nth-child(2) { background: color-mix(in srgb, #dc2626 10%, transparent); }
+.diff-row.is-edit .diff-cell-text:nth-child(4) { background: color-mix(in srgb, #16a34a 10%, transparent); }
+
+.diff-word { padding: 0; }
+.diff-word-add { background: color-mix(in srgb, #16a34a 28%, transparent); border-radius: 2px; }
+.diff-word-remove { background: color-mix(in srgb, #dc2626 28%, transparent; border-radius: 2px); }
+.diff-word-equal { background: transparent; }
+
+/* History mode disables the editor-area's normal padding so the
+   diff takes the full cell. Same idea as `.is-graph` above. */
+.vault .editor-area.is-history .content.content-diff {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 .ab-btn {
   width: 100%;
@@ -530,11 +832,33 @@ main.container {
   cursor: pointer;
   border-left: 2px solid transparent;
   transition: color 0.12s, background 0.12s;
+  position: relative;
 }
 .ab-btn:hover { color: var(--vs-text-1); background: var(--vs-hover-bg); }
 .ab-btn.active {
   color: var(--vs-text-1);
   background: var(--vs-hover-bg);
+}
+/* Small count badge anchored to the bottom-right of the activity-
+   bar button. Currently only used by the History button (dirty
+   file count), but the class is generic so a future button can
+   reuse it without re-styling. */
+.ab-badge {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: var(--vs-accent);
+  color: var(--vs-bg-1);
+  font-size: 9px;
+  line-height: 14px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
 }
 
 /* FileTree: scope token names so it picks up VSCode palette */

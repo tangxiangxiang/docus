@@ -21,6 +21,8 @@ import ReadingPane from '../components/vault/ReadingPane.vue'
 import KnowledgeGraph from '../components/vault/KnowledgeGraph.vue'
 import TocPanel from '../components/vault/TocPanel.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
+import HistoryPanel from '../components/vault/HistoryPanel.vue'
+import DiffView from '../components/vault/DiffView.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
@@ -215,18 +217,14 @@ watch(() => navSearch?.tick.value, () => openSearch())
       @select="toggleTag"
       @open="openPost"
     />
-    <!-- History panel: placeholder. The activity-bar button is in
-         place; the real git-history browser lands in a follow-up.
-         Renders an empty side-panel slot of the same width as the
-         file tree so the layout reserves the column correctly. -->
-    <section
-      v-else-if="activePanel === 'history'"
-      class="side-panel side-panel-history"
-      aria-label="History"
-    >
-      <header class="side-panel-header">History</header>
-      <div class="side-panel-empty">Coming soon.</div>
-    </section>
+    <!-- History panel: side-panel host for the commit composer +
+         changes list + commit timeline. The activity-bar button
+         toggles `activePanel === 'history'`. The main editor area
+         separately renders <DiffView> in the same mode (see below
+         — same `activePanel === 'history'` gate) so the diff sits
+         in the editor's grid track instead of fighting for the
+         side-panel column. -->
+    <HistoryPanel v-else-if="activePanel === 'history'" />
 
     <div
       v-show="sidePanelOpen"
@@ -239,10 +237,10 @@ watch(() => navSearch?.tick.value, () => openSearch())
 
     <section
       class="editor-area"
-      :class="{ 'is-read': isReadMode, 'ai-open': aiOpen, 'is-graph': activePanel === 'graph' }"
+      :class="{ 'is-read': isReadMode, 'ai-open': aiOpen, 'is-graph': activePanel === 'graph', 'is-history': activePanel === 'history' }"
     >
       <EditorTabs
-        v-if="activePanel !== 'graph'"
+        v-if="activePanel !== 'graph' && activePanel !== 'history'"
         :tabs="tabs"
         :active-path="activePath"
         @select="selectTab"
@@ -263,6 +261,14 @@ watch(() => navSearch?.tick.value, () => openSearch())
            the read/edit branches below stay the unchanged original. -->
       <div v-if="activePanel === 'graph'" class="content content-graph">
         <KnowledgeGraph />
+      </div>
+
+      <!-- History mode: side panel shows the HistoryPanel, this
+           main area shows the DiffView. EditorTabs is hidden so
+           the diff gets the full editor height. The side panel
+           drives what the diff renders via useHistory.selectFile. -->
+      <div v-else-if="activePanel === 'history'" class="content content-diff">
+        <DiffView />
       </div>
 
       <!-- Edit mode: editor + preview side-by-side, draggable mid-splitter. -->
