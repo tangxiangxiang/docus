@@ -161,7 +161,9 @@ export type CommitRecord = {
   files: string[]
 }
 
-const LOG_SEPARATOR = '\x1e__DOCUS_LOG__\x1e'
+// Exported (not just `const`) so the parseLog regression tests can
+// build synthetic blocks in the same format the L0 wrapper emits.
+export const LOG_SEPARATOR = '\x1e__DOCUS_LOG__\x1e'
 // The 0x1e (record separator) is illegal in a commit message body,
 // so it doubles as a robust line/group delimiter that survives any
 // pathological input.
@@ -214,10 +216,18 @@ export function parseLog(text: string): CommitRecord[] {
   const blocks = text.split(LOG_SEPARATOR).filter((b) => b.length > 0)
   for (const block of blocks) {
     // Each block is: <fields...>\x00\n<name-only list, one per line>
-    // Split off the trailing name-only list first. The NUL-terminated
-    // header is everything up to the FIRST \n that begins a line that
-    // does NOT contain a NUL. (i.e. the file-name list.)
-    const headerEnd = block.indexOf('\n')
+    // The header is NUL-separated fields (sha, author, date, subject,
+    // body, trailing ''), terminated by a newline. The body field can
+    // itself contain newlines (multi-line commit messages), so we can't
+    // just find the first \n — that's the line that says "The NUL-
+    // terminated header is everything up to the FIRST \n that begins a
+    // line that does NOT contain a NUL" in spirit, but the original
+    // implementation used `block.indexOf('\n')`, which is the first \n
+    // in the body for multi-line commits. That caused the file list to
+    // absorb the rest of the body, and `files[0]` returned the first
+    // body line as if it were a path. Walk line-by-line and return the
+    // offset of the first \n whose NEXT line has no NUL.
+    const headerEnd = findHeaderEnd(block)
     const header = headerEnd === -1 ? block : block.slice(0, headerEnd)
     const tail = headerEnd === -1 ? '' : block.slice(headerEnd + 1)
     const parts = header.split('\x00')
@@ -233,6 +243,31 @@ export function parseLog(text: string): CommitRecord[] {
     records.push({ sha, author, date, subject, body, files })
   }
   return records
+}
+
+/**
+ * Find the offset of the newline that ends the NUL-separated header
+ * (and thus begins the file-name list). The header is the prefix up
+ * to and including the last NUL-terminated field plus its trailing
+ * \n. Since the body field can contain \n, the right boundary is
+ * the LAST \n whose preceding line contains a NUL — file-name lines
+ * never contain NUL, so the NUL-containing lines are entirely
+ * within the header. Returns -1 if no such boundary exists (no file
+ * list at all).
+ */
+function findHeaderEnd(block: string): number {
+  let lastNulLineEnd = -1
+  let i = 0
+  while (i < block.length) {
+    const nl = block.indexOf('\n', i)
+    if (nl === -1) break
+    const line = block.slice(i, nl)
+    if (line.includes('\x00')) {
+      lastNulLineEnd = nl
+    }
+    i = nl + 1
+  }
+  return lastNulLineEnd
 }
 
 // --- Show / raw content at a ref ------------------------------------------

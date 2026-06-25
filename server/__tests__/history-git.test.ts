@@ -243,6 +243,86 @@ describe('addAndCommit + log', () => {
   })
 })
 
+// Pure-function tests for `parseLog` against synthetic git log output.
+// These don't spawn git — they assert the parser handles the format
+// the L0 wrapper feeds it, including the multi-line body case where
+// `body` itself contains newlines (the field is everything after
+// `subject` and can span multiple lines). The naive
+// `block.indexOf('\n')` shortcut would treat the first body newline
+// as the header / file-list boundary, so `files[]` would absorb the
+// rest of the body and `files[0]` would be a body line, not a path.
+describe('parseLog (synthetic input)', () => {
+  // The format the L0 wrapper produces:
+  //   <LOG_SEP><sha>\x00<author>\x00<date>\x00<subject>\x00<body>\x00\n<file1>\n<file2>...
+  // Five NUL-separated header fields, plus a trailing NUL terminator,
+  // then a newline, then the name-only file list.
+  function makeBlock(header: string[], body: string, files: string[]): string {
+    return [...header, body].join('\x00') + '\x00\n' + files.join('\n')
+  }
+
+  it('extracts the full multi-line body and only the file paths in files[]', () => {
+    const block = makeBlock(
+      [
+        'a'.repeat(40),
+        'txx',
+        '2026-06-25T09:02:20+08:00',
+        'fix(history): auto-pick a file when clicking a commit with none selected',
+      ],
+      [
+        'Clicking a commit row in the timeline was a no-op when no file was',
+        'selected: the handler stored the sha on selectedOldRef and returned,',
+        'leaving the DiffView stuck on "No file selected". The user sees a',
+        'dead timeline with no feedback.',
+        '',
+        'Prefer a useful default instead: pick the first file in that',
+        'commit, falling back to the first dirty file in the working tree.',
+        'If neither has anything, show a toast telling the user to open a',
+        'file first. The click now always produces a visible diff (or an',
+        'explicit error), so the timeline is never silently dead.',
+      ].join('\n'),
+      ['src/components/vault/HistoryPanel.vue'],
+    )
+    const records = git.parseLog(block)
+    expect(records).toHaveLength(1)
+    expect(records[0].body).toContain('Clicking a commit row in the timeline')
+    expect(records[0].body).toContain('silently dead.')
+    // The files list is ONLY the path, not the body lines that happen
+    // to come before the trailing NUL.
+    expect(records[0].files).toEqual(['src/components/vault/HistoryPanel.vue'])
+  })
+
+  it('still parses correctly when the body is a single line', () => {
+    const block = makeBlock(
+      ['b'.repeat(40), 'txx', '2026-06-24T20:13:19+08:00', 'single-line body commit'],
+      'Adds a single-file restore action that overwrites a files',
+      ['src/components/vault/DiffView.vue'],
+    )
+    const records = git.parseLog(block)
+    expect(records[0].body).toBe('Adds a single-file restore action that overwrites a files')
+    expect(records[0].files).toEqual(['src/components/vault/DiffView.vue'])
+  })
+
+  it('parses an empty body and a multi-file change set', () => {
+    const block = makeBlock(
+      ['c'.repeat(40), 'txx', '2026-06-25T09:00:00+08:00', 'multi-file commit'],
+      '',
+      ['server/history/git.ts', 'server/history/routes.ts', 'src/style.css'],
+    )
+    const records = git.parseLog(block)
+    expect(records[0].body).toBe('')
+    expect(records[0].files).toEqual(['server/history/git.ts', 'server/history/routes.ts', 'src/style.css'])
+  })
+
+  it('returns multiple records when the input has more than one LOG_SEPARATOR block', () => {
+    const a = makeBlock(['a'.repeat(40), 'txx', '2026-06-25T09:00:00+08:00', 'first'], '', ['a.md'])
+    const b = makeBlock(['b'.repeat(40), 'txx', '2026-06-25T09:01:00+08:00', 'second'], 'body', ['b.md'])
+    const text = git.LOG_SEPARATOR + a + git.LOG_SEPARATOR + b
+    const records = git.parseLog(text)
+    expect(records.map((r) => r.subject)).toEqual(['first', 'second'])
+    expect(records.map((r) => r.files)).toEqual([['a.md'], ['b.md']])
+  })
+})
+
 describe('rawAt', () => {
   beforeEach(initAndSeed)
 
