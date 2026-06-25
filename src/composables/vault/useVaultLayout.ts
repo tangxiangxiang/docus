@@ -41,7 +41,7 @@
 //   openPost in useEditorTabs. This avoids the cycle of having the
 //   child import the parent's layout instance.
 
-import { computed, ref, toRef, watch, type Ref, type MaybeRefOrGetter } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import { useStorage } from '@vueuse/core'
 import type { SidePanel } from '../../components/vault/ActivityBar.vue'
 

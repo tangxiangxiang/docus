@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { nextTick } from 'vue'
 import DiffView from '../components/vault/DiffView.vue'
 import { useHistory, __resetHistoryStateForTesting } from '../composables/vault/useHistory'
 import * as api from '../lib/history-api'

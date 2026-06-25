@@ -64,6 +64,7 @@ function makeRouter() {
 interface Harness {
   openPost: (p: string) => Promise<void>
   closeTab: (p: string) => Promise<void>
+  closeMany: (paths: string[]) => Promise<void>
   selectTab: (p: string) => void
   doSaveNow: () => Promise<void>
   onEditorChange: (p: string, v: string) => void

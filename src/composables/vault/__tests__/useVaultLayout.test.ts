@@ -14,7 +14,7 @@
 // don't accidentally break the writer.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { defineComponent, h, ref, watch, type Ref } from 'vue'
+import { defineComponent, h, ref, type Ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import {
   useVaultLayout,
@@ -329,10 +329,10 @@ describe('useVaultLayout', () => {
     // is the contract KnowledgeGraph relies on.
     expect(getSelectPanelForClicks()).toBeNull()
     const captured: string[] = []
-    /* The slot's signature is `SidePanel` (3 values: files/tags/graph)
+    /* The slot's signature is `SidePanel` (4 values: files/tags/graph/history)
        so test consumers must accept the full union. Narrowing it here
        would be a lie about the API surface KnowledgeGraph relies on. */
-    const fn = (p: 'files' | 'tags' | 'graph') => { captured.push(p) }
+    const fn = (p: 'files' | 'tags' | 'graph' | 'history') => { captured.push(p) }
     setSelectPanelForClicks(fn)
     expect(getSelectPanelForClicks()).toBe(fn)
     // The "child" can call it — it runs, even if it has no effect
