@@ -10,6 +10,10 @@
 export interface Capability {
   gitAvailable: boolean
   repoInitialized: boolean
+  /** Present only when repoInitialized is false but git is available
+     — explains why the auto-init failed (e.g. vault sits inside
+     another git repo, .git/ write failed, etc.). */
+  initError?: string
 }
 
 /**

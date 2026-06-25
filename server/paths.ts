@@ -1,15 +1,38 @@
 import path from 'node:path'
 
+// Where the user's vault lives. In dev this defaults to
+// `<project>/src/content`; in production it can be overridden via
+// the VAULT_DIR env var so docus can point at any directory the
+// user happens to keep their notes in. This is also the directory
+// the history feature treats as a git repo root — see
+// server/history/routes.ts.
+//
+// Resolution order at module load:
+//   1. process.env.VAULT_DIR, if set (absolute or relative-to-cwd)
+//   2. <cwd>/src/content (dev convention)
+//
 // `let` (not `const`) so tests can swap the content dir via
 // `setContentDir`. All call sites (assertSafePath, filePathFor,
 // folderPathFor) read `CONTENT_DIR` inside their function body, so
 // they pick up the current value on each call.
-export let CONTENT_DIR = path.resolve(process.cwd(), 'src/content')
+function resolveInitialContentDir(): string {
+  const fromEnv = process.env.VAULT_DIR?.trim()
+  if (fromEnv && fromEnv.length > 0) {
+    return path.isAbsolute(fromEnv)
+      ? path.normalize(fromEnv)
+      : path.resolve(process.cwd(), fromEnv)
+  }
+  return path.resolve(process.cwd(), 'src/content')
+}
+
+export let CONTENT_DIR = resolveInitialContentDir()
 
 /**
  * Override the workspace root. Intended for tests that exercise
- * filesystem helpers against a temp dir. Pass the original
- * `path.resolve(process.cwd(), 'src/content')` value to restore.
+ * filesystem helpers against a temp dir, and for runtime config
+ * reload if we ever add one. Pass the result of
+ * `resolveInitialContentDir()` (i.e. the value picked from env /
+ * cwd at module load) to restore.
  */
 export function setContentDir(dir: string): void {
   CONTENT_DIR = dir

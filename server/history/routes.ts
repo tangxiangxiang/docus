@@ -19,19 +19,38 @@ import { Hono } from 'hono'
 import * as git from './git.js'
 import { ensureRepo } from './repo.js'
 import { computeFileDiff } from './diff.js'
+import { CONTENT_DIR } from '../paths.js'
 
 /**
- * Where git runs. The vault root — the directory the user pointed
- * docus at. In dev that's `process.cwd()`. Tests inject a tempdir.
+ * Where git runs — the vault root. By default this is the same
+ * directory the posts API reads from (CONTENT_DIR), so the git
+ * repo lives at the vault root in both dev and production. That
+ * keeps path conventions consistent: `git status --porcelain`
+ * returns paths relative to the vault, which match the `inbox/x.md`
+ * shape the rest of docus uses everywhere (URLs, tab.path, etc.).
+ *
+ * In dev that means the vault gets its own `.git/` inside
+ * `<project>/src/content`, separate from the project's own git
+ * repo at `<project>/.git/`. That's deliberate — vault history
+ * should not include code commits, and code history should not
+ * include unrelated vault snapshots.
+ *
+ * In production, set VAULT_DIR (see ../paths.ts) to point at
+ * wherever the user's vault lives; repoRoot follows automatically.
+ *
+ * Tests inject a tempdir via `setRepoRootForTesting`.
  */
-let _repoRoot: string = process.cwd()
+let _repoRoot: string = CONTENT_DIR
 
 export function setRepoRootForTesting(dir: string): void {
   _repoRoot = dir
 }
 
 export function __resetRepoRootForTesting(): void {
-  _repoRoot = process.cwd()
+  // Mirror the module-load default: read CONTENT_DIR rather than
+  // process.cwd() so resetting after a test still gives us the
+  // production-shaped default.
+  _repoRoot = CONTENT_DIR
 }
 
 function repoRoot(): string {
@@ -81,11 +100,16 @@ history.get('/capability', async (c) => {
   // the history feature shouldn't pay the cost.
   try {
     await ensureRepo(repoRoot())
-  } catch {
-    // init failure is a real problem but we don't want capability
-    // to 500 — report it as "available but not initialized" and
-    // let the user re-trigger via a UI prompt.
-    return c.json({ gitAvailable: true, repoInitialized: false })
+  } catch (e: any) {
+    // Init failure is a real problem but we don't want capability
+    // to 500 — report it as "available but not initialized" with
+    // the underlying error in `initError` so the UI can show a
+    // specific message (e.g. "vault sits inside another git repo").
+    return c.json({
+      gitAvailable: true,
+      repoInitialized: false,
+      initError: e?.message ?? 'init failed',
+    })
   }
   return c.json({ gitAvailable: true, repoInitialized: true })
 })

@@ -20,7 +20,7 @@
 // (different versions format --porcelain slightly differently; we
 // want to catch regressions on upgrade). Mocks would test the mock.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -109,6 +109,49 @@ describe('ensureRepo', () => {
     // ensureRepo should not throw and should not change HEAD
     await ensureRepo(root)
     expect(await git.rawAt(root, 'HEAD', 'foo.md')).toBe('hello')
+  })
+
+  // The vault is meant to be its own top-level git repo, separate
+  // from any project that surrounds it. But for dev convenience
+  // (and for users who actually want a nested vault repo) we don't
+  // refuse — we log a one-time warning and init the nested repo
+  // anyway. Git's built-in `.git/` ignore means the outer repo
+  // doesn't see the inner one's internals as untracked files.
+  it('initializes a nested vault repo when one is requested inside another', async () => {
+    // `root` becomes the OUTER project repo. `vault/` is the vault
+    // subfolder that the user is pointing docus at.
+    await git.initRepo(root)
+    await setUser()
+    await write('README.md', 'project readme')
+    await git.addAndCommit(root, ['README.md'], 'project seed')
+    const vault = path.join(root, 'vault')
+    await fs.mkdir(vault, { recursive: true })
+
+    // Silence the expected console.warn so the test output is clean.
+    // We don't assert on it here — vitest's console interception is
+    // unreliable across module loaders; the side-effect check below
+    // is the load-bearing one.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await ensureRepo(vault)
+    } finally {
+      warnSpy.mockRestore()
+    }
+    // The nested repo was actually created — we check for the
+    // literal `.git/` directory rather than `git.isRepo` (which
+    // uses rev-parse --is-inside-work-tree and would also match
+    // the OUTER repo at `root`).
+    const vaultDotGit = path.join(vault, '.git')
+    let dotGitExists = false
+    try {
+      const st = await fs.stat(vaultDotGit)
+      dotGitExists = st.isDirectory() || st.isFile()
+    } catch {
+      dotGitExists = false
+    }
+    expect(dotGitExists).toBe(true)
+    // Dotfiles made it into the nested repo's working tree.
+    expect((await fs.readFile(path.join(vault, '.gitignore'), 'utf8')).length).toBeGreaterThan(0)
   })
 })
 

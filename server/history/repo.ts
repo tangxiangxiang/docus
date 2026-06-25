@@ -26,6 +26,47 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import * as git from './git.js'
 
+/**
+ * Does `dir` have its OWN `.git/` (or `.git` file, for worktrees
+ * and submodules)? `git.isRepo` uses `rev-parse --is-inside-work-tree`
+ * which returns true for ANY directory inside an outer repo — we
+ * need the stricter "this directory itself is the root" check so
+ * nested-in-another-repo detection can fire before we silently
+ * `git init` a nested repo.
+ */
+async function hasOwnGitDir(dir: string): Promise<boolean> {
+  try {
+    const st = await fs.stat(path.join(dir, '.git'))
+    return st.isDirectory() || st.isFile()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Is `dir` inside an OUTER git working tree (i.e. an ancestor
+ * directory has its own `.git/`, distinct from any `.git/` directly
+ * inside `dir`)? Nested repos are legal in git but usually
+ * accidental — in our case they mean the user pointed VAULT_DIR
+ * at a subfolder of a project that already has its own git
+ * history, and silently `git init`-ing inside would split their
+ * vault history across two unrelated repos.
+ *
+ * Returns the outer repo root path if one is found, otherwise
+ * null. We walk up the directory tree looking for a `.git/`
+ * sibling that is NOT inside `dir` itself.
+ */
+async function outerRepoRoot(dir: string): Promise<string | null> {
+  let cur = path.resolve(dir)
+  const start = cur
+  while (true) {
+    if (cur !== start && await hasOwnGitDir(cur)) return cur
+    const parent = path.dirname(cur)
+    if (parent === cur) return null
+    cur = parent
+  }
+}
+
 const GITIGNORE_LINES = [
   '# docus runtime',
   'data/',
@@ -62,7 +103,16 @@ const GITATTRIBUTES = ''
 /**
  * Idempotent repo initialization. Steps:
  *   1. If already a git repo, do nothing.
- *   2. Otherwise: ensure `.gitignore` and `.gitattributes` exist
+ *   2. If the directory sits inside an OUTER git repo, log a one-
+ *      time warning and proceed anyway. Git treats the nested
+ *      repo as a self-contained unit (the outer one ignores the
+ *      inner `.git/` by default and only sees an untracked
+ *      directory at the vault path), so vault history stays
+ *      separate from the surrounding project's history. The
+ *      warning tells the user about the unusual layout so they
+ *      can fix it (move VAULT_DIR outside the project) if they
+ *      didn't intend the nesting.
+ *   3. Otherwise: ensure `.gitignore` and `.gitattributes` exist
  *      (create if missing, leave existing content alone — the user
  *      may have customized them), then `git init`.
  *
@@ -71,7 +121,19 @@ const GITATTRIBUTES = ''
  * were trying to ignore.
  */
 export async function ensureRepo(repoRoot: string): Promise<void> {
-  if (await git.isRepo(repoRoot)) return
+  // Tight "this directory has its own .git/" check rather than
+  // git.isRepo (which uses rev-parse --is-inside-work-tree and
+  // returns true for any nested directory of an outer repo).
+  if (await hasOwnGitDir(repoRoot)) return
+  const outer = await outerRepoRoot(repoRoot)
+  if (outer) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[docus] vault ${repoRoot} is inside another git repository at ${outer}. `
+      + 'Creating a nested vault repo. Set VAULT_DIR to a directory '
+      + 'outside the surrounding project if this was not intentional.',
+    )
+  }
   await writeIfMissing(path.join(repoRoot, '.gitignore'), GITIGNORE_LINES.join('\n'))
   await writeIfMissing(path.join(repoRoot, '.gitattributes'), GITATTRIBUTES)
   await git.initRepo(repoRoot)

@@ -26,6 +26,15 @@ dist-ssr
 # Local data directory (SQLite DB lives here at runtime)
 data/
 
+# Vault repo: when the dev default CONTENT_DIR is `src/content/`,
+# the history feature initializes a git repo there. These files
+# are per-developer state — committing them would leak one user's
+# vault history into the project repo. Production deploys with
+# VAULT_DIR set elsewhere won't see these paths.
+src/content/.git/
+src/content/.gitignore
+src/content/.gitattributes
+
 # Per-developer secrets (see .env.example for the template)
 .env
 .env.local

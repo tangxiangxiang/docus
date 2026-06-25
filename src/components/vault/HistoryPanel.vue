@@ -194,7 +194,10 @@ onMounted(() => {
       <div class="empty-hint">Install git and add it to your PATH, then reload.</div>
     </div>
     <div v-else-if="h.capability.value && !h.capability.value.repoInitialized" class="history-empty">
-      <div class="empty-title">Initializing vault…</div>
+      <div class="empty-title">
+        {{ h.capability.value.initError ? 'Vault git unavailable' : 'Initializing vault…' }}
+      </div>
+      <div v-if="h.capability.value.initError" class="empty-hint">{{ h.capability.value.initError }}</div>
     </div>
 
     <template v-else>
