@@ -609,6 +609,12 @@ main.container {
   min-height: 0;
 }
 .history-section + .history-section { border-top: 1px solid var(--vs-border); }
+/* The Timeline is the long list — let it grow to consume the
+   remaining panel height so a vault with many commits gets a
+   properly scrolling region instead of a hard-capped 240px box
+   with empty space below. The Changes list keeps its cap because
+   a huge dirty set should not push the timeline off-screen. */
+.history-section:has(.history-timeline) { flex: 1; }
 .history-section-title {
   flex-shrink: 0;
   padding: 6px 10px;
@@ -619,13 +625,20 @@ main.container {
   color: var(--vs-text-3);
   background: var(--vs-bg-1);
 }
-.history-dirty,
-.history-timeline {
+.history-dirty {
   list-style: none;
   margin: 0;
   padding: 0;
   overflow-y: auto;
   max-height: 240px;
+  min-height: 0;
+}
+.history-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
   min-height: 0;
 }
 .history-dirty-row {
