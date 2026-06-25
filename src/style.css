@@ -797,6 +797,7 @@ main.container {
 
 .diff-table {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   font-family: var(--mono);
   font-size: 0.78rem;
@@ -805,7 +806,11 @@ main.container {
 }
 .diff-row {
   display: grid;
-  grid-template-columns: 56px 1fr 56px 1fr;
+  /* `minmax(0, 1fr)` (not bare `1fr`) lets the text columns shrink
+     below their content's intrinsic min width — otherwise an
+     unbreakable long line (URL, code fence) blows out the column
+     and pushes the gutter / right column off-screen. */
+  grid-template-columns: 56px minmax(0, 1fr) 56px minmax(0, 1fr);
   align-items: stretch;
 }
 .diff-row-head {
@@ -844,7 +849,7 @@ main.container {
 
 .diff-word { padding: 0; }
 .diff-word-add { background: color-mix(in srgb, #16a34a 28%, transparent); border-radius: 2px; }
-.diff-word-remove { background: color-mix(in srgb, #dc2626 28%, transparent; border-radius: 2px); }
+.diff-word-remove { background: color-mix(in srgb, #dc2626 28%, transparent); border-radius: 2px; }
 .diff-word-equal { background: transparent; }
 
 /* History mode disables the editor-area's normal padding so the
@@ -1555,6 +1560,14 @@ main.container {
    graph would only get the lower 1fr row, leaving a 36px blank
    band at the top. */
 .editor-area.is-graph {
+  grid-template-rows: minmax(0, 1fr);
+}
+/* History mode needs the same collapse: EditorTabs is v-if'd out,
+   and the diff content auto-places into the first grid cell, which
+   is the 36px tab row in the base grid. Without this override the
+   DiffView is squashed into 36px (header takes all of it) and the
+   diff table has zero height. */
+.editor-area.is-history {
   grid-template-rows: minmax(0, 1fr);
 }
 
