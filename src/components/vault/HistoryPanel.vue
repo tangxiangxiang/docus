@@ -26,10 +26,19 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useHistory } from '../../composables/vault/useHistory.js'
 import { getLiveTabs } from '../../composables/vault/useEditorTabs.js'
 import { useToast } from '../../composables/useToast.js'
-import type { CommitRecord } from '../../lib/history-api.js'
+import { WORKTREE_REF, type CommitRecord } from '../../lib/history-api.js'
 
 const h = useHistory()
 const toast = useToast()
+
+/* True if `path` appears in the dirty list — i.e. the working tree
+   has edits not yet reflected in HEAD. Used by the row click / mount
+   flows to pick the right diff defaults: dirty files diff against the
+   working tree (so the user sees their uncommitted changes), clean
+   files diff against HEAD~1 (so the user sees the last commit). */
+function isDirty(path: string): boolean {
+  return h.status.value.some((e) => e.path === path)
+}
 
 /* Set of dirty paths the user has ticked. Plain Set (not reactive)
    for cheap toggle. The button label and enabled-state are derived
@@ -68,11 +77,14 @@ function onToggleDirty(path: string) {
 }
 
 function onRowClick(path: string) {
-  // The diff is between the previous commit and the current
-  // working tree (or HEAD if the file is clean at HEAD). For now
-  // we use HEAD^..HEAD as a sensible default — clicking a file
-  // shows the "last commit's change to that file" diff. The user
-  // can pick a different old ref from the timeline.
+  // Clicking a dirty file should show the user's uncommitted edits,
+  // not "what the last commit did". Diff HEAD vs the working tree so
+  // the +1s they just typed land in the "new" column. For a clean
+  // file, fall back to HEAD~1..HEAD — there's nothing unsaved to show.
+  if (isDirty(path)) {
+    void h.selectFile(path, { oldRef: 'HEAD', newRef: WORKTREE_REF })
+    return
+  }
   void h.selectFile(path, { oldRef: 'HEAD~1', newRef: 'HEAD' })
 }
 
@@ -138,14 +150,20 @@ onMounted(() => autoresize())
 
 /* On mount, if a tab is open and we have a clean baseline, default
    the selected file to the active tab so the diff area shows
-   something useful immediately. */
+   something useful immediately. For dirty files we diff HEAD vs the
+   working tree (so the user's uncommitted edits show up); for clean
+   files we fall back to the last commit (HEAD~1..HEAD). */
 onMounted(() => {
   const live = getLiveTabs()
   if (live && live.value.length > 0) {
     const active = live.value.find((t) => t.path)
     const candidate = active?.path
     if (candidate && !h.selectedFile.value) {
-      void h.selectFile(candidate, { oldRef: 'HEAD~1', newRef: 'HEAD' })
+      if (isDirty(candidate)) {
+        void h.selectFile(candidate, { oldRef: 'HEAD', newRef: WORKTREE_REF })
+      } else {
+        void h.selectFile(candidate, { oldRef: 'HEAD~1', newRef: 'HEAD' })
+      }
     }
   }
 })

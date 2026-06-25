@@ -343,6 +343,30 @@ describe('rawAt', () => {
     await git.addAndCommit(root, ['b.md'], 'add b')
     expect(await git.rawAt(root, r1.sha, 'b.md')).toBeNull()
   })
+
+  // The WORKTREE ref is a sentinel meaning "the file as it sits on
+  // disk right now", distinct from any committed version. The diff
+  // route uses it so users can see their uncommitted edits without
+  // having to stage + commit first.
+  it('returns the on-disk content for the WORKTREE sentinel', async () => {
+    await write('note.md', 'committed version')
+    await git.addAndCommit(root, ['note.md'], 'seed')
+    // Overwrite on disk WITHOUT committing — the working tree now
+    // diverges from HEAD. WORKTREE should reflect the on-disk bytes.
+    await write('note.md', 'uncommitted edits')
+    expect(await git.rawAt(root, git.WORKTREE_REF, 'note.md')).toBe('uncommitted edits')
+    // HEAD still reports the committed version, so the two sides
+    // actually differ (which is what makes the worktree-vs-HEAD
+    // diff meaningful).
+    expect(await git.rawAt(root, 'HEAD', 'note.md')).toBe('committed version')
+  })
+
+  it('returns null for WORKTREE when the file does not exist on disk', async () => {
+    // No write() — the file doesn't exist in the working tree at all.
+    // Same contract as a missing git ref: null, not throw, so the
+    // diff endpoint can render the "did not exist" path uniformly.
+    expect(await git.rawAt(root, git.WORKTREE_REF, 'ghost.md')).toBeNull()
+  })
 })
 
 describe('CRLF safety', () => {

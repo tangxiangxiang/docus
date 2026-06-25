@@ -24,10 +24,19 @@
 import { computed } from 'vue'
 import { useHistory } from '../../composables/vault/useHistory.js'
 import { useToast } from '../../composables/useToast.js'
-import type { DiffOp } from '../../lib/history-api.js'
+import { WORKTREE_REF, type DiffOp } from '../../lib/history-api.js'
 
 const h = useHistory()
 const toast = useToast()
+
+/* Refs come back from the API as either a 7-char sha prefix, the
+   literal "HEAD", "HEAD~1", or the WORKTREE sentinel. Render them
+   uniformly — sha-prefix for git refs, "Working tree" for the
+   sentinel — so the diff header reads naturally. */
+function refLabel(ref: string): string {
+  if (ref === WORKTREE_REF) return 'Working tree'
+  return ref.slice(0, 7)
+}
 
 /**
  * The restore button only makes sense when the two refs actually
@@ -41,18 +50,28 @@ async function onRestore() {
   const file = h.selectedFile.value
   const ref = h.selectedOldRef.value
   if (!file) return
+  // WORKTREE is a sentinel, not a real git ref — restoring to it
+  // would mean "overwrite the file with the working tree version",
+  // which is a no-op (the working tree IS the working tree). Block
+  // it explicitly so the user gets a clear error instead of a
+  // confusing git stderr.
+  if (ref === WORKTREE_REF) {
+    toast.error('Cannot restore to the working tree — pick a commit or HEAD as the old side.')
+    return
+  }
+  const label = refLabel(ref)
   // Native confirm: this is destructive and we don't want to ship a
   // modal component just for this. The user has the diff on screen
   // already, so they know what they're about to overwrite.
   const ok = typeof window !== 'undefined'
     && window.confirm(
-      `Overwrite "${file}" with the ${ref.slice(0, 7)} version?\n\n`
+      `Overwrite "${file}" with the ${label} version?\n\n`
       + 'Any unsaved edits to this file will be lost.',
     )
   if (!ok) return
   const success = await h.restoreFile(file, ref)
   if (success) {
-    toast.success(`Restored ${file} to ${ref.slice(0, 7)}`)
+    toast.success(`Restored ${file} to ${label}`)
   } else {
     toast.error(`Restore failed: ${h.error.value ?? 'unknown error'}`)
   }
@@ -133,24 +152,26 @@ const hasDiff = computed(() => h.selectedFile.value !== null)
           <span class="diff-stat-eq">{{ stats.equal }} unchanged</span>
         </div>
         <div class="diff-refs">
-          <span class="diff-ref">{{ h.selectedOldRef.value.slice(0, 7) }}</span>
+          <span class="diff-ref">{{ refLabel(h.selectedOldRef.value) }}</span>
           <span class="diff-ref-sep">→</span>
-          <span class="diff-ref">{{ h.selectedNewRef.value.slice(0, 7) }}</span>
+          <span class="diff-ref">{{ refLabel(h.selectedNewRef.value) }}</span>
         </div>
         <!-- Restore: overwrite the on-disk file with the OLD ref's
              version. Only shown when there's something to restore
              (i.e. the old side differs from the new side — when
              they're identical the diff is empty and the button would
              be a no-op anyway, but we still gate it for clarity).
-             We confirm with a native dialog because this is genuinely
-             destructive: the working tree is overwritten and any
-             unsaved local edits to that file are lost. -->
+             Hidden when the old ref is WORKTREE (a no-op restore
+             target — see onRestore). We confirm with a native
+             dialog because this is genuinely destructive: the
+             working tree is overwritten and any unsaved local
+             edits to that file are lost. -->
         <div class="diff-actions">
           <button
-            v-if="canRestore"
+            v-if="canRestore && h.selectedOldRef.value !== WORKTREE_REF"
             class="diff-restore-btn"
             :disabled="h.busy.value"
-            :title="`Overwrite ${h.selectedFile.value} with the ${h.selectedOldRef.value.slice(0, 7)} version`"
+            :title="`Overwrite ${h.selectedFile.value} with the ${refLabel(h.selectedOldRef.value)} version`"
             @click="onRestore"
           >Restore old version</button>
         </div>

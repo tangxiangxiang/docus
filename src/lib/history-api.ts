@@ -36,6 +36,15 @@ export interface CommitRecord {
 }
 
 /**
+ * Sentinel ref meaning "the file as it currently sits on disk,
+ * unsaved/uncommitted". The diff endpoint resolves this to a direct
+ * read of the working tree; the value is never sent to `git` itself
+ * (so no risk of injection). Mirrors `server/history/git.ts`'s
+ * `WORKTREE_REF`.
+ */
+export const WORKTREE_REF = 'WORKTREE'
+
+/**
  * A single line of a diff. `oldLine` is 1-based and null for an
  * add-only row; `newLine` is 1-based and null for a remove-only row.
  * `words` is the optional word-level breakdown for highlight

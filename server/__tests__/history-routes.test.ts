@@ -209,6 +209,23 @@ describe('GET /api/history/diff', () => {
     const r = await call('GET', '/diff?path=x')
     expect(r.status).toBe(400)
   })
+
+  // The WORKTREE ref is a sentinel meaning "the file as it sits on
+  // disk right now". Diffing HEAD..WORKTREE lets the user see their
+  // uncommitted edits without staging + committing first. The route
+  // passes the sentinel through to rawAt, which reads from disk.
+  it('returns the worktree-vs-HEAD diff via the WORKTREE sentinel', async () => {
+    await write('note.md', 'one\ntwo\nthree\n')
+    await call('POST', '/commits', { paths: ['note.md'], message: 'v1' })
+    // Overwrite on disk without committing — this is the user's
+    // uncommitted edit, exactly what the diff should surface.
+    await write('note.md', 'one\nTWO\nthree\nfour\n')
+    const r = await call('GET', '/diff?path=note.md&old=HEAD&new=WORKTREE')
+    expect(r.status).toBe(200)
+    const body = await r.json() as { diff: { ops: { op: string; text: string }[]; stats: { added: number; removed: number } } }
+    expect(body.diff.stats.added).toBe(2)
+    expect(body.diff.stats.removed).toBe(1)
+  })
 })
 
 describe('POST /api/history/commits', () => {
@@ -327,6 +344,20 @@ describe('POST /api/history/restore', () => {
     expect(r.status).toBe(400)
     const body = await r.json() as { error: string }
     expect(body.error).toMatch(/ref/i)
+  })
+
+  // WORKTREE is a sentinel meaning "the file as it sits on disk".
+  // Restoring TO the working tree is meaningless (you can't restore
+  // to the thing you're overwriting), so the route rejects it
+  // explicitly rather than letting it fall through to git checkout
+  // and produce a confusing "invalid reference" error.
+  it('returns 400 when ref is the WORKTREE sentinel', async () => {
+    await write('note.md', 'committed\n')
+    await call('POST', '/commits', { paths: ['note.md'], message: 'seed' })
+    const r = await call('POST', '/restore', { path: 'note.md', ref: 'WORKTREE' })
+    expect(r.status).toBe(400)
+    const body = await r.json() as { error: string }
+    expect(body.error).toMatch(/working tree/i)
   })
 
   it('returns 404 when the file does not exist at the requested ref', async () => {

@@ -21,12 +21,23 @@
 // for end-to-end coverage anyway).
 
 import { spawn } from 'node:child_process'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
 
 export type RunResult = {
   status: number
   stdout: string
   stderr: string
 }
+
+/**
+ * Sentinel ref meaning "the file as it currently sits on disk,
+ * unsaved/uncommitted". Used by the diff route so users can see
+ * their pending edits vs the last committed version without having
+ * to stage and commit first. NOT a valid ref for `git checkout` —
+ * the restore route catches that and returns a 4xx.
+ */
+export const WORKTREE_REF = 'WORKTREE'
 
 /**
  * Error thrown when `git` itself cannot be spawned (binary missing).
@@ -286,9 +297,22 @@ function findHeaderEnd(block: string): number {
 export async function rawAt(
   repoRoot: string,
   ref: string,
-  path: string,
+  filePath: string,
 ): Promise<string | null> {
-  const r = await run(repoRoot, ['show', `${ref}:${path}`])
+  // "WORKTREE" is a sentinel meaning "the file as it sits on disk
+  // right now, before staging or committing". It's not a real git
+  // ref — we read the file from the working tree directly. Used by
+  // the diff route so the user can see their uncommitted edits
+  // without having to stage + commit first.
+  if (ref === WORKTREE_REF) {
+    try {
+      return await fs.readFile(path.join(repoRoot, filePath), 'utf8')
+    } catch (e: any) {
+      if (e?.code === 'ENOENT') return null
+      throw e
+    }
+  }
+  const r = await run(repoRoot, ['show', `${ref}:${filePath}`])
   if (r.status === 0) return r.stdout
   // Three error patterns mean "no such (ref, path) tuple". We treat
   // all of them as null rather than throwing because the caller —

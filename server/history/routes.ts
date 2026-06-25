@@ -237,6 +237,13 @@ history.post('/restore', async (c) => {
   }
   try {
     await ensureRepo(repoRoot())
+    // WORKTREE is a sentinel meaning "the file as it sits on disk".
+    // Restoring TO the working tree is a no-op (you can't restore to
+    // the thing you're overwriting). Reject explicitly so the caller
+    // gets a clean 400 instead of a confusing git stderr.
+    if (body.ref === git.WORKTREE_REF) {
+      return bad(c, 'cannot restore to the working tree', 400)
+    }
     // Pre-check: confirm the file exists at that ref so we can return
     // a clean 404 instead of a generic git error. Cheaper than parsing
     // git checkout's stderr in every error path.
