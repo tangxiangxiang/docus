@@ -693,13 +693,40 @@ main.container {
   text-overflow: ellipsis;
 }
 .history-commit-files {
-  margin-top: 2px;
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.history-commit-file-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--vs-bg-3);
+  border: 1px solid transparent;
+  color: var(--vs-text-2);
   font-family: var(--mono);
-  font-size: 0.7rem;
-  color: var(--vs-text-3);
+  font-size: 0.68rem;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  /* Long paths need ellipsis but stay clickable across the full chip
+     width. Combined with the row's flex-wrap, multi-file commits
+     reflow gracefully even on narrow sidebars. */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.history-commit-file-chip:hover {
+  background: color-mix(in srgb, var(--vs-accent) 18%, var(--vs-bg-3));
+  color: var(--vs-text-1);
+}
+.history-commit-file-chip.selected {
+  background: color-mix(in srgb, var(--vs-accent) 30%, var(--vs-bg-3));
+  border-color: var(--vs-accent);
+  color: var(--vs-text-1);
 }
 .history-error {
   flex-shrink: 0;

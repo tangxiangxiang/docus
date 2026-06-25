@@ -77,24 +77,32 @@ function onRowClick(path: string) {
 }
 
 function onCommitClick(sha: string) {
-  // Make this commit the OLD side; keep new=HEAD. The user can
-  // reverse direction with the swap button on the DiffView.
-  if (h.selectedFile.value) {
-    void h.selectFile(h.selectedFile.value, { oldRef: sha, newRef: 'HEAD' })
-    return
-  }
-  // No file selected yet — rather than silently stashing the ref
-  // and leaving the diff area stuck on "No file selected", pick
-  // the first file in this commit (or, failing that, the first
-  // dirty file) and load its diff. Clicking a commit should
-  // always produce a visible result.
+  // Clicking a commit should produce a diff the user actually wanted.
+  // With no file selected, pick the first file in this commit (or the
+  // first dirty file as a last resort). With a file selected, keep it
+  // if THIS commit actually touched it — otherwise the diff would
+  // render as an empty "no changes" page and look broken. In that
+  // case, switch to the commit's own first file so the user sees
+  // what the commit did.
   const commit = h.log.value.find((c) => c.sha === sha) as CommitRecord | undefined
-  const candidate = commit?.files[0] ?? h.status.value[0]?.path
+  const current = h.selectedFile.value
+  const inCommit = current && commit?.files.includes(current)
+  const candidate = inCommit
+    ? current
+    : (commit?.files[0] ?? h.status.value[0]?.path ?? current)
   if (!candidate) {
     toast.error('Open a file or make a change first — no file to diff.')
     return
   }
   void h.selectFile(candidate, { oldRef: sha, newRef: 'HEAD' })
+}
+
+/* Click on a specific file chip inside a commit row: open that
+   file's diff at this commit. The chip's @click.stop prevents the
+   row's onCommitClick from also firing (which would re-select
+   files[0] and overwrite the user's intent). */
+function onCommitFileClick(sha: string, path: string) {
+  void h.selectFile(path, { oldRef: sha, newRef: 'HEAD' })
 }
 
 function timeAgo(iso: string): string {
@@ -229,7 +237,28 @@ onMounted(() => {
               <span class="history-commit-when">{{ timeAgo(c.date) }}</span>
             </div>
             <div class="history-commit-subject" :title="c.subject">{{ c.subject }}</div>
-            <div v-if="c.files.length" class="history-commit-files">{{ c.files.join(', ') }}</div>
+            <!-- One chip per file. Each chip opens the diff for THAT
+                 specific file at this commit; @click.stop prevents
+                 the row-level handler (which would re-select files[0])
+                 from also firing. The "selected" highlight is keyed
+                 on (sha, path) — not just path — because the same
+                 file appears in many commits and only one of those
+                 chips represents the diff currently on screen. -->
+            <div v-if="c.files.length" class="history-commit-files">
+              <button
+                v-for="path in c.files"
+                :key="path"
+                type="button"
+                class="history-commit-file-chip"
+                :class="{
+                  selected:
+                    h.selectedFile.value === path
+                    && h.selectedOldRef.value === c.sha,
+                }"
+                :title="`Show diff of ${path} at ${c.sha.slice(0, 7)}`"
+                @click.stop="onCommitFileClick(c.sha, path)"
+              >{{ path }}</button>
+            </div>
           </li>
         </ul>
       </div>
