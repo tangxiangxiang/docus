@@ -525,7 +525,7 @@ main.container {
 .history-header {
   flex-shrink: 0;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   padding: 0 10px;
   height: 36px;
@@ -609,12 +609,14 @@ main.container {
   min-height: 0;
 }
 .history-section + .history-section { border-top: 1px solid var(--vs-border); }
-/* The Timeline is the long list — let it grow to consume the
-   remaining panel height so a vault with many commits gets a
-   properly scrolling region instead of a hard-capped 240px box
-   with empty space below. The Changes list keeps its cap because
-   a huge dirty set should not push the timeline off-screen. */
-.history-section:has(.history-timeline) { flex: 1; }
+/* The Changes section stays at a fixed 220px so a vault with many
+   dirty files doesn't push the timeline off-screen. The Timeline
+   section grows with flex: 1 to consume whatever height remains
+   in the panel — that's the long list users scroll through, and
+   the section title row stays fixed via flex-shrink: 0 above. The
+   internal <ul> in each section becomes the scroll region. */
+.history-section:has(.history-dirty) { flex: 0 0 220px; }
+.history-section:has(.history-timeline) { flex: 1 1 auto; min-height: 220px; }
 .history-section-title {
   flex-shrink: 0;
   padding: 6px 10px;
@@ -625,14 +627,7 @@ main.container {
   color: var(--vs-text-3);
   background: var(--vs-bg-1);
 }
-.history-dirty {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  max-height: 240px;
-  min-height: 0;
-}
+.history-dirty,
 .history-timeline {
   list-style: none;
   margin: 0;
