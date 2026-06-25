@@ -75,6 +75,10 @@ FROM node:22-bookworm-slim AS runtime
 
 # tini 提供正确的 SIGTERM/SIGINT 处理，这样 `docker stop` 时 Node 进程不会被半路截断。
 # ca-certificates 让 Node 调用 Anthropic API 时能正常校验 TLS 证书。
+# git 是 server/history/* 功能的运行时依赖 —— vault 的本地 history 面板通过
+# `spawn('git', ...)` 调 git 子命令(rev-parse / log / show / add / commit /
+# checkout),不在 runtime 装 git 的话 history 路由会全部 503 (`GitUnavailableError`)。
+# bookworm-slim 上 git 包 ~21MB,换来 history 功能完整可用,值得。
 # 同上：apt 源换成阿里云镜像，覆盖所有可能的源文件位置。
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -88,7 +92,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         fi; \
     done; \
     apt-get update \
- && apt-get install -y --no-install-recommends tini ca-certificates
+ && apt-get install -y --no-install-recommends tini ca-certificates git
 
 ENV NODE_ENV=production \
     PORT=3000 \
