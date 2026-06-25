@@ -25,8 +25,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useHistory } from '../../composables/vault/useHistory.js'
 import { getLiveTabs } from '../../composables/vault/useEditorTabs.js'
+import { useToast } from '../../composables/useToast.js'
+import type { CommitRecord } from '../../lib/history-api.js'
 
 const h = useHistory()
+const toast = useToast()
 
 /* Set of dirty paths the user has ticked. Plain Set (not reactive)
    for cheap toggle. The button label and enabled-state are derived
@@ -76,13 +79,22 @@ function onRowClick(path: string) {
 function onCommitClick(sha: string) {
   // Make this commit the OLD side; keep new=HEAD. The user can
   // reverse direction with the swap button on the DiffView.
-  if (!h.selectedFile.value) {
-    // No file selected yet — just remember the ref so the next
-    // file pick will use it.
-    h.selectedOldRef.value = sha
+  if (h.selectedFile.value) {
+    void h.selectFile(h.selectedFile.value, { oldRef: sha, newRef: 'HEAD' })
     return
   }
-  void h.selectFile(h.selectedFile.value, { oldRef: sha, newRef: 'HEAD' })
+  // No file selected yet — rather than silently stashing the ref
+  // and leaving the diff area stuck on "No file selected", pick
+  // the first file in this commit (or, failing that, the first
+  // dirty file) and load its diff. Clicking a commit should
+  // always produce a visible result.
+  const commit = h.log.value.find((c) => c.sha === sha) as CommitRecord | undefined
+  const candidate = commit?.files[0] ?? h.status.value[0]?.path
+  if (!candidate) {
+    toast.error('Open a file or make a change first — no file to diff.')
+    return
+  }
+  void h.selectFile(candidate, { oldRef: sha, newRef: 'HEAD' })
 }
 
 function timeAgo(iso: string): string {
