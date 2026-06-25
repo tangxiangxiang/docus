@@ -610,13 +610,20 @@ main.container {
 }
 .history-section + .history-section { border-top: 1px solid var(--vs-border); }
 /* The Changes section stays at a fixed 220px so a vault with many
-   dirty files doesn't push the timeline off-screen. The Timeline
-   section grows with flex: 1 to consume whatever height remains
-   in the panel — that's the long list users scroll through, and
-   the section title row stays fixed via flex-shrink: 0 above. The
-   internal <ul> in each section becomes the scroll region. */
-.history-section:has(.history-dirty) { flex: 0 0 220px; }
-.history-section:has(.history-timeline) { flex: 1 1 auto; min-height: 220px; }
+   dirty files doesn't push the timeline off-screen — and so the
+   section keeps its height even when status is empty (no <ul>
+   rendered, only the .history-empty-inline placeholder). The
+   Timeline section grows with flex: 1 to consume whatever height
+   remains in the panel — that's the long list users scroll through,
+   and the section title row stays fixed via flex-shrink: 0 above.
+   The internal <ul> in each section becomes the scroll region.
+
+   Targeted via explicit .history-section-changes / -timeline classes
+   rather than :has(.history-dirty) — the empty-state branch doesn't
+   render <ul>, so :has() would miss it and the Changes section
+   would collapse to its title + placeholder's natural height. */
+.history-section-changes { flex: 0 0 220px; }
+.history-section-timeline { flex: 1 1 auto; min-height: 220px; }
 .history-section-title {
   flex-shrink: 0;
   padding: 6px 10px;

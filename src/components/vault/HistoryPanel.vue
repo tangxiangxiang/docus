@@ -96,6 +96,13 @@ function onCommitClick(sha: string) {
   // render as an empty "no changes" page and look broken. In that
   // case, switch to the commit's own first file so the user sees
   // what the commit did.
+  //
+  // The diff compares `sha~1` (the commit's parent) vs `sha` — i.e.
+  // "what THIS commit changed". That's the standard convention in
+  // GitHub / SourceTree / VSCode: clicking a commit row shows that
+  // commit's own change, NOT the cumulative delta from sha up to
+  // HEAD. (The cumulative view is reachable by clicking the most
+  // recent commit, which is HEAD~1..HEAD for that file.)
   const commit = h.log.value.find((c) => c.sha === sha) as CommitRecord | undefined
   const current = h.selectedFile.value
   const inCommit = current && commit?.files.includes(current)
@@ -106,15 +113,16 @@ function onCommitClick(sha: string) {
     toast.error('Open a file or make a change first — no file to diff.')
     return
   }
-  void h.selectFile(candidate, { oldRef: sha, newRef: 'HEAD' })
+  void h.selectFile(candidate, { oldRef: `${sha}~1`, newRef: sha })
 }
 
 /* Click on a specific file chip inside a commit row: open that
    file's diff at this commit. The chip's @click.stop prevents the
    row's onCommitClick from also firing (which would re-select
-   files[0] and overwrite the user's intent). */
+   files[0] and overwrite the user's intent). Same refs as the row
+   click — show that commit's own change, not the cumulative diff. */
 function onCommitFileClick(sha: string, path: string) {
-  void h.selectFile(path, { oldRef: sha, newRef: 'HEAD' })
+  void h.selectFile(path, { oldRef: `${sha}~1`, newRef: sha })
 }
 
 function timeAgo(iso: string): string {
@@ -213,7 +221,7 @@ onMounted(() => {
       </div>
 
       <!-- Changes -->
-      <div class="history-section">
+      <div class="history-section history-section-changes">
         <div class="history-section-title">Changes ({{ h.status.value.length }})</div>
         <div v-if="h.status.value.length === 0" class="history-empty-inline">No changes.</div>
         <ul v-else class="history-dirty">
@@ -240,7 +248,7 @@ onMounted(() => {
       </div>
 
       <!-- Timeline -->
-      <div class="history-section">
+      <div class="history-section history-section-timeline">
         <div class="history-section-title">Timeline ({{ h.log.value.length }})</div>
         <div v-if="h.log.value.length === 0" class="history-empty-inline">No commits yet.</div>
         <ul v-else class="history-timeline">
