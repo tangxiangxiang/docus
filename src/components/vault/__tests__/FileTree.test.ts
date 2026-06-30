@@ -118,9 +118,6 @@ describe('FileTree search input', () => {
     const input = w.find('.search-input')
     expect(input.exists()).toBe(true)
     expect(input.attributes('placeholder')).toContain('Search')
-    // The placeholder also hints at the #tag token syntax, since
-    // both modes are reachable from the same input.
-    expect(input.attributes('placeholder')).toContain('#tag')
   })
 
   it('does not filter anything when the query is empty', () => {

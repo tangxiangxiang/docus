@@ -60,32 +60,6 @@ export function canCreateChild(path: string | null | undefined): boolean {
   return !isInZettel(path)
 }
 
-/** Hint text shown in the context menu when a row is read-only. */
-export function readonlyHintLabel(path: string | null | undefined): string {
-  const r = readonlyReason(path)
-  if (r === 'zettel') return 'Zettel · 永久笔记'
-  // Protected root: name is pinned, but children are still editable. The
-  // hint should reflect that, otherwise the user thinks the folder is
-  // fully locked (some old versions of the menu did show no actions at
-  // all here, which was the bug this hint was rewritten to undo). The
-  // wording deliberately avoids the substrings "重命名" / "删除" so the
-  // hint can sit next to a menu whose other rows do/don't contain those
-  // actions without producing a confusing duplicate-token visual.
-  if (r === 'root') {
-    return isFolderLike(path)
-      ? '顶层目录 · 名称已固定,可新建子项'
-      : '顶层目录 · 名称已固定'
-  }
-  return ''
-}
-
-// Internal: only the three protected root *names* (inbox/literature/
-// zettel) get the folder-shaped hint. Files under a protected root are
-// normal user content — they don't get this hint at all.
-function isFolderLike(path: string | null | undefined): boolean {
-  return !!path && PROTECTED_ROOTS.has(path)
-}
-
 /**
  * User-facing error message for a blocked write op on `path`, or null if the
  * op is allowed. Callers do `if (msg) { toast.error(msg); return }` — this
