@@ -344,6 +344,56 @@ export async function rawAt(
 
 // --- Commit ----------------------------------------------------------------
 
+/**
+ * Make sure the vault repo has a `user.name` + `user.email` configured
+ * before the first commit. A bare `git init` (which is what
+ * `initRepo` does) does NOT set a committer identity — git only
+ * complains when you actually try to commit, so the failure surfaces
+ * late and far from the cause.
+ *
+ * We use local config (the default scope of `git config`, no
+ * `--global`) so:
+ *   - the identity is per-vault, not per-user — a single `node`
+ *     container user can host multiple vaults with different
+ *     identities.
+ *   - we don't touch `~/.gitconfig` inside the container, which
+ *     would be lost on every redeploy anyway.
+ *   - the local config wins over any global config (git precedence:
+ *     local > global > system), so the env-var override actually
+ *     applies even on dev machines that have a global identity set.
+ *
+ * Identity source, in priority order:
+ *   1. Whatever is already in the repo's LOCAL config (preserved —
+ *      a vault cloned from another machine keeps its real author).
+ *   2. GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL env vars (so operators can
+ *      pick a per-host identity without rebuilding the image).
+ *   3. "docus" / "docus@localhost" as a last-resort default.
+ *
+ * `git config --local --get` exits non-zero on a missing key — that's
+ * the "is local config set?" check. We intentionally do NOT use
+ * `--get` (effective) for the check, because a global identity set
+ * on the host would mask the env-var override path on dev machines.
+ */
+async function ensureAuthorIdentity(repoRoot: string): Promise<void> {
+  const name = process.env.GIT_AUTHOR_NAME?.trim() || 'docus'
+  const email = process.env.GIT_AUTHOR_EMAIL?.trim() || 'docus@localhost'
+
+  const haveName = (await run(repoRoot, ['config', '--local', '--get', 'user.name'])).status === 0
+  if (!haveName) {
+    const r = await run(repoRoot, ['config', '--local', 'user.name', name])
+    if (r.status !== 0) {
+      throw new Error(`git config user.name failed: ${r.stderr.trim()}`)
+    }
+  }
+  const haveEmail = (await run(repoRoot, ['config', '--local', '--get', 'user.email'])).status === 0
+  if (!haveEmail) {
+    const r = await run(repoRoot, ['config', '--local', 'user.email', email])
+    if (r.status !== 0) {
+      throw new Error(`git config user.email failed: ${r.stderr.trim()}`)
+    }
+  }
+}
+
 export type CommitResult = {
   sha: string
   filesCommitted: string[]
@@ -369,6 +419,18 @@ export async function addAndCommit(
   if (message.trim().length === 0) {
     throw new Error('addAndCommit: message must not be empty')
   }
+  // A fresh vault in production (or a vault that was `git init`-ed by
+  // hand without setting a user.name / user.email) makes `git commit`
+  // fail with "Author identity unknown", which the route maps to 500.
+  // Write a local identity before committing so the first commit just
+  // works. Only writes keys that aren't already set — an existing
+  // identity (e.g. a vault cloned from another machine, or a repo
+  // where the user manually set their own name) is preserved.
+  // Identity comes from GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL env vars
+  // when set, falling back to "docus" / "docus@localhost" — the env
+  // vars match git's own convention for per-command overrides and let
+  // operators pick the identity per-host without touching the image.
+  await ensureAuthorIdentity(repoRoot)
   // Stage. Use -- to disambiguate paths from refs, even though our
   // paths are obviously paths.
   const add = await run(repoRoot, ['add', '--', ...paths])

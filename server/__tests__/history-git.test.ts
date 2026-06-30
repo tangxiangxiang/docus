@@ -298,6 +298,88 @@ describe('addAndCommit + log', () => {
   })
 })
 
+// Regression: a fresh vault in production used to fail its first
+// commit with "fatal: Author identity unknown" because `git init`
+// doesn't set a committer identity, and the `node` user inside the
+// container has no `~/.gitconfig` to fall back to. The existing
+// `addAndCommit` tests pre-set the user in beforeEach (setUser()),
+// so the unset path was never exercised. `addAndCommit` should
+// lazily write a default identity before committing.
+describe('addAndCommit author identity', () => {
+  // Init the repo but do NOT configure user.name / user.email —
+  // mirrors what `git init` looks like in a fresh container, and
+  // mirrors what a hand-init'd vault looks like.
+  beforeEach(async () => {
+    await ensureRepo(root)
+  })
+
+  // Snapshot the env so we can mutate it for the override test and
+  // restore between cases — vitest runs tests in the same process,
+  // and env-var leakage would silently break other test files.
+  const originalEnv = { ...process.env }
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) {
+      if (!(k in originalEnv)) delete process.env[k]
+    }
+    Object.assign(process.env, originalEnv)
+  })
+
+  it('writes a default user.name + user.email when none is configured', async () => {
+    // Sanity: ensureRepo created the repo, but local identity is not
+    // set. (The dev machine's global config is irrelevant — our code
+    // scopes the check to --local so it always writes a per-vault
+    // identity when one is missing.)
+    const nameBefore = await git.run(root, ['config', '--local', '--get', 'user.name'])
+    expect(nameBefore.status).not.toBe(0)
+
+    await write('a.md', 'one')
+    const r = await git.addAndCommit(root, ['a.md'], 'first')
+
+    // Commit went through.
+    expect(r.sha).toMatch(/^[0-9a-f]{40}$/)
+    // Local identity was lazily written — defaults to "docus" /
+    // "docus@localhost" (or whatever GIT_AUTHOR_* env vars are set
+    // to, but here neither is).
+    const nameAfter = await git.run(root, ['config', '--local', '--get', 'user.name'])
+    const emailAfter = await git.run(root, ['config', '--local', '--get', 'user.email'])
+    expect(nameAfter.stdout.trim()).toBe('docus')
+    expect(emailAfter.stdout.trim()).toBe('docus@localhost')
+    // ... and the commit's author reflects it.
+    const log = await git.log(root)
+    expect(log[0].author).toBe('docus')
+  })
+
+  it('uses GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL env vars when set', async () => {
+    process.env.GIT_AUTHOR_NAME = 'Real Name'
+    process.env.GIT_AUTHOR_EMAIL = 'real@example.com'
+
+    await write('a.md', 'one')
+    await git.addAndCommit(root, ['a.md'], 'first')
+
+    const name = await git.run(root, ['config', '--local', '--get', 'user.name'])
+    const email = await git.run(root, ['config', '--local', '--get', 'user.email'])
+    expect(name.stdout.trim()).toBe('Real Name')
+    expect(email.stdout.trim()).toBe('real@example.com')
+  })
+
+  it('does not overwrite an already-configured identity', async () => {
+    // Simulate a vault cloned from another machine where the user
+    // already set their own LOCAL identity. We write with --local
+    // explicitly to match what our code checks.
+    await git.run(root, ['config', '--local', 'user.name', 'Existing User'])
+    await git.run(root, ['config', '--local', 'user.email', 'existing@example.com'])
+
+    await write('a.md', 'one')
+    await git.addAndCommit(root, ['a.md'], 'first')
+
+    // Even with no env var, the existing local identity is preserved.
+    const name = await git.run(root, ['config', '--local', '--get', 'user.name'])
+    const email = await git.run(root, ['config', '--local', '--get', 'user.email'])
+    expect(name.stdout.trim()).toBe('Existing User')
+    expect(email.stdout.trim()).toBe('existing@example.com')
+  })
+})
+
 // Pure-function tests for `parseLog` against synthetic git log output.
 // These don't spawn git — they assert the parser handles the format
 // the L0 wrapper feeds it, including the multi-line body case where

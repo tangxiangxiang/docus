@@ -38,6 +38,18 @@ services:
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      # Git author identity used by the vault history feature when the
+      # vault repo has no user.name / user.email set yet (typical for
+      # a fresh `git init` in a brand-new vault). Both default to
+      # "docus" / "docus@localhost" if unset, which is fine for a
+      # personal single-user vault. Operators who want their own
+      # identity (e.g. on a shared server with multiple users) should
+      # set these in .env so the per-host identity persists across
+      # container recreations. Identities already configured inside
+      # the vault's local git config (e.g. a repo cloned from another
+      # machine) are always preserved — we never overwrite.
+      GIT_AUTHOR_NAME: ${GIT_AUTHOR_NAME:-docus}
+      GIT_AUTHOR_EMAIL: ${GIT_AUTHOR_EMAIL:-docus@localhost}
 
     volumes:
       # SQLite 数据库 + WAL/SHM 走命名卷。Docker 自动管理权限,容器以 uid 1000
