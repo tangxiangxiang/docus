@@ -1,7 +1,0 @@
----
-title: 粗能力计划
-created: 2026-06-15
-updated: 2026-06-15
-tags: [erp, planning, capacity-planning]
-source: 
----

@@ -7,6 +7,12 @@
 AI 对话面板 —— 它的对话历史持久化在 Hono 启动时打开的一小块
 SQLite 数据库里。
 
+> **资料库是你的数据，不是项目代码。** `src/content/` 下的文件
+> **不**被 docus 的 git 仓库跟踪 —— 它们属于你的笔记，不属于这个
+> 工具。资料库有自己的 git 历史（`src/content/.git/`，由
+> `server/history/` 维护）。docus 仓库只跟踪工具本身：源码、配置、
+> 文档。
+
 ## 快速开始
 
 ```bash
@@ -50,7 +56,9 @@ src/
     search.ts            客户端构建的 MiniSearch 全文索引
     markdown.ts, frontmatter.ts
   content/               资料库本体 —— 三个顶层目录
-                         (inbox / literature / zettel) 以及用户写下的所有内容
+                         (inbox / literature / zettel) 以及用户写下的所有内容。
+                         不被 docus 的 git 仓库跟踪；资料库自己的历史在
+                         src/content/.git/
   router/                vue-router 配置（vault 使用 splat 参数）
 
 server/

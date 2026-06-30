@@ -8,6 +8,12 @@ share a VS-Code-style layout. A right-side AI chat panel rounds out
 the surface — its history is persisted to a small SQLite database that
 the Hono server opens on startup.
 
+> **The vault is your data, not project code.** Files under `src/content/`
+> are **not** tracked by the docus git repository — they belong to your
+> notes, not to this tool. The vault has its own git history
+> (`src/content/.git/`) managed by `server/history/`. docus's git repo
+> only tracks the tool: source, configs, docs.
+
 ## Quick start
 
 ```bash
@@ -54,7 +60,9 @@ src/
     markdown.ts, frontmatter.ts
   content/               The vault itself — three top-level folders
                          (inbox / literature / zettel) plus everything
-                         the user writes
+                         the user writes. NOT tracked by docus's git
+                         repo; vault's own history lives in
+                         src/content/.git/
   router/                vue-router setup (vault uses a splat param)
 
 server/

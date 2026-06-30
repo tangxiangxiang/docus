@@ -72,6 +72,14 @@ open http://localhost:3000          # 或者你设置的 DOCS_PORT
 - `docus-data` → `/app/data`，里面是 `docus.db`（SQLite）+ WAL/SHM 文件。**聊天历史在这里**。
 - `docus-content` → `/app/src/content`，里面是 vault 的 `inbox/` / `literature/` / `zettel/`。**笔记在这里**。
 
+> **vault 不在 docus 仓库里。** `src/content/` 下的笔记文件（以及
+> `src/content/.git/` 这个 vault 自己的版本历史仓库）**不**被 docus
+> 的 git 仓库跟踪 —— 它们是用户的资产，不是工具代码。clone docus
+> 仓库后 `./src/content/` 是空的；首次部署时如果 vault 是空的，会
+> 自动 `git init` 一个新的 vault 历史（见 `server/history/git.ts`）。
+> 生产里 vault 通常走 bind mount 挂到宿主机目录，方便直接用本地编辑
+> 器和 rsync / Syncthing 备份。
+
 要查看真实路径：
 
 ```bash
