@@ -601,7 +601,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
           v-model="contentText"
           class="search-input"
           type="text"
-          placeholder="Search by name / title / summary… (#tag)"
+          placeholder="Search file"
           aria-label="搜索文件"
           @input="onContentInput"
           @keydown="onQueryKeydown"
