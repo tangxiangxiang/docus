@@ -192,3 +192,60 @@ describe('listSubtreePaths', () => {
     expect(all).toEqual([])
   })
 })
+
+// The vault's own .git/ is docus's history-feature bookkeeping
+// (server/history/git.ts), not user content. It must not surface in the
+// file tree, and the tree builders must not recurse through .git/objects/.
+// These tests lay a real .git/ in the sandbox and assert the public
+// helpers ignore it entirely.
+describe('vault .git/ is excluded from tree listings', () => {
+  let sandboxWithGit: string
+
+  beforeEach(async () => {
+    sandboxWithGit = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tree-with-git-'))
+    await fs.writeFile(path.join(sandboxWithGit, 'visible.md'), '# visible')
+    // Minimal .git/ shape — enough to prove both the file-listing and
+    // folder-listing branches of walk()'s filter.
+    await fs.mkdir(path.join(sandboxWithGit, '.git'))
+    await fs.writeFile(
+      path.join(sandboxWithGit, '.git', 'HEAD'),
+      'ref: refs/heads/main\n',
+    )
+    await fs.mkdir(path.join(sandboxWithGit, '.git', 'objects'), { recursive: true })
+    await fs.writeFile(
+      path.join(sandboxWithGit, '.git', 'objects', 'abc123'),
+      'fake-blob',
+    )
+    // .gitignore and .gitattributes that initRepo() also creates in real vaults
+    await fs.writeFile(path.join(sandboxWithGit, '.gitignore'), '')
+    await fs.writeFile(path.join(sandboxWithGit, '.gitattributes'), '')
+  })
+
+  afterEach(async () => {
+    await fs.rm(sandboxWithGit, { recursive: true, force: true })
+  })
+
+  it('listPostsFlat ignores .git/ contents entirely', async () => {
+    const posts = await listPostsFlat(sandboxWithGit)
+    expect(posts.map((p) => p.path)).toEqual(['visible'])
+  })
+
+  it('buildTree does not surface a .git/ folder node', async () => {
+    const tree = await buildTree(sandboxWithGit)
+    // tree[0] is the implicit root folder; its children must only contain
+    // visible.md, not a .git folder.
+    const root = tree[0]!
+    expect(root.kind).toBe('folder')
+    if (root.kind !== 'folder') return
+    const childNames = root.children.map((c) => c.name).sort()
+    expect(childNames).toEqual(['visible'])
+    expect(childNames).not.toContain('.git')
+  })
+
+  it('listSubtreePaths("") does not include .git/ descendants', async () => {
+    // Walking the root should mirror what /api/tree would render for
+    // a brand-new vault with .git/ in place — no .git/ descendants leak.
+    const all = await listSubtreePaths(sandboxWithGit, '')
+    expect(all).toEqual(['visible'])
+  })
+})

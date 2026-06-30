@@ -24,6 +24,17 @@ async function* walk(
   }
   for (const entry of entries) {
     const name = entry.name.toString()
+    // Skip the vault's own git repo. It's docus's history-feature state
+    // (server/history/git.ts), not user content — surfacing it in the tree
+    // would (a) leak docus internals into the UI, (b) force buildTree /
+    // listPostsFlat to recurse through .git/objects/ on every request.
+    // The history endpoint /api/history/* already exposes commit history
+    // for the vault; users have no reason to browse .git/ from the file
+    // tree. Note: `isValidSegment` in server/paths.ts already rejects any
+    // path containing a dot, so user content can never legitimately live
+    // inside a dot-prefixed directory — this filter is purely a hygiene
+    // boundary for docus's own bookkeeping, not a security check.
+    if (name === '.git') continue
     const abs = path.join(dir, name)
     const rel = prefix ? `${prefix}/${name}` : name
     if (entry.isDirectory()) {
