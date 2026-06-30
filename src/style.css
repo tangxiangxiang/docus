@@ -518,7 +518,6 @@ main.container {
   display: flex;
   flex-direction: column;
   background: var(--vs-bg-1);
-  border-right: 1px solid var(--vs-border);
   overflow: hidden;
   height: 100%;
 }
@@ -749,6 +748,10 @@ main.container {
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* min-height: 0 so the flex item can fill its parent (`.content`)
+     even when the diff content is shorter than the cell — the default
+     `min-height: auto` would cap us at content height. */
+  min-height: 0;
   background: var(--vs-bg-1);
   overflow: hidden;
 }
@@ -894,13 +897,24 @@ main.container {
 .diff-word-remove { background: color-mix(in srgb, #dc2626 28%, transparent); border-radius: 2px; }
 .diff-word-equal { background: transparent; }
 
-/* History mode disables the editor-area's normal padding so the
-   diff takes the full cell. Same idea as `.is-graph` above. */
+/* `.editor-area.is-history` collapses the grid to one row (see line
+   ~1598), and `.content { height: 100% }` should already stretch the
+   only cell. But the base `.content { display: flex }` makes
+   `.diff-view` a flex item, and the cross-axis stretch
+   (`align-items: stretch` default) plus the `minmax(0, 1fr)` grid
+   track's height resolution don't reliably chain in all engines —
+   the section collapses to its content height for short diffs and
+   leaves a blank band below. Switching the cell to `display: block`
+   makes `.diff-view` a normal block child whose `height: 100%`
+   resolves directly against the cell, with no flex item
+   `min-height: auto` trap in the way. The section itself stays a
+   flex column, so the header/table layout inside is unaffected. */
 .vault .editor-area.is-history .content.content-diff {
-  display: flex;
-  flex: 1;
+  display: block;
+  height: 100%;
   min-height: 0;
 }
+
 .ab-btn {
   width: 100%;
   height: 36px;
@@ -1096,7 +1110,6 @@ main.container {
   color: var(--vs-text-1);
   font-size: 0.88rem;
   line-height: 1.4;
-  border-left: 2px solid transparent;
 }
 /* `.row-line` is the visible row strip (chevron + icon + name/rename
    input). It's a sibling of `.tree-children` inside `.tree-row`, NOT
@@ -1125,10 +1138,8 @@ main.container {
 }
 /* Full-width hover/active background that extends through the indent
    area on the left, so deep rows don't show a gap between the
-   file-tree's edge and the active highlight. The 2px accent strip on
-   the row's own border-left stays at a consistent width and is just
-   recoloured when active, while the background spans the full row
-   width of the LINE (not the children <ul> below it). */
+   file-tree's edge and the active highlight. The background spans
+   the full row width of the LINE (not the children <ul> below it). */
 .vault .file-tree .row-line::before {
   content: '';
   position: absolute;
@@ -1138,9 +1149,6 @@ main.container {
   z-index: 0;
 }
 .vault .file-tree .row-line:hover::before { background: var(--vs-hover-bg); }
-.vault .file-tree .tree-row.active {
-  border-left-color: var(--vs-accent);
-}
 .vault .file-tree .tree-row.active .row-line::before { background: var(--vs-active-bg); }
 .vault .file-tree .row-line > * { position: relative; z-index: 1; }
 .vault .file-tree .tree-row[draggable] { cursor: grab; }
