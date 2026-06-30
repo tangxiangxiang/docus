@@ -24,6 +24,12 @@ const emit = defineEmits<{
   refresh: []
   'remove-tag': [tag: string]
   'split-card': [path: string, mode: 'inbox' | 'literature']
+  // archive-to-zettel is self-contained inside FileTree: handler calls
+  // patchPost + emit('refresh') + (optionally) emit('select'). VaultView
+  // doesn't need to know. Distinct from `move` because move-into-zettel
+  // remains blocked by onMove — archive is a deliberate menu action that
+  // bypasses that block.
+  'archive-to-zettel': [path: string]
 }>()
 
 const { confirm } = useConfirm()
@@ -514,6 +520,28 @@ async function onSplitCard(path: string) {
   emit('split-card', path, mode)
 }
 
+// Archive handler. Distinct from onMove: onMove refuses any move into
+// zettel/ because zettel is the read-only permanent-notes sink for the
+// drag-and-drop UX. Archive is the explicit product action of promoting
+// a finished note from inbox/ or literature/ straight into zettel/. The
+// TreeRow menu only emits this for files whose path matches canArchive's
+// shape (i.e. !folder && under inbox/ or literature/), so the server
+// whitelist's "source must be in inbox/ or literature/" check is just
+// a backstop here.
+async function onArchiveToZettel(path: string) {
+  const filename = path.split('/').pop()!
+  const targetPath = 'zettel/' + filename
+  if (targetPath === path) return
+  try {
+    await patchPost(path, { targetPath })
+    emit('refresh')
+    if (props.currentPath === path) emit('select', targetPath)
+    toast.success('已归档到 zettel')
+  } catch (e: any) {
+    toast.error('归档失败: ' + (e.message ?? '未知错误'))
+  }
+}
+
 async function onCreateIn(folder: string, kind: 'file' | 'folder') {
   {
     const msg = blockedMessage(folder, 'create')
@@ -631,6 +659,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @move="onMove"
         @create-in="onCreateIn"
         @split-card="onSplitCard"
+        @archive-to-zettel="onArchiveToZettel"
       />
     </ul>
     <p v-else-if="effectiveQuery && activeTags.length" class="empty">没有同时匹配 tag 和 “{{ effectiveQuery }}” 的文件。</p>

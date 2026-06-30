@@ -5,7 +5,6 @@ import { ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FILE_MD, ICON_CHEVRON } from './ico
 import {
   canModify,
   canCreateChild,
-  readonlyHintLabel,
 } from '../../composables/zettelProtocol'
 import type { MatchInfo } from './FileTree.vue'
 
@@ -43,6 +42,11 @@ const emit = defineEmits<{
   // (FileTree) maps this to a mode (inbox|literature) based on the
   // path prefix and forwards to VaultView's splitCard action.
   'split-card': [path: string]
+  // File only: archive-to-zettel moves inbox/* or literature/* straight
+  // into zettel/ (the permanent-notes sink). Distinct from `move` because
+  // `move` into zettel/ is still blocked — archiving is a deliberate
+  // product action that only the menu can trigger.
+  'archive-to-zettel': [path: string]
 }>()
 
 const isFolder = computed(() => props.node.kind === 'folder')
@@ -69,9 +73,17 @@ const childNodes = computed(() =>
 //     "all or nothing" wording.
 const canModifyRow = computed(() => canModify(props.node.path))
 const canCreateChildRow = computed(() => canCreateChild(props.node.path))
-// `readonlyHint` is the single-line footer that appears when the row is
-// read-only in any sense. Reused for both menu states.
-const readonlyHint = computed(() => readonlyHintLabel(props.node.path))
+// True if the row has at least one context-menu item to render. Without
+// this gate, right-clicking a fully locked row (zettel subtree at any depth)
+// would show an empty menu box — the placeholder hint that used to fill
+// the space was removed on the principle that "no hint beats a redundant
+// one", but that left the empty-menu case visible. Skip the menu entirely
+// when there's nothing to show.
+const hasAnyMenuItem = computed(() =>
+  (isFolder.value && canCreateChildRow.value) ||
+  canModifyRow.value ||
+  canSplit.value,
+)
 
 // True for files under inbox/ or literature/. The split-card menu
 // item is gated on this — the server route also enforces it, but
@@ -81,6 +93,16 @@ const canSplit = computed(() =>
     props.node.path.startsWith('inbox/') || props.node.path === 'inbox' ||
     props.node.path.startsWith('literature/') || props.node.path === 'literature'
   )
+)
+// Mirror of canSplit — same source paths, same file-only shape. The two
+// actions are conceptually distinct (split = draft a card via AI; archive
+// = promote a finished note into the permanent-notes sink) so each has
+// its own gate.
+const canArchive = computed(() =>
+  !isFolder.value && (
+    props.node.path.startsWith('inbox/') || props.node.path === 'inbox' ||
+    props.node.path.startsWith('literature/') || props.node.path === 'literature'
+  ),
 )
 
 // Native browser tooltip on the filename button. Only emitted for
@@ -316,7 +338,7 @@ function cancelRename() {
 
     <Teleport to="body">
       <div
-        v-if="menuVisible"
+        v-if="menuVisible && hasAnyMenuItem"
         class="tree-context-menu"
         :style="{ left: menuX + 'px', top: menuY + 'px' }"
         @click.stop
@@ -338,8 +360,9 @@ function cancelRename() {
         <button v-if="canModifyRow" @click="menuAction(startRename)">重命名</button>
         <hr v-if="canModifyRow" />
         <button v-if="canSplit" @click="menuAction(() => emit('split-card', node.path))">📤 拆为原子卡</button>
+        <hr v-if="canArchive" />
+        <button v-if="canArchive" @click="menuAction(() => emit('archive-to-zettel', node.path))">🗂 归档到 zettel</button>
         <button v-if="canModifyRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))">删除</button>
-        <span v-if="!canModifyRow || (isFolder && !canCreateChildRow)" class="readonly-hint">{{ readonlyHint }}</span>
       </div>
     </Teleport>
 
@@ -359,6 +382,7 @@ function cancelRename() {
         @move="(src, folder, srcKind) => emit('move', src, folder, srcKind)"
         @create-in="(folder, kind) => emit('create-in', folder, kind)"
         @split-card="(p) => emit('split-card', p)"
+        @archive-to-zettel="(p) => emit('archive-to-zettel', p)"
       />
     </ul>
   </li>

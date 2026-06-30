@@ -142,6 +142,23 @@ app.patch('/api/posts/*', async (c) => {
     if (dest !== src && body.targetPath!.startsWith(srcPath + '/')) {
       return bad(c, 'cannot move into descendant', 422)
     }
+    // Archive whitelist: zettel/ is the read-only permanent-notes sink.
+    // The client enforces this on drag-and-drop (FileTree.onMove refuses
+    // any move whose targetFolder === 'zettel'), but the menu's archive
+    // action is a deliberate exception. To keep the "zettel only grows
+    // through archiving" contract safe even if the client guard is
+    // bypassed, only files that currently live under inbox/ or
+    // literature/ may be moved into zettel/. All other attempts get 422
+    // before fs.rename runs.
+    const targetInZettel = destPath === 'zettel' || destPath.startsWith('zettel/')
+    if (targetInZettel) {
+      const sourceArchiveable =
+        srcPath === 'inbox' || srcPath.startsWith('inbox/') ||
+        srcPath === 'literature' || srcPath.startsWith('literature/')
+      if (!sourceArchiveable) {
+        return bad(c, 'only inbox/ and literature/ notes can be archived to zettel', 422)
+      }
+    }
   }
   if (await exists(dest)) return bad(c, 'destination exists', 409)
   await fs.rename(src, dest)

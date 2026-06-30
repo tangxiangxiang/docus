@@ -17,10 +17,23 @@ const TREE: TreeNode[] = [
         ],
       },
       {
-        kind: 'folder', name: 'literature', path: 'literature', children: [],
+        kind: 'folder', name: 'literature', path: 'literature', children: [
+          { kind: 'file', name: 'ahrens', path: 'literature/ahrens', title: 'Ahrens 2017', mtime: 0 },
+        ],
       },
       {
-        kind: 'folder', name: 'zettel', path: 'zettel', children: [],
+        kind: 'folder', name: 'zettel', path: 'zettel', children: [
+          { kind: 'file', name: 'permanent', path: 'zettel/permanent', title: 'Permanent', mtime: 0 },
+        ],
+      },
+      // A user-defined top-level folder that is NOT one of the three
+      // protected roots. Files inside are user content but the
+      // archive-to-zettel action should not appear (only inbox/ and
+      // literature/ files qualify).
+      {
+        kind: 'folder', name: 'archive', path: 'archive', children: [
+          { kind: 'file', name: 'old', path: 'archive/old', title: 'Old', mtime: 0 },
+        ],
       },
     ],
   },
@@ -49,7 +62,6 @@ describe('FileTree context menu', () => {
 
     const menu = document.querySelector('.tree-context-menu')
     expect(menu).not.toBeNull()
-    expect(menu!.textContent).toContain('顶层目录')  // or similar readonly hint
     w.unmount()
   })
 
@@ -97,12 +109,10 @@ describe('FileTree context menu', () => {
     // Name-modifying ops remain blocked — the folder name is pinned.
     expect(menu!.textContent).not.toContain('重命名')
     expect(menu!.textContent).not.toContain('删除')
-    // The hint footer is the user-facing explanation.
-    expect(menu!.textContent).toContain('顶层目录')
     w.unmount()
   })
 
-  it('right-click on zettel (protected root inside the read-only subtree) hides create-in', async () => {
+  it('right-click on zettel (protected root inside the read-only subtree) shows no menu', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
     const zettelRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'zettel')!
@@ -111,15 +121,10 @@ describe('FileTree context menu', () => {
     await w.vm.$nextTick()
     await flushPromises()
 
-    const menu = document.querySelector('.tree-context-menu')
-    expect(menu).not.toBeNull()
-    // zettel is a permanent-notes sink — even the root can't grow new
-    // children, so neither create-in nor rename/delete appear.
-    expect(menu!.textContent).not.toContain('新建文件')
-    expect(menu!.textContent).not.toContain('新建文件夹')
-    expect(menu!.textContent).not.toContain('重命名')
-    expect(menu!.textContent).not.toContain('删除')
-    expect(menu!.textContent).toContain('永久笔记')
+    // zettel is a permanent-notes sink — no menu item applies (can't
+    // create children, can't rename, can't delete, can't split-card).
+    // Showing an empty menu box would be worse than no menu at all.
+    expect(document.querySelector('.tree-context-menu')).toBeNull()
     w.unmount()
   })
 
@@ -132,6 +137,79 @@ describe('FileTree context menu', () => {
     // so the attribute should be the string "false" (Vue binds booleans
     // that way to the DOM property).
     expect(inboxRow.attributes('draggable')).toBe('false')
+    w.unmount()
+  })
+})
+
+// Archive-to-zettel visibility. The action promotes a file directly from
+// inbox/ or literature/ into zettel/ — distinct from the drag-and-drop
+// "move into zettel" path that remains blocked. The menu button is gated
+// by canArchive which mirrors canSplit's shape, so these cases pin that
+// matrix.
+describe('FileTree context menu — archive-to-zettel visibility', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    document.querySelectorAll('.tree-context-menu').forEach((el) => el.remove())
+  })
+
+  async function rightClickRow(label: string) {
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    await w.vm.$nextTick()
+    // Expand the parent folders (inbox / literature / zettel / archive)
+    // so their file rows render. The expansion click is on the chevron.
+    for (const parent of ['inbox', 'literature', 'zettel', 'archive']) {
+      const parentRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === parent)
+      if (parentRow?.find('.chevron').exists()) {
+        await parentRow.find('.chevron').trigger('click')
+        await w.vm.$nextTick()
+      }
+    }
+    const row = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === label)!
+    expect(row.exists()).toBe(true)
+    await row.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    await w.vm.$nextTick()
+    await flushPromises()
+    return w
+  }
+
+  it('shows 归档到 zettel for a file under inbox/', async () => {
+    const w = await rightClickRow('hello')
+    const menu = document.querySelector('.tree-context-menu')
+    expect(menu).not.toBeNull()
+    expect(menu!.textContent).toContain('归档到 zettel')
+    w.unmount()
+  })
+
+  it('shows 归档到 zettel for a file under literature/', async () => {
+    const w = await rightClickRow('ahrens')
+    const menu = document.querySelector('.tree-context-menu')
+    expect(menu).not.toBeNull()
+    expect(menu!.textContent).toContain('归档到 zettel')
+    w.unmount()
+  })
+
+  it('hides 归档到 zettel for a file inside zettel/', async () => {
+    const w = await rightClickRow('permanent')
+    // zettel subtree is the read-only sink — even right-clicking a file
+    // there produces a fully-empty menu and TreeRow skips rendering it.
+    expect(document.querySelector('.tree-context-menu')).toBeNull()
+    w.unmount()
+  })
+
+  it('hides 归档到 zettel for a file under a user-defined folder (not inbox/literature)', async () => {
+    const w = await rightClickRow('old')
+    const menu = document.querySelector('.tree-context-menu')
+    expect(menu).not.toBeNull()
+    expect(menu!.textContent).not.toContain('归档到 zettel')
+    w.unmount()
+  })
+
+  it('hides 归档到 zettel when right-clicking a folder row', async () => {
+    const w = await rightClickRow('inbox')
+    const menu = document.querySelector('.tree-context-menu')
+    expect(menu).not.toBeNull()
+    // Folders see create-in / rename / delete, never the archive action.
+    expect(menu!.textContent).not.toContain('归档到 zettel')
     w.unmount()
   })
 })
