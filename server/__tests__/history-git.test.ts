@@ -504,6 +504,25 @@ describe('rawAt', () => {
     // diff endpoint can render the "did not exist" path uniformly.
     expect(await git.rawAt(root, git.WORKTREE_REF, 'ghost.md')).toBeNull()
   })
+
+  // Regression: on a freshly-initialized vault with no commits, the
+  // HistoryPanel's default selection is HEAD~1..HEAD. Both refs resolve
+  // to "unknown revision / ambiguous argument" — earlier code threw,
+  // which surfaced as a 500 on /api/history/diff and broke the panel
+  // before the user could even make their first commit. Now both
+  // resolve to null and the panel renders an empty diff / preview.
+  it('returns null for HEAD~1 on an empty repo (no commits yet)', async () => {
+    // initAndSeed has already initialized a repo but made no commits.
+    expect(await git.rawAt(root, 'HEAD~1', 'note.md')).toBeNull()
+    expect(await git.rawAt(root, 'HEAD', 'note.md')).toBeNull()
+  })
+
+  it('returns null for an unknown symbolic ref', async () => {
+    // 'main' doesn't exist on this fresh repo (no commits → no branch).
+    // Bad symbolic refs should map to null, not throw.
+    expect(await git.rawAt(root, 'main', 'note.md')).toBeNull()
+    expect(await git.rawAt(root, 'nonexistent-branch', 'note.md')).toBeNull()
+  })
 })
 
 describe('CRLF safety', () => {

@@ -144,6 +144,22 @@ describe('GET /api/history/log', () => {
     const body = await r.json() as { commits: unknown[] }
     expect(body.commits).toEqual([])
   })
+
+  // Companion regression: same empty-repo case but for /diff. The
+  // HistoryPanel defaults the file selection to HEAD~1..HEAD, and
+  // HEAD~1 on a fresh vault used to throw "ambiguous argument" from
+  // git show — surfacing as a 500 on /diff and breaking the panel
+  // before the user could even stage their first commit. After the
+  // rawAt fix, both refs resolve to null and the diff is just an
+  // empty shape (zero stats) — the panel renders "no previous
+  // version" gracefully.
+  it('returns an empty diff (not 500) when both refs are HEAD~1/HEAD on an empty repo', async () => {
+    const r = await call('GET', '/diff?path=inbox/init.md&old=HEAD~1&new=HEAD')
+    expect(r.status).toBe(200)
+    const body = await r.json() as { diff: { stats: { added: number; removed: number; equal: number }; ops: unknown[] } }
+    expect(body.diff.stats).toEqual({ added: 0, removed: 0, equal: 0 })
+    expect(body.diff.ops).toEqual([])
+  })
 })
 
 describe('GET /api/history/file', () => {

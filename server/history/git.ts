@@ -327,15 +327,29 @@ export async function rawAt(
   }
   const r = await run(repoRoot, ['show', `${ref}:${filePath}`])
   if (r.status === 0) return r.stdout
-  // Three error patterns mean "no such (ref, path) tuple". We treat
-  // all of them as null rather than throwing because the caller —
-  // the diff route — wants to render "this file did not exist in
-  // the old version" gracefully.
+  // Six error patterns all mean "no such (ref, path) tuple" — or in the
+  // empty-repo case, "no such ref at all". We treat all of them as null
+  // rather than throwing because the caller — the diff route — wants
+  // to render "this file did not exist in the old version" gracefully,
+  // AND the HistoryPanel wants the first commit on a fresh vault to
+  // land cleanly (a 500 on HEAD~1/HEAD would crash the panel before
+  // the user even has anything to commit).
   if (
     /does not exist/i.test(r.stderr) ||
     /bad revision/i.test(r.stderr) ||
     /exists on disk, but not in/i.test(r.stderr) ||
-    /not in /i.test(r.stderr)
+    /not in /i.test(r.stderr) ||
+    // Empty repo / bad symbolic ref. We cover the three shapes git
+    // actually emits so the empty-vault flow doesn't 500:
+    //   - "fatal: invalid object name 'HEAD~1'"  (no commits → HEAD~1)
+    //   - "fatal: ambiguous argument 'HEAD'..." (depends on git version)
+    //   - "fatal: unknown revision or path not in the working tree"
+    // None of these are bugs the caller can do anything about, so
+    // collapsing them all to null keeps the diff route happy on the
+    // very first commit attempt.
+    /invalid object name/i.test(r.stderr) ||
+    /ambiguous argument/i.test(r.stderr) ||
+    /unknown revision/i.test(r.stderr)
   ) {
     return null
   }
