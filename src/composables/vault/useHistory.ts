@@ -119,7 +119,13 @@ async function refreshStatus(): Promise<void> {
 async function refreshLog(opts: { path?: string } = {}): Promise<void> {
   try {
     const r = await api.getLog({ path: opts.path, limit: 200 })
-    _log.value = r.commits
+    // Default to [] if the server's body is missing `commits` for any
+    // reason (older version, partial migration, etc.) — the template
+    // reads `h.log.value.length` and would otherwise crash on
+    // `undefined.length`. `getLog` already throws on non-2xx so we
+    // only land here on a 200 with a usable body; this guard is for
+    // shape drift, not transport errors.
+    _log.value = Array.isArray(r?.commits) ? r.commits : []
   } catch (e: any) {
     _log.value = []
     _error.value = e?.message ?? 'log failed'

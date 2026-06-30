@@ -284,6 +284,18 @@ describe('addAndCommit + log', () => {
     const logNew = await git.log(root, { path: 'new-name.md' })
     expect(logNew.map((c) => c.subject)).toEqual(['rename'])
   })
+
+  // Regression: a freshly-initialized repo (no commits yet) used to
+  // throw `git log failed: ... does not have any commits yet`. That
+  // bubbled up to /api/history/log as a 500, the client returned
+  // `{ error: ... }` (no `commits` field), and the History panel
+  // crashed on `h.log.value.length`. `log()` should treat the empty
+  // repo as a successful empty list.
+  it('returns [] for a freshly-initialized repo with no commits', async () => {
+    await ensureRepo(root)
+    const log = await git.log(root)
+    expect(log).toEqual([])
+  })
 })
 
 // Pure-function tests for `parseLog` against synthetic git log output.

@@ -215,6 +215,19 @@ export async function log(
   }
   const r = await run(repoRoot, args)
   if (r.status !== 0) {
+    // "your current branch 'main' does not have any commits yet" is
+    // a normal, expected state for a freshly-initialized vault — the
+    // repo exists, the user just hasn't committed anything. Treat it
+    // as an empty log rather than a server fault; the route returns
+    // `{ commits: [] }` with 200, and the History panel shows
+    // "No commits yet." The wording varies across git versions
+    // (older git said "ambiguous argument 'HEAD'", git 2.3+ says
+    // "does not have any commits yet") so we match on a substring
+    // that both share.
+    if (/does not have any commits yet/i.test(r.stderr)
+        || /ambiguous argument ['"]?HEAD['"]?/i.test(r.stderr)) {
+      return []
+    }
     throw new Error(`git log failed: ${r.stderr.trim()}`)
   }
   return parseLog(r.stdout)

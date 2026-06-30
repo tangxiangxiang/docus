@@ -131,6 +131,19 @@ describe('GET /api/history/log', () => {
     const body = await r.json() as { commits: { subject: string }[] }
     expect(body.commits.map((c) => c.subject)).toEqual(['touch b'])
   })
+
+  // Regression: a freshly-initialized vault (no commits yet) used to
+  // return 500 with `git log failed: ... does not have any commits yet`,
+  // which the client treated as `{ error: ... }`, then the History
+  // panel crashed on `h.log.value.length` (undefined.length). The
+  // route should now treat the empty-repo case as a successful empty
+  // log so the panel can render "No commits yet." instead of crashing.
+  it('returns an empty list (not 500) on a freshly-initialized repo with no commits', async () => {
+    const r = await call('GET', '/log?limit=200')
+    expect(r.status).toBe(200)
+    const body = await r.json() as { commits: unknown[] }
+    expect(body.commits).toEqual([])
+  })
 })
 
 describe('GET /api/history/file', () => {

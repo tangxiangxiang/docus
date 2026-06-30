@@ -90,6 +90,17 @@ export async function getLog(opts: { path?: string; limit?: number } = {}): Prom
   if (opts.path) q.set('path', opts.path)
   if (opts.limit !== undefined) q.set('limit', String(opts.limit))
   const r = await fetch(`/api/history/log?${q.toString()}`)
+  // Match the other endpoints in this file: throw on non-2xx with the
+  // server's `{ error }` body, so callers see a useful message in
+  // `_error.value` instead of a downstream `undefined.length` crash.
+  // (Pre-fix the server returned 500 + `{ error: ... }` for an empty
+  // repo, getLog returned that as-is, and refreshLog did
+  // `_log.value = r.commits` → undefined → template threw on
+  // `h.log.value.length`.)
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({} as any))
+    throw new Error(body?.error ?? `getLog failed: ${r.status}`)
+  }
   return r.json()
 }
 
