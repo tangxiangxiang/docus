@@ -147,12 +147,14 @@ export function parsePorcelain(text: string): StatusEntry[] {
 }
 
 export async function status(repoRoot: string): Promise<StatusEntry[]> {
-  // `--untracked-files=all` makes git report files inside otherwise-
-  // ignored subtrees; we don't need that, but the default of `normal`
-  // skips untracked dirs that contain no tracked files yet. Since we
-  // may `git add` an entire dir, this matters less for us, but explicit
-  // doesn't hurt.
-  const r = await run(repoRoot, ['status', '--porcelain', '--untracked-files=normal'])
+  // `-uall` enumerates each file inside untracked directories. The
+  // default (`normal`) collapses a wholly-untracked dir like
+  // `inbox/` into a single `?? inbox/` line, which would surface in
+  // the History panel as one row representing the directory — useless
+  // for selection, diff, or "Commit N files" counting. `-uall` still
+  // honours `.gitignore` (files matching an ignore pattern remain
+  // hidden); the trade-off is just longer output on a fresh vault.
+  const r = await run(repoRoot, ['status', '--porcelain', '--untracked-files=all'])
   if (r.status !== 0) {
     throw new Error(`git status failed: ${r.stderr.trim()}`)
   }
