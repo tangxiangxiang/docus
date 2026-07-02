@@ -54,10 +54,24 @@ export interface VaultLayout {
   aiOpen: boolean
   aiPanelWidth: number
   tocPanelWidth: number
+  /* Whether the side-by-side preview pane is open in edit mode. Defaults
+     to false: the vault's editor surface is full-width by default, and
+     the user opts into the split view (via the eye-icon next to the
+     mode-toggle, or `Cmd-\`). Persisted alongside the rest of the
+     layout so the user's last choice is restored on next load. */
+  previewOpen: boolean
 }
 
 const STORAGE_KEY = 'docus.vault.layout'
-const DEFAULTS: VaultLayout = { activePanel: 'files', sidePanelWidth: 260, editorRatio: 1, aiOpen: false, aiPanelWidth: 320, tocPanelWidth: 320 }
+const DEFAULTS: VaultLayout = {
+  activePanel: 'files',
+  sidePanelWidth: 260,
+  editorRatio: 1,
+  aiOpen: false,
+  aiPanelWidth: 320,
+  tocPanelWidth: 320,
+  previewOpen: false,
+}
 
 /* Module-level shared refs.
    NavBar (in the navbar above the router view) and VaultView (the
@@ -83,6 +97,7 @@ const _editorRatio = ref(DEFAULTS.editorRatio)
 const _aiOpen = ref(DEFAULTS.aiOpen)
 const _aiPanelWidth = ref(DEFAULTS.aiPanelWidth)
 const _tocPanelWidth = ref(DEFAULTS.tocPanelWidth)
+const _previewOpen = ref(DEFAULTS.previewOpen)
 
 /* Hydration guard. The first useVaultLayout() call (which is the
    VaultView's) is the one that owns the storage round-trip — it reads
@@ -123,6 +138,7 @@ export function __resetVaultLayoutState(): void {
   _aiOpen.value = DEFAULTS.aiOpen
   _aiPanelWidth.value = DEFAULTS.aiPanelWidth
   _tocPanelWidth.value = DEFAULTS.tocPanelWidth
+  _previewOpen.value = DEFAULTS.previewOpen
 }
 
 export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
@@ -170,6 +186,16 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
             aiOpen: typeof d.aiOpen === 'boolean' ? d.aiOpen : DEFAULTS.aiOpen,
             aiPanelWidth: typeof d.aiPanelWidth === 'number' ? d.aiPanelWidth : DEFAULTS.aiPanelWidth,
             tocPanelWidth: typeof d.tocPanelWidth === 'number' ? d.tocPanelWidth : DEFAULTS.tocPanelWidth,
+            // previewOpen was added after the preview pane was made
+            // opt-in (Cmd-\ / eye-icon), so persisted layouts from
+            // the always-on era lack the field. Treat missing as the
+            // new default (false): the user starts in full-width
+            // editor mode and can re-enable the split if they want.
+            // This is a deliberate UX break — the old "preview always
+            // on" layout pushed the editor below scroll comfort on
+            // common screens, and we don't want to silently restore
+            // it for upgrading users.
+            previewOpen: typeof d.previewOpen === 'boolean' ? d.previewOpen : DEFAULTS.previewOpen,
           } satisfies VaultLayout
         } catch {
           return { ...DEFAULTS }
@@ -192,14 +218,15 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
     _aiOpen.value = layout.value.aiOpen
     _aiPanelWidth.value = layout.value.aiPanelWidth
     _tocPanelWidth.value = layout.value.tocPanelWidth
+    _previewOpen.value = layout.value.previewOpen
 
     // Persist on any change. useStorage's deep-compare avoids noop writes
     // (e.g. when the storage value already matches), so the round-trip
     // doesn't cause re-render storms.
     watch(
-      [_activePanel, _sidePanelWidth, _editorRatio, _aiOpen, _aiPanelWidth, _tocPanelWidth],
-      ([ap, w, r, ao, aw, tw]) => {
-        layout.value = { activePanel: ap, sidePanelWidth: w, editorRatio: r, aiOpen: ao, aiPanelWidth: aw, tocPanelWidth: tw }
+      [_activePanel, _sidePanelWidth, _editorRatio, _aiOpen, _aiPanelWidth, _tocPanelWidth, _previewOpen],
+      ([ap, w, r, ao, aw, tw, po]) => {
+        layout.value = { activePanel: ap, sidePanelWidth: w, editorRatio: r, aiOpen: ao, aiPanelWidth: aw, tocPanelWidth: tw, previewOpen: po }
       },
     )
   }
@@ -220,6 +247,7 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
   const aiOpen: Ref<boolean> = _aiOpen
   const aiPanelWidth: Ref<number> = _aiPanelWidth
   const tocPanelWidth: Ref<number> = _tocPanelWidth
+  const previewOpen: Ref<boolean> = _previewOpen
 
   const vaultStyle = computed(() => {
     // Rows: editor-area (fills), then a 24px status-bar that spans the
@@ -307,6 +335,15 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
     // the grid because the `!aiOpen` clause in vaultStyle elides it.
   }
 
+  function togglePreview() {
+    previewOpen.value = !previewOpen.value
+    // The layout doesn't change tracks when preview toggles — the
+    // editor + preview are siblings inside .editor-area's content
+    // flex row, not grid columns. VaultView gates the splitter and
+    // preview-pane on previewOpen, so a `false` here both hides the
+    // preview and reclaims the horizontal space for the editor.
+  }
+
   return {
     activePanel,
     sidePanelOpen,
@@ -315,9 +352,11 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
     aiOpen,
     aiPanelWidth,
     tocPanelWidth,
+    previewOpen,
     vaultStyle,
     contentStyle,
     selectPanel,
     toggleAi,
+    togglePreview,
   }
 }

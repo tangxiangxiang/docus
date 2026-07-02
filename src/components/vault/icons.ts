@@ -129,3 +129,16 @@ export const ICON_TOC = `
   <line x1="7" y1="8"  x2="13"  y2="8"  />
   <line x1="7" y1="12" x2="13"  y2="12" />
 </svg>`
+
+// "Preview" — an open eye (lens + iris). 14×14 line art in the same
+// 1.5px stroke as ICON_TOC / ICON_AI, so it sits visually next to the
+// mode-toggle pair without weight mismatch. Used in the NavBar toggle
+// that opens the side-by-side preview pane while editing. Active state
+// is signaled by CSS (filled background), not by a second icon — the
+// same glyph reads as "preview is on" and "preview is off, click to
+// turn on" because the button's pressed state is visible.
+export const ICON_EYE = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M1.5 8s2-4.5 6.5-4.5S14.5 8 14.5 8s-2 4.5-6.5 4.5S1.5 8 1.5 8z"/>
+  <circle cx="8" cy="8" r="2"/>
+</svg>`

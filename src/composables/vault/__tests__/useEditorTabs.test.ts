@@ -72,9 +72,11 @@ interface Harness {
   onCommandPaletteNew: (t: string) => Promise<void>
   activePath: Ref<string | null>
   tabs: Ref<{ path: string; raw: string; originalRaw: string; saveStatus: string; loadError: string | null; serverMtime?: number }[]>
-  // The selectPanel spy is captured separately because the composable
-  // receives it as a constructor arg and doesn't return it.
+  // The selectPanel / togglePreview spies are captured separately
+  // because the composable receives them as constructor args and
+  // doesn't return them.
   selectPanel: ReturnType<typeof vi.fn>
+  togglePreview: ReturnType<typeof vi.fn>
 }
 
 function setup(): Promise<Harness> {
@@ -83,8 +85,9 @@ function setup(): Promise<Harness> {
     const Comp = defineComponent({
       setup() {
         const selectPanel = vi.fn()
-        const api = useEditorTabs({ selectPanel })
-        captured = { ...(api as unknown as Omit<Harness, 'selectPanel'>), selectPanel }
+        const togglePreview = vi.fn()
+        const api = useEditorTabs({ selectPanel, togglePreview })
+        captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'togglePreview'>), selectPanel, togglePreview }
         return () => h('div')
       },
     })
@@ -170,7 +173,7 @@ describe('live tabs publish', () => {
     let capturedTabs: any = null
     const Comp = defineComponent({
       setup() {
-        const t = useEditorTabs({ selectPanel: () => {} })
+        const t = useEditorTabs({ selectPanel: () => {}, togglePreview: () => {} })
         capturedTabs = t.tabs
         return () => h('div')
       },
@@ -553,6 +556,28 @@ describe('live tabs publish', () => {
     const evt = new KeyboardEvent('keydown', { key: 'b', metaKey: true, cancelable: true })
     h.onKeydown(evt)
     expect(h.selectPanel).toHaveBeenCalledWith('files')
+  })
+
+  it('onKeydown Cmd-\\ calls togglePreview (mirrors the NavBar eye-button)', async () => {
+    // The shortcut the NavBar preview-toggle button advertises. We
+    // assert by spy rather than reading the layout ref because the
+    // spy is the seam the production caller uses (see VaultView.vue),
+    // so a regression that renames the field or wires the bit
+    // directly would still surface here.
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+    }))
+    const h = await setup()
+    const evt = new KeyboardEvent('keydown', { key: '\\', metaKey: true, cancelable: true })
+    h.onKeydown(evt)
+    expect(h.togglePreview).toHaveBeenCalledOnce()
+    // Ctrl on Windows / Linux maps to metaKey in the handler — make
+    // sure the shortcut isn't gated to macOS only.
+    const ctrlEvt = new KeyboardEvent('keydown', { key: '\\', ctrlKey: true, cancelable: true })
+    h.togglePreview.mockClear()
+    h.onKeydown(ctrlEvt)
+    expect(h.togglePreview).toHaveBeenCalledOnce()
   })
 
   it('onKeydown Ctrl-Tab cycles through open tabs', async () => {

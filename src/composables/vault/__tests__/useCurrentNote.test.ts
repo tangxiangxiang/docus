@@ -177,7 +177,7 @@ describe('useCurrentNote — live tab integration', () => {
       setup() {
         // NOTE: both composables live in the same setup so they share
         // the same app instance and the module-level mirror ref.
-        editorApi = useEditorTabs({ selectPanel: () => {} })
+        editorApi = useEditorTabs({ selectPanel: () => {}, togglePreview: () => {} })
         noteApi = useCurrentNote()
         return () => h('div')
       },

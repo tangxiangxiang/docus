@@ -14,6 +14,10 @@
 // they trigger. Cmd-B needs to flip the layout's activePanel to
 // 'files', so the composable accepts the layout's selectPanel via the
 // constructor — the dependency is explicit, not a global lookup.
+// Cmd-\ (\) toggles the edit-mode preview pane (see
+// useVaultLayout.togglePreview). In read mode the preview pane isn't
+// rendered, so the shortcut becomes a no-op for the user — the
+// preference is persisted and re-applied when they switch back.
 //
 // The composable also subscribes to the file-change bus so an AI write
 // to a file the user has open is reflected in the tab (with a confirm
@@ -120,6 +124,11 @@ export function __resetOpenPostForClicks(fn: ((path: string) => void) | null): v
 
 export function useEditorTabs(opts: {
   selectPanel: (panel: SidePanel) => void
+  /* Wired into the Cmd-\ shortcut to flip the preview pane open/closed
+     in edit mode. Accepted as a callback (not looked up globally) for
+     the same reason selectPanel is — keeps the layout dependency
+     explicit. */
+  togglePreview: () => void
 }) {
   const route = useRoute()
   const router = useRouter()
@@ -361,6 +370,22 @@ export function useEditorTabs(opts: {
     if (meta && e.key === 'b') {
       e.preventDefault()
       opts.selectPanel('files')
+    }
+    // Cmd-\ (or Ctrl-\) toggles the edit-mode preview pane. The
+    // shortcut mirrors the eye-icon next to the mode-toggle in the
+    // NavBar — see useVaultLayout.togglePreview / NavBar.vue's
+    // preview-toggle button for the matching user-visible affordance.
+    // The keyboard variant stays in sync whether or not the user has
+    // focus inside the editor: the listener is bound to the outer
+    // .vault root, so any keystroke while the vault has focus works
+    // (useEditorTabs.onKeydown is gated on `isReadMode` indirectly via
+    // VaultView's edit-mode template branch — read mode has its own
+    // tab navigation, but Cmd-\ falls through to the no-op condition
+    // we don't add because the preview pane is simply not rendered in
+    // read mode, so toggling the bit has no visible effect there).
+    if (meta && e.key === '\\') {
+      e.preventDefault()
+      opts.togglePreview()
     }
     // Ctrl+Tab / Ctrl+Shift+Tab — cycle through open tabs. Matches the
     // browser convention: Tab goes forward, Shift+Tab goes backward.

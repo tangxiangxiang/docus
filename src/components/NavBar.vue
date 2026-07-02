@@ -5,7 +5,7 @@ import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { PROTECTED_ROOTS } from '../composables/zettelProtocol'
-import { ICON_AI, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ZETTEL } from './vault/icons'
+import { ICON_AI, ICON_EYE, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ZETTEL } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 
 defineProps<{ isVault?: boolean }>()
@@ -52,6 +52,20 @@ const { activeScope, toggleScope } = useScopeFilter()
    is a sibling of the existing nav-search / mode-toggle, and the
    useVaultLayout singleton makes this safe. */
 const { aiOpen, toggleAi } = useVaultLayout()
+
+/* Preview-pane toggle. Shown only in edit mode (read mode has its own
+   ReadingPane that already renders the rendered markdown, so a
+   separate preview pane would be redundant). Reads the same module-
+   level `previewOpen` ref the keyboard shortcut (Cmd-\) and the
+   VaultView template gate use, so all three affordances stay in
+   sync without a round-trip. */
+const { previewOpen, togglePreview } = useVaultLayout()
+const isReadMode = computed(() => viewMode.value === 'read')
+const previewTitle = computed(() =>
+  previewOpen.value
+    ? 'Preview pane (click or ⌘\\ to close)'
+    : 'Preview pane (click or ⌘\\ to open)'
+)
 const SCOPE_ICONS: Record<string, string> = {
   inbox: ICON_SCOPE_INBOX,
   literature: ICON_SCOPE_LITERATURE,
@@ -129,6 +143,28 @@ const SCOPE_ICONS: Record<string, string> = {
             <path d="M2 4h7a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z" />
             <path d="M22 4h-7a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h8z" />
           </svg>
+        </button>
+        <!-- Preview-pane toggle. Sits next to mode-toggle so the two
+             read as a paired group: "what kind of view do I have?" —
+             {edit/read} on the left, {preview on/off} on the right.
+             Hidden in read mode because read mode already renders the
+             markdown; showing the toggle there would imply a separate
+             preview surface that doesn't exist. The keyboard shortcut
+             (Cmd-\) still toggles `previewOpen` in read mode but has
+             no visible effect — the bit sticks for when the user
+             switches back. The icon is the same in both states; the
+             active state is the button's aria-pressed + CSS accent,
+             matching the AI-toggle pattern. -->
+        <button
+          v-if="isVault && !isReadMode"
+          class="preview-toggle"
+          type="button"
+          :title="previewTitle"
+          :aria-label="previewTitle"
+          :aria-pressed="previewOpen"
+          @click="togglePreview"
+        >
+          <span class="preview-toggle-icon" aria-hidden="true" v-html="ICON_EYE" />
         </button>
         <button
           class="theme-toggle"

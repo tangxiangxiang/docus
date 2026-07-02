@@ -2959,6 +2959,36 @@ main.container {
 }
 .ai-toggle .ai-toggle-icon { display: inline-flex; line-height: 0; }
 
+/* NavBar preview-pane toggle. Pairs visually with .mode-toggle (one
+   step to its right) so the two read as a single control: "what's
+   my edit surface — read/edit × preview on/off". Matches the .ai-toggle
+   hover + pressed styling so all three view-related buttons speak
+   the same visual language. The gap to .mode-toggle is tightened
+   below so the pair is obvious without drawing a divider line, which
+   would look heavy in a 24px-tall navbar. */
+.preview-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  /* Pull the button 4px to the left of its .nav-actions gap, so it
+     sits closer to .mode-toggle than the surrounding buttons do to
+     each other. Pairs visually without needing a border. */
+  margin-left: -4px;
+}
+.preview-toggle:hover { background: var(--bg-soft); color: var(--text-h); }
+.preview-toggle[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.preview-toggle .preview-toggle-icon { display: inline-flex; line-height: 0; }
+
 /* Clickable session title in the AI panel header. The whole
    "Claude · {title}" is a button so the user can open the
    session picker. Inherits the same colors as the rest of the

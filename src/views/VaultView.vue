@@ -60,6 +60,8 @@ const {
   toggleAi,
   aiOpen,
   tocPanelWidth,
+  previewOpen,
+  togglePreview,
 } = useVaultLayout({ tocGate: () => tocGate() })
 
 /* Splitter drag lives in its own composable — it mutates the same
@@ -135,7 +137,7 @@ async function splitCard(path: string, mode: SplitMode) {
 const {
   tree, posts, tabs, activePath, activeTab, isDirty, activeSize,
   refresh, openPost, closeTab, closeMany, selectTab, onEditorChange, onKeydown, onCommandPaletteNew,
-} = useEditorTabs({ selectPanel })
+} = useEditorTabs({ selectPanel, togglePreview })
 
 /* Mirror the editor's scroll position onto the preview pane (and
    vice versa) so the two stay aligned as the user scrolls in edit
@@ -302,7 +304,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
         </div>
 
         <div
-          v-if="tabs.length"
+          v-if="tabs.length && previewOpen"
           class="splitter splitter-mid"
           role="separator"
           aria-orientation="vertical"
@@ -310,15 +312,17 @@ watch(() => navSearch?.tick.value, () => openSearch())
           @pointerdown="startDrag(vaultRef!, 'middle', $event)"
         />
 
-        <div
-          v-for="t in tabs"
-          v-show="t.path === activePath"
-          :key="`p-${t.path}`"
-          class="preview-pane"
-          :data-path="t.path"
-        >
-          <PreviewPane v-if="!t.loading && !t.loadError" :raw="t.raw" :resolver="wikiResolver" />
-        </div>
+        <template v-if="previewOpen">
+          <div
+            v-for="t in tabs"
+            v-show="t.path === activePath"
+            :key="`p-${t.path}`"
+            class="preview-pane"
+            :data-path="t.path"
+          >
+            <PreviewPane v-if="!t.loading && !t.loadError" :raw="t.raw" :resolver="wikiResolver" />
+          </div>
+        </template>
       </div>
 
       <!-- Read mode: single reading surface in the same slot. The side

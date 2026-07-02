@@ -35,8 +35,10 @@ interface Harness {
   aiOpen: Ref<boolean>
   aiPanelWidth: Ref<number>
   tocPanelWidth: Ref<number>
+  previewOpen: Ref<boolean>
   selectPanel: (p: 'files' | 'tags' | 'graph') => void
   toggleAi: () => void
+  togglePreview: () => void
   vaultStyle: { value: { gridTemplateColumns: string } }
 }
 
@@ -53,8 +55,10 @@ function setup(opts: { tocGate?: () => boolean } = {}): Harness {
         aiOpen: layout.aiOpen,
         aiPanelWidth: layout.aiPanelWidth,
         tocPanelWidth: layout.tocPanelWidth,
+        previewOpen: layout.previewOpen,
         selectPanel: layout.selectPanel,
         toggleAi: layout.toggleAi,
+        togglePreview: layout.togglePreview,
         vaultStyle: layout.vaultStyle as Harness['vaultStyle'],
       }
       return () => h('div')
@@ -80,6 +84,8 @@ describe('useVaultLayout', () => {
     expect(h.activePanel.value).toBe('files')
     expect(h.sidePanelWidth.value).toBe(260)
     expect(h.editorRatio.value).toBe(1)
+    // Preview pane is opt-in: new users land in full-width editor mode.
+    expect(h.previewOpen.value).toBe(false)
   })
 
   it('exposes aiOpen=false and aiPanelWidth=320 by default', () => {
@@ -138,6 +144,7 @@ describe('useVaultLayout', () => {
     expect(h.activePanel.value).toBe('files')
     expect(h.sidePanelWidth.value).toBe(260)
     expect(h.editorRatio.value).toBe(1)
+    expect(h.previewOpen.value).toBe(false)
   })
 
   it('ignores an unknown activePanel value (treats it as null)', () => {
@@ -168,6 +175,68 @@ describe('useVaultLayout', () => {
     expect(h.aiOpen.value).toBe(true)
     h.toggleAi()
     expect(h.aiOpen.value).toBe(false)
+  })
+
+  it('togglePreview flips previewOpen off and on', () => {
+    // Mirrors toggleAi's signature so the NavBar eye-button and the
+    // Cmd-\ shortcut can rely on a single dependency that doesn't
+    // branch on the current value.
+    const h = setup()
+    expect(h.previewOpen.value).toBe(false)
+    h.togglePreview()
+    expect(h.previewOpen.value).toBe(true)
+    h.togglePreview()
+    expect(h.previewOpen.value).toBe(false)
+  })
+
+  it('hydrates previewOpen=false when the persisted payload predates the field', () => {
+    // Users upgrading from a build that always showed the preview
+    // pane don't have a previewOpen field in their persisted layout.
+    // We treat missing as false: the new full-width-editor default
+    // wins, and the user can re-enable the split if they want.
+    // This locks in the migration in case someone later "improves"
+    // the default by reading truthy or some heuristic.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      activePanel: 'files',
+      sidePanelWidth: 260,
+      editorRatio: 1,
+      aiOpen: false,
+      aiPanelWidth: 320,
+      tocPanelWidth: 320,
+      // note: no previewOpen
+    }))
+    const h = setup()
+    expect(h.previewOpen.value).toBe(false)
+  })
+
+  it('hydrates previewOpen=true when the field is present and true', async () => {
+    // After a user toggles preview on, the persisted payload carries
+    // previewOpen=true. On next mount the ref must come back true so
+    // the side-by-side layout they were using is preserved across
+    // reloads — otherwise the editor would silently steal the space
+    // and the user would have to re-enable it every session.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      activePanel: 'files',
+      sidePanelWidth: 260,
+      editorRatio: 1,
+      aiOpen: false,
+      aiPanelWidth: 320,
+      tocPanelWidth: 320,
+      previewOpen: true,
+    }))
+    const h = setup()
+    expect(h.previewOpen.value).toBe(true)
+  })
+
+  it('persists previewOpen=true when toggled', async () => {
+    // The writer must include previewOpen in the persisted payload.
+    // A regression that drops the field from the writer would lose
+    // the user's choice on every reload — silent data loss.
+    const h = setup()
+    h.togglePreview()
+    await Promise.resolve()
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as VaultLayout
+    expect(parsed.previewOpen).toBe(true)
   })
 
   it('vaultStyle uses 4 columns when side=off, ai=off, tocGate=true (default)', () => {
@@ -260,6 +329,7 @@ describe('useVaultLayout', () => {
   it('persists changes back to localStorage in the new shape only', async () => {
     const h = setup()
     h.selectPanel('tags')
+    h.togglePreview() // also exercise previewOpen in the write path
     // The watcher is sync; one microtask tick is enough.
     await Promise.resolve()
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -271,6 +341,8 @@ describe('useVaultLayout', () => {
     expect(parsed.activePanel).toBe('tags')
     expect(typeof parsed.sidePanelWidth).toBe('number')
     expect(typeof parsed.editorRatio).toBe('number')
+    // previewOpen made it into the writer
+    expect(parsed.previewOpen).toBe(true)
   })
 
   it('persists aiOpen and aiPanelWidth when toggled', async () => {
