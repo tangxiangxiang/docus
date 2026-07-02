@@ -25,9 +25,12 @@ const themeTitle = computed<string>(() => {
   return `Theme: ${cur} (click for ${next})`
 })
 
-/* View-mode toggle is provided globally by App.vue; null on routes that
-   don't use the vault (e.g. /tags), in which case the button is
-   hidden. We default to a no-op toggle so consumers can call it freely. */
+/* View-mode toggle is provided globally by App.vue. Every route now
+   lands in the vault (the catch-all below the /vault/* entries routes
+   anything unknown to /vault), so the inject is always non-null in
+   practice — we keep the null fallback defensively for tests and
+   future standalone pages, plus a no-op toggle so consumers can call
+   it freely without a guard. */
 const viewModeApi = inject(VaultViewModeKey, null)
 const viewMode = computed(() => viewModeApi?.mode.value ?? 'edit')
 

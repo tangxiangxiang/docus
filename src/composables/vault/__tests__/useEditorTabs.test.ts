@@ -156,7 +156,7 @@ describe('live tabs publish', () => {
       history: createMemoryHistory(),
       routes: [{ path: '/vault/:path(.*)*', name: 'vault', component: { template: '<div/>' } }],
     })
-    router.push('/tags') // /tags has no pathMatch, so openPost is not called
+    router.push('/not-vault') // path doesn't match /vault/:path, so openPost is not called
     await router.isReady()
 
     // Stub fetch — useEditorTabs.refresh() calls getTree() and listPosts()

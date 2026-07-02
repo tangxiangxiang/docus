@@ -385,23 +385,6 @@ main.container {
 .article :first-child { margin-top: 0; }
 .article img { max-width: 100%; height: auto; }
 
-/* Tags */
-.tag-list {
-  list-style: none;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 20px;
-}
-.tag-list li a {
-  font-family: var(--mono);
-  font-size: 0.95em;
-}
-.tag-list .count {
-  color: var(--text-muted);
-}
-
 .empty {
   color: var(--text-muted);
   font-style: italic;
@@ -1324,9 +1307,9 @@ main.container {
   line-height: 1;
 }
 /* Inside the vault the panel's <ul> is a flex item of the column
-   panel — `display: block` here overrides the global `.tag-list`
-   flex-wrap layout (which is meant for the /tags cloud view) so the
-   tag rows stay at intrinsic height and don't get stretched. */
+   panel — `display: block` here gives the list intrinsic row height
+   and lets it scroll independently inside the column, instead of
+   stretching every row to fill vertical space. */
 .vault .tag-panel ul {
   display: block;
   overflow-y: auto;

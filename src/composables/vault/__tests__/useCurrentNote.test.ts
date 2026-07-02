@@ -65,7 +65,7 @@ async function mountAtRoute(initialPath: string) {
 
 describe('useCurrentNote', () => {
   it('exposes null path and empty content when the route is not the vault', async () => {
-    const { note } = await mountAtRoute('/tags')
+    const { note } = await mountAtRoute('/not-vault')
     expect(note.path.value).toBeNull()
     expect(note.content.value).toBe('')
   })
