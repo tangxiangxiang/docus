@@ -262,8 +262,7 @@ hr {
   gap: 6px;            /* search and theme toggle sit close together as a unit */
 }
 .nav-search,
-.theme-toggle,
-.mode-toggle {
+.theme-toggle {
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
@@ -276,22 +275,13 @@ hr {
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .nav-search:hover,
-.theme-toggle:hover,
-.mode-toggle:hover {
+.theme-toggle:hover {
   color: var(--text-h);
   border-color: var(--border);
   background: var(--bg-soft);
 }
-/* When read mode is active the toggle is the "primary" affordance —
-   give it a soft filled state so it's obvious how to switch back. */
-.mode-toggle[aria-pressed='true'] {
-  color: var(--accent);
-  border-color: var(--border);
-  background: var(--bg-soft);
-}
 .navbar.is-vault .nav-search,
-.navbar.is-vault .theme-toggle,
-.navbar.is-vault .mode-toggle { padding: 4px; }
+.navbar.is-vault .theme-toggle { padding: 4px; }
 
 /* Scope filter chips (Zettelkasten roots: inbox / literature / zettel).
    Rendered in the navbar in vault mode because the file tree's header
@@ -3012,35 +3002,126 @@ main.container {
 }
 .ai-toggle .ai-toggle-icon { display: inline-flex; line-height: 0; }
 
-/* NavBar preview-pane toggle. Pairs visually with .mode-toggle (one
-   step to its right) so the two read as a single control: "what's
-   my edit surface — read/edit × preview on/off". Matches the .ai-toggle
-   hover + pressed styling so all three view-related buttons speak
-   the same visual language. The gap to .mode-toggle is tightened
-   below so the pair is obvious without drawing a divider line, which
-   would look heavy in a 24px-tall navbar. */
-.preview-toggle {
+/* ViewModeMenu — combined view-mode picker in the navbar. Replaces
+   the previous pair of toggle buttons (.mode-toggle +
+   .preview-toggle). The trigger is a single labeled button so the
+   user sees "Edit + Preview" / "Read" / "Edit" as the current state
+   instead of having to read two adjacent aria-pressed flags; the
+   popover lists the three valid states as radio rows.
+
+   Trigger styling is a lighter sibling of the .mode-toggle / .theme-toggle
+   buttons above: same hover (color + soft background + border) but
+   with a visible text label so the active state is readable at a
+   glance. The trigger sits in the .navbar.is-vault only (the
+   component hides itself otherwise), so the .is-vault override
+   matches the other navbar buttons' reduced padding. */
+.view-mode-menu {
+  position: relative;
+  display: inline-block;
+}
+.view-mode-menu-trigger {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 4px;
+  gap: 6px;
+  padding: 4px 8px 4px 6px;
   background: transparent;
-  border: 0;
+  border: 1px solid transparent;
   color: var(--text-muted);
-  border-radius: 4px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.82rem;
   cursor: pointer;
-  transition: background 0.1s, color 0.1s;
-  /* Pull the button 4px to the left of its .nav-actions gap, so it
-     sits closer to .mode-toggle than the surrounding buttons do to
-     each other. Pairs visually without needing a border. */
-  margin-left: -4px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
-.preview-toggle:hover { background: var(--bg-soft); color: var(--text-h); }
-.preview-toggle[aria-pressed='true'] {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+.view-mode-menu-trigger:hover {
+  color: var(--text-h);
+  border-color: var(--border);
+  background: var(--bg-soft);
+}
+/* Open state mirrors the hover state so the user can see at a
+   glance whether the popover is showing. */
+.view-mode-menu.is-open .view-mode-menu-trigger {
+  color: var(--text-h);
+  border-color: var(--border);
+  background: var(--bg-soft);
+}
+.view-mode-menu-trigger-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
   color: var(--accent);
 }
-.preview-toggle .preview-toggle-icon { display: inline-flex; line-height: 0; }
+.view-mode-menu-trigger-label { white-space: nowrap; }
+.view-mode-menu-trigger-caret {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  /* Tight gap with the label; the caret reads as part of the
+     trigger label rather than a separate glyph. */
+  margin-left: 2px;
+}
+
+/* Popover sits absolutely below the trigger, anchored to its right
+   edge so the menu doesn't fly off-screen in the rightmost position
+   of the navbar. Width auto so the longest label ("Edit + Preview")
+   dictates it; the rows pad to match the trigger's interior rhythm. */
+.view-mode-menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 160px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.view-mode-menu-item {
+  display: grid;
+  /* Three columns: icon (auto), label (1fr), check (auto). The
+     grid makes the check column line up across all three rows even
+     when only one row is "active" — the empty space stays reserved
+     so future additions don't shift the check position. */
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.view-mode-menu-item:hover,
+.view-mode-menu-item:focus-visible {
+  background: var(--bg-soft);
+  outline: none;
+}
+/* Active row uses the same accent fill the AI toggle uses for its
+   pressed state, so the user gets a familiar "this is on" cue. */
+.view-mode-menu-item.is-active {
+  color: var(--accent);
+}
+.view-mode-menu-item-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+  color: var(--text-muted);
+}
+.view-mode-menu-item.is-active .view-mode-menu-item-icon {
+  color: var(--accent);
+}
+.view-mode-menu-item-check {
+  color: var(--accent);
+  font-weight: 600;
+}
 
 /* Clickable session title in the AI panel header. The whole
    "Claude · {title}" is a button so the user can open the

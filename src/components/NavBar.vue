@@ -5,8 +5,9 @@ import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { PROTECTED_ROOTS } from '../composables/zettelProtocol'
-import { ICON_AI, ICON_EYE, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ZETTEL } from './vault/icons'
+import { ICON_AI, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ZETTEL } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
+import ViewModeMenu from './ViewModeMenu.vue'
 
 defineProps<{ isVault?: boolean }>()
 const emit = defineEmits<{
@@ -25,23 +26,14 @@ const themeTitle = computed<string>(() => {
   return `Theme: ${cur} (click for ${next})`
 })
 
-/* View-mode toggle is provided globally by App.vue. Every route now
-   lands in the vault (the catch-all below the /vault/* entries routes
-   anything unknown to /vault), so the inject is always non-null in
-   practice — we keep the null fallback defensively for tests and
-   future standalone pages, plus a no-op toggle so consumers can call
-   it freely without a guard. */
+/* View-mode is provided globally by App.vue. The picker itself
+   lives in <ViewModeMenu>; we just feed it the current state and
+   translate its emit back into the source-of-truth setters. Keeping
+   the source of truth in App.vue means keyboard shortcuts
+   (Cmd-\ toggles preview, Cmd-Shift-R toggles read) keep working
+   alongside the menu without duplicating logic. */
 const viewModeApi = inject(VaultViewModeKey, null)
 const viewMode = computed(() => viewModeApi?.mode.value ?? 'edit')
-
-/* In edit mode the button invites a switch to read (book icon).
-   In read mode it invites a switch back to edit (pencil icon). */
-const modeIcon = computed<'book-open' | 'pencil'>(() => (viewMode.value === 'edit' ? 'book-open' : 'pencil'))
-const modeTitle = computed<string>(() => {
-  const next = viewMode.value === 'edit' ? 'Read' : 'Edit'
-  return `${next} mode (click to switch)`
-})
-function onToggleViewMode() { viewModeApi?.toggle() }
 
 /* Scope filter (Zettelkasten root chips). Owned by the composable so
    FileTree can read the active scope and the chips here can write it.
@@ -49,23 +41,29 @@ function onToggleViewMode() { viewModeApi?.toggle() }
 const { activeScope, toggleScope } = useScopeFilter()
 
 /* AI panel toggle. Lives here (not in VaultView) because the button
-   is a sibling of the existing nav-search / mode-toggle, and the
+   is a sibling of the existing nav-search / view-mode-menu, and the
    useVaultLayout singleton makes this safe. */
 const { aiOpen, toggleAi } = useVaultLayout()
 
-/* Preview-pane toggle. Shown only in edit mode (read mode has its own
-   ReadingPane that already renders the rendered markdown, so a
-   separate preview pane would be redundant). Reads the same module-
-   level `previewOpen` ref the keyboard shortcut (Cmd-\) and the
-   VaultView template gate use, so all three affordances stay in
-   sync without a round-trip. */
+/* Preview-pane toggle state lives in useVaultLayout; the menu emits
+   a desired (mode, previewOpen) tuple and we apply each bit to its
+   respective setter. Toggling preview (rather than always writing
+   `previewOpen = opt.previewOpen`) preserves the user's existing
+   `previewOpen` bit when switching to read — switching to read
+   doesn't silently reset the preview flag, it just hides the
+   preview pane for as long as read mode is active (the underlying
+   bit sticks, mirroring the Cmd-\ shortcut's behavior). */
 const { previewOpen, togglePreview } = useVaultLayout()
-const isReadMode = computed(() => viewMode.value === 'read')
-const previewTitle = computed(() =>
-  previewOpen.value
-    ? 'Preview pane (click or ⌘\\ to close)'
-    : 'Preview pane (click or ⌘\\ to open)'
-)
+
+function onViewModeSelect(payload: { mode: 'edit' | 'read'; previewOpen: boolean }) {
+  if (viewModeApi && payload.mode !== viewModeApi.mode.value) {
+    viewModeApi.set(payload.mode)
+  }
+  if (payload.previewOpen !== previewOpen.value) {
+    togglePreview()
+  }
+}
+
 const SCOPE_ICONS: Record<string, string> = {
   inbox: ICON_SCOPE_INBOX,
   literature: ICON_SCOPE_LITERATURE,
@@ -124,48 +122,12 @@ const SCOPE_ICONS: Record<string, string> = {
         >
           <span class="ai-toggle-icon" aria-hidden="true" v-html="ICON_AI" />
         </button>
-        <button
+        <ViewModeMenu
           v-if="isVault"
-          class="mode-toggle"
-          type="button"
-          :title="modeTitle"
-          :aria-label="modeTitle"
-          :aria-pressed="viewMode === 'read'"
-          @click="onToggleViewMode"
-        >
-          <!-- read mode active: show pencil (click to switch back to edit) -->
-          <svg v-if="modeIcon === 'pencil'" aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 20h9" />
-            <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-          </svg>
-          <!-- edit mode active: show book-open (click to switch to read) -->
-          <svg v-else aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M2 4h7a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z" />
-            <path d="M22 4h-7a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h8z" />
-          </svg>
-        </button>
-        <!-- Preview-pane toggle. Sits next to mode-toggle so the two
-             read as a paired group: "what kind of view do I have?" —
-             {edit/read} on the left, {preview on/off} on the right.
-             Hidden in read mode because read mode already renders the
-             markdown; showing the toggle there would imply a separate
-             preview surface that doesn't exist. The keyboard shortcut
-             (Cmd-\) still toggles `previewOpen` in read mode but has
-             no visible effect — the bit sticks for when the user
-             switches back. The icon is the same in both states; the
-             active state is the button's aria-pressed + CSS accent,
-             matching the AI-toggle pattern. -->
-        <button
-          v-if="isVault && !isReadMode"
-          class="preview-toggle"
-          type="button"
-          :title="previewTitle"
-          :aria-label="previewTitle"
-          :aria-pressed="previewOpen"
-          @click="togglePreview"
-        >
-          <span class="preview-toggle-icon" aria-hidden="true" v-html="ICON_EYE" />
-        </button>
+          :mode="viewMode"
+          :preview-open="previewOpen"
+          @select="onViewModeSelect"
+        />
         <button
           class="theme-toggle"
           type="button"

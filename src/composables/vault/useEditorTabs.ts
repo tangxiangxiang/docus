@@ -372,9 +372,9 @@ export function useEditorTabs(opts: {
       opts.selectPanel('files')
     }
     // Cmd-\ (or Ctrl-\) toggles the edit-mode preview pane. The
-    // shortcut mirrors the eye-icon next to the mode-toggle in the
-    // NavBar — see useVaultLayout.togglePreview / NavBar.vue's
-    // preview-toggle button for the matching user-visible affordance.
+    // shortcut mirrors the "Edit + Preview" option in the ViewModeMenu
+    // picker in NavBar — see useVaultLayout.togglePreview and the
+    // NavBar's <ViewModeMenu> for the matching user-visible affordance.
     // The keyboard variant stays in sync whether or not the user has
     // focus inside the editor: the listener is bound to the outer
     // .vault root, so any keystroke while the vault has focus works
