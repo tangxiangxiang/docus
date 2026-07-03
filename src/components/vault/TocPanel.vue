@@ -9,7 +9,7 @@
 //
 // Stylistically the two halves read as a single visual family: same
 // background token (var(--vs-side-bg)), same header rhythm (icon +
-// title row, uppercase tracked, 8px/12px padding, 1px border-bottom),
+// title row, 8px/12px padding, 1px border-bottom),
 // same row hover treatment. The TOC keeps one piece of its own
 // chrome — the active heading's left-edge accent bar — because the
 // scroll-spy highlight is the whole point of the TOC; the Links panel
@@ -29,7 +29,7 @@
 //     parent can route through openPost.
 
 import { computed } from 'vue'
-import { tocHeadings, tocActiveId, tocScrollTo } from '../../composables/vault/useTocState'
+import { tocHeadings, tocActiveId, tocScrollTo, linksEmpty } from '../../composables/vault/useTocState'
 import { ICON_TOC } from './icons'
 import type { PostSummary } from '../../lib/api'
 import LinksPanel from './LinksPanel.vue'
@@ -48,6 +48,22 @@ const emit = defineEmits<{
 
 const hasHeadings = computed(() => tocHeadings.value.length > 0)
 
+/* The right-rail is split 50/50 by default, but that's wasteful when
+   one half is empty (a 30-heading note with 0 links leaves half the
+   rail sitting on "No links yet"). When exactly one half is empty we
+   collapse the empty one and let the populated half take the full
+   column. When both are empty we fall back to 50/50 so the "No
+   headings" / "No links yet" empty states still have somewhere to
+   sit. `linksEmpty` is published by LinksPanel via a watchEffect on
+   its own isEmpty computed (which tracks the async backlinks fetch
+   + the link index), so it stays in lockstep with what the panel
+   actually shows. */
+const isTocEmpty = computed(() => !hasHeadings.value)
+const isLinksEmpty = computed(() => linksEmpty.value)
+const bothEmpty = computed(() => isTocEmpty.value && isLinksEmpty.value)
+const tocCollapsed = computed(() => isTocEmpty.value && !bothEmpty.value)
+const linksCollapsed = computed(() => isLinksEmpty.value && !bothEmpty.value)
+
 function onTocClick(id: string) {
   tocScrollTo.value?.(id)
 }
@@ -58,7 +74,10 @@ function onLinkNavigate(p: string) {
 </script>
 
 <template>
-  <div class="right-rail">
+  <div
+    class="right-rail"
+    :class="{ 'toc-collapsed': tocCollapsed, 'links-collapsed': linksCollapsed }"
+  >
     <section class="toc-panel" aria-label="Page navigation">
       <header class="toc-panel-header">
         <div class="toc-panel-title" role="presentation">
@@ -124,14 +143,28 @@ function onLinkNavigate(p: string) {
 }
 
 /* 1px divider between the two halves. Sits on the Links side so the
-   top half's bottom border doesn't double up against it. */
+   top half's bottom border doesn't double up against it. Dropped
+   when the TOC half is collapsed — there's no boundary to draw. */
 .links-slot {
   border-top: 1px solid var(--vs-border, var(--border));
+}
+.right-rail.toc-collapsed .links-slot {
+  border-top: 0;
+}
+
+/* Collapse the empty half so the populated one takes the full rail
+   height. The .right-rail stays a flex column, and the surviving
+   half's existing `flex: 1 1 0` makes it stretch to fill. When both
+   halves are empty (no .toc-collapsed / .links-collapsed class), the
+   default 50/50 split still applies so the empty states have room. */
+.right-rail.toc-collapsed .toc-panel,
+.right-rail.links-collapsed .links-slot {
+  display: none;
 }
 
 /* ----- TOC half: matches LinksPanel's header + row rhythm -----
    Header mirrors the .links-panel > header layout: icon + title row,
-   8px/12px padding, 1px border-bottom, uppercase tracked text. */
+   8px/12px padding, 1px border-bottom. */
 .toc-panel-header {
   display: flex;
   align-items: center;
@@ -197,7 +230,10 @@ function onLinkNavigate(p: string) {
   color: var(--vs-text-2, var(--text-muted));
   text-decoration: none;
   border-left: 2px solid transparent;
-  transition: background 0.12s ease, color 0.12s ease;
+  /* Animate the accent border too — without it, scroll-spy jumps
+     snap the bar in place while the row's text fades in, which
+     reads as a tiny flicker on slow section transitions. */
+  transition: background 0.12s ease, color 0.12s ease, border-left-color 0.18s ease;
 }
 
 .toc-panel-link-text {

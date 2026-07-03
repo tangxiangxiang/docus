@@ -12,11 +12,12 @@
 // parent (VaultView) can route through `useEditorTabs.openPost`.
 // Same shape as FileTree / TagPanel emits.
 
-import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, watchEffect, onMounted, onBeforeUnmount } from 'vue'
 import { useDebounceFn } from '@vueuse/core'
 import type { PostSummary, BacklinkRecord } from '../../lib/api'
 import { getLinkIndex, fetchBacklinks } from '../../composables/vault/useLinkIndex'
 import { getFileChangeBus } from '../../composables/vault/useFileChangeBus'
+import { linksEmpty } from '../../composables/vault/useTocState'
 import { ICON_LINKS } from './icons'
 import { PROTECTED_ROOTS } from '../../composables/zettelProtocol'
 
@@ -140,6 +141,16 @@ const isEmpty = computed(() =>
   !activePath.value ||
   (backlinks.value.length === 0 && outgoingDisplay.value.length === 0),
 )
+
+/* Publish the empty state to the right-rail state module so TocPanel
+   (a sibling, not a parent) can drive the rail's collapse. A
+   watchEffect re-runs whenever `isEmpty` flips, which is what
+   keeps the published ref in lockstep. The `isEmpty` computed
+   depends on activePath, backlinks, and outgoing — watchEffect
+   tracks all three transitively. */
+watchEffect(() => {
+  linksEmpty.value = isEmpty.value
+})
 </script>
 
 <template>
@@ -159,12 +170,18 @@ const isEmpty = computed(() =>
     </div>
 
     <template v-else>
-      <section class="section" aria-label="Linked by">
+      <!-- Hide a section entirely when it has nothing to show. The
+           overall isEmpty branch above covers the "both empty" case,
+           so the per-section "No backlinks" / "No outgoing" messages
+           and the section headers (with their "0" count) are
+           redundant — dropping them keeps the panel down to what
+           the note actually has. -->
+      <section v-if="backlinks.length" class="section" aria-label="Linked by">
         <header class="section-header">
           <span class="section-title">Linked by</span>
           <span class="section-count">{{ backlinks.length }}</span>
         </header>
-        <ul v-if="backlinks.length" class="link-list">
+        <ul class="link-list">
           <li v-for="b in backlinks" :key="b.source">
             <button
               class="link-entry"
@@ -177,15 +194,14 @@ const isEmpty = computed(() =>
             </button>
           </li>
         </ul>
-        <p v-else class="empty section-empty">No other notes link here yet.</p>
       </section>
 
-      <section class="section" aria-label="Links to">
+      <section v-if="outgoingDisplay.length" class="section" aria-label="Links to">
         <header class="section-header">
           <span class="section-title">Links to</span>
           <span class="section-count">{{ outgoingDisplay.length }}</span>
         </header>
-        <ul v-if="outgoingDisplay.length" class="link-list">
+        <ul class="link-list">
           <li v-for="l in outgoingDisplay" :key="l.target + (l.anchor ?? '')">
             <button
               class="link-entry"
@@ -198,7 +214,6 @@ const isEmpty = computed(() =>
             </button>
           </li>
         </ul>
-        <p v-else class="empty section-empty">This note doesn't link to any other notes yet.</p>
       </section>
     </template>
   </aside>
@@ -319,9 +334,5 @@ const isEmpty = computed(() =>
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
-}
-.section-empty {
-  padding: 10px 14px;
-  font-size: 0.82rem;
 }
 </style>
