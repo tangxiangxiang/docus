@@ -25,6 +25,7 @@ import { computed } from 'vue'
 import { useHistory } from '../../composables/vault/useHistory.js'
 import { useToast } from '../../composables/useToast.js'
 import { WORKTREE_REF, type DiffOp } from '../../lib/history-api.js'
+import EmptyState from './EmptyState.vue'
 
 const h = useHistory()
 const toast = useToast()
@@ -139,8 +140,9 @@ const hasDiff = computed(() => h.selectedFile.value !== null)
          and we render the result here. Until then, the main area
          stays empty rather than rendering a confusing default. -->
     <div v-if="!hasDiff" class="diff-empty">
-      <div class="empty-title">No file selected</div>
-      <div class="empty-hint">Pick a dirty file or a commit in the History panel.</div>
+      <EmptyState size="compact" title="No file selected">
+        Pick a dirty file or a commit in the History panel.
+      </EmptyState>
     </div>
 
     <template v-else>
@@ -179,8 +181,9 @@ const hasDiff = computed(() => h.selectedFile.value !== null)
 
       <div v-if="h.busy.value" class="diff-loading">Loading diff…</div>
       <div v-else-if="rows.length === 0" class="diff-empty">
-        <div class="empty-title">No changes</div>
-        <div class="empty-hint">The two refs are identical.</div>
+        <EmptyState size="compact" title="No changes">
+          The two refs are identical.
+        </EmptyState>
       </div>
 
       <div v-else class="diff-table" role="table">

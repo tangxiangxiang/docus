@@ -27,6 +27,7 @@ import { useHistory } from '../../composables/vault/useHistory.js'
 import { getLiveTabs } from '../../composables/vault/useEditorTabs.js'
 import { useToast } from '../../composables/useToast.js'
 import { WORKTREE_REF, type CommitRecord } from '../../lib/history-api.js'
+import EmptyState from './EmptyState.vue'
 
 const h = useHistory()
 const toast = useToast()
@@ -190,14 +191,14 @@ onMounted(() => {
          The capability probe runs at app start; this is the resting
          state for a vault where the binary isn't on PATH. -->
     <div v-if="h.capability.value && !h.capability.value.gitAvailable" class="history-empty">
-      <div class="empty-title">Git is not available</div>
-      <div class="empty-hint">Install git and add it to your PATH, then reload.</div>
+      <EmptyState size="compact" title="Git is not available">
+        Install git and add it to your PATH, then reload.
+      </EmptyState>
     </div>
     <div v-else-if="h.capability.value && !h.capability.value.repoInitialized" class="history-empty">
-      <div class="empty-title">
-        {{ h.capability.value.initError ? 'Vault git unavailable' : 'Initializing vault…' }}
-      </div>
-      <div v-if="h.capability.value.initError" class="empty-hint">{{ h.capability.value.initError }}</div>
+      <EmptyState size="compact" :title="h.capability.value.initError ? 'Vault git unavailable' : 'Initializing vault…'">
+        <template v-if="h.capability.value.initError">{{ h.capability.value.initError }}</template>
+      </EmptyState>
     </div>
 
     <template v-else>

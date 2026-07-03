@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, inject, shallowRef, watch, computed, provide, onMounted, onBeforeUnmount } from 'vue'
+import { useShortcutDisplay } from '../composables/useShortcutDisplay'
 import { useVaultLayout, setSelectPanelForClicks } from '../composables/vault/useVaultLayout'
 import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
 import { useEditorPreviewScrollSync } from '../composables/vault/useEditorPreviewScrollSync'
@@ -20,6 +21,7 @@ import PreviewPane from '../components/vault/PreviewPane.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
 import KnowledgeGraph from '../components/vault/KnowledgeGraph.vue'
 import TocPanel from '../components/vault/TocPanel.vue'
+import EmptyState from '../components/vault/EmptyState.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
 import HistoryPanel from '../components/vault/HistoryPanel.vue'
 import DiffView from '../components/vault/DiffView.vue'
@@ -31,6 +33,23 @@ import CommandPalette from '../components/vault/CommandPalette.vue'
    (which lives outside the router view) can ask the vault to open its
    CommandPalette. We watch the tick and call show() each time. */
 const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
+
+/* Platform-aware shortcut display for the empty-state hint chips.
+   Computed once at module load (see useShortcutDisplay), so this
+   just hands back the same `{ isMac, format }` for the whole
+   session. */
+const shortcuts = useShortcutDisplay()
+
+/* Both edit-mode and read-mode render the same "no file open"
+   empty card when `tabs.length === 0`. The action list lives here
+   so the label / shortcut keys only need to be edited once and the
+   template can `v-for` over them. The `.content-empty` wrapper
+   around the card still owns the absolute-fill centering in either
+   mode, so this list only describes the card body. */
+const emptyActions = computed(() => [
+  { label: 'Command palette', keys: shortcuts.format('mod+P') },
+  { label: 'Toggle sidebar', keys: shortcuts.format('mod+B') },
+])
 
 /* View mode is provided globally by App.vue (see VaultViewModeKey).
    Default to 'edit' so this view still renders sensibly if it's ever
@@ -291,16 +310,12 @@ watch(() => navSearch?.tick.value, () => openSearch())
           />
         </div>
         <div v-if="!tabs.length" class="content-empty">
-          <div class="empty-card">
-            <div class="empty-title">No file open</div>
-            <div class="empty-hint">
-              <!-- Each hint item is one flex item so the kbd and its
-                   label stay together when the row wraps. -->
-              <span class="hint-item"><kbd>⌘P</kbd> command palette</span>
-              <span class="dot" aria-hidden="true">·</span>
-              <span class="hint-item"><kbd>⌘B</kbd> toggle sidebar</span>
-            </div>
-          </div>
+          <EmptyState title="No file open">
+            <span v-for="a in emptyActions" :key="a.label" class="hint-row">
+              <span class="hint-label">{{ a.label }}</span>
+              <kbd class="hint-kbd">{{ a.keys }}</kbd>
+            </span>
+          </EmptyState>
         </div>
 
         <div
@@ -344,16 +359,12 @@ watch(() => navSearch?.tick.value, () => openSearch())
           <ReadingPane :raw="activeTab.raw" :resolver="wikiResolver" />
         </div>
         <div v-if="!tabs.length" class="content-empty">
-          <div class="empty-card">
-            <div class="empty-title">No file open</div>
-            <div class="empty-hint">
-              <!-- Each hint item is one flex item so the kbd and its
-                   label stay together when the row wraps. -->
-              <span class="hint-item"><kbd>⌘P</kbd> command palette</span>
-              <span class="dot" aria-hidden="true">·</span>
-              <span class="hint-item"><kbd>⌘B</kbd> toggle sidebar</span>
-            </div>
-          </div>
+          <EmptyState title="No file open">
+            <span v-for="a in emptyActions" :key="a.label" class="hint-row">
+              <span class="hint-label">{{ a.label }}</span>
+              <kbd class="hint-kbd">{{ a.keys }}</kbd>
+            </span>
+          </EmptyState>
         </div>
       </div>
     </section>

@@ -530,7 +530,6 @@ main.container {
   font-size: 0.8rem;
   color: var(--vs-text-3);
 }
-.history-empty .empty-title { font-weight: 600; color: var(--vs-text-2); margin-bottom: 4px; }
 
 .history-composer {
   flex-shrink: 0;
@@ -821,7 +820,6 @@ main.container {
   color: var(--vs-text-3);
   font-size: 0.85rem;
 }
-.diff-empty .empty-title { font-weight: 600; color: var(--vs-text-2); margin-bottom: 4px; }
 
 .diff-table {
   flex: 1;
@@ -1733,50 +1731,105 @@ main.container {
   color: var(--vs-text-3);
   background: var(--vs-bg-1);
 }
-.content-empty .empty-card {
-  text-align: center;
-  padding: 20px 28px;
-  border-radius: 8px;
-  background: var(--vs-bg-2);
-  max-width: 360px;
+
+/* Shared empty-state family. Used by VaultView (main pane),
+   HistoryPanel (git missing / repo not initialized), and DiffView
+   (no file / identical refs). All three used to ship their own
+   `.empty-title` rule with subtly different colors; collapsing into
+   one block here keeps them in lockstep.
+
+   The two sizes share `.empty-state-title` / `.empty-state-hint`
+   rules; only font-size and spacing differ between normal and
+   compact. (Earlier revisions had an `icon` slot and a card frame;
+   both were removed when the empty state was simplified down to
+   "title + hint" so it doesn't compete with the surrounding vault
+   surface for attention.)
+
+   The hint pattern is modeled on the VS Code Welcome tab: left-aligned
+   "label + shortcut" rows, kbd chips pill-shaped and right-aligned in
+   their own column. The grid is left-aligned (no centering) so the
+   empty state reads as a list of next actions, not as a centered
+   splash.
+
+   `font-style: normal` on the title/hint overrides the global
+   `.empty { font-style: italic }` rule (style.css:388) which would
+   otherwise italicize the text. */
+.empty-state {
+  /* No padding / max-width on the host — the hint grid sizes itself.
+     Left-aligned by default (no text-align: center) so the label
+     column anchors to the surface's reading edge. */
+  color: var(--vs-text-3);
+  font-size: 0.85rem;
 }
-.content-empty .empty-title {
-  font-size: 0.92rem;
+.empty-state-title {
   font-weight: 600;
   color: var(--vs-text-1);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   font-style: normal;
 }
-.content-empty .empty-hint {
+.empty-state-hint {
   font-size: 0.78rem;
   color: var(--vs-text-2);
   font-style: normal;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  /* Left-aligned two-column grid: column 1 grows to fit the longest
+     label so all kbd chips share the same right edge; column 2 holds
+     the kbd and right-aligns its content within the cell. Row-gap
+     keeps the action lines visually separate. */
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 24px;
+  row-gap: 6px;
 }
-/* Each hint item is one flex child so the kbd and its label stay
-   glued together when the row wraps (otherwise the kbd drops to one
-   line and the label to the next). */
-.content-empty .empty-hint .hint-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+/* `display: contents` makes the row's label + kbd participate in the
+   parent grid as direct cells, while still letting callers write a
+   single `<span class="hint-row">` per action. */
+.empty-state-hint .hint-row {
+  display: contents;
 }
-.content-empty .empty-hint .dot { color: var(--vs-text-3); }
-.content-empty kbd {
+/* Label sits in column 1; kbd sits in column 2 (right-aligned by
+   grid auto-flow + `justify-self`). No special alignment needed on
+   the label cell beyond default. */
+.empty-state-hint .hint-label {
+  /* Default left-align. */
+}
+.empty-state-hint .hint-kbd {
+  justify-self: end;
+}
+/* Pill-style kbd chip, modeled on VS Code's welcome page chips.
+   Rounder corners, more horizontal padding, a soft background that
+   reads as a discrete key rather than a button border. */
+.empty-state kbd {
   display: inline-block;
   font-family: var(--mono);
   font-size: 0.72rem;
-  padding: 1px 5px;
+  padding: 2px 7px;
   border: 1px solid var(--vs-border);
-  border-bottom-width: 2px;
-  border-radius: 3px;
-  background: var(--vs-bg-1);
+  border-radius: 6px;
+  background: var(--vs-bg-2);
   color: var(--vs-text-1);
-  line-height: 1.2;
+  line-height: 1.4;
+  white-space: nowrap;
+  /* Match the row's vertical center. */
+  vertical-align: middle;
+}
+
+/* Compact variant: narrower side-pane wrappers (HistoryPanel,
+   DiffView). Slightly smaller font + tighter row spacing so the
+   empty state sits inside the surrounding list rhythm without
+   commanding attention. Hint font-size matches the surrounding
+   `.history-empty` / `.diff-empty` wrapper font-size. */
+.empty-state--compact .empty-state-title {
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+}
+.empty-state--compact .empty-state-hint {
+  font-size: 0.75rem;
+  column-gap: 16px;
+  row-gap: 4px;
+}
+.empty-state--compact kbd {
+  font-size: 0.68rem;
+  padding: 1px 6px;
 }
 
 /* Splitters inside vault — the visual rule is exactly 1px (the
