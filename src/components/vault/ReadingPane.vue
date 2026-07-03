@@ -172,6 +172,11 @@ onBeforeUnmount(() => {
 
 watch([articleEl, readingPaneEl, headings], () => attachObserver(), { flush: 'post' })
 watch(() => props.raw, () => {
+  /* Reset published state so the TocPanel doesn't keep rendering the
+     previous document's heading list during the brief render window
+     of the new one. useMarkdownRender's onWatcherCleanup also guards
+     against an in-flight render clobbering the new result. */
+  tocHeadings.value = []
   tocActiveId.value = ''
   freezeActiveUntil = 0
 })

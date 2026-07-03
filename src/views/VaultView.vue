@@ -329,13 +329,19 @@ watch(() => navSearch?.tick.value, () => openSearch())
            panel, tabs, and status bar above/below stay untouched so
            navigation still works while reading. -->
       <div v-else class="content reading-content">
+        <!-- Only the active tab is mounted. Mounting one ReadingPane
+             per tab (v-for + v-show) would have every instance write
+             to the same module-level tocHeadings / tocActiveId, and
+             whichever rendered last would "win" — so switching tabs
+             could surface the wrong document's TOC. Mounting a single
+             keyed-by-path ReadingPane keeps the mapping 1:1 between
+             the visible ReadingPane and the shared TOC state. -->
         <div
-          v-for="t in tabs"
-          v-show="t.path === activePath"
-          :key="`r-${t.path}`"
+          v-if="activeTab"
+          :key="activeTab.path"
           class="reading-slot"
         >
-          <ReadingPane :raw="t.raw" :resolver="wikiResolver" />
+          <ReadingPane :raw="activeTab.raw" :resolver="wikiResolver" />
         </div>
         <div v-if="!tabs.length" class="content-empty">
           <div class="empty-card">

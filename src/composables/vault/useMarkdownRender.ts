@@ -98,12 +98,18 @@ export function useMarkdownRender(
   const error = ref<string | null>(null)
   const headings = ref<Heading[]>([])
 
-  watchEffect(async () => {
+  watchEffect(async (onCleanup) => {
     const raw = typeof source === 'function' ? source() : source.value
     // Set the resolver BEFORE render() so the wiki-link plugin sees
     // the latest closure. Passing `null` resets to the identity
     // (as-written) resolver — useful for tests.
     __setMdResolverForTesting(resolver ?? null)
+    /* Cancel any in-flight render when source changes again. Without
+       this, a slow render from the previous document can resolve
+       AFTER the new one and clobber the html/headings, leaving the
+       reader looking at stale content + a stale TOC. */
+    let cancelled = false
+    onCleanup(() => { cancelled = true })
     try {
       const { frontmatter, content } = parseDoc(raw)
       const title = typeof frontmatter.title === 'string' ? frontmatter.title.trim() : ''
@@ -112,10 +118,12 @@ export function useMarkdownRender(
         ? `# ${title}\n\n${content.replace(/^\n+/, '')}`
         : content
       const rendered = await render(body)
+      if (cancelled) return
       html.value = rendered
       headings.value = extractHeadings(rendered)
       error.value = null
     } catch (e) {
+      if (cancelled) return
       error.value = (e as Error).message
     }
   })
