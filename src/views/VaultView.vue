@@ -258,10 +258,10 @@ watch(() => navSearch?.tick.value, () => openSearch())
 
     <section
       class="editor-area"
-      :class="{ 'is-read': isReadMode, 'ai-open': aiOpen, 'is-graph': activePanel === 'graph', 'is-history': activePanel === 'history' }"
+      :class="{ 'is-read': isReadMode, 'ai-open': aiOpen, 'is-graph': activePanel === 'graph', 'is-history': activePanel === 'history', 'is-empty': tabs.length === 0 }"
     >
       <EditorTabs
-        v-if="activePanel !== 'graph' && activePanel !== 'history'"
+        v-if="activePanel !== 'graph' && activePanel !== 'history' && tabs.length > 0"
         :tabs="tabs"
         :active-path="activePath"
         @select="selectTab"

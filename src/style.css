@@ -1584,6 +1584,17 @@ main.container {
 .editor-area.is-history {
   grid-template-rows: minmax(0, 1fr);
 }
+/* Empty-tabs state: no files are open, so EditorTabs is v-if'd out
+   in VaultView. Without this override the base 36px tab row would
+   leave a blank strip above the EmptyState card — collapsing the
+   grid to one row makes the centered empty card fill the editor
+   area, which reads as a deliberate full-bleed empty surface
+   rather than a half-rendered layout. The .is-read branch below
+   composes with this (both can apply when the user has no tabs and
+   switches to read mode). */
+.editor-area.is-empty {
+  grid-template-rows: minmax(0, 1fr);
+}
 
 /* Tabs */
 .tabs {
