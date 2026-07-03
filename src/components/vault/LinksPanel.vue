@@ -152,14 +152,10 @@ const isEmpty = computed(() =>
     </header>
 
     <div v-if="!activePath" class="empty">
-      打开一篇笔记以查看其链接。
+      Open a note to see its links.
     </div>
     <div v-else-if="isEmpty" class="empty">
-      <p>暂无链接。</p>
-      <p class="empty-hint">
-        在正文里写 <code>[[other-note]]</code> 或
-        <code>[other](other.md)</code> 来建立链接。
-      </p>
+      No links yet.
     </div>
 
     <template v-else>
@@ -181,7 +177,7 @@ const isEmpty = computed(() =>
             </button>
           </li>
         </ul>
-        <p v-else class="empty section-empty">尚无其他笔记链接到这里。</p>
+        <p v-else class="empty section-empty">No other notes link here yet.</p>
       </section>
 
       <section class="section" aria-label="Links to">
@@ -202,7 +198,7 @@ const isEmpty = computed(() =>
             </button>
           </li>
         </ul>
-        <p v-else class="empty section-empty">本笔记暂未链接到其他笔记。</p>
+        <p v-else class="empty section-empty">This note doesn't link to any other notes yet.</p>
       </section>
     </template>
   </aside>
@@ -236,8 +232,6 @@ const isEmpty = computed(() =>
   gap: 6px;
   color: var(--vs-text-2, var(--text-muted));
   font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 .title-icon {
   display: inline-flex;
@@ -276,8 +270,6 @@ const isEmpty = computed(() =>
   padding: 6px 12px;
   font-size: 0.78rem;
   color: var(--vs-text-2, var(--text-muted));
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   background: var(--vs-side-section-bg, transparent);
   border-bottom: 1px solid var(--vs-border, var(--border));
 }

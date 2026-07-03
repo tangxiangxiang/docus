@@ -59,16 +59,16 @@ function onLinkNavigate(p: string) {
 
 <template>
   <div class="right-rail">
-    <section class="toc-panel" aria-label="页面导航">
+    <section class="toc-panel" aria-label="Page navigation">
       <header class="toc-panel-header">
         <div class="toc-panel-title" role="presentation">
           <span class="toc-panel-icon" aria-hidden="true" v-html="ICON_TOC" />
-          <span class="toc-panel-title-text">页面导航</span>
+          <span class="toc-panel-title-text">Page Navigation</span>
         </div>
       </header>
 
       <div v-if="!hasHeadings" class="toc-panel-empty">
-        暂无标题
+        No headings
       </div>
       <ul v-else class="toc-panel-list">
         <li
@@ -89,7 +89,7 @@ function onLinkNavigate(p: string) {
       </ul>
     </section>
 
-    <section class="links-slot" aria-label="链接">
+    <section class="links-slot" aria-label="Links">
       <LinksPanel
         :path="path"
         :posts="posts"
@@ -147,8 +147,6 @@ function onLinkNavigate(p: string) {
   gap: 6px;
   color: var(--vs-text-2, var(--text-muted));
   font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 
 .toc-panel-icon {

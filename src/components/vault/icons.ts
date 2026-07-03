@@ -93,18 +93,15 @@ export const ICON_AI = `
 // up to y=1.5 which pushed the visual centroid up by half a unit and
 // made the icon look higher than its neighbor.
 export const ICON_HISTORY = `
-<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M3 5 A5 5 0 1 1 3 11"/>
-  <polyline points="3 3 3 5 5 5"/>
-  <polyline points="8 5 8 8 10.5 9.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 1024 1024" fill="currentColor">
+  <path d="M511.488 0C228.864 0 0 229.376 0 512s228.864 512 511.488 512C794.624 1024 1024 794.624 1024 512s-229.376-512-512.512-512z m21.76 556.416V219.52H438.912v392.32h1.472l243.84 140.8 47.296-81.728-198.144-114.432zM512 921.6A409.472 409.472 0 0 1 102.4 512c0-226.304 183.296-409.6 409.6-409.6 226.304 0 409.6 183.296 409.6 409.6 0 226.304-183.296 409.6-409.6 409.6z"/>
 </svg>`
 
 // "New chat" — plus in a square. 14×14 line art. Creates a fresh
 // session and switches to it.
 export const ICON_NEW_CHAT = `
-<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <line x1="8" y1="3" x2="8" y2="13"/>
-  <line x1="3" y1="8" x2="13" y2="8"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 1024 1024" fill="currentColor">
+  <path d="M576 64H448v384H64v128h384v384h128V576h384V448H576z"/>
 </svg>`
 
 // "Link" — two interlocked rings. 14×14 line art, visually
@@ -112,9 +109,8 @@ export const ICON_NEW_CHAT = `
 // the Links activity-bar entry. Kept consistent with the
 // ICON_HISTORY / ICON_NEW_CHAT visual weight (1.5px stroke).
 export const ICON_LINKS = `
-<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M6.5 9.5 A2.5 2.5 0 0 1 6.5 4.5 L8 3 A2.5 2.5 0 0 1 13 3 A2.5 2.5 0 0 1 13 8 L11.5 9.5"/>
-  <path d="M9.5 6.5 A2.5 2.5 0 0 1 9.5 11.5 L8 13 A2.5 2.5 0 0 1 3 13 A2.5 2.5 0 0 1 3 8 L4.5 6.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 1024 1024" fill="currentColor">
+  <path d="M593.944 715.648a10.688 10.688 0 0 0-14.976 0L424.216 870.4c-71.68 71.68-192.576 79.232-271.68 0-79.232-79.232-71.616-200 0-271.616l154.752-154.752a10.688 10.688 0 0 0 0-15.04l-52.992-52.992a10.688 10.688 0 0 0-15.04 0L84.504 530.688a287.872 287.872 0 0 0 0 407.488 288 288 0 0 0 407.488 0l154.752-154.752a10.688 10.688 0 0 0 0-15.04l-52.736-52.736z m344.384-631.168a288.256 288.256 0 0 1 0 407.616l-154.752 154.752a10.688 10.688 0 0 1-15.04 0l-52.992-52.992a10.688 10.688 0 0 1 0-15.104l154.752-154.688c71.68-71.68 79.232-192.448 0-271.68-79.104-79.232-200-71.68-271.68 0L443.928 307.2a10.688 10.688 0 0 1-15.04 0l-52.864-52.864a10.688 10.688 0 0 1 0-15.04l154.88-154.752a287.872 287.872 0 0 1 407.424 0z m-296.32 240.896l52.672 52.736a10.688 10.688 0 0 1 0 15.04l-301.504 301.44a10.688 10.688 0 0 1-15.04 0l-52.736-52.672a10.688 10.688 0 0 1 0-15.04l301.632-301.504a10.688 10.688 0 0 1 15.04 0z"/>
 </svg>`
 
 // "TOC" — a vertical stack of three lines, the universal "outline"
