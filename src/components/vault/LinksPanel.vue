@@ -212,7 +212,7 @@ const isEmpty = computed(() =>
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--vs-side-bg, var(--bg-soft));
+  background: var(--vs-side-bg, var(--vs-bg-1));
   border-right: 1px solid var(--vs-border, var(--border));
   color: var(--vs-text, var(--text));
   height: 100%;
@@ -282,7 +282,7 @@ const isEmpty = computed(() =>
 .link-list {
   list-style: none;
   margin: 0;
-  padding: 4px 0;
+  padding: 0;
   overflow-y: auto;
   flex: 1 1 auto;
   min-height: 0;

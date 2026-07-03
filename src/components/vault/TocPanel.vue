@@ -82,7 +82,6 @@ function onLinkNavigate(p: string) {
             :title="h.text"
             @click.prevent="onTocClick(h.id)"
           >
-            <span class="toc-panel-link-level" aria-hidden="true">H{{ h.level }}</span>
             <span class="toc-panel-link-text">{{ h.text }}</span>
           </a>
         </li>
@@ -111,7 +110,7 @@ function onLinkNavigate(p: string) {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--vs-side-bg, var(--bg-soft));
+  background: var(--vs-side-bg, var(--vs-bg-1));
   overflow: hidden;
 }
 
@@ -169,7 +168,7 @@ function onLinkNavigate(p: string) {
   overflow-y: auto;
   list-style: none;
   margin: 0;
-  padding: 4px 0;
+  padding: 0;
   scrollbar-width: thin;
   min-height: 0;
 }
@@ -182,22 +181,15 @@ function onLinkNavigate(p: string) {
 
 /* Row uses the same vertical rhythm as a .link-entry (6px/12px
    padding, 0.88rem font-size, 1.4 line-height) so the two halves
-   have matching row heights. The text + level-hint pair sits on one
-   line: the heading text fills the available width (truncated with
-   ellipsis on overflow) and a small "H2" / "H3" / "H4" badge on the
-   right gives a quick at-a-glance hierarchy cue without breaking
-   the rhythm. */
+   have matching row heights. The heading text fills the available
+   width and is truncated with ellipsis on overflow. H3/H4 indents
+   (8px per level on top of the 16px baseline) provide the hierarchy
+   cue without a separate badge. */
 .toc-panel-link {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: block;
   width: 100%;
   /* min-width: 0 lets this flex item shrink below its intrinsic
-     content width when the column is narrow, so the level badge
-     stays inside the row instead of being clipped off the right
-     edge. Without it the <a> grows to fit "H2"/"H3"/"H4" plus the
-     full heading text, and the badge ends up rendered outside the
-     visible area. */
+     content width when the column is narrow. */
   min-width: 0;
   padding: 6px 12px 6px 16px;
   font-size: 0.88rem;
@@ -209,23 +201,11 @@ function onLinkNavigate(p: string) {
 }
 
 .toc-panel-link-text {
-  flex: 1;
+  display: block;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.toc-panel-link-level {
-  flex-shrink: 0;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--vs-text-3, var(--text-muted));
-  font-variant-numeric: tabular-nums;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--vs-code-bg, rgba(0, 0, 0, 0.18));
 }
 
 .toc-panel-link:hover {
