@@ -3004,17 +3004,16 @@ main.container {
 
 /* ViewModeMenu — combined view-mode picker in the navbar. Replaces
    the previous pair of toggle buttons (.mode-toggle +
-   .preview-toggle). The trigger is a single labeled button so the
-   user sees "Edit + Preview" / "Read" / "Edit" as the current state
-   instead of having to read two adjacent aria-pressed flags; the
-   popover lists the three valid states as radio rows.
+   .preview-toggle). The trigger is icon-only at rest and slides
+   out its label on hover or while the popover is open — keeps the
+   collapsed navbar visually tight (just a 28px icon button, like
+   the AI / theme toggles next to it) while still letting the user
+   read the active state at a glance when they're paying attention.
+   The label + caret stay in the DOM at all times (collapsed to 0
+   width and 0 opacity) so screen readers still announce the active
+   option via the trigger's aria-label.
 
-   Trigger styling is a lighter sibling of the .mode-toggle / .theme-toggle
-   buttons above: same hover (color + soft background + border) but
-   with a visible text label so the active state is readable at a
-   glance. The trigger sits in the .navbar.is-vault only (the
-   component hides itself otherwise), so the .is-vault override
-   matches the other navbar buttons' reduced padding. */
+   The popover lists the three valid states as radio rows. */
 .view-mode-menu {
   position: relative;
   display: inline-block;
@@ -3022,8 +3021,11 @@ main.container {
 .view-mode-menu-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px 4px 6px;
+  /* `gap: 0` at rest — when the label collapses, the caret sits
+     flush against the icon. Hover/open override this with `gap: 6px`
+     below. */
+  gap: 0;
+  padding: 4px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
@@ -3037,27 +3039,54 @@ main.container {
   color: var(--text-h);
   border-color: var(--border);
   background: var(--bg-soft);
+  gap: 6px;
+  padding-right: 8px;
 }
 /* Open state mirrors the hover state so the user can see at a
-   glance whether the popover is showing. */
+   glance whether the popover is showing, AND keeps the label slot
+   expanded so the active-state text stays visible while the popover
+   is up. */
 .view-mode-menu.is-open .view-mode-menu-trigger {
   color: var(--text-h);
   border-color: var(--border);
   background: var(--bg-soft);
+  gap: 6px;
+  padding-right: 8px;
 }
 .view-mode-menu-trigger-icon {
   display: inline-flex;
   align-items: center;
   line-height: 0;
   color: var(--accent);
+  flex-shrink: 0;
 }
-.view-mode-menu-trigger-label { white-space: nowrap; }
+/* Label and caret: collapsed to zero width at rest. The
+   `max-width` transition is what drives the slide-out animation —
+   we don't animate `width: auto` (browsers can't transition to/from
+   auto), so we cap the visible width at a value comfortably larger
+   than any label we'll ever show and let the inner span's natural
+   width take over once it animates open. */
+.view-mode-menu-trigger-label,
+.view-mode-menu-trigger-caret {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 0.18s ease, opacity 0.18s ease;
+}
+.view-mode-menu.is-open .view-mode-menu-trigger-label,
+.view-mode-menu.is-open .view-mode-menu-trigger-caret,
+.view-mode-menu-trigger:hover .view-mode-menu-trigger-label,
+.view-mode-menu-trigger:hover .view-mode-menu-trigger-caret {
+  max-width: 120px;
+  opacity: 1;
+}
 .view-mode-menu-trigger-caret {
   font-size: 0.7rem;
   color: var(--text-muted);
   /* Tight gap with the label; the caret reads as part of the
      trigger label rather than a separate glyph. */
-  margin-left: 2px;
+  margin-left: 0;
 }
 
 /* Popover sits absolutely below the trigger, anchored to its right
