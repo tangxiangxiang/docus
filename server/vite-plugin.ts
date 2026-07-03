@@ -1,7 +1,8 @@
 // Load .env into process.env BEFORE the Hono app reads it. Vite's
 // default .env handling only exposes VITE_* vars to the client
 // build; server-side process.env stays empty without this.
-import 'dotenv/config'
+import dotenv from 'dotenv'
+dotenv.config({ override: true })
 import type { Plugin } from 'vite'
 import app from './index.ts'
 
