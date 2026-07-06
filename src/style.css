@@ -2472,6 +2472,69 @@ main.container {
 .article .task-list-item input[type='checkbox'] { margin-right: 0.4em; }
 .article ul.contains-task-list { padding-left: 1.2em; }
 
+/* ---------- Footnotes (markdown-it-footnote) ----------
+   The plugin emits: <sup class="footnote-ref">, then later
+   <hr class="footnotes-sep">, <section class="footnotes">,
+   <ol class="footnotes-list">, <li id="fnN" class="footnote-item">,
+   and a backref <a class="footnote-backref" href="#fnrefN">↩︎</a>.
+   Without these rules the inline ref renders at the same size as
+   the surrounding text and the footnote block looks like a stray
+   paragraph list. We anchor on .article (not .vault .article) so
+   both the preview pane and reading pane get the same treatment;
+   reading-pane-specific spacing tweaks live below. */
+.article .footnote-ref {
+  font-size: 0.75em;
+  line-height: 0;
+  margin-left: 0.15em;
+}
+.article .footnote-ref a {
+  /* Plugin already nests <a> inside <sup>, so the anchor is the
+     clickable target. Inherit color so the sup doesn't introduce
+     a new hue against the article body. */
+  color: inherit;
+  text-decoration: none;
+}
+.article .footnote-ref a:hover {
+  text-decoration: underline;
+}
+.article .footnotes-sep {
+  /* Plugin emits a bare <hr>; the project has no global .article hr
+     rule, so the browser default (1px inset) would clash with the
+     vault's flat border look. Force the same --vs-border hairline
+     the reading pane's hr uses (see rule near .vault .reading-pane
+     .article.reading hr) so the footnote separator reads as a
+     proper section divider, not a chrome artifact. */
+  width: 4em;
+  margin: 2em auto 1em;
+  border: 0;
+  border-top: 1px solid var(--vs-border);
+}
+.article .footnotes {
+  font-size: 0.85em;
+  /* Color is left to inherit — there's no --vs-fg-muted token in
+     this stylesheet, and the article text color reads fine at
+     0.85em without an extra mute step. */
+}
+.article .footnotes-list {
+  padding-left: 1.4em;
+  margin: 0;
+}
+.article .footnote-item {
+  /* Plugin's default puts the backref inside the same <p> as the
+     note text, separated by a space. No special layout needed;
+     the only override is to soften the spacing so the list reads
+     tight, not as a separate prose block. */
+  margin: 0.25em 0;
+}
+.article .footnote-item p { margin: 0; display: inline; }
+.article .footnote-backref {
+  margin-left: 0.25em;
+  text-decoration: none;
+}
+.article .footnote-backref:hover {
+  text-decoration: underline;
+}
+
 /* ---------- Markmap mount host ----------
    The ```markmap``` fence in src/lib/markdown.ts emits a
    `<div class="markmap-mount">` placeholder; useMarkmapMount replaces

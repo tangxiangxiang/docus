@@ -25,6 +25,7 @@
     "hono": "^4.12.23",
     "markdown-it": "^14.1.0",
     "markdown-it-anchor": "^9.2.0",
+    "markdown-it-footnote": "^4.0.0",
     "markdown-it-task-lists": "^2.1.1",
     "markmap-lib": "^0.18.12",
     "markmap-view": "^0.18.12",

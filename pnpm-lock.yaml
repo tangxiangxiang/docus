@@ -14,12 +14,18 @@ importers:
       '@hono/node-server':
         specifier: ^2.0.4
         version: 2.0.4(hono@4.12.23)
+      '@types/diff':
+        specifier: ^7.0.2
+        version: 7.0.2
       '@vueuse/core':
         specifier: ^14.3.0
         version: 14.3.0(vue@3.5.35(typescript@6.0.3))
       better-sqlite3:
         specifier: ^11.7.0
         version: 11.10.0
+      diff:
+        specifier: ^9.0.0
+        version: 9.0.0
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -41,6 +47,9 @@ importers:
       markdown-it-anchor:
         specifier: ^9.2.0
         version: 9.2.0(@types/markdown-it@14.1.2)(markdown-it@14.2.0)
+      markdown-it-footnote:
+        specifier: ^4.0.0
+        version: 4.0.0
       markdown-it-task-lists:
         specifier: ^2.1.1
         version: 2.1.1
@@ -102,9 +111,6 @@ importers:
       '@vitejs/plugin-vue':
         specifier: ^6.0.6
         version: 6.0.7(vite@8.0.16(@types/node@24.13.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.9.0))(vue@3.5.35(typescript@6.0.3))
-      '@vitest/ui':
-        specifier: ^4.1.8
-        version: 4.1.8(vitest@4.1.8)
       '@vue/test-utils':
         specifier: ^2.4.10
         version: 2.4.11(@vue/compiler-dom@3.5.35)(@vue/server-renderer@3.5.35(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3))
@@ -710,6 +716,9 @@ packages:
   '@types/deep-eql@4.0.2':
     resolution: {integrity: sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==}
 
+  '@types/diff@7.0.2':
+    resolution: {integrity: sha512-JSWRMozjFKsGlEjiiKajUjIJVKuKdE3oVy2DNtK+fUo8q82nhFZ2CPQwicAIkXrofahDXrWJ7mjelvZphMS98Q==}
+
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
 
@@ -1191,6 +1200,10 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
+  diff@9.0.0:
+    resolution: {integrity: sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw==}
+    engines: {node: '>=0.3.1'}
+
   dom-serializer@2.0.0:
     resolution: {integrity: sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg==}
 
@@ -1537,6 +1550,9 @@ packages:
     peerDependencies:
       '@types/markdown-it': '*'
       markdown-it: '*'
+
+  markdown-it-footnote@4.0.0:
+    resolution: {integrity: sha512-WYJ7urf+khJYl3DqofQpYfEYkZKbmXmwxQV8c8mO/hGIhgZ1wOe7R4HLFNwqx7TjILbnC98fuyeSsin19JdFcQ==}
 
   markdown-it-ins@4.0.0:
     resolution: {integrity: sha512-sWbjK2DprrkINE4oYDhHdCijGT+MIDhEupjSHLXe5UXeVr5qmVxs/nTUVtgi0Oh/qtF+QKV0tNWDhQBEPxiMew==}
@@ -2451,7 +2467,8 @@ snapshots:
   '@pkgjs/parseargs@0.11.0':
     optional: true
 
-  '@polka/url@1.0.0-next.29': {}
+  '@polka/url@1.0.0-next.29':
+    optional: true
 
   '@rolldown/binding-android-arm64@1.0.3':
     optional: true
@@ -2643,6 +2660,8 @@ snapshots:
 
   '@types/deep-eql@4.0.2': {}
 
+  '@types/diff@7.0.2': {}
+
   '@types/estree@1.0.9': {}
 
   '@types/geojson@7946.0.16': {}
@@ -2725,6 +2744,7 @@ snapshots:
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
       vitest: 4.1.8(@types/node@24.13.0)(@vitest/ui@4.1.8)(jsdom@29.1.1)(vite@8.0.16(@types/node@24.13.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.9.0))
+    optional: true
 
   '@vitest/utils@4.1.8':
     dependencies:
@@ -3203,6 +3223,8 @@ snapshots:
 
   detect-libc@2.1.2: {}
 
+  diff@9.0.0: {}
+
   dom-serializer@2.0.0:
     dependencies:
       domelementtype: 2.3.0
@@ -3312,11 +3334,13 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.4
 
-  fflate@0.8.3: {}
+  fflate@0.8.3:
+    optional: true
 
   file-uri-to-path@1.0.0: {}
 
-  flatted@3.4.2: {}
+  flatted@3.4.2:
+    optional: true
 
   float-tooltip@1.7.5:
     dependencies:
@@ -3551,6 +3575,8 @@ snapshots:
       '@types/markdown-it': 14.1.2
       markdown-it: 14.2.0
 
+  markdown-it-footnote@4.0.0: {}
+
   markdown-it-ins@4.0.0: {}
 
   markdown-it-mark@4.0.0: {}
@@ -3649,7 +3675,8 @@ snapshots:
 
   mkdirp-classic@0.5.3: {}
 
-  mrmime@2.0.1: {}
+  mrmime@2.0.1:
+    optional: true
 
   muggle-string@0.4.1: {}
 
@@ -3843,6 +3870,7 @@ snapshots:
       '@polka/url': 1.0.0-next.29
       mrmime: 2.0.1
       totalist: 3.0.1
+    optional: true
 
   source-map-js@1.2.1: {}
 
@@ -3927,7 +3955,8 @@ snapshots:
     dependencies:
       tldts-core: 7.4.2
 
-  totalist@3.0.1: {}
+  totalist@3.0.1:
+    optional: true
 
   tough-cookie@6.0.1:
     dependencies:

@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
 import anchor from 'markdown-it-anchor'
+import footnote from 'markdown-it-footnote'
 import { wikiLinkPlugin, type Resolver as WikiResolver } from './wikiLinks'
 
 function escapeHtml(s: string): string {
@@ -117,6 +118,12 @@ async function getMd(): Promise<MarkdownIt> {
             .replace(/^-+|-+$/g, ''),
         permalink: anchor.permalink.headerLink({ safariReaderFix: true }),
       })
+      // 脚注:pandoc 风格的 [^id] 引用 + 定义段。anchor id 始终按
+      // 出现顺序编号(fn1, fn2, ...),[^label] 里的 label 只用来匹配
+      // ref ↔ def,不参与 anchor 命名。放在 anchor 之后:脚注规则
+      // 和标题 slugify 互不影响,但读起来"先标题、再脚注、再链接"
+      // 比 anchor 之前更顺。
+      .use(footnote)
       // Wiki link + standard `.md` link classification. Plugin
       // signature is `(md, opts) => void` — see wikiLinks.ts for why
       // currying doesn't work with `md.use`. The resolver reads
