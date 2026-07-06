@@ -2535,6 +2535,31 @@ main.container {
   text-decoration: underline;
 }
 
+/* ---------- Definition lists (markdown-it-deflist) ----------
+   Plugin emits standard <dl>/<dt>/<dd> with multiple dd's as
+   siblings under one dt (HTML5 model — not nested). Without these
+   rules the browser default <dd> indent (~40px left padding) makes
+   glossary-style notes feel misaligned with the rest of the
+   article. We scope to .article so both preview and reading pane
+   get the same treatment. */
+.article dl {
+  margin: 0.8em 0;
+}
+.article dt {
+  /* Term is the "label" half — render it slightly bolder so it
+     reads as the heading of its definitions, not as a list bullet. */
+  font-weight: 600;
+  margin-top: 0.6em;
+}
+.article dt:first-child { margin-top: 0; }
+.article dd {
+  /* Pull definitions back to align under the term, not under a
+     40px browser-default gutter. 1.4em matches the list indent
+     used by .article ul / .article ol (see rule above) so dl
+     reads in the same column as the surrounding lists. */
+  margin: 0.2em 0 0.2em 1.4em;
+}
+
 /* ---------- Markmap mount host ----------
    The ```markmap``` fence in src/lib/markdown.ts emits a
    `<div class="markmap-mount">` placeholder; useMarkmapMount replaces

@@ -17,3 +17,11 @@ declare module 'markdown-it-footnote' {
   const plugin: (md: MarkdownIt) => void
   export default plugin
 }
+
+declare module 'markdown-it-deflist' {
+  import type MarkdownIt from 'markdown-it'
+  // markdown-it-deflist 3.x 同样不接受配置;所有样式通过覆盖
+  // md.renderer.rules.dl_open / dt_open / dd_open 等完成。
+  const plugin: (md: MarkdownIt) => void
+  export default plugin
+}

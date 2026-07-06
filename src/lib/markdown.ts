@@ -2,6 +2,7 @@ import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
 import anchor from 'markdown-it-anchor'
 import footnote from 'markdown-it-footnote'
+import deflist from 'markdown-it-deflist'
 import { wikiLinkPlugin, type Resolver as WikiResolver } from './wikiLinks'
 
 function escapeHtml(s: string): string {
@@ -124,6 +125,9 @@ async function getMd(): Promise<MarkdownIt> {
       // 和标题 slugify 互不影响,但读起来"先标题、再脚注、再链接"
       // 比 anchor 之前更顺。
       .use(footnote)
+      // 定义列表:pandoc 风格的 `Term\n:   Definition`。跟脚注
+      // 不冲突(: 是行首字符,[^] 是行内),放在脚注之后读着自然。
+      .use(deflist)
       // Wiki link + standard `.md` link classification. Plugin
       // signature is `(md, opts) => void` — see wikiLinks.ts for why
       // currying doesn't work with `md.use`. The resolver reads

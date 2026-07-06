@@ -179,4 +179,93 @@ describe('markdown render()', () => {
     expect(html).not.toContain('<section class="footnotes">')
     expect(html).toContain('[^orphan]')
   })
+
+  /* Definition lists (markdown-it-deflist). Pandoc-style syntax:
+     one term per line, then one or more indented `:   definition`
+     lines, blank line separates entries. Plugin emits standard
+     <dl>/<dt>/<dd> with multiple dd's as siblings (NOT nested)
+     under the same dt — that's the HTML5 spec, and the plugin
+     follows it. Before wiring this plugin, the `:` character at
+     line start was passed through as literal text. */
+  it('renders a basic definition list as <dl>/<dt>/<dd>', async () => {
+    const html = await render([
+      'Term 1',
+      ':   Definition 1',
+    ].join('\n'))
+    expect(html).toContain('<dl>')
+    expect(html).toContain('<dt>Term 1</dt>')
+    expect(html).toContain('<dd>Definition 1</dd>')
+    expect(html).toContain('</dl>')
+    /* The literal `:` must NOT leak through as plain text. */
+    expect(html).not.toMatch(/<p>.*:.*Definition.*<\/p>/)
+  })
+
+  it('emits multiple <dd> as siblings under one <dt>', async () => {
+    const html = await render([
+      'Term',
+      ':   Definition A',
+      ':   Definition B',
+    ].join('\n'))
+    /* One dt, two dd's as siblings — not nested. */
+    expect((html.match(/<dt>/g) ?? []).length).toBe(1)
+    expect((html.match(/<dd>/g) ?? []).length).toBe(2)
+    /* Both definitions are inside the same <dl>. */
+    const dlStart = html.indexOf('<dl>')
+    const dlEnd = html.indexOf('</dl>')
+    expect(dlStart).toBeGreaterThan(-1)
+    expect(dlEnd).toBeGreaterThan(dlStart)
+    const dlHtml = html.slice(dlStart, dlEnd)
+    expect(dlHtml).toContain('Definition A')
+    expect(dlHtml).toContain('Definition B')
+  })
+
+  it('keeps surrounding paragraphs outside the <dl>', async () => {
+    const html = await render([
+      'Prose before.',
+      '',
+      'Term',
+      ':   Definition',
+      '',
+      'Prose after.',
+    ].join('\n'))
+    /* Both prose paragraphs must remain in <p> tags, NOT inside
+       the <dl>. */
+    const dlStart = html.indexOf('<dl>')
+    const dlEnd = html.indexOf('</dl>')
+    expect(dlStart).toBeGreaterThan(-1)
+    expect(dlEnd).toBeGreaterThan(dlStart)
+    const dlHtml = html.slice(dlStart, dlEnd + '</dl>'.length)
+    expect(dlHtml).not.toContain('<p>Prose before.</p>')
+    expect(dlHtml).not.toContain('<p>Prose after.</p>')
+    expect(html).toContain('<p>Prose before.</p>')
+    expect(html).toContain('<p>Prose after.</p>')
+  })
+
+  it('renders inline markup inside dt and dd', async () => {
+    const html = await render([
+      '`code-term`',
+      ':   description with **bold** and a [link](https://example.com)',
+    ].join('\n'))
+    expect(html).toContain('<dt><code>code-term</code></dt>')
+    expect(html).toContain('<strong>bold</strong>')
+    expect(html).toContain('<a href="https://example.com">link</a>')
+  })
+
+  it('groups multiple term/definition pairs into one <dl>', async () => {
+    const html = await render([
+      'Term 1',
+      ':   Definition 1',
+      '',
+      'Term 2',
+      ':   Definition 2a',
+      ':   Definition 2b',
+    ].join('\n'))
+    /* One <dl> wrapping everything (plugin doesn't emit one
+       block per term — that would break the HTML5 model where
+       one dl holds the whole list). */
+    expect((html.match(/<dl>/g) ?? []).length).toBe(1)
+    expect((html.match(/<\/dl>/g) ?? []).length).toBe(1)
+    expect((html.match(/<dt>/g) ?? []).length).toBe(2)
+    expect((html.match(/<dd>/g) ?? []).length).toBe(3)
+  })
 })
