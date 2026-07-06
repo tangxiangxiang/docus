@@ -2560,6 +2560,22 @@ main.container {
   margin: 0.2em 0 0.2em 1.4em;
 }
 
+/* ---------- Highlight (markdown-it-mark) ----------
+   ==text== → <mark>. The browser default is solid yellow, which
+   reads as a browser-system color and clashes with the vault's
+   flat look (see --vs-bg / --vs-border tokens above). We tone it
+   down to a translucent amber so the highlight still pops on both
+   light and dark backgrounds without dominating the line. The
+   padding keeps the highlight from sitting flush against the
+   text — solid yellow at zero padding makes adjacent characters
+   look smudged. */
+.article mark {
+  background-color: rgba(255, 213, 79, 0.45);
+  color: inherit;
+  padding: 0.05em 0.15em;
+  border-radius: 2px;
+}
+
 /* ---------- Markmap mount host ----------
    The ```markmap``` fence in src/lib/markdown.ts emits a
    `<div class="markmap-mount">` placeholder; useMarkmapMount replaces

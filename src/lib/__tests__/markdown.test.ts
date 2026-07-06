@@ -287,4 +287,36 @@ describe('markdown render()', () => {
     expect(html).toMatch(/<td>a<br>b<\/td>/)
     expect(html).not.toContain('&lt;br&gt;')
   })
+
+  /* Highlight (markdown-it-mark). Obsidian / VitePress syntax:
+     ==text== → <mark>text</mark>. Plugin ships as a transitive dep
+     of markmap-lib, so wiring it costs zero new packages. Unmatched
+     == is left as literal text (no error, no half-formed <mark>). */
+  it('renders ==text== as <mark>text</mark>', async () => {
+    const html = await render('This is ==highlighted== here.')
+    expect(html).toContain('<mark>highlighted</mark>')
+    /* The literal == delimiters must NOT leak through. */
+    expect(html).not.toContain('==highlighted==')
+    expect(html).not.toContain('==')
+  })
+
+  it('combines <mark> with other inline markup', async () => {
+    const html = await render('mix **bold** with ==highlight== and `code`')
+    expect(html).toContain('<strong>bold</strong>')
+    expect(html).toContain('<mark>highlight</mark>')
+    expect(html).toContain('<code>code</code>')
+    /* All three must sit inside the same <p> — confirms the
+       plugin integrates with the rest of the inline parser. */
+    expect(html).toMatch(/<p>mix <strong>bold<\/strong> with <mark>highlight<\/mark> and <code>code<\/code><\/p>/)
+  })
+
+  it('leaves unmatched == as literal text', async () => {
+    const html = await render('unmatched == text without closing')
+    /* Plugin refuses to emit a half-formed <mark>; the literal
+       == stays in place. That's the desired behavior — the user
+       just made an authoring mistake, no need to panic the
+       renderer. */
+    expect(html).not.toContain('<mark>')
+    expect(html).toContain('==')
+  })
 })

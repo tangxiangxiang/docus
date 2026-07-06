@@ -25,3 +25,11 @@ declare module 'markdown-it-deflist' {
   const plugin: (md: MarkdownIt) => void
   export default plugin
 }
+
+declare module 'markdown-it-mark' {
+  import type MarkdownIt from 'markdown-it'
+  // markdown-it-mark 4.x: ==text== → <mark>text</mark>。无配置。
+  // 该包已是 markmap-lib 的 transitive dep,所以零新增依赖就可用。
+  const plugin: (md: MarkdownIt) => void
+  export default plugin
+}

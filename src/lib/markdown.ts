@@ -3,6 +3,7 @@ import taskLists from 'markdown-it-task-lists'
 import anchor from 'markdown-it-anchor'
 import footnote from 'markdown-it-footnote'
 import deflist from 'markdown-it-deflist'
+import mark from 'markdown-it-mark'
 import { wikiLinkPlugin, type Resolver as WikiResolver } from './wikiLinks'
 
 function escapeHtml(s: string): string {
@@ -141,6 +142,11 @@ async function getMd(): Promise<MarkdownIt> {
       // 定义列表:pandoc 风格的 `Term\n:   Definition`。跟脚注
       // 不冲突(: 是行首字符,[^] 是行内),放在脚注之后读着自然。
       .use(deflist)
+      // 高亮:`==text==` → `<mark>text</mark>`。Obsidian / VitePress
+      // 风格的标记,语义用浏览器原生 <mark> 元素。不放在最前面
+      // 是因为它跟其它行内标记(粗体、代码、链接)需要在同一阶段
+      // 解析,但顺序对结果无影响 —— 这里跟 deflist 排在一起读着顺。
+      .use(mark)
       // Wiki link + standard `.md` link classification. Plugin
       // signature is `(md, opts) => void` — see wikiLinks.ts for why
       // currying doesn't work with `md.use`. The resolver reads
