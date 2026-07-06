@@ -44,7 +44,7 @@ src/
                          ActivityBar, AiPanel, AiSessionPicker
   composables/           useToast / useConfirm / usePrompt / useTheme
                          （UI 单例）
-    zettelProtocol.ts    纯函数：哪些路径是只读 / 受保护，及其对应的
+    zettelProtocol.ts    纯函数：哪些路径受保护，及其对应的
                          用户提示文案
     vault/               useVaultLayout, useEditorTabs, useTagFilter,
                          useAiHistory, useCurrentNote —— 从 VaultView.vue
@@ -97,12 +97,12 @@ docs/superpowers/
 
 - **`inbox/`** —— 收件桶，新内容先落在这里
 - **`literature/`** —— 长篇参考资料
-- **`zettel/`** —— 永久笔记，整个子树只读
+- **`zettel/`** —— 永久笔记，目录结构受保护；可新建文件夹并在内部移动整理，不能直接新建永久笔记
 
 对这三个根目录的重命名、删除、重新挂载都会被客户端和服务端拒绝。
 规则集中在 [src/composables/zettelProtocol.ts](src/composables/zettelProtocol.ts)
-这个纯函数模块里。同一套规则同时约束两件事：右键菜单 UI（只读行
-隐藏写操作按钮）和文件系统写入（被阻止的操作会弹中文 toast 并
+这个纯函数模块里。同一套规则同时约束两件事：右键菜单 UI（受保护行
+只显示允许的操作）和文件系统写入（被阻止的操作会弹中文 toast 并
 提前 return）。
 
 要新增第四个受保护的根目录，或修改提示文案，只需改这一个文件。

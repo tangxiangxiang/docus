@@ -90,8 +90,8 @@ describe('FileTree context menu', () => {
   // their names but their *children* are still user content. The original
   // menu gated everything on a single "readonly" boolean, so right-clicking
   // inbox/literature offered no way to add a child. These cases pin the
-  // new matrix: protected root → create-in only, zettel subtree →
-  // nothing, ordinary file → full menu.
+  // matrix: protected root → create-in, zettel folder → create folders
+  // only, ordinary file → full menu.
   it('right-click on a protected root (inbox) shows create-in buttons but no rename/delete', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
@@ -112,7 +112,7 @@ describe('FileTree context menu', () => {
     w.unmount()
   })
 
-  it('right-click on zettel (protected root inside the read-only subtree) shows no menu', async () => {
+  it('right-click on zettel shows new-folder only, not direct note creation', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
     const zettelRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'zettel')!
@@ -121,14 +121,17 @@ describe('FileTree context menu', () => {
     await w.vm.$nextTick()
     await flushPromises()
 
-    // zettel is a permanent-notes sink — no menu item applies (can't
-    // create children, can't rename, can't delete, can't split-card).
-    // Showing an empty menu box would be worse than no menu at all.
-    expect(document.querySelector('.tree-context-menu')).toBeNull()
+    const menu = document.querySelector('.tree-context-menu')
+    expect(menu).not.toBeNull()
+    const labels = Array.from(menu!.querySelectorAll('button')).map((b) => b.textContent)
+    expect(labels).toContain('新建文件夹')
+    expect(labels).not.toContain('新建文件')
+    expect(labels).not.toContain('重命名')
+    expect(labels).not.toContain('删除')
     w.unmount()
   })
 
-  it('protected root row is not draggable (draggable attribute reflects canModify)', async () => {
+  it('protected root row is not draggable (draggable attribute reflects canMove)', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
     const inboxRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'inbox')!
@@ -137,6 +140,18 @@ describe('FileTree context menu', () => {
     // so the attribute should be the string "false" (Vue binds booleans
     // that way to the DOM property).
     expect(inboxRow.attributes('draggable')).toBe('false')
+    w.unmount()
+  })
+
+  it('zettel child rows are draggable for reclassification', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    await w.vm.$nextTick()
+    const zettelRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'zettel')!
+    await zettelRow.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+
+    const permanentRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'permanent')!
+    expect(permanentRow.attributes('draggable')).toBe('true')
     w.unmount()
   })
 })
@@ -190,8 +205,8 @@ describe('FileTree context menu — archive-to-zettel visibility', () => {
 
   it('hides 归档到 zettel for a file inside zettel/', async () => {
     const w = await rightClickRow('permanent')
-    // zettel subtree is the read-only sink — even right-clicking a file
-    // there produces a fully-empty menu and TreeRow skips rendering it.
+    // A zettel file can be dragged for reclassification, but it has no
+    // context-menu action: no rename/delete and no archive-to-zettel.
     expect(document.querySelector('.tree-context-menu')).toBeNull()
     w.unmount()
   })

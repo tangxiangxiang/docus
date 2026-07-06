@@ -4,7 +4,8 @@ import type { TreeNode } from '../../lib/api'
 import { ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FILE_MD, ICON_CHEVRON } from './icons'
 import {
   canModify,
-  canCreateChild,
+  canMove,
+  canCreateFileChild,
 } from '../../composables/zettelProtocol'
 import type { MatchInfo } from './FileTree.vue'
 
@@ -60,27 +61,26 @@ const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.
 const childNodes = computed(() =>
   props.node.kind === 'folder' ? props.node.children : [],
 )
-// Two independent write-permission flags. The protocol distinguishes:
-//   • canModify — rename / delete / drag-out. Blocked for both the zettel
-//     subtree AND protected roots (the three top-level folder names are
-//     pinned by the Zettelkasten spec).
-//   • canCreateChild — in-place create-in. Blocked for the zettel subtree
-//     (the permanent-notes sink is write-locked at every depth) but
-//     ALLOWED for protected roots: the folder's name is pinned, but its
-//     contents are still user content. Without this split, right-clicking
-//     inbox/literature offered no way to add a child — see the
-//     "顶层目录 · 不可修改" hint in zettelProtocol.ts for the original
-//     "all or nothing" wording.
+// Three independent write-permission flags. The protocol distinguishes:
+//   • canModify — rename / delete. Blocked for both the zettel subtree AND
+//     protected roots (the three top-level folder names are pinned by the
+//     Zettelkasten spec).
+//   • canMove — drag-out. Protected roots are pinned; zettel children can
+//     move within zettel for reclassification.
+//   • canCreateFileChild — in-place note creation. Blocked for the zettel
+//     subtree so permanent notes still enter via archive/draft flows.
+// Folder creation is always allowed for any folder row, so the "新建文件夹"
+// button is rendered unconditionally on `isFolder` (no gate needed).
 const canModifyRow = computed(() => canModify(props.node.path))
-const canCreateChildRow = computed(() => canCreateChild(props.node.path))
+const canMoveRow = computed(() => canMove(props.node.path))
+const canCreateFileChildRow = computed(() => canCreateFileChild(props.node.path))
 // True if the row has at least one context-menu item to render. Without
-// this gate, right-clicking a fully locked row (zettel subtree at any depth)
-// would show an empty menu box — the placeholder hint that used to fill
-// the space was removed on the principle that "no hint beats a redundant
-// one", but that left the empty-menu case visible. Skip the menu entirely
-// when there's nothing to show.
+// this gate, right-clicking a fully locked row (e.g. an in-zettel file)
+// would show an empty menu box. Skip the menu entirely when there's
+// nothing to show. Folders always have at least the folder-create button,
+// so `isFolder` alone covers the create branch.
 const hasAnyMenuItem = computed(() =>
-  (isFolder.value && canCreateChildRow.value) ||
+  isFolder.value ||
   canModifyRow.value ||
   canSplit.value,
 )
@@ -144,14 +144,9 @@ function onDragStart(e: DragEvent) {
   // here so only the row the user actually grabbed sets the drag payload.
   e.stopPropagation()
   // Protected roots (inbox/literature/zettel) cannot be re-parented. We
-  // still want their *children* to be draggable — the on-the-wire guard
-  // in FileTree's onMove/onRootDrop catches a misrouted move and toasts
-  // a clear error, but the better UX is to never start the drag in the
-  // first place (no ghost, no half-grabbed cursor). canCreateChild
-  // already encodes the deeper rule (zettel subtree children are also
-  // un-draggable) because canModify and canCreateChild are both false
-  // there.
-  if (!canModifyRow.value) { e.preventDefault(); return }
+  // still want their children to be draggable, including zettel children
+  // that are being reclassified inside the permanent-notes subtree.
+  if (!canMoveRow.value) { e.preventDefault(); return }
   if (!e.dataTransfer) return
   e.dataTransfer.setData('text/x-docus-path', props.node.path)
   // Carry the source kind in the payload too. Path is not enough to
@@ -271,7 +266,7 @@ function cancelRename() {
     class="tree-row"
     :class="{ active: isActive, expanded: isExpanded, folder: isFolder, dragging: isDragging, 'drop-target': isDropTarget }"
     :style="{ '--depth': depth }"
-    :draggable="!renaming && canModifyRow"
+    :draggable="!renaming && canMoveRow"
     @dragstart="onDragStart"
     @dragend="onDragEnd"
     @dragenter="onDragEnter"
@@ -343,13 +338,15 @@ function cancelRename() {
         :style="{ left: menuX + 'px', top: menuY + 'px' }"
         @click.stop
       >
-        <!-- create-in is allowed for ordinary folders AND for the three
-             protected roots (inbox / literature). zettel/ subtree children
-             cannot be created here — see canCreateChild in zettelProtocol.
+        <!-- create-in is allowed for ordinary folders and protected roots.
+             Inside zettel/ only the folder button is offered; permanent
+             notes still enter through archive/draft flows (gated by
+             canCreateFileChild). The folder button is unconditional on
+             isFolder — there's no protocol gate against sub-foldering.
              Render the create buttons first so the most-common action on
              a folder is the first thing under the cursor. -->
-        <template v-if="isFolder && canCreateChildRow">
-          <button @click="menuAction(() => emit('create-in', node.path, 'file'))">新建文件</button>
+        <template v-if="isFolder">
+          <button v-if="canCreateFileChildRow" @click="menuAction(() => emit('create-in', node.path, 'file'))">新建文件</button>
           <button @click="menuAction(() => emit('create-in', node.path, 'folder'))">新建文件夹</button>
           <!-- On a protected root the create buttons are followed only by
                a hint — no rename/delete divider, since the only other

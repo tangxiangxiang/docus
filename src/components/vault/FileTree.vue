@@ -376,12 +376,13 @@ async function onRootDrop(e: DragEvent) {
   rootDragDepth.value = 0
   if (!src) return
   // Reject moves of protected roots (the three top-level folders are part
-  // of the Zettelkasten protocol and cannot be re-parented) or anything
-  // inside the read-only zettel/ subtree.
+  // of the Zettelkasten protocol and cannot be re-parented). Zettel children
+  // are handled below because they may move inside zettel but not out of it.
   {
     const msg = blockedMessage(src, 'move')
     if (msg) { toast.error(msg); return }
   }
+  if (isInZettel(src)) { toast.error('Zettel 笔记只能在 zettel 内移动'); return }
   const filename = src.split('/').pop()!
   const targetPath = filename
   if (targetPath === src) return
@@ -479,12 +480,15 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
     const msg = blockedMessage(srcPath, 'move')
     if (msg) { toast.error(msg); return }
   }
-  // The three top-level folders keep their names but their *contents* are
-  // fully editable. The one place we still refuse to write is zettel, which
-  // is the read-only permanent-notes sink. inbox / literature must remain
-  // valid drop targets so a file can be promoted out of a sub-folder
-  // (e.g. moving inbox/test/foo.md back up to inbox/foo.md).
-  if (targetFolder === 'zettel') { toast.error('Zettel 是永久笔记，不能直接写入'); return }
+  // The three top-level folders keep their names but their contents are
+  // editable according to the protocol. Dropping a non-zettel note directly
+  // on zettel/ is still too vague, so the explicit archive action owns that
+  // path. Existing zettel items may move within zettel for reclassification,
+  // but not out into inbox/literature/root.
+  const sourceInZettel = isInZettel(srcPath)
+  const targetInZettel = isInZettel(targetFolder)
+  if (!sourceInZettel && targetFolder === 'zettel') { toast.error('Zettel 是永久笔记，不能直接写入'); return }
+  if (sourceInZettel && !targetInZettel) { toast.error('Zettel 笔记只能在 zettel 内移动'); return }
   const filename = srcPath.split('/').pop()!
   const newPath = targetFolder ? `${targetFolder}/${filename}` : filename
   if (newPath === srcPath) return
@@ -520,14 +524,11 @@ async function onSplitCard(path: string) {
   emit('split-card', path, mode)
 }
 
-// Archive handler. Distinct from onMove: onMove refuses any move into
-// zettel/ because zettel is the read-only permanent-notes sink for the
-// drag-and-drop UX. Archive is the explicit product action of promoting
-// a finished note from inbox/ or literature/ straight into zettel/. The
-// TreeRow menu only emits this for files whose path matches canArchive's
-// shape (i.e. !folder && under inbox/ or literature/), so the server
-// whitelist's "source must be in inbox/ or literature/" check is just
-// a backstop here.
+// Archive handler. Distinct from onMove: this is the explicit product action
+// of promoting a finished note from inbox/ or literature/ straight into the
+// zettel/ root. Classified archiving can also happen by dragging an eligible
+// inbox/literature note onto a zettel subfolder; the server whitelist's
+// "source must be in inbox/ or literature/" check backs up both paths.
 async function onArchiveToZettel(path: string) {
   const filename = path.split('/').pop()!
   const targetPath = 'zettel/' + filename
@@ -544,7 +545,7 @@ async function onArchiveToZettel(path: string) {
 
 async function onCreateIn(folder: string, kind: 'file' | 'folder') {
   {
-    const msg = blockedMessage(folder, 'create')
+    const msg = blockedMessage(folder, kind === 'file' ? 'create-file' : 'create-folder')
     if (msg) { toast.error(msg); return }
   }
   const title = await prompt({

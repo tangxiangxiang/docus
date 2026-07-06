@@ -46,7 +46,7 @@ src/
                          ActivityBar, AiPanel, AiSessionPicker
   composables/           useToast / useConfirm / usePrompt / useTheme
                          (UI singletons)
-    zettelProtocol.ts    Pure functions: which paths are read-only / protected
+    zettelProtocol.ts    Pure functions: which paths are protected
                          and the user-facing error messages
     vault/               useVaultLayout, useEditorTabs, useTagFilter,
                          useAiHistory, useCurrentNote — the state and
@@ -99,13 +99,13 @@ choices:
 
 - **`inbox/`** — capture bucket. Anything new lands here.
 - **`literature/`** — long-form reference material.
-- **`zettel/`** — permanent notes. The entire subtree is read-only.
+- **`zettel/`** — permanent notes. The structure is protected: folders may be created and items may be moved inside zettel for organization, but permanent notes are not created there directly.
 
 Rename, delete, and re-parenting of these roots are rejected by the
 client and the server. The rules live in
 [src/composables/zettelProtocol.ts](src/composables/zettelProtocol.ts)
 as a flat module of pure functions. The same rules gate both the
-context-menu UI (read-only rows hide write buttons) and the
+context-menu UI (protected rows show only allowed actions) and the
 filesystem writes (a blocked op shows a Chinese toast and returns
 early).
 

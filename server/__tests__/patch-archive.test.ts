@@ -1,10 +1,9 @@
 // PATCH /api/posts/* archive-to-zettel whitelist.
 //
-// The menu's archive action is the ONLY client path that lets a file
-// land in zettel/. The server is the second line of defense: even if the
-// client guard in FileTree.onMove is bypassed, PATCH must refuse any
-// targetPath under zettel/ unless the source currently lives under
-// inbox/ or literature/.
+// The archive action and classified drops onto zettel subfolders can land a
+// file in zettel/. The server is the second line of defense: PATCH must refuse
+// any targetPath under zettel/ unless the source currently lives under inbox/
+// or literature/.
 //
 // We mock filePathFor into a per-test tmp dir (same pattern as
 // get-post.test.ts and split.test.ts) so the test never touches the
@@ -33,12 +32,18 @@ async function patch(urlPath: string, body: unknown) {
   return app.fetch(req)
 }
 
+async function del(urlPath: string) {
+  const req = new Request(`http://localhost${urlPath}`, { method: 'DELETE' })
+  return app.fetch(req)
+}
+
 beforeEach(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-patch-archive-test-'))
   await fs.mkdir(path.join(tmpRoot, 'inbox'), { recursive: true })
   await fs.mkdir(path.join(tmpRoot, 'literature'), { recursive: true })
   await fs.mkdir(path.join(tmpRoot, 'archive'), { recursive: true })
   await fs.mkdir(path.join(tmpRoot, 'zettel'), { recursive: true })
+  await fs.mkdir(path.join(tmpRoot, 'zettel', 'concepts'), { recursive: true })
   await fs.writeFile(path.join(tmpRoot, 'inbox', 'foo.md'), '---\ntitle: Foo\n---\n\nbody\n', 'utf8')
   await fs.writeFile(path.join(tmpRoot, 'literature', 'ahrens.md'), '---\ntitle: Ahrens\n---\n\nbody\n', 'utf8')
   await fs.writeFile(path.join(tmpRoot, 'archive', 'old.md'), '---\ntitle: Old\n---\n\nbody\n', 'utf8')
@@ -64,14 +69,53 @@ describe('PATCH /api/posts/* archive-to-zettel whitelist', () => {
     expect(await fs.stat(path.join(tmpRoot, 'zettel', 'ahrens.md'))).toBeTruthy()
   })
 
-  it('refuses zettel/* → zettel/* (zettel is read-only, no internal moves)', async () => {
-    const r = await patch('/api/posts/zettel/perm', { targetPath: 'zettel/other' })
-    // zettel/perm is NOT under inbox/ or literature/, so the whitelist
-    // catches it. (The client also blocks this — the menu gate means
-    // the action never gets here — but the server must agree.)
+  it('moves inbox/foo.md to a zettel subfolder for classified archiving', async () => {
+    const r = await patch('/api/posts/inbox/foo', { targetPath: 'zettel/concepts/foo' })
+    expect(r.status).toBe(200)
+    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'concepts', 'foo.md'))).toBeTruthy()
+  })
+
+  it('allows zettel/* → zettel/* reclassification', async () => {
+    const r = await patch('/api/posts/zettel/perm', { targetPath: 'zettel/concepts/perm' })
+    expect(r.status).toBe(200)
+    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'concepts', 'perm.md'))).toBeTruthy()
+  })
+
+  it('refuses zettel/* → inbox/* (permanent notes stay in zettel)', async () => {
+    const r = await patch('/api/posts/zettel/perm', { targetPath: 'inbox/perm' })
     expect(r.status).toBe(422)
-    // Original file is untouched.
     expect(await fs.stat(path.join(tmpRoot, 'zettel', 'perm.md'))).toBeTruthy()
+    await expect(fs.stat(path.join(tmpRoot, 'inbox', 'perm.md'))).rejects.toThrow()
+  })
+
+  it('refuses zettel rename via PATCH body.name (server backstop)', async () => {
+    // The client hides the rename menu item inside zettel via canModify,
+    // but a non-UI caller hitting the API directly must still be blocked.
+    const r = await patch('/api/posts/zettel/perm', { name: 'renamed' })
+    expect(r.status).toBe(422)
+    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'perm.md'))).toBeTruthy()
+    await expect(fs.stat(path.join(tmpRoot, 'zettel', 'renamed.md'))).rejects.toThrow()
+  })
+
+  it('refuses DELETE inside zettel/ (server backstop)', async () => {
+    // Same rationale as the rename guard: the client hides the menu
+    // item, but a non-UI caller hitting the API directly must be blocked.
+    const r = await del('/api/posts/zettel/perm')
+    expect(r.status).toBe(422)
+    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'perm.md'))).toBeTruthy()
+  })
+
+  it('treats case-variant Zettel/ prefix as zettel (refuses zettel → non-zettel move)', async () => {
+    // isInZettel is case-insensitive on purpose: macOS APFS (the default
+    // dev filesystem) collapses case variants to the same dir at the OS
+    // level, so the protocol layer must too. Without this, a capital-Z
+    // path could escape the "zettel notes stay in zettel" gate.
+    // Seed a file under the case-variant path and try to move it out.
+    await fs.writeFile(path.join(tmpRoot, 'Zettel', 'perm.md'), '---\ntitle: P\n---\n\nbody\n', 'utf8')
+    const r = await patch('/api/posts/Zettel/perm', { targetPath: 'inbox/perm' })
+    expect(r.status).toBe(422)
+    expect(await fs.stat(path.join(tmpRoot, 'Zettel', 'perm.md'))).toBeTruthy()
+    await expect(fs.stat(path.join(tmpRoot, 'inbox', 'perm.md'))).rejects.toThrow()
   })
 
   it('refuses archive/old.md → zettel/old (source not in inbox/literature)', async () => {

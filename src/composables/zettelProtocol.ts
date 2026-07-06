@@ -1,8 +1,10 @@
 // The Zettelkasten protocol: the three top-level folders (inbox / literature
-// / zettel) are part of the spec and cannot be renamed / deleted / re-parented,
-// and the entire zettel/ subtree is a read-only permanent-notes sink. These
-// rules are pure — no state, no async — so a module of exported functions is
-// the right shape (not a `useXxx()` factory like useToast/useConfirm).
+// / zettel) are part of the spec and cannot be renamed / deleted / re-parented.
+// The zettel/ subtree is structurally protected: permanent notes cannot be
+// directly created there, but folders may be created and existing zettel items
+// may be moved inside the subtree to organize them. These rules are pure — no
+// state, no async — so a module of exported functions is the right shape (not a
+// `useXxx()` factory like useToast/useConfirm).
 //
 // Before this module the rules lived inline in FileTree.vue and TreeRow.vue,
 // with the set `{'inbox','literature','zettel'}` duplicated literally across
@@ -11,10 +13,17 @@
 
 export const PROTECTED_ROOTS: ReadonlySet<string> = new Set(['inbox', 'literature', 'zettel'])
 
-/** True for any path inside the read-only zettel/ subtree. */
+/** True for any path inside the protected zettel/ subtree.
+ *
+ * Case-insensitive on purpose: macOS APFS (the default dev filesystem) is
+ * case-insensitive, so `Zettel/` and `zettel/` resolve to the same directory
+ * at the OS level. Treating them as the same subtree at the protocol layer
+ * means the gates behave identically regardless of which the user typed.
+ */
 export function isInZettel(path: string | null | undefined): boolean {
   if (!path) return false
-  return path === 'zettel' || path.startsWith('zettel/')
+  const p = path.toLowerCase()
+  return p === 'zettel' || p.startsWith('zettel/')
 }
 
 /** True for the three top-level folders that must keep their names. */
@@ -23,7 +32,7 @@ export function isProtectedRoot(path: string | null | undefined): boolean {
 }
 
 /**
- * Why a path is read-only, or null if it is not. Use this in templates to
+ * Why a path is structurally locked, or null if it is not. Use this in templates to
  * pick a hint label and to gate write actions:
  *   readonlyReason(node.path) === null  // editable
  *   readonlyReason(node.path) === 'zettel'  // inside permanent notes
@@ -36,27 +45,42 @@ export function readonlyReason(path: string | null | undefined): ReadonlyReason 
   return null
 }
 
-// Write-permission matrix — kept as two named booleans rather than one
+// Write-permission matrix — kept as named booleans rather than one
 // "readonly" flag because the protocol's two read-only states allow
 // different ops:
-//   • protected root (inbox/literature/zettel)  — names are pinned, but
+//   • protected root (inbox/literature/zettel) — names are pinned, but
 //     children are still user content. create-in is allowed, rename /
 //     delete / drag-out are not.
-//   • zettel subtree (zettel and anything below) — permanent-notes sink.
-//     Nothing inside is user-editable, including create-in.
+//   • zettel subtree (zettel and anything below) — permanent-notes area.
+//     Existing items cannot be renamed / deleted, and new notes cannot be
+//     directly created there. Moves are allowed inside zettel so users can
+//     reorganize permanent notes without flattening the whole tree.
 // Templates and TreeRow use these to gate individual menu items and the
 // draggable attribute. Keep these in sync with `blockedMessage`: any new
 // op added there needs a corresponding canX below.
-/** True for paths whose name cannot be changed, deleted, or re-parented. */
+/** True for paths whose name/content entry can be renamed or deleted. */
 export function canModify(path: string | null | undefined): boolean {
   return readonlyReason(path) === null
 }
-/** True for paths that may receive new children (file/folder create-in). */
-export function canCreateChild(path: string | null | undefined): boolean {
-  // zettel/ subtree is a write sink — even the root can't grow new
-  // children. Protected roots (inbox/literature) keep their own names
-  // but accept new children, which is the whole point of being a
-  // container.
+
+/** True for paths that can be dragged/re-parented. */
+export function canMove(path: string | null | undefined): boolean {
+  if (!path) return false
+  if (isProtectedRoot(path)) return false
+  return true
+}
+/** True for folders that may receive directly created notes.
+ *
+ * Folder creation (organizational subfolders inside zettel) is always
+ * allowed for any folder — see TreeRow.vue's context menu, which renders
+ * "新建文件夹" unconditionally on isFolder rows. The split between file
+ * and folder creation lives here so callers can gate the two buttons
+ * independently without re-implementing the zettel subtree check.
+ */
+export function canCreateFileChild(path: string | null | undefined): boolean {
+  // Permanent notes should enter zettel through archive/draft flows, not
+  // ad-hoc file creation from the tree menu. Protected roots
+  // (inbox/literature) keep their own names but accept new children.
   return !isInZettel(path)
 }
 
@@ -66,30 +90,31 @@ export function canCreateChild(path: string | null | undefined): boolean {
  * shape matches the actual usage pattern (no caller needs a structured
  * `reason` separately; the op is either allowed or it isn't).
  *
- * The four ops match the four buttons in the context menu: rename / delete
- * / move / create-in. The 'move' op is for the *source* path of a move (we
- * block moves that originate from a protected or zettel path). The
- * *target-side* check (cannot drop into `zettel` itself) is handled inline
- * at the call site — its message is a one-off.
+ * The five ops match the buttons in the context menu: rename / delete /
+ * move / create-file / create-folder. The 'move' op is for the *source*
+ * path of a move. The target-side checks (for example, keeping zettel notes
+ * inside zettel) are handled inline at the call site because they need
+ * both source and target.
  */
 export function blockedMessage(
   path: string | null | undefined,
-  op: 'rename' | 'delete' | 'move' | 'create',
+  op: 'rename' | 'delete' | 'move' | 'create-file' | 'create-folder',
 ): string | null {
   if (isProtectedRoot(path)) {
     const label = path!
     if (op === 'rename') return `${label} 是固定目录，不能重命名`
     if (op === 'delete') return `${label} 是固定目录，不能删除`
     if (op === 'move')   return `${label} 是固定目录，不能移动`
-    // 'create' on a protected root isn't blocked — you can put files into
-    // inbox / literature. Only the create-into-zettel path is blocked, and
-    // that's the same as `isInZettel(path)`.
+    // create-file / create-folder on a protected root aren't blocked —
+    // you can put files into inbox / literature. Only the create-into-zettel
+    // path is blocked, and that's the same as `isInZettel(path)` below.
   }
   if (isInZettel(path)) {
     if (op === 'rename') return 'Zettel 是永久笔记，不能重命名'
     if (op === 'delete') return 'Zettel 是永久笔记，不能删除'
-    if (op === 'move')   return 'Zettel 是永久笔记，不能移动'
-    if (op === 'create') return 'Zettel 是永久笔记，不能直接新建'
+    if (op === 'move')   return null
+    if (op === 'create-file') return 'Zettel 是永久笔记，不能直接新建笔记'
+    if (op === 'create-folder') return null
   }
   return null
 }

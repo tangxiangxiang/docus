@@ -22,7 +22,12 @@ const TREE: TreeNode[] = [
         ],
       },
       { kind: 'folder', name: 'literature', path: 'literature', children: [] },
-      { kind: 'folder', name: 'zettel', path: 'zettel', children: [] },
+      {
+        kind: 'folder', name: 'zettel', path: 'zettel', children: [
+          { kind: 'file', name: 'permanent', path: 'zettel/permanent', title: 'Permanent', mtime: 0 },
+          { kind: 'folder', name: 'concepts', path: 'zettel/concepts', children: [] },
+        ],
+      },
     ],
   },
 ]
@@ -76,7 +81,7 @@ describe('FileTree drag-move (sub-documents)', () => {
     w.unmount()
   })
 
-  it('still blocks moves into zettel (permanent notes are read-only)', async () => {
+  it('still blocks dropping non-zettel notes directly onto the zettel root', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
       path: 'zettel/test1', title: 'test1', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
@@ -96,6 +101,92 @@ describe('FileTree drag-move (sub-documents)', () => {
       dataTransfer: {
         getData: (k: string) => {
           if (k === 'text/x-docus-path') return 'inbox/test/test1'
+          if (k === 'text/x-docus-kind') return 'file'
+          return ''
+        },
+      },
+    })
+    await w.vm.$nextTick()
+    await flushPromises()
+
+    expect(patchSpy).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('allows classifying an inbox note by dropping it onto a zettel subfolder', async () => {
+    const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'zettel/concepts/test1', title: 'test1', created: '', updated: '', tags: [], size: 0, mtime: 0,
+    })
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    await w.vm.$nextTick()
+
+    const inbox = rowByLabel(w.findAll('li.tree-row'), 'inbox')
+    await inbox.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+    const testFolder = rowByLabel(w.findAll('li.tree-row'), 'test')
+    await testFolder.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+    const zettel = rowByLabel(w.findAll('li.tree-row'), 'zettel')
+    await zettel.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+
+    const concepts = rowByLabel(w.findAll('li.tree-row'), 'concepts')
+    await concepts.trigger('drop', {
+      dataTransfer: {
+        getData: (k: string) => {
+          if (k === 'text/x-docus-path') return 'inbox/test/test1'
+          if (k === 'text/x-docus-kind') return 'file'
+          return ''
+        },
+      },
+    })
+    await w.vm.$nextTick()
+    await flushPromises()
+
+    expect(patchSpy).toHaveBeenCalledWith('inbox/test/test1', { targetPath: 'zettel/concepts/test1' })
+    w.unmount()
+  })
+
+  it('allows moving an existing zettel note into a zettel subfolder', async () => {
+    const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'zettel/concepts/permanent', title: 'permanent', created: '', updated: '', tags: [], size: 0, mtime: 0,
+    })
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    await w.vm.$nextTick()
+
+    const zettel = rowByLabel(w.findAll('li.tree-row'), 'zettel')
+    await zettel.find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+
+    const concepts = rowByLabel(w.findAll('li.tree-row'), 'concepts')
+    await concepts.trigger('drop', {
+      dataTransfer: {
+        getData: (k: string) => {
+          if (k === 'text/x-docus-path') return 'zettel/permanent'
+          if (k === 'text/x-docus-kind') return 'file'
+          return ''
+        },
+      },
+    })
+    await w.vm.$nextTick()
+    await flushPromises()
+
+    expect(patchSpy).toHaveBeenCalledWith('zettel/permanent', { targetPath: 'zettel/concepts/permanent' })
+    w.unmount()
+  })
+
+  it('blocks moving a zettel note out to inbox', async () => {
+    const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'inbox/permanent', title: 'permanent', created: '', updated: '', tags: [], size: 0, mtime: 0,
+    })
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    await w.vm.$nextTick()
+
+    const inbox = rowByLabel(w.findAll('li.tree-row'), 'inbox')
+    await inbox.trigger('drop', {
+      dataTransfer: {
+        getData: (k: string) => {
+          if (k === 'text/x-docus-path') return 'zettel/permanent'
           if (k === 'text/x-docus-kind') return 'file'
           return ''
         },

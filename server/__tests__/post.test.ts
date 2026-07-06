@@ -82,4 +82,31 @@ describe('POST /api/posts', () => {
     const r = await call('POST', '/api/posts', { title: 'no path' })
     expect(r.status).toBe(400)
   })
+
+  it('rejects direct note creation inside zettel/', async () => {
+    const r = await call('POST', '/api/posts', { path: 'zettel/direct', title: 'Direct' })
+    expect(r.status).toBe(422)
+    await expect(fs.stat(path.join(CONTENT_DIR, 'zettel', 'direct.md'))).rejects.toThrow()
+  })
+
+  it('allows organizational folder creation inside zettel/', async () => {
+    const folder = path.join(CONTENT_DIR, 'zettel', 'concepts-test')
+    try {
+      const r = await call('POST', '/api/folders', { path: 'zettel/concepts-test' })
+      expect(r.status).toBe(201)
+      await expect(fs.stat(folder)).resolves.toBeTruthy()
+    } finally {
+      await fs.rm(folder, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects case-variant Zettel/ prefix (case-insensitive isInZettel guard)', async () => {
+    // On macOS APFS `Zettel/...` is the same directory as `zettel/...`,
+    // so the guard must catch case variants too. Without this, a client
+    // could POST `Zettel/note` and create a parallel namespace on Linux
+    // or a colliding file on macOS.
+    const r = await call('POST', '/api/posts', { path: 'Zettel/direct', title: 'Direct' })
+    expect(r.status).toBe(422)
+    await expect(fs.stat(path.join(CONTENT_DIR, 'Zettel', 'direct.md'))).rejects.toThrow()
+  })
 })
