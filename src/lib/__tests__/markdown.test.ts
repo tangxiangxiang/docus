@@ -268,4 +268,23 @@ describe('markdown render()', () => {
     expect((html.match(/<dt>/g) ?? []).length).toBe(2)
     expect((html.match(/<dd>/g) ?? []).length).toBe(3)
   })
+
+  /* Raw HTML pass-through for table cells. markdown-it's GFM table
+     parser splits cells on \n, so the only way to get a line break
+     inside a cell is a literal <br>. That requires html: true —
+     which the pipeline now opts into (see markdown.ts comment for
+     the XSS rationale). Pin the behavior here so a future flip back
+     to html: false fails loudly with a meaningful test name instead
+     of silently re-escaping <br> to &lt;br&gt; in users' tables. */
+  it('passes raw <br> through inside table cells', async () => {
+    const html = await render([
+      '| col1 | col2 |',
+      '| --- | --- |',
+      '| a<br>b | c |',
+    ].join('\n'))
+    /* The cell content must contain a literal <br>, not the escaped
+       &lt;br&gt;. */
+    expect(html).toMatch(/<td>a<br>b<\/td>/)
+    expect(html).not.toContain('&lt;br&gt;')
+  })
 })

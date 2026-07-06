@@ -100,7 +100,20 @@ async function getMd(): Promise<MarkdownIt> {
   mdPromise = (async () => {
     const highlight = await buildHighlight()
     const md = new MarkdownIt({
-      html: false,
+      // html: true is an explicit, user-approved trade-off. We accept
+      // raw HTML in markdown source so <br> works inside table cells
+      // (markdown-it's GFM table parser splits on \n — without this,
+      // <br> gets escaped to &lt;br&gt; and there's no way to put a
+      // line break in a cell). The cost is that any <script>,
+      // <iframe>, <img onerror=...> pasted from a hostile source will
+      // render. docus is a single-user local vault — content is the
+      // user's own files, not multi-tenant upload — so the practical
+      // XSS surface is "user attacks themselves." If this assumption
+      // ever changes (multi-user vault, imported web clippings
+      // auto-rendered without review), flip back to html: false and
+      // either pre-process <br> sentinels in tables or switch to a
+      // table plugin that supports multi-line cells natively.
+      html: true,
       linkify: true,
       typographer: true,
       highlight(str, lang) {
