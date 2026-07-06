@@ -2472,6 +2472,110 @@ main.container {
 .article .task-list-item input[type='checkbox'] { margin-right: 0.4em; }
 .article ul.contains-task-list { padding-left: 1.2em; }
 
+/* ---------- Footnotes (markdown-it-footnote) ----------
+   The plugin emits: <sup class="footnote-ref">, then later
+   <hr class="footnotes-sep">, <section class="footnotes">,
+   <ol class="footnotes-list">, <li id="fnN" class="footnote-item">,
+   and a backref <a class="footnote-backref" href="#fnrefN">↩︎</a>.
+   Without these rules the inline ref renders at the same size as
+   the surrounding text and the footnote block looks like a stray
+   paragraph list. We anchor on .article (not .vault .article) so
+   both the preview pane and reading pane get the same treatment;
+   reading-pane-specific spacing tweaks live below. */
+.article .footnote-ref {
+  font-size: 0.75em;
+  line-height: 0;
+  margin-left: 0.15em;
+}
+.article .footnote-ref a {
+  /* Plugin already nests <a> inside <sup>, so the anchor is the
+     clickable target. Inherit color so the sup doesn't introduce
+     a new hue against the article body. */
+  color: inherit;
+  text-decoration: none;
+}
+.article .footnote-ref a:hover {
+  text-decoration: underline;
+}
+.article .footnotes-sep {
+  /* Plugin emits a bare <hr>; the project has no global .article hr
+     rule, so the browser default (1px inset) would clash with the
+     vault's flat border look. Force the same --vs-border hairline
+     the reading pane's hr uses (see rule near .vault .reading-pane
+     .article.reading hr) so the footnote separator reads as a
+     proper section divider, not a chrome artifact. */
+  width: 4em;
+  margin: 2em auto 1em;
+  border: 0;
+  border-top: 1px solid var(--vs-border);
+}
+.article .footnotes {
+  font-size: 0.85em;
+  /* Color is left to inherit — there's no --vs-fg-muted token in
+     this stylesheet, and the article text color reads fine at
+     0.85em without an extra mute step. */
+}
+.article .footnotes-list {
+  padding-left: 1.4em;
+  margin: 0;
+}
+.article .footnote-item {
+  /* Plugin's default puts the backref inside the same <p> as the
+     note text, separated by a space. No special layout needed;
+     the only override is to soften the spacing so the list reads
+     tight, not as a separate prose block. */
+  margin: 0.25em 0;
+}
+.article .footnote-item p { margin: 0; display: inline; }
+.article .footnote-backref {
+  margin-left: 0.25em;
+  text-decoration: none;
+}
+.article .footnote-backref:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Definition lists (markdown-it-deflist) ----------
+   Plugin emits standard <dl>/<dt>/<dd> with multiple dd's as
+   siblings under one dt (HTML5 model — not nested). Without these
+   rules the browser default <dd> indent (~40px left padding) makes
+   glossary-style notes feel misaligned with the rest of the
+   article. We scope to .article so both preview and reading pane
+   get the same treatment. */
+.article dl {
+  margin: 0.8em 0;
+}
+.article dt {
+  /* Term is the "label" half — render it slightly bolder so it
+     reads as the heading of its definitions, not as a list bullet. */
+  font-weight: 600;
+  margin-top: 0.6em;
+}
+.article dt:first-child { margin-top: 0; }
+.article dd {
+  /* Pull definitions back to align under the term, not under a
+     40px browser-default gutter. 1.4em matches the list indent
+     used by .article ul / .article ol (see rule above) so dl
+     reads in the same column as the surrounding lists. */
+  margin: 0.2em 0 0.2em 1.4em;
+}
+
+/* ---------- Highlight (markdown-it-mark) ----------
+   ==text== → <mark>. The browser default is solid yellow, which
+   reads as a browser-system color and clashes with the vault's
+   flat look (see --vs-bg / --vs-border tokens above). We tone it
+   down to a translucent amber so the highlight still pops on both
+   light and dark backgrounds without dominating the line. The
+   padding keeps the highlight from sitting flush against the
+   text — solid yellow at zero padding makes adjacent characters
+   look smudged. */
+.article mark {
+  background-color: rgba(255, 213, 79, 0.45);
+  color: inherit;
+  padding: 0.05em 0.15em;
+  border-radius: 2px;
+}
+
 /* ---------- Markmap mount host ----------
    The ```markmap``` fence in src/lib/markdown.ts emits a
    `<div class="markmap-mount">` placeholder; useMarkmapMount replaces

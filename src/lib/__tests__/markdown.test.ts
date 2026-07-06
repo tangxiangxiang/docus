@@ -77,4 +77,246 @@ describe('markdown render()', () => {
     ].join('\n'))
     expect(html).not.toContain('class="mermaid-mount"')
   })
+
+  /* Footnotes (markdown-it-footnote). Plugin behavior worth pinning:
+     - The label inside [^label] is metadata for matching ref ↔ def;
+       the rendered anchor id is always a sequence number (fn1, fn2, ...).
+       So [^a] and [^1] both produce fn1.
+     - Definitions land in a trailing <section class="footnotes"> with
+       one <li class="footnote-item" id="fnN"> per note.
+     - Each item has a backref <a class="footnote-backref" href="#fnrefN">↩︎</a>.
+     - A reference with no matching definition is left as literal text
+       (no <sup> emitted) — this is the documented behavior, not a bug. */
+  it('renders an inline footnote ref as a <sup class="footnote-ref">', async () => {
+    const html = await render([
+      'Here is a footnote reference,[^1] and another.[^longnote]',
+      '',
+      '[^1]: first.',
+      '',
+      '[^longnote]: second.',
+    ].join('\n'))
+    /* Two inline refs in the body paragraph. */
+    const refs = html.match(/<sup class="footnote-ref">/g) ?? []
+    expect(refs.length).toBe(2)
+    /* Both refs and items are numbered sequentially regardless of the
+       label used in the source — first gets fn1, second gets fn2. */
+    expect(html).toContain('href="#fn1"')
+    expect(html).toContain('id="fnref1"')
+    expect(html).toContain('href="#fn2"')
+    expect(html).toContain('id="fnref2"')
+    /* The visible caption inside the <sup> is "[1]" / "[2]", not the
+       source label — that's what readers click to jump down. */
+    expect(html).toContain('>[1]</a>')
+    expect(html).toContain('>[2]</a>')
+  })
+
+  it('collects definitions into a trailing <section class="footnotes">', async () => {
+    const html = await render([
+      'body[^a]',
+      '',
+      '[^a]: definition text.',
+    ].join('\n'))
+    /* The definitions must NOT leak into the body paragraph as
+       plain text. Before the plugin was wired, [^a]: landed as
+       a literal <p>[^a]: definition text.</p>. */
+    expect(html).not.toMatch(/<p>\[\^a\]:/)
+    /* The trailing block must exist, with the item carrying the
+       numeric anchor id fn1 (alpha label still maps to fn1 because
+       it's the first definition in this document). */
+    expect(html).toContain('<section class="footnotes">')
+    expect(html).toContain('<ol class="footnotes-list">')
+    expect(html).toContain('id="fn1"')
+    /* The plugin's default backref points back at the inline ref id. */
+    expect(html).toContain('class="footnote-backref"')
+    expect(html).toContain('href="#fnref1"')
+  })
+
+  it('preserves multi-paragraph footnote bodies (indented continuation)', async () => {
+    const html = await render([
+      'see[^multi]',
+      '',
+      '[^multi]: first paragraph.',
+      '',
+      '    second paragraph in the same note.',
+    ].join('\n'))
+    /* The whole definition sits between the <li> open and the
+       closing </ol> of the footnotes section. */
+    const liOpen = html.indexOf('<li id="fn1"')
+    const olClose = html.indexOf('</ol>')
+    expect(liOpen).toBeGreaterThan(-1)
+    expect(olClose).toBeGreaterThan(liOpen)
+    const itemHtml = html.slice(liOpen, olClose)
+    expect(itemHtml).toContain('first paragraph.')
+    expect(itemHtml).toContain('second paragraph in the same note.')
+    /* The backref appears only on the last paragraph, not on every
+       one — that's the plugin's default and is fine. */
+    expect(itemHtml.match(/footnote-backref/g)?.length).toBe(1)
+  })
+
+  it('renders the footnote separator <hr class="footnotes-sep">', async () => {
+    const html = await render([
+      'body[^1]',
+      '',
+      '[^1]: note.',
+    ].join('\n'))
+    /* Plugin emits <hr class="footnotes-sep"> before the section.
+       Default xhtmlOut=false so it's a bare <hr> (no trailing slash). */
+    expect(html).toMatch(/<hr class="footnotes-sep">/)
+    /* The separator must appear BEFORE the section, not after. */
+    const sepIdx = html.indexOf('footnotes-sep')
+    const sectionIdx = html.indexOf('<section class="footnotes">')
+    expect(sepIdx).toBeGreaterThan(-1)
+    expect(sectionIdx).toBeGreaterThan(sepIdx)
+  })
+
+  it('leaves [^id] literal when no matching definition exists', async () => {
+    const html = await render('A reference with no body[^orphan].')
+    /* The plugin refuses to emit a <sup> for an unresolved ref —
+       it just leaves the literal [^orphan] text in place. That
+       matches CommonMark-style footnote tooling: missing defs are
+       a user authoring bug, not a render bug to paper over. */
+    expect(html).not.toContain('<sup class="footnote-ref">')
+    expect(html).not.toContain('<section class="footnotes">')
+    expect(html).toContain('[^orphan]')
+  })
+
+  /* Definition lists (markdown-it-deflist). Pandoc-style syntax:
+     one term per line, then one or more indented `:   definition`
+     lines, blank line separates entries. Plugin emits standard
+     <dl>/<dt>/<dd> with multiple dd's as siblings (NOT nested)
+     under the same dt — that's the HTML5 spec, and the plugin
+     follows it. Before wiring this plugin, the `:` character at
+     line start was passed through as literal text. */
+  it('renders a basic definition list as <dl>/<dt>/<dd>', async () => {
+    const html = await render([
+      'Term 1',
+      ':   Definition 1',
+    ].join('\n'))
+    expect(html).toContain('<dl>')
+    expect(html).toContain('<dt>Term 1</dt>')
+    expect(html).toContain('<dd>Definition 1</dd>')
+    expect(html).toContain('</dl>')
+    /* The literal `:` must NOT leak through as plain text. */
+    expect(html).not.toMatch(/<p>.*:.*Definition.*<\/p>/)
+  })
+
+  it('emits multiple <dd> as siblings under one <dt>', async () => {
+    const html = await render([
+      'Term',
+      ':   Definition A',
+      ':   Definition B',
+    ].join('\n'))
+    /* One dt, two dd's as siblings — not nested. */
+    expect((html.match(/<dt>/g) ?? []).length).toBe(1)
+    expect((html.match(/<dd>/g) ?? []).length).toBe(2)
+    /* Both definitions are inside the same <dl>. */
+    const dlStart = html.indexOf('<dl>')
+    const dlEnd = html.indexOf('</dl>')
+    expect(dlStart).toBeGreaterThan(-1)
+    expect(dlEnd).toBeGreaterThan(dlStart)
+    const dlHtml = html.slice(dlStart, dlEnd)
+    expect(dlHtml).toContain('Definition A')
+    expect(dlHtml).toContain('Definition B')
+  })
+
+  it('keeps surrounding paragraphs outside the <dl>', async () => {
+    const html = await render([
+      'Prose before.',
+      '',
+      'Term',
+      ':   Definition',
+      '',
+      'Prose after.',
+    ].join('\n'))
+    /* Both prose paragraphs must remain in <p> tags, NOT inside
+       the <dl>. */
+    const dlStart = html.indexOf('<dl>')
+    const dlEnd = html.indexOf('</dl>')
+    expect(dlStart).toBeGreaterThan(-1)
+    expect(dlEnd).toBeGreaterThan(dlStart)
+    const dlHtml = html.slice(dlStart, dlEnd + '</dl>'.length)
+    expect(dlHtml).not.toContain('<p>Prose before.</p>')
+    expect(dlHtml).not.toContain('<p>Prose after.</p>')
+    expect(html).toContain('<p>Prose before.</p>')
+    expect(html).toContain('<p>Prose after.</p>')
+  })
+
+  it('renders inline markup inside dt and dd', async () => {
+    const html = await render([
+      '`code-term`',
+      ':   description with **bold** and a [link](https://example.com)',
+    ].join('\n'))
+    expect(html).toContain('<dt><code>code-term</code></dt>')
+    expect(html).toContain('<strong>bold</strong>')
+    expect(html).toContain('<a href="https://example.com">link</a>')
+  })
+
+  it('groups multiple term/definition pairs into one <dl>', async () => {
+    const html = await render([
+      'Term 1',
+      ':   Definition 1',
+      '',
+      'Term 2',
+      ':   Definition 2a',
+      ':   Definition 2b',
+    ].join('\n'))
+    /* One <dl> wrapping everything (plugin doesn't emit one
+       block per term — that would break the HTML5 model where
+       one dl holds the whole list). */
+    expect((html.match(/<dl>/g) ?? []).length).toBe(1)
+    expect((html.match(/<\/dl>/g) ?? []).length).toBe(1)
+    expect((html.match(/<dt>/g) ?? []).length).toBe(2)
+    expect((html.match(/<dd>/g) ?? []).length).toBe(3)
+  })
+
+  /* Raw HTML pass-through for table cells. markdown-it's GFM table
+     parser splits cells on \n, so the only way to get a line break
+     inside a cell is a literal <br>. That requires html: true —
+     which the pipeline now opts into (see markdown.ts comment for
+     the XSS rationale). Pin the behavior here so a future flip back
+     to html: false fails loudly with a meaningful test name instead
+     of silently re-escaping <br> to &lt;br&gt; in users' tables. */
+  it('passes raw <br> through inside table cells', async () => {
+    const html = await render([
+      '| col1 | col2 |',
+      '| --- | --- |',
+      '| a<br>b | c |',
+    ].join('\n'))
+    /* The cell content must contain a literal <br>, not the escaped
+       &lt;br&gt;. */
+    expect(html).toMatch(/<td>a<br>b<\/td>/)
+    expect(html).not.toContain('&lt;br&gt;')
+  })
+
+  /* Highlight (markdown-it-mark). Obsidian / VitePress syntax:
+     ==text== → <mark>text</mark>. Plugin ships as a transitive dep
+     of markmap-lib, so wiring it costs zero new packages. Unmatched
+     == is left as literal text (no error, no half-formed <mark>). */
+  it('renders ==text== as <mark>text</mark>', async () => {
+    const html = await render('This is ==highlighted== here.')
+    expect(html).toContain('<mark>highlighted</mark>')
+    /* The literal == delimiters must NOT leak through. */
+    expect(html).not.toContain('==highlighted==')
+    expect(html).not.toContain('==')
+  })
+
+  it('combines <mark> with other inline markup', async () => {
+    const html = await render('mix **bold** with ==highlight== and `code`')
+    expect(html).toContain('<strong>bold</strong>')
+    expect(html).toContain('<mark>highlight</mark>')
+    expect(html).toContain('<code>code</code>')
+    /* All three must sit inside the same <p> — confirms the
+       plugin integrates with the rest of the inline parser. */
+    expect(html).toMatch(/<p>mix <strong>bold<\/strong> with <mark>highlight<\/mark> and <code>code<\/code><\/p>/)
+  })
+
+  it('leaves unmatched == as literal text', async () => {
+    const html = await render('unmatched == text without closing')
+    /* Plugin refuses to emit a half-formed <mark>; the literal
+       == stays in place. That's the desired behavior — the user
+       just made an authoring mistake, no need to panic the
+       renderer. */
+    expect(html).not.toContain('<mark>')
+    expect(html).toContain('==')
+  })
 })
