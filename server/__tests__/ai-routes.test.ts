@@ -65,6 +65,29 @@ describe('GET /api/ai/sessions', () => {
   })
 })
 
+describe('POST /api/ai/slug', () => {
+  it('validates the request body', async () => {
+    const r = await call('POST', '/slug', { input: '第一性原理', kind: 'note' })
+    expect(r.status).toBe(400)
+  })
+
+  it('returns 503 when AI auth is not configured', async () => {
+    const oldKey = process.env.ANTHROPIC_API_KEY
+    const oldToken = process.env.ANTHROPIC_AUTH_TOKEN
+    delete process.env.ANTHROPIC_API_KEY
+    delete process.env.ANTHROPIC_AUTH_TOKEN
+    try {
+      const r = await call('POST', '/slug', { input: '第一性原理', kind: 'file' })
+      expect(r.status).toBe(503)
+    } finally {
+      if (oldKey === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = oldKey
+      if (oldToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN
+      else process.env.ANTHROPIC_AUTH_TOKEN = oldToken
+    }
+  })
+})
+
 describe('POST /api/ai/sessions', () => {
   it('creates a session and returns it with status 201', async () => {
     const r = await call('POST', '/sessions')

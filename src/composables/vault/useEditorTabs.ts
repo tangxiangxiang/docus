@@ -44,6 +44,7 @@ import {
 } from './useFileChangeBus.js'
 import type { Tab } from '../../components/vault/tabs'
 import type { SidePanel } from '../../components/vault/ActivityBar.vue'
+import { isSlugSegment, toLocalSlug } from '../../lib/slug'
 
 /* Tab-count limits. vault is a personal Zettelkasten — heavy
    multi-tab editing (20+ tabs) signals the user should be using
@@ -406,8 +407,11 @@ export function useEditorTabs(opts: {
     const trimmed = (title ?? '').trim()
     if (!trimmed) return
     const parent = activePath.value ? activePath.value.replace(/\/[^/]+$/, '') : ''
-    const filename = trimmed.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
-    if (!filename) { toast.error('名称无效'); return }
+    const filename = toLocalSlug(trimmed)
+    if (!filename || !isSlugSegment(filename)) {
+      toast.error('名称只能使用小写英文、数字和连字符')
+      return
+    }
     const newPath = parent ? `${parent}/${filename}` : filename
     try {
       await createPost({ path: newPath, title: trimmed })

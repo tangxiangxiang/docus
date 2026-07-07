@@ -38,28 +38,11 @@ export function setContentDir(dir: string): void {
   CONTENT_DIR = dir
 }
 
-// Every path segment is a non-empty run of `[\w一-鿿-]` that does
-// NOT start or end with `-`, does NOT equal `.` or `..`, and does NOT end
-// in `.md`. The full path is one or more such segments joined by `/` — there
-// is no implicit `posts/` prefix anymore, since `src/content/` itself is the
-// implicit root (with `posts/`, `archive/`, etc. as ordinary sub-folders).
-//
-// Why this looser shape instead of the original `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`:
-// the imported reference docs (see `参考/Documents/docs/...`) carry Chinese
-// category names (`007-思维/`, `001-第一性原理`) and mixed-case technical
-// names (`006-MacOS/`, `001-macOS-快捷键`). The filesystem layer accepts
-// them — the previous ASCII-kebab regex was a tighter gate than the OS
-// actually enforces, and the mismatch surfaced as a 400 from /api/posts/*
-// the moment those files were migrated into literature/.
-//
-// Security posture is unchanged by the loosening: traversal is still
-// blocked by (a) the explicit `..` rejection in `isValidSegment`, and
-// (b) the `resolved.startsWith(CONTENT_DIR + path.sep)` second line
-// in `assertSafePath`. The character class itself only governs *what
-// characters are allowed inside a segment*, not whether the segment
-// can escape the content root.
-const SEGMENT_RE = /^[\w一-鿿-]+$/
-const PATH_RE = /^(?:\/|(?:[\w一-鿿-]+(?:\/[\w一-鿿-]+)*))?$/
+// Content paths are intentionally strict ASCII kebab slugs. Markdown
+// titles/frontmatter may be Chinese, but folder/file path segments stay
+// boring and portable for git history, URLs, shell tools, and sync clients.
+const SEGMENT_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
+const PATH_RE = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)$/
 
 export function isValidSegment(s: string): boolean {
   if (!SEGMENT_RE.test(s)) return false
@@ -98,10 +81,4 @@ export function folderPathFor(p: string): string {
 
 export { SEGMENT_RE }
 
-// Strict kebab slug for AI-generated ids. zettel/draft slugs come
-// from the LLM and the prompt forbids CJK / uppercase /
-// underscores, so the wider `SEGMENT_RE` above would let bad
-// output slip through (and then fail further down the pipeline
-// with a less specific error). This regex matches the docus
-// `slug:` field contract: `^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`.
 export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/

@@ -2,6 +2,8 @@
 import { ref, computed, nextTick } from 'vue'
 import type { TreeNode } from '../../lib/api'
 import { ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FILE_MD, ICON_CHEVRON } from './icons'
+import { suggestSlug } from '../../lib/ai-api'
+import { toLocalSlug } from '../../lib/slug'
 import {
   canModify,
   canMove,
@@ -227,6 +229,7 @@ function menuAction(fn: () => void) {
 // --- inline rename state ---
 const renaming = ref(false)
 const renameValue = ref('')
+const renameSuggesting = ref(false)
 
 function startRename() {
   renaming.value = true
@@ -251,13 +254,40 @@ function commitRename() {
   // calls short-circuit, and the click-away (blur-only) path still commits
   // because renaming is still true at that point.
   if (!renaming.value) return
+  const rawName = renameValue.value.trim()
+  const name = toLocalSlug(rawName) || rawName
+  if (!name || name === props.node.name) {
+    renaming.value = false
+    return
+  }
   renaming.value = false
-  const name = renameValue.value.trim()
-  if (!name || name === props.node.name) return
   emit('rename', props.node.path, name, props.node.kind)
 }
 function cancelRename() {
   renaming.value = false
+}
+async function suggestRename() {
+  if (renameSuggesting.value) return
+  const current = renameValue.value.trim()
+  if (!current) return
+  const local = toLocalSlug(current)
+  if (local && /^[\x00-\x7F]+$/.test(current)) {
+    renameValue.value = local
+    return
+  }
+  renameSuggesting.value = true
+  try {
+    const out = await suggestSlug({ input: current, kind: props.node.kind })
+    renameValue.value = out.slug
+  } catch {
+    if (local) renameValue.value = local
+  } finally {
+    renameSuggesting.value = false
+    await nextTick()
+    const el = document.getElementById('docus-rename-input-' + props.node.path) as HTMLInputElement | null
+    el?.focus()
+    el?.select()
+  }
 }
 </script>
 
@@ -301,15 +331,24 @@ function cancelRename() {
       <span class="row-icon" v-else :aria-hidden="true" v-html="ICON_FILE_MD" />
 
       <template v-if="renaming">
-        <input
-          :id="'docus-rename-input-' + node.path"
-          v-model="renameValue"
-          class="rename-input"
-          @keydown.enter="commitRename"
-          @keydown.escape="cancelRename"
-          @blur="commitRename"
-          @click.stop
-        />
+        <span class="rename-wrap" @click.stop>
+          <input
+            :id="'docus-rename-input-' + node.path"
+            v-model="renameValue"
+            class="rename-input"
+            @keydown.enter="commitRename"
+            @keydown.escape="cancelRename"
+            @blur="commitRename"
+          />
+          <button
+            type="button"
+            class="rename-action"
+            title="翻译为英文路径名"
+            :disabled="renameSuggesting"
+            @mousedown.prevent
+            @click.stop="suggestRename"
+          >{{ renameSuggesting ? '...' : 'AI' }}</button>
+        </span>
       </template>
       <template v-else>
         <!-- Button, not anchor. A folder row toggles (not navigates) and

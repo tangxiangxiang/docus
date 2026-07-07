@@ -20,6 +20,7 @@ import * as sessions from './sessions.js'
 import * as messages from './messages.js'
 import { runChat, type ChatEvent } from './chat.js'
 import { runSplit } from './split.js'
+import { generateSlug } from './slug.js'
 import { ChatError } from './errors.js'
 import { resolveApiKey } from './llm.js'
 import type { Message, AssistantBlocks } from '../../src/lib/ai-api.js'
@@ -125,6 +126,39 @@ ai.put('/active', async (c) => {
   }
   sessions.setActiveSessionId(getDb(), id)
   return c.json({ sessionId: id })
+})
+
+// ---- /slug ----
+// Lightweight one-shot helper for name inputs. It deliberately does not
+// create a chat session or persist a message; the result is just a suggested
+// filesystem-safe English path segment.
+ai.post('/slug', async (c) => {
+  const body = await c.req.json().catch(() => null) as
+    | { input?: unknown; kind?: unknown }
+    | null
+  if (
+    !body ||
+    typeof body.input !== 'string' ||
+    (body.kind !== 'file' && body.kind !== 'folder')
+  ) {
+    return bad(c, 'input (string) and kind (file|folder) required')
+  }
+  try {
+    const slug = await generateSlug({
+      input: body.input,
+      kind: body.kind,
+      signal: c.req.raw.signal,
+    })
+    return c.json({ slug })
+  } catch (err) {
+    if (err instanceof ChatError) {
+      if (err.reason === 'no-api-key') return bad(c, 'AI not configured', 503)
+      if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499 as any)
+      if (err.reason === 'parse-failed') return bad(c, err.message, 502)
+      return bad(c, err.message || 'llm-error', 502)
+    }
+    return bad(c, 'unknown', 500)
+  }
 })
 
 // ---- /chat ----

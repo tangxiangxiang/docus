@@ -1063,6 +1063,34 @@ main.container {
   padding: 1px 5px;
   font: inherit;
 }
+.vault .file-tree .rename-wrap {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+}
+.vault .file-tree .rename-wrap .rename-input {
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.vault .file-tree .rename-action {
+  padding: 0 6px;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--vs-text-2);
+  background: var(--vs-bg-1);
+  border: 1px solid var(--vs-accent);
+  border-left: 0;
+  border-radius: 0 2px 2px 0;
+  cursor: pointer;
+}
+.vault .file-tree .rename-action:hover:not(:disabled) {
+  color: var(--vs-accent);
+}
+.vault .file-tree .rename-action:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
 
 /* New recursive tree structure: TreeRow / tree-children / drop targets */
 .vault .file-tree .tree {

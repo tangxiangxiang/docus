@@ -12,6 +12,9 @@ export interface PromptRequest {
   title: string
   placeholder?: string
   initial?: string
+  actionLabel?: string
+  actionTitle?: string
+  transform?: (value: string) => Promise<string> | string
   resolve: (value: string | null) => void
 }
 
@@ -19,7 +22,14 @@ const queue = ref<PromptRequest[]>([])
 let nextId = 1
 
 export function usePrompt() {
-  function prompt(input: { title: string; placeholder?: string; initial?: string }): Promise<string | null> {
+  function prompt(input: {
+    title: string
+    placeholder?: string
+    initial?: string
+    actionLabel?: string
+    actionTitle?: string
+    transform?: (value: string) => Promise<string> | string
+  }): Promise<string | null> {
     return new Promise((resolve) => {
       const id = nextId++
       queue.value = [...queue.value, { id, ...input, resolve }]

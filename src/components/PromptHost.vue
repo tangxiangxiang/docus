@@ -6,6 +6,7 @@ import { useFocusTrap } from '../composables/useFocusTrap'
 const { queue, answer } = usePrompt()
 const active = computed(() => queue.value[0] ?? null)
 const input = ref('')
+const busy = ref(false)
 const cardRef = ref<HTMLElement | null>(null)
 const trap = useFocusTrap()
 
@@ -17,6 +18,7 @@ watch(active, async (a) => {
   if (a) {
     trap.activate()
     input.value = a.initial ?? ''
+    busy.value = false
     await nextTick()
     const el = document.getElementById('docus-prompt-input') as HTMLInputElement | null
     el?.focus()
@@ -33,6 +35,21 @@ function submit() {
 function cancel() {
   if (!active.value) return
   answer(active.value.id, null)
+}
+async function runAction() {
+  const req = active.value
+  if (!req?.transform || busy.value) return
+  busy.value = true
+  try {
+    const next = await req.transform(input.value)
+    input.value = next
+    await nextTick()
+    const el = document.getElementById('docus-prompt-input') as HTMLInputElement | null
+    el?.focus()
+    el?.select()
+  } finally {
+    busy.value = false
+  }
 }
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') { e.preventDefault(); cancel(); return }
@@ -64,14 +81,24 @@ onBeforeUnmount(() => {
         :aria-label="active.title"
       >
         <h3 class="prompt-title">{{ active.title }}</h3>
-        <input
-          id="docus-prompt-input"
-          v-model="input"
-          class="prompt-input"
-          :placeholder="active.placeholder"
-          @keydown.enter.prevent="submit"
-          @keydown.escape.prevent="cancel"
-        />
+        <div class="prompt-input-wrap" :class="{ 'has-action': Boolean(active.transform) }">
+          <input
+            id="docus-prompt-input"
+            v-model="input"
+            class="prompt-input"
+            :placeholder="active.placeholder"
+            @keydown.enter.prevent="submit"
+            @keydown.escape.prevent="cancel"
+          />
+          <button
+            v-if="active.transform"
+            type="button"
+            class="prompt-input-action"
+            :title="active.actionTitle ?? '生成英文路径名'"
+            :disabled="busy"
+            @click="runAction"
+          >{{ busy ? '...' : (active.actionLabel ?? 'AI') }}</button>
+        </div>
         <div class="prompt-actions">
           <button type="button" class="btn" @click="cancel">取消</button>
           <button type="button" class="btn btn-primary" @click="submit">确定</button>
@@ -107,6 +134,11 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: var(--text-h);
 }
+.prompt-input-wrap {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+}
 .prompt-input {
   width: 100%;
   box-sizing: border-box;
@@ -119,8 +151,31 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   outline: none;
 }
+.prompt-input-wrap.has-action .prompt-input {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
 .prompt-input:focus {
   border-color: var(--accent);
+}
+.prompt-input-action {
+  min-width: 42px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--text-h);
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-left: 0;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+}
+.prompt-input-action:hover:not(:disabled) {
+  color: var(--accent);
+}
+.prompt-input-action:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .prompt-actions {
   display: flex;

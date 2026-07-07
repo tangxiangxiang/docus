@@ -7,6 +7,8 @@ import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
 import { blockedMessage, isInZettel } from '../../composables/zettelProtocol'
 import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder } from '../../lib/api'
+import { suggestSlug } from '../../lib/ai-api'
+import { isSlugSegment, toLocalSlug } from '../../lib/slug'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
 import { ICON_SEARCH } from './icons'
 
@@ -43,6 +45,21 @@ const expanded = ref<Set<string>>(new Set(loadExpanded()))
 // renders the chips). We only read activeScope here — the filter is
 // applied to topLevel below, and the chips live in the NavBar.
 const { activeScope } = useScopeFilter()
+
+async function suggestEnglishSlug(input: string, kind: 'file' | 'folder'): Promise<string> {
+  const trimmed = input.trim()
+  if (!trimmed) return ''
+  const local = toLocalSlug(trimmed)
+  if (local && /^[\x00-\x7F]+$/.test(trimmed)) return local
+  try {
+    const out = await suggestSlug({ input: trimmed, kind })
+    return out.slug
+  } catch (e: any) {
+    if (local) return local
+    toast.error('AI 文件名生成失败: ' + (e.message ?? '未知错误'))
+    return trimmed
+  }
+}
 
 // The server returns a single implicit root folder ("content", path "") whose
 // children are the user's top-level folders. We don't surface that synthetic
@@ -426,6 +443,7 @@ async function onSelect(p: string) { emit('select', p) }
 async function onToggle(p: string) { toggle(p) }
 
 async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder') {
+  const safeName = toLocalSlug(newName) || newName.trim()
   // Look up the node by *both* path and kind — see findNode for why path
   // alone is ambiguous. A user right-clicking `inbox/notes.md` while the
   // folder `inbox/notes/` also exists must rename the file, not the folder.
@@ -435,14 +453,18 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
     const msg = blockedMessage(oldPath, 'rename')
     if (msg) { toast.error(msg); return }
   }
+  if (!isSlugSegment(safeName)) {
+    toast.error('名称只能使用小写英文、数字和连字符')
+    return
+  }
   try {
     if (node.kind === 'folder') {
       const parent = oldPath.split('/').slice(0, -1).join('/')
-      const newPath = parent ? `${parent}/${newName}` : newName
+      const newPath = parent ? `${parent}/${safeName}` : safeName
       const res = await renameFolder(oldPath, newPath)
       toast.success(`已重命名 (${res.moved.length} 项)`)
     } else {
-      await patchPost(oldPath, { name: newName })
+      await patchPost(oldPath, { name: safeName })
     }
     emit('refresh')
   } catch (e: any) {
@@ -548,16 +570,26 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
     const msg = blockedMessage(folder, kind === 'file' ? 'create-file' : 'create-folder')
     if (msg) { toast.error(msg); return }
   }
+  let sourceTitle = ''
   const title = await prompt({
     title: kind === 'file' ? `在 ${folder || 'inbox'} 中新建文件` : `在 ${folder || 'inbox'} 中新建文件夹`,
-    placeholder: '名称',
+    placeholder: '中文标题或英文路径名',
+    actionLabel: 'AI',
+    actionTitle: '翻译为英文路径名',
+    transform: async (value) => {
+      sourceTitle = value.trim()
+      return suggestEnglishSlug(value, kind)
+    },
   })
   if (!title) return
-  const name = title.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')
-  if (!name) { toast.error('名称无效'); return }
+  const name = toLocalSlug(title)
+  if (!name || !isSlugSegment(name)) {
+    toast.error('名称只能使用小写英文、数字和连字符')
+    return
+  }
   const path = folder ? `${folder}/${name}` : name
   try {
-    if (kind === 'file') await createPost({ path, title: name })
+    if (kind === 'file') await createPost({ path, title: sourceTitle || title })
     else await createFolder(path)
     expanded.value.add(folder)
     expanded.value = new Set(expanded.value)

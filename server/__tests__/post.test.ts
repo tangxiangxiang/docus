@@ -83,6 +83,25 @@ describe('POST /api/posts', () => {
     expect(r.status).toBe(400)
   })
 
+  it('rejects non-English path segments', async () => {
+    const r = await call('POST', '/api/posts', { path: 'inbox/第一性原理', title: '第一性原理' })
+    expect(r.status).toBe(400)
+  })
+
+  it('allows a Chinese title when the path is an English slug', async () => {
+    const path2 = 'post-chinese-title'
+    const abs2 = path.join(CONTENT_DIR, 'post-chinese-title.md')
+    try {
+      const r = await call('POST', '/api/posts', { path: path2, title: '第一性原理' })
+      expect(r.status).toBe(201)
+      const onDisk = await fs.readFile(abs2, 'utf8')
+      expect(onDisk).toContain('title: 第一性原理')
+      expect(onDisk).toContain('# 第一性原理\n')
+    } finally {
+      await fs.rm(abs2, { force: true })
+    }
+  })
+
   it('rejects direct note creation inside zettel/', async () => {
     const r = await call('POST', '/api/posts', { path: 'zettel/direct', title: 'Direct' })
     expect(r.status).toBe(422)
@@ -100,13 +119,13 @@ describe('POST /api/posts', () => {
     }
   })
 
-  it('rejects case-variant Zettel/ prefix (case-insensitive isInZettel guard)', async () => {
-    // On macOS APFS `Zettel/...` is the same directory as `zettel/...`,
-    // so the guard must catch case variants too. Without this, a client
-    // could POST `Zettel/note` and create a parallel namespace on Linux
-    // or a colliding file on macOS.
+  it('rejects case-variant Zettel/ prefix before it can create a file', async () => {
+    // The strict path validator now rejects uppercase path segments before
+    // the case-insensitive zettel policy guard runs. The important contract
+    // is unchanged: a client cannot POST `Zettel/note` and create a parallel
+    // namespace on Linux or a colliding file on macOS.
     const r = await call('POST', '/api/posts', { path: 'Zettel/direct', title: 'Direct' })
-    expect(r.status).toBe(422)
+    expect(r.status).toBe(400)
     await expect(fs.stat(path.join(CONTENT_DIR, 'Zettel', 'direct.md'))).rejects.toThrow()
   })
 })

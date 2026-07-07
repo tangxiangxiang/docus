@@ -138,6 +138,16 @@ export async function setActiveSessionId(sessionId: number | null): Promise<numb
   return r.sessionId
 }
 
+export async function suggestSlug(input: {
+  input: string
+  kind: 'file' | 'folder'
+}): Promise<{ slug: string }> {
+  return jsonOrThrow<{ slug: string }>(await fetch('/api/ai/slug', {
+    method: 'POST',
+    ...jsonBody(input),
+  }))
+}
+
 /**
  * Open a streaming chat request and yield typed ChatEvent objects.
  * Yields exactly one {type: 'error'} event and returns on any HTTP
