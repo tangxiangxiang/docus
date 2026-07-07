@@ -460,6 +460,9 @@ main.container {
   gap: 0;
   border-right: 1px solid var(--vs-border);
 }
+.activity-bar .ab-spacer {
+  flex: 1 1 auto;
+}
 
 /* History panel: a tall column split into three scrollable
    sections (composer, changes, timeline). The composer echoes the
@@ -925,6 +928,105 @@ main.container {
   font-weight: 600;
   text-align: center;
   pointer-events: none;
+}
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9997;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.36);
+}
+.settings-modal {
+  width: min(520px, calc(100vw - 32px));
+  color: var(--vs-text-1, var(--text-h));
+  background: var(--vs-bg-1, var(--bg));
+  border: 1px solid var(--vs-border, var(--border));
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+}
+.settings-header {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 0 16px;
+  border-bottom: 1px solid var(--vs-border, var(--border));
+}
+.settings-header h2 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+.settings-icon-btn {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--vs-text-2, var(--text-muted));
+  background: transparent;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+.settings-icon-btn:hover {
+  color: var(--vs-text-1, var(--text-h));
+  background: var(--vs-hover-bg, var(--bg-soft));
+}
+.settings-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--vs-text-2, var(--text-muted));
+  font-size: 0.85rem;
+}
+.settings-status strong {
+  color: var(--vs-text-1, var(--text-h));
+  font-weight: 600;
+}
+.settings-status code {
+  margin-left: auto;
+  color: var(--vs-text-2, var(--text-muted));
+  background: var(--vs-bg-2, var(--bg-soft));
+}
+.settings-field {
+  display: grid;
+  gap: 6px;
+}
+.settings-field span {
+  color: var(--vs-text-2, var(--text-muted));
+  font-size: 0.82rem;
+}
+.settings-field input {
+  min-height: 32px;
+  box-sizing: border-box;
+  border: 1px solid var(--vs-border, var(--border));
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--vs-text-1, var(--text-h));
+  background: var(--vs-bg-2, var(--bg-soft));
+  font: inherit;
+}
+.settings-field input:disabled {
+  opacity: 0.72;
+}
+.settings-note {
+  margin: 0;
+  color: var(--vs-text-2, var(--text-muted));
+  font-size: 0.82rem;
+}
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--vs-border, var(--border));
 }
 
 /* FileTree: scope token names so it picks up VSCode palette */

@@ -23,6 +23,7 @@ import KnowledgeGraph from '../components/vault/KnowledgeGraph.vue'
 import TocPanel from '../components/vault/TocPanel.vue'
 import EmptyState from '../components/vault/EmptyState.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
+import SettingsModal from '../components/vault/SettingsModal.vue'
 import HistoryPanel from '../components/vault/HistoryPanel.vue'
 import DiffView from '../components/vault/DiffView.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
@@ -33,6 +34,7 @@ import CommandPalette from '../components/vault/CommandPalette.vue'
    (which lives outside the router view) can ask the vault to open its
    CommandPalette. We watch the tick and call show() each time. */
 const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
+const settingsOpen = ref(false)
 
 /* Platform-aware shortcut display for the empty-state hint chips.
    Computed once at module load (see useShortcutDisplay), so this
@@ -217,6 +219,12 @@ watch(() => navSearch?.tick.value, () => openSearch())
     <ActivityBar
       :active-panel="activePanel"
       @select-panel="selectPanel"
+      @open-settings="settingsOpen = true"
+    />
+
+    <SettingsModal
+      :open="settingsOpen"
+      @close="settingsOpen = false"
     />
 
     <FileTree

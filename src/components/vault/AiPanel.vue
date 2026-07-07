@@ -354,7 +354,7 @@ watch(() => review.phase.value, (p) => {
       v-if="!history.configured.value"
       class="ai-no-key-banner"
       role="status"
-    >AI not configured — set <code>ANTHROPIC_API_KEY</code> in the server environment.</div>
+    >AI not configured — open Settings from the activity bar.</div>
 
     <!-- Review surface: shown when useSplitReview.phase is 'review'.
          The chat surface is hidden (not stacked) so the user isn't

@@ -10,11 +10,11 @@
 //     pumpStream. Forwards `tools` and `toolChoice` if the caller
 //     passes them.
 //
-// Auth resolution order: ANTHROPIC_AUTH_TOKEN > ANTHROPIC_API_KEY.
-// This lets proxies that use the alt name (e.g. some Chinese
-// Anthropic-compatible providers) work without renaming.
-// ANTHROPIC_BASE_URL, if set, is forwarded to the SDK so the call
-// hits a proxy instead of the official Anthropic endpoint.
+// Auth resolution order: environment > DB settings. Environment
+// covers deployment/admin overrides (`ANTHROPIC_AUTH_TOKEN`, then
+// `ANTHROPIC_API_KEY`, plus optional `ANTHROPIC_BASE_URL` /
+// `ANTHROPIC_MODEL`). DB settings power the in-app Settings dialog
+// for desktop/personal use.
 //
 // The SDK type is opaque (we don't import Anthropic's TS types
 // beyond the constructor), so any object with `on` and
@@ -24,6 +24,9 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { Message } from '@anthropic-ai/sdk/resources/messages/messages'
 import { ChatError } from './errors.js'
+import { getDb } from '../db.js'
+import { getAiRuntimeConfig } from './settings.js'
+import type { Database as DatabaseT } from 'better-sqlite3'
 
 const MAX_TOKENS = 4096
 
@@ -46,13 +49,17 @@ export type StreamClaudeOpts = {
 }
 
 /**
- * Resolve the auth token from the process environment, in order:
- * ANTHROPIC_AUTH_TOKEN, then ANTHROPIC_API_KEY. Returns undefined
- * if neither is set. Exported so the route layer can reuse the
- * same check for the `configured` flag.
+ * Resolve the auth token from env/DB settings. Kept as a narrow
+ * export for older callers/tests that only need the configured bit;
+ * new code should prefer resolveAiRuntimeConfig() when it also needs
+ * model/baseURL.
  */
 export function resolveApiKey(): string | undefined {
-  return process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY
+  return resolveAiRuntimeConfig().apiKey
+}
+
+export function resolveAiRuntimeConfig(db: DatabaseT = getDb()) {
+  return getAiRuntimeConfig(db)
 }
 
 /**
@@ -99,10 +106,9 @@ export async function pumpStream(
  * on stream or finalization failure.
  */
 export async function streamClaude(opts: StreamClaudeOpts): Promise<StreamResult> {
-  const apiKey = resolveApiKey()
-  if (!apiKey) throw new ChatError('no-api-key')
-  const baseURL = process.env.ANTHROPIC_BASE_URL
-  const client = new Anthropic(baseURL ? { apiKey, baseURL } : { apiKey })
+  const cfg = resolveAiRuntimeConfig()
+  if (!cfg.apiKey) throw new ChatError('no-api-key')
+  const client = new Anthropic(cfg.baseURL ? { apiKey: cfg.apiKey, baseURL: cfg.baseURL } : { apiKey: cfg.apiKey })
   const stream = client.messages.stream({
     model: opts.model,
     max_tokens: MAX_TOKENS,

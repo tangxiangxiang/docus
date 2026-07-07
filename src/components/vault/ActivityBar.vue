@@ -13,6 +13,7 @@ export type SidePanel = 'files' | 'tags' | 'graph' | 'history'
 defineProps<{ activePanel: SidePanel | null }>()
 const emit = defineEmits<{
   'select-panel': [panel: SidePanel]
+  'open-settings': []
 }>()
 
 const h = useHistory()
@@ -85,6 +86,18 @@ const h = useHistory()
         class="ab-badge"
         :aria-label="`${h.dirtyCount.value} changed files`"
       >{{ h.dirtyCount.value }}</span>
+    </button>
+    <div class="ab-spacer" aria-hidden="true" />
+    <button
+      class="ab-btn ab-btn-settings"
+      title="Settings"
+      aria-label="Settings"
+      @click="emit('open-settings')"
+    >
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.04.04a2.1 2.1 0 0 1-2.98 2.98l-.04-.04a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.66V21a2.1 2.1 0 0 1-4.2 0v-.06A1.8 1.8 0 0 0 8.4 19.3a1.8 1.8 0 0 0-1.98.36l-.04.04A2.1 2.1 0 0 1 3.4 16.72l.04-.04A1.8 1.8 0 0 0 3.8 14.7a1.8 1.8 0 0 0-1.66-1.1H2a2.1 2.1 0 0 1 0-4.2h.06A1.8 1.8 0 0 0 3.7 8.3a1.8 1.8 0 0 0-.36-1.98l-.04-.04A2.1 2.1 0 0 1 6.28 3.3l.04.04A1.8 1.8 0 0 0 8.3 3.7h.1A1.8 1.8 0 0 0 9.5 2.06V2a2.1 2.1 0 0 1 4.2 0v.06a1.8 1.8 0 0 0 1.1 1.64 1.8 1.8 0 0 0 1.98-.36l.04-.04a2.1 2.1 0 0 1 2.98 2.98l-.04.04a1.8 1.8 0 0 0-.36 1.98v.1a1.8 1.8 0 0 0 1.66 1.1H21a2.1 2.1 0 0 1 0 4.2h-.06A1.8 1.8 0 0 0 19.4 15z" />
+      </svg>
     </button>
   </aside>
 </template>

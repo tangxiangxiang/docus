@@ -82,6 +82,40 @@ describe('ai-api', () => {
     expect(JSON.parse(calls[0].init.body as string)).toEqual({ sessionId: 42 })
   })
 
+  it('getAiSettings GETs /api/ai/settings', async () => {
+    responses.push({
+      status: 200,
+      body: {
+        provider: 'anthropic',
+        configured: true,
+        source: 'db',
+        maskedKey: 'sk-a...1234',
+        baseURL: '',
+        model: 'claude-test',
+        envOverride: false,
+      },
+    })
+    const settings = await api.getAiSettings()
+    expect(calls[0].url).toBe('/api/ai/settings')
+    expect(calls[0].init.method).toBe('GET')
+    expect(settings.model).toBe('claude-test')
+  })
+
+  it('saveAiSettings PUTs the editable fields', async () => {
+    responses.push({ status: 200, body: { provider: 'anthropic', configured: true, source: 'db', maskedKey: 'sk-a...1234', baseURL: 'https://x', model: 'm', envOverride: false } })
+    await api.saveAiSettings({ apiKey: 'secret', baseURL: 'https://x', model: 'm' })
+    expect(calls[0].url).toBe('/api/ai/settings')
+    expect(calls[0].init.method).toBe('PUT')
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ apiKey: 'secret', baseURL: 'https://x', model: 'm' })
+  })
+
+  it('clearAiApiKey DELETEs the stored key', async () => {
+    responses.push({ status: 200, body: { provider: 'anthropic', configured: false, source: 'none', maskedKey: '', baseURL: '', model: 'm', envOverride: false } })
+    await api.clearAiApiKey()
+    expect(calls[0].url).toBe('/api/ai/settings/key')
+    expect(calls[0].init.method).toBe('DELETE')
+  })
+
   it('throws with the server error message on a 4xx response', async () => {
     responses.push({ status: 404, body: { error: 'not found' } })
     await expect(api.getActiveSessionId()).rejects.toMatchObject({ status: 404 })

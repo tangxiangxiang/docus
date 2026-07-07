@@ -22,11 +22,34 @@ import { runChat, type ChatEvent } from './chat.js'
 import { runSplit } from './split.js'
 import { generateSlug } from './slug.js'
 import { ChatError } from './errors.js'
-import { resolveApiKey } from './llm.js'
+import { resolveAiRuntimeConfig } from './llm.js'
+import {
+  clearAiApiKey,
+  getAiSettingsView,
+  MAX_AI_API_KEY_LENGTH,
+  MAX_AI_BASE_URL_LENGTH,
+  MAX_AI_MODEL_LENGTH,
+  saveAiSettings,
+} from './settings.js'
 import type { Message, AssistantBlocks } from '../../src/lib/ai-api.js'
 
 function bad(c: any, msg: string, code = 400) {
   return c.json({ error: msg }, code)
+}
+
+function isValidHttpUrl(value: string): boolean {
+  if (!value) return true
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function isValidModelName(value: string): boolean {
+  if (!value) return true
+  return /^[A-Za-z0-9._:-]+$/.test(value)
 }
 
 // Tool-using assistant turns persist as a JSON envelope in the
@@ -103,13 +126,43 @@ ai.post('/sessions/:id/messages', async (c) => {
   return bad(c, result.reason) // 'empty' or 'invalid-role' → 400
 })
 
+// ---- /settings ----
+ai.get('/settings', (c) => c.json(getAiSettingsView(getDb())))
+
+ai.put('/settings', async (c) => {
+  const body = await c.req.json().catch(() => null) as
+    | { apiKey?: unknown; baseURL?: unknown; model?: unknown }
+    | null
+  if (!body) return bad(c, 'body required')
+  if (body.apiKey !== undefined && typeof body.apiKey !== 'string') return bad(c, 'apiKey must be a string')
+  if (body.baseURL !== undefined && typeof body.baseURL !== 'string') return bad(c, 'baseURL must be a string')
+  if (body.model !== undefined && typeof body.model !== 'string') return bad(c, 'model must be a string')
+  const apiKey = body.apiKey?.trim()
+  const baseURL = body.baseURL?.trim()
+  const model = body.model?.trim()
+  if (apiKey && apiKey.length > MAX_AI_API_KEY_LENGTH) return bad(c, 'apiKey is too long')
+  if (baseURL && baseURL.length > MAX_AI_BASE_URL_LENGTH) return bad(c, 'baseURL is too long')
+  if (model && model.length > MAX_AI_MODEL_LENGTH) return bad(c, 'model is too long')
+  if (baseURL && !isValidHttpUrl(baseURL)) return bad(c, 'baseURL must be an http(s) URL')
+  if (model && !isValidModelName(model)) return bad(c, 'model contains unsupported characters')
+  saveAiSettings(getDb(), {
+    apiKey,
+    baseURL,
+    model,
+  })
+  return c.json(getAiSettingsView(getDb()))
+})
+
+ai.delete('/settings/key', (c) => {
+  clearAiApiKey(getDb())
+  return c.json(getAiSettingsView(getDb()))
+})
+
 // ---- /active ----
 ai.get('/active', (c) =>
   c.json({
     activeId: sessions.getActiveSessionId(getDb()),
-    configured: Boolean(
-      process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN,
-    ),
+    configured: Boolean(resolveAiRuntimeConfig().apiKey),
   })
 )
 
@@ -163,7 +216,7 @@ ai.post('/slug', async (c) => {
 
 // ---- /chat ----
 ai.post('/chat', async (c) => {
-  if (!resolveApiKey()) {
+  if (!resolveAiRuntimeConfig().apiKey) {
     return c.json({ ok: false, reason: 'no-api-key' }, 503)
   }
   const body = (await c.req.json().catch(() => null)) as
@@ -248,7 +301,7 @@ ai.post('/chat', async (c) => {
         sessionId,
         userContent,
         ctx,
-        model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
+        model: resolveAiRuntimeConfig().model,
         signal: c.req.raw.signal,
         onEvent: writeEvent,
       })
@@ -272,7 +325,7 @@ ai.post('/chat', async (c) => {
 // literature/ — splitting notes from any other directory is a spec
 // violation, and the error makes that explicit at the boundary.
 ai.post('/split', async (c) => {
-  if (!resolveApiKey()) {
+  if (!resolveAiRuntimeConfig().apiKey) {
     return c.json({ error: 'AI not configured (ANTHROPIC_API_KEY missing)' }, 503)
   }
   const body = await c.req.json().catch(() => null) as

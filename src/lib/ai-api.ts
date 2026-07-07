@@ -46,6 +46,16 @@ export interface ActiveSession {
   configured: boolean
 }
 
+export interface AiSettings {
+  provider: 'anthropic'
+  configured: boolean
+  source: 'env' | 'db' | 'none'
+  maskedKey: string
+  baseURL: string
+  model: string
+  envOverride: boolean
+}
+
 export interface ChatRequest {
   sessionId: number
   content: string
@@ -136,6 +146,25 @@ export async function getActiveSessionId(): Promise<number | null> {
 export async function setActiveSessionId(sessionId: number | null): Promise<number | null> {
   const r = await jsonOrThrow<{ sessionId: number | null }>(await fetch('/api/ai/active', { method: 'PUT', ...jsonBody({ sessionId }) }))
   return r.sessionId
+}
+
+export async function getAiSettings(): Promise<AiSettings> {
+  return jsonOrThrow<AiSettings>(await fetch('/api/ai/settings', { method: 'GET' }))
+}
+
+export async function saveAiSettings(input: {
+  apiKey?: string
+  baseURL?: string
+  model?: string
+}): Promise<AiSettings> {
+  return jsonOrThrow<AiSettings>(await fetch('/api/ai/settings', {
+    method: 'PUT',
+    ...jsonBody(input),
+  }))
+}
+
+export async function clearAiApiKey(): Promise<AiSettings> {
+  return jsonOrThrow<AiSettings>(await fetch('/api/ai/settings/key', { method: 'DELETE' }))
 }
 
 export async function suggestSlug(input: {

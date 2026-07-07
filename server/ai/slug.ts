@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { SLUG_RE } from '../paths.js'
-import { resolveApiKey } from './llm.js'
+import { resolveAiRuntimeConfig } from './llm.js'
 import { ChatError } from './errors.js'
+import { getDb } from '../db.js'
 
 const MAX_TOKENS = 64
 const MAX_INPUT_CHARS = 160
@@ -26,15 +27,14 @@ export async function generateSlug(opts: {
 }): Promise<string> {
   const text = opts.input.trim().slice(0, MAX_INPUT_CHARS)
   if (!text) throw new ChatError('parse-failed', 'empty input')
-  const apiKey = resolveApiKey()
-  if (!apiKey) throw new ChatError('no-api-key')
-  const baseURL = process.env.ANTHROPIC_BASE_URL
-  const client = new Anthropic(baseURL ? { apiKey, baseURL } : { apiKey })
+  const cfg = resolveAiRuntimeConfig(getDb())
+  if (!cfg.apiKey) throw new ChatError('no-api-key')
+  const client = new Anthropic(cfg.baseURL ? { apiKey: cfg.apiKey, baseURL: cfg.baseURL } : { apiKey: cfg.apiKey })
 
   let response
   try {
     response = await client.messages.create({
-      model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
+      model: cfg.model,
       max_tokens: MAX_TOKENS,
       temperature: 0,
       system: [

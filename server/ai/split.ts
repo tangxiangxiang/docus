@@ -12,7 +12,7 @@
 // status codes. This module only knows about the prompt, the SDK, and
 // the output schema.
 import Anthropic from '@anthropic-ai/sdk'
-import { resolveApiKey } from './llm.js'
+import { resolveAiRuntimeConfig } from './llm.js'
 import { ChatError } from './errors.js'
 import type { Card, SplitMode } from '../../src/lib/ai-api.js'
 
@@ -114,14 +114,13 @@ export async function runSplit(opts: {
   if (opts.signal?.aborted) {
     throw new ChatError('aborted')
   }
-  const apiKey = resolveApiKey()
-  if (!apiKey) throw new ChatError('no-api-key')
-  const baseURL = process.env.ANTHROPIC_BASE_URL
-  const client = new Anthropic(baseURL ? { apiKey, baseURL } : { apiKey })
+  const cfg = resolveAiRuntimeConfig()
+  if (!cfg.apiKey) throw new ChatError('no-api-key')
+  const client = new Anthropic(cfg.baseURL ? { apiKey: cfg.apiKey, baseURL: cfg.baseURL } : { apiKey: cfg.apiKey })
   let response
   try {
     response = await client.messages.create({
-      model: opts.model ?? process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-6',
+      model: opts.model ?? cfg.model,
       max_tokens: MAX_TOKENS,
       system: BASE_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: buildUserPrompt(opts.mode, opts.path, opts.raw) }],
