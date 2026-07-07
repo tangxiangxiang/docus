@@ -12,10 +12,15 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { getLinkIndex, __resetLinkIndexForTesting } from '../useLinkIndex'
 import { useGraphData } from '../useGraphData'
 
-function setIndex(state: { paths: string[]; outgoing: Record<string, Array<{ target: string; alias?: string; anchor?: string; kind: 'wiki' | 'md' }>> }) {
+function setIndex(state: {
+  paths: string[]
+  outgoing: Record<string, Array<{ target: string; alias?: string; anchor?: string; kind: 'wiki' | 'md' }>>
+  titles?: Record<string, string>
+}) {
   getLinkIndex().value = {
     paths: new Set(state.paths),
     outgoing: state.outgoing,
+    titles: state.titles ?? {},
     lastFetched: 0,
   }
 }
@@ -122,6 +127,19 @@ describe('useGraphData — zettel filter', () => {
     expect(nodes).toHaveLength(2)
     const lonely = nodes.find((n) => n.id === 'zettel/lonely')!
     expect(lonely).toBeDefined()
+  })
+
+  it('uses document titles from the link index and falls back to the path basename', () => {
+    setIndex({
+      paths: ['zettel/a', 'zettel/ch01-where-dreams-begin'],
+      outgoing: {},
+      titles: {
+        'zettel/a': 'Atomic Ideas',
+      },
+    })
+    const nodes = useGraphData().value.nodes
+    expect(nodes.find((n) => n.id === 'zettel/a')?.title).toBe('Atomic Ideas')
+    expect(nodes.find((n) => n.id === 'zettel/ch01-where-dreams-begin')?.title).toBe('ch01-where-dreams-begin')
   })
 })
 

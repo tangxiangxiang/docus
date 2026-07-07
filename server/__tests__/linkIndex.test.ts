@@ -319,18 +319,36 @@ describe('LinkIndex', () => {
     expect(idx.hasPath('missing')).toBe(false)
   })
 
-  it('snapshot returns paths and outgoing map (no reverse map)', () => {
+  it('snapshot returns paths, outgoing map, and display titles (no reverse map)', () => {
     const idx = new LinkIndex()
     idx.registerPath('b')
     idx.registerPath('c')
-    idx.applyWrite('a', 'see [[b]] and [c](c.md)')
-    idx.applyWrite('b', '# b')
-    idx.applyWrite('c', '# c')
+    idx.applyWrite('a', '---\ntitle: Alpha Note\n---\n\nsee [[b]] and [c](c.md)')
+    idx.applyWrite('b', '# Beta Heading')
+    idx.applyWrite('c', 'plain')
     const snap = idx.snapshot()
     expect(snap.paths.sort()).toEqual(['a', 'b', 'c'])
     expect(snap.outgoing['a']).toHaveLength(2)
     expect(snap.outgoing['a'].map((l) => l.target).sort()).toEqual(['b', 'c'])
     expect(snap.outgoing['b']).toBeUndefined()  // no outbound links
+    expect(snap.titles).toMatchObject({
+      a: 'Alpha Note',
+      b: 'Beta Heading',
+      c: 'c',
+    })
+  })
+
+  it('rebuild populates display titles from listPostsFlat metadata', async () => {
+    await writeFile('zettel/a.md', '---\ntitle: Frontmatter Title\n---\n\n# Body Title\n')
+    await writeFile('zettel/b.md', '# Heading Title\n')
+
+    const idx = new LinkIndex()
+    await idx.rebuild(sandbox)
+
+    expect(idx.snapshot().titles).toMatchObject({
+      'zettel/a': 'Frontmatter Title',
+      'zettel/b': 'Heading Title',
+    })
   })
 
   it('applyFolderRename moves every file in the subtree', () => {

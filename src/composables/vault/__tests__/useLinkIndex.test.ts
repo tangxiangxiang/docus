@@ -60,6 +60,7 @@ describe('useLinkIndex', () => {
       const idx = getLinkIndex()
       expect(idx.value.paths.size).toBe(0)
       expect(idx.value.outgoing).toEqual({})
+      expect(idx.value.titles).toEqual({})
       expect(idx.value.lastFetched).toBe(0)
     })
 
@@ -77,13 +78,27 @@ describe('useLinkIndex', () => {
         body: {
           paths: ['a', 'b'],
           outgoing: { a: [{ target: 'b', kind: 'wiki' }] },
+          titles: { a: 'Alpha', b: 'Beta' },
         },
       })
       await refreshLinkIndex()
       const state = getLinkIndex().value
       expect(Array.from(state.paths)).toEqual(['a', 'b'])
       expect(state.outgoing).toEqual({ a: [{ target: 'b', kind: 'wiki' }] })
+      expect(state.titles).toEqual({ a: 'Alpha', b: 'Beta' })
       expect(state.lastFetched).toBeGreaterThan(0)
+    })
+
+    it('keeps compatibility with older snapshots that do not include titles', async () => {
+      enqueue('GET', '/api/links/index', {
+        status: 200,
+        body: {
+          paths: ['a'],
+          outgoing: {},
+        },
+      })
+      await refreshLinkIndex()
+      expect(getLinkIndex().value.titles).toEqual({})
     })
 
     it('keeps the previous state if the fetch fails', async () => {

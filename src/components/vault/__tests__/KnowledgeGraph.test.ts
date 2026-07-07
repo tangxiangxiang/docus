@@ -55,6 +55,7 @@ interface FakeGraph {
   nodeLabel: ReturnType<typeof vi.fn>
   nodeVal: ReturnType<typeof vi.fn>
   nodeCanvasObject: ReturnType<typeof vi.fn>
+  nodePointerAreaPaint: ReturnType<typeof vi.fn>
   linkColor: ReturnType<typeof vi.fn>
   /* Custom link renderer. The component draws lines itself via
      `linkCanvasObject` instead of relying on force-graph's
@@ -130,6 +131,7 @@ vi.mock('force-graph', () => ({
         g._lastNodeCanvasObject = cb
         return g
       }),
+      nodePointerAreaPaint: vi.fn().mockReturnThis(),
       linkColor: vi.fn().mockReturnThis(),
       linkCanvasObject: vi.fn().mockReturnThis(),
       linkCanvasObjectMode: vi.fn().mockReturnThis(),
@@ -192,10 +194,15 @@ function fireResizeObservers() {
    (e.g. a real-width path test) doesn't have to redefine it. */
 void fireResizeObservers
 
-function setIndex(state: { paths: string[]; outgoing: Record<string, Array<{ target: string; kind: 'wiki' | 'md' }>> }) {
+function setIndex(state: {
+  paths: string[]
+  outgoing: Record<string, Array<{ target: string; kind: 'wiki' | 'md' }>>
+  titles?: Record<string, string>
+}) {
   getLinkIndex().value = {
     paths: new Set(state.paths),
     outgoing: state.outgoing,
+    titles: state.titles ?? {},
     lastFetched: 0,
   }
 }
@@ -258,6 +265,7 @@ describe('KnowledgeGraph — wiring', () => {
     expect(g.nodeLabel).toHaveBeenCalledWith('title')
     expect(g.nodeVal).toHaveBeenCalledWith('val')
     expect(g.nodeCanvasObject).toHaveBeenCalled()
+    expect(g.nodePointerAreaPaint).toHaveBeenCalled()
     expect(g.onNodeClick).toHaveBeenCalled()
     unmount()
   })
@@ -305,6 +313,15 @@ describe('KnowledgeGraph — wiring', () => {
        callback, so we can't drive the renderer directly here.
        The "re-installs the link renderer on theme change" test
        below covers the re-installation path. */
+    unmount()
+  })
+
+  it('shrinks the clickable node area to the card body instead of using the default val-sized circle', async () => {
+    setIndex({ paths: ['zettel/a'], outgoing: {}, titles: { 'zettel/a': 'A Card' } })
+    const { unmount } = mountStandalone()
+    await settle()
+    const pointerArg = graphs[0].nodePointerAreaPaint.mock.calls[0]?.[0]
+    expect(typeof pointerArg).toBe('function')
     unmount()
   })
 

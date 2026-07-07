@@ -113,7 +113,8 @@ export function buildGraphData(idx: LinkIndexState): GraphData {
   for (const id of zettelNodes) {
     const inD = inDegree.get(id) ?? 0
     const outD = outDegree.get(id) ?? 0
-    nodes.push({ id, path: id, title: titleFromPath(id), val: valOf(inD + outD) })
+    const title = idx.titles?.[id]?.trim() || titleFromPath(id)
+    nodes.push({ id, path: id, title, val: valOf(inD + outD) })
   }
   /* Sort by id so the layout is stable across re-runs. Without
      this, Set iteration order + outgoing key order produces a

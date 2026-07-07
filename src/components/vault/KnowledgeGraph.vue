@@ -57,6 +57,7 @@ interface ForceGraphInstance {
   nodeLabel: (k: string) => ForceGraphInstance
   nodeVal: (k: string) => ForceGraphInstance
   nodeCanvasObject: (cb: (node: { id: string; title: string; val: number; x?: number; y?: number }, ctx: CanvasRenderingContext2D, scale: number) => void) => ForceGraphInstance
+  nodePointerAreaPaint: (cb: (node: { id: string; title: string; val: number; x?: number; y?: number }, color: string, ctx: CanvasRenderingContext2D, scale: number) => void) => ForceGraphInstance
   linkColor: (c: string | ((link: { source: unknown; target: unknown }) => string | null | undefined)) => ForceGraphInstance
   /* Custom link renderer. We use this instead of `linkColor`
      because the user reported the `linkColor` setter not
@@ -110,23 +111,23 @@ const { theme } = useTheme()
 const colors = computed(() => {
   const dark = theme.value === 'dark'
   return {
-    bg: dark ? '#0A0E1A' : '#FAFAFA',
-    /* Solid ball — the node is the focal element. The fill is
-       fully opaque; the stroke is still drawn at 1.5/globalScale
-       (visible as a subtle inner edge), but the ball itself
-       reads as a single solid disc on top of the bg. */
-    nodeFill: dark ? 'rgba(255,255,255)' : 'rgba(0,0,0)',
-    nodeStroke: dark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)',
+    bg: dark ? '#121212' : '#F7F7F4',
+    cardFill: dark ? 'rgba(28,28,26,0.92)' : 'rgba(255,255,255,0.88)',
+    cardStroke: dark ? 'rgba(255,255,255,0.14)' : 'rgba(28,25,23,0.12)',
+    cardAccent: dark ? '#7DD3C7' : '#0F766E',
+    nodeHalo: dark ? 'rgba(125,211,199,0.16)' : 'rgba(15,118,110,0.11)',
+    nodeShadow: dark ? 'rgba(0,0,0,0.42)' : 'rgba(16,24,40,0.14)',
     /* Link stroke — deliberately low-alpha so the line
-       recedes and the solid node balls read as the focal
+       recedes and the note cards read as the focal
        element. We use a function (not a string) because
        force-graph's `linkColor` setter routes through
        `accessor-fn`, which would treat the literal `'…'`
        as a property name on the link object (see
        `installLinkRenderer` for the same trap on
        `linkCanvasObjectMode`). */
-    linkColorFn: () => (dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'),
-    text: dark ? '#E2E8F0' : '#1F2937',
+    linkColorFn: () => (dark ? 'rgba(125,211,199,0.28)' : 'rgba(15,118,110,0.20)'),
+    text: dark ? '#F5F5F4' : '#1C1917',
+    textMuted: dark ? 'rgba(245,245,244,0.58)' : 'rgba(28,25,23,0.52)',
   }
 })
 
@@ -134,6 +135,68 @@ let graph: ForceGraphInstance | null = null
 let resizeObserver: ResizeObserver | null = null
 const loadError = ref<string | null>(null)
 let disposed = false
+
+function roundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x, y, width, height, radius)
+    return
+  }
+  const r = Math.min(radius, width / 2, height / 2)
+  ctx.moveTo(x + r, y)
+  ctx.lineTo(x + width - r, y)
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r)
+  ctx.lineTo(x + width, y + height - r)
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height)
+  ctx.lineTo(x + r, y + height)
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r)
+  ctx.lineTo(x, y + r)
+  ctx.quadraticCurveTo(x, y, x + r, y)
+}
+
+function fitText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text
+  const ellipsis = '…'
+  let lo = 0
+  let hi = text.length
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (ctx.measureText(text.slice(0, mid) + ellipsis).width <= maxWidth) lo = mid
+    else hi = mid - 1
+  }
+  return text.slice(0, lo) + ellipsis
+}
+
+function cardMetrics(
+  node: { title: string; val: number; x?: number; y?: number },
+  ctx: CanvasRenderingContext2D,
+  globalScale: number,
+) {
+  const x = node.x ?? 0
+  const y = node.y ?? 0
+  const fontSize = 11 / globalScale
+  const metaFontSize = 8 / globalScale
+  const padX = 10 / globalScale
+  const cardMinW = 72 / globalScale
+  const cardMaxW = 168 / globalScale
+  const cardH = (30 + Math.min(8, Math.max(0, node.val - 8)) * 0.45) / globalScale
+  const radius = 7 / globalScale
+  const accentW = 3 / globalScale
+  const metaReserve = node.val > 11 ? 18 / globalScale : 0
+  ctx.font = `600 ${fontSize}px Inter, "Noto Sans SC", sans-serif`
+  const measuredTitleW = ctx.measureText(node.title).width
+  const cardW = Math.min(cardMaxW, Math.max(cardMinW, measuredTitleW + padX * 2 + accentW + metaReserve))
+  const cardX = x - cardW / 2
+  const cardY = y - cardH / 2
+  const title = fitText(ctx, node.title, cardW - padX * 2 - accentW - metaReserve)
+  return { x, y, fontSize, metaFontSize, padX, cardW, cardH, cardX, cardY, radius, accentW, title }
+}
 
 function destroyGraph() {
   resizeObserver?.disconnect()
@@ -154,22 +217,76 @@ function installCanvasCallback(g: ForceGraphInstance) {
      warmup window. */
   const c = colors.value
   g.nodeCanvasObject((node, ctx, globalScale) => {
-    const r = node.val / globalScale
+    /* `y` is the card's vertical center; `cardX`/`cardY` are
+       already derived from `x`/`y` inside cardMetrics, so we don't
+       pull `x` out here — only `y` is referenced directly (the
+       title sits one pixel above center, the val badge one below). */
+    const { y, fontSize, metaFontSize, padX, cardW, cardH, cardX, cardY, radius, accentW, title } =
+      cardMetrics(node, ctx, globalScale)
+
     ctx.beginPath()
-    ctx.arc(node.x ?? 0, node.y ?? 0, r, 0, 2 * Math.PI, false)
-    ctx.fillStyle = c.nodeFill
+    roundedRect(
+      ctx,
+      cardX - 4 / globalScale,
+      cardY - 4 / globalScale,
+      cardW + 8 / globalScale,
+      cardH + 8 / globalScale,
+      radius + 3 / globalScale,
+    )
+    ctx.fillStyle = c.nodeHalo
     ctx.fill()
-    ctx.lineWidth = 1.5 / globalScale
-    ctx.strokeStyle = c.nodeStroke
+
+    ctx.save()
+    ctx.shadowColor = c.nodeShadow
+    ctx.shadowBlur = 14 / globalScale
+    ctx.shadowOffsetY = 3 / globalScale
+    ctx.beginPath()
+    roundedRect(ctx, cardX, cardY, cardW, cardH, radius)
+    ctx.fillStyle = c.cardFill
+    ctx.fill()
+    ctx.restore()
+
+    ctx.lineWidth = 1 / globalScale
+    ctx.strokeStyle = c.cardStroke
     ctx.stroke()
-    /* Label below the dot. We use the title (not the path) so
+
+    ctx.beginPath()
+    roundedRect(ctx, cardX, cardY, accentW, cardH, radius)
+    ctx.fillStyle = c.cardAccent
+    ctx.fill()
+
+    /* Title inside the card. We use the title (not the path) so
        the visual matches the in-editor display. */
-    const fontSize = 12 / globalScale
-    ctx.font = `${fontSize}px Inter, "Noto Sans SC", sans-serif`
+    ctx.font = `600 ${fontSize}px Inter, "Noto Sans SC", sans-serif`
     ctx.fillStyle = c.text
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'top'
-    ctx.fillText(node.title, node.x ?? 0, (node.y ?? 0) + r + 2 / globalScale)
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(title, cardX + padX + accentW, y - 1 / globalScale)
+
+    if (node.val > 11) {
+      ctx.font = `500 ${metaFontSize}px Inter, "Noto Sans SC", sans-serif`
+      ctx.fillStyle = c.textMuted
+      ctx.textAlign = 'right'
+      ctx.fillText(String(node.val), cardX + cardW - 7 / globalScale, y + 1 / globalScale)
+    }
+  })
+}
+
+function installNodePointerArea(g: ForceGraphInstance) {
+  g.nodePointerAreaPaint((node, color, ctx, globalScale) => {
+    const { cardW, cardH, cardX, cardY, radius } = cardMetrics(node, ctx, globalScale)
+    const inset = Math.min(4 / globalScale, cardW / 4, cardH / 4)
+    ctx.fillStyle = color
+    ctx.beginPath()
+    roundedRect(
+      ctx,
+      cardX + inset,
+      cardY + inset,
+      cardW - inset * 2,
+      cardH - inset * 2,
+      Math.max(1 / globalScale, radius - inset),
+    )
+    ctx.fill()
   })
 }
 
@@ -213,13 +330,12 @@ function installLinkRenderer(g: ForceGraphInstance) {
     ctx.moveTo(start.x, start.y)
     ctx.lineTo(end.x, end.y)
     ctx.strokeStyle = c.linkColorFn()
-    /* 1px in canvas space, scaled down as the user zooms in.
+    /* 1.15px in canvas space, scaled down as the user zooms in.
        This matches force-graph's default linkWidth: a single
        anti-aliased line that reads as ~1px on screen at the
-       resting zoom. We don't need to over-thicken because the
-       stroke color is full-alpha (no transparency to lose in
-       AA mixing). */
-    ctx.lineWidth = 1 / globalScale
+       resting zoom, with just enough presence to stay visible
+       beneath the softer node styling. */
+    ctx.lineWidth = 1.15 / globalScale
     ctx.stroke()
   })
 }
@@ -327,6 +443,7 @@ async function mountGraph() {
     center.strength(CENTER_STRENGTH)
   }
   installCanvasCallback(g)
+  installNodePointerArea(g)
   installLinkRenderer(g)
   g.onNodeClick((node) => {
     /* `getOpenPostForClicks` is the same singleton
@@ -473,35 +590,71 @@ watch(theme, () => {
   width: 100%;
   height: 100%;
   position: relative;
-  background: var(--vs-bg-1);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, var(--kg-glow), transparent 42%),
+    linear-gradient(var(--kg-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--kg-grid) 1px, transparent 1px),
+    var(--kg-bg);
+  background-size: auto, 32px 32px, 32px 32px, auto;
+  box-shadow:
+    inset 0 1px 0 var(--kg-edge-hi),
+    inset 0 0 0 1px var(--kg-edge),
+    inset 0 -40px 80px var(--kg-vignette);
 }
-/* force-graph injects a <canvas> as a direct child of the
-   element we hand it. The ref lives on .kg-wrap, so the canvas
-   lands here. */
-.kg-wrap > canvas {
+/* force-graph injects a wrapper div plus a canvas into the
+   element we hand it. Keep both stretched so the rendering
+   surface tracks the editor area exactly. */
+.kg-wrap :deep(.force-graph-container),
+.kg-wrap :deep(canvas) {
   display: block;
   width: 100% !important;
   height: 100% !important;
 }
 .kg-wrap[data-theme='dark'] {
-  background: #0A0E1A;
+  --kg-bg: #121212;
+  --kg-grid: rgba(255,255,255,0.035);
+  --kg-glow: rgba(125,211,199,0.08);
+  --kg-edge: rgba(255,255,255,0.08);
+  --kg-edge-hi: rgba(255,255,255,0.06);
+  --kg-vignette: rgba(0,0,0,0.32);
+  --kg-empty-bg: rgba(255,255,255,0.045);
+  --kg-empty-border: rgba(255,255,255,0.08);
 }
 .kg-wrap[data-theme='light'] {
-  background: #FAFAFA;
+  --kg-bg: #f7f7f4;
+  --kg-grid: rgba(28,25,23,0.055);
+  --kg-glow: rgba(15,118,110,0.08);
+  --kg-edge: rgba(28,25,23,0.10);
+  --kg-edge-hi: rgba(255,255,255,0.72);
+  --kg-vignette: rgba(28,25,23,0.045);
+  --kg-empty-bg: rgba(255,255,255,0.58);
+  --kg-empty-border: rgba(28,25,23,0.10);
 }
 .kg-canvas {
   width: 100%;
   height: 100%;
 }
 .kg-empty {
-  display: flex;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  max-width: min(420px, calc(100% - 48px));
+  min-height: 44px;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--kg-empty-border);
+  border-radius: 8px;
+  background: var(--kg-empty-bg);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
   color: var(--vs-text-2);
-  font-size: 0.95em;
-  /* Pad the message so it doesn't touch the panel edge. */
-  padding: 0 2rem;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  padding: 10px 16px;
   text-align: center;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.10);
 }
 </style>

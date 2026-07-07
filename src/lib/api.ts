@@ -105,6 +105,8 @@ export interface Link {
 export interface LinkIndexSnapshot {
   paths: string[]
   outgoing: Record<string, Link[]>
+  /** path -> display title (frontmatter.title -> first H1 -> filename). */
+  titles?: Record<string, string>
 }
 
 export interface BacklinkRecord {

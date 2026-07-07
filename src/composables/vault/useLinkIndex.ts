@@ -31,6 +31,7 @@ import { getFileChangeBus } from './useFileChangeBus.js'
 export interface LinkIndexState {
   paths: Set<string>
   outgoing: Record<string, Array<{ target: string; alias?: string; anchor?: string; kind: 'wiki' | 'md' }>>
+  titles: Record<string, string>
   /** Unix ms of the last successful refresh, for diagnostics. */
   lastFetched: number
 }
@@ -38,7 +39,7 @@ export interface LinkIndexState {
 let _state: ShallowRef<LinkIndexState> | null = null
 
 function makeInitialState(): LinkIndexState {
-  return { paths: new Set(), outgoing: {}, lastFetched: 0 }
+  return { paths: new Set(), outgoing: {}, titles: {}, lastFetched: 0 }
 }
 
 export function getLinkIndex(): ShallowRef<LinkIndexState> {
@@ -56,6 +57,7 @@ export async function refreshLinkIndex(): Promise<void> {
     const next: LinkIndexState = {
       paths: new Set(snap.paths),
       outgoing: snap.outgoing,
+      titles: snap.titles ?? {},
       lastFetched: Date.now(),
     }
     // Always initialize the singleton (so a refresh called before

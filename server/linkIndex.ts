@@ -19,6 +19,7 @@
 // rebuild in v1; the lazy `getIndex()` on first request handles it.
 
 import { promises as fs } from 'node:fs'
+import matter from 'gray-matter'
 import { listPostsFlat } from './tree.js'
 import { CONTENT_DIR, filePathFor } from './paths.js'
 import { resolveWikiTarget } from './linkResolve.ts'
@@ -46,6 +47,8 @@ export interface LinkIndexSnapshot {
   paths: string[]
   /** source -> outbound links */
   outgoing: Record<string, Link[]>
+  /** path -> display title (frontmatter.title -> first H1 -> filename). */
+  titles: Record<string, string>
 }
 
 // ---------- extraction ----------
@@ -75,6 +78,24 @@ function stripCode(body: string): string {
     .replace(/```[\s\S]*?```/g, '')   // ``` fenced
     .replace(/~~~[\s\S]*?~~~/g, '')   // ~~~ fenced
     .replace(/`[^`\n]+`/g, '')        // inline code
+}
+
+function nameFromPath(path: string): string {
+  return path.split('/').pop() || path
+}
+
+function titleFromRaw(path: string, raw: string): string {
+  try {
+    const parsed = matter(raw)
+    const fmTitle = parsed.data.title
+    if (typeof fmTitle === 'string' && fmTitle.trim()) return fmTitle.trim()
+    const h1 = /^#\s+(.+)$/m.exec(parsed.content)
+    if (h1?.[1]?.trim()) return h1[1].trim()
+  } catch {
+    const h1 = /^#\s+(.+)$/m.exec(stripFrontmatter(raw))
+    if (h1?.[1]?.trim()) return h1[1].trim()
+  }
+  return nameFromPath(path)
 }
 
 function isExternalHref(href: string): boolean {
@@ -149,13 +170,18 @@ export function extractLinks(
 export class LinkIndex {
   private forward = new Map<string, Link[]>()
   private paths = new Set<string>()
+  private titles = new Map<string, string>()
 
   /** Full rebuild from disk. Reads every .md file in `rootDir`. */
   async rebuild(rootDir: string = CONTENT_DIR): Promise<void> {
     this.forward.clear()
     this.paths.clear()
+    this.titles.clear()
     const posts = await listPostsFlat(rootDir)
-    for (const p of posts) this.paths.add(p.path)
+    for (const p of posts) {
+      this.paths.add(p.path)
+      this.titles.set(p.path, p.title)
+    }
     const allPaths = Array.from(this.paths)
     for (const p of posts) {
       const abs = filePathFor(p.path)
@@ -176,8 +202,9 @@ export class LinkIndex {
   /** Add a path to the existence set without extracting. Used by
    *  tests (and any caller that needs to pre-register a target
    *  before writing a file that links to it). */
-  registerPath(path: string): void {
+  registerPath(path: string, title = nameFromPath(path)): void {
     this.paths.add(path)
+    this.titles.set(path, title)
   }
 
   /** Re-extract links for a single file. Used after a write or after
@@ -185,6 +212,7 @@ export class LinkIndex {
   applyWrite(path: string, raw: string): void {
     this.forward.delete(path)
     this.paths.add(path)
+    this.titles.set(path, titleFromRaw(path, raw))
     const allPaths = Array.from(this.paths)
     const links = extractLinks(raw, path, allPaths)
     if (links.length > 0) this.forward.set(path, links)
@@ -196,6 +224,7 @@ export class LinkIndex {
   applyDelete(path: string): void {
     this.forward.delete(path)
     this.paths.delete(path)
+    this.titles.delete(path)
     for (const [source, links] of this.forward) {
       const filtered = links.filter((l) => l.target !== path)
       if (filtered.length === 0) {
@@ -260,7 +289,11 @@ export class LinkIndex {
   snapshot(): LinkIndexSnapshot {
     const outgoing: Record<string, Link[]> = {}
     for (const [k, v] of this.forward) outgoing[k] = v.slice()
-    return { paths: Array.from(this.paths), outgoing }
+    const titles: Record<string, string> = {}
+    for (const p of this.paths) {
+      titles[p] = this.titles.get(p) ?? nameFromPath(p)
+    }
+    return { paths: Array.from(this.paths), outgoing, titles }
   }
 }
 
