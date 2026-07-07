@@ -118,7 +118,10 @@ export async function getFileAt(path: string, ref: string): Promise<{ path: stri
 export async function getDiff(path: string, oldRef: string, newRef: string): Promise<{ path: string; oldRef: string; newRef: string; diff: FileDiff }> {
   const q = new URLSearchParams({ path, old: oldRef, new: newRef })
   const r = await fetch(`/api/history/diff?${q.toString()}`)
-  if (!r.ok) throw new Error(`getDiff ${path}: ${r.status}`)
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({} as any))
+    throw new Error(body?.error ?? `getDiff ${path}: ${r.status}`)
+  }
   return r.json()
 }
 

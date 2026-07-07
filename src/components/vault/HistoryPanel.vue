@@ -29,6 +29,10 @@ import { useToast } from '../../composables/useToast.js'
 import { WORKTREE_REF, type CommitRecord } from '../../lib/history-api.js'
 import EmptyState from './EmptyState.vue'
 
+const props = defineProps<{
+  currentPath?: string | null
+}>()
+
 const h = useHistory()
 const toast = useToast()
 
@@ -126,6 +130,25 @@ function onCommitFileClick(sha: string, path: string) {
   void h.selectFile(path, { oldRef: `${sha}~1`, newRef: sha })
 }
 
+function toHistoryPath(path: string): string {
+  return path.endsWith('.md') ? path : `${path}.md`
+}
+
+function selectInitialFile() {
+  const live = getLiveTabs()
+  const candidate =
+    props.currentPath
+    ?? live?.value.find((t) => t.path)?.path
+
+  if (!candidate || h.selectedFile.value) return
+  const historyPath = toHistoryPath(candidate)
+  if (isDirty(historyPath)) {
+    void h.selectFile(historyPath, { oldRef: 'HEAD', newRef: WORKTREE_REF })
+    return
+  }
+  void h.selectFile(historyPath, { oldRef: 'HEAD~1', newRef: 'HEAD' })
+}
+
 function timeAgo(iso: string): string {
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return ''
@@ -162,19 +185,13 @@ onMounted(() => autoresize())
    something useful immediately. For dirty files we diff HEAD vs the
    working tree (so the user's uncommitted edits show up); for clean
    files we fall back to the last commit (HEAD~1..HEAD). */
-onMounted(() => {
-  const live = getLiveTabs()
-  if (live && live.value.length > 0) {
-    const active = live.value.find((t) => t.path)
-    const candidate = active?.path
-    if (candidate && !h.selectedFile.value) {
-      if (isDirty(candidate)) {
-        void h.selectFile(candidate, { oldRef: 'HEAD', newRef: WORKTREE_REF })
-      } else {
-        void h.selectFile(candidate, { oldRef: 'HEAD~1', newRef: 'HEAD' })
-      }
-    }
-  }
+onMounted(async () => {
+  // Opening the history panel should reflect the current working tree.
+  // Without this refresh, a newly-created untracked file can race the
+  // initial status load and be treated as clean, which makes the panel
+  // ask for HEAD~1..HEAD instead of HEAD..WORKTREE.
+  await h.refreshStatus()
+  selectInitialFile()
 })
 </script>
 

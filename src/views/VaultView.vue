@@ -253,7 +253,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
          — same `activePanel === 'history'` gate) so the diff sits
          in the editor's grid track instead of fighting for the
          side-panel column. -->
-    <HistoryPanel v-else-if="activePanel === 'history'" />
+    <HistoryPanel v-else-if="activePanel === 'history'" :current-path="activePath" />
 
     <div
       v-show="sidePanelOpen"
