@@ -133,6 +133,14 @@ const colors = computed(() => {
 let graph: ForceGraphInstance | null = null
 let resizeObserver: ResizeObserver | null = null
 const loadError = ref<string | null>(null)
+let disposed = false
+
+function destroyGraph() {
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  graph?._destructor()
+  graph = null
+}
 
 function installCanvasCallback(g: ForceGraphInstance) {
   /* Snapshot the colors object at install time. force-graph's
@@ -228,7 +236,7 @@ function installLinkRenderer(g: ForceGraphInstance) {
    once `new Ctor(el)` returns. */
 let mountInFlight = false
 async function mountGraph() {
-  if (graph || mountInFlight) return
+  if (disposed || graph || mountInFlight) return
   const el = containerRef.value
   if (!el) return
   /* Skip mount for an empty zettel set — force-graph renders a
@@ -237,6 +245,7 @@ async function mountGraph() {
      test pins in the empty-state describe block. */
   if (graphData.value.nodes.length === 0) return
   mountInFlight = true
+  loadError.value = null
 
   /* Dynamic import keeps force-graph + d3 out of the main
      bundle. After the first import, subsequent mounts reuse the
@@ -257,6 +266,11 @@ async function mountGraph() {
   } catch (err) {
     mountInFlight = false
     loadError.value = err instanceof Error ? err.message : String(err)
+    return
+  }
+  if (disposed || !containerRef.value || graphData.value.nodes.length === 0) {
+    mountInFlight = false
+    g._destructor()
     return
   }
   graph = g
@@ -384,19 +398,13 @@ async function mountGraph() {
 }
 
 onMounted(() => {
+  disposed = false
   void mountGraph()
 })
 
 onBeforeUnmount(() => {
-  resizeObserver?.disconnect()
-  resizeObserver = null
-  /* kapsule exposes the destructor as `_destructor` (see
-     node_modules/force-graph/dist/force-graph.mjs — the linkKapsule
-     helper calls it during teardown). Calling it stops the d3
-     simulation timer and releases the canvas — the test pins
-     this. */
-  graph?._destructor()
-  graph = null
+  disposed = true
+  destroyGraph()
 })
 
 /* Push new data into force-graph on every link index change.
@@ -406,6 +414,10 @@ onBeforeUnmount(() => {
    ComputedRef, so deep-watching its value is a no-op — Vue
    re-evaluates the computed wholesale on dependency change. */
 watch(graphData, (next) => {
+  if (next.nodes.length === 0) {
+    destroyGraph()
+    return
+  }
   if (!graph) {
     /* Mount raced with the first link index fetch — the empty
        state guard in mountGraph() prevented initial setup. Try

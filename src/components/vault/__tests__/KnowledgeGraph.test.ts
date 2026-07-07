@@ -398,6 +398,20 @@ describe('KnowledgeGraph — reactiveness', () => {
     expect(last.links).toHaveLength(2)
     unmount()
   })
+
+  it('destroys the force-graph instance when the zettel set becomes empty', async () => {
+    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    const { unmount, host } = mountStandalone()
+    await settle()
+    expect(graphs).toHaveLength(1)
+    expect(graphs[0]._destructor).not.toHaveBeenCalled()
+
+    setIndex({ paths: ['inbox/a'], outgoing: {} })
+    await settle()
+    expect(graphs[0]._destructor).toHaveBeenCalledTimes(1)
+    expect(host.textContent).toMatch(/zettel|还没有|写一条/)
+    unmount()
+  })
 })
 
 describe('KnowledgeGraph — node click', () => {

@@ -79,6 +79,35 @@ describe('useGraphData — zettel filter', () => {
     expect(useGraphData().value.links).toEqual([])
   })
 
+  it('drops self-links so one note does not draw a loop back to itself', () => {
+    setIndex({
+      paths: ['zettel/a', 'zettel/b'],
+      outgoing: {
+        'zettel/a': [
+          { target: 'zettel/a', kind: 'wiki' },
+          { target: 'zettel/b', kind: 'wiki' },
+        ],
+      },
+    })
+    expect(useGraphData().value.links).toEqual([{ source: 'zettel/a', target: 'zettel/b' }])
+  })
+
+  it('sorts links stably by source and target', () => {
+    setIndex({
+      paths: ['zettel/c', 'zettel/b', 'zettel/a'],
+      outgoing: {
+        'zettel/c': [{ target: 'zettel/a', kind: 'wiki' }],
+        'zettel/a': [{ target: 'zettel/c', kind: 'wiki' }],
+        'zettel/b': [{ target: 'zettel/a', kind: 'wiki' }],
+      },
+    })
+    expect(useGraphData().value.links).toEqual([
+      { source: 'zettel/a', target: 'zettel/c' },
+      { source: 'zettel/b', target: 'zettel/a' },
+      { source: 'zettel/c', target: 'zettel/a' },
+    ])
+  })
+
   it('keeps isolated nodes (no edges in, no edges out)', () => {
     /* A freshly-written zettel note may have no links yet. The
        user should still see it on the graph as an isolated dot
