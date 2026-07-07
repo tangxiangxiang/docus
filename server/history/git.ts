@@ -24,6 +24,9 @@ import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
+const DEFAULT_GIT_TIMEOUT_MS = 15_000
+const MAX_CAPTURE_BYTES = 10 * 1024 * 1024
+
 export type RunResult = {
   status: number
   stdout: string
@@ -52,6 +55,12 @@ export class GitUnavailableError extends Error {
   }
 }
 
+function appendCapped(current: string, chunk: string): string {
+  if (current.length >= MAX_CAPTURE_BYTES) return current
+  const remaining = MAX_CAPTURE_BYTES - current.length
+  return current + chunk.slice(0, remaining)
+}
+
 /**
  * Run a git subcommand. Resolves with the captured output; rejects
  * only on spawn failure (no shell escaping concerns, args are passed
@@ -62,15 +71,58 @@ export function run(repoRoot: string, args: string[]): Promise<RunResult> {
     const child = spawn('git', args, { cwd: repoRoot, windowsHide: true })
     let stdout = ''
     let stderr = ''
+    let settled = false
+    let timedOut = false
+    let capped = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, DEFAULT_GIT_TIMEOUT_MS)
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (c) => { stdout += c })
-    child.stderr.on('data', (c) => { stderr += c })
-    child.on('error', (err) => reject(new GitUnavailableError(err)))
+    child.stdout.on('data', (c) => {
+      const next = appendCapped(stdout, c)
+      capped ||= next.length < stdout.length + c.length
+      stdout = next
+      if (capped) child.kill('SIGKILL')
+    })
+    child.stderr.on('data', (c) => {
+      const next = appendCapped(stderr, c)
+      capped ||= next.length < stderr.length + c.length
+      stderr = next
+      if (capped) child.kill('SIGKILL')
+    })
+    child.on('error', (err) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(new GitUnavailableError(err))
+    })
     child.on('close', (code) => {
-      resolve({ status: code ?? -1, stdout, stderr })
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      const suffix = timedOut
+        ? `git command timed out after ${DEFAULT_GIT_TIMEOUT_MS}ms`
+        : capped
+          ? `git output exceeded ${MAX_CAPTURE_BYTES} bytes`
+          : ''
+      resolve({
+        status: timedOut || capped ? -1 : (code ?? -1),
+        stdout,
+        stderr: suffix ? [stderr.trim(), suffix].filter(Boolean).join('\n') : stderr,
+      })
     })
   })
+}
+
+function safeWorktreeFile(repoRoot: string, filePath: string): string {
+  const root = path.resolve(repoRoot)
+  const resolved = path.resolve(root, filePath)
+  if (!resolved.startsWith(root + path.sep) && resolved !== root) {
+    throw new Error(`path escapes repo root: ${filePath}`)
+  }
+  return resolved
 }
 
 /**
@@ -321,7 +373,7 @@ export async function rawAt(
   // without having to stage + commit first.
   if (ref === WORKTREE_REF) {
     try {
-      return await fs.readFile(path.join(repoRoot, filePath), 'utf8')
+      return await fs.readFile(safeWorktreeFile(repoRoot, filePath), 'utf8')
     } catch (e: any) {
       if (e?.code === 'ENOENT') return null
       throw e

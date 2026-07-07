@@ -20,6 +20,12 @@ import * as git from './git.js'
 import { ensureRepo } from './repo.js'
 import { computeFileDiff } from './diff.js'
 import { CONTENT_DIR } from '../paths.js'
+import {
+  isManagedHistoryPath,
+  isValidHistoryPath,
+  isValidHistoryRef,
+  validateHistoryPaths,
+} from './validation.js'
 
 /**
  * Where git runs — the vault root. By default this is the same
@@ -59,6 +65,23 @@ function repoRoot(): string {
 
 function bad(c: any, msg: string, code = 400) {
   return c.json({ error: msg }, code)
+}
+
+function validPathParam(c: any, value: string | undefined): string | Response {
+  if (!value) return bad(c, 'path required')
+  if (!isValidHistoryPath(value)) return bad(c, 'invalid path')
+  return value
+}
+
+function validRefParam(
+  c: any,
+  value: string | undefined,
+  name = 'ref',
+  opts: { allowWorktree?: boolean } = {},
+): string | Response {
+  if (!value) return bad(c, name === 'ref' ? 'ref required' : `${name} ref required`)
+  if (!isValidHistoryRef(value, opts)) return bad(c, 'invalid ref')
+  return value
 }
 
 // --- capability -----------------------------------------------------------
@@ -122,7 +145,8 @@ history.get('/status', async (c) => {
   if (!(await probeGit())) return c.json({ dirty: [], available: false }, 503)
   try {
     await ensureRepo(repoRoot())
-    const dirty = await git.status(repoRoot())
+    const dirty = (await git.status(repoRoot()))
+      .filter((entry) => !isManagedHistoryPath(entry.path))
     return c.json({ dirty, available: true })
   } catch (e: any) {
     return bad(c, e.message ?? 'status failed', 500)
@@ -133,9 +157,11 @@ history.get('/status', async (c) => {
 // Commit history, newest-first. `?path=` filters to a single file.
 history.get('/log', async (c) => {
   if (!(await probeGit())) return bad(c, 'git not available', 503)
-  const path = c.req.query('path')
+  const pathParam = c.req.query('path')
   const limitStr = c.req.query('limit')
   const limit = limitStr ? Math.max(1, Math.min(2000, Number(limitStr) || 200)) : 200
+  if (pathParam && !isValidHistoryPath(pathParam)) return bad(c, 'invalid path')
+  const path = pathParam || undefined
   try {
     await ensureRepo(repoRoot())
     const commits = await git.log(repoRoot(), { path, limit })
@@ -153,12 +179,15 @@ history.get('/file', async (c) => {
   if (!(await probeGit())) return bad(c, 'git not available', 503)
   const path = c.req.query('path')
   const ref = c.req.query('ref') ?? 'HEAD'
-  if (!path) return bad(c, 'path required')
+  const validPath = validPathParam(c, path)
+  if (validPath instanceof Response) return validPath
+  const validRef = validRefParam(c, ref, 'ref', { allowWorktree: true })
+  if (validRef instanceof Response) return validRef
   try {
     await ensureRepo(repoRoot())
-    const content = await git.rawAt(repoRoot(), ref, path)
+    const content = await git.rawAt(repoRoot(), validRef, validPath)
     if (content === null) return bad(c, 'not found at ref', 404)
-    return c.json({ path, ref, content })
+    return c.json({ path: validPath, ref: validRef, content })
   } catch (e: any) {
     return bad(c, e.message ?? 'file failed', 500)
   }
@@ -179,8 +208,13 @@ history.get('/diff', async (c) => {
   const path = c.req.query('path')
   const oldRef = c.req.query('old')
   const newRef = c.req.query('new')
-  if (!path) return bad(c, 'path required')
+  const validPath = validPathParam(c, path)
+  if (validPath instanceof Response) return validPath
   if (!oldRef || !newRef) return bad(c, 'old and new refs required')
+  const validOldRef = validRefParam(c, oldRef, 'old', { allowWorktree: true })
+  if (validOldRef instanceof Response) return validOldRef
+  const validNewRef = validRefParam(c, newRef, 'new', { allowWorktree: true })
+  if (validNewRef instanceof Response) return validNewRef
   try {
     await ensureRepo(repoRoot())
     // Resolve both sides in parallel. rawAt returns null when the
@@ -188,11 +222,11 @@ history.get('/diff', async (c) => {
     // empty string so the diff endpoint always returns the same
     // shape regardless of the file's history.
     const [oldContent, newContent] = await Promise.all([
-      git.rawAt(repoRoot(), oldRef, path),
-      git.rawAt(repoRoot(), newRef, path),
+      git.rawAt(repoRoot(), validOldRef, validPath),
+      git.rawAt(repoRoot(), validNewRef, validPath),
     ])
     const diff = computeFileDiff(oldContent, newContent)
-    return c.json({ path, oldRef, newRef, diff })
+    return c.json({ path: validPath, oldRef: validOldRef, newRef: validNewRef, diff })
   } catch (e: any) {
     return bad(c, e.message ?? 'diff failed', 500)
   }
@@ -219,12 +253,14 @@ history.post('/commits', async (c) => {
   if (body.paths.some((p) => typeof p !== 'string' || p.length === 0)) {
     return bad(c, 'every path must be a non-empty string')
   }
+  const paths = validateHistoryPaths(body.paths)
+  if (!paths) return bad(c, 'invalid path')
   if (typeof body.message !== 'string' || body.message.trim().length === 0) {
     return bad(c, 'message must be a non-empty string')
   }
   try {
     await ensureRepo(repoRoot())
-    const r = await git.addAndCommit(repoRoot(), body.paths as string[], body.message)
+    const r = await git.addAndCommit(repoRoot(), paths, body.message)
     return c.json(r, 201)
   } catch (e: any) {
     const msg = e.message ?? 'commit failed'
@@ -259,6 +295,9 @@ history.post('/restore', async (c) => {
   if (typeof body.ref !== 'string' || body.ref.length === 0) {
     return bad(c, 'ref required')
   }
+  const validPath = validPathParam(c, body.path)
+  if (validPath instanceof Response) return validPath
+  if (body.ref !== git.WORKTREE_REF && !isValidHistoryRef(body.ref)) return bad(c, 'invalid ref')
   try {
     await ensureRepo(repoRoot())
     // WORKTREE is a sentinel meaning "the file as it sits on disk".
@@ -271,12 +310,12 @@ history.post('/restore', async (c) => {
     // Pre-check: confirm the file exists at that ref so we can return
     // a clean 404 instead of a generic git error. Cheaper than parsing
     // git checkout's stderr in every error path.
-    const exists = await git.rawAt(repoRoot(), body.ref, body.path)
+    const exists = await git.rawAt(repoRoot(), body.ref, validPath)
     if (exists === null) {
       return bad(c, `file does not exist at ref ${body.ref}`, 404)
     }
-    await git.restoreFile(repoRoot(), body.ref, body.path)
-    return c.json({ path: body.path, ref: body.ref })
+    await git.restoreFile(repoRoot(), body.ref, validPath)
+    return c.json({ path: validPath, ref: body.ref })
   } catch (e: any) {
     const msg = e.message ?? 'restore failed'
     // git checkout's "pathspec ... did not match" / "invalid reference"

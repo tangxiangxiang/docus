@@ -283,7 +283,7 @@ onMounted(() => {
                 :class="{
                   selected:
                     h.selectedFile.value === path
-                    && h.selectedOldRef.value === c.sha,
+                    && h.selectedNewRef.value === c.sha,
                 }"
                 :title="`Show diff of ${path} at ${c.sha.slice(0, 7)}`"
                 @click.stop="onCommitFileClick(c.sha, path)"

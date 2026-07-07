@@ -81,15 +81,14 @@ describe('GET /api/history/status', () => {
   })
 
   it('returns empty dirty list when the working tree is clean', async () => {
-    // After /capability the .gitignore/.gitattributes are untracked.
-    // The route returns the raw git status — those dotfiles are the
-    // only entries, which is what a fresh vault looks like.
+    // The vault-managed .gitignore/.gitattributes exist on disk, but
+    // the route hides them so the first History view starts clean.
     const r = await call('GET', '/status')
     expect(r.status).toBe(200)
     const body = await r.json() as { dirty: any[]; available: boolean }
     expect(body.available).toBe(true)
     const paths = body.dirty.map((e) => e.path).sort()
-    expect(paths).toEqual(['.gitattributes', '.gitignore'])
+    expect(paths).toEqual([])
   })
 
   it('reports new and modified files', async () => {
@@ -130,6 +129,11 @@ describe('GET /api/history/log', () => {
     const r = await call('GET', '/log?path=b.md')
     const body = await r.json() as { commits: { subject: string }[] }
     expect(body.commits.map((c) => c.subject)).toEqual(['touch b'])
+  })
+
+  it('rejects invalid path filters', async () => {
+    const r = await call('GET', '/log?path=../outside.md')
+    expect(r.status).toBe(400)
   })
 
   // Regression: a freshly-initialized vault (no commits yet) used to
@@ -200,6 +204,16 @@ describe('GET /api/history/file', () => {
     const r = await call('GET', '/file')
     expect(r.status).toBe(400)
   })
+
+  it('rejects path traversal for WORKTREE reads', async () => {
+    const r = await call('GET', '/file?path=../package.json&ref=WORKTREE')
+    expect(r.status).toBe(400)
+  })
+
+  it('rejects invalid refs', async () => {
+    const r = await call('GET', '/file?path=note.md&ref=main')
+    expect(r.status).toBe(400)
+  })
 })
 
 describe('GET /api/history/diff', () => {
@@ -255,6 +269,13 @@ describe('GET /api/history/diff', () => {
     expect(body.diff.stats.added).toBe(2)
     expect(body.diff.stats.removed).toBe(1)
   })
+
+  it('rejects invalid diff paths and refs', async () => {
+    const badPath = await call('GET', '/diff?path=.git/config&old=HEAD&new=WORKTREE')
+    expect(badPath.status).toBe(400)
+    const badRef = await call('GET', '/diff?path=note.md&old=main&new=WORKTREE')
+    expect(badRef.status).toBe(400)
+  })
 })
 
 describe('POST /api/history/commits', () => {
@@ -285,6 +306,13 @@ describe('POST /api/history/commits', () => {
   it('returns 400 on non-string path entry', async () => {
     const r = await call('POST', '/commits', { paths: ['a.md', 42], message: 'x' })
     expect(r.status).toBe(400)
+  })
+
+  it('returns 400 on unsafe or non-note paths', async () => {
+    const outside = await call('POST', '/commits', { paths: ['../outside.md'], message: 'x' })
+    expect(outside.status).toBe(400)
+    const dotfile = await call('POST', '/commits', { paths: ['.gitignore'], message: 'x' })
+    expect(dotfile.status).toBe(400)
   })
 
   it('returns 409 "nothing to commit" when all paths are clean', async () => {
@@ -373,6 +401,13 @@ describe('POST /api/history/restore', () => {
     expect(r.status).toBe(400)
     const body = await r.json() as { error: string }
     expect(body.error).toMatch(/ref/i)
+  })
+
+  it('returns 400 on unsafe path or unsupported ref syntax', async () => {
+    const unsafePath = await call('POST', '/restore', { path: '../outside.md', ref: 'HEAD' })
+    expect(unsafePath.status).toBe(400)
+    const branchRef = await call('POST', '/restore', { path: 'note.md', ref: 'main' })
+    expect(branchRef.status).toBe(400)
   })
 
   // WORKTREE is a sentinel meaning "the file as it sits on disk".
