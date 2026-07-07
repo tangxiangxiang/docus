@@ -71,16 +71,44 @@ export interface FileDiff {
 
 // --- Capability ------------------------------------------------------------
 
+/* Single fetch wrapper for endpoints that use the standard `{ error:
+   string }` failure shape. Surfaces that string in the thrown Error so
+   callers see what the server actually said — e.g. "file does not
+   exist at ref HEAD~1" rather than a generic "getDiff: 404". If the
+   body has no `error` field (older routes, partial responses), we fall
+   back to "<endpoint> failed: <status>".
+
+   Most routes use this contract. /status is the exception: a missing
+   git binary returns 503 + `{ dirty: [], available: false }` as a
+   graceful "unavailable" signal that the caller is expected to read
+   from the body, NOT an error. Pass `allowNonOkJson: true` for that
+   case so the body comes through and refreshStatus can flip
+   `_available` itself. */
+async function readJson<T>(r: Response, fallback: string, opts: { allowNonOkJson?: boolean } = {}): Promise<T> {
+  if (r.ok || opts.allowNonOkJson) {
+    return r.json() as Promise<T>
+  }
+  const body = (await r.json().catch(() => ({}))) as { error?: unknown }
+  const message = typeof body.error === 'string' ? body.error : `${fallback}: ${r.status}`
+  throw new Error(message)
+}
+
 export async function getCapability(): Promise<Capability> {
   const r = await fetch('/api/history/capability')
-  return r.json()
+  return readJson<Capability>(r, 'getCapability failed')
 }
 
 // --- Status ----------------------------------------------------------------
 
 export async function getStatus(): Promise<{ dirty: StatusEntry[]; available: boolean }> {
+  /* /status uses 503 + `{ available: false }` to mean "git is
+     missing on this machine", not "the request failed". The panel
+     reads `available` off the body and renders a "Git is not
+     available" EmptyState — throwing here would surface a useless
+     "getStatus failed: 503" in the History panel's error slot and
+     hide the actual reason from the user. */
   const r = await fetch('/api/history/status')
-  return r.json()
+  return readJson(r, 'getStatus failed', { allowNonOkJson: true })
 }
 
 // --- Log -------------------------------------------------------------------
@@ -90,18 +118,7 @@ export async function getLog(opts: { path?: string; limit?: number } = {}): Prom
   if (opts.path) q.set('path', opts.path)
   if (opts.limit !== undefined) q.set('limit', String(opts.limit))
   const r = await fetch(`/api/history/log?${q.toString()}`)
-  // Match the other endpoints in this file: throw on non-2xx with the
-  // server's `{ error }` body, so callers see a useful message in
-  // `_error.value` instead of a downstream `undefined.length` crash.
-  // (Pre-fix the server returned 500 + `{ error: ... }` for an empty
-  // repo, getLog returned that as-is, and refreshLog did
-  // `_log.value = r.commits` → undefined → template threw on
-  // `h.log.value.length`.)
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({} as any))
-    throw new Error(body?.error ?? `getLog failed: ${r.status}`)
-  }
-  return r.json()
+  return readJson(r, 'getLog failed')
 }
 
 // --- File ------------------------------------------------------------------
@@ -109,8 +126,7 @@ export async function getLog(opts: { path?: string; limit?: number } = {}): Prom
 export async function getFileAt(path: string, ref: string): Promise<{ path: string; ref: string; content: string }> {
   const q = new URLSearchParams({ path, ref })
   const r = await fetch(`/api/history/file?${q.toString()}`)
-  if (!r.ok) throw new Error(`getFileAt ${path}@${ref}: ${r.status}`)
-  return r.json()
+  return readJson(r, `getFileAt ${path}@${ref} failed`)
 }
 
 // --- Diff ------------------------------------------------------------------
@@ -118,11 +134,7 @@ export async function getFileAt(path: string, ref: string): Promise<{ path: stri
 export async function getDiff(path: string, oldRef: string, newRef: string): Promise<{ path: string; oldRef: string; newRef: string; diff: FileDiff }> {
   const q = new URLSearchParams({ path, old: oldRef, new: newRef })
   const r = await fetch(`/api/history/diff?${q.toString()}`)
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({} as any))
-    throw new Error(body?.error ?? `getDiff ${path}: ${r.status}`)
-  }
-  return r.json()
+  return readJson(r, `getDiff ${path} failed`)
 }
 
 // --- Commits ---------------------------------------------------------------
@@ -138,15 +150,7 @@ export async function createCommit(paths: string[], message: string): Promise<Co
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ paths, message }),
   })
-  if (!r.ok) {
-    // Try to surface the server's error string. Some failures (e.g.
-    // 503 "git not available") set `available: false` rather than
-    // `error`, but the route also writes `{ error: ... }` in that
-    // case — see routes.ts. Read both fields defensively.
-    const body = await r.json().catch(() => ({} as any))
-    throw new Error(body?.error ?? `createCommit failed: ${r.status}`)
-  }
-  return r.json()
+  return readJson(r, 'createCommit failed')
 }
 
 // --- Restore ---------------------------------------------------------------
@@ -166,9 +170,5 @@ export async function restoreFile(path: string, ref: string): Promise<{ path: st
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path, ref }),
   })
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({} as any))
-    throw new Error(body?.error ?? `restoreFile failed: ${r.status}`)
-  }
-  return r.json()
+  return readJson(r, 'restoreFile failed')
 }
