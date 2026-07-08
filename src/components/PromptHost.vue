@@ -97,7 +97,7 @@ onBeforeUnmount(() => {
             :title="active.actionTitle ?? '生成英文路径名'"
             :disabled="busy"
             @click="runAction"
-          >{{ busy ? '...' : (active.actionLabel ?? 'AI') }}</button>
+          >{{ busy ? '...' : (active.actionLabel ?? '✧') }}</button>
         </div>
         <div class="prompt-actions">
           <button type="button" class="btn" @click="cancel">取消</button>
@@ -135,47 +135,64 @@ onBeforeUnmount(() => {
   color: var(--text-h);
 }
 .prompt-input-wrap {
+  position: relative;
   display: flex;
-  align-items: stretch;
   width: 100%;
+  min-width: 0;
 }
 .prompt-input {
+  display: block;
   width: 100%;
   box-sizing: border-box;
-  padding: 6px 10px;
-  font: inherit;
-  font-size: 0.9rem;
-  background: var(--bg-soft);
-  color: var(--text-h);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  padding: 6px 32px 6px 10px;
+  font-family: var(--sans);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  min-height: 34px;
+  background: color-mix(in srgb, var(--bg) 94%, white);
+  color: var(--vs-text-1);
+  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--text));
+  border-radius: 6px;
   outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
-.prompt-input-wrap.has-action .prompt-input {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
+.prompt-input-wrap:not(.has-action) .prompt-input {
+  padding-right: 10px;
 }
 .prompt-input:focus {
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--vs-accent) 62%, var(--vs-border));
+  background: color-mix(in srgb, var(--bg) 96%, white);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-accent) 16%, transparent);
+}
+.prompt-input::placeholder {
+  color: color-mix(in srgb, var(--vs-text-2) 78%, var(--vs-text-3));
+  font-weight: 500;
 }
 .prompt-input-action {
-  min-width: 42px;
-  padding: 0 10px;
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: color-mix(in srgb, var(--vs-text-2) 86%, var(--vs-text-1));
   font: inherit;
-  font-size: 0.82rem;
-  color: var(--text-h);
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  border-left: 0;
-  border-radius: 0 4px 4px 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1;
   cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
 }
 .prompt-input-action:hover:not(:disabled) {
-  color: var(--accent);
+  color: var(--vs-accent);
+  background: color-mix(in srgb, var(--vs-accent) 10%, transparent);
 }
 .prompt-input-action:disabled {
-  opacity: 0.6;
-  cursor: default;
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .prompt-actions {
   display: flex;

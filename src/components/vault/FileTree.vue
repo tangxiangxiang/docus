@@ -574,7 +574,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
   const title = await prompt({
     title: kind === 'file' ? `在 ${folder || 'inbox'} 中新建文件` : `在 ${folder || 'inbox'} 中新建文件夹`,
     placeholder: '中文标题或英文路径名',
-    actionLabel: 'AI',
+    actionLabel: '✧',
     actionTitle: '翻译为英文路径名',
     transform: async (value) => {
       sourceTitle = value.trim()

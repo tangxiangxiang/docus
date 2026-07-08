@@ -304,7 +304,7 @@ onMounted(async () => {
             v-model="h.commitMessage.value"
             rows="1"
             class="history-composer-input"
-            placeholder="消息(Enter 提交)…"
+            placeholder="Commit message…"
             @keydown.enter.exact.prevent="onCommit"
           />
           <button

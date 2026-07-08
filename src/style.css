@@ -552,26 +552,23 @@ main.container {
   resize: none;
   background: color-mix(in srgb, var(--vs-bg-1) 88%, white);
   border: 1px solid color-mix(in srgb, var(--vs-border) 82%, white);
-  border-radius: 8px;
-  padding: 10px 44px 9px 12px;
+  border-radius: 6px;
+  padding: 6px 32px 6px 10px;
   font-family: var(--sans);
-  font-size: 1rem;
+  font-size: 0.85rem;
   color: var(--vs-text-1);
-  line-height: 1.45;
+  line-height: 1.4;
   outline: none;
-  min-height: 48px;
+  min-height: 34px;
   overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 72%, transparent);
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 .history-composer-input:focus {
   border-color: color-mix(in srgb, var(--vs-accent) 62%, var(--vs-border));
   background: color-mix(in srgb, var(--vs-bg-1) 92%, white);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 72%, transparent),
-    0 0 0 2px color-mix(in srgb, var(--vs-accent) 16%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-accent) 16%, transparent);
 }
 .history-composer-input::-webkit-scrollbar { width: 0; background: transparent; }
 .history-composer-input::placeholder {
@@ -580,16 +577,16 @@ main.container {
 }
 .history-ai-message-btn {
   position: absolute;
-  right: 8px;
-  top: 8px;
-  width: 32px;
-  height: 32px;
+  right: 4px;
+  top: 4px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: color-mix(in srgb, var(--vs-text-2) 86%, var(--vs-text-1));
-  font-size: 1.15rem;
+  font-size: 0.95rem;
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
