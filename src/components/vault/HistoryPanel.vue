@@ -27,6 +27,7 @@ import { useHistory } from '../../composables/vault/useHistory.js'
 import { getLiveTabs } from '../../composables/vault/useEditorTabs.js'
 import { useToast } from '../../composables/useToast.js'
 import { WORKTREE_REF, type CommitRecord } from '../../lib/history-api.js'
+import { suggestCommitMessage } from '../../lib/ai-api.js'
 import EmptyState from './EmptyState.vue'
 
 const props = defineProps<{
@@ -68,12 +69,49 @@ const selectedCount = computed(() => selected.value.size)
 const canCommit = computed(
   () => selectedCount.value > 0 && h.commitMessage.value.trim().length > 0 && !h.busy.value,
 )
+const generatingCommitMessage = ref(false)
+const canGenerateCommitMessage = computed(
+  () => selectedCount.value > 0 && !h.busy.value && !generatingCommitMessage.value,
+)
+
+function diffTextForPrompt(): string {
+  const diff = h.currentDiff.value
+  if (!diff) return ''
+  return diff.ops.map((op) => {
+    const prefix = op.op === 'add' ? '+' : op.op === 'remove' ? '-' : ' '
+    const oldLine = op.oldLine === null ? '' : String(op.oldLine)
+    const newLine = op.newLine === null ? '' : String(op.newLine)
+    return `${prefix} old:${oldLine} new:${newLine} ${op.text}`
+  }).join('\n')
+}
 
 async function onCommit() {
   if (!canCommit.value) return
   const r = await h.createCommit([...selected.value], h.commitMessage.value)
   if (r) {
     h.commitMessage.value = ''
+  }
+}
+
+async function onGenerateCommitMessage() {
+  if (!canGenerateCommitMessage.value) return
+  generatingCommitMessage.value = true
+  try {
+    const paths = [...selected.value]
+    const selectedPath = h.selectedFile.value && paths.includes(h.selectedFile.value)
+      ? h.selectedFile.value
+      : paths[0]
+    const { message } = await suggestCommitMessage({
+      paths,
+      selectedPath,
+      diffText: selectedPath === h.selectedFile.value ? diffTextForPrompt() : undefined,
+    })
+    h.commitMessage.value = message
+    toast.success('AI generated a commit message')
+  } catch (err) {
+    toast.error(`AI commit message failed: ${(err as Error).message}`)
+  } finally {
+    generatingCommitMessage.value = false
   }
 }
 
@@ -221,14 +259,24 @@ onMounted(async () => {
     <template v-else>
       <!-- Commit composer -->
       <div class="history-composer">
-        <textarea
-          ref="composerEl"
-          v-model="h.commitMessage.value"
-          rows="1"
-          class="history-composer-input"
-          placeholder="Commit message…"
-          @keydown.enter.exact.prevent="onCommit"
-        />
+        <div class="history-composer-input-wrap">
+          <textarea
+            ref="composerEl"
+            v-model="h.commitMessage.value"
+            rows="1"
+            class="history-composer-input"
+            placeholder="Commit message…"
+            @keydown.enter.exact.prevent="onCommit"
+          />
+          <button
+            type="button"
+            class="history-ai-message-btn"
+            :disabled="!canGenerateCommitMessage"
+            :title="selectedCount === 0 ? 'Select files first' : 'Generate commit message with AI'"
+            aria-label="Generate commit message with AI"
+            @click="onGenerateCommitMessage"
+          >{{ generatingCommitMessage ? '…' : 'AI' }}</button>
+        </div>
         <button
           type="button"
           class="history-commit-btn"

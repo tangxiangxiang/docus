@@ -21,6 +21,7 @@ import * as messages from './messages.js'
 import { runChat, type ChatEvent } from './chat.js'
 import { runSplit } from './split.js'
 import { generateSlug } from './slug.js'
+import { generateCommitMessage } from './commitMessage.js'
 import { ChatError } from './errors.js'
 import { resolveAiRuntimeConfig } from './llm.js'
 import {
@@ -50,6 +51,14 @@ function isValidHttpUrl(value: string): boolean {
 function isValidModelName(value: string): boolean {
   if (!value) return true
   return /^[A-Za-z0-9._:-]+$/.test(value)
+}
+
+const MAX_COMMIT_MESSAGE_PATHS = 20
+const MAX_COMMIT_NOTE_CHARS = 2_000
+const MAX_COMMIT_DIFF_CHARS = 8_000
+
+function contentPathForHistoryPath(p: string): string {
+  return p.endsWith('.md') ? p.slice(0, -3) : p
 }
 
 // Tool-using assistant turns persist as a JSON envelope in the
@@ -211,6 +220,49 @@ ai.post('/slug', async (c) => {
       return bad(c, err.message || 'llm-error', 502)
     }
     return bad(c, 'unknown', 500)
+  }
+})
+
+// ---- /commit-message ----
+// Lightweight helper for the History composer. It does not create a chat
+// session; it reads the selected notes and returns a single subject line.
+ai.post('/commit-message', async (c) => {
+  const body = await c.req.json().catch(() => null) as
+    | { paths?: unknown; selectedPath?: unknown; diffText?: unknown }
+    | null
+  if (!body || !Array.isArray(body.paths)) return bad(c, 'paths array required')
+  const paths = body.paths
+    .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+    .map((p) => p.trim())
+    .slice(0, MAX_COMMIT_MESSAGE_PATHS)
+  if (paths.length === 0) return bad(c, 'at least one path required')
+  const selectedPath = typeof body.selectedPath === 'string' ? body.selectedPath.trim() : undefined
+  const diffText = typeof body.diffText === 'string'
+    ? body.diffText.slice(0, MAX_COMMIT_DIFF_CHARS)
+    : undefined
+
+  try {
+    const noteContext = await Promise.all(paths.map(async (p) => {
+      const abs = filePathFor(contentPathForHistoryPath(p))
+      const raw = await fs.readFile(abs, 'utf8').catch(() => '')
+      return { path: p, raw: raw.slice(0, MAX_COMMIT_NOTE_CHARS) }
+    }))
+    const message = await generateCommitMessage({
+      paths,
+      selectedPath,
+      diffText,
+      noteContext,
+      signal: c.req.raw.signal,
+    })
+    return c.json({ message })
+  } catch (err) {
+    if (err instanceof ChatError) {
+      if (err.reason === 'no-api-key') return bad(c, 'AI not configured', 503)
+      if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499 as any)
+      if (err.reason === 'parse-failed') return bad(c, err.message, 502)
+      return bad(c, err.message || 'llm-error', 502)
+    }
+    return bad(c, (err as Error).message || 'unknown', 500)
   }
 })
 

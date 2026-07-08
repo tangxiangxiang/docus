@@ -177,6 +177,17 @@ export async function suggestSlug(input: {
   }))
 }
 
+export async function suggestCommitMessage(input: {
+  paths: string[]
+  selectedPath?: string
+  diffText?: string
+}): Promise<{ message: string }> {
+  return jsonOrThrow<{ message: string }>(await fetch('/api/ai/commit-message', {
+    method: 'POST',
+    ...jsonBody(input),
+  }))
+}
+
 /**
  * Open a streaming chat request and yield typed ChatEvent objects.
  * Yields exactly one {type: 'error'} event and returns on any HTTP

@@ -502,46 +502,58 @@ main.container {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
+  padding: 0 12px;
   height: 36px;
   box-sizing: border-box;
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
   color: var(--vs-text-2);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-size: 0.8rem;
+  font-weight: 500;
 }
 .history-subtitle {
   font-weight: 400;
   color: var(--vs-text-3);
   font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
 }
 .history-empty,
 .history-empty-inline {
-  padding: 12px 10px;
+  padding: 14px 12px;
   font-size: 0.8rem;
   color: var(--vs-text-3);
+}
+.history-empty-inline {
+  font-style: italic;
+  background: color-mix(in srgb, var(--vs-bg-1) 88%, var(--vs-bg-2));
 }
 
 .history-composer {
   flex-shrink: 0;
-  padding: 8px 10px 10px;
+  padding: 10px 10px 12px;
   border-bottom: 1px solid var(--vs-border);
-  background: var(--vs-bg-1);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--vs-bg-2) 46%, var(--vs-bg-1)),
+    var(--vs-bg-1)
+  );
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
+}
+.history-composer-input-wrap {
+  position: relative;
+  min-width: 0;
 }
 .history-composer-input {
   display: block;
   width: 100%;
   box-sizing: border-box;
   resize: none;
-  background: var(--vs-bg-2);
+  background: color-mix(in srgb, var(--vs-bg-2) 82%, var(--vs-bg-1));
   border: 1px solid var(--vs-border);
-  border-radius: 8px;
-  padding: 10px 12px 8px;
+  border-radius: 7px;
+  padding: 10px 46px 8px 12px;
   font-family: var(--sans);
   font-size: 0.85rem;
   color: var(--vs-text-1);
@@ -554,27 +566,54 @@ main.container {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .history-composer-input:focus {
-  border-color: var(--vs-text-3);
+  border-color: color-mix(in srgb, var(--vs-accent) 62%, var(--vs-border));
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-accent) 18%, transparent);
 }
 .history-composer-input::-webkit-scrollbar { width: 0; background: transparent; }
 .history-composer-input::placeholder { color: var(--vs-text-3); }
+.history-ai-message-btn {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  height: 28px;
+  min-width: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--vs-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--vs-accent) 8%, var(--vs-bg-2));
+  color: var(--vs-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
+}
+.history-ai-message-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--vs-accent) 18%, var(--vs-bg-2));
+  border-color: var(--vs-accent);
+  color: var(--vs-text-1);
+}
+.history-ai-message-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
 .history-commit-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   height: 32px;
   padding: 0 12px;
-  border-radius: 8px;
+  border-radius: 7px;
   border: 0;
   background: var(--vs-accent);
   color: #fff;
   font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s, opacity 0.12s;
+  transition: background 0.12s, opacity 0.12s, transform 0.12s;
 }
 .history-commit-btn:hover:not(:disabled) { background: var(--vs-accent-hover); }
+.history-commit-btn:active:not(:disabled) { transform: translateY(1px); }
 .history-commit-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .history-section {
@@ -600,13 +639,14 @@ main.container {
 .history-section-timeline { flex: 1 1 auto; min-height: 220px; }
 .history-section-title {
   flex-shrink: 0;
-  padding: 6px 10px;
+  padding: 7px 10px 6px;
   font-size: 0.7rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--vs-text-3);
-  background: var(--vs-bg-1);
+  background: var(--vs-bg-2);
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 70%, transparent);
 }
 .history-dirty,
 .history-timeline {
@@ -620,15 +660,26 @@ main.container {
 .history-dirty-row {
   display: grid;
   grid-template-columns: auto 1fr auto;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
+  min-height: 30px;
   padding: 4px 10px;
   font-size: 0.8rem;
   color: var(--vs-text-1);
   cursor: pointer;
+  border-left: 2px solid transparent;
 }
 .history-dirty-row:hover { background: var(--vs-hover-bg); }
-.history-dirty-row.selected { background: color-mix(in srgb, var(--vs-accent) 10%, transparent); }
+.history-dirty-row.selected {
+  background: var(--vs-active-bg);
+  border-left-color: var(--vs-accent);
+}
+.history-dirty-row input[type='checkbox'] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--vs-accent);
+}
 .history-dirty-path {
   white-space: nowrap;
   overflow: hidden;
@@ -642,39 +693,48 @@ main.container {
   color: var(--vs-text-3);
   min-width: 12px;
   text-align: right;
+  font-weight: 600;
 }
 
 .history-commit-row {
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--vs-border);
+  padding: 8px 10px 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 72%, transparent);
   cursor: pointer;
   font-size: 0.8rem;
+  border-left: 2px solid transparent;
+  transition: background 0.12s, border-left-color 0.12s;
 }
 .history-commit-row:hover { background: var(--vs-hover-bg); }
+.history-commit-row:focus-within {
+  background: color-mix(in srgb, var(--vs-accent) 7%, transparent);
+}
 .history-commit-row-head {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
 }
 .history-commit-sha {
   font-family: var(--mono);
   font-size: 0.7rem;
-  color: var(--vs-text-3);
+  color: var(--vs-text-2);
 }
 .history-commit-when {
   font-size: 0.7rem;
   color: var(--vs-text-3);
+  white-space: nowrap;
 }
 .history-commit-subject {
   color: var(--vs-text-1);
+  font-weight: 500;
+  line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .history-commit-files {
-  margin-top: 4px;
+  margin-top: 6px;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -682,10 +742,10 @@ main.container {
 .history-commit-file-chip {
   display: inline-block;
   max-width: 100%;
-  padding: 1px 6px;
+  padding: 1px 6px 2px;
   border-radius: 4px;
-  background: var(--vs-bg-3);
-  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--vs-bg-2) 78%, var(--vs-bg-1));
+  border: 1px solid color-mix(in srgb, var(--vs-border) 68%, transparent);
   color: var(--vs-text-2);
   font-family: var(--mono);
   font-size: 0.68rem;
@@ -701,21 +761,23 @@ main.container {
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 .history-commit-file-chip:hover {
-  background: color-mix(in srgb, var(--vs-accent) 18%, var(--vs-bg-3));
+  background: color-mix(in srgb, var(--vs-accent) 14%, var(--vs-bg-2));
+  border-color: color-mix(in srgb, var(--vs-accent) 42%, var(--vs-border));
   color: var(--vs-text-1);
 }
 .history-commit-file-chip.selected {
-  background: color-mix(in srgb, var(--vs-accent) 30%, var(--vs-bg-3));
+  background: color-mix(in srgb, var(--vs-accent) 22%, var(--vs-bg-2));
   border-color: var(--vs-accent);
   color: var(--vs-text-1);
 }
 .history-error {
   flex-shrink: 0;
-  padding: 8px 10px;
-  background: color-mix(in srgb, #ef4444 12%, transparent);
+  padding: 8px 12px;
+  background: color-mix(in srgb, #ef4444 12%, var(--vs-bg-1));
   color: var(--vs-text-1);
   font-size: 0.78rem;
   border-top: 1px solid var(--vs-border);
+  border-left: 2px solid #ef4444;
 }
 
 /* === DiffView === */

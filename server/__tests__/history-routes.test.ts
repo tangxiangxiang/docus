@@ -248,6 +248,15 @@ describe('GET /api/history/diff', () => {
     expect(body.diff.stats.removed).toBe(0)
   })
 
+  it('handles a root commit diff via sha~1 without rejecting the ref', async () => {
+    await write('first.md', 'one\ntwo\n')
+    const c1 = (await (await call('POST', '/commits', { paths: ['first.md'], message: 'add first' })).json()) as { sha: string }
+    const r = await call('GET', `/diff?path=first.md&old=${c1.sha}~1&new=${c1.sha}`)
+    expect(r.status).toBe(200)
+    const body = await r.json() as { diff: { stats: { added: number; removed: number; equal: number } } }
+    expect(body.diff.stats).toEqual({ added: 2, removed: 0, equal: 0 })
+  })
+
   it('returns 400 when refs are missing', async () => {
     const r = await call('GET', '/diff?path=x')
     expect(r.status).toBe(400)

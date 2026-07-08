@@ -5,6 +5,7 @@ const FILE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.md$/
 // Git object ids are SHA-1 today. If the vault repo switches to SHA-256,
 // raise the upper bound from 40 to 64.
 const SHA_RE = /^[0-9a-f]{7,40}$/i
+const SHA_ANCESTOR_RE = /^[0-9a-f]{7,40}~[1-9][0-9]*$/i
 const HEAD_RE = /^HEAD(?:~[1-9][0-9]*)?$/
 
 export const MANAGED_HISTORY_DOTFILES = new Set(['.gitattributes', '.gitignore'])
@@ -29,7 +30,7 @@ export function isValidHistoryPath(filePath: string): boolean {
 export function isValidHistoryRef(ref: string, opts: { allowWorktree?: boolean } = {}): boolean {
   if (!ref || ref.includes('\0')) return false
   if (opts.allowWorktree && ref === 'WORKTREE') return true
-  return SHA_RE.test(ref) || HEAD_RE.test(ref)
+  return SHA_RE.test(ref) || SHA_ANCESTOR_RE.test(ref) || HEAD_RE.test(ref)
 }
 
 export function validateHistoryPaths(value: unknown): string[] | null {
