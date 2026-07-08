@@ -128,6 +128,11 @@ describe('useEditorTabs', () => {
     toastCalls.length = 0
     confirmResolve = null
     confirmAnswer.value = null
+    // localStorage carries persisted tab state across tests — clear it
+    // so each test starts from a known-empty session. The composable
+    // reads from it in onMounted (restore) and writes to it via a
+    // debounced watcher (persist).
+    localStorage.clear()
     // The composable's onMounted calls refresh() → fetch('/api/tree') +
     // fetch('/api/posts'). Tests that need a richer API stub override
     // fetch *after* this default. We can't put a "no-op" stub in afterEach
@@ -758,5 +763,225 @@ describe('useEditorTabs — file-change bus', () => {
     await flushPromises()
     expect(h.tabs.value[0].raw).toBe('E')
     expect(confirmResolve).toBeNull()
+  })
+})
+
+// --- tab persistence ------------------------------------------------------
+//
+// On refresh the composable reads the previous session's tab set from
+// localStorage and restores it. The default beforeEach fetch stub
+// returns [] for tree/posts and throws for anything else, so each
+// test here overrides it with per-path getPost handlers.
+
+const PERSIST_KEY = 'docus:tabs:v1'
+
+function stubFetchForPaths(paths: Record<string, unknown>): void {
+  vi.stubGlobal('fetch', stubFetch({
+    'GET /api/tree': () => [],
+    'GET /api/posts': () => [],
+    ...Object.fromEntries(
+      Object.entries(paths).map(([p, raw]) => [
+        `GET /api/posts/${p}`,
+        () => ({ path: p, raw: raw as string, content: raw as string, frontmatter: { title: p }, size: 1, mtime: 0 }),
+      ]),
+    ),
+  }))
+}
+
+describe('useEditorTabs — tab persistence', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    // Reset toast capture here too — this nested describe doesn't
+    // inherit the outer describe's beforeEach.
+    toastCalls.length = 0
+  })
+
+  it('persists the tab set + active path after openPost (debounced)', async () => {
+    stubFetchForPaths({ a: 'A', b: 'B' })
+    const h = await setup()
+    await h.openPost('a')
+    await flushPromises()
+    await h.openPost('b')
+    await flushPromises()
+    // debouncedPersist has a 100ms delay; advance and flush.
+    await new Promise((r) => setTimeout(r, 150))
+    const raw = localStorage.getItem(PERSIST_KEY)
+    expect(raw).not.toBeNull()
+    const data = JSON.parse(raw!)
+    expect(data.v).toBe(1)
+    expect(data.paths).toEqual(['a', 'b'])
+    expect(data.active).toBe('b')
+  })
+
+  it('removes the path from persistence when a tab is closed', async () => {
+    stubFetchForPaths({ a: 'A', b: 'B' })
+    const h = await setup()
+    await h.openPost('a')
+    await flushPromises()
+    await h.openPost('b')
+    await flushPromises()
+    await h.closeTab('a')
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 150))
+    const data = JSON.parse(localStorage.getItem(PERSIST_KEY)!)
+    expect(data.paths).toEqual(['b'])
+    expect(data.active).toBe('b')
+  })
+
+  it('writes an empty session when the last tab is closed', async () => {
+    stubFetchForPaths({ a: 'A' })
+    const h = await setup()
+    await h.openPost('a')
+    await flushPromises()
+    await h.closeTab('a')
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 150))
+    const data = JSON.parse(localStorage.getItem(PERSIST_KEY)!)
+    expect(data.paths).toEqual([])
+    expect(data.active).toBeNull()
+  })
+
+  it('restores the tab set from localStorage on mount', async () => {
+    stubFetchForPaths({ a: 'A', b: 'B' })
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['a', 'b'], active: 'a',
+    }))
+    const h = await setup()
+    await flushPromises()
+    expect(h.tabs.value.map((t) => t.path)).toEqual(['a', 'b'])
+    expect(h.tabs.value[0].raw).toBe('A')
+    expect(h.tabs.value[1].raw).toBe('B')
+    expect(h.activePath.value).toBe('a')
+  })
+
+  it('falls back to the first restored tab when the saved active path no longer exists', async () => {
+    stubFetchForPaths({ a: 'A', b: 'B' })
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['a', 'b'], active: 'c', // c never persisted as a tab
+    }))
+    const h = await setup()
+    await flushPromises()
+    expect(h.tabs.value.map((t) => t.path)).toEqual(['a', 'b'])
+    expect(h.activePath.value).toBe('a')
+  })
+
+  it('drops paths that 404 on restore and reports them in a single toast', async () => {
+    stubFetchForPaths({ a: 'A' })
+    // b is NOT stubbed → fetch throws "Unexpected fetch" → treated as missing.
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['a', 'b'], active: 'b',
+    }))
+    const h = await setup()
+    await flushPromises()
+    expect(h.tabs.value.map((t) => t.path)).toEqual(['a'])
+    expect(h.activePath.value).toBe('a')
+    const toasts = toastCalls.filter((t) => t.type === 'info')
+    expect(toasts.length).toBe(1)
+    expect(toasts[0].message).toContain('1 个标签页已不存在')
+    expect(toasts[0].message).toContain('· b')
+  })
+
+  it('caps the restored set at TAB_HARD_LIMIT so the UI never overflows', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => `f${i}`).reduce(
+      (acc, p) => { acc[p] = 'X'; return acc },
+      {} as Record<string, unknown>,
+    )
+    stubFetchForPaths(many)
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: Object.keys(many), active: 'f0',
+    }))
+    const h = await setup()
+    await flushPromises()
+    expect(h.tabs.value.length).toBe(9)
+  })
+
+  it('lists at most 3 missing paths in the toast, with an overflow count', async () => {
+    // 5 missing paths; only the first 3 should appear by name.
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['m1', 'm2', 'm3', 'm4', 'm5'], active: 'm1',
+    }))
+    // No per-path handlers — all 5 will 404.
+    const h = await setup()
+    await flushPromises()
+    expect(h.tabs.value.length).toBe(0)
+    const toasts = toastCalls.filter((t) => t.type === 'info')
+    expect(toasts.length).toBe(1)
+    expect(toasts[0].message).toContain('5 个标签页已不存在')
+    expect(toasts[0].message).toContain('· m1')
+    expect(toasts[0].message).toContain('· m2')
+    expect(toasts[0].message).toContain('· m3')
+    expect(toasts[0].message).not.toContain('· m4')
+    expect(toasts[0].message).toContain('还有 2 个')
+  })
+
+  it('treats corrupt JSON in localStorage as empty (no crash)', async () => {
+    stubFetchForPaths({ a: 'A' })
+    localStorage.setItem(PERSIST_KEY, '{not valid json')
+    const h = await setup()
+    await flushPromises()
+    expect(h.tabs.value.length).toBe(0)
+    expect(h.activePath.value).toBeNull()
+  })
+
+  it('ignores entries with the wrong schema version', async () => {
+    stubFetchForPaths({ a: 'A' })
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 999, paths: ['a'], active: 'a', // future version → drop
+    }))
+    const h = await setup()
+    await flushPromises()
+    expect(h.tabs.value.length).toBe(0)
+  })
+
+  it('keeps restored tabs when a deep-link override opens a different path', async () => {
+    stubFetchForPaths({ a: 'A', b: 'B', c: 'C' })
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['a', 'b'], active: 'b',
+    }))
+    // Stand up a router pointed at /vault/c BEFORE mounting.
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/vault', component: { template: '<div/>' } },
+        { path: '/vault/:pathMatch(.*)*', component: { template: '<div/>' } },
+      ],
+    })
+    router.push('/vault/c').catch(() => {})
+    await router.isReady()
+    // Use `harness` (not `h`) here — `h` shadows the module-level
+    // hyperscript import and the render closure would hit a TDZ when
+    // mount() fires it before this binding initializes. The standard
+    // helper sidesteps this by mounting inside its own scope; an
+    // inline mount doesn't, so we have to pick a non-colliding name.
+    let captured: Harness | null = null
+    const Comp = defineComponent({
+      setup() {
+        const selectPanel = vi.fn()
+        const togglePreview = vi.fn()
+        const api = useEditorTabs({ selectPanel, togglePreview })
+        captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'togglePreview'>), selectPanel, togglePreview }
+        return () => h('div')
+      },
+    })
+    mount(Comp, { global: { plugins: [router] } })
+    await nextTick()
+    await Promise.resolve()
+    await flushPromises()
+    const harness = captured!
+    // a + b restored from persistence, then c opened via deep-link.
+    expect(harness.tabs.value.map((t) => t.path).sort()).toEqual(['a', 'b', 'c'])
+    // Deep-link wins for active.
+    expect(harness.activePath.value).toBe('c')
+  })
+
+  it('does nothing on mount when localStorage is empty', async () => {
+    stubFetchForPaths({ a: 'A' })
+    // localStorage cleared by outer beforeEach; just mount.
+    const h = await setup()
+    await flushPromises()
+    expect(h.tabs.value.length).toBe(0)
+    expect(h.activePath.value).toBeNull()
+    // No missing-tab toast either.
+    expect(toastCalls.filter((t) => t.type === 'info')).toEqual([])
   })
 })

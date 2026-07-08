@@ -63,6 +63,80 @@ import { isSlugSegment, toLocalSlug } from '../../lib/slug'
 const TAB_SOFT_LIMIT = 6
 const TAB_HARD_LIMIT = 9
 
+// ---- tab persistence ----
+//
+// On refresh, restore the user's previous tab set + active tab from
+// localStorage. This matches the VSCode / IDEA mental model: refresh ≠
+// lose workspace. We persist the bare path list + active — content is
+// already covered by the auto-save debounce, and scroll position is out
+// of scope for v1.
+//
+// Stale paths (file deleted/renamed while the app was closed) are
+// filtered out at load time via a per-path getPost probe. Missing
+// paths surface as one aggregate toast (listing up to 3 + overflow
+// count) so the user knows the workspace shifted, instead of silent
+// drops.
+//
+// The key is versioned (`:v1`) so future schema changes can detect old
+// data and ignore it cleanly without crashing the load. We degrade
+// silently on localStorage errors (private mode, quota) — persistence
+// is a nice-to-have, not load-bearing.
+
+const TAB_PERSIST_KEY = 'docus:tabs:v1'
+const TAB_PERSIST_MAX = 20
+const TAB_PERSIST_DEBOUNCE_MS = 100
+
+interface PersistedTabs {
+  v: number
+  paths: string[]
+  active: string | null
+}
+
+function readPersistedTabs(): PersistedTabs | null {
+  let raw: string | null
+  try {
+    raw = localStorage.getItem(TAB_PERSIST_KEY)
+  } catch {
+    return null
+  }
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (
+      typeof parsed === 'object' && parsed !== null
+      && (parsed as { v?: unknown }).v === 1
+      && Array.isArray((parsed as { paths?: unknown }).paths)
+    ) {
+      const paths = ((parsed as { paths: unknown[] }).paths)
+        .filter((p): p is string => typeof p === 'string')
+        .slice(0, TAB_PERSIST_MAX)
+      const rawActive = (parsed as { active?: unknown }).active
+      return {
+        v: 1,
+        paths,
+        active: typeof rawActive === 'string' ? rawActive : null,
+      }
+    }
+  } catch {
+    // Corrupt JSON — treat as empty.
+  }
+  return null
+}
+
+function writePersistedTabs(tabs: Tab[], active: string | null) {
+  try {
+    const data: PersistedTabs = {
+      v: 1,
+      paths: tabs.map((t) => t.path).slice(0, TAB_PERSIST_MAX),
+      active,
+    }
+    localStorage.setItem(TAB_PERSIST_KEY, JSON.stringify(data))
+  } catch {
+    // localStorage may throw (private mode, quota). Persistence is a
+    // nice-to-have, not load-bearing — silently degrade.
+  }
+}
+
 // ---- live tabs publish ----
 //
 // useEditorTabs is a per-mount composable (it takes `selectPanel` as a
@@ -226,6 +300,44 @@ export function useEditorTabs(opts: {
     }
     await refresh()
   }
+
+  // Restore a single tab during startup without going through
+  // openPost. The differences are intentional:
+  //   - No hard-cap check (we slice to the cap before calling, so
+  //     we can never exceed it).
+  //   - No soft-limit toast (we're restoring, not opening — the
+  //     user already accepted this count by setting it last session).
+  //   - No dirty-confirm (fresh mount, nothing is dirty yet).
+  //   - No router.replace (we sync the URL once at the end of the
+  //     restore loop, not per tab).
+  //   - On getPost failure we silently drop the tab (and report the
+  //     missing paths in one toast). openPost instead surfaces a
+  //     visible loadError card, which would be noisy on startup.
+  async function restoreOneTab(path: string): Promise<boolean> {
+    if (tabs.value.find((t) => t.path === path)) return true
+    const tab = makeEmptyTab(path)
+    tabs.value.push(tab)
+    try {
+      const post = await getPost(path)
+      tab.raw = post.raw
+      tab.originalRaw = post.raw
+      tab.title = (post.frontmatter.title as string) || path
+      tab.serverMtime = post.mtime
+      tab.loading = false
+      return true
+    } catch {
+      const idx = tabs.value.findIndex((t) => t.path === path)
+      if (idx !== -1) tabs.value.splice(idx, 1)
+      return false
+    }
+  }
+
+  // Debounced write of the persisted tab set. Watched (below) — no
+  // need to call from each mutation site.
+  const debouncedPersist = useDebounceFn(
+    () => writePersistedTabs(tabs.value, activePath.value),
+    TAB_PERSIST_DEBOUNCE_MS,
+  )
 
   async function closeTab(path: string, opts?: { skipDirtyCheck?: boolean }): Promise<void> {
     const idx = tabs.value.findIndex((t) => t.path === path)
@@ -423,13 +535,51 @@ export function useEditorTabs(opts: {
     }
   }
 
-  // Initial load: refresh the tree + posts, then if the URL already has a
-  // path, open that file. The watch below (no `immediate: true`) handles
-  // subsequent URL changes; we don't want the watch to also fire on
-  // mount or we'd double-open.
+  // Initial load: refresh the tree + posts, then restore any tabs
+  // persisted from the previous session, then handle a deep-link
+  // override if the URL specifies a path. Order matters:
+  //   1. refresh() — needed for getPost calls inside restoreOneTab.
+  //   2. Restore persisted tabs. Each path is probed via getPost so
+  //      a deleted/renamed file silently drops out (and is reported
+  //      in one aggregate toast). Restore is capped at TAB_HARD_LIMIT
+  //      to match the runtime cap, so we never end up with more tabs
+  //      than the UI accepts.
+  //   3. Deep-link override. If the URL points to a different path
+  //      than the restored active, open it (additive — the restored
+  //      tabs stay). If the deep-link points to one of the restored
+  //      tabs, openPost just reactivates it (no duplicate tab).
+  // The routePath watcher (no `immediate: true`) handles subsequent
+  // URL changes; we don't want it to also fire on mount or we'd
+  // double-open.
   onMounted(async () => {
     await refresh()
-    if (routePath.value) {
+
+    const saved = readPersistedTabs()
+    if (saved && saved.paths.length > 0) {
+      const missing: string[] = []
+      const toRestore = saved.paths.slice(0, TAB_HARD_LIMIT)
+      for (const p of toRestore) {
+        const ok = await restoreOneTab(p)
+        if (!ok) missing.push(p)
+      }
+      if (tabs.value.length > 0) {
+        // Prefer the saved active if it survived restore; otherwise
+        // fall back to the first restored tab (left-to-right reading
+        // order matches the persisted order).
+        const target = saved.active && tabs.value.some((t) => t.path === saved.active)
+          ? saved.active
+          : tabs.value[0].path
+        activePath.value = target
+        router.replace(pathToUrl(target))
+      }
+      if (missing.length > 0) {
+        const sample = missing.slice(0, 3).map((p) => `· ${p}`).join('\n')
+        const more = missing.length > 3 ? `\n(还有 ${missing.length - 3} 个)` : ''
+        toast.info(`${missing.length} 个标签页已不存在:\n${sample}${more}`)
+      }
+    }
+
+    if (routePath.value && routePath.value !== activePath.value) {
       await openPost(routePath.value)
     }
     // Subscribe to the file-change bus so AI tool writes/deletes/
@@ -450,6 +600,18 @@ export function useEditorTabs(opts: {
       { flush: 'post' },
     )
   })
+
+  // Persist on every (debounced) tab/active change. Watching the
+  // public state covers openPost, closeTab, closeMany, selectTab,
+  // and applyExternalChange without each call site needing its own
+  // wiring. `deep: false` is enough because the mutations we care
+  // about are array-level (push/splice) and `activePath = ...`,
+  // both of which swap the ref's value.
+  watch(
+    [tabs, activePath],
+    () => { debouncedPersist() },
+    { deep: false },
+  )
 
   // Apply one external file-change event. Mutates the tabs list in
   // place (the refs are already reactive). Awaits the confirm
