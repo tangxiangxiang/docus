@@ -114,7 +114,6 @@ const colors = computed(() => {
     bg: dark ? '#121212' : '#F7F7F4',
     cardFill: dark ? 'rgba(28,28,26,0.92)' : 'rgba(255,255,255,0.88)',
     cardStroke: dark ? 'rgba(255,255,255,0.14)' : 'rgba(28,25,23,0.12)',
-    cardAccent: dark ? '#7DD3C7' : '#0F766E',
     nodeHalo: dark ? 'rgba(125,211,199,0.16)' : 'rgba(15,118,110,0.11)',
     nodeShadow: dark ? 'rgba(0,0,0,0.42)' : 'rgba(16,24,40,0.14)',
     /* Link stroke — deliberately low-alpha so the line
@@ -135,6 +134,7 @@ let graph: ForceGraphInstance | null = null
 let resizeObserver: ResizeObserver | null = null
 const loadError = ref<string | null>(null)
 let disposed = false
+let fitTimer: ReturnType<typeof window.setTimeout> | null = null
 
 function roundedRect(
   ctx: CanvasRenderingContext2D,
@@ -187,18 +187,21 @@ function cardMetrics(
   const cardMaxW = 168 / globalScale
   const cardH = (30 + Math.min(8, Math.max(0, node.val - 8)) * 0.45) / globalScale
   const radius = 7 / globalScale
-  const accentW = 3 / globalScale
   const metaReserve = node.val > 11 ? 18 / globalScale : 0
   ctx.font = `600 ${fontSize}px Inter, "Noto Sans SC", sans-serif`
   const measuredTitleW = ctx.measureText(node.title).width
-  const cardW = Math.min(cardMaxW, Math.max(cardMinW, measuredTitleW + padX * 2 + accentW + metaReserve))
+  const cardW = Math.min(cardMaxW, Math.max(cardMinW, measuredTitleW + padX * 2 + metaReserve))
   const cardX = x - cardW / 2
   const cardY = y - cardH / 2
-  const title = fitText(ctx, node.title, cardW - padX * 2 - accentW - metaReserve)
-  return { x, y, fontSize, metaFontSize, padX, cardW, cardH, cardX, cardY, radius, accentW, title }
+  const title = fitText(ctx, node.title, cardW - padX * 2 - metaReserve)
+  return { x, y, fontSize, metaFontSize, padX, cardW, cardH, cardX, cardY, radius, title }
 }
 
 function destroyGraph() {
+  if (fitTimer !== null) {
+    window.clearTimeout(fitTimer)
+    fitTimer = null
+  }
   resizeObserver?.disconnect()
   resizeObserver = null
   graph?._destructor()
@@ -221,7 +224,7 @@ function installCanvasCallback(g: ForceGraphInstance) {
        already derived from `x`/`y` inside cardMetrics, so we don't
        pull `x` out here — only `y` is referenced directly (the
        title sits one pixel above center, the val badge one below). */
-    const { y, fontSize, metaFontSize, padX, cardW, cardH, cardX, cardY, radius, accentW, title } =
+    const { y, fontSize, metaFontSize, padX, cardW, cardH, cardX, cardY, radius, title } =
       cardMetrics(node, ctx, globalScale)
 
     ctx.beginPath()
@@ -250,18 +253,13 @@ function installCanvasCallback(g: ForceGraphInstance) {
     ctx.strokeStyle = c.cardStroke
     ctx.stroke()
 
-    ctx.beginPath()
-    roundedRect(ctx, cardX, cardY, accentW, cardH, radius)
-    ctx.fillStyle = c.cardAccent
-    ctx.fill()
-
     /* Title inside the card. We use the title (not the path) so
        the visual matches the in-editor display. */
     ctx.font = `600 ${fontSize}px Inter, "Noto Sans SC", sans-serif`
     ctx.fillStyle = c.text
     ctx.textAlign = 'left'
     ctx.textBaseline = 'middle'
-    ctx.fillText(title, cardX + padX + accentW, y - 1 / globalScale)
+    ctx.fillText(title, cardX + padX, y - 1 / globalScale)
 
     if (node.val > 11) {
       ctx.font = `500 ${metaFontSize}px Inter, "Noto Sans SC", sans-serif`
@@ -432,6 +430,10 @@ async function mountGraph() {
   const CHARGE_STRENGTH = -1
   const CENTER_STRENGTH = 0.3
   const FIXED_ZOOM = 50
+  const FIT_THRESHOLD = 6
+  const FIT_DELAY_MS = 180
+  const FIT_DURATION_MS = 450
+  const FIT_PADDING = 96
   const COOLDOWN_TIME_MS = 1500
   const COOLDOWN_TICKS = 150
   const charge = g.d3Force('charge') as { strength?: (n: number) => unknown } | null
@@ -463,19 +465,18 @@ async function mountGraph() {
     const select = getSelectPanelForClicks()
     if (select) select('files')
   })
-  /* Pin a fixed camera instead of calling force-graph's zoomToFit.
-     zoomToFit scales the simulation's bounding box to fill the
-     canvas, which for a 2-node edgeless graph (bbox ~1 sim unit
-     across) zooms the camera in so far that the two nodes end
-     up at the canvas edges — the user reads that as "they're far
-     apart" even though the simulation itself is converged at a
-     tight d=1.0. FIXED_ZOOM (1 sim unit = 50 canvas pixels)
-     gives a 2-node cluster of ~50px and a 30-node cluster of
-     ~1000px (fits 1280 with padding). The user can still wheel-
-     zoom in/out to inspect; the fixed zoom is just the resting
-     position. Camera is set synchronously — the simulation runs
-     via rAF, so by the first paint nodes have already moved off
-     their initial (0,0) coincidence point.
+  /* Initial camera strategy:
+     - Tiny graphs keep the fixed zoom. A 1-2 node graph has a
+       microscopic bbox, so zoomToFit would blow it up until the
+       cards sit at opposite edges of the canvas.
+     - Larger graphs get a delayed zoomToFit. The delay gives
+       d3-force a few ticks to separate initially-coincident nodes;
+       fitting after that early spread avoids the "opened too
+       zoomed-in, only seeing card edges" problem when the user has
+       many zettels.
+
+     The user can still wheel-zoom after the first fit; this only
+     chooses a sane opening frame.
 
      cooldownTime / cooldownTicks stop the simulation after 1.5s
      OR 150 ticks (whichever first) regardless of alpha decay.
@@ -490,14 +491,23 @@ async function mountGraph() {
      simulation hasn't actually been ticking (e.g. test env
      with rAF paused): the timer alone might never elapse
      relative to simulation time. */
-  g.zoom(FIXED_ZOOM)
-  g.centerAt(0, 0, 0)
   g.cooldownTime(COOLDOWN_TIME_MS)
   g.cooldownTicks(COOLDOWN_TICKS)
-  g.graphData({
+  const initialData = {
     nodes: graphData.value.nodes.slice(),
     links: graphData.value.links.slice(),
-  })
+  }
+  g.graphData(initialData)
+  if (initialData.nodes.length > FIT_THRESHOLD) {
+    fitTimer = window.setTimeout(() => {
+      fitTimer = null
+      if (disposed || graph !== g) return
+      g.zoomToFit(FIT_DURATION_MS, FIT_PADDING)
+    }, FIT_DELAY_MS)
+  } else {
+    g.zoom(FIXED_ZOOM)
+    g.centerAt(0, 0, 0)
+  }
 
   /* ResizeObserver keeps the canvas sized to the container. The
      editor-area can change width as the user drags the tree

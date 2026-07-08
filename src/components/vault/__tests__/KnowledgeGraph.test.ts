@@ -349,7 +349,7 @@ describe('KnowledgeGraph — wiring', () => {
     unmount()
   })
 
-  it('pins a fixed zoom + center so 2-node edgeless clusters render as a small cluster', async () => {
+  it('keeps a fixed zoom + center for tiny graphs so 2-node clusters stay compact', async () => {
     /* Even with the simulation-space equilibrium at d=2.58
        (charge=-1, center=0.3), a naive call to g.zoomToFit()
        would scale the bounding box to fill the canvas — 2 nodes
@@ -359,15 +359,29 @@ describe('KnowledgeGraph — wiring', () => {
        (1 sim unit = 50px) and centers at (0, 0) so a 2-node
        cluster renders as ~129px and a 30-node cluster renders
        as ~1000px (fits 1280px canvas with padding). This is the
-       regression guard: if someone swaps in a zoomToFit call
-       here, 2-node edgeless graphs go back to "two dots at the
-       canvas edges". */
+       regression guard: if someone uses zoomToFit for tiny graphs,
+       2-node edgeless graphs go back to "two dots at the canvas
+       edges". */
     setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     expect(graphs[0].zoom).toHaveBeenCalledWith(50)
     expect(graphs[0].centerAt).toHaveBeenCalledWith(0, 0, 0)
     expect(graphs[0].zoomToFit).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('fits larger graphs after initial force ticks so the opening view shows the whole graph', async () => {
+    setIndex({
+      paths: Array.from({ length: 8 }, (_, i) => `zettel/n${i}`),
+      outgoing: {},
+    })
+    const { unmount } = mountStandalone()
+    await settle()
+    expect(graphs[0].zoom).not.toHaveBeenCalledWith(50)
+    expect(graphs[0].zoomToFit).not.toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 250))
+    expect(graphs[0].zoomToFit).toHaveBeenCalledWith(450, 96)
     unmount()
   })
 
