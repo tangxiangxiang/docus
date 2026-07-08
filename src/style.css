@@ -2065,88 +2065,127 @@ main.container {
      to enlarge the hit area, so leave it click-transparent visually. */
 }
 
-/* Chevron button anchored to the TOC splitter. Two affordances for
-   collapsing / re-expanding the right rail:
-     1. The button itself — visible on hover, persists on focus.
-     2. Double-click on the splitter body (handled in VaultView).
-   The chevron sits centered vertically on the splitter, shifted left
-   so the arrow tip visually points at the rail (when expanded) or at
-   the screen edge (when collapsed — the splitter also gets pinned to
-   the right via grid order below). */
+/* Chevron button anchored to the TOC splitter. The visible-state
+   counterpart of .rail-expand-edge — same dimensions, same hover
+   treatment (accent color + accent glow), same reveal pattern
+   (opacity 0 by default, becomes visible when the parent splitter
+   is hovered or the button itself receives focus). The two read
+   as a matched pair: ‹ in the open state, › in the closed state,
+   both pointing at the column they affect. The chevron straddles
+   the 1px splitter, so its border-radius is symmetric (unlike the
+   rail-expand-edge which is flush with the screen edge and only
+   rounds the left side). */
 .vault .splitter-toc .splitter-chevron {
   position: absolute;
   top: 50%;
-  /* Shift toward the rail side (right of the splitter). When the rail
-     is collapsed, the splitter itself is moved to the right edge via
-     grid order, and the chevron's translate compensates so it still
-     sits flush against the visual "screen edge" the rail would
-     re-expand from. */
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 14px;
-  height: 28px;
+  width: 16px;
+  height: 32px;
   padding: 0;
   border: 1px solid var(--vs-border);
-  border-radius: 3px;
+  border-radius: 4px;
   background: var(--vs-bg-2);
   color: var(--vs-text-2);
-  font-size: 0.7rem;
+  font-size: 0.85rem;
   line-height: 1;
+  font-weight: 500;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.1s, color 0.1s, background 0.1s, border-color 0.1s;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   z-index: 1;
+  opacity: 0;
+  /* Symmetric glow (the rail-expand-edge uses an asymmetric 1px-right
+     shadow because it sits at the screen edge; the splitter chevron
+     is centered on the 1px splitter line, so a centered glow reads
+     more natural). */
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.25);
+  transition:
+    opacity 0.12s,
+    color 0.1s,
+    background 0.1s,
+    border-color 0.1s,
+    box-shadow 0.12s;
 }
 .vault .splitter-toc:hover .splitter-chevron,
-.vault .splitter-toc .splitter-chevron:focus-visible,
-.vault .splitter-toc .splitter-chevron.is-collapsed {
+.vault .splitter-toc .splitter-chevron:focus-visible {
   opacity: 1;
 }
-.vault .splitter-toc .splitter-chevron:hover {
-  color: var(--vs-text-1);
-  background: var(--vs-hover-bg);
+.vault .splitter-toc .splitter-chevron:hover,
+.vault .splitter-toc .splitter-chevron:focus-visible {
+  color: var(--vs-accent);
+  background: var(--vs-bg-3);
   border-color: var(--vs-accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--vs-accent) 35%, transparent);
 }
 /* Edge button that replaces the splitter when the right rail is
    collapsed. Pinned absolutely to the vault's right edge (NOT a
    grid child, see the VaultView template comment) so it doesn't
    create an extra grid column or wrap into the status-bar row.
-   `top: 50%` centers vertically. The button is always visible —
-   the collapsed rail is otherwise invisible, so the user has no
-   affordance to re-expand without it. */
+   Hidden by default — hover the right edge to reveal it. The
+   expanded ::before hit-area (16px wide) makes the 16px chevron
+   forgiving to aim at (32px total target), and keeps the visible
+   glyph small enough to disappear cleanly into the edge when
+   faded out. Discoverability loss is accepted: the user
+   explicitly chose to collapse the rail, so they know there was
+   something there to begin with. */
 .vault .rail-expand-edge {
   position: absolute;
   top: 50%;
-  /* -14px = half the button width, so its left edge sits flush with
-     the vault's right edge instead of overflowing it. Subtract the
-     24px status-bar row so the button doesn't sit on top of the
-     status bar visually. */
   right: 0;
   transform: translate(-50%, -50%);
-  width: 14px;
-  height: 28px;
+  width: 16px;
+  height: 32px;
   padding: 0;
   border: 1px solid var(--vs-border);
   border-left: 0;
-  border-radius: 3px 0 0 3px;
+  border-radius: 4px 0 0 4px;
   background: var(--vs-bg-2);
   color: var(--vs-text-2);
-  font-size: 0.7rem;
+  font-size: 0.85rem;
   line-height: 1;
+  font-weight: 500;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   z-index: 2;
-  transition: color 0.1s, background 0.1s, border-color 0.1s;
+  opacity: 0;
+  /* `box-shadow` on a 1px-wide button acts as a subtle 1px-thick
+     edge line when the button is invisible — a faint dark sliver
+     that hints "something lives here" without being a hard border.
+     On hover the shadow takes the accent color so the button feels
+     lifted, matching the chevron-on-splitter reveal in the
+     rail-visible state. */
+  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.3);
+  transition:
+    opacity 0.12s,
+    color 0.1s,
+    background 0.1s,
+    border-color 0.1s,
+    box-shadow 0.12s;
 }
-.vault .rail-expand-edge:hover {
-  color: var(--vs-text-1);
-  background: var(--vs-hover-bg);
+/* Invisible hit-area extension. The pseudo-element expands the
+   click target 16px leftward so the user can land anywhere in a
+   32px-wide column flush with the right edge. The ::before is
+   part of the button so :hover inherits cleanly without needing
+   an explicit :hover rule on the pseudo-element. */
+.vault .rail-expand-edge::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -16px;
+  width: 16px;
+}
+.vault .rail-expand-edge:hover,
+.vault .rail-expand-edge:focus-visible {
+  opacity: 1;
+  color: var(--vs-accent);
+  background: var(--vs-bg-3);
   border-color: var(--vs-accent);
+  box-shadow: 2px 0 6px color-mix(in srgb, var(--vs-accent) 35%, transparent);
 }
 
 /* EditorPane inside vault */
