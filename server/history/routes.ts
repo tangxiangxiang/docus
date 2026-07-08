@@ -22,6 +22,7 @@ import { computeFileDiff } from './diff.js'
 import { CONTENT_DIR } from '../paths.js'
 import {
   isManagedHistoryPath,
+  isValidCommitSha,
   isValidHistoryPath,
   isValidHistoryRef,
   validateHistoryPaths,
@@ -265,6 +266,30 @@ history.post('/commits', async (c) => {
   } catch (e: any) {
     const msg = e.message ?? 'commit failed'
     if (/nothing to commit/i.test(msg)) return bad(c, 'nothing to commit', 409)
+    return bad(c, msg, 500)
+  }
+})
+
+// ---- /drop ----
+// Remove the latest commit from history while keeping its file changes
+// in the working tree. This intentionally only accepts HEAD; dropping
+// older commits would require history rewriting across descendants.
+history.post('/drop', async (c) => {
+  if (!(await probeGit())) return bad(c, 'git not available', 503)
+  const body = await c.req.json().catch(() => null) as
+    | { sha?: unknown }
+    | null
+  if (!body) return bad(c, 'body required')
+  if (typeof body.sha !== 'string' || body.sha.length === 0) return bad(c, 'sha required')
+  if (!isValidCommitSha(body.sha)) return bad(c, 'invalid sha')
+  try {
+    await ensureRepo(repoRoot())
+    const r = await git.dropHeadCommit(repoRoot(), body.sha)
+    return c.json(r, 201)
+  } catch (e: any) {
+    const msg = e.message ?? 'drop failed'
+    if (/only the latest commit/i.test(msg)) return bad(c, msg, 409)
+    if (/bad revision|unknown revision|not a valid object name/i.test(msg)) return bad(c, msg, 404)
     return bad(c, msg, 500)
   }
 })

@@ -65,6 +65,7 @@ export interface HistoryState {
   selectFile(path: string, opts?: { oldRef?: string; newRef?: string }): Promise<void>
   loadDiffForSelection(): Promise<void>
   createCommit(paths: string[], message: string): Promise<CommitResult | null>
+  dropCommit(sha: string): Promise<CommitResult | null>
   // Restore a file's on-disk content to its blob at `ref`. After
   // success, status is reloaded and a file-change event is fired so
   // any open editor tab sees the new content. Returns false on
@@ -196,6 +197,29 @@ async function createCommit(paths: string[], message: string): Promise<CommitRes
   }
 }
 
+async function dropCommit(sha: string): Promise<CommitResult | null> {
+  _busy.value = true
+  try {
+    const r = await api.dropCommit(sha)
+    _error.value = null
+    for (const p of r.filesCommitted) {
+      publishFileChange({
+        path: p,
+        kind: 'write',
+        newMtime: Date.now(),
+        newRaw: undefined,
+      })
+    }
+    await Promise.all([refreshStatus(), refreshLog()])
+    return r
+  } catch (e: any) {
+    _error.value = e?.message ?? 'drop failed'
+    return null
+  } finally {
+    _busy.value = false
+  }
+}
+
 function toggleDirty(path: string, selected: Set<string>): void {
   if (selected.has(path)) selected.delete(path)
   else selected.add(path)
@@ -301,6 +325,7 @@ export function useHistory(): HistoryState {
     selectFile,
     loadDiffForSelection,
     createCommit,
+    dropCommit,
     restoreFile,
     toggleDirty,
   }

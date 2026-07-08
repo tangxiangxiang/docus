@@ -33,6 +33,10 @@ export function isValidHistoryRef(ref: string, opts: { allowWorktree?: boolean }
   return SHA_RE.test(ref) || SHA_ANCESTOR_RE.test(ref) || HEAD_RE.test(ref)
 }
 
+export function isValidCommitSha(ref: string): boolean {
+  return SHA_RE.test(ref)
+}
+
 export function validateHistoryPaths(value: unknown): string[] | null {
   if (!Array.isArray(value) || value.length === 0) return null
   const paths: string[] = []

@@ -153,6 +153,15 @@ export async function createCommit(paths: string[], message: string): Promise<Co
   return readJson(r, 'createCommit failed')
 }
 
+export async function dropCommit(sha: string): Promise<CommitResult> {
+  const r = await fetch('/api/history/drop', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sha }),
+  })
+  return readJson(r, 'dropCommit failed')
+}
+
 // --- Restore ---------------------------------------------------------------
 
 /**

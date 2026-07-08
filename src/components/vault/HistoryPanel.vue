@@ -22,7 +22,7 @@
    The panel renders the empty state (no git / uninitialized repo /
    no changes) inline — never a separate splash screen — so the
    layout stays stable while the user figures out what's going on. */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useHistory } from '../../composables/vault/useHistory.js'
 import { getLiveTabs } from '../../composables/vault/useEditorTabs.js'
 import { useToast } from '../../composables/useToast.js'
@@ -168,6 +168,45 @@ function onCommitFileClick(sha: string, path: string) {
   void h.selectFile(path, { oldRef: `${sha}~1`, newRef: sha })
 }
 
+const menuVisible = ref(false)
+const menuX = ref(0)
+const menuY = ref(0)
+const menuCommit = ref<CommitRecord | null>(null)
+
+function openCommitMenu(e: MouseEvent, commit: CommitRecord) {
+  e.preventDefault()
+  e.stopPropagation()
+  menuCommit.value = commit
+  menuX.value = e.clientX
+  menuY.value = e.clientY
+  menuVisible.value = true
+  nextTick(() => {
+    document.addEventListener('click', closeCommitMenu, { once: true })
+    document.addEventListener('keydown', onCommitMenuEscape)
+  })
+}
+
+function closeCommitMenu() {
+  menuVisible.value = false
+  document.removeEventListener('keydown', onCommitMenuEscape)
+}
+
+function onCommitMenuEscape(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeCommitMenu()
+}
+
+async function onDropCommit() {
+  const commit = menuCommit.value
+  if (!commit) return
+  closeCommitMenu()
+  const ok = typeof window !== 'undefined'
+    && window.confirm(`Drop commit ${commit.sha.slice(0, 7)}?\n\nIts changes will stay in the working tree.\n\n${commit.subject}`)
+  if (!ok) return
+  const r = await h.dropCommit(commit.sha)
+  if (r) toast.success(`Dropped ${commit.sha.slice(0, 7)}`)
+  else toast.error(`Drop failed: ${h.error.value ?? 'unknown error'}`)
+}
+
 function toHistoryPath(path: string): string {
   return path.endsWith('.md') ? path : `${path}.md`
 }
@@ -265,7 +304,7 @@ onMounted(async () => {
             v-model="h.commitMessage.value"
             rows="1"
             class="history-composer-input"
-            placeholder="Commit message…"
+            placeholder="消息(Enter 提交)…"
             @keydown.enter.exact.prevent="onCommit"
           />
           <button
@@ -275,7 +314,7 @@ onMounted(async () => {
             :title="selectedCount === 0 ? 'Select files first' : 'Generate commit message with AI'"
             aria-label="Generate commit message with AI"
             @click="onGenerateCommitMessage"
-          >{{ generatingCommitMessage ? '…' : 'AI' }}</button>
+          >{{ generatingCommitMessage ? '…' : '✧' }}</button>
         </div>
         <button
           type="button"
@@ -326,6 +365,7 @@ onMounted(async () => {
             :key="c.sha"
             class="history-commit-row"
             @click="onCommitClick(c.sha)"
+            @contextmenu="openCommitMenu($event, c)"
           >
             <div class="history-commit-row-head">
               <span class="history-commit-sha">{{ c.sha.slice(0, 7) }}</span>
@@ -360,5 +400,18 @@ onMounted(async () => {
 
       <div v-if="h.error.value" class="history-error">{{ h.error.value }}</div>
     </template>
+    <Teleport to="body">
+      <div
+        v-if="menuVisible"
+        class="history-context-menu"
+        :style="{ left: menuX + 'px', top: menuY + 'px' }"
+        role="menu"
+        @click.stop
+      >
+        <button type="button" class="danger" role="menuitem" @click="onDropCommit">
+          Drop commit
+        </button>
+      </div>
+    </Teleport>
   </section>
 </template>

@@ -535,6 +535,45 @@ export async function addAndCommit(
   return { sha: head.stdout.trim(), filesCommitted }
 }
 
+export async function dropHeadCommit(
+  repoRoot: string,
+  sha: string,
+): Promise<CommitResult> {
+  const head = await run(repoRoot, ['rev-parse', 'HEAD'])
+  if (head.status !== 0) {
+    throw new Error(`git rev-parse HEAD failed: ${head.stderr.trim()}`)
+  }
+  if (head.stdout.trim() !== sha) {
+    throw new Error('only the latest commit can be dropped')
+  }
+  const show = await run(repoRoot, ['show', '--name-only', '--pretty=', sha])
+  const filesCommitted = show.status === 0
+    ? show.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
+    : []
+  const parent = await run(repoRoot, ['rev-parse', `${sha}^`])
+  if (parent.status !== 0) {
+    const deleteHead = await run(repoRoot, ['update-ref', '-d', 'HEAD'])
+    if (deleteHead.status !== 0) {
+      const all = `${deleteHead.stdout}\n${deleteHead.stderr}`.trim()
+      throw new Error(all || `git update-ref failed (exit ${deleteHead.status})`)
+    }
+    if (filesCommitted.length > 0) {
+      const untrack = await run(repoRoot, ['rm', '--cached', '--', ...filesCommitted])
+      if (untrack.status !== 0) {
+        const all = `${untrack.stdout}\n${untrack.stderr}`.trim()
+        throw new Error(all || `git rm --cached failed (exit ${untrack.status})`)
+      }
+    }
+    return { sha: '', filesCommitted }
+  }
+  const reset = await run(repoRoot, ['reset', '--mixed', parent.stdout.trim()])
+  if (reset.status !== 0) {
+    const all = `${reset.stdout}\n${reset.stderr}`.trim()
+    throw new Error(all || `git reset failed (exit ${reset.status})`)
+  }
+  return { sha: parent.stdout.trim(), filesCommitted }
+}
+
 // --- Restore --------------------------------------------------------------
 
 /**

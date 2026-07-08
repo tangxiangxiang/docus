@@ -24,6 +24,10 @@ async function write(rel: string, body: string) {
   await fs.writeFile(abs, body, 'utf8')
 }
 
+async function read(rel: string) {
+  return fs.readFile(path.join(root, rel), 'utf8')
+}
+
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-history-routes-'))
   setRepoRootForTesting(root)
@@ -339,6 +343,66 @@ describe('POST /api/history/commits', () => {
     expect(r.status).toBe(201)
     const body = await r.json() as { filesCommitted: string[] }
     expect(body.filesCommitted.sort()).toEqual(['a.md', 'b.md'])
+  })
+})
+
+describe('POST /api/history/drop', () => {
+  beforeEach(async () => {
+    await call('GET', '/capability')
+    await configureGitUser()
+  })
+
+  it('removes the latest commit while keeping its changes in the working tree', async () => {
+    await write('note.md', 'v1\n')
+    const c1 = (await (await call('POST', '/commits', { paths: ['note.md'], message: 'v1' })).json()) as { sha: string }
+    await write('note.md', 'v2\n')
+    const c2 = (await (await call('POST', '/commits', { paths: ['note.md'], message: 'v2' })).json()) as { sha: string }
+
+    const r = await call('POST', '/drop', { sha: c2.sha })
+    expect(r.status).toBe(201)
+    const body = await r.json() as { sha: string; filesCommitted: string[] }
+    expect(body.sha).toBe(c1.sha)
+    expect(body.filesCommitted).toEqual(['note.md'])
+    expect(await read('note.md')).toBe('v2\n')
+
+    const status = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string }> }
+    expect(status.dirty.map((e) => e.path)).toContain('note.md')
+
+    const log = await (await call('GET', '/log')).json() as { commits: Array<{ sha: string }> }
+    expect(log.commits.map((c) => c.sha)).toEqual([c1.sha])
+  })
+
+  it('rejects dropping an older commit', async () => {
+    await write('note.md', 'v1\n')
+    const c1 = (await (await call('POST', '/commits', { paths: ['note.md'], message: 'v1' })).json()) as { sha: string }
+    await write('note.md', 'v2\n')
+    await call('POST', '/commits', { paths: ['note.md'], message: 'v2' })
+
+    const r = await call('POST', '/drop', { sha: c1.sha })
+    expect(r.status).toBe(409)
+  })
+
+  it('can drop the root commit and leave its files untracked', async () => {
+    await write('note.md', 'root\n')
+    const c1 = (await (await call('POST', '/commits', { paths: ['note.md'], message: 'root' })).json()) as { sha: string }
+
+    const r = await call('POST', '/drop', { sha: c1.sha })
+    expect(r.status).toBe(201)
+    const body = await r.json() as { sha: string; filesCommitted: string[] }
+    expect(body.sha).toBe('')
+    expect(body.filesCommitted).toEqual(['note.md'])
+    expect(await read('note.md')).toBe('root\n')
+
+    const status = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string; index: string; worktree: string }> }
+    expect(status.dirty).toContainEqual(expect.objectContaining({ path: 'note.md', index: '?', worktree: '?' }))
+
+    const log = await (await call('GET', '/log')).json() as { commits: Array<{ sha: string }> }
+    expect(log.commits).toEqual([])
+  })
+
+  it('rejects unsupported sha syntax', async () => {
+    const r = await call('POST', '/drop', { sha: 'HEAD' })
+    expect(r.status).toBe(400)
   })
 })
 

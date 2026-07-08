@@ -14,6 +14,7 @@ vi.mock('../../../lib/history-api', async () => {
     getLog: vi.fn(),
     getDiff: vi.fn(),
     createCommit: vi.fn(),
+    dropCommit: vi.fn(),
     restoreFile: vi.fn(),
   }
 })
@@ -35,10 +36,43 @@ beforeEach(() => {
     newRef: api.WORKTREE_REF,
     diff: EMPTY_DIFF,
   })
+  vi.mocked(api.dropCommit).mockResolvedValue({ sha: 'parent123', filesCommitted: ['inbox/a.md'] })
 })
 
 afterEach(() => {
   __resetHistoryStateForTesting()
+})
+
+describe('HistoryPanel timeline context menu', () => {
+  it('drops a commit from the right-click menu after confirmation', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
+    vi.mocked(api.getLog).mockResolvedValue({
+      commits: [{
+        sha: 'abc1234000000000000000000000000000000000',
+        author: 'A',
+        date: new Date().toISOString(),
+        subject: 'add note',
+        body: '',
+        files: ['inbox/a.md'],
+      }],
+    })
+
+    const wrapper = mount(HistoryPanel)
+    await flushPromises()
+    await wrapper.get('.history-commit-row').trigger('contextmenu', {
+      clientX: 10,
+      clientY: 20,
+    })
+    await flushPromises()
+
+    const menuButton = document.body.querySelector<HTMLButtonElement>('.history-context-menu button.danger')
+    expect(menuButton?.textContent).toContain('Drop commit')
+    menuButton?.click()
+    await flushPromises()
+
+    expect(api.dropCommit).toHaveBeenCalledWith('abc1234000000000000000000000000000000000')
+    expect(window.confirm).toHaveBeenCalled()
+  })
 })
 
 describe('HistoryPanel initial selection', () => {

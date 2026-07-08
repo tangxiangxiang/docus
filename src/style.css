@@ -550,48 +550,54 @@ main.container {
   width: 100%;
   box-sizing: border-box;
   resize: none;
-  background: color-mix(in srgb, var(--vs-bg-2) 82%, var(--vs-bg-1));
-  border: 1px solid var(--vs-border);
-  border-radius: 7px;
-  padding: 10px 46px 8px 12px;
+  background: color-mix(in srgb, var(--vs-bg-1) 88%, white);
+  border: 1px solid color-mix(in srgb, var(--vs-border) 82%, white);
+  border-radius: 8px;
+  padding: 10px 44px 9px 12px;
   font-family: var(--sans);
-  font-size: 0.85rem;
+  font-size: 1rem;
   color: var(--vs-text-1);
-  line-height: 1.4;
+  line-height: 1.45;
   outline: none;
-  min-height: 40px;
+  min-height: 48px;
   overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 72%, transparent);
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 .history-composer-input:focus {
   border-color: color-mix(in srgb, var(--vs-accent) 62%, var(--vs-border));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-accent) 18%, transparent);
+  background: color-mix(in srgb, var(--vs-bg-1) 92%, white);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 72%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--vs-accent) 16%, transparent);
 }
 .history-composer-input::-webkit-scrollbar { width: 0; background: transparent; }
-.history-composer-input::placeholder { color: var(--vs-text-3); }
+.history-composer-input::placeholder {
+  color: color-mix(in srgb, var(--vs-text-2) 78%, var(--vs-text-3));
+  font-weight: 500;
+}
 .history-ai-message-btn {
   position: absolute;
-  right: 6px;
-  top: 6px;
-  height: 28px;
-  min-width: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--vs-border);
+  right: 8px;
+  top: 8px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--vs-accent) 8%, var(--vs-bg-2));
-  color: var(--vs-accent);
-  font-size: 0.72rem;
-  font-weight: 700;
+  background: transparent;
+  color: color-mix(in srgb, var(--vs-text-2) 86%, var(--vs-text-1));
+  font-size: 1.15rem;
+  font-weight: 600;
   line-height: 1;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
 }
 .history-ai-message-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--vs-accent) 18%, var(--vs-bg-2));
-  border-color: var(--vs-accent);
-  color: var(--vs-text-1);
+  background: color-mix(in srgb, var(--vs-accent) 10%, transparent);
+  color: var(--vs-accent);
 }
 .history-ai-message-btn:disabled {
   cursor: not-allowed;
@@ -1416,7 +1422,8 @@ main.container {
    so the .vault-scoped --vs-* tokens are not available here.
    Use :root-level tokens with dark fallbacks (the vault is dark by default). */
 .tree-context-menu,
-.tab-context-menu {
+.tab-context-menu,
+.history-context-menu {
   position: fixed; z-index: 9999;
   min-width: 140px;
   padding: 4px;
@@ -1428,27 +1435,32 @@ main.container {
   display: flex; flex-direction: column;
 }
 .tree-context-menu button,
-.tab-context-menu button {
+.tab-context-menu button,
+.history-context-menu button {
   background: transparent; border: 0; color: inherit;
   padding: 5px 10px; border-radius: 4px; cursor: pointer; font: inherit;
   font-size: 0.85rem; text-align: left;
 }
 .tree-context-menu button:hover,
-.tab-context-menu button:hover {
+.tab-context-menu button:hover,
+.history-context-menu button:hover {
   background: var(--border, rgba(255,255,255,0.08));
 }
 .tree-context-menu button:disabled,
-.tab-context-menu button:disabled {
+.tab-context-menu button:disabled,
+.history-context-menu button:disabled {
   color: var(--text-muted, #666);
   cursor: not-allowed;
   background: transparent;
 }
-.tree-context-menu button.danger:hover {
+.tree-context-menu button.danger:hover,
+.history-context-menu button.danger:hover {
   background: rgba(220, 60, 60, 0.18);
   color: #e06060;
 }
 .tree-context-menu hr,
-.tab-context-menu hr {
+.tab-context-menu hr,
+.history-context-menu hr {
   border: 0; border-top: 1px solid var(--border, rgba(255,255,255,0.08));
   margin: 4px 0;
 }
