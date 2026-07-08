@@ -30,12 +30,18 @@ import EmptyState from './EmptyState.vue'
 const h = useHistory()
 const toast = useToast()
 
-/* Refs come back from the API as either a 7-char sha prefix, the
-   literal "HEAD", "HEAD~1", or the WORKTREE sentinel. Render them
-   uniformly — sha-prefix for git refs, "Working tree" for the
-   sentinel — so the diff header reads naturally. */
+/* Refs come back from the API as HEAD-ish names, sha prefixes, or the
+   WORKTREE sentinel. Timeline clicks use `<sha>~1` for the old side;
+   display the resolved parent sha when it is present in the loaded
+   timeline so the pane labels don't show the child sha on both sides. */
 function refLabel(ref: string): string {
   if (ref === WORKTREE_REF) return 'Working tree'
+  const parent = ref.match(/^([0-9a-f]{7,40})~1$/i)
+  if (parent) {
+    const idx = h.log.value.findIndex((c) => c.sha.startsWith(parent[1]))
+    const parentCommit = idx >= 0 ? h.log.value[idx + 1] : undefined
+    return parentCommit ? parentCommit.sha.slice(0, 7) : 'empty'
+  }
   return ref.slice(0, 7)
 }
 
@@ -210,9 +216,9 @@ function syncVerticalScroll(source: 'old' | 'new') {
           aria-label="Old version"
           @scroll="syncVerticalScroll('old')"
         >
-          <div class="diff-row diff-row-head" role="row">
-            <div class="diff-cell diff-cell-num" role="columnheader">old</div>
-            <div class="diff-cell diff-cell-text" role="columnheader"></div>
+          <div class="diff-pane-title">
+            <span class="diff-pane-label">Old</span>
+            <span class="diff-pane-ref">{{ refLabel(h.selectedOldRef.value) }}</span>
           </div>
           <div
             v-for="(row, idx) in rows"
@@ -247,9 +253,9 @@ function syncVerticalScroll(source: 'old' | 'new') {
           aria-label="New version"
           @scroll="syncVerticalScroll('new')"
         >
-          <div class="diff-row diff-row-head" role="row">
-            <div class="diff-cell diff-cell-num" role="columnheader">new</div>
-            <div class="diff-cell diff-cell-text" role="columnheader"></div>
+          <div class="diff-pane-title">
+            <span class="diff-pane-label">New</span>
+            <span class="diff-pane-ref">{{ refLabel(h.selectedNewRef.value) }}</span>
           </div>
           <div
             v-for="(row, idx) in rows"

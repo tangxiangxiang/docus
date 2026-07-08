@@ -904,38 +904,40 @@ main.container {
 .diff-pane + .diff-pane {
   border-left: 1px solid var(--vs-border);
 }
+.diff-pane-title {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  width: 100%;
+  background: var(--vs-bg-2);
+  border-bottom: 1px solid var(--vs-border);
+  color: var(--vs-text-2);
+  font-family: var(--sans);
+  font-size: 0.76rem;
+}
+.diff-pane-label {
+  color: var(--vs-text-3);
+}
+.diff-pane-ref {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vs-text-1);
+}
 .diff-row {
   display: grid;
   grid-template-columns: 56px max-content;
   align-items: stretch;
   width: max-content;
   min-width: 100%;
-}
-.diff-row-head {
-  position: sticky;
-  /* Pin to top AND left so the column label stays visible while the
-     user pans to a long line. Without left:0 the header scrolls
-     horizontally with .diff-pane and disappears off the left edge
-     as soon as the user scrolls right. */
-  top: 0;
-  left: 0;
-  /* Pane-wide, not content-wide. .diff-row sets width:max-content so
-     data rows can be wider than the pane; the header doesn't have a
-     wide text cell so max-content would collapse it to ~56px. Pin
-     to 100% so the header's background always spans the visible
-     width and the label stays anchored to the left edge. */
-  width: 100%;
-  z-index: 1;
-  background: var(--vs-bg-2);
-  color: var(--vs-text-3);
-  font-size: 0.72rem;
-  font-weight: 500;
-  /* VSCode's diff header is plain case, not the all-caps banner we
-     used to use. The uppercase + letter-spacing was heavy and drew
-     attention away from the actual content. */
-  text-transform: none;
-  letter-spacing: 0;
-  border-bottom: 1px solid var(--vs-border);
 }
 .diff-cell {
   padding: 0 10px;
@@ -947,13 +949,16 @@ main.container {
   min-height: 1.5em;
 }
 .diff-cell-num {
+  position: sticky;
+  left: 0;
+  z-index: 1;
   text-align: right;
   color: var(--vs-text-3);
   user-select: none;
   background: var(--vs-bg-2);
   border-right: 1px solid var(--vs-border);
-  /* Stacking context for the left-edge indicator ::before. */
-  position: relative;
+  /* Stacking context for the left-edge indicator ::before. Also keeps
+     the gutter fixed during horizontal scrolling inside each pane. */
 }
 /* VSCode-style left-edge indicator on changed rows. A 3px colored
    bar pinned to the very left of the gutter cell — the line number

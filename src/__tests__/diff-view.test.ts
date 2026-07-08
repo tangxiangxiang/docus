@@ -54,19 +54,24 @@ describe('DiffView empty state', () => {
 // (which render diff content) and the restore-button tests (which
 // need a non-empty diff so the button shows up). Hoisted to module
 // scope so multiple `describe` blocks can share it.
-async function loadDiffWith(diff: api.FileDiff, file = 'inbox/a.md') {
+async function loadDiffWith(
+  diff: api.FileDiff,
+  file = 'inbox/a.md',
+  refs: { oldRef?: string; newRef?: string } = {},
+) {
+  const oldRef = refs.oldRef ?? 'HEAD~1'
+  const newRef = refs.newRef ?? 'HEAD'
   vi.mocked(api.getDiff).mockResolvedValue({
-    path: file, oldRef: 'HEAD~1', newRef: 'HEAD', diff,
+    path: file, oldRef, newRef, diff,
   })
   const h = useHistory()
-  await h.selectFile(file, { oldRef: 'HEAD~1', newRef: 'HEAD' })
+  await h.selectFile(file, { oldRef, newRef })
 }
 
 function paneRows(wrapper: ReturnType<typeof renderDiffView>, side: 'old' | 'new') {
   return wrapper
     .find(`.diff-pane-${side}`)
     .findAll('.diff-row')
-    .filter((r) => !r.classes('diff-row-head'))
 }
 
 function rowCells(wrapper: ReturnType<typeof renderDiffView>, side: 'old' | 'new', index: number) {
@@ -91,6 +96,8 @@ describe('DiffView row pairing', () => {
     })
     const wrapper = renderDiffView()
     await flushPromises()
+    expect(wrapper.find('.diff-pane-old .diff-pane-title').text()).toContain('HEAD~1')
+    expect(wrapper.find('.diff-pane-new .diff-pane-title').text()).toContain('HEAD')
     expect(paneRows(wrapper, 'old')).toHaveLength(2)
     expect(paneRows(wrapper, 'new')).toHaveLength(2)
     const oldCells0 = rowCells(wrapper, 'old', 0)
@@ -100,6 +107,38 @@ describe('DiffView row pairing', () => {
     expect(oldCells0[1].text()).toBe('a')
     expect(newCells0[0].text()).toBe('1')
     expect(newCells0[1].text()).toBe('a')
+  })
+
+  it('labels sha~1 old refs as the resolved parent commit when available', async () => {
+    await loadDiffWith({
+      ops: [{ op: 'equal', oldLine: 1, newLine: 1, text: 'a' }],
+      stats: { added: 0, removed: 0, equal: 1 },
+    }, 'inbox/a.md', {
+      oldRef: '6a057c9000000000000000000000000000000000~1',
+      newRef: '6a057c9000000000000000000000000000000000',
+    })
+    useHistory().log.value = [
+      {
+        sha: '6a057c9000000000000000000000000000000000',
+        author: 'A',
+        date: new Date().toISOString(),
+        subject: 'new',
+        body: '',
+        files: ['inbox/a.md'],
+      },
+      {
+        sha: 'aeab6d6000000000000000000000000000000000',
+        author: 'A',
+        date: new Date().toISOString(),
+        subject: 'old',
+        body: '',
+        files: ['inbox/a.md'],
+      },
+    ]
+    const wrapper = renderDiffView()
+    await flushPromises()
+    expect(wrapper.find('.diff-pane-old .diff-pane-title').text()).toContain('aeab6d6')
+    expect(wrapper.find('.diff-pane-new .diff-pane-title').text()).toContain('6a057c9')
   })
 
   it('renders a remove row with the old line and a blank new side', async () => {
