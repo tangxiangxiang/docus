@@ -402,7 +402,7 @@ main.container {
   --vs-accent-bg: rgba(0, 122, 204, 0.2);
   --vs-active-bg: #37373d;
   --vs-tab-active-bg: #1e1e1e;
-  --vs-tab-inactive-bg: #2d2d2d;
+  --vs-tab-inactive-bg: #373737;
   --vs-hover-bg: #2a2d2e;
   --vs-status-bg: #007acc;
   --vs-status-fg: #ffffff;
@@ -1866,10 +1866,11 @@ main.container {
   font-size: 0.85rem;
   line-height: 1;
   flex-shrink: 0;
-  /* Always slightly visible (0.35) so users discover the close affordance
-     without hovering each tab. Hover or active bumps it to full opacity
-     and adds the background hover. */
-  opacity: 0.35;
+  /* Hidden on inactive tabs — the × only appears on hover (so it
+     doesn't compete with the tab title for the limited 100px width).
+     The active tab's × is permanently visible (see .tab.active below)
+     so there's always one close affordance on screen at all times. */
+  opacity: 0;
   transition: opacity 0.1s, background 0.1s, color 0.1s;
 }
 .tab:hover .tab-close,
@@ -2902,7 +2903,7 @@ main.container {
   --vs-accent-bg: rgba(0, 122, 204, 0.2);
   --vs-active-bg: #37373d;
   --vs-tab-active-bg: #1e1e1e;
-  --vs-tab-inactive-bg: #2d2d2d;
+  --vs-tab-inactive-bg: #373737;
   --vs-hover-bg: #2a2d2e;
   --vs-status-bg: #007acc;
   --vs-status-fg: #ffffff;
