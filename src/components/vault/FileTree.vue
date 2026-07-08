@@ -89,6 +89,11 @@ const topLevel = computed<TreeNode[]>(() => {
   }
   return children
 })
+// Names of every top-level child. Used as the sibling list for the
+// top-level TreeRows' inline rename duplicate check. Filtered
+// (scope / tags / query) the same way as topLevel above so a name
+// hidden by the current filters doesn't count as a collision.
+const topLevelNames = computed(() => topLevel.value.map((n) => n.name))
 
 // Path -> tags lookup so the tree filter can run in O(n) without scanning
 // props.posts for every file node. Recomputed when posts or the active
@@ -685,6 +690,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :current-path="currentPath"
         :expanded-set="effectiveExpanded"
         :matched-fields="matchedFields"
+        :sibling-names="topLevelNames"
         @select="onSelect"
         @toggle="onToggle"
         @rename="onRename"

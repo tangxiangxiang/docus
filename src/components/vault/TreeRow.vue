@@ -3,7 +3,7 @@ import { ref, computed, nextTick } from 'vue'
 import type { TreeNode } from '../../lib/api'
 import { ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FILE_MD, ICON_CHEVRON } from './icons'
 import { suggestSlug } from '../../lib/ai-api'
-import { toLocalSlug } from '../../lib/slug'
+import { toLocalSlug, isSlugSegment } from '../../lib/slug'
 import {
   canModify,
   canMove,
@@ -24,6 +24,15 @@ const props = defineProps<{
   // absent from the map, and the lookup correctly returns undefined
   // for them — no tooltip on those rows.
   matchedFields?: Map<string, MatchInfo>
+  // Names of every sibling (files + folders) at this row's level.
+  // Used for inline duplicate detection during rename: the input
+  // blocks commit when the new name would collide with one of these.
+  // Top-level rows receive the top-level names; folder children
+  // receive the children names of THAT folder (not the whole tree).
+  // The list includes the row's own current name — the duplicate
+  // check filters that case out, since "rename to the same name"
+  // is a no-op, not a collision.
+  siblingNames?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -63,6 +72,11 @@ const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.
 const childNodes = computed(() =>
   props.node.kind === 'folder' ? props.node.children : [],
 )
+// Sibling list for the recursive children: this row's own children's
+// names. Each child TreeRow will receive this as its siblingNames prop
+// so its inline rename validator can detect duplicates within THIS
+// folder. (Top-level rows get their sibling list from FileTree.)
+const childNames = computed(() => childNodes.value.map((c) => c.name))
 // Three independent write-permission flags. The protocol distinguishes:
 //   • canModify — rename / delete. Blocked for both the zettel subtree AND
 //     protected roots (the three top-level folder names are pinned by the
@@ -260,12 +274,46 @@ function commitRename() {
     renaming.value = false
     return
   }
+  // Block commit when the inline validator flagged an error. The input
+  // stays mounted so the user can see the message and fix the name.
+  // (Esc / clicking cancel still works via cancelRename.)
+  if (renameError.value) return
   renaming.value = false
   emit('rename', props.node.path, name, props.node.kind)
 }
 function cancelRename() {
   renaming.value = false
 }
+// Inline validator for the rename input. Runs on every keystroke (and
+// at commit time) and returns the user-facing error string, or ''
+// when the current value is acceptable. Three cases produce an error:
+//   1. Empty / unchanged — silently treated as a no-op, NOT an error.
+//   2. Slug-invalid — toLocalSlug produced a string that doesn't pass
+//      isSlugSegment (e.g. all-punctuation input like "!!!"). We
+//      render the message and block commit; the user can still
+//      press Esc to abort.
+//   3. Duplicate — a sibling already owns this name. We exclude the
+//      row's own current name from the comparison so "no change"
+//      doesn't register as a self-collision.
+//
+// siblingNames is optional: when the parent doesn't pass it (e.g.
+// older callers) the duplicate check is skipped and the server's
+// 409 response becomes the only line of defense, matching the
+// pre-inline behavior.
+const renameError = computed(() => {
+  const raw = renameValue.value.trim()
+  if (!raw || raw === props.node.name) return ''
+  const candidate = toLocalSlug(raw) || raw
+  if (!isSlugSegment(candidate)) return '只能使用小写英文、数字和连字符'
+  if (props.siblingNames) {
+    const lower = candidate.toLowerCase()
+    const collision = props.siblingNames.some(
+      (n) => n !== props.node.name && n.toLowerCase() === lower,
+    )
+    if (collision) return '已存在同名文件/文件夹'
+  }
+  return ''
+})
 async function suggestRename() {
   if (renameSuggesting.value) return
   const current = renameValue.value.trim()
@@ -336,6 +384,9 @@ async function suggestRename() {
             :id="'docus-rename-input-' + node.path"
             v-model="renameValue"
             class="rename-input"
+            :class="{ 'is-invalid': renameError }"
+            :aria-invalid="renameError ? 'true' : 'false'"
+            :aria-describedby="renameError ? 'docus-rename-error-' + node.path : undefined"
             @keydown.enter="commitRename"
             @keydown.escape="cancelRename"
             @blur="commitRename"
@@ -348,6 +399,12 @@ async function suggestRename() {
             @mousedown.prevent
             @click.stop="suggestRename"
           >{{ renameSuggesting ? '...' : 'AI' }}</button>
+          <span
+            v-if="renameError"
+            :id="'docus-rename-error-' + node.path"
+            class="rename-error"
+            role="alert"
+          >{{ renameError }}</span>
         </span>
       </template>
       <template v-else>
@@ -411,6 +468,7 @@ async function suggestRename() {
         :current-path="currentPath"
         :expanded-set="expandedSet"
         :matched-fields="matchedFields"
+        :sibling-names="childNames"
         @select="(p) => emit('select', p)"
         @toggle="(p) => emit('toggle', p)"
         @rename="(oldP, n, kind) => emit('rename', oldP, n, kind)"

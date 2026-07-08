@@ -1300,7 +1300,8 @@ main.container {
   font: inherit;
 }
 .vault .file-tree .rename-wrap {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   min-width: 0;
 }
@@ -1308,6 +1309,31 @@ main.container {
   min-width: 0;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
+}
+/* Inline rename validator — red border when the typed name is invalid
+   (bad slug characters, or a duplicate of an existing sibling). The
+   focus ring stays accent so the user can still see what's focused;
+   only the resting border turns red. */
+.vault .file-tree .rename-input.is-invalid {
+  border-color: #dc2626;
+  background: color-mix(in srgb, #dc2626 10%, var(--vs-bg-1));
+}
+.vault .file-tree .rename-input.is-invalid:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #dc2626 50%, transparent);
+}
+/* Error message below the input. flex: 0 0 100% forces it onto its
+   own line under the input+button row, regardless of the input
+   width. font-size matches the section-title scale so it doesn't
+   compete with the (already small) tree row text. */
+.vault .file-tree .rename-error {
+  flex: 0 0 100%;
+  margin-top: 2px;
+  font-size: 0.7rem;
+  line-height: 1.3;
+  color: #dc2626;
+  white-space: normal;
+  word-break: break-word;
 }
 .vault .file-tree .rename-action {
   padding: 0 6px;
