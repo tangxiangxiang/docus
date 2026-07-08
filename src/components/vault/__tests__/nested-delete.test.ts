@@ -92,15 +92,10 @@ describe('FileTree nested delete', () => {
     await w.vm.$nextTick()
 
     const old = rowByLabel(w.findAll('li.tree-row'), 'old', 'file')
+    dialogStubs.prompt.mockResolvedValueOnce('new')
     await old.trigger('contextmenu', { clientX: 10, clientY: 10 })
     await w.vm.$nextTick()
     await clickMenuButton('重命名')
-
-    const input = w.find('input.rename-input')
-    expect(input.exists()).toBe(true)
-    await input.setValue('new')
-    await input.trigger('keydown.enter')
-    await w.vm.$nextTick()
     await flushPromises()
 
     expect(renameFolderSpy).not.toHaveBeenCalled()

@@ -2,8 +2,6 @@
 import { ref, computed, nextTick } from 'vue'
 import type { TreeNode } from '../../lib/api'
 import { ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FILE_MD, ICON_CHEVRON } from './icons'
-import { suggestSlug } from '../../lib/ai-api'
-import { toLocalSlug, isSlugSegment } from '../../lib/slug'
 import {
   canModify,
   canMove,
@@ -24,15 +22,6 @@ const props = defineProps<{
   // absent from the map, and the lookup correctly returns undefined
   // for them — no tooltip on those rows.
   matchedFields?: Map<string, MatchInfo>
-  // Names of every sibling (files + folders) at this row's level.
-  // Used for inline duplicate detection during rename: the input
-  // blocks commit when the new name would collide with one of these.
-  // Top-level rows receive the top-level names; folder children
-  // receive the children names of THAT folder (not the whole tree).
-  // The list includes the row's own current name — the duplicate
-  // check filters that case out, since "rename to the same name"
-  // is a no-op, not a collision.
-  siblingNames?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -47,6 +36,7 @@ const emit = defineEmits<{
   // clicked the file. Without the kind, renaming the file would silently
   // rename the folder instead.
   rename: [oldPath: string, newName: string, kind: 'file' | 'folder']
+  'request-rename': [path: string, kind: 'file' | 'folder']
   delete: [path: string, kind: 'file' | 'folder']
   move: [srcPath: string, targetFolder: string, srcKind: 'file' | 'folder']
   'create-in': [folder: string, kind: 'file' | 'folder']
@@ -72,11 +62,6 @@ const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.
 const childNodes = computed(() =>
   props.node.kind === 'folder' ? props.node.children : [],
 )
-// Sibling list for the recursive children: this row's own children's
-// names. Each child TreeRow will receive this as its siblingNames prop
-// so its inline rename validator can detect duplicates within THIS
-// folder. (Top-level rows get their sibling list from FileTree.)
-const childNames = computed(() => childNodes.value.map((c) => c.name))
 // Three independent write-permission flags. The protocol distinguishes:
 //   • canModify — rename / delete. Blocked for both the zettel subtree AND
 //     protected roots (the three top-level folder names are pinned by the
@@ -240,103 +225,6 @@ function menuAction(fn: () => void) {
   fn()
 }
 
-// --- inline rename state ---
-const renaming = ref(false)
-const renameValue = ref('')
-const renameSuggesting = ref(false)
-
-function startRename() {
-  renaming.value = true
-  renameValue.value = props.node.name
-  nextTick(() => {
-    const el = document.getElementById('docus-rename-input-' + props.node.path) as HTMLInputElement | null
-    el?.focus()
-    el?.select()
-  })
-}
-function commitRename() {
-  // The input's keydown (Enter) and blur both call us. When the user presses
-  // Enter, this function runs synchronously and sets renaming.value = false;
-  // the resulting DOM removal then fires blur, which would call us a second
-  // time. The second call would re-emit `rename` against the *old* path —
-  // and since the first call already moved the file on disk, the server
-  // answers the duplicate PATCH with 404, producing a "rename failed" toast
-  // for a rename that actually succeeded. The same hazard turns Escape
-  // (cancelRename) into a commit: cancel sets renaming = false, the input
-  // is unmounted, blur fires, commit runs. Guard with `if (!renaming.value)`
-  // so we only act on the first invocation; subsequent blur-after-keydown
-  // calls short-circuit, and the click-away (blur-only) path still commits
-  // because renaming is still true at that point.
-  if (!renaming.value) return
-  const rawName = renameValue.value.trim()
-  const name = toLocalSlug(rawName) || rawName
-  if (!name || name === props.node.name) {
-    renaming.value = false
-    return
-  }
-  // Block commit when the inline validator flagged an error. The input
-  // stays mounted so the user can see the message and fix the name.
-  // (Esc / clicking cancel still works via cancelRename.)
-  if (renameError.value) return
-  renaming.value = false
-  emit('rename', props.node.path, name, props.node.kind)
-}
-function cancelRename() {
-  renaming.value = false
-}
-// Inline validator for the rename input. Runs on every keystroke (and
-// at commit time) and returns the user-facing error string, or ''
-// when the current value is acceptable. Three cases produce an error:
-//   1. Empty / unchanged — silently treated as a no-op, NOT an error.
-//   2. Slug-invalid — toLocalSlug produced a string that doesn't pass
-//      isSlugSegment (e.g. all-punctuation input like "!!!"). We
-//      render the message and block commit; the user can still
-//      press Esc to abort.
-//   3. Duplicate — a sibling already owns this name. We exclude the
-//      row's own current name from the comparison so "no change"
-//      doesn't register as a self-collision.
-//
-// siblingNames is optional: when the parent doesn't pass it (e.g.
-// older callers) the duplicate check is skipped and the server's
-// 409 response becomes the only line of defense, matching the
-// pre-inline behavior.
-const renameError = computed(() => {
-  const raw = renameValue.value.trim()
-  if (!raw || raw === props.node.name) return ''
-  const candidate = toLocalSlug(raw) || raw
-  if (!isSlugSegment(candidate)) return '只能使用小写英文、数字和连字符'
-  if (props.siblingNames) {
-    const lower = candidate.toLowerCase()
-    const collision = props.siblingNames.some(
-      (n) => n !== props.node.name && n.toLowerCase() === lower,
-    )
-    if (collision) return '已存在同名文件/文件夹'
-  }
-  return ''
-})
-async function suggestRename() {
-  if (renameSuggesting.value) return
-  const current = renameValue.value.trim()
-  if (!current) return
-  const local = toLocalSlug(current)
-  if (local && /^[\x00-\x7F]+$/.test(current)) {
-    renameValue.value = local
-    return
-  }
-  renameSuggesting.value = true
-  try {
-    const out = await suggestSlug({ input: current, kind: props.node.kind })
-    renameValue.value = out.slug
-  } catch {
-    if (local) renameValue.value = local
-  } finally {
-    renameSuggesting.value = false
-    await nextTick()
-    const el = document.getElementById('docus-rename-input-' + props.node.path) as HTMLInputElement | null
-    el?.focus()
-    el?.select()
-  }
-}
 </script>
 
 <template>
@@ -344,7 +232,7 @@ async function suggestRename() {
     class="tree-row"
     :class="{ active: isActive, expanded: isExpanded, folder: isFolder, dragging: isDragging, 'drop-target': isDropTarget }"
     :style="{ '--depth': depth }"
-    :draggable="!renaming && canMoveRow"
+    :draggable="canMoveRow"
     @dragstart="onDragStart"
     @dragend="onDragEnd"
     @dragenter="onDragEnter"
@@ -378,53 +266,22 @@ async function suggestRename() {
       <span class="row-icon" v-if="isFolder" :aria-hidden="true" v-html="isExpanded ? ICON_FOLDER_OPEN : ICON_FOLDER" />
       <span class="row-icon" v-else :aria-hidden="true" v-html="ICON_FILE_MD" />
 
-      <template v-if="renaming">
-        <span class="rename-wrap" @click.stop>
-          <input
-            :id="'docus-rename-input-' + node.path"
-            v-model="renameValue"
-            class="rename-input"
-            :class="{ 'is-invalid': renameError }"
-            :aria-invalid="renameError ? 'true' : 'false'"
-            :aria-describedby="renameError ? 'docus-rename-error-' + node.path : undefined"
-            @keydown.enter="commitRename"
-            @keydown.escape="cancelRename"
-            @blur="commitRename"
-          />
-          <button
-            type="button"
-            class="rename-action"
-            title="翻译为英文路径名"
-            :disabled="renameSuggesting"
-            @mousedown.prevent
-            @click.stop="suggestRename"
-          >{{ renameSuggesting ? '...' : 'AI' }}</button>
-          <span
-            v-if="renameError"
-            :id="'docus-rename-error-' + node.path"
-            class="rename-error"
-            role="alert"
-          >{{ renameError }}</span>
-        </span>
-      </template>
-      <template v-else>
-        <!-- Button, not anchor. A folder row toggles (not navigates) and
-             a file row opens in the same SPA (not a new tab). Using an
-             anchor with href="#" would pollute browser history on every
-             click and confuse screen readers announcing "link" for what
-             is really an activation.
-             The native `title` is bound to `matchTooltip`: when the
-             file matched the search query by name/title/summary, the
-             tooltip names which fields matched; when the file is in
-             the tree for another reason (folder-name match, or no
-             query active), the attribute is omitted entirely. -->
-        <button
-          type="button"
-          class="row-name"
-          :title="matchTooltip"
-          @click="isFolder ? emit('toggle', node.path) : emit('select', node.path)"
-        >{{ node.name }}</button>
-      </template>
+      <!-- Button, not anchor. A folder row toggles (not navigates) and
+           a file row opens in the same SPA (not a new tab). Using an
+           anchor with href="#" would pollute browser history on every
+           click and confuse screen readers announcing "link" for what
+           is really an activation.
+           The native `title` is bound to `matchTooltip`: when the
+           file matched the search query by name/title/summary, the
+           tooltip names which fields matched; when the file is in
+           the tree for another reason (folder-name match, or no
+           query active), the attribute is omitted entirely. -->
+      <button
+        type="button"
+        class="row-name"
+        :title="matchTooltip"
+        @click="isFolder ? emit('toggle', node.path) : emit('select', node.path)"
+      >{{ node.name }}</button>
     </div>
 
     <Teleport to="body">
@@ -450,7 +307,7 @@ async function suggestRename() {
                show "删除" (灰掉) for the root itself. -->
           <hr v-if="canModifyRow" />
         </template>
-        <button v-if="canModifyRow" @click="menuAction(startRename)">重命名</button>
+        <button v-if="canModifyRow" @click="menuAction(() => emit('request-rename', node.path, node.kind))">重命名</button>
         <hr v-if="canModifyRow" />
         <button v-if="canSplit" @click="menuAction(() => emit('split-card', node.path))">📤 拆为原子卡</button>
         <hr v-if="canArchive" />
@@ -468,10 +325,10 @@ async function suggestRename() {
         :current-path="currentPath"
         :expanded-set="expandedSet"
         :matched-fields="matchedFields"
-        :sibling-names="childNames"
         @select="(p) => emit('select', p)"
         @toggle="(p) => emit('toggle', p)"
         @rename="(oldP, n, kind) => emit('rename', oldP, n, kind)"
+        @request-rename="(p, kind) => emit('request-rename', p, kind)"
         @delete="(p, kind) => emit('delete', p, kind)"
         @move="(src, folder, srcKind) => emit('move', src, folder, srcKind)"
         @create-in="(folder, kind) => emit('create-in', folder, kind)"

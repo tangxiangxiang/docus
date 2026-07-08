@@ -2,10 +2,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { flushPromises } from "@vue/test-utils"
+import { dialogStubs, installDialogMocks, resetDialogMocks, rowByLabel } from '../../../__test-helpers__/dialogs'
 import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
 import * as api from '../../../lib/api'
-import { installDialogMocks, rowByLabel } from '../../../__test-helpers__/dialogs'
 
 installDialogMocks()
 
@@ -56,6 +56,7 @@ async function startRenameOn(row: any) {
 describe('FileTree rename collision (file and folder share a path)', () => {
   beforeEach(() => {
     localStorage.clear()
+    resetDialogMocks()
     vi.restoreAllMocks()
   })
 
@@ -82,12 +83,8 @@ describe('FileTree rename collision (file and folder share a path)', () => {
     expect(fileRow.exists()).toBe(true)
     expect(fileRow.classes('folder')).toBe(false)
 
+    dialogStubs.prompt.mockResolvedValueOnce('notes-v2')
     await startRenameOn(fileRow)
-    const input = w.find('input.rename-input')
-    expect(input.exists()).toBe(true)
-    await input.setValue('notes-v2')
-    await input.trigger('keydown.enter')
-    await w.vm.$nextTick()
     await flushPromises()
 
     // The bug: findNode returned the folder (first match in the
@@ -116,11 +113,8 @@ describe('FileTree rename collision (file and folder share a path)', () => {
     expect(folderRow.exists()).toBe(true)
     expect(folderRow.classes('folder')).toBe(true)
 
+    dialogStubs.prompt.mockResolvedValueOnce('notes-v2')
     await startRenameOn(folderRow)
-    const input = w.find('input.rename-input')
-    await input.setValue('notes-v2')
-    await input.trigger('keydown.enter')
-    await w.vm.$nextTick()
     await flushPromises()
 
     expect(patchSpy).not.toHaveBeenCalled()

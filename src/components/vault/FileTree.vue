@@ -89,12 +89,6 @@ const topLevel = computed<TreeNode[]>(() => {
   }
   return children
 })
-// Names of every top-level child. Used as the sibling list for the
-// top-level TreeRows' inline rename duplicate check. Filtered
-// (scope / tags / query) the same way as topLevel above so a name
-// hidden by the current filters doesn't count as a collision.
-const topLevelNames = computed(() => topLevel.value.map((n) => n.name))
-
 // Path -> tags lookup so the tree filter can run in O(n) without scanning
 // props.posts for every file node. Recomputed when posts or the active
 // tag set changes.
@@ -477,6 +471,25 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
   }
 }
 
+async function onRequestRename(oldPath: string, kind: 'file' | 'folder') {
+  const node = findNode(props.tree, oldPath, kind)
+  if (!node) return
+  {
+    const msg = blockedMessage(oldPath, 'rename')
+    if (msg) { toast.error(msg); return }
+  }
+  const title = await prompt({
+    title: kind === 'file' ? `重命名文件 ${node.name}` : `重命名文件夹 ${node.name}`,
+    placeholder: '中文标题或英文路径名',
+    initial: node.name,
+    actionLabel: '✧',
+    actionTitle: '翻译为英文路径名',
+    transform: async (value) => suggestEnglishSlug(value, kind),
+  })
+  if (!title) return
+  await onRename(oldPath, title, kind)
+}
+
 async function onDelete(p: string, kind: 'file' | 'folder') {
   // Same disambiguation as onRename — see findNode. A path-only lookup
   // would resolve a delete on `inbox/notes` to whichever node appears
@@ -690,10 +703,10 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :current-path="currentPath"
         :expanded-set="effectiveExpanded"
         :matched-fields="matchedFields"
-        :sibling-names="topLevelNames"
         @select="onSelect"
         @toggle="onToggle"
         @rename="onRename"
+        @request-rename="onRequestRename"
         @delete="onDelete"
         @move="onMove"
         @create-in="onCreateIn"
