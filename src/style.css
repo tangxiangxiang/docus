@@ -797,7 +797,9 @@ main.container {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 16px;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 16px;
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
   font-size: 0.78rem;
