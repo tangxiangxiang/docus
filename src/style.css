@@ -1457,56 +1457,13 @@ main.container {
   overflow: hidden;
 }
 .vault .tag-panel header {
-  /* Mirrors .vault .file-tree header: 36px tall, same chrome rhythm
-     as the navbar / activity-bar / tabs. Title is icon + name (same
-     structure as the FileTree), count pill rides on the right. */
+  /* Mirrors .vault .file-tree header: a column container that holds
+     one row (.tag-filter) at 36px min-height. The chrome rhythm (border-
+     bottom + bg) matches the navbar / activity-bar / tabs. */
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
-  padding: 0 8px 0 10px;
-  height: 36px;
-  box-sizing: border-box;
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: 0.02em;
-  color: var(--vs-text-2);
+  flex-direction: column;
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
-}
-.vault .tag-panel header .title {
-  /* Same flex pattern as the FileTree title so both panel headers
-     align identically. */
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--vs-text-2);
-}
-.vault .tag-panel header .title-text {
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-.vault .tag-panel header .title-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--vs-text-2);
-}
-.vault .tag-panel header .count {
-  /* Small tabular count on the right, pushed to the far edge via
-     the parent gap. Mono so the digits don't jitter when the
-     number changes. */
-  margin-left: auto;
-  font-weight: 500;
-  font-size: 0.7rem;
-  color: var(--vs-text-2);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
-  line-height: 1;
 }
 /* Inside the vault the panel's <ul> is a flex item of the column
    panel — `display: block` here gives the list intrinsic row height
@@ -1523,18 +1480,37 @@ main.container {
 }
 .vault .tag-panel li { border-bottom: 0; }
 
-/* Filter input row. The container is a flex bar with three children:
-   a magnifier icon (turns accent on focus-within), the bare text input,
-   and a × clear button that only renders while there's text. The input
-   itself drops its own border/background — the icon + clear button
-   provide the visual affordance, matching the file-tree filter bar. */
+/* Filter input row. Same chrome as .vault .file-tree header .search:
+   36px min-height so it sits flush with the first .ab-btn on the
+   activity bar. Four flex children: magnifier icon (turns accent on
+   focus-within), the bare text input that fills the row, a × clear
+   button (only when filter has text), and a small count badge pinned
+   to the far right. The input drops its own border/background — the
+   icon + clear button + count provide the visual affordance. No
+   border-bottom here; the parent header carries the panel separator. */
 .vault .tag-panel .tag-filter {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--vs-border);
+  min-height: 36px;
+  padding: 0 12px;
+  box-sizing: border-box;
   background: var(--vs-bg-2);
+}
+/* Total tag count on the far right. `margin-left: auto` claims the
+   space between input/clear-x and the count; `flex-shrink: 0` keeps
+   it pinned when the input grows. Tabular-nums so digit changes
+   don't shift the input width. Same visual weight as the original
+   header .count (0.7rem, --vs-text-2, mono numerals). */
+.vault .tag-panel .tag-filter-count {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-weight: 500;
+  font-size: 0.7rem;
+  color: var(--vs-text-2);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  line-height: 1;
 }
 .vault .tag-panel .tag-filter-icon {
   display: inline-flex;

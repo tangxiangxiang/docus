@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import { PROTECTED_ROOTS } from '../../composables/zettelProtocol'
-import { ICON_SEARCH, ICON_TAG } from './icons'
+import { ICON_SEARCH } from './icons'
 
 const props = defineProps<{
   posts: PostSummary[]
@@ -78,33 +78,30 @@ function onFilterKeydown(e: KeyboardEvent) {
 <template>
   <aside class="tag-panel" aria-label="Tags panel">
     <header>
-      <div class="title" role="presentation">
-        <!-- Mirrors the FileTree header (icon + panel name) so the
-             two panels in the activity bar swap read identically. -->
-        <span class="title-icon" v-html="ICON_TAG" aria-hidden="true" />
-        <span class="title-text">Tags</span>
+      <div class="tag-filter">
+        <span class="tag-filter-icon" v-html="ICON_SEARCH" aria-hidden="true" />
+        <input
+          v-model="filter"
+          class="tag-filter-input"
+          type="text"
+          placeholder="过滤 tag…"
+          aria-label="过滤 tag"
+          @keydown="onFilterKeydown"
+        />
+        <button
+          v-if="filter"
+          class="tag-filter-clear-x"
+          title="清空过滤"
+          aria-label="清空过滤"
+          @click="filter = ''"
+        >×</button>
+        <span
+          class="tag-filter-count"
+          :title="filter ? `共 ${tagMap.length} 个 tag` : undefined"
+          aria-label="Tag 总数"
+        >{{ tagMap.length }}</span>
       </div>
-      <span class="count">{{ tagMap.length }}</span>
     </header>
-
-    <div class="tag-filter">
-      <span class="tag-filter-icon" v-html="ICON_SEARCH" aria-hidden="true" />
-      <input
-        v-model="filter"
-        class="tag-filter-input"
-        type="text"
-        placeholder="过滤 tag…"
-        aria-label="过滤 tag"
-        @keydown="onFilterKeydown"
-      />
-      <button
-        v-if="filter"
-        class="tag-filter-clear-x"
-        title="清空过滤"
-        aria-label="清空过滤"
-        @click="filter = ''"
-      >×</button>
-    </div>
 
     <ul v-if="visibleTags.length" class="tag-list" role="listbox" aria-multiselectable="true" aria-label="Tag 列表">
       <li v-for="[tag, count] in visibleTags" :key="tag">
