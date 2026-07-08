@@ -60,6 +60,15 @@ export interface VaultLayout {
      mode-toggle, or `Cmd-\`). Persisted alongside the rest of the
      layout so the user's last choice is restored on next load. */
   previewOpen: boolean
+  /* Whether the read-mode right rail (TOC + Links) is collapsed by user
+     choice. Defaults to false (rail visible in read mode when other
+     gates allow it). When true, the tocGate reports false so the grid
+     elides the rail track entirely — different from toc-collapsed /
+     links-collapsed inside the rail, which only hide one half while
+     keeping the other half sized normally. This is the "I don't want
+     ANY side panel on the right" toggle, accessible via the chevron
+     on the splitter or by double-clicking the splitter. */
+  rightRailCollapsed: boolean
 }
 
 const STORAGE_KEY = 'docus.vault.layout'
@@ -71,6 +80,7 @@ const DEFAULTS: VaultLayout = {
   aiPanelWidth: 320,
   tocPanelWidth: 320,
   previewOpen: false,
+  rightRailCollapsed: false,
 }
 
 /* Module-level shared refs.
@@ -98,6 +108,7 @@ const _aiOpen = ref(DEFAULTS.aiOpen)
 const _aiPanelWidth = ref(DEFAULTS.aiPanelWidth)
 const _tocPanelWidth = ref(DEFAULTS.tocPanelWidth)
 const _previewOpen = ref(DEFAULTS.previewOpen)
+const _rightRailCollapsed = ref(DEFAULTS.rightRailCollapsed)
 
 /* Hydration guard. The first useVaultLayout() call (which is the
    VaultView's) is the one that owns the storage round-trip — it reads
@@ -139,6 +150,7 @@ export function __resetVaultLayoutState(): void {
   _aiPanelWidth.value = DEFAULTS.aiPanelWidth
   _tocPanelWidth.value = DEFAULTS.tocPanelWidth
   _previewOpen.value = DEFAULTS.previewOpen
+  _rightRailCollapsed.value = DEFAULTS.rightRailCollapsed
 }
 
 export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
@@ -196,6 +208,12 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
             // common screens, and we don't want to silently restore
             // it for upgrading users.
             previewOpen: typeof d.previewOpen === 'boolean' ? d.previewOpen : DEFAULTS.previewOpen,
+            // rightRailCollapsed was added with the chevron-on-splitter
+            // toggle. Persisted layouts from before that feature lack
+            // the field — treat missing as the new default (false) so
+            // existing users keep seeing their right rail until they
+            // explicitly collapse it.
+            rightRailCollapsed: typeof d.rightRailCollapsed === 'boolean' ? d.rightRailCollapsed : DEFAULTS.rightRailCollapsed,
           } satisfies VaultLayout
         } catch {
           return { ...DEFAULTS }
@@ -219,14 +237,15 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
     _aiPanelWidth.value = layout.value.aiPanelWidth
     _tocPanelWidth.value = layout.value.tocPanelWidth
     _previewOpen.value = layout.value.previewOpen
+    _rightRailCollapsed.value = layout.value.rightRailCollapsed
 
     // Persist on any change. useStorage's deep-compare avoids noop writes
     // (e.g. when the storage value already matches), so the round-trip
     // doesn't cause re-render storms.
     watch(
-      [_activePanel, _sidePanelWidth, _editorRatio, _aiOpen, _aiPanelWidth, _tocPanelWidth, _previewOpen],
-      ([ap, w, r, ao, aw, tw, po]) => {
-        layout.value = { activePanel: ap, sidePanelWidth: w, editorRatio: r, aiOpen: ao, aiPanelWidth: aw, tocPanelWidth: tw, previewOpen: po }
+      [_activePanel, _sidePanelWidth, _editorRatio, _aiOpen, _aiPanelWidth, _tocPanelWidth, _previewOpen, _rightRailCollapsed],
+      ([ap, w, r, ao, aw, tw, po, rrc]) => {
+        layout.value = { activePanel: ap, sidePanelWidth: w, editorRatio: r, aiOpen: ao, aiPanelWidth: aw, tocPanelWidth: tw, previewOpen: po, rightRailCollapsed: rrc }
       },
     )
   }
@@ -248,6 +267,7 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
   const aiPanelWidth: Ref<number> = _aiPanelWidth
   const tocPanelWidth: Ref<number> = _tocPanelWidth
   const previewOpen: Ref<boolean> = _previewOpen
+  const rightRailCollapsed: Ref<boolean> = _rightRailCollapsed
 
   const vaultStyle = computed(() => {
     // Rows: editor-area (fills), then a 24px status-bar that spans the
@@ -296,7 +316,13 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
     // allocates the track even though the v-if hides the element.
     // tocGate is a getter (not a Ref) so it captures activePanel by
     // closure — see useVaultLayout's signature comment.
-    const toc = (!aiOpen.value && tocGate()) ? ` 1px ${tocPanelWidth.value}px` : ''
+    // rightRailCollapsed is checked here too: when the user has
+    // explicitly collapsed the rail (via the splitter chevron or
+    // dblclick), the grid track should vanish entirely, not stay
+    // allocated. VaultView owns the tocGate body, so the rail-collapsed
+    // check is local to this composable and stays in sync without
+    // touching the gate's contract.
+    const toc = (!aiOpen.value && !rightRailCollapsed.value && tocGate()) ? ` 1px ${tocPanelWidth.value}px` : ''
     const right = aiOpen.value ? ` 1px ${aiPanelWidth.value}px` : ''
     return {
       gridTemplateColumns: `48px ${left}1fr${toc}${right}`,
@@ -344,6 +370,17 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
     // preview and reclaims the horizontal space for the editor.
   }
 
+  function toggleRightRail() {
+    // The user's manual override: collapse / re-expand the entire
+    // right rail (TOC + Links) at once. Distinct from the rail's
+    // internal toc-collapsed / links-collapsed halves, which only
+    // hide one of the two children. When the user has explicitly
+    // collapsed the rail, the tocGate reports false so the grid
+    // elides the column — see the `rightRailCollapsed` clause in
+    // vaultStyle.
+    rightRailCollapsed.value = !rightRailCollapsed.value
+  }
+
   return {
     activePanel,
     sidePanelOpen,
@@ -353,10 +390,12 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
     aiPanelWidth,
     tocPanelWidth,
     previewOpen,
+    rightRailCollapsed,
     vaultStyle,
     contentStyle,
     selectPanel,
     toggleAi,
     togglePreview,
+    toggleRightRail,
   }
 }

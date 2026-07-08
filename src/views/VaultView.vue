@@ -83,6 +83,8 @@ const {
   tocPanelWidth,
   previewOpen,
   togglePreview,
+  rightRailCollapsed,
+  toggleRightRail,
 } = useVaultLayout({ tocGate: () => tocGate() })
 
 /* Splitter drag lives in its own composable — it mutates the same
@@ -108,7 +110,16 @@ const { startDrag } = useSplitterDrag({
 const tocPanelEnabled = computed(
   () => isReadMode.value && activePanel.value !== 'graph',
 )
-const tocVisible = computed(() => tocPanelEnabled.value && !aiOpen.value)
+const tocVisible = computed(
+  () => tocPanelEnabled.value && !aiOpen.value && !rightRailCollapsed.value,
+)
+/* The splitter is a grid child only when the rail is visible. In the
+   collapsed state the chevron affordance is rendered as an absolutely-
+   positioned button pinned to the vault's right edge (see template
+   below) — putting it in the grid would either force an extra column
+   (creating a 1px gray strip where the rail used to be) or, with the
+   default grid-auto-flow: row, wrap the splitter to row 2 (status
+   bar), which is what produced the gray area the user reported. */
 tocGate = () => tocPanelEnabled.value
 
 const review = useSplitReview()
@@ -382,9 +393,35 @@ watch(() => navSearch?.tick.value, () => openSearch())
       class="splitter splitter-toc"
       role="separator"
       aria-orientation="vertical"
-      title="拖动调整目录宽度"
+      title="拖动调整宽度 · 双击折叠右侧栏"
       @pointerdown="startDrag(vaultRef!, 'toc', $event)"
-    />
+      @dblclick="toggleRightRail"
+    >
+      <button
+        type="button"
+        class="splitter-chevron"
+        aria-label="折叠右侧栏"
+        title="折叠右侧栏"
+        @click.stop="toggleRightRail"
+      >‹</button>
+    </div>
+    <!-- In collapsed mode the splitter is gone from the grid (see
+         tocVisible above) — it's replaced by an absolutely-positioned
+         chevron pinned to the vault's right edge. Putting it in the
+         grid would either create an extra column or wrap the splitter
+         into the status-bar row, both of which produce visual
+         artifacts. Hidden while AI is open (the AI panel covers the
+         right edge; clicking the rail chevron there would replace
+         the AI panel, which is surprising). The collapsed state
+         persists, so when AI closes the chevron returns. -->
+    <button
+      v-if="rightRailCollapsed && tocPanelEnabled && !aiOpen"
+      type="button"
+      class="rail-expand-edge"
+      aria-label="展开右侧栏"
+      title="展开右侧栏"
+      @click="toggleRightRail"
+    >›</button>
     <TocPanel
       v-if="tocVisible"
       class="toc-panel-slot"

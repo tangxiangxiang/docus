@@ -385,6 +385,12 @@ main.container {
   display: grid;
   grid-template-rows: 1fr;
   gap: 0;
+  /* Anchor for the absolute-positioned .rail-expand-edge button
+     that appears at the right edge when the right rail is
+     collapsed by user choice. Without `position: relative` here,
+     the button would anchor to the nearest positioned ancestor
+     (body / root), escaping the vault. */
+  position: relative;
   background: var(--border);
   height: calc(100vh - var(--navbar-h, 56px));
   outline: none;
@@ -2057,6 +2063,90 @@ main.container {
   right: -3px;
   /* pointer-events: auto is the default; the ::before exists solely
      to enlarge the hit area, so leave it click-transparent visually. */
+}
+
+/* Chevron button anchored to the TOC splitter. Two affordances for
+   collapsing / re-expanding the right rail:
+     1. The button itself — visible on hover, persists on focus.
+     2. Double-click on the splitter body (handled in VaultView).
+   The chevron sits centered vertically on the splitter, shifted left
+   so the arrow tip visually points at the rail (when expanded) or at
+   the screen edge (when collapsed — the splitter also gets pinned to
+   the right via grid order below). */
+.vault .splitter-toc .splitter-chevron {
+  position: absolute;
+  top: 50%;
+  /* Shift toward the rail side (right of the splitter). When the rail
+     is collapsed, the splitter itself is moved to the right edge via
+     grid order, and the chevron's translate compensates so it still
+     sits flush against the visual "screen edge" the rail would
+     re-expand from. */
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--vs-border);
+  border-radius: 3px;
+  background: var(--vs-bg-2);
+  color: var(--vs-text-2);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s, color 0.1s, background 0.1s, border-color 0.1s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+.vault .splitter-toc:hover .splitter-chevron,
+.vault .splitter-toc .splitter-chevron:focus-visible,
+.vault .splitter-toc .splitter-chevron.is-collapsed {
+  opacity: 1;
+}
+.vault .splitter-toc .splitter-chevron:hover {
+  color: var(--vs-text-1);
+  background: var(--vs-hover-bg);
+  border-color: var(--vs-accent);
+}
+/* Edge button that replaces the splitter when the right rail is
+   collapsed. Pinned absolutely to the vault's right edge (NOT a
+   grid child, see the VaultView template comment) so it doesn't
+   create an extra grid column or wrap into the status-bar row.
+   `top: 50%` centers vertically. The button is always visible —
+   the collapsed rail is otherwise invisible, so the user has no
+   affordance to re-expand without it. */
+.vault .rail-expand-edge {
+  position: absolute;
+  top: 50%;
+  /* -14px = half the button width, so its left edge sits flush with
+     the vault's right edge instead of overflowing it. Subtract the
+     24px status-bar row so the button doesn't sit on top of the
+     status bar visually. */
+  right: 0;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--vs-border);
+  border-left: 0;
+  border-radius: 3px 0 0 3px;
+  background: var(--vs-bg-2);
+  color: var(--vs-text-2);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
+}
+.vault .rail-expand-edge:hover {
+  color: var(--vs-text-1);
+  background: var(--vs-hover-bg);
+  border-color: var(--vs-accent);
 }
 
 /* EditorPane inside vault */

@@ -36,9 +36,11 @@ interface Harness {
   aiPanelWidth: Ref<number>
   tocPanelWidth: Ref<number>
   previewOpen: Ref<boolean>
+  rightRailCollapsed: Ref<boolean>
   selectPanel: (p: 'files' | 'tags' | 'graph') => void
   toggleAi: () => void
   togglePreview: () => void
+  toggleRightRail: () => void
   vaultStyle: { value: { gridTemplateColumns: string } }
 }
 
@@ -56,9 +58,11 @@ function setup(opts: { tocGate?: () => boolean } = {}): Harness {
         aiPanelWidth: layout.aiPanelWidth,
         tocPanelWidth: layout.tocPanelWidth,
         previewOpen: layout.previewOpen,
+        rightRailCollapsed: layout.rightRailCollapsed,
         selectPanel: layout.selectPanel,
         toggleAi: layout.toggleAi,
         togglePreview: layout.togglePreview,
+        toggleRightRail: layout.toggleRightRail,
         vaultStyle: layout.vaultStyle as Harness['vaultStyle'],
       }
       return () => h('div')
@@ -414,5 +418,123 @@ describe('useVaultLayout', () => {
     // Reset is honored — the next reader gets null and won't crash.
     __resetSelectPanelForClicks()
     expect(getSelectPanelForClicks()).toBeNull()
+  })
+
+  // --- right rail collapse ------------------------------------------------
+  //
+  // The "rightRailCollapsed" flag is the user's manual override for
+  // hiding the entire read-mode right rail (TOC + Links) at once.
+  // Distinct from the rail's internal toc-collapsed / links-collapsed
+  // halves (which only hide one of the two children). vaultStyle must
+  // honor it on top of the tocGate so the grid column elides.
+
+  it('exposes rightRailCollapsed=false by default', () => {
+    const h = setup()
+    expect(h.rightRailCollapsed.value).toBe(false)
+  })
+
+  it('toggleRightRail flips rightRailCollapsed off and on', () => {
+    const h = setup()
+    expect(h.rightRailCollapsed.value).toBe(false)
+    h.toggleRightRail()
+    expect(h.rightRailCollapsed.value).toBe(true)
+    h.toggleRightRail()
+    expect(h.rightRailCollapsed.value).toBe(false)
+  })
+
+  it('vaultStyle elides the TOC track when rightRailCollapsed=true', () => {
+    // Regression: before this flag existed, a user who wanted no right
+    // rail at all had no escape — they could collapse each half but
+    // the splitter still allocated the column. With the flag, the
+    // column vanishes from the grid just like when tocGate=false.
+    const h = setup()
+    // baseline: default side=files, gate would default to true
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr 1px 320px')
+    h.toggleRightRail()
+    expect(h.rightRailCollapsed.value).toBe(true)
+    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr')
+  })
+
+  it('rightRailCollapsed composes with the tocGate (either elides the TOC track)', async () => {
+    // Both gates must be honored: collapsing the rail while in edit
+    // mode (gate=false) leaves the column elided either way; toggling
+    // the rail back on in edit mode doesn't bring it back (gate still
+    // false). Conversely, the gate returning true re-allocates the
+    // column ONLY if rightRailCollapsed is also false.
+    const gate = ref(true)
+    let layout: ReturnType<typeof useVaultLayout> | null = null
+    const Comp = defineComponent({
+      setup() {
+        layout = useVaultLayout({ tocGate: () => gate.value })
+        return () => h('div')
+      },
+    })
+    mount(Comp)
+    // gate=true, collapsed=false → toc track present
+    expect(layout!.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr 1px 320px')
+    // collapse: toc track gone
+    layout!.toggleRightRail()
+    await Promise.resolve()
+    expect(layout!.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr')
+    // gate goes false (edit mode): still no toc track (would be gone anyway)
+    gate.value = false
+    await Promise.resolve()
+    expect(layout!.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr')
+    // gate goes true, but rail is still collapsed: still no toc track
+    gate.value = true
+    await Promise.resolve()
+    expect(layout!.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr')
+    // re-expand: toc track returns
+    layout!.toggleRightRail()
+    await Promise.resolve()
+    expect(layout!.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr 1px 320px')
+  })
+
+  it('hydrates rightRailCollapsed=true from localStorage', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      ...JSON.parse('{}'),
+      activePanel: 'files',
+      sidePanelWidth: 260,
+      editorRatio: 1,
+      aiOpen: false,
+      aiPanelWidth: 320,
+      tocPanelWidth: 320,
+      previewOpen: false,
+      rightRailCollapsed: true,
+    }))
+    const h = setup()
+    await Promise.resolve()
+    expect(h.rightRailCollapsed.value).toBe(true)
+  })
+
+  it('hydrates rightRailCollapsed=false when the field is missing (pre-chevron payloads)', () => {
+    // Persisted layouts from before the chevron feature lack the
+    // field. Treat missing as the new default (false) so existing
+    // users keep their visible right rail until they explicitly
+    // collapse it.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      activePanel: 'files',
+      sidePanelWidth: 260,
+      editorRatio: 1,
+      aiOpen: false,
+      aiPanelWidth: 320,
+      tocPanelWidth: 320,
+      previewOpen: false,
+      // no rightRailCollapsed
+    }))
+    const h = setup()
+    expect(h.rightRailCollapsed.value).toBe(false)
+  })
+
+  it('persists rightRailCollapsed to localStorage when toggled', async () => {
+    const h = setup()
+    h.toggleRightRail()
+    await Promise.resolve()
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as VaultLayout
+    expect(parsed.rightRailCollapsed).toBe(true)
+    h.toggleRightRail()
+    await Promise.resolve()
+    const parsed2 = JSON.parse(localStorage.getItem(STORAGE_KEY)!) as VaultLayout
+    expect(parsed2.rightRailCollapsed).toBe(false)
   })
 })
