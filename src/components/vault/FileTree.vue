@@ -620,23 +620,14 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
 <template>
   <aside
     class="file-tree"
+    aria-label="File explorer"
     :class="{ 'drop-target-root': isRootDropTarget }"
     @dragenter="onRootDragEnter"
     @dragleave="onRootDragLeave"
     @dragover="onRootDragOver"
     @drop="onRootDrop"
   >
-    <header :aria-label="'File explorer'">
-      <div class="title" role="presentation">
-        <!-- The scope filter chips moved to the NavBar, so the header
-             is just a folder glyph + panel name. English label matches
-             the scope / file names below and the VS Code vocabulary
-             this app emulates. -->
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-        </svg>
-        <span class="title-text">Explorer</span>
-      </div>
+    <header>
       <!-- Always-on search input. Filters the tree by file name /
            title / summary (case-insensitive, contains) and AND-composes
            with the tag chips inlined to the left of the input. Tag

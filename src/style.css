@@ -1182,40 +1182,21 @@ main.container {
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
 }
-.vault .file-tree header .title {
-  /* Folder glyph + panel name. flex-shrink: 0 so CJK characters stay
-     on one line even when the sidebar is at its 150px minimum.
-     Height matches .ab-btn (36px) so the panel-title row is flush with
-     the first activity-bar button on the left. */
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px 0 10px;
-  height: 36px;
-  box-sizing: border-box;
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--vs-text-2);
-}
-.vault .file-tree header .title-text {
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-}
-/* Always-on search input lives below the title row. Icon + active-tag
+/* Always-on search input. Icon + active-tag
    chips + input + clear-x all share one flex row; chips wrap to a
    second line when there are too many to fit alongside the input.
-   AND-composes with the chip filters inlined to the left of the input. */
+   AND-composes with the chip filters inlined to the left of the input.
+   min-height: 36px matches the activity-bar (.ab-btn) so the search
+   row sits flush with the first ab-btn on the left. flex-wrap lets
+   the row grow taller than 36px when chips overflow. */
 .vault .file-tree header .search {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px 6px 10px;
-  border-top: 1px solid var(--vs-border);
+  min-height: 36px;
+  padding: 0 8px 0 10px;
+  box-sizing: border-box;
 }
 .vault .file-tree header .search-icon {
   flex-shrink: 0;
