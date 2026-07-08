@@ -62,6 +62,17 @@ async function loadDiffWith(diff: api.FileDiff, file = 'inbox/a.md') {
   await h.selectFile(file, { oldRef: 'HEAD~1', newRef: 'HEAD' })
 }
 
+function paneRows(wrapper: ReturnType<typeof renderDiffView>, side: 'old' | 'new') {
+  return wrapper
+    .find(`.diff-pane-${side}`)
+    .findAll('.diff-row')
+    .filter((r) => !r.classes('diff-row-head'))
+}
+
+function rowCells(wrapper: ReturnType<typeof renderDiffView>, side: 'old' | 'new', index: number) {
+  return paneRows(wrapper, side)[index].findAll('.diff-cell')
+}
+
 describe('DiffView row pairing', () => {
   // Pre-populate the singleton's currentDiff via a direct write —
   // we don't want to round-trip through the mocked api just to
@@ -80,15 +91,15 @@ describe('DiffView row pairing', () => {
     })
     const wrapper = renderDiffView()
     await flushPromises()
-    const rows = wrapper.findAll('.diff-row').filter((r) => !r.classes('diff-row-head'))
-    expect(rows).toHaveLength(2)
-    // Row layout: [old-num, old-text, new-num, new-text]
-    const cells0 = rows[0].findAll('.diff-cell')
-    expect(cells0).toHaveLength(4)
-    expect(cells0[0].text()).toBe('1')
-    expect(cells0[1].text()).toBe('a')
-    expect(cells0[2].text()).toBe('1')
-    expect(cells0[3].text()).toBe('a')
+    expect(paneRows(wrapper, 'old')).toHaveLength(2)
+    expect(paneRows(wrapper, 'new')).toHaveLength(2)
+    const oldCells0 = rowCells(wrapper, 'old', 0)
+    const newCells0 = rowCells(wrapper, 'new', 0)
+    expect(oldCells0).toHaveLength(2)
+    expect(oldCells0[0].text()).toBe('1')
+    expect(oldCells0[1].text()).toBe('a')
+    expect(newCells0[0].text()).toBe('1')
+    expect(newCells0[1].text()).toBe('a')
   })
 
   it('renders a remove row with the old line and a blank new side', async () => {
@@ -100,13 +111,13 @@ describe('DiffView row pairing', () => {
     })
     const wrapper = renderDiffView()
     await flushPromises()
-    const row = wrapper.find('.diff-row.is-del')
-    expect(row.exists()).toBe(true)
-    const cells = row.findAll('.diff-cell')
-    expect(cells[0].text()).toBe('1')
-    expect(cells[1].text()).toBe('gone')
-    expect(cells[2].text()).toBe('')
-    expect(cells[3].text()).toBe('')
+    expect(paneRows(wrapper, 'old')[0].classes()).toContain('is-del')
+    const oldCells = rowCells(wrapper, 'old', 0)
+    const newCells = rowCells(wrapper, 'new', 0)
+    expect(oldCells[0].text()).toBe('1')
+    expect(oldCells[1].text()).toBe('gone')
+    expect(newCells[0].text()).toBe('')
+    expect(newCells[1].text()).toBe('')
   })
 
   it('renders an add row with the new line and a blank old side', async () => {
@@ -118,13 +129,13 @@ describe('DiffView row pairing', () => {
     })
     const wrapper = renderDiffView()
     await flushPromises()
-    const row = wrapper.find('.diff-row.is-add')
-    expect(row.exists()).toBe(true)
-    const cells = row.findAll('.diff-cell')
-    expect(cells[0].text()).toBe('')
-    expect(cells[1].text()).toBe('')
-    expect(cells[2].text()).toBe('1')
-    expect(cells[3].text()).toBe('fresh')
+    expect(paneRows(wrapper, 'new')[0].classes()).toContain('is-add')
+    const oldCells = rowCells(wrapper, 'old', 0)
+    const newCells = rowCells(wrapper, 'new', 0)
+    expect(oldCells[0].text()).toBe('')
+    expect(oldCells[1].text()).toBe('')
+    expect(newCells[0].text()).toBe('1')
+    expect(newCells[1].text()).toBe('fresh')
   })
 
   it('renders word-level diff chunks when the L1 layer attached them', async () => {
@@ -143,13 +154,10 @@ describe('DiffView row pairing', () => {
     })
     const wrapper = renderDiffView()
     await flushPromises()
-    const row = wrapper.find('.diff-row.is-edit')
-    expect(row.exists()).toBe(true)
-    const cells = row.findAll('.diff-cell')
-    // Old column is cells[1] (the diff-cell-text on the old side).
-    // New column is cells[3].
-    const oldSpans = cells[1].findAll('.diff-word')
-    const newSpans = cells[3].findAll('.diff-word')
+    expect(paneRows(wrapper, 'old')[0].classes()).toContain('is-edit')
+    expect(paneRows(wrapper, 'new')[0].classes()).toContain('is-edit')
+    const oldSpans = rowCells(wrapper, 'old', 0)[1].findAll('.diff-word')
+    const newSpans = rowCells(wrapper, 'new', 0)[1].findAll('.diff-word')
     expect(oldSpans.length).toBeGreaterThan(0)
     expect(newSpans.length).toBeGreaterThan(0)
     expect(oldSpans.some((s) => s.classes().includes('diff-word-equal'))).toBe(true)
@@ -179,14 +187,41 @@ describe('DiffView row pairing', () => {
     })
     const wrapper = renderDiffView()
     await flushPromises()
-    const rows = wrapper.findAll('.diff-row').filter((r) => !r.classes('diff-row-head'))
-    // max(2 removes, 3 adds) = 3 rows
-    expect(rows).toHaveLength(3)
-    // First two rows: del on left, add on right
-    expect(rows[0].classes()).toContain('is-edit')
-    expect(rows[1].classes()).toContain('is-edit')
-    // Last row: only an add (left blank, right has 'a3')
-    expect(rows[2].classes()).toContain('is-add')
+    const oldRows = paneRows(wrapper, 'old')
+    const newRows = paneRows(wrapper, 'new')
+    // max(2 removes, 3 adds) = 3 paired rows per pane
+    expect(oldRows).toHaveLength(3)
+    expect(newRows).toHaveLength(3)
+    expect(oldRows[0].classes()).toContain('is-edit')
+    expect(newRows[0].classes()).toContain('is-edit')
+    expect(oldRows[1].classes()).toContain('is-edit')
+    expect(newRows[1].classes()).toContain('is-edit')
+    expect(newRows[2].classes()).toContain('is-add')
+    expect(rowCells(wrapper, 'old', 2)[1].text()).toBe('')
+    expect(rowCells(wrapper, 'new', 2)[1].text()).toBe('a3')
+  })
+
+  it('synchronizes vertical scroll between the old and new panes', async () => {
+    await loadDiffWith({
+      ops: [
+        { op: 'equal', oldLine: 1, newLine: 1, text: 'a' },
+        { op: 'equal', oldLine: 2, newLine: 2, text: 'b' },
+      ],
+      stats: { added: 0, removed: 0, equal: 2 },
+    })
+    const wrapper = renderDiffView()
+    await flushPromises()
+    const oldPane = wrapper.get('.diff-pane-old').element as HTMLElement
+    const newPane = wrapper.get('.diff-pane-new').element as HTMLElement
+
+    oldPane.scrollTop = 42
+    await wrapper.get('.diff-pane-old').trigger('scroll')
+    expect(newPane.scrollTop).toBe(42)
+
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    newPane.scrollTop = 17
+    await wrapper.get('.diff-pane-new').trigger('scroll')
+    expect(oldPane.scrollTop).toBe(17)
   })
 })
 

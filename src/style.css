@@ -817,20 +817,33 @@ main.container {
 .diff-table {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   font-family: var(--mono);
   font-size: 0.78rem;
   line-height: 1.55;
   background: var(--vs-bg-1);
+  overflow: hidden;
+}
+.diff-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--vs-bg-1);
+  /* Vertical scroll is synchronized between panes, so both sides must
+     keep the same text metrics or paired rows will drift apart. */
+  font-size: inherit;
+  line-height: inherit;
+}
+.diff-pane + .diff-pane {
+  border-left: 1px solid var(--vs-border);
 }
 .diff-row {
   display: grid;
-  /* `minmax(0, 1fr)` (not bare `1fr`) lets the text columns shrink
-     below their content's intrinsic min width — otherwise an
-     unbreakable long line (URL, code fence) blows out the column
-     and pushes the gutter / right column off-screen. */
-  grid-template-columns: 56px minmax(0, 1fr) 56px minmax(0, 1fr);
+  grid-template-columns: 56px max-content;
   align-items: stretch;
+  width: max-content;
+  min-width: 100%;
 }
 .diff-row-head {
   position: sticky;
@@ -847,8 +860,11 @@ main.container {
 .diff-cell {
   padding: 0 8px;
   white-space: pre;
-  overflow: hidden;
-  text-overflow: clip;
+  overflow: visible;
+}
+.diff-cell-text {
+  min-width: 0;
+  min-height: 1.55em;
 }
 .diff-cell-num {
   text-align: right;
@@ -857,14 +873,12 @@ main.container {
   background: var(--vs-bg-2);
   border-right: 1px solid var(--vs-border);
 }
-.diff-row.is-add .diff-cell-num:nth-child(3) { color: #16a34a; }
-.diff-row.is-del .diff-cell-num:nth-child(1) { color: #dc2626; }
-.diff-row.is-add .diff-cell-text:nth-child(2) { background: color-mix(in srgb, #16a34a 12%, transparent); }
-.diff-row.is-add .diff-cell-text:nth-child(4) { background: color-mix(in srgb, #16a34a 12%, transparent); }
-.diff-row.is-del .diff-cell-text:nth-child(2) { background: color-mix(in srgb, #dc2626 12%, transparent); }
-.diff-row.is-del .diff-cell-text:nth-child(4) { background: color-mix(in srgb, #dc2626 12%, transparent); }
-.diff-row.is-edit .diff-cell-text:nth-child(2) { background: color-mix(in srgb, #dc2626 10%, transparent); }
-.diff-row.is-edit .diff-cell-text:nth-child(4) { background: color-mix(in srgb, #16a34a 10%, transparent); }
+.diff-pane-old .diff-row.is-del .diff-cell-num { color: #dc2626; }
+.diff-pane-new .diff-row.is-add .diff-cell-num { color: #16a34a; }
+.diff-pane-new .diff-row.is-add .diff-cell-text { background: color-mix(in srgb, #16a34a 12%, transparent); }
+.diff-pane-old .diff-row.is-del .diff-cell-text { background: color-mix(in srgb, #dc2626 12%, transparent); }
+.diff-pane-old .diff-row.is-edit .diff-cell-text { background: color-mix(in srgb, #dc2626 10%, transparent); }
+.diff-pane-new .diff-row.is-edit .diff-cell-text { background: color-mix(in srgb, #16a34a 10%, transparent); }
 
 .diff-word { padding: 0; }
 .diff-word-add { background: color-mix(in srgb, #16a34a 28%, transparent); border-radius: 2px; }

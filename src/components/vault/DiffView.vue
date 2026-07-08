@@ -21,7 +21,7 @@
    markdown note the diff has at most a few hundred rows, well
    under any virtualization threshold. We don't virtualize — that
    would break the row-pairing invariant in the remove/add gaps. */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useHistory } from '../../composables/vault/useHistory.js'
 import { useToast } from '../../composables/useToast.js'
 import { WORKTREE_REF, type DiffOp } from '../../lib/history-api.js'
@@ -131,6 +131,22 @@ const rows = computed<{ left: DiffOp | null; right: DiffOp | null }[]>(() => {
 
 const stats = computed(() => h.currentDiff.value?.stats ?? { added: 0, removed: 0, equal: 0 })
 const hasDiff = computed(() => h.selectedFile.value !== null)
+
+const oldPane = ref<HTMLElement | null>(null)
+const newPane = ref<HTMLElement | null>(null)
+let syncingScroll = false
+
+function syncVerticalScroll(source: 'old' | 'new') {
+  if (syncingScroll) return
+  const from = source === 'old' ? oldPane.value : newPane.value
+  const to = source === 'old' ? newPane.value : oldPane.value
+  if (!from || !to) return
+  syncingScroll = true
+  to.scrollTop = from.scrollTop
+  requestAnimationFrame(() => {
+    syncingScroll = false
+  })
+}
 </script>
 
 <template>
@@ -186,49 +202,78 @@ const hasDiff = computed(() => h.selectedFile.value !== null)
         </EmptyState>
       </div>
 
-      <div v-else class="diff-table" role="table">
-        <div class="diff-row diff-row-head" role="row">
-          <div class="diff-cell diff-cell-num" role="columnheader">old</div>
-          <div class="diff-cell diff-cell-text" role="columnheader"></div>
-          <div class="diff-cell diff-cell-num" role="columnheader">new</div>
-          <div class="diff-cell diff-cell-text" role="columnheader"></div>
-        </div>
+      <div v-else class="diff-table" role="group" aria-label="Side-by-side diff">
         <div
-          v-for="(row, idx) in rows"
-          :key="idx"
-          class="diff-row"
-          :class="{
-            'is-add': row.right && !row.left,
-            'is-del': row.left && !row.right,
-            'is-edit': row.left && row.right && row.left.text !== row.right.text,
-          }"
-          role="row"
+          ref="oldPane"
+          class="diff-pane diff-pane-old"
+          role="table"
+          aria-label="Old version"
+          @scroll="syncVerticalScroll('old')"
         >
-          <div class="diff-cell diff-cell-num" role="cell">
-            {{ row.left?.oldLine ?? '' }}
+          <div class="diff-row diff-row-head" role="row">
+            <div class="diff-cell diff-cell-num" role="columnheader">old</div>
+            <div class="diff-cell diff-cell-text" role="columnheader"></div>
           </div>
-          <div class="diff-cell diff-cell-text" role="cell">
-            <template v-if="row.left?.words">
-              <span
-                v-for="(w, j) in row.left.words"
-                :key="j"
-                :class="['diff-word', `diff-word-${w.op}`]"
-              >{{ w.text }}</span>
-            </template>
-            <template v-else>{{ row.left?.text ?? '' }}</template>
+          <div
+            v-for="(row, idx) in rows"
+            :key="`old-${idx}`"
+            class="diff-row"
+            :class="{
+              'is-del': row.left && !row.right,
+              'is-edit': row.left && row.right && row.left.text !== row.right.text,
+            }"
+            role="row"
+          >
+            <div class="diff-cell diff-cell-num" role="cell">
+              {{ row.left?.oldLine ?? '' }}
+            </div>
+            <div class="diff-cell diff-cell-text" role="cell">
+              <template v-if="row.left?.words">
+                <span
+                  v-for="(w, j) in row.left.words"
+                  :key="j"
+                  :class="['diff-word', `diff-word-${w.op}`]"
+                >{{ w.text }}</span>
+              </template>
+              <template v-else>{{ row.left?.text ?? '' }}</template>
+            </div>
           </div>
-          <div class="diff-cell diff-cell-num" role="cell">
-            {{ row.right?.newLine ?? '' }}
+        </div>
+
+        <div
+          ref="newPane"
+          class="diff-pane diff-pane-new"
+          role="table"
+          aria-label="New version"
+          @scroll="syncVerticalScroll('new')"
+        >
+          <div class="diff-row diff-row-head" role="row">
+            <div class="diff-cell diff-cell-num" role="columnheader">new</div>
+            <div class="diff-cell diff-cell-text" role="columnheader"></div>
           </div>
-          <div class="diff-cell diff-cell-text" role="cell">
-            <template v-if="row.right?.words">
-              <span
-                v-for="(w, j) in row.right.words"
-                :key="j"
-                :class="['diff-word', `diff-word-${w.op}`]"
-              >{{ w.text }}</span>
-            </template>
-            <template v-else>{{ row.right?.text ?? '' }}</template>
+          <div
+            v-for="(row, idx) in rows"
+            :key="`new-${idx}`"
+            class="diff-row"
+            :class="{
+              'is-add': row.right && !row.left,
+              'is-edit': row.left && row.right && row.left.text !== row.right.text,
+            }"
+            role="row"
+          >
+            <div class="diff-cell diff-cell-num" role="cell">
+              {{ row.right?.newLine ?? '' }}
+            </div>
+            <div class="diff-cell diff-cell-text" role="cell">
+              <template v-if="row.right?.words">
+                <span
+                  v-for="(w, j) in row.right.words"
+                  :key="j"
+                  :class="['diff-word', `diff-word-${w.op}`]"
+                >{{ w.text }}</span>
+              </template>
+              <template v-else>{{ row.right?.text ?? '' }}</template>
+            </div>
           </div>
         </div>
       </div>
