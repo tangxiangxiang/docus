@@ -290,7 +290,7 @@ export async function splitNote(req: SplitRequest): Promise<SplitResponse> {
 export async function writeDraftBatch(
   req: WriteDraftBatchRequest,
 ): Promise<WriteDraftBatchResponse> {
-  return jsonOrThrow<WriteDraftBatchResponse>(await fetch('/api/zettel/draft/batch', {
+  return jsonOrThrow<WriteDraftBatchResponse>(await fetch('/api/drafts/batch', {
     method: 'POST', ...jsonBody(req),
   }))
 }

@@ -31,6 +31,11 @@ const TREE: TreeNode[] = [
       {
         kind: 'folder', name: 'inbox', path: 'inbox', children: [
           { kind: 'file', name: 'foo', path: 'inbox/foo', title: 'Foo', mtime: 0 },
+          {
+            kind: 'folder', name: 'draft', path: 'inbox/draft', children: [
+              { kind: 'file', name: 'draft-foo', path: 'inbox/draft/draft-foo', title: 'Draft Foo', mtime: 0 },
+            ],
+          },
         ],
       },
       { kind: 'folder', name: 'literature', path: 'literature', children: [] },
@@ -80,6 +85,36 @@ describe('FileTree archive-to-zettel', () => {
 
     expect(w.emitted('refresh')).toBeTruthy()
     expect(w.emitted('select')!.at(-1)).toEqual(['zettel/foo'])
+    w.unmount()
+  })
+
+  it('emits select(final path) when the server auto-suffixes a zettel collision', async () => {
+    vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'zettel/foo-2', title: 'foo-2', created: '', updated: '', tags: [], size: 0, mtime: 0,
+    })
+
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: 'inbox/foo' } })
+    const vm = w.vm as any
+    await vm.onArchiveToZettel('inbox/foo')
+    await flushPromises()
+
+    expect(w.emitted('select')!.at(-1)).toEqual(['zettel/foo-2'])
+    expect(toastSpy.success).toHaveBeenCalledWith('已归档到 zettel/foo-2')
+    w.unmount()
+  })
+
+  it('archives an inbox/draft file to zettel/<name>', async () => {
+    const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'zettel/draft-foo', title: 'draft-foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
+    })
+
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: 'inbox/draft/draft-foo' } })
+    const vm = w.vm as any
+    await vm.onArchiveToZettel('inbox/draft/draft-foo')
+    await flushPromises()
+
+    expect(patchSpy).toHaveBeenCalledWith('inbox/draft/draft-foo', { targetPath: 'zettel/draft-foo' })
+    expect(w.emitted('select')!.at(-1)).toEqual(['zettel/draft-foo'])
     w.unmount()
   })
 

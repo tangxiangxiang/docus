@@ -40,12 +40,16 @@ async function del(urlPath: string) {
 beforeEach(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-patch-archive-test-'))
   await fs.mkdir(path.join(tmpRoot, 'inbox'), { recursive: true })
+  await fs.mkdir(path.join(tmpRoot, 'inbox', 'draft'), { recursive: true })
   await fs.mkdir(path.join(tmpRoot, 'literature'), { recursive: true })
+  await fs.mkdir(path.join(tmpRoot, 'literature', 'draft'), { recursive: true })
   await fs.mkdir(path.join(tmpRoot, 'archive'), { recursive: true })
   await fs.mkdir(path.join(tmpRoot, 'zettel'), { recursive: true })
   await fs.mkdir(path.join(tmpRoot, 'zettel', 'concepts'), { recursive: true })
   await fs.writeFile(path.join(tmpRoot, 'inbox', 'foo.md'), '---\ntitle: Foo\n---\n\nbody\n', 'utf8')
+  await fs.writeFile(path.join(tmpRoot, 'inbox', 'draft', 'draft-foo.md'), '---\ntitle: Draft Foo\n---\n\nbody\n', 'utf8')
   await fs.writeFile(path.join(tmpRoot, 'literature', 'ahrens.md'), '---\ntitle: Ahrens\n---\n\nbody\n', 'utf8')
+  await fs.writeFile(path.join(tmpRoot, 'literature', 'draft', 'draft-ahrens.md'), '---\ntitle: Draft Ahrens\n---\n\nbody\n', 'utf8')
   await fs.writeFile(path.join(tmpRoot, 'archive', 'old.md'), '---\ntitle: Old\n---\n\nbody\n', 'utf8')
   await fs.writeFile(path.join(tmpRoot, 'zettel', 'perm.md'), '---\ntitle: Perm\n---\n\nbody\n', 'utf8')
 })
@@ -67,6 +71,31 @@ describe('PATCH /api/posts/* archive-to-zettel whitelist', () => {
     const r = await patch('/api/posts/literature/ahrens', { targetPath: 'zettel/ahrens' })
     expect(r.status).toBe(200)
     expect(await fs.stat(path.join(tmpRoot, 'zettel', 'ahrens.md'))).toBeTruthy()
+  })
+
+  it('moves inbox draft files to zettel/<name>.md', async () => {
+    const r = await patch('/api/posts/inbox/draft/draft-foo', { targetPath: 'zettel/draft-foo' })
+    expect(r.status).toBe(200)
+    const body = await r.json() as { path: string }
+    expect(body.path).toBe('zettel/draft-foo')
+    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'draft-foo.md'))).toBeTruthy()
+  })
+
+  it('moves literature draft files to zettel/<name>.md', async () => {
+    const r = await patch('/api/posts/literature/draft/draft-ahrens', { targetPath: 'zettel/draft-ahrens' })
+    expect(r.status).toBe(200)
+    const body = await r.json() as { path: string }
+    expect(body.path).toBe('zettel/draft-ahrens')
+    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'draft-ahrens.md'))).toBeTruthy()
+  })
+
+  it('appends a suffix when archiving into an existing zettel path', async () => {
+    await fs.writeFile(path.join(tmpRoot, 'zettel', 'foo.md'), '---\ntitle: Existing Foo\n---\n\nbody\n', 'utf8')
+    const r = await patch('/api/posts/inbox/foo', { targetPath: 'zettel/foo' })
+    expect(r.status).toBe(200)
+    const body = await r.json() as { path: string }
+    expect(body.path).toBe('zettel/foo-2')
+    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'foo-2.md'))).toBeTruthy()
   })
 
   it('moves inbox/foo.md to a zettel subfolder for classified archiving', async () => {

@@ -86,7 +86,7 @@ const hasAnyMenuItem = computed(() =>
   canSplit.value,
 )
 
-// True for files under inbox/ or literature/. The split-card menu
+// True for files under inbox/ or literature/. The card-draft menu
 // item is gated on this — the server route also enforces it, but
 // hiding it in the menu avoids the "click then 400" round-trip.
 const canSplit = computed(() =>
@@ -309,7 +309,7 @@ function menuAction(fn: () => void) {
         </template>
         <button v-if="canModifyRow" @click="menuAction(() => emit('request-rename', node.path, node.kind))">重命名</button>
         <hr v-if="canModifyRow" />
-        <button v-if="canSplit" @click="menuAction(() => emit('split-card', node.path))">📤 拆为原子卡</button>
+        <button v-if="canSplit" @click="menuAction(() => emit('split-card', node.path))">📤 生成卡片草稿</button>
         <hr v-if="canArchive" />
         <button v-if="canArchive" @click="menuAction(() => emit('archive-to-zettel', node.path))">🗂 归档到 zettel</button>
         <button v-if="canModifyRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))">删除</button>

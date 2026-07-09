@@ -574,10 +574,10 @@ async function onArchiveToZettel(path: string) {
   const targetPath = 'zettel/' + filename
   if (targetPath === path) return
   try {
-    await patchPost(path, { targetPath })
+    const moved = await patchPost(path, { targetPath })
     emit('refresh')
-    if (props.currentPath === path) emit('select', targetPath)
-    toast.success('已归档到 zettel')
+    if (props.currentPath === path) emit('select', moved.path)
+    toast.success(moved.path === targetPath ? '已归档到 zettel' : `已归档到 ${moved.path}`)
   } catch (e: any) {
     toast.error('归档失败: ' + (e.message ?? '未知错误'))
   }

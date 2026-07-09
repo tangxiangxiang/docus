@@ -154,8 +154,8 @@ async function splitCard(path: string, mode: SplitMode) {
   try {
     const { cards } = await splitNote({ path, mode })
     if (cards.length === 0) {
-      review.setError('没有识别出独立的原子想法')
-      toast.info('没有识别出独立的原子想法')
+      review.setError('没有生成可用的卡片草稿')
+      toast.info('没有生成可用的卡片草稿')
       return
     }
     review.setReview(mode, cards)

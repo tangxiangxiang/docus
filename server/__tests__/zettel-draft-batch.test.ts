@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import draftsRoutes from '../drafts.js'
 import zettelRoutes from '../zettel.js'
 
 // Stub resolveApiKey so the route doesn't 503.
@@ -31,17 +32,17 @@ afterEach(async () => {
   await fs.rm(tmpRoot, { recursive: true, force: true })
 })
 
-function postJson(body: unknown): Request {
-  return new Request('http://localhost/draft/batch', {
+function postJson(body: unknown, route = '/batch'): Request {
+  return new Request(`http://localhost${route}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
 }
 
-describe('POST /api/zettel/draft/batch', () => {
+describe('POST /api/drafts/batch', () => {
   it('writes inbox cards to inbox/draft/ and reports all as written', async () => {
-    const res = await zettelRoutes.request(postJson({
+    const res = await draftsRoutes.request(postJson({
       cards: [
         { title: 'Card 1', body: 'Body 1', tags: ['a'], slug: 'card-1', source: 'inbox/init' },
         { title: 'Card 2', body: 'Body 2', tags: ['b'], slug: 'card-2', source: 'inbox/init' },
@@ -66,7 +67,7 @@ describe('POST /api/zettel/draft/batch', () => {
   })
 
   it('writes literature cards to literature/draft/', async () => {
-    const res = await zettelRoutes.request(postJson({
+    const res = await draftsRoutes.request(postJson({
       cards: [
         { title: 'Card 1', body: 'Body 1', tags: ['book'], slug: 'card-1', source: 'literature/book' },
       ],
@@ -81,11 +82,11 @@ describe('POST /api/zettel/draft/batch', () => {
 
   it('appends -2, -3 suffix on slug collision', async () => {
     // First write
-    await zettelRoutes.request(postJson({
+    await draftsRoutes.request(postJson({
       cards: [{ title: 'a', body: 'b', tags: [], slug: 'dup', source: 'inbox/init' }],
     }))
     // Second write with the same slug
-    const res = await zettelRoutes.request(postJson({
+    const res = await draftsRoutes.request(postJson({
       cards: [{ title: 'a', body: 'b', tags: [], slug: 'dup', source: 'inbox/init' }],
     }))
     const body = await res.json() as { written: Array<{ slug: string; path: string }> }
@@ -95,7 +96,7 @@ describe('POST /api/zettel/draft/batch', () => {
   })
 
   it('rejects cards whose source is outside inbox/ or literature/', async () => {
-    const res = await zettelRoutes.request(postJson({
+    const res = await draftsRoutes.request(postJson({
       cards: [{ title: 'x', body: 'y', tags: [], slug: 's', source: 'zettel/init' }],
     }))
     expect(res.status).toBe(200)
@@ -105,7 +106,7 @@ describe('POST /api/zettel/draft/batch', () => {
   })
 
   it('reports an invalid slug in failed[] (does not abort the batch)', async () => {
-    const res = await zettelRoutes.request(postJson({
+    const res = await draftsRoutes.request(postJson({
       cards: [{ title: 'x', body: 'y', tags: [], slug: 'BadSlug', source: 'inbox/init' }],
     }))
     expect(res.status).toBe(200)
@@ -116,17 +117,29 @@ describe('POST /api/zettel/draft/batch', () => {
   })
 
   it('rejects empty body', async () => {
-    const res = await zettelRoutes.request(new Request('http://localhost/draft/batch', { method: 'POST' }))
+    const res = await draftsRoutes.request(new Request('http://localhost/batch', { method: 'POST' }))
     expect(res.status).toBe(400)
   })
 
   it('includes created and updated dates in frontmatter', async () => {
-    const res = await zettelRoutes.request(postJson({
+    const res = await draftsRoutes.request(postJson({
       cards: [{ title: 't', body: 'b', tags: [], slug: 's', source: 'inbox/init' }],
     }))
     const raw = await fs.readFile(path.join(tmpRoot, 'inbox', 'draft', 's.md'), 'utf8')
     const today = new Date().toISOString().slice(0, 10)
     expect(raw).toMatch(new RegExp('created: ' + today))
     expect(raw).toMatch(new RegExp('updated: ' + today))
+  })
+})
+
+describe('POST /api/zettel/draft/batch compatibility', () => {
+  it('keeps the legacy zettel draft route working', async () => {
+    const res = await zettelRoutes.request(postJson({
+      cards: [{ title: 'Legacy', body: 'Body', tags: [], slug: 'legacy', source: 'inbox/init' }],
+    }, '/draft/batch'))
+    expect(res.status).toBe(200)
+    const body = await res.json() as { written: Array<{ slug: string; path: string }> }
+    expect(body.written).toEqual([{ slug: 'legacy', path: 'inbox/draft/legacy' }])
+    expect(await fs.readFile(path.join(tmpRoot, 'inbox', 'draft', 'legacy.md'), 'utf8')).toMatch(/title: Legacy/)
   })
 })

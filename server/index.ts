@@ -8,6 +8,7 @@ import { getIndex as getLinkIndex } from './linkIndex.js'
 import { bumpUpdatedInFrontmatter } from './frontmatter.js'
 import aiRoutes from './ai/routes.js'
 import historyRoutes from './history/routes.js'
+import draftsRoutes from './drafts.js'
 import zettelRoutes from './zettel.js'
 import { isInZettel } from '../src/composables/zettelProtocol.js'
 import type { PostSummary, PostDetail } from '../src/lib/api.js'
@@ -24,6 +25,19 @@ function bad(c: any, msg: string, code = 400) { return c.json({ error: msg }, co
 
 async function exists(p: string) {
   try { await fs.stat(p); return true } catch { return false }
+}
+
+async function uniqueMoveTarget(absPath: string, relPath: string): Promise<{ abs: string; rel: string }> {
+  if (!await exists(absPath)) return { abs: absPath, rel: relPath }
+  const ext = path.extname(absPath)
+  const absBase = absPath.slice(0, -ext.length)
+  const relBase = relPath
+  for (let i = 2; i < 1000; i++) {
+    const nextAbs = `${absBase}-${i}${ext}`
+    if (!await exists(nextAbs)) return { abs: nextAbs, rel: `${relBase}-${i}` }
+  }
+  const suffix = Date.now()
+  return { abs: `${absBase}-${suffix}${ext}`, rel: `${relBase}-${suffix}` }
 }
 
 app.get('/api/health', (c) => c.json({ ok: true }))
@@ -173,7 +187,15 @@ app.patch('/api/posts/*', async (c) => {
       }
     }
   }
-  if (await exists(dest)) return bad(c, 'destination exists', 409)
+  if (await exists(dest)) {
+    if (body.targetPath !== undefined && isInZettel(destPath)) {
+      const unique = await uniqueMoveTarget(dest, destPath)
+      dest = unique.abs
+      destPath = unique.rel
+    } else {
+      return bad(c, 'destination exists', 409)
+    }
+  }
   await fs.rename(src, dest)
   // Update the link index AFTER the rename succeeds. Read the new
   // content so the new path's outbound links are extracted against
@@ -330,6 +352,7 @@ app.get('/api/backlinks', async (c) => {
 
 app.route('/api/ai', aiRoutes)
 app.route('/api/history', historyRoutes)
+app.route('/api/drafts', draftsRoutes)
 app.route('/api/zettel', zettelRoutes)
 
 export default app

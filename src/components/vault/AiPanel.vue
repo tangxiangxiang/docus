@@ -434,11 +434,11 @@ watch(() => review.phase.value, (p) => {
       v-if="review.phase.value.kind === 'review'"
       class="ai-review"
       role="region"
-      aria-label="Split review"
+      aria-label="Card draft review"
     >
       <div class="ai-review-header">
         <span class="ai-review-title">
-          ✂️ 拆分预览
+          卡片草稿
           <span class="ai-review-mode">· {{ review.phase.value.kind === 'review' ? review.phase.value.mode : '' }}</span>
         </span>
         <span class="ai-review-count">{{ writableCards.length }} / {{ review.phase.value.kind === 'review' ? review.phase.value.cards.length : 0 }} 选中</span>
@@ -510,11 +510,11 @@ watch(() => review.phase.value, (p) => {
           class="ai-review-write"
           :disabled="writableCards.length === 0"
           @click="onWrite"
-        >📥 写入 {{ draftPrefixForMode(review.phase.value.mode) }}/</button>
+        >写入 {{ draftPrefixForMode(review.phase.value.mode) }}/</button>
       </div>
 
       <div v-if="writeStatus" class="ai-review-status" role="status">
-        ✓ 已写入 {{ writeStatus.written }} 张,
+        已写入 draft {{ writeStatus.written }} 张,
         失败 {{ writeStatus.failed }} 张
         <span v-if="writeStatus.failed > 0">(检查控制台)</span>
       </div>
@@ -527,7 +527,7 @@ watch(() => review.phase.value, (p) => {
         v-if="review.phase.value.kind === 'loading'"
         class="ai-review-banner"
         role="status"
-      >✂️ 正在拆分为原子卡…</div>
+      >正在生成卡片草稿…</div>
       <div
         v-else-if="review.phase.value.kind === 'error'"
         class="ai-review-banner ai-review-banner-error"
@@ -835,7 +835,7 @@ watch(() => review.phase.value, (p) => {
   background: color-mix(in srgb, var(--vs-accent, #7aa2f7) 10%, transparent);
 }
 
-/* Split review surface. Layout: header → card list → action bar.
+/* Card-draft review surface. Layout: header → card list → action bar.
    Cards are a flex row: checkbox | fields | remove. Fields stack
    vertically inside their column. We keep the styles local to
    AiPanel.vue so they don't leak into other components. */
