@@ -46,7 +46,7 @@ app.post('/api/posts', async (c) => {
     return bad(c, 'invalid path syntax')
   }
   if (isInZettel(body.path)) {
-    return bad(c, 'zettel notes must be created through archive or draft flows', 422)
+    return bad(c, 'zettel notes must be created through archive flow', 422)
   }
   let abs: string
   try { abs = filePathFor(body.path) } catch (e: any) { return bad(c, e.message) }

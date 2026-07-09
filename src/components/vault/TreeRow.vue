@@ -69,7 +69,7 @@ const childNodes = computed(() =>
 //   • canMove — drag-out. Protected roots are pinned; zettel children can
 //     move within zettel for reclassification.
 //   • canCreateFileChild — in-place note creation. Blocked for the zettel
-//     subtree so permanent notes still enter via archive/draft flows.
+//     subtree so permanent notes still enter via explicit archive/move flows.
 // Folder creation is always allowed for any folder row, so the "新建文件夹"
 // button is rendered unconditionally on `isFolder` (no gate needed).
 const canModifyRow = computed(() => canModify(props.node.path))
@@ -293,7 +293,7 @@ function menuAction(fn: () => void) {
       >
         <!-- create-in is allowed for ordinary folders and protected roots.
              Inside zettel/ only the folder button is offered; permanent
-             notes still enter through archive/draft flows (gated by
+             notes still enter through explicit archive/move flows (gated by
              canCreateFileChild). The folder button is unconditional on
              isFolder — there's no protocol gate against sub-foldering.
              Render the create buttons first so the most-common action on

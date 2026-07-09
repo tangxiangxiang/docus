@@ -78,8 +78,8 @@ export function canMove(path: string | null | undefined): boolean {
  * independently without re-implementing the zettel subtree check.
  */
 export function canCreateFileChild(path: string | null | undefined): boolean {
-  // Permanent notes should enter zettel through archive/draft flows, not
-  // ad-hoc file creation from the tree menu. Protected roots
+  // Permanent notes should enter zettel through explicit archive/move flows,
+  // not ad-hoc file creation from the tree menu. Protected roots
   // (inbox/literature) keep their own names but accept new children.
   return !isInZettel(path)
 }

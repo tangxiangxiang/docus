@@ -1,10 +1,11 @@
 // Hono sub-router for /api/zettel. Mounted by server/index.ts.
 //
 // /draft/batch is the one route we add here. It writes a batch of
-// Card[] (from the AI split-to-draft feature) to zettel/draft/,
+// Card[] (from the AI split-to-draft feature) to the draft folder
+// that belongs to the source area: inbox/draft/ or literature/draft/,
 // enforcing:
 //
-//   - The path prefix is hardcoded to zettel/draft/. The user only
+//   - The path prefix is derived from `source`. The user only
 //     controls the *slug* (the last path segment), which we validate
 //     against SEGMENT_RE (same rule as POST /api/posts uses for the
 //     final path segment).
@@ -49,10 +50,16 @@ async function exists(p: string): Promise<boolean> {
   try { await fs.stat(p); return true } catch { return false }
 }
 
+function draftPrefixForSource(source: string): string | null {
+  if (source.startsWith('inbox/')) return 'inbox/draft'
+  if (source.startsWith('literature/')) return 'literature/draft'
+  return null
+}
+
 function renderCard(card: Card, today: string): string {
-  // Zettel frontmatter is intentionally minimal: title + dates +
-  // tags + provenance (`source`). No `summary:` field (zettel are
-  // atomic — title + body are the complete card), no `splitMode:`
+  // Draft-card frontmatter is intentionally minimal: title + dates +
+  // tags + provenance (`source`). No `summary:` field (title + body
+  // are the complete proposed card), no `splitMode:`
   // field (the first path segment of `source` already encodes the
   // mode for every supported source, e.g. `inbox/init` → inbox
   // mode). If the user wants an explicit summary or mode marker
@@ -96,16 +103,23 @@ zettel.post('/draft/batch', async (c) => {
       result.failed.push({ slug: card.slug, reason: 'invalid slug' })
       continue
     }
+    const draftPrefix = draftPrefixForSource(card.source)
+    if (!draftPrefix) {
+      result.failed.push({ slug: card.slug, reason: 'source must be under inbox/ or literature/' })
+      continue
+    }
+    const draftPath = `${draftPrefix}/${card.slug}`
     let abs: string
-    try { abs = filePathFor('zettel/draft/' + card.slug) } catch (e: any) {
+    try { abs = filePathFor(draftPath) } catch (e: any) {
       result.failed.push({ slug: card.slug, reason: e.message })
       continue
     }
     const finalSlug = await uniqueSlug(path.dirname(abs), card.slug)
+    const finalPath = `${draftPrefix}/${finalSlug}`
     try {
       await fs.mkdir(path.dirname(abs), { recursive: true })
-      await fs.writeFile(abs, renderCard(card, today), 'utf8')
-      result.written.push({ slug: finalSlug, path: 'zettel/draft/' + finalSlug })
+      await fs.writeFile(filePathFor(finalPath), renderCard(card, today), 'utf8')
+      result.written.push({ slug: finalSlug, path: finalPath })
     } catch (e: any) {
       result.failed.push({ slug: card.slug, reason: e.message })
     }

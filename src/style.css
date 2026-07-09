@@ -2065,48 +2065,41 @@ main.container {
      to enlarge the hit area, so leave it click-transparent visually. */
 }
 
-/* Chevron button anchored to the TOC splitter. The visible-state
-   counterpart of .rail-expand-edge — same dimensions, same hover
-   treatment (accent color + accent glow), same reveal pattern
-   (opacity 0 by default, becomes visible when the parent splitter
-   is hovered or the button itself receives focus). The two read
-   as a matched pair: ‹ in the open state, › in the closed state,
-   both pointing at the column they affect. The chevron straddles
-   the 1px splitter, so its border-radius is symmetric (unlike the
-   rail-expand-edge which is flush with the screen edge and only
-   rounds the left side). */
+/* Right-rail collapse / expand controls. They read as quiet IDE edge
+   handles: visible enough to discover, but lighter than real toolbar
+   buttons until hovered or focused. */
 .vault .splitter-toc .splitter-chevron {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 16px;
-  height: 32px;
+  width: 20px;
+  height: 44px;
   padding: 0;
-  border: 1px solid var(--vs-border);
-  border-radius: 4px;
-  background: var(--vs-bg-2);
-  color: var(--vs-text-2);
-  font-size: 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--vs-border) 88%, var(--vs-bg-1));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--vs-bg-2) 92%, var(--vs-bg-1));
+  color: color-mix(in srgb, var(--vs-text-2) 82%, var(--vs-text-1));
+  font-size: 1rem;
   line-height: 1;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   z-index: 1;
-  opacity: 0;
-  /* Symmetric glow (the rail-expand-edge uses an asymmetric 1px-right
-     shadow because it sits at the screen edge; the splitter chevron
-     is centered on the 1px splitter line, so a centered glow reads
-     more natural). */
-  box-shadow: 0 0 4px rgba(0, 0, 0, 0.25);
+  opacity: 0.72;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--vs-border) 55%, transparent),
+    0 2px 8px rgba(0, 0, 0, 0.26),
+    inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
   transition:
-    opacity 0.12s,
-    color 0.1s,
-    background 0.1s,
-    border-color 0.1s,
-    box-shadow 0.12s;
+    opacity 0.14s,
+    color 0.14s,
+    background 0.14s,
+    border-color 0.14s,
+    box-shadow 0.14s,
+    transform 0.14s;
 }
 .vault .splitter-toc:hover .splitter-chevron,
 .vault .splitter-toc .splitter-chevron:focus-visible {
@@ -2114,57 +2107,48 @@ main.container {
 }
 .vault .splitter-toc .splitter-chevron:hover,
 .vault .splitter-toc .splitter-chevron:focus-visible {
-  color: var(--vs-accent);
-  background: var(--vs-bg-3);
-  border-color: var(--vs-accent);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--vs-accent) 35%, transparent);
+  transform: translate(-50%, -50%) scale(1.02);
+  color: var(--vs-text-1);
+  background: color-mix(in srgb, var(--vs-accent) 16%, var(--vs-bg-2));
+  border-color: color-mix(in srgb, var(--vs-accent) 72%, var(--vs-border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--vs-accent) 22%, transparent),
+    0 4px 14px rgba(0, 0, 0, 0.32);
 }
-/* Edge button that replaces the splitter when the right rail is
-   collapsed. Pinned absolutely to the vault's right edge (NOT a
-   grid child, see the VaultView template comment) so it doesn't
-   create an extra grid column or wrap into the status-bar row.
-   Hidden by default — hover the right edge to reveal it. The
-   expanded ::before hit-area (16px wide) makes the 16px chevron
-   forgiving to aim at (32px total target), and keeps the visible
-   glyph small enough to disappear cleanly into the edge when
-   faded out. Discoverability loss is accepted: the user
-   explicitly chose to collapse the rail, so they know there was
-   something there to begin with. */
+/* Edge button that replaces the splitter when the right rail is collapsed. */
 .vault .rail-expand-edge {
   position: absolute;
   top: 50%;
   right: 0;
-  transform: translate(-50%, -50%);
-  width: 16px;
-  height: 32px;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 44px;
   padding: 0;
-  border: 1px solid var(--vs-border);
-  border-left: 0;
-  border-radius: 4px 0 0 4px;
-  background: var(--vs-bg-2);
-  color: var(--vs-text-2);
-  font-size: 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--vs-border) 88%, var(--vs-bg-1));
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+  background: color-mix(in srgb, var(--vs-bg-2) 92%, var(--vs-bg-1));
+  color: color-mix(in srgb, var(--vs-text-2) 82%, var(--vs-text-1));
+  font-size: 1rem;
   line-height: 1;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   z-index: 2;
-  opacity: 0;
-  /* `box-shadow` on a 1px-wide button acts as a subtle 1px-thick
-     edge line when the button is invisible — a faint dark sliver
-     that hints "something lives here" without being a hard border.
-     On hover the shadow takes the accent color so the button feels
-     lifted, matching the chevron-on-splitter reveal in the
-     rail-visible state. */
-  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.3);
+  opacity: 0.62;
+  box-shadow:
+    -1px 0 0 color-mix(in srgb, var(--vs-border) 60%, transparent),
+    0 1px 4px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
   transition:
-    opacity 0.12s,
-    color 0.1s,
-    background 0.1s,
-    border-color 0.1s,
-    box-shadow 0.12s;
+    opacity 0.14s,
+    color 0.14s,
+    background 0.14s,
+    border-color 0.14s,
+    box-shadow 0.14s,
+    width 0.14s;
 }
 /* Invisible hit-area extension. The pseudo-element expands the
    click target 16px leftward so the user can land anywhere in a
@@ -2182,10 +2166,14 @@ main.container {
 .vault .rail-expand-edge:hover,
 .vault .rail-expand-edge:focus-visible {
   opacity: 1;
-  color: var(--vs-accent);
-  background: var(--vs-bg-3);
-  border-color: var(--vs-accent);
-  box-shadow: 2px 0 6px color-mix(in srgb, var(--vs-accent) 35%, transparent);
+  width: 26px;
+  color: var(--vs-text-1);
+  background: color-mix(in srgb, var(--vs-accent) 16%, var(--vs-bg-2));
+  border-color: color-mix(in srgb, var(--vs-accent) 72%, var(--vs-border));
+  box-shadow:
+    -1px 0 0 color-mix(in srgb, var(--vs-accent) 42%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--vs-accent) 22%, transparent),
+    0 4px 14px rgba(0, 0, 0, 0.32);
 }
 
 /* EditorPane inside vault */
@@ -3072,11 +3060,11 @@ main.container {
 .ai-panel .ai-header {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   height: 36px;
   box-sizing: border-box;
-  padding: 0 6px 0 12px;
-  background: var(--vs-bg-1);
+  padding: 0 7px 0 10px;
+  background: color-mix(in srgb, var(--vs-bg-1) 82%, var(--vs-bg-2));
   border-bottom: 1px solid var(--vs-border);
   user-select: none;
   flex: 0 0 auto;
@@ -3085,25 +3073,34 @@ main.container {
 .ai-panel .ai-title {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font-size: 0.82rem;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--vs-text-1);
 }
 
 .ai-panel .ai-title-icon {
   display: inline-flex;
-  width: 16px;
-  height: 16px;
-  color: var(--vs-accent);
+  width: 18px;
+  height: 18px;
+  color: color-mix(in srgb, var(--vs-accent) 82%, var(--vs-text-1));
+  background: color-mix(in srgb, var(--vs-accent) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vs-accent) 24%, transparent);
+  border-radius: 5px;
   align-items: center;
   justify-content: center;
+}
+.ai-panel .ai-title-icon :where(svg) {
+  width: 13px;
+  height: 13px;
+  display: block;
 }
 
 .ai-panel .ai-title-text { letter-spacing: -0.005em; }
 
 .ai-panel .ai-title-session {
-  max-width: 180px;
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3119,26 +3116,29 @@ main.container {
   border: 0;
   color: var(--vs-text-3);
   cursor: pointer;
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.1s, color 0.1s;
+  opacity: 0.78;
+  transition: background 0.12s, color 0.12s, opacity 0.12s;
 }
 .ai-panel .ai-header-btn:hover {
   background: var(--vs-hover-bg);
   color: var(--vs-text-1);
+  opacity: 1;
 }
 .ai-panel .ai-header-btn:focus-visible {
   outline: 1px solid var(--vs-accent);
   outline-offset: 1px;
 }
 .ai-panel .ai-header-btn[aria-pressed='true'] {
-  background: var(--vs-active-bg);
+  background: color-mix(in srgb, var(--vs-accent) 14%, var(--vs-active-bg));
   color: var(--vs-text-1);
+  opacity: 1;
 }
 .ai-panel .ai-header-btn:disabled {
   opacity: 0.4;
@@ -3182,15 +3182,15 @@ main.container {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 14px 12px;
+  padding: 12px 12px 10px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .ai-panel .ai-message {
   display: flex;
-  gap: 8px;
+  gap: 7px;
   align-items: flex-start;
   min-width: 0;
 }
@@ -3202,23 +3202,24 @@ main.container {
    the whole glyph uniformly. */
 .ai-panel .ai-avatar {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  color: var(--vs-accent);
+  color: color-mix(in srgb, var(--vs-accent) 78%, var(--vs-text-2));
+  background: color-mix(in srgb, var(--vs-accent) 9%, transparent);
   border-radius: 5px;
 }
-.ai-panel .ai-avatar :where(svg) { width: 16px; height: 16px; display: block; }
+.ai-panel .ai-avatar :where(svg) { width: 13px; height: 13px; display: block; }
 
 /* Assistant text is plain (no background, no padding) so the message
    stream reads as continuous prose, like a chat transcript, rather
    than a stack of UI cards. User turns get a subtle bubble so they
    read as "from me". */
 .ai-panel .ai-bubble {
-  font-size: 0.85rem;
-  line-height: 1.55;
+  font-size: 0.84rem;
+  line-height: 1.5;
   color: var(--vs-text-1);
   word-wrap: break-word;
   white-space: pre-wrap;
@@ -3227,13 +3228,15 @@ main.container {
 }
 .ai-panel .ai-message.assistant .ai-bubble {
   background: transparent;
-  padding: 2px 0;
+  padding: 1px 0;
 }
 .ai-panel .ai-message.user .ai-bubble {
-  background: var(--vs-bg-2);
-  padding: 8px 12px;
-  border-radius: 10px;
+  background: color-mix(in srgb, var(--vs-bg-2) 88%, var(--vs-bg-3));
+  padding: 6px 9px;
+  border-radius: 8px;
   border-bottom-right-radius: 3px;
+  border: 1px solid color-mix(in srgb, var(--vs-border) 72%, transparent);
+  max-width: 88%;
 }
 
 /* Composer — two-layer card. The input sits on top as a clean
@@ -3242,25 +3245,30 @@ main.container {
    input by a thin top border. Matches the Claude Code CLI
    composer where the file/action/send row is visually
    independent of the input area. The whole card lights up on
-   focus-within via a single subtle border + faint coral ring. */
+   focus-within via the same accent ring used by other vault inputs. */
 .ai-panel .ai-composer {
   flex: 0 0 auto;
-  padding: 8px 12px 10px;
-  background: var(--vs-bg-1);
+  padding: 8px 10px 10px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--vs-bg-1) 86%, transparent),
+    var(--vs-bg-1)
+  );
 }
 
 .ai-panel .ai-composer-card {
   display: flex;
   flex-direction: column;
-  background: var(--vs-bg-2);
-  border: 1px solid var(--vs-border);
-  border-radius: 10px;
+  background: color-mix(in srgb, var(--vs-bg-1) 88%, white);
+  border: 1px solid color-mix(in srgb, var(--vs-border) 82%, white);
+  border-radius: 7px;
   overflow: hidden;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 .ai-panel .ai-composer-card:focus-within {
-  border-color: var(--vs-text-3);
-  box-shadow: 0 0 0 3px rgba(255, 122, 89, 0.12);
+  background: color-mix(in srgb, var(--vs-bg-1) 92%, white);
+  border-color: color-mix(in srgb, var(--vs-accent) 62%, var(--vs-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-accent) 16%, transparent);
 }
 
 .ai-panel .ai-input {
@@ -3282,13 +3290,13 @@ main.container {
   /* Padding is asymmetric — extra horizontal so long words have
      breathing room from the card edges, generous vertical so the
      placeholder sits centered with breathing room. */
-  padding: 11px 14px 9px;
+  padding: 9px 10px 7px;
   font-family: var(--sans);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   color: var(--vs-text-1);
   line-height: 1.4;
   outline: none;
-  min-height: 40px;
+  min-height: 36px;
   overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -3305,10 +3313,10 @@ main.container {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 4px 6px 4px 12px;
-  border-top: 1px solid var(--vs-border);
-  height: 40px;
+  gap: 6px;
+  padding: 3px 4px 4px 9px;
+  border-top: 1px solid color-mix(in srgb, var(--vs-border) 72%, transparent);
+  height: 34px;
   box-sizing: border-box;
 }
 .ai-panel .ai-toolbar-left {
@@ -3335,12 +3343,16 @@ main.container {
 .ai-panel .ai-context {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
-  color: var(--vs-text-2);
+  color: color-mix(in srgb, var(--vs-text-2) 88%, var(--vs-text-1));
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   line-height: 1;
+  background: color-mix(in srgb, var(--vs-bg-2) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vs-border) 55%, transparent);
+  border-radius: 5px;
+  padding: 3px 6px;
 }
 .ai-panel .ai-context-icon {
   display: inline-flex;
@@ -3361,21 +3373,20 @@ main.container {
   max-width: 180px;
 }
 .ai-panel .ai-context-empty {
-  font-style: italic;
   color: var(--vs-text-3);
   font-family: var(--sans);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
 }
 
 .ai-panel .ai-send {
   flex: 0 0 auto;
-  width: 30px;
-  height: 32px;
-  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
   border: 0;
-  background: #ff7a59;
+  background: var(--vs-accent);
   color: #fff;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   line-height: 1;
   cursor: pointer;
   display: inline-flex;
@@ -3383,10 +3394,9 @@ main.container {
   justify-content: center;
   transition: background 0.12s, transform 0.12s, box-shadow 0.12s;
   /* Slight outer glow so the button lifts off the muted card
-     surface — the same trick used by the Claude Code CLI send
-     button. Box-shadow instead of border because border eats
-     into the 30x32 box and shifts the icon. */
-  box-shadow: 0 1px 2px rgba(255, 122, 89, 0.35);
+     surface. Box-shadow instead of border because border eats
+     into the compact box and shifts the icon. */
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--vs-accent) 35%, transparent);
 }
 .ai-panel .ai-send:disabled {
   opacity: 0.35;
@@ -3394,13 +3404,13 @@ main.container {
   box-shadow: none;
 }
 .ai-panel .ai-send:hover:not(:disabled) {
-  background: #ff8c70;
+  background: var(--vs-accent-hover);
   transform: translateY(-1px);
-  box-shadow: 0 2px 5px rgba(255, 122, 89, 0.4);
+  box-shadow: 0 2px 5px color-mix(in srgb, var(--vs-accent) 40%, transparent);
 }
 .ai-panel .ai-send:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow: 0 1px 2px rgba(255, 122, 89, 0.35);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--vs-accent) 35%, transparent);
 }
 /* The button doubles as Stop while a stream is in flight. A
    slightly deeper red makes the destructive semantics obvious at
@@ -3562,12 +3572,12 @@ main.container {
 
 /* LLM integration additions (spec §5) */
 .ai-panel .ai-no-key-banner {
-  background: var(--vs-bg-3);
-  color: var(--vs-text-2);
-  font-size: 0.8rem;
-  padding: 8px 12px;
+  background: color-mix(in srgb, var(--vs-accent) 8%, var(--vs-bg-1));
+  color: color-mix(in srgb, var(--vs-text-2) 82%, var(--vs-text-1));
+  font-size: 0.76rem;
+  padding: 6px 10px;
   line-height: 1.4;
-  border-bottom: 1px solid var(--vs-border);
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-accent) 18%, var(--vs-border));
 }
 
 .ai-panel .ai-no-key-banner code {

@@ -8,9 +8,10 @@ The workspace is `src/content/`. Every `.md` file under it is one note. A note's
 
 Top-level directories carry intent:
 - `inbox/` — raw, unprocessed thoughts. Default home for new notes.
+- `inbox/draft/` — staging area for AI-generated cards split from inbox notes.
 - `literature/` — notes taken while reading.
+- `literature/draft/` — staging area for AI-generated cards split from literature notes.
 - `zettel/` — atomic cards. Each is one self-contained idea.
-- `zettel/draft/` — staging area for AI-generated or un-reviewed cards.
 
 ## Frontmatter
 
@@ -31,7 +32,7 @@ source: inbox/init              # OPTIONAL; zettel cards only
 - `created` / `updated` — UTC `YYYY-MM-DD`. Server bumps `updated` on every PUT; external edits and renames do not touch it.
 - `tags` — array form only.
 - `summary` — optional 1–2 sentence blurb the author writes for the search index and result list. The client ranks `summary` hits at boost=1, so empty/missing means the note won't surface on body-free searches. **Zettel cards do not carry this field** — a card's title + body is the complete atomic card, so a summary would just duplicate it.
-- `source` — zettel-card provenance. Records the access path of the note a card was split from (e.g. `inbox/init`). Set by the split-to-draft flow, never by hand.
+- `source` — draft-card provenance. Records the access path of the note a card was split from (e.g. `inbox/init`). Set by the split-to-draft flow, never by hand.
 
 ## Writing conventions
 

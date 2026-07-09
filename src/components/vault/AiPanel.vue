@@ -20,7 +20,7 @@
 // tool name, an icon, a status pill (ok / error / pending), and
 // the result text. read_file / list_files cards are collapsed by
 // default to keep the panel compact; the user can expand them.
-import { onMounted, reactive, ref, watch, computed, inject } from 'vue'
+import { onMounted, reactive, ref, watch, computed, inject, nextTick } from 'vue'
 import { ICON_AI, ICON_HISTORY, ICON_NEW_CHAT, ICON_FILE_MD } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useCurrentNote } from '../../composables/vault/useCurrentNote'
@@ -192,6 +192,76 @@ function truncateForCard(s: string): string {
 
 function toggleToolCard(id: string) {
   expandedToolCards[id] = !expandedToolCards[id]
+}
+
+function stringInput(input: Record<string, unknown>, key: string): string {
+  const value = input[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function countResultItems(content: string): number | null {
+  const trimmed = content.trim()
+  if (!trimmed) return null
+  const lines = trimmed.split('\n').filter((line) => line.trim().length > 0)
+  if (lines.length > 1) return lines.length
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    if (Array.isArray(parsed)) return parsed.length
+    if (parsed && typeof parsed === 'object') return Object.keys(parsed).length
+  } catch {
+    // Plain text result; fall through to the character count summary.
+  }
+  return null
+}
+
+function formatChars(content: string): string {
+  const n = content.length
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k chars`
+  return `${n} chars`
+}
+
+function toolSummary(tc: { name: string; input: Record<string, unknown>; result: { content: string; is_error: boolean } }): string {
+  const path = stringInput(tc.input, 'path')
+  const newPath = stringInput(tc.input, 'new_path')
+  const scope = stringInput(tc.input, 'scope')
+  const target = tc.name === 'rename_file' && newPath
+    ? `${path || 'file'} -> ${newPath}`
+    : path || scope || ''
+  const content = tc.result.content
+  const result = tc.result.is_error
+    ? 'error'
+    : !content
+      ? 'pending'
+      : tc.name === 'list_files'
+        ? `${countResultItems(content) ?? 0} items`
+        : formatChars(content)
+  return [target, result].filter(Boolean).join(' · ')
+}
+
+const quickPrompts = computed(() => {
+  const hasNote = Boolean(currentNote.path.value)
+  return hasNote
+    ? [
+        { label: '总结当前笔记', text: '总结当前笔记，提炼核心观点和可行动的下一步。' },
+        { label: '找相关笔记', text: '基于当前笔记，帮我找可能相关的笔记，并说明关联原因。' },
+        { label: '提出整理建议', text: '基于当前笔记，建议我应该如何整理、重命名或归档它。' },
+      ]
+    : [
+        { label: '浏览知识库', text: '帮我概览这个 vault 的主要主题和最近值得关注的笔记。' },
+        { label: '找未整理内容', text: '帮我找出 inbox 或 literature 中适合整理成永久笔记的内容。' },
+        { label: '整理建议', text: '根据当前 vault，给我一些整理和命名上的建议。' },
+      ]
+})
+
+async function useQuickPrompt(text: string) {
+  draft.value = text
+  await nextTick()
+  autoresize()
+  inputEl.value?.focus()
+}
+
+function draftPrefixForMode(mode: SplitMode): string {
+  return mode === 'literature' ? 'literature/draft' : 'inbox/draft'
 }
 
 // Card-edit handlers. The review surface uses v-model on each
@@ -398,7 +468,7 @@ watch(() => review.phase.value, (p) => {
               v-model="card.slug"
               class="ai-review-slug-input"
               placeholder="slug"
-              :title="'将作为 zettel/draft/' + card.slug + '.md 的文件名'"
+              :title="'将作为 ' + draftPrefixForMode(review.phase.value.mode) + '/' + card.slug + '.md 的文件名'"
               @input="updateCard(i, { slug: ($event.target as HTMLInputElement).value })"
             />
             <textarea
@@ -440,7 +510,7 @@ watch(() => review.phase.value, (p) => {
           class="ai-review-write"
           :disabled="writableCards.length === 0"
           @click="onWrite"
-        >📥 写入 zettel/draft/</button>
+        >📥 写入 {{ draftPrefixForMode(review.phase.value.mode) }}/</button>
       </div>
 
       <div v-if="writeStatus" class="ai-review-status" role="status">
@@ -466,10 +536,26 @@ watch(() => review.phase.value, (p) => {
 
       <div class="ai-messages" role="log" aria-live="polite">
         <template v-if="history.messages.value.length === 0">
-          <div class="ai-message assistant">
-            <div class="ai-avatar" v-html="ICON_AI" aria-hidden="true" />
-            <div class="ai-bubble">
-              Hi, I'm your AI assistant. Ask me anything about this vault.
+          <div class="ai-empty-chat">
+            <div class="ai-empty-head">
+              <span class="ai-empty-icon" v-html="ICON_AI" aria-hidden="true" />
+              <div>
+                <div class="ai-empty-title">
+                  {{ currentNote.path.value ? 'Ask about current note' : 'Ask about your vault' }}
+                </div>
+                <div class="ai-empty-subtitle">
+                  {{ currentNote.path.value || 'No document selected' }}
+                </div>
+              </div>
+            </div>
+            <div class="ai-quick-prompts" aria-label="Quick prompts">
+              <button
+                v-for="p in quickPrompts"
+                :key="p.label"
+                type="button"
+                class="ai-quick-prompt"
+                @click="useQuickPrompt(p.text)"
+              >{{ p.label }}</button>
             </div>
           </div>
         </template>
@@ -497,6 +583,7 @@ watch(() => review.phase.value, (p) => {
                 <div class="ai-tool-header">
                   <span class="ai-tool-icon" v-html="iconForTool(tc.name)" aria-hidden="true" />
                   <span class="ai-tool-name">{{ tc.name }}</span>
+                  <span class="ai-tool-summary">{{ toolSummary(tc) }}</span>
                   <span v-if="tc.result.is_error" class="ai-tool-pill ai-tool-pill-error">error</span>
                   <span v-else-if="tc.result.content" class="ai-tool-pill ai-tool-pill-ok">ok</span>
                   <span v-else class="ai-tool-pill ai-tool-pill-pending">…</span>
@@ -585,61 +672,143 @@ watch(() => review.phase.value, (p) => {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.ai-tool-card {
-  margin-top: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--ai-border, #3a3f4b);
+.ai-empty-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0;
+  color: var(--vs-text-2, #858585);
+}
+.ai-empty-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.ai-empty-icon {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--vs-accent, #007acc) 82%, var(--vs-text-1, #d4d4d4));
+  background: color-mix(in srgb, var(--vs-accent, #007acc) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vs-accent, #007acc) 22%, transparent);
+  border-radius: 7px;
+}
+.ai-empty-icon :deep(svg) {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+.ai-empty-title {
+  color: var(--vs-text-1, #d4d4d4);
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.ai-empty-subtitle {
+  margin-top: 2px;
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vs-text-3, #6a6a6a);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.72rem;
+}
+.ai-quick-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ai-quick-prompt {
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--vs-border, #3c3c3c) 74%, transparent);
   border-radius: 6px;
-  background: var(--ai-tool-bg, rgba(255, 255, 255, 0.03));
-  font-size: 0.85em;
+  background: color-mix(in srgb, var(--vs-bg-2, #252526) 72%, transparent);
+  color: var(--vs-text-2, #858585);
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.ai-quick-prompt:hover {
+  color: var(--vs-text-1, #d4d4d4);
+  background: color-mix(in srgb, var(--vs-accent, #007acc) 10%, var(--vs-bg-2, #252526));
+  border-color: color-mix(in srgb, var(--vs-accent, #007acc) 36%, var(--vs-border, #3c3c3c));
+}
+.ai-tool-card {
+  margin-top: 7px;
+  padding: 6px 7px;
+  border: 1px solid color-mix(in srgb, var(--vs-border, #3a3f4b) 72%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--vs-bg-2, #252526) 78%, transparent);
+  font-size: 0.82em;
 }
 .ai-tool-card.ai-tool-error {
-  border-color: var(--ai-error, #c14545);
-  background: var(--ai-tool-error-bg, rgba(193, 69, 69, 0.08));
+  border-color: color-mix(in srgb, #c14545 72%, var(--vs-border, #3a3f4b));
+  background: color-mix(in srgb, #c14545 10%, var(--vs-bg-2, #252526));
 }
 .ai-tool-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
+  gap: 5px;
+  margin-bottom: 5px;
+  min-height: 18px;
 }
 .ai-tool-icon {
   display: inline-flex;
   align-items: center;
-  color: var(--ai-muted, #8a93a6);
+  color: var(--vs-text-3, #8a93a6);
 }
 .ai-tool-name {
-  font-family: var(--ai-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-weight: 500;
+  color: var(--vs-text-2, #858585);
+}
+.ai-tool-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vs-text-3, #6a6a6a);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.92em;
 }
 .ai-tool-pill {
   margin-left: auto;
-  padding: 0 6px;
-  border-radius: 9999px;
-  font-size: 0.75em;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 0.72em;
+  line-height: 1.45;
+  text-transform: lowercase;
+  letter-spacing: 0;
 }
 .ai-tool-pill-ok {
-  background: var(--ai-ok-bg, rgba(80, 170, 110, 0.18));
-  color: var(--ai-ok, #6ec486);
+  background: color-mix(in srgb, #50aa6e 16%, transparent);
+  color: #6ec486;
 }
 .ai-tool-pill-error {
-  background: var(--ai-error-bg, rgba(193, 69, 69, 0.18));
-  color: var(--ai-error, #c14545);
+  background: color-mix(in srgb, #c14545 18%, transparent);
+  color: #e06c75;
 }
 .ai-tool-pill-pending {
-  background: var(--ai-pending-bg, rgba(120, 130, 150, 0.18));
-  color: var(--ai-pending, #8a93a6);
+  background: color-mix(in srgb, var(--vs-text-3, #8a93a6) 16%, transparent);
+  color: var(--vs-text-3, #8a93a6);
 }
 .ai-tool-result {
   margin: 0;
-  padding: 6px 8px;
-  background: rgba(0, 0, 0, 0.18);
+  padding: 6px 7px;
+  background: color-mix(in srgb, var(--vs-bg-1, #1e1e1e) 86%, black);
+  border: 1px solid color-mix(in srgb, var(--vs-border, #3a3f4b) 45%, transparent);
   border-radius: 4px;
-  font-family: var(--ai-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 0.85em;
-  max-height: 240px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.82em;
+  line-height: 1.45;
+  max-height: 220px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -654,15 +823,16 @@ watch(() => review.phase.value, (p) => {
 }
 .ai-tool-toggle {
   margin-top: 4px;
-  padding: 2px 6px;
+  padding: 1px 5px;
   border: none;
+  border-radius: 4px;
   background: transparent;
-  color: var(--ai-accent, #7aa2f7);
+  color: var(--vs-accent, #7aa2f7);
   cursor: pointer;
-  font-size: 0.85em;
+  font-size: 0.82em;
 }
 .ai-tool-toggle:hover {
-  text-decoration: underline;
+  background: color-mix(in srgb, var(--vs-accent, #7aa2f7) 10%, transparent);
 }
 
 /* Split review surface. Layout: header → card list → action bar.

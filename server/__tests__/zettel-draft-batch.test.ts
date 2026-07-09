@@ -23,7 +23,8 @@ vi.mock('../paths.js', async (importOriginal) => {
 
 beforeEach(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-zettel-test-'))
-  await fs.mkdir(path.join(tmpRoot, 'zettel', 'draft'), { recursive: true })
+  await fs.mkdir(path.join(tmpRoot, 'inbox', 'draft'), { recursive: true })
+  await fs.mkdir(path.join(tmpRoot, 'literature', 'draft'), { recursive: true })
 })
 
 afterEach(async () => {
@@ -39,7 +40,7 @@ function postJson(body: unknown): Request {
 }
 
 describe('POST /api/zettel/draft/batch', () => {
-  it('writes 3 cards to zettel/draft/ and reports all as written', async () => {
+  it('writes inbox cards to inbox/draft/ and reports all as written', async () => {
     const res = await zettelRoutes.request(postJson({
       cards: [
         { title: 'Card 1', body: 'Body 1', tags: ['a'], slug: 'card-1', source: 'inbox/init' },
@@ -52,11 +53,30 @@ describe('POST /api/zettel/draft/batch', () => {
     expect(body.written).toHaveLength(3)
     expect(body.written.map((w) => w.slug).sort()).toEqual(['card-1', 'card-2', 'card-3'])
     // Files actually exist with the expected frontmatter.
-    const raw1 = await fs.readFile(path.join(tmpRoot, 'zettel', 'draft', 'card-1.md'), 'utf8')
+    expect(body.written.map((w) => w.path).sort()).toEqual([
+      'inbox/draft/card-1',
+      'inbox/draft/card-2',
+      'inbox/draft/card-3',
+    ])
+    const raw1 = await fs.readFile(path.join(tmpRoot, 'inbox', 'draft', 'card-1.md'), 'utf8')
     expect(raw1).toMatch(/^---\n/)
     expect(raw1).toMatch(/title: Card 1/)
     expect(raw1).toMatch(/source: inbox\/init/)
     
+  })
+
+  it('writes literature cards to literature/draft/', async () => {
+    const res = await zettelRoutes.request(postJson({
+      cards: [
+        { title: 'Card 1', body: 'Body 1', tags: ['book'], slug: 'card-1', source: 'literature/book' },
+      ],
+    }))
+    expect(res.status).toBe(200)
+    const body = await res.json() as { written: Array<{ slug: string; path: string }>; failed: unknown[] }
+    expect(body.written).toEqual([{ slug: 'card-1', path: 'literature/draft/card-1' }])
+    expect(body.failed).toEqual([])
+    const raw = await fs.readFile(path.join(tmpRoot, 'literature', 'draft', 'card-1.md'), 'utf8')
+    expect(raw).toMatch(/source: literature\/book/)
   })
 
   it('appends -2, -3 suffix on slug collision', async () => {
@@ -71,7 +91,17 @@ describe('POST /api/zettel/draft/batch', () => {
     const body = await res.json() as { written: Array<{ slug: string; path: string }> }
     expect(body.written).toHaveLength(1)
     expect(body.written[0].slug).toBe('dup-2')
-    expect(body.written[0].path).toBe('zettel/draft/dup-2')
+    expect(body.written[0].path).toBe('inbox/draft/dup-2')
+  })
+
+  it('rejects cards whose source is outside inbox/ or literature/', async () => {
+    const res = await zettelRoutes.request(postJson({
+      cards: [{ title: 'x', body: 'y', tags: [], slug: 's', source: 'zettel/init' }],
+    }))
+    expect(res.status).toBe(200)
+    const body = await res.json() as { written: unknown[]; failed: Array<{ slug: string; reason: string }> }
+    expect(body.written).toEqual([])
+    expect(body.failed).toEqual([{ slug: 's', reason: 'source must be under inbox/ or literature/' }])
   })
 
   it('reports an invalid slug in failed[] (does not abort the batch)', async () => {
@@ -94,7 +124,7 @@ describe('POST /api/zettel/draft/batch', () => {
     const res = await zettelRoutes.request(postJson({
       cards: [{ title: 't', body: 'b', tags: [], slug: 's', source: 'inbox/init' }],
     }))
-    const raw = await fs.readFile(path.join(tmpRoot, 'zettel', 'draft', 's.md'), 'utf8')
+    const raw = await fs.readFile(path.join(tmpRoot, 'inbox', 'draft', 's.md'), 'utf8')
     const today = new Date().toISOString().slice(0, 10)
     expect(raw).toMatch(new RegExp('created: ' + today))
     expect(raw).toMatch(new RegExp('updated: ' + today))

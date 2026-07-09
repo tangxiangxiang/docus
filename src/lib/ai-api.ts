@@ -284,7 +284,8 @@ export async function splitNote(req: SplitRequest): Promise<SplitResponse> {
   }))
 }
 
-/** Write a batch of cards to src/content/zettel/draft/.
+/** Write a batch of cards to the draft folder beside their source area
+ *  (inbox/draft/ or literature/draft/).
  *  Per-card status: written (with the final path), skipped, or failed. */
 export async function writeDraftBatch(
   req: WriteDraftBatchRequest,
