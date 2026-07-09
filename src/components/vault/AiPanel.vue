@@ -25,19 +25,27 @@ import { ICON_AI, ICON_HISTORY, ICON_NEW_CHAT, ICON_FILE_MD } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useCurrentNote } from '../../composables/vault/useCurrentNote'
 import { useSplitReview } from '../../composables/vault/useSplitReview'
+import { useToast } from '../../composables/useToast'
 import { writeDraftBatch, type Card, type SplitMode } from '../../lib/ai-api'
+import { patchPost, type PostSummary } from '../../lib/api'
 import AiSessionPicker from './AiSessionPicker.vue'
+
+const props = defineProps<{
+  posts?: PostSummary[]
+}>()
 
 const emit = defineEmits<{
   close: []
   'split-request': [path: string, mode: SplitMode]
   'refresh-tree': []
+  open: [path: string]
 }>()
 
 const draft = ref('')
 const pickerOpen = ref(false)
 const history = useAiHistory()
 const currentNote = useCurrentNote()
+const toast = useToast()
 
 // Injected by VaultView. Default to a fresh local instance if the panel
 // ever renders without a provider (defensive — keeps the panel functional
@@ -252,6 +260,30 @@ const quickPrompts = computed(() => {
         { label: '整理建议', text: '根据当前 vault，给我一些整理和命名上的建议。' },
       ]
 })
+
+const draftNotes = computed(() => {
+  return (props.posts ?? [])
+    .filter((post) => post.path.startsWith('inbox/draft/') || post.path.startsWith('literature/draft/'))
+    .sort((a, b) => b.mtime - a.mtime)
+})
+
+function draftArea(path: string): string {
+  return path.startsWith('literature/') ? 'literature' : 'inbox'
+}
+
+async function archiveDraft(path: string) {
+  const filename = path.split('/').pop()
+  if (!filename) return
+  const targetPath = `zettel/${filename}`
+  try {
+    const moved = await patchPost(path, { targetPath })
+    emit('refresh-tree')
+    emit('open', moved.path)
+    toast.success(moved.path === targetPath ? '已归档到 zettel' : `已归档到 ${moved.path}`)
+  } catch (err: any) {
+    toast.error('归档失败: ' + (err.message ?? '未知错误'))
+  }
+}
 
 async function useQuickPrompt(text: string) {
   draft.value = text
@@ -533,6 +565,41 @@ watch(() => review.phase.value, (p) => {
         class="ai-review-banner ai-review-banner-error"
         role="alert"
       >{{ review.phase.value.reason }}</div>
+
+      <section
+        v-if="draftNotes.length"
+        class="ai-drafts"
+        aria-label="Draft notes"
+      >
+        <div class="ai-drafts-head">
+          <span class="ai-drafts-title">Drafts</span>
+          <span class="ai-drafts-count">{{ draftNotes.length }}</span>
+        </div>
+        <ul class="ai-drafts-list">
+          <li
+            v-for="note in draftNotes"
+            :key="note.path"
+            class="ai-draft-item"
+          >
+            <button
+              type="button"
+              class="ai-draft-open"
+              :title="note.path"
+              @click="emit('open', note.path)"
+            >
+              <span class="ai-draft-title">{{ note.title || note.path.split('/').pop() }}</span>
+              <span class="ai-draft-path">{{ draftArea(note.path) }}</span>
+            </button>
+            <button
+              type="button"
+              class="ai-draft-archive"
+              :aria-label="'归档 ' + note.title"
+              title="归档到 zettel"
+              @click="archiveDraft(note.path)"
+            >归档</button>
+          </li>
+        </ul>
+      </section>
 
       <div class="ai-messages" role="log" aria-live="polite">
         <template v-if="history.messages.value.length === 0">
@@ -833,6 +900,110 @@ watch(() => review.phase.value, (p) => {
 }
 .ai-tool-toggle:hover {
   background: color-mix(in srgb, var(--vs-accent, #7aa2f7) 10%, transparent);
+}
+
+.ai-drafts {
+  flex: 0 0 auto;
+  margin: 8px 10px 0;
+  border: 1px solid color-mix(in srgb, var(--vs-border, #3c3c3c) 72%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--vs-bg-2, #252526) 72%, transparent);
+  overflow: hidden;
+}
+.ai-drafts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border, #3c3c3c) 55%, transparent);
+}
+.ai-drafts-title {
+  color: var(--vs-text-1, #d4d4d4);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+.ai-drafts-count {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vs-accent, #007acc) 13%, transparent);
+  color: color-mix(in srgb, var(--vs-accent, #007acc) 78%, var(--vs-text-1, #d4d4d4));
+  font-size: 0.7rem;
+  line-height: 1.35;
+  text-align: center;
+}
+.ai-drafts-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 164px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+}
+.ai-draft-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 2px 3px 2px 6px;
+  border-radius: 5px;
+}
+.ai-draft-item:hover {
+  background: color-mix(in srgb, var(--vs-list-hover, #2a2d2e) 70%, transparent);
+}
+.ai-draft-open,
+.ai-draft-archive {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ai-draft-open {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 2px 0;
+  text-align: left;
+}
+.ai-draft-title,
+.ai-draft-path {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-draft-title {
+  color: var(--vs-text-1, #d4d4d4);
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+.ai-draft-path {
+  color: var(--vs-text-3, #6a6a6a);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.68rem;
+  line-height: 1.2;
+}
+.ai-draft-archive {
+  opacity: 0;
+  padding: 3px 6px;
+  border-radius: 5px;
+  color: var(--vs-accent, #007acc);
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+.ai-draft-item:hover .ai-draft-archive,
+.ai-draft-archive:focus-visible {
+  opacity: 1;
+}
+.ai-draft-archive:hover {
+  background: color-mix(in srgb, var(--vs-accent, #007acc) 12%, transparent);
 }
 
 /* Card-draft review surface. Layout: header → card list → action bar.

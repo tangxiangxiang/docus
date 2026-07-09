@@ -56,6 +56,15 @@ function nameFromPath(p: string): string {
   return p.split('/').pop()!
 }
 
+const naturalCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+})
+
+export function naturalPathCompare(a: string, b: string): number {
+  return naturalCollator.compare(a, b)
+}
+
 export function readFrontmatter(file: string): {
   tags: string[]
   firstHeading: string | null
@@ -157,7 +166,7 @@ export async function listPostsFlat(
       mtime: stat.mtimeMs,
     })
   }
-  out.sort((a, b) => a.path.localeCompare(b.path))
+  out.sort((a, b) => naturalPathCompare(a.path, b.path))
   return out
 }
 
@@ -245,12 +254,13 @@ export async function buildTree(
     }
   }
 
-  // Sort each folder's children: folders first, then files, both alphabetically (case-insensitive).
+  // Sort each folder's children: folders first, then files, both naturally.
+  // This keeps numbered prefixes useful: ch2-* sorts before ch10-*.
   function sortChildren(n: MutableNode) {
     if (n.kind === 'folder') {
       n.children.sort((a, b) => {
         if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
-        return a.name.localeCompare(b.name)
+        return naturalPathCompare(a.name, b.name)
       })
       n.children.forEach(sortChildren)
     }

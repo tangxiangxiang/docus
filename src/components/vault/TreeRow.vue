@@ -14,6 +14,7 @@ const props = defineProps<{
   depth: number
   currentPath: string | null
   expandedSet: Set<string>
+  showPathHint?: boolean
   // Path → per-file match annotation from FileTree's search filter.
   // The whole map (not just this row's entry) is passed so the
   // recursive child rows can look up their own paths without
@@ -62,6 +63,11 @@ const isExpanded = computed(() => isFolder.value && props.expandedSet.has(props.
 const childNodes = computed(() =>
   props.node.kind === 'folder' ? props.node.children : [],
 )
+const parentPath = computed(() => {
+  const parts = props.node.path.split('/')
+  parts.pop()
+  return parts.join('/')
+})
 // Three independent write-permission flags. The protocol distinguishes:
 //   • canModify — rename / delete. Blocked for both the zettel subtree AND
 //     protected roots (the three top-level folder names are pinned by the
@@ -281,7 +287,13 @@ function menuAction(fn: () => void) {
         class="row-name"
         :title="matchTooltip"
         @click="isFolder ? emit('toggle', node.path) : emit('select', node.path)"
-      >{{ node.name }}</button>
+      >
+        <span class="row-name-text">{{ node.name }}</span>
+        <span
+          v-if="!isFolder && showPathHint && parentPath"
+          class="row-path-hint"
+        >{{ parentPath }}</span>
+      </button>
     </div>
 
     <Teleport to="body">
@@ -290,7 +302,7 @@ function menuAction(fn: () => void) {
         class="tree-context-menu"
         :style="{ left: menuX + 'px', top: menuY + 'px' }"
         @click.stop
-      >
+        >
         <!-- create-in is allowed for ordinary folders and protected roots.
              Inside zettel/ only the folder button is offered; permanent
              notes still enter through explicit archive/move flows (gated by
@@ -299,19 +311,15 @@ function menuAction(fn: () => void) {
              Render the create buttons first so the most-common action on
              a folder is the first thing under the cursor. -->
         <template v-if="isFolder">
+          <div class="tree-menu-label">创建</div>
           <button v-if="canCreateFileChildRow" @click="menuAction(() => emit('create-in', node.path, 'file'))">新建文件</button>
           <button @click="menuAction(() => emit('create-in', node.path, 'folder'))">新建文件夹</button>
-          <!-- On a protected root the create buttons are followed only by
-               a hint — no rename/delete divider, since the only other
-               write op is the destructive one and we deliberately don't
-               show "删除" (灰掉) for the root itself. -->
-          <hr v-if="canModifyRow" />
         </template>
+        <div v-if="canModifyRow || canSplit || canArchive" class="tree-menu-label">整理</div>
         <button v-if="canModifyRow" @click="menuAction(() => emit('request-rename', node.path, node.kind))">重命名</button>
-        <hr v-if="canModifyRow" />
         <button v-if="canSplit" @click="menuAction(() => emit('split-card', node.path))">📤 生成卡片草稿</button>
-        <hr v-if="canArchive" />
         <button v-if="canArchive" @click="menuAction(() => emit('archive-to-zettel', node.path))">🗂 归档到 zettel</button>
+        <div v-if="canModifyRow" class="tree-menu-label">危险操作</div>
         <button v-if="canModifyRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))">删除</button>
       </div>
     </Teleport>
@@ -325,6 +333,7 @@ function menuAction(fn: () => void) {
         :current-path="currentPath"
         :expanded-set="expandedSet"
         :matched-fields="matchedFields"
+        :show-path-hint="showPathHint"
         @select="(p) => emit('select', p)"
         @toggle="(p) => emit('toggle', p)"
         @rename="(oldP, n, kind) => emit('rename', oldP, n, kind)"

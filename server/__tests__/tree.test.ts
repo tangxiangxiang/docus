@@ -163,6 +163,28 @@ describe('buildTree', () => {
     ])
   })
 
+  it('sorts numeric and chapter prefixes naturally', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tree-natural-sort-'))
+    await fs.mkdir(path.join(dir, 'book'))
+    await fs.writeFile(path.join(dir, 'book', 'ch10-late.md'), '# late')
+    await fs.writeFile(path.join(dir, 'book', 'ch2-middle.md'), '# middle')
+    await fs.writeFile(path.join(dir, 'book', 'ch1-early.md'), '# early')
+    await fs.writeFile(path.join(dir, '002-second.md'), '# second')
+    await fs.writeFile(path.join(dir, '001-first.md'), '# first')
+
+    const tree = await buildTree(dir)
+    const root = tree[0]!
+    expect(root.kind).toBe('folder')
+    if (root.kind !== 'folder') return
+    expect(root.children.map((n) => n.name)).toEqual(['book', '001-first', '002-second'])
+    const book = root.children[0]!
+    expect(book.kind).toBe('folder')
+    if (book.kind !== 'folder') return
+    expect(book.children.map((n) => n.name)).toEqual(['ch1-early', 'ch2-middle', 'ch10-late'])
+
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
   it('prefers frontmatter.title over the first H1 and the filename', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-tree-fm-'))
     await fs.writeFile(

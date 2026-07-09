@@ -19,6 +19,7 @@ import {
   filePathFor,
   folderPathFor,
 } from '../paths.js'
+import { naturalPathCompare } from '../tree.js'
 
 export type ToolContext = { signal: AbortSignal }
 
@@ -259,7 +260,7 @@ function executeListFiles(input: { scope?: string }): ToolResult {
       mtime: stat.mtimeMs,
     })
   }
-  out.sort((a, b) => a.path.localeCompare(b.path))
+  out.sort((a, b) => naturalPathCompare(a.path, b.path))
   return ok(JSON.stringify(out, null, 2))
 }
 

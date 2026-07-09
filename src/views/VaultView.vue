@@ -441,7 +441,9 @@ watch(() => navSearch?.tick.value, () => openSearch())
     <AiPanel
       v-if="aiOpen"
       class="ai-panel-slot"
+      :posts="posts"
       @close="toggleAi"
+      @open="openPost"
       @split-request="splitCard"
       @refresh-tree="refresh"
     />

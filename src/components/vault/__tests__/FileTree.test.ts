@@ -30,6 +30,11 @@ const TREE: TreeNode[] = [
       },
       {
         kind: 'folder', name: 'zettel', path: 'zettel', children: [
+          {
+            kind: 'folder', name: 'concepts', path: 'zettel/concepts', children: [
+              { kind: 'file', name: 'atomic-note', path: 'zettel/concepts/atomic-note', title: 'Atomic note', mtime: 0 },
+            ],
+          },
           { kind: 'file', name: 'zettelkasten-intro', path: 'zettel/zettelkasten-intro', title: 'Zettelkasten intro', mtime: 0 },
         ],
       },
@@ -39,7 +44,7 @@ const TREE: TreeNode[] = [
 
 /** Pick the leafmost row whose .row-name element has the given text. */
 function rowByLabel(rows: any[], name: string): any {
-  return rows.filter((r: any) => r.find('.row-name')?.text() === name).pop()!
+  return rows.filter((r: any) => r.find('.row-name-text')?.text() === name || r.find('.row-name')?.text() === name).pop()!
 }
 
 describe('FileTree', () => {
@@ -93,6 +98,13 @@ describe('FileTree', () => {
     const stored = JSON.parse(localStorage.getItem('docus.vault.expandedPaths') ?? '[]')
     expect(stored).toContain('inbox')
     expect(stored).toContain('inbox/notes')
+  })
+
+  it('default-expands zettel ancestors of the current path on mount', () => {
+    mount(FileTree, { props: { tree: TREE, currentPath: 'zettel/concepts/atomic-note' } })
+    const stored = JSON.parse(localStorage.getItem('docus.vault.expandedPaths') ?? '[]')
+    expect(stored).toContain('zettel')
+    expect(stored).toContain('zettel/concepts')
   })
 })
 
@@ -157,6 +169,13 @@ describe('FileTree search input', () => {
     // And 'warm' only appears in hello's summary, not in any title or basename.
     await w.find('.search-input').setValue('warm')
     expect(w.text()).toContain('hello')
+  })
+
+  it('shows the parent path under search result rows', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
+    await w.find('.search-input').setValue('rough')
+    const draftRow = rowByLabel(w.findAll('.tree-row'), 'draft')
+    expect(draftRow.find('.row-path-hint').text()).toBe('inbox/notes')
   })
 
   it('keeps an entire folder visible when the folder name matches', async () => {
@@ -239,7 +258,7 @@ describe('FileTree search input', () => {
   // button for the leafmost row whose filename matches `name`, or
   // undefined if the row isn't rendered or has no title attribute set.
   function titleByName(w: any, name: string): string | undefined {
-    const btn = w.findAll('.row-name').find((b: any) => b.text() === name)
+    const btn = w.findAll('.row-name').find((b: any) => b.find('.row-name-text')?.text() === name || b.text() === name)
     return btn?.attributes('title')
   }
 
@@ -401,7 +420,7 @@ describe('FileTree search input', () => {
   it('the #tag tooltip says "Matched in: tags"', async () => {
     const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
     await w.find('.search-input').setValue('#greeting')
-    const btn = w.findAll('.row-name').find((b: any) => b.text() === 'hello')
+    const btn = w.findAll('.row-name').find((b: any) => b.find('.row-name-text')?.text() === 'hello')
     expect(btn?.attributes('title')).toBe('Matched in: tags')
   })
 
@@ -413,7 +432,7 @@ describe('FileTree search input', () => {
     // "how was it identified" sequence.
     const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
     await w.find('.search-input').setValue('#greeting warm')
-    const btn = w.findAll('.row-name').find((b: any) => b.text() === 'hello')
+    const btn = w.findAll('.row-name').find((b: any) => b.find('.row-name-text')?.text() === 'hello')
     expect(btn?.attributes('title')).toBe('Matched in: summary, tags')
   })
 

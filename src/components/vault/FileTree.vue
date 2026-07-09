@@ -363,10 +363,10 @@ function toggle(path: string) {
   saveExpanded()
 }
 
-// Default-expand ancestors of currentPath (skip zettel — it's collapsed by default).
+// Default-expand ancestors of currentPath. Zettel can now contain
+// classification folders, so the active permanent note should be revealed too.
 watch(() => props.currentPath, (p) => {
   if (!p) return
-  if (isInZettel(p)) return
   const segs = p.split('/')
   const ancestors: string[] = []
   let acc = ''
@@ -694,6 +694,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :current-path="currentPath"
         :expanded-set="effectiveExpanded"
         :matched-fields="matchedFields"
+        :show-path-hint="Boolean(effectiveQuery)"
         @select="onSelect"
         @toggle="onToggle"
         @rename="onRename"
