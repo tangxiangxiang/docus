@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, inject, shallowRef, watch, computed, provide, onMounted, onBeforeUnmount } from 'vue'
+import { useStorage } from '@vueuse/core'
 import { useShortcutDisplay } from '../composables/useShortcutDisplay'
 import { useVaultLayout, setSelectPanelForClicks } from '../composables/vault/useVaultLayout'
 import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
@@ -35,6 +36,7 @@ import CommandPalette from '../components/vault/CommandPalette.vue'
    CommandPalette. We watch the tick and call show() each time. */
 const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
 const settingsOpen = ref(false)
+const editorFocusWidth = useStorage('docus.editor.focus-width', true)
 
 /* Platform-aware shortcut display for the empty-state hint chips.
    Computed once at module load (see useShortcutDisplay), so this
@@ -325,6 +327,9 @@ watch(() => navSearch?.tick.value, () => openSearch())
           <EditorPane
             v-else
             :model-value="t.raw"
+            :path="t.path"
+            :focus-width="editorFocusWidth"
+            :link-targets="posts.map((post) => ({ path: post.path, title: post.title }))"
             @update:model-value="(val: string) => onEditorChange(t.path, val)"
           />
         </div>
@@ -455,6 +460,8 @@ watch(() => navSearch?.tick.value, () => openSearch())
       :error="activeTab?.error ?? null"
       :size="activeSize"
       :dirty="isDirty"
+      :focus-width="editorFocusWidth"
+      @toggle-focus-width="editorFocusWidth = !editorFocusWidth"
     />
 
     <CommandPalette

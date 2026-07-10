@@ -8,7 +8,9 @@ const props = defineProps<{
   error: string | null
   size: number
   dirty: boolean
+  focusWidth: boolean
 }>()
+const emit = defineEmits<{ 'toggle-focus-width': [] }>()
 
 // The leading glyphs (● ✓ ⟳ !) come from CSS `::before` on
 // `.sb-status[data-status=...]` (see style.css ~line 1351). This computed
@@ -69,6 +71,15 @@ const pathLabel = computed(() => {
       <span v-else class="sb-path sb-path-empty">—</span>
     </div>
     <div class="sb-right">
+      <button
+        type="button"
+        class="sb-focus-width"
+        :class="{ active: focusWidth }"
+        :aria-pressed="focusWidth"
+        aria-label="切换专注宽度"
+        :title="focusWidth ? '使用完整编辑器宽度' : '使用专注宽度'"
+        @click="emit('toggle-focus-width')"
+      >⇔</button>
       <span class="sb-item">Markdown</span>
       <span v-if="sizeLabel" class="sb-item">{{ sizeLabel }}</span>
     </div>
@@ -103,4 +114,20 @@ const pathLabel = computed(() => {
   font-style: italic;
   color: var(--vs-text-3, #888);
 }
+.sb-focus-width {
+  width: 22px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vs-text-3, #888);
+  font: inherit;
+  cursor: pointer;
+}
+.sb-focus-width:hover { background: var(--vs-hover-bg); color: var(--vs-text-1); }
+.sb-focus-width.active { color: var(--vs-accent); }
 </style>

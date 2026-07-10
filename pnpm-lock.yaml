@@ -84,12 +84,18 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0
     devDependencies:
+      '@codemirror/autocomplete':
+        specifier: ^6.20.3
+        version: 6.20.3
       '@codemirror/commands':
         specifier: ^6.10.3
         version: 6.10.3
       '@codemirror/lang-markdown':
         specifier: ^6.5.0
         version: 6.5.0
+      '@codemirror/search':
+        specifier: ^6.7.1
+        version: 6.7.1
       '@codemirror/state':
         specifier: ^6.6.0
         version: 6.6.0
@@ -131,7 +137,7 @@ importers:
         version: 8.0.16(@types/node@24.13.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.9.0)
       vitest:
         specifier: ^4.1.8
-        version: 4.1.8(@types/node@24.13.0)(@vitest/ui@4.1.8)(jsdom@29.1.1)(vite@8.0.16(@types/node@24.13.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.9.0))
+        version: 4.1.8(@types/node@24.13.0)(jsdom@29.1.1)(vite@8.0.16(@types/node@24.13.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.9.0))
       vue-tsc:
         specifier: ^3.2.8
         version: 3.3.3(typescript@6.0.3)
@@ -219,6 +225,9 @@ packages:
 
   '@codemirror/lint@6.9.6':
     resolution: {integrity: sha512-6Kp7r6XfCi/D/5sdXieMfg9pJU1bUEx96WITuLU6ESaKizCz0QHFMjY/TaFSbigDdEAIgi93itLBIUETP4oK+A==}
+
+  '@codemirror/search@6.7.1':
+    resolution: {integrity: sha512-uMe5UO6PamJtSHrXhhHOzSX3ReWtiJrva6GnPMwSOrZtiExb5X5eExhr2OUZQVvdxPsKpY3Ro2mFbQadpPWmHA==}
 
   '@codemirror/state@6.6.0':
     resolution: {integrity: sha512-4nbvra5R5EtiCzr9BTHiTLc+MLXK2QGiAVYMyi8PkQd3SR+6ixar/Q/01Fa21TBIDOZXgeWV4WppsQolSreAPQ==}
@@ -504,9 +513,6 @@ packages:
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
     engines: {node: '>=14'}
 
-  '@polka/url@1.0.0-next.29':
-    resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
-
   '@rolldown/binding-android-arm64@1.0.3':
     resolution: {integrity: sha512-454rs7jHngixp/NMxd5srYD57OnzSlZ/eFTETjORQHLwJG1lRtmNOJcBerZlfu4GjKqeq8aCCIQrMdHyhI51Hw==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -785,11 +791,6 @@ packages:
 
   '@vitest/spy@4.1.8':
     resolution: {integrity: sha512-6EevtBp6OZOPF7bmz36HrGMeP3txgVSrgebWxHOafDXGkhIzfXK14f8KF6MuFfgXXUeHxmpD3BQxkV00/3s5mA==}
-
-  '@vitest/ui@4.1.8':
-    resolution: {integrity: sha512-RUS2ZU2TsduVrI+9c12uTNaKrNUTsm6yFt3fueEUB9iKvyC2UP83F+sqIz00HQIah4UOL1TMoDAki8K0NjGvsA==}
-    peerDependencies:
-      vitest: 4.1.8
 
   '@vitest/utils@4.1.8':
     resolution: {integrity: sha512-uOJamYALNhfJ6iolExyQM40yIQwDqYnkKtQ5VCiSe17E33H0aQ/u+1GlRuz4LZBk6Mm3sg90G9hEbmEt37C1Zg==}
@@ -1309,14 +1310,8 @@ packages:
       picomatch:
         optional: true
 
-  fflate@0.8.3:
-    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
-
   file-uri-to-path@1.0.0:
     resolution: {integrity: sha512-0Zt+s3L7Vf1biwWZ29aARiVYLx7iMGnEUl9x33fbB/j3jR81u/O2LbqK+Bm1CDSNDKVtJ/YjwY7TUd5SkeLQLw==}
-
-  flatted@3.4.2:
-    resolution: {integrity: sha512-PjDse7RzhcPkIJwy5t7KPWQSZ9cAbzQXcafsetQoD7sOJRQlGikNbx7yZp2OotDnJyrDcbyRq3Ttb18iYOqkxA==}
 
   float-tooltip@1.7.5:
     resolution: {integrity: sha512-/kXzuDnnBqyyWyhDMH7+PfP8J/oXiAavGzcRxASOMRHFuReDtofizLLJsf7nnDLAfEaMW4pVWaXrAjtnglpEkg==}
@@ -1632,10 +1627,6 @@ packages:
   mkdirp-classic@0.5.3:
     resolution: {integrity: sha512-gKLcREMhtuZRwRAfqP3RFW+TK4JqApVBtOIftVgjuABpAtpxhPGaDcfvbhNvD0B8iD1oUr/txX35NjcaY6Ns/A==}
 
-  mrmime@2.0.1:
-    resolution: {integrity: sha512-Y3wQdFg2Va6etvQ5I82yUhGdsKrcYox6p7FfL1LbK2J4V01F9TGlepTIhnK24t7koZibmg82KGglhA1XK5IsLQ==}
-    engines: {node: '>=10'}
-
   muggle-string@0.4.1:
     resolution: {integrity: sha512-VNTrAak/KhO2i8dqqnqnAHOa3cYBwXEZe9h+D5h/1ZqFSTEFHdM65lR7RoIqq3tBBYavsOXV84NoHXZ0AkPyqQ==}
 
@@ -1814,10 +1805,6 @@ packages:
   simple-get@4.0.1:
     resolution: {integrity: sha512-brv7p5WgH0jmQJr1ZDDfKDOSeWWg+OVypG99A/5vYGPqJ6pxiaHLy8nxtFjBA7oMa01ebA9gfh1uMCFqOuXxvA==}
 
-  sirv@3.0.2:
-    resolution: {integrity: sha512-2wcC/oGxHis/BoHkkPwldgiPSYcpZK3JU28WoMVv55yHJgcZ8rlXvuG9iZggz+sU1d4bRgIGASwyWqjxu3FM0g==}
-    engines: {node: '>=18'}
-
   source-map-js@1.2.1:
     resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
     engines: {node: '>=0.10.0'}
@@ -1904,10 +1891,6 @@ packages:
   tldts@7.4.2:
     resolution: {integrity: sha512-kCwffuaH8ntKtygnWe1b4BJKWiCUH30n5KfoTr6IchcXOwR7chAOFJxFrH3vjANafUYrIA4a7SDL+nn7SiR4Sw==}
     hasBin: true
-
-  totalist@3.0.1:
-    resolution: {integrity: sha512-sf4i37nQ2LBx4m3wB74y+ubopq6W/dIzXg0FDGjsYnZHVa1Da8FH853wlL2gtUhg+xJXjfk3kUZS3BRoQeoQBQ==}
-    engines: {node: '>=6'}
 
   tough-cookie@6.0.1:
     resolution: {integrity: sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==}
@@ -2255,6 +2238,12 @@ snapshots:
       '@codemirror/view': 6.43.0
       crelt: 1.0.6
 
+  '@codemirror/search@6.7.1':
+    dependencies:
+      '@codemirror/state': 6.6.0
+      '@codemirror/view': 6.43.0
+      crelt: 1.0.6
+
   '@codemirror/state@6.6.0':
     dependencies:
       '@marijn/find-cluster-break': 1.0.2
@@ -2471,9 +2460,6 @@ snapshots:
   '@oxc-project/types@0.133.0': {}
 
   '@pkgjs/parseargs@0.11.0':
-    optional: true
-
-  '@polka/url@1.0.0-next.29':
     optional: true
 
   '@rolldown/binding-android-arm64@1.0.3':
@@ -2739,18 +2725,6 @@ snapshots:
       pathe: 2.0.3
 
   '@vitest/spy@4.1.8': {}
-
-  '@vitest/ui@4.1.8(vitest@4.1.8)':
-    dependencies:
-      '@vitest/utils': 4.1.8
-      fflate: 0.8.3
-      flatted: 3.4.2
-      pathe: 2.0.3
-      sirv: 3.0.2
-      tinyglobby: 0.2.17
-      tinyrainbow: 3.1.0
-      vitest: 4.1.8(@types/node@24.13.0)(@vitest/ui@4.1.8)(jsdom@29.1.1)(vite@8.0.16(@types/node@24.13.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.9.0))
-    optional: true
 
   '@vitest/utils@4.1.8':
     dependencies:
@@ -3340,13 +3314,7 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.4
 
-  fflate@0.8.3:
-    optional: true
-
   file-uri-to-path@1.0.0: {}
-
-  flatted@3.4.2:
-    optional: true
 
   float-tooltip@1.7.5:
     dependencies:
@@ -3683,9 +3651,6 @@ snapshots:
 
   mkdirp-classic@0.5.3: {}
 
-  mrmime@2.0.1:
-    optional: true
-
   muggle-string@0.4.1: {}
 
   nanoid@3.3.12: {}
@@ -3873,13 +3838,6 @@ snapshots:
       once: 1.4.0
       simple-concat: 1.0.1
 
-  sirv@3.0.2:
-    dependencies:
-      '@polka/url': 1.0.0-next.29
-      mrmime: 2.0.1
-      totalist: 3.0.1
-    optional: true
-
   source-map-js@1.2.1: {}
 
   sprintf-js@1.0.3: {}
@@ -3963,9 +3921,6 @@ snapshots:
     dependencies:
       tldts-core: 7.4.2
 
-  totalist@3.0.1:
-    optional: true
-
   tough-cookie@6.0.1:
     dependencies:
       tldts: 7.4.2
@@ -4019,7 +3974,7 @@ snapshots:
       tsx: 4.22.4
       yaml: 2.9.0
 
-  vitest@4.1.8(@types/node@24.13.0)(@vitest/ui@4.1.8)(jsdom@29.1.1)(vite@8.0.16(@types/node@24.13.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.9.0)):
+  vitest@4.1.8(@types/node@24.13.0)(jsdom@29.1.1)(vite@8.0.16(@types/node@24.13.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.9.0)):
     dependencies:
       '@vitest/expect': 4.1.8
       '@vitest/mocker': 4.1.8(vite@8.0.16(@types/node@24.13.0)(esbuild@0.28.0)(tsx@4.22.4)(yaml@2.9.0))
@@ -4043,7 +3998,6 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 24.13.0
-      '@vitest/ui': 4.1.8(vitest@4.1.8)
       jsdom: 29.1.1
     transitivePeerDependencies:
       - msw

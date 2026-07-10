@@ -2329,6 +2329,123 @@ main.container {
   background-color: var(--vs-bg-1) !important;
 }
 .vault .cm-host .cm-scroller { font-family: var(--mono); }
+.vault .cm-host.focus-width .cm-scroller {
+  padding-inline: max(12px, calc((100% - 860px) / 2));
+  box-sizing: border-box;
+}
+.vault .cm-host.focus-width .cm-content { min-width: 0; }
+
+/* CodeMirror's built-in search panel stays inside the editing surface
+   and follows the same quiet IDE chrome as tabs and side panels. */
+.vault .cm-host .cm-panel.cm-search {
+  position: absolute;
+  z-index: 20;
+  top: 6px;
+  right: 8px;
+  width: min(620px, calc(100% - 16px));
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) auto auto auto auto auto auto;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 32px 6px 8px;
+  background: var(--vs-bg-2);
+  border: 1px solid var(--vs-border);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  color: var(--vs-text-1);
+  font-family: var(--sans);
+}
+.vault .cm-host .cm-panel.cm-search br { display: none; }
+.vault .cm-host .cm-panel.cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  color: var(--vs-text-2);
+}
+.vault .cm-host .cm-panel.cm-search input,
+.vault .cm-host .cm-panel.cm-search button {
+  height: 24px;
+  border: 1px solid var(--vs-border);
+  border-radius: 3px;
+  background: var(--vs-bg-1);
+  color: var(--vs-text-1);
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+.vault .cm-host .cm-panel.cm-search button { padding: 0 7px; white-space: nowrap; }
+.vault .cm-host .cm-panel.cm-search input[name='search'],
+.vault .cm-host .cm-panel.cm-search input[name='replace'] { width: 100%; box-sizing: border-box; }
+.vault .cm-host .cm-panel.cm-search button[name='close'] {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  min-height: 20px;
+  border: 0;
+  background: transparent;
+}
+.vault .cm-host .cm-panel.cm-search button:hover {
+  background: var(--vs-hover-bg);
+}
+@media (max-width: 760px) {
+  .vault .cm-host .cm-panel.cm-search {
+    grid-template-columns: minmax(120px, 1fr) auto auto auto;
+  }
+  .vault .cm-host .cm-panel.cm-search label { display: none; }
+}
+
+.vault .cm-host .cm-tooltip-autocomplete {
+  min-width: 260px;
+  max-width: min(460px, calc(100vw - 24px));
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--vs-border);
+  border-radius: 4px;
+  background: var(--vs-bg-2);
+  color: var(--vs-text-1);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.24);
+  font-family: var(--sans);
+}
+.vault .cm-host .cm-tooltip-autocomplete > ul > li {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 3px 8px;
+}
+.vault .cm-host .cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--vs-active-bg);
+  color: var(--vs-text-1);
+}
+.vault .cm-host .cm-completionLabel { font-size: 0.8rem; }
+.vault .cm-host .cm-completionDetail {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--vs-text-3);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+}
+.vault .cm-host .cm-completionIcon { display: none; }
+
+/* Source-first Markdown hierarchy. Markers remain visible; line
+   decoration only changes emphasis so source editing stays predictable. */
+.vault .cm-host .cm-md-heading { font-weight: 650; }
+.vault .cm-host .cm-md-heading span { color: var(--vs-text-1) !important; }
+.vault .cm-host .cm-md-heading span:first-child { color: var(--vs-accent) !important; }
+.vault .cm-host .cm-md-h1 { font-weight: 720; }
+.vault .cm-host .cm-md-h1,
+.vault .cm-host .cm-md-h2 { padding-top: 0.22em; }
+.vault .cm-host .cm-md-quote {
+  box-shadow: inset 2px 0 color-mix(in srgb, var(--vs-accent) 58%, transparent);
+  padding-left: 8px;
+  color: var(--vs-text-2);
+  font-style: italic;
+}
+.vault .cm-host .cm-md-frontmatter { opacity: 0.72; }
+.vault .cm-host .cm-md-list span:first-child { color: var(--vs-accent) !important; }
 
 /* PreviewPane inside vault: drop docus stylesheet padding to match */
 .vault .preview-pane {
