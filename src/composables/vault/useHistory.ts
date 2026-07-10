@@ -211,6 +211,10 @@ async function createCommit(paths: string[], message: string): Promise<CommitRes
     return r
   } catch (e: any) {
     _actionError.value = e?.message ?? 'commit failed'
+    // A 409 commonly means the panel's selection became stale while it was
+    // open. Reconcile the Changes list immediately so clean/restored paths
+    // disappear and the user can retry the remaining dirty selection.
+    await refreshStatus()
     return null
   } finally {
     endBusy()

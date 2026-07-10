@@ -343,12 +343,64 @@ describe('POST /api/history/commits', () => {
     expect(dotfile.status).toBe(400)
   })
 
-  it('returns 409 "nothing to commit" when all paths are clean', async () => {
+  it('returns a clear 409 when the selected path is no longer dirty', async () => {
     await write('a.md', 'x')
     await call('POST', '/commits', { paths: ['a.md'], message: 'first' })
     const r = await call('POST', '/commits', { paths: ['a.md'], message: 'second' })
     expect(r.status).toBe(409)
-    expect(((await r.json()) as { error: string }).error).toMatch(/nothing to commit/i)
+    expect(((await r.json()) as { error: string }).error).toBe('selection is stale; no longer changed: a.md')
+  })
+
+  it('rejects the whole batch when one selected path became clean', async () => {
+    await write('clean.md', 'clean')
+    await call('POST', '/commits', { paths: ['clean.md'], message: 'seed' })
+    await write('dirty.md', 'dirty')
+
+    const r = await call('POST', '/commits', {
+      paths: ['clean.md', 'dirty.md'],
+      message: 'must not partially commit',
+    })
+
+    expect(r.status).toBe(409)
+    expect(((await r.json()) as { error: string }).error).toContain('clean.md')
+    const log = await (await call('GET', '/log')).json() as { commits: Array<{ subject: string }> }
+    expect(log.commits.map((commit) => commit.subject)).toEqual(['seed'])
+    const status = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string }> }
+    expect(status.dirty.map((entry) => entry.path)).toContain('dirty.md')
+  })
+
+  it('commits an externally deleted selected file', async () => {
+    await write('deleted.md', 'before\n')
+    await call('POST', '/commits', { paths: ['deleted.md'], message: 'seed' })
+    await fs.unlink(path.join(root, 'deleted.md'))
+
+    const r = await call('POST', '/commits', { paths: ['deleted.md'], message: 'delete note' })
+
+    expect(r.status).toBe(201)
+    const body = await r.json() as { filesCommitted: string[] }
+    expect(body.filesCommitted).toEqual(['deleted.md'])
+    const { rawAt } = await import('../history/git.js')
+    expect(await rawAt(root, 'HEAD', 'deleted.md')).toBeNull()
+  })
+
+  it('commits both sides of an externally moved file', async () => {
+    await write('old.md', 'moved\n')
+    await call('POST', '/commits', { paths: ['old.md'], message: 'seed' })
+    await fs.rename(path.join(root, 'old.md'), path.join(root, 'new.md'))
+
+    const r = await call('POST', '/commits', {
+      paths: ['old.md', 'new.md'],
+      message: 'move note',
+    })
+
+    expect(r.status).toBe(201)
+    const body = await r.json() as { filesCommitted: string[] }
+    // Git detects the delete+add pair as a rename, and --name-only reports
+    // the destination path for that single logical change.
+    expect(body.filesCommitted).toEqual(['new.md'])
+    const { rawAt } = await import('../history/git.js')
+    expect(await rawAt(root, 'HEAD', 'old.md')).toBeNull()
+    expect(await rawAt(root, 'HEAD', 'new.md')).toBe('moved\n')
   })
 
   it('commits a multi-file batch in one commit', async () => {

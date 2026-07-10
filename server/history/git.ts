@@ -472,9 +472,8 @@ export type CommitResult = {
  * paths are relative to `repoRoot` and use forward slashes (the same
  * shape `git status` reports). Throws if the resulting commit touches
  * zero files (nothing to commit) or if git itself rejects the message
- * (e.g. hooks). The caller is responsible for validating that at
- * least one path is dirty — passing a clean path still works (git
- * re-stages whatever is there) but produces an empty commit.
+ * (e.g. hooks). The HTTP route validates that every selected path is
+ * currently dirty immediately before calling this function.
  */
 export async function addAndCommit(
   repoRoot: string,

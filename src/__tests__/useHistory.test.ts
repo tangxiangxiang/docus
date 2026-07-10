@@ -197,12 +197,17 @@ describe('useHistory singleton', () => {
 
   it('createCommit surfaces the server error string and does NOT clear composer', async () => {
     vi.mocked(api.createCommit).mockRejectedValueOnce(new Error('nothing to commit'))
+    vi.mocked(api.getStatus).mockResolvedValue({
+      dirty: [{ path: 'b.md', index: ' ', worktree: 'M' }],
+      available: true,
+    })
     const h = useHistory()
     h.commitMessage.value = 'msg'
     const r = await h.createCommit(['a.md'], 'msg')
     expect(r).toBeNull()
     expect(h.actionError.value).toBe('nothing to commit')
     expect(h.commitMessage.value).toBe('msg')
+    expect(h.status.value.map((entry) => entry.path)).toEqual(['b.md'])
   })
 
   it('toggleDirty adds then removes a path from a Set', () => {

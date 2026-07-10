@@ -242,6 +242,10 @@ history.get('/diff', async (c) => {
 // guards the same condition; we duplicate the check here so the
 // 400 has a clear error message and the 500 ("git commit failed:
 // ...") stays for genuine git failures.
+//
+// Status is re-read immediately before staging. The History panel can remain
+// open while another editor restores, deletes, or moves files; rejecting a
+// stale batch is safer than silently committing only the paths still dirty.
 history.post('/commits', async (c) => {
   if (!(await probeGit())) return bad(c, 'git not available', 503)
   const body = await c.req.json().catch(() => null) as
@@ -261,6 +265,11 @@ history.post('/commits', async (c) => {
   }
   try {
     await ensureRepo(repoRoot())
+    const dirtyPaths = new Set((await git.status(repoRoot())).map((entry) => entry.path))
+    const stalePaths = paths.filter((path) => !dirtyPaths.has(path))
+    if (stalePaths.length > 0) {
+      return bad(c, `selection is stale; no longer changed: ${stalePaths.join(', ')}`, 409)
+    }
     const r = await git.addAndCommit(repoRoot(), paths, body.message)
     return c.json(r, 201)
   } catch (e: any) {
