@@ -68,6 +68,40 @@ describe('FileTree', () => {
     expect(w.text()).toContain('hello')
   })
 
+  it('uses the whole visible row as the folder toggle target', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
+    const inboxRow = rowByLabel(w.findAll('.tree-row'), 'inbox')
+    await inboxRow.find('.row-line').trigger('click')
+    expect(w.text()).toContain('Hello')
+  })
+
+  it('shows the document title first and keeps the English filename as secondary text', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
+    await rowByLabel(w.findAll('.tree-row'), 'inbox').find('.chevron').trigger('click')
+    const helloRow = rowByLabel(w.findAll('.tree-row'), 'hello')
+    expect(helloRow.find('.row-title').text()).toBe('Hello')
+    expect(helloRow.find('.row-file-name').text()).toBe('hello')
+  })
+
+  it('navigates visible nodes with tree keyboard semantics', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
+    const inbox = rowByLabel(w.findAll('.tree-row'), 'inbox')
+    expect(inbox.attributes('tabindex')).toBe('0')
+    await inbox.trigger('keydown', { key: 'ArrowRight' })
+    await inbox.trigger('keydown', { key: 'ArrowDown' })
+    const hello = rowByLabel(w.findAll('.tree-row'), 'hello')
+    expect(hello.classes()).toContain('focused')
+    await hello.trigger('keydown', { key: 'Enter' })
+    expect(w.emitted('select')?.at(-1)).toEqual(['inbox/hello'])
+  })
+
+  it('focuses the search input with Ctrl+F while the tree is active', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    await rowByLabel(w.findAll('.tree-row'), 'inbox').trigger('keydown', { key: 'f', ctrlKey: true })
+    expect(document.activeElement).toBe(w.find('.search-input').element)
+    w.unmount()
+  })
+
   it('emits select when a file is clicked', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
     const inboxRow = rowByLabel(w.findAll('.tree-row'), 'inbox')
@@ -129,7 +163,7 @@ describe('FileTree search input', () => {
     const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
     const input = w.find('.search-input')
     expect(input.exists()).toBe(true)
-    expect(input.attributes('placeholder')).toContain('Search')
+    expect(input.attributes('placeholder')).toBe('搜索文件')
   })
 
   it('does not filter anything when the query is empty', () => {
@@ -283,7 +317,7 @@ describe('FileTree search input', () => {
     const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
     await w.find('.search-input').setValue('draft')
     // name "draft" AND title "Draft" both match "draft" — multi-field.
-    expect(titleByName(w, 'draft')).toBe('Matched in: filename, title')
+    expect(titleByName(w, 'draft')).toBe('匹配字段：文件名, 标题')
   })
 
   it('names "summary" when only the summary matched', async () => {
@@ -291,7 +325,7 @@ describe('FileTree search input', () => {
     await w.find('.search-input').setValue('rough')
     // "rough" appears ONLY in inbox/notes/draft's summary field —
     // basename "draft" and title "Draft" don't contain it.
-    expect(titleByName(w, 'draft')).toBe('Matched in: summary')
+    expect(titleByName(w, 'draft')).toBe('匹配字段：摘要')
   })
 
   it('names "title" when only the title matched', async () => {
@@ -321,7 +355,7 @@ describe('FileTree search input', () => {
     await w.find('.search-input').setValue('hello')
     // inbox/hello: name="hello" matches; title="Hello" matches;
     // summary="a warm greeting" does NOT match.
-    expect(titleByName(w, 'hello')).toBe('Matched in: filename, title')
+    expect(titleByName(w, 'hello')).toBe('匹配字段：文件名, 标题')
   })
 
   it('does not annotate files kept only because a folder name matched', async () => {
@@ -421,7 +455,7 @@ describe('FileTree search input', () => {
     const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
     await w.find('.search-input').setValue('#greeting')
     const btn = w.findAll('.row-name').find((b: any) => b.find('.row-name-text')?.text() === 'hello')
-    expect(btn?.attributes('title')).toBe('Matched in: tags')
+    expect(btn?.attributes('title')).toBe('匹配字段：标签')
   })
 
   it('mixed query tooltip lists "tags" alongside content fields', async () => {
@@ -433,7 +467,7 @@ describe('FileTree search input', () => {
     const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
     await w.find('.search-input').setValue('#greeting warm')
     const btn = w.findAll('.row-name').find((b: any) => b.find('.row-name-text')?.text() === 'hello')
-    expect(btn?.attributes('title')).toBe('Matched in: summary, tags')
+    expect(btn?.attributes('title')).toBe('匹配字段：摘要, 标签')
   })
 
   // --- typed #tag → chip styling ------------------------------------------

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import type { TreeNode, PostSummary } from '../../lib/api'
 import TreeRow from './TreeRow.vue'
 import { useConfirm } from '../../composables/useConfirm'
@@ -12,6 +12,7 @@ import { isSlugSegment, toLocalSlug } from '../../lib/slug'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
 import { useArchiveToZettel } from '../../composables/vault/useArchiveToZettel'
 import { ICON_SEARCH } from './icons'
+import { useI18n } from '../../composables/useI18n'
 
 const props = withDefaults(defineProps<{
   tree: TreeNode[]
@@ -39,6 +40,8 @@ const { confirm } = useConfirm()
 const { prompt } = usePrompt()
 const { archive: archiveToZettel } = useArchiveToZettel()
 const toast = useToast()
+const { t } = useI18n()
+const searchInputRef = ref<HTMLInputElement | null>(null)
 
 const STORAGE_KEY = 'docus.vault.expandedPaths'
 const expanded = ref<Set<string>>(new Set(loadExpanded()))
@@ -292,6 +295,75 @@ const effectiveExpanded = computed<Set<string>>(() => {
   for (const p of over) u.add(p)
   return u
 })
+
+type VisibleTreeItem = { node: TreeNode; parentKey: string | null }
+const visibleItems = computed<VisibleTreeItem[]>(() => {
+  const items: VisibleTreeItem[] = []
+  const walk = (nodes: TreeNode[], parentKey: string | null) => {
+    for (const node of nodes) {
+      items.push({ node, parentKey })
+      if (node.kind === 'folder' && effectiveExpanded.value.has(node.path)) {
+        walk(node.children, nodeKey(node))
+      }
+    }
+  }
+  walk(topLevel.value, null)
+  return items
+})
+const focusedNodeKey = ref<string | null>(null)
+
+function nodeKey(node: Pick<TreeNode, 'kind' | 'path'>): string {
+  return `${node.kind}:${node.path}`
+}
+
+function setFocused(path: string, kind: 'file' | 'folder', focusDom = false) {
+  focusedNodeKey.value = `${kind}:${path}`
+  if (focusDom) {
+    nextTick(() => {
+      const rows = document.querySelectorAll<HTMLElement>('.file-tree [data-tree-key]')
+      Array.from(rows).find((row) => row.dataset.treeKey === focusedNodeKey.value)?.focus()
+    })
+  }
+}
+
+function onTreeKeydown(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+    e.preventDefault()
+    searchInputRef.value?.focus()
+    return
+  }
+  const index = visibleItems.value.findIndex(({ node }) => nodeKey(node) === focusedNodeKey.value)
+  if (index < 0) return
+  const item = visibleItems.value[index]
+  const node = item.node
+  let target: VisibleTreeItem | undefined
+  if (e.key === 'ArrowDown') target = visibleItems.value[index + 1]
+  else if (e.key === 'ArrowUp') target = visibleItems.value[index - 1]
+  else if (e.key === 'ArrowRight' && node.kind === 'folder') {
+    if (!effectiveExpanded.value.has(node.path)) toggle(node.path)
+    else target = visibleItems.value[index + 1]
+  } else if (e.key === 'ArrowLeft') {
+    if (node.kind === 'folder' && effectiveExpanded.value.has(node.path)) toggle(node.path)
+    else if (item.parentKey) target = visibleItems.value.find(({ node: candidate }) => nodeKey(candidate) === item.parentKey)
+  } else if (e.key === 'Enter') {
+    if (node.kind === 'folder') toggle(node.path)
+    else emit('select', node.path)
+  } else if (e.key === 'F2') {
+    void onRequestRename(node.path, node.kind)
+  } else if (e.key === 'Delete') {
+    void onDelete(node.path, node.kind)
+  } else return
+  e.preventDefault()
+  e.stopPropagation()
+  if (target) setFocused(target.node.path, target.node.kind, true)
+}
+
+watch([visibleItems, () => props.currentPath], ([items, currentPath]) => {
+  if (focusedNodeKey.value && items.some(({ node }) => nodeKey(node) === focusedNodeKey.value)) return
+  const current = items.find(({ node }) => node.kind === 'file' && node.path === currentPath)
+  const fallback = current ?? items[0]
+  focusedNodeKey.value = fallback ? nodeKey(fallback.node) : null
+}, { immediate: true })
 
 // Extract `#token`s out of the input value into `tagTokens`. A token
 // is only extracted when it's complete: preceded by start-of-input
@@ -615,12 +687,13 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
 <template>
   <aside
     class="file-tree"
-    aria-label="File explorer"
+    :aria-label="t('file_tree.label')"
     :class="{ 'drop-target-root': isRootDropTarget }"
     @dragenter="onRootDragEnter"
     @dragleave="onRootDragLeave"
     @dragover="onRootDragOver"
     @drop="onRootDrop"
+    @keydown="onTreeKeydown"
   >
     <header>
       <!-- Always-on search input. Filters the tree by file name /
@@ -644,8 +717,8 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
           <span class="tag-filter-chip-name">#{{ tag }}</span>
           <button
             class="tag-filter-chip-x"
-            :aria-label="`移除过滤 ${tag}`"
-            :title="`移除过滤 ${tag}`"
+            :aria-label="t('file_tree.remove_filter', { tag })"
+            :title="t('file_tree.remove_filter', { tag })"
             @click="emit('remove-tag', tag)"
           >×</button>
         </span>
@@ -657,25 +730,26 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
           <span class="tag-filter-chip-name">#{{ tag }}</span>
           <button
             class="tag-filter-chip-x"
-            :aria-label="`移除输入标签 ${tag}`"
-            :title="`移除输入标签 ${tag}`"
+            :aria-label="t('file_tree.remove_typed_tag', { tag })"
+            :title="t('file_tree.remove_typed_tag', { tag })"
             @click="removeTypedToken(tag)"
           >×</button>
         </span>
         <input
+          ref="searchInputRef"
           v-model="contentText"
           class="search-input"
           type="text"
-          placeholder="Search file"
-          aria-label="搜索文件"
+          :placeholder="t('file_tree.search')"
+          :aria-label="t('file_tree.search')"
           @input="onContentInput"
           @keydown="onQueryKeydown"
         />
         <button
           v-if="contentText"
           class="search-clear-x"
-          title="清空搜索"
-          aria-label="清空搜索"
+          :title="t('file_tree.clear_search')"
+          :aria-label="t('file_tree.clear_search')"
           @click="clearContentText"
         >×</button>
       </div>
@@ -687,6 +761,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :node="node"
         :depth="0"
         :current-path="currentPath"
+        :focused-node-key="focusedNodeKey"
         :expanded-set="effectiveExpanded"
         :matched-fields="matchedFields"
         :show-path-hint="Boolean(effectiveQuery)"
@@ -699,11 +774,12 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @create-in="onCreateIn"
         @split-card="onSplitCard"
         @archive-to-zettel="onArchiveToZettel"
+        @focus="setFocused"
       />
     </ul>
-    <p v-else-if="effectiveQuery && activeTags.length" class="empty">没有同时匹配 tag 和 “{{ effectiveQuery }}” 的文件。</p>
-    <p v-else-if="effectiveQuery" class="empty">没有匹配 “{{ effectiveQuery }}” 的文件。</p>
-    <p v-else-if="activeTags.length" class="empty">没有匹配这些 tag 的文件。</p>
-    <p v-else class="empty">还没有文件。</p>
+    <p v-else-if="effectiveQuery && activeTags.length" class="empty">{{ t('file_tree.no_combined_match', { query: effectiveQuery }) }}</p>
+    <p v-else-if="effectiveQuery" class="empty">{{ t('file_tree.no_query_match', { query: effectiveQuery }) }}</p>
+    <p v-else-if="activeTags.length" class="empty">{{ t('file_tree.no_tag_match') }}</p>
+    <p v-else class="empty">{{ t('file_tree.empty') }}</p>
   </aside>
 </template>

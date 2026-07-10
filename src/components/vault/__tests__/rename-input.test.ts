@@ -25,7 +25,7 @@ const TREE: TreeNode[] = [
 
 async function clickRenameMenuButton() {
   const btn = [...document.querySelectorAll<HTMLButtonElement>('.tree-context-menu button')]
-    .find((b) => b.textContent?.trim() === '重命名')
+    .find((b) => b.textContent?.includes('重命名'))
   expect(btn).toBeDefined()
   btn!.click()
   await flushPromises()

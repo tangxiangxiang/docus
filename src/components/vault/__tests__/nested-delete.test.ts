@@ -29,7 +29,7 @@ const TREE: TreeNode[] = [
 
 async function clickMenuButton(label: string) {
   const btn = [...document.querySelectorAll<HTMLButtonElement>('.tree-context-menu button')]
-    .find((b) => b.textContent?.trim() === label)
+    .find((b) => b.textContent?.includes(label))
   expect(btn).toBeDefined()
   btn!.click()
   await flushPromises()

@@ -47,7 +47,7 @@ async function startRenameOn(row: any) {
   // The context menu renders a "重命名" button. Pick the first one (files
   // and folders both expose the same button when not readonly).
   const btn = [...document.querySelectorAll<HTMLButtonElement>('.tree-context-menu button')]
-    .find((b) => b.textContent?.trim() === '重命名')
+    .find((b) => b.textContent?.includes('重命名'))
   expect(btn).toBeDefined()
   btn!.click()
   await flushPromises()

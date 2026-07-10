@@ -3,7 +3,7 @@
 // session. The composable is intentionally small — docus is a
 // self-use app with most strings hardcoded in Chinese, so this
 // composable only covers the strings we've decided to translate
-// (currently the AI panel and History/Diff workspace).
+// (currently the AI panel, History/Diff workspace, and file explorer).
 //
 // Usage:
 //   const { t } = useI18n()
@@ -132,6 +132,30 @@ const STRINGS: Strings = {
   'diff.identical': { zh: '两个版本内容相同。', en: 'The two refs are identical.' },
   'diff.old': { zh: '旧版本', en: 'Old' },
   'diff.new': { zh: '新版本', en: 'New' },
+  'file_tree.label': { zh: '文件资源管理器', en: 'File explorer' },
+  'file_tree.search': { zh: '搜索文件', en: 'Search files' },
+  'file_tree.clear_search': { zh: '清空搜索', en: 'Clear search' },
+  'file_tree.remove_filter': { zh: '移除过滤 {tag}', en: 'Remove filter {tag}' },
+  'file_tree.remove_typed_tag': { zh: '移除输入标签 {tag}', en: 'Remove typed tag {tag}' },
+  'file_tree.no_combined_match': { zh: '没有同时匹配标签和“{query}”的文件。', en: 'No files match both the tags and “{query}”.' },
+  'file_tree.no_query_match': { zh: '没有匹配“{query}”的文件。', en: 'No files match “{query}”.' },
+  'file_tree.no_tag_match': { zh: '没有匹配这些标签的文件。', en: 'No files match these tags.' },
+  'file_tree.empty': { zh: '还没有文件。', en: 'No files yet.' },
+  'file_tree.matched_in': { zh: '匹配字段：{fields}', en: 'Matched in: {fields}' },
+  'file_tree.field_filename': { zh: '文件名', en: 'filename' },
+  'file_tree.field_title': { zh: '标题', en: 'title' },
+  'file_tree.field_summary': { zh: '摘要', en: 'summary' },
+  'file_tree.field_tags': { zh: '标签', en: 'tags' },
+  'file_tree.move_here': { zh: '移动到此处', en: 'Move here' },
+  'file_tree.create': { zh: '创建', en: 'Create' },
+  'file_tree.organize': { zh: '整理', en: 'Organize' },
+  'file_tree.danger': { zh: '危险操作', en: 'Danger zone' },
+  'file_tree.new_file': { zh: '新建文件', en: 'New file' },
+  'file_tree.new_folder': { zh: '新建文件夹', en: 'New folder' },
+  'file_tree.rename': { zh: '重命名', en: 'Rename' },
+  'file_tree.split_card': { zh: '生成卡片草稿', en: 'Generate card draft' },
+  'file_tree.archive': { zh: '归档到 zettel', en: 'Archive to zettel' },
+  'file_tree.delete': { zh: '删除', en: 'Delete' },
   'common.unknown_error': { zh: '未知错误', en: 'unknown error' },
 }
 

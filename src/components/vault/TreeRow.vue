@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
 import type { TreeNode } from '../../lib/api'
-import { ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FILE_MD, ICON_CHEVRON } from './icons'
+import {
+  ICON_ARCHIVE, ICON_CHEVRON, ICON_DELETE, ICON_FILE_MD, ICON_FILE_PLUS,
+  ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FOLDER_PLUS, ICON_RENAME, ICON_SPLIT,
+} from './icons'
+import { useI18n } from '../../composables/useI18n'
 import {
   canModify,
   canMove,
@@ -13,6 +17,7 @@ const props = defineProps<{
   node: TreeNode
   depth: number
   currentPath: string | null
+  focusedNodeKey: string | null
   expandedSet: Set<string>
   showPathHint?: boolean
   // Path → per-file match annotation from FileTree's search filter.
@@ -50,7 +55,10 @@ const emit = defineEmits<{
   // `move` into zettel/ is still blocked — archiving is a deliberate
   // product action that only the menu can trigger.
   'archive-to-zettel': [path: string]
+  focus: [path: string, kind: 'file' | 'folder']
 }>()
+
+const { t } = useI18n()
 
 const isFolder = computed(() => props.node.kind === 'folder')
 const isActive = computed(() => !isFolder.value && props.node.path === props.currentPath)
@@ -68,6 +76,10 @@ const parentPath = computed(() => {
   parts.pop()
   return parts.join('/')
 })
+const displayTitle = computed(() => props.node.kind === 'file' && props.node.title.trim()
+  ? props.node.title.trim()
+  : props.node.name)
+const showFilename = computed(() => props.node.kind === 'file' && displayTitle.value !== props.node.name)
 // Three independent write-permission flags. The protocol distinguishes:
 //   • canModify — rename / delete. Blocked for both the zettel subtree AND
 //     protected roots (the three top-level folder names are pinned by the
@@ -126,18 +138,24 @@ const matchTooltip = computed<string | undefined>(() => {
   // User-facing labels are "filename" (not "name") so the tooltip
   // matches the field the user thinks in terms of; "node.name" is the
   // internal TreeNode property name.
-  if (m.name) fields.push('filename')
-  if (m.title) fields.push('title')
-  if (m.summary) fields.push('summary')
-  if (m.tag) fields.push('tags')
+  if (m.name) fields.push(t('file_tree.field_filename'))
+  if (m.title) fields.push(t('file_tree.field_title'))
+  if (m.summary) fields.push(t('file_tree.field_summary'))
+  if (m.tag) fields.push(t('file_tree.field_tags'))
   if (!fields.length) return undefined
-  return `Matched in: ${fields.join(', ')}`
+  return t('file_tree.matched_in', { fields: fields.join(', ') })
 })
 
 // --- drag state ---
 const isDragging = ref(false)
 const isDropTarget = ref(false)
 const dragDepth = ref(0)
+let expandTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearExpandTimer() {
+  if (expandTimer) clearTimeout(expandTimer)
+  expandTimer = null
+}
 
 function onDragStart(e: DragEvent) {
   // dragstart bubbles. Without this stopPropagation(), starting a drag on a
@@ -166,29 +184,37 @@ function onDragStart(e: DragEvent) {
   isDragging.value = true
 }
 function onDragEnd() {
+  clearExpandTimer()
   isDragging.value = false
   isDropTarget.value = false
   dragDepth.value = 0
 }
 
 function onDragEnter(e: DragEvent) {
-  if (!isFolder.value) return
   e.preventDefault()
+  e.stopPropagation()
   dragDepth.value++
   isDropTarget.value = true
+  if (isFolder.value && !isExpanded.value && !expandTimer) {
+    expandTimer = setTimeout(() => {
+      emit('toggle', props.node.path)
+      expandTimer = null
+    }, 600)
+  }
 }
 function onDragLeave() {
-  if (!isFolder.value) return
   dragDepth.value = Math.max(0, dragDepth.value - 1)
-  if (dragDepth.value === 0) isDropTarget.value = false
+  if (dragDepth.value === 0) {
+    isDropTarget.value = false
+    clearExpandTimer()
+  }
 }
 function onDragOver(e: DragEvent) {
-  if (!isFolder.value) return
   e.preventDefault()
+  e.stopPropagation()
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
 }
 function onDrop(e: DragEvent) {
-  if (!isFolder.value) return
   e.preventDefault()
   e.stopPropagation()
   const src = e.dataTransfer?.getData('text/x-docus-path') ?? ''
@@ -200,13 +226,15 @@ function onDrop(e: DragEvent) {
   const srcKind = (e.dataTransfer?.getData('text/x-docus-kind') === 'folder' ? 'folder' : 'file') as 'file' | 'folder'
   isDropTarget.value = false
   dragDepth.value = 0
-  emit('move', src, props.node.path, srcKind)
+  clearExpandTimer()
+  emit('move', src, isFolder.value ? props.node.path : parentPath.value, srcKind)
 }
 
 // --- context menu ---
 const menuVisible = ref(false)
 const menuX = ref(0)
 const menuY = ref(0)
+const menuRef = ref<HTMLElement | null>(null)
 
 function showMenu(e: MouseEvent) {
   e.preventDefault()
@@ -215,10 +243,21 @@ function showMenu(e: MouseEvent) {
   menuX.value = e.clientX
   menuY.value = e.clientY
   nextTick(() => {
+    const menu = menuRef.value
+    if (menu) {
+      const gutter = 8
+      menuX.value = Math.max(gutter, Math.min(menuX.value, window.innerWidth - menu.offsetWidth - gutter))
+      menuY.value = Math.max(gutter, Math.min(menuY.value, window.innerHeight - menu.offsetHeight - gutter))
+    }
     document.addEventListener('click', closeMenu, { once: true })
     document.addEventListener('keydown', onMenuEscape)
   })
 }
+
+onBeforeUnmount(() => {
+  clearExpandTimer()
+  document.removeEventListener('keydown', onMenuEscape)
+})
 function closeMenu() {
   menuVisible.value = false
   document.removeEventListener('keydown', onMenuEscape)
@@ -236,8 +275,16 @@ function menuAction(fn: () => void) {
 <template>
   <li
     class="tree-row"
-    :class="{ active: isActive, expanded: isExpanded, folder: isFolder, dragging: isDragging, 'drop-target': isDropTarget }"
+    :class="{ active: isActive, focused: focusedNodeKey === `${node.kind}:${node.path}`, expanded: isExpanded, folder: isFolder, 'top-level': depth === 0, dragging: isDragging, 'drop-target': isDropTarget }"
     :style="{ '--depth': depth }"
+    :data-tree-path="node.path"
+    :data-tree-kind="node.kind"
+    :data-tree-key="`${node.kind}:${node.path}`"
+    role="treeitem"
+    :aria-level="depth + 1"
+    :aria-expanded="isFolder ? isExpanded : undefined"
+    :aria-selected="!isFolder ? isActive : undefined"
+    :tabindex="focusedNodeKey === `${node.kind}:${node.path}` ? 0 : -1"
     :draggable="canMoveRow"
     @dragstart="onDragStart"
     @dragend="onDragEnd"
@@ -246,6 +293,7 @@ function menuAction(fn: () => void) {
     @dragover="onDragOver"
     @drop="onDrop"
     @contextmenu="showMenu"
+    @focus="emit('focus', node.path, node.kind)"
   >
     <!-- .row-line is the *row's visible content* — chevron + icon +
          name (or the rename input). It is a sibling of .tree-children,
@@ -258,13 +306,16 @@ function menuAction(fn: () => void) {
          Splitting the line out confines the highlight to the line
          itself; the children area stays neutral until the user
          actually hovers a child row. -->
-    <div class="row-line">
+    <div
+      class="row-line"
+      @click="emit('focus', node.path, node.kind); isFolder ? emit('toggle', node.path) : emit('select', node.path)"
+    >
       <span
         v-if="isFolder"
         class="chevron"
         :class="{ expanded: isExpanded }"
         :aria-hidden="true"
-        @click.stop="emit('toggle', node.path)"
+        @click.stop="emit('focus', node.path, node.kind); emit('toggle', node.path)"
         v-html="ICON_CHEVRON"
       />
       <span v-else class="chevron-spacer" />
@@ -282,23 +333,30 @@ function menuAction(fn: () => void) {
            tooltip names which fields matched; when the file is in
            the tree for another reason (folder-name match, or no
            query active), the attribute is omitted entirely. -->
-      <button
-        type="button"
-        class="row-name"
-        :title="matchTooltip"
-        @click="isFolder ? emit('toggle', node.path) : emit('select', node.path)"
-      >
-        <span class="row-name-text">{{ node.name }}</span>
+      <div class="row-label">
+        <span v-if="!isFolder" class="row-title">{{ displayTitle }}</span>
+        <button
+          type="button"
+          class="row-name"
+          :class="{ 'row-file-name': showFilename, 'row-file-name-hidden': !isFolder && !showFilename }"
+          :title="matchTooltip"
+          :aria-label="displayTitle"
+          @click.stop="emit('focus', node.path, node.kind); isFolder ? emit('toggle', node.path) : emit('select', node.path)"
+        >
+          <span class="row-name-text">{{ node.name }}</span>
+        </button>
         <span
           v-if="!isFolder && showPathHint && parentPath"
           class="row-path-hint"
         >{{ parentPath }}</span>
-      </button>
+      </div>
+      <span v-if="isDropTarget" class="drop-hint">{{ t('file_tree.move_here') }}</span>
     </div>
 
     <Teleport to="body">
       <div
         v-if="menuVisible && hasAnyMenuItem"
+        ref="menuRef"
         class="tree-context-menu"
         :style="{ left: menuX + 'px', top: menuY + 'px' }"
         @click.stop
@@ -311,16 +369,16 @@ function menuAction(fn: () => void) {
              Render the create buttons first so the most-common action on
              a folder is the first thing under the cursor. -->
         <template v-if="isFolder">
-          <div class="tree-menu-label">创建</div>
-          <button v-if="canCreateFileChildRow" @click="menuAction(() => emit('create-in', node.path, 'file'))">新建文件</button>
-          <button @click="menuAction(() => emit('create-in', node.path, 'folder'))">新建文件夹</button>
+          <div class="tree-menu-label">{{ t('file_tree.create') }}</div>
+          <button v-if="canCreateFileChildRow" @click="menuAction(() => emit('create-in', node.path, 'file'))"><span class="menu-icon" v-html="ICON_FILE_PLUS" />{{ t('file_tree.new_file') }}</button>
+          <button @click="menuAction(() => emit('create-in', node.path, 'folder'))"><span class="menu-icon" v-html="ICON_FOLDER_PLUS" />{{ t('file_tree.new_folder') }}</button>
         </template>
-        <div v-if="canModifyRow || canSplit || canArchive" class="tree-menu-label">整理</div>
-        <button v-if="canModifyRow" @click="menuAction(() => emit('request-rename', node.path, node.kind))">重命名</button>
-        <button v-if="canSplit" @click="menuAction(() => emit('split-card', node.path))">📤 生成卡片草稿</button>
-        <button v-if="canArchive" @click="menuAction(() => emit('archive-to-zettel', node.path))">🗂 归档到 zettel</button>
-        <div v-if="canModifyRow" class="tree-menu-label">危险操作</div>
-        <button v-if="canModifyRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))">删除</button>
+        <div v-if="canModifyRow || canSplit || canArchive" class="tree-menu-label">{{ t('file_tree.organize') }}</div>
+        <button v-if="canModifyRow" @click="menuAction(() => emit('request-rename', node.path, node.kind))"><span class="menu-icon" v-html="ICON_RENAME" />{{ t('file_tree.rename') }}<kbd>F2</kbd></button>
+        <button v-if="canSplit" @click="menuAction(() => emit('split-card', node.path))"><span class="menu-icon" v-html="ICON_SPLIT" />{{ t('file_tree.split_card') }}</button>
+        <button v-if="canArchive" @click="menuAction(() => emit('archive-to-zettel', node.path))"><span class="menu-icon" v-html="ICON_ARCHIVE" />{{ t('file_tree.archive') }}</button>
+        <div v-if="canModifyRow" class="tree-menu-label">{{ t('file_tree.danger') }}</div>
+        <button v-if="canModifyRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))"><span class="menu-icon" v-html="ICON_DELETE" />{{ t('file_tree.delete') }}<kbd>Delete</kbd></button>
       </div>
     </Teleport>
 
@@ -331,6 +389,7 @@ function menuAction(fn: () => void) {
         :node="child"
         :depth="depth + 1"
         :current-path="currentPath"
+        :focused-node-key="focusedNodeKey"
         :expanded-set="expandedSet"
         :matched-fields="matchedFields"
         :show-path-hint="showPathHint"
@@ -343,6 +402,7 @@ function menuAction(fn: () => void) {
         @create-in="(folder, kind) => emit('create-in', folder, kind)"
         @split-card="(p) => emit('split-card', p)"
         @archive-to-zettel="(p) => emit('archive-to-zettel', p)"
+        @focus="(p, kind) => emit('focus', p, kind)"
       />
     </ul>
   </li>

@@ -36,6 +36,11 @@
 
 import { vi, type Mock } from 'vitest'
 import type { PostSummary, TreeNode } from '../lib/api'
+import { useI18n } from '../composables/useI18n'
+
+// Vault interaction fixtures assert the app's primary Chinese copy.
+// Keep them independent from jsdom's navigator.language.
+useI18n().setLocale('zh')
 
 /* ---------- dialog stubs ---------- */
 
@@ -135,7 +140,7 @@ export function makeDT() {
  *  explicitly. */
 export function rowByLabel(rows: any[], name: string, kind?: 'folder' | 'file'): any {
   return rows.filter((r: any) => {
-    if (r.find('.row-name')?.text() !== name) return false
+    if (r.find('.row-name-text')?.text() !== name) return false
     if (kind === undefined) return true
     if (kind === 'folder') return r.classes('folder') === true
     return r.classes('folder') === false

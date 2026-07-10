@@ -26,6 +26,18 @@ export const ICON_CHEVRON = `
   <path d="M3.5 2l3 3-3 3"/>
 </svg>`
 
+export const ICON_FILE_PLUS = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2.5h6l3 3V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1z"/><path d="M9 2.5v3h3"/><path d="M7 8v4M5 10h4"/></svg>`
+
+export const ICON_FOLDER_PLUS = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3L8 4.5h4.5A1.5 1.5 0 0 1 14 6v6.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/><path d="M8 7.5v4M6 9.5h4"/></svg>`
+
+export const ICON_RENAME = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12.5l.5-3L10.8 2.2a1 1 0 0 1 1.4 0l1.6 1.6a1 1 0 0 1 0 1.4L6.5 12.5l-3 .5z"/><path d="M9.5 3.5l3 3"/></svg>`
+
+export const ICON_DELETE = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.6 9h6.8l.6-9M6.5 6.5v4M9.5 6.5v4"/></svg>`
+
+export const ICON_ARCHIVE = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3h11v3h-11zM3.5 6v7h9V6M6.5 8.5h3"/></svg>`
+
+export const ICON_SPLIT = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v3a3 3 0 0 1-3 3H2M8 5a3 3 0 0 0 3 3h3M5 11l-3-3 3-3M11 5l3 3-3 3"/></svg>`
+
 // "Search" — magnifier. 14×14 line art, matches the scope/file-tree icons.
 // Used as the prefix glyph in the TagPanel filter input; the host turns
 // it accent-blue on focus-within to confirm the search context.
