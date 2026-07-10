@@ -119,6 +119,14 @@ function onToggleDirty(path: string) {
   h.toggleDirty(path, selected.value)
 }
 
+function dirtyStatus(entry: { index: string; worktree: string }): string {
+  if (entry.index === '?' || entry.worktree === '?') return 'A'
+  if (entry.index === 'D' || entry.worktree === 'D') return 'D'
+  if (entry.index === 'R' || entry.worktree === 'R') return 'R'
+  if (entry.index === 'M' || entry.worktree === 'M') return 'M'
+  return entry.index.trim() || entry.worktree.trim() || 'M'
+}
+
 function onRowClick(path: string) {
   // Clicking a dirty file should show the user's uncommitted edits,
   // not "what the last commit did". Diff HEAD vs the working tree so
@@ -330,7 +338,10 @@ onMounted(async () => {
 
       <!-- Changes -->
       <div class="history-section history-section-changes">
-        <div class="history-section-title">Changes ({{ h.status.value.length }})</div>
+        <div class="history-section-title">
+          <span>Changes</span>
+          <span class="history-section-count">{{ h.status.value.length }}</span>
+        </div>
         <div v-if="h.status.value.length === 0" class="history-empty-inline">No changes.</div>
         <ul v-else class="history-dirty">
           <li
@@ -338,7 +349,9 @@ onMounted(async () => {
             :key="entry.path"
             class="history-dirty-row"
             :class="{ selected: h.selectedFile.value === entry.path }"
+            tabindex="0"
             @click="onRowClick(entry.path)"
+            @keydown.enter.prevent="onRowClick(entry.path)"
           >
             <input
               type="checkbox"
@@ -348,8 +361,12 @@ onMounted(async () => {
               @change="onToggleDirty(entry.path)"
             />
             <span class="history-dirty-path">{{ entry.path }}</span>
-            <span class="history-dirty-status">
-              {{ entry.index === '?' ? 'A' : entry.worktree === 'M' ? 'M' : entry.index === 'D' || entry.worktree === 'D' ? 'D' : entry.worktree === '?' ? '?' : entry.index !== ' ' ? entry.index : ' ' }}
+            <span
+              class="history-dirty-status"
+              :class="`is-${dirtyStatus(entry).toLowerCase()}`"
+              :title="dirtyStatus(entry) === 'A' ? 'Added' : dirtyStatus(entry) === 'D' ? 'Deleted' : dirtyStatus(entry) === 'R' ? 'Renamed' : 'Modified'"
+            >
+              {{ dirtyStatus(entry) }}
             </span>
           </li>
         </ul>
@@ -357,14 +374,20 @@ onMounted(async () => {
 
       <!-- Timeline -->
       <div class="history-section history-section-timeline">
-        <div class="history-section-title">Timeline ({{ h.log.value.length }})</div>
+        <div class="history-section-title">
+          <span>Timeline</span>
+          <span class="history-section-count">{{ h.log.value.length }}</span>
+        </div>
         <div v-if="h.log.value.length === 0" class="history-empty-inline">No commits yet.</div>
         <ul v-else class="history-timeline">
           <li
             v-for="c in h.log.value"
             :key="c.sha"
             class="history-commit-row"
+            :class="{ selected: h.selectedNewRef.value === c.sha }"
+            tabindex="0"
             @click="onCommitClick(c.sha)"
+            @keydown.enter.prevent="onCommitClick(c.sha)"
             @contextmenu="openCommitMenu($event, c)"
           >
             <div class="history-commit-row-head">
@@ -398,7 +421,7 @@ onMounted(async () => {
         </ul>
       </div>
 
-      <div v-if="h.error.value" class="history-error">{{ h.error.value }}</div>
+      <div v-if="h.error.value" class="history-error" role="alert">{{ h.error.value }}</div>
     </template>
     <Teleport to="body">
       <div

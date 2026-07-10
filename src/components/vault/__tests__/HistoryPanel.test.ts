@@ -99,3 +99,43 @@ describe('HistoryPanel initial selection', () => {
     expect(api.getDiff).toHaveBeenCalledWith('inbox/old-note.md', 'HEAD~1', 'HEAD')
   })
 })
+
+describe('HistoryPanel state presentation', () => {
+  it('renders semantic status badges and keeps keyboard selection in sync', async () => {
+    const sha = 'abc1234000000000000000000000000000000000'
+    vi.mocked(api.getStatus).mockResolvedValue({
+      dirty: [
+        { path: 'inbox/added.md', index: '?', worktree: '?' },
+        { path: 'inbox/changed.md', index: ' ', worktree: 'M' },
+        { path: 'inbox/deleted.md', index: ' ', worktree: 'D' },
+      ],
+      available: true,
+    })
+    vi.mocked(api.getLog).mockResolvedValue({
+      commits: [{
+        sha,
+        author: 'A',
+        date: new Date().toISOString(),
+        subject: 'state boundary',
+        body: '',
+        files: ['inbox/changed.md'],
+      }],
+    })
+
+    const wrapper = mount(HistoryPanel)
+    await flushPromises()
+    expect(wrapper.findAll('.history-section-count').map((node) => node.text())).toEqual(['3', '1'])
+    expect(wrapper.findAll('.history-dirty-status').map((node) => node.text())).toEqual(['A', 'M', 'D'])
+    expect(wrapper.get('.history-dirty-status.is-a').attributes('title')).toBe('Added')
+    expect(wrapper.get('.history-dirty-status.is-d').attributes('title')).toBe('Deleted')
+
+    await wrapper.findAll('.history-dirty-row')[1].trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(api.getDiff).toHaveBeenLastCalledWith('inbox/changed.md', 'HEAD', api.WORKTREE_REF)
+
+    await wrapper.get('.history-commit-row').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(wrapper.get('.history-commit-row').classes()).toContain('selected')
+    expect(api.getDiff).toHaveBeenLastCalledWith('inbox/changed.md', `${sha}~1`, sha)
+  })
+})

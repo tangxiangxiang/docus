@@ -51,7 +51,10 @@ function refLabel(ref: string): string {
  * restoring would be a no-op (and confusing). `rows` is computed
  * elsewhere and reflects the paired rows the renderer shows.
  */
-const canRestore = computed(() => rows.value.length > 0)
+// A pure addition has no old-side blob to restore. Showing the action
+// there leads to a guaranteed 404 from /history/restore because the
+// file did not exist at the selected old ref.
+const canRestore = computed(() => rows.value.some((row) => row.left !== null))
 
 async function onRestore() {
   const file = h.selectedFile.value
@@ -156,7 +159,7 @@ function syncVerticalScroll(source: 'old' | 'new') {
 </script>
 
 <template>
-  <section class="diff-view" aria-label="Diff">
+  <section class="diff-view" aria-label="Diff" :aria-busy="h.busy.value">
     <!-- Empty state: no file selected. The HistoryPanel is the
          primary driver — when it picks a file it sets the diff,
          and we render the result here. Until then, the main area
@@ -201,7 +204,15 @@ function syncVerticalScroll(source: 'old' | 'new') {
         </div>
       </header>
 
-      <div v-if="h.busy.value" class="diff-loading">Loading diff…</div>
+      <div v-if="h.busy.value && !h.currentDiff.value" class="diff-loading">
+        <span class="diff-loading-indicator" aria-hidden="true" />
+        Loading diff…
+      </div>
+      <div v-else-if="h.error.value && !h.currentDiff.value" class="diff-empty diff-error" role="alert">
+        <EmptyState size="compact" title="Unable to load diff">
+          {{ h.error.value }}
+        </EmptyState>
+      </div>
       <div v-else-if="rows.length === 0" class="diff-empty">
         <EmptyState size="compact" title="No changes">
           The two refs are identical.

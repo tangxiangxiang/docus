@@ -505,9 +505,10 @@ export async function addAndCommit(
   if (add.status !== 0) {
     throw new Error(`git add failed: ${add.stderr.trim()}`)
   }
-  // Commit. -m once with the full message — easier than juggling -m FOO -m BAR
-  // and gives git a single body to inspect.
-  const commit = await run(repoRoot, ['commit', '-m', message])
+  // Limit the commit itself to the paths selected in the History panel.
+  // The index may contain files staged outside docus; a bare `git commit`
+  // would silently sweep those unrelated files into this commit.
+  const commit = await run(repoRoot, ['commit', '-m', message, '--', ...paths])
   if (commit.status !== 0) {
     // "nothing to commit" is a normal caller's error, not a git failure.
     // The wording varies across git versions ("nothing to commit, working

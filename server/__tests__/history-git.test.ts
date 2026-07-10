@@ -228,6 +228,24 @@ describe('addAndCommit + log', () => {
     expect(log[0].files.sort()).toEqual(['inbox/a.md', 'inbox/b.md'])
   })
 
+  it('commits only selected paths when an unrelated file is already staged', async () => {
+    await write('selected.md', 'selected')
+    await write('staged-elsewhere.md', 'staged elsewhere')
+    const stage = await git.run(root, ['add', '--', 'staged-elsewhere.md'])
+    expect(stage.status).toBe(0)
+
+    const result = await git.addAndCommit(root, ['selected.md'], 'selected only')
+
+    expect(result.filesCommitted).toEqual(['selected.md'])
+    expect(await git.rawAt(root, 'HEAD', 'selected.md')).toBe('selected')
+    expect(await git.rawAt(root, 'HEAD', 'staged-elsewhere.md')).toBeNull()
+    expect(await git.status(root)).toContainEqual(expect.objectContaining({
+      path: 'staged-elsewhere.md',
+      index: 'A',
+      worktree: ' ',
+    }))
+  })
+
   it('rejects an empty path list', async () => {
     await expect(git.addAndCommit(root, [], 'x')).rejects.toThrow(/path/i)
   })

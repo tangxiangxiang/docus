@@ -648,7 +648,12 @@ main.container {
 .history-section-timeline { flex: 1 1 auto; min-height: 220px; }
 .history-section-title {
   flex-shrink: 0;
-  padding: 7px 10px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  box-sizing: border-box;
+  padding: 0 10px;
   font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.03em;
@@ -656,6 +661,17 @@ main.container {
   color: var(--vs-text-3);
   background: var(--vs-bg-2);
   border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 70%, transparent);
+}
+.history-section-count {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vs-text-3) 16%, transparent);
+  color: var(--vs-text-2);
+  font-size: 0.66rem;
+  line-height: 1.35;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 .history-dirty,
 .history-timeline {
@@ -679,6 +695,11 @@ main.container {
   border-left: 2px solid transparent;
 }
 .history-dirty-row:hover { background: var(--vs-hover-bg); }
+.history-dirty-row:focus-visible,
+.history-commit-row:focus-visible {
+  outline: 1px solid var(--vs-accent);
+  outline-offset: -1px;
+}
 .history-dirty-row.selected {
   background: var(--vs-active-bg);
   border-left-color: var(--vs-accent);
@@ -700,10 +721,16 @@ main.container {
   font-family: var(--mono);
   font-size: 0.7rem;
   color: var(--vs-text-3);
-  min-width: 12px;
-  text-align: right;
+  min-width: 18px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  text-align: center;
   font-weight: 600;
 }
+.history-dirty-status.is-a { color: #5fbf78; background: color-mix(in srgb, #16a34a 14%, transparent); }
+.history-dirty-status.is-m,
+.history-dirty-status.is-r { color: #d2ad57; background: color-mix(in srgb, #d2ad57 14%, transparent); }
+.history-dirty-status.is-d { color: #e06c75; background: color-mix(in srgb, #dc2626 14%, transparent); }
 
 .history-commit-row {
   padding: 8px 10px 9px;
@@ -714,6 +741,10 @@ main.container {
   transition: background 0.12s, border-left-color 0.12s;
 }
 .history-commit-row:hover { background: var(--vs-hover-bg); }
+.history-commit-row.selected {
+  background: color-mix(in srgb, var(--vs-accent) 12%, var(--vs-bg-1));
+  border-left-color: var(--vs-accent);
+}
 .history-commit-row:focus-within {
   background: color-mix(in srgb, var(--vs-accent) 7%, transparent);
 }
@@ -885,6 +916,21 @@ main.container {
   text-align: center;
   color: var(--vs-text-3);
   font-size: 0.85rem;
+}
+.diff-loading { gap: 10px; }
+.diff-loading-indicator {
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 2px solid color-mix(in srgb, var(--vs-text-3) 35%, transparent);
+  border-top-color: var(--vs-accent);
+  border-radius: 50%;
+  animation: diff-loading-spin 0.8s linear infinite;
+}
+.diff-error { color: #e06c75; }
+@keyframes diff-loading-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .diff-loading-indicator { animation: none; }
 }
 
 .diff-table {

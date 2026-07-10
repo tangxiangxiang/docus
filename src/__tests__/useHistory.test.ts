@@ -77,6 +77,53 @@ describe('useHistory singleton', () => {
     expect(api.getDiff).toHaveBeenCalledWith('inbox/a.md', 'HEAD~1', 'HEAD')
   })
 
+  it('keeps the newest selection when an older diff request resolves last', async () => {
+    let resolveA!: (value: Awaited<ReturnType<typeof api.getDiff>>) => void
+    let resolveB!: (value: Awaited<ReturnType<typeof api.getDiff>>) => void
+    vi.mocked(api.getDiff)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveB = resolve }))
+    const h = useHistory()
+
+    const requestA = h.selectFile('inbox/a.md', { oldRef: 'HEAD', newRef: 'WORKTREE' })
+    const requestB = h.selectFile('inbox/b.md', { oldRef: 'HEAD~1', newRef: 'HEAD' })
+    resolveB({
+      path: 'inbox/b.md', oldRef: 'HEAD~1', newRef: 'HEAD',
+      diff: { ops: [{ op: 'add', oldLine: null, newLine: 1, text: 'newest' }], stats: { added: 1, removed: 0, equal: 0 } },
+    })
+    await requestB
+    expect(h.selectedFile.value).toBe('inbox/b.md')
+    expect(h.currentDiff.value?.ops[0].text).toBe('newest')
+    expect(h.busy.value).toBe(true)
+
+    resolveA({
+      path: 'inbox/a.md', oldRef: 'HEAD', newRef: 'WORKTREE',
+      diff: { ops: [{ op: 'remove', oldLine: 1, newLine: null, text: 'stale' }], stats: { added: 0, removed: 1, equal: 0 } },
+    })
+    await requestA
+    expect(h.selectedFile.value).toBe('inbox/b.md')
+    expect(h.currentDiff.value?.ops[0].text).toBe('newest')
+    expect(h.busy.value).toBe(false)
+  })
+
+  it('ignores an error from a stale diff request', async () => {
+    let rejectOld!: (reason: Error) => void
+    vi.mocked(api.getDiff)
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectOld = reject }))
+      .mockResolvedValueOnce({
+        path: 'b.md', oldRef: 'HEAD', newRef: 'WORKTREE',
+        diff: { ops: [], stats: { added: 0, removed: 0, equal: 0 } },
+      })
+    const h = useHistory()
+    const oldRequest = h.selectFile('a.md', { oldRef: 'HEAD', newRef: 'WORKTREE' })
+    await h.selectFile('b.md', { oldRef: 'HEAD', newRef: 'WORKTREE' })
+    rejectOld(new Error('stale failure'))
+    await oldRequest
+
+    expect(h.selectedFile.value).toBe('b.md')
+    expect(h.error.value).toBeNull()
+  })
+
   it('createCommit calls the API and refreshes status + log on success', async () => {
     vi.mocked(api.createCommit).mockResolvedValueOnce({
       sha: 'b'.repeat(40), filesCommitted: ['inbox/a.md'],

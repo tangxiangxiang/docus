@@ -283,6 +283,21 @@ describe('GET /api/history/diff', () => {
     expect(body.diff.stats.removed).toBe(1)
   })
 
+  it('represents a deleted working-tree file as removals from HEAD', async () => {
+    await write('deleted.md', 'one\ntwo\n')
+    await call('POST', '/commits', { paths: ['deleted.md'], message: 'seed deleted file' })
+    await fs.unlink(path.join(root, 'deleted.md'))
+
+    const r = await call('GET', '/diff?path=deleted.md&old=HEAD&new=WORKTREE')
+    expect(r.status).toBe(200)
+    const body = await r.json() as { diff: { ops: Array<{ op: string; text: string }>; stats: { added: number; removed: number; equal: number } } }
+    expect(body.diff.stats).toEqual({ added: 0, removed: 2, equal: 0 })
+    expect(body.diff.ops.map((op) => [op.op, op.text])).toEqual([
+      ['remove', 'one'],
+      ['remove', 'two'],
+    ])
+  })
+
   it('rejects invalid diff paths and refs', async () => {
     const badPath = await call('GET', '/diff?path=.git/config&old=HEAD&new=WORKTREE')
     expect(badPath.status).toBe(400)
@@ -398,6 +413,20 @@ describe('POST /api/history/drop', () => {
 
     const log = await (await call('GET', '/log')).json() as { commits: Array<{ sha: string }> }
     expect(log.commits).toEqual([])
+  })
+
+  it('keeps unrelated staged files staged when dropping the root commit', async () => {
+    await write('root.md', 'root\n')
+    const rootCommit = (await (await call('POST', '/commits', { paths: ['root.md'], message: 'root' })).json()) as { sha: string }
+    await write('staged-later.md', 'later\n')
+    const { run } = await import('../history/git.js')
+    expect((await run(root, ['add', '--', 'staged-later.md'])).status).toBe(0)
+
+    const r = await call('POST', '/drop', { sha: rootCommit.sha })
+    expect(r.status).toBe(201)
+    const status = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string; index: string; worktree: string }> }
+    expect(status.dirty).toContainEqual(expect.objectContaining({ path: 'root.md', index: '?', worktree: '?' }))
+    expect(status.dirty).toContainEqual(expect.objectContaining({ path: 'staged-later.md', index: 'A', worktree: ' ' }))
   })
 
   it('rejects unsupported sha syntax', async () => {

@@ -92,6 +92,18 @@ const _available = ref(false)
 let _hydrated = false
 let _fileChangeUnsub: (() => void) | null = null
 let _lastSeenFileChangeSeq = 0
+let _pendingOperations = 0
+let _diffRequestId = 0
+
+function beginBusy(): void {
+  _pendingOperations++
+  _busy.value = true
+}
+
+function endBusy(): void {
+  _pendingOperations = Math.max(0, _pendingOperations - 1)
+  _busy.value = _pendingOperations > 0
+}
 
 async function refreshCapability(): Promise<void> {
   try {
@@ -148,16 +160,21 @@ async function loadDiffForSelection(): Promise<void> {
     _currentDiff.value = null
     return
   }
-  _busy.value = true
+  const oldRef = _selectedOldRef.value
+  const newRef = _selectedNewRef.value
+  const requestId = ++_diffRequestId
+  beginBusy()
   try {
-    const r = await api.getDiff(path, _selectedOldRef.value, _selectedNewRef.value)
+    const r = await api.getDiff(path, oldRef, newRef)
+    if (requestId !== _diffRequestId) return
     _currentDiff.value = r.diff
     _error.value = null
   } catch (e: any) {
+    if (requestId !== _diffRequestId) return
     _currentDiff.value = null
     _error.value = e?.message ?? 'diff failed'
   } finally {
-    _busy.value = false
+    endBusy()
   }
 }
 
@@ -170,7 +187,7 @@ async function createCommit(paths: string[], message: string): Promise<CommitRes
     _error.value = 'message must not be empty'
     return null
   }
-  _busy.value = true
+  beginBusy()
   try {
     const r = await api.createCommit(paths, message)
     _error.value = null
@@ -193,12 +210,12 @@ async function createCommit(paths: string[], message: string): Promise<CommitRes
     _error.value = e?.message ?? 'commit failed'
     return null
   } finally {
-    _busy.value = false
+    endBusy()
   }
 }
 
 async function dropCommit(sha: string): Promise<CommitResult | null> {
-  _busy.value = true
+  beginBusy()
   try {
     const r = await api.dropCommit(sha)
     _error.value = null
@@ -216,7 +233,7 @@ async function dropCommit(sha: string): Promise<CommitResult | null> {
     _error.value = e?.message ?? 'drop failed'
     return null
   } finally {
-    _busy.value = false
+    endBusy()
   }
 }
 
@@ -234,7 +251,7 @@ function toggleDirty(path: string, selected: Set<string>): void {
  * commit via the normal composer flow.
  */
 async function restoreFile(path: string, ref: string): Promise<boolean> {
-  _busy.value = true
+  beginBusy()
   try {
     await api.restoreFile(path, ref)
     _error.value = null
@@ -260,7 +277,7 @@ async function restoreFile(path: string, ref: string): Promise<boolean> {
     _error.value = e?.message ?? 'restore failed'
     return false
   } finally {
-    _busy.value = false
+    endBusy()
   }
 }
 
@@ -345,6 +362,8 @@ export function __resetHistoryStateForTesting(): void {
   _selectedNewRef.value = 'HEAD'
   _currentDiff.value = null
   _commitMessage.value = ''
+  _pendingOperations = 0
+  _diffRequestId = 0
   _available.value = false
   _hydrated = false
   _lastSeenFileChangeSeq = 0

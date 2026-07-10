@@ -296,6 +296,16 @@ describe('DiffView restore button', () => {
     expect(wrapper.find('.diff-restore-btn').exists()).toBe(false)
   })
 
+  it('hides the button for a newly added file with no old-side blob', async () => {
+    await loadDiffWith({
+      ops: [{ op: 'add', oldLine: null, newLine: 1, text: 'new file' }],
+      stats: { added: 1, removed: 0, equal: 0 },
+    }, { oldRef: 'HEAD', newRef: api.WORKTREE_REF })
+    const wrapper = renderDiffView()
+    await flushPromises()
+    expect(wrapper.find('.diff-restore-btn').exists()).toBe(false)
+  })
+
   it('hides the button when no file is selected', () => {
     const wrapper = renderDiffView()
     expect(wrapper.find('.diff-restore-btn').exists()).toBe(false)

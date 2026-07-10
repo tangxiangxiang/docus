@@ -20,7 +20,7 @@
 // tool name, an icon, a status pill (ok / error / pending), and
 // the result text. read_file / list_files cards are collapsed by
 // default to keep the panel compact; the user can expand them.
-import { onMounted, reactive, ref, watch, computed, inject, nextTick } from 'vue'
+import { onMounted, ref, watch, computed, inject, nextTick } from 'vue'
 import { ICON_AI, ICON_HISTORY, ICON_NEW_CHAT, ICON_FILE_MD } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useCurrentNote } from '../../composables/vault/useCurrentNote'
@@ -32,6 +32,7 @@ import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
 import { useI18n } from '../../composables/useI18n'
 import AiSessionPicker from './AiSessionPicker.vue'
+import AiToolCallCard from './AiToolCallCard.vue'
 
 const props = defineProps<{
   posts?: PostSummary[]
@@ -57,10 +58,6 @@ const { t } = useI18n()
 // ever renders without a provider (defensive — keeps the panel functional
 // in isolation, e.g. in a test harness).
 const review = inject<ReturnType<typeof useSplitReview> | null>('splitReview', null) ?? useSplitReview()
-
-// Per-card expanded state for read_file / list_files (which tend
-// to have long payloads). Other tools are always shown in full.
-const expandedToolCards = reactive<Record<string, boolean>>({})
 
 /* Composer auto-grow. The textarea is sized to its content (up to
    INPUT_MAX_H) so a short prompt is one line tall and a multi-line
@@ -181,75 +178,6 @@ async function trySlashCommand(text: string): Promise<boolean> {
   // it by emitting. The parent handles it.
   emit('split-request', path, mode)
   return true
-}
-
-// Inline SVG glyphs for each tool. Kept small and monochrome so
-// they pick up the surrounding text color via currentColor.
-const TOOL_ICONS: Record<string, string> = {
-  read_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h10l2 2v8H2z"/><path d="M2 3v10h12"/></svg>',
-  list_files: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/></svg>',
-  create_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2h7l3 3v9H3z"/><path d="M8 7v4M6 9h4"/></svg>',
-  write_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2l3 3-8 8H3v-3z"/></svg>',
-  patch_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2"/><circle cx="10" cy="10" r="2"/><path d="M7 8l2 0M7 8l-1 4M9 8l1-4"/></svg>',
-  delete_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M5 4V2h6v2M5 4l1 10h4l1-10"/></svg>',
-  rename_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12V8l8-8 4 4-8 8z"/><path d="M6 6l4 4"/></svg>',
-}
-function iconForTool(name: string): string {
-  return TOOL_ICONS[name] ?? TOOL_ICONS.read_file
-}
-
-const COLLAPSE_THRESHOLD = 200
-function truncateForCard(s: string): string {
-  if (s.length <= COLLAPSE_THRESHOLD) return s
-  return s.slice(0, COLLAPSE_THRESHOLD) + '…'
-}
-
-function toggleToolCard(id: string) {
-  expandedToolCards[id] = !expandedToolCards[id]
-}
-
-function stringInput(input: Record<string, unknown>, key: string): string {
-  const value = input[key]
-  return typeof value === 'string' ? value : ''
-}
-
-function countResultItems(content: string): number | null {
-  const trimmed = content.trim()
-  if (!trimmed) return null
-  const lines = trimmed.split('\n').filter((line) => line.trim().length > 0)
-  if (lines.length > 1) return lines.length
-  try {
-    const parsed = JSON.parse(trimmed) as unknown
-    if (Array.isArray(parsed)) return parsed.length
-    if (parsed && typeof parsed === 'object') return Object.keys(parsed).length
-  } catch {
-    // Plain text result; fall through to the character count summary.
-  }
-  return null
-}
-
-function formatChars(content: string): string {
-  const n = content.length
-  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k chars`
-  return `${n} chars`
-}
-
-function toolSummary(tc: { name: string; input: Record<string, unknown>; result: { content: string; is_error: boolean } }): string {
-  const path = stringInput(tc.input, 'path')
-  const newPath = stringInput(tc.input, 'new_path')
-  const scope = stringInput(tc.input, 'scope')
-  const target = tc.name === 'rename_file' && newPath
-    ? `${path || 'file'} -> ${newPath}`
-    : path || scope || ''
-  const content = tc.result.content
-  const result = tc.result.is_error
-    ? 'error'
-    : !content
-      ? 'pending'
-      : tc.name === 'list_files'
-        ? `${countResultItems(content) ?? 0} items`
-        : formatChars(content)
-  return [target, result].filter(Boolean).join(' · ')
 }
 
 const quickPrompts = computed(() => {
@@ -744,35 +672,11 @@ watch(() => review.phase.value, (p) => {
             />
             <div class="ai-bubble">
               <div v-if="m.content" class="ai-text">{{ m.content }}</div>
-              <div
+              <AiToolCallCard
                 v-for="tc in m.blocks?.toolCalls ?? []"
                 :key="tc.id"
-                class="ai-tool-card"
-                :class="{ 'ai-tool-error': tc.result.is_error }"
-              >
-                <div class="ai-tool-header">
-                  <span class="ai-tool-icon" v-html="iconForTool(tc.name)" aria-hidden="true" />
-                  <span class="ai-tool-name">{{ tc.name }}</span>
-                  <span class="ai-tool-summary">{{ toolSummary(tc) }}</span>
-                  <span v-if="tc.result.is_error" class="ai-tool-pill ai-tool-pill-error">error</span>
-                  <span v-else-if="tc.result.content" class="ai-tool-pill ai-tool-pill-ok">ok</span>
-                  <span v-else class="ai-tool-pill ai-tool-pill-pending">…</span>
-                </div>
-                <pre
-                  v-if="tc.result.content && (tc.name === 'read_file' || tc.name === 'list_files') && !expandedToolCards[tc.id]"
-                  class="ai-tool-result ai-tool-collapsed"
-                ><code>{{ truncateForCard(tc.result.content) }}</code></pre>
-                <pre
-                  v-else-if="tc.result.content"
-                  class="ai-tool-result"
-                ><code>{{ tc.result.content }}</code></pre>
-                <button
-                  v-if="tc.result.content && (tc.name === 'read_file' || tc.name === 'list_files')"
-                  type="button"
-                  class="ai-tool-toggle"
-                  @click="toggleToolCard(tc.id)"
-                >{{ expandedToolCards[tc.id] ? '收起' : '展开' }}</button>
-              </div>
+                :call="tc"
+              />
             </div>
           </div>
         </template>
@@ -909,102 +813,6 @@ watch(() => review.phase.value, (p) => {
   background: color-mix(in srgb, var(--vs-accent, #007acc) 10%, var(--vs-bg-2, #252526));
   border-color: color-mix(in srgb, var(--vs-accent, #007acc) 36%, var(--vs-border, #3c3c3c));
 }
-.ai-tool-card {
-  margin-top: 7px;
-  padding: 6px 7px;
-  border: 1px solid color-mix(in srgb, var(--vs-border, #3a3f4b) 72%, transparent);
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--vs-bg-2, #252526) 78%, transparent);
-  font-size: 0.82em;
-}
-.ai-tool-card.ai-tool-error {
-  border-color: color-mix(in srgb, #c14545 72%, var(--vs-border, #3a3f4b));
-  background: color-mix(in srgb, #c14545 10%, var(--vs-bg-2, #252526));
-}
-.ai-tool-header {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 5px;
-  min-height: 18px;
-}
-.ai-tool-icon {
-  display: inline-flex;
-  align-items: center;
-  color: var(--vs-text-3, #8a93a6);
-}
-.ai-tool-name {
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-weight: 500;
-  color: var(--vs-text-2, #858585);
-}
-.ai-tool-summary {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--vs-text-3, #6a6a6a);
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 0.92em;
-}
-.ai-tool-pill {
-  margin-left: auto;
-  flex: 0 0 auto;
-  padding: 0 5px;
-  border-radius: 4px;
-  font-size: 0.72em;
-  line-height: 1.45;
-  text-transform: lowercase;
-  letter-spacing: 0;
-}
-.ai-tool-pill-ok {
-  background: color-mix(in srgb, #50aa6e 16%, transparent);
-  color: #6ec486;
-}
-.ai-tool-pill-error {
-  background: color-mix(in srgb, #c14545 18%, transparent);
-  color: #e06c75;
-}
-.ai-tool-pill-pending {
-  background: color-mix(in srgb, var(--vs-text-3, #8a93a6) 16%, transparent);
-  color: var(--vs-text-3, #8a93a6);
-}
-.ai-tool-result {
-  margin: 0;
-  padding: 6px 7px;
-  background: color-mix(in srgb, var(--vs-bg-1, #1e1e1e) 86%, black);
-  border: 1px solid color-mix(in srgb, var(--vs-border, #3a3f4b) 45%, transparent);
-  border-radius: 4px;
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 0.82em;
-  line-height: 1.45;
-  max-height: 220px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.ai-tool-result.ai-tool-collapsed {
-  max-height: 64px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ai-tool-result code {
-  font-family: inherit;
-}
-.ai-tool-toggle {
-  margin-top: 4px;
-  padding: 1px 5px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--vs-accent, #7aa2f7);
-  cursor: pointer;
-  font-size: 0.82em;
-}
-.ai-tool-toggle:hover {
-  background: color-mix(in srgb, var(--vs-accent, #7aa2f7) 10%, transparent);
-}
-
 .ai-drafts {
   flex: 0 0 auto;
   margin: 8px 10px 0;
