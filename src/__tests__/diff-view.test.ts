@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import DiffView from '../components/vault/DiffView.vue'
 import { useHistory, __resetHistoryStateForTesting } from '../composables/vault/useHistory'
+import { useI18n } from '../composables/useI18n'
 import * as api from '../lib/history-api'
 
 // Mock the network layer so the test doesn't need the dev server.
@@ -46,6 +47,18 @@ describe('DiffView empty state', () => {
     const wrapper = renderDiffView()
     expect(wrapper.find('.diff-empty').exists()).toBe(true)
     expect(wrapper.text()).toContain('No file selected')
+  })
+
+  it('renders the empty state in Chinese when the locale is zh', () => {
+    const { setLocale } = useI18n()
+    setLocale('zh')
+    try {
+      const wrapper = renderDiffView()
+      expect(wrapper.text()).toContain('未选择文件')
+      expect(wrapper.attributes('aria-label')).toBe('差异')
+    } finally {
+      setLocale('en')
+    }
   })
 })
 

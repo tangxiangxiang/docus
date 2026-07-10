@@ -44,6 +44,13 @@ describe('useI18n', () => {
     expect(t('nope.missing.key')).toBe('nope.missing.key')
   })
 
+  it('interpolates named parameters without dropping unknown placeholders', () => {
+    const { t, setLocale } = useI18n()
+    setLocale('en')
+    expect(t('history.changed', { count: 3 })).toBe('3 changed')
+    expect(t('diff.unchanged')).toBe('{count} unchanged')
+  })
+
   it('falls back to zh when the active locale is missing a translation', () => {
     // All our keys have both zh and en. To test fallback, we'd need
     // a key that ONLY has zh. We don't ship any such key, so this

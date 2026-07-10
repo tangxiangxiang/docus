@@ -24,23 +24,25 @@
 import { computed, ref } from 'vue'
 import { useHistory } from '../../composables/vault/useHistory.js'
 import { useToast } from '../../composables/useToast.js'
+import { useI18n } from '../../composables/useI18n.js'
 import { WORKTREE_REF, type DiffOp } from '../../lib/history-api.js'
 import EmptyState from './EmptyState.vue'
 
 const h = useHistory()
 const toast = useToast()
+const { t } = useI18n()
 
 /* Refs come back from the API as HEAD-ish names, sha prefixes, or the
    WORKTREE sentinel. Timeline clicks use `<sha>~1` for the old side;
    display the resolved parent sha when it is present in the loaded
    timeline so the pane labels don't show the child sha on both sides. */
 function refLabel(ref: string): string {
-  if (ref === WORKTREE_REF) return 'Working tree'
+  if (ref === WORKTREE_REF) return t('diff.working_tree')
   const parent = ref.match(/^([0-9a-f]{7,40})~1$/i)
   if (parent) {
     const idx = h.log.value.findIndex((c) => c.sha.startsWith(parent[1]))
     const parentCommit = idx >= 0 ? h.log.value[idx + 1] : undefined
-    return parentCommit ? parentCommit.sha.slice(0, 7) : 'empty'
+    return parentCommit ? parentCommit.sha.slice(0, 7) : t('diff.empty')
   }
   return ref.slice(0, 7)
 }
@@ -66,7 +68,7 @@ async function onRestore() {
   // it explicitly so the user gets a clear error instead of a
   // confusing git stderr.
   if (ref === WORKTREE_REF) {
-    toast.error('Cannot restore to the working tree — pick a commit or HEAD as the old side.')
+    toast.error(t('diff.cannot_restore_worktree'))
     return
   }
   const label = refLabel(ref)
@@ -74,16 +76,15 @@ async function onRestore() {
   // modal component just for this. The user has the diff on screen
   // already, so they know what they're about to overwrite.
   const ok = typeof window !== 'undefined'
-    && window.confirm(
-      `Overwrite "${file}" with the ${label} version?\n\n`
-      + 'Any unsaved edits to this file will be lost.',
-    )
+    && window.confirm(t('diff.restore_confirm', { file, label }))
   if (!ok) return
   const success = await h.restoreFile(file, ref)
   if (success) {
-    toast.success(`Restored ${file} to ${label}`)
+    toast.success(t('diff.restore_success', { file, label }))
   } else {
-    toast.error(`Restore failed: ${h.actionError.value ?? 'unknown error'}`)
+    toast.error(t('diff.restore_failed', {
+      error: h.actionError.value ?? t('common.unknown_error'),
+    }))
   }
 }
 
@@ -159,14 +160,14 @@ function syncVerticalScroll(source: 'old' | 'new') {
 </script>
 
 <template>
-  <section class="diff-view" aria-label="Diff" :aria-busy="h.busy.value">
+  <section class="diff-view" :aria-label="t('diff.title')" :aria-busy="h.busy.value">
     <!-- Empty state: no file selected. The HistoryPanel is the
          primary driver — when it picks a file it sets the diff,
          and we render the result here. Until then, the main area
          stays empty rather than rendering a confusing default. -->
     <div v-if="!hasDiff" class="diff-empty">
-      <EmptyState size="compact" title="No file selected">
-        Pick a dirty file or a commit in the History panel.
+      <EmptyState size="compact" :title="t('diff.no_file_selected')">
+        {{ t('diff.pick_file') }}
       </EmptyState>
     </div>
 
@@ -176,7 +177,7 @@ function syncVerticalScroll(source: 'old' | 'new') {
         <div class="diff-stats">
           <span class="diff-stat-add">+{{ stats.added }}</span>
           <span class="diff-stat-del">-{{ stats.removed }}</span>
-          <span class="diff-stat-eq">{{ stats.equal }} unchanged</span>
+          <span class="diff-stat-eq">{{ t('diff.unchanged', { count: stats.equal }) }}</span>
         </div>
         <div class="diff-refs">
           <span class="diff-ref">{{ refLabel(h.selectedOldRef.value) }}</span>
@@ -198,37 +199,37 @@ function syncVerticalScroll(source: 'old' | 'new') {
             v-if="canRestore && h.selectedOldRef.value !== WORKTREE_REF"
             class="diff-restore-btn"
             :disabled="h.busy.value"
-            :title="`Overwrite ${h.selectedFile.value} with the ${refLabel(h.selectedOldRef.value)} version`"
+            :title="t('diff.overwrite_title', { file: h.selectedFile.value ?? '', label: refLabel(h.selectedOldRef.value) })"
             @click="onRestore"
-          >Restore old version</button>
+          >{{ t('diff.restore_old') }}</button>
         </div>
       </header>
 
       <div v-if="h.busy.value && !h.currentDiff.value" class="diff-loading">
         <span class="diff-loading-indicator" aria-hidden="true" />
-        Loading diff…
+        {{ t('diff.loading') }}
       </div>
       <div v-else-if="h.diffError.value && !h.currentDiff.value" class="diff-empty diff-error" role="alert">
-        <EmptyState size="compact" title="Unable to load diff">
+        <EmptyState size="compact" :title="t('diff.unable')">
           {{ h.diffError.value }}
         </EmptyState>
       </div>
       <div v-else-if="rows.length === 0" class="diff-empty">
-        <EmptyState size="compact" title="No changes">
-          The two refs are identical.
+        <EmptyState size="compact" :title="t('diff.no_changes')">
+          {{ t('diff.identical') }}
         </EmptyState>
       </div>
 
-      <div v-else class="diff-table" role="group" aria-label="Side-by-side diff">
+      <div v-else class="diff-table" role="group" :aria-label="t('diff.side_by_side')">
         <div
           ref="oldPane"
           class="diff-pane diff-pane-old"
           role="table"
-          aria-label="Old version"
+          :aria-label="t('diff.old_version')"
           @scroll="syncVerticalScroll('old')"
         >
           <div class="diff-pane-title">
-            <span class="diff-pane-label">Old</span>
+            <span class="diff-pane-label">{{ t('diff.old') }}</span>
             <span class="diff-pane-ref">{{ refLabel(h.selectedOldRef.value) }}</span>
           </div>
           <div
@@ -261,11 +262,11 @@ function syncVerticalScroll(source: 'old' | 'new') {
           ref="newPane"
           class="diff-pane diff-pane-new"
           role="table"
-          aria-label="New version"
+          :aria-label="t('diff.new_version')"
           @scroll="syncVerticalScroll('new')"
         >
           <div class="diff-pane-title">
-            <span class="diff-pane-label">New</span>
+            <span class="diff-pane-label">{{ t('diff.new') }}</span>
             <span class="diff-pane-ref">{{ refLabel(h.selectedNewRef.value) }}</span>
           </div>
           <div

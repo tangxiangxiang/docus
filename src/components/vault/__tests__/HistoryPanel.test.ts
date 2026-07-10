@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import HistoryPanel from '../HistoryPanel.vue'
 import { __resetHistoryStateForTesting } from '../../../composables/vault/useHistory'
+import { useI18n } from '../../../composables/useI18n'
 import * as api from '../../../lib/history-api'
 
 vi.mock('../../../lib/history-api', async () => {
@@ -137,5 +138,20 @@ describe('HistoryPanel state presentation', () => {
     await flushPromises()
     expect(wrapper.get('.history-commit-row').classes()).toContain('selected')
     expect(api.getDiff).toHaveBeenLastCalledWith('inbox/changed.md', `${sha}~1`, sha)
+  })
+
+  it('renders History controls in Chinese when the locale is zh', async () => {
+    const { setLocale } = useI18n()
+    setLocale('zh')
+    try {
+      const wrapper = mount(HistoryPanel)
+      await flushPromises()
+      expect(wrapper.get('.history-title').text()).toBe('历史')
+      expect(wrapper.get('.history-section-changes').text()).toContain('更改')
+      expect(wrapper.get('.history-composer-input').attributes('placeholder')).toBe('提交信息…')
+      expect(wrapper.get('.history-commit-btn').text()).toBe('提交 0 个文件')
+    } finally {
+      setLocale('en')
+    }
   })
 })

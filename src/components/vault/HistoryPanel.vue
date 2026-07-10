@@ -26,6 +26,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useHistory } from '../../composables/vault/useHistory.js'
 import { getLiveTabs } from '../../composables/vault/useEditorTabs.js'
 import { useToast } from '../../composables/useToast.js'
+import { useI18n } from '../../composables/useI18n.js'
 import { WORKTREE_REF, type CommitRecord } from '../../lib/history-api.js'
 import { suggestCommitMessage } from '../../lib/ai-api.js'
 import EmptyState from './EmptyState.vue'
@@ -36,6 +37,7 @@ const props = defineProps<{
 
 const h = useHistory()
 const toast = useToast()
+const { t } = useI18n()
 
 /* True if `path` appears in the dirty list — i.e. the working tree
    has edits not yet reflected in HEAD. Used by the row click / mount
@@ -107,9 +109,9 @@ async function onGenerateCommitMessage() {
       diffText: selectedPath === h.selectedFile.value ? diffTextForPrompt() : undefined,
     })
     h.commitMessage.value = message
-    toast.success('AI generated a commit message')
+    toast.success(t('history.ai_message_success'))
   } catch (err) {
-    toast.error(`AI commit message failed: ${(err as Error).message}`)
+    toast.error(t('history.ai_message_failed', { error: (err as Error).message }))
   } finally {
     generatingCommitMessage.value = false
   }
@@ -125,6 +127,13 @@ function dirtyStatus(entry: { index: string; worktree: string }): string {
   if (entry.index === 'R' || entry.worktree === 'R') return 'R'
   if (entry.index === 'M' || entry.worktree === 'M') return 'M'
   return entry.index.trim() || entry.worktree.trim() || 'M'
+}
+
+function dirtyStatusLabel(status: string): string {
+  if (status === 'A') return t('history.added')
+  if (status === 'D') return t('history.deleted')
+  if (status === 'R') return t('history.renamed')
+  return t('history.modified')
 }
 
 function onRowClick(path: string) {
@@ -161,7 +170,7 @@ function onCommitClick(sha: string) {
     ? current
     : (commit?.files[0] ?? h.status.value[0]?.path ?? current)
   if (!candidate) {
-    toast.error('Open a file or make a change first — no file to diff.')
+    toast.error(t('history.no_file_to_diff'))
     return
   }
   void h.selectFile(candidate, { oldRef: `${sha}~1`, newRef: sha })
@@ -208,11 +217,16 @@ async function onDropCommit() {
   if (!commit) return
   closeCommitMenu()
   const ok = typeof window !== 'undefined'
-    && window.confirm(`Drop commit ${commit.sha.slice(0, 7)}?\n\nIts changes will stay in the working tree.\n\n${commit.subject}`)
+    && window.confirm(t('history.drop_confirm', {
+      sha: commit.sha.slice(0, 7),
+      subject: commit.subject,
+    }))
   if (!ok) return
   const r = await h.dropCommit(commit.sha)
-  if (r) toast.success(`Dropped ${commit.sha.slice(0, 7)}`)
-  else toast.error(`Drop failed: ${h.actionError.value ?? 'unknown error'}`)
+  if (r) toast.success(t('history.drop_success', { sha: commit.sha.slice(0, 7) }))
+  else toast.error(t('history.drop_failed', {
+    error: h.actionError.value ?? t('common.unknown_error'),
+  }))
 }
 
 function toHistoryPath(path: string): string {
@@ -235,19 +249,19 @@ function selectInitialFile() {
 }
 
 function timeAgo(iso: string): string {
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return ''
-  const diff = Date.now() - t
+  const timestamp = Date.parse(iso)
+  if (Number.isNaN(timestamp)) return ''
+  const diff = Date.now() - timestamp
   const min = Math.floor(diff / 60_000)
-  if (min < 1) return 'just now'
-  if (min < 60) return `${min}m ago`
+  if (min < 1) return t('history.just_now')
+  if (min < 60) return t('history.minutes_ago', { count: min })
   const hr = Math.floor(min / 60)
-  if (hr < 24) return `${hr}h ago`
+  if (hr < 24) return t('history.hours_ago', { count: hr })
   const day = Math.floor(hr / 24)
-  if (day < 30) return `${day}d ago`
+  if (day < 30) return t('history.days_ago', { count: day })
   const mon = Math.floor(day / 30)
-  if (mon < 12) return `${mon}mo ago`
-  return `${Math.floor(mon / 12)}y ago`
+  if (mon < 12) return t('history.months_ago', { count: mon })
+  return t('history.years_ago', { count: Math.floor(mon / 12) })
 }
 
 // --- composer autoresize (same pattern as AiPanel) -----------------------
@@ -281,11 +295,11 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="history-panel" aria-label="History">
+  <section class="history-panel" :aria-label="t('history.title')">
     <header class="history-header">
-      <span class="history-title">History</span>
+      <span class="history-title">{{ t('history.title') }}</span>
       <span class="history-subtitle" v-if="h.capability.value?.repoInitialized">
-        {{ h.dirtyCount.value }} changed
+        {{ t('history.changed', { count: h.dirtyCount.value }) }}
       </span>
     </header>
 
@@ -293,12 +307,12 @@ onMounted(async () => {
          The capability probe runs at app start; this is the resting
          state for a vault where the binary isn't on PATH. -->
     <div v-if="h.capability.value && !h.capability.value.gitAvailable" class="history-empty">
-      <EmptyState size="compact" title="Git is not available">
-        Install git and add it to your PATH, then reload.
+      <EmptyState size="compact" :title="t('history.git_unavailable')">
+        {{ t('history.git_unavailable_body') }}
       </EmptyState>
     </div>
     <div v-else-if="h.capability.value && !h.capability.value.repoInitialized" class="history-empty">
-      <EmptyState size="compact" :title="h.capability.value.initError ? 'Vault git unavailable' : 'Initializing vault…'">
+      <EmptyState size="compact" :title="h.capability.value.initError ? t('history.vault_git_unavailable') : t('history.initializing')">
         <template v-if="h.capability.value.initError">{{ h.capability.value.initError }}</template>
       </EmptyState>
     </div>
@@ -312,15 +326,15 @@ onMounted(async () => {
             v-model="h.commitMessage.value"
             rows="1"
             class="history-composer-input"
-            placeholder="Commit message…"
+            :placeholder="t('history.commit_placeholder')"
             @keydown.enter.exact.prevent="onCommit"
           />
           <button
             type="button"
             class="history-ai-message-btn"
             :disabled="!canGenerateCommitMessage"
-            :title="selectedCount === 0 ? 'Select files first' : 'Generate commit message with AI'"
-            aria-label="Generate commit message with AI"
+            :title="selectedCount === 0 ? t('history.select_files_first') : t('history.generate_message')"
+            :aria-label="t('history.generate_message')"
             @click="onGenerateCommitMessage"
           >{{ generatingCommitMessage ? '…' : '✧' }}</button>
         </div>
@@ -328,21 +342,21 @@ onMounted(async () => {
           type="button"
           class="history-commit-btn"
           :disabled="!canCommit"
-          :title="selectedCount === 0 ? 'No files selected' : h.commitMessage.value.trim().length === 0 ? 'Message required' : 'Commit selected files'"
+          :title="selectedCount === 0 ? t('history.no_files_selected') : h.commitMessage.value.trim().length === 0 ? t('history.message_required') : t('history.commit_selected')"
           @click="onCommit"
         >
           <span v-if="h.busy.value">…</span>
-          <span v-else>Commit {{ selectedCount }} {{ selectedCount === 1 ? 'file' : 'files' }}</span>
+          <span v-else>{{ t('history.commit_files', { count: selectedCount, unit: t(selectedCount === 1 ? 'history.file_one' : 'history.files_many') }) }}</span>
         </button>
       </div>
 
       <!-- Changes -->
       <div class="history-section history-section-changes">
         <div class="history-section-title">
-          <span>Changes</span>
+          <span>{{ t('history.changes') }}</span>
           <span class="history-section-count">{{ h.status.value.length }}</span>
         </div>
-        <div v-if="h.status.value.length === 0" class="history-empty-inline">No changes.</div>
+        <div v-if="h.status.value.length === 0" class="history-empty-inline">{{ t('history.no_changes') }}</div>
         <ul v-else class="history-dirty">
           <li
             v-for="entry in h.status.value"
@@ -356,7 +370,7 @@ onMounted(async () => {
             <input
               type="checkbox"
               :checked="selected.has(entry.path)"
-              :aria-label="`Include ${entry.path} in commit`"
+              :aria-label="t('history.include_path', { path: entry.path })"
               @click.stop
               @change="onToggleDirty(entry.path)"
             />
@@ -364,7 +378,7 @@ onMounted(async () => {
             <span
               class="history-dirty-status"
               :class="`is-${dirtyStatus(entry).toLowerCase()}`"
-              :title="dirtyStatus(entry) === 'A' ? 'Added' : dirtyStatus(entry) === 'D' ? 'Deleted' : dirtyStatus(entry) === 'R' ? 'Renamed' : 'Modified'"
+              :title="dirtyStatusLabel(dirtyStatus(entry))"
             >
               {{ dirtyStatus(entry) }}
             </span>
@@ -375,10 +389,10 @@ onMounted(async () => {
       <!-- Timeline -->
       <div class="history-section history-section-timeline">
         <div class="history-section-title">
-          <span>Timeline</span>
+          <span>{{ t('history.timeline') }}</span>
           <span class="history-section-count">{{ h.log.value.length }}</span>
         </div>
-        <div v-if="h.log.value.length === 0" class="history-empty-inline">No commits yet.</div>
+        <div v-if="h.log.value.length === 0" class="history-empty-inline">{{ t('history.no_commits') }}</div>
         <ul v-else class="history-timeline">
           <li
             v-for="c in h.log.value"
@@ -413,7 +427,7 @@ onMounted(async () => {
                     h.selectedFile.value === path
                     && h.selectedNewRef.value === c.sha,
                 }"
-                :title="`Show diff of ${path} at ${c.sha.slice(0, 7)}`"
+                :title="t('history.show_diff', { path, sha: c.sha.slice(0, 7) })"
                 @click.stop="onCommitFileClick(c.sha, path)"
               >{{ path }}</button>
             </div>
@@ -432,7 +446,7 @@ onMounted(async () => {
         @click.stop
       >
         <button type="button" class="danger" role="menuitem" @click="onDropCommit">
-          Drop commit
+          {{ t('history.drop_commit') }}
         </button>
       </div>
     </Teleport>
