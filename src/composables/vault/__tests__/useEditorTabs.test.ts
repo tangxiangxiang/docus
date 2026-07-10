@@ -985,3 +985,50 @@ describe('useEditorTabs — tab persistence', () => {
     expect(toastCalls.filter((t) => t.type === 'info')).toEqual([])
   })
 })
+
+// --- tab persistence: vault isolation -------------------------------------
+//
+// When the server reports a vault id, the tab persistence key is
+// scoped by it (`docus:tabs:v1:<vaultId>`). Multiple vaults sharing
+// the same browser shouldn't see each other's tabs. When the server
+// doesn't report an id, the bare key is used — no regression.
+
+import { __setVaultIdForTesting } from '../useEditorTabs'
+
+describe('useEditorTabs — vault-scoped persistence', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('uses the bare key when no vault id is reported', async () => {
+    __setVaultIdForTesting(null)
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/health': () => ({ ok: true /* no vaultId */ }),
+    }))
+    const h = await setup()
+    await flushPromises()
+    await h.openPost('inbox/a')
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 150))
+    expect(localStorage.getItem('docus:tabs:v1')).toBeTruthy()
+    expect(localStorage.getItem('docus:tabs:v1:vault-1234')).toBeNull()
+  })
+
+  it('scopes the persistence key by vault id from /api/health', async () => {
+    __setVaultIdForTesting('vault-1234')
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/health': () => ({ ok: true, vaultId: 'vault-1234' }),
+    }))
+    const h = await setup()
+    await flushPromises()
+    await h.openPost('inbox/a')
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 150))
+    expect(localStorage.getItem('docus:tabs:v1:vault-1234')).toBeTruthy()
+    expect(localStorage.getItem('docus:tabs:v1')).toBeNull()
+  })
+})

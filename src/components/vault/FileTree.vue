@@ -10,6 +10,7 @@ import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFo
 import { suggestSlug } from '../../lib/ai-api'
 import { isSlugSegment, toLocalSlug } from '../../lib/slug'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
+import { useArchiveToZettel } from '../../composables/vault/useArchiveToZettel'
 import { ICON_SEARCH } from './icons'
 
 const props = withDefaults(defineProps<{
@@ -36,6 +37,7 @@ const emit = defineEmits<{
 
 const { confirm } = useConfirm()
 const { prompt } = usePrompt()
+const { archive: archiveToZettel } = useArchiveToZettel()
 const toast = useToast()
 
 const STORAGE_KEY = 'docus.vault.expandedPaths'
@@ -570,17 +572,10 @@ async function onSplitCard(path: string) {
 // inbox/literature note onto a zettel subfolder; the server whitelist's
 // "source must be in inbox/ or literature/" check backs up both paths.
 async function onArchiveToZettel(path: string) {
-  const filename = path.split('/').pop()!
-  const targetPath = 'zettel/' + filename
-  if (targetPath === path) return
-  try {
-    const moved = await patchPost(path, { targetPath })
-    emit('refresh')
-    if (props.currentPath === path) emit('select', moved.path)
-    toast.success(moved.path === targetPath ? '已归档到 zettel' : `已归档到 ${moved.path}`)
-  } catch (e: any) {
-    toast.error('归档失败: ' + (e.message ?? '未知错误'))
-  }
+  const movedPath = await archiveToZettel(path)
+  if (!movedPath) return
+  emit('refresh')
+  if (props.currentPath === path) emit('select', movedPath)
 }
 
 async function onCreateIn(folder: string, kind: 'file' | 'folder') {

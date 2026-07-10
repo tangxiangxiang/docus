@@ -86,16 +86,37 @@ const TAB_PERSIST_KEY = 'docus:tabs:v1'
 const TAB_PERSIST_MAX = 20
 const TAB_PERSIST_DEBOUNCE_MS = 100
 
+// Module-level vault id. Fetched once at first useEditorTabs() mount
+// (VaultView's onMounted) via /api/health. Without the id, the
+// persisted-state key is the bare TAB_PERSIST_KEY — multiple vaults
+// sharing the same browser would step on each other's tabs. With the
+// id, the key becomes `docus:tabs:v1:<vaultId>`. The id is fetched
+// once and cached for the session; subsequent remounts reuse the
+// cached value rather than re-hitting the network.
+let _vaultIdPromise: Promise<string | null> | null = null
+function fetchVaultId(): Promise<string | null> {
+  if (!_vaultIdPromise) {
+    _vaultIdPromise = fetch('/api/health')
+      .then((r) => r.json() as Promise<{ vaultId?: string }>)
+      .then((j) => j.vaultId ?? null)
+      .catch(() => null)
+  }
+  return _vaultIdPromise
+}
+function storageKey(vaultId: string | null): string {
+  return vaultId ? `${TAB_PERSIST_KEY}:${vaultId}` : TAB_PERSIST_KEY
+}
+
 interface PersistedTabs {
   v: number
   paths: string[]
   active: string | null
 }
 
-function readPersistedTabs(): PersistedTabs | null {
+function readPersistedTabs(vaultId: string | null): PersistedTabs | null {
   let raw: string | null
   try {
-    raw = localStorage.getItem(TAB_PERSIST_KEY)
+    raw = localStorage.getItem(storageKey(vaultId))
   } catch {
     return null
   }
@@ -123,14 +144,14 @@ function readPersistedTabs(): PersistedTabs | null {
   return null
 }
 
-function writePersistedTabs(tabs: Tab[], active: string | null) {
+function writePersistedTabs(tabs: Tab[], active: string | null, vaultId: string | null) {
   try {
     const data: PersistedTabs = {
       v: 1,
       paths: tabs.map((t) => t.path).slice(0, TAB_PERSIST_MAX),
       active,
     }
-    localStorage.setItem(TAB_PERSIST_KEY, JSON.stringify(data))
+    localStorage.setItem(storageKey(vaultId), JSON.stringify(data))
   } catch {
     // localStorage may throw (private mode, quota). Persistence is a
     // nice-to-have, not load-bearing — silently degrade.
@@ -156,6 +177,10 @@ function writePersistedTabs(tabs: Tab[], active: string | null) {
 
 let _liveTabs: ShallowRef<Tab[]> | null = null
 let _mirrorStop: (() => void) | null = null
+// Session-cached vault id, populated by the first useEditorTabs mount.
+// Lets the persist watcher (which fires on every tab/active change)
+// avoid re-reading the vault id — it just reads this variable.
+let _cachedVaultId: string | null = null
 
 function _teardownMirror() {
   _mirrorStop?.()
@@ -174,6 +199,16 @@ export function __setLiveTabsForTesting(ref: ShallowRef<Tab[]> | null): void {
 export function __resetLiveTabsForTesting(): void {
   _teardownMirror()
   _liveTabs = null
+  _cachedVaultId = null
+  _vaultIdPromise = null
+}
+
+/** Test-only: pin the vault id so tests can verify vault-scoped
+ *  keys without going through the real /api/health fetch. Pass null
+ *  to simulate a server that doesn't report a vault id (bare key). */
+export function __setVaultIdForTesting(vaultId: string | null): void {
+  _cachedVaultId = vaultId
+  _vaultIdPromise = Promise.resolve(vaultId)
 }
 
 // openPost singleton: the preview/reading panes intercept
@@ -335,7 +370,7 @@ export function useEditorTabs(opts: {
   // Debounced write of the persisted tab set. Watched (below) — no
   // need to call from each mutation site.
   const debouncedPersist = useDebounceFn(
-    () => writePersistedTabs(tabs.value, activePath.value),
+    () => writePersistedTabs(tabs.value, activePath.value, _cachedVaultId),
     TAB_PERSIST_DEBOUNCE_MS,
   )
 
@@ -553,8 +588,12 @@ export function useEditorTabs(opts: {
   // double-open.
   onMounted(async () => {
     await refresh()
+    // Resolve the vault id once and cache it for the persist watcher.
+    // The cache lifetime is the page session — a refresh re-fetches,
+    // but for the duration of one mount the id is stable.
+    _cachedVaultId = await fetchVaultId()
 
-    const saved = readPersistedTabs()
+    const saved = readPersistedTabs(_cachedVaultId)
     if (saved && saved.paths.length > 0) {
       const missing: string[] = []
       const toRestore = saved.paths.slice(0, TAB_HARD_LIMIT)

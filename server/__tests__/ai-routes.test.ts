@@ -27,6 +27,16 @@ vi.mock('../db', async (importOriginal) => {
 import aiRoutes from '../ai/routes'
 
 beforeEach(() => {
+  // Strip ANTHROPIC_* env vars so the 'source' field reflects the
+  // DB-stored settings. Tests that need an env override (the
+  // 'lets environment configuration override' case) restore them in
+  // their own try/finally. Without this, a parent process with
+  // ANTHROPIC_API_KEY set in the shell would leak into every test
+  // and force source='env' even when the DB has the key.
+  delete process.env.ANTHROPIC_API_KEY
+  delete process.env.ANTHROPIC_AUTH_TOKEN
+  delete process.env.ANTHROPIC_BASE_URL
+  delete process.env.ANTHROPIC_MODEL
   const db = new Database(':memory:')
   applyMigrations(db)
   testDbRef.value = db

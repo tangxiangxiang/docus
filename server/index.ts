@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import matter from 'gray-matter'
 import { filePathFor, folderPathFor, CONTENT_DIR, isValidPathSyntax, isValidSegment } from './paths.js'
 import { listPostsFlat, buildTree, listSubtreePaths, readFrontmatter } from './tree.js'
@@ -40,7 +41,14 @@ async function uniqueMoveTarget(absPath: string, relPath: string): Promise<{ abs
   return { abs: `${absBase}-${suffix}${ext}`, rel: `${relBase}-${suffix}` }
 }
 
-app.get('/api/health', (c) => c.json({ ok: true }))
+// Vault identity. Used by the client to scope per-vault persistent
+// state (tabs, expanded paths, layout). Hashes the absolute content
+// dir, so different vault roots in the same browser do not share
+// localStorage keys. The hash is short enough to fit in a key and is
+// returned via /api/health so the client can fetch it once at mount.
+const VAULT_ID = createHash('sha256').update(CONTENT_DIR).digest('hex').slice(0, 12)
+
+app.get('/api/health', (c) => c.json({ ok: true, vaultId: VAULT_ID }))
 
 app.get('/api/tree', async (c) => {
   const tree = await buildTree()

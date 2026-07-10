@@ -54,10 +54,17 @@ describe('app mounts /api/ai', () => {
   it('GET /api/ai/health on the parent app also works (sanity)', async () => {
     // The original /api/health route is preserved — this just
     // guards against a mounting mistake that breaks the parent.
+    // The body now also carries `vaultId` (a 12-char hash of the
+    // content dir) so the client can scope per-vault persistent
+    // state. We only assert ok + vaultId shape here; the exact
+    // value depends on where the test runs from.
     const req = new Request('http://localhost/api/health')
     const r = await app.fetch(req)
     expect(r.status).toBe(200)
-    expect(await r.json()).toEqual({ ok: true })
+    const body = await r.json() as { ok: boolean; vaultId: string }
+    expect(body.ok).toBe(true)
+    expect(typeof body.vaultId).toBe('string')
+    expect(body.vaultId.length).toBe(12)
   })
 })
 

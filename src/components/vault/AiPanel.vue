@@ -25,9 +25,12 @@ import { ICON_AI, ICON_HISTORY, ICON_NEW_CHAT, ICON_FILE_MD } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useCurrentNote } from '../../composables/vault/useCurrentNote'
 import { useSplitReview } from '../../composables/vault/useSplitReview'
-import { useToast } from '../../composables/useToast'
 import { writeDraftBatch, type Card, type SplitMode } from '../../lib/ai-api'
-import { patchPost, type PostSummary } from '../../lib/api'
+import { type PostSummary } from '../../lib/api'
+import { useArchiveToZettel } from '../../composables/vault/useArchiveToZettel'
+import { useToast } from '../../composables/useToast'
+import { useConfirm } from '../../composables/useConfirm'
+import { useI18n } from '../../composables/useI18n'
 import AiSessionPicker from './AiSessionPicker.vue'
 
 const props = defineProps<{
@@ -45,7 +48,10 @@ const draft = ref('')
 const pickerOpen = ref(false)
 const history = useAiHistory()
 const currentNote = useCurrentNote()
+const { archive: archiveToZettel } = useArchiveToZettel()
 const toast = useToast()
+const { confirm } = useConfirm()
+const { t } = useI18n()
 
 // Injected by VaultView. Default to a fresh local instance if the panel
 // ever renders without a provider (defensive — keeps the panel functional
@@ -250,20 +256,23 @@ const quickPrompts = computed(() => {
   const hasNote = Boolean(currentNote.path.value)
   return hasNote
     ? [
-        { label: '总结当前笔记', text: '总结当前笔记，提炼核心观点和可行动的下一步。' },
-        { label: '找相关笔记', text: '基于当前笔记，帮我找可能相关的笔记，并说明关联原因。' },
-        { label: '提出整理建议', text: '基于当前笔记，建议我应该如何整理、重命名或归档它。' },
+        { label: t('quick_prompts.with_note.summarize.label'), text: t('quick_prompts.with_note.summarize.text') },
+        { label: t('quick_prompts.with_note.find_related.label'), text: t('quick_prompts.with_note.find_related.text') },
+        { label: t('quick_prompts.with_note.suggest_tidy.label'), text: t('quick_prompts.with_note.suggest_tidy.text') },
       ]
     : [
-        { label: '浏览知识库', text: '帮我概览这个 vault 的主要主题和最近值得关注的笔记。' },
-        { label: '找未整理内容', text: '帮我找出 inbox 或 literature 中适合整理成永久笔记的内容。' },
-        { label: '整理建议', text: '根据当前 vault，给我一些整理和命名上的建议。' },
+        { label: t('quick_prompts.no_note.browse.label'), text: t('quick_prompts.no_note.browse.text') },
+        { label: t('quick_prompts.no_note.find_unprocessed.label'), text: t('quick_prompts.no_note.find_unprocessed.text') },
+        { label: t('quick_prompts.no_note.suggest_tidy.label'), text: t('quick_prompts.no_note.suggest_tidy.text') },
       ]
 })
+
+const draftAreaFilter = ref<'all' | 'inbox' | 'literature'>('all')
 
 const draftNotes = computed(() => {
   return (props.posts ?? [])
     .filter((post) => post.path.startsWith('inbox/draft/') || post.path.startsWith('literature/draft/'))
+    .filter((post) => draftAreaFilter.value === 'all' || draftArea(post.path) === draftAreaFilter.value)
     .sort((a, b) => b.mtime - a.mtime)
 })
 
@@ -272,16 +281,77 @@ function draftArea(path: string): string {
 }
 
 async function archiveDraft(path: string) {
-  const filename = path.split('/').pop()
-  if (!filename) return
-  const targetPath = `zettel/${filename}`
-  try {
-    const moved = await patchPost(path, { targetPath })
-    emit('refresh-tree')
-    emit('open', moved.path)
-    toast.success(moved.path === targetPath ? '已归档到 zettel' : `已归档到 ${moved.path}`)
-  } catch (err: any) {
-    toast.error('归档失败: ' + (err.message ?? '未知错误'))
+  const movedPath = await archiveToZettel(path)
+  if (!movedPath) return
+  emit('refresh-tree')
+  emit('open', movedPath)
+}
+
+/* Batch archive. Pre-computes unique target paths so the server-side
+   -2 suffix collision handler doesn't kick in for each draft — the
+   client has full visibility into all existing zettel paths via
+   props.posts, so it can pick zettel/foo, zettel/foo-2, zettel/foo-3
+   upfront and send each PATCH with its final name. This avoids the
+   '5 drafts become foo-2/-3/-4/-5/-6' scatter problem.
+
+   Conflicts are still possible between the pre-compute and the
+   request landing (a parallel archive by the user, an external file
+   move) — when that happens the server returns a 409 and the
+   composable's archive() will toast the error. We don't retry; the
+   user can re-trigger with the latest posts[] in hand. */
+const batchArchivePreview = computed(() => {
+  // Mirror the server's existing-set: anything currently under zettel/
+  // is taken. We index by basename so 'zettel/foo' blocks 'zettel/foo-2'
+  // as a basename collision too — the server would otherwise suffix on
+  // first archive and we'd race.
+  const taken = new Set<string>()
+  for (const p of props.posts ?? []) {
+    if (p.path.startsWith('zettel/')) {
+      taken.add(p.path.slice('zettel/'.length).replace(/\.md$/, ''))
+    }
+  }
+  // Inbox drafts first so a literature draft of the same slug gets
+  // the -2 suffix (matches the server's per-call ordering: the FIRST
+  // archived wins, the next gets -2). The user's mental model of
+  // 'inbox < literature' as the canonical intake order matches this.
+  const inbox = draftNotes.value.filter((d) => draftArea(d.path) === 'inbox')
+  const literature = draftNotes.value.filter((d) => draftArea(d.path) === 'literature')
+  const ordered = [...inbox, ...literature]
+
+  const targets: { from: string; to: string }[] = []
+  for (const d of ordered) {
+    const base = d.path.split('/').pop()!.replace(/\.md$/, '')
+    let candidate = base
+    if (taken.has(candidate)) {
+      for (let i = 2; i < 1000; i++) {
+        const next = `${base}-${i}`
+        if (!taken.has(next)) { candidate = next; break }
+      }
+    }
+    taken.add(candidate)
+    // targetPath goes to PATCH /api/posts/*, which accepts paths
+    // WITHOUT the .md suffix and appends it itself server-side.
+    targets.push({ from: d.path, to: `zettel/${candidate}` })
+  }
+  return targets
+})
+
+async function batchArchiveAll() {
+  const targets = batchArchivePreview.value
+  if (targets.length === 0) return
+  const preview = targets.map((t) => `${t.to.replace(/^zettel\//, '')}.md`).join('\n')
+  const ok = await confirm(`归档 ${targets.length} 张草稿:\n\n${preview}`)
+  if (!ok) return
+  let okCount = 0
+  for (const t of targets) {
+    const moved = await archiveToZettel(t.from, t.to)
+    if (moved) okCount++
+  }
+  if (okCount > 0) emit('refresh-tree')
+  if (okCount === targets.length) {
+    toast.success(`已归档 ${okCount} 张`)
+  } else {
+    toast.error(`归档了 ${okCount}/${targets.length} 张，剩余的失败了`)
   }
 }
 
@@ -574,6 +644,39 @@ watch(() => review.phase.value, (p) => {
         <div class="ai-drafts-head">
           <span class="ai-drafts-title">Drafts</span>
           <span class="ai-drafts-count">{{ draftNotes.length }}</span>
+          <div class="ai-drafts-filter" role="radiogroup" aria-label="按来源区筛选">
+            <button
+              type="button"
+              class="ai-drafts-filter-btn"
+              :class="{ 'is-active': draftAreaFilter === 'all' }"
+              role="radio"
+              :aria-checked="draftAreaFilter === 'all'"
+              @click="draftAreaFilter = 'all'"
+            >全部</button>
+            <button
+              type="button"
+              class="ai-drafts-filter-btn"
+              :class="{ 'is-active': draftAreaFilter === 'inbox' }"
+              role="radio"
+              :aria-checked="draftAreaFilter === 'inbox'"
+              @click="draftAreaFilter = 'inbox'"
+            >Inbox</button>
+            <button
+              type="button"
+              class="ai-drafts-filter-btn"
+              :class="{ 'is-active': draftAreaFilter === 'literature' }"
+              role="radio"
+              :aria-checked="draftAreaFilter === 'literature'"
+              @click="draftAreaFilter = 'literature'"
+            >Lit</button>
+          </div>
+          <button
+            type="button"
+            class="ai-drafts-archive-all"
+            title="归档所有 draft 到 zettel"
+            aria-label="归档所有 draft 到 zettel"
+            @click="batchArchiveAll"
+          >归档全部</button>
         </div>
         <ul class="ai-drafts-list">
           <li
@@ -933,6 +1036,48 @@ watch(() => review.phase.value, (p) => {
   font-size: 0.7rem;
   line-height: 1.35;
   text-align: center;
+}
+.ai-drafts-archive-all {
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--vs-accent, #007acc) 35%, var(--vs-border, #3c3c3c));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vs-accent, #007acc);
+  font: inherit;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.ai-drafts-archive-all:hover {
+  background: color-mix(in srgb, var(--vs-accent, #007acc) 12%, transparent);
+  border-color: var(--vs-accent, #007acc);
+}
+.ai-drafts-filter {
+  display: inline-flex;
+  gap: 2px;
+  padding: 1px;
+  border: 1px solid color-mix(in srgb, var(--vs-border, #3c3c3c) 60%, transparent);
+  border-radius: 4px;
+}
+.ai-drafts-filter-btn {
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vs-text-3, #6a6a6a);
+  font: inherit;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.ai-drafts-filter-btn:hover {
+  color: var(--vs-text-1, #d4d4d4);
+}
+.ai-drafts-filter-btn.is-active {
+  background: color-mix(in srgb, var(--vs-accent, #007acc) 18%, transparent);
+  color: var(--vs-accent, #007acc);
 }
 .ai-drafts-list {
   display: flex;

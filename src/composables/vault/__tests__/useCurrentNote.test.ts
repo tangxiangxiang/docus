@@ -150,7 +150,11 @@ describe('useCurrentNote — live tab integration', () => {
     // parallel — two responses consumed up front.
     responses.push({ status: 200, body: { tree: [], posts: [] } })
     responses.push({ status: 200, body: { tree: [], posts: [] } })
-    // The third response is for the explicit openPost('foo.md') call
+    // useEditorTabs also fetches /api/health on mount to resolve the
+    // vault id. Reply without a vaultId so the bare persistence key
+    // is used (matching the pre-vault-id behavior).
+    responses.push({ status: 200, body: { ok: true } })
+    // The fourth response is for the explicit openPost('foo.md') call
     // below, which fetches via getPost.
     responses.push({
       status: 200,
