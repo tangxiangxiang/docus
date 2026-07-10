@@ -21,7 +21,7 @@
 // the result text. read_file / list_files cards are collapsed by
 // default to keep the panel compact; the user can expand them.
 import { onMounted, ref, watch, computed, inject, nextTick } from 'vue'
-import { ICON_AI, ICON_HISTORY, ICON_NEW_CHAT, ICON_FILE_MD } from './icons'
+import { ICON_AI, ICON_HISTORY, ICON_NEW_CHAT } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useCurrentNote } from '../../composables/vault/useCurrentNote'
 import { useSplitReview } from '../../composables/vault/useSplitReview'
@@ -32,7 +32,8 @@ import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
 import { useI18n } from '../../composables/useI18n'
 import AiSessionPicker from './AiSessionPicker.vue'
-import AiToolCallCard from './AiToolCallCard.vue'
+import AiChatMessages from './AiChatMessages.vue'
+import AiComposer from './AiComposer.vue'
 
 const props = defineProps<{
   posts?: PostSummary[]
@@ -53,50 +54,16 @@ const { archive: archiveToZettel } = useArchiveToZettel()
 const toast = useToast()
 const { confirm } = useConfirm()
 const { t } = useI18n()
+const composer = ref<InstanceType<typeof AiComposer> | null>(null)
 
 // Injected by VaultView. Default to a fresh local instance if the panel
 // ever renders without a provider (defensive — keeps the panel functional
 // in isolation, e.g. in a test harness).
 const review = inject<ReturnType<typeof useSplitReview> | null>('splitReview', null) ?? useSplitReview()
 
-/* Composer auto-grow. The textarea is sized to its content (up to
-   INPUT_MAX_H) so a short prompt is one line tall and a multi-line
-   paste expands naturally — no internal scrollbar at the sizes
-   people actually type. At the cap we flip to overflow-y:auto so a
-   wall-of-text paste is still keyboard- / wheel-scrollable inside
-   the field; the scrollbar itself is rendered transparent in
-   style.css, so the input reads as scrollbar-free at a glance.
-
-   - @input fires it on every keystroke (instant feedback while typing)
-   - watch(draft) catches programmatic clears (after onSend sets
-     draft.value = '') so the field collapses back to one line
-   - onMounted fires the initial size for the empty state
-
-   Setting height:'auto' first is the standard textarea autoresize
-   trick — without it scrollHeight reflects the *current* height
-   and never grows.
-
-   The template pins `rows="1"`. Without it, an empty textarea in
-   WebKit/Blink reports a 2-row scrollHeight (~60px) and autoresize
-   writes that to the inline height, overriding CSS min-height. The
-   explicit 1-row attribute makes the empty-state scrollHeight
-   match the 40px floor we want. */
-const inputEl = ref<HTMLTextAreaElement | null>(null)
-const INPUT_MAX_H = 160
-function autoresize() {
-  const el = inputEl.value
-  if (!el) return
-  el.style.height = 'auto'
-  const natural = el.scrollHeight
-  el.style.height = Math.min(natural, INPUT_MAX_H) + 'px'
-  el.style.overflowY = natural > INPUT_MAX_H ? 'auto' : 'hidden'
-}
-
 onMounted(async () => {
   await history.loadActive()
-  autoresize()
 })
-watch(draft, () => autoresize())
 
 async function onSend() {
   const text = draft.value.trim()
@@ -116,27 +83,6 @@ async function onSend() {
   await history.sendAndStream(text, {
     path: currentNote.path.value ?? '',
   })
-}
-
-function onStop() {
-  // Triggers AbortController inside sendAndStream; the stream
-  // ends, the for-await exits, busy flips to false, and the
-  // assistant message gets an [aborted] tag.
-  history.stop()
-}
-
-function onSendOrStop() {
-  // Single button, two behaviors. The form's @submit still routes
-  // Enter through onSend(), so this handler only governs clicks.
-  if (history.busy.value) onStop()
-  else onSend()
-}
-
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
-    onSend()
-  }
 }
 
 function togglePicker() {
@@ -286,8 +232,7 @@ async function batchArchiveAll() {
 async function useQuickPrompt(text: string) {
   draft.value = text
   await nextTick()
-  autoresize()
-  inputEl.value?.focus()
+  await composer.value?.focus()
 }
 
 function draftPrefixForMode(mode: SplitMode): string {
@@ -632,107 +577,22 @@ watch(() => review.phase.value, (p) => {
         </ul>
       </section>
 
-      <div class="ai-messages" role="log" aria-live="polite">
-        <template v-if="history.messages.value.length === 0">
-          <div class="ai-empty-chat">
-            <div class="ai-empty-head">
-              <span class="ai-empty-icon" v-html="ICON_AI" aria-hidden="true" />
-              <div>
-                <div class="ai-empty-title">
-                  {{ currentNote.path.value ? 'Ask about current note' : 'Ask about your vault' }}
-                </div>
-                <div class="ai-empty-subtitle">
-                  {{ currentNote.path.value || 'No document selected' }}
-                </div>
-              </div>
-            </div>
-            <div class="ai-quick-prompts" aria-label="Quick prompts">
-              <button
-                v-for="p in quickPrompts"
-                :key="p.label"
-                type="button"
-                class="ai-quick-prompt"
-                @click="useQuickPrompt(p.text)"
-              >{{ p.label }}</button>
-            </div>
-          </div>
-        </template>
-        <template v-else>
-          <div
-            v-for="m in history.messages.value"
-            :key="m.id || `${m.sessionId}-${m.createdAt}`"
-            class="ai-message"
-            :class="[m.role, { 'ai-streaming': m.id === 0 || m.id === -1 }]"
-          >
-            <div
-              v-if="m.role === 'assistant'"
-              class="ai-avatar"
-              v-html="ICON_AI"
-              aria-hidden="true"
-            />
-            <div class="ai-bubble">
-              <div v-if="m.content" class="ai-text">{{ m.content }}</div>
-              <AiToolCallCard
-                v-for="tc in m.blocks?.toolCalls ?? []"
-                :key="tc.id"
-                :call="tc"
-              />
-            </div>
-          </div>
-        </template>
-      </div>
+      <AiChatMessages
+        :messages="history.messages.value"
+        :current-path="currentNote.path.value"
+        :quick-prompts="quickPrompts"
+        @prompt="useQuickPrompt"
+      />
 
-      <form class="ai-composer" @submit.prevent="onSend">
-        <!-- Two-layer card: the input sits on top, the toolbar
-             (slash shortcut + current-note context + send button)
-             sits below as a separate row. The thin top border on
-             the toolbar is what makes the two halves read as
-             distinct layers, matching the Claude Code CLI composer. -->
-        <div class="ai-composer-card">
-          <textarea
-            ref="inputEl"
-            v-model="draft"
-            class="ai-input"
-            rows="1"
-            placeholder="Ask Claude…"
-            aria-label="Ask Claude"
-            @keydown="onKeydown"
-            @input="autoresize"
-          />
-          <div class="ai-toolbar">
-            <div class="ai-toolbar-left">
-              <!-- Current-note context chip. The AI panel already
-                   passes currentNote.path into sendAndStream, so
-                   the chip is informational — it tells the user
-                   which note will be sent as context for the next
-                   message. We keep the full path on hover (via
-                   title) and ellipsize in the visible label. -->
-              <span
-                v-if="currentNote.path.value"
-                class="ai-context"
-                :title="currentNote.path.value"
-              >
-                <span class="ai-context-icon" v-html="ICON_FILE_MD" aria-hidden="true" />
-                <span class="ai-context-path">{{ currentNote.path.value }}</span>
-              </span>
-              <span v-else class="ai-context ai-context-empty">
-                no document
-              </span>
-            </div>
-            <div class="ai-toolbar-right">
-              <button
-                class="ai-send"
-                :class="{ 'ai-send-busy': history.busy.value }"
-                type="button"
-                :title="history.busy.value ? 'Stop' : 'Send (Enter)'"
-                :aria-label="history.busy.value ? 'Stop' : 'Send'"
-                :disabled="!history.busy.value && (!draft.trim() || !history.configured.value)"
-                @click="onSendOrStop"
-              >{{ history.busy.value ? '■' : '↑' }}</button>
-            </div>
-          </div>
-        </div>
-      </form>
+      <AiComposer
+        ref="composer"
+        v-model="draft"
+        :busy="history.busy.value"
+        :configured="history.configured.value"
+        :current-path="currentNote.path.value"
+        @send="onSend"
+        @stop="history.stop"
+      />
 
       <AiSessionPicker v-if="pickerOpen" @close="pickerOpen = false" />
     </template>
@@ -740,79 +600,6 @@ watch(() => review.phase.value, (p) => {
 </template>
 
 <style scoped>
-/* Tool card styles. Kept scoped to AiPanel.vue so they don't leak.
-   The base .ai-bubble styles handle alignment with the avatar. */
-.ai-text {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.ai-empty-chat {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 4px 0;
-  color: var(--vs-text-2, #858585);
-}
-.ai-empty-head {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-.ai-empty-icon {
-  display: inline-flex;
-  width: 26px;
-  height: 26px;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  color: color-mix(in srgb, var(--vs-accent, #007acc) 82%, var(--vs-text-1, #d4d4d4));
-  background: color-mix(in srgb, var(--vs-accent, #007acc) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vs-accent, #007acc) 22%, transparent);
-  border-radius: 7px;
-}
-.ai-empty-icon :deep(svg) {
-  width: 15px;
-  height: 15px;
-  display: block;
-}
-.ai-empty-title {
-  color: var(--vs-text-1, #d4d4d4);
-  font-size: 0.86rem;
-  font-weight: 600;
-  line-height: 1.25;
-}
-.ai-empty-subtitle {
-  margin-top: 2px;
-  max-width: 230px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--vs-text-3, #6a6a6a);
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 0.72rem;
-}
-.ai-quick-prompts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.ai-quick-prompt {
-  padding: 4px 7px;
-  border: 1px solid color-mix(in srgb, var(--vs-border, #3c3c3c) 74%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--vs-bg-2, #252526) 72%, transparent);
-  color: var(--vs-text-2, #858585);
-  font: inherit;
-  font-size: 0.75rem;
-  line-height: 1.2;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
-}
-.ai-quick-prompt:hover {
-  color: var(--vs-text-1, #d4d4d4);
-  background: color-mix(in srgb, var(--vs-accent, #007acc) 10%, var(--vs-bg-2, #252526));
-  border-color: color-mix(in srgb, var(--vs-accent, #007acc) 36%, var(--vs-border, #3c3c3c));
-}
 .ai-drafts {
   flex: 0 0 auto;
   margin: 8px 10px 0;
