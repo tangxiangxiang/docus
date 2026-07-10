@@ -212,7 +212,7 @@ async function onDropCommit() {
   if (!ok) return
   const r = await h.dropCommit(commit.sha)
   if (r) toast.success(`Dropped ${commit.sha.slice(0, 7)}`)
-  else toast.error(`Drop failed: ${h.error.value ?? 'unknown error'}`)
+  else toast.error(`Drop failed: ${h.actionError.value ?? 'unknown error'}`)
 }
 
 function toHistoryPath(path: string): string {
@@ -421,7 +421,7 @@ onMounted(async () => {
         </ul>
       </div>
 
-      <div v-if="h.error.value" class="history-error" role="alert">{{ h.error.value }}</div>
+      <div v-if="h.actionError.value" class="history-error" role="alert">{{ h.actionError.value }}</div>
     </template>
     <Teleport to="body">
       <div

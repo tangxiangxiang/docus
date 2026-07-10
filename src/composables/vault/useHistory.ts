@@ -38,9 +38,11 @@ export interface HistoryState {
   log: Ref<CommitRecord[]>
   available: Ref<boolean>
 
-  // busy / error
+  // Busy is shared because it gates mutations globally. Errors are scoped so
+  // a failed diff never appears under the commit timeline (and vice versa).
   busy: Ref<boolean>
-  error: Ref<string | null>
+  diffError: Ref<string | null>
+  actionError: Ref<string | null>
 
   // selection — drives the DiffView
   selectedFile: Ref<string | null>
@@ -69,7 +71,7 @@ export interface HistoryState {
   // Restore a file's on-disk content to its blob at `ref`. After
   // success, status is reloaded and a file-change event is fired so
   // any open editor tab sees the new content. Returns false on
-  // failure (the error is on `error`).
+  // failure (the error is on `actionError`).
   restoreFile(path: string, ref: string): Promise<boolean>
   // Toggle a dirty file in/out of the next commit. `paths` is the
   // caller's working set; we just flip membership in it.
@@ -82,7 +84,8 @@ const _capability = ref<Capability | null>(null)
 const _status = ref<StatusEntry[]>([])
 const _log = ref<CommitRecord[]>([])
 const _busy = ref(false)
-const _error = ref<string | null>(null)
+const _diffError = ref<string | null>(null)
+const _actionError = ref<string | null>(null)
 const _selectedFile = ref<string | null>(null)
 const _selectedOldRef = ref<string>('HEAD')
 const _selectedNewRef = ref<string>('HEAD')
@@ -113,7 +116,7 @@ async function refreshCapability(): Promise<void> {
   } catch (e: any) {
     _capability.value = { gitAvailable: false, repoInitialized: false }
     _available.value = false
-    _error.value = e?.message ?? 'capability probe failed'
+    _actionError.value = e?.message ?? 'capability probe failed'
   }
 }
 
@@ -125,7 +128,7 @@ async function refreshStatus(): Promise<void> {
   } catch (e: any) {
     _status.value = []
     _available.value = false
-    _error.value = e?.message ?? 'status failed'
+    _actionError.value = e?.message ?? 'status failed'
   }
 }
 
@@ -141,7 +144,7 @@ async function refreshLog(opts: { path?: string } = {}): Promise<void> {
     _log.value = Array.isArray(r?.commits) ? r.commits : []
   } catch (e: any) {
     _log.value = []
-    _error.value = e?.message ?? 'log failed'
+    _actionError.value = e?.message ?? 'log failed'
   }
 }
 
@@ -168,11 +171,11 @@ async function loadDiffForSelection(): Promise<void> {
     const r = await api.getDiff(path, oldRef, newRef)
     if (requestId !== _diffRequestId) return
     _currentDiff.value = r.diff
-    _error.value = null
+    _diffError.value = null
   } catch (e: any) {
     if (requestId !== _diffRequestId) return
     _currentDiff.value = null
-    _error.value = e?.message ?? 'diff failed'
+    _diffError.value = e?.message ?? 'diff failed'
   } finally {
     endBusy()
   }
@@ -180,17 +183,17 @@ async function loadDiffForSelection(): Promise<void> {
 
 async function createCommit(paths: string[], message: string): Promise<CommitResult | null> {
   if (paths.length === 0) {
-    _error.value = 'select at least one file'
+    _actionError.value = 'select at least one file'
     return null
   }
   if (message.trim().length === 0) {
-    _error.value = 'message must not be empty'
+    _actionError.value = 'message must not be empty'
     return null
   }
   beginBusy()
   try {
     const r = await api.createCommit(paths, message)
-    _error.value = null
+    _actionError.value = null
     // The commit touched these files on disk; notify the file-change
     // bus so any open editor tab refreshes. The mtime is irrelevant
     // here — the bus is purely a "something changed" signal.
@@ -207,7 +210,7 @@ async function createCommit(paths: string[], message: string): Promise<CommitRes
     await Promise.all([refreshStatus(), refreshLog()])
     return r
   } catch (e: any) {
-    _error.value = e?.message ?? 'commit failed'
+    _actionError.value = e?.message ?? 'commit failed'
     return null
   } finally {
     endBusy()
@@ -218,7 +221,7 @@ async function dropCommit(sha: string): Promise<CommitResult | null> {
   beginBusy()
   try {
     const r = await api.dropCommit(sha)
-    _error.value = null
+    _actionError.value = null
     for (const p of r.filesCommitted) {
       publishFileChange({
         path: p,
@@ -230,7 +233,7 @@ async function dropCommit(sha: string): Promise<CommitResult | null> {
     await Promise.all([refreshStatus(), refreshLog()])
     return r
   } catch (e: any) {
-    _error.value = e?.message ?? 'drop failed'
+    _actionError.value = e?.message ?? 'drop failed'
     return null
   } finally {
     endBusy()
@@ -254,7 +257,7 @@ async function restoreFile(path: string, ref: string): Promise<boolean> {
   beginBusy()
   try {
     await api.restoreFile(path, ref)
-    _error.value = null
+    _actionError.value = null
     // Tell the file-change bus something changed on disk. The bus
     // doesn't carry the new content — the editor tab that owns the
     // file will re-read it from disk on the next self-save tick.
@@ -274,7 +277,7 @@ async function restoreFile(path: string, ref: string): Promise<boolean> {
     }
     return true
   } catch (e: any) {
-    _error.value = e?.message ?? 'restore failed'
+    _actionError.value = e?.message ?? 'restore failed'
     return false
   } finally {
     endBusy()
@@ -329,7 +332,8 @@ export function useHistory(): HistoryState {
     log: _log,
     available: _available,
     busy: _busy,
-    error: _error,
+    diffError: _diffError,
+    actionError: _actionError,
     selectedFile: _selectedFile,
     selectedOldRef: _selectedOldRef,
     selectedNewRef: _selectedNewRef,
@@ -356,7 +360,8 @@ export function __resetHistoryStateForTesting(): void {
   _status.value = []
   _log.value = []
   _busy.value = false
-  _error.value = null
+  _diffError.value = null
+  _actionError.value = null
   _selectedFile.value = null
   _selectedOldRef.value = 'HEAD'
   _selectedNewRef.value = 'HEAD'

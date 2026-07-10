@@ -83,7 +83,7 @@ async function onRestore() {
   if (success) {
     toast.success(`Restored ${file} to ${label}`)
   } else {
-    toast.error(`Restore failed: ${h.error.value ?? 'unknown error'}`)
+    toast.error(`Restore failed: ${h.actionError.value ?? 'unknown error'}`)
   }
 }
 
@@ -208,9 +208,9 @@ function syncVerticalScroll(source: 'old' | 'new') {
         <span class="diff-loading-indicator" aria-hidden="true" />
         Loading diff…
       </div>
-      <div v-else-if="h.error.value && !h.currentDiff.value" class="diff-empty diff-error" role="alert">
+      <div v-else-if="h.diffError.value && !h.currentDiff.value" class="diff-empty diff-error" role="alert">
         <EmptyState size="compact" title="Unable to load diff">
-          {{ h.error.value }}
+          {{ h.diffError.value }}
         </EmptyState>
       </div>
       <div v-else-if="rows.length === 0" class="diff-empty">

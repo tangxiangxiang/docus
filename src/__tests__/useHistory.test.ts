@@ -121,7 +121,31 @@ describe('useHistory singleton', () => {
     await oldRequest
 
     expect(h.selectedFile.value).toBe('b.md')
-    expect(h.error.value).toBeNull()
+    expect(h.diffError.value).toBeNull()
+  })
+
+  it('keeps diff and action errors in independent channels', async () => {
+    vi.mocked(api.getDiff).mockRejectedValueOnce(new Error('diff unavailable'))
+    const h = useHistory()
+
+    await h.createCommit([], 'message')
+    await h.selectFile('a.md', { oldRef: 'HEAD~1', newRef: 'HEAD' })
+
+    expect(h.actionError.value).toBe('select at least one file')
+    expect(h.diffError.value).toBe('diff unavailable')
+  })
+
+  it('a successful action does not clear an existing diff error', async () => {
+    vi.mocked(api.getDiff).mockRejectedValueOnce(new Error('bad diff ref'))
+    vi.mocked(api.createCommit).mockResolvedValueOnce({ sha: 'd'.repeat(40), filesCommitted: ['a.md'] })
+    const h = useHistory()
+    await h.selectFile('a.md', { oldRef: 'HEAD~1', newRef: 'HEAD' })
+
+    const result = await h.createCommit(['a.md'], 'commit a')
+
+    expect(result?.sha).toBe('d'.repeat(40))
+    expect(h.actionError.value).toBeNull()
+    expect(h.diffError.value).toBe('bad diff ref')
   })
 
   it('createCommit calls the API and refreshes status + log on success', async () => {
@@ -144,7 +168,7 @@ describe('useHistory singleton', () => {
     const r = await h.createCommit(['a.md'], '   ')
     expect(r).toBeNull()
     expect(api.createCommit).not.toHaveBeenCalled()
-    expect(h.error.value).toMatch(/message/i)
+    expect(h.actionError.value).toMatch(/message/i)
   })
 
   it('createCommit refuses empty paths without hitting the API', async () => {
@@ -153,7 +177,7 @@ describe('useHistory singleton', () => {
     const r = await h.createCommit([], 'msg')
     expect(r).toBeNull()
     expect(api.createCommit).not.toHaveBeenCalled()
-    expect(h.error.value).toMatch(/file/i)
+    expect(h.actionError.value).toMatch(/file/i)
   })
 
   it('createCommit returns the API result on success', async () => {
@@ -177,7 +201,7 @@ describe('useHistory singleton', () => {
     h.commitMessage.value = 'msg'
     const r = await h.createCommit(['a.md'], 'msg')
     expect(r).toBeNull()
-    expect(h.error.value).toBe('nothing to commit')
+    expect(h.actionError.value).toBe('nothing to commit')
     expect(h.commitMessage.value).toBe('msg')
   })
 
@@ -197,7 +221,7 @@ describe('useHistory singleton', () => {
     const r = await h.restoreFile('a.md', 'HEAD~1')
     expect(r).toBe(true)
     expect(api.restoreFile).toHaveBeenCalledWith('a.md', 'HEAD~1')
-    expect(h.error.value).toBeNull()
+    expect(h.actionError.value).toBeNull()
   })
 
   it('restoreFile surfaces the server error and returns false on failure', async () => {
@@ -205,7 +229,7 @@ describe('useHistory singleton', () => {
     const h = useHistory()
     const r = await h.restoreFile('a.md', 'HEAD')
     expect(r).toBe(false)
-    expect(h.error.value).toMatch(/does not exist at ref/)
+    expect(h.actionError.value).toMatch(/does not exist at ref/)
   })
 })
 
