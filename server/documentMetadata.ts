@@ -139,7 +139,18 @@ export function ensureDocumentMetadata(
   updatedAt = mtimeMs,
 ): DocumentMetadata {
   const existing = getDocumentMetadata(db, path)
-  if (existing) return saveDocumentMetadata(db, { ...existing, updatedAt })
+  if (existing) {
+    // Don't let mtime or a stale `updatedAt` argument push the stored
+    // updatedAt backwards. External editors (vim, Obsidian) can advance
+    // the frontmatter `updated:` without touching mtime — git checkout in
+    // particular preserves mtime — and the database row's updatedAt is
+    // supposed to be the user's most recent claim, not the file's clock.
+    // Mirror the Math.max guard migrateVaultMetadata uses on re-import.
+    return saveDocumentMetadata(db, {
+      ...existing,
+      updatedAt: Math.max(existing.updatedAt, updatedAt, mtimeMs),
+    })
+  }
 
   const parsed = matter(raw)
   const fallbackTitle = path.split('/').pop()!
@@ -153,6 +164,10 @@ export function ensureDocumentMetadata(
   const aliases = Array.isArray(parsed.data.aliases)
     ? parsed.data.aliases.filter((alias: unknown): alias is string => typeof alias === 'string')
     : []
+  // First-time import: trust the file's frontmatter `updated:` when it
+  // parses to a later date than mtime (e.g. user edited in vim then
+  // git-checked-out without restoring mtime).
+  const legacyUpdatedAt = dateMs(parsed.data.updated, mtimeMs)
   return saveDocumentMetadata(db, {
     path,
     title,
@@ -160,7 +175,7 @@ export function ensureDocumentMetadata(
     tags,
     aliases,
     createdAt: dateMs(parsed.data.created ?? parsed.data.date, mtimeMs),
-    updatedAt,
+    updatedAt: Math.max(legacyUpdatedAt, mtimeMs),
   })
 }
 

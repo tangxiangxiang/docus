@@ -3,6 +3,7 @@ import Database from 'better-sqlite3'
 import { applyMigrations } from '../db'
 import {
   deleteDocumentMetadata,
+  ensureDocumentMetadata,
   getDocumentMetadata,
   listDocumentMetadata,
   moveDocumentMetadata,
@@ -129,5 +130,32 @@ describe('document metadata repository', () => {
       { path: 'inbox/a', backup: '---A---' },
       { path: 'inbox/b', backup: '---B---' },
     ])
+  })
+
+  it('keeps a newer stored updatedAt across a save with an older mtime', () => {
+    // External editor advances the file's `updated:` field without
+    // bumping mtime (e.g. git checkout preserves mtime). The PUT path
+    // calls ensureDocumentMetadata with the older mtimeMs — without
+    // Math.max the stored updatedAt would silently move backwards.
+    const futureMs = Date.UTC(2026, 6, 12)
+    const oldMtimeMs = Date.UTC(2026, 5, 1)
+    saveDocumentMetadata(db, { path: 'inbox/note', title: 'Note', updatedAt: futureMs })
+    const result = ensureDocumentMetadata(db, 'inbox/note', 'body', oldMtimeMs, oldMtimeMs)
+    expect(result.updatedAt).toBe(futureMs)
+  })
+
+  it('imports a fresh row using the frontmatter updated: field when it is newer than mtime', () => {
+    const futureMs = Date.UTC(2026, 6, 12)
+    const oldMtimeMs = Date.UTC(2026, 5, 1)
+    const raw = [
+      '---',
+      'title: Note',
+      `updated: ${new Date(futureMs).toISOString().slice(0, 10)}`,
+      '---',
+      '',
+      'body',
+    ].join('\n')
+    const result = ensureDocumentMetadata(db, 'inbox/note', raw, oldMtimeMs, oldMtimeMs)
+    expect(result.updatedAt).toBe(futureMs)
   })
 })
