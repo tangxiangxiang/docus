@@ -224,7 +224,13 @@ app.post('/api/posts', async (c) => {
   try { abs = filePathFor(body.path) } catch (e: any) { return bad(c, e.message) }
   if (await exists(abs)) return bad(c, 'file exists', 409)
   await fs.mkdir(path.dirname(abs), { recursive: true })
-  const title = body.title ?? body.path.split('/').pop()!
+  // Validate at the route boundary. Without this, saveDocumentMetadata
+  // throws "metadata title is required" on a whitespace title and the
+  // catch block below propagates a 500 even though the request is
+  // obviously malformed client input.
+  const title = (body.title ?? body.path.split('/').pop() ?? '').trim()
+  if (!title) return bad(c, 'title must be a non-empty string', 400)
+  if (title.length > 200) return bad(c, 'title must be at most 200 characters', 400)
   const now = Date.now()
   const today = new Date(now).toISOString().slice(0, 10)
   const body_text = `# ${title}\n`

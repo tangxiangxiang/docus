@@ -127,4 +127,19 @@ describe('POST /api/posts', () => {
     expect(r.status).toBe(400)
     await expect(fs.stat(path.join(CONTENT_DIR, 'Zettel', 'direct.md'))).rejects.toThrow()
   })
+
+  it('returns 400 (not 500) for a whitespace-only title', async () => {
+    // saveDocumentMetadata throws on a blank title, which used to bubble
+    // out of the route as an unhandled 500. Validate at the boundary so
+    // malformed client input is reported as 400.
+    const abs = path.join(CONTENT_DIR, 'post-whitespace.md')
+    try {
+      const r = await call('POST', '/api/posts', { path: 'post-whitespace', title: '   ' })
+      expect(r.status).toBe(400)
+      await expect(fs.stat(abs)).rejects.toThrow()
+    } finally {
+      await fs.rm(abs, { force: true })
+      deleteDocumentMetadata(db, 'post-whitespace')
+    }
+  })
 })
