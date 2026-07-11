@@ -13,26 +13,21 @@ Top-level directories carry intent:
 - `literature/draft/` — staging area for AI-generated cards split from literature notes.
 - `zettel/` — atomic cards. Each is one self-contained idea.
 
-## Frontmatter
+## Document metadata
 
-Every note starts with a YAML block:
+Markdown files contain body content only. Document metadata is stored in SQLite,
+not in YAML Frontmatter and not in the Markdown text.
 
-```yaml
----
-title: <display title>          # required
-created: YYYY-MM-DD             # UTC date, set on first save
-updated: YYYY-MM-DD             # UTC date, bumped on every PUT
-tags: [kebab-case, ...]         # array; [] if none
-summary: <one or two sentences> # OPTIONAL; absent on zettel cards
-source: inbox/init              # OPTIONAL; zettel cards only
----
-```
+- `title` — required display title; may differ from the filename.
+- `createdAt` / `updatedAt` — timestamps managed by the server.
+- `tags` — searchable labels.
+- `summary` — optional 1–2 sentence search blurb.
+- `aliases` — alternative titles used for discovery and links.
 
-- `title` — may differ from filename.
-- `created` / `updated` — UTC `YYYY-MM-DD`. Server bumps `updated` on every PUT; external edits and renames do not touch it.
-- `tags` — array form only.
-- `summary` — optional 1–2 sentence blurb the author writes for the search index and result list. The client ranks `summary` hits at boost=1, so empty/missing means the note won't surface on body-free searches. **Zettel cards do not carry this field** — a card's title + body is the complete atomic card, so a summary would just duplicate it.
-- `source` — draft-card provenance. Records the access path of the note a card was split from (e.g. `inbox/init`). Set by the split-to-draft flow, never by hand.
+`read_file` returns database-owned fields under `metadata`. Use
+`update_metadata` to change title, summary, tags, or aliases. Never add YAML
+Frontmatter to a note. Legacy files may still contain it during migration;
+treat it as read-only legacy data and prefer `metadata`.
 
 ## Writing conventions
 

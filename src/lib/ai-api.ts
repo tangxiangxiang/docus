@@ -244,7 +244,7 @@ export async function* streamChat(
  *  is intentionally not on the card: it was redundant with
  *  `source` (whose first path segment is the mode for every
  *  currently-supported source), and removing it keeps the
- *  frontmatter minimal. */
+ *  metadata payload minimal. Metadata is persisted in SQLite when archived. */
 export interface Card {
   title: string
   body: string

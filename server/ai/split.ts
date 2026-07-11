@@ -108,6 +108,7 @@ export async function runSplit(opts: {
   path: string
   mode: SplitMode
   raw: string
+  metadata?: { title: string; summary: string; tags: string[]; aliases: string[] } | null
   model?: string
   signal?: AbortSignal
 }): Promise<Card[]> {
@@ -123,7 +124,12 @@ export async function runSplit(opts: {
       model: opts.model ?? cfg.model,
       max_tokens: MAX_TOKENS,
       system: BASE_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: buildUserPrompt(opts.mode, opts.path, opts.raw) }],
+      messages: [{
+        role: 'user',
+        content: buildUserPrompt(opts.mode, opts.path, opts.raw) + (opts.metadata
+          ? `\n\nDatabase metadata (context only; do not emit YAML):\n${JSON.stringify(opts.metadata)}`
+          : ''),
+      }],
     }, { signal: opts.signal })
   } catch (err) {
     // The SDK's HTTP layer surfaces aborts as a thrown error rather

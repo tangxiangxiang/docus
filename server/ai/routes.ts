@@ -16,6 +16,8 @@ import { streamSSE } from 'hono/streaming'
 import { promises as fs } from 'node:fs'
 import { getDb } from '../db.js'
 import { filePathFor } from '../paths.js'
+import { getDocumentMetadata } from '../documentMetadata.js'
+import matter from 'gray-matter'
 import * as sessions from './sessions.js'
 import * as messages from './messages.js'
 import { runChat, type ChatEvent } from './chat.js'
@@ -412,7 +414,13 @@ ai.post('/split', async (c) => {
   }
 
   try {
-    const cards = await runSplit({ path, mode, raw, signal: c.req.raw.signal })
+    const cards = await runSplit({
+      path,
+      mode,
+      raw: matter(raw).content,
+      metadata: getDocumentMetadata(getDb(), path),
+      signal: c.req.raw.signal,
+    })
     return c.json({ cards })
   } catch (err) {
     if (err instanceof ChatError) {

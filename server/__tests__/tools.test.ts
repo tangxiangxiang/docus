@@ -19,7 +19,7 @@ import {
   type ToolContext,
 } from '../ai/tools'
 import { applyMigrations } from '../db'
-import { getDocumentMetadata } from '../documentMetadata'
+import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
 
 const ORIGINAL_CONTENT_DIR = CONTENT_DIR
 
@@ -81,14 +81,17 @@ describe('read_file', () => {
   beforeEach(() => { contentDir = makeTempContentDir(); setContentDir(contentDir) })
   afterEach(() => { setContentDir(ORIGINAL_CONTENT_DIR); fs.rmSync(path.dirname(contentDir), { recursive: true, force: true }) })
 
-  it('returns a JSON payload with raw, content, frontmatter, size, mtime', async () => {
+  it('returns body and database metadata separately', async () => {
     writeFile('a/note.md', '---\ntitle: hi\n---\n\nbody text\n')
+    saveDocumentMetadata(db, { path: 'a/note', title: 'Database title', summary: 'Stored summary', tags: ['db'] })
     const r = await executeToolCall('read_file', { path: 'a/note' }, ctx)
     expect(r.isError).toBe(false)
     const payload = JSON.parse(r.content)
     expect(payload.path).toBe('a/note')
     expect(payload.content.trim()).toBe('body text')
-    expect(payload.frontmatter).toEqual({ title: 'hi' })
+    expect(payload.metadata).toMatchObject({ title: 'Database title', summary: 'Stored summary', tags: ['db'] })
+    expect(payload.legacyFrontmatter).toEqual({ title: 'hi' })
+    expect(payload.raw).toBeUndefined()
     expect(payload.size).toBeGreaterThan(0)
     expect(typeof payload.mtime).toBe('number')
   })
@@ -167,6 +170,13 @@ describe('create_file', () => {
     expect(r.isError).toBe(true)
     expect(r.content).toMatch(/already exists/)
     expect(fs.readFileSync(path.join(contentDir, 'a/exists.md'), 'utf8')).toBe('old')
+  })
+
+  it('rejects YAML Frontmatter', async () => {
+    const r = await executeToolCall('create_file', { path: 'a/yaml', content: '---\ntitle: Wrong\n---\n\nBody' }, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.content).toMatch(/update_metadata/)
+    expect(fs.existsSync(path.join(contentDir, 'a/yaml.md'))).toBe(false)
   })
 })
 
@@ -341,10 +351,10 @@ describe('executeToolCall dispatcher', () => {
 })
 
 describe('TOOL_DEFINITIONS', () => {
-  it('has 7 tools with names matching the dispatch table', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(7)
+  it('has tools with names matching the dispatch table', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(8)
     const names = TOOL_DEFINITIONS.map((t) => t.name).sort()
-    expect(names).toEqual(['create_file', 'delete_file', 'list_files', 'patch_file', 'read_file', 'rename_file', 'write_file'])
+    expect(names).toEqual(['create_file', 'delete_file', 'list_files', 'patch_file', 'read_file', 'rename_file', 'update_metadata', 'write_file'])
     for (const t of TOOL_DEFINITIONS) {
       expect(t.input_schema.type).toBe('object')
       expect(typeof t.description).toBe('string')

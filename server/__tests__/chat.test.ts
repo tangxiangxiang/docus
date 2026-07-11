@@ -166,7 +166,7 @@ describe('runChat', () => {
     const call = vi.mocked(streamClaude).mock.calls[0][0]
     expect(call.tools).toBeDefined()
     expect(call.tools!.map((t) => t.name).sort()).toEqual(
-      ['create_file', 'delete_file', 'list_files', 'patch_file', 'read_file', 'rename_file', 'write_file'],
+      ['create_file', 'delete_file', 'list_files', 'patch_file', 'read_file', 'rename_file', 'update_metadata', 'write_file'],
     )
     expect(call.toolChoice).toEqual({ type: 'auto' })
   })

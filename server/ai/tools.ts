@@ -94,7 +94,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: 'read_file',
     description:
-      'Read a file from the workspace. Returns the raw text, parsed frontmatter, body, size in bytes, and mtime. Use this before patching a file so your `old_string` matches the actual content.',
+      'Read a note. Returns Markdown body and database-owned metadata separately, plus size and mtime. Use this before patching so `old_string` matches the body.',
     input_schema: {
       type: 'object',
       properties: {
@@ -103,6 +103,21 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
           description:
             'Workspace-relative path WITHOUT the .md suffix (e.g. "inbox/markdown-syntax").',
         },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'update_metadata',
+    description: 'Update database-owned note metadata. Omitted fields remain unchanged. Never write metadata as YAML Frontmatter.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Workspace-relative path WITHOUT the .md suffix.' },
+        title: { type: 'string', description: 'Non-empty display title (max 200 characters).' },
+        summary: { type: 'string', description: 'Search summary (max 2000 characters).' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Searchable tags.' },
+        aliases: { type: 'array', items: { type: 'string' }, description: 'Alternative titles.' },
       },
       required: ['path'],
     },
@@ -222,14 +237,46 @@ function executeReadFile(input: { path?: string }, db: DatabaseT): ToolResult {
   }
   const payload = {
     path: input.path,
-    raw: truncate(bundle.raw, MAX_READ_CHARS, `\n\n[... file truncated; total ${bundle.stat.size} bytes ...]`),
-    content: bundle.content,
-    frontmatter: bundle.frontmatter,
+    content: truncate(bundle.content, MAX_READ_CHARS, `\n\n[... note truncated; total ${bundle.stat.size} bytes ...]`),
     metadata: getDocumentMetadata(db, input.path),
+    legacyFrontmatter: bundle.frontmatter,
     size: bundle.stat.size,
     mtime: bundle.stat.mtimeMs,
   }
   return ok(JSON.stringify(payload, null, 2))
+}
+
+function executeUpdateMetadata(input: { path?: string; title?: unknown; summary?: unknown; tags?: unknown; aliases?: unknown }, db: DatabaseT): ToolResult {
+  if (typeof input.path !== 'string' || !input.path) return err('update_metadata: `path` is required')
+  const current = getDocumentMetadata(db, input.path)
+  if (!current) return err(`update_metadata: document does not exist: ${input.path}`)
+  if (input.title !== undefined && (typeof input.title !== 'string' || !input.title.trim() || input.title.trim().length > 200)) {
+    return err('update_metadata: `title` must be a non-empty string of at most 200 characters')
+  }
+  if (input.summary !== undefined && (typeof input.summary !== 'string' || input.summary.length > 2000)) {
+    return err('update_metadata: `summary` must be a string of at most 2000 characters')
+  }
+  for (const field of ['tags', 'aliases'] as const) {
+    const value = input[field]
+    if (value !== undefined && (!Array.isArray(value) || value.some((item) => typeof item !== 'string'))) {
+      return err(`update_metadata: \`${field}\` must be an array of strings`)
+    }
+  }
+  try {
+    return ok(JSON.stringify(saveDocumentMetadata(db, {
+      ...current,
+      title: typeof input.title === 'string' ? input.title.trim() : current.title,
+      summary: typeof input.summary === 'string' ? input.summary.trim() : current.summary,
+      tags: (input.tags as string[] | undefined) ?? current.tags,
+      aliases: (input.aliases as string[] | undefined) ?? current.aliases,
+    }), null, 2))
+  } catch (e) {
+    return err(`update_metadata: ${(e as Error).message}`)
+  }
+}
+
+function containsFrontmatter(content: string): boolean {
+  return /^\uFEFF?---(?:\r?\n|$)/.test(content)
 }
 
 function executeListFiles(input: { scope?: string }): ToolResult {
@@ -282,6 +329,7 @@ function executeCreateFile(input: { path?: string; content?: string }, db: Datab
   if (typeof input.content !== 'string') {
     return err('create_file: `content` is required')
   }
+  if (containsFrontmatter(input.content)) return err('create_file: Markdown must contain body only; use update_metadata for metadata')
   let abs: string
   try {
     abs = filePathFor(input.path)
@@ -318,6 +366,7 @@ function executeWriteFile(input: { path?: string; content?: string }, db: Databa
   if (typeof input.content !== 'string') {
     return err('write_file: `content` is required')
   }
+  if (containsFrontmatter(input.content)) return err('write_file: Markdown must contain body only; use update_metadata for metadata')
   let abs: string
   try {
     abs = filePathFor(input.path)
@@ -563,6 +612,8 @@ export async function executeToolCall(
       return executeReadFile(input as { path?: string }, db)
     case 'list_files':
       return executeListFiles(input as { scope?: string })
+    case 'update_metadata':
+      return executeUpdateMetadata(input as { path?: string; title?: unknown; summary?: unknown; tags?: unknown; aliases?: unknown }, db)
     case 'create_file':
       return executeCreateFile(input as { path?: string; content?: string }, db)
     case 'write_file':
