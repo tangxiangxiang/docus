@@ -444,7 +444,7 @@ watch(() => props.focusWidth, (focused) => {
 watch(() => props.linkTargets, () => {
   rebuildLinkIndex()
   scheduleMarkdownDecorations()
-}, { deep: true })
+})
 
 onBeforeUnmount(() => {
   emit('unregister-scroll', props.path)

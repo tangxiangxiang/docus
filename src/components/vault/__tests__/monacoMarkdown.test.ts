@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  indentMarkdownLine, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs,
+  filterMarkdownSlashCommands, indentMarkdownLine, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs,
   markdownLinkFromPaste, markdownWrapEdit, rankWikiTargets, toggleMarkdownWrap, wikiLinkAtColumn,
 } from '../monacoMarkdown'
 
@@ -24,6 +24,18 @@ describe('Monaco Markdown helpers', () => {
   it('indents and outdents Markdown list lines', () => {
     expect(indentMarkdownLine('- item', false)).toBe('  - item')
     expect(indentMarkdownLine('  - item', true)).toBe('- item')
+    expect(indentMarkdownLine('    - item', false)).toBe('        - item')
+    expect(indentMarkdownLine('    - item', true)).toBe('- item')
+    expect(indentMarkdownLine('\t- item', false)).toBe('\t\t- item')
+    expect(indentMarkdownLine('\t- item', true)).toBe('- item')
+  })
+
+  it('filters slash commands by English labels and Chinese details', () => {
+    expect(filterMarkdownSlashCommands('head').map((item) => item.label)).toEqual([
+      'heading 1', 'heading 2', 'heading 3',
+    ])
+    expect(filterMarkdownSlashCommands('图表').map((item) => item.label)).toEqual(['mermaid'])
+    expect(filterMarkdownSlashCommands('')).toHaveLength(11)
   })
 
   it('toggles Markdown formatting around selected text', () => {

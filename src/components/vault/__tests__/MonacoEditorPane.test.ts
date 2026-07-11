@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => {
   const compositionStartListeners: Array<() => void> = []
   const compositionEndListeners: Array<() => void> = []
   const scrollListeners: Array<(event: { scrollTopChanged: boolean }) => void> = []
+  const completionProviders: Array<any> = []
   const model = {
     value: '',
     getValue: vi.fn(() => model.value),
@@ -51,6 +52,7 @@ const mocks = vi.hoisted(() => {
     compositionStartListeners,
     compositionEndListeners,
     scrollListeners,
+    completionProviders,
     model,
     editor,
     defineTheme: vi.fn(),
@@ -68,8 +70,12 @@ vi.mock('monaco-editor/esm/vs/editor/editor.api.js', () => ({
     create: vi.fn(() => mocks.editor),
   },
   languages: {
-    CompletionItemKind: { Reference: 1, Keyword: 2 },
-    registerCompletionItemProvider: vi.fn(() => ({ dispose: mocks.completionDispose })),
+    CompletionItemKind: { Reference: 1, Keyword: 2, Snippet: 3 },
+    CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
+    registerCompletionItemProvider: vi.fn((_language: string, provider: any) => {
+      mocks.completionProviders.push(provider)
+      return { dispose: mocks.completionDispose }
+    }),
     registerHoverProvider: vi.fn(() => ({ dispose: mocks.hoverDispose })),
   },
   Uri: { parse: vi.fn((value: string) => value) },
@@ -134,6 +140,15 @@ describe('Monaco EditorPane', () => {
     document.documentElement.setAttribute('data-theme', 'dark')
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(mocks.setTheme).toHaveBeenCalledWith('docus-dark')
+    wrapper.unmount()
+  })
+
+  it('offers Markdown snippets after a slash command', () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: '/mer', path: 'inbox/slash' } })
+    const provider = mocks.completionProviders.at(-1)
+    const result = provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 5 })
+    expect(result.suggestions).toHaveLength(1)
+    expect(result.suggestions[0]).toMatchObject({ label: 'mermaid', insertTextRules: 4 })
     wrapper.unmount()
   })
 
