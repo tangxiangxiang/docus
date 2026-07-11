@@ -356,13 +356,24 @@ app.patch('/api/posts/*', async (c) => {
   const sourceRaw = await fs.readFile(src, 'utf8')
   const sourceStat = await fs.stat(src)
   ensureMetadata(srcPath, sourceRaw, sourceStat.mtimeMs)
-  // A missing destination file makes any row at that path orphaned.
-  deleteDocumentMetadata(metadataDb(), destPath)
+  // Capture any orphan metadata at the destination so a failed rename can
+  // put it back. If we deleted first and `fs.rename` then failed (cross-
+  // device, permissions, etc.) the destPath row would be gone for good
+  // even though the file never actually moved.
+  const previousDestMetadata = getDocumentMetadata(metadataDb(), destPath)
   await fs.rename(src, dest)
   try {
+    // Once the file is physically at dest, drop any orphan destPath row and
+    // promote the srcPath row into its place. Doing both inside the try block
+    // means a failure rolls the file back AND re-creates the previous
+    // destPath row so the user's data survives.
+    deleteDocumentMetadata(metadataDb(), destPath)
     moveDocumentMetadata(metadataDb(), srcPath, destPath)
   } catch (error) {
     await fs.rename(dest, src)
+    if (previousDestMetadata && !getDocumentMetadata(metadataDb(), destPath)) {
+      saveDocumentMetadata(metadataDb(), previousDestMetadata)
+    }
     throw error
   }
   // Update the link index AFTER the rename succeeds. Read the new

@@ -15,6 +15,7 @@ import path from 'node:path'
 import os from 'node:os'
 import app, { __setMetadataDbForTesting } from '../index'
 import { applyMigrations } from '../db'
+import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
 
 let tmpRoot: string
 const db = new Database(':memory:')
@@ -173,5 +174,26 @@ describe('PATCH /api/posts/* archive-to-zettel whitelist', () => {
     const r = await patch('/api/posts/inbox/foo', { targetPath: 'literature/foo' })
     expect(r.status).toBe(200)
     expect(await fs.stat(path.join(tmpRoot, 'literature', 'foo.md'))).toBeTruthy()
+  })
+
+  it('preserves orphan metadata at the destination when rename fails', async () => {
+    // The endpoint used to delete the destPath row BEFORE the fs.rename
+    // ran, so any rename failure (cross-device, permission, etc.) left
+    // the user with a wiped destPath row even though the file never
+    // actually moved. Capture the orphan first and run the rename only
+    // after we know it's about to succeed.
+    saveDocumentMetadata(db, {
+      path: 'zettel/foo', title: 'Original Foo', summary: 'Important', tags: ['keep'],
+    })
+    const spy = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('simulated cross-device'))
+    try {
+      const r = await patch('/api/posts/inbox/foo', { targetPath: 'zettel/foo' })
+      expect(r.status).toBeGreaterThanOrEqual(500)
+    } finally {
+      spy.mockRestore()
+    }
+    expect(getDocumentMetadata(db, 'zettel/foo')?.title).toBe('Original Foo')
+    expect(getDocumentMetadata(db, 'zettel/foo')?.tags).toEqual(['keep'])
+    expect(await fs.readFile(path.join(tmpRoot, 'inbox', 'foo.md'), 'utf8')).toContain('Foo')
   })
 })

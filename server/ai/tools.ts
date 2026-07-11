@@ -526,18 +526,24 @@ function executeRenameFile(input: { path?: string; new_path?: string }, db: Data
     )
   }
   let raw: string
+  let previousDestMetadata: ReturnType<typeof getDocumentMetadata> = null
   try {
     raw = fs.readFileSync(srcAbs, 'utf8')
     const sourceStat = fs.statSync(srcAbs)
     ensureDocumentMetadata(db, input.path, raw, sourceStat.mtimeMs)
-    // The target file was checked above, so a target row is orphaned.
-    deleteDocumentMetadata(db, input.new_path)
+    // Capture the target row so a failed rename (cross-device, permissions,
+    // etc.) doesn't silently destroy its metadata while the file stays put.
+    previousDestMetadata = getDocumentMetadata(db, input.new_path)
     fs.mkdirSync(path.dirname(dstAbs), { recursive: true })
     fs.renameSync(srcAbs, dstAbs)
+    deleteDocumentMetadata(db, input.new_path)
     moveDocumentMetadata(db, input.path, input.new_path)
   } catch (e) {
     if (fs.existsSync(dstAbs) && !fs.existsSync(srcAbs)) {
       try { fs.renameSync(dstAbs, srcAbs) } catch { /* best-effort compensation */ }
+    }
+    if (previousDestMetadata && !getDocumentMetadata(db, input.new_path)) {
+      try { saveDocumentMetadata(db, previousDestMetadata) } catch { /* best-effort compensation */ }
     }
     return err(`rename_file: ${(e as Error).message}`)
   }
