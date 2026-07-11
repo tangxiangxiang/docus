@@ -8,7 +8,7 @@ import {
   saveDocumentMetadata,
 } from './documentMetadata.js'
 
-export type MetadataMigrationStatus = 'legacy' | 'imported' | 'verified' | 'cleaned' | 'failed'
+export type MetadataMigrationStatus = 'legacy' | 'imported' | 'verified' | 'cleaned' | 'failed' | 'orphaned'
 
 export interface MetadataMigrationRecord {
   path: string
@@ -18,6 +18,8 @@ export interface MetadataMigrationRecord {
   updatedAt: number
   frontmatterBackup: string
   cleanedHash: string
+  documentId: string | null
+  originalPath: string
 }
 
 export interface MetadataMigrationReport {
@@ -37,6 +39,8 @@ type MigrationRow = {
   updated_at: number
   frontmatter_backup: string
   cleaned_hash: string
+  document_id: string | null
+  original_path: string
 }
 
 function hydrate(row: MigrationRow): MetadataMigrationRecord {
@@ -48,6 +52,8 @@ function hydrate(row: MigrationRow): MetadataMigrationRecord {
     updatedAt: row.updated_at,
     frontmatterBackup: row.frontmatter_backup,
     cleanedHash: row.cleaned_hash,
+    documentId: row.document_id,
+    originalPath: row.original_path,
   }
 }
 
@@ -59,25 +65,27 @@ function saveRecord(
   error = '',
   frontmatterBackup = '',
 ): void {
+  const document = db.prepare('SELECT id FROM documents WHERE path = ?').get(path) as { id: string } | undefined
   db.prepare(`
     INSERT INTO metadata_migrations (
-      path, status, source_hash, error, updated_at, frontmatter_backup
-    ) VALUES (?, ?, ?, ?, ?, ?)
+      path, document_id, status, source_hash, error, updated_at, frontmatter_backup
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(path) DO UPDATE SET
       status = excluded.status,
       source_hash = excluded.source_hash,
       error = excluded.error,
       updated_at = excluded.updated_at,
+      document_id = COALESCE(excluded.document_id, metadata_migrations.document_id),
       frontmatter_backup = CASE
         WHEN excluded.frontmatter_backup = '' THEN metadata_migrations.frontmatter_backup
         ELSE excluded.frontmatter_backup
       END
-  `).run(path, status, sourceHash, error, Date.now(), frontmatterBackup)
+  `).run(path, document?.id ?? null, status, sourceHash, error, Date.now(), frontmatterBackup)
 }
 
 export function getMetadataMigrationRecord(db: DatabaseT, path: string): MetadataMigrationRecord | null {
   const row = db.prepare(`
-    SELECT path, status, source_hash, error, updated_at, frontmatter_backup, cleaned_hash
+    SELECT path, document_id, original_path, status, source_hash, error, updated_at, frontmatter_backup, cleaned_hash
     FROM metadata_migrations WHERE path = ?
   `).get(path) as MigrationRow | undefined
   return row ? hydrate(row) : null
@@ -85,7 +93,7 @@ export function getMetadataMigrationRecord(db: DatabaseT, path: string): Metadat
 
 export function listMetadataMigrationRecords(db: DatabaseT): MetadataMigrationRecord[] {
   const rows = db.prepare(`
-    SELECT path, status, source_hash, error, updated_at, frontmatter_backup, cleaned_hash
+    SELECT path, document_id, original_path, status, source_hash, error, updated_at, frontmatter_backup, cleaned_hash
     FROM metadata_migrations ORDER BY path
   `).all() as MigrationRow[]
   return rows.map(hydrate)
@@ -101,6 +109,7 @@ export function getMetadataMigrationSummary(db: DatabaseT) {
     verified: 0,
     cleaned: 0,
     failed: 0,
+    orphaned: 0,
   }
   for (const row of counts) summary[row.status] = row.count
   return { total: counts.reduce((total, row) => total + row.count, 0), ...summary }
@@ -140,10 +149,12 @@ export function extractFrontmatterBackup(raw: string): string {
 
 /** Keep restore guards current after a normal body write to an already-cleaned document. */
 export function trackCleanedDocumentWrite(db: DatabaseT, path: string, raw: string): boolean {
+  const document = getDocumentMetadata(db, path)
+  if (!document) return false
   const result = db.prepare(`
     UPDATE metadata_migrations SET cleaned_hash = ?, updated_at = ?
-    WHERE path = ? AND status = 'cleaned'
-  `).run(metadataSourceHash(raw), Date.now(), path)
+    WHERE path = ? AND document_id = ? AND status = 'cleaned'
+  `).run(metadataSourceHash(raw), Date.now(), path, document.id)
   return result.changes > 0
 }
 
@@ -189,7 +200,9 @@ export async function migrateVaultMetadata(
       sourceHash = metadataSourceHash(raw)
       const frontmatterBackup = extractFrontmatterBackup(raw)
       const record = getMetadataMigrationRecord(db, file.path)
-      if (record?.status === 'cleaned' && !frontmatterBackup && getDocumentMetadata(db, file.path)) {
+      const currentDocument = getDocumentMetadata(db, file.path)
+      const sameDocument = Boolean(currentDocument && record?.documentId === currentDocument.id)
+      if (record?.status === 'cleaned' && sameDocument && !frontmatterBackup) {
         if (record.cleanedHash !== sourceHash) {
           db.prepare(`
             UPDATE metadata_migrations SET cleaned_hash = ?, updated_at = ? WHERE path = ?
@@ -200,7 +213,7 @@ export async function migrateVaultMetadata(
       }
       const backupComplete = !frontmatterBackup || record?.frontmatterBackup === frontmatterBackup
       if (record?.status === 'verified' && record.sourceHash === sourceHash
-          && backupComplete && getDocumentMetadata(db, file.path)) {
+          && backupComplete && sameDocument) {
         report.skipped++
         continue
       }
@@ -225,11 +238,15 @@ export async function migrateVaultMetadata(
     }
   }
 
-  const stale = db.prepare('SELECT path FROM metadata_migrations').all() as Array<{ path: string }>
-  const remove = db.prepare('DELETE FROM metadata_migrations WHERE path = ?')
+  const stale = db.prepare("SELECT path FROM metadata_migrations WHERE status != 'orphaned'").all() as Array<{ path: string }>
   for (const row of stale) {
     if (livePaths.has(row.path)) continue
-    remove.run(row.path)
+    const tombstone = `@deleted/${Date.now()}-${createHash('sha256').update(row.path).digest('hex').slice(0, 12)}`
+    db.prepare(`
+      UPDATE metadata_migrations
+      SET path = ?, original_path = path, document_id = NULL, status = 'orphaned', updated_at = ?
+      WHERE path = ?
+    `).run(tombstone, Date.now(), row.path)
     report.pruned++
   }
   return report

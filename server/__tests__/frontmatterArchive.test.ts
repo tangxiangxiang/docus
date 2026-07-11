@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { applyMigrations } from '../db'
-import { saveDocumentMetadata } from '../documentMetadata'
+import { deleteDocumentMetadata, getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
 import {
   cleanDocumentFrontmatter,
   exportDocumentFrontmatter,
@@ -114,5 +114,26 @@ describe('Frontmatter archive and cleanup preview', () => {
     const restored = await restoreDocumentFrontmatter(db, ['note'], 'original')
     expect(restored.failed).toEqual([])
     expect(await fs.readFile(path.join(root, 'note.md'), 'utf8')).toContain('edited body\n')
+  })
+
+  it('never restores a deleted generation into a new document at the same path', async () => {
+    const original = '---\ntitle: Old generation\n---\n\n# Same body\n'
+    await write('note.md', original)
+    await migrateVaultMetadata(db, root)
+    await cleanDocumentFrontmatter(db, ['note'])
+    const oldId = getDocumentMetadata(db, 'note')!.id
+    deleteDocumentMetadata(db, 'note')
+    await fs.rm(path.join(root, 'note.md'))
+
+    await write('note.md', '# Same body\n')
+    const next = saveDocumentMetadata(db, { path: 'note', title: 'New generation' })
+    expect(next.id).not.toBe(oldId)
+    const restored = await restoreDocumentFrontmatter(db, ['note'], 'original')
+    expect(restored.changed).toEqual([])
+    expect(restored.failed[0]).toMatchObject({ path: 'note' })
+    expect(await fs.readFile(path.join(root, 'note.md'), 'utf8')).toBe('# Same body\n')
+    expect(db.prepare(
+      "SELECT status, original_path AS originalPath FROM metadata_migrations WHERE status = 'orphaned'",
+    ).get()).toEqual({ status: 'orphaned', originalPath: 'note' })
   })
 })

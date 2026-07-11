@@ -48,6 +48,7 @@ export interface MetadataMigrationSummary {
   verified: number
   cleaned: number
   failed: number
+  orphaned: number
 }
 
 export interface FrontmatterCleanupPreview {

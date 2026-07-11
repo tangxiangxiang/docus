@@ -26,10 +26,10 @@ import {
   deleteDocumentMetadata,
   ensureDocumentMetadata,
   getDocumentMetadata,
-  moveDocumentMetadata,
   saveDocumentMetadata,
 } from '../documentMetadata.js'
 import { trackCleanedDocumentWrite } from '../metadataMigration.js'
+import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
 
 export type ToolContext = { signal: AbortSignal; db?: DatabaseT }
 
@@ -498,7 +498,7 @@ function executeDeleteFile(input: { path?: string }, db: DatabaseT): ToolResult 
   })
 }
 
-function executeRenameFile(input: { path?: string; new_path?: string }, db: DatabaseT): ToolResult {
+async function executeRenameFile(input: { path?: string; new_path?: string }, db: DatabaseT): Promise<ToolResult> {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('rename_file: `path` is required')
   }
@@ -526,25 +526,15 @@ function executeRenameFile(input: { path?: string; new_path?: string }, db: Data
     )
   }
   let raw: string
-  let previousDestMetadata: ReturnType<typeof getDocumentMetadata> = null
   try {
     raw = fs.readFileSync(srcAbs, 'utf8')
     const sourceStat = fs.statSync(srcAbs)
     ensureDocumentMetadata(db, input.path, raw, sourceStat.mtimeMs)
-    // Capture the target row so a failed rename (cross-device, permissions,
-    // etc.) doesn't silently destroy its metadata while the file stays put.
-    previousDestMetadata = getDocumentMetadata(db, input.new_path)
     fs.mkdirSync(path.dirname(dstAbs), { recursive: true })
-    fs.renameSync(srcAbs, dstAbs)
-    deleteDocumentMetadata(db, input.new_path)
-    moveDocumentMetadata(db, input.path, input.new_path)
+    await renameDocumentWithMetadata({
+      db, fromPath: input.path, toPath: input.new_path, fromAbs: srcAbs, toAbs: dstAbs,
+    })
   } catch (e) {
-    if (fs.existsSync(dstAbs) && !fs.existsSync(srcAbs)) {
-      try { fs.renameSync(dstAbs, srcAbs) } catch { /* best-effort compensation */ }
-    }
-    if (previousDestMetadata && !getDocumentMetadata(db, input.new_path)) {
-      try { saveDocumentMetadata(db, previousDestMetadata) } catch { /* best-effort compensation */ }
-    }
     return err(`rename_file: ${(e as Error).message}`)
   }
   const stat = fs.statSync(dstAbs)

@@ -52,9 +52,11 @@ describe('document metadata repository', () => {
     expect(deleteDocumentMetadata(db, 'zettel/a')).toBe(true)
     expect(db.prepare('SELECT COUNT(*) AS n FROM document_tags').get()).toEqual({ n: 0 })
     expect(db.prepare('SELECT COUNT(*) AS n FROM document_aliases').get()).toEqual({ n: 0 })
-    // The migration row carries the Frontmatter backup; deleting the document
-    // must NOT silently destroy it. Startup migration prunes orphans.
-    expect(db.prepare('SELECT path FROM metadata_migrations').get()).toEqual({ path: 'zettel/a' })
+    // The backup survives under an orphaned tombstone, no longer occupying
+    // the user-visible path or being eligible for restore.
+    expect(db.prepare('SELECT original_path, status FROM metadata_migrations').get()).toEqual({
+      original_path: 'zettel/a', status: 'orphaned',
+    })
   })
 
   it('lists documents in path order and rejects invalid input', () => {
@@ -110,8 +112,8 @@ describe('document metadata repository', () => {
     expect(deleteDocumentMetadata(db, 'inbox/a')).toBe(true)
     // The backup survives — it's the only place the pre-cleanup bytes live.
     expect(db.prepare(
-      'SELECT status, frontmatter_backup AS backup FROM metadata_migrations WHERE path = ?',
-    ).get('inbox/a')).toEqual({ status: 'cleaned', backup: '---original---' })
+      'SELECT status, original_path AS originalPath, frontmatter_backup AS backup FROM metadata_migrations',
+    ).get()).toEqual({ status: 'orphaned', originalPath: 'inbox/a', backup: '---original---' })
   })
 
   it('preserves per-file migration rows when deleting a folder prefix', () => {
@@ -124,11 +126,11 @@ describe('document metadata repository', () => {
     `).run()
     expect(deleteDocumentMetadataPrefix(db, 'inbox')).toBe(2)
     expect(db.prepare(
-      `SELECT path, frontmatter_backup AS backup FROM metadata_migrations
-       WHERE path IN ('inbox/a', 'inbox/b') ORDER BY path`,
+      `SELECT original_path AS originalPath, status, frontmatter_backup AS backup
+       FROM metadata_migrations ORDER BY original_path`,
     ).all()).toEqual([
-      { path: 'inbox/a', backup: '---A---' },
-      { path: 'inbox/b', backup: '---B---' },
+      { originalPath: 'inbox/a', status: 'orphaned', backup: '---A---' },
+      { originalPath: 'inbox/b', status: 'orphaned', backup: '---B---' },
     ])
   })
 

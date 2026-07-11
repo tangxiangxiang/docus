@@ -87,7 +87,7 @@ describe('vault metadata migration', () => {
     const report = await migrateVaultMetadata(db, root)
     expect(report).toMatchObject({ scanned: 1, verified: 1, skipped: 0, pruned: 1 })
     expect(getMetadataMigrationRecord(db, 'b')).toBeNull()
-    expect(getMetadataMigrationSummary(db)).toMatchObject({ total: 1, verified: 1, failed: 0 })
+    expect(getMetadataMigrationSummary(db)).toMatchObject({ total: 2, verified: 1, orphaned: 1, failed: 0 })
   })
 
   it('walks into dot-prefixed directories other than .git, matching tree.ts', async () => {

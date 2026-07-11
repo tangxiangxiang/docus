@@ -20,10 +20,10 @@ import {
   ensureDocumentMetadata,
   getDocumentMetadata,
   listDocumentMetadata,
-  moveDocumentMetadata,
   moveDocumentMetadataPrefix,
   saveDocumentMetadata,
 } from './documentMetadata.js'
+import { renameDocumentWithMetadata } from './documentFileLifecycle.js'
 import {
   getMetadataMigrationSummary,
   listMetadataMigrationRecords,
@@ -212,7 +212,7 @@ app.get('/api/posts', async (c) => {
 
 // Create a new post. Body: { path: string, title?: string }
 app.post('/api/posts', async (c) => {
-  const body = await c.req.json().catch(() => null) as { path?: string; title?: string } | null
+  const body = await c.req.json().catch(() => null) as { path?: unknown; title?: unknown } | null
   if (!body || typeof body.path !== 'string') return bad(c, 'path required')
   if (!isValidPathSyntax(body.path)) {
     return bad(c, 'invalid path syntax')
@@ -220,17 +220,17 @@ app.post('/api/posts', async (c) => {
   if (isInZettel(body.path)) {
     return bad(c, 'zettel notes must be created through archive flow', 422)
   }
+  if (body.title !== undefined && typeof body.title !== 'string') {
+    return bad(c, 'title must be a string', 400)
+  }
+  const rawTitle = body.title ?? body.path.split('/').pop() ?? ''
+  const title = rawTitle.trim()
+  if (!title) return bad(c, 'title must be a non-empty string', 400)
+  if (title.length > 200) return bad(c, 'title must be at most 200 characters', 400)
   let abs: string
   try { abs = filePathFor(body.path) } catch (e: any) { return bad(c, e.message) }
   if (await exists(abs)) return bad(c, 'file exists', 409)
   await fs.mkdir(path.dirname(abs), { recursive: true })
-  // Validate at the route boundary. Without this, saveDocumentMetadata
-  // throws "metadata title is required" on a whitespace title and the
-  // catch block below propagates a 500 even though the request is
-  // obviously malformed client input.
-  const title = (body.title ?? body.path.split('/').pop() ?? '').trim()
-  if (!title) return bad(c, 'title must be a non-empty string', 400)
-  if (title.length > 200) return bad(c, 'title must be at most 200 characters', 400)
   const now = Date.now()
   const today = new Date(now).toISOString().slice(0, 10)
   const body_text = `# ${title}\n`
@@ -362,26 +362,9 @@ app.patch('/api/posts/*', async (c) => {
   const sourceRaw = await fs.readFile(src, 'utf8')
   const sourceStat = await fs.stat(src)
   ensureMetadata(srcPath, sourceRaw, sourceStat.mtimeMs)
-  // Capture any orphan metadata at the destination so a failed rename can
-  // put it back. If we deleted first and `fs.rename` then failed (cross-
-  // device, permissions, etc.) the destPath row would be gone for good
-  // even though the file never actually moved.
-  const previousDestMetadata = getDocumentMetadata(metadataDb(), destPath)
-  await fs.rename(src, dest)
-  try {
-    // Once the file is physically at dest, drop any orphan destPath row and
-    // promote the srcPath row into its place. Doing both inside the try block
-    // means a failure rolls the file back AND re-creates the previous
-    // destPath row so the user's data survives.
-    deleteDocumentMetadata(metadataDb(), destPath)
-    moveDocumentMetadata(metadataDb(), srcPath, destPath)
-  } catch (error) {
-    await fs.rename(dest, src)
-    if (previousDestMetadata && !getDocumentMetadata(metadataDb(), destPath)) {
-      saveDocumentMetadata(metadataDb(), previousDestMetadata)
-    }
-    throw error
-  }
+  await renameDocumentWithMetadata({
+    db: metadataDb(), fromPath: srcPath, toPath: destPath, fromAbs: src, toAbs: dest,
+  })
   // Update the link index AFTER the rename succeeds. Read the new
   // content so the new path's outbound links are extracted against
   // the post-rename state of the world.

@@ -142,4 +142,23 @@ describe('POST /api/posts', () => {
       deleteDocumentMetadata(db, 'post-whitespace')
     }
   })
+
+  it('rejects invalid title input before creating parent directories', async () => {
+    const parent = path.join(CONTENT_DIR, 'post-invalid-parent', 'nested')
+    try {
+      const whitespace = await call('POST', '/api/posts', {
+        path: 'post-invalid-parent/nested/blank', title: '   ',
+      })
+      expect(whitespace.status).toBe(400)
+      await expect(fs.stat(parent)).rejects.toThrow()
+
+      const wrongType = await call('POST', '/api/posts', {
+        path: 'post-invalid-parent/nested/number', title: 123,
+      })
+      expect(wrongType.status).toBe(400)
+      await expect(fs.stat(parent)).rejects.toThrow()
+    } finally {
+      await fs.rm(path.join(CONTENT_DIR, 'post-invalid-parent'), { recursive: true, force: true })
+    }
+  })
 })

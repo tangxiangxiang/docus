@@ -179,7 +179,7 @@ describe('Monaco EditorPane', () => {
     // preview actually scrolls. This catches anyone who renames
     // the emit, removes the @scroll-change handler in VaultView,
     // or stops calling syncPreviewFromEditor on the composable.
-    const { default: Vue, defineComponent, ref, effectScope, nextTick } = await import('vue')
+    const { defineComponent, ref, effectScope, nextTick } = await import('vue')
     const { useEditorPreviewScrollSync } = await import('../../../composables/vault/useEditorPreviewScrollSync')
 
     const vaultRoot = document.createElement('div')
@@ -227,7 +227,6 @@ describe('Monaco EditorPane', () => {
     expect(previewPane.scrollTop).toBe(900)
     wrapper.unmount()
     vaultRoot.remove()
-    void Vue
   })
 
   it('registers itself on mount and unregisters on unmount using its own path', async () => {

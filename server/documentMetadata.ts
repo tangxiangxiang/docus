@@ -181,26 +181,57 @@ export function ensureDocumentMetadata(
 
 export function moveDocumentMetadata(db: DatabaseT, fromPath: string, toPath: string): boolean {
   return db.transaction(() => {
+    const source = db.prepare('SELECT id FROM documents WHERE path = ?').get(fromPath) as { id: string } | undefined
+    if (!source) return false
     const result = db.prepare(
       'UPDATE documents SET path = ?, updated_at = ? WHERE path = ?',
     ).run(toPath, Date.now(), fromPath)
-    db.prepare('UPDATE metadata_migrations SET path = ?, updated_at = ? WHERE path = ?')
-      .run(toPath, Date.now(), fromPath)
+    db.prepare(`
+      UPDATE metadata_migrations SET path = ?, document_id = ?, updated_at = ?
+      WHERE document_id = ? OR (document_id IS NULL AND path = ?)
+    `).run(toPath, source.id, Date.now(), source.id, fromPath)
     return result.changes > 0
   })()
 }
 
-export function deleteDocumentMetadata(db: DatabaseT, path: string): boolean {
-  /* Deliberately do NOT delete from metadata_migrations here. The migration
-     table doubles as a lossless Frontmatter archive: rows in `cleaned` state
-     carry the pre-cleanup bytes in frontmatter_backup. Deleting a document
-     silently destroying the user's ability to restore its original
-     Frontmatter defeats the entire cleanup/restore safety net. Orphan
-     metadata_migrations rows are pruned by migrateVaultMetadata on the next
-     startup, so the summary and per-path records stay accurate once the
-     process restarts. */
+function quarantineMigrationAtPath(db: DatabaseT, path: string, documentId?: string): void {
+  const row = db.prepare('SELECT path FROM metadata_migrations WHERE path = ?').get(path)
+  if (!row) return
+  const tombstone = `@deleted/${documentId ?? randomUUID()}`
+  db.prepare(`
+    UPDATE metadata_migrations
+    SET path = ?, original_path = CASE WHEN original_path = '' THEN path ELSE original_path END,
+        document_id = NULL, status = 'orphaned', updated_at = ?
+    WHERE path = ?
+  `).run(tombstone, Date.now(), path)
+}
+
+/** Atomically isolate a stale destination generation and move the source identity. */
+export function moveDocumentMetadataReplacingDestination(
+  db: DatabaseT,
+  fromPath: string,
+  toPath: string,
+): boolean {
   return db.transaction(() => {
-    const result = db.prepare('DELETE FROM documents WHERE path = ?').run(path)
+    const source = db.prepare('SELECT id FROM documents WHERE path = ?').get(fromPath) as { id: string } | undefined
+    if (!source) return false
+    const destination = db.prepare('SELECT id FROM documents WHERE path = ?').get(toPath) as { id: string } | undefined
+    quarantineMigrationAtPath(db, toPath, destination?.id)
+    if (destination) db.prepare('DELETE FROM documents WHERE id = ?').run(destination.id)
+    db.prepare('UPDATE documents SET path = ?, updated_at = ? WHERE id = ?').run(toPath, Date.now(), source.id)
+    db.prepare('UPDATE metadata_migrations SET path = ?, updated_at = ? WHERE document_id = ?')
+      .run(toPath, Date.now(), source.id)
+    return true
+  })()
+}
+
+export function deleteDocumentMetadata(db: DatabaseT, path: string): boolean {
+  return db.transaction(() => {
+    const document = db.prepare('SELECT id FROM documents WHERE path = ?').get(path) as { id: string } | undefined
+    quarantineMigrationAtPath(db, path, document?.id)
+    const result = document
+      ? db.prepare('DELETE FROM documents WHERE id = ?').run(document.id)
+      : { changes: 0 }
     return result.changes > 0
   })()
 }
@@ -226,7 +257,7 @@ function assertPrefixMoveSafe(fromPrefix: string, toPrefix: string, planned: Arr
   const sourceIds = new Set(planned.map((row) => row.id))
   const seenNext = new Set<string>()
   const lookup = db.prepare('SELECT id FROM documents WHERE path = ?')
-  for (const { id, nextPath } of planned) {
+  for (const { nextPath } of planned) {
     if (seenNext.has(nextPath)) {
       throw new Error(`metadata prefix move duplicate destination: ${nextPath}`)
     }
@@ -250,23 +281,25 @@ export function moveDocumentMetadataPrefix(db: DatabaseT, fromPrefix: string, to
     }))
     assertPrefixMoveSafe(fromPrefix, toPrefix, planned, db)
     const update = db.prepare('UPDATE documents SET path = ?, updated_at = ? WHERE id = ?')
-    const updateMigration = db.prepare(
-      'UPDATE metadata_migrations SET path = ?, updated_at = ? WHERE path = ?',
-    )
+    const updateMigration = db.prepare(`
+      UPDATE metadata_migrations SET path = ?, document_id = ?, updated_at = ?
+      WHERE document_id = ? OR (document_id IS NULL AND path = ?)
+    `)
     const now = Date.now()
     for (const { id, fromPath, nextPath } of planned) {
       update.run(nextPath, now, id)
-      updateMigration.run(nextPath, now, fromPath)
+      updateMigration.run(nextPath, id, now, id, fromPath)
     }
     return rows.length
   })()
 }
 
 export function deleteDocumentMetadataPrefix(db: DatabaseT, prefix: string): number {
-  /* See deleteDocumentMetadata for why metadata_migrations rows are kept:
-     a folder-level delete must not destroy the per-file backup bytes that
-     the cleanup/restore flow depends on. */
   return db.transaction(() => {
+    const documents = db.prepare(
+      'SELECT id, path FROM documents WHERE path = ? OR path LIKE ?',
+    ).all(prefix, `${prefix}/%`) as Array<{ id: string; path: string }>
+    for (const document of documents) quarantineMigrationAtPath(db, document.path, document.id)
     const result = db.prepare('DELETE FROM documents WHERE path = ? OR path LIKE ?')
       .run(prefix, `${prefix}/%`)
     return result.changes

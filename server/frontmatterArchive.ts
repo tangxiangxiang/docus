@@ -68,6 +68,7 @@ export async function previewFrontmatterCleanup(
 ): Promise<FrontmatterCleanupPreview> {
   const preview: FrontmatterCleanupPreview = { candidates: [], blocked: [] }
   for (const record of listMetadataMigrationRecords(db)) {
+    if (record.status === 'orphaned') continue
     let raw: string
     try {
       raw = await fs.readFile(filePathFor(record.path), 'utf8')
@@ -89,7 +90,8 @@ export async function previewFrontmatterCleanup(
       preview.blocked.push({ path: record.path, reason: 'frontmatter backup is incomplete' })
       continue
     }
-    if (!getDocumentMetadata(db, record.path)) {
+    const metadata = getDocumentMetadata(db, record.path)
+    if (!metadata || record.documentId !== metadata.id) {
       preview.blocked.push({ path: record.path, reason: 'database metadata missing' })
       continue
     }
@@ -145,8 +147,10 @@ export async function cleanDocumentFrontmatter(
       const abs = filePathFor(path)
       const raw = await fs.readFile(abs, 'utf8')
       const record = getMetadataMigrationRecord(db, path)
+      const metadata = getDocumentMetadata(db, path)
       const backup = extractFrontmatterBackup(raw)
       if (!record || record.status !== 'verified' || !backup
+          || !metadata || record.documentId !== metadata.id
           || record.frontmatterBackup !== backup || metadataSourceHash(raw) !== record.sourceHash) {
         throw new Error('document changed after cleanup preview')
       }
@@ -156,8 +160,8 @@ export async function cleanDocumentFrontmatter(
         const updated = db.prepare(`
           UPDATE metadata_migrations
           SET status = 'cleaned', cleaned_hash = ?, error = '', updated_at = ?
-          WHERE path = ? AND status = 'verified' AND source_hash = ?
-        `).run(cleanedHash, Date.now(), path, record.sourceHash)
+          WHERE path = ? AND document_id = ? AND status = 'verified' AND source_hash = ?
+        `).run(cleanedHash, Date.now(), path, metadata.id, record.sourceHash)
         if (updated.changes !== 1) throw new Error('migration state changed during cleanup')
       })
       result.changed.push({ path, newRaw: cleaned, newMtime })
@@ -177,7 +181,9 @@ export async function restoreDocumentFrontmatter(
   for (const path of [...new Set(paths)]) {
     try {
       const record = getMetadataMigrationRecord(db, path)
-      if (!record || record.status !== 'cleaned' || !record.cleanedHash) {
+      const metadata = getDocumentMetadata(db, path)
+      if (!record || record.status !== 'cleaned' || !record.cleanedHash
+          || !metadata || record.documentId !== metadata.id) {
         throw new Error('document is not in cleaned state')
       }
       const abs = filePathFor(path)
@@ -193,8 +199,8 @@ export async function restoreDocumentFrontmatter(
         const updated = db.prepare(`
           UPDATE metadata_migrations
           SET status = 'verified', source_hash = ?, cleaned_hash = '', error = '', updated_at = ?
-          WHERE path = ? AND status = 'cleaned' AND cleaned_hash = ?
-        `).run(restoredHash, Date.now(), path, record.cleanedHash)
+          WHERE path = ? AND document_id = ? AND status = 'cleaned' AND cleaned_hash = ?
+        `).run(restoredHash, Date.now(), path, metadata.id, record.cleanedHash)
         if (updated.changes !== 1) throw new Error('migration state changed during restore')
       })
       result.changed.push({ path, newRaw: restored, newMtime })
