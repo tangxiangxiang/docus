@@ -167,6 +167,69 @@ describe('Monaco EditorPane', () => {
     wrapper.unmount()
   })
 
+  it('drives the editor↔preview scroll sync end-to-end when wired like VaultView', async () => {
+    // The composable's preview→editor branch and the EditorPane's
+    // scroll-change emit are individually covered, but the wire
+    // between them lives in VaultView.vue's template and was not
+    // exercised by any test. Mount EditorPane inside the same
+    // .editor-pane[data-path] structure VaultView uses, pair its
+    // scroll-change emit with a real composable instance via a
+    // parent wrapper that mirrors VaultView's @scroll-change
+    // handler, fire Monaco's onDidScrollChange, and assert the
+    // preview actually scrolls. This catches anyone who renames
+    // the emit, removes the @scroll-change handler in VaultView,
+    // or stops calling syncPreviewFromEditor on the composable.
+    const { default: Vue, defineComponent, ref, effectScope, nextTick } = await import('vue')
+    const { useEditorPreviewScrollSync } = await import('../../../composables/vault/useEditorPreviewScrollSync')
+
+    const vaultRoot = document.createElement('div')
+    vaultRoot.className = 'vault'
+    const editorPaneHost = document.createElement('div')
+    editorPaneHost.className = 'editor-pane'
+    editorPaneHost.setAttribute('data-path', 'note')
+    const previewPane = document.createElement('div')
+    previewPane.className = 'preview-pane'
+    previewPane.setAttribute('data-path', 'note')
+    vaultRoot.appendChild(editorPaneHost)
+    vaultRoot.appendChild(previewPane)
+    document.body.appendChild(vaultRoot)
+
+    // jsdom does not compute layout — stub the preview's scroll
+    // metrics. previewMax = 2400 - 600 = 1800.
+    Object.defineProperty(previewPane, 'scrollHeight', { configurable: true, get: () => 2400 })
+    Object.defineProperty(previewPane, 'clientHeight', { configurable: true, get: () => 600 })
+
+    const api = effectScope().run(() => useEditorPreviewScrollSync({
+      vaultRoot: ref<HTMLElement | null>(vaultRoot),
+      activePath: ref<string | null>('note'),
+    }))!
+
+    const Wrapper = defineComponent({
+      components: { EditorPane },
+      template: `<EditorPane :path="path" :model-value="modelValue" @scroll-change="onScroll" />`,
+      setup() {
+        return {
+          path: 'note',
+          modelValue: '',
+          onScroll: (fraction: number) => api.syncPreviewFromEditor('note', fraction),
+        }
+      },
+    })
+
+    const wrapper = mount(Wrapper, { attachTo: editorPaneHost })
+    await nextTick()
+
+    // Monaco reports scrollTop = 250, layout height = 500, scroll
+    // height = 1000 → max = 500, fraction = 0.5. Preview fraction 0.5
+    // over previewMax = 1800 = scrollTop 900.
+    mocks.scrollListeners.forEach((fn) => fn({ scrollTopChanged: true }))
+    await wrapper.vm.$nextTick()
+    expect(previewPane.scrollTop).toBe(900)
+    wrapper.unmount()
+    vaultRoot.remove()
+    void Vue
+  })
+
   it('registers itself on mount and unregisters on unmount using its own path', async () => {
     const wrapper = mount(EditorPane, { props: { modelValue: '', path: 'folder/a' } })
     await wrapper.vm.$nextTick()
