@@ -45,6 +45,7 @@ describe('FileTree prompt rename', () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
       path: 'inbox/final', title: 'final', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
+    vi.spyOn(api, 'getRenameImpact').mockResolvedValue({ path: 'inbox/draft', count: 0, sources: [] })
     dialogStubs.prompt.mockResolvedValueOnce('final')
 
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
@@ -68,6 +69,28 @@ describe('FileTree prompt rename', () => {
     }))
     expect(patchSpy).toHaveBeenCalledTimes(1)
     expect(patchSpy).toHaveBeenCalledWith('inbox/draft', { name: 'final' })
+  })
+
+  it('offers to update inbound links during rename', async () => {
+    const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'inbox/final', title: 'final', created: '', updated: '', tags: [], size: 0, mtime: 0,
+    })
+    vi.spyOn(api, 'getRenameImpact').mockResolvedValue({
+      path: 'inbox/draft', count: 2, sources: ['inbox/a', 'literature/b'],
+    })
+    dialogStubs.prompt.mockResolvedValueOnce('final')
+    dialogStubs.confirm.mockResolvedValueOnce(true)
+
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
+    await w.vm.$nextTick()
+    await rowByLabel(w.findAll('.tree-row'), 'inbox').find('.chevron').trigger('click')
+    await w.vm.$nextTick()
+    await rowByLabel(w.findAll('.tree-row'), 'draft').trigger('contextmenu', { clientX: 10, clientY: 10 })
+    await clickRenameMenuButton()
+    await flushPromises()
+
+    expect(dialogStubs.confirm).toHaveBeenCalledWith(expect.stringContaining('2 篇文档'))
+    expect(patchSpy).toHaveBeenCalledWith('inbox/draft', { name: 'final', updateReferences: true })
   })
 
   it('canceling the prompt does not rename', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  filterMarkdownSlashCommands, indentMarkdownLine, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs,
+  filterMarkdownSlashCommands, indentMarkdownLine, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs, markdownHeadingTargets,
   markdownLinkFromPaste, markdownWrapEdit, rankWikiTargets, toggleMarkdownWrap, wikiLinkAtColumn,
 } from '../monacoMarkdown'
 
@@ -36,6 +36,14 @@ describe('Monaco Markdown helpers', () => {
     ])
     expect(filterMarkdownSlashCommands('图表').map((item) => item.label)).toEqual(['mermaid'])
     expect(filterMarkdownSlashCommands('')).toHaveLength(11)
+  })
+
+  it('extracts preview-compatible heading anchors and ignores fenced code', () => {
+    expect(markdownHeadingTargets('# Intro\n## 中文 标题\n## Intro\n```md\n# Hidden\n```')).toEqual([
+      { title: 'Intro', anchor: 'intro', level: 1 },
+      { title: '中文 标题', anchor: '中文-标题', level: 2 },
+      { title: 'Intro', anchor: 'intro-2', level: 2 },
+    ])
   })
 
   it('toggles Markdown formatting around selected text', () => {

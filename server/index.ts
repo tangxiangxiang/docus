@@ -24,6 +24,7 @@ import {
   saveDocumentMetadata,
 } from './documentMetadata.js'
 import { renameDocumentWithMetadata } from './documentFileLifecycle.js'
+import { rewriteDocumentReferences } from './renameReferences.js'
 import {
   getMetadataMigrationSummary,
   listMetadataMigrationRecords,
@@ -373,7 +374,7 @@ app.patch('/api/posts/*', async (c) => {
   try { src = filePathFor(srcPath) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(src)) return bad(c, 'not found', 404)
 
-  const body = await c.req.json().catch(() => null) as { name?: string; targetPath?: string } | null
+  const body = await c.req.json().catch(() => null) as { name?: string; targetPath?: string; updateReferences?: boolean } | null
   if (!body || (body.name === undefined && body.targetPath === undefined)) {
     return bad(c, 'name or targetPath required')
   }
@@ -395,7 +396,7 @@ app.patch('/api/posts/*', async (c) => {
     const parent = path.dirname(src)
     dest = path.join(parent, body.name + '.md')
     const parentRel = path.dirname(srcPath)
-    destPath = parentRel ? `${parentRel}/${body.name}` : body.name
+    destPath = parentRel && parentRel !== '.' ? `${parentRel}/${body.name}` : body.name
   } else {
     try { dest = filePathFor(body.targetPath!) } catch (e: any) { return bad(c, e.message) }
     destPath = body.targetPath!
@@ -435,9 +436,60 @@ app.patch('/api/posts/*', async (c) => {
   const sourceRaw = await fs.readFile(src, 'utf8')
   const sourceStat = await fs.stat(src)
   ensureMetadata(srcPath, sourceRaw, sourceStat.mtimeMs)
-  await renameDocumentWithMetadata({
-    db: metadataDb(), fromPath: srcPath, toPath: destPath, fromAbs: src, toAbs: dest,
-  })
+  const referenceSnapshots: Array<{
+    sourcePath: string
+    writePath: string
+    abs: string
+    raw: string
+    updated: string
+    metadata: ReturnType<typeof getDocumentMetadata>
+  }> = []
+  if (body.updateReferences) {
+    const idx = await getLinkIndex()
+    const allPaths = idx.snapshot().paths
+    for (const backlink of idx.getBacklinks(srcPath)) {
+      const raw = backlink.source === srcPath ? sourceRaw : await fs.readFile(filePathFor(backlink.source), 'utf8')
+      const updated = rewriteDocumentReferences(raw, backlink.source, srcPath, destPath, allPaths)
+      if (updated === raw) continue
+      const writePath = backlink.source === srcPath ? destPath : backlink.source
+      referenceSnapshots.push({
+        sourcePath: backlink.source,
+        writePath,
+        abs: backlink.source === srcPath ? dest : filePathFor(backlink.source),
+        raw,
+        updated,
+        metadata: getDocumentMetadata(metadataDb(), backlink.source),
+      })
+    }
+  }
+  await renameDocumentWithMetadata({ db: metadataDb(), fromPath: srcPath, toPath: destPath, fromAbs: src, toAbs: dest })
+  const written: typeof referenceSnapshots = []
+  try {
+    for (const snapshot of referenceSnapshots) {
+      await fs.writeFile(snapshot.abs, snapshot.updated, 'utf8')
+      const stat = await fs.stat(snapshot.abs)
+      ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
+      written.push(snapshot)
+    }
+  } catch (error) {
+    const rollbackErrors: unknown[] = []
+    for (const snapshot of written.reverse()) {
+      try {
+        await fs.writeFile(snapshot.abs, snapshot.raw, 'utf8')
+        if (snapshot.metadata && snapshot.sourcePath !== srcPath) saveDocumentMetadata(metadataDb(), snapshot.metadata)
+      } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    }
+    try {
+      await renameDocumentWithMetadata({ db: metadataDb(), fromPath: destPath, toPath: srcPath, fromAbs: dest, toAbs: src })
+    } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    const selfSnapshot = referenceSnapshots.find((snapshot) => snapshot.sourcePath === srcPath)
+    if (selfSnapshot?.metadata) {
+      try { saveDocumentMetadata(metadataDb(), selfSnapshot.metadata) }
+      catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    }
+    if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'reference update failed and rollback was incomplete')
+    throw error
+  }
   // Update the link index AFTER the rename succeeds. Read the new
   // content so the new path's outbound links are extracted against
   // the post-rename state of the world.
@@ -448,6 +500,9 @@ app.patch('/api/posts/*', async (c) => {
     const idx = await getLinkIndex()
     const newRaw = await fs.readFile(dest, 'utf8')
     idx.applyRename(srcPath, destPath, newRaw)
+    for (const snapshot of referenceSnapshots) {
+      if (snapshot.writePath !== destPath) idx.applyWrite(snapshot.writePath, snapshot.updated)
+    }
     if (movedMetadata) idx.setTitle(destPath, movedMetadata.title)
   } catch { /* ignore */ }
   return c.json({
@@ -464,6 +519,10 @@ app.patch('/api/posts/*', async (c) => {
     summary: movedMetadata?.summary ?? fm.summary ?? '',
     size: st.size,
     mtime: st.mtimeMs,
+    updatedReferences: referenceSnapshots.map((snapshot) => ({
+      path: snapshot.writePath,
+      raw: snapshot.updated,
+    })),
   } satisfies PostSummary)
 })
 
@@ -644,6 +703,13 @@ app.get('/api/backlinks', async (c) => {
   if (!target) return bad(c, 'path required')
   const idx = await getLinkIndex()
   return c.json(idx.getBacklinks(target))
+})
+
+app.get('/api/links/rename-impact', async (c) => {
+  const target = c.req.query('path')
+  if (!target || !isValidPathSyntax(target)) return bad(c, 'valid path required')
+  const sources = (await getLinkIndex()).getBacklinks(target).map((record) => record.source)
+  return c.json({ path: target, count: sources.length, sources })
 })
 
 app.route('/api/ai', aiRoutes)

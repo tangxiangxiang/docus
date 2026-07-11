@@ -9,6 +9,7 @@ export interface PostSummary {
   summary?: string
   size: number
   mtime: number
+  updatedReferences?: Array<{ path: string; raw: string }>
 }
 
 export type TreeNode =
@@ -172,11 +173,15 @@ export async function uploadAttachment(documentPath: string, file: File): Promis
   }))
 }
 
-export async function patchPost(srcPath: string, body: { name?: string; targetPath?: string }): Promise<PostSummary> {
+export async function patchPost(srcPath: string, body: { name?: string; targetPath?: string; updateReferences?: boolean }): Promise<PostSummary> {
   return jsonOrThrow<PostSummary>(await fetch('/api/posts/' + splat(srcPath), {
     method: 'PATCH', headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   }))
+}
+
+export async function getRenameImpact(path: string): Promise<{ path: string; count: number; sources: string[] }> {
+  return jsonOrThrow(await fetch('/api/links/rename-impact?path=' + encodeURIComponent(path)))
 }
 
 export async function deletePost(path: string): Promise<{ ok: true }> {

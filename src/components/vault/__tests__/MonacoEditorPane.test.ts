@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => {
   const compositionStartListeners: Array<() => void> = []
   const compositionEndListeners: Array<() => void> = []
   const scrollListeners: Array<(event: { scrollTopChanged: boolean }) => void> = []
+  const mouseDownListeners: Array<(event: any) => void> = []
   const completionProviders: Array<any> = []
   const model = {
     value: '',
@@ -30,7 +31,7 @@ const mocks = vi.hoisted(() => {
     onDidBlurEditorWidget: vi.fn((fn: () => void) => { blurListeners.push(fn) }),
     onDidCompositionStart: vi.fn((fn: () => void) => { compositionStartListeners.push(fn) }),
     onDidCompositionEnd: vi.fn((fn: () => void) => { compositionEndListeners.push(fn) }),
-    onMouseDown: vi.fn(),
+    onMouseDown: vi.fn((fn: (event: any) => void) => { mouseDownListeners.push(fn) }),
     onDidScrollChange: vi.fn((fn: (event: { scrollTopChanged: boolean }) => void) => { scrollListeners.push(fn) }),
     getScrollHeight: vi.fn(() => 1000),
     getScrollTop: vi.fn(() => 250),
@@ -52,6 +53,7 @@ const mocks = vi.hoisted(() => {
     compositionStartListeners,
     compositionEndListeners,
     scrollListeners,
+    mouseDownListeners,
     completionProviders,
     model,
     editor,
@@ -60,6 +62,7 @@ const mocks = vi.hoisted(() => {
     completionDispose: vi.fn(),
     hoverDispose: vi.fn(),
     uploadAttachment: vi.fn(),
+    getPost: vi.fn(),
   }
 })
 
@@ -91,7 +94,7 @@ vi.mock('monaco-editor/esm/vs/editor/editor.api.js', () => ({
 }))
 vi.mock('monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js', () => ({}))
 vi.mock('monaco-editor/esm/vs/editor/editor.worker?worker', () => ({ default: class WorkerStub {} }))
-vi.mock('../../../lib/api', () => ({ uploadAttachment: mocks.uploadAttachment }))
+vi.mock('../../../lib/api', () => ({ uploadAttachment: mocks.uploadAttachment, getPost: mocks.getPost }))
 
 import EditorPane from '../EditorPane.vue'
 import { resetMarkdownModelsForTesting } from '../monacoModels'
@@ -105,8 +108,10 @@ describe('Monaco EditorPane', () => {
     mocks.compositionStartListeners.length = 0
     mocks.compositionEndListeners.length = 0
     mocks.scrollListeners.length = 0
+    mocks.mouseDownListeners.length = 0
     vi.clearAllMocks()
     mocks.editor.getSelection.mockReturnValue(null)
+    mocks.model.getLineContent.mockReturnValue('')
     document.documentElement.setAttribute('data-theme', 'light')
   })
 
@@ -146,12 +151,42 @@ describe('Monaco EditorPane', () => {
     wrapper.unmount()
   })
 
-  it('offers Markdown snippets after a slash command', () => {
+  it('offers Markdown snippets after a slash command', async () => {
     const wrapper = mount(EditorPane, { props: { modelValue: '/mer', path: 'inbox/slash' } })
     const provider = mocks.completionProviders.at(-1)
-    const result = provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 5 })
+    const result = await provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 5 })
     expect(result.suggestions).toHaveLength(1)
     expect(result.suggestions[0]).toMatchObject({ label: 'mermaid', insertTextRules: 4 })
+    wrapper.unmount()
+  })
+
+  it('offers target headings after a Wiki Link hash', async () => {
+    mocks.getPost.mockResolvedValue({ content: '# Intro\n\n## Setup Guide\n\n## 中文标题' })
+    const wrapper = mount(EditorPane, {
+      props: {
+        modelValue: '[[docs/guide#set',
+        path: 'inbox/source',
+        linkTargets: [{ path: 'docs/guide', title: 'Guide' }],
+      },
+    })
+    const provider = mocks.completionProviders.at(-1)
+    const result = await provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 18 })
+    expect(mocks.getPost).toHaveBeenCalledWith('docs/guide')
+    expect(result.suggestions).toEqual([expect.objectContaining({
+      label: 'Setup Guide', insertText: 'setup-guide]]',
+    })])
+    wrapper.unmount()
+  })
+
+  it('emits create-link when Cmd-clicking a missing Wiki Link', async () => {
+    mocks.model.getLineContent.mockReturnValue('[[missing-note]]')
+    const wrapper = mount(EditorPane, { props: { modelValue: '[[missing-note]]', path: 'inbox/source', linkTargets: [] } })
+    mocks.mouseDownListeners.forEach((listener) => listener({
+      target: { position: { lineNumber: 1, column: 4 } },
+      event: { ctrlKey: false, metaKey: true },
+    }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('create-link')).toEqual([['missing-note']])
     wrapper.unmount()
   })
 

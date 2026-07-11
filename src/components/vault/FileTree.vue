@@ -6,11 +6,12 @@ import { useConfirm } from '../../composables/useConfirm'
 import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
 import { blockedMessage, isInZettel } from '../../composables/zettelProtocol'
-import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder } from '../../lib/api'
+import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder, getRenameImpact } from '../../lib/api'
 import { suggestSlug } from '../../lib/ai-api'
 import { isSlugSegment, toLocalSlug } from '../../lib/slug'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
 import { useArchiveToZettel } from '../../composables/vault/useArchiveToZettel'
+import { publishFileChange } from '../../composables/vault/useFileChangeBus'
 import { ICON_SEARCH } from './icons'
 import { useI18n } from '../../composables/useI18n'
 
@@ -537,7 +538,17 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
       const res = await renameFolder(oldPath, newPath)
       toast.success(`已重命名 (${res.moved.length} 项)`)
     } else {
-      await patchPost(oldPath, { name: safeName })
+      let updateReferences = false
+      try {
+        const impact = await getRenameImpact(oldPath)
+        updateReferences = impact.count > 0
+          ? await confirm(`有 ${impact.count} 篇文档引用此笔记。是否同时更新这些引用？\n\n取消将仅重命名文件。`)
+          : false
+      } catch { /* impact preview is advisory; renaming still works */ }
+      const renamed = await patchPost(oldPath, updateReferences ? { name: safeName, updateReferences: true } : { name: safeName })
+      for (const updated of renamed.updatedReferences ?? []) {
+        if (updated.path !== renamed.path) publishFileChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
+      }
     }
     emit('refresh')
   } catch (e: any) {

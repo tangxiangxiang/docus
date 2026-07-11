@@ -67,6 +67,38 @@ export function filterMarkdownSlashCommands(query: string): readonly MarkdownSla
   )
 }
 
+export interface MarkdownHeadingTarget {
+  title: string
+  anchor: string
+  level: number
+}
+
+export function markdownHeadingTargets(markdown: string): MarkdownHeadingTarget[] {
+  const headings: MarkdownHeadingTarget[] = []
+  const counts = new Map<string, number>()
+  let fence: string | null = null
+  for (const line of markdown.split(/\r?\n/)) {
+    const fenceMatch = /^\s*(```+|~~~+)/.exec(line)
+    if (fenceMatch) {
+      if (!fence) fence = fenceMatch[1][0]
+      else if (fence === fenceMatch[1][0]) fence = null
+      continue
+    }
+    if (fence) continue
+    const match = /^\s*(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
+    if (!match) continue
+    const title = match[2].replace(/[*_`~\[\]]/g, '').trim()
+    const base = title.toLowerCase().trim()
+      .replace(/[^a-z0-9一-龥]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+    if (!base) continue
+    const count = (counts.get(base) ?? 0) + 1
+    counts.set(base, count)
+    headings.push({ title, anchor: count === 1 ? base : `${base}-${count}`, level: match[1].length })
+  }
+  return headings
+}
+
 export interface MarkdownWrap {
   before: string
   after: string

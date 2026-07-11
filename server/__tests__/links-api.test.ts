@@ -4,7 +4,7 @@
 // exercised end-to-end (the splitter routes, gray-matter parsing,
 // etc.). We never mock getIndex — it is the real singleton, but
 // reset in beforeEach to point at the temp dir.
-import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
@@ -73,6 +73,50 @@ describe('GET /api/backlinks', () => {
     const r = await get('/api/backlinks?path=does-not-exist')
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual([])
+  })
+})
+
+describe('rename reference updates', () => {
+  it('previews and updates inbound links when requested', async () => {
+    const impact = await get('/api/links/rename-impact?path=b')
+    expect(await impact.json()).toEqual({ path: 'b', count: 1, sources: ['a'] })
+
+    const renamed = await app.fetch(new Request('http://localhost/api/posts/b', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'renamed-b', updateReferences: true }),
+    }))
+    expect(renamed.status).toBe(200)
+    expect(await fs.readFile(path.join(sandbox, 'a.md'), 'utf8')).toBe('# a\nsee [[renamed-b]]')
+    await expect(fs.stat(path.join(sandbox, 'b.md'))).rejects.toThrow()
+    expect(await fs.readFile(path.join(sandbox, 'renamed-b.md'), 'utf8')).toBe('# b\nsee [a](a.md)')
+
+    const backlinks = await get('/api/backlinks?path=renamed-b')
+    expect((await backlinks.json() as Array<{ source: string }>).map((item) => item.source)).toEqual(['a'])
+  })
+
+  it('rolls the rename back when an inbound link write fails', async () => {
+    await get('/api/links/index')
+    const originalWrite = fs.writeFile.bind(fs)
+    const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, options) => {
+      if (String(file).endsWith(`${path.sep}a.md`) && String(data).includes('renamed-b')) {
+        throw new Error('simulated reference write failure')
+      }
+      return originalWrite(file, data, options as any)
+    })
+    try {
+      const renamed = await app.fetch(new Request('http://localhost/api/posts/b', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'renamed-b', updateReferences: true }),
+      }))
+      expect(renamed.status).toBe(500)
+      expect(await fs.readFile(path.join(sandbox, 'a.md'), 'utf8')).toBe('# a\nsee [[b]]')
+      expect(await fs.readFile(path.join(sandbox, 'b.md'), 'utf8')).toBe('# b\nsee [a](a.md)')
+      await expect(fs.stat(path.join(sandbox, 'renamed-b.md'))).rejects.toThrow()
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
 

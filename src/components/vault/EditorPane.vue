@@ -5,7 +5,7 @@ import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import { acquireMarkdownModel } from './monacoModels'
 import { resolveWikiTarget } from '../../lib/linkResolve'
-import { uploadAttachment } from '../../lib/api'
+import { getPost, uploadAttachment } from '../../lib/api'
 import { useToast } from '../../composables/useToast'
 import {
   indentMarkdownLine,
@@ -15,6 +15,7 @@ import {
   markdownContinuation,
   markdownDecorationSpecs,
   markdownLinkFromPaste,
+  markdownHeadingTargets,
   markdownWrapEdit,
   rankWikiTargets,
   wikiLinkAtColumn,
@@ -34,6 +35,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   'open-link': [path: string]
+  'create-link': [ref: string]
   'scroll-change': [fraction: number]
   // Self-registration for the editor↔preview scroll sync. The component
   // uses its own props.path (stable for the lifetime of this instance,
@@ -64,6 +66,7 @@ const IMMEDIATE_SCROLL = 1
 let linkPaths: string[] = []
 let targetsByPath = new Map<string, EditorLinkTarget>()
 const resolvedLinkCache = new Map<string, string | null>()
+const headingCache = new Map<string, Promise<ReturnType<typeof markdownHeadingTargets>>>()
 
 function recentLinks(): string[] {
   try {
@@ -192,6 +195,15 @@ function resolvedWikiPath(ref: string): string | null {
   return resolvedLinkCache.get(ref) ?? null
 }
 
+function headingsFor(path: string) {
+  let pending = headingCache.get(path)
+  if (!pending) {
+    pending = getPost(path).then((post) => markdownHeadingTargets(post.content)).catch(() => [])
+    headingCache.set(path, pending)
+  }
+  return pending
+}
+
 function scheduleMarkdownDecorations() {
   if (decorationTimer) clearTimeout(decorationTimer)
   decorationTimer = setTimeout(refreshMarkdownDecorations, 120)
@@ -199,7 +211,7 @@ function scheduleMarkdownDecorations() {
 
 const completion = monaco.languages.registerCompletionItemProvider('markdown', {
   triggerCharacters: ['[', '`', '/'],
-  provideCompletionItems(currentModel, position) {
+  async provideCompletionItems(currentModel, position) {
     if (currentModel !== model) return { suggestions: [] }
     const before = currentModel.getValueInRange({
       startLineNumber: position.lineNumber,
@@ -242,7 +254,30 @@ const completion = monaco.languages.registerCompletionItemProvider('markdown', {
       }
     }
     const match = /\[\[([^\]\n]*)$/.exec(before)
-    if (!match || match[1].includes('|') || match[1].includes('#')) return { suggestions: [] }
+    if (!match || match[1].includes('|')) return { suggestions: [] }
+    const anchorMatch = /^([^#]+)#([^#]*)$/.exec(match[1])
+    if (anchorMatch) {
+      const targetPath = resolvedWikiPath(anchorMatch[1])
+      if (!targetPath) return { suggestions: [] }
+      const query = anchorMatch[2].toLocaleLowerCase()
+      const headings = await headingsFor(targetPath)
+      return {
+        suggestions: headings
+          .filter((heading) => `${heading.title} ${heading.anchor}`.toLocaleLowerCase().includes(query))
+          .map((heading) => ({
+            label: heading.title,
+            detail: `${'#'.repeat(heading.level)} · ${heading.anchor}`,
+            kind: monaco.languages.CompletionItemKind.Reference,
+            insertText: `${heading.anchor}]]`,
+            range: {
+              startLineNumber: position.lineNumber,
+              startColumn: position.column - anchorMatch[2].length,
+              endLineNumber: position.lineNumber,
+              endColumn: position.column,
+            },
+          })),
+      }
+    }
     const startColumn = position.column - match[1].length
     const recency = recentLinks()
     return {
@@ -278,7 +313,7 @@ const hover = monaco.languages.registerHoverProvider('markdown', {
     return {
       contents: target
         ? [{ value: `**${target.title || target.path}**` }, { value: `\`${target.path}\`` }]
-        : [{ value: '**Missing note**' }, { value: `\`${path}\`` }],
+        : [{ value: '**Missing note**' }, { value: `\`${path}\`` }, { value: 'Cmd/Ctrl-click to create it in `inbox/`.' }],
     }
   },
 })
@@ -440,7 +475,10 @@ onMounted(() => {
     const ref = wikiLinkAtColumn(model.getLineContent(position.lineNumber), position.column - 1)
     if (!ref) return
     const path = resolvedWikiPath(ref)
-    if (!path) return
+    if (!path) {
+      emit('create-link', ref)
+      return
+    }
     recordRecentLink(path)
     emit('open-link', path)
   })

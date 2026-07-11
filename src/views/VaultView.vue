@@ -12,7 +12,8 @@ import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { useTagFilter } from '../composables/vault/useTagFilter'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
-import type { DocumentMetadata } from '../lib/api'
+import { createPost, type DocumentMetadata } from '../lib/api'
+import { isSlugSegment } from '../lib/slug'
 import { resolveWikiTarget } from '../lib/linkResolve'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import FileTree from '../components/vault/FileTree.vue'
@@ -195,6 +196,26 @@ async function onMetadataSaved(metadata: DocumentMetadata) {
   await Promise.all([refresh(), refreshLinkIndex()])
 }
 
+async function createMissingWikiNote(ref: string) {
+  const clean = ref.replace(/\.md$/i, '').trim()
+  const segments = clean.split('/')
+  if (!segments.length || segments.some((segment) => !isSlugSegment(segment))) {
+    toast.error('无法创建：Wiki Link 必须使用英文 kebab-case 路径')
+    return
+  }
+  const path = clean.startsWith('inbox/') ? clean : `inbox/${clean}`
+  const title = segments.at(-1)!.split('-').join(' ')
+  try {
+    await createPost({ path, title })
+    await refresh()
+    await openPost(path)
+    toast.success(`已创建: ${path}`)
+  } catch (error: any) {
+    if (error?.status === 409) await openPost(path)
+    else toast.error(`创建失败: ${error?.message ?? '未知错误'}`)
+  }
+}
+
 watch(activePath, () => { metadataOpen.value = false })
 
 /* Mirror the editor's scroll position onto the preview pane (and
@@ -366,6 +387,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
             :link-targets="editorLinkTargets"
             @update:model-value="(val: string) => onEditorChange(activePath!, val)"
             @open-link="openPost"
+            @create-link="createMissingWikiNote"
             @register-scroll="registerEditorScroll"
             @unregister-scroll="unregisterEditorScroll"
             @scroll-change="(fraction: number) => editorPreviewScroll.syncPreviewFromEditor(activePath!, fraction)"
