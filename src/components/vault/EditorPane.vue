@@ -31,6 +31,13 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
   'open-link': [path: string]
   'scroll-change': [fraction: number]
+  // Self-registration for the editor↔preview scroll sync. The component
+  // uses its own props.path (stable for the lifetime of this instance,
+  // because the parent re-keys on tab switch) instead of having the
+  // parent capture `activePath` in a closure — which races when the
+  // active tab changes between mount/unmount.
+  'register-scroll': [registration: { path: string; setScrollFraction: (fraction: number) => void }]
+  'unregister-scroll': [path: string]
 }>()
 
 const host = ref<HTMLDivElement | null>(null)
@@ -400,6 +407,7 @@ watch(() => props.linkTargets, () => {
 }, { deep: true })
 
 onBeforeUnmount(() => {
+  emit('unregister-scroll', props.path)
   saveViewState()
   themeObserver?.disconnect()
   if (decorationTimer) clearTimeout(decorationTimer)
@@ -412,14 +420,18 @@ onBeforeUnmount(() => {
   model = null
 })
 
+function setScrollFraction(fraction: number) {
+  if (!editor) return
+  const max = Math.max(0, editor.getScrollHeight() - editor.getLayoutInfo().height)
+  editor.setScrollTop(Math.max(0, Math.min(1, fraction)) * max, IMMEDIATE_SCROLL)
+}
+
+emit('register-scroll', { path: props.path, setScrollFraction })
+
 defineExpose({
   focus: () => editor?.focus(),
   getScrollEl: () => host.value?.querySelector<HTMLElement>('.monaco-scrollable-element.editor-scrollable') ?? null,
-  setScrollFraction: (fraction: number) => {
-    if (!editor) return
-    const max = Math.max(0, editor.getScrollHeight() - editor.getLayoutInfo().height)
-    editor.setScrollTop(Math.max(0, Math.min(1, fraction)) * max, IMMEDIATE_SCROLL)
-  },
+  setScrollFraction,
 })
 </script>
 

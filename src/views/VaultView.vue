@@ -143,9 +143,11 @@ const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 type EditorScrollApi = { setScrollFraction: (fraction: number) => void }
 const editorRefs = new Map<string, EditorScrollApi>()
-function setEditorRef(path: string, instance: unknown) {
-  if (instance) editorRefs.set(path, instance as EditorScrollApi)
-  else editorRefs.delete(path)
+function registerEditorScroll(registration: { path: string; setScrollFraction: (fraction: number) => void }) {
+  editorRefs.set(registration.path, { setScrollFraction: registration.setScrollFraction })
+}
+function unregisterEditorScroll(path: string) {
+  editorRefs.delete(path)
 }
 function openSearch() { paletteRef.value?.show() }
 
@@ -358,13 +360,14 @@ watch(() => navSearch?.tick.value, () => openSearch())
           <div v-else-if="activeTab.loadError" class="empty error">{{ activeTab.loadError }}</div>
           <EditorPane
             v-else
-            :ref="(instance: unknown) => setEditorRef(activePath!, instance)"
             :model-value="activeTab.raw"
             :path="activeTab.path"
             :focus-width="editorFocusWidth"
             :link-targets="editorLinkTargets"
             @update:model-value="(val: string) => onEditorChange(activePath!, val)"
             @open-link="openPost"
+            @register-scroll="registerEditorScroll"
+            @unregister-scroll="unregisterEditorScroll"
             @scroll-change="(fraction: number) => editorPreviewScroll.syncPreviewFromEditor(activePath!, fraction)"
           />
         </div>

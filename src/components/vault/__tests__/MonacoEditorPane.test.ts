@@ -166,4 +166,17 @@ describe('Monaco EditorPane', () => {
     expect(wrapper.emitted('scroll-change')).toEqual([[0.5]])
     wrapper.unmount()
   })
+
+  it('registers itself on mount and unregisters on unmount using its own path', async () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: '', path: 'folder/a' } })
+    await wrapper.vm.$nextTick()
+    const registrations = wrapper.emitted('register-scroll') as Array<[{ path: string; setScrollFraction: (f: number) => void }]>
+    expect(registrations).toHaveLength(1)
+    expect(registrations[0][0].path).toBe('folder/a')
+    expect(typeof registrations[0][0].setScrollFraction).toBe('function')
+    wrapper.unmount()
+    // Unregister fires with the path the component was given, not whatever
+    // the parent's activePath is at unmount time.
+    expect(wrapper.emitted('unregister-scroll')).toEqual([['folder/a']])
+  })
 })
