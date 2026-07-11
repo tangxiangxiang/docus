@@ -32,6 +32,8 @@ beforeAll(() => __setMetadataDbForTesting(db))
 afterAll(async () => {
   __setMetadataDbForTesting(null)
   await fs.rm(TEST_ABS, { force: true })
+  const documentId = getDocumentMetadata(db, TEST_PATH)?.id
+  if (documentId) await fs.rm(path.join(CONTENT_DIR, '.attachments', documentId), { recursive: true, force: true })
   db.close()
 })
 
@@ -74,6 +76,36 @@ describe('POST /api/posts', () => {
     // yet, so the file should still be on disk.
     const r = await call('POST', '/api/posts', { path: TEST_PATH, title: 'Smoke' })
     expect(r.status).toBe(409)
+  })
+
+  it('stores and serves a validated image attachment', async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const upload = await call('POST', '/api/attachments', {
+      path: TEST_PATH,
+      name: 'My Screenshot.png',
+      mime: 'image/png',
+      data: png.toString('base64'),
+    })
+    expect(upload.status).toBe(201)
+    const result = await upload.json() as { url: string; name: string; size: number }
+    expect(result.name).toMatch(/^[0-9]+-my-screenshot\.png$/)
+    expect(result.size).toBe(8)
+
+    const served = await app.fetch(new Request(`http://localhost${result.url}`))
+    expect(served.status).toBe(200)
+    expect(served.headers.get('content-type')).toBe('image/png')
+    expect(Buffer.from(await served.arrayBuffer())).toEqual(png)
+  })
+
+  it('rejects SVG and malformed base64 attachments', async () => {
+    const svg = await call('POST', '/api/attachments', {
+      path: TEST_PATH, name: 'unsafe.svg', mime: 'image/svg+xml', data: 'PHN2Zz4=',
+    })
+    expect(svg.status).toBe(415)
+    const malformed = await call('POST', '/api/attachments', {
+      path: TEST_PATH, name: 'bad.png', mime: 'image/png', data: 'not base64',
+    })
+    expect(malformed.status).toBe(400)
   })
 
   it('rejects a request body without a path', async () => {

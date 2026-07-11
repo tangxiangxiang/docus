@@ -59,6 +59,7 @@ const mocks = vi.hoisted(() => {
     setTheme: vi.fn(),
     completionDispose: vi.fn(),
     hoverDispose: vi.fn(),
+    uploadAttachment: vi.fn(),
   }
 })
 
@@ -90,6 +91,7 @@ vi.mock('monaco-editor/esm/vs/editor/editor.api.js', () => ({
 }))
 vi.mock('monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js', () => ({}))
 vi.mock('monaco-editor/esm/vs/editor/editor.worker?worker', () => ({ default: class WorkerStub {} }))
+vi.mock('../../../lib/api', () => ({ uploadAttachment: mocks.uploadAttachment }))
 
 import EditorPane from '../EditorPane.vue'
 import { resetMarkdownModelsForTesting } from '../monacoModels'
@@ -104,6 +106,7 @@ describe('Monaco EditorPane', () => {
     mocks.compositionEndListeners.length = 0
     mocks.scrollListeners.length = 0
     vi.clearAllMocks()
+    mocks.editor.getSelection.mockReturnValue(null)
     document.documentElement.setAttribute('data-theme', 'light')
   })
 
@@ -149,6 +152,26 @@ describe('Monaco EditorPane', () => {
     const result = provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 5 })
     expect(result.suggestions).toHaveLength(1)
     expect(result.suggestions[0]).toMatchObject({ label: 'mermaid', insertTextRules: 4 })
+    wrapper.unmount()
+  })
+
+  it('uploads a pasted image and inserts its Markdown URL', async () => {
+    const selection = { isEmpty: () => true }
+    mocks.editor.getSelection.mockReturnValue(selection as any)
+    mocks.uploadAttachment.mockResolvedValue({
+      url: '/api/attachments/doc-1/123-shot.png', name: '123-shot.png', size: 4,
+    })
+    const wrapper = mount(EditorPane, { props: { modelValue: '', path: 'inbox/image' } })
+    const file = new File(['png'], 'shot.png', { type: 'image/png' })
+    const event = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(event, 'clipboardData', { value: { files: [file], getData: () => '' } })
+    wrapper.element.dispatchEvent(event)
+    await vi.waitFor(() => expect(mocks.editor.executeEdits).toHaveBeenCalled())
+    expect(mocks.uploadAttachment).toHaveBeenCalledWith('inbox/image', file)
+    expect(mocks.editor.executeEdits).toHaveBeenCalledWith('markdown-image-upload', [{
+      range: selection,
+      text: '![shot](/api/attachments/doc-1/123-shot.png)',
+    }])
     wrapper.unmount()
   })
 

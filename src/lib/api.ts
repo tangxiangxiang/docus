@@ -154,6 +154,24 @@ export async function createPost(input: { path: string; title?: string }): Promi
   }))
 }
 
+export async function uploadAttachment(documentPath: string, file: File): Promise<{
+  url: string
+  name: string
+  size: number
+}> {
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return jsonOrThrow(await fetch('/api/attachments', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: documentPath, name: file.name, mime: file.type, data: btoa(binary) }),
+  }))
+}
+
 export async function patchPost(srcPath: string, body: { name?: string; targetPath?: string }): Promise<PostSummary> {
   return jsonOrThrow<PostSummary>(await fetch('/api/posts/' + splat(srcPath), {
     method: 'PATCH', headers: { 'content-type': 'application/json' },
