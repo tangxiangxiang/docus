@@ -1164,6 +1164,8 @@ main.container {
   display: grid;
   gap: 12px;
   padding: 16px;
+  max-height: min(620px, calc(100vh - 150px));
+  overflow: auto;
 }
 .settings-row {
   display: flex;
@@ -1206,6 +1208,47 @@ main.container {
   margin: 0;
   color: var(--vs-text-2, var(--text-muted));
   font-size: 0.82rem;
+}
+.settings-metadata {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--vs-border, var(--border));
+}
+.settings-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-section-heading h3 {
+  margin: 0;
+  color: var(--vs-text-1, var(--text-h));
+  font-size: 0.86rem;
+  letter-spacing: 0;
+}
+.settings-section-heading p {
+  margin: 3px 0 0;
+  color: var(--vs-text-3, var(--text-muted));
+  font-size: 0.72rem;
+}
+.settings-metadata-stats,
+.settings-cleanup-result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--vs-text-2, var(--text-muted));
+  font-size: 0.76rem;
+}
+.settings-metadata-stats strong,
+.settings-cleanup-result strong { color: var(--vs-text-1, var(--text-h)); }
+.settings-metadata-stats .danger,
+.settings-metadata-stats .danger strong { color: var(--vs-danger, #dc2626); }
+.settings-metadata-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .settings-actions {
   display: flex;
@@ -2318,6 +2361,26 @@ main.container {
 
 /* Monaco EditorPane inside vault */
 .vault .monaco-host { flex: 1; min-width: 0; min-height: 0; height: 100%; }
+.vault .monaco-host .monaco-scrollable-element > .scrollbar {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.vault .monaco-host .monaco-scrollable-element > .scrollbar > .slider {
+  background: var(--sb-thumb) !important;
+  border-radius: var(--sb-radius);
+  transition: background 0.15s;
+}
+.vault .monaco-host:hover .monaco-scrollable-element > .scrollbar > .slider,
+.vault .monaco-host .monaco-scrollable-element > .scrollbar > .slider:hover {
+  background: var(--sb-thumb-hover) !important;
+}
+.vault .monaco-host .monaco-scrollable-element > .shadow,
+.vault .monaco-host .monaco-scrollable-element > .corner {
+  display: none !important;
+}
+.vault .monaco-host .decorationsOverviewRuler {
+  display: none !important;
+}
 .vault .editor-pane:has(> .monaco-host.focus-width) {
   align-items: center;
 }
@@ -2713,6 +2776,12 @@ main.container {
   border-color: var(--accent);
 }
 .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-danger {
+  color: #fff;
+  border-color: #b42318;
+  background: #b42318;
+}
+.btn-danger:hover { border-color: #912018; background: #912018; }
 
 /* ---------- Command palette ---------- */
 .palette-backdrop {

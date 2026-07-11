@@ -4,18 +4,25 @@
 // exercised end-to-end (the splitter routes, gray-matter parsing,
 // etc.). We never mock getIndex — it is the real singleton, but
 // reset in beforeEach to point at the temp dir.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
+import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import app from '../index'
+import app, { __setMetadataDbForTesting } from '../index'
 import { setContentDir } from '../paths.js'
 import { __resetLinkIndexForTesting } from '../linkIndex.js'
+import { applyMigrations } from '../db.js'
 
 let sandbox: string
 let originalContentDir: string
+const db = new Database(':memory:')
+db.pragma('foreign_keys = ON')
+applyMigrations(db)
 
 beforeEach(async () => {
+  db.exec('DELETE FROM documents; DELETE FROM tags;')
+  __setMetadataDbForTesting(db)
   originalContentDir = path.resolve(process.cwd(), 'src/content')
   sandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-links-api-'))
   // Seed two files so the index has something to start with.
@@ -26,10 +33,13 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  __setMetadataDbForTesting(null)
   await fs.rm(sandbox, { recursive: true, force: true })
   setContentDir(originalContentDir)
   __resetLinkIndexForTesting()
 })
+
+afterAll(() => db.close())
 
 async function get(urlPath: string) {
   return app.fetch(new Request(`http://localhost${urlPath}`))

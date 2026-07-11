@@ -7,12 +7,15 @@ const mocks = vi.hoisted(() => {
   const blurListeners: Array<() => void> = []
   const compositionStartListeners: Array<() => void> = []
   const compositionEndListeners: Array<() => void> = []
+  const scrollListeners: Array<(event: { scrollTopChanged: boolean }) => void> = []
   const model = {
     value: '',
     getValue: vi.fn(() => model.value),
     setValue: vi.fn((value: string) => { model.value = value; changeListeners.forEach((fn) => fn()) }),
-    getValueInRange: vi.fn(() => ''),
+    getValueInRange: vi.fn(() => model.value),
     getLineContent: vi.fn(() => ''),
+    getLineCount: vi.fn(() => Math.max(1, model.value.split('\n').length)),
+    getLineMaxColumn: vi.fn(() => 1),
     dispose: vi.fn(),
   }
   const editor = {
@@ -24,6 +27,12 @@ const mocks = vi.hoisted(() => {
     onDidCompositionStart: vi.fn((fn: () => void) => { compositionStartListeners.push(fn) }),
     onDidCompositionEnd: vi.fn((fn: () => void) => { compositionEndListeners.push(fn) }),
     onMouseDown: vi.fn(),
+    onDidScrollChange: vi.fn((fn: (event: { scrollTopChanged: boolean }) => void) => { scrollListeners.push(fn) }),
+    getScrollHeight: vi.fn(() => 1000),
+    getScrollTop: vi.fn(() => 250),
+    getLayoutInfo: vi.fn(() => ({ height: 500 })),
+    setScrollTop: vi.fn(),
+    getVisibleRanges: vi.fn(() => [{ startLineNumber: 1, endLineNumber: 20 }]),
     addCommand: vi.fn(() => 'remember-link-command'),
     addAction: vi.fn(),
     getSelection: vi.fn(() => null),
@@ -37,6 +46,7 @@ const mocks = vi.hoisted(() => {
     blurListeners,
     compositionStartListeners,
     compositionEndListeners,
+    scrollListeners,
     model,
     editor,
     defineTheme: vi.fn(),
@@ -77,6 +87,7 @@ describe('Monaco EditorPane', () => {
     mocks.blurListeners.length = 0
     mocks.compositionStartListeners.length = 0
     mocks.compositionEndListeners.length = 0
+    mocks.scrollListeners.length = 0
     vi.clearAllMocks()
     document.documentElement.setAttribute('data-theme', 'light')
   })
@@ -126,6 +137,33 @@ describe('Monaco EditorPane', () => {
     mocks.compositionEndListeners.forEach((fn) => fn())
     await wrapper.vm.$nextTick()
     expect(wrapper.emitted('update:modelValue')).toEqual([['中文输入']])
+    wrapper.unmount()
+  })
+
+  it('resolves relative Wiki Links before marking them missing', () => {
+    const wrapper = mount(EditorPane, {
+      props: {
+        modelValue: '[[note]] and [[missing]]',
+        path: 'folder/source',
+        linkTargets: [{ path: 'folder/note', title: 'Note' }],
+      },
+    })
+    const calls = (mocks.editor.deltaDecorations as unknown as {
+      mock: { calls: Array<[unknown, unknown]> }
+    }).mock.calls
+    const decorations = calls.at(-1)?.[1] as Array<{
+      options: { inlineClassName?: string }
+    }>
+    expect(decorations.map((item) => item.options.inlineClassName)).toContain('monaco-md-link')
+    expect(decorations.map((item) => item.options.inlineClassName)).toContain('monaco-md-link-invalid')
+    wrapper.unmount()
+  })
+
+  it('emits Monaco scroll position as a document fraction', async () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: '', path: 'inbox/scroll' } })
+    mocks.scrollListeners.forEach((fn) => fn({ scrollTopChanged: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('scroll-change')).toEqual([[0.5]])
     wrapper.unmount()
   })
 })

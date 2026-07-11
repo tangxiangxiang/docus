@@ -7,11 +7,14 @@
 // We seed a fixture note in a temp dir and vi.mock filePathFor to point
 // at it — same pattern split.test.ts uses. The test is self-contained
 // and doesn't depend on any real file under src/content/.
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
+import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import app from '../index'
+import app, { __setMetadataDbForTesting } from '../index'
+import { applyMigrations } from '../db'
+import { deleteDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
 
 // `tmpRoot` is referenced inside the mock factory, which vitest hoists
 // above this assignment — but the factory is a function that runs
@@ -28,6 +31,9 @@ vi.mock('../paths.js', async (importOriginal) => {
 })
 
 const FIXTURE_PATH = 'inbox/markdown-syntax'
+const db = new Database(':memory:')
+db.pragma('foreign_keys = ON')
+applyMigrations(db)
 const FIXTURE_BODY = [
   '---',
   'title: Markdown syntax quick reference',
@@ -45,13 +51,18 @@ const FIXTURE_BODY = [
   '',
 ].join('\n')
 
+beforeAll(() => __setMetadataDbForTesting(db))
+afterAll(() => { __setMetadataDbForTesting(null); db.close() })
+
 beforeEach(async () => {
+  deleteDocumentMetadata(db, FIXTURE_PATH)
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-get-post-test-'))
   await fs.mkdir(path.join(tmpRoot, 'inbox'), { recursive: true })
   await fs.writeFile(path.join(tmpRoot, 'inbox', 'markdown-syntax.md'), FIXTURE_BODY, 'utf8')
 })
 
 afterEach(async () => {
+  deleteDocumentMetadata(db, FIXTURE_PATH)
   await fs.rm(tmpRoot, { recursive: true, force: true })
 })
 
@@ -61,6 +72,26 @@ async function get(urlPath: string) {
 }
 
 describe('GET /api/posts/*', () => {
+  it('returns database metadata ahead of legacy Frontmatter', async () => {
+    saveDocumentMetadata(db, {
+      id: 'metadata-test', path: FIXTURE_PATH, title: 'Database title',
+      summary: 'Database summary', tags: ['database'], aliases: ['Syntax'],
+      createdAt: Date.UTC(2025, 0, 2), updatedAt: Date.UTC(2026, 1, 3),
+    })
+    const r = await get('/api/posts/' + FIXTURE_PATH)
+    const body = await r.json() as {
+      metadata: { id: string; title: string }
+      frontmatter: Record<string, unknown>
+      raw: string
+    }
+    expect(body.metadata).toMatchObject({ id: 'metadata-test', title: 'Database title' })
+    expect(body.frontmatter).toMatchObject({
+      title: 'Database title', summary: 'Database summary', tags: ['database'], aliases: ['Syntax'],
+      created: '2025-01-02', updated: '2026-02-03',
+    })
+    expect(body.raw).toContain('title: Markdown syntax quick reference')
+  })
+
   it('returns the markdown body with frontmatter stripped under `content`', async () => {
     const r = await get('/api/posts/' + FIXTURE_PATH)
     expect(r.status).toBe(200)

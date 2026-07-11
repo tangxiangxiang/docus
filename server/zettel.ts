@@ -3,10 +3,14 @@
 // /draft/batch is kept as a compatibility alias. New clients should
 // call /api/drafts/batch instead.
 import { Hono } from 'hono'
+import type { Database as DatabaseT } from 'better-sqlite3'
+import { getDb } from './db.js'
 import { writeDraftBatchHandler } from './drafts.js'
 
-const zettel = new Hono()
+export function createZettelRoutes(dbProvider: () => DatabaseT = getDb) {
+  const routes = new Hono()
+  routes.post('/draft/batch', (c) => writeDraftBatchHandler(c, dbProvider()))
+  return routes
+}
 
-zettel.post('/draft/batch', writeDraftBatchHandler)
-
-export default zettel
+export default createZettelRoutes()

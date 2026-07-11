@@ -13,6 +13,8 @@ import path from 'node:path'
 import app from './index.ts'
 import { CONTENT_DIR } from './paths.ts'
 import { ensureInitialFolders } from './seed.ts'
+import { getDb } from './db.ts'
+import { migrateVaultMetadata } from './metadataMigration.ts'
 
 const PORT = Number(process.env.PORT ?? 3000)
 const HOST = process.env.HOST ?? '0.0.0.0'
@@ -48,7 +50,9 @@ app.get('*', async (c) => {
 // folders and files are left alone; only missing roots are created.
 // See server/seed.ts for the rationale.
 await ensureInitialFolders(CONTENT_DIR)
+const metadataReport = await migrateVaultMetadata(getDb(), CONTENT_DIR)
 console.log(`[docus] content dir: ${CONTENT_DIR}`)
+console.log(`[docus] metadata migration: ${JSON.stringify(metadataReport)}`)
 
 serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
   console.log(`[docus] listening on http://${info.address}:${info.port}`)

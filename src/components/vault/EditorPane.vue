@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
 import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+import { resolveWikiTarget } from '../../lib/linkResolve'
 import {
   indentMarkdownLine,
   MARKDOWN_CODE_LANGUAGES,
@@ -29,6 +30,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   'open-link': [path: string]
+  'scroll-change': [fraction: number]
 }>()
 
 const host = ref<HTMLDivElement | null>(null)
@@ -43,9 +45,17 @@ let composing = false
 let decorationTimer: ReturnType<typeof setTimeout> | null = null
 const VIEW_STATE_KEY = 'docus.monaco.view-state'
 const RECENT_LINKS_KEY = 'docus.monaco.recent-wiki-links'
+// `ScrollType` is type-only in Monaco's ESM build; 1 is Immediate.
+const IMMEDIATE_SCROLL = 1
+let linkPaths: string[] = []
+let targetsByPath = new Map<string, EditorLinkTarget>()
+const resolvedLinkCache = new Map<string, string | null>()
 
 function recentLinks(): string[] {
-  try { return JSON.parse(localStorage.getItem(RECENT_LINKS_KEY) ?? '[]') as string[] }
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(RECENT_LINKS_KEY) ?? '[]')
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []
+  }
   catch { return [] }
 }
 
@@ -108,10 +118,25 @@ function saveViewState() {
   } catch { /* best effort */ }
 }
 
+function rebuildLinkIndex() {
+  linkPaths = (props.linkTargets ?? []).map((target) => target.path)
+  targetsByPath = new Map((props.linkTargets ?? []).map((target) => [target.path, target]))
+  resolvedLinkCache.clear()
+}
+
+rebuildLinkIndex()
+
 function refreshMarkdownDecorations() {
   if (!editor || !model) return
-  const validWikiPaths = new Set((props.linkTargets ?? []).map((target) => target.path))
-  const decorations: monaco.editor.IModelDeltaDecoration[] = markdownDecorationSpecs(model.getValue(), validWikiPaths).map((spec) => ({
+  const visible = editor.getVisibleRanges()[0]
+  const startLine = Math.max(1, (visible?.startLineNumber ?? 1) - 100)
+  const endLine = Math.min(model.getLineCount(), (visible?.endLineNumber ?? Math.min(300, model.getLineCount())) + 100)
+  const text = model.getValueInRange(new monaco.Range(startLine, 1, endLine, model.getLineMaxColumn(endLine)))
+  const decorations: monaco.editor.IModelDeltaDecoration[] = markdownDecorationSpecs(
+    text,
+    (ref) => resolvedWikiPath(ref) !== null,
+    startLine - 1,
+  ).map((spec) => ({
     range: new monaco.Range(spec.startLineNumber, spec.startColumn, spec.endLineNumber, spec.endColumn),
     options: {
       isWholeLine: Boolean(spec.className),
@@ -120,6 +145,11 @@ function refreshMarkdownDecorations() {
     },
   }))
   decorationIds = editor.deltaDecorations(decorationIds, decorations)
+}
+
+function resolvedWikiPath(ref: string): string | null {
+  if (!resolvedLinkCache.has(ref)) resolvedLinkCache.set(ref, resolveWikiTarget(ref, props.path, linkPaths))
+  return resolvedLinkCache.get(ref) ?? null
 }
 
 function scheduleMarkdownDecorations() {
@@ -185,7 +215,8 @@ const hover = monaco.languages.registerHoverProvider('markdown', {
     const line = currentModel.getLineContent(position.lineNumber)
     const path = wikiLinkAtColumn(line, position.column - 1)
     if (!path) return null
-    const target = props.linkTargets?.find((item) => item.path === path)
+    const resolvedPath = resolvedWikiPath(path)
+    const target = resolvedPath ? targetsByPath.get(resolvedPath) : undefined
     return {
       contents: target
         ? [{ value: `**${target.title || target.path}**` }, { value: `\`${target.path}\`` }]
@@ -214,6 +245,16 @@ onMounted(() => {
     renderLineHighlight: 'line',
     scrollBeyondLastLine: false,
     smoothScrolling: true,
+    overviewRulerLanes: 0,
+    hideCursorInOverviewRuler: true,
+    overviewRulerBorder: false,
+    scrollbar: {
+      verticalScrollbarSize: 6,
+      horizontalScrollbarSize: 6,
+      verticalSliderSize: 6,
+      horizontalSliderSize: 6,
+      useShadows: false,
+    },
     stickyScroll: { enabled: false },
     bracketPairColorization: { enabled: false },
     // Full-width Chinese punctuation such as `）` is ordinary prose in
@@ -256,6 +297,12 @@ onMounted(() => {
     composing = false
     if (!suppressChange && model) emit('update:modelValue', model.getValue())
   })
+  editor.onDidScrollChange((event) => {
+    if (!editor || !event.scrollTopChanged) return
+    const max = Math.max(0, editor.getScrollHeight() - editor.getLayoutInfo().height)
+    emit('scroll-change', max > 0 ? editor.getScrollTop() / max : 0)
+    scheduleMarkdownDecorations()
+  })
   editor.addAction({
     id: 'docus.markdown-enter',
     label: 'Continue Markdown list',
@@ -289,6 +336,13 @@ onMounted(() => {
         if (!model) return
         const selection = instance.getSelection()
         if (!selection) return
+        const isMultiLine = selection.startLineNumber !== selection.endLineNumber
+        const currentLine = model.getLineContent(selection.startLineNumber)
+        const isList = /^\s*(?:[-+*]|\d+\.|- \[[ xX]\])\s/.test(currentLine)
+        if (!isMultiLine && !isList) {
+          instance.executeEdits(id, [{ range: selection, text: '\t' }])
+          return
+        }
         const endLine = selection.endColumn === 1 && selection.endLineNumber > selection.startLineNumber
           ? selection.endLineNumber - 1
           : selection.endLineNumber
@@ -305,7 +359,9 @@ onMounted(() => {
   editor.onMouseDown((event) => {
     const position = event.target.position
     if (!model || !position || (!event.event.ctrlKey && !event.event.metaKey)) return
-    const path = wikiLinkAtColumn(model.getLineContent(position.lineNumber), position.column - 1)
+    const ref = wikiLinkAtColumn(model.getLineContent(position.lineNumber), position.column - 1)
+    if (!ref) return
+    const path = resolvedWikiPath(ref)
     if (!path) return
     recordRecentLink(path)
     emit('open-link', path)
@@ -338,7 +394,10 @@ watch(() => props.focusWidth, (focused) => {
   editor?.updateOptions({ wordWrap: focused ? 'wordWrapColumn' : 'on', wordWrapColumn: 100 })
 })
 
-watch(() => props.linkTargets, scheduleMarkdownDecorations, { deep: true })
+watch(() => props.linkTargets, () => {
+  rebuildLinkIndex()
+  scheduleMarkdownDecorations()
+}, { deep: true })
 
 onBeforeUnmount(() => {
   saveViewState()
@@ -356,6 +415,11 @@ onBeforeUnmount(() => {
 defineExpose({
   focus: () => editor?.focus(),
   getScrollEl: () => host.value?.querySelector<HTMLElement>('.monaco-scrollable-element.editor-scrollable') ?? null,
+  setScrollFraction: (fraction: number) => {
+    if (!editor) return
+    const max = Math.max(0, editor.getScrollHeight() - editor.getLayoutInfo().height)
+    editor.setScrollTop(Math.max(0, Math.min(1, fraction)) * max, IMMEDIATE_SCROLL)
+  },
 })
 </script>
 

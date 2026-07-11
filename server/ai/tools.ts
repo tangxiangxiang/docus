@@ -11,6 +11,7 @@
 // client's editor can refresh any open tab on that path.
 
 import Anthropic from '@anthropic-ai/sdk'
+import type { Database as DatabaseT } from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
 import matter from 'gray-matter'
@@ -20,8 +21,17 @@ import {
   folderPathFor,
 } from '../paths.js'
 import { naturalPathCompare } from '../tree.js'
+import { getDb } from '../db.js'
+import {
+  deleteDocumentMetadata,
+  ensureDocumentMetadata,
+  getDocumentMetadata,
+  moveDocumentMetadata,
+  saveDocumentMetadata,
+} from '../documentMetadata.js'
+import { trackCleanedDocumentWrite } from '../metadataMigration.js'
 
-export type ToolContext = { signal: AbortSignal }
+export type ToolContext = { signal: AbortSignal; db?: DatabaseT }
 
 export type FileChangeKind = 'write' | 'delete' | 'rename'
 
@@ -197,7 +207,7 @@ function err(content: string): ToolResult {
   return { content, isError: true }
 }
 
-function executeReadFile(input: { path?: string }): ToolResult {
+function executeReadFile(input: { path?: string }, db: DatabaseT): ToolResult {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('read_file: `path` is required')
   }
@@ -215,6 +225,7 @@ function executeReadFile(input: { path?: string }): ToolResult {
     raw: truncate(bundle.raw, MAX_READ_CHARS, `\n\n[... file truncated; total ${bundle.stat.size} bytes ...]`),
     content: bundle.content,
     frontmatter: bundle.frontmatter,
+    metadata: getDocumentMetadata(db, input.path),
     size: bundle.stat.size,
     mtime: bundle.stat.mtimeMs,
   }
@@ -264,7 +275,7 @@ function executeListFiles(input: { scope?: string }): ToolResult {
   return ok(JSON.stringify(out, null, 2))
 }
 
-function executeCreateFile(input: { path?: string; content?: string }): ToolResult {
+function executeCreateFile(input: { path?: string; content?: string }, db: DatabaseT): ToolResult {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('create_file: `path` is required')
   }
@@ -281,9 +292,14 @@ function executeCreateFile(input: { path?: string; content?: string }): ToolResu
     return err(`create_file: file already exists: ${input.path}. Use write_file to overwrite.`)
   }
   try {
+    deleteDocumentMetadata(db, input.path)
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     fs.writeFileSync(abs, input.content, 'utf8')
+    const stat = fs.statSync(abs)
+    ensureDocumentMetadata(db, input.path, input.content, stat.mtimeMs, Date.now())
+    trackCleanedDocumentWrite(db, input.path, input.content)
   } catch (e) {
+    try { fs.rmSync(abs, { force: true }) } catch { /* best-effort compensation */ }
     return err(`create_file: ${(e as Error).message}`)
   }
   const stat = fs.statSync(abs)
@@ -295,7 +311,7 @@ function executeCreateFile(input: { path?: string; content?: string }): ToolResu
   })
 }
 
-function executeWriteFile(input: { path?: string; content?: string }): ToolResult {
+function executeWriteFile(input: { path?: string; content?: string }, db: DatabaseT): ToolResult {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('write_file: `path` is required')
   }
@@ -308,10 +324,26 @@ function executeWriteFile(input: { path?: string; content?: string }): ToolResul
   } catch (e) {
     return err(`write_file: ${(e as Error).message}`)
   }
+  const existed = fs.existsSync(abs)
+  let previousRaw = ''
   try {
+    if (existed) {
+      previousRaw = fs.readFileSync(abs, 'utf8')
+      const previousStat = fs.statSync(abs)
+      ensureDocumentMetadata(db, input.path, previousRaw, previousStat.mtimeMs)
+    } else {
+      deleteDocumentMetadata(db, input.path)
+    }
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     fs.writeFileSync(abs, input.content, 'utf8')
+    const stat = fs.statSync(abs)
+    ensureDocumentMetadata(db, input.path, input.content, stat.mtimeMs, Date.now())
+    trackCleanedDocumentWrite(db, input.path, input.content)
   } catch (e) {
+    try {
+      if (existed) fs.writeFileSync(abs, previousRaw, 'utf8')
+      else fs.rmSync(abs, { force: true })
+    } catch { /* best-effort compensation */ }
     return err(`write_file: ${(e as Error).message}`)
   }
   const stat = fs.statSync(abs)
@@ -328,7 +360,7 @@ function executePatchFile(input: {
   old_string?: string
   new_string?: string
   replace_all?: boolean
-}): ToolResult {
+}, db: DatabaseT): ToolResult {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('patch_file: `path` is required')
   }
@@ -411,8 +443,13 @@ function executePatchFile(input: {
     ? bundle.raw.split(input.old_string).join(input.new_string)
     : bundle.raw.replace(input.old_string, input.new_string)
   try {
+    ensureDocumentMetadata(db, input.path, bundle.raw, bundle.stat.mtimeMs)
     fs.writeFileSync(bundle.abs, updated, 'utf8')
+    const stat = fs.statSync(bundle.abs)
+    ensureDocumentMetadata(db, input.path, updated, stat.mtimeMs, Date.now())
+    trackCleanedDocumentWrite(db, input.path, updated)
   } catch (e) {
+    try { fs.writeFileSync(bundle.abs, bundle.raw, 'utf8') } catch { /* best-effort compensation */ }
     return err(`patch_file: ${(e as Error).message}`)
   }
   const stat = fs.statSync(bundle.abs)
@@ -427,7 +464,7 @@ function executePatchFile(input: {
   )
 }
 
-function executeDeleteFile(input: { path?: string }): ToolResult {
+function executeDeleteFile(input: { path?: string }, db: DatabaseT): ToolResult {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('delete_file: `path` is required')
   }
@@ -437,9 +474,19 @@ function executeDeleteFile(input: { path?: string }): ToolResult {
   } catch (e) {
     return err(`delete_file: ${(e as Error).message}`)
   }
+  const staged = `${abs}.docus-delete-${Date.now()}`
+  const previousMetadata = getDocumentMetadata(db, input.path)
   try {
-    fs.unlinkSync(abs)
+    fs.renameSync(abs, staged)
+    deleteDocumentMetadata(db, input.path)
+    fs.unlinkSync(staged)
   } catch (e) {
+    if (fs.existsSync(staged) && !fs.existsSync(abs)) {
+      try { fs.renameSync(staged, abs) } catch { /* best-effort compensation */ }
+    }
+    if (previousMetadata && !getDocumentMetadata(db, input.path)) {
+      try { saveDocumentMetadata(db, previousMetadata) } catch { /* best-effort compensation */ }
+    }
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
       return err(`delete_file: file does not exist: ${input.path}`)
     }
@@ -451,7 +498,7 @@ function executeDeleteFile(input: { path?: string }): ToolResult {
   })
 }
 
-function executeRenameFile(input: { path?: string; new_path?: string }): ToolResult {
+function executeRenameFile(input: { path?: string; new_path?: string }, db: DatabaseT): ToolResult {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('rename_file: `path` is required')
   }
@@ -480,10 +527,18 @@ function executeRenameFile(input: { path?: string; new_path?: string }): ToolRes
   }
   let raw: string
   try {
+    raw = fs.readFileSync(srcAbs, 'utf8')
+    const sourceStat = fs.statSync(srcAbs)
+    ensureDocumentMetadata(db, input.path, raw, sourceStat.mtimeMs)
+    // The target file was checked above, so a target row is orphaned.
+    deleteDocumentMetadata(db, input.new_path)
     fs.mkdirSync(path.dirname(dstAbs), { recursive: true })
     fs.renameSync(srcAbs, dstAbs)
-    raw = fs.readFileSync(dstAbs, 'utf8')
+    moveDocumentMetadata(db, input.path, input.new_path)
   } catch (e) {
+    if (fs.existsSync(dstAbs) && !fs.existsSync(srcAbs)) {
+      try { fs.renameSync(dstAbs, srcAbs) } catch { /* best-effort compensation */ }
+    }
     return err(`rename_file: ${(e as Error).message}`)
   }
   const stat = fs.statSync(dstAbs)
@@ -506,15 +561,16 @@ export async function executeToolCall(
   if (ctx.signal.aborted) {
     return err('aborted')
   }
+  const db = ctx.db ?? getDb()
   switch (name) {
     case 'read_file':
-      return executeReadFile(input as { path?: string })
+      return executeReadFile(input as { path?: string }, db)
     case 'list_files':
       return executeListFiles(input as { scope?: string })
     case 'create_file':
-      return executeCreateFile(input as { path?: string; content?: string })
+      return executeCreateFile(input as { path?: string; content?: string }, db)
     case 'write_file':
-      return executeWriteFile(input as { path?: string; content?: string })
+      return executeWriteFile(input as { path?: string; content?: string }, db)
     case 'patch_file':
       return executePatchFile(
         input as {
@@ -522,12 +578,12 @@ export async function executeToolCall(
           old_string?: string
           new_string?: string
           replace_all?: boolean
-        },
+        }, db,
       )
     case 'delete_file':
-      return executeDeleteFile(input as { path?: string })
+      return executeDeleteFile(input as { path?: string }, db)
     case 'rename_file':
-      return executeRenameFile(input as { path?: string; new_path?: string })
+      return executeRenameFile(input as { path?: string; new_path?: string }, db)
     default:
       return err(`unknown tool: ${name}`)
   }

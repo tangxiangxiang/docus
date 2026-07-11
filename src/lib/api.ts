@@ -1,12 +1,9 @@
 export interface PostSummary {
   path: string            // e.g. "hello-world" or "notes/draft" or "archive/2024/old" — relative to src/content/, no implicit prefix
   title: string
-  /** Frontmatter `created` field (YYYY-MM-DD, UTC). Falls back to the
-   *  legacy `date` field for older notes; empty string if neither is set. */
+  /** Database creation date (YYYY-MM-DD, UTC), with legacy Frontmatter fallback. */
   created: string
-  /** File mtime formatted as YYYY-MM-DD in UTC. Same source as `mtime`
-   *  (the canonical ms-since-epoch integer) but human-readable for
-   *  archive views. */
+  /** Database update date formatted as YYYY-MM-DD, with file mtime fallback. */
   updated: string
   tags: string[]
   summary?: string
@@ -26,8 +23,47 @@ export interface PostDetail {
    *  the raw field is what gets written back on save. */
   content: string
   frontmatter: Record<string, unknown>
+  metadata?: DocumentMetadata
   size: number
   mtime: number
+}
+
+export interface DocumentMetadata {
+  id: string
+  path: string
+  title: string
+  summary: string
+  tags: string[]
+  aliases: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export type UpdateDocumentMetadata = Pick<DocumentMetadata, 'title' | 'summary' | 'tags' | 'aliases'>
+
+export interface MetadataMigrationSummary {
+  total: number
+  legacy: number
+  imported: number
+  verified: number
+  cleaned: number
+  failed: number
+}
+
+export interface FrontmatterCleanupPreview {
+  candidates: Array<{
+    path: string
+    beforeBytes: number
+    afterBytes: number
+    removedBytes: number
+    customFields: string[]
+  }>
+  blocked: Array<{ path: string; reason: string }>
+}
+
+export interface FrontmatterMutationResult {
+  changed: Array<{ path: string; newRaw: string; newMtime: number }>
+  failed: Array<{ path: string; reason: string }>
 }
 
 async function jsonOrThrow<T>(r: Response): Promise<T> {
@@ -54,6 +90,60 @@ export async function listPosts(): Promise<PostSummary[]> {
 
 export async function getPost(path: string): Promise<PostDetail> {
   return jsonOrThrow<PostDetail>(await fetch('/api/posts/' + splat(path)))
+}
+
+export async function updateDocumentMetadata(
+  path: string,
+  input: UpdateDocumentMetadata,
+): Promise<DocumentMetadata> {
+  return jsonOrThrow<DocumentMetadata>(await fetch('/api/metadata/documents/' + splat(path), {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  }))
+}
+
+export async function getMetadataMigrationStatus(): Promise<{
+  running: boolean
+  summary: MetadataMigrationSummary
+  failures: Array<{ path: string; error: string }>
+  cleanedPaths: string[]
+}> {
+  return jsonOrThrow(await fetch('/api/metadata/migration'))
+}
+
+export async function cleanDocumentFrontmatter(paths: string[]): Promise<FrontmatterMutationResult> {
+  return jsonOrThrow(await fetch('/api/metadata/cleanup', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ paths, confirm: 'REMOVE_FRONTMATTER' }),
+  }))
+}
+
+export async function restoreDocumentFrontmatter(
+  paths: string[],
+  mode: 'canonical' | 'original' = 'original',
+): Promise<FrontmatterMutationResult> {
+  return jsonOrThrow(await fetch('/api/metadata/restore', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ paths, mode, confirm: 'RESTORE_FRONTMATTER' }),
+  }))
+}
+
+export async function getFrontmatterCleanupPreview(): Promise<FrontmatterCleanupPreview> {
+  return jsonOrThrow(await fetch('/api/metadata/cleanup/preview'))
+}
+
+export async function exportDocumentFrontmatter(
+  path: string,
+  mode: 'canonical' | 'original' = 'canonical',
+): Promise<string> {
+  const query = new URLSearchParams({ path, mode })
+  const result = await jsonOrThrow<{ frontmatter: string }>(
+    await fetch('/api/metadata/export?' + query.toString()),
+  )
+  return result.frontmatter
 }
 
 export async function createPost(input: { path: string; title?: string }): Promise<PostSummary> {
@@ -105,7 +195,7 @@ export interface Link {
 export interface LinkIndexSnapshot {
   paths: string[]
   outgoing: Record<string, Link[]>
-  /** path -> display title (frontmatter.title -> first H1 -> filename). */
+  /** path -> display title (database metadata -> Frontmatter -> first H1 -> filename). */
   titles?: Record<string, string>
 }
 

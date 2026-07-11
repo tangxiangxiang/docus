@@ -3,6 +3,9 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { listPostsFlat, buildTree, listSubtreePaths } from '../tree.js'
+import Database from 'better-sqlite3'
+import { applyMigrations } from '../db.js'
+import { saveDocumentMetadata } from '../documentMetadata.js'
 
 let sandbox: string
 
@@ -21,6 +24,23 @@ afterEach(async () => {
 })
 
 describe('listPostsFlat', () => {
+  it('prefers database metadata while retaining file statistics', async () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    saveDocumentMetadata(db, {
+      path: 'hello', title: 'Database title', summary: 'Database summary', tags: ['database'],
+      createdAt: Date.UTC(2025, 0, 2), updatedAt: Date.UTC(2026, 1, 3),
+    })
+    const posts = await listPostsFlat(sandbox, db)
+    const hello = posts.find((post) => post.path === 'hello')!
+    expect(hello).toMatchObject({
+      title: 'Database title', summary: 'Database summary', tags: ['database'],
+      created: '2025-01-02', updated: '2026-02-03',
+    })
+    expect(hello.size).toBeGreaterThan(0)
+    db.close()
+  })
+
   it('returns all .md files as PostSummary-shaped objects', async () => {
     const posts = await listPostsFlat(sandbox)
     const paths = posts.map((p) => p.path).sort()

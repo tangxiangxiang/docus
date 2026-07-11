@@ -11,7 +11,8 @@ import { useToast } from '../composables/useToast'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { useTagFilter } from '../composables/vault/useTagFilter'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
-import { getLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
+import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
+import type { DocumentMetadata } from '../lib/api'
 import { resolveWikiTarget } from '../lib/linkResolve'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import FileTree from '../components/vault/FileTree.vue'
@@ -24,6 +25,7 @@ import TocPanel from '../components/vault/TocPanel.vue'
 import EmptyState from '../components/vault/EmptyState.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
 import SettingsModal from '../components/vault/SettingsModal.vue'
+import DocumentMetadataModal from '../components/vault/DocumentMetadataModal.vue'
 import HistoryPanel from '../components/vault/HistoryPanel.vue'
 import DiffView from '../components/vault/DiffView.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
@@ -39,6 +41,7 @@ const EditorPane = defineAsyncComponent(() => import('../components/vault/Editor
    CommandPalette. We watch the tick and call show() each time. */
 const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
 const settingsOpen = ref(false)
+const metadataOpen = ref(false)
 const editorFocusWidth = useStorage('docus.editor.focus-width', true)
 
 /* Platform-aware shortcut display for the empty-state hint chips.
@@ -138,6 +141,12 @@ const toast = useToast()
 // template binding resolves cleanly. startDrag takes the host as a parameter.
 const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
+type EditorScrollApi = { setScrollFraction: (fraction: number) => void }
+const editorRefs = new Map<string, EditorScrollApi>()
+function setEditorRef(path: string, instance: unknown) {
+  if (instance) editorRefs.set(path, instance as EditorScrollApi)
+  else editorRefs.delete(path)
+}
 function openSearch() { paletteRef.value?.show() }
 
 /* Publish our selectPanel to children that need to close the graph
@@ -175,13 +184,27 @@ const {
   tree, posts, tabs, activePath, activeTab, isDirty, activeSize,
   refresh, openPost, closeTab, closeMany, selectTab, onEditorChange, onKeydown, onCommandPaletteNew,
 } = useEditorTabs({ selectPanel, togglePreview })
+const editorLinkTargets = computed(() => posts.value.map((post) => ({ path: post.path, title: post.title })))
+
+async function onMetadataSaved(metadata: DocumentMetadata) {
+  const tab = tabs.value.find((item) => item.path === metadata.path)
+  if (tab) tab.title = metadata.title
+  metadataOpen.value = false
+  await Promise.all([refresh(), refreshLinkIndex()])
+}
+
+watch(activePath, () => { metadataOpen.value = false })
 
 /* Mirror the editor's scroll position onto the preview pane (and
    vice versa) so the two stay aligned as the user scrolls in edit
    mode. Read-only at the VaultView level — the composable finds the
    right scroll containers inside the vault root via data-path
    selectors. Wired after useEditorTabs because we need activePath. */
-useEditorPreviewScrollSync({ vaultRoot: vaultRef, activePath })
+const editorPreviewScroll = useEditorPreviewScrollSync({
+  vaultRoot: vaultRef,
+  activePath,
+  setEditorScrollFraction: (path, fraction) => editorRefs.get(path)?.setScrollFraction(fraction),
+})
 
 /* ---------- Scope filter (NavBar chips) ---------- */
 // useScopeFilter is called here so the singleton state is wired up
@@ -241,6 +264,13 @@ watch(() => navSearch?.tick.value, () => openSearch())
     <SettingsModal
       :open="settingsOpen"
       @close="settingsOpen = false"
+    />
+
+    <DocumentMetadataModal
+      :open="metadataOpen"
+      :path="activePath"
+      @close="metadataOpen = false"
+      @saved="onMetadataSaved"
     />
 
     <FileTree
@@ -319,22 +349,23 @@ watch(() => navSearch?.tick.value, () => openSearch())
       <!-- Edit mode: editor + preview side-by-side, draggable mid-splitter. -->
       <div v-else-if="!isReadMode" class="content" :style="contentStyle">
         <div
-          v-for="t in tabs"
-          v-show="t.path === activePath"
-          :key="t.path"
+          v-if="activeTab"
+          :key="activeTab.path"
           class="editor-pane"
-          :data-path="t.path"
+          :data-path="activeTab.path"
         >
-          <div v-if="t.loading" class="empty">正在加载 {{ t.path }}…</div>
-          <div v-else-if="t.loadError" class="empty error">{{ t.loadError }}</div>
+          <div v-if="activeTab.loading" class="empty">正在加载 {{ activeTab.path }}…</div>
+          <div v-else-if="activeTab.loadError" class="empty error">{{ activeTab.loadError }}</div>
           <EditorPane
             v-else
-            :model-value="t.raw"
-            :path="t.path"
+            :ref="(instance: unknown) => setEditorRef(activePath!, instance)"
+            :model-value="activeTab.raw"
+            :path="activeTab.path"
             :focus-width="editorFocusWidth"
-            :link-targets="posts.map((post) => ({ path: post.path, title: post.title }))"
-            @update:model-value="(val: string) => onEditorChange(t.path, val)"
+            :link-targets="editorLinkTargets"
+            @update:model-value="(val: string) => onEditorChange(activePath!, val)"
             @open-link="openPost"
+            @scroll-change="(fraction: number) => editorPreviewScroll.syncPreviewFromEditor(activePath!, fraction)"
           />
         </div>
         <div v-if="!tabs.length" class="content-empty">
@@ -355,15 +386,13 @@ watch(() => navSearch?.tick.value, () => openSearch())
           @pointerdown="startDrag(vaultRef!, 'middle', $event)"
         />
 
-        <template v-if="previewOpen">
+        <template v-if="previewOpen && activeTab">
           <div
-            v-for="t in tabs"
-            v-show="t.path === activePath"
-            :key="`p-${t.path}`"
+            :key="`p-${activeTab.path}`"
             class="preview-pane"
-            :data-path="t.path"
+            :data-path="activeTab.path"
           >
-            <PreviewPane v-if="!t.loading && !t.loadError" :raw="t.raw" :resolver="wikiResolver" />
+            <PreviewPane v-if="!activeTab.loading && !activeTab.loadError" :raw="activeTab.raw" :resolver="wikiResolver" />
           </div>
         </template>
       </div>
@@ -466,6 +495,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
       :dirty="isDirty"
       :focus-width="editorFocusWidth"
       @toggle-focus-width="editorFocusWidth = !editorFocusWidth"
+      @open-metadata="metadataOpen = true"
     />
 
     <CommandPalette

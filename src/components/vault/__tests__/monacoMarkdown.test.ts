@@ -77,6 +77,11 @@ describe('Monaco Markdown helpers', () => {
     expect(specs.map((spec) => spec.inlineClassName)).toContain('monaco-md-link-invalid')
   })
 
+  it('offsets decoration line numbers for visible-range scans', () => {
+    const specs = markdownDecorationSpecs('## Visible heading', undefined, 99)
+    expect(specs[0].startLineNumber).toBe(100)
+  })
+
   it('handles a long Chinese document without losing line positions', () => {
     const document = Array.from({ length: 2_000 }, (_, index) =>
       index % 10 === 0 ? `## 第 ${index} 节` : `这是第 ${index} 行，包含中文标点（测试）。`,

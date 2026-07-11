@@ -19,8 +19,7 @@ import { onBeforeUnmount, watch, type Ref } from 'vue'
    We guard with a `syncing` flag because setting scrollTop
    programmatically fires its own scroll event; without the guard we'd
    ping-pong between the two listeners. The flag is released in the
-   next animation frame, which is well after the synchronous
-   "scroll" event dispatched by setting scrollTop.
+   next animation frame.
 
    We use **event delegation on the vault root** (capture phase)
    rather than attaching listeners directly to the inner scrollers.
@@ -69,21 +68,13 @@ function scrollMax(el: HTMLElement): number {
 export function useEditorPreviewScrollSync(opts: {
   vaultRoot: Ref<HTMLElement | null>
   activePath: Ref<string | null>
+  setEditorScrollFraction?: (path: string, fraction: number) => void
 }) {
-  /* Set while we are programmatically scrolling the other pane.
-     Releasing in rAF ensures the "scroll" event fired by our own
-     scrollTop assignment is suppressed before we accept new
-     user-driven scrolls. */
   let syncing = false
   let pendingRelease: number | null = null
 
-  function syncTo(src: HTMLElement, dst: HTMLElement) {
-    const srcMax = scrollMax(src)
-    const dstMax = scrollMax(dst)
-    if (srcMax <= 0 || dstMax <= 0) return
-    const target = (src.scrollTop / srcMax) * dstMax
+  function beginSync() {
     syncing = true
-    dst.scrollTop = target
     if (pendingRelease !== null) cancelAnimationFrame(pendingRelease)
     pendingRelease = requestAnimationFrame(() => {
       syncing = false
@@ -92,13 +83,6 @@ export function useEditorPreviewScrollSync(opts: {
   }
 
   function onScroll(e: Event) {
-    /* Belt-and-suspenders guard: in addition to the rAF release we
-       also release here on the first echo we observe. The relative
-       ordering of "scroll" event and rAF callback differs across
-       browsers (Chrome typically dispatches the scroll event before
-       rAF; some others fire rAF first). Releasing in either path
-       means we never get stuck, and we never drop a real user scroll
-       more than once even in the worst-case race. */
     if (syncing) {
       syncing = false
       if (pendingRelease !== null) {
@@ -117,10 +101,9 @@ export function useEditorPreviewScrollSync(opts: {
            the actual scroll container (see the long comment at the
            top of this file). closest('.preview-pane') on the
            wrapper element returns itself. */
-    const editorPane = target.closest<HTMLElement>('.editor-pane')
     const previewPane = target.closest<HTMLElement>('.preview-pane')
-    if (!editorPane && !previewPane) return
-    const wrapper = (editorPane ?? previewPane)!
+    if (!previewPane) return
+    const wrapper = previewPane
     const path = wrapper.getAttribute('data-path')
     if (!path || path !== opts.activePath.value) return  // inactive tab
     const root = opts.vaultRoot.value
@@ -130,15 +113,29 @@ export function useEditorPreviewScrollSync(opts: {
          scroll, NOT the .article inside it — see the long comment).
        - preview→editor: query Monaco's .editor-scrollable;
          .editor-pane has no overflow). */
-    const previewSel = `.preview-pane[data-path="${attrEscape(path)}"]`
-    const editorSel = `.editor-pane[data-path="${attrEscape(path)}"] .monaco-scrollable-element.editor-scrollable`
-    if (editorPane) {
-      const preview = root.querySelector<HTMLElement>(previewSel)
-      if (preview) syncTo(target, preview)
-    } else if (previewPane) {
-      const editor = root.querySelector<HTMLElement>(editorSel)
-      if (editor) syncTo(target, editor)
+    const fraction = target.scrollTop / Math.max(1, scrollMax(target))
+    if (opts.setEditorScrollFraction) {
+      beginSync()
+      opts.setEditorScrollFraction(path, fraction)
     }
+  }
+
+  function syncPreviewFromEditor(path: string, fraction: number) {
+    /* Note: we do NOT check `syncing` here. The flag protects
+       onScroll from echoing the programmatic scrollTop we just
+       assigned; gating THIS entry point on the same flag would
+       drop the second of two rapid user scrolls that arrive inside
+       the same rAF window (Monaco fires onDidScrollChange →
+       scroll-change continuously while the user wheels, each one
+       of which must reach the preview). The path check still
+       blocks inactive tabs. */
+    if (path !== opts.activePath.value) return
+    const root = opts.vaultRoot.value
+    if (!root) return
+    const preview = root.querySelector<HTMLElement>(`.preview-pane[data-path="${attrEscape(path)}"]`)
+    if (!preview || scrollMax(preview) <= 0) return
+    beginSync()
+    preview.scrollTop = Math.max(0, Math.min(1, fraction)) * scrollMax(preview)
   }
 
   function attach() {
@@ -180,4 +177,5 @@ export function useEditorPreviewScrollSync(opts: {
   )
 
   onBeforeUnmount(detach)
+  return { syncPreviewFromEditor }
 }

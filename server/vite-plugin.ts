@@ -5,11 +5,16 @@ import dotenv from 'dotenv'
 dotenv.config({ override: true })
 import type { Plugin } from 'vite'
 import app from './index.ts'
+import { CONTENT_DIR } from './paths.ts'
+import { getDb } from './db.ts'
+import { migrateVaultMetadata } from './metadataMigration.ts'
 
 export function serverPlugin(): Plugin {
   return {
     name: 'docus-server',
-    configureServer(server) {
+    async configureServer(server) {
+      const report = await migrateVaultMetadata(getDb(), CONTENT_DIR)
+      console.log(`[docus] metadata migration: ${JSON.stringify(report)}`)
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith('/api/')) return next()
         const url = `http://localhost${req.url}`

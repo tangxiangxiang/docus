@@ -100,16 +100,19 @@ function flushRaf() {
    watchers and lifecycle hooks fire. effectScope gives us a
    disposable scope without the overhead of mounting a component
    and dealing with the test-utils lifecycle. */
-function runWith(opts: { root: HTMLElement; path: string }) {
+function runWith(opts: { root: HTMLElement; path: string; setEditorScrollFraction?: (path: string, fraction: number) => void }) {
   const vaultRoot = ref<HTMLElement | null>(opts.root)
   const activePath = ref<string | null>(opts.path)
   const scope = effectScope()
-  scope.run(() => {
-    useEditorPreviewScrollSync({ vaultRoot, activePath })
-  })
+  const api = scope.run(() => useEditorPreviewScrollSync({
+    vaultRoot,
+    activePath,
+    setEditorScrollFraction: opts.setEditorScrollFraction,
+  }))!
   return {
     vaultRoot,
     activePath,
+    api,
     stop: () => scope.stop(),
   }
 }
@@ -119,7 +122,7 @@ describe('useEditorPreviewScrollSync', () => {
     const { root, editorScroll, previewScroll } = buildVault()
     stubLayout(editorScroll, 2000, 400)  // editorMax = 1600
     stubLayout(previewScroll, 3000, 600) // previewMax = 2400
-    runWith({ root, path: 'x' })
+    const { api } = runWith({ root, path: 'x' })
 
     /* flush:'post' watcher + rAF — both must run before the listener
        is attached. */
@@ -127,7 +130,7 @@ describe('useEditorPreviewScrollSync', () => {
     await Promise.resolve()
 
     /* editor at 50% → preview should land at 50% too. 0.5 * 2400 = 1200. */
-    scrollEl(editorScroll, 800)
+    api.syncPreviewFromEditor('x', 0.5)
     expect(previewScroll.scrollTop).toBe(1200)
   })
 
@@ -135,25 +138,27 @@ describe('useEditorPreviewScrollSync', () => {
     const { root, editorScroll, previewScroll } = buildVault()
     stubLayout(editorScroll, 2000, 400)
     stubLayout(previewScroll, 3000, 600)
-    runWith({ root, path: 'x' })
+    const setEditorScrollFraction = vi.fn()
+    runWith({ root, path: 'x', setEditorScrollFraction })
     flushRaf()
     await Promise.resolve()
 
     /* preview at 25% → editor at 25%. 0.25 * 1600 = 400. */
     scrollEl(previewScroll, 600)
-    expect(editorScroll.scrollTop).toBe(400)
+    expect(setEditorScrollFraction).toHaveBeenCalledWith('x', 0.25)
   })
 
   it('suppresses the echo scroll event to avoid feedback loop', async () => {
     const { root, editorScroll, previewScroll } = buildVault()
     stubLayout(editorScroll, 2000, 400)
     stubLayout(previewScroll, 3000, 600)
-    runWith({ root, path: 'x' })
+    const setEditorScrollFraction = vi.fn()
+    const { api } = runWith({ root, path: 'x', setEditorScrollFraction })
     flushRaf()
     await Promise.resolve()
 
     /* User scrolls the editor → preview scrolls to 1200. */
-    scrollEl(editorScroll, 800)
+    api.syncPreviewFromEditor('x', 0.5)
     expect(previewScroll.scrollTop).toBe(1200)
 
     /* In a real browser setting preview.scrollTop fires a scroll
@@ -166,10 +171,26 @@ describe('useEditorPreviewScrollSync', () => {
        the assertion meaningful we move the editor's scrollTop out
        of the sync target first; the echo then has a value to reset
        it from. */
-    editorScroll.scrollTop = 400
     previewScroll.dispatchEvent(new Event('scroll', { bubbles: true }))
-    /* Echo was suppressed → editor is still at 400, not 800. */
-    expect(editorScroll.scrollTop).toBe(400)
+    expect(setEditorScrollFraction).not.toHaveBeenCalled()
+
+  })
+
+  it('keeps syncing during rapid consecutive scroll-change events', async () => {
+    const { root, editorScroll, previewScroll } = buildVault()
+    stubLayout(editorScroll, 2000, 400)  // editorMax = 1600
+    stubLayout(previewScroll, 3000, 600) // previewMax = 2400
+    const { api } = runWith({ root, path: 'x' })
+    flushRaf()
+    await Promise.resolve()
+
+    /* Two scroll-change calls within the same rAF window. The first
+       flips syncing=true; without the gate inside syncPreviewFromEditor
+       the second call would also be dropped — preview would stay at
+       0.5 even though the editor asked for 0.75. */
+    api.syncPreviewFromEditor('x', 0.5)
+    api.syncPreviewFromEditor('x', 0.75)
+    expect(previewScroll.scrollTop).toBe(1800)
   })
 
   it('does not sync inactive tabs', async () => {

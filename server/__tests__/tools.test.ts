@@ -6,7 +6,8 @@
 // This mirrors the `fs.mkdtemp` pattern used by `tree.test.ts` and
 // keeps the test files completely out of the real `src/content/`.
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
+import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -17,6 +18,8 @@ import {
   readPostIfExists,
   type ToolContext,
 } from '../ai/tools'
+import { applyMigrations } from '../db'
+import { getDocumentMetadata } from '../documentMetadata'
 
 const ORIGINAL_CONTENT_DIR = CONTENT_DIR
 
@@ -34,7 +37,16 @@ function writeFile(relPath: string, content: string): string {
   return abs
 }
 
-const ctx: ToolContext = { signal: new AbortController().signal }
+const db = new Database(':memory:')
+db.pragma('foreign_keys = ON')
+applyMigrations(db)
+const ctx: ToolContext = { signal: new AbortController().signal, db }
+
+beforeEach(() => {
+  db.exec('DELETE FROM documents; DELETE FROM tags;')
+})
+
+afterAll(() => db.close())
 
 // --- readPostIfExists -------------------------------------------------------
 
@@ -146,6 +158,7 @@ describe('create_file', () => {
     expect(r.changed?.kind).toBe('write')
     expect(r.changed?.path).toBe('a/new')
     expect(fs.readFileSync(path.join(contentDir, 'a/new.md'), 'utf8')).toBe('hello')
+    expect(getDocumentMetadata(db, 'a/new')?.title).toBe('new')
   })
 
   it('fails if the file already exists', async () => {
@@ -170,6 +183,7 @@ describe('write_file', () => {
     expect(r.isError).toBe(false)
     expect(r.changed?.kind).toBe('write')
     expect(fs.readFileSync(path.join(contentDir, 'a/x.md'), 'utf8')).toBe('new')
+    expect(getDocumentMetadata(db, 'a/x')?.updatedAt).toBeGreaterThan(0)
   })
 
   it('creates a new file in a fresh subdirectory', async () => {
@@ -251,6 +265,7 @@ describe('delete_file', () => {
     expect(r.changed?.kind).toBe('delete')
     expect(r.changed?.path).toBe('a/x')
     expect(fs.existsSync(path.join(contentDir, 'a/x.md'))).toBe(false)
+    expect(getDocumentMetadata(db, 'a/x')).toBeNull()
   })
 
   it('returns is_error when the file does not exist', async () => {
@@ -277,6 +292,8 @@ describe('rename_file', () => {
     expect(r.changed?.newRaw).toBe('hello')
     expect(fs.existsSync(path.join(contentDir, 'a/old.md'))).toBe(false)
     expect(fs.readFileSync(path.join(contentDir, 'a/new.md'), 'utf8')).toBe('hello')
+    expect(getDocumentMetadata(db, 'a/old')).toBeNull()
+    expect(getDocumentMetadata(db, 'a/new')?.title).toBe('old')
   })
 
   it('rejects when source equals target', async () => {

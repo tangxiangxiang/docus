@@ -1,11 +1,14 @@
 // Batch write tests. We hit the route in-process and inspect the
 // resulting files on disk under a temp directory.
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest'
+import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import draftsRoutes from '../drafts.js'
-import zettelRoutes from '../zettel.js'
+import { createDraftRoutes } from '../drafts.js'
+import { createZettelRoutes } from '../zettel.js'
+import { applyMigrations } from '../db.js'
+import { getDocumentMetadata } from '../documentMetadata.js'
 
 // Stub resolveApiKey so the route doesn't 503.
 vi.mock('../ai/llm.js', () => ({ resolveApiKey: () => 'test-key' }))
@@ -22,11 +25,20 @@ vi.mock('../paths.js', async (importOriginal) => {
   }
 })
 
+const db = new Database(':memory:')
+db.pragma('foreign_keys = ON')
+applyMigrations(db)
+const draftsRoutes = createDraftRoutes(() => db)
+const zettelRoutes = createZettelRoutes(() => db)
+
 beforeEach(async () => {
+  db.exec('DELETE FROM documents; DELETE FROM tags;')
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-zettel-test-'))
   await fs.mkdir(path.join(tmpRoot, 'inbox', 'draft'), { recursive: true })
   await fs.mkdir(path.join(tmpRoot, 'literature', 'draft'), { recursive: true })
 })
+
+afterAll(() => db.close())
 
 afterEach(async () => {
   await fs.rm(tmpRoot, { recursive: true, force: true })
@@ -53,16 +65,18 @@ describe('POST /api/drafts/batch', () => {
     const body = await res.json() as { written: Array<{ slug: string; path: string }>; skipped: unknown[]; failed: unknown[] }
     expect(body.written).toHaveLength(3)
     expect(body.written.map((w) => w.slug).sort()).toEqual(['card-1', 'card-2', 'card-3'])
-    // Files actually exist with the expected frontmatter.
+    // Files contain body content only; metadata is database-owned.
     expect(body.written.map((w) => w.path).sort()).toEqual([
       'inbox/draft/card-1',
       'inbox/draft/card-2',
       'inbox/draft/card-3',
     ])
     const raw1 = await fs.readFile(path.join(tmpRoot, 'inbox', 'draft', 'card-1.md'), 'utf8')
-    expect(raw1).toMatch(/^---\n/)
-    expect(raw1).toMatch(/title: Card 1/)
-    expect(raw1).toMatch(/source: inbox\/init/)
+    expect(raw1).toBe('# Card 1\n\nBody 1')
+    expect(getDocumentMetadata(db, 'inbox/draft/card-1')).toMatchObject({
+      title: 'Card 1',
+      tags: ['a'],
+    })
     
   })
 
@@ -77,7 +91,8 @@ describe('POST /api/drafts/batch', () => {
     expect(body.written).toEqual([{ slug: 'card-1', path: 'literature/draft/card-1' }])
     expect(body.failed).toEqual([])
     const raw = await fs.readFile(path.join(tmpRoot, 'literature', 'draft', 'card-1.md'), 'utf8')
-    expect(raw).toMatch(/source: literature\/book/)
+    expect(raw).toBe('# Card 1\n\nBody 1')
+    expect(getDocumentMetadata(db, 'literature/draft/card-1')?.tags).toEqual(['book'])
   })
 
   it('appends -2, -3 suffix on slug collision', async () => {
@@ -121,14 +136,13 @@ describe('POST /api/drafts/batch', () => {
     expect(res.status).toBe(400)
   })
 
-  it('includes created and updated dates in frontmatter', async () => {
+  it('stores created and updated timestamps in the database', async () => {
     const res = await draftsRoutes.request(postJson({
       cards: [{ title: 't', body: 'b', tags: [], slug: 's', source: 'inbox/init' }],
     }))
-    const raw = await fs.readFile(path.join(tmpRoot, 'inbox', 'draft', 's.md'), 'utf8')
-    const today = new Date().toISOString().slice(0, 10)
-    expect(raw).toMatch(new RegExp('created: ' + today))
-    expect(raw).toMatch(new RegExp('updated: ' + today))
+    const metadata = getDocumentMetadata(db, 'inbox/draft/s')
+    expect(metadata?.createdAt).toBeGreaterThan(0)
+    expect(metadata?.updatedAt).toBe(metadata?.createdAt)
   })
 })
 
@@ -140,6 +154,7 @@ describe('POST /api/zettel/draft/batch compatibility', () => {
     expect(res.status).toBe(200)
     const body = await res.json() as { written: Array<{ slug: string; path: string }> }
     expect(body.written).toEqual([{ slug: 'legacy', path: 'inbox/draft/legacy' }])
-    expect(await fs.readFile(path.join(tmpRoot, 'inbox', 'draft', 'legacy.md'), 'utf8')).toMatch(/title: Legacy/)
+    expect(await fs.readFile(path.join(tmpRoot, 'inbox', 'draft', 'legacy.md'), 'utf8')).toBe('# Legacy\n\nBody')
+    expect(getDocumentMetadata(db, 'inbox/draft/legacy')?.title).toBe('Legacy')
   })
 })

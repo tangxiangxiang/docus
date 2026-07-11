@@ -103,12 +103,16 @@ export type MonacoDecorationSpec = {
   inlineClassName?: string
 }
 
-export function markdownDecorationSpecs(text: string, validWikiPaths?: ReadonlySet<string>): MonacoDecorationSpec[] {
+export function markdownDecorationSpecs(
+  text: string,
+  validWikiPaths?: ReadonlySet<string> | ((ref: string) => boolean),
+  lineOffset = 0,
+): MonacoDecorationSpec[] {
   const specs: MonacoDecorationSpec[] = []
   const lines = text.split('\n')
-  let inFrontmatter = lines.length > 1 && lines[0].trim() === '---'
+  let inFrontmatter = lineOffset === 0 && lines.length > 1 && lines[0].trim() === '---'
   lines.forEach((line, index) => {
-    const lineNumber = index + 1
+    const lineNumber = lineOffset + index + 1
     const trimmed = line.trimStart()
     const leading = line.length - trimmed.length
     const lineClass: string[] = []
@@ -137,7 +141,10 @@ export function markdownDecorationSpecs(text: string, validWikiPaths?: ReadonlyS
       }
     }
     for (const match of line.matchAll(/\[\[([^\]|#\n]+)(?:#[^\]|\n]+)?(?:\|[^\]\n]+)?\]\]/g)) {
-      const className = validWikiPaths && !validWikiPaths.has(match[1]) ? 'monaco-md-link-invalid' : 'monaco-md-link'
+      const valid = typeof validWikiPaths === 'function'
+        ? validWikiPaths(match[1])
+        : validWikiPaths?.has(match[1])
+      const className = validWikiPaths && !valid ? 'monaco-md-link-invalid' : 'monaco-md-link'
       specs.push({ startLineNumber: lineNumber, startColumn: (match.index ?? 0) + 1, endLineNumber: lineNumber, endColumn: (match.index ?? 0) + match[0].length + 1, inlineClassName: className })
     }
     if (index > 0 && inFrontmatter && trimmed === '---') inFrontmatter = false

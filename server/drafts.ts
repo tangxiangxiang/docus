@@ -15,10 +15,11 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import type { Database as DatabaseT } from 'better-sqlite3'
 import { filePathFor, SLUG_RE } from './paths.js'
+import { getDb } from './db.js'
+import { saveDocumentMetadata } from './documentMetadata.js'
 import type { Card } from '../src/lib/ai-api.js'
-
-const drafts = new Hono()
 
 interface WriteResult {
   written: { slug: string; path: string }[]
@@ -50,32 +51,19 @@ function draftPrefixForSource(source: string): string | null {
   return null
 }
 
-function renderCard(card: Card, today: string): string {
-  // Draft-card frontmatter is intentionally minimal: title + dates +
-  // tags + provenance (`source`). No `summary:` field: title + body
-  // are the complete proposed card.
-  const tagsYaml = card.tags.length ? '[' + card.tags.join(', ') + ']' : '[]'
+function renderCard(card: Card): string {
   return [
-    '---',
-    `title: ${card.title}`,
-    `created: ${today}`,
-    `updated: ${today}`,
-    `tags: ${tagsYaml}`,
-    `source: ${card.source}`,
-    '---',
-    '',
     `# ${card.title}`,
     '',
     card.body,
   ].join('\n')
 }
 
-export async function writeDraftBatchHandler(c: Context) {
+export async function writeDraftBatchHandler(c: Context, db: DatabaseT = getDb()) {
   const body = await c.req.json().catch(() => null) as { cards?: unknown } | null
   if (!body || !Array.isArray(body.cards)) return bad(c, 'cards array required')
 
   const cards = body.cards as Card[]
-  const today = new Date().toISOString().slice(0, 10)
   const result: WriteResult = { written: [], skipped: [], failed: [] }
 
   for (const card of cards) {
@@ -103,11 +91,21 @@ export async function writeDraftBatchHandler(c: Context) {
     }
     const finalSlug = await uniqueSlug(path.dirname(abs), card.slug)
     const finalPath = `${draftPrefix}/${finalSlug}`
+    const finalAbs = filePathFor(finalPath)
     try {
       await fs.mkdir(path.dirname(abs), { recursive: true })
-      await fs.writeFile(filePathFor(finalPath), renderCard(card, today), 'utf8')
+      await fs.writeFile(finalAbs, renderCard(card), 'utf8')
+      const stat = await fs.stat(finalAbs)
+      saveDocumentMetadata(db, {
+        path: finalPath,
+        title: card.title,
+        tags: card.tags,
+        createdAt: stat.mtimeMs,
+        updatedAt: stat.mtimeMs,
+      })
       result.written.push({ slug: finalSlug, path: finalPath })
     } catch (e: any) {
+      await fs.rm(finalAbs, { force: true }).catch(() => undefined)
       result.failed.push({ slug: card.slug, reason: e.message })
     }
   }
@@ -115,6 +113,10 @@ export async function writeDraftBatchHandler(c: Context) {
   return c.json(result)
 }
 
-drafts.post('/batch', writeDraftBatchHandler)
+export function createDraftRoutes(dbProvider: () => DatabaseT = getDb) {
+  const routes = new Hono()
+  routes.post('/batch', (c) => writeDraftBatchHandler(c, dbProvider()))
+  return routes
+}
 
-export default drafts
+export default createDraftRoutes()

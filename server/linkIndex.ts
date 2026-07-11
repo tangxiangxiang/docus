@@ -23,6 +23,7 @@ import matter from 'gray-matter'
 import { listPostsFlat } from './tree.js'
 import { CONTENT_DIR, filePathFor } from './paths.js'
 import { resolveWikiTarget } from './linkResolve.ts'
+import { getDb } from './db.js'
 
 export interface Link {
   /** Resolved vault path (no .md extension, no #anchor). */
@@ -173,11 +174,11 @@ export class LinkIndex {
   private titles = new Map<string, string>()
 
   /** Full rebuild from disk. Reads every .md file in `rootDir`. */
-  async rebuild(rootDir: string = CONTENT_DIR): Promise<void> {
+  async rebuild(rootDir: string = CONTENT_DIR, useMetadataDb = false): Promise<void> {
     this.forward.clear()
     this.paths.clear()
     this.titles.clear()
-    const posts = await listPostsFlat(rootDir)
+    const posts = await listPostsFlat(rootDir, useMetadataDb ? getDb() : null)
     for (const p of posts) {
       this.paths.add(p.path)
       this.titles.set(p.path, p.title)
@@ -205,6 +206,10 @@ export class LinkIndex {
   registerPath(path: string, title = nameFromPath(path)): void {
     this.paths.add(path)
     this.titles.set(path, title)
+  }
+
+  setTitle(path: string, title: string): void {
+    if (this.paths.has(path)) this.titles.set(path, title)
   }
 
   /** Re-extract links for a single file. Used after a write or after
@@ -309,7 +314,7 @@ export async function getIndex(): Promise<LinkIndex> {
   if (_indexPromise) return _indexPromise
   _indexPromise = (async () => {
     const idx = new LinkIndex()
-    await idx.rebuild()
+    await idx.rebuild(CONTENT_DIR, true)
     _index = idx
     return idx
   })()

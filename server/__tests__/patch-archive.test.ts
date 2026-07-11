@@ -8,13 +8,18 @@
 // We mock filePathFor into a per-test tmp dir (same pattern as
 // get-post.test.ts and split.test.ts) so the test never touches the
 // real src/content/ vault.
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
+import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import app from '../index'
+import app, { __setMetadataDbForTesting } from '../index'
+import { applyMigrations } from '../db'
 
 let tmpRoot: string
+const db = new Database(':memory:')
+db.pragma('foreign_keys = ON')
+applyMigrations(db)
 vi.mock('../paths.js', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../paths.js')>()
   return {
@@ -38,6 +43,8 @@ async function del(urlPath: string) {
 }
 
 beforeEach(async () => {
+  db.exec('DELETE FROM documents; DELETE FROM tags;')
+  __setMetadataDbForTesting(db)
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-patch-archive-test-'))
   await fs.mkdir(path.join(tmpRoot, 'inbox'), { recursive: true })
   await fs.mkdir(path.join(tmpRoot, 'inbox', 'draft'), { recursive: true })
@@ -55,8 +62,11 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  __setMetadataDbForTesting(null)
   await fs.rm(tmpRoot, { recursive: true, force: true })
 })
+
+afterAll(() => db.close())
 
 describe('PATCH /api/posts/* archive-to-zettel whitelist', () => {
   it('moves inbox/foo.md to zettel/foo.md', async () => {

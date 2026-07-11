@@ -1,16 +1,20 @@
-// Smoke test for POST /api/posts. Verifies the on-disk frontmatter
-// template (title / created / updated / tags / summary placeholder)
-// matches the wire response, and that summary: '' is included so the
-// line is visible in the editor as a fillable field.
+// Smoke test for POST /api/posts. Verifies body-only Markdown creation,
+// database-owned metadata, and the compatible wire response.
 
-import { describe, it, expect, afterAll } from 'vitest'
+import { describe, it, expect, afterAll, beforeAll } from 'vitest'
+import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import app from '../index'
+import app, { __setMetadataDbForTesting } from '../index'
 import { CONTENT_DIR } from '../paths'
+import { applyMigrations } from '../db'
+import { deleteDocumentMetadata, getDocumentMetadata } from '../documentMetadata'
 
 const TEST_PATH = 'post-smoke'
 const TEST_ABS = path.join(CONTENT_DIR, 'post-smoke.md')
+const db = new Database(':memory:')
+db.pragma('foreign_keys = ON')
+applyMigrations(db)
 
 async function call(method: string, urlPath: string, body?: unknown) {
   const req = new Request(`http://localhost${urlPath}`, {
@@ -23,31 +27,24 @@ async function call(method: string, urlPath: string, body?: unknown) {
 
 const today = new Date().toISOString().slice(0, 10)
 
+beforeAll(() => __setMetadataDbForTesting(db))
+
 afterAll(async () => {
+  __setMetadataDbForTesting(null)
   await fs.rm(TEST_ABS, { force: true })
+  db.close()
 })
 
 describe('POST /api/posts', () => {
-  it('creates a file with the full frontmatter template (incl. empty `summary` placeholder)', async () => {
+  it('creates a body-only file and stores metadata in SQLite', async () => {
     const r = await call('POST', '/api/posts', { path: TEST_PATH, title: 'Smoke' })
     expect(r.status).toBe(201)
 
     const onDisk = await fs.readFile(TEST_ABS, 'utf8')
-    // The template is fixed: title/created/updated/tags/summary in
-    // that order, all on their own lines, with a single H1 body. The
-    // bare `summary:` (no value) placeholder is the only new line vs.
-    // the pre-7bbf692 template — see the comment in server/index.ts
-    // for the rationale. gray-matter parses it as null, so the API
-    // response surfaces `summary: ''` (same as a missing field).
-    expect(onDisk).toBe(
-      `---\ntitle: Smoke\ncreated: ${today}\nupdated: ${today}\ntags: []\nsummary:\n---\n\n# Smoke\n`,
-    )
+    expect(onDisk).toBe('# Smoke\n')
+    expect(getDocumentMetadata(db, TEST_PATH)).toMatchObject({ title: 'Smoke', summary: '', tags: [] })
 
-    // The response mirrors the same shape and includes `summary: ''` —
-    // so the client search index can distinguish "no summary written"
-    // from "file was missing frontmatter entirely" (both currently
-    // produce empty strings; this just keeps the wire shape consistent
-    // with the on-disk template).
+    // The response keeps the existing PostSummary shape for clients.
     const body = (await r.json()) as Record<string, unknown>
     expect(body.path).toBe(TEST_PATH)
     expect(body.title).toBe('Smoke')
@@ -64,10 +61,11 @@ describe('POST /api/posts', () => {
       const r = await call('POST', '/api/posts', { path: path2 })
       expect(r.status).toBe(201)
       const onDisk = await fs.readFile(abs2, 'utf8')
-      expect(onDisk).toContain('title: post-no-title')
-      expect(onDisk).toContain('# post-no-title\n')
+      expect(onDisk).toBe('# post-no-title\n')
+      expect(getDocumentMetadata(db, path2)?.title).toBe('post-no-title')
     } finally {
       await fs.rm(abs2, { force: true })
+      deleteDocumentMetadata(db, path2)
     }
   })
 
@@ -95,10 +93,11 @@ describe('POST /api/posts', () => {
       const r = await call('POST', '/api/posts', { path: path2, title: '第一性原理' })
       expect(r.status).toBe(201)
       const onDisk = await fs.readFile(abs2, 'utf8')
-      expect(onDisk).toContain('title: 第一性原理')
-      expect(onDisk).toContain('# 第一性原理\n')
+      expect(onDisk).toBe('# 第一性原理\n')
+      expect(getDocumentMetadata(db, path2)?.title).toBe('第一性原理')
     } finally {
       await fs.rm(abs2, { force: true })
+      deleteDocumentMetadata(db, path2)
     }
   })
 

@@ -326,7 +326,7 @@ export function useEditorTabs(opts: {
       const post = await getPost(path)
       tab.raw = post.raw
       tab.originalRaw = post.raw
-      tab.title = (post.frontmatter.title as string) || path
+      tab.title = post.metadata?.title || (post.frontmatter.title as string) || path
       tab.serverMtime = post.mtime
       tab.loading = false
     } catch (e) {
@@ -356,7 +356,7 @@ export function useEditorTabs(opts: {
       const post = await getPost(path)
       tab.raw = post.raw
       tab.originalRaw = post.raw
-      tab.title = (post.frontmatter.title as string) || path
+      tab.title = post.metadata?.title || (post.frontmatter.title as string) || path
       tab.serverMtime = post.mtime
       tab.loading = false
       return true
@@ -464,15 +464,14 @@ export function useEditorTabs(opts: {
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = (await r.json()) as { ok: true; raw: string }
       if (tab.raw === sentVersion) {
-        // No keystrokes landed during the round-trip — adopt the
-        // server's bumped version (which now has the new `updated:`
-        // line) so the editor's frontmatter matches the on-disk file.
+      // No keystrokes landed during the round-trip — adopt the exact
+      // bytes acknowledged by the server.
         tab.raw = data.raw
         tab.originalRaw = data.raw
       } else {
         // The user kept typing. Their buffer is the source of truth;
         // just mark it as the new saved baseline. The next debounced
-        // save will pick up the bumped `updated:` on disk.
+        // save will persist the latest buffer.
         tab.originalRaw = tab.raw
       }
       tab.saveStatus = 'saved'

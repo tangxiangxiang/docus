@@ -4,6 +4,8 @@ import path from 'node:path'
 import matter from 'gray-matter'
 import { CONTENT_DIR } from './paths.js'
 import type { PostSummary, TreeNode } from '../src/lib/api.js'
+import type { Database as DatabaseT } from 'better-sqlite3'
+import { getDocumentMetadata } from './documentMetadata.js'
 
 // `PostSummary` and `TreeNode` are owned by the client (src/lib/api.ts). The
 // server is intentionally not in the type-check graph (no tsconfig include),
@@ -97,10 +99,8 @@ export function readFrontmatter(file: string): {
     } else if (rawCreated instanceof Date && !isNaN(rawCreated.getTime())) {
       created = rawCreated.toISOString().slice(0, 10)
     }
-    // `updated` is the last-content-save date the server maintains in the
-    // frontmatter (see server/frontmatter.ts). New files get it on create;
-    // existing files may not have it yet — callers should fall back to
-    // filesystem mtime when this is null.
+    // Legacy files may still carry `updated` in Frontmatter. Database-backed
+    // callers prefer documents.updated_at and use this only as fallback.
     const rawUpdated = parsed.data.updated
     let updated: string | null = null
     if (typeof rawUpdated === 'string' && rawUpdated.trim()) {
@@ -139,6 +139,7 @@ function titleFromFile(
 
 export async function listPostsFlat(
   rootDir: string = CONTENT_DIR,
+  metadataDb: DatabaseT | null = null,
 ): Promise<PostSummary[]> {
   const out: PostSummary[] = []
   for await (const entry of walk(rootDir, '')) {
@@ -148,20 +149,20 @@ export async function listPostsFlat(
     const name = nameFromPath(p)
     const stat = await fs.stat(entry.abs)
     const fm = readFrontmatter(entry.abs)
+    const metadata = metadataDb ? getDocumentMetadata(metadataDb, p) : null
     out.push({
       path: p,
-      title: titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
-      created: fm.created ?? '',
-      // Frontmatter `updated` is the source of truth (set by the server on
-      // each save). Files that don't have it yet — typically never-saved
-      // notes from before this field existed — fall back to mtime.
-      updated: fm.updated ?? new Date(stat.mtimeMs).toISOString().slice(0, 10),
-      tags: fm.tags,
-      // Pass the frontmatter summary through to the client search index.
-      // The client's `?? ''` in src/lib/search.ts would silently swallow
-      // undefined; surfacing `''` here matches the type and makes the
-      // "no summary" case observable in the API response.
-      summary: fm.summary ?? '',
+      title: metadata?.title ?? titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
+      created: metadata ? new Date(metadata.createdAt).toISOString().slice(0, 10) : fm.created ?? '',
+      // SQLite is authoritative after import; legacy Frontmatter and then
+      // filesystem mtime remain compatibility fallbacks.
+      updated: metadata
+        ? new Date(metadata.updatedAt).toISOString().slice(0, 10)
+        : fm.updated ?? new Date(stat.mtimeMs).toISOString().slice(0, 10),
+      tags: metadata?.tags ?? fm.tags,
+      // Keep an explicit empty string for the client search index when neither
+      // database metadata nor legacy Frontmatter provides a summary.
+      summary: metadata?.summary ?? fm.summary ?? '',
       size: stat.size,
       mtime: stat.mtimeMs,
     })
@@ -197,6 +198,7 @@ type MutableNode =
 
 export async function buildTree(
   rootDir: string = CONTENT_DIR,
+  metadataDb: DatabaseT | null = null,
 ): Promise<TreeNode[]> {
   // Build a tree by sorting and inserting into a path-keyed node map.
   // The implicit root is `src/content/`, named "content" with `path: ''`
@@ -232,11 +234,12 @@ export async function buildTree(
       if (!parent || parent.kind !== 'folder') continue
       const stat = await fs.stat(entry.abs)
       const fm = readFrontmatter(entry.abs)
+      const metadata = metadataDb ? getDocumentMetadata(metadataDb, p) : null
       parent.children.push({
         kind: 'file',
         name,
         path: p,
-        title: titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
+        title: metadata?.title ?? titleFromFile(entry.abs, name, fm.firstHeading, fm.title),
         mtime: stat.mtimeMs,
       })
     }
