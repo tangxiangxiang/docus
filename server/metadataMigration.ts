@@ -111,7 +111,12 @@ async function listMarkdownFiles(rootDir: string): Promise<Array<{ path: string;
   async function walk(dir: string, prefix: string): Promise<void> {
     const entries = await fs.readdir(dir, { withFileTypes: true })
     for (const entry of entries) {
-      if (entry.name.startsWith('.')) continue
+      // Mirror server/tree.ts: skip only `.git`, not every dot-prefixed
+      // directory. Without this, `.obsidian/`, `.vscode/`, `.trash/`
+      // surface in the file tree but are invisible to migration, so the
+      // Settings → "Document metadata" panel and the tree disagree about
+      // which documents exist. See tree.ts for the rationale.
+      if (entry.name === '.git') continue
       const abs = path.join(dir, entry.name)
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name
       if (entry.isDirectory()) await walk(abs, rel)

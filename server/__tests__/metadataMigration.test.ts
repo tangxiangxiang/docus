@@ -89,4 +89,16 @@ describe('vault metadata migration', () => {
     expect(getMetadataMigrationRecord(db, 'b')).toBeNull()
     expect(getMetadataMigrationSummary(db)).toMatchObject({ total: 1, verified: 1, failed: 0 })
   })
+
+  it('walks into dot-prefixed directories other than .git, matching tree.ts', async () => {
+    // The migration walker used to skip every entry whose name started
+    // with a dot, while tree.ts skipped only `.git`. Files under
+    // `.obsidian/` etc. would appear in the file tree but never get a
+    // migration record. Mirror tree.ts so the two walkers agree.
+    await write('.obsidian/notes/secret.md', '---\ntitle: Secret\n---\n\nbody\n')
+    await write('plain.md', '---\ntitle: Plain\n---\n\nbody\n')
+    const report = await migrateVaultMetadata(db, root)
+    expect(report.scanned).toBe(2)
+    expect(getMetadataMigrationRecord(db, '.obsidian/notes/secret')?.status).toBe('verified')
+  })
 })
