@@ -176,9 +176,16 @@ export function moveDocumentMetadata(db: DatabaseT, fromPath: string, toPath: st
 }
 
 export function deleteDocumentMetadata(db: DatabaseT, path: string): boolean {
+  /* Deliberately do NOT delete from metadata_migrations here. The migration
+     table doubles as a lossless Frontmatter archive: rows in `cleaned` state
+     carry the pre-cleanup bytes in frontmatter_backup. Deleting a document
+     silently destroying the user's ability to restore its original
+     Frontmatter defeats the entire cleanup/restore safety net. Orphan
+     metadata_migrations rows are pruned by migrateVaultMetadata on the next
+     startup, so the summary and per-path records stay accurate once the
+     process restarts. */
   return db.transaction(() => {
     const result = db.prepare('DELETE FROM documents WHERE path = ?').run(path)
-    db.prepare('DELETE FROM metadata_migrations WHERE path = ?').run(path)
     return result.changes > 0
   })()
 }
@@ -241,10 +248,11 @@ export function moveDocumentMetadataPrefix(db: DatabaseT, fromPrefix: string, to
 }
 
 export function deleteDocumentMetadataPrefix(db: DatabaseT, prefix: string): number {
+  /* See deleteDocumentMetadata for why metadata_migrations rows are kept:
+     a folder-level delete must not destroy the per-file backup bytes that
+     the cleanup/restore flow depends on. */
   return db.transaction(() => {
     const result = db.prepare('DELETE FROM documents WHERE path = ? OR path LIKE ?')
-      .run(prefix, `${prefix}/%`)
-    db.prepare('DELETE FROM metadata_migrations WHERE path = ? OR path LIKE ?')
       .run(prefix, `${prefix}/%`)
     return result.changes
   })()

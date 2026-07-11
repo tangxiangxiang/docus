@@ -51,7 +51,9 @@ describe('document metadata repository', () => {
     expect(deleteDocumentMetadata(db, 'zettel/a')).toBe(true)
     expect(db.prepare('SELECT COUNT(*) AS n FROM document_tags').get()).toEqual({ n: 0 })
     expect(db.prepare('SELECT COUNT(*) AS n FROM document_aliases').get()).toEqual({ n: 0 })
-    expect(db.prepare('SELECT COUNT(*) AS n FROM metadata_migrations').get()).toEqual({ n: 0 })
+    // The migration row carries the Frontmatter backup; deleting the document
+    // must NOT silently destroy it. Startup migration prunes orphans.
+    expect(db.prepare('SELECT path FROM metadata_migrations').get()).toEqual({ path: 'zettel/a' })
   })
 
   it('lists documents in path order and rejects invalid input', () => {
@@ -96,5 +98,36 @@ describe('document metadata repository', () => {
       .toThrow(/collides with existing path: archive\/a/)
     expect(getDocumentMetadata(db, 'inbox/a')?.id).toBe('a')
     expect(getDocumentMetadata(db, 'archive/a')?.id).toBe('unrelated')
+  })
+
+  it('preserves frontmatter_backup when deleting a cleaned document', () => {
+    saveDocumentMetadata(db, { path: 'inbox/a', title: 'A' })
+    db.prepare(`
+      INSERT INTO metadata_migrations (path, status, source_hash, frontmatter_backup, error, updated_at)
+      VALUES ('inbox/a', 'cleaned', 'hash', '---original---', '', 1)
+    `).run()
+    expect(deleteDocumentMetadata(db, 'inbox/a')).toBe(true)
+    // The backup survives — it's the only place the pre-cleanup bytes live.
+    expect(db.prepare(
+      'SELECT status, frontmatter_backup AS backup FROM metadata_migrations WHERE path = ?',
+    ).get('inbox/a')).toEqual({ status: 'cleaned', backup: '---original---' })
+  })
+
+  it('preserves per-file migration rows when deleting a folder prefix', () => {
+    saveDocumentMetadata(db, { path: 'inbox/a', title: 'A' })
+    saveDocumentMetadata(db, { path: 'inbox/b', title: 'B' })
+    db.prepare(`
+      INSERT INTO metadata_migrations (path, status, source_hash, frontmatter_backup, error, updated_at)
+      VALUES ('inbox/a', 'cleaned', 'h1', '---A---', '', 1),
+             ('inbox/b', 'cleaned', 'h2', '---B---', '', 1)
+    `).run()
+    expect(deleteDocumentMetadataPrefix(db, 'inbox')).toBe(2)
+    expect(db.prepare(
+      `SELECT path, frontmatter_backup AS backup FROM metadata_migrations
+       WHERE path IN ('inbox/a', 'inbox/b') ORDER BY path`,
+    ).all()).toEqual([
+      { path: 'inbox/a', backup: '---A---' },
+      { path: 'inbox/b', backup: '---B---' },
+    ])
   })
 })
