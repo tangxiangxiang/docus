@@ -43,17 +43,12 @@ import { onBeforeUnmount, watch, type Ref } from 'vue'
 
    - **Preview side**: the scrollable element is **`.preview-pane`
      itself**, not `.article` inside it. style.css gives both
-     `.preview-pane` (`overflow:auto` in the .vault scope, line
-     1406) and `.preview-pane > .article` (`overflow:auto` on line
-     1290) overflow rules. The .vault-scoped rule on `.article`
-     sets `min-height:100%`, which forces the article to be at
-     least as tall as its parent. Combined with `flex:0 0 auto` (no
-     shrink), the article's box always matches or exceeds its
-     content height, so .article never has internal overflow. The
-     scrollbar — and the scroll event — live on `.preview-pane`.
-     Earlier I queried `.preview-pane > .article` here and set
-     its `scrollTop`, which was a silent no-op; that is what made
-     editor→preview sync fail while preview→editor sync worked. */
+     `.preview-pane` owns `overflow:auto`; its `.article` child is
+     deliberately `overflow:visible` and grows with the rendered
+     document. Keeping one scroll owner avoids nested scroll areas
+     and ensures both wheel input and editor sync update the same
+     element. Earlier implementations queried `.article` and set
+     its `scrollTop`, which was a silent no-op. */
 
 /* Proper escape for a value placed inside an attribute selector
    `[attr="…"]`. CSS.escape escapes for *identifiers*, not quoted

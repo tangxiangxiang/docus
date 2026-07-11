@@ -28,6 +28,58 @@ export function indentMarkdownLine(line: string, outdent: boolean): string {
   return `  ${line}`
 }
 
+export interface MarkdownWrap {
+  before: string
+  after: string
+  placeholder: string
+}
+
+export const MARKDOWN_WRAPS = {
+  bold: { before: '**', after: '**', placeholder: 'bold text' },
+  italic: { before: '*', after: '*', placeholder: 'italic text' },
+  code: { before: '`', after: '`', placeholder: 'code' },
+  link: { before: '[', after: '](https://)', placeholder: 'link text' },
+} as const satisfies Record<string, MarkdownWrap>
+
+export function toggleMarkdownWrap(text: string, wrap: MarkdownWrap): string {
+  if (text.startsWith(wrap.before) && text.endsWith(wrap.after)) {
+    return text.slice(wrap.before.length, text.length - wrap.after.length)
+  }
+  return `${wrap.before}${text || wrap.placeholder}${wrap.after}`
+}
+
+export function rankWikiTargets<T extends { path: string; title: string }>(
+  targets: T[], query: string, recent: string[], currentPath: string,
+): T[] {
+  const needle = query.trim().toLocaleLowerCase()
+  const score = (target: T) => {
+    const title = target.title.toLocaleLowerCase()
+    const path = target.path.toLocaleLowerCase()
+    const recentIndex = recent.indexOf(target.path)
+    let relevance = 0
+    if (needle) {
+      if (title === needle || path === needle) relevance = 100
+      else if (title.startsWith(needle)) relevance = 80
+      else if (path.startsWith(needle)) relevance = 70
+      else if (title.includes(needle)) relevance = 60
+      else if (path.includes(needle)) relevance = 50
+      else {
+        let cursor = 0
+        for (const char of `${title} ${path}`) if (char === needle[cursor]) cursor += 1
+        if (cursor !== needle.length) return null
+        relevance = 20
+      }
+    }
+    return relevance + (recentIndex < 0 ? 0 : Math.max(1, 15 - recentIndex))
+  }
+  return targets
+    .filter((target) => target.path !== currentPath)
+    .map((target) => ({ target, score: score(target) }))
+    .filter((item): item is { target: T; score: number } => item.score !== null)
+    .sort((a, b) => b.score - a.score || (a.target.title || a.target.path).localeCompare(b.target.title || b.target.path, 'zh-CN'))
+    .map(({ target }) => target)
+}
+
 export function wikiLinkAtColumn(line: string, column: number): string | null {
   for (const match of line.matchAll(/\[\[([^\]|#\n]+)(?:#[^\]|\n]+)?(?:\|[^\]\n]+)?\]\]/g)) {
     const start = match.index ?? 0
@@ -51,7 +103,7 @@ export type MonacoDecorationSpec = {
   inlineClassName?: string
 }
 
-export function markdownDecorationSpecs(text: string): MonacoDecorationSpec[] {
+export function markdownDecorationSpecs(text: string, validWikiPaths?: ReadonlySet<string>): MonacoDecorationSpec[] {
   const specs: MonacoDecorationSpec[] = []
   const lines = text.split('\n')
   let inFrontmatter = lines.length > 1 && lines[0].trim() === '---'
@@ -77,13 +129,16 @@ export function markdownDecorationSpecs(text: string): MonacoDecorationSpec[] {
     const patterns: Array<[RegExp, string]> = [
       [/`[^`\n]+`/g, 'monaco-md-code'],
       [/\*\*[^*\n]+\*\*/g, 'monaco-md-strong'],
-      [/\[\[[^\]\n]+\]\]/g, 'monaco-md-link'],
       [/\[[^\]\n]+\]\(https?:\/\/(?:[^()\s]|\([^()\s]*\))*\)/g, 'monaco-md-link'],
     ]
     for (const [pattern, className] of patterns) {
       for (const match of line.matchAll(pattern)) {
         specs.push({ startLineNumber: lineNumber, startColumn: (match.index ?? 0) + 1, endLineNumber: lineNumber, endColumn: (match.index ?? 0) + match[0].length + 1, inlineClassName: className })
       }
+    }
+    for (const match of line.matchAll(/\[\[([^\]|#\n]+)(?:#[^\]|\n]+)?(?:\|[^\]\n]+)?\]\]/g)) {
+      const className = validWikiPaths && !validWikiPaths.has(match[1]) ? 'monaco-md-link-invalid' : 'monaco-md-link'
+      specs.push({ startLineNumber: lineNumber, startColumn: (match.index ?? 0) + 1, endLineNumber: lineNumber, endColumn: (match.index ?? 0) + match[0].length + 1, inlineClassName: className })
     }
     if (index > 0 && inFrontmatter && trimmed === '---') inFrontmatter = false
   })

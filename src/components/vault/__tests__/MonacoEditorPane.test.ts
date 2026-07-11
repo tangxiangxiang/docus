@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => {
     defineTheme: vi.fn(),
     setTheme: vi.fn(),
     completionDispose: vi.fn(),
+    hoverDispose: vi.fn(),
   }
 })
 
@@ -55,13 +56,14 @@ vi.mock('monaco-editor/esm/vs/editor/editor.api.js', () => ({
   languages: {
     CompletionItemKind: { Reference: 1, Keyword: 2 },
     registerCompletionItemProvider: vi.fn(() => ({ dispose: mocks.completionDispose })),
+    registerHoverProvider: vi.fn(() => ({ dispose: mocks.hoverDispose })),
   },
   Uri: { parse: vi.fn((value: string) => value) },
   Range: class Range {
     constructor(..._args: number[]) {}
   },
-  KeyCode: { Enter: 3, Tab: 2 },
-  KeyMod: { Shift: 1024 },
+  KeyCode: { Enter: 3, Tab: 2, KeyB: 31, KeyI: 38, KeyK: 40, Backquote: 85 },
+  KeyMod: { Shift: 1024, CtrlCmd: 2048 },
 }))
 vi.mock('monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js', () => ({}))
 vi.mock('monaco-editor/esm/vs/editor/editor.worker?worker', () => ({ default: class WorkerStub {} }))
@@ -104,6 +106,7 @@ describe('Monaco EditorPane', () => {
     expect(mocks.editor.dispose).toHaveBeenCalledOnce()
     expect(mocks.model.dispose).toHaveBeenCalledOnce()
     expect(mocks.completionDispose).toHaveBeenCalledOnce()
+    expect(mocks.hoverDispose).toHaveBeenCalledOnce()
   })
 
   it('updates the Monaco theme without recreating the editor', async () => {

@@ -4,6 +4,7 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   plugins: [vue()],
   test: {
+    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
     environment: 'node',
     environmentMatchGlobs: [
       ['src/**/*.test.ts', 'jsdom'],

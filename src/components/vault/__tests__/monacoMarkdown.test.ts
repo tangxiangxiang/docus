@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  indentMarkdownLine, markdownContinuation, markdownDecorationSpecs,
-  markdownLinkFromPaste, wikiLinkAtColumn,
+  indentMarkdownLine, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs,
+  markdownLinkFromPaste, rankWikiTargets, toggleMarkdownWrap, wikiLinkAtColumn,
 } from '../monacoMarkdown'
 
 describe('Monaco Markdown helpers', () => {
@@ -24,6 +24,23 @@ describe('Monaco Markdown helpers', () => {
   it('indents and outdents Markdown list lines', () => {
     expect(indentMarkdownLine('- item', false)).toBe('  - item')
     expect(indentMarkdownLine('  - item', true)).toBe('- item')
+  })
+
+  it('toggles Markdown formatting around selected text', () => {
+    expect(toggleMarkdownWrap('text', MARKDOWN_WRAPS.bold)).toBe('**text**')
+    expect(toggleMarkdownWrap('**text**', MARKDOWN_WRAPS.bold)).toBe('text')
+    expect(toggleMarkdownWrap('', MARKDOWN_WRAPS.link)).toBe('[link text](https://)')
+  })
+
+  it('ranks Wiki Links by relevance and recent use', () => {
+    const targets = [
+      { path: 'zettel/second-brain', title: 'Building a Second Brain' },
+      { path: 'literature/brain', title: 'Brain Notes' },
+      { path: 'zettel/boxes', title: 'Zettelkasten' },
+    ]
+    expect(rankWikiTargets(targets, 'brain', [], '')[0].path).toBe('literature/brain')
+    expect(rankWikiTargets(targets, '', ['zettel/boxes'], '')[0].path).toBe('zettel/boxes')
+    expect(rankWikiTargets(targets, 'zbx', [], '')[0].path).toBe('zettel/boxes')
   })
 
   it('finds a Wiki Link target under the pointer', () => {
@@ -53,6 +70,11 @@ describe('Monaco Markdown helpers', () => {
     expect(lengths[0]).toBe(54)
     // Second link is the simple one.
     expect(lengths[1]).toBe(28)
+  })
+
+  it('marks unresolved Wiki Links separately', () => {
+    const specs = markdownDecorationSpecs('[[known]] and [[missing]]', new Set(['known']))
+    expect(specs.map((spec) => spec.inlineClassName)).toContain('monaco-md-link-invalid')
   })
 
   it('handles a long Chinese document without losing line positions', () => {

@@ -2051,7 +2051,7 @@ main.container {
 .preview-pane > .article {
   flex: 0 0 auto;
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
   box-sizing: border-box;
 }
 .content-empty {
@@ -2337,6 +2337,12 @@ main.container {
 .vault .monaco-host .monaco-md-code { background: var(--vs-bg-2); color: var(--vs-text-1) !important; }
 .vault .monaco-host .monaco-md-strong { color: var(--vs-text-1) !important; font-weight: 700; }
 .vault .monaco-host .monaco-md-link { color: var(--vs-accent) !important; }
+.vault .monaco-host .monaco-md-link-invalid {
+  color: var(--vs-danger, #d73a49) !important;
+  text-decoration: underline wavy;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
 
 /* PreviewPane inside vault: drop docus stylesheet padding to match */
 .vault .preview-pane {
@@ -2349,58 +2355,23 @@ main.container {
   min-height: 100%;
   box-sizing: border-box;
 }
-.vault .preview-pane .article h1:first-child { margin-top: 0; }
-
-/* Heading hierarchy inside the live preview pane. The bare h1/h2/h3
-   from :root is too uniform — the sizes are close enough together
-   that the eye can't tell the levels apart, and there's no color or
-   weight to anchor them. We re-bind: H1 is the document title, H2 a
-   section, H3+ sub-sections. A tighter weight ladder makes the
-   hierarchy read at a glance.
-
-   The underline is scoped to the FIRST h1 only — the title. The
-   first h1 is always the title because useMarkdownRender either
-   prepends `# ${frontmatter.title}` to the body (when the body
-   doesn't already start with an h1) or the body's own first h1
-   acts as the title. Later in-body h1s are rare (most notes use
-   h2+ for sections) but when present they get the same size/weight
-   as the title, just without the underline — otherwise the
-   underline reads as a section divider, not a title marker. */
-.vault .preview-pane .article h1 {
-  font-size: 1.65rem;
-  font-weight: 700;
-  margin: 0.2em 0 0.6em;
-  padding-bottom: 0.3em;
-  color: var(--vs-text-1);
-  letter-spacing: -0.01em;
-}
-.vault .preview-pane .article h1:first-of-type {
-  border-bottom: 1px solid var(--vs-border);
-}
-.vault .preview-pane .article h2 {
-  font-size: 1.25rem;
-  font-weight: 650;
-  margin: 1.4em 0 0.5em;
+.vault .article {
+  --article-flow: 0.72em;
+  --article-heading-gap: 1.45em;
   color: var(--vs-text-1);
 }
-.vault .preview-pane .article h3 {
-  font-size: 1.05rem;
-  font-weight: 600;
-  margin: 1.2em 0 0.4em;
+.vault .article :where(h1, h2, h3, h4) {
   color: var(--vs-text-1);
+  line-height: 1.3;
+  scroll-margin-top: 24px;
 }
-.vault .preview-pane .article h4 {
-  font-size: 0.92rem;
-  font-weight: 600;
-  margin: 1em 0 0.35em;
-  color: var(--vs-text-2);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.vault .preview-pane .article p { margin: 0.6em 0; line-height: 1.65; }
-.vault .preview-pane .article ul,
-.vault .preview-pane .article ol { padding-left: 1.4em; }
-.vault .preview-pane .article li + li { margin-top: 0.25em; }
+.vault .article h1 { font-size: 1.72rem; font-weight: 700; margin: 0 0 0.55em; }
+.vault .article h2 { font-size: 1.34rem; font-weight: 650; margin: var(--article-heading-gap) 0 0.5em; }
+.vault .article h3 { font-size: 1.12rem; font-weight: 600; margin: var(--article-heading-gap) 0 0.45em; }
+.vault .article h4 { font-size: 0.98rem; font-weight: 600; margin: var(--article-heading-gap) 0 0.4em; color: var(--vs-text-2); }
+.vault .article :where(p, ul, ol, blockquote, dl) { margin: var(--article-flow) 0; }
+.vault .article :where(ul, ol) { padding-left: 1.45em; }
+.vault .article li + li { margin-top: 0.3em; }
 
 /* Reading mode (vault read surface). Reuses the editor-area's grid
    slot (where editor + preview normally live) and swaps the split
@@ -2451,41 +2422,8 @@ main.container {
   /* Slightly more space between sibling paragraphs and surrounding
      content than the preview pane — the preview is reference material,
      the reading pane is a long-form read. */
-  --rp-flow: 1.1em;
-}
-.vault .reading-pane .article.reading h1:first-child { margin-top: 0; }
-.vault .reading-pane .article.reading h1 {
-  /* Hero treatment for the post title — bigger, tighter. No border /
-     underline so the heading reads as plain text, not a clickable
-     permalink. The id is still there for the TOC to scroll to. */
-  font-size: 2.1rem;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
-  margin: 0 0 0.4em;
-}
-.vault .reading-pane .article.reading h2,
-.vault .reading-pane .article.reading h3,
-.vault .reading-pane .article.reading h4 {
-  margin: 1.9em 0 0.6em;
-  line-height: 1.3;
-  letter-spacing: -0.005em;
-  /* Headings are sticky-scroll targets. Add a small top scroll-margin
-     so smooth-scroll from the TOC doesn't tuck the heading right under
-     the very top edge of the reading pane. */
-  scroll-margin-top: 24px;
-}
-.vault .reading-pane .article.reading h2 {
-  font-size: 1.45rem;
-}
-.vault .reading-pane .article.reading h3 {
-  font-size: 1.18rem;
-  color: var(--vs-text-1);
-}
-.vault .reading-pane .article.reading h4 {
-  font-size: 1rem;
-  color: var(--vs-text-2);
-  text-transform: none;
-  letter-spacing: 0.02em;
+  --article-flow: 1.05em;
+  --article-heading-gap: 1.85em;
 }
 /* markdown-it-anchor wraps heading text in <a class="header-anchor">.
    In read mode the heading should read as plain text — not as a
@@ -2499,19 +2437,6 @@ main.container {
   pointer-events: none;
   cursor: text;
 }
-.vault .reading-pane .article.reading p,
-.vault .reading-pane .article.reading ul,
-.vault .reading-pane .article.reading ol,
-.vault .reading-pane .article.reading blockquote {
-  margin: var(--rp-flow) 0;
-}
-.vault .reading-pane .article.reading ul,
-.vault .reading-pane .article.reading ol {
-  /* Markdown renders tight bullet lists; the reading column gets a
-     bit more breathing room and softer markers. */
-  padding-left: 1.5em;
-}
-.vault .reading-pane .article.reading li + li { margin-top: 0.35em; }
 /* Vault code styling. The global `code` and `pre` defaults use
    hardcoded gray chips and `--code-bg` — fine for the docs but
    reads as "uncoded" against the vault's themed chrome. The
@@ -2542,7 +2467,7 @@ main.container {
   background: var(--vs-bg-2);
   border-color: var(--vs-border);
 }
-.vault .reading-pane .article.reading blockquote {
+.vault .article blockquote {
   border-left: 3px solid var(--vs-accent);
   background: var(--vs-bg-2);
   color: var(--vs-text-2);
@@ -2550,8 +2475,8 @@ main.container {
   padding: 0.6em 1em;
   border-radius: 0 4px 4px 0;
 }
-.vault .reading-pane .article.reading blockquote p { margin: 0.3em 0; }
-.vault .reading-pane .article.reading a {
+.vault .article blockquote p { margin: 0.3em 0; }
+.vault .article a {
   /* Inherits the global `a` color (--accent), but reading columns
      benefit from a subtle underline that signals "this jumps" — the
      preview pane's clean look reads as "this is rendered prose,"
@@ -2561,7 +2486,7 @@ main.container {
   text-underline-offset: 3px;
   text-decoration-color: var(--vs-border);
 }
-.vault .reading-pane .article.reading a:hover {
+.vault .article a:hover {
   text-decoration-color: var(--vs-accent);
   color: var(--vs-accent-hover);
 }
@@ -2594,12 +2519,12 @@ main.container {
   color: var(--vs-text-1);
   text-decoration-color: var(--vs-text-1);
 }
-.vault .reading-pane .article.reading hr {
+.vault .article hr {
   margin: 2.4em auto;
   width: 4em;
   border-top: 1px solid var(--vs-border);
 }
-.vault .reading-pane .article.reading table {
+.vault .article table {
   /* `separate` + `border-spacing: 0` instead of `collapse` so the
      rounded corners + overflow clip don't eat the cell borders —
      the classic collapse+radius combo silently drops borders on the
@@ -2612,14 +2537,14 @@ main.container {
   border-radius: 6px;
   overflow: hidden;
 }
-.vault .reading-pane .article.reading th,
-.vault .reading-pane .article.reading td {
+.vault .article th,
+.vault .article td {
   /* Subtler than --vs-border so the cell dividers read as quiet grid
      lines; the outer table border (--vs-border) carries the frame. */
   border: 1px solid var(--vs-table-border);
   padding: 6px 10px;
 }
-.vault .reading-pane .article.reading th {
+.vault .article th {
   background: var(--vs-bg-2);
   color: var(--vs-text-1);
 }
@@ -2627,22 +2552,22 @@ main.container {
    its own border (double lines on interior edges). Drop them on
    the right and bottom of every cell except the last column / row
    so the table reads as a single grid. */
-.vault .reading-pane .article.reading th:not(:last-child),
-.vault .reading-pane .article.reading td:not(:last-child) {
+.vault .article th:not(:last-child),
+.vault .article td:not(:last-child) {
   border-right: 0;
 }
-.vault .reading-pane .article.reading tr:not(:last-child) th,
-.vault .reading-pane .article.reading tr:not(:last-child) td {
+.vault .article tr:not(:last-child) th,
+.vault .article tr:not(:last-child) td {
   border-bottom: 0;
 }
 /* Top corners only on the first row's cells; bottom corners only on
    the last row's. The outer border-radius on the table + overflow:
    hidden takes care of the rest. */
-.vault .reading-pane .article.reading tr:first-child th:first-child { border-top-left-radius: 6px; }
-.vault .reading-pane .article.reading tr:first-child th:last-child  { border-top-right-radius: 6px; }
-.vault .reading-pane .article.reading tr:last-child  td:first-child { border-bottom-left-radius: 6px; }
-.vault .reading-pane .article.reading tr:last-child  td:last-child  { border-bottom-right-radius: 6px; }
-.vault .reading-pane .article.reading img {
+.vault .article tr:first-child th:first-child { border-top-left-radius: 6px; }
+.vault .article tr:first-child th:last-child  { border-top-right-radius: 6px; }
+.vault .article tr:last-child  td:first-child { border-bottom-left-radius: 6px; }
+.vault .article tr:last-child  td:last-child  { border-bottom-right-radius: 6px; }
+.vault .article img {
   border-radius: 6px;
   border: 1px solid var(--vs-border);
   margin: 0.4em 0;

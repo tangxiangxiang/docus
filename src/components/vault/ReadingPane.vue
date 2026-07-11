@@ -9,12 +9,10 @@
 // IntersectionObserver scroll-spy and publishes heading state via
 // useTocState so TocPanel can render the active-highlighted list.
 
-import { toRef, ref, computed, watch, onBeforeUnmount } from 'vue'
-import { useMarkdownRender } from '../../composables/vault/useMarkdownRender'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import RenderedMarkdown from './RenderedMarkdown.vue'
+import type { Heading } from '../../composables/vault/useMarkdownRender'
 import { tocHeadings, tocActiveId, tocScrollTo } from '../../composables/vault/useTocState'
-import { useMarkmapMount } from '../../composables/useMarkmapMount'
-import { useMermaidMount } from '../../composables/useMermaidMount'
-import { getOpenPostForClicks } from '../../composables/vault/useEditorTabs'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 
 const props = defineProps<{
@@ -22,21 +20,7 @@ const props = defineProps<{
   /** Resolver for [[wiki]] / [t](path.md) links. See PreviewPane. */
   resolver?: WikiResolver
 }>()
-const { html, error: renderError, headings } = useMarkdownRender(toRef(props, 'raw'), props.resolver)
-
-/* Same delegated click handler as PreviewPane. Mounted on .article
-   so the right-side page-nav (.reading-toc) keeps its own click
-   handling. */
-function onArticleClick(e: MouseEvent) {
-  if (e.button !== 0) return
-  const target = e.target as HTMLElement | null
-  const a = target?.closest('a.wiki-link') as HTMLAnchorElement | null
-  if (!a) return
-  const dest = a.dataset.target
-  if (!dest) return
-  e.preventDefault()
-  getOpenPostForClicks()?.(dest)
-}
+const headings = ref<Heading[]>([])
 
 /* True when the active document is empty (no tabs opened, or the
    current tab is still loading). We render a soft placeholder instead
@@ -61,12 +45,6 @@ const isEmpty = computed(() => !props.raw || !props.raw.trim())
 
 const articleEl = ref<HTMLElement | null>(null)
 const readingPaneEl = ref<HTMLElement | null>(null)
-
-/* Mount ```markmap``` and ```mermaid``` placeholders as live widgets
-   (same pipeline as PreviewPane — the article is the same v-html
-   surface, just with a different surrounding layout). */
-useMarkmapMount(articleEl)
-useMermaidMount(articleEl)
 
 let observer: IntersectionObserver | null = null
 
@@ -187,9 +165,15 @@ watch(() => props.raw, () => {
     <div v-if="isEmpty" class="reading-empty">
       未打开文件。在侧栏选一个或按 <kbd>⌘P</kbd> 新建。
     </div>
-    <div v-else-if="renderError" class="render-error">{{ renderError }}</div>
     <div v-else class="reading-layout">
-      <article ref="articleEl" class="article reading" v-html="html" @click="onArticleClick" />
+      <RenderedMarkdown
+        :raw="raw"
+        :resolver="resolver"
+        tag="article"
+        mode="reading"
+        @update:headings="headings = $event"
+        @rendered="articleEl = $event"
+      />
     </div>
   </div>
 </template>

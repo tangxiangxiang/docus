@@ -1,9 +1,6 @@
 <script setup lang="ts">
-import { toRef, ref } from 'vue'
-import { useMarkdownRender } from '../../composables/vault/useMarkdownRender'
-import { useMarkmapMount } from '../../composables/useMarkmapMount'
-import { useMermaidMount } from '../../composables/useMermaidMount'
-import { getOpenPostForClicks } from '../../composables/vault/useEditorTabs'
+import { ref } from 'vue'
+import RenderedMarkdown from './RenderedMarkdown.vue'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 
 const props = defineProps<{
@@ -14,30 +11,7 @@ const props = defineProps<{
   resolver?: WikiResolver
 }>()
 
-const { html, error: renderError } = useMarkdownRender(toRef(props, 'raw'), props.resolver)
 const articleEl = ref<HTMLElement | null>(null)
-/* Replace any ```markmap``` / ```mermaid``` placeholder divs v-html
-   just dropped in with live, interactive widgets. See the two
-   composables for the lifecycle. */
-useMarkmapMount(articleEl)
-useMermaidMount(articleEl)
-
-/* Delegated click handler for wiki-link anchors. We mount this on
-   the .article root (not on VaultView) so it only catches links
-   inside the rendered article body — the right-rail TOC, the
-   header-anchor permalinks, etc. are not affected. Middle-click /
-   cmd-click / right-click fall through to the browser because we
-   only preventDefault on the primary button for resolved links. */
-function onArticleClick(e: MouseEvent) {
-  if (e.button !== 0) return  // primary button only
-  const target = e.target as HTMLElement | null
-  const a = target?.closest('a.wiki-link') as HTMLAnchorElement | null
-  if (!a) return
-  const dest = a.dataset.target
-  if (!dest) return  // missing target — let the browser handle href="#"
-  e.preventDefault()
-  getOpenPostForClicks()?.(dest)
-}
 
 /* Expose the article element so the parent's edit-mode scroll-sync
    composable can identify the rendered body. Note: the actual
@@ -54,6 +28,10 @@ defineExpose({
 </script>
 
 <template>
-  <div v-if="renderError" class="render-error">{{ renderError }}</div>
-  <div v-else ref="articleEl" class="article preview" v-html="html" @click="onArticleClick" />
+  <RenderedMarkdown
+    :raw="raw"
+    :resolver="resolver"
+    mode="preview"
+    @rendered="articleEl = $event"
+  />
 </template>

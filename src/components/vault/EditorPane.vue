@@ -6,9 +6,12 @@ import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import {
   indentMarkdownLine,
   MARKDOWN_CODE_LANGUAGES,
+  MARKDOWN_WRAPS,
   markdownContinuation,
   markdownDecorationSpecs,
   markdownLinkFromPaste,
+  rankWikiTargets,
+  toggleMarkdownWrap,
   wikiLinkAtColumn,
 } from './monacoMarkdown'
 
@@ -37,6 +40,7 @@ let decorationIds: string[] = []
 let pasteHandler: ((event: ClipboardEvent) => void) | null = null
 let rememberLinkCommand: string | null = null
 let composing = false
+let decorationTimer: ReturnType<typeof setTimeout> | null = null
 const VIEW_STATE_KEY = 'docus.monaco.view-state'
 const RECENT_LINKS_KEY = 'docus.monaco.recent-wiki-links'
 
@@ -106,7 +110,8 @@ function saveViewState() {
 
 function refreshMarkdownDecorations() {
   if (!editor || !model) return
-  const decorations: monaco.editor.IModelDeltaDecoration[] = markdownDecorationSpecs(model.getValue()).map((spec) => ({
+  const validWikiPaths = new Set((props.linkTargets ?? []).map((target) => target.path))
+  const decorations: monaco.editor.IModelDeltaDecoration[] = markdownDecorationSpecs(model.getValue(), validWikiPaths).map((spec) => ({
     range: new monaco.Range(spec.startLineNumber, spec.startColumn, spec.endLineNumber, spec.endColumn),
     options: {
       isWholeLine: Boolean(spec.className),
@@ -115,6 +120,11 @@ function refreshMarkdownDecorations() {
     },
   }))
   decorationIds = editor.deltaDecorations(decorationIds, decorations)
+}
+
+function scheduleMarkdownDecorations() {
+  if (decorationTimer) clearTimeout(decorationTimer)
+  decorationTimer = setTimeout(refreshMarkdownDecorations, 120)
 }
 
 const completion = monaco.languages.registerCompletionItemProvider('markdown', {
@@ -148,14 +158,7 @@ const completion = monaco.languages.registerCompletionItemProvider('markdown', {
     const startColumn = position.column - match[1].length
     const recency = recentLinks()
     return {
-      suggestions: (props.linkTargets ?? [])
-        .filter((target) => target.path !== props.path)
-        .sort((a, b) => {
-          const aIndex = recency.indexOf(a.path)
-          const bIndex = recency.indexOf(b.path)
-          if (aIndex !== bIndex) return (aIndex < 0 ? Infinity : aIndex) - (bIndex < 0 ? Infinity : bIndex)
-          return (a.title || a.path).localeCompare(b.title || b.path, 'zh-CN')
-        })
+      suggestions: rankWikiTargets(props.linkTargets ?? [], match[1], recency, props.path)
         .map((target) => ({
           label: target.title || target.path,
           detail: target.path,
@@ -172,6 +175,21 @@ const completion = monaco.languages.registerCompletionItemProvider('markdown', {
             endColumn: position.column,
           },
         })),
+    }
+  },
+})
+
+const hover = monaco.languages.registerHoverProvider('markdown', {
+  provideHover(currentModel, position) {
+    if (currentModel !== model) return null
+    const line = currentModel.getLineContent(position.lineNumber)
+    const path = wikiLinkAtColumn(line, position.column - 1)
+    if (!path) return null
+    const target = props.linkTargets?.find((item) => item.path === path)
+    return {
+      contents: target
+        ? [{ value: `**${target.title || target.path}**` }, { value: `\`${target.path}\`` }]
+        : [{ value: '**Missing note**' }, { value: `\`${path}\`` }],
     }
   },
 })
@@ -210,10 +228,29 @@ onMounted(() => {
   if (saved) editor.restoreViewState(saved)
   refreshMarkdownDecorations()
   editor.onDidChangeModelContent(() => {
-    refreshMarkdownDecorations()
+    scheduleMarkdownDecorations()
     if (suppressChange || composing || !model) return
     emit('update:modelValue', model.getValue())
   })
+  for (const [id, label, keybinding, wrap] of [
+    ['docus.markdown-bold', 'Toggle bold', monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB, MARKDOWN_WRAPS.bold],
+    ['docus.markdown-italic', 'Toggle italic', monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyI, MARKDOWN_WRAPS.italic],
+    ['docus.markdown-code', 'Toggle inline code', monaco.KeyMod.CtrlCmd | monaco.KeyCode.Backquote, MARKDOWN_WRAPS.code],
+    ['docus.markdown-link', 'Insert Markdown link', monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, MARKDOWN_WRAPS.link],
+  ] as const) {
+    editor.addAction({
+      id,
+      label,
+      keybindings: [keybinding],
+      run(instance) {
+        if (!model) return
+        const selection = instance.getSelection()
+        if (!selection) return
+        const selected = model.getValueInRange(selection)
+        instance.executeEdits(id, [{ range: selection, text: toggleMarkdownWrap(selected, wrap) }])
+      },
+    })
+  }
   editor.onDidCompositionStart(() => { composing = true })
   editor.onDidCompositionEnd(() => {
     composing = false
@@ -301,13 +338,17 @@ watch(() => props.focusWidth, (focused) => {
   editor?.updateOptions({ wordWrap: focused ? 'wordWrapColumn' : 'on', wordWrapColumn: 100 })
 })
 
+watch(() => props.linkTargets, scheduleMarkdownDecorations, { deep: true })
+
 onBeforeUnmount(() => {
   saveViewState()
   themeObserver?.disconnect()
+  if (decorationTimer) clearTimeout(decorationTimer)
   if (pasteHandler && host.value) host.value.removeEventListener('paste', pasteHandler, true)
   editor?.dispose()
   model?.dispose()
   completion.dispose()
+  hover.dispose()
   editor = null
   model = null
 })
