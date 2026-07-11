@@ -196,6 +196,7 @@ describe('live tabs publish', () => {
     // propagate to _liveTabs via the flush:post mirror watch.
     const newTab: Tab = {
       path: 'x.md', title: 'x', raw: 'live', originalRaw: '',
+      revision: 1, savedRevision: 0, savingRevision: null,
       saveStatus: 'idle', error: null, loadError: null, loading: false,
       serverMtime: 0,
     }
@@ -276,7 +277,7 @@ describe('live tabs publish', () => {
     expect(h.tabs.value[0].loadError).toContain('HTTP 404')
   })
 
-  it('openPost asks for confirmation when switching from a dirty tab', async () => {
+  it('openPost switches freely while the previous tab remains dirty', async () => {
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [],
       'GET /api/posts': () => [],
@@ -286,18 +287,11 @@ describe('live tabs publish', () => {
     const h = await setup()
     await h.openPost('a')
     h.onEditorChange('a', 'A modified')         // mark dirty
-    // Start opening 'b'; the confirm() call will return a pending promise.
-    const openB = h.openPost('b')
-    // Drain microtasks so confirm() is reached.
-    await Promise.resolve()
-    await Promise.resolve()
-    // 'b' is NOT in the tabs yet — openPost awaits the confirm.
-    expect(h.tabs.value.find((t) => t.path === 'b')).toBeUndefined()
-    answerConfirm(false)                          // user says no
-    await openB
-    // 'b' is still not open, 'a' is still active and dirty.
-    expect(h.tabs.value).toHaveLength(1)
-    expect(h.activePath.value).toBe('a')
+    await h.openPost('b')
+    expect(h.tabs.value).toHaveLength(2)
+    expect(h.tabs.value.find((t) => t.path === 'a')?.saveStatus).toBe('dirty')
+    expect(h.activePath.value).toBe('b')
+    expect(confirmResolve).toBeNull()
   })
 
   it('closeTab removes a tab and switches to the next sibling', async () => {
@@ -434,6 +428,48 @@ describe('live tabs publish', () => {
     expect(putBody).toEqual({ raw: 'A modified' })
     expect(h.tabs.value[0].saveStatus).toBe('saved')
     expect(h.tabs.value[0].originalRaw).toBe('A modified')
+  })
+
+  it('serializes saves and persists edits made while a request is in flight', async () => {
+    let releaseFirst!: () => void
+    const firstPending = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const sent: string[] = []
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'PUT /api/posts/a': async (body) => {
+        const raw = (body as { raw: string }).raw
+        sent.push(raw)
+        if (sent.length === 1) await firstPending
+        return { ok: true, raw }
+      },
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    h.onEditorChange('a', 'A1')
+    const saving = h.doSaveNow()
+    await Promise.resolve()
+    h.onEditorChange('a', 'A2')
+    releaseFirst()
+    await saving
+    expect(sent).toEqual(['A1', 'A2'])
+    expect(h.tabs.value[0].originalRaw).toBe('A2')
+    expect(h.tabs.value[0].saveStatus).toBe('saved')
+  })
+
+  it('blocks page unload while a tab is dirty', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    h.onEditorChange('a', 'unsaved')
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
   })
 
   it('doSave is a no-op when the tab content matches originalRaw', async () => {

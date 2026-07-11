@@ -184,7 +184,7 @@ async function splitCard(path: string, mode: SplitMode) {
 /* ---------- Tabs / save / route sync ---------- */
 const {
   tree, posts, tabs, activePath, activeTab, isDirty, activeSize,
-  refresh, openPost, closeTab, closeMany, selectTab, onEditorChange, onKeydown, onCommandPaletteNew,
+  refresh, openPost, closeTab, closeMany, selectTab, onEditorChange, doSaveNow, onKeydown, onCommandPaletteNew,
 } = useEditorTabs({ selectPanel, togglePreview })
 const editorLinkTargets = computed(() => posts.value.map((post) => ({ path: post.path, title: post.title })))
 
@@ -499,6 +499,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
       :focus-width="editorFocusWidth"
       @toggle-focus-width="editorFocusWidth = !editorFocusWidth"
       @open-metadata="metadataOpen = true"
+      @retry-save="doSaveNow"
     />
 
     <CommandPalette

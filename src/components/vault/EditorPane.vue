@@ -3,16 +3,18 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
 import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+import { acquireMarkdownModel } from './monacoModels'
 import { resolveWikiTarget } from '../../lib/linkResolve'
 import {
   indentMarkdownLine,
+  filterMarkdownSlashCommands,
   MARKDOWN_CODE_LANGUAGES,
   MARKDOWN_WRAPS,
   markdownContinuation,
   markdownDecorationSpecs,
   markdownLinkFromPaste,
+  markdownWrapEdit,
   rankWikiTargets,
-  toggleMarkdownWrap,
   wikiLinkAtColumn,
 } from './monacoMarkdown'
 
@@ -165,7 +167,7 @@ function scheduleMarkdownDecorations() {
 }
 
 const completion = monaco.languages.registerCompletionItemProvider('markdown', {
-  triggerCharacters: ['[', '`'],
+  triggerCharacters: ['[', '`', '/'],
   provideCompletionItems(currentModel, position) {
     if (currentModel !== model) return { suggestions: [] }
     const before = currentModel.getValueInRange({
@@ -174,6 +176,24 @@ const completion = monaco.languages.registerCompletionItemProvider('markdown', {
       endLineNumber: position.lineNumber,
       endColumn: position.column,
     })
+    const slash = /^\s*\/([^\s/]*)$/.exec(before)
+    if (slash) {
+      return {
+        suggestions: filterMarkdownSlashCommands(slash[1]).map((command) => ({
+          label: command.label,
+          detail: command.detail,
+          kind: monaco.languages.CompletionItemKind.Snippet,
+          insertText: command.insertText,
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          range: {
+            startLineNumber: position.lineNumber,
+            startColumn: before.lastIndexOf('/') + 1,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column,
+          },
+        })),
+      }
+    }
     const fence = /^```([A-Za-z0-9_-]*)$/.exec(before)
     if (fence) {
       return {
@@ -234,7 +254,7 @@ const hover = monaco.languages.registerHoverProvider('markdown', {
 
 onMounted(() => {
   if (!host.value) return
-  model = monaco.editor.createModel(props.modelValue, 'markdown', monaco.Uri.parse(`docus://vault/${props.path}`))
+  model = acquireMarkdownModel(props.path, props.modelValue)
   editor = monaco.editor.create(host.value, {
     model,
     theme: activeTheme(),
@@ -248,6 +268,9 @@ onMounted(() => {
     fontFamily: 'var(--mono)',
     fontSize: 14,
     lineHeight: 22,
+    tabSize: 2,
+    insertSpaces: true,
+    detectIndentation: false,
     padding: { top: 10, bottom: 48 },
     renderLineHighlight: 'line',
     scrollBeyondLastLine: false,
@@ -295,7 +318,11 @@ onMounted(() => {
         const selection = instance.getSelection()
         if (!selection) return
         const selected = model.getValueInRange(selection)
-        instance.executeEdits(id, [{ range: selection, text: toggleMarkdownWrap(selected, wrap) }])
+        const edit = markdownWrapEdit(selected, wrap)
+        instance.executeEdits(id, [{ range: selection, text: edit.text }])
+        const start = model.getPositionAt(model.getOffsetAt(selection.getStartPosition()) + edit.selectionOffset)
+        const end = model.getPositionAt(model.getOffsetAt(start) + edit.selectionLength)
+        instance.setSelection(new monaco.Selection(start.lineNumber, start.column, end.lineNumber, end.column))
       },
     })
   }
@@ -354,12 +381,25 @@ onMounted(() => {
           ? selection.endLineNumber - 1
           : selection.endLineNumber
         const edits: monaco.editor.IIdentifiedSingleEditOperation[] = []
+        let firstDelta = 0
+        let lastDelta = 0
         for (let lineNumber = selection.startLineNumber; lineNumber <= endLine; lineNumber += 1) {
           const line = model.getLineContent(lineNumber)
           const next = indentMarkdownLine(line, outdent)
-          if (next !== line) edits.push({ range: new monaco.Range(lineNumber, 1, lineNumber, line.length + 1), text: next })
+          if (next !== line) {
+            const delta = next.length - line.length
+            if (lineNumber === selection.startLineNumber) firstDelta = delta
+            if (lineNumber === endLine) lastDelta = delta
+            edits.push({ range: new monaco.Range(lineNumber, 1, lineNumber, line.length + 1), text: next })
+          }
         }
         instance.executeEdits(id, edits)
+        instance.setSelection(new monaco.Selection(
+          selection.startLineNumber,
+          Math.max(1, selection.startColumn + firstDelta),
+          selection.endLineNumber,
+          Math.max(1, selection.endColumn + lastDelta),
+        ))
       },
     })
   }
@@ -413,7 +453,6 @@ onBeforeUnmount(() => {
   if (decorationTimer) clearTimeout(decorationTimer)
   if (pasteHandler && host.value) host.value.removeEventListener('paste', pasteHandler, true)
   editor?.dispose()
-  model?.dispose()
   completion.dispose()
   hover.dispose()
   editor = null

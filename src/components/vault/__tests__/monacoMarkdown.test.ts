@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   indentMarkdownLine, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs,
-  markdownLinkFromPaste, rankWikiTargets, toggleMarkdownWrap, wikiLinkAtColumn,
+  markdownLinkFromPaste, markdownWrapEdit, rankWikiTargets, toggleMarkdownWrap, wikiLinkAtColumn,
 } from '../monacoMarkdown'
 
 describe('Monaco Markdown helpers', () => {
@@ -29,7 +29,10 @@ describe('Monaco Markdown helpers', () => {
   it('toggles Markdown formatting around selected text', () => {
     expect(toggleMarkdownWrap('text', MARKDOWN_WRAPS.bold)).toBe('**text**')
     expect(toggleMarkdownWrap('**text**', MARKDOWN_WRAPS.bold)).toBe('text')
-    expect(toggleMarkdownWrap('', MARKDOWN_WRAPS.link)).toBe('[link text](https://)')
+  expect(toggleMarkdownWrap('', MARKDOWN_WRAPS.link)).toBe('[link text](https://)')
+  expect(markdownWrapEdit('', MARKDOWN_WRAPS.bold)).toEqual({
+    text: '**bold text**', selectionOffset: 2, selectionLength: 9,
+  })
   })
 
   it('ranks Wiki Links by relevance and recent use', () => {

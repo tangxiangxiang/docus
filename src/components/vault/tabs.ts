@@ -5,6 +5,9 @@ export interface Tab {
   title: string
   raw: string
   originalRaw: string
+  revision: number
+  savedRevision: number
+  savingRevision: number | null
   saveStatus: SaveStatus
   error: string | null
   loadError: string | null

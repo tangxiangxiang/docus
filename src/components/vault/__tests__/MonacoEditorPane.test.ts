@@ -16,6 +16,9 @@ const mocks = vi.hoisted(() => {
     getLineContent: vi.fn(() => ''),
     getLineCount: vi.fn(() => Math.max(1, model.value.split('\n').length)),
     getLineMaxColumn: vi.fn(() => 1),
+    getOffsetAt: vi.fn(() => 0),
+    getPositionAt: vi.fn(() => ({ lineNumber: 1, column: 1 })),
+    isDisposed: vi.fn(() => false),
     dispose: vi.fn(),
   }
   const editor = {
@@ -37,6 +40,7 @@ const mocks = vi.hoisted(() => {
     addAction: vi.fn(),
     getSelection: vi.fn(() => null),
     executeEdits: vi.fn(),
+    setSelection: vi.fn(),
     updateOptions: vi.fn(),
     focus: vi.fn(),
     dispose: vi.fn(),
@@ -72,6 +76,9 @@ vi.mock('monaco-editor/esm/vs/editor/editor.api.js', () => ({
   Range: class Range {
     constructor(..._args: number[]) {}
   },
+  Selection: class Selection {
+    constructor(..._args: number[]) {}
+  },
   KeyCode: { Enter: 3, Tab: 2, KeyB: 31, KeyI: 38, KeyK: 40, Backquote: 85 },
   KeyMod: { Shift: 1024, CtrlCmd: 2048 },
 }))
@@ -79,9 +86,11 @@ vi.mock('monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js'
 vi.mock('monaco-editor/esm/vs/editor/editor.worker?worker', () => ({ default: class WorkerStub {} }))
 
 import EditorPane from '../EditorPane.vue'
+import { resetMarkdownModelsForTesting } from '../monacoModels'
 
 describe('Monaco EditorPane', () => {
   beforeEach(() => {
+    resetMarkdownModelsForTesting()
     localStorage.clear()
     mocks.changeListeners.length = 0
     mocks.blurListeners.length = 0
@@ -109,13 +118,13 @@ describe('Monaco EditorPane', () => {
     wrapper.unmount()
   })
 
-  it('restores view state and releases Monaco resources', () => {
+  it('restores view state and keeps the tab model for Undo/Redo', () => {
     localStorage.setItem('docus.monaco.view-state', JSON.stringify({ 'inbox/test': { cursorState: [], viewState: {} } }))
     const wrapper = mount(EditorPane, { props: { modelValue: 'start', path: 'inbox/test' } })
     expect(mocks.editor.restoreViewState).toHaveBeenCalled()
     wrapper.unmount()
     expect(mocks.editor.dispose).toHaveBeenCalledOnce()
-    expect(mocks.model.dispose).toHaveBeenCalledOnce()
+    expect(mocks.model.dispose).not.toHaveBeenCalled()
     expect(mocks.completionDispose).toHaveBeenCalledOnce()
     expect(mocks.hoverDispose).toHaveBeenCalledOnce()
   })

@@ -13,6 +13,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'toggle-focus-width': []
   'open-metadata': []
+  'retry-save': []
 }>()
 
 // The leading glyphs (● ✓ ⟳ !) come from CSS `::before` on
@@ -56,7 +57,17 @@ const pathLabel = computed(() => {
            change ("Unsaved" → "Saving…" → "Saved") without being
            interrupted. aria-atomic="true" re-announces the whole
            status instead of just the diff. -->
+      <button
+        v-if="saveStatus === 'error'"
+        type="button"
+        class="sb-item sb-status sb-status-retry"
+        :data-status="saveStatus"
+        :title="`${statusLabel}。点击重试保存`"
+        aria-label="保存失败，点击重试"
+        @click="emit('retry-save')"
+      >{{ statusLabel }}</button>
       <span
+        v-else
         class="sb-item sb-status"
         :data-status="saveStatus"
         aria-live="polite"
@@ -124,6 +135,13 @@ const pathLabel = computed(() => {
 .sb-path-empty {
   font-style: italic;
   color: var(--vs-text-3, #888);
+}
+.sb-status-retry {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 .sb-focus-width, .sb-metadata {
   width: 22px;

@@ -45,6 +45,7 @@ import {
 import type { Tab } from '../../components/vault/tabs'
 import type { SidePanel } from '../../components/vault/ActivityBar.vue'
 import { isSlugSegment, toLocalSlug } from '../../lib/slug'
+import { disposeMarkdownModel } from '../../components/vault/monacoModels'
 
 /* Tab-count limits. vault is a personal Zettelkasten — heavy
    multi-tab editing (20+ tabs) signals the user should be using
@@ -282,6 +283,9 @@ export function useEditorTabs(opts: {
       title: title || path,
       raw: '',
       originalRaw: '',
+      revision: 0,
+      savedRevision: 0,
+      savingRevision: null,
       saveStatus: 'idle',
       error: null,
       loadError: null,
@@ -310,13 +314,6 @@ export function useEditorTabs(opts: {
     // point, and spamming would be worse than a missed nudge.
     if (tabs.value.length >= TAB_SOFT_LIMIT) {
       toast.info('标签页较多,建议关闭不常用的 (按 ⌘P 用命令面板更快)')
-    }
-    // The confirm() must run *before* any tab mutation, so an in-flight
-    // click can't interleave with another openPost and leave the tabs
-    // list in an unexpected state.
-    if (isDirty.value && activePath.value) {
-      const ok = await confirm('有未保存的修改,确定要切换吗?')
-      if (!ok) return
     }
     const tab = makeEmptyTab(path)
     tabs.value.push(tab)
@@ -387,6 +384,7 @@ export function useEditorTabs(opts: {
       if (!ok) return
     }
     tabs.value.splice(idx, 1)
+    disposeMarkdownModel(path)
     if (activePath.value === path) {
       const next = tabs.value[idx] ?? tabs.value[idx - 1] ?? null
       activePath.value = next ? next.path : null
@@ -441,40 +439,46 @@ export function useEditorTabs(opts: {
     router.replace(pathToUrl(path))
   }
 
-  async function doSave(path: string): Promise<void> {
+  const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const savePromises = new Map<string, Promise<void>>()
+
+  function scheduleSave(path: string, delay = 800) {
+    const current = saveTimers.get(path)
+    if (current) clearTimeout(current)
+    saveTimers.set(path, setTimeout(() => {
+      saveTimers.delete(path)
+      void doSave(path)
+    }, delay))
+  }
+
+  async function saveLatest(path: string): Promise<void> {
     const tab = tabs.value.find((t) => t.path === path)
     if (!tab) return
-    if (tab.raw === tab.originalRaw) {
+    if (tab.revision === tab.savedRevision) {
       tab.saveStatus = 'idle'
       return
     }
+    const sentRevision = tab.revision
+    const sentVersion = tab.raw
+    tab.savingRevision = sentRevision
     tab.saveStatus = 'saving'
     tab.error = null
-    // Capture the version we sent so we can tell on response whether
-    // the user kept typing during the PUT round-trip. If so, their
-    // latest keystrokes win and we DON'T overwrite with the server's
-    // bumped raw (which would lose those keystrokes).
-    const sentVersion = tab.raw
     try {
       const r = await fetch('/api/posts/' + encodeURI(path), {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ raw: tab.raw }),
+        body: JSON.stringify({ raw: sentVersion }),
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const data = (await r.json()) as { ok: true; raw: string }
       if (tab.raw === sentVersion) {
-      // No keystrokes landed during the round-trip — adopt the exact
-      // bytes acknowledged by the server.
         tab.raw = data.raw
         tab.originalRaw = data.raw
       } else {
-        // The user kept typing. Their buffer is the source of truth;
-        // just mark it as the new saved baseline. The next debounced
-        // save will persist the latest buffer.
-        tab.originalRaw = tab.raw
+        tab.originalRaw = sentVersion
       }
-      tab.saveStatus = 'saved'
+      tab.savedRevision = sentRevision
+      tab.saveStatus = tab.revision === sentRevision ? 'saved' : 'dirty'
       await refresh()
       // refresh() repopulates `posts` with current mtimes; pick up
       // the new serverMtime so a later external-change compare (or
@@ -485,19 +489,42 @@ export function useEditorTabs(opts: {
       tab.saveStatus = 'error'
       tab.error = (e as Error).message
       toast.error(`保存失败: ${tab.error}`)
+    } finally {
+      tab.savingRevision = null
     }
   }
 
-  const debouncedSave = useDebounceFn((path: string) => {
-    void doSave(path)
-  }, 800)
+  async function doSave(path: string): Promise<void> {
+    const active = savePromises.get(path)
+    if (active) return active
+    const promise = (async () => {
+      do {
+        await saveLatest(path)
+        const tab = tabs.value.find((t) => t.path === path)
+        if (!tab || tab.saveStatus === 'error' || tab.revision === tab.savedRevision) break
+      } while (true)
+    })().finally(() => savePromises.delete(path))
+    savePromises.set(path, promise)
+    return promise
+  }
 
   function onEditorChange(path: string, val: string) {
     const tab = tabs.value.find((t) => t.path === path)
     if (!tab) return
     tab.raw = val
-    tab.saveStatus = tab.raw === tab.originalRaw ? 'idle' : 'dirty'
-    debouncedSave(path)
+    tab.revision += 1
+    if (tab.raw === tab.originalRaw) tab.savedRevision = tab.revision
+    tab.saveStatus = tab.revision === tab.savedRevision ? 'idle' : 'dirty'
+    scheduleSave(path)
+  }
+
+  function handleBeforeUnload(event: BeforeUnloadEvent) {
+    const hasUnsaved = tabs.value.some((tab) =>
+      tab.revision !== tab.savedRevision || tab.saveStatus === 'error' || tab.saveStatus === 'saving',
+    )
+    if (!hasUnsaved) return
+    event.preventDefault()
+    event.returnValue = ''
   }
 
   async function doSaveNow() {
@@ -586,6 +613,7 @@ export function useEditorTabs(opts: {
   // URL changes; we don't want it to also fire on mount or we'd
   // double-open.
   onMounted(async () => {
+    window.addEventListener('beforeunload', handleBeforeUnload)
     await refresh()
     // Resolve the vault id once and cache it for the persist watcher.
     // The cache lifetime is the page session — a refresh re-fetches,
@@ -753,6 +781,9 @@ export function useEditorTabs(opts: {
   // ReadingPane) can navigate wiki-link clicks without prop-drilling.
   setOpenPostForClicks(openPost)
   onBeforeUnmount(() => {
+    window.removeEventListener('beforeunload', handleBeforeUnload)
+    for (const timer of saveTimers.values()) clearTimeout(timer)
+    saveTimers.clear()
     if (_openPost === openPost) setOpenPostForClicks(null)
   })
 

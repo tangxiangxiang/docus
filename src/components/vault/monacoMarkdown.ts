@@ -23,9 +23,48 @@ export function markdownLinkFromPaste(label: string, pasted: string): string | n
   return `[${label.replace(/]/g, '\\]')}](${url.replace(/\)/g, '\\)')})`
 }
 
-export function indentMarkdownLine(line: string, outdent: boolean): string {
-  if (outdent) return line.replace(/^ {1,2}/, '')
-  return `  ${line}`
+export function markdownIndentUnit(line: string, tabSize = 2): string {
+  if (line.startsWith('\t')) return '\t'
+  const spaces = /^ +/.exec(line)?.[0].length ?? 0
+  if (spaces >= 4 && spaces % 4 === 0) return '    '
+  return ' '.repeat(tabSize)
+}
+
+export function indentMarkdownLine(line: string, outdent: boolean, tabSize = 2): string {
+  const unit = markdownIndentUnit(line, tabSize)
+  if (outdent) {
+    if (line.startsWith('\t')) return line.slice(1)
+    return line.startsWith(unit) ? line.slice(unit.length) : line.replace(/^ +/, '')
+  }
+  return `${unit}${line}`
+}
+
+export interface MarkdownSlashCommand {
+  label: string
+  detail: string
+  insertText: string
+}
+
+export const MARKDOWN_SLASH_COMMANDS: readonly MarkdownSlashCommand[] = [
+  { label: 'heading 1', detail: '一级标题', insertText: '# ${1:Heading}' },
+  { label: 'heading 2', detail: '二级标题', insertText: '## ${1:Heading}' },
+  { label: 'heading 3', detail: '三级标题', insertText: '### ${1:Heading}' },
+  { label: 'bullet list', detail: '无序列表', insertText: '- ${1:Item}' },
+  { label: 'numbered list', detail: '有序列表', insertText: '1. ${1:Item}' },
+  { label: 'task', detail: '任务列表', insertText: '- [ ] ${1:Task}' },
+  { label: 'quote', detail: '引用', insertText: '> ${1:Quote}' },
+  { label: 'code block', detail: '代码块', insertText: '```$1\n$2\n```' },
+  { label: 'mermaid', detail: 'Mermaid 图表', insertText: '```mermaid\n${1:graph TD\n  A --> B}\n```' },
+  { label: 'markmap', detail: 'Markmap 思维导图', insertText: '```markmap\n# ${1:Topic}\n- ${2:Branch}\n```' },
+  { label: 'table', detail: 'Markdown 表格', insertText: '| ${1:Column} | ${2:Column} |\n| --- | --- |\n| ${3:Value} | ${4:Value} |' },
+] as const
+
+export function filterMarkdownSlashCommands(query: string): readonly MarkdownSlashCommand[] {
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) return MARKDOWN_SLASH_COMMANDS
+  return MARKDOWN_SLASH_COMMANDS.filter((command) =>
+    `${command.label} ${command.detail}`.toLocaleLowerCase().includes(needle),
+  )
 }
 
 export interface MarkdownWrap {
@@ -46,6 +85,26 @@ export function toggleMarkdownWrap(text: string, wrap: MarkdownWrap): string {
     return text.slice(wrap.before.length, text.length - wrap.after.length)
   }
   return `${wrap.before}${text || wrap.placeholder}${wrap.after}`
+}
+
+export interface MarkdownWrapEdit {
+  text: string
+  selectionOffset: number
+  selectionLength: number
+}
+
+export function markdownWrapEdit(text: string, wrap: MarkdownWrap): MarkdownWrapEdit {
+  const unwrapping = text.startsWith(wrap.before) && text.endsWith(wrap.after)
+  if (unwrapping) {
+    const unwrapped = text.slice(wrap.before.length, text.length - wrap.after.length)
+    return { text: unwrapped, selectionOffset: 0, selectionLength: unwrapped.length }
+  }
+  const inner = text || wrap.placeholder
+  return {
+    text: `${wrap.before}${inner}${wrap.after}`,
+    selectionOffset: wrap.before.length,
+    selectionLength: inner.length,
+  }
 }
 
 export function rankWikiTargets<T extends { path: string; title: string }>(
