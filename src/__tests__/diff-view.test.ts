@@ -313,7 +313,7 @@ describe('DiffView restore button', () => {
     await loadDiffWith({
       ops: [{ op: 'add', oldLine: null, newLine: 1, text: 'new file' }],
       stats: { added: 1, removed: 0, equal: 0 },
-    }, { oldRef: 'HEAD', newRef: api.WORKTREE_REF })
+    }, 'inbox/a.md', { oldRef: 'HEAD', newRef: api.WORKTREE_REF })
     const wrapper = renderDiffView()
     await flushPromises()
     expect(wrapper.find('.diff-restore-btn').exists()).toBe(false)

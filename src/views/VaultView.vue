@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, shallowRef, watch, computed, provide, onMounted, onBeforeUnmount } from 'vue'
+import { ref, inject, shallowRef, watch, computed, provide, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue'
 import { useStorage } from '@vueuse/core'
 import { useShortcutDisplay } from '../composables/useShortcutDisplay'
 import { useVaultLayout, setSelectPanelForClicks } from '../composables/vault/useVaultLayout'
@@ -17,7 +17,6 @@ import { VaultViewModeKey } from '../composables/vault/viewMode'
 import FileTree from '../components/vault/FileTree.vue'
 import AiPanel from '../components/vault/AiPanel.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
-import EditorPane from '../components/vault/EditorPane.vue'
 import PreviewPane from '../components/vault/PreviewPane.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
 import KnowledgeGraph from '../components/vault/KnowledgeGraph.vue'
@@ -30,6 +29,10 @@ import DiffView from '../components/vault/DiffView.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
+
+// Monaco is the heaviest client dependency. Load it only when edit mode
+// actually mounts an editor, keeping navigation/read-only startup lean.
+const EditorPane = defineAsyncComponent(() => import('../components/vault/EditorPane.vue'))
 
 /* App.vue provides a global "open search" trigger so the NavBar button
    (which lives outside the router view) can ask the vault to open its
@@ -331,6 +334,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
             :focus-width="editorFocusWidth"
             :link-targets="posts.map((post) => ({ path: post.path, title: post.title }))"
             @update:model-value="(val: string) => onEditorChange(t.path, val)"
+            @open-link="openPost"
           />
         </div>
         <div v-if="!tabs.length" class="content-empty">

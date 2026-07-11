@@ -2316,136 +2316,27 @@ main.container {
     0 4px 14px rgba(0, 0, 0, 0.32);
 }
 
-/* EditorPane inside vault */
-.vault .cm-host { flex: 1; min-height: 0; height: 100%; }
-.vault .cm-host .cm-editor { height: 100%; }
-/* Override the oneDark theme's #282c34 background to match --vs-bg-1
-   so the editor pane reads as continuous with the preview pane. The
-   oneDark theme is still active (syntax colors / caret etc.), only
-   the bg of the editor and its scroller is re-tinted. */
-.vault .cm-host .cm-editor,
-.vault .cm-host .cm-scroller,
-.vault .cm-host .cm-gutters {
-  background-color: var(--vs-bg-1) !important;
-}
-.vault .cm-host .cm-scroller { font-family: var(--mono); }
-.vault .cm-host.focus-width .cm-scroller {
-  padding-inline: max(12px, calc((100% - 860px) / 2));
-  box-sizing: border-box;
-}
-.vault .cm-host.focus-width .cm-content { min-width: 0; }
-
-/* CodeMirror's built-in search panel stays inside the editing surface
-   and follows the same quiet IDE chrome as tabs and side panels. */
-.vault .cm-host .cm-panel.cm-search {
-  position: absolute;
-  z-index: 20;
-  top: 6px;
-  right: 8px;
-  width: min(620px, calc(100% - 16px));
-  box-sizing: border-box;
-  display: grid;
-  grid-template-columns: minmax(150px, 1fr) auto auto auto auto auto auto;
+/* Monaco EditorPane inside vault */
+.vault .monaco-host { flex: 1; min-width: 0; min-height: 0; height: 100%; }
+.vault .editor-pane:has(> .monaco-host.focus-width) {
   align-items: center;
-  gap: 5px;
-  padding: 6px 32px 6px 8px;
-  background: var(--vs-bg-2);
-  border: 1px solid var(--vs-border);
-  border-radius: 4px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-  color: var(--vs-text-1);
-  font-family: var(--sans);
 }
-.vault .cm-host .cm-panel.cm-search br { display: none; }
-.vault .cm-host .cm-panel.cm-search label {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  white-space: nowrap;
-  font-size: 0.68rem;
-  color: var(--vs-text-2);
-}
-.vault .cm-host .cm-panel.cm-search input,
-.vault .cm-host .cm-panel.cm-search button {
-  height: 24px;
-  border: 1px solid var(--vs-border);
-  border-radius: 3px;
-  background: var(--vs-bg-1);
-  color: var(--vs-text-1);
-  font: inherit;
-  font-size: 0.72rem;
-  line-height: 1;
-}
-.vault .cm-host .cm-panel.cm-search button { padding: 0 7px; white-space: nowrap; }
-.vault .cm-host .cm-panel.cm-search input[name='search'],
-.vault .cm-host .cm-panel.cm-search input[name='replace'] { width: 100%; box-sizing: border-box; }
-.vault .cm-host .cm-panel.cm-search button[name='close'] {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 20px;
-  min-height: 20px;
-  border: 0;
-  background: transparent;
-}
-.vault .cm-host .cm-panel.cm-search button:hover {
-  background: var(--vs-hover-bg);
-}
-@media (max-width: 760px) {
-  .vault .cm-host .cm-panel.cm-search {
-    grid-template-columns: minmax(120px, 1fr) auto auto auto;
-  }
-  .vault .cm-host .cm-panel.cm-search label { display: none; }
-}
-
-.vault .cm-host .cm-tooltip-autocomplete {
-  min-width: 260px;
-  max-width: min(460px, calc(100vw - 24px));
-  max-height: 280px;
-  overflow: auto;
-  border: 1px solid var(--vs-border);
-  border-radius: 4px;
-  background: var(--vs-bg-2);
-  color: var(--vs-text-1);
-  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.24);
-  font-family: var(--sans);
-}
-.vault .cm-host .cm-tooltip-autocomplete > ul > li {
-  min-height: 28px;
-  display: flex;
-  align-items: center;
-  padding: 3px 8px;
-}
-.vault .cm-host .cm-tooltip-autocomplete > ul > li[aria-selected] {
-  background: var(--vs-active-bg);
-  color: var(--vs-text-1);
-}
-.vault .cm-host .cm-completionLabel { font-size: 0.8rem; }
-.vault .cm-host .cm-completionDetail {
-  margin-left: auto;
-  padding-left: 16px;
-  color: var(--vs-text-3);
-  font-family: var(--mono);
-  font-size: 0.68rem;
-}
-.vault .cm-host .cm-completionIcon { display: none; }
-
-/* Source-first Markdown hierarchy. Markers remain visible; line
-   decoration only changes emphasis so source editing stays predictable. */
-.vault .cm-host .cm-md-heading { font-weight: 650; }
-.vault .cm-host .cm-md-heading span { color: var(--vs-text-1) !important; }
-.vault .cm-host .cm-md-heading span:first-child { color: var(--vs-accent) !important; }
-.vault .cm-host .cm-md-h1 { font-weight: 720; }
-.vault .cm-host .cm-md-h1,
-.vault .cm-host .cm-md-h2 { padding-top: 0.22em; }
-.vault .cm-host .cm-md-quote {
+.vault .monaco-host.focus-width { width: min(100%, 920px); }
+.vault .monaco-host .monaco-md-heading { font-weight: 650; }
+.vault .monaco-host .monaco-md-h1 { font-weight: 720; }
+.vault .monaco-host .monaco-md-marker { color: var(--vs-accent) !important; }
+.vault .monaco-host .monaco-md-quote {
   box-shadow: inset 2px 0 color-mix(in srgb, var(--vs-accent) 58%, transparent);
   padding-left: 8px;
-  color: var(--vs-text-2);
+  color: var(--vs-text-2) !important;
   font-style: italic;
 }
-.vault .cm-host .cm-md-frontmatter { opacity: 0.72; }
-.vault .cm-host .cm-md-list span:first-child { color: var(--vs-accent) !important; }
+.vault .monaco-host .monaco-md-frontmatter { opacity: 0.72; }
+.vault .monaco-host .monaco-md-frontmatter-key { color: var(--vs-accent) !important; font-weight: 600; }
+.vault .monaco-host .monaco-md-frontmatter-value { color: var(--vs-text-2) !important; }
+.vault .monaco-host .monaco-md-code { background: var(--vs-bg-2); color: var(--vs-text-1) !important; }
+.vault .monaco-host .monaco-md-strong { color: var(--vs-text-1) !important; font-weight: 700; }
+.vault .monaco-host .monaco-md-link { color: var(--vs-accent) !important; }
 
 /* PreviewPane inside vault: drop docus stylesheet padding to match */
 .vault .preview-pane {
@@ -2806,49 +2697,6 @@ main.container {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-}
-
-.cm-host {
-  height: 100%;
-  font-size: 0.9rem;
-}
-.cm-host .cm-editor { height: 100%; }
-.cm-host .cm-scroller { font-family: var(--mono); }
-/* Light-mode CodeMirror palette. Only applies when the vault is in
-   light theme (the EditorPane skips oneDark in that case). Pulled from
-   the One Light theme so it still feels "code-editor-ish" rather than
-   a plain textarea. */
-.vault .cm-host .cm-editor {
-  background: var(--vs-bg-1);
-  color: var(--vs-text-1);
-}
-.vault .cm-host .cm-gutters {
-  background: var(--vs-bg-1);
-  color: var(--vs-text-3);
-  border-right: 1px solid var(--vs-border);
-}
-.vault .cm-host .cm-cursor { border-left-color: var(--vs-text-1); }
-.vault .cm-host .cm-activeLine { background: var(--vs-hover-bg); }
-.vault .cm-host .cm-activeLineGutter {
-  background-color: transparent;
-  color: var(--vs-text-1);
-}
-.vault .cm-host .cm-content { caret-color: var(--vs-text-1); }
-.vault .cm-host .cm-selectionBackground,
-.vault .cm-host .cm-focused .cm-selectionBackground {
-  background: var(--vs-accent-bg) !important;
-}
-.vault .cm-host .cm-searchMatch { background: rgba(255, 200, 50, 0.35); }
-.vault .cm-host .cm-searchMatch.cm-searchMatch-selected { background: rgba(255, 150, 0, 0.45); }
-
-/* VS Code's active-line gutter is subtle: the gutter keeps its base
-   bg and only the line number is bumped to the brightest text color.
-   The oneDark theme paints a slab of #2c313a behind the active row
-   which disconnects it from the surrounding gutter; flatten that
-   back to transparent and re-tint the number with the design token. */
-.cm-host .cm-activeLineGutter {
-  background-color: transparent;
-  color: var(--vs-text-1);
 }
 
 .preview { max-width: 100%; }

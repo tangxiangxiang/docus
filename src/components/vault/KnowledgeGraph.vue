@@ -134,7 +134,7 @@ let graph: ForceGraphInstance | null = null
 let resizeObserver: ResizeObserver | null = null
 const loadError = ref<string | null>(null)
 let disposed = false
-let fitTimer: ReturnType<typeof window.setTimeout> | null = null
+let fitTimer: number | null = null
 
 function roundedRect(
   ctx: CanvasRenderingContext2D,

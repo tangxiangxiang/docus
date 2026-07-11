@@ -26,8 +26,8 @@ interface WriteResult {
   failed: { slug: string; reason: string }[]
 }
 
-function bad(c: Context, msg: string, code = 400) {
-  return c.json({ error: msg }, code)
+function bad(c: Context, msg: string) {
+  return c.json({ error: msg }, 400)
 }
 
 async function exists(p: string): Promise<boolean> {

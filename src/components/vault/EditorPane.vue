@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
-import { Compartment, EditorSelection, EditorState, RangeSetBuilder, Transaction } from '@codemirror/state'
-import { Decoration, EditorView, ViewPlugin, keymap, lineNumbers, highlightActiveLineGutter } from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { insertNewlineContinueMarkup, markdown } from '@codemirror/lang-markdown'
-import { search, searchKeymap } from '@codemirror/search'
-import { autocompletion, completionStatus, startCompletion, type CompletionContext, type Completion } from '@codemirror/autocomplete'
-import { oneDark } from '@codemirror/theme-one-dark'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
+import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js'
+import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+import {
+  indentMarkdownLine,
+  MARKDOWN_CODE_LANGUAGES,
+  markdownContinuation,
+  markdownDecorationSpecs,
+  markdownLinkFromPaste,
+  wikiLinkAtColumn,
+} from './monacoMarkdown'
 
 export interface EditorLinkTarget {
   path: string
@@ -19,255 +23,301 @@ const props = defineProps<{
   focusWidth?: boolean
   linkTargets?: EditorLinkTarget[]
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: string]
+  'open-link': [path: string]
+}>()
 
 const host = ref<HTMLDivElement | null>(null)
-let view: EditorView | null = null
-let suppressNextEmit = false
-const themeCompartment = new Compartment()
-const STORAGE_KEY = 'docus.editor.view-state'
-type StoredViewState = { anchor: number; head: number; scrollTop: number }
-let scrollSaveTimer: ReturnType<typeof setTimeout> | null = null
+let editor: monaco.editor.IStandaloneCodeEditor | null = null
+let model: monaco.editor.ITextModel | null = null
+let suppressChange = false
+let themeObserver: MutationObserver | null = null
+let decorationIds: string[] = []
+let pasteHandler: ((event: ClipboardEvent) => void) | null = null
+let rememberLinkCommand: string | null = null
+let composing = false
+const VIEW_STATE_KEY = 'docus.monaco.view-state'
+const RECENT_LINKS_KEY = 'docus.monaco.recent-wiki-links'
 
-function readViewStates(): Record<string, StoredViewState> {
-  if (typeof localStorage === 'undefined') return {}
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<string, StoredViewState>
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch { return {} }
+function recentLinks(): string[] {
+  try { return JSON.parse(localStorage.getItem(RECENT_LINKS_KEY) ?? '[]') as string[] }
+  catch { return [] }
 }
 
-function restoreViewState(state: EditorState): EditorState {
-  const stored = readViewStates()[props.path]
-  if (!stored) return state
-  const anchor = Math.min(stored.anchor, state.doc.length)
-  const head = Math.min(stored.head, state.doc.length)
-  return state.update({ selection: EditorSelection.single(anchor, head) }).state
+function recordRecentLink(path: string) {
+  const links = recentLinks().filter((item) => item !== path)
+  localStorage.setItem(RECENT_LINKS_KEY, JSON.stringify([path, ...links].slice(0, 20)))
+}
+
+const monacoGlobal = globalThis as typeof globalThis & {
+  MonacoEnvironment?: { getWorker: () => Worker }
+}
+monacoGlobal.MonacoEnvironment = {
+  getWorker: () => new EditorWorker(),
+}
+
+function activeTheme(): 'docus-light' | 'docus-dark' {
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'docus-light' : 'docus-dark'
+}
+
+monaco.editor.defineTheme('docus-light', {
+  base: 'vs', inherit: true,
+  rules: [
+    { token: 'markup.heading.markdown', foreground: '0969DA', fontStyle: 'bold' },
+    { token: 'string.link.markdown', foreground: '0969DA' },
+    { token: 'variable', foreground: '953800' },
+  ],
+  colors: {
+    'editor.background': '#ffffff',
+    'editor.lineHighlightBackground': '#f5f7f9',
+    'editorGutter.background': '#ffffff',
+  },
+})
+monaco.editor.defineTheme('docus-dark', {
+  base: 'vs-dark', inherit: true,
+  rules: [
+    { token: 'markup.heading.markdown', foreground: '61AFEF', fontStyle: 'bold' },
+    { token: 'string.link.markdown', foreground: '61AFEF' },
+  ],
+  colors: {
+    'editor.background': '#1e1e1e',
+    'editor.lineHighlightBackground': '#252526',
+    'editorGutter.background': '#1e1e1e',
+  },
+})
+
+function readViewState(): monaco.editor.ICodeEditorViewState | null {
+  try {
+    const all = JSON.parse(localStorage.getItem(VIEW_STATE_KEY) ?? '{}') as Record<string, monaco.editor.ICodeEditorViewState>
+    return all[props.path] ?? null
+  } catch { return null }
 }
 
 function saveViewState() {
-  if (!view || typeof localStorage === 'undefined') return
+  if (!editor) return
   try {
-    const states = readViewStates()
-    const selection = view.state.selection.main
-    delete states[props.path]
-    states[props.path] = {
-      anchor: selection.anchor,
-      head: selection.head,
-      scrollTop: view.scrollDOM.scrollTop,
+    const all = JSON.parse(localStorage.getItem(VIEW_STATE_KEY) ?? '{}') as Record<string, monaco.editor.ICodeEditorViewState>
+    delete all[props.path]
+    all[props.path] = editor.saveViewState()!
+    localStorage.setItem(VIEW_STATE_KEY, JSON.stringify(Object.fromEntries(Object.entries(all).slice(-100))))
+  } catch { /* best effort */ }
+}
+
+function refreshMarkdownDecorations() {
+  if (!editor || !model) return
+  const decorations: monaco.editor.IModelDeltaDecoration[] = markdownDecorationSpecs(model.getValue()).map((spec) => ({
+    range: new monaco.Range(spec.startLineNumber, spec.startColumn, spec.endLineNumber, spec.endColumn),
+    options: {
+      isWholeLine: Boolean(spec.className),
+      className: spec.className,
+      inlineClassName: spec.inlineClassName,
+    },
+  }))
+  decorationIds = editor.deltaDecorations(decorationIds, decorations)
+}
+
+const completion = monaco.languages.registerCompletionItemProvider('markdown', {
+  triggerCharacters: ['[', '`'],
+  provideCompletionItems(currentModel, position) {
+    if (currentModel !== model) return { suggestions: [] }
+    const before = currentModel.getValueInRange({
+      startLineNumber: position.lineNumber,
+      startColumn: 1,
+      endLineNumber: position.lineNumber,
+      endColumn: position.column,
+    })
+    const fence = /^```([A-Za-z0-9_-]*)$/.exec(before)
+    if (fence) {
+      return {
+        suggestions: MARKDOWN_CODE_LANGUAGES.map((language) => ({
+          label: language,
+          kind: monaco.languages.CompletionItemKind.Keyword,
+          insertText: language,
+          range: {
+            startLineNumber: position.lineNumber,
+            startColumn: position.column - fence[1].length,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column,
+          },
+        })),
+      }
     }
-    // Bound persistence so renamed/deleted notes cannot grow this forever.
-    const entries = Object.entries(states).slice(-100)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)))
-  } catch { /* persistence is best-effort */ }
-}
-
-function scheduleViewStateSave() {
-  if (scrollSaveTimer) clearTimeout(scrollSaveTimer)
-  scrollSaveTimer = setTimeout(saveViewState, 120)
-}
-
-/* Track the vault's current theme (set as data-theme on <html>) so the
-   editor's palette matches the surrounding chrome. oneDark only loads
-   in dark mode; in light mode we fall through to a small light-token
-   set defined in style.css. A Compartment swaps that extension without
-   replacing the EditorView or losing its interaction state. */
-function currentTheme(): 'light' | 'dark' {
-  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark'
-}
-
-function themeExtension() {
-  return currentTheme() === 'dark' ? oneDark : []
-}
-
-function markdownLineDecorations(state: EditorState) {
-  const builder = new RangeSetBuilder<Decoration>()
-  let inFrontmatter = state.doc.lines > 1 && state.doc.line(1).text.trim() === '---'
-  for (let number = 1; number <= state.doc.lines; number += 1) {
-    const line = state.doc.line(number)
-    const trimmed = line.text.trimStart()
-    const classes: string[] = []
-    if (inFrontmatter) classes.push('cm-md-frontmatter')
-    const heading = /^(#{1,6})\s/.exec(trimmed)
-    if (heading) classes.push('cm-md-heading', `cm-md-h${heading[1].length}`)
-    if (/^>\s?/.test(trimmed)) classes.push('cm-md-quote')
-    if (/^(?:[-+*]|\d+\.)\s/.test(trimmed)) classes.push('cm-md-list')
-    if (classes.length) builder.add(line.from, line.from, Decoration.line({ attributes: { class: classes.join(' ') } }))
-    if (number > 1 && inFrontmatter && trimmed.trim() === '---') inFrontmatter = false
-  }
-  return builder.finish()
-}
-
-const markdownStructurePlugin = ViewPlugin.fromClass(class {
-  decorations
-  constructor(view: EditorView) {
-    this.decorations = markdownLineDecorations(view.state)
-  }
-  update(update: { docChanged: boolean; state: EditorState }) {
-    if (update.docChanged) this.decorations = markdownLineDecorations(update.state)
-  }
-}, { decorations: (value) => value.decorations })
-
-function wikiLinkCompletion(context: CompletionContext) {
-  const line = context.state.doc.lineAt(context.pos)
-  const before = context.state.doc.sliceString(line.from, context.pos)
-  const match = /\[\[([^\]\n]*)$/.exec(before)
-  if (!match || match[1].includes('|') || match[1].includes('#')) return null
-  const options: Completion[] = (props.linkTargets ?? [])
-    .filter((target) => target.path !== props.path)
-    .map((target) => ({
-      label: `${target.title} ${target.path}`,
-      displayLabel: target.title || target.path,
-      detail: target.title && target.title !== target.path ? target.path : undefined,
-      type: 'text',
-      apply: `${target.path}]]`,
-    }))
-  return {
-    from: context.pos - match[1].length,
-    options,
-    validFor: /^[^\]\n]*$/,
-  }
-}
-
-function pasteMarkdownLink(event: ClipboardEvent, editor: EditorView): boolean {
-  const selection = editor.state.selection.main
-  if (selection.empty) return false
-  const pasted = event.clipboardData?.getData('text/plain').trim() ?? ''
-  if (!/^https?:\/\/\S+$/i.test(pasted)) return false
-  const label = editor.state.doc.sliceString(selection.from, selection.to).replace(/]/g, '\\]')
-  const url = pasted.replace(/\)/g, '\\)')
-  const replacement = `[${label}](${url})`
-  event.preventDefault()
-  editor.dispatch({
-    changes: { from: selection.from, to: selection.to, insert: replacement },
-    selection: { anchor: selection.from + replacement.length },
-  })
-  return true
-}
-
-function makeState(doc: string): EditorState {
-  const state = EditorState.create({
-    doc,
-    extensions: [
-      lineNumbers(),
-      highlightActiveLineGutter(),
-      history(),
-      search({ top: true }),
-      autocompletion({ override: [wikiLinkCompletion], activateOnTyping: true }),
-      keymap.of([
-        { key: 'Enter', run: insertNewlineContinueMarkup },
-        ...searchKeymap,
-        ...defaultKeymap,
-        ...historyKeymap,
-        indentWithTab,
-      ]),
-      markdown(),
-      markdownStructurePlugin,
-      EditorView.domEventHandlers({ paste: pasteMarkdownLink }),
-      // oneDark colors only apply when the vault is in dark mode — in
-      // light mode the editor inherits a light palette via
-      // `.vault .cm-host .cm-editor` rules in style.css.
-      themeCompartment.of(themeExtension()),
-      EditorView.lineWrapping,
-      EditorView.updateListener.of((u) => {
-        if (u.docChanged) {
-          const head = u.state.selection.main.head
-          const typed = u.transactions.some((transaction) => transaction.isUserEvent('input.type'))
-          if (typed && u.state.doc.sliceString(Math.max(0, head - 2), head) === '[[') {
-            queueMicrotask(() => startCompletion(u.view))
-          }
-          if (suppressNextEmit) {
-            suppressNextEmit = false
-            return
-          }
-          emit('update:modelValue', u.state.doc.toString())
-        }
-        if (u.selectionSet) scheduleViewStateSave()
-      }),
-    ],
-  })
-  return restoreViewState(state)
-}
-
-/* Reconfigure only the theme compartment. The EditorView, history,
-   selection, search panel, and scroll position all remain intact. */
-let themeObserver: MutationObserver | null = null
-function watchTheme() {
-  if (typeof window === 'undefined') return
-  themeObserver = new MutationObserver(() => {
-    if (!view) return
-    view.dispatch({ effects: themeCompartment.reconfigure(themeExtension()) })
-  })
-  themeObserver.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ['data-theme'],
-  })
-}
+    const match = /\[\[([^\]\n]*)$/.exec(before)
+    if (!match || match[1].includes('|') || match[1].includes('#')) return { suggestions: [] }
+    const startColumn = position.column - match[1].length
+    const recency = recentLinks()
+    return {
+      suggestions: (props.linkTargets ?? [])
+        .filter((target) => target.path !== props.path)
+        .sort((a, b) => {
+          const aIndex = recency.indexOf(a.path)
+          const bIndex = recency.indexOf(b.path)
+          if (aIndex !== bIndex) return (aIndex < 0 ? Infinity : aIndex) - (bIndex < 0 ? Infinity : bIndex)
+          return (a.title || a.path).localeCompare(b.title || b.path, 'zh-CN')
+        })
+        .map((target) => ({
+          label: target.title || target.path,
+          detail: target.path,
+          filterText: `${target.title} ${target.path}`,
+          kind: monaco.languages.CompletionItemKind.Reference,
+          insertText: `${target.path}]]`,
+          command: rememberLinkCommand
+            ? { id: rememberLinkCommand, title: 'Remember wiki link', arguments: [target.path] }
+            : undefined,
+          range: {
+            startLineNumber: position.lineNumber,
+            startColumn,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column,
+          },
+        })),
+    }
+  },
+})
 
 onMounted(() => {
   if (!host.value) return
-  view = new EditorView({ state: makeState(props.modelValue), parent: host.value })
-  const stored = readViewStates()[props.path]
-  if (stored) requestAnimationFrame(() => {
-    if (view) view.scrollDOM.scrollTop = stored.scrollTop
+  model = monaco.editor.createModel(props.modelValue, 'markdown', monaco.Uri.parse(`docus://vault/${props.path}`))
+  editor = monaco.editor.create(host.value, {
+    model,
+    theme: activeTheme(),
+    automaticLayout: true,
+    wordWrap: props.focusWidth ? 'wordWrapColumn' : 'on',
+    wordWrapColumn: 100,
+    minimap: { enabled: false },
+    lineNumbersMinChars: 3,
+    glyphMargin: false,
+    folding: true,
+    fontFamily: 'var(--mono)',
+    fontSize: 14,
+    lineHeight: 22,
+    padding: { top: 10, bottom: 48 },
+    renderLineHighlight: 'line',
+    scrollBeyondLastLine: false,
+    smoothScrolling: true,
+    stickyScroll: { enabled: false },
+    bracketPairColorization: { enabled: false },
+    // Full-width Chinese punctuation such as `）` is ordinary prose in
+    // this Markdown vault. Keep Monaco's invisible-character checks, but
+    // do not flag every CJK lookalike as a source-code security warning.
+    unicodeHighlight: { ambiguousCharacters: false },
+    quickSuggestions: { other: true, comments: false, strings: false },
+    suggestOnTriggerCharacters: true,
   })
-  view.scrollDOM.addEventListener('scroll', scheduleViewStateSave, { passive: true })
-  watchTheme()
+  rememberLinkCommand = editor.addCommand(0, (_context, path: string) => recordRecentLink(path))
+  const saved = readViewState()
+  if (saved) editor.restoreViewState(saved)
+  refreshMarkdownDecorations()
+  editor.onDidChangeModelContent(() => {
+    refreshMarkdownDecorations()
+    if (suppressChange || composing || !model) return
+    emit('update:modelValue', model.getValue())
+  })
+  editor.onDidCompositionStart(() => { composing = true })
+  editor.onDidCompositionEnd(() => {
+    composing = false
+    if (!suppressChange && model) emit('update:modelValue', model.getValue())
+  })
+  editor.addAction({
+    id: 'docus.markdown-enter',
+    label: 'Continue Markdown list',
+    keybindings: [monaco.KeyCode.Enter],
+    run(instance) {
+      if (!model) return
+      const selection = instance.getSelection()
+      if (!selection) return
+      const position = selection.getPosition()
+      const before = model.getValueInRange(new monaco.Range(position.lineNumber, 1, position.lineNumber, position.column))
+      const continuation = markdownContinuation(before)
+      if (continuation.removeMarkerFrom !== undefined && selection.isEmpty()) {
+        instance.executeEdits('markdown-enter', [{
+          range: new monaco.Range(position.lineNumber, continuation.removeMarkerFrom + 1, position.lineNumber, position.column),
+          text: `\n${' '.repeat(continuation.removeMarkerFrom)}`,
+        }])
+      } else {
+        instance.executeEdits('markdown-enter', [{ range: selection, text: continuation.insert }])
+      }
+    },
+  })
+  for (const [id, label, keybinding, outdent] of [
+    ['docus.markdown-indent', 'Indent Markdown line', monaco.KeyCode.Tab, false],
+    ['docus.markdown-outdent', 'Outdent Markdown line', monaco.KeyMod.Shift | monaco.KeyCode.Tab, true],
+  ] as const) {
+    editor.addAction({
+      id,
+      label,
+      keybindings: [keybinding],
+      run(instance) {
+        if (!model) return
+        const selection = instance.getSelection()
+        if (!selection) return
+        const endLine = selection.endColumn === 1 && selection.endLineNumber > selection.startLineNumber
+          ? selection.endLineNumber - 1
+          : selection.endLineNumber
+        const edits: monaco.editor.IIdentifiedSingleEditOperation[] = []
+        for (let lineNumber = selection.startLineNumber; lineNumber <= endLine; lineNumber += 1) {
+          const line = model.getLineContent(lineNumber)
+          const next = indentMarkdownLine(line, outdent)
+          if (next !== line) edits.push({ range: new monaco.Range(lineNumber, 1, lineNumber, line.length + 1), text: next })
+        }
+        instance.executeEdits(id, edits)
+      },
+    })
+  }
+  editor.onMouseDown((event) => {
+    const position = event.target.position
+    if (!model || !position || (!event.event.ctrlKey && !event.event.metaKey)) return
+    const path = wikiLinkAtColumn(model.getLineContent(position.lineNumber), position.column - 1)
+    if (!path) return
+    recordRecentLink(path)
+    emit('open-link', path)
+  })
+  pasteHandler = (event) => {
+    if (!editor || !model) return
+    const selection = editor.getSelection()
+    if (!selection || selection.isEmpty()) return
+    const label = model.getValueInRange(selection)
+    const replacement = markdownLinkFromPaste(label, event.clipboardData?.getData('text/plain') ?? '')
+    if (!replacement) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    editor.executeEdits('markdown-link-paste', [{ range: selection, text: replacement }])
+  }
+  host.value.addEventListener('paste', pasteHandler, true)
+  editor.onDidBlurEditorWidget(saveViewState)
+  themeObserver = new MutationObserver(() => monaco.editor.setTheme(activeTheme()))
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 })
 
-watch(
-  () => props.modelValue,
-  (val) => {
-    if (!view) return
-    if (view.state.doc.toString() === val) return
-    suppressNextEmit = true
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: val },
-    })
-  },
-)
+watch(() => props.modelValue, (value) => {
+  if (!model || model.getValue() === value) return
+  suppressChange = true
+  model.setValue(value)
+  suppressChange = false
+})
+
+watch(() => props.focusWidth, (focused) => {
+  editor?.updateOptions({ wordWrap: focused ? 'wordWrapColumn' : 'on', wordWrapColumn: 100 })
+})
 
 onBeforeUnmount(() => {
   saveViewState()
-  if (scrollSaveTimer) clearTimeout(scrollSaveTimer)
-  view?.destroy()
-  view = null
   themeObserver?.disconnect()
-  themeObserver = null
+  if (pasteHandler && host.value) host.value.removeEventListener('paste', pasteHandler, true)
+  editor?.dispose()
+  model?.dispose()
+  completion.dispose()
+  editor = null
+  model = null
 })
 
 defineExpose({
-  focus() {
-    view?.focus()
-  },
-  /* CodeMirror's scroll container is `.cm-scroller` (not the host
-     div). Expose it so the parent (VaultView's edit-mode scroll-sync
-     composable) can attach a passive scroll listener and mirror the
-     preview pane. Returns null until the view has mounted. */
-  getScrollEl(): HTMLElement | null {
-    return view?.scrollDOM ?? null
-  },
-  setSelection(anchor: number, head = anchor) {
-    if (!view) return
-    const max = view.state.doc.length
-    view.dispatch({ selection: { anchor: Math.min(anchor, max), head: Math.min(head, max) } })
-  },
-  insertText(text: string) {
-    if (!view) return
-    view.focus()
-    const selection = view.state.selection.main
-    view.dispatch({
-      changes: { from: selection.from, to: selection.to, insert: text },
-      selection: { anchor: selection.from + text.length },
-      annotations: Transaction.userEvent.of('input.type'),
-    })
-  },
-  getCompletionStatus() {
-    return view ? completionStatus(view.state) : null
-  },
+  focus: () => editor?.focus(),
+  getScrollEl: () => host.value?.querySelector<HTMLElement>('.monaco-scrollable-element.editor-scrollable') ?? null,
 })
 </script>
 
 <template>
-  <div ref="host" class="cm-host" :class="{ 'focus-width': focusWidth }" />
+  <div ref="host" class="monaco-host" :class="{ 'focus-width': focusWidth }" />
 </template>

@@ -1,8 +1,8 @@
 import { onBeforeUnmount, watch, type Ref } from 'vue'
 
-/* In edit mode the editor pane (CodeMirror) and preview pane (rendered
+/* In edit mode the Monaco editor and preview pane (rendered
    markdown) sit side-by-side. The two surfaces have very different
-   line heights — CodeMirror is monospace at ~18px per line, the preview
+   line heights — Monaco is monospace at ~22px per line, the preview
    is proportional with line-height:1.65 and per-element variation for
    headings / code blocks / lists. A line-count or per-element ratio
    would drift over time as the renderer or theme changes, so we sync
@@ -24,9 +24,9 @@ import { onBeforeUnmount, watch, type Ref } from 'vue'
 
    We use **event delegation on the vault root** (capture phase)
    rather than attaching listeners directly to the inner scrollers.
-   The inner elements are not stable: CodeMirror mounts its
-   .cm-scroller asynchronously inside onMounted of EditorPane, and
-   tabs that are still loading have no cm-scroller yet at all. By
+   The inner elements are not stable: Monaco mounts its primary
+   .editor-scrollable asynchronously inside EditorPane, and loading
+   tabs do not have an editor scroll container yet. By
    delegating, a single listener handles every current and future
    tab without us having to re-attach when DOM children come and go.
    The `data-path` attribute on each pane tells us which tab the
@@ -39,9 +39,7 @@ import { onBeforeUnmount, watch, type Ref } from 'vue'
    failure mode):
 
    - **Editor side**: `.editor-pane` itself has no overflow; the
-     scrollable element is CodeMirror's `.cm-scroller` (CodeMirror
-     sets `overflow:auto` by default and exposes it via
-     `view.scrollDOM`).
+     scrollable element is Monaco's `.editor-scrollable`.
 
    - **Preview side**: the scrollable element is **`.preview-pane`
      itself**, not `.article` inside it. style.css gives both
@@ -118,7 +116,7 @@ export function useEditorPreviewScrollSync(opts: {
     if (!target) return
     /* Walk up to the pane wrapper so we can identify the tab and
        decide direction. target can be:
-         - .cm-scroller (editor) — child of .editor-pane
+         - .editor-scrollable (editor) — child of .editor-pane
          - .preview-pane itself (preview) — it IS the wrapper when
            the user scrolls the preview, because .preview-pane is
            the actual scroll container (see the long comment at the
@@ -135,10 +133,10 @@ export function useEditorPreviewScrollSync(opts: {
     /* Selector strategy:
        - editor→preview: query the .preview-pane itself (it owns the
          scroll, NOT the .article inside it — see the long comment).
-       - preview→editor: query the .cm-scroller (it owns the scroll;
+       - preview→editor: query Monaco's .editor-scrollable;
          .editor-pane has no overflow). */
     const previewSel = `.preview-pane[data-path="${attrEscape(path)}"]`
-    const editorSel = `.editor-pane[data-path="${attrEscape(path)}"] .cm-scroller`
+    const editorSel = `.editor-pane[data-path="${attrEscape(path)}"] .monaco-scrollable-element.editor-scrollable`
     if (editorPane) {
       const preview = root.querySelector<HTMLElement>(previewSel)
       if (preview) syncTo(target, preview)

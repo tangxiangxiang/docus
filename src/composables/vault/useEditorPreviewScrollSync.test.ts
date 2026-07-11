@@ -15,13 +15,13 @@ function stubLayout(el: HTMLElement, scrollHeight: number, clientHeight: number)
 }
 
 /* Build a minimal vault-like DOM that mirrors the real layout:
-   - editor scroll container is .cm-scroller (CodeMirror default)
+   - editor scroll container is Monaco's .editor-scrollable
    - preview scroll container is .preview-pane itself (.vault
      scope gives it overflow:auto, and the .article inside has
      min-height:100% so it never has internal overflow)
      <div class="vault">
        <div class="editor-pane" data-path="x">
-         <div class="cm-scroller">…long content…</div>
+         <div class="monaco-scrollable-element editor-scrollable">…long content…</div>
        </div>
        <div class="preview-pane" data-path="x">
          <div class="article">…long content…</div>
@@ -40,7 +40,7 @@ function buildVault(): {
   editorPane.setAttribute('data-path', 'x')
 
   const editorScroll = document.createElement('div')
-  editorScroll.className = 'cm-scroller'
+  editorScroll.className = 'monaco-scrollable-element editor-scrollable'
   editorPane.appendChild(editorScroll)
 
   const previewPane = document.createElement('div')

@@ -261,7 +261,7 @@ describe('AiPanel Drafts section', () => {
     // The earlier per-row archive tests leave patchSpy with stale
     // calls — clear before installing the batch implementation.
     if ((api.patchPost as any).mock) (api.patchPost as any).mockClear()
-    const patchSpy = vi.spyOn(api, 'patchPost').mockImplementation(async (p, body) => ({
+    const patchSpy = vi.spyOn(api, 'patchPost').mockImplementation(async (_p, body) => ({
       path: (body as any).targetPath,
       title: (body as any).targetPath.split('/').pop()!,
       created: '', updated: '', tags: [], size: 0, mtime: 0,

@@ -39,7 +39,7 @@ beforeEach(() => {
 })
 
 interface Harness {
-  archive: (path: string) => Promise<string | null>
+  archive: (path: string, targetPath?: string) => Promise<string | null>
 }
 
 function setup(): Harness {

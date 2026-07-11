@@ -39,7 +39,8 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 function onPrimaryAction() {
-  emit(props.busy ? 'stop' : 'send')
+  if (props.busy) emit('stop')
+  else emit('send')
 }
 
 async function focus() {

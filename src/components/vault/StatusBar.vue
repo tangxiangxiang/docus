@@ -10,7 +10,9 @@ const props = defineProps<{
   dirty: boolean
   focusWidth: boolean
 }>()
-const emit = defineEmits<{ 'toggle-focus-width': [] }>()
+const emit = defineEmits<{
+  'toggle-focus-width': []
+}>()
 
 // The leading glyphs (● ✓ ⟳ !) come from CSS `::before` on
 // `.sb-status[data-status=...]` (see style.css ~line 1351). This computed
