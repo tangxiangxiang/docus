@@ -183,20 +183,58 @@ export function deleteDocumentMetadata(db: DatabaseT, path: string): boolean {
   })()
 }
 
+/**
+ * Reject operations that would (a) collapse source and destination to the same
+ * prefix, (b) move a folder into one of its own descendants — which would
+ * rewrite the prefix row onto a path that another descendant is also being
+ * rewritten from — or (c) overwrite an unrelated existing path.
+ *
+ * Without this guard the UPDATE loop would either fail mid-transaction (the
+ * SQLite UNIQUE(path) violation rolls back the whole rename and leaves the
+ * filesystem in a state where the folder has already moved but the metadata
+ * hasn't) or silently overwrite an unrelated row.
+ */
+function assertPrefixMoveSafe(fromPrefix: string, toPrefix: string, planned: Array<{ id: string; nextPath: string }>, db: DatabaseT): void {
+  if (toPrefix === fromPrefix) {
+    throw new Error(`metadata prefix move source and destination are identical: ${fromPrefix}`)
+  }
+  if (toPrefix.startsWith(`${fromPrefix}/`)) {
+    throw new Error(`cannot move metadata prefix into its own subtree: ${fromPrefix} -> ${toPrefix}`)
+  }
+  const sourceIds = new Set(planned.map((row) => row.id))
+  const seenNext = new Set<string>()
+  const lookup = db.prepare('SELECT id FROM documents WHERE path = ?')
+  for (const { id, nextPath } of planned) {
+    if (seenNext.has(nextPath)) {
+      throw new Error(`metadata prefix move duplicate destination: ${nextPath}`)
+    }
+    const existing = lookup.get(nextPath) as { id: string } | undefined
+    if (existing && !sourceIds.has(existing.id)) {
+      throw new Error(`metadata prefix move collides with existing path: ${nextPath}`)
+    }
+    seenNext.add(nextPath)
+  }
+}
+
 export function moveDocumentMetadataPrefix(db: DatabaseT, fromPrefix: string, toPrefix: string): number {
   return db.transaction(() => {
     const rows = db.prepare(
       'SELECT id, path FROM documents WHERE path = ? OR path LIKE ? ORDER BY length(path)',
     ).all(fromPrefix, `${fromPrefix}/%`) as Array<{ id: string; path: string }>
+    const planned = rows.map((row) => ({
+      id: row.id,
+      fromPath: row.path,
+      nextPath: toPrefix + row.path.slice(fromPrefix.length),
+    }))
+    assertPrefixMoveSafe(fromPrefix, toPrefix, planned, db)
     const update = db.prepare('UPDATE documents SET path = ?, updated_at = ? WHERE id = ?')
     const updateMigration = db.prepare(
       'UPDATE metadata_migrations SET path = ?, updated_at = ? WHERE path = ?',
     )
     const now = Date.now()
-    for (const row of rows) {
-      const nextPath = toPrefix + row.path.slice(fromPrefix.length)
-      update.run(nextPath, now, row.id)
-      updateMigration.run(nextPath, now, row.path)
+    for (const { id, fromPath, nextPath } of planned) {
+      update.run(nextPath, now, id)
+      updateMigration.run(nextPath, now, fromPath)
     }
     return rows.length
   })()

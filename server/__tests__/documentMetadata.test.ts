@@ -72,4 +72,29 @@ describe('document metadata repository', () => {
     expect(deleteDocumentMetadataPrefix(db, 'literature/folder')).toBe(2)
     expect(listDocumentMetadata(db).map((item) => item.path)).toEqual(['inbox/other'])
   })
+
+  it('refuses prefix moves into the source subtree', () => {
+    saveDocumentMetadata(db, { id: 'root', path: 'notes', title: 'Notes' })
+    saveDocumentMetadata(db, { id: 'child', path: 'notes/2026/a', title: 'A' })
+    expect(() => moveDocumentMetadataPrefix(db, 'notes', 'notes/2026'))
+      .toThrow(/into its own subtree/)
+    // Transaction rolled back: source rows are still where they started.
+    expect(listDocumentMetadata(db).map((item) => item.path).sort()).toEqual(['notes', 'notes/2026/a'])
+  })
+
+  it('refuses a no-op prefix move', () => {
+    saveDocumentMetadata(db, { path: 'inbox/a', title: 'A' })
+    expect(() => moveDocumentMetadataPrefix(db, 'inbox', 'inbox'))
+      .toThrow(/identical/)
+    expect(getDocumentMetadata(db, 'inbox/a')?.title).toBe('A')
+  })
+
+  it('refuses a prefix move that would collide with an unrelated path', () => {
+    saveDocumentMetadata(db, { id: 'a', path: 'inbox/a', title: 'A' })
+    saveDocumentMetadata(db, { id: 'unrelated', path: 'archive/a', title: 'Archive' })
+    expect(() => moveDocumentMetadataPrefix(db, 'inbox', 'archive'))
+      .toThrow(/collides with existing path: archive\/a/)
+    expect(getDocumentMetadata(db, 'inbox/a')?.id).toBe('a')
+    expect(getDocumentMetadata(db, 'archive/a')?.id).toBe('unrelated')
+  })
 })
