@@ -78,7 +78,7 @@ export function markdownDecorationSpecs(text: string): MonacoDecorationSpec[] {
       [/`[^`\n]+`/g, 'monaco-md-code'],
       [/\*\*[^*\n]+\*\*/g, 'monaco-md-strong'],
       [/\[\[[^\]\n]+\]\]/g, 'monaco-md-link'],
-      [/\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)/g, 'monaco-md-link'],
+      [/\[[^\]\n]+\]\(https?:\/\/(?:[^()\s]|\([^()\s]*\))*\)/g, 'monaco-md-link'],
     ]
     for (const [pattern, className] of patterns) {
       for (const match of line.matchAll(pattern)) {

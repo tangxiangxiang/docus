@@ -44,6 +44,17 @@ describe('Monaco Markdown helpers', () => {
     expect(classes).toContain('monaco-md-link')
   })
 
+  it('decorates URLs with balanced parentheses in full', () => {
+    const specs = markdownDecorationSpecs('See [Wikipedia](https://en.wikipedia.org/wiki/Link_(film)) and [plain](https://example.com).')
+    const linkSpecs = specs.filter((spec) => spec.inlineClassName === 'monaco-md-link')
+    expect(linkSpecs).toHaveLength(2)
+    const lengths = linkSpecs.map((spec) => spec.endColumn - spec.startColumn)
+    // First link contains 54 chars (label + URL with balanced parens).
+    expect(lengths[0]).toBe(54)
+    // Second link is the simple one.
+    expect(lengths[1]).toBe(28)
+  })
+
   it('handles a long Chinese document without losing line positions', () => {
     const document = Array.from({ length: 2_000 }, (_, index) =>
       index % 10 === 0 ? `## 第 ${index} 节` : `这是第 ${index} 行，包含中文标点（测试）。`,
