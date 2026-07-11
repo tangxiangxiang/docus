@@ -3,7 +3,7 @@
 A Vue 3 + TypeScript personal knowledge base built around a small
 Zettelkasten protocol. The vault lives as plain `.md` files under
 `src/content/` and is served by an in-process Hono backend. The editor
-is CodeMirror; the file tree and the right pane (editor + live preview)
+is Monaco; the file tree and the right pane (editor + live preview)
 share a VS-Code-style layout. A right-side AI chat panel rounds out
 the surface — its history is persisted to a small SQLite database that
 the Hono server opens on startup.

@@ -2,7 +2,7 @@
 
 一个基于 Vue 3 + TypeScript 的个人知识库，围绕一套小型 Zettelkasten
 协议构建。资料库本体是 `src/content/` 下的纯 `.md` 文件，由一个
-进程内的 Hono 后台服务支撑。编辑器使用 CodeMirror；文件树与右侧
+进程内的 Hono 后台服务支撑。编辑器使用 Monaco；文件树与右侧
 面板（编辑器 + 实时预览）采用类 VS Code 的布局。最右侧还有一面
 AI 对话面板 —— 它的对话历史持久化在 Hono 启动时打开的一小块
 SQLite 数据库里。
