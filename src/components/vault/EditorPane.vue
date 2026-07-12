@@ -5,8 +5,7 @@ import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import { acquireMarkdownModel } from './monacoModels'
 import { resolveWikiTarget } from '../../lib/linkResolve'
-import { getPost, uploadAttachment } from '../../lib/api'
-import { useToast } from '../../composables/useToast'
+import { getPost } from '../../lib/api'
 import {
   indentMarkdownLine,
   filterMarkdownSlashCommands,
@@ -45,7 +44,6 @@ const emit = defineEmits<{
   'register-scroll': [registration: { path: string; setScrollFraction: (fraction: number) => void }]
   'unregister-scroll': [path: string]
 }>()
-const toast = useToast()
 
 const host = ref<HTMLDivElement | null>(null)
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
@@ -54,8 +52,6 @@ let suppressChange = false
 let themeObserver: MutationObserver | null = null
 let decorationIds: string[] = []
 let pasteHandler: ((event: ClipboardEvent) => void) | null = null
-let dropHandler: ((event: DragEvent) => void) | null = null
-let dragOverHandler: ((event: DragEvent) => void) | null = null
 let rememberLinkCommand: string | null = null
 let composing = false
 let decorationTimer: ReturnType<typeof setTimeout> | null = null
@@ -79,32 +75,6 @@ function recentLinks(): string[] {
 function recordRecentLink(path: string) {
   const links = recentLinks().filter((item) => item !== path)
   localStorage.setItem(RECENT_LINKS_KEY, JSON.stringify([path, ...links].slice(0, 20)))
-}
-
-const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
-
-function imageFiles(files: FileList | null): File[] {
-  return files ? [...files].filter((file) => SUPPORTED_IMAGE_TYPES.has(file.type)) : []
-}
-
-async function insertImages(files: File[]) {
-  if (!editor || !model || files.length === 0) return
-  const selection = editor.getSelection()
-  if (!selection) return
-  try {
-    const uploaded = await Promise.all(files.map(async (file) => ({
-      file,
-      attachment: await uploadAttachment(props.path, file),
-    })))
-    const markdown = uploaded.map(({ file, attachment }) => {
-      const alt = file.name.replace(/\.[^.]+$/, '').replace(/[\[\]]/g, '').trim() || 'image'
-      return `![${alt}](${attachment.url})`
-    }).join('\n')
-    editor?.executeEdits('markdown-image-upload', [{ range: selection, text: markdown }])
-    editor?.focus()
-  } catch (error) {
-    toast.error(`图片上传失败: ${(error as Error).message}`)
-  }
 }
 
 const monacoGlobal = globalThis as typeof globalThis & {
@@ -484,13 +454,6 @@ onMounted(() => {
   })
   pasteHandler = (event) => {
     if (!editor || !model) return
-    const images = imageFiles(event.clipboardData?.files ?? null)
-    if (images.length > 0) {
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      void insertImages(images)
-      return
-    }
     const selection = editor.getSelection()
     if (!selection || selection.isEmpty()) return
     const label = model.getValueInRange(selection)
@@ -501,20 +464,6 @@ onMounted(() => {
     editor.executeEdits('markdown-link-paste', [{ range: selection, text: replacement }])
   }
   host.value.addEventListener('paste', pasteHandler, true)
-  dragOverHandler = (event) => {
-    if (imageFiles(event.dataTransfer?.files ?? null).length === 0) return
-    event.preventDefault()
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
-  }
-  dropHandler = (event) => {
-    const images = imageFiles(event.dataTransfer?.files ?? null)
-    if (images.length === 0) return
-    event.preventDefault()
-    event.stopPropagation()
-    void insertImages(images)
-  }
-  host.value.addEventListener('dragover', dragOverHandler)
-  host.value.addEventListener('drop', dropHandler)
   editor.onDidBlurEditorWidget(saveViewState)
   themeObserver = new MutationObserver(() => monaco.editor.setTheme(activeTheme()))
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
@@ -542,8 +491,6 @@ onBeforeUnmount(() => {
   themeObserver?.disconnect()
   if (decorationTimer) clearTimeout(decorationTimer)
   if (pasteHandler && host.value) host.value.removeEventListener('paste', pasteHandler, true)
-  if (dragOverHandler && host.value) host.value.removeEventListener('dragover', dragOverHandler)
-  if (dropHandler && host.value) host.value.removeEventListener('drop', dropHandler)
   editor?.dispose()
   completion.dispose()
   hover.dispose()

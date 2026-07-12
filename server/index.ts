@@ -46,16 +46,6 @@ import {
 
 const app = new Hono()
 
-const ATTACHMENT_MIME = {
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-  'image/gif': 'gif',
-  'image/webp': 'webp',
-} as const
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
-const ATTACHMENT_FILE_RE = /^[0-9]+-[a-z0-9-]+\.(?:png|jpg|gif|webp)$/
-const DOCUMENT_ID_RE = /^[A-Za-z0-9_-]+$/
-
 let metadataDbOverride: DatabaseT | null = null
 
 /** Test-only injection so temp-vault integration tests never write the user's database. */
@@ -71,21 +61,6 @@ function bad(c: any, msg: string, code = 400) { return c.json({ error: msg }, co
 
 async function exists(p: string) {
   try { await fs.stat(p); return true } catch { return false }
-}
-
-async function removeDocumentAttachments(documentIds: string[]) {
-  await Promise.all(documentIds.filter((id) => DOCUMENT_ID_RE.test(id)).map((id) =>
-    fs.rm(path.join(CONTENT_DIR, '.attachments', id), { recursive: true, force: true }).catch(() => undefined),
-  ))
-}
-
-function matchesImageSignature(bytes: Buffer, mime: keyof typeof ATTACHMENT_MIME): boolean {
-  if (mime === 'image/png') return bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-  if (mime === 'image/jpeg') return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
-  if (mime === 'image/gif') return bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('ascii'))
-  return bytes.length >= 12
-    && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
-    && bytes.subarray(8, 12).toString('ascii') === 'WEBP'
 }
 
 async function uniqueMoveTarget(absPath: string, relPath: string): Promise<{ abs: string; rel: string }> {
@@ -234,54 +209,6 @@ app.get('/api/tree', async (c) => {
 app.get('/api/posts', async (c) => {
   const posts = await listPostsFlat(CONTENT_DIR, metadataDb())
   return c.json(posts)
-})
-
-app.post('/api/attachments', async (c) => {
-  const body = await c.req.json().catch(() => null) as {
-    path?: unknown; name?: unknown; mime?: unknown; data?: unknown
-  } | null
-  if (!body || typeof body.path !== 'string' || typeof body.name !== 'string'
-    || typeof body.mime !== 'string' || typeof body.data !== 'string') {
-    return bad(c, 'path, name, mime and data are required')
-  }
-  if (!isValidPathSyntax(body.path)) return bad(c, 'invalid path')
-  const extension = ATTACHMENT_MIME[body.mime as keyof typeof ATTACHMENT_MIME]
-  if (!extension) return bad(c, 'unsupported image type', 415)
-  if (body.data.length > Math.ceil(MAX_ATTACHMENT_BYTES * 4 / 3) + 8) return bad(c, 'image is too large', 413)
-  if (body.data.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(body.data)) {
-    return bad(c, 'invalid image data')
-  }
-  const document = getDocumentMetadata(metadataDb(), body.path)
-  if (!document || !await exists(filePathFor(body.path))) return bad(c, 'document not found', 404)
-  let bytes: Buffer
-  bytes = Buffer.from(body.data, 'base64')
-  if (!bytes.length || bytes.length > MAX_ATTACHMENT_BYTES) return bad(c, 'image is empty or too large', 413)
-  if (!matchesImageSignature(bytes, body.mime as keyof typeof ATTACHMENT_MIME)) return bad(c, 'image content does not match its type', 415)
-  const stem = path.basename(body.name, path.extname(body.name))
-    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'image'
-  const fileName = `${Date.now()}-${stem}.${extension}`
-  const dir = path.join(CONTENT_DIR, '.attachments', document.id)
-  await fs.mkdir(dir, { recursive: true })
-  await fs.writeFile(path.join(dir, fileName), bytes, { flag: 'wx' })
-  return c.json({
-    url: `/api/attachments/${encodeURIComponent(document.id)}/${fileName}`,
-    name: fileName,
-    size: bytes.length,
-  }, 201)
-})
-
-app.get('/api/attachments/:documentId/:fileName', async (c) => {
-  const documentId = c.req.param('documentId')
-  const fileName = c.req.param('fileName')
-  if (!DOCUMENT_ID_RE.test(documentId) || !ATTACHMENT_FILE_RE.test(fileName)) return bad(c, 'invalid attachment path')
-  const abs = path.join(CONTENT_DIR, '.attachments', documentId, fileName)
-  let bytes: Buffer
-  try { bytes = await fs.readFile(abs) } catch { return bad(c, 'attachment not found', 404) }
-  const ext = path.extname(fileName).slice(1)
-  const mime = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`
-  return new Response(bytes, {
-    headers: { 'content-type': mime, 'cache-control': 'private, max-age=31536000, immutable' },
-  })
 })
 
 // Create a new post. Body: { path: string, title?: string }
@@ -553,7 +480,6 @@ app.delete('/api/posts/*', async (c) => {
     const idx = await getLinkIndex()
     idx.applyDelete(splat)
   } catch { /* ignore */ }
-  if (previousMetadata) await removeDocumentAttachments([previousMetadata.id])
   return c.json({ ok: true })
 })
 
@@ -685,7 +611,6 @@ app.delete('/api/folders/*', async (c) => {
     const idx = await getLinkIndex()
     idx.applyFolderDelete(all)
   } catch { /* ignore */ }
-  await removeDocumentAttachments(previousMetadata.map((metadata) => metadata.id))
   return c.json({ deleted: all })
 })
 
