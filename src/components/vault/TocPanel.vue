@@ -30,7 +30,7 @@
 
 import { computed } from 'vue'
 import { tocHeadings, tocActiveId, tocScrollTo, linksEmpty } from '../../composables/vault/useTocState'
-import { ICON_TOC } from './icons'
+import { ICON_FILE_MD } from './icons'
 import type { PostSummary } from '../../lib/api'
 import LinksPanel from './LinksPanel.vue'
 
@@ -47,6 +47,18 @@ const emit = defineEmits<{
 }>()
 
 const hasHeadings = computed(() => tocHeadings.value.length > 0)
+const currentPost = computed(() => props.posts.find((post) => post.path === props.path))
+const documentTitle = computed(() => currentPost.value?.title || props.path?.split('/').at(-1) || '未打开文档')
+function compactDirectory(parts: string[]): string {
+  const labels = parts.map((part, index) => index === 0
+    ? part.charAt(0).toUpperCase() + part.slice(1)
+    : part.replace(/-/g, ' '))
+  return labels.length <= 2 ? labels.join(' / ') : `${labels[0]} / … / ${labels.at(-1)}`
+}
+const documentDirectory = computed(() => {
+  if (!props.path) return ''
+  return compactDirectory(props.path.split('/').slice(0, -1))
+})
 
 /* The right-rail is split 50/50 by default, but that's wasteful when
    one half is empty (a 30-heading note with 0 links leaves half the
@@ -78,16 +90,21 @@ function onLinkNavigate(p: string) {
     class="right-rail"
     :class="{ 'toc-collapsed': tocCollapsed, 'links-collapsed': linksCollapsed }"
   >
-    <section class="toc-panel" aria-label="Page navigation">
-      <header class="toc-panel-header">
-        <div class="toc-panel-title" role="presentation">
-          <span class="toc-panel-icon" aria-hidden="true" v-html="ICON_TOC" />
-          <span class="toc-panel-title-text">Page Navigation</span>
-        </div>
+    <header class="document-context">
+      <span class="document-context-icon" aria-hidden="true" v-html="ICON_FILE_MD" />
+      <div class="document-context-copy">
+        <strong :title="documentTitle">{{ documentTitle }}</strong>
+        <span v-if="documentDirectory" :title="documentDirectory">{{ documentDirectory }}</span>
+      </div>
+    </header>
+
+    <section class="toc-panel" aria-label="目录">
+      <header class="rail-section-header">
+        <span>目录</span>
       </header>
 
       <div v-if="!hasHeadings" class="toc-panel-empty">
-        No headings
+        暂无目录
       </div>
       <ul v-else class="toc-panel-list">
         <li
@@ -107,7 +124,7 @@ function onLinkNavigate(p: string) {
       </ul>
     </section>
 
-    <section class="links-slot" aria-label="Links">
+    <section class="links-slot" aria-label="引用关系">
       <LinksPanel
         :path="path"
         :posts="posts"
@@ -133,20 +150,37 @@ function onLinkNavigate(p: string) {
   overflow: hidden;
 }
 
+.document-context {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  flex: 0 0 auto;
+  padding: 8px 14px 7px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border, var(--border)) 40%, transparent);
+}
+.document-context-icon { display: inline-flex; flex: 0 0 auto; margin-top: 2px; color: var(--vs-text-2, var(--text-muted)); }
+.document-context-copy { min-width: 0; display: grid; gap: 2px; }
+.document-context-copy strong,
+.document-context-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document-context-copy strong { color: var(--vs-text-1, var(--text)); font-size: 0.86rem; font-weight: 600; }
+.document-context-copy span { color: var(--vs-text-3, var(--text-muted)); font-size: 0.7rem; }
+
 .toc-panel,
 .links-slot {
-  flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
+.toc-panel { flex: 0 1 auto; max-height: 40%; }
+.links-slot { flex: 1 1 auto; }
+.right-rail.links-collapsed .toc-panel { flex: 1 1 auto; max-height: none; }
 
 /* 1px divider between the two halves. Sits on the Links side so the
    top half's bottom border doesn't double up against it. Dropped
    when the TOC half is collapsed — there's no boundary to draw. */
 .links-slot {
-  border-top: 1px solid var(--vs-border, var(--border));
+  border-top: 1px solid color-mix(in srgb, var(--vs-border, var(--border)) 40%, transparent);
 }
 .right-rail.toc-collapsed .links-slot {
   border-top: 0;
@@ -162,35 +196,20 @@ function onLinkNavigate(p: string) {
   display: none;
 }
 
-/* ----- TOC half: matches LinksPanel's header + row rhythm -----
-   Header mirrors the .links-panel > header layout: icon + title row,
-   8px/12px padding, 1px border-bottom. */
-.toc-panel-header {
+.rail-section-header {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--vs-border, var(--border));
+  min-height: 30px;
+  padding: 5px 14px 3px;
   flex-shrink: 0;
-}
-
-.toc-panel-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.78rem;
+  font-size: 0.72rem;
+  font-weight: 600;
 }
-
-.toc-panel-icon {
-  display: inline-flex;
-  color: var(--vs-text-2, var(--text-muted));
-}
-
-.toc-panel-title-text { color: var(--vs-text-1, var(--text)); }
 
 .toc-panel-empty {
-  padding: 18px 14px;
-  font-size: 0.88rem;
+  padding: 7px 14px 12px;
+  font-size: 0.78rem;
   color: var(--vs-text-2, var(--text-muted));
   font-style: italic;
 }
@@ -224,8 +243,8 @@ function onLinkNavigate(p: string) {
   /* min-width: 0 lets this flex item shrink below its intrinsic
      content width when the column is narrow. */
   min-width: 0;
-  padding: 6px 12px 6px 16px;
-  font-size: 0.88rem;
+  padding: 5px 14px 5px 16px;
+  font-size: 0.84rem;
   line-height: 1.4;
   color: var(--vs-text-2, var(--text-muted));
   text-decoration: none;
@@ -250,8 +269,8 @@ function onLinkNavigate(p: string) {
 }
 
 .toc-panel-item.active .toc-panel-link {
-  color: var(--vs-text-1, var(--text));
-  font-weight: 500;
+  color: var(--vs-accent, var(--accent));
+  font-weight: 600;
 }
 
 /* Active row gets the same accent left border that the .section

@@ -18,7 +18,7 @@ import type { PostSummary, BacklinkRecord } from '../../lib/api'
 import { getLinkIndex, fetchBacklinks } from '../../composables/vault/useLinkIndex'
 import { getFileChangeBus } from '../../composables/vault/useFileChangeBus'
 import { linksEmpty } from '../../composables/vault/useTocState'
-import { ICON_LINKS } from './icons'
+import { ICON_FILE_MD } from './icons'
 import { PROTECTED_ROOTS } from '../../composables/archiveProtocol'
 
 const props = defineProps<{
@@ -53,16 +53,21 @@ const titleByPath = computed(() => {
 })
 
 function displayTitle(p: string): string {
-  return titleByPath.value.get(p) ?? pathTail(p)
+  return titleByPath.value.get(p) ?? p.split('/').at(-1) ?? p
 }
 
 /** Drop the leading protected root (`inbox/`, `archive/`, etc.) so
  *  the panel rows read as "the meaningful tail", matching what
  *  TagPanel / FileTree do. */
-function pathTail(p: string): string {
+function directoryLabel(p: string): string {
   const parts = p.split('/')
-  if (parts.length > 1 && PROTECTED_ROOTS.has(parts[0])) parts.shift()
-  return parts.join(' / ')
+  parts.pop()
+  if (!parts.length) return '根目录'
+  const labels = parts.map((part, index) => {
+    if (index === 0 && PROTECTED_ROOTS.has(part)) return part.charAt(0).toUpperCase() + part.slice(1)
+    return part.replace(/-/g, ' ')
+  })
+  return labels.length <= 2 ? labels.join(' / ') : `${labels[0]} / … / ${labels.at(-1)}`
 }
 
 /** Outgoing links for the current path, derived from the
@@ -154,32 +159,26 @@ watchEffect(() => {
 </script>
 
 <template>
-  <aside class="links-panel" aria-label="Links panel">
-    <header>
-      <div class="title" role="presentation">
-        <span class="title-icon" v-html="ICON_LINKS" aria-hidden="true" />
-        <span class="title-text">Links</span>
-      </div>
-    </header>
+  <aside class="links-panel" aria-label="引用关系">
+    <header class="links-heading">引用关系</header>
 
     <div v-if="!activePath" class="empty">
-      Open a note to see its links.
+      打开文档后查看引用关系
     </div>
     <div v-else-if="isEmpty" class="empty">
-      No links yet.
+      暂无引用关系
     </div>
 
-    <template v-else>
+    <div v-else class="links-content">
       <!-- Hide a section entirely when it has nothing to show. The
            overall isEmpty branch above covers the "both empty" case,
            so the per-section "No backlinks" / "No outgoing" messages
            and the section headers (with their "0" count) are
            redundant — dropping them keeps the panel down to what
            the note actually has. -->
-      <section v-if="backlinks.length" class="section" aria-label="Linked by">
+      <section v-if="backlinks.length" class="section" aria-label="被引用">
         <header class="section-header">
-          <span class="section-title">Linked by</span>
-          <span class="section-count">{{ backlinks.length }}</span>
+          <span class="section-title">被引用（{{ backlinks.length }}）</span>
         </header>
         <ul class="link-list">
           <li v-for="b in backlinks" :key="b.source">
@@ -189,17 +188,19 @@ watchEffect(() => {
               :title="b.source"
               @click="emit('navigate', b.source)"
             >
-              <span class="link-title">{{ displayTitle(b.source) }}</span>
-              <span class="link-path">{{ pathTail(b.source) }}</span>
+              <span class="link-icon" aria-hidden="true" v-html="ICON_FILE_MD" />
+              <span class="link-copy">
+                <span class="link-title">{{ displayTitle(b.source) }}</span>
+                <span class="link-path">{{ directoryLabel(b.source) }}</span>
+              </span>
             </button>
           </li>
         </ul>
       </section>
 
-      <section v-if="outgoingDisplay.length" class="section" aria-label="Links to">
+      <section v-if="outgoingDisplay.length" class="section" aria-label="引用">
         <header class="section-header">
-          <span class="section-title">Links to</span>
-          <span class="section-count">{{ outgoingDisplay.length }}</span>
+          <span class="section-title">引用（{{ outgoingDisplay.length }}）</span>
         </header>
         <ul class="link-list">
           <li v-for="l in outgoingDisplay" :key="l.target + (l.anchor ?? '')">
@@ -209,117 +210,98 @@ watchEffect(() => {
               :title="l.target"
               @click="emit('navigate', l.target)"
             >
-              <span class="link-title">{{ l.label }}</span>
-              <span class="link-path">{{ pathTail(l.target) }}</span>
+              <span class="link-icon" aria-hidden="true" v-html="ICON_FILE_MD" />
+              <span class="link-copy">
+                <span class="link-title">{{ l.label }}</span>
+                <span class="link-path">{{ directoryLabel(l.target) }}</span>
+              </span>
             </button>
           </li>
         </ul>
       </section>
-    </template>
+    </div>
   </aside>
 </template>
 
 <style scoped>
-/* Layout matches TagPanel / FileTree so the three panels in the
-   activity bar read as a single visual family. Background and
-   border use the vault tokens so dark/light themes flow through. */
 .links-panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
   background: var(--vs-side-bg, var(--vs-bg-1));
-  border-right: 1px solid var(--vs-border, var(--border));
   color: var(--vs-text, var(--text));
   height: 100%;
   overflow: hidden;
 }
-.links-panel > header {
+.links-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--vs-border, var(--border));
-  background: var(--vs-side-header-bg, transparent);
-}
-.title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  min-height: 30px;
+  padding: 5px 14px 3px;
   color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.78rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  flex: 0 0 auto;
 }
-.title-icon {
-  display: inline-flex;
-  align-items: center;
-  color: var(--vs-text-2, var(--text-muted));
-}
-.title-text { color: var(--vs-text-1, var(--text)); }
 
 .empty {
-  padding: 18px 14px;
-  font-size: 0.88rem;
+  padding: 7px 14px 12px;
+  font-size: 0.78rem;
   color: var(--vs-text-2, var(--text-muted));
   font-style: italic;
 }
-.empty-hint { margin-top: 8px; font-size: 0.82rem; }
-.empty code {
-  font-family: var(--vs-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 0.85em;
-  background: var(--vs-code-bg, rgba(0, 0, 0, 0.18));
-  padding: 1px 4px;
-  border-radius: 3px;
+.links-content {
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 8px;
 }
 
 .section {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1 1 auto;
-  border-bottom: 1px solid var(--vs-border, var(--border));
+  display: block;
 }
-.section:last-child { border-bottom: 0; }
+.section + .section { margin-top: 8px; }
 .section-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px;
-  font-size: 0.78rem;
+  padding: 6px 14px 3px;
+  font-size: 0.7rem;
   color: var(--vs-text-2, var(--text-muted));
-  background: var(--vs-side-section-bg, transparent);
-  border-bottom: 1px solid var(--vs-border, var(--border));
 }
 .section-title { font-weight: 600; }
-.section-count {
-  font-variant-numeric: tabular-nums;
-  color: var(--vs-text-3, var(--text-muted));
-}
 
 .link-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  overflow-y: auto;
-  flex: 1 1 auto;
-  min-height: 0;
 }
 .link-entry {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
   width: 100%;
-  padding: 6px 12px;
+  padding: 6px 14px;
+  border-radius: 0;
   background: transparent;
   border: 0;
   color: var(--vs-text, var(--text));
   text-align: left;
   cursor: pointer;
   font: inherit;
-  font-size: 0.88rem;
+  font-size: 0.84rem;
 }
 .link-entry:hover {
-  background: var(--vs-row-hover, var(--bg-soft));
+  background: color-mix(in srgb, var(--vs-hover-bg, var(--bg-soft)) 82%, transparent);
 }
+.link-entry:active {
+  background: color-mix(in srgb, var(--vs-accent, var(--accent)) 10%, transparent);
+}
+.link-icon {
+  display: inline-flex;
+  margin-top: 2px;
+  color: var(--vs-text-3, var(--text-muted));
+}
+.link-copy { min-width: 0; display: grid; gap: 1px; }
 .link-title {
   font-weight: 500;
   white-space: nowrap;
@@ -328,7 +310,7 @@ watchEffect(() => {
   max-width: 100%;
 }
 .link-path {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: var(--vs-text-3, var(--text-muted));
   white-space: nowrap;
   overflow: hidden;
