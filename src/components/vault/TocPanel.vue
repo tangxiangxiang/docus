@@ -97,38 +97,47 @@ function onLinkNavigate(p: string) {
   scrollbar-width: thin;
 }
 
+/* Right-rail tab nav. Modeled on Figma / Linear / Notion / Cursor
+   right-side panel headers: text-only, no per-tab cards or vertical
+   dividers, a single thin strip with a short accent line under the
+   active label.
+
+   - The active indicator is `border-bottom` on the button itself.
+     Because the button is `inline-flex` with `padding: 0`, its width
+     collapses to the label width, so the 2px accent reads as an
+     underline under just the active text — not a full-width tab bar.
+   - The transparent default border reserves the same 2px on inactive
+     tabs so the label never shifts when a tab becomes active.
+   - `box-sizing: border-box` keeps the reserved 2px inside the 36px
+     row height instead of pushing the button past it. */
 .sidebar-tabs {
   display: flex;
   align-items: stretch;
   gap: 20px;
   height: 36px;
   box-sizing: border-box;
-  padding: 0 22px;
-  border-bottom: 1px solid color-mix(in srgb, var(--vs-border, var(--border)) 42%, transparent);
+  padding: 0 14px;
+  border-bottom: 1px solid var(--vs-border, var(--border));
 }
 .sidebar-tabs button {
-  position: relative;
   display: inline-flex;
   align-items: center;
   height: 100%;
   padding: 0;
   border: 0;
+  border-bottom: 2px solid transparent;
+  box-sizing: border-box;
   background: transparent;
   color: var(--vs-text-3, var(--text-muted));
   font: inherit;
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   cursor: pointer;
 }
 .sidebar-tabs button:hover { color: var(--vs-text-1, var(--text)); }
-.sidebar-tabs button.active { color: var(--vs-text-1, var(--text)); font-weight: 600; }
-.sidebar-tabs button.active::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 2px;
-  background: var(--vs-accent, var(--accent));
+.sidebar-tabs button.active {
+  color: var(--vs-text-1, var(--text));
+  font-weight: 600;
+  border-bottom-color: var(--vs-accent, var(--accent));
 }
 
 .toc-panel,
