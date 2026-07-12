@@ -1688,11 +1688,14 @@ main.container {
 }
 .vault .tag-panel header {
   /* Mirrors .vault .file-tree header: a column container that holds
-     one row (.tag-filter) at 36px min-height. The chrome rhythm (border-
-     bottom + bg) matches the navbar / activity-bar / tabs. */
+     one row (.tag-filter) at exactly 36px so it sits flush with the
+     editor .tabs row above it. The border-bottom lives on .tag-filter
+     below, not on the header, so the divider tracks the row. */
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--vs-border);
+  height: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
   background: var(--vs-bg-2);
 }
 /* Inside the vault the panel's <ul> is a flex item of the column
@@ -1711,20 +1714,22 @@ main.container {
 .vault .tag-panel li { border-bottom: 0; }
 
 /* Filter input row. Same chrome as .vault .file-tree header .search:
-   36px min-height so it sits flush with the first .ab-btn on the
-   activity bar. Four flex children: magnifier icon (turns accent on
-   focus-within), the bare text input that fills the row, a × clear
-   button (only when filter has text), and a small count badge pinned
-   to the far right. The input drops its own border/background — the
-   icon + clear button + count provide the visual affordance. No
-   border-bottom here; the parent header carries the panel separator. */
+   fixed 36px height + border-bottom at the row itself, so the divider
+   is at the same y as the editor .tabs border. Four flex children:
+   magnifier icon (turns accent on focus-within), the bare text input
+   that fills the row, a × clear button (only when filter has text),
+   and a small count badge pinned to the far right. The input drops
+   its own border/background — the icon + clear button + count
+   provide the visual affordance. */
 .vault .tag-panel .tag-filter {
   display: flex;
   align-items: center;
   gap: 8px;
+  height: 36px;
   min-height: 36px;
-  padding: 0 12px;
   box-sizing: border-box;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
 }
 /* Total tag count on the far right. `margin-left: auto` claims the
@@ -1745,6 +1750,9 @@ main.container {
 .vault .tag-panel .tag-filter-icon {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
   color: var(--vs-text-3);
   transition: color 100ms;
@@ -1753,6 +1761,10 @@ main.container {
   color: var(--vs-accent);
 }
 .vault .tag-panel .tag-filter-input {
+  /* Fills the 36px row vertically without contributing its own
+     padding/border/line-height. font-size matches the editor tabs
+     (0.8rem) so the input glyph optical-center aligns with the tab
+     title optical-center on the row above. */
   flex: 1;
   min-width: 0;
   background: transparent;
@@ -1760,7 +1772,10 @@ main.container {
   padding: 0;
   color: var(--vs-text-1);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
+  line-height: normal;
+  height: 100%;
+  box-sizing: border-box;
   outline: none;
 }
 .vault .tag-panel .tag-filter-input::placeholder { color: var(--vs-text-3); }
