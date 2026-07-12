@@ -72,7 +72,7 @@ const quickPrompts = computed(() => {
       ]
     : [
         { label: t('quick_prompts.no_note.browse.label'), text: t('quick_prompts.no_note.browse.text') },
-        { label: t('quick_prompts.no_note.find_unprocessed.label'), text: t('quick_prompts.no_note.find_unprocessed.text' }),
+        { label: t('quick_prompts.no_note.find_unprocessed.label'), text: t('quick_prompts.no_note.find_unprocessed.text') },
         { label: t('quick_prompts.no_note.suggest_tidy.label'), text: t('quick_prompts.no_note.suggest_tidy.text') },
       ]
 })
