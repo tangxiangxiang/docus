@@ -18,9 +18,6 @@ import { defineComponent, h, ref, type Ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import {
   useVaultLayout,
-  setSelectPanelForClicks,
-  getSelectPanelForClicks,
-  __resetSelectPanelForClicks,
   __resetVaultLayoutState,
   type VaultLayout,
 } from '../useVaultLayout'
@@ -37,7 +34,7 @@ interface Harness {
   tocPanelWidth: Ref<number>
   previewOpen: Ref<boolean>
   rightRailCollapsed: Ref<boolean>
-  selectPanel: (p: 'files' | 'tags' | 'graph') => void
+  selectPanel: (p: 'files' | 'tags' | 'history') => void
   toggleAi: () => void
   togglePreview: () => void
   toggleRightRail: () => void
@@ -75,7 +72,6 @@ function setup(opts: { tocGate?: () => boolean } = {}): Harness {
 describe('useVaultLayout', () => {
   beforeEach(() => {
     localStorage.clear()
-    __resetSelectPanelForClicks()
     __resetVaultLayoutState()
   })
 
@@ -371,53 +367,28 @@ describe('useVaultLayout', () => {
     expect(h.aiPanelWidth.value).toBe(320)
   })
 
-  it('sidePanelOpen is true for files/tags/links and false for graph and null', () => {
+  it('sidePanelOpen follows the three available panels and null', () => {
     const h = setup()
     // default: 'files' is a side panel
     expect(h.sidePanelOpen.value).toBe(true)
     h.selectPanel('tags')
     expect(h.sidePanelOpen.value).toBe(true)
-    h.selectPanel('graph')
-    // graph is a body mode, not a side panel
-    expect(h.sidePanelOpen.value).toBe(false)
-    h.selectPanel('graph') // toggle off -> null
+    h.selectPanel('history')
+    expect(h.sidePanelOpen.value).toBe(true)
+    h.selectPanel('history')
     expect(h.activePanel.value).toBeNull()
     expect(h.sidePanelOpen.value).toBe(false)
   })
 
-  it('vaultStyle emits 4 columns when activePanel is graph (no side panel, TOC on)', () => {
-    // Regression: the graph panel is rendered inside .editor-area, not
-    // next to the activity bar. If the side-panel track were emitted
-    // for graph mode, .editor-area would shrink to 1px and the
-    // force-graph canvas would have nowhere to render. The TOC track
-    // is on the right of editor-area, so the graph canvas inside the
-    // 1fr column still has the full width to itself.
+  it('migrates a persisted graph panel to files', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      activePanel: 'graph', sidePanelWidth: 260, editorRatio: 1,
+      aiOpen: false, aiPanelWidth: 320, tocPanelWidth: 320,
+      previewOpen: false, rightRailCollapsed: false,
+    }))
+    __resetVaultLayoutState()
     const h = setup()
-    h.selectPanel('graph')
-    expect(h.vaultStyle.value.gridTemplateColumns).toBe('48px 1fr 1px 320px')
-  })
-
-  it('publishes selectPanel via the cross-component slot, callable from any consumer', () => {
-    // The KnowledgeGraph child component lives in the editor area and
-    // cannot import VaultView's layout instance. It calls the
-    // registered selectPanel to close the graph panel on node click.
-    // We verify the slot is writable, readable, and clearable, which
-    // is the contract KnowledgeGraph relies on.
-    expect(getSelectPanelForClicks()).toBeNull()
-    const captured: string[] = []
-    /* The slot's signature is `SidePanel` (4 values: files/tags/graph/history)
-       so test consumers must accept the full union. Narrowing it here
-       would be a lie about the API surface KnowledgeGraph relies on. */
-    const fn = (p: 'files' | 'tags' | 'graph' | 'history') => { captured.push(p) }
-    setSelectPanelForClicks(fn)
-    expect(getSelectPanelForClicks()).toBe(fn)
-    // The "child" can call it — it runs, even if it has no effect
-    // on a state the parent doesn't own.
-    getSelectPanelForClicks()!('files')
-    expect(captured).toEqual(['files'])
-    // Reset is honored — the next reader gets null and won't crash.
-    __resetSelectPanelForClicks()
-    expect(getSelectPanelForClicks()).toBeNull()
+    expect(h.activePanel.value).toBe('files')
   })
 
   // --- right rail collapse ------------------------------------------------

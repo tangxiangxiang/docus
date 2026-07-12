@@ -1,5 +1,7 @@
 # 知识图谱（Knowledge Graph）设计
 
+> Status: Removed. This document is retained as historical design context; the Graph view and `force-graph` dependency are no longer part of Docus.
+
 > **For agentic workers:** 配套实现计划见 `docs/superpowers/plans/2026-06-13-knowledge-graph-implementation.md`。
 
 ## 概述

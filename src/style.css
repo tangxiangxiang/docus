@@ -1954,14 +1954,6 @@ main.container {
   height: 100%;
   overflow: hidden;
 }
-/* Graph mode collapses the 36px tab row so the canvas gets the
-   full editor height. The EditorTabs component is also v-if'd out
-   in VaultView, so the row is empty — without this override the
-   graph would only get the lower 1fr row, leaving a 36px blank
-   band at the top. */
-.editor-area.is-graph {
-  grid-template-rows: minmax(0, 1fr);
-}
 /* History mode needs the same collapse: EditorTabs is v-if'd out,
    and the diff content auto-places into the first grid cell, which
    is the 36px tab row in the base grid. Without this override the
@@ -3740,18 +3732,4 @@ main.container {
 
 @keyframes ai-cursor-blink {
   to { opacity: 0; }
-}
-
-/* Knowledge-graph surface: fills the same grid cell the editor /
-   preview split occupies in edit mode, and the reading surface
-   in read mode. The v-if (not v-show) on the parent means the
-   canvas is destroyed when the user clicks another ActivityBar
-   button, so we don't pay the d3-force boot cost on every tab
-   flip. */
-.vault .content.content-graph {
-  /* Graph owns the full editor surface; no editor/preview split. */
-  display: block;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
 }

@@ -31,16 +31,6 @@
 // must NOT change — existing users' localStorage has the new shape, and
 // older installs may still have {fileTreeOpen, fileTreeWidth}.
 //
-// Cross-component call into the layout:
-//   useVaultLayout is a per-mount composable — every call creates its
-//   own activePanel ref, which means a child component invoking
-//   `useVaultLayout()` would get a SECOND, disconnected set of refs.
-//   The child (KnowledgeGraph.vue, when a node is clicked) needs to
-//   tell the parent vault to switch panels, so we publish the parent's
-//   selectPanel via a module-level slot. The same pattern is used for
-//   openPost in useEditorTabs. This avoids the cycle of having the
-//   child import the parent's layout instance.
-
 import { computed, ref, watch, type Ref } from 'vue'
 import { useStorage } from '@vueuse/core'
 import type { SidePanel } from '../../components/vault/ActivityBar.vue'
@@ -117,25 +107,6 @@ const _rightRailCollapsed = ref(DEFAULTS.rightRailCollapsed)
    instances. */
 let _hydrated = false
 
-/* Cross-component call slot. See the comment block at the top of the
-   file for the full reasoning. Set once by the first useVaultLayout()
-   call (which is the parent's), and read by child components that need
-   to switch the activity-bar panel (e.g. KnowledgeGraph closing the
-   graph panel when a node is clicked). */
-let _selectPanelForClicks: ((panel: SidePanel) => void) | null = null
-
-export function setSelectPanelForClicks(fn: ((panel: SidePanel) => void) | null): void {
-  _selectPanelForClicks = fn
-}
-
-export function getSelectPanelForClicks(): ((panel: SidePanel) => void) | null {
-  return _selectPanelForClicks
-}
-
-export function __resetSelectPanelForClicks(): void {
-  _selectPanelForClicks = null
-}
-
 /* Test-only reset. Restores the module-level refs to their defaults
    and clears the hydration guard so the next useVaultLayout() call
    re-runs the localStorage hydration step. The persistent writer is
@@ -157,7 +128,7 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
   // External visibility gate for the right-rail column. useVaultLayout
   // owns the persisted tocPanelWidth state, but it doesn't know
   // whether the rail is *currently* meaningful — that's a view-mode
-  // concern owned by VaultView (read mode + AI closed + not graph).
+  // concern owned by VaultView (read mode + AI closed).
   // The grid must elide the rail track when the panel isn't going to
   // render, otherwise an invisible 320px column sits at the right of
   // the vault (the v-if hides <TocPanel> but the grid template still
@@ -185,7 +156,8 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
           const d = JSON.parse(raw) as Record<string, unknown>
           const ap = d.activePanel
           let active: ActivePanel = null
-          if (ap === 'files' || ap === 'tags' || ap === 'graph' || ap === 'history' || ap === null) active = ap as ActivePanel
+          if (ap === 'graph') active = 'files'
+          else if (ap === 'files' || ap === 'tags' || ap === 'history' || ap === null) active = ap as ActivePanel
           else if (typeof d.fileTreeOpen === 'boolean') active = d.fileTreeOpen ? 'files' : null
           const w = typeof d.sidePanelWidth === 'number'
             ? d.sidePanelWidth
@@ -250,11 +222,8 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
     )
   }
 
-  /* The "side panel" is the file tree / tag panel / links panel. Graph
-     mode does NOT count — the graph panel is rendered inside
-     .editor-area, not next to the activity bar, so it must not steal a
-     grid column from the editor surface. Exposed as a top-level ref
-     so the template can use it for the side-splitter's v-show. */
+  /* Exposed as a top-level ref so the template can use it for the
+     side-splitter's v-show. */
   const sidePanelOpen = computed(() =>
     _activePanel.value === 'files' ||
     _activePanel.value === 'tags' ||
@@ -277,13 +246,7 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
     // actual grabbable area is wider (7px) but that lives on a
     // transparent ::before that overflows the layout box.
     //
-    // The "side panel" is only the file tree / tag panel / links panel.
-    // `activePanel === 'graph'` does NOT mean a side panel is open — the
-    // graph replaces the editor surface inside .editor-area (it lives in
-    // the `1fr` column, not next to the activity bar). Treating graph as
-    // a side panel would push .editor-area into a 1px column and the
-    // force-graph canvas would have nowhere to render. So the left track
-    // is keyed on the three side-panel modes, not on `activePanel`.
+    // The left side panel is the file tree, tag panel, or history panel.
     //
     // The right-rail panel sits on the right (between editor-area and
     // AI panel) when the external gate says it would render —
@@ -341,16 +304,6 @@ export function useVaultLayout(opts: { tocGate?: () => boolean } = {}) {
 
   function selectPanel(panel: SidePanel) {
     activePanel.value = activePanel.value === panel ? null : panel
-  }
-
-  /* Module-level slot for cross-component calls into the parent's
-     selectPanel. KnowledgeGraph (a child of the editor area) registers
-     nothing here — it reads via getSelectPanelForClicks() at click
-     time. VaultView calls setSelectPanelForClicks(selectPanel) inside
-     its setup so the registered fn is the SAME closure the template
-     bound to the activity bar buttons. */
-  if (!_selectPanelForClicks) {
-    _selectPanelForClicks = selectPanel
   }
 
   function toggleAi() {

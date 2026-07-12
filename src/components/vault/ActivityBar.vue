@@ -8,7 +8,7 @@
    useHistory singleton (which subscribes to the file-change bus)
    so the badge updates live as the user saves tabs. */
 import { useHistory } from '../../composables/vault/useHistory.js'
-export type SidePanel = 'files' | 'tags' | 'graph' | 'history'
+export type SidePanel = 'files' | 'tags' | 'history'
 
 defineProps<{ activePanel: SidePanel | null }>()
 const emit = defineEmits<{
@@ -46,34 +46,12 @@ const h = useHistory()
     </button>
     <button
       class="ab-btn"
-      :class="{ active: activePanel === 'graph' }"
-      title="Knowledge Graph"
-      :aria-pressed="activePanel === 'graph'"
-      @click="emit('select-panel', 'graph')"
-    >
-      <!-- Force-graph icon: a node with three outgoing edges, the
-           visual language of "graph view". 22x22, same stroke
-           weight as the other three. -->
-      <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="5" cy="6" r="2" />
-        <circle cx="19" cy="6" r="2" />
-        <circle cx="12" cy="18" r="2" />
-        <line x1="6.5" y1="7" x2="10.5" y2="16.5" />
-        <line x1="17.5" y1="7" x2="13.5" y2="16.5" />
-        <line x1="7" y1="6" x2="17" y2="6" />
-      </svg>
-    </button>
-    <button
-      class="ab-btn"
       :class="{ active: activePanel === 'history' }"
       title="History"
       :aria-pressed="activePanel === 'history'"
       @click="emit('select-panel', 'history')"
     >
-      <!-- Git-history icon: three commit dots connected by a curve.
-           Visual language of "log / timeline" — distinct from the
-           graph (network) and history (clock) glyphs already used
-           elsewhere. 22x22, same stroke weight as the others. -->
+      <!-- Git-history icon: three commit dots connected by a curve. -->
       <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="6" cy="5" r="1.6" fill="currentColor" stroke="none" />
         <circle cx="6" cy="19" r="1.6" fill="currentColor" stroke="none" />

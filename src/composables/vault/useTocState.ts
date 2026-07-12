@@ -3,8 +3,8 @@
 // handler; TocPanel (a sibling in the vault grid, not a child) reads them
 // to render the page navigation.
 //
-// Same pattern as setSelectPanelForClicks / getSelectPanelForClicks in
-// useVaultLayout.ts: plain module-level refs, no provide/inject needed.
+// Plain module-level refs keep sibling consumers in sync without
+// requiring a shared component parent or provide/inject wiring.
 
 import { ref, type Ref } from 'vue'
 import type { Heading } from './useMarkdownRender'

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, inject, shallowRef, watch, computed, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue'
+import { ref, inject, shallowRef, watch, computed, defineAsyncComponent } from 'vue'
 import { useStorage } from '@vueuse/core'
 import { useShortcutDisplay } from '../composables/useShortcutDisplay'
-import { useVaultLayout, setSelectPanelForClicks } from '../composables/vault/useVaultLayout'
+import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
 import { useEditorPreviewScrollSync } from '../composables/vault/useEditorPreviewScrollSync'
 import { useToast } from '../composables/useToast'
@@ -20,7 +20,6 @@ import AiPanel from '../components/vault/AiPanel.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import PreviewPane from '../components/vault/PreviewPane.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
-import KnowledgeGraph from '../components/vault/KnowledgeGraph.vue'
 import TocPanel from '../components/vault/TocPanel.vue'
 import EmptyState from '../components/vault/EmptyState.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
@@ -107,18 +106,13 @@ const { startDrag } = useSplitterDrag({
 })
 
 /* Right-rail visibility: the rail is a read-mode affordance and
-   shows whenever the user is in read mode AND the AI panel is closed
-   AND we're not in graph mode. Graph mode replaces the editor area
-   entirely (force-graph canvas takes the full body), so the rail
-   must hide — otherwise an empty 320px column would sit on the right
-   of the graph. The rail hosts both the TOC (which has its own
+   shows whenever the user is in read mode AND the AI panel is closed.
+   The rail hosts both the TOC (which has its own
    hasHeadings gate inside TocPanel) and the Links panel — a document
    with links but no headings still gets the rail with just the Links
    half populated. The same gate drives the grid track (via tocGate)
    and the v-if (via tocVisible) so they stay in lockstep. */
-const tocPanelEnabled = computed(
-  () => isReadMode.value && activePanel.value !== 'graph',
-)
+const tocPanelEnabled = computed(() => isReadMode.value)
 const tocVisible = computed(
   () => tocPanelEnabled.value && !aiOpen.value && !rightRailCollapsed.value,
 )
@@ -147,17 +141,6 @@ function unregisterEditorScroll(path: string) {
   editorRefs.delete(path)
 }
 function openSearch() { paletteRef.value?.show() }
-
-/* Publish our selectPanel to children that need to close the graph
-   panel from inside the editor area (KnowledgeGraph's node-click
-   handler). VaultView is the one and only owner of the layout
-   state, so this is the right place to register. */
-onMounted(() => {
-  setSelectPanelForClicks(selectPanel)
-})
-onBeforeUnmount(() => {
-  setSelectPanelForClicks(null)
-})
 
 /* ---------- Tabs / save / route sync ---------- */
 const {
@@ -329,10 +312,10 @@ watch(() => navSearch?.tick.value, () => openSearch())
 
     <section
       class="editor-area"
-      :class="{ 'is-read': isReadMode, 'ai-open': aiOpen, 'is-graph': activePanel === 'graph', 'is-history': activePanel === 'history', 'is-empty': tabs.length === 0 }"
+      :class="{ 'is-read': isReadMode, 'ai-open': aiOpen, 'is-history': activePanel === 'history', 'is-empty': tabs.length === 0 }"
     >
       <EditorTabs
-        v-if="activePanel !== 'graph' && activePanel !== 'history' && tabs.length > 0"
+        v-if="activePanel !== 'history' && tabs.length > 0"
         :tabs="tabs"
         :active-path="activePath"
         @select="selectTab"
@@ -340,26 +323,11 @@ watch(() => navSearch?.tick.value, () => openSearch())
         @close-many="closeMany"
       />
 
-      <!-- Graph mode: replaces the entire edit / read surface with
-           the knowledge-graph canvas. The EditorTabs row is also
-           hidden (see the v-if above + the .editor-area.is-graph
-           grid override in style.css) so the canvas gets the full
-           editor height. ActivityBar, side panel, AI panel, and
-           StatusBar stay put — the user keeps navigation context
-           for everything except the per-tab switcher. The graph
-           component reads from the link index singleton and
-           dispatches node clicks through the same openPost
-           singleton the wiki-link renderer uses. Checked first so
-           the read/edit branches below stay the unchanged original. -->
-      <div v-if="activePanel === 'graph'" class="content content-graph">
-        <KnowledgeGraph />
-      </div>
-
       <!-- History mode: side panel shows the HistoryPanel, this
            main area shows the DiffView. EditorTabs is hidden so
            the diff gets the full editor height. The side panel
            drives what the diff renders via useHistory.selectFile. -->
-      <div v-else-if="activePanel === 'history'" class="content content-diff">
+      <div v-if="activePanel === 'history'" class="content content-diff">
         <DiffView />
       </div>
 
