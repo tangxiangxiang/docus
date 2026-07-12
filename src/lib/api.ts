@@ -90,6 +90,14 @@ export async function listPosts(): Promise<PostSummary[]> {
   return jsonOrThrow<PostSummary[]>(await fetch('/api/posts'))
 }
 
+export async function getFileStates(paths: string[]): Promise<Array<{
+  path: string; exists: boolean; mtime: number; size: number
+}>> {
+  return jsonOrThrow(await fetch('/api/files/state', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paths }),
+  }))
+}
+
 export async function getPost(path: string): Promise<PostDetail> {
   return jsonOrThrow<PostDetail>(await fetch('/api/posts/' + splat(path)))
 }
@@ -162,8 +170,8 @@ export async function patchPost(srcPath: string, body: { name?: string; targetPa
   }))
 }
 
-export async function getRenameImpact(path: string): Promise<{ path: string; count: number; sources: string[] }> {
-  return jsonOrThrow(await fetch('/api/links/rename-impact?path=' + encodeURIComponent(path)))
+export async function getRenameImpact(path: string, recursive = false): Promise<{ path: string; count: number; sources: string[] }> {
+  return jsonOrThrow(await fetch('/api/links/rename-impact?path=' + encodeURIComponent(path) + (recursive ? '&recursive=true' : '')))
 }
 
 export async function deletePost(path: string): Promise<{ ok: true }> {
@@ -177,10 +185,10 @@ export async function createFolder(path: string): Promise<{ path: string }> {
   }))
 }
 
-export async function renameFolder(srcPath: string, newPath: string): Promise<{ path: string; moved: string[] }> {
+export async function renameFolder(srcPath: string, newPath: string, updateReferences = false): Promise<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string }> }> {
   return jsonOrThrow<{ path: string; moved: string[] }>(await fetch('/api/folders/' + splat(srcPath), {
     method: 'PATCH', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ newPath }),
+    body: JSON.stringify({ newPath, updateReferences }),
   }))
 }
 

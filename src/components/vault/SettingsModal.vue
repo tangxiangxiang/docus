@@ -5,6 +5,7 @@ import { useToast } from '../../composables/useToast'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useConfirm } from '../../composables/useConfirm'
+import { useEditorPreferences } from '../../composables/vault/useEditorPreferences'
 import { publishFileChange } from '../../composables/vault/useFileChangeBus'
 import {
   cleanDocumentFrontmatter,
@@ -22,6 +23,7 @@ const toast = useToast()
 const aiHistory = useAiHistory()
 const trap = useFocusTrap()
 const { confirm } = useConfirm()
+const editorPreferences = useEditorPreferences()
 const loading = ref(false)
 const saving = ref(false)
 const settings = ref<AiSettings | null>(null)
@@ -265,6 +267,19 @@ onBeforeUnmount(() => {
           <p v-if="settings?.envOverride" class="settings-note">
             当前由环境变量配置。保存到数据库的设置会保留，但不会覆盖环境变量。
           </p>
+
+          <section class="settings-metadata" aria-labelledby="settings-editor-title">
+            <div class="settings-section-heading">
+              <div><h3 id="settings-editor-title">Editor</h3><p>Device-local Monaco preferences</p></div>
+            </div>
+            <div class="settings-editor-grid">
+              <label class="settings-field"><span>Font size</span><input v-model.number="editorPreferences.fontSize.value" type="number" min="11" max="24" /></label>
+              <label class="settings-field"><span>Line height</span><input v-model.number="editorPreferences.lineHeight.value" type="number" min="16" max="40" /></label>
+              <label class="settings-field"><span>Tab width</span><select v-model.number="editorPreferences.tabSize.value"><option :value="2">2 spaces</option><option :value="4">4 spaces</option></select></label>
+              <label class="settings-field"><span>Wrap column</span><input v-model.number="editorPreferences.wrapColumn.value" type="number" min="60" max="160" /></label>
+              <label class="settings-field"><span>Writing diagnostics</span><input v-model="editorPreferences.typography.value" type="checkbox" /></label>
+            </div>
+          </section>
 
           <section class="settings-metadata" aria-labelledby="settings-metadata-title">
             <div class="settings-section-heading">

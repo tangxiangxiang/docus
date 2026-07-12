@@ -30,6 +30,8 @@ import {
 } from '../documentMetadata.js'
 import { trackCleanedDocumentWrite } from '../metadataMigration.js'
 import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
+import { getIndex as getLinkIndex } from '../linkIndex.js'
+import { rewriteDocumentReferences } from '../renameReferences.js'
 
 export type ToolContext = { signal: AbortSignal; db?: DatabaseT }
 
@@ -47,6 +49,7 @@ export type ToolResult = {
   content: string
   isError: boolean
   changed?: FileChangeDescriptor
+  changes?: FileChangeDescriptor[]
 }
 
 // ---- helpers (also used by the test file) ----
@@ -206,6 +209,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
       properties: {
         path: { type: 'string', description: 'Current workspace-relative path WITHOUT .md.' },
         new_path: { type: 'string', description: 'New workspace-relative path WITHOUT .md.' },
+        update_references: { type: 'boolean', description: 'Update inbound Wiki/Markdown links. Defaults to true.' },
       },
       required: ['path', 'new_path'],
     },
@@ -547,7 +551,7 @@ function executeDeleteFile(input: { path?: string }, db: DatabaseT): ToolResult 
   })
 }
 
-async function executeRenameFile(input: { path?: string; new_path?: string }, db: DatabaseT): Promise<ToolResult> {
+async function executeRenameFile(input: { path?: string; new_path?: string; update_references?: boolean }, db: DatabaseT): Promise<ToolResult> {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('rename_file: `path` is required')
   }
@@ -575,25 +579,61 @@ async function executeRenameFile(input: { path?: string; new_path?: string }, db
     )
   }
   let raw: string
+  const references: Array<{ path: string; abs: string; raw: string; updated: string }> = []
   try {
     raw = fs.readFileSync(srcAbs, 'utf8')
     const sourceStat = fs.statSync(srcAbs)
     ensureDocumentMetadata(db, input.path, raw, sourceStat.mtimeMs)
     fs.mkdirSync(path.dirname(dstAbs), { recursive: true })
+    if (input.update_references !== false) {
+      const idx = await getLinkIndex()
+      const allPaths = idx.snapshot().paths
+      for (const backlink of idx.getBacklinks(input.path)) {
+        const refRaw = backlink.source === input.path ? raw : fs.readFileSync(filePathFor(backlink.source), 'utf8')
+        const updated = rewriteDocumentReferences(refRaw, backlink.source, input.path, input.new_path, allPaths)
+        if (updated !== refRaw) references.push({
+          path: backlink.source === input.path ? input.new_path : backlink.source,
+          abs: backlink.source === input.path ? dstAbs : filePathFor(backlink.source),
+          raw: refRaw,
+          updated,
+        })
+      }
+    }
     await renameDocumentWithMetadata({
       db, fromPath: input.path, toPath: input.new_path, fromAbs: srcAbs, toAbs: dstAbs,
     })
+    const written: typeof references = []
+    try {
+      for (const reference of references) {
+        fs.writeFileSync(reference.abs, reference.updated, 'utf8')
+        const stat = fs.statSync(reference.abs)
+        ensureDocumentMetadata(db, reference.path, reference.updated, stat.mtimeMs, Date.now())
+        written.push(reference)
+      }
+    } catch (error) {
+      for (const reference of written.reverse()) fs.writeFileSync(reference.abs, reference.raw, 'utf8')
+      await renameDocumentWithMetadata({ db, fromPath: input.new_path, toPath: input.path, fromAbs: dstAbs, toAbs: srcAbs })
+      throw error
+    }
   } catch (e) {
     return err(`rename_file: ${(e as Error).message}`)
   }
   const stat = fs.statSync(dstAbs)
-  return ok(`renamed ${input.path} → ${input.new_path}`, {
+  try {
+    const idx = await getLinkIndex()
+    idx.applyRename(input.path, input.new_path, fs.readFileSync(dstAbs, 'utf8'))
+    for (const reference of references) if (reference.path !== input.new_path) idx.applyWrite(reference.path, reference.updated)
+  } catch { /* next rebuild repairs the index */ }
+  const renamedChange: FileChangeDescriptor = {
     path: input.new_path,
     oldPath: input.path,
     kind: 'rename',
     newMtime: stat.mtimeMs,
     newRaw: raw,
-  })
+  }
+  return { content: `renamed ${input.path} → ${input.new_path}`, isError: false, changed: renamedChange, changes: references
+    .filter((reference) => reference.path !== input.new_path)
+    .map((reference) => ({ path: reference.path, kind: 'write', newRaw: reference.updated })) }
 }
 
 // ---- dispatcher ----
@@ -630,7 +670,7 @@ export async function executeToolCall(
     case 'delete_file':
       return executeDeleteFile(input as { path?: string }, db)
     case 'rename_file':
-      return executeRenameFile(input as { path?: string; new_path?: string }, db)
+      return executeRenameFile(input as { path?: string; new_path?: string; update_references?: boolean }, db)
     default:
       return err(`unknown tool: ${name}`)
   }

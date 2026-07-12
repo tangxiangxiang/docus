@@ -234,6 +234,12 @@ export async function runChat(opts: RunChatOpts): Promise<{
             oldPath: r.changed.oldPath,
           })
         }
+        for (const changed of r.changes ?? []) {
+          await emit(opts.onEvent, {
+            type: 'file_changed', path: changed.path, kind: changed.kind,
+            newMtime: changed.newMtime, newRaw: changed.newRaw, oldPath: changed.oldPath,
+          })
+        }
         results.push({
           tool_use_id: tb.id,
           content: r.content,

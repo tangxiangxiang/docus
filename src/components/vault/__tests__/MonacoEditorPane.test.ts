@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => {
     addAction: vi.fn(),
     getSelection: vi.fn(() => null),
     executeEdits: vi.fn(),
+    setModel: vi.fn(),
     setSelection: vi.fn(),
     updateOptions: vi.fn(),
     focus: vi.fn(),
@@ -71,6 +72,7 @@ vi.mock('monaco-editor/esm/vs/editor/editor.api.js', () => ({
     setTheme: mocks.setTheme,
     createModel: vi.fn((value: string) => { mocks.model.value = value; return mocks.model }),
     create: vi.fn(() => mocks.editor),
+    setModelMarkers: vi.fn(),
   },
   languages: {
     CompletionItemKind: { Reference: 1, Keyword: 2, Snippet: 3 },
@@ -90,6 +92,7 @@ vi.mock('monaco-editor/esm/vs/editor/editor.api.js', () => ({
   },
   KeyCode: { Enter: 3, Tab: 2, KeyB: 31, KeyI: 38, KeyK: 40, Backquote: 85 },
   KeyMod: { Shift: 1024, CtrlCmd: 2048 },
+  MarkerSeverity: { Hint: 1 },
 }))
 vi.mock('monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js', () => ({}))
 vi.mock('monaco-editor/esm/vs/editor/editor.worker?worker', () => ({ default: class WorkerStub {} }))

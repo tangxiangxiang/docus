@@ -216,6 +216,14 @@ async function createMissingWikiNote(ref: string) {
   }
 }
 
+async function copyActiveContent() {
+  if (!activeTab.value) return
+  try {
+    await navigator.clipboard.writeText(activeTab.value.raw)
+    toast.success('已复制当前文档内容')
+  } catch { toast.error('复制失败') }
+}
+
 watch(activePath, () => { metadataOpen.value = false })
 
 /* Mirror the editor's scroll position onto the preview pane (and
@@ -373,7 +381,6 @@ watch(() => navSearch?.tick.value, () => openSearch())
       <div v-else-if="!isReadMode" class="content" :style="contentStyle">
         <div
           v-if="activeTab"
-          :key="activeTab.path"
           class="editor-pane"
           :data-path="activeTab.path"
         >
@@ -417,7 +424,8 @@ watch(() => navSearch?.tick.value, () => openSearch())
             class="preview-pane"
             :data-path="activeTab.path"
           >
-            <PreviewPane v-if="!activeTab.loading && !activeTab.loadError" :raw="activeTab.raw" :resolver="wikiResolver" />
+            <div v-if="activeTab.raw.length >= 500000" class="empty">大文档模式：实时预览与滚动同步已暂停</div>
+            <PreviewPane v-else-if="!activeTab.loading && !activeTab.loadError" :raw="activeTab.raw" :resolver="wikiResolver" />
           </div>
         </template>
       </div>
@@ -522,6 +530,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
       @toggle-focus-width="editorFocusWidth = !editorFocusWidth"
       @open-metadata="metadataOpen = true"
       @retry-save="doSaveNow"
+      @copy-content="copyActiveContent"
     />
 
     <CommandPalette

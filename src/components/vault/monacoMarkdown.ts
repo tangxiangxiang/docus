@@ -99,6 +99,36 @@ export function markdownHeadingTargets(markdown: string): MarkdownHeadingTarget[
   return headings
 }
 
+export interface WritingDiagnostic {
+  line: number
+  startColumn: number
+  endColumn: number
+  message: string
+}
+
+const COMMON_TYPOS: Record<string, string> = {
+  teh: 'the', recieve: 'receive', seperate: 'separate', occured: 'occurred', definately: 'definitely',
+}
+
+export function writingDiagnostics(markdown: string): WritingDiagnostic[] {
+  const out: WritingDiagnostic[] = []
+  let fenced = false
+  markdown.split(/\r?\n/).forEach((line, index) => {
+    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; return }
+    if (fenced) return
+    const trailing = /\s+$/.exec(line)
+    if (trailing) out.push({ line: index + 1, startColumn: trailing.index + 1, endColumn: line.length + 1, message: 'Trailing whitespace' })
+    for (const match of line.matchAll(/\b(teh|recieve|seperate|occured|definately)\b/gi)) {
+      const word = match[0].toLowerCase()
+      out.push({ line: index + 1, startColumn: (match.index ?? 0) + 1, endColumn: (match.index ?? 0) + match[0].length + 1, message: `Possible typo: ${match[0]} → ${COMMON_TYPOS[word]}` })
+    }
+    for (const match of line.matchAll(/\s+([,.;!?])/g)) {
+      out.push({ line: index + 1, startColumn: (match.index ?? 0) + 1, endColumn: (match.index ?? 0) + match[0].length, message: `Remove the space before “${match[1]}”` })
+    }
+  })
+  return out.slice(0, 200)
+}
+
 export interface MarkdownWrap {
   before: string
   after: string

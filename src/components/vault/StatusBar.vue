@@ -14,6 +14,7 @@ const emit = defineEmits<{
   'toggle-focus-width': []
   'open-metadata': []
   'retry-save': []
+  'copy-content': []
 }>()
 
 // The leading glyphs (● ✓ ⟳ !) come from CSS `::before` on
@@ -27,6 +28,8 @@ const statusLabel = computed(() => {
   if (props.saveStatus === 'dirty') return 'Unsaved'
   if (props.saveStatus === 'saved') return 'Saved'
   if (props.saveStatus === 'error') return props.error ?? 'Error'
+  if (props.saveStatus === 'offline') return 'Offline · waiting to retry'
+  if (props.saveStatus === 'external') return 'File changed on disk'
   return 'Idle'
 })
 
@@ -58,7 +61,7 @@ const pathLabel = computed(() => {
            interrupted. aria-atomic="true" re-announces the whole
            status instead of just the diff. -->
       <button
-        v-if="saveStatus === 'error'"
+        v-if="saveStatus === 'error' || saveStatus === 'offline'"
         type="button"
         class="sb-item sb-status sb-status-retry"
         :data-status="saveStatus"
@@ -85,6 +88,14 @@ const pathLabel = computed(() => {
       <span v-else class="sb-path sb-path-empty">—</span>
     </div>
     <div class="sb-right">
+      <button
+        v-if="dirty || saveStatus === 'error' || saveStatus === 'offline' || saveStatus === 'external'"
+        type="button"
+        class="sb-copy-content"
+        aria-label="复制当前文档内容"
+        title="复制当前文档内容"
+        @click="emit('copy-content')"
+      >⧉</button>
       <button
         type="button"
         class="sb-metadata"
@@ -143,7 +154,7 @@ const pathLabel = computed(() => {
   font: inherit;
   cursor: pointer;
 }
-.sb-focus-width, .sb-metadata {
+.sb-focus-width, .sb-metadata, .sb-copy-content {
   width: 22px;
   height: 18px;
   display: inline-flex;

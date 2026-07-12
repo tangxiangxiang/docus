@@ -33,6 +33,7 @@ import {
   getPost,
   getTree,
   createPost,
+  getFileStates,
   type PostSummary,
   type TreeNode,
 } from '../../lib/api'
@@ -486,7 +487,7 @@ export function useEditorTabs(opts: {
       const post = posts.value.find((p) => p.path === path)
       if (post) tab.serverMtime = post.mtime
     } catch (e) {
-      tab.saveStatus = 'error'
+      tab.saveStatus = typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error'
       tab.error = (e as Error).message
       toast.error(`保存失败: ${tab.error}`)
     } finally {
@@ -501,7 +502,7 @@ export function useEditorTabs(opts: {
       do {
         await saveLatest(path)
         const tab = tabs.value.find((t) => t.path === path)
-        if (!tab || tab.saveStatus === 'error' || tab.revision === tab.savedRevision) break
+        if (!tab || ['error', 'offline', 'external'].includes(tab.saveStatus) || tab.revision === tab.savedRevision) break
       } while (true)
     })().finally(() => savePromises.delete(path))
     savePromises.set(path, promise)
@@ -520,11 +521,48 @@ export function useEditorTabs(opts: {
 
   function handleBeforeUnload(event: BeforeUnloadEvent) {
     const hasUnsaved = tabs.value.some((tab) =>
-      tab.revision !== tab.savedRevision || tab.saveStatus === 'error' || tab.saveStatus === 'saving',
+      tab.revision !== tab.savedRevision || ['error', 'offline', 'saving'].includes(tab.saveStatus),
     )
     if (!hasUnsaved) return
     event.preventDefault()
     event.returnValue = ''
+  }
+
+  async function pollExternalChanges() {
+    const loaded = tabs.value.filter((tab) => !tab.loading && !tab.loadError)
+    if (!loaded.length) return
+    let states: Awaited<ReturnType<typeof getFileStates>>
+    try { states = await getFileStates(loaded.map((tab) => tab.path)) } catch { return }
+    for (const state of states) {
+      const tab = tabs.value.find((item) => item.path === state.path)
+      if (!tab || tab.saveStatus === 'saving' || state.mtime === tab.serverMtime) continue
+      if (!state.exists) {
+        tab.saveStatus = 'external'
+        tab.error = '文件已从磁盘删除'
+        continue
+      }
+      if (tab.revision !== tab.savedRevision) {
+        tab.saveStatus = 'external'
+        tab.error = '磁盘文件已变化，本地修改尚未保存'
+        continue
+      }
+      try {
+        const post = await getPost(tab.path)
+        tab.raw = post.raw
+        tab.originalRaw = post.raw
+        tab.revision += 1
+        tab.savedRevision = tab.revision
+        tab.serverMtime = post.mtime
+        tab.saveStatus = 'idle'
+        tab.error = null
+      } catch { /* next poll retries */ }
+    }
+  }
+
+  function handleOnline() {
+    for (const tab of tabs.value) {
+      if (tab.saveStatus === 'offline') void doSave(tab.path)
+    }
   }
 
   async function doSaveNow() {
@@ -614,6 +652,7 @@ export function useEditorTabs(opts: {
   // double-open.
   onMounted(async () => {
     window.addEventListener('beforeunload', handleBeforeUnload)
+    window.addEventListener('online', handleOnline)
     await refresh()
     // Resolve the vault id once and cache it for the persist watcher.
     // The cache lifetime is the page session — a refresh re-fetches,
@@ -782,10 +821,14 @@ export function useEditorTabs(opts: {
   setOpenPostForClicks(openPost)
   onBeforeUnmount(() => {
     window.removeEventListener('beforeunload', handleBeforeUnload)
+    window.removeEventListener('online', handleOnline)
+    clearInterval(externalPollTimer)
     for (const timer of saveTimers.values()) clearTimeout(timer)
     saveTimers.clear()
     if (_openPost === openPost) setOpenPostForClicks(null)
   })
+
+  const externalPollTimer = setInterval(() => { void pollExternalChanges() }, 5_000)
 
   return {
     tree,

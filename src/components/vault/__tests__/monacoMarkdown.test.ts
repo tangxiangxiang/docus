@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  filterMarkdownSlashCommands, indentMarkdownLine, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs, markdownHeadingTargets,
+  filterMarkdownSlashCommands, indentMarkdownLine, MARKDOWN_WRAPS, markdownContinuation, markdownDecorationSpecs, markdownHeadingTargets, writingDiagnostics,
   markdownLinkFromPaste, markdownWrapEdit, rankWikiTargets, toggleMarkdownWrap, wikiLinkAtColumn,
 } from '../monacoMarkdown'
 
@@ -43,6 +43,14 @@ describe('Monaco Markdown helpers', () => {
       { title: 'Intro', anchor: 'intro', level: 1 },
       { title: '中文 标题', anchor: '中文-标题', level: 2 },
       { title: 'Intro', anchor: 'intro-2', level: 2 },
+    ])
+  })
+
+  it('reports common English typos and spacing outside code fences', () => {
+    expect(writingDiagnostics('The teh value , failed.  \n```text\nteh ,\n```')).toEqual([
+      expect.objectContaining({ line: 1, message: 'Trailing whitespace' }),
+      expect.objectContaining({ line: 1, message: 'Possible typo: teh → the' }),
+      expect.objectContaining({ line: 1, message: 'Remove the space before “,”' }),
     ])
   })
 

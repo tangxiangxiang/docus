@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
 import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import { acquireMarkdownModel } from './monacoModels'
 import { resolveWikiTarget } from '../../lib/linkResolve'
 import { getPost } from '../../lib/api'
+import { useEditorPreferences } from '../../composables/vault/useEditorPreferences'
 import {
   indentMarkdownLine,
   filterMarkdownSlashCommands,
@@ -18,6 +19,7 @@ import {
   markdownWrapEdit,
   rankWikiTargets,
   wikiLinkAtColumn,
+  writingDiagnostics,
 } from './monacoMarkdown'
 
 export interface EditorLinkTarget {
@@ -31,6 +33,8 @@ const props = defineProps<{
   focusWidth?: boolean
   linkTargets?: EditorLinkTarget[]
 }>()
+const preferences = useEditorPreferences()
+const isLargeDocument = computed(() => props.modelValue.length >= 500_000)
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   'open-link': [path: string]
@@ -114,19 +118,19 @@ monaco.editor.defineTheme('docus-dark', {
   },
 })
 
-function readViewState(): monaco.editor.ICodeEditorViewState | null {
+function readViewState(path = props.path): monaco.editor.ICodeEditorViewState | null {
   try {
     const all = JSON.parse(localStorage.getItem(VIEW_STATE_KEY) ?? '{}') as Record<string, monaco.editor.ICodeEditorViewState>
-    return all[props.path] ?? null
+    return all[path] ?? null
   } catch { return null }
 }
 
-function saveViewState() {
+function saveViewState(path = props.path) {
   if (!editor) return
   try {
     const all = JSON.parse(localStorage.getItem(VIEW_STATE_KEY) ?? '{}') as Record<string, monaco.editor.ICodeEditorViewState>
-    delete all[props.path]
-    all[props.path] = editor.saveViewState()!
+    delete all[path]
+    all[path] = editor.saveViewState()!
     localStorage.setItem(VIEW_STATE_KEY, JSON.stringify(Object.fromEntries(Object.entries(all).slice(-100))))
   } catch { /* best effort */ }
 }
@@ -141,6 +145,21 @@ rebuildLinkIndex()
 
 function refreshMarkdownDecorations() {
   if (!editor || !model) return
+  if (isLargeDocument.value) {
+    decorationIds = editor.deltaDecorations(decorationIds, [])
+    monaco.editor.setModelMarkers(model, 'docus-writing', [])
+    return
+  }
+  monaco.editor.setModelMarkers(model, 'docus-writing', preferences.typography.value
+    ? writingDiagnostics(model.getValue()).map((item) => ({
+        severity: monaco.MarkerSeverity.Hint,
+        message: item.message,
+        startLineNumber: item.line,
+        endLineNumber: item.line,
+        startColumn: item.startColumn,
+        endColumn: item.endColumn,
+      }))
+    : [])
   const visible = editor.getVisibleRanges()[0]
   const startLine = Math.max(1, (visible?.startLineNumber ?? 1) - 100)
   const endLine = Math.min(model.getLineCount(), (visible?.endLineNumber ?? Math.min(300, model.getLineCount())) + 100)
@@ -252,22 +271,25 @@ const completion = monaco.languages.registerCompletionItemProvider('markdown', {
     const recency = recentLinks()
     return {
       suggestions: rankWikiTargets(props.linkTargets ?? [], match[1], recency, props.path)
-        .map((target) => ({
-          label: target.title || target.path,
-          detail: target.path,
-          filterText: `${target.title} ${target.path}`,
-          kind: monaco.languages.CompletionItemKind.Reference,
-          insertText: `${target.path}]]`,
-          command: rememberLinkCommand
-            ? { id: rememberLinkCommand, title: 'Remember wiki link', arguments: [target.path] }
-            : undefined,
-          range: {
-            startLineNumber: position.lineNumber,
-            startColumn,
-            endLineNumber: position.lineNumber,
-            endColumn: position.column,
-          },
-        })),
+        .flatMap((target) => {
+          const common = {
+            filterText: `${target.title} ${target.path}`,
+            kind: monaco.languages.CompletionItemKind.Reference,
+            command: rememberLinkCommand
+              ? { id: rememberLinkCommand, title: 'Remember wiki link', arguments: [target.path] }
+              : undefined,
+            range: {
+              startLineNumber: position.lineNumber,
+              startColumn,
+              endLineNumber: position.lineNumber,
+              endColumn: position.column,
+            },
+          }
+          const direct = { ...common, label: target.title || target.path, detail: target.path, insertText: `${target.path}]]` }
+          return target.title && target.title !== target.path
+            ? [direct, { ...common, label: `${target.title} (alias)`, detail: `${target.path} · 以标题显示`, insertText: `${target.path}|${target.title}]]` }]
+            : [direct]
+        }),
     }
   },
 })
@@ -296,15 +318,15 @@ onMounted(() => {
     theme: activeTheme(),
     automaticLayout: true,
     wordWrap: props.focusWidth ? 'wordWrapColumn' : 'on',
-    wordWrapColumn: 100,
+    wordWrapColumn: preferences.wrapColumn.value,
     minimap: { enabled: false },
     lineNumbersMinChars: 3,
     glyphMargin: false,
-    folding: true,
+    folding: !isLargeDocument.value,
     fontFamily: 'var(--mono)',
-    fontSize: 14,
-    lineHeight: 22,
-    tabSize: 2,
+    fontSize: preferences.fontSize.value,
+    lineHeight: preferences.lineHeight.value,
+    tabSize: preferences.tabSize.value,
     insertSpaces: true,
     detectIndentation: false,
     padding: { top: 10, bottom: 48 },
@@ -464,7 +486,7 @@ onMounted(() => {
     editor.executeEdits('markdown-link-paste', [{ range: selection, text: replacement }])
   }
   host.value.addEventListener('paste', pasteHandler, true)
-  editor.onDidBlurEditorWidget(saveViewState)
+  editor.onDidBlurEditorWidget(() => saveViewState())
   themeObserver = new MutationObserver(() => monaco.editor.setTheme(activeTheme()))
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 })
@@ -476,9 +498,33 @@ watch(() => props.modelValue, (value) => {
   suppressChange = false
 })
 
-watch(() => props.focusWidth, (focused) => {
-  editor?.updateOptions({ wordWrap: focused ? 'wordWrapColumn' : 'on', wordWrapColumn: 100 })
+watch(() => props.path, (nextPath, previousPath) => {
+  if (!editor) return
+  saveViewState(previousPath)
+  emit('unregister-scroll', previousPath)
+  model = acquireMarkdownModel(nextPath, props.modelValue)
+  editor.setModel(model)
+  const state = readViewState(nextPath)
+  if (state) editor.restoreViewState(state)
+  rebuildLinkIndex()
+  refreshMarkdownDecorations()
+  emit('register-scroll', { path: nextPath, setScrollFraction })
 })
+
+watch(() => props.focusWidth, (focused) => {
+  editor?.updateOptions({ wordWrap: focused ? 'wordWrapColumn' : 'on', wordWrapColumn: preferences.wrapColumn.value })
+})
+
+watch(
+  [preferences.fontSize, preferences.lineHeight, preferences.tabSize, preferences.wrapColumn],
+  ([fontSize, lineHeight, tabSize, wrapColumn]) => editor?.updateOptions({ fontSize, lineHeight, tabSize, wordWrapColumn: wrapColumn }),
+)
+
+watch(isLargeDocument, (large) => {
+  editor?.updateOptions({ folding: !large, smoothScrolling: !large })
+  refreshMarkdownDecorations()
+})
+watch(preferences.typography, refreshMarkdownDecorations)
 
 watch(() => props.linkTargets, () => {
   rebuildLinkIndex()

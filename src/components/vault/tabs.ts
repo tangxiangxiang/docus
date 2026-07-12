@@ -1,4 +1,4 @@
-export type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
+export type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'offline' | 'external'
 
 export interface Tab {
   path: string

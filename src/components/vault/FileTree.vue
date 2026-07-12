@@ -535,7 +535,19 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
     if (node.kind === 'folder') {
       const parent = oldPath.split('/').slice(0, -1).join('/')
       const newPath = parent ? `${parent}/${safeName}` : safeName
-      const res = await renameFolder(oldPath, newPath)
+      let updateReferences = false
+      try {
+        const impact = await getRenameImpact(oldPath, true)
+        updateReferences = impact.count > 0
+          ? await confirm(`有 ${impact.count} 篇文档引用此文件夹中的笔记。是否同时更新这些引用？\n\n取消将仅重命名文件夹。`)
+          : false
+      } catch { /* advisory */ }
+      const res = updateReferences
+        ? await renameFolder(oldPath, newPath, true)
+        : await renameFolder(oldPath, newPath)
+      for (const updated of res.updatedReferences ?? []) {
+        publishFileChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
+      }
       toast.success(`已重命名 (${res.moved.length} 项)`)
     } else {
       let updateReferences = false

@@ -211,6 +211,22 @@ app.get('/api/posts', async (c) => {
   return c.json(posts)
 })
 
+app.post('/api/files/state', async (c) => {
+  const body = await c.req.json().catch(() => null) as { paths?: unknown } | null
+  if (!body || !Array.isArray(body.paths) || body.paths.length > 50) return bad(c, 'paths array required')
+  const states: Array<{ path: string; exists: boolean; mtime: number; size: number }> = []
+  for (const item of body.paths) {
+    if (typeof item !== 'string' || !isValidPathSyntax(item)) return bad(c, 'invalid path')
+    try {
+      const stat = await fs.stat(filePathFor(item))
+      states.push({ path: item, exists: true, mtime: stat.mtimeMs, size: stat.size })
+    } catch {
+      states.push({ path: item, exists: false, mtime: 0, size: 0 })
+    }
+  }
+  return c.json(states)
+})
+
 // Create a new post. Body: { path: string, title?: string }
 app.post('/api/posts', async (c) => {
   const body = await c.req.json().catch(() => null) as { path?: unknown; title?: unknown } | null
@@ -537,7 +553,7 @@ app.patch('/api/folders/*', async (c) => {
   try { src = folderPathFor(srcPath) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(src)) return bad(c, 'not found', 404)
 
-  const body = await c.req.json().catch(() => null) as { newPath?: string } | null
+  const body = await c.req.json().catch(() => null) as { newPath?: string; updateReferences?: boolean } | null
   if (!body || typeof body.newPath !== 'string') return bad(c, 'newPath required')
   const newPath = body.newPath
   // Validate: newPath parent must match srcPath parent, only last segment differs.
@@ -553,12 +569,42 @@ app.patch('/api/folders/*', async (c) => {
     const [raw, stat] = await Promise.all([fs.readFile(oldAbs, 'utf8'), fs.stat(oldAbs)])
     ensureMetadata(oldPath, raw, stat.mtimeMs)
   }
+  const folderReferenceSnapshots: Array<{ sourcePath: string; writePath: string; raw: string; updated: string }> = []
+  if (body.updateReferences) {
+    const idx = await getLinkIndex()
+    const indexSnapshot = idx.snapshot()
+    const moves = oldPaths.map((oldPath) => ({ oldPath, newPath: newPath + oldPath.slice(srcPath.length) }))
+    for (const [source, links] of Object.entries(indexSnapshot.outgoing)) {
+      if (!links.some((link) => oldPaths.includes(link.target))) continue
+      const raw = await fs.readFile(filePathFor(source), 'utf8')
+      const updated = moves.reduce(
+        (text, move) => rewriteDocumentReferences(text, source, move.oldPath, move.newPath, indexSnapshot.paths), raw,
+      )
+      if (updated !== raw) folderReferenceSnapshots.push({
+        sourcePath: source,
+        writePath: source === srcPath || source.startsWith(srcPath + '/') ? newPath + source.slice(srcPath.length) : source,
+        raw,
+        updated,
+      })
+    }
+  }
   deleteDocumentMetadataPrefix(metadataDb(), newPath)
   await fs.rename(src, dest)
   try {
     moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
+    for (const snapshot of folderReferenceSnapshots) {
+      const target = filePathFor(snapshot.writePath)
+      await fs.writeFile(target, snapshot.updated, 'utf8')
+      const stat = await fs.stat(target)
+      ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
+    }
   } catch (error) {
+    for (const snapshot of folderReferenceSnapshots) {
+      const target = filePathFor(snapshot.writePath)
+      if (await exists(target)) await fs.writeFile(target, snapshot.raw, 'utf8').catch(() => undefined)
+    }
     await fs.rename(dest, src)
+    try { moveDocumentMetadataPrefix(metadataDb(), newPath, srcPath) } catch { /* original error wins */ }
     throw error
   }
   // Collect affected file paths for client cache refresh.
@@ -576,8 +622,15 @@ app.patch('/api/folders/*', async (c) => {
     // Only cascade files that actually existed in the old subtree.
     const oldSet = new Set(oldPaths)
     idx.applyFolderRename(pairs.filter((p) => oldSet.has(p.oldPath)))
+    for (const snapshot of folderReferenceSnapshots) {
+      if (!snapshot.writePath.startsWith(newPath + '/')) idx.applyWrite(snapshot.writePath, snapshot.updated)
+    }
   } catch { /* ignore */ }
-  return c.json({ path: body.newPath, moved })
+  return c.json({
+    path: body.newPath,
+    moved,
+    updatedReferences: folderReferenceSnapshots.map((snapshot) => ({ path: snapshot.writePath, raw: snapshot.updated })),
+  })
 })
 
 // Delete a folder recursively. Requires ?recursive=true if non-empty.
@@ -633,7 +686,12 @@ app.get('/api/backlinks', async (c) => {
 app.get('/api/links/rename-impact', async (c) => {
   const target = c.req.query('path')
   if (!target || !isValidPathSyntax(target)) return bad(c, 'valid path required')
-  const sources = (await getLinkIndex()).getBacklinks(target).map((record) => record.source)
+  const idx = await getLinkIndex()
+  const sources = c.req.query('recursive') === 'true'
+    ? Object.entries(idx.snapshot().outgoing)
+        .filter(([, links]) => links.some((link) => link.target === target || link.target.startsWith(target + '/')))
+        .map(([source]) => source)
+    : idx.getBacklinks(target).map((record) => record.source)
   return c.json({ path: target, count: sources.length, sources })
 })
 
