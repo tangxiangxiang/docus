@@ -2388,8 +2388,6 @@ main.container {
 .vault .monaco-host .monaco-md-h1 { font-weight: 720; }
 .vault .monaco-host .monaco-md-marker { color: var(--vs-accent) !important; }
 .vault .monaco-host .monaco-md-quote {
-  box-shadow: inset 2px 0 color-mix(in srgb, var(--vs-accent) 58%, transparent);
-  padding-left: 8px;
   color: var(--vs-text-2) !important;
   font-style: italic;
 }
