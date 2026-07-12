@@ -2603,14 +2603,8 @@ main.container {
   overscroll-behavior-inline: contain;
 }
 .vault .article table {
-  /* `separate` + `border-spacing: 0` instead of `collapse` so the
-     rounded corners + overflow clip don't eat the cell borders —
-     the classic collapse+radius combo silently drops borders on the
-     outer cells in many engines. Each cell draws its own border
-     here, and the first / last rows get the radius. */
   font-size: 0.95em;
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
   border: 1px solid var(--vs-border);
   border-radius: 6px;
   overflow: hidden;
@@ -2618,9 +2612,7 @@ main.container {
 }
 .vault .article th,
 .vault .article td {
-  /* Subtler than --vs-border so the cell dividers read as quiet grid
-     lines; the outer table border (--vs-border) carries the frame. */
-  border: 1px solid var(--vs-table-border);
+  border: 1px solid var(--vs-border);
   padding: 6px 10px;
 }
 .vault .article th {
