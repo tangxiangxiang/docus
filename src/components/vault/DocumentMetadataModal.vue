@@ -16,7 +16,6 @@ const saving = ref(false)
 const title = ref('')
 const summary = ref('')
 const tags = ref('')
-const aliases = ref('')
 
 function join(values: string[]) {
   return values.join(', ')
@@ -41,7 +40,6 @@ async function load() {
     title.value = metadata?.title ?? String(post.frontmatter.title ?? props.path.split('/').pop() ?? '')
     summary.value = metadata?.summary ?? String(post.frontmatter.summary ?? '')
     tags.value = join(metadata?.tags ?? (Array.isArray(post.frontmatter.tags) ? post.frontmatter.tags as string[] : []))
-    aliases.value = join(metadata?.aliases ?? (Array.isArray(post.frontmatter.aliases) ? post.frontmatter.aliases as string[] : []))
     await nextTick()
     titleInput.value?.focus()
     titleInput.value?.select()
@@ -60,7 +58,6 @@ async function save() {
       title: title.value.trim(),
       summary: summary.value.trim(),
       tags: split(tags.value),
-      aliases: split(aliases.value),
     })
     toast.success('文档信息已保存')
     emit('saved', metadata)
@@ -134,10 +131,6 @@ onBeforeUnmount(() => { void trap.deactivate() })
           <label class="document-metadata-field">
             <span>标签</span>
             <input v-model="tags" placeholder="rag, notes" :disabled="loading || saving" />
-          </label>
-          <label class="document-metadata-field">
-            <span>别名</span>
-            <input v-model="aliases" placeholder="用逗号分隔" :disabled="loading || saving" />
           </label>
         </div>
 

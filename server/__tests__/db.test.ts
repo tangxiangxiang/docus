@@ -32,7 +32,7 @@ describe('applyMigrations', () => {
     expect(tables).toContain('documents')
     expect(tables).toContain('tags')
     expect(tables).toContain('document_tags')
-    expect(tables).toContain('document_aliases')
+    expect(tables).not.toContain('document_aliases')
     expect(tables).toContain('document_embeddings')
     expect(tables).toContain('metadata_migrations')
     expect(tables).toContain('schema_version')

@@ -170,8 +170,7 @@ function verifyStoredMetadata(
       || stored.summary !== expected.summary
       || stored.createdAt !== expected.createdAt
       || stored.updatedAt !== expected.updatedAt
-      || JSON.stringify(stored.tags) !== JSON.stringify(expected.tags)
-      || JSON.stringify(stored.aliases) !== JSON.stringify(expected.aliases)) {
+      || JSON.stringify(stored.tags) !== JSON.stringify(expected.tags)) {
     throw new Error('metadata read-back verification failed')
   }
 }

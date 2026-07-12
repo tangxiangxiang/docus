@@ -177,10 +177,8 @@ app.patch('/api/metadata/documents/*', async (c) => {
   }
 
   let tags = current.tags
-  let aliases = current.aliases
   try {
     if (body.tags !== undefined) tags = stringList(body.tags, 'tags')
-    if (body.aliases !== undefined) aliases = stringList(body.aliases, 'aliases')
   } catch (error) {
     return bad(c, (error as Error).message)
   }
@@ -189,7 +187,6 @@ app.patch('/api/metadata/documents/*', async (c) => {
     title,
     summary,
     tags,
-    aliases,
     updatedAt: Date.now(),
   })
   try {
@@ -534,7 +531,6 @@ app.get('/api/posts/*', async (c) => {
         title: metadata.title,
         summary: metadata.summary,
         tags: metadata.tags,
-        aliases: metadata.aliases,
         created: new Date(metadata.createdAt).toISOString().slice(0, 10),
         updated: new Date(metadata.updatedAt).toISOString().slice(0, 10),
       }

@@ -53,7 +53,7 @@ const TOOLS_SECTION = `
 工作区根目录: src/content/  (所有路径相对此目录, 不带 .md 后缀)
 可用工具:
 - read_file(path) — 读取 Markdown 正文和数据库 metadata
-- update_metadata(path, title?, summary?, tags?, aliases?) — 修改数据库元数据
+- update_metadata(path, title?, summary?, tags?) — 修改数据库元数据
 - list_files(scope?) — 列目录顶层 (不递归); 省略 scope 列工作区根
 - create_file(path, content) — 新建; 文件已存在则失败 (用 write_file 覆盖)
 - write_file(path, content) — 覆盖或创建

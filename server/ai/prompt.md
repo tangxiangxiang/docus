@@ -20,10 +20,9 @@ not in YAML Frontmatter and not in the Markdown text.
 - `createdAt` / `updatedAt` — timestamps managed by the server.
 - `tags` — searchable labels.
 - `summary` — optional 1–2 sentence search blurb.
-- `aliases` — alternative titles used for discovery and links.
 
 `read_file` returns database-owned fields under `metadata`. Use
-`update_metadata` to change title, summary, tags, or aliases. Never add YAML
+`update_metadata` to change title, summary, or tags. Never add YAML
 Frontmatter to a note. Legacy files may still contain it during migration;
 treat it as read-only legacy data and prefer `metadata`.
 

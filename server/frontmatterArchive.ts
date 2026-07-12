@@ -34,6 +34,8 @@ export interface FrontmatterMutationResult {
   failed: Array<{ path: string; reason: string }>
 }
 
+// `aliases` is deprecated, but remains recognized so cleanup can archive and remove
+// it from legacy Frontmatter instead of treating it as an unknown custom field.
 const STANDARD_FIELDS = new Set(['title', 'summary', 'tags', 'aliases', 'created', 'updated', 'date'])
 
 function date(value: number): string {
@@ -48,7 +50,6 @@ export function renderCanonicalFrontmatter(metadata: DocumentMetadata): string {
     tags: metadata.tags,
   }
   if (metadata.summary) data.summary = metadata.summary
-  if (metadata.aliases.length) data.aliases = metadata.aliases
   return `---\n${YAML.stringify(data).trimEnd()}\n---\n\n`
 }
 

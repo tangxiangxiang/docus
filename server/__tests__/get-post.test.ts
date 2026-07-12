@@ -75,7 +75,7 @@ describe('GET /api/posts/*', () => {
   it('returns database metadata ahead of legacy Frontmatter', async () => {
     saveDocumentMetadata(db, {
       id: 'metadata-test', path: FIXTURE_PATH, title: 'Database title',
-      summary: 'Database summary', tags: ['database'], aliases: ['Syntax'],
+      summary: 'Database summary', tags: ['database'],
       createdAt: Date.UTC(2025, 0, 2), updatedAt: Date.UTC(2026, 1, 3),
     })
     const r = await get('/api/posts/' + FIXTURE_PATH)
@@ -86,7 +86,7 @@ describe('GET /api/posts/*', () => {
     }
     expect(body.metadata).toMatchObject({ id: 'metadata-test', title: 'Database title' })
     expect(body.frontmatter).toMatchObject({
-      title: 'Database title', summary: 'Database summary', tags: ['database'], aliases: ['Syntax'],
+      title: 'Database title', summary: 'Database summary', tags: ['database'],
       created: '2025-01-02', updated: '2026-02-03',
     })
     expect(body.raw).toContain('title: Markdown syntax quick reference')

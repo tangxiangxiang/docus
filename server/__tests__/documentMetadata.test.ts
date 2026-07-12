@@ -24,12 +24,12 @@ describe('document metadata repository', () => {
   it('creates and reads normalized metadata', () => {
     const saved = saveDocumentMetadata(db, {
       id: 'doc-1', path: 'archive/example', title: ' Example ', summary: ' Summary ',
-      tags: ['RAG', 'rag', ' notes '], aliases: ['Example', ' Example '],
+      tags: ['RAG', 'rag', ' notes '],
       createdAt: 10, updatedAt: 20,
     })
     expect(saved).toMatchObject({
       id: 'doc-1', path: 'archive/example', title: 'Example', summary: 'Summary',
-      tags: ['notes', 'RAG'], aliases: ['Example'], createdAt: 10, updatedAt: 20,
+      tags: ['notes', 'RAG'], createdAt: 10, updatedAt: 20,
     })
   })
 
@@ -40,7 +40,7 @@ describe('document metadata repository', () => {
   })
 
   it('moves and deletes metadata with related rows', () => {
-    saveDocumentMetadata(db, { id: 'doc-1', path: 'inbox/a', title: 'A', tags: ['tag'], aliases: ['alias'] })
+    saveDocumentMetadata(db, { id: 'doc-1', path: 'inbox/a', title: 'A', tags: ['tag'] })
     db.prepare(`
       INSERT INTO metadata_migrations (path, status, source_hash, error, updated_at)
       VALUES ('inbox/a', 'verified', 'hash', '', 1)
@@ -51,7 +51,6 @@ describe('document metadata repository', () => {
     expect(db.prepare('SELECT path FROM metadata_migrations').get()).toEqual({ path: 'archive/a' })
     expect(deleteDocumentMetadata(db, 'archive/a')).toBe(true)
     expect(db.prepare('SELECT COUNT(*) AS n FROM document_tags').get()).toEqual({ n: 0 })
-    expect(db.prepare('SELECT COUNT(*) AS n FROM document_aliases').get()).toEqual({ n: 0 })
     // The backup survives under an orphaned tombstone, no longer occupying
     // the user-visible path or being eligible for restore.
     expect(db.prepare('SELECT original_path, status FROM metadata_migrations').get()).toEqual({

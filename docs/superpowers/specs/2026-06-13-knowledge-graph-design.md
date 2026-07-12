@@ -46,7 +46,7 @@ interface GraphLink {
 1. `archivePaths = paths.filter(p => p.startsWith('archive/'))` —— 节点候选集
 2. 遍历 `outgoing`，只保留 `source ∈ archivePaths && target ∈ archivePaths && kind === 'wiki'` 的边
 3. 节点的 `val` 按度数计算：center=`degree===0` 24px，leaf=`outDegree===0` 12px，中间=16px
-4. 过滤后没有出边也没有入边的孤立节点仍然显示（zettel 可能是新写的、还没连上别条笔记）
+4. 过滤后没有出边也没有入边的孤立节点仍然显示（archive 笔记可能是新写的、还没连上别条笔记）
 
 不显示 inbox / literature 节点——它们不是"知识"（inbox 是 inbox，literature 是别人的东西）。这与参考项目"全 sidebar 展示"不同，是 docus 的语义裁剪。
 
@@ -129,7 +129,7 @@ const colors = computed(() => {
 纯计算，无 DOM / 无 force-graph 依赖。覆盖：
 - 节点是 archive 路径的子集
 - 边只在 archive 内部 wiki 链接里产生
-- 跨目录（zettel → inbox）的链接不出现在图里
+- 跨目录（archive → inbox）的链接不出现在图里
 - 孤立节点（无入无出）仍出现在 nodes
 - `val` 字段按度数计算正确
 - link index 变化（paths 增减、outgoing 增减）能产生新结果

@@ -41,7 +41,7 @@ describe('vault metadata migration', () => {
 
     expect(report).toMatchObject({ scanned: 1, imported: 1, verified: 1, failed: 0 })
     expect(getDocumentMetadata(db, 'inbox/legacy')).toMatchObject({
-      title: 'Legacy', summary: 'Keep me', tags: ['notes', 'RAG'], aliases: ['Old name'],
+      title: 'Legacy', summary: 'Keep me', tags: ['notes', 'RAG'],
     })
     expect(getMetadataMigrationRecord(db, 'inbox/legacy')).toMatchObject({
       status: 'verified', error: '', frontmatterBackup: expect.stringContaining('title: Legacy'),

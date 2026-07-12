@@ -42,12 +42,12 @@ async function write(rel: string, raw: string) {
 describe('Frontmatter archive and cleanup preview', () => {
   it('exports canonical database metadata in a stable field order', () => {
     const metadata = saveDocumentMetadata(db, {
-      path: 'note', title: 'Title', summary: 'Summary', tags: ['a'], aliases: ['Alias'],
+      path: 'note', title: 'Title', summary: 'Summary', tags: ['a'],
       createdAt: Date.UTC(2025, 0, 2), updatedAt: Date.UTC(2026, 1, 3),
     })
     expect(renderCanonicalFrontmatter(metadata)).toBe([
       '---', 'title: Title', 'created: 2025-01-02', 'updated: 2026-02-03',
-      'tags:', '  - a', 'summary: Summary', 'aliases:', '  - Alias', '---', '', '',
+      'tags:', '  - a', 'summary: Summary', '---', '', '',
     ].join('\n'))
   })
 

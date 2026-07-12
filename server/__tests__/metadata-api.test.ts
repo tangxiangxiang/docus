@@ -50,11 +50,11 @@ describe('PATCH /api/metadata/documents/*', () => {
     const raw = '---\ntitle: Legacy\ntags: [old]\n---\n\n# Body\n'
     await fs.writeFile(path.join(root, 'inbox', 'note.md'), raw, 'utf8')
     const response = await patch('inbox/note', {
-      title: 'Database title', summary: 'For retrieval', tags: ['rag', 'RAG'], aliases: ['Note'],
+      title: 'Database title', summary: 'For retrieval', tags: ['rag', 'RAG'],
     })
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({
-      path: 'inbox/note', title: 'Database title', summary: 'For retrieval', tags: ['rag'], aliases: ['Note'],
+      path: 'inbox/note', title: 'Database title', summary: 'For retrieval', tags: ['rag'],
     })
     expect(getDocumentMetadata(db, 'inbox/note')?.title).toBe('Database title')
     expect(await fs.readFile(path.join(root, 'inbox', 'note.md'), 'utf8')).toBe(raw)

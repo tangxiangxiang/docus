@@ -8,7 +8,6 @@ export interface DocumentMetadata {
   title: string
   summary: string
   tags: string[]
-  aliases: string[]
   createdAt: number
   updatedAt: number
 }
@@ -19,7 +18,6 @@ export interface SaveDocumentMetadata {
   title: string
   summary?: string
   tags?: string[]
-  aliases?: string[]
   createdAt?: number
   updatedAt?: number
 }
@@ -61,16 +59,12 @@ function hydrate(db: DatabaseT, row: DocumentRow): DocumentMetadata {
     JOIN document_tags dt ON dt.tag_id = t.id
     WHERE dt.document_id = ? ORDER BY t.normalized_name
   `).all(row.id) as Array<{ name: string }>
-  const aliases = db.prepare(
-    'SELECT alias FROM document_aliases WHERE document_id = ? ORDER BY alias COLLATE NOCASE',
-  ).all(row.id) as Array<{ alias: string }>
   return {
     id: row.id,
     path: row.path,
     title: row.title,
     summary: row.summary,
     tags: tags.map((item) => item.name),
-    aliases: aliases.map((item) => item.alias),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -122,10 +116,6 @@ export function saveDocumentMetadata(db: DatabaseT, input: SaveDocumentMetadata)
       db.prepare('INSERT INTO document_tags (document_id, tag_id) VALUES (?, ?)').run(id, tagRow.id)
     }
 
-    db.prepare('DELETE FROM document_aliases WHERE document_id = ?').run(id)
-    for (const alias of cleanValues(input.aliases ?? existing?.aliases)) {
-      db.prepare('INSERT INTO document_aliases (document_id, alias) VALUES (?, ?)').run(id, alias)
-    }
     return getDocumentMetadata(db, path)!
   })()
 }
@@ -161,9 +151,6 @@ export function ensureDocumentMetadata(
   const tags = Array.isArray(parsed.data.tags)
     ? parsed.data.tags.filter((tag: unknown): tag is string => typeof tag === 'string')
     : []
-  const aliases = Array.isArray(parsed.data.aliases)
-    ? parsed.data.aliases.filter((alias: unknown): alias is string => typeof alias === 'string')
-    : []
   // First-time import: trust the file's frontmatter `updated:` when it
   // parses to a later date than mtime (e.g. user edited in vim then
   // git-checked-out without restoring mtime).
@@ -173,7 +160,6 @@ export function ensureDocumentMetadata(
     title,
     summary: typeof parsed.data.summary === 'string' ? parsed.data.summary : '',
     tags,
-    aliases,
     createdAt: dateMs(parsed.data.created ?? parsed.data.date, mtimeMs),
     updatedAt: Math.max(legacyUpdatedAt, mtimeMs),
   })

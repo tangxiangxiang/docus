@@ -120,7 +120,6 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
         title: { type: 'string', description: 'Non-empty display title (max 200 characters).' },
         summary: { type: 'string', description: 'Search summary (max 2000 characters).' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Searchable tags.' },
-        aliases: { type: 'array', items: { type: 'string' }, description: 'Alternative titles.' },
       },
       required: ['path'],
     },
@@ -250,7 +249,7 @@ function executeReadFile(input: { path?: string }, db: DatabaseT): ToolResult {
   return ok(JSON.stringify(payload, null, 2))
 }
 
-function executeUpdateMetadata(input: { path?: string; title?: unknown; summary?: unknown; tags?: unknown; aliases?: unknown }, db: DatabaseT): ToolResult {
+function executeUpdateMetadata(input: { path?: string; title?: unknown; summary?: unknown; tags?: unknown }, db: DatabaseT): ToolResult {
   if (typeof input.path !== 'string' || !input.path) return err('update_metadata: `path` is required')
   const current = getDocumentMetadata(db, input.path)
   if (!current) return err(`update_metadata: document does not exist: ${input.path}`)
@@ -260,11 +259,8 @@ function executeUpdateMetadata(input: { path?: string; title?: unknown; summary?
   if (input.summary !== undefined && (typeof input.summary !== 'string' || input.summary.length > 2000)) {
     return err('update_metadata: `summary` must be a string of at most 2000 characters')
   }
-  for (const field of ['tags', 'aliases'] as const) {
-    const value = input[field]
-    if (value !== undefined && (!Array.isArray(value) || value.some((item) => typeof item !== 'string'))) {
-      return err(`update_metadata: \`${field}\` must be an array of strings`)
-    }
+  if (input.tags !== undefined && (!Array.isArray(input.tags) || input.tags.some((item) => typeof item !== 'string'))) {
+    return err('update_metadata: `tags` must be an array of strings')
   }
   try {
     return ok(JSON.stringify(saveDocumentMetadata(db, {
@@ -272,7 +268,6 @@ function executeUpdateMetadata(input: { path?: string; title?: unknown; summary?
       title: typeof input.title === 'string' ? input.title.trim() : current.title,
       summary: typeof input.summary === 'string' ? input.summary.trim() : current.summary,
       tags: (input.tags as string[] | undefined) ?? current.tags,
-      aliases: (input.aliases as string[] | undefined) ?? current.aliases,
     }), null, 2))
   } catch (e) {
     return err(`update_metadata: ${(e as Error).message}`)
@@ -673,7 +668,7 @@ export async function executeToolCall(
     case 'list_files':
       return executeListFiles(input as { scope?: string })
     case 'update_metadata':
-      return executeUpdateMetadata(input as { path?: string; title?: unknown; summary?: unknown; tags?: unknown; aliases?: unknown }, db)
+      return executeUpdateMetadata(input as { path?: string; title?: unknown; summary?: unknown; tags?: unknown }, db)
     case 'create_file':
       return executeCreateFile(input as { path?: string; content?: string }, db)
     case 'write_file':

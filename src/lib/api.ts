@@ -35,12 +35,11 @@ export interface DocumentMetadata {
   title: string
   summary: string
   tags: string[]
-  aliases: string[]
   createdAt: number
   updatedAt: number
 }
 
-export type UpdateDocumentMetadata = Pick<DocumentMetadata, 'title' | 'summary' | 'tags' | 'aliases'>
+export type UpdateDocumentMetadata = Pick<DocumentMetadata, 'title' | 'summary' | 'tags'>
 
 export interface MetadataMigrationSummary {
   total: number

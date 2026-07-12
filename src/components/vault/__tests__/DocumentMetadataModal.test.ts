@@ -17,7 +17,7 @@ vi.mock('../../../composables/useToast', () => ({
 
 const metadata = {
   id: 'doc-1', path: 'inbox/note', title: 'Note', summary: 'Summary',
-  tags: ['rag', 'notes'], aliases: ['Old name'], createdAt: 1, updatedAt: 2,
+  tags: ['rag', 'notes'], createdAt: 1, updatedAt: 2,
 }
 
 beforeEach(() => {
@@ -37,13 +37,10 @@ describe('DocumentMetadataModal', () => {
     const tagInput = document.body.querySelector<HTMLInputElement>('input[placeholder="rag, notes"]')!
     tagInput.value = 'rag, RAG, new'
     tagInput.dispatchEvent(new Event('input', { bubbles: true }))
-    const aliasInput = document.body.querySelector<HTMLInputElement>('input[placeholder="用逗号分隔"]')!
-    aliasInput.value = 'Old name, Alias'
-    aliasInput.dispatchEvent(new Event('input', { bubbles: true }))
     document.body.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await flushPromises()
     expect(updateDocumentMetadata).toHaveBeenCalledWith('inbox/note', expect.objectContaining({
-      tags: ['rag', 'new'], aliases: ['Old name', 'Alias'],
+      tags: ['rag', 'new'],
     }))
     expect(wrapper.emitted('saved')?.[0]?.[0]).toMatchObject({ title: 'Updated' })
     wrapper.unmount()
