@@ -5,7 +5,7 @@ import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { PROTECTED_ROOTS } from '../composables/archiveProtocol'
-import { ICON_AI, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ARCHIVE } from './vault/icons'
+import { ICON_PANEL_RIGHT_CLOSE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ARCHIVE } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import ViewModeMenu from './ViewModeMenu.vue'
 
@@ -112,17 +112,6 @@ const SCOPE_ICONS: Record<string, string> = {
             <line x1="20" y1="20" x2="16.5" y2="16.5" />
           </svg>
         </button>
-        <button
-          v-if="isVault"
-          class="ai-toggle"
-          type="button"
-          :title="aiRailOpen ? 'AI panel (click to close)' : 'AI panel'"
-          :aria-label="aiRailOpen ? 'AI panel (click to close)' : 'AI panel'"
-          :aria-pressed="aiRailOpen"
-          @click="toggleAi"
-        >
-          <span class="ai-toggle-icon" aria-hidden="true" v-html="ICON_AI" />
-        </button>
         <ViewModeMenu
           v-if="isVault"
           :mode="viewMode"
@@ -146,6 +135,17 @@ const SCOPE_ICONS: Record<string, string> = {
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
         </svg>
       </button>
+        <button
+          v-if="isVault"
+          class="ai-toggle"
+          type="button"
+          :title="aiRailOpen ? 'AI panel (click to close)' : 'AI panel'"
+          :aria-label="aiRailOpen ? 'AI panel (click to close)' : 'AI panel'"
+          :aria-pressed="aiRailOpen"
+          @click="toggleAi"
+        >
+          <span class="ai-toggle-icon" aria-hidden="true" v-html="aiRailOpen ? ICON_PANEL_RIGHT_OPEN : ICON_PANEL_RIGHT_CLOSE" />
+        </button>
       </div>
     </div>
   </header>

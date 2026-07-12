@@ -86,11 +86,35 @@ export const ICON_TAG = `
 
 // AI sparkle — 4-point star with a small inner dot. 14×14 line art,
 // matches the file-tree / scope-chip icon set. Used in the AI panel
-// header and the NavBar AI toggle button.
+// header (the panel itself) and in the NavBar, where it now serves
+// only as a decorative role for AI-scoped UI; the right-rail toggle
+// in the NavBar uses ICON_PANEL_RIGHT_* below instead, since that
+// button represents the right rail (AI / TOC / Links), not AI.
 export const ICON_AI = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
   <path d="M8 1.5l1.4 4.1L13.5 7l-4.1 1.4L8 12.5 6.6 8.4 2.5 7l4.1-1.4z"/>
   <circle cx="13" cy="13" r="0.6" fill="currentColor" stroke="none"/>
+</svg>`
+
+// "Right panel — open". 14×14 line art matching the file-tree /
+// scope-chip icon set. The NavBar right-rail toggle uses this when
+// the rail is visible: the rectangle with a vertical divider reads
+// as "main area | right panel", conveying "click to collapse the
+// rail". Modeled on Lucide's PanelRight so it sits in the same icon
+// family as VS Code's secondary-sidebar toggle.
+export const ICON_PANEL_RIGHT_OPEN = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="3" width="12" height="10" rx="1.5"></rect>
+  <line x1="9" y1="3" x2="9" y2="13"></line>
+</svg>`
+
+// "Right panel — closed". Same rectangle as the open variant but
+// without the vertical divider, so the right panel reads as folded
+// back into the main area. Pairs with ICON_PANEL_RIGHT_OPEN so the
+// NavBar toggle reflects the rail's current visibility.
+export const ICON_PANEL_RIGHT_CLOSE = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="3" width="12" height="10" rx="1.5"></rect>
 </svg>`
 
 // "History" — clock with a counter-clockwise arrow. 14×14 line art,
