@@ -240,26 +240,13 @@ export function markdownDecorationSpecs(
 ): MonacoDecorationSpec[] {
   const specs: MonacoDecorationSpec[] = []
   const lines = text.split('\n')
-  let inFrontmatter = lineOffset === 0 && lines.length > 1 && lines[0].trim() === '---'
   lines.forEach((line, index) => {
     const lineNumber = lineOffset + index + 1
     const trimmed = line.trimStart()
     const leading = line.length - trimmed.length
-    const lineClass: string[] = []
-    if (inFrontmatter) lineClass.push('monaco-md-frontmatter')
     const heading = /^(#{1,6})\s/.exec(trimmed)
-    if (heading) lineClass.push('monaco-md-heading', `monaco-md-h${heading[1].length}`)
-    if (/^>\s?/.test(trimmed)) lineClass.push('monaco-md-quote')
-    if (lineClass.length) specs.push({ startLineNumber: lineNumber, startColumn: 1, endLineNumber: lineNumber, endColumn: 1, className: lineClass.join(' ') })
     const mark = heading?.[1] ?? (/^>/.test(trimmed) ? '>' : /^(?:[-+*]|\d+\.)/.exec(trimmed)?.[0])
     if (mark) specs.push({ startLineNumber: lineNumber, startColumn: leading + 1, endLineNumber: lineNumber, endColumn: leading + mark.length + 1, inlineClassName: 'monaco-md-marker' })
-    if (inFrontmatter) {
-      const field = /^([A-Za-z][\w-]*):(.*)$/.exec(trimmed)
-      if (field) {
-        specs.push({ startLineNumber: lineNumber, startColumn: leading + 1, endLineNumber: lineNumber, endColumn: leading + field[1].length + 1, inlineClassName: 'monaco-md-frontmatter-key' })
-        if (field[2]) specs.push({ startLineNumber: lineNumber, startColumn: leading + field[1].length + 2, endLineNumber: lineNumber, endColumn: line.length + 1, inlineClassName: 'monaco-md-frontmatter-value' })
-      }
-    }
     const patterns: Array<[RegExp, string]> = [
       [/`[^`\n]+`/g, 'monaco-md-code'],
       [/\*\*[^*\n]+\*\*/g, 'monaco-md-strong'],
@@ -277,7 +264,6 @@ export function markdownDecorationSpecs(
       const className = validWikiPaths && !valid ? 'monaco-md-link-invalid' : 'monaco-md-link'
       specs.push({ startLineNumber: lineNumber, startColumn: (match.index ?? 0) + 1, endLineNumber: lineNumber, endColumn: (match.index ?? 0) + match[0].length + 1, inlineClassName: className })
     }
-    if (index > 0 && inFrontmatter && trimmed === '---') inFrontmatter = false
   })
   return specs
 }

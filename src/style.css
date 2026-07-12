@@ -2384,16 +2384,7 @@ main.container {
   align-items: center;
 }
 .vault .monaco-host.focus-width { width: min(100%, 920px); }
-.vault .monaco-host .monaco-md-heading { font-weight: 650; }
-.vault .monaco-host .monaco-md-h1 { font-weight: 720; }
 .vault .monaco-host .monaco-md-marker { color: var(--vs-accent) !important; }
-.vault .monaco-host .monaco-md-quote {
-  color: var(--vs-text-2) !important;
-  font-style: italic;
-}
-.vault .monaco-host .monaco-md-frontmatter { opacity: 0.72; }
-.vault .monaco-host .monaco-md-frontmatter-key { color: var(--vs-accent) !important; font-weight: 600; }
-.vault .monaco-host .monaco-md-frontmatter-value { color: var(--vs-text-2) !important; }
 .vault .monaco-host .monaco-md-code { background: var(--vs-bg-2); color: var(--vs-text-1) !important; }
 .vault .monaco-host .monaco-md-strong { color: var(--vs-text-1) !important; font-weight: 700; }
 .vault .monaco-host .monaco-md-link { color: var(--vs-accent) !important; }
