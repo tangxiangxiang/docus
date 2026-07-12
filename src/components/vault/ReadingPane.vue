@@ -83,6 +83,40 @@ function pickActiveId(els: HTMLElement[]): string {
   return active.id
 }
 
+/* True when the reading pane has been scrolled all the way to the
+   bottom, within a small epsilon for browser pixel rounding and
+   fractional scroll values during smooth-scroll. Used by the scroll-
+   spy to force-activate the last heading when no further heading
+   can ever cross the trigger line (i.e. the document ends before
+   the next heading starts). */
+function isScrolledToBottom(container: HTMLElement): boolean {
+  const epsilon = 2
+  return container.scrollTop + container.clientHeight >= container.scrollHeight - epsilon
+}
+
+/* Single entry point for publishing `tocActiveId`. Both the
+   IntersectionObserver callback and the `.reading-pane` scroll
+   handler route through this so the freeze window and the
+   bottom-edge rule apply consistently. */
+function updateActiveHeading(els: HTMLElement[]) {
+  if (Date.now() < freezeActiveUntil) return
+  const pane = readingPaneEl.value
+  if (!pane || els.length === 0) return
+  if (isScrolledToBottom(pane)) {
+    tocActiveId.value = els.at(-1)?.id ?? ''
+    return
+  }
+  tocActiveId.value = pickActiveId(els)
+}
+
+/* The observer alone is not enough: at the very bottom of the page
+   no further intersection change happens, so without a scroll
+   listener the last heading would never become active. Calling the
+   same updater on every scroll tick fills that gap. */
+function onReadingPaneScroll() {
+  updateActiveHeading(getHeadingEls())
+}
+
 /* Build the observer once the article is in the DOM and the headings
    have been resolved. Publishes the active heading id to the shared
    tocActiveId ref so TocPanel can highlight it. */
@@ -92,10 +126,7 @@ function attachObserver() {
   const els = getHeadingEls()
   if (els.length === 0) return
   observer = new IntersectionObserver(
-    () => {
-      if (Date.now() < freezeActiveUntil) return
-      tocActiveId.value = pickActiveId(els)
-    },
+    () => { updateActiveHeading(els) },
     {
       root: readingPaneEl.value,
       rootMargin: '0px 0px -60% 0px',
@@ -103,7 +134,7 @@ function attachObserver() {
     },
   )
   for (const el of els) observer.observe(el)
-  if (!tocActiveId.value) tocActiveId.value = pickActiveId(els)
+  if (!tocActiveId.value) updateActiveHeading(els)
 }
 
 /* The slugify in ../../lib/markdown.ts allows CJK characters, which
@@ -161,7 +192,7 @@ watch(() => props.raw, () => {
 </script>
 
 <template>
-  <div ref="readingPaneEl" class="reading-pane">
+  <div ref="readingPaneEl" class="reading-pane" @scroll.passive="onReadingPaneScroll">
     <div v-if="isEmpty" class="reading-empty">
       未打开文件。在侧栏选一个或按 <kbd>⌘P</kbd> 新建。
     </div>
