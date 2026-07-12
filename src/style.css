@@ -2598,46 +2598,54 @@ main.container {
 }
 .vault .article .table-scroll {
   max-width: 100%;
-  margin: 1em 0;
+  margin: 1.15em 0;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
-}
-.vault .article table {
-  font-size: 0.95em;
-  border-collapse: collapse;
   border: 1px solid var(--vs-border);
   border-radius: 6px;
-  overflow: hidden;
+  background: var(--vs-bg-1);
+}
+.vault .article .table-scroll > table {
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.9em;
+  line-height: 1.45;
+  border-collapse: collapse;
+  border: 0;
   margin: 0;
 }
 .vault .article th,
 .vault .article td {
-  border: 1px solid var(--vs-border);
-  padding: 6px 10px;
+  max-width: 32rem;
+  padding: 8px 12px;
+  border: 0;
+  border-right: 1px solid var(--vs-table-border);
+  border-bottom: 1px solid var(--vs-table-border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
 }
 .vault .article th {
   background: var(--vs-bg-2);
   color: var(--vs-text-1);
+  font-weight: 600;
 }
-/* The shared borders between cells look ugly once every cell has
-   its own border (double lines on interior edges). Drop them on
-   the right and bottom of every cell except the last column / row
-   so the table reads as a single grid. */
-.vault .article th:not(:last-child),
-.vault .article td:not(:last-child) {
+.vault .article tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--vs-bg-2) 42%, var(--vs-bg-1));
+}
+.vault .article tbody tr:hover {
+  background: var(--vs-hover-bg);
+}
+.vault .article tr > :last-child {
   border-right: 0;
 }
-.vault .article tr:not(:last-child) th,
-.vault .article tr:not(:last-child) td {
+.vault .article tbody tr:last-child > td {
   border-bottom: 0;
 }
-/* Top corners only on the first row's cells; bottom corners only on
-   the last row's. The outer border-radius on the table + overflow:
-   hidden takes care of the rest. */
-.vault .article tr:first-child th:first-child { border-top-left-radius: 6px; }
-.vault .article tr:first-child th:last-child  { border-top-right-radius: 6px; }
-.vault .article tr:last-child  td:first-child { border-bottom-left-radius: 6px; }
-.vault .article tr:last-child  td:last-child  { border-bottom-right-radius: 6px; }
+@media (max-width: 600px) {
+  .vault .article th,
+  .vault .article td { padding: 7px 9px; }
+}
 .vault .article img {
   border-radius: 6px;
   border: 1px solid var(--vs-border);
