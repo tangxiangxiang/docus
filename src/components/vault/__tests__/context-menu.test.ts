@@ -129,7 +129,10 @@ describe('FileTree context menu', () => {
 
     const menu = document.querySelector('.tree-context-menu')
     expect(menu).not.toBeNull()
-    const labels = Array.from(menu!.querySelectorAll('button')).map((b) => b.textContent)
+    // Trim because each menu button inlines an icon SVG whose markup
+    // contributes whitespace to textContent. Substring equality keeps
+    // the test focused on the label rather than the SVG formatting.
+    const labels = Array.from(menu!.querySelectorAll('button')).map((b) => (b.textContent ?? '').trim())
     expect(labels).toContain('新建文件夹')
     expect(labels).not.toContain('新建文件')
     expect(labels).not.toContain('重命名')

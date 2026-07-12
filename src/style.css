@@ -326,15 +326,15 @@ hr {
 }
 .navbar .scope-chip-icon {
   display: inline-flex;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
 .navbar .scope-chip-icon :where(svg) {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   display: block;
 }
 .navbar .scope-chip-label {
@@ -3389,15 +3389,15 @@ main.container {
 }
 .ai-panel .ai-context-icon {
   display: inline-flex;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   color: var(--vs-text-3);
   flex-shrink: 0;
 }
 .ai-panel .ai-context-icon :where(svg) {
   display: block;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
 }
 .ai-panel .ai-context-path {
   overflow: hidden;
