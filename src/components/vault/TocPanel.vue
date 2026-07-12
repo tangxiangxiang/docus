@@ -168,7 +168,12 @@ function onLinkNavigate(p: string) {
    have matching row heights. The heading text fills the available
    width and is truncated with ellipsis on overflow. H3/H4 indents
    (8px per level on top of the 16px baseline) provide the hierarchy
-   cue without a separate badge. */
+   cue without a separate badge.
+
+   Active state is communicated by text weight + a light row
+   background, modeled on Cursor / VS Code Outline rather than the
+   file-tree's accent-bar style — a TOC is a reading aid, not a
+   navigation tree. */
 .toc-panel-link {
   display: block;
   width: calc(100% - 28px);
@@ -181,11 +186,8 @@ function onLinkNavigate(p: string) {
   line-height: 1.35;
   color: var(--vs-text-2, var(--text-muted));
   text-decoration: none;
-  border-left: 2px solid transparent;
-  /* Animate the accent border too — without it, scroll-spy jumps
-     snap the bar in place while the row's text fades in, which
-     reads as a tiny flicker on slow section transitions. */
-  transition: background 0.12s ease, color 0.12s ease, border-left-color 0.18s ease;
+  border-radius: 5px;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .toc-panel-link-text {
@@ -198,18 +200,13 @@ function onLinkNavigate(p: string) {
 
 .toc-panel-link:hover {
   color: var(--vs-text-1, var(--text));
+  background: var(--vs-hover-bg, var(--bg-soft));
 }
 
 .toc-panel-item.active .toc-panel-link {
   color: var(--vs-text-1, var(--text));
   font-weight: 600;
-}
-
-/* Active row gets the same accent left border that the .section
-   focus state uses in LinksPanel. Drawn on the <a> so the indent
-   for h3/h4 composes with the 2px bar. */
-.toc-panel-item.active .toc-panel-link {
-  border-left-color: var(--vs-accent, var(--accent));
+  background: var(--vs-hover-bg, var(--bg-soft));
 }
 
 /* H3 / H4 indents: 16px baseline + 8px per level. */
