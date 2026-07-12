@@ -12,6 +12,7 @@ export interface Tab {
   error: string | null
   loadError: string | null
   loading: boolean
+  externalRaw?: string | null
   // mtime of the file on disk at the last load/save. Used to detect
   // external changes (the AI file-change bus drives refreshes
   // off this). v1 doesn't strictly compare mtimes — `dirty` is

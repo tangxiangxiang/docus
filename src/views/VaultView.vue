@@ -8,6 +8,7 @@ import { useEditorPreviewScrollSync } from '../composables/vault/useEditorPrevie
 import { useSplitReview } from '../composables/vault/useSplitReview'
 import { splitNote, type SplitMode } from '../lib/ai-api'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { useTagFilter } from '../composables/vault/useTagFilter'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
@@ -137,6 +138,7 @@ const review = useSplitReview()
 // AiPanel) share state — the panel re-renders when we mutate.
 provide('splitReview', review)
 const toast = useToast()
+const { confirm } = useConfirm()
 
 // Lives in VaultView (not the composable) so the string `ref="vaultRef"`
 // template binding resolves cleanly. startDrag takes the host as a parameter.
@@ -185,7 +187,7 @@ async function splitCard(path: string, mode: SplitMode) {
 /* ---------- Tabs / save / route sync ---------- */
 const {
   tree, posts, tabs, activePath, activeTab, isDirty, activeSize,
-  refresh, openPost, closeTab, closeMany, selectTab, onEditorChange, doSaveNow, onKeydown, onCommandPaletteNew,
+  refresh, openPost, closeTab, closeMany, selectTab, onEditorChange, doSaveNow, resolveExternal, onKeydown, onCommandPaletteNew,
 } = useEditorTabs({ selectPanel, togglePreview })
 const editorLinkTargets = computed(() => posts.value.map((post) => ({ path: post.path, title: post.title })))
 
@@ -222,6 +224,12 @@ async function copyActiveContent() {
     await navigator.clipboard.writeText(activeTab.value.raw)
     toast.success('已复制当前文档内容')
   } catch { toast.error('复制失败') }
+}
+
+async function showExternalDiff() {
+  const tab = activeTab.value
+  if (!tab) return
+  await confirm(`本地版本：\n\n${tab.raw.slice(0, 1600)}\n\n────────\n磁盘版本：\n\n${(tab.externalRaw ?? '(文件已删除)').slice(0, 1600)}`)
 }
 
 watch(activePath, () => { metadataOpen.value = false })
@@ -531,6 +539,9 @@ watch(() => navSearch?.tick.value, () => openSearch())
       @open-metadata="metadataOpen = true"
       @retry-save="doSaveNow"
       @copy-content="copyActiveContent"
+      @external-diff="showExternalDiff"
+      @external-disk="activePath && resolveExternal(activePath, 'disk')"
+      @external-local="activePath && resolveExternal(activePath, 'local')"
     />
 
     <CommandPalette

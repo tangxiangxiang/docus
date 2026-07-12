@@ -15,6 +15,9 @@ const emit = defineEmits<{
   'open-metadata': []
   'retry-save': []
   'copy-content': []
+  'external-diff': []
+  'external-disk': []
+  'external-local': []
 }>()
 
 // The leading glyphs (● ✓ ⟳ !) come from CSS `::before` on
@@ -88,6 +91,11 @@ const pathLabel = computed(() => {
       <span v-else class="sb-path sb-path-empty">—</span>
     </div>
     <div class="sb-right">
+      <template v-if="saveStatus === 'external'">
+        <button type="button" class="sb-copy-content" title="查看本地与磁盘差异" aria-label="查看外部修改差异" @click="emit('external-diff')">⇄</button>
+        <button type="button" class="sb-copy-content" title="使用磁盘版本" aria-label="使用磁盘版本" @click="emit('external-disk')">↓</button>
+        <button type="button" class="sb-copy-content" title="保留本地版本并覆盖磁盘" aria-label="保留本地版本" @click="emit('external-local')">↑</button>
+      </template>
       <button
         v-if="dirty || saveStatus === 'error' || saveStatus === 'offline' || saveStatus === 'external'"
         type="button"

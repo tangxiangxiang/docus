@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
   const mouseDownListeners: Array<(event: any) => void> = []
   const completionProviders: Array<any> = []
   const model = {
+    uri: { toString: () => 'docus://vault/test' },
     value: '',
     getValue: vi.fn(() => model.value),
     setValue: vi.fn((value: string) => { model.value = value; changeListeners.forEach((fn) => fn()) }),
@@ -141,8 +142,8 @@ describe('Monaco EditorPane', () => {
     wrapper.unmount()
     expect(mocks.editor.dispose).toHaveBeenCalledOnce()
     expect(mocks.model.dispose).not.toHaveBeenCalled()
-    expect(mocks.completionDispose).toHaveBeenCalledOnce()
-    expect(mocks.hoverDispose).toHaveBeenCalledOnce()
+    expect(mocks.completionDispose).not.toHaveBeenCalled()
+    expect(mocks.hoverDispose).not.toHaveBeenCalled()
   })
 
   it('updates the Monaco theme without recreating the editor', async () => {
@@ -177,6 +178,18 @@ describe('Monaco EditorPane', () => {
     expect(result.suggestions).toEqual([expect.objectContaining({
       label: 'Setup Guide', insertText: 'setup-guide]]',
     })])
+    wrapper.unmount()
+  })
+
+  it('offers direct and title-alias Wiki Link insertions in stable order', async () => {
+    const wrapper = mount(EditorPane, {
+      props: { modelValue: '[[gui', path: 'inbox/source', linkTargets: [{ path: 'docs/guide', title: 'Guide title' }] },
+    })
+    const provider = mocks.completionProviders.at(-1)
+    const result = await provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 6 })
+    expect(result.suggestions.map((item: any) => item.insertText)).toEqual([
+      'docs/guide]]', 'docs/guide|Guide title]]',
+    ])
     wrapper.unmount()
   })
 
@@ -228,6 +241,16 @@ describe('Monaco EditorPane', () => {
     mocks.scrollListeners.forEach((fn) => fn({ scrollTopChanged: true }))
     await wrapper.vm.$nextTick()
     expect(wrapper.emitted('scroll-change')).toEqual([[0.5]])
+    wrapper.unmount()
+  })
+
+  it('disables expensive editor features and scroll sync for large documents', async () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: 'x'.repeat(500_000), path: 'inbox/large' } })
+    const create = (await import('monaco-editor/esm/vs/editor/editor.api.js')).editor.create as any
+    expect(create.mock.calls.at(-1)?.[1]).toMatchObject({ folding: false })
+    mocks.scrollListeners.forEach((fn) => fn({ scrollTopChanged: true }))
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('scroll-change')).toBeUndefined()
     wrapper.unmount()
   })
 

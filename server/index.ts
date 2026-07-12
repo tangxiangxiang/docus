@@ -309,6 +309,23 @@ app.put('/api/posts/*', async (c) => {
   return c.json({ ok: true, raw: body.raw })
 })
 
+app.put('/api/recover/*', async (c) => {
+  const documentPath = c.req.path.replace(/^\/api\/recover\//, '')
+  if (!isValidPathSyntax(documentPath)) return bad(c, 'invalid path')
+  const body = await c.req.json().catch(() => null) as { raw?: unknown } | null
+  if (!body || typeof body.raw !== 'string') return bad(c, 'raw required')
+  const abs = filePathFor(documentPath)
+  if (await exists(abs)) return bad(c, 'file already exists', 409)
+  const metadata = getDocumentMetadata(metadataDb(), documentPath)
+  if (!metadata) return bad(c, 'document metadata not found', 404)
+  await fs.mkdir(path.dirname(abs), { recursive: true })
+  await fs.writeFile(abs, body.raw, { encoding: 'utf8', flag: 'wx' })
+  const stat = await fs.stat(abs)
+  saveDocumentMetadata(metadataDb(), { ...metadata, updatedAt: Date.now() })
+  try { (await getLinkIndex()).applyWrite(documentPath, body.raw) } catch { /* next rebuild repairs it */ }
+  return c.json({ ok: true, raw: body.raw, mtime: stat.mtimeMs })
+})
+
 // PATCH a file: rename within folder (name) or move (targetPath). Exactly one.
 app.patch('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
@@ -392,6 +409,10 @@ app.patch('/api/posts/*', async (c) => {
     const allPaths = idx.snapshot().paths
     for (const backlink of idx.getBacklinks(srcPath)) {
       const raw = backlink.source === srcPath ? sourceRaw : await fs.readFile(filePathFor(backlink.source), 'utf8')
+      if (backlink.source !== srcPath) {
+        const stat = await fs.stat(filePathFor(backlink.source))
+        ensureMetadata(backlink.source, raw, stat.mtimeMs)
+      }
       const updated = rewriteDocumentReferences(raw, backlink.source, srcPath, destPath, allPaths)
       if (updated === raw) continue
       const writePath = backlink.source === srcPath ? destPath : backlink.source
@@ -569,7 +590,10 @@ app.patch('/api/folders/*', async (c) => {
     const [raw, stat] = await Promise.all([fs.readFile(oldAbs, 'utf8'), fs.stat(oldAbs)])
     ensureMetadata(oldPath, raw, stat.mtimeMs)
   }
-  const folderReferenceSnapshots: Array<{ sourcePath: string; writePath: string; raw: string; updated: string }> = []
+  const folderReferenceSnapshots: Array<{
+    sourcePath: string; writePath: string; raw: string; updated: string
+    metadata: ReturnType<typeof getDocumentMetadata>
+  }> = []
   if (body.updateReferences) {
     const idx = await getLinkIndex()
     const indexSnapshot = idx.snapshot()
@@ -577,6 +601,8 @@ app.patch('/api/folders/*', async (c) => {
     for (const [source, links] of Object.entries(indexSnapshot.outgoing)) {
       if (!links.some((link) => oldPaths.includes(link.target))) continue
       const raw = await fs.readFile(filePathFor(source), 'utf8')
+      const sourceStat = await fs.stat(filePathFor(source))
+      ensureMetadata(source, raw, sourceStat.mtimeMs)
       const updated = moves.reduce(
         (text, move) => rewriteDocumentReferences(text, source, move.oldPath, move.newPath, indexSnapshot.paths), raw,
       )
@@ -585,6 +611,7 @@ app.patch('/api/folders/*', async (c) => {
         writePath: source === srcPath || source.startsWith(srcPath + '/') ? newPath + source.slice(srcPath.length) : source,
         raw,
         updated,
+        metadata: getDocumentMetadata(metadataDb(), source),
       })
     }
   }
@@ -599,12 +626,22 @@ app.patch('/api/folders/*', async (c) => {
       ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
     }
   } catch (error) {
+    const rollbackErrors: unknown[] = []
     for (const snapshot of folderReferenceSnapshots) {
       const target = filePathFor(snapshot.writePath)
-      if (await exists(target)) await fs.writeFile(target, snapshot.raw, 'utf8').catch(() => undefined)
+      if (await exists(target)) {
+        try { await fs.writeFile(target, snapshot.raw, 'utf8') }
+        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      }
     }
-    await fs.rename(dest, src)
-    try { moveDocumentMetadataPrefix(metadataDb(), newPath, srcPath) } catch { /* original error wins */ }
+    try { await fs.rename(dest, src) } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    try { moveDocumentMetadataPrefix(metadataDb(), newPath, srcPath) } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    for (const snapshot of folderReferenceSnapshots) {
+      if (!snapshot.metadata) continue
+      try { saveDocumentMetadata(metadataDb(), snapshot.metadata) }
+      catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    }
+    if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'folder rename failed and rollback was incomplete')
     throw error
   }
   // Collect affected file paths for client cache refresh.

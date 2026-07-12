@@ -13,6 +13,7 @@ import app, { __setMetadataDbForTesting } from '../index'
 import { setContentDir } from '../paths.js'
 import { __resetLinkIndexForTesting } from '../linkIndex.js'
 import { applyMigrations } from '../db.js'
+import { getDocumentMetadata } from '../documentMetadata.js'
 
 let sandbox: string
 let originalContentDir: string
@@ -225,6 +226,35 @@ describe('write routes update the index', () => {
 
     // 'archive/a' resolves [[b]] against its new same-dir → 'archive/b'.
     expect(snap.outgoing['archive/a']?.[0]?.target).toBe('archive/b')
+  })
+
+  it('restores reference metadata when a folder reference update rolls back', async () => {
+    await fs.mkdir(path.join(sandbox, 'notes'))
+    await fs.writeFile(path.join(sandbox, 'notes', 'target.md'), '# target', 'utf8')
+    await fs.writeFile(path.join(sandbox, 'c.md'), '[[notes/target]]', 'utf8')
+    await fs.writeFile(path.join(sandbox, 'd.md'), '[[notes/target]]', 'utf8')
+    __resetLinkIndexForTesting()
+    await get('/api/links/index')
+    const originalCmtime = (await fs.stat(path.join(sandbox, 'c.md'))).mtimeMs
+    const originalWrite = fs.writeFile.bind(fs)
+    const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, options) => {
+      if (String(file).endsWith(`${path.sep}d.md`) && String(data).includes('archive/target')) {
+        throw new Error('simulated second reference failure')
+      }
+      return originalWrite(file, data, options as any)
+    })
+    try {
+      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ newPath: 'archive', updateReferences: true }),
+      }))
+      expect(response.status).toBe(500)
+      expect(await fs.readFile(path.join(sandbox, 'c.md'), 'utf8')).toBe('[[notes/target]]')
+      expect(await fs.readFile(path.join(sandbox, 'd.md'), 'utf8')).toBe('[[notes/target]]')
+      expect(getDocumentMetadata(db, 'c')?.updatedAt).toBe(originalCmtime)
+      await expect(fs.stat(path.join(sandbox, 'notes', 'target.md'))).resolves.toBeTruthy()
+      await expect(fs.stat(path.join(sandbox, 'archive'))).rejects.toThrow()
+    } finally { spy.mockRestore() }
   })
 
   it('DELETE /api/folders cascades the index (recursive)', async () => {

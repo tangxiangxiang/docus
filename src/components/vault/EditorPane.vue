@@ -4,6 +4,7 @@ import * as monaco from 'monaco-editor/esm/vs/editor/editor.api.js'
 import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import { acquireMarkdownModel } from './monacoModels'
+import { bindMarkdownProviderContext, unbindMarkdownProviderContext } from './monacoMarkdownProviders'
 import { resolveWikiTarget } from '../../lib/linkResolve'
 import { getPost } from '../../lib/api'
 import { useEditorPreferences } from '../../composables/vault/useEditorPreferences'
@@ -198,7 +199,7 @@ function scheduleMarkdownDecorations() {
   decorationTimer = setTimeout(refreshMarkdownDecorations, 120)
 }
 
-const completion = monaco.languages.registerCompletionItemProvider('markdown', {
+const completionProvider: monaco.languages.CompletionItemProvider = {
   triggerCharacters: ['[', '`', '/'],
   async provideCompletionItems(currentModel, position) {
     if (currentModel !== model) return { suggestions: [] }
@@ -292,9 +293,9 @@ const completion = monaco.languages.registerCompletionItemProvider('markdown', {
         }),
     }
   },
-})
+}
 
-const hover = monaco.languages.registerHoverProvider('markdown', {
+const hoverProvider: monaco.languages.HoverProvider = {
   provideHover(currentModel, position) {
     if (currentModel !== model) return null
     const line = currentModel.getLineContent(position.lineNumber)
@@ -308,11 +309,12 @@ const hover = monaco.languages.registerHoverProvider('markdown', {
         : [{ value: '**Missing note**' }, { value: `\`${path}\`` }, { value: 'Cmd/Ctrl-click to create it in `inbox/`.' }],
     }
   },
-})
+}
 
 onMounted(() => {
   if (!host.value) return
   model = acquireMarkdownModel(props.path, props.modelValue)
+  bindMarkdownProviderContext(model, { completion: completionProvider, hover: hoverProvider })
   editor = monaco.editor.create(host.value, {
     model,
     theme: activeTheme(),
@@ -323,7 +325,7 @@ onMounted(() => {
     lineNumbersMinChars: 3,
     glyphMargin: false,
     folding: !isLargeDocument.value,
-    fontFamily: 'var(--mono)',
+    fontFamily: preferences.fontFamily.value.trim() || 'var(--mono)',
     fontSize: preferences.fontSize.value,
     lineHeight: preferences.lineHeight.value,
     tabSize: preferences.tabSize.value,
@@ -391,6 +393,7 @@ onMounted(() => {
   })
   editor.onDidScrollChange((event) => {
     if (!editor || !event.scrollTopChanged) return
+    if (isLargeDocument.value) return
     const max = Math.max(0, editor.getScrollHeight() - editor.getLayoutInfo().height)
     emit('scroll-change', max > 0 ? editor.getScrollTop() / max : 0)
     scheduleMarkdownDecorations()
@@ -502,7 +505,9 @@ watch(() => props.path, (nextPath, previousPath) => {
   if (!editor) return
   saveViewState(previousPath)
   emit('unregister-scroll', previousPath)
+  if (model) unbindMarkdownProviderContext(model)
   model = acquireMarkdownModel(nextPath, props.modelValue)
+  bindMarkdownProviderContext(model, { completion: completionProvider, hover: hoverProvider })
   editor.setModel(model)
   const state = readViewState(nextPath)
   if (state) editor.restoreViewState(state)
@@ -516,8 +521,10 @@ watch(() => props.focusWidth, (focused) => {
 })
 
 watch(
-  [preferences.fontSize, preferences.lineHeight, preferences.tabSize, preferences.wrapColumn],
-  ([fontSize, lineHeight, tabSize, wrapColumn]) => editor?.updateOptions({ fontSize, lineHeight, tabSize, wordWrapColumn: wrapColumn }),
+  [preferences.fontSize, preferences.lineHeight, preferences.tabSize, preferences.wrapColumn, preferences.fontFamily],
+  ([fontSize, lineHeight, tabSize, wrapColumn, fontFamily]) => editor?.updateOptions({
+    fontSize, lineHeight, tabSize, wordWrapColumn: wrapColumn, fontFamily: fontFamily.trim() || 'var(--mono)',
+  }),
 )
 
 watch(isLargeDocument, (large) => {
@@ -538,8 +545,7 @@ onBeforeUnmount(() => {
   if (decorationTimer) clearTimeout(decorationTimer)
   if (pasteHandler && host.value) host.value.removeEventListener('paste', pasteHandler, true)
   editor?.dispose()
-  completion.dispose()
-  hover.dispose()
+  if (model) unbindMarkdownProviderContext(model)
   editor = null
   model = null
 })

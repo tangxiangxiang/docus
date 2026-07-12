@@ -108,6 +108,7 @@ export interface WritingDiagnostic {
 
 const COMMON_TYPOS: Record<string, string> = {
   teh: 'the', recieve: 'receive', seperate: 'separate', occured: 'occurred', definately: 'definitely',
+  adress: 'address', goverment: 'government', untill: 'until', wich: 'which', becuase: 'because',
 }
 
 export function writingDiagnostics(markdown: string): WritingDiagnostic[] {
@@ -116,14 +117,22 @@ export function writingDiagnostics(markdown: string): WritingDiagnostic[] {
   markdown.split(/\r?\n/).forEach((line, index) => {
     if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; return }
     if (fenced) return
+    const visible = line.replace(/`[^`\n]*`/g, (code) => ' '.repeat(code.length))
     const trailing = /\s+$/.exec(line)
     if (trailing) out.push({ line: index + 1, startColumn: trailing.index + 1, endColumn: line.length + 1, message: 'Trailing whitespace' })
-    for (const match of line.matchAll(/\b(teh|recieve|seperate|occured|definately)\b/gi)) {
+    for (const match of visible.matchAll(/\b(teh|recieve|seperate|occured|definately|adress|goverment|untill|wich|becuase)\b/gi)) {
       const word = match[0].toLowerCase()
       out.push({ line: index + 1, startColumn: (match.index ?? 0) + 1, endColumn: (match.index ?? 0) + match[0].length + 1, message: `Possible typo: ${match[0]} → ${COMMON_TYPOS[word]}` })
     }
-    for (const match of line.matchAll(/\s+([,.;!?])/g)) {
+    for (const match of visible.matchAll(/\s+([,.;!?])/g)) {
       out.push({ line: index + 1, startColumn: (match.index ?? 0) + 1, endColumn: (match.index ?? 0) + match[0].length, message: `Remove the space before “${match[1]}”` })
+    }
+    for (const match of visible.matchAll(/([一-龥])([A-Za-z0-9])|([A-Za-z0-9])([一-龥])/g)) {
+      const boundary = (match.index ?? 0) + (match[1] ? 1 : match[3].length)
+      out.push({ line: index + 1, startColumn: boundary + 1, endColumn: boundary + 1, message: 'Add a space between Chinese and Latin text' })
+    }
+    for (const match of visible.matchAll(/([一-龥])([,!?;:])/g)) {
+      out.push({ line: index + 1, startColumn: (match.index ?? 0) + 2, endColumn: (match.index ?? 0) + 3, message: 'Use full-width punctuation in Chinese prose' })
     }
   })
   return out.slice(0, 200)

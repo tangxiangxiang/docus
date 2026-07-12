@@ -277,7 +277,9 @@ onBeforeUnmount(() => {
               <label class="settings-field"><span>Line height</span><input v-model.number="editorPreferences.lineHeight.value" type="number" min="16" max="40" /></label>
               <label class="settings-field"><span>Tab width</span><select v-model.number="editorPreferences.tabSize.value"><option :value="2">2 spaces</option><option :value="4">4 spaces</option></select></label>
               <label class="settings-field"><span>Wrap column</span><input v-model.number="editorPreferences.wrapColumn.value" type="number" min="60" max="160" /></label>
+              <label class="settings-field"><span>Font family</span><input v-model="editorPreferences.fontFamily.value" type="text" placeholder="System monospace" maxlength="120" /></label>
               <label class="settings-field"><span>Writing diagnostics</span><input v-model="editorPreferences.typography.value" type="checkbox" /></label>
+              <button type="button" class="btn" @click="editorPreferences.reset">Reset editor defaults</button>
             </div>
           </section>
 

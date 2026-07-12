@@ -54,6 +54,12 @@ describe('Monaco Markdown helpers', () => {
     ])
   })
 
+  it('reports Chinese-Latin spacing and ASCII punctuation but ignores inline code', () => {
+    const messages = writingDiagnostics('使用TypeScript编写,很好。`中文Code`').map((item) => item.message)
+    expect(messages.filter((message) => message.includes('Chinese and Latin'))).toHaveLength(2)
+    expect(messages).toContain('Use full-width punctuation in Chinese prose')
+  })
+
   it('toggles Markdown formatting around selected text', () => {
     expect(toggleMarkdownWrap('text', MARKDOWN_WRAPS.bold)).toBe('**text**')
     expect(toggleMarkdownWrap('**text**', MARKDOWN_WRAPS.bold)).toBe('text')

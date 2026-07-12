@@ -20,6 +20,7 @@ import {
 } from '../ai/tools'
 import { applyMigrations } from '../db'
 import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
+import { __resetLinkIndexForTesting } from '../linkIndex'
 
 const ORIGINAL_CONTENT_DIR = CONTENT_DIR
 
@@ -289,8 +290,8 @@ describe('delete_file', () => {
 
 describe('rename_file', () => {
   let contentDir: string
-  beforeEach(() => { contentDir = makeTempContentDir(); setContentDir(contentDir) })
-  afterEach(() => { setContentDir(ORIGINAL_CONTENT_DIR); fs.rmSync(path.dirname(contentDir), { recursive: true, force: true }) })
+  beforeEach(() => { contentDir = makeTempContentDir(); setContentDir(contentDir); __resetLinkIndexForTesting() })
+  afterEach(() => { setContentDir(ORIGINAL_CONTENT_DIR); __resetLinkIndexForTesting(); fs.rmSync(path.dirname(contentDir), { recursive: true, force: true }) })
 
   it('renames a file and reports a rename change with newRaw', async () => {
     writeFile('a/old.md', 'hello')
@@ -325,6 +326,26 @@ describe('rename_file', () => {
     const r = await executeToolCall('rename_file', { path: 'a/old', new_path: 'a/new' }, ctx)
     expect(r.isError).toBe(true)
     expect(r.content).toMatch(/already exists/)
+  })
+
+  it('updates inbound references by default and reports changed files', async () => {
+    writeFile('a/old.md', 'target')
+    writeFile('a/source.md', 'see [[old]]')
+    const r = await executeToolCall('rename_file', { path: 'a/old', new_path: 'a/new' }, ctx)
+    expect(r.isError).toBe(false)
+    expect(fs.readFileSync(path.join(contentDir, 'a/source.md'), 'utf8')).toBe('see [[a/new]]')
+    expect(r.changes).toEqual([expect.objectContaining({ path: 'a/source', kind: 'write', newRaw: 'see [[a/new]]' })])
+  })
+
+  it('can rename without updating inbound references', async () => {
+    writeFile('a/old.md', 'target')
+    writeFile('a/source.md', 'see [[old]]')
+    const r = await executeToolCall('rename_file', {
+      path: 'a/old', new_path: 'a/new', update_references: false,
+    }, ctx)
+    expect(r.isError).toBe(false)
+    expect(fs.readFileSync(path.join(contentDir, 'a/source.md'), 'utf8')).toBe('see [[old]]')
+    expect(r.changes).toEqual([])
   })
 })
 

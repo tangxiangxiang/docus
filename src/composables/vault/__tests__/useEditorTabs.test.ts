@@ -67,11 +67,13 @@ interface Harness {
   closeMany: (paths: string[]) => Promise<void>
   selectTab: (p: string) => void
   doSaveNow: () => Promise<void>
+  resolveExternal: (path: string, strategy: 'disk' | 'local') => Promise<void>
+  pollExternalChanges: () => Promise<void>
   onEditorChange: (p: string, v: string) => void
   onKeydown: (e: KeyboardEvent) => void
   onCommandPaletteNew: (t: string) => Promise<void>
   activePath: Ref<string | null>
-  tabs: Ref<{ path: string; raw: string; originalRaw: string; saveStatus: string; loadError: string | null; serverMtime?: number }[]>
+  tabs: Ref<{ path: string; raw: string; originalRaw: string; saveStatus: string; loadError: string | null; serverMtime?: number; externalRaw?: string | null }[]>
   // The selectPanel / togglePreview spies are captured separately
   // because the composable receives them as constructor args and
   // doesn't return them.
@@ -499,6 +501,115 @@ describe('live tabs publish', () => {
     await h.doSaveNow()
     expect(h.tabs.value[0].saveStatus).toBe('error')
     expect(toastCalls).toEqual([{ type: 'error', message: expect.stringContaining('保存失败') }])
+  })
+
+  it('resolves an external conflict with the disk version', async () => {
+    let reads = 0
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [], 'GET /api/posts': () => [],
+      'GET /api/posts/a': () => {
+        reads += 1
+        return { path: 'a', raw: reads === 1 ? 'A' : 'disk', content: '', frontmatter: {}, size: 4, mtime: 2 }
+      },
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    h.onEditorChange('a', 'local')
+    h.tabs.value[0].saveStatus = 'external'
+    h.tabs.value[0].externalRaw = 'disk'
+    await h.resolveExternal('a', 'disk')
+    expect(h.tabs.value[0]).toMatchObject({ raw: 'disk', originalRaw: 'disk', saveStatus: 'idle', externalRaw: null })
+  })
+
+  it('keeps the local version after an external conflict and saves it', async () => {
+    vi.useFakeTimers()
+    const writes: string[] = []
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [], 'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: '', frontmatter: {}, size: 1, mtime: 1 }),
+      'PUT /api/posts/a': (body) => { writes.push((body as { raw: string }).raw); return { ok: true, raw: writes.at(-1)! } },
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    h.onEditorChange('a', 'local')
+    h.tabs.value[0].saveStatus = 'external'
+    h.tabs.value[0].externalRaw = 'disk'
+    await h.resolveExternal('a', 'local')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(writes).toContain('local')
+    expect(h.tabs.value[0].saveStatus).toBe('saved')
+  })
+
+  it('marks a failed save offline and retries when connectivity returns', async () => {
+    let online = false
+    let attempts = 0
+    vi.spyOn(window.navigator, 'onLine', 'get').mockImplementation(() => online)
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [], 'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: '', frontmatter: {}, size: 1, mtime: 1 }),
+      'PUT /api/posts/a': () => {
+        attempts += 1
+        if (!online) throw new Error('network unavailable')
+        return { ok: true, raw: 'local' }
+      },
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    h.onEditorChange('a', 'local')
+    await h.doSaveNow()
+    expect(h.tabs.value[0].saveStatus).toBe('offline')
+    online = true
+    window.dispatchEvent(new Event('online'))
+    await flushPromises()
+    expect(attempts).toBe(2)
+    expect(h.tabs.value[0].saveStatus).toBe('saved')
+  })
+
+  it('reloads a clean tab when its file changes on disk', async () => {
+    let reads = 0
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [], 'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: reads++ ? 'disk' : 'A', content: '', frontmatter: {}, size: 4, mtime: reads > 1 ? 2 : 1 }),
+      'POST /api/files/state': () => [{ path: 'a', exists: true, mtime: 2, size: 4 }],
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    await h.pollExternalChanges()
+    expect(h.tabs.value[0]).toMatchObject({ raw: 'disk', originalRaw: 'disk', saveStatus: 'idle', serverMtime: 2 })
+  })
+
+  it('preserves a dirty buffer and records the external disk snapshot', async () => {
+    let reads = 0
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [], 'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: reads++ ? 'disk' : 'A', content: '', frontmatter: {}, size: 4, mtime: reads > 1 ? 2 : 1 }),
+      'POST /api/files/state': () => [{ path: 'a', exists: true, mtime: 2, size: 4 }],
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    h.onEditorChange('a', 'local')
+    await h.pollExternalChanges()
+    expect(h.tabs.value[0]).toMatchObject({ raw: 'local', externalRaw: 'disk', saveStatus: 'external' })
+  })
+
+  it('marks an externally deleted file without discarding its buffer', async () => {
+    let recovered = ''
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [], 'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: '', frontmatter: {}, size: 1, mtime: 1 }),
+      'POST /api/files/state': () => [{ path: 'a', exists: false, mtime: 0, size: 0 }],
+      'PUT /api/recover/a': (body) => {
+        recovered = (body as { raw: string }).raw
+        return { ok: true, raw: recovered, mtime: 3 }
+      },
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    await h.pollExternalChanges()
+    expect(h.tabs.value[0]).toMatchObject({ raw: 'A', saveStatus: 'external', error: '文件已从磁盘删除' })
+    await h.resolveExternal('a', 'local')
+    expect(recovered).toBe('A')
+    expect(h.tabs.value[0]).toMatchObject({ saveStatus: 'saved', serverMtime: 3 })
   })
 
   it('onEditorChange marks the tab dirty and debounces a save', async () => {

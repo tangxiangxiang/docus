@@ -579,7 +579,10 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     )
   }
   let raw: string
-  const references: Array<{ path: string; abs: string; raw: string; updated: string }> = []
+  const references: Array<{
+    sourcePath: string; path: string; abs: string; raw: string; updated: string
+    metadata: ReturnType<typeof getDocumentMetadata>
+  }> = []
   try {
     raw = fs.readFileSync(srcAbs, 'utf8')
     const sourceStat = fs.statSync(srcAbs)
@@ -590,12 +593,18 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
       const allPaths = idx.snapshot().paths
       for (const backlink of idx.getBacklinks(input.path)) {
         const refRaw = backlink.source === input.path ? raw : fs.readFileSync(filePathFor(backlink.source), 'utf8')
+        if (backlink.source !== input.path) {
+          const refStat = fs.statSync(filePathFor(backlink.source))
+          ensureDocumentMetadata(db, backlink.source, refRaw, refStat.mtimeMs)
+        }
         const updated = rewriteDocumentReferences(refRaw, backlink.source, input.path, input.new_path, allPaths)
         if (updated !== refRaw) references.push({
+          sourcePath: backlink.source,
           path: backlink.source === input.path ? input.new_path : backlink.source,
           abs: backlink.source === input.path ? dstAbs : filePathFor(backlink.source),
           raw: refRaw,
           updated,
+          metadata: getDocumentMetadata(db, backlink.source),
         })
       }
     }
@@ -611,8 +620,19 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
         written.push(reference)
       }
     } catch (error) {
-      for (const reference of written.reverse()) fs.writeFileSync(reference.abs, reference.raw, 'utf8')
-      await renameDocumentWithMetadata({ db, fromPath: input.new_path, toPath: input.path, fromAbs: dstAbs, toAbs: srcAbs })
+      const rollbackErrors: unknown[] = []
+      for (const reference of written.reverse()) {
+        try { fs.writeFileSync(reference.abs, reference.raw, 'utf8') }
+        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      }
+      try { await renameDocumentWithMetadata({ db, fromPath: input.new_path, toPath: input.path, fromAbs: dstAbs, toAbs: srcAbs }) }
+      catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      for (const reference of references) {
+        if (!reference.metadata) continue
+        try { saveDocumentMetadata(db, reference.metadata) }
+        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      }
+      if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'AI rename failed and rollback was incomplete')
       throw error
     }
   } catch (e) {

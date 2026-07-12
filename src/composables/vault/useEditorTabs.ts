@@ -34,6 +34,7 @@ import {
   getTree,
   createPost,
   getFileStates,
+  recoverPost,
   type PostSummary,
   type TreeNode,
 } from '../../lib/api'
@@ -292,6 +293,7 @@ export function useEditorTabs(opts: {
       loadError: null,
       loading: true,
       serverMtime: 0,
+      externalRaw: null,
     }
   }
 
@@ -539,9 +541,15 @@ export function useEditorTabs(opts: {
       if (!state.exists) {
         tab.saveStatus = 'external'
         tab.error = '文件已从磁盘删除'
+        tab.externalRaw = null
         continue
       }
       if (tab.revision !== tab.savedRevision) {
+        try {
+          const post = await getPost(tab.path)
+          tab.externalRaw = post.raw
+          tab.serverMtime = post.mtime
+        } catch { tab.externalRaw = null }
         tab.saveStatus = 'external'
         tab.error = '磁盘文件已变化，本地修改尚未保存'
         continue
@@ -563,6 +571,34 @@ export function useEditorTabs(opts: {
     for (const tab of tabs.value) {
       if (tab.saveStatus === 'offline') void doSave(tab.path)
     }
+  }
+
+  async function resolveExternal(path: string, strategy: 'disk' | 'local') {
+    const tab = tabs.value.find((item) => item.path === path)
+    if (!tab || tab.saveStatus !== 'external') return
+    if (strategy === 'disk') {
+      const post = await getPost(path)
+      tab.raw = post.raw
+      tab.originalRaw = post.raw
+      tab.revision += 1
+      tab.savedRevision = tab.revision
+      tab.serverMtime = post.mtime
+      tab.saveStatus = 'idle'
+    } else {
+      if (tab.externalRaw == null) {
+        const recovered = await recoverPost(path, tab.raw)
+        tab.originalRaw = recovered.raw
+        tab.savedRevision = tab.revision
+        tab.serverMtime = recovered.mtime
+        tab.saveStatus = 'saved'
+      } else {
+        tab.originalRaw = tab.externalRaw
+        tab.saveStatus = 'dirty'
+        scheduleSave(path, 0)
+      }
+    }
+    tab.externalRaw = null
+    tab.error = null
   }
 
   async function doSaveNow() {
@@ -845,6 +881,8 @@ export function useEditorTabs(opts: {
     selectTab,
     onEditorChange,
     doSaveNow,
+    resolveExternal,
+    pollExternalChanges,
     onKeydown,
     onCommandPaletteNew,
   }

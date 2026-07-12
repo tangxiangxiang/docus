@@ -102,6 +102,12 @@ export async function getPost(path: string): Promise<PostDetail> {
   return jsonOrThrow<PostDetail>(await fetch('/api/posts/' + splat(path)))
 }
 
+export async function recoverPost(path: string, raw: string): Promise<{ ok: true; raw: string; mtime: number }> {
+  return jsonOrThrow(await fetch('/api/recover/' + splat(path), {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ raw }),
+  }))
+}
+
 export async function updateDocumentMetadata(
   path: string,
   input: UpdateDocumentMetadata,
