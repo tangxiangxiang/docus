@@ -1,5 +1,7 @@
 # docus
 
+> **Write in Inbox. Keep in Archive. Let AI connect the dots.**
+
 A Vue 3 + TypeScript personal knowledge base. The vault lives as plain `.md` files under
 `src/content/` and is served by an in-process Hono backend. The editor
 is Monaco; the file tree and the right pane (editor + live preview)
@@ -12,6 +14,16 @@ the Hono server opens on startup.
 > notes, not to this tool. The vault has its own git history
 > (`src/content/.git/`) managed by `server/history/`. docus's git repo
 > only tracks the tool: source, configs, docs.
+
+## Philosophy
+
+The vault is split into three zones, and docus treats them differently:
+
+- **`literature/`** holds your reading notes — excerpts, annotations, and follow-up thinking tied to long-form sources (books, papers, articles). The originals live elsewhere; this is what you wrote while working through them.
+- **`inbox/`** holds what you are still thinking through — loose notes, half-formed ideas, anything that has not yet earned its place.
+- **`archive/`** holds what has settled into knowledge — refined notes you return to, structured by topic, meant to last.
+
+Notes flow one way: Literature feeds Inbox, where AI helps you think; what earns its place then moves to Archive, where AI helps you connect the dots. docus is built around that flow.
 
 ## Quick start
 
