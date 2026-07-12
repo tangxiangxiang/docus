@@ -87,7 +87,11 @@ async function useQuickPrompt(text: string) {
 <template>
   <aside class="ai-panel" aria-label="AI assistant">
     <header class="ai-header">
-      <span v-if="history.activeSession.value?.title" class="ai-title-session" :title="history.activeSession.value.title">{{ history.activeSession.value.title }}</span>
+      <span
+        class="ai-title-session"
+        :title="history.activeSession.value?.title || '新对话'"
+      >{{ history.activeSession.value?.title || '新对话' }}</span>
+      <div class="ai-header-actions">
       <button
         class="ai-header-btn"
         type="button"
@@ -105,6 +109,7 @@ async function useQuickPrompt(text: string) {
         :disabled="history.busy.value"
         @click="onNewSession"
       ><span v-html="ICON_NEW_CHAT" aria-hidden="true" /></button>
+      </div>
     </header>
 
     <div

@@ -99,14 +99,19 @@ function onLinkNavigate(p: string) {
 
 .sidebar-tabs {
   display: flex;
+  align-items: stretch;
   gap: 20px;
-  min-height: 42px;
+  height: 36px;
+  box-sizing: border-box;
   padding: 0 22px;
   border-bottom: 1px solid color-mix(in srgb, var(--vs-border, var(--border)) 42%, transparent);
 }
 .sidebar-tabs button {
   position: relative;
-  padding: 7px 0 8px;
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--vs-text-3, var(--text-muted));
@@ -119,8 +124,8 @@ function onLinkNavigate(p: string) {
 .sidebar-tabs button.active::after {
   content: '';
   position: absolute;
+  top: 0;
   right: 0;
-  bottom: -1px;
   left: 0;
   height: 2px;
   background: var(--vs-accent, var(--accent));
@@ -128,7 +133,7 @@ function onLinkNavigate(p: string) {
 
 .toc-panel,
 .links-slot { display: block; padding-top: 14px; padding-bottom: 24px; }
-.ai-slot { height: calc(100% - 42px); min-height: 0; }
+.ai-slot { height: calc(100% - 36px); min-height: 0; }
 .ai-slot :deep(.ai-panel) { height: 100%; }
 .toc-panel-empty {
   padding: 0 22px;
