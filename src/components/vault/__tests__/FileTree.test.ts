@@ -87,6 +87,7 @@ describe('FileTree', () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
     const inbox = rowByLabel(w.findAll('.tree-row'), 'inbox')
     expect(inbox.attributes('tabindex')).toBe('0')
+    expect(inbox.classes()).not.toContain('focused')
     await inbox.trigger('keydown', { key: 'ArrowRight' })
     await inbox.trigger('keydown', { key: 'ArrowDown' })
     const hello = rowByLabel(w.findAll('.tree-row'), 'hello')
