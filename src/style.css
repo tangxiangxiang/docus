@@ -2588,8 +2588,9 @@ main.container {
   text-decoration-color: var(--vs-text-1);
 }
 .vault .article hr {
-  margin: 2.4em auto;
-  width: 4em;
+  margin: 2.4em 0;
+  width: 100%;
+  border: 0;
   border-top: 1px solid var(--vs-border);
 }
 .vault .article table {
@@ -2913,9 +2914,9 @@ main.container {
   /* Plugin emits a bare <hr>; the project has no global .article hr
      rule, so the browser default (1px inset) would clash with the
      vault's flat border look. Force the same --vs-border hairline
-     the reading pane's hr uses (see rule near .vault .reading-pane
-     .article.reading hr) so the footnote separator reads as a
-     proper section divider, not a chrome artifact. */
+     used by article separators, while keeping this footnote divider
+     intentionally short so it marks supporting notes rather than a new
+     top-level section or a browser-default chrome artifact. */
   width: 4em;
   margin: 2em auto 1em;
   border: 0;
