@@ -1275,49 +1275,61 @@ main.container {
   flex-direction: column;
   gap: 0;
   padding: 0;
-  border-bottom: 1px solid var(--vs-border);
+  /* Match .tabs row height (36px) exactly so the search bar aligns
+     with the editor tabs above it. No border-bottom here — the
+     divider lives on .search below so it tracks the search row
+     even when chips wrap and the row grows. */
+  height: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
   background: var(--vs-bg-2);
 }
-/* Always-on search input. Icon + active-tag
-   chips + input + clear-x all share one flex row; chips wrap to a
-   second line when there are too many to fit alongside the input.
-   AND-composes with the chip filters inlined to the left of the input.
-   min-height: 36px matches the activity-bar (.ab-btn) so the search
-   row sits flush with the first ab-btn on the left. flex-wrap lets
-   the row grow taller than 36px when chips overflow. */
+/* Always-on search input. Icon + active-tag chips + input + clear-x
+   all share one flex row; chips wrap to a second line when there
+   are too many to fit alongside the input. AND-composes with the
+   chip filters inlined to the left of the input. height: 36px
+   matches the activity-bar (.ab-btn) and the editor .tabs row
+   so all three top strips sit on the same baseline. */
 .vault .file-tree header .search {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  height: 36px;
   min-height: 36px;
-  padding: 0 8px 0 10px;
   box-sizing: border-box;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--vs-border);
 }
 .vault .file-tree header .search-icon {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   color: var(--vs-text-3);
 }
 .vault .file-tree header .search-input {
-  /* `flex: 1 1 120px` + `min-width: 120px` keeps the input usable even
-     when chips consume most of the row: with the floor set, the input
-     wraps to a new flex line instead of being squeezed into a few px
-     wide sliver. With zero chips, the input still fills the row. */
+  /* `flex: 1 1 120px` keeps the input filling the row when there
+     are no chips. The explicit `height: 100%` makes the input fill
+     the 36px row vertically — combined with `padding: 0` and
+     `border: 0` it contributes no extra height to the search bar.
+     `min-width: 0` is required for the flex item to shrink below
+     its intrinsic size so chips can push the input to a second
+     flex line instead of squeezing it. */
   flex: 1 1 120px;
-  min-width: 120px;
+  min-width: 0;
   background: transparent;
   border: 0;
   outline: none;
   color: var(--vs-text-1);
   font: inherit;
-  font-size: 0.78rem;
-  padding: 2px 0;
-  line-height: 1.4;
+  font-size: 0.8rem;
+  padding: 0;
+  height: 100%;
+  line-height: normal;
+  box-sizing: border-box;
 }
 .vault .file-tree header .search-input::placeholder {
   color: var(--vs-text-3);
