@@ -82,7 +82,13 @@ describe('FileTree context menu', () => {
     const menu = document.querySelector('.tree-context-menu')
     expect(menu).not.toBeNull()
     expect(menu!.textContent).toContain('重命名')
+    expect(menu!.textContent).toContain('文档属性…')
     expect(menu!.textContent).toContain('删除')
+    const properties = Array.from(menu!.querySelectorAll('button'))
+      .find((button) => button.textContent?.includes('文档属性')) as HTMLButtonElement
+    properties.click()
+    await flushPromises()
+    expect(w.emitted('open-properties')).toEqual([['inbox/hello']])
     w.unmount()
   })
 
@@ -203,11 +209,12 @@ describe('FileTree context menu — archive-note visibility', () => {
     w.unmount()
   })
 
-  it('hides 归档 for a file inside archive/', async () => {
+  it('shows properties but hides 归档 for a file inside archive/', async () => {
     const w = await rightClickRow('permanent')
-    // A archive file can be dragged for reclassification, but it has no
-    // context-menu action: no rename/delete and no archive-note.
-    expect(document.querySelector('.tree-context-menu')).toBeNull()
+    const menu = document.querySelector('.tree-context-menu')
+    expect(menu).not.toBeNull()
+    expect(menu!.textContent).toContain('文档属性…')
+    expect(menu!.textContent).not.toContain('归档')
     w.unmount()
   })
 

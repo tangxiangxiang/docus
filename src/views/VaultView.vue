@@ -42,6 +42,7 @@ const EditorPane = defineAsyncComponent(() => import('../components/vault/Editor
 const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
 const settingsOpen = ref(false)
 const metadataOpen = ref(false)
+const metadataPath = ref<string | null>(null)
 const editorFocusWidth = useStorage('docus.editor.focus-width', true)
 
 /* Platform-aware shortcut display for the empty-state hint chips.
@@ -172,6 +173,11 @@ async function onMetadataSaved(metadata: DocumentMetadata) {
   await Promise.all([refresh(), refreshLinkIndex()])
 }
 
+function openDocumentProperties(path: string) {
+  metadataPath.value = path
+  metadataOpen.value = true
+}
+
 async function createMissingWikiNote(ref: string) {
   const clean = ref.replace(/\.md$/i, '').trim()
   const segments = clean.split('/')
@@ -205,8 +211,6 @@ async function showExternalDiff() {
   if (!tab) return
   await confirm(`本地版本：\n\n${tab.raw.slice(0, 1600)}\n\n────────\n磁盘版本：\n\n${(tab.externalRaw ?? '(文件已删除)').slice(0, 1600)}`)
 }
-
-watch(activePath, () => { metadataOpen.value = false })
 
 /* Mirror the editor's scroll position onto the preview pane (and
    vice versa) so the two stay aligned as the user scrolls in edit
@@ -281,7 +285,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
 
     <DocumentMetadataModal
       :open="metadataOpen"
-      :path="activePath"
+      :path="metadataPath"
       @close="metadataOpen = false"
       @saved="onMetadataSaved"
     />
@@ -295,6 +299,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
       @select="openPost"
       @refresh="refresh"
       @remove-tag="removeTag"
+      @open-properties="openDocumentProperties"
     />
     <TagPanel
       v-else-if="activePanel === 'tags'"
@@ -508,7 +513,6 @@ watch(() => navSearch?.tick.value, () => openSearch())
       :dirty="isDirty"
       :focus-width="editorFocusWidth"
       @toggle-focus-width="editorFocusWidth = !editorFocusWidth"
-      @open-metadata="metadataOpen = true"
       @retry-save="doSaveNow"
       @copy-content="copyActiveContent"
       @external-diff="showExternalDiff"

@@ -34,6 +34,9 @@ describe('DocumentMetadataModal', () => {
     await flushPromises()
     const inputs = document.body.querySelectorAll<HTMLInputElement>('.document-metadata-field input')
     expect(inputs[0].value).toBe('Note')
+    expect(document.body.textContent).toContain('文档属性')
+    expect(document.body.textContent).toContain('doc-1')
+    expect(document.body.textContent).toContain('inbox')
     const tagInput = document.body.querySelector<HTMLInputElement>('input[placeholder="rag, notes"]')!
     tagInput.value = 'rag, RAG, new'
     tagInput.dispatchEvent(new Event('input', { bubbles: true }))

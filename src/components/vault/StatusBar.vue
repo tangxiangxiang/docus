@@ -12,7 +12,6 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   'toggle-focus-width': []
-  'open-metadata': []
   'retry-save': []
   'copy-content': []
   'external-diff': []
@@ -106,14 +105,6 @@ const pathLabel = computed(() => {
       >⧉</button>
       <button
         type="button"
-        class="sb-metadata"
-        :disabled="!path"
-        aria-label="编辑文档信息"
-        title="编辑文档信息"
-        @click="emit('open-metadata')"
-      >ⓘ</button>
-      <button
-        type="button"
         class="sb-focus-width"
         :class="{ active: focusWidth }"
         :aria-pressed="focusWidth"
@@ -162,7 +153,7 @@ const pathLabel = computed(() => {
   font: inherit;
   cursor: pointer;
 }
-.sb-focus-width, .sb-metadata, .sb-copy-content {
+.sb-focus-width, .sb-copy-content {
   width: 22px;
   height: 18px;
   display: inline-flex;
@@ -176,8 +167,6 @@ const pathLabel = computed(() => {
   font: inherit;
   cursor: pointer;
 }
-.sb-focus-width:hover, .sb-metadata:hover:not(:disabled) { background: var(--vs-hover-bg); color: var(--vs-text-1); }
+.sb-focus-width:hover { background: var(--vs-hover-bg); color: var(--vs-text-1); }
 .sb-focus-width.active { color: var(--vs-accent); }
-.sb-metadata { font-size: 0.8rem; }
-.sb-metadata:disabled { opacity: 0.35; cursor: default; }
 </style>

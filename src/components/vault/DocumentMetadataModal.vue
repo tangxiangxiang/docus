@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { getPost, updateDocumentMetadata, type DocumentMetadata } from '../../lib/api'
 import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useToast } from '../../composables/useToast'
@@ -16,6 +16,21 @@ const saving = ref(false)
 const title = ref('')
 const summary = ref('')
 const tags = ref('')
+const metadata = ref<DocumentMetadata | null>(null)
+
+const directory = computed(() => {
+  if (!props.path) return '—'
+  const index = props.path.lastIndexOf('/')
+  return index < 0 ? '根目录' : props.path.slice(0, index)
+})
+
+function formatDate(value?: number): string {
+  if (!value) return '—'
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).format(value)
+}
 
 function join(values: string[]) {
   return values.join(', ')
@@ -36,15 +51,15 @@ async function load() {
   loading.value = true
   try {
     const post = await getPost(props.path)
-    const metadata = post.metadata
-    title.value = metadata?.title ?? String(post.frontmatter.title ?? props.path.split('/').pop() ?? '')
-    summary.value = metadata?.summary ?? String(post.frontmatter.summary ?? '')
-    tags.value = join(metadata?.tags ?? (Array.isArray(post.frontmatter.tags) ? post.frontmatter.tags as string[] : []))
+    metadata.value = post.metadata ?? null
+    title.value = metadata.value?.title ?? String(post.frontmatter.title ?? props.path.split('/').pop() ?? '')
+    summary.value = metadata.value?.summary ?? String(post.frontmatter.summary ?? '')
+    tags.value = join(metadata.value?.tags ?? (Array.isArray(post.frontmatter.tags) ? post.frontmatter.tags as string[] : []))
     await nextTick()
     titleInput.value?.focus()
     titleInput.value?.select()
   } catch (error) {
-    toast.error('加载文档信息失败: ' + (error as Error).message)
+    toast.error('加载文档属性失败: ' + (error as Error).message)
   } finally {
     loading.value = false
   }
@@ -59,10 +74,10 @@ async function save() {
       summary: summary.value.trim(),
       tags: split(tags.value),
     })
-    toast.success('文档信息已保存')
+    toast.success('文档属性已保存')
     emit('saved', metadata)
   } catch (error) {
-    toast.error('保存文档信息失败: ' + (error as Error).message)
+    toast.error('保存文档属性失败: ' + (error as Error).message)
   } finally {
     saving.value = false
   }
@@ -107,12 +122,12 @@ onBeforeUnmount(() => { void trap.deactivate() })
         class="document-metadata-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="文档信息"
+        aria-label="文档属性"
         @submit.prevent="save"
       >
         <header class="document-metadata-header">
           <div>
-            <h2>文档信息</h2>
+            <h2>文档属性</h2>
             <span>{{ path }}</span>
           </div>
           <button type="button" class="document-metadata-close" aria-label="关闭" title="关闭" @click="emit('close')">×</button>
@@ -132,6 +147,12 @@ onBeforeUnmount(() => { void trap.deactivate() })
             <span>标签</span>
             <input v-model="tags" placeholder="rag, notes" :disabled="loading || saving" />
           </label>
+          <section class="document-metadata-readonly" aria-label="只读信息">
+            <div><span>创建时间</span><output>{{ formatDate(metadata?.createdAt) }}</output></div>
+            <div><span>更新时间</span><output>{{ formatDate(metadata?.updatedAt) }}</output></div>
+            <div><span>文档 ID</span><output class="is-mono" :title="metadata?.id">{{ metadata?.id ?? '—' }}</output></div>
+            <div><span>所属目录</span><output class="is-mono" :title="directory">{{ directory }}</output></div>
+          </section>
         </div>
 
         <footer class="document-metadata-actions">
@@ -160,6 +181,13 @@ onBeforeUnmount(() => { void trap.deactivate() })
 .document-metadata-field textarea { resize: vertical; min-height: 92px; line-height: 1.5; }
 .document-metadata-field input:focus, .document-metadata-field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .document-metadata-field small { position: absolute; right: 8px; bottom: 7px; color: var(--text-muted); font-size: 0.68rem; pointer-events: none; }
+.document-metadata-readonly { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-top: 3px; border-top: 1px solid var(--border); }
+.document-metadata-readonly > div { min-width: 0; display: grid; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.document-metadata-readonly > div:nth-child(odd) { padding-right: 16px; }
+.document-metadata-readonly > div:nth-child(even) { padding-left: 16px; border-left: 1px solid var(--border); }
+.document-metadata-readonly span { color: var(--text-muted); font-size: 0.7rem; }
+.document-metadata-readonly output { min-width: 0; overflow: hidden; color: var(--text); font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
+.document-metadata-readonly output.is-mono { font-family: var(--mono); font-size: 0.72rem; }
 .document-metadata-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); background: var(--bg-soft); }
-@media (max-width: 600px) { .document-metadata-backdrop { align-items: end; padding: 0; } .document-metadata-modal { width: 100%; max-height: 88vh; border-radius: 6px 6px 0 0; } }
+@media (max-width: 600px) { .document-metadata-backdrop { align-items: end; padding: 0; } .document-metadata-modal { width: 100%; max-height: 88vh; border-radius: 6px 6px 0 0; } .document-metadata-readonly { grid-template-columns: 1fr; } .document-metadata-readonly > div:nth-child(n) { padding: 10px 0; border-left: 0; } }
 </style>

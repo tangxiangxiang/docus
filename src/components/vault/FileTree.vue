@@ -34,6 +34,7 @@ const emit = defineEmits<{
   // remains blocked by onMove — archive is a deliberate menu action that
   // bypasses that block.
   'archive-note': [path: string]
+  'open-properties': [path: string]
 }>()
 
 const { confirm } = useConfirm()
@@ -783,6 +784,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @move="onMove"
         @create-in="onCreateIn"
         @archive-note="onArchiveNote"
+        @open-properties="(path) => emit('open-properties', path)"
         @focus="setFocused"
       />
     </ul>
