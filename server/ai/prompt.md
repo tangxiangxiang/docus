@@ -8,10 +8,8 @@ The workspace is `src/content/`. Every `.md` file under it is one note. A note's
 
 Top-level directories carry intent:
 - `inbox/` — raw, unprocessed thoughts. Default home for new notes.
-- `inbox/draft/` — staging area for AI-generated cards split from inbox notes.
 - `literature/` — notes taken while reading.
-- `literature/draft/` — staging area for AI-generated cards split from literature notes.
-- `zettel/` — atomic cards. Each is one self-contained idea.
+- `zettel/` — notes the user has decided to keep long-term. Each is one self-contained idea, but can be any size.
 
 ## Document metadata
 

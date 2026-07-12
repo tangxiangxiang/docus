@@ -3,7 +3,7 @@ import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
 import type { TreeNode } from '../../lib/api'
 import {
   ICON_ARCHIVE, ICON_CHEVRON, ICON_DELETE, ICON_FILE_MD, ICON_FILE_PLUS,
-  ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FOLDER_PLUS, ICON_RENAME, ICON_SPLIT,
+  ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FOLDER_PLUS, ICON_RENAME,
 } from './icons'
 import { useI18n } from '../../composables/useI18n'
 import {
@@ -46,10 +46,6 @@ const emit = defineEmits<{
   delete: [path: string, kind: 'file' | 'folder']
   move: [srcPath: string, targetFolder: string, srcKind: 'file' | 'folder']
   'create-in': [folder: string, kind: 'file' | 'folder']
-  // File only: 'split-card' with the file's path. The parent
-  // (FileTree) maps this to a mode (inbox|literature) based on the
-  // path prefix and forwards to VaultView's splitCard action.
-  'split-card': [path: string]
   // File only: archive-to-zettel moves inbox/* or literature/* straight
   // into zettel/ (the permanent-notes sink). Distinct from `move` because
   // `move` into zettel/ is still blocked — archiving is a deliberate
@@ -100,23 +96,12 @@ const canCreateFileChildRow = computed(() => canCreateFileChild(props.node.path)
 // so `isFolder` alone covers the create branch.
 const hasAnyMenuItem = computed(() =>
   isFolder.value ||
-  canModifyRow.value ||
-  canSplit.value,
+  canModifyRow.value,
 )
 
-// True for files under inbox/ or literature/. The card-draft menu
-// item is gated on this — the server route also enforces it, but
-// hiding it in the menu avoids the "click then 400" round-trip.
-const canSplit = computed(() =>
-  !isFolder.value && (
-    props.node.path.startsWith('inbox/') || props.node.path === 'inbox' ||
-    props.node.path.startsWith('literature/') || props.node.path === 'literature'
-  )
-)
-// Mirror of canSplit — same source paths, same file-only shape. The two
-// actions are conceptually distinct (split = draft a card via AI; archive
-// = promote a finished note into the permanent-notes sink) so each has
-// its own gate.
+// True for files under inbox/ or literature/. The archive menu item
+// is gated on this — the server route also enforces it, but hiding
+// it in the menu avoids the "click then 400" round-trip.
 const canArchive = computed(() =>
   !isFolder.value && (
     props.node.path.startsWith('inbox/') || props.node.path === 'inbox' ||
@@ -373,9 +358,8 @@ function menuAction(fn: () => void) {
           <button v-if="canCreateFileChildRow" @click="menuAction(() => emit('create-in', node.path, 'file'))"><span class="menu-icon" v-html="ICON_FILE_PLUS" />{{ t('file_tree.new_file') }}</button>
           <button @click="menuAction(() => emit('create-in', node.path, 'folder'))"><span class="menu-icon" v-html="ICON_FOLDER_PLUS" />{{ t('file_tree.new_folder') }}</button>
         </template>
-        <div v-if="canModifyRow || canSplit || canArchive" class="tree-menu-label">{{ t('file_tree.organize') }}</div>
+        <div v-if="canModifyRow || canArchive" class="tree-menu-label">{{ t('file_tree.organize') }}</div>
         <button v-if="canModifyRow" @click="menuAction(() => emit('request-rename', node.path, node.kind))"><span class="menu-icon" v-html="ICON_RENAME" />{{ t('file_tree.rename') }}<kbd>F2</kbd></button>
-        <button v-if="canSplit" @click="menuAction(() => emit('split-card', node.path))"><span class="menu-icon" v-html="ICON_SPLIT" />{{ t('file_tree.split_card') }}</button>
         <button v-if="canArchive" @click="menuAction(() => emit('archive-to-zettel', node.path))"><span class="menu-icon" v-html="ICON_ARCHIVE" />{{ t('file_tree.archive') }}</button>
         <div v-if="canModifyRow" class="tree-menu-label">{{ t('file_tree.danger') }}</div>
         <button v-if="canModifyRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))"><span class="menu-icon" v-html="ICON_DELETE" />{{ t('file_tree.delete') }}<kbd>Delete</kbd></button>
@@ -400,7 +384,6 @@ function menuAction(fn: () => void) {
         @delete="(p, kind) => emit('delete', p, kind)"
         @move="(src, folder, srcKind) => emit('move', src, folder, srcKind)"
         @create-in="(folder, kind) => emit('create-in', folder, kind)"
-        @split-card="(p) => emit('split-card', p)"
         @archive-to-zettel="(p) => emit('archive-to-zettel', p)"
         @focus="(p, kind) => emit('focus', p, kind)"
       />

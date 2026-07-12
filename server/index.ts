@@ -9,8 +9,6 @@ import { listPostsFlat, buildTree, listSubtreePaths, readFrontmatter } from './t
 import { getIndex as getLinkIndex } from './linkIndex.js'
 import aiRoutes from './ai/routes.js'
 import historyRoutes from './history/routes.js'
-import draftsRoutes from './drafts.js'
-import zettelRoutes from './zettel.js'
 import { isInZettel } from '../src/composables/zettelProtocol.js'
 import type { PostSummary, PostDetail } from '../src/lib/api.js'
 import { getDb } from './db.js'
@@ -734,7 +732,5 @@ app.get('/api/links/rename-impact', async (c) => {
 
 app.route('/api/ai', aiRoutes)
 app.route('/api/history', historyRoutes)
-app.route('/api/drafts', draftsRoutes)
-app.route('/api/zettel', zettelRoutes)
 
 export default app

@@ -36,8 +36,6 @@ export const ICON_DELETE = `<svg xmlns="http://www.w3.org/2000/svg" width="14" h
 
 export const ICON_ARCHIVE = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3h11v3h-11zM3.5 6v7h9V6M6.5 8.5h3"/></svg>`
 
-export const ICON_SPLIT = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v3a3 3 0 0 1-3 3H2M8 5a3 3 0 0 0 3 3h3M5 11l-3-3 3-3M11 5l3 3-3 3"/></svg>`
-
 // "Search" — magnifier. 14×14 line art, matches the scope/file-tree icons.
 // Used as the prefix glyph in the TagPanel filter input; the host turns
 // it accent-blue on focus-within to confirm the search context.

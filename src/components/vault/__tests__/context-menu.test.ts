@@ -159,8 +159,8 @@ describe('FileTree context menu', () => {
 // Archive-to-zettel visibility. The action promotes a file directly from
 // inbox/ or literature/ into zettel/ — distinct from the drag-and-drop
 // "move into zettel" path that remains blocked. The menu button is gated
-// by canArchive which mirrors canSplit's shape, so these cases pin that
-// matrix.
+// by canArchive which restricts the action to source paths in those
+// two roots, so these cases pin that matrix.
 describe('FileTree context menu — archive-to-zettel visibility', () => {
   beforeEach(() => {
     localStorage.clear()

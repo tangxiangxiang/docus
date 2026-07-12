@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { ref, inject, shallowRef, watch, computed, provide, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue'
+import { ref, inject, shallowRef, watch, computed, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue'
 import { useStorage } from '@vueuse/core'
 import { useShortcutDisplay } from '../composables/useShortcutDisplay'
 import { useVaultLayout, setSelectPanelForClicks } from '../composables/vault/useVaultLayout'
 import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
 import { useEditorPreviewScrollSync } from '../composables/vault/useEditorPreviewScrollSync'
-import { useSplitReview } from '../composables/vault/useSplitReview'
-import { splitNote, type SplitMode } from '../lib/ai-api'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
@@ -132,11 +130,6 @@ const tocVisible = computed(
    bar), which is what produced the gray area the user reported. */
 tocGate = () => tocPanelEnabled.value
 
-const review = useSplitReview()
-// Provide the same instance to AiPanel so the tree-menu path
-// (this function) and the /split slash command (handled in
-// AiPanel) share state — the panel re-renders when we mutate.
-provide('splitReview', review)
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -164,25 +157,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   setSelectPanelForClicks(null)
 })
-
-async function splitCard(path: string, mode: SplitMode) {
-  review.setLoading(path, mode)
-  // Make sure the AI panel is visible — the user might have
-  // dismissed it. VaultView's aiOpen lives in useVaultLayout.
-  if (!aiOpen.value) toggleAi()
-  try {
-    const { cards } = await splitNote({ path, mode })
-    if (cards.length === 0) {
-      review.setError('没有生成可用的卡片草稿')
-      toast.info('没有生成可用的卡片草稿')
-      return
-    }
-    review.setReview(mode, cards)
-  } catch (err: any) {
-    review.setError(err.message ?? '拆分失败')
-    toast.error('拆分失败: ' + (err.message ?? '未知错误'))
-  }
-}
 
 /* ---------- Tabs / save / route sync ---------- */
 const {
@@ -321,7 +295,6 @@ watch(() => navSearch?.tick.value, () => openSearch())
       @select="openPost"
       @refresh="refresh"
       @remove-tag="removeTag"
-      @split-card="splitCard"
     />
     <TagPanel
       v-else-if="activePanel === 'tags'"
@@ -523,7 +496,6 @@ watch(() => navSearch?.tick.value, () => openSearch())
       :posts="posts"
       @close="toggleAi"
       @open="openPost"
-      @split-request="splitCard"
       @refresh-tree="refresh"
     />
 

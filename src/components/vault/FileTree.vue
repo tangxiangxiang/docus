@@ -28,7 +28,6 @@ const emit = defineEmits<{
   select: [path: string]
   refresh: []
   'remove-tag': [tag: string]
-  'split-card': [path: string, mode: 'inbox' | 'literature']
   // archive-to-zettel is self-contained inside FileTree: handler calls
   // patchPost + emit('refresh') + (optionally) emit('select'). VaultView
   // doesn't need to know. Distinct from `move` because move-into-zettel
@@ -649,18 +648,6 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
   }
 }
 
-async function onSplitCard(path: string) {
-  // The mode is derived from the path prefix — we don't ask the
-  // user. The right-click context is unambiguous: a file under
-  // inbox/ is inbox mode, under literature/ is literature mode.
-  // The slash-command form in the AI panel lets the user pick, but
-  // here the path IS the choice.
-  const mode: 'inbox' | 'literature' = path.startsWith('literature/') || path === 'literature'
-    ? 'literature'
-    : 'inbox'
-  emit('split-card', path, mode)
-}
-
 // Archive handler. Distinct from onMove: this is the explicit product action
 // of promoting a finished note from inbox/ or literature/ straight into the
 // zettel/ root. Classified archiving can also happen by dragging an eligible
@@ -795,7 +782,6 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @delete="onDelete"
         @move="onMove"
         @create-in="onCreateIn"
-        @split-card="onSplitCard"
         @archive-to-zettel="onArchiveToZettel"
         @focus="setFocused"
       />
