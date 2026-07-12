@@ -2496,14 +2496,31 @@ main.container {
   --article-heading-gap: 1.85em;
 }
 /* markdown-it-anchor wraps heading text in <a class="header-anchor">.
-   In read mode the heading should read as plain text — not as a
-   clickable permalink — so the anchor inherits color, drops the
-   text-decoration, and disables hover/focus pointer events. The
-   heading's own id is still there so the page-nav TOC can scroll
-   to it; only the in-place click is suppressed. */
-.vault .reading-pane .article.reading :where(h1, h2, h3, h4) a.header-anchor {
+   The heading should read as plain prose in every article mode
+   (preview AND reading), so we drop the underline that
+   `.vault .article a` applies to regular links. Without this rule
+   the anchor inherits the body-link text-decoration and the
+   heading gets an unwanted underline that the reading pane's
+   TOC-free view doesn't have.
+
+   The rule is scoped to `.vault .article` headings specifically —
+   external links inside a heading's text content still get the
+   underline treatment because the descendant `a` they wrap is not
+   itself a `header-anchor`. */
+.vault .article :where(h1, h2, h3, h4) a.header-anchor {
   color: inherit;
   text-decoration: none;
+}
+.vault .article :where(h1, h2, h3, h4) a.header-anchor:hover {
+  color: inherit;
+  text-decoration: none;
+}
+/* Read mode keeps the heading non-clickable. Preview still allows
+   the click (jumps to / copies the anchor), but the visible
+   treatment matches. The heading's own `id` is still there so the
+   page-nav TOC can scroll to it; only the in-place click is
+   suppressed. */
+.vault .reading-pane .article.reading :where(h1, h2, h3, h4) a.header-anchor {
   pointer-events: none;
   cursor: text;
 }
