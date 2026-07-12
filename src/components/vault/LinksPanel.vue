@@ -159,9 +159,7 @@ watchEffect(() => {
 </script>
 
 <template>
-  <aside class="links-panel" aria-label="引用关系">
-    <header class="links-heading">引用关系</header>
-
+  <aside class="links-panel" aria-label="相关文档">
     <div v-if="!activePath" class="empty">
       打开文档后查看引用关系
     </div>
@@ -225,45 +223,30 @@ watchEffect(() => {
 
 <style scoped>
 .links-panel {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
+  display: block;
   background: var(--vs-side-bg, var(--vs-bg-1));
   color: var(--vs-text, var(--text));
-  height: 100%;
-  overflow: hidden;
+  height: auto;
+  overflow: visible;
 }
-.links-heading {
-  display: flex;
-  align-items: center;
-  min-height: 30px;
-  padding: 5px 14px 3px;
-  color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.72rem;
-  font-weight: 600;
-  flex: 0 0 auto;
-}
-
 .empty {
-  padding: 7px 14px 12px;
+  padding: 0 22px;
   font-size: 0.78rem;
   color: var(--vs-text-2, var(--text-muted));
   font-style: italic;
 }
 .links-content {
-  min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 8px;
+  padding-top: 0;
 }
 
 .section {
   display: block;
 }
-.section + .section { margin-top: 8px; }
+.section + .section { margin-top: 18px; }
 .section-header {
   display: flex;
   align-items: center;
-  padding: 6px 14px 3px;
+  padding: 0 22px 5px;
   font-size: 0.7rem;
   color: var(--vs-text-2, var(--text-muted));
 }
@@ -272,7 +255,9 @@ watchEffect(() => {
 .link-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 14px;
+  display: grid;
+  gap: 6px;
 }
 .link-entry {
   display: grid;
@@ -280,8 +265,8 @@ watchEffect(() => {
   align-items: start;
   gap: 8px;
   width: 100%;
-  padding: 6px 14px;
-  border-radius: 0;
+  padding: 7px 8px;
+  border-radius: 4px;
   background: transparent;
   border: 0;
   color: var(--vs-text, var(--text));
@@ -291,7 +276,8 @@ watchEffect(() => {
   font-size: 0.84rem;
 }
 .link-entry:hover {
-  background: color-mix(in srgb, var(--vs-hover-bg, var(--bg-soft)) 82%, transparent);
+  background: color-mix(in srgb, var(--vs-hover-bg, var(--bg-soft)) 58%, transparent);
+  color: var(--vs-text-1, var(--text));
 }
 .link-entry:active {
   background: color-mix(in srgb, var(--vs-accent, var(--accent)) 10%, transparent);

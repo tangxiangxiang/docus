@@ -385,12 +385,6 @@ main.container {
   display: grid;
   grid-template-rows: 1fr;
   gap: 0;
-  /* Anchor for the absolute-positioned .rail-expand-edge button
-     that appears at the right edge when the right rail is
-     collapsed by user choice. Without `position: relative` here,
-     the button would anchor to the nearest positioned ancestor
-     (body / root), escaping the vault. */
-  position: relative;
   background: var(--border);
   height: calc(100vh - var(--navbar-h, 56px));
   outline: none;
@@ -2247,117 +2241,6 @@ main.container {
      to enlarge the hit area, so leave it click-transparent visually. */
 }
 
-/* Right-rail collapse / expand controls. They read as quiet IDE edge
-   handles: visible enough to discover, but lighter than real toolbar
-   buttons until hovered or focused. */
-.vault .splitter-toc .splitter-chevron {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 20px;
-  height: 44px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--vs-border) 88%, var(--vs-bg-1));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--vs-bg-2) 92%, var(--vs-bg-1));
-  color: color-mix(in srgb, var(--vs-text-2) 82%, var(--vs-text-1));
-  font-size: 1rem;
-  line-height: 1;
-  font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1;
-  opacity: 0.72;
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--vs-border) 55%, transparent),
-    0 2px 8px rgba(0, 0, 0, 0.26),
-    inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
-  transition:
-    opacity 0.14s,
-    color 0.14s,
-    background 0.14s,
-    border-color 0.14s,
-    box-shadow 0.14s,
-    transform 0.14s;
-}
-.vault .splitter-toc:hover .splitter-chevron,
-.vault .splitter-toc .splitter-chevron:focus-visible {
-  opacity: 1;
-}
-.vault .splitter-toc .splitter-chevron:hover,
-.vault .splitter-toc .splitter-chevron:focus-visible {
-  transform: translate(-50%, -50%) scale(1.02);
-  color: var(--vs-text-1);
-  background: color-mix(in srgb, var(--vs-accent) 16%, var(--vs-bg-2));
-  border-color: color-mix(in srgb, var(--vs-accent) 72%, var(--vs-border));
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--vs-accent) 22%, transparent),
-    0 4px 14px rgba(0, 0, 0, 0.32);
-}
-/* Edge button that replaces the splitter when the right rail is collapsed. */
-.vault .rail-expand-edge {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  transform: translateY(-50%);
-  width: 22px;
-  height: 44px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--vs-border) 88%, var(--vs-bg-1));
-  border-right: 0;
-  border-radius: 8px 0 0 8px;
-  background: color-mix(in srgb, var(--vs-bg-2) 92%, var(--vs-bg-1));
-  color: color-mix(in srgb, var(--vs-text-2) 82%, var(--vs-text-1));
-  font-size: 1rem;
-  line-height: 1;
-  font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2;
-  opacity: 0.62;
-  box-shadow:
-    -1px 0 0 color-mix(in srgb, var(--vs-border) 60%, transparent),
-    0 1px 4px rgba(0, 0, 0, 0.22),
-    inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
-  transition:
-    opacity 0.14s,
-    color 0.14s,
-    background 0.14s,
-    border-color 0.14s,
-    box-shadow 0.14s,
-    width 0.14s;
-}
-/* Invisible hit-area extension. The pseudo-element expands the
-   click target 16px leftward so the user can land anywhere in a
-   32px-wide column flush with the right edge. The ::before is
-   part of the button so :hover inherits cleanly without needing
-   an explicit :hover rule on the pseudo-element. */
-.vault .rail-expand-edge::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -16px;
-  width: 16px;
-}
-.vault .rail-expand-edge:hover,
-.vault .rail-expand-edge:focus-visible {
-  opacity: 1;
-  width: 26px;
-  color: var(--vs-text-1);
-  background: color-mix(in srgb, var(--vs-accent) 16%, var(--vs-bg-2));
-  border-color: color-mix(in srgb, var(--vs-accent) 72%, var(--vs-border));
-  box-shadow:
-    -1px 0 0 color-mix(in srgb, var(--vs-accent) 42%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--vs-accent) 22%, transparent),
-    0 4px 14px rgba(0, 0, 0, 0.32);
-}
-
 /* Monaco EditorPane inside vault */
 .vault .monaco-host { flex: 1; min-width: 0; min-height: 0; height: 100%; }
 .vault .monaco-host .monaco-scrollable-element > .scrollbar {
@@ -3151,9 +3034,8 @@ main.container {
   --accent-bg: var(--vs-accent-bg);
 }
 
-/* AI panel — right-rail chat surface. Visual layout follows Claude
-   Code in VS Code: a 36px header (matches FileTree / TagPanel so the
-   three panel headers swap-read identically), a flowing message
+/* AI assistant inside the unified right rail: a compact session toolbar,
+   a flowing message
    stream with avatar + plain text for assistant turns and a subtle
    right-aligned bubble for user turns, and a single rounded composer
    that hosts the textarea + send button as one focusable surface.
@@ -3176,50 +3058,24 @@ main.container {
   display: flex;
   align-items: center;
   gap: 3px;
-  height: 36px;
+  min-height: 38px;
   box-sizing: border-box;
-  padding: 0 7px 0 10px;
-  background: color-mix(in srgb, var(--vs-bg-1) 82%, var(--vs-bg-2));
-  border-bottom: 1px solid var(--vs-border);
+  padding: 4px 16px 2px 20px;
+  background: transparent;
+  border-bottom: 0;
   user-select: none;
   flex: 0 0 auto;
 }
 
-.ai-panel .ai-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--vs-text-1);
-}
-
-.ai-panel .ai-title-icon {
-  display: inline-flex;
-  width: 18px;
-  height: 18px;
-  color: color-mix(in srgb, var(--vs-accent) 82%, var(--vs-text-1));
-  background: color-mix(in srgb, var(--vs-accent) 13%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vs-accent) 24%, transparent);
-  border-radius: 5px;
-  align-items: center;
-  justify-content: center;
-}
-.ai-panel .ai-title-icon :where(svg) {
-  width: 13px;
-  height: 13px;
-  display: block;
-}
-
-.ai-panel .ai-title-text { letter-spacing: -0.005em; }
-
 .ai-panel .ai-title-session {
+  margin-right: auto;
+  min-width: 0;
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--vs-text-2);
+  font-size: 0.76rem;
   font-weight: 500;
 }
 

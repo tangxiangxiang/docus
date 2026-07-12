@@ -1,5 +1,5 @@
-// Pointer-drag handler for the four vault splitters (left tree, middle
-// editor/preview, right TOC, right AI). Lives in its own composable
+// Pointer-drag handler for the three vault splitters (left tree, middle
+// editor/preview, unified right rail). Lives in its own composable
 // rather than inside useVaultLayout so the layout composable stays
 // focused on persisted reactive state — drag is a pure DOM concern.
 //
@@ -11,7 +11,7 @@
 
 import type { Ref } from 'vue'
 
-export type SplitterWhich = 'tree' | 'middle' | 'ai' | 'toc'
+export type SplitterWhich = 'tree' | 'middle' | 'rightRail'
 
 /* Refs the drag handler is allowed to mutate. Pass the same Ref
    instances useVaultLayout returned — that's what makes the grid
@@ -19,8 +19,7 @@ export type SplitterWhich = 'tree' | 'middle' | 'ai' | 'toc'
 export interface SplitterTargets {
   sidePanelWidth: Ref<number>
   editorRatio: Ref<number>
-  aiPanelWidth: Ref<number>
-  tocPanelWidth: Ref<number>
+  rightRailWidth: Ref<number>
 }
 
 // Must match the splitter's layout width in .vault .splitter { width: 1px }
@@ -39,8 +38,7 @@ export function useSplitterDrag(targets: SplitterTargets) {
     const startX = e.clientX
     const startTree = targets.sidePanelWidth.value
     const startRatio = targets.editorRatio.value
-    const startAi = targets.aiPanelWidth.value
-    const startToc = targets.tocPanelWidth.value
+    const startRightRail = targets.rightRailWidth.value
 
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
@@ -51,18 +49,14 @@ export function useSplitterDrag(targets: SplitterTargets) {
            outward → panel grows. */
         const max = Math.min(600, rect.width - 480)
         targets.sidePanelWidth.value = clamp(startTree + dx, 150, max)
-      } else if (which === 'toc') {
+      } else if (which === 'rightRail') {
         /* Right-anchored column (grid template ends with `… 1fr 1px
-           {toc}px`). The splitter is the column's LEFT edge, and
+           {rightRail}px`). The splitter is the column's LEFT edge, and
            the right edge is the vault's right border — fixed.
            Dragging right (positive dx) moves the left edge right →
            column shrinks. So we SUBTRACT dx. */
-        const max = Math.min(400, rect.width - 480)
-        targets.tocPanelWidth.value = clamp(startToc - dx, 180, max)
-      } else if (which === 'ai') {
-        /* Same right-anchored geometry as toc — subtract dx. */
-        const max = Math.min(600, rect.width - 480)
-        targets.aiPanelWidth.value = clamp(startAi - dx, 220, max)
+        const max = Math.min(520, rect.width - 480)
+        targets.rightRailWidth.value = clamp(startRightRail - dx, 320, max)
       } else {
         const content = host.querySelector<HTMLElement>('.content')
         const total = content ? content.clientWidth - SPLITTER_PX : 0

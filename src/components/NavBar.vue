@@ -43,7 +43,8 @@ const { activeScope, toggleScope } = useScopeFilter()
 /* AI panel toggle. Lives here (not in VaultView) because the button
    is a sibling of the existing nav-search / view-mode-menu, and the
    useVaultLayout singleton makes this safe. */
-const { aiOpen, toggleAi } = useVaultLayout()
+const { rightRailTab, rightRailCollapsed, toggleAi } = useVaultLayout()
+const aiRailOpen = computed(() => !rightRailCollapsed.value && rightRailTab.value === 'ai')
 
 /* Preview-pane toggle state lives in useVaultLayout; the menu emits
    a desired (mode, previewOpen) tuple and we apply each bit to its
@@ -115,9 +116,9 @@ const SCOPE_ICONS: Record<string, string> = {
           v-if="isVault"
           class="ai-toggle"
           type="button"
-          :title="aiOpen ? 'AI panel (click to close)' : 'AI panel'"
-          :aria-label="aiOpen ? 'AI panel (click to close)' : 'AI panel'"
-          :aria-pressed="aiOpen"
+          :title="aiRailOpen ? 'AI panel (click to close)' : 'AI panel'"
+          :aria-label="aiRailOpen ? 'AI panel (click to close)' : 'AI panel'"
+          :aria-pressed="aiRailOpen"
           @click="toggleAi"
         >
           <span class="ai-toggle-icon" aria-hidden="true" v-html="ICON_AI" />

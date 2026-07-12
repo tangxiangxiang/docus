@@ -16,7 +16,6 @@ import { isSlugSegment } from '../lib/slug'
 import { resolveWikiTarget } from '../lib/linkResolve'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import FileTree from '../components/vault/FileTree.vue'
-import AiPanel from '../components/vault/AiPanel.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import PreviewPane from '../components/vault/PreviewPane.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
@@ -67,33 +66,21 @@ const emptyActions = computed(() => [
 const viewModeApi = inject(VaultViewModeKey, null)
 const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
 
-/* ---------- Layout ----------
-   tocGate is declared first as `let` so useVaultLayout can close over
-   it via a getter. The actual function body reads `isReadMode` and
-   `activePanel`, both of which are declared further down — but the
-   closure body is lazy: vaultStyle only invokes tocGate() when it
-   first reads its computed (after setup has finished), so the late
-   bindings are live by then. The `?? true` fallback covers the brief
-   window before the real gate is wired in below. */
-let tocGate: () => boolean = () => true
-
+/* ---------- Layout ---------- */
 const {
   activePanel,
   sidePanelOpen,
   sidePanelWidth,
   editorRatio,
-  aiPanelWidth,
+  rightRailWidth,
   vaultStyle,
   contentStyle,
   selectPanel,
-  toggleAi,
-  aiOpen,
-  tocPanelWidth,
+  rightRailTab,
   previewOpen,
   togglePreview,
   rightRailCollapsed,
-  toggleRightRail,
-} = useVaultLayout({ tocGate: () => tocGate() })
+} = useVaultLayout()
 
 /* Splitter drag lives in its own composable — it mutates the same
    width/ratio refs useVaultLayout returns, so the grid updates
@@ -101,21 +88,11 @@ const {
 const { startDrag } = useSplitterDrag({
   sidePanelWidth,
   editorRatio,
-  aiPanelWidth,
-  tocPanelWidth,
+  rightRailWidth,
 })
 
-/* Right-rail visibility: the rail is a read-mode affordance and
-   shows whenever the user is in read mode AND the AI panel is closed.
-   The rail hosts both the TOC (which has its own
-   hasHeadings gate inside TocPanel) and the Links panel — a document
-   with links but no headings still gets the rail with just the Links
-   half populated. The same gate drives the grid track (via tocGate)
-   and the v-if (via tocVisible) so they stay in lockstep. */
-const tocPanelEnabled = computed(() => isReadMode.value)
-const tocVisible = computed(
-  () => tocPanelEnabled.value && !aiOpen.value && !rightRailCollapsed.value,
-)
+/* The unified rail remains available in edit and read modes. */
+const rightRailVisible = computed(() => !rightRailCollapsed.value)
 /* The splitter is a grid child only when the rail is visible. In the
    collapsed state the chevron affordance is rendered as an absolutely-
    positioned button pinned to the vault's right edge (see template
@@ -123,8 +100,6 @@ const tocVisible = computed(
    (creating a 1px gray strip where the rail used to be) or, with the
    default grid-auto-flow: row, wrap the splitter to row 2 (status
    bar), which is what produced the gray area the user reported. */
-tocGate = () => tocPanelEnabled.value
-
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -250,7 +225,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
   <div
     ref="vaultRef"
     class="vault"
-    :class="{ 'is-read': isReadMode, 'ai-open': aiOpen, 'toc-open': tocVisible }"
+    :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible }"
     tabindex="0"
     :style="vaultStyle"
     @keydown="onKeydown"
@@ -312,7 +287,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
 
     <section
       class="editor-area"
-      :class="{ 'is-read': isReadMode, 'ai-open': aiOpen, 'is-history': activePanel === 'history', 'is-empty': tabs.length === 0 }"
+      :class="{ 'is-read': isReadMode, 'is-history': activePanel === 'history', 'is-empty': tabs.length === 0 }"
     >
       <EditorTabs
         v-if="activePanel !== 'history' && tabs.length > 0"
@@ -414,62 +389,21 @@ watch(() => navSearch?.tick.value, () => openSearch())
     </section>
 
     <div
-      v-if="tocVisible"
+      v-if="rightRailVisible"
       class="splitter splitter-toc"
       role="separator"
       aria-orientation="vertical"
-      title="拖动调整宽度 · 双击折叠右侧栏"
-      @pointerdown="startDrag(vaultRef!, 'toc', $event)"
-      @dblclick="toggleRightRail"
-    >
-      <button
-        type="button"
-        class="splitter-chevron"
-        aria-label="折叠右侧栏"
-        title="折叠右侧栏"
-        @click.stop="toggleRightRail"
-      >‹</button>
-    </div>
-    <!-- In collapsed mode the splitter is gone from the grid (see
-         tocVisible above) — it's replaced by an absolutely-positioned
-         chevron pinned to the vault's right edge. Putting it in the
-         grid would either create an extra column or wrap the splitter
-         into the status-bar row, both of which produce visual
-         artifacts. Hidden while AI is open (the AI panel covers the
-         right edge; clicking the rail chevron there would replace
-         the AI panel, which is surprising). The collapsed state
-         persists, so when AI closes the chevron returns. -->
-    <button
-      v-if="rightRailCollapsed && tocPanelEnabled && !aiOpen"
-      type="button"
-      class="rail-expand-edge"
-      aria-label="展开右侧栏"
-      title="展开右侧栏"
-      @click="toggleRightRail"
-    >›</button>
+      title="拖动调整右侧栏宽度"
+      @pointerdown="startDrag(vaultRef!, 'rightRail', $event)"
+    />
     <TocPanel
-      v-if="tocVisible"
+      v-if="rightRailVisible"
       class="toc-panel-slot"
       :path="activePath"
       :posts="posts"
+      :active-tab="rightRailTab"
+      @update:active-tab="rightRailTab = $event"
       @link-navigate="openPost"
-    />
-
-    <div
-      v-if="aiOpen"
-      class="splitter splitter-ai"
-      role="separator"
-      aria-orientation="vertical"
-      title="拖动调整 AI 面板宽度"
-      @pointerdown="startDrag(vaultRef!, 'ai', $event)"
-    />
-    <AiPanel
-      v-if="aiOpen"
-      class="ai-panel-slot"
-      :posts="posts"
-      @close="toggleAi"
-      @open="openPost"
-      @refresh-tree="refresh"
     />
 
     <StatusBar

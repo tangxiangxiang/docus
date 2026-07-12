@@ -22,7 +22,7 @@
 // the result text. read_file / list_files cards are collapsed by
 // default to keep the panel compact; the user can expand them.
 import { onMounted, ref, computed, nextTick } from 'vue'
-import { ICON_AI, ICON_HISTORY, ICON_NEW_CHAT } from './icons'
+import { ICON_HISTORY, ICON_NEW_CHAT } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useCurrentNote } from '../../composables/vault/useCurrentNote'
 import { useI18n } from '../../composables/useI18n'
@@ -87,17 +87,7 @@ async function useQuickPrompt(text: string) {
 <template>
   <aside class="ai-panel" aria-label="AI assistant">
     <header class="ai-header">
-      <div class="ai-title">
-        <span class="ai-title-icon" v-html="ICON_AI" aria-hidden="true" />
-        <span class="ai-title-text">AI</span>
-        <template v-if="history.activeSession.value?.title">
-          <span class="ai-title-sep" aria-hidden="true">·</span>
-          <span
-            class="ai-title-session"
-            :title="history.activeSession.value.title"
-          >{{ history.activeSession.value.title }}</span>
-        </template>
-      </div>
+      <span v-if="history.activeSession.value?.title" class="ai-title-session" :title="history.activeSession.value.title">{{ history.activeSession.value.title }}</span>
       <button
         class="ai-header-btn"
         type="button"
