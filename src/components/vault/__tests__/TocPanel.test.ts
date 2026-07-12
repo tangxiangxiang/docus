@@ -41,11 +41,33 @@ describe('unified document sidebar', () => {
     expect(wrapper.find('.toc-panel-item.active').text()).toBe('例句')
   })
 
-  it('emits tab changes for links and AI', async () => {
+  it('renders tabs in AI → 目录 → 引用 order', () => {
     const wrapper = mountPanel()
-    await wrapper.findAll('[role="tab"]')[1].trigger('click')
-    await wrapper.findAll('[role="tab"]')[2].trigger('click')
-    expect(wrapper.emitted('update:activeTab')).toEqual([['links'], ['ai']])
+    const labels = wrapper.findAll('[role="tab"]').map((tab) => tab.text())
+    expect(labels).toEqual(['AI', '目录', '引用'])
+  })
+
+  it('emits update:activeTab with the matching key for each tab', async () => {
+    const wrapper = mountPanel()
+    const tabs = wrapper.findAll('[role="tab"]')
+    await tabs[0].trigger('click')
+    await tabs[1].trigger('click')
+    await tabs[2].trigger('click')
+    expect(wrapper.emitted('update:activeTab')).toEqual([['ai'], ['toc'], ['links']])
+  })
+
+  it('reflects the controlled activeTab via aria-selected and the .active class', async () => {
+    const wrapper = mountPanel('toc')
+    expect(wrapper.get('[role="tab"]:nth-of-type(2)').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('[role="tab"]:nth-of-type(2)').classes()).toContain('active')
+
+    await wrapper.setProps({ activeTab: 'ai' })
+    expect(wrapper.get('[role="tab"]:nth-of-type(1)').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('[role="tab"]:nth-of-type(1)').classes()).toContain('active')
+
+    await wrapper.setProps({ activeTab: 'links' })
+    expect(wrapper.get('[role="tab"]:nth-of-type(3)').attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('[role="tab"]:nth-of-type(3)').classes()).toContain('active')
   })
 
   it('keeps all three views mounted while showing only the active one', () => {

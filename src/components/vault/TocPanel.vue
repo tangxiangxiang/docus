@@ -46,9 +46,9 @@ function onLinkNavigate(p: string) {
 <template>
   <div class="right-rail">
     <nav class="sidebar-tabs" role="tablist" aria-label="文档导航">
+      <button role="tab" :aria-selected="activeTab === 'ai'" :class="{ active: activeTab === 'ai' }" @click="emit('update:activeTab', 'ai')">AI</button>
       <button role="tab" :aria-selected="activeTab === 'toc'" :class="{ active: activeTab === 'toc' }" @click="emit('update:activeTab', 'toc')">目录</button>
       <button role="tab" :aria-selected="activeTab === 'links'" :class="{ active: activeTab === 'links' }" @click="emit('update:activeTab', 'links')">引用</button>
-      <button role="tab" :aria-selected="activeTab === 'ai'" :class="{ active: activeTab === 'ai' }" @click="emit('update:activeTab', 'ai')">AI</button>
     </nav>
 
     <section v-show="activeTab === 'toc'" class="toc-panel" role="tabpanel" aria-label="目录">
