@@ -10,7 +10,7 @@ import {
   canModify,
   canMove,
   canCreateFileChild,
-} from '../../composables/zettelProtocol'
+} from '../../composables/archiveProtocol'
 import type { MatchInfo } from './FileTree.vue'
 
 const props = defineProps<{
@@ -46,11 +46,11 @@ const emit = defineEmits<{
   delete: [path: string, kind: 'file' | 'folder']
   move: [srcPath: string, targetFolder: string, srcKind: 'file' | 'folder']
   'create-in': [folder: string, kind: 'file' | 'folder']
-  // File only: archive-to-zettel moves inbox/* or literature/* straight
-  // into zettel/ (the permanent-notes sink). Distinct from `move` because
-  // `move` into zettel/ is still blocked — archiving is a deliberate
+  // File only: archive-note moves inbox/* or literature/* straight
+  // into archive/ (the archived-notes root). Distinct from `move` because
+  // `move` into archive/ is still blocked — archiving is a deliberate
   // product action that only the menu can trigger.
-  'archive-to-zettel': [path: string]
+  'archive-note': [path: string]
   focus: [path: string, kind: 'file' | 'folder']
 }>()
 
@@ -77,20 +77,20 @@ const displayTitle = computed(() => props.node.kind === 'file' && props.node.tit
   : props.node.name)
 const showFilename = computed(() => props.node.kind === 'file' && displayTitle.value !== props.node.name)
 // Three independent write-permission flags. The protocol distinguishes:
-//   • canModify — rename / delete. Blocked for both the zettel subtree AND
+//   • canModify — rename / delete. Blocked for both the archive subtree AND
 //     protected roots (the three top-level folder names are pinned by the
-//     Zettelkasten spec).
-//   • canMove — drag-out. Protected roots are pinned; zettel children can
-//     move within zettel for reclassification.
-//   • canCreateFileChild — in-place note creation. Blocked for the zettel
-//     subtree so permanent notes still enter via explicit archive/move flows.
+//     vault spec).
+//   • canMove — drag-out. Protected roots are pinned; archive children can
+//     move within archive for reclassification.
+//   • canCreateFileChild — in-place note creation. Blocked for the archive
+//     subtree so archived notes still enter via explicit archive/move flows.
 // Folder creation is always allowed for any folder row, so the "新建文件夹"
 // button is rendered unconditionally on `isFolder` (no gate needed).
 const canModifyRow = computed(() => canModify(props.node.path))
 const canMoveRow = computed(() => canMove(props.node.path))
 const canCreateFileChildRow = computed(() => canCreateFileChild(props.node.path))
 // True if the row has at least one context-menu item to render. Without
-// this gate, right-clicking a fully locked row (e.g. an in-zettel file)
+// this gate, right-clicking a fully locked row (e.g. an in-archive file)
 // would show an empty menu box. Skip the menu entirely when there's
 // nothing to show. Folders always have at least the folder-create button,
 // so `isFolder` alone covers the create branch.
@@ -153,9 +153,9 @@ function onDragStart(e: DragEvent) {
   // isProtectedRoot() then rejects with a confusing toast). Stop the event
   // here so only the row the user actually grabbed sets the drag payload.
   e.stopPropagation()
-  // Protected roots (inbox/literature/zettel) cannot be re-parented. We
-  // still want their children to be draggable, including zettel children
-  // that are being reclassified inside the permanent-notes subtree.
+  // Protected roots (inbox/literature/archive) cannot be re-parented. We
+  // still want their children to be draggable, including archive children
+  // that are being reclassified inside the archived-notes subtree.
   if (!canMoveRow.value) { e.preventDefault(); return }
   if (!e.dataTransfer) return
   e.dataTransfer.setData('text/x-docus-path', props.node.path)
@@ -347,7 +347,7 @@ function menuAction(fn: () => void) {
         @click.stop
         >
         <!-- create-in is allowed for ordinary folders and protected roots.
-             Inside zettel/ only the folder button is offered; permanent
+             Inside archive/ only the folder button is offered; archived
              notes still enter through explicit archive/move flows (gated by
              canCreateFileChild). The folder button is unconditional on
              isFolder — there's no protocol gate against sub-foldering.
@@ -360,7 +360,7 @@ function menuAction(fn: () => void) {
         </template>
         <div v-if="canModifyRow || canArchive" class="tree-menu-label">{{ t('file_tree.organize') }}</div>
         <button v-if="canModifyRow" @click="menuAction(() => emit('request-rename', node.path, node.kind))"><span class="menu-icon" v-html="ICON_RENAME" />{{ t('file_tree.rename') }}<kbd>F2</kbd></button>
-        <button v-if="canArchive" @click="menuAction(() => emit('archive-to-zettel', node.path))"><span class="menu-icon" v-html="ICON_ARCHIVE" />{{ t('file_tree.archive') }}</button>
+        <button v-if="canArchive" @click="menuAction(() => emit('archive-note', node.path))"><span class="menu-icon" v-html="ICON_ARCHIVE" />{{ t('file_tree.archive') }}</button>
         <div v-if="canModifyRow" class="tree-menu-label">{{ t('file_tree.danger') }}</div>
         <button v-if="canModifyRow" class="danger" @click="menuAction(() => emit('delete', node.path, node.kind))"><span class="menu-icon" v-html="ICON_DELETE" />{{ t('file_tree.delete') }}<kbd>Delete</kbd></button>
       </div>
@@ -384,7 +384,7 @@ function menuAction(fn: () => void) {
         @delete="(p, kind) => emit('delete', p, kind)"
         @move="(src, folder, srcKind) => emit('move', src, folder, srcKind)"
         @create-in="(folder, kind) => emit('create-in', folder, kind)"
-        @archive-to-zettel="(p) => emit('archive-to-zettel', p)"
+        @archive-note="(p) => emit('archive-note', p)"
         @focus="(p, kind) => emit('focus', p, kind)"
       />
     </ul>

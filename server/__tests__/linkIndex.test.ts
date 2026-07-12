@@ -339,15 +339,15 @@ describe('LinkIndex', () => {
   })
 
   it('rebuild populates display titles from listPostsFlat metadata', async () => {
-    await writeFile('zettel/a.md', '---\ntitle: Frontmatter Title\n---\n\n# Body Title\n')
-    await writeFile('zettel/b.md', '# Heading Title\n')
+    await writeFile('archive/a.md', '---\ntitle: Frontmatter Title\n---\n\n# Body Title\n')
+    await writeFile('archive/b.md', '# Heading Title\n')
 
     const idx = new LinkIndex()
     await idx.rebuild(sandbox)
 
     expect(idx.snapshot().titles).toMatchObject({
-      'zettel/a': 'Frontmatter Title',
-      'zettel/b': 'Heading Title',
+      'archive/a': 'Frontmatter Title',
+      'archive/b': 'Heading Title',
     })
   })
 

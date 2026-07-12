@@ -49,7 +49,7 @@ import type { SidePanel } from '../../components/vault/ActivityBar.vue'
 import { isSlugSegment, toLocalSlug } from '../../lib/slug'
 import { disposeMarkdownModel } from '../../components/vault/monacoModels'
 
-/* Tab-count limits. vault is a personal Zettelkasten — heavy
+/* Tab-count limits. vault is a personal knowledge base — heavy
    multi-tab editing (20+ tabs) signals the user should be using
    command palette / search, not cycling through tabs. Two thresholds:
    - TAB_SOFT_LIMIT (6): past this, each new open emits a soft

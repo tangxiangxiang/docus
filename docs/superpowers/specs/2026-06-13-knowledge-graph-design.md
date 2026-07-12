@@ -4,7 +4,7 @@
 
 ## 概述
 
-把 `force-graph` 移植到 docus 作为 vault 内的"知识图谱"视图：节点是 `src/content/zettel/` 目录里（包括 `zettel/draft/`）的每个 `.md` 笔记，边是这些笔记之间通过 `[[wiki]]` 语法建立的双向链接。点击节点关闭图谱并在编辑器中打开该笔记。
+把 `force-graph` 移植到 docus 作为 vault 内的"知识图谱"视图：节点是 `src/content/archive/` 目录里（包括 `archive/draft/`）的每个 `.md` 笔记，边是这些笔记之间通过 `[[wiki]]` 语法建立的双向链接。点击节点关闭图谱并在编辑器中打开该笔记。
 
 入口是 ActivityBar 的第 4 个按钮（`graph` 图标），与 Files / Tags / Links 互斥，active 时高亮。点击按钮时把 vault 的右侧 `editor-area` 替换为全宽图谱画布；再次点击或点击其他 ActivityBar 按钮即关闭并恢复原编辑区。ActivityBar、侧栏、StatusBar、右侧 AI 面板**不**受影响——保留 vault 导航上下文。
 
@@ -14,19 +14,19 @@
 - **Vue 3 Composition API** — 组件框架
 - **Hono** — 后端
 - **现有的 `/api/links/index`** — 双向链接数据源（已存在，wire shape 见 `src/lib/api.ts:105`）
-- **现有的 `/api/posts`** — 用于拉取 zettel 目录的笔记摘要（不重写）
+- **现有的 `/api/posts`** — 用于拉取 archive 目录的笔记摘要（不重写）
 
 ## 数据源
 
 ### 后端：不新增端点
 
-`/api/links/index` 已经返回了整库（包含 zettel + inbox + literature + draft）的 `paths` 和 `outgoing`。前端在拿到 snapshot 后**自己**过滤出 `path.startsWith('zettel/')` 的子集——后端是无状态的，前端做范围裁剪符合 docus 现有约定（参考 `useScopeFilter`）。
+`/api/links/index` 已经返回了整库（包含 archive + inbox + literature + draft）的 `paths` 和 `outgoing`。前端在拿到 snapshot 后**自己**过滤出 `path.startsWith('archive/')` 的子集——后端是无状态的，前端做范围裁剪符合 docus 现有约定（参考 `useScopeFilter`）。
 
 ### 前端数据形状
 
 ```ts
 interface GraphNode {
-  id: string              // = path (no .md, 例如 "zettel/init")
+  id: string              // = path (no .md, 例如 "archive/init")
   path: string            // 同 id，保留便于 openPost
   title: string           // 来自 PostSummary.title，没有则用 basename
   val: number             // 节点尺寸权重（按入度+出度计算）
@@ -43,8 +43,8 @@ interface GraphLink {
 ### 节点筛选
 
 从 link index 出发：
-1. `zettelPaths = paths.filter(p => p.startsWith('zettel/'))` —— 节点候选集
-2. 遍历 `outgoing`，只保留 `source ∈ zettelPaths && target ∈ zettelPaths && kind === 'wiki'` 的边
+1. `archivePaths = paths.filter(p => p.startsWith('archive/'))` —— 节点候选集
+2. 遍历 `outgoing`，只保留 `source ∈ archivePaths && target ∈ archivePaths && kind === 'wiki'` 的边
 3. 节点的 `val` 按度数计算：center=`degree===0` 24px，leaf=`outDegree===0` 12px，中间=16px
 4. 过滤后没有出边也没有入边的孤立节点仍然显示（zettel 可能是新写的、还没连上别条笔记）
 
@@ -118,7 +118,7 @@ const colors = computed(() => {
 |------|------|
 | force-graph 动态 import 失败 | 容器内显示文字"图谱加载失败"，不抛错阻塞 vault |
 | `/api/links/index` 网络失败 | 容器内显示"暂无图谱数据"，保留之前的 graph 实例（如果 mount 时已成功） |
-| zettel 没有任何笔记 | 容器内显示"还没有 zettel 笔记，先去 inbox 写一条吧" |
+| archive 没有任何笔记 | 容器内显示"还没有 archive 笔记，先去 inbox 写一条吧" |
 | 用户在编辑器里保存导致链接变化 | `useLinkIndex()` 的 bus subscription 自动 refetch，computed 重新计算，graph.graphData() 增量更新 |
 | 用户拖动节点后再次打开图谱 | force-graph 的 fx/fy 在 unmount 时被 force-graph 内部的 `_destroy` 清掉，下次 mount 重新居中 |
 
@@ -127,8 +127,8 @@ const colors = computed(() => {
 ### `src/composables/vault/__tests__/useGraphData.test.ts`（新建）
 
 纯计算，无 DOM / 无 force-graph 依赖。覆盖：
-- 节点是 zettel 路径的子集
-- 边只在 zettel 内部 wiki 链接里产生
+- 节点是 archive 路径的子集
+- 边只在 archive 内部 wiki 链接里产生
 - 跨目录（zettel → inbox）的链接不出现在图里
 - 孤立节点（无入无出）仍出现在 nodes
 - `val` 字段按度数计算正确

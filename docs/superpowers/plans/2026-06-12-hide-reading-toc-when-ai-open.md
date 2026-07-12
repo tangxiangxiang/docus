@@ -173,7 +173,7 @@ pnpm dev
 We need a post that has at least 3 h2 headings so the TOC has multiple items to render. Run:
 
 ```bash
-ls /Users/txx/docus/src/content/zettel/ /Users/txx/docus/src/content/inbox/ /Users/txx/docus/src/content/literature/ 2>/dev/null | head -40
+ls /Users/txx/docus/src/content/archive/ /Users/txx/docus/src/content/inbox/ /Users/txx/docus/src/content/literature/ 2>/dev/null | head -40
 ```
 
 Pick any `.md` file that has visible `## ` headings. For the rest of this task, replace `LONG_POST` with its path (e.g. `inbox/some-post`).

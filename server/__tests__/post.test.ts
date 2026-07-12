@@ -101,16 +101,16 @@ describe('POST /api/posts', () => {
     }
   })
 
-  it('rejects direct note creation inside zettel/', async () => {
-    const r = await call('POST', '/api/posts', { path: 'zettel/direct', title: 'Direct' })
+  it('rejects direct note creation inside archive/', async () => {
+    const r = await call('POST', '/api/posts', { path: 'archive/direct', title: 'Direct' })
     expect(r.status).toBe(422)
-    await expect(fs.stat(path.join(CONTENT_DIR, 'zettel', 'direct.md'))).rejects.toThrow()
+    await expect(fs.stat(path.join(CONTENT_DIR, 'archive', 'direct.md'))).rejects.toThrow()
   })
 
-  it('allows organizational folder creation inside zettel/', async () => {
-    const folder = path.join(CONTENT_DIR, 'zettel', 'concepts-test')
+  it('allows organizational folder creation inside archive/', async () => {
+    const folder = path.join(CONTENT_DIR, 'archive', 'concepts-test')
     try {
-      const r = await call('POST', '/api/folders', { path: 'zettel/concepts-test' })
+      const r = await call('POST', '/api/folders', { path: 'archive/concepts-test' })
       expect(r.status).toBe(201)
       await expect(fs.stat(folder)).resolves.toBeTruthy()
     } finally {
@@ -118,14 +118,14 @@ describe('POST /api/posts', () => {
     }
   })
 
-  it('rejects case-variant Zettel/ prefix before it can create a file', async () => {
+  it('rejects case-variant Archive/ prefix before it can create a file', async () => {
     // The strict path validator now rejects uppercase path segments before
-    // the case-insensitive zettel policy guard runs. The important contract
-    // is unchanged: a client cannot POST `Zettel/note` and create a parallel
+    // the case-insensitive archive policy guard runs. The important contract
+    // is unchanged: a client cannot POST `Archive/note` and create a parallel
     // namespace on Linux or a colliding file on macOS.
-    const r = await call('POST', '/api/posts', { path: 'Zettel/direct', title: 'Direct' })
+    const r = await call('POST', '/api/posts', { path: 'Archive/direct', title: 'Direct' })
     expect(r.status).toBe(400)
-    await expect(fs.stat(path.join(CONTENT_DIR, 'Zettel', 'direct.md'))).rejects.toThrow()
+    await expect(fs.stat(path.join(CONTENT_DIR, 'Archive', 'direct.md'))).rejects.toThrow()
   })
 
   it('returns 400 (not 500) for a whitespace-only title', async () => {

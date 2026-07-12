@@ -8,8 +8,8 @@ import { installDialogMocks } from '../../../__test-helpers__/dialogs'
 installDialogMocks()
 
 // New convention: implicit root is `src/content/`, surfaced in the API as a
-// folder named "content" with path "". Top-level children are the Zettelkasten
-// folders: inbox (fleeting), literature (source notes), zettel (permanent).
+// folder named "content" with path "". Top-level children are the vault roots
+// folders: inbox (fleeting), literature (source notes), archive (permanent).
 const TREE: TreeNode[] = [
   {
     kind: 'folder', name: 'content', path: '', children: [
@@ -29,13 +29,13 @@ const TREE: TreeNode[] = [
         ],
       },
       {
-        kind: 'folder', name: 'zettel', path: 'zettel', children: [
+        kind: 'folder', name: 'archive', path: 'archive', children: [
           {
-            kind: 'folder', name: 'concepts', path: 'zettel/concepts', children: [
-              { kind: 'file', name: 'atomic-note', path: 'zettel/concepts/atomic-note', title: 'Atomic note', mtime: 0 },
+            kind: 'folder', name: 'concepts', path: 'archive/concepts', children: [
+              { kind: 'file', name: 'atomic-note', path: 'archive/concepts/atomic-note', title: 'Atomic note', mtime: 0 },
             ],
           },
-          { kind: 'file', name: 'zettelkasten-intro', path: 'zettel/zettelkasten-intro', title: 'Zettelkasten intro', mtime: 0 },
+          { kind: 'file', name: 'archive-intro', path: 'archive/archive-intro', title: 'Archive intro', mtime: 0 },
         ],
       },
     ],
@@ -56,7 +56,7 @@ describe('FileTree', () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
     expect(w.text()).toContain('inbox')
     expect(w.text()).toContain('literature')
-    expect(w.text()).toContain('zettel')
+    expect(w.text()).toContain('archive')
     // 'notes' is nested inside 'inbox' which is collapsed by default
     expect(w.text()).not.toContain('notes')
   })
@@ -134,11 +134,11 @@ describe('FileTree', () => {
     expect(stored).toContain('inbox/notes')
   })
 
-  it('default-expands zettel ancestors of the current path on mount', () => {
-    mount(FileTree, { props: { tree: TREE, currentPath: 'zettel/concepts/atomic-note' } })
+  it('default-expands archive ancestors of the current path on mount', () => {
+    mount(FileTree, { props: { tree: TREE, currentPath: 'archive/concepts/atomic-note' } })
     const stored = JSON.parse(localStorage.getItem('docus.vault.expandedPaths') ?? '[]')
-    expect(stored).toContain('zettel')
-    expect(stored).toContain('zettel/concepts')
+    expect(stored).toContain('archive')
+    expect(stored).toContain('archive/concepts')
   })
 })
 
@@ -168,11 +168,11 @@ describe('FileTree search input', () => {
 
   it('does not filter anything when the query is empty', () => {
     const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
-    // No input value, so the inbox / literature / zettel folders all
+    // No input value, so the inbox / literature / archive folders all
     // render as collapsed top-level rows.
     expect(w.text()).toContain('inbox')
     expect(w.text()).toContain('literature')
-    expect(w.text()).toContain('zettel')
+    expect(w.text()).toContain('archive')
   })
 
   it('hides the clear-× button until the query is non-empty', async () => {
@@ -213,13 +213,13 @@ describe('FileTree search input', () => {
   })
 
   it('keeps an entire folder visible when the folder name matches', async () => {
-    // 'zettel' as a query keeps all zettel/* children, even though
-    // none of their names/titles/summaries contain 'zettel'. This is
+    // 'archive' as a query keeps all archive/* children, even though
+    // none of their names/titles/summaries contain 'archive'. This is
     // the "scope to a folder by typing its name" workflow.
     const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
-    await w.find('.search-input').setValue('zettel')
-    expect(w.text()).toContain('zettelkasten-intro')
-    // inbox is hidden because its folder name doesn't match 'zettel'
+    await w.find('.search-input').setValue('archive')
+    expect(w.text()).toContain('archive-intro')
+    // inbox is hidden because its folder name doesn't match 'archive'
     // and no descendant matches.
     expect(w.text()).not.toContain('hello')
   })
@@ -365,8 +365,8 @@ describe('FileTree search input', () => {
     // none of those contain "inbox", so it gets no matchInfo and
     // therefore no tooltip.
     //
-    // (Earlier draft used "zettel" / "zettelkasten-intro", but
-    // "zettel" IS a substring of the filename, so the file would
+    // (Earlier draft used "archive" / "archive-intro", but
+    // "archive" IS a substring of the filename, so the file would
     // legitimately match by name — making the assertion false.)
     const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
     await w.find('.search-input').setValue('inbox')
@@ -448,7 +448,7 @@ describe('FileTree search input', () => {
     // Nothing got filtered out, all three top-level folders visible.
     expect(w.text()).toContain('inbox')
     expect(w.text()).toContain('literature')
-    expect(w.text()).toContain('zettel')
+    expect(w.text()).toContain('archive')
   })
 
   it('the #tag tooltip says "Matched in: tags"', async () => {

@@ -19,7 +19,7 @@ import { getLinkIndex, fetchBacklinks } from '../../composables/vault/useLinkInd
 import { getFileChangeBus } from '../../composables/vault/useFileChangeBus'
 import { linksEmpty } from '../../composables/vault/useTocState'
 import { ICON_LINKS } from './icons'
-import { PROTECTED_ROOTS } from '../../composables/zettelProtocol'
+import { PROTECTED_ROOTS } from '../../composables/archiveProtocol'
 
 const props = defineProps<{
   /** Path of the currently active note, or null if no note is open. */
@@ -56,7 +56,7 @@ function displayTitle(p: string): string {
   return titleByPath.value.get(p) ?? pathTail(p)
 }
 
-/** Drop the leading protected root (`inbox/`, `zettel/`, etc.) so
+/** Drop the leading protected root (`inbox/`, `archive/`, etc.) so
  *  the panel rows read as "the meaningful tail", matching what
  *  TagPanel / FileTree do. */
 function pathTail(p: string): string {

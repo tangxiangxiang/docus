@@ -39,12 +39,12 @@ const TREE: TreeNode[] = [
         ],
       },
       { kind: 'folder', name: 'literature', path: 'literature', children: [] },
-      { kind: 'folder', name: 'zettel', path: 'zettel', children: [] },
+      { kind: 'folder', name: 'archive', path: 'archive', children: [] },
     ],
   },
 ]
 
-describe('FileTree archive-to-zettel', () => {
+describe('FileTree archive-note', () => {
   beforeEach(() => {
     localStorage.clear()
     vi.restoreAllMocks()
@@ -55,18 +55,18 @@ describe('FileTree archive-to-zettel', () => {
     document.querySelectorAll('.tree-context-menu').forEach((el) => el.remove())
   })
 
-  it('moves an inbox file to zettel/<name> via patchPost and toasts success', async () => {
+  it('moves an inbox file to archive/<name> via patchPost and toasts success', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'zettel/foo', title: 'foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
+      path: 'archive/foo', title: 'foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
 
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
     const vm = w.vm as any
-    await vm.onArchiveToZettel('inbox/foo')
+    await vm.onArchiveNote('inbox/foo')
     await flushPromises()
 
-    expect(patchSpy).toHaveBeenCalledWith('inbox/foo', { targetPath: 'zettel/foo' })
-    expect(toastSpy.success).toHaveBeenCalledWith('已归档到 zettel')
+    expect(patchSpy).toHaveBeenCalledWith('inbox/foo', { targetPath: 'archive/foo' })
+    expect(toastSpy.success).toHaveBeenCalledWith('已归档')
     expect(w.emitted('refresh')).toBeTruthy()
     // currentPath is null in this case, so no select emit.
     expect(w.emitted('select')).toBeFalsy()
@@ -75,57 +75,57 @@ describe('FileTree archive-to-zettel', () => {
 
   it('emits select(targetPath) when currentPath equals the archived file', async () => {
     vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'zettel/foo', title: 'foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
+      path: 'archive/foo', title: 'foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
 
     const w = mount(FileTree, { props: { tree: TREE, currentPath: 'inbox/foo' } })
     const vm = w.vm as any
-    await vm.onArchiveToZettel('inbox/foo')
+    await vm.onArchiveNote('inbox/foo')
     await flushPromises()
 
     expect(w.emitted('refresh')).toBeTruthy()
-    expect(w.emitted('select')!.at(-1)).toEqual(['zettel/foo'])
+    expect(w.emitted('select')!.at(-1)).toEqual(['archive/foo'])
     w.unmount()
   })
 
-  it('emits select(final path) when the server auto-suffixes a zettel collision', async () => {
+  it('emits select(final path) when the server auto-suffixes a archive collision', async () => {
     vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'zettel/foo-2', title: 'foo-2', created: '', updated: '', tags: [], size: 0, mtime: 0,
+      path: 'archive/foo-2', title: 'foo-2', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
 
     const w = mount(FileTree, { props: { tree: TREE, currentPath: 'inbox/foo' } })
     const vm = w.vm as any
-    await vm.onArchiveToZettel('inbox/foo')
+    await vm.onArchiveNote('inbox/foo')
     await flushPromises()
 
-    expect(w.emitted('select')!.at(-1)).toEqual(['zettel/foo-2'])
-    expect(toastSpy.success).toHaveBeenCalledWith('已归档到 zettel/foo-2')
+    expect(w.emitted('select')!.at(-1)).toEqual(['archive/foo-2'])
+    expect(toastSpy.success).toHaveBeenCalledWith('已归档到 archive/foo-2')
     w.unmount()
   })
 
-  it('archives an inbox/draft file to zettel/<name>', async () => {
+  it('archives an inbox/draft file to archive/<name>', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'zettel/draft-foo', title: 'draft-foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
+      path: 'archive/draft-foo', title: 'draft-foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
 
     const w = mount(FileTree, { props: { tree: TREE, currentPath: 'inbox/draft/draft-foo' } })
     const vm = w.vm as any
-    await vm.onArchiveToZettel('inbox/draft/draft-foo')
+    await vm.onArchiveNote('inbox/draft/draft-foo')
     await flushPromises()
 
-    expect(patchSpy).toHaveBeenCalledWith('inbox/draft/draft-foo', { targetPath: 'zettel/draft-foo' })
-    expect(w.emitted('select')!.at(-1)).toEqual(['zettel/draft-foo'])
+    expect(patchSpy).toHaveBeenCalledWith('inbox/draft/draft-foo', { targetPath: 'archive/draft-foo' })
+    expect(w.emitted('select')!.at(-1)).toEqual(['archive/draft-foo'])
     w.unmount()
   })
 
   it('does not emit select when currentPath differs from the archived file', async () => {
     vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'zettel/foo', title: 'foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
+      path: 'archive/foo', title: 'foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
 
     const w = mount(FileTree, { props: { tree: TREE, currentPath: 'inbox/other' } })
     const vm = w.vm as any
-    await vm.onArchiveToZettel('inbox/foo')
+    await vm.onArchiveNote('inbox/foo')
     await flushPromises()
 
     expect(w.emitted('refresh')).toBeTruthy()
@@ -138,7 +138,7 @@ describe('FileTree archive-to-zettel', () => {
 
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
     const vm = w.vm as any
-    await vm.onArchiveToZettel('inbox/foo')
+    await vm.onArchiveNote('inbox/foo')
     await flushPromises()
 
     expect(toastSpy.error).toHaveBeenCalledWith('归档失败: boom')
@@ -146,18 +146,18 @@ describe('FileTree archive-to-zettel', () => {
     w.unmount()
   })
 
-  it('does not call patchPost when the source path is already in zettel (defensive)', async () => {
+  it('does not call patchPost when the source path is already in archive (defensive)', async () => {
     // Belt-and-suspenders: TreeRow's canArchive gate already prevents the
-    // menu from rendering for zettel/* files, so onArchiveToZettel should
+    // menu from rendering for archive/* files, so onArchiveNote should
     // never be invoked with such a path in practice. If something ever
     // bypasses the gate, the handler must still short-circuit rather
     // than round-trip to PATCH with targetPath === src.
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'zettel/foo', title: 'foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
+      path: 'archive/foo', title: 'foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null } })
     const vm = w.vm as any
-    await vm.onArchiveToZettel('zettel/foo')
+    await vm.onArchiveNote('archive/foo')
 
     expect(patchSpy).not.toHaveBeenCalled()
     expect(toastSpy.success).not.toHaveBeenCalled()
@@ -165,13 +165,13 @@ describe('FileTree archive-to-zettel', () => {
   })
 
   it('drives the menu click end-to-end and lands on patchPost', async () => {
-    // Verifies the TreeRow menu wiring: right-click → 归档到 zettel button
-    // → emit('archive-to-zettel') → FileTree handler → patchPost. Done
+    // Verifies the TreeRow menu wiring: right-click → 归档到 archive button
+    // → emit('archive-note') → FileTree handler → patchPost. Done
     // through the DOM (Teleport + real click) so a future Vue version
     // or template refactor that breaks the @click binding will fail here
     // rather than in the unit-only tests above.
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'zettel/foo', title: 'foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
+      path: 'archive/foo', title: 'foo', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
 
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
@@ -187,13 +187,13 @@ describe('FileTree archive-to-zettel', () => {
     const menu = document.querySelector('.tree-context-menu')!
     expect(menu).not.toBeNull()
     const buttons = [...menu.querySelectorAll('button')]
-    const archive = buttons.find((b) => b.textContent?.includes('归档到 zettel'))
+    const archive = buttons.find((b) => b.textContent?.includes('归档'))
     expect(archive).toBeDefined()
     archive!.click()
     await flushPromises()
 
-    expect(patchSpy).toHaveBeenCalledWith('inbox/foo', { targetPath: 'zettel/foo' })
-    expect(toastSpy.success).toHaveBeenCalledWith('已归档到 zettel')
+    expect(patchSpy).toHaveBeenCalledWith('inbox/foo', { targetPath: 'archive/foo' })
+    expect(toastSpy.success).toHaveBeenCalledWith('已归档')
     w.unmount()
   })
 })

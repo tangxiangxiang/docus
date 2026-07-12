@@ -9,13 +9,13 @@ describe('AiChatMessages', () => {
     const wrapper = mount(AiChatMessages, {
       props: {
         messages: [],
-        currentPath: 'zettel/example.md',
+        currentPath: 'archive/example.md',
         quickPrompts: [{ label: 'Summarize', text: 'Summarize this note' }],
       },
     })
 
     expect(wrapper.text()).toContain('Ask about current note')
-    expect(wrapper.text()).toContain('zettel/example.md')
+    expect(wrapper.text()).toContain('archive/example.md')
     await wrapper.get('.ai-quick-prompt').trigger('click')
     expect(wrapper.emitted('prompt')).toEqual([['Summarize this note']])
   })
@@ -39,7 +39,7 @@ describe('AiChatMessages', () => {
               toolCalls: [{
                 id: 'tool-1',
                 name: 'read_file',
-                input: { path: 'zettel/example.md' },
+                input: { path: 'archive/example.md' },
                 result: { content: 'body', is_error: false },
               }],
             },

@@ -1,5 +1,5 @@
 // Scope filter for the vault's file tree. The filter narrows the tree
-// to one of the three Zettelkasten roots (inbox / literature / zettel)
+// to one of the three vault roots (inbox / literature / archive)
 // and is rendered as chips in the NavBar (the file tree's header is too
 // narrow on 150px sidebars). Both the NavBar and the FileTree need to
 // read this state, so it lives in a composable with module-level refs
@@ -7,7 +7,7 @@
 // in one place instead of two.
 
 import { ref, watch } from 'vue'
-import { PROTECTED_ROOTS } from '../zettelProtocol'
+import { PROTECTED_ROOTS } from '../archiveProtocol'
 
 const STORAGE_KEY = 'docus.vault.activeScope'
 

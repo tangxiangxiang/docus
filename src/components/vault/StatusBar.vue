@@ -44,7 +44,7 @@ const sizeLabel = computed(() => {
 
 // Path segments for the center group. Drops the .md extension from
 // the leaf segment — it's an internal storage detail, not part of
-// the document's identity as a zettel. Rendered inline with `›`
+// the document's identity. Rendered inline with `›`
 // separators in a single text run so a single `text-overflow:
 // ellipsis` on the wrapper handles long-path truncation.
 const pathLabel = computed(() => {

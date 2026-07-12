@@ -23,12 +23,12 @@ beforeEach(() => {
 describe('document metadata repository', () => {
   it('creates and reads normalized metadata', () => {
     const saved = saveDocumentMetadata(db, {
-      id: 'doc-1', path: 'zettel/example', title: ' Example ', summary: ' Summary ',
+      id: 'doc-1', path: 'archive/example', title: ' Example ', summary: ' Summary ',
       tags: ['RAG', 'rag', ' notes '], aliases: ['Example', ' Example '],
       createdAt: 10, updatedAt: 20,
     })
     expect(saved).toMatchObject({
-      id: 'doc-1', path: 'zettel/example', title: 'Example', summary: 'Summary',
+      id: 'doc-1', path: 'archive/example', title: 'Example', summary: 'Summary',
       tags: ['notes', 'RAG'], aliases: ['Example'], createdAt: 10, updatedAt: 20,
     })
   })
@@ -45,17 +45,17 @@ describe('document metadata repository', () => {
       INSERT INTO metadata_migrations (path, status, source_hash, error, updated_at)
       VALUES ('inbox/a', 'verified', 'hash', '', 1)
     `).run()
-    expect(moveDocumentMetadata(db, 'inbox/a', 'zettel/a')).toBe(true)
+    expect(moveDocumentMetadata(db, 'inbox/a', 'archive/a')).toBe(true)
     expect(getDocumentMetadata(db, 'inbox/a')).toBeNull()
-    expect(getDocumentMetadata(db, 'zettel/a')?.id).toBe('doc-1')
-    expect(db.prepare('SELECT path FROM metadata_migrations').get()).toEqual({ path: 'zettel/a' })
-    expect(deleteDocumentMetadata(db, 'zettel/a')).toBe(true)
+    expect(getDocumentMetadata(db, 'archive/a')?.id).toBe('doc-1')
+    expect(db.prepare('SELECT path FROM metadata_migrations').get()).toEqual({ path: 'archive/a' })
+    expect(deleteDocumentMetadata(db, 'archive/a')).toBe(true)
     expect(db.prepare('SELECT COUNT(*) AS n FROM document_tags').get()).toEqual({ n: 0 })
     expect(db.prepare('SELECT COUNT(*) AS n FROM document_aliases').get()).toEqual({ n: 0 })
     // The backup survives under an orphaned tombstone, no longer occupying
     // the user-visible path or being eligible for restore.
     expect(db.prepare('SELECT original_path, status FROM metadata_migrations').get()).toEqual({
-      original_path: 'zettel/a', status: 'orphaned',
+      original_path: 'archive/a', status: 'orphaned',
     })
   })
 

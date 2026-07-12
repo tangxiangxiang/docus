@@ -62,8 +62,8 @@ const STRINGS: Strings = {
     en: 'Find unprocessed',
   },
   'quick_prompts.no_note.find_unprocessed.text': {
-    zh: '帮我找出 inbox 或 literature 中适合整理成永久笔记的内容。',
-    en: 'Find content in inbox or literature that is ready to be promoted into a permanent note.',
+    zh: '帮我找出 inbox 或 literature 中适合整理成归档笔记的内容。',
+    en: 'Find content in inbox or literature that is ready to be archived.',
   },
   'quick_prompts.no_note.suggest_tidy.label': {
     zh: '整理建议',
@@ -153,7 +153,7 @@ const STRINGS: Strings = {
   'file_tree.new_file': { zh: '新建文件', en: 'New file' },
   'file_tree.new_folder': { zh: '新建文件夹', en: 'New folder' },
   'file_tree.rename': { zh: '重命名', en: 'Rename' },
-  'file_tree.archive': { zh: '归档到 zettel', en: 'Archive to zettel' },
+  'file_tree.archive': { zh: '归档', en: 'Archive' },
   'file_tree.delete': { zh: '删除', en: 'Delete' },
   'common.unknown_error': { zh: '未知错误', en: 'unknown error' },
 }

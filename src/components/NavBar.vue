@@ -4,8 +4,8 @@ import { RouterLink } from 'vue-router'
 import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
-import { PROTECTED_ROOTS } from '../composables/zettelProtocol'
-import { ICON_AI, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ZETTEL } from './vault/icons'
+import { PROTECTED_ROOTS } from '../composables/archiveProtocol'
+import { ICON_AI, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ARCHIVE } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import ViewModeMenu from './ViewModeMenu.vue'
 
@@ -35,7 +35,7 @@ const themeTitle = computed<string>(() => {
 const viewModeApi = inject(VaultViewModeKey, null)
 const viewMode = computed(() => viewModeApi?.mode.value ?? 'edit')
 
-/* Scope filter (Zettelkasten root chips). Owned by the composable so
+/* Scope filter (vault root chips). Owned by the composable so
    FileTree can read the active scope and the chips here can write it.
    Counts are pushed in by VaultView whenever the tree changes. */
 const { activeScope, toggleScope } = useScopeFilter()
@@ -67,7 +67,7 @@ function onViewModeSelect(payload: { mode: 'edit' | 'read'; previewOpen: boolean
 const SCOPE_ICONS: Record<string, string> = {
   inbox: ICON_SCOPE_INBOX,
   literature: ICON_SCOPE_LITERATURE,
-  zettel: ICON_SCOPE_ZETTEL,
+  archive: ICON_SCOPE_ARCHIVE,
 }
 </script>
 

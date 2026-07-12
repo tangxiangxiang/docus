@@ -1,6 +1,6 @@
 // Knowledge-graph data projection: take the server's link index
 // snapshot (see /api/links/index) and reduce it to force-graph's
-// { nodes, links } shape, restricted to the zettel/ subtree.
+// { nodes, links } shape, restricted to the archive/ subtree.
 //
 // The composable is reactive: it reads `getLinkIndex()` (a module-
 // level ShallowRef populated by useLinkIndexSubscription) and
@@ -12,8 +12,8 @@
 // Why filter on the client and not in the link index endpoint:
 // the link index is a generic cross-cutting index (used by the
 // wiki link resolver, the LinksPanel, and the in-editor backlink
-// preview). Restricting it to zettel/ would couple those callers
-// to the zettel scope. The filter is a view-layer concern, so it
+// preview). Restricting it to archive/ would couple those callers
+// to the archive scope. The filter is a view-layer concern, so it
 // lives here.
 
 import { computed, type ComputedRef } from 'vue'
@@ -37,7 +37,7 @@ export interface GraphData {
   links: GraphLink[]
 }
 
-const ZETTEL_PREFIX = 'zettel/'
+const ARCHIVE_PREFIX = 'archive/'
 
 function titleFromPath(path: string): string {
   /* docus notes are addressable by path; the title is the basename
@@ -48,25 +48,25 @@ function titleFromPath(path: string): string {
 }
 
 export function buildGraphData(idx: LinkIndexState): GraphData {
-  /* Stage 1: collect zettel nodes from the path index. The path
+  /* Stage 1: collect archive nodes from the path index. The path
      index is authoritative for "this note exists" — we don't
      need to scan the file system. */
-  const zettelNodes = new Set<string>()
+  const archiveNodes = new Set<string>()
   for (const p of idx.paths) {
-    if (p.startsWith(ZETTEL_PREFIX)) zettelNodes.add(p)
+    if (p.startsWith(ARCHIVE_PREFIX)) archiveNodes.add(p)
   }
 
-  /* Stage 2: collect intra-zettel wiki links. Both ends must be
-     in the zettel set; kind must be 'wiki' (we don't surface
+  /* Stage 2: collect intra-archive wiki links. Both ends must be
+     in the archive set; kind must be 'wiki' (we don't surface
      regular .md links as "knowledge" connections). */
   const linkSet = new Map<string, GraphLink>()
   const inDegree = new Map<string, number>()
   const outDegree = new Map<string, number>()
-  for (const source of zettelNodes) {
+  for (const source of archiveNodes) {
     const links = idx.outgoing[source] ?? []
     for (const link of links) {
       if (link.kind !== 'wiki') continue
-      if (!zettelNodes.has(link.target)) continue
+      if (!archiveNodes.has(link.target)) continue
       if (link.target === source) continue
       const key = `${source} ${link.target}`
       if (linkSet.has(key)) continue
@@ -90,7 +90,7 @@ export function buildGraphData(idx: LinkIndexState): GraphData {
 
      New formula follows Obsidian's graph view: scale the radius
      with sqrt(degree) (so 4x more links = 2x larger dot, not 4x),
-     keep an isolated-node floor (otherwise zero-degree zettels
+     keep an isolated-node floor (otherwise zero-degree archive notes
      disappear entirely), and cap the maximum so a runaway hub
      (an inbox page that every other note links to) doesn't
      dwarf its neighbors. The numbers are tuned to land in the
@@ -110,7 +110,7 @@ export function buildGraphData(idx: LinkIndexState): GraphData {
     total === 0 ? BASE : Math.min(MAX, BASE + Math.round(COEFF * Math.sqrt(total)))
 
   const nodes: GraphNode[] = []
-  for (const id of zettelNodes) {
+  for (const id of archiveNodes) {
     const inD = inDegree.get(id) ?? 0
     const outD = outDegree.get(id) ?? 0
     const title = idx.titles?.[id]?.trim() || titleFromPath(id)

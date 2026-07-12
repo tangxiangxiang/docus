@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Knowledge-graph canvas. Renders the zettel/ subtree as a
+// Knowledge-graph canvas. Renders the archive/ subtree as a
 // force-directed graph using `force-graph` (canvas, not svg — the
 // library targets 1k+ nodes and uses d3-force under the hood).
 //
@@ -353,7 +353,7 @@ async function mountGraph() {
   if (disposed || graph || mountInFlight) return
   const el = containerRef.value
   if (!el) return
-  /* Skip mount for an empty zettel set — force-graph renders a
+  /* Skip mount for an empty archive set — force-graph renders a
      black box for a 0-node graph, which is a worse UX than a
      one-line "no notes" message. The early return is what the
      test pins in the empty-state describe block. */
@@ -396,7 +396,7 @@ async function mountGraph() {
    .nodeLabel('title')
    .nodeVal('val')
   /* Tighten the default charge + center forces so an edgeless graph
-     (the common zettel/ draft state where a few notes have no links
+     (the common archive/ draft state where a few notes have no links
      yet) doesn't fling its nodes to opposite corners. force-graph
      pre-registers forceManyBody (strength=-30) and forceCenter
      (strength=0.1). With defaults the charge is 300x stronger than
@@ -473,7 +473,7 @@ async function mountGraph() {
        d3-force a few ticks to separate initially-coincident nodes;
        fitting after that early spread avoids the "opened too
        zoomed-in, only seeing card edges" problem when the user has
-       many zettels.
+       many notes.
 
      The user can still wheel-zoom after the first fit; this only
      chooses a sane opening frame.
@@ -590,7 +590,7 @@ watch(theme, () => {
       class="kg-empty"
       aria-live="polite"
     >
-      还没有 zettel 笔记，先去 inbox 写一条吧。
+      还没有归档笔记，先去 inbox 写一条吧。
     </div>
   </div>
 </template>

@@ -71,13 +71,13 @@ describe('Monaco Markdown helpers', () => {
 
   it('ranks Wiki Links by relevance and recent use', () => {
     const targets = [
-      { path: 'zettel/second-brain', title: 'Building a Second Brain' },
+      { path: 'archive/second-brain', title: 'Building a Second Brain' },
       { path: 'literature/brain', title: 'Brain Notes' },
-      { path: 'zettel/boxes', title: 'Zettelkasten' },
+      { path: 'archive/boxes', title: 'Archive vault' },
     ]
     expect(rankWikiTargets(targets, 'brain', [], '')[0].path).toBe('literature/brain')
-    expect(rankWikiTargets(targets, '', ['zettel/boxes'], '')[0].path).toBe('zettel/boxes')
-    expect(rankWikiTargets(targets, 'zbx', [], '')[0].path).toBe('zettel/boxes')
+    expect(rankWikiTargets(targets, '', ['archive/boxes'], '')[0].path).toBe('archive/boxes')
+    expect(rankWikiTargets(targets, 'avb', [], '')[0].path).toBe('archive/boxes')
   })
 
   it('finds a Wiki Link target under the pointer', () => {

@@ -283,7 +283,7 @@ hr {
 .navbar.is-vault .nav-search,
 .navbar.is-vault .theme-toggle { padding: 4px; }
 
-/* Scope filter chips (Zettelkasten roots: inbox / literature / zettel).
+/* Scope filter chips (vault roots: inbox / literature / archive).
    Rendered in the navbar in vault mode because the file tree's header
    is too narrow on 150px sidebars to fit three chips alongside the
    folder icon. Sits between the brand and the nav-spacer; uses global
@@ -338,7 +338,7 @@ hr {
   display: block;
 }
 .navbar .scope-chip-label {
-  /* Mono so the three names (inbox / literature / zettel) feel like
+  /* Mono so the three names (inbox / literature / archive) feel like
      route-like identifiers, matching the file-tree row visual language.
      Truncates on very narrow viewports rather than wrapping. */
   font-family: var(--mono);

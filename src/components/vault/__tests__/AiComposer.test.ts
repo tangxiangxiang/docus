@@ -46,9 +46,9 @@ describe('AiComposer', () => {
     const wrapper = mountComposer({
       modelValue: 'hello',
       configured: false,
-      currentPath: 'zettel/example.md',
+      currentPath: 'archive/example.md',
     })
-    expect(wrapper.get('.ai-context-path').text()).toBe('zettel/example.md')
+    expect(wrapper.get('.ai-context-path').text()).toBe('archive/example.md')
     expect(wrapper.get('.ai-send').attributes('disabled')).toBeDefined()
   })
 })

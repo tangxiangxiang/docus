@@ -45,7 +45,7 @@ app.get('*', async (c) => {
   return c.html(html)
 })
 
-// Seed the three Zettelkasten spec folders (inbox / literature / zettel)
+// Seed the three vault root folders (inbox / literature / archive)
 // before the HTTP server starts accepting requests. Idempotent — existing
 // folders and files are left alone; only missing roots are created.
 // See server/seed.ts for the rationale.

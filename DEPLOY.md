@@ -70,7 +70,7 @@ open http://localhost:3000          # 或者你设置的 DOCS_PORT
 容器无状态。所有改动都落在两个命名卷里：
 
 - `docus-data` → `/app/data`，里面是 `docus.db`（SQLite）+ WAL/SHM 文件。**聊天历史在这里**。
-- `docus-content` → `/app/src/content`，里面是 vault 的 `inbox/` / `literature/` / `zettel/`。**笔记在这里**。
+- `docus-content` → `/app/src/content`，里面是 vault 的 `inbox/` / `literature/` / `archive/`。**笔记在这里**。
 
 > **vault 不在 docus 仓库里。** `src/content/` 下的笔记文件（以及
 > `src/content/.git/` 这个 vault 自己的版本历史仓库）**不**被 docus

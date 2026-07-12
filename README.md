@@ -1,7 +1,6 @@
 # docus
 
-A Vue 3 + TypeScript personal knowledge base built around a small
-Zettelkasten protocol. The vault lives as plain `.md` files under
+A Vue 3 + TypeScript personal knowledge base. The vault lives as plain `.md` files under
 `src/content/` and is served by an in-process Hono backend. The editor
 is Monaco; the file tree and the right pane (editor + live preview)
 share a VS-Code-style layout. A right-side AI chat panel rounds out
@@ -46,7 +45,7 @@ src/
                          ActivityBar, AiPanel, AiSessionPicker
   composables/           useToast / useConfirm / usePrompt / useTheme
                          (UI singletons)
-    zettelProtocol.ts    Pure functions: which paths are protected
+    archiveProtocol.ts   Pure functions: which paths are protected
                          and the user-facing error messages
     vault/               useVaultLayout, useEditorTabs, useTagFilter,
                          useAiHistory, useCurrentNote — the state and
@@ -59,7 +58,7 @@ src/
     search.ts            MiniSearch full-text index, built client-side
     markdown.ts, frontmatter.ts
   content/               The vault itself — three top-level folders
-                         (inbox / literature / zettel) plus everything
+                         (inbox / literature / archive) plus everything
                          the user writes. NOT tracked by docus's git
                          repo; vault's own history lives in
                          src/content/.git/
@@ -92,18 +91,18 @@ docs/superpowers/
   plans/                 Implementation plans (per feature)
 ```
 
-## The Zettelkasten protocol
+## The Archive protocol
 
 The three top-level folders are part of the spec, not user-editable
 choices:
 
 - **`inbox/`** — capture bucket. Anything new lands here.
 - **`literature/`** — long-form reference material.
-- **`zettel/`** — permanent notes. The structure is protected: folders may be created and items may be moved inside zettel for organization, but permanent notes are not created there directly.
+- **`archive/`** — archived notes. The structure is protected: folders may be created and items may be moved inside archive for organization, but archived notes are not created there directly — they enter through explicit archive flows.
 
 Rename, delete, and re-parenting of these roots are rejected by the
 client and the server. The rules live in
-[src/composables/zettelProtocol.ts](src/composables/zettelProtocol.ts)
+[src/composables/archiveProtocol.ts](src/composables/archiveProtocol.ts)
 as a flat module of pure functions. The same rules gate both the
 context-menu UI (protected rows show only allowed actions) and the
 filesystem writes (a blocked op shows a Chinese toast and returns
@@ -295,7 +294,7 @@ rely on the dev server's manual smoke (open / edit / save / drag).
 - **Composables** in `src/composables/` follow the singleton-factory
   pattern when they hold cross-component state (toasts, confirm
   queue, prompt queue, theme, AI history), and the pure-function-
-  module pattern when they are stateless rules (`zettelProtocol.ts`).
+  module pattern when they are stateless rules (`archiveProtocol.ts`).
 - **The vault composables** (`useVaultLayout`, `useEditorTabs`,
   `useTagFilter`) are per-component factories. Cross-composable
   dependencies are taken as constructor arguments — `useTagFilter({ activePanel })`,

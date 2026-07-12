@@ -36,7 +36,7 @@ title: Markdown Style Specimen
 
 ### Links and media
 
-[[zettel/example|有效 Wiki Link]] · [[missing-note|失效 Wiki Link]]
+[[archive/example|有效 Wiki Link]] · [[missing-note|失效 Wiki Link]]
 
 ![Docus logo](/logo.svg)
 

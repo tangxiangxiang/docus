@@ -23,7 +23,7 @@ const TREE: TreeNode[] = [
         ],
       },
       { kind: 'folder', name: 'literature', path: 'literature', children: [] },
-      { kind: 'folder', name: 'zettel', path: 'zettel', children: [] },
+      { kind: 'folder', name: 'archive', path: 'archive', children: [] },
     ],
   },
 ]
@@ -71,7 +71,7 @@ describe('FileTree full drag flow (with bubbling)', () => {
             ],
           },
           { kind: 'folder', name: 'literature', path: 'literature', children: [] },
-          { kind: 'folder', name: 'zettel', path: 'zettel', children: [] },
+          { kind: 'folder', name: 'archive', path: 'archive', children: [] },
         ],
       },
     ]

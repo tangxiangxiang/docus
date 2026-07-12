@@ -65,7 +65,7 @@ test('writes Chinese, persists it, and restores it after reload', async ({ page 
 test('opens a Wiki Link with the platform modifier and follows theme changes', async ({ page }) => {
   const link = page.locator('.monaco-md-link').last()
   await link.click({ modifiers: [process.platform === 'darwin' ? 'Meta' : 'Control'] })
-  await expect(page.getByTestId('opened-link')).toHaveText('zettel/linked-note')
+  await expect(page.getByTestId('opened-link')).toHaveText('archive/linked-note')
 
   const before = await page.locator('html').getAttribute('data-theme')
   await page.locator('.theme-toggle').click()

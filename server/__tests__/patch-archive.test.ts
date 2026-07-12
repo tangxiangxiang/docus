@@ -1,8 +1,8 @@
-// PATCH /api/posts/* archive-to-zettel whitelist.
+// PATCH /api/posts/* archive-note whitelist.
 //
-// The archive action and classified drops onto zettel subfolders can land a
-// file in zettel/. The server is the second line of defense: PATCH must refuse
-// any targetPath under zettel/ unless the source currently lives under inbox/
+// The archive action and classified drops onto archive subfolders can land a
+// file in archive/. The server is the second line of defense: PATCH must refuse
+// any targetPath under archive/ unless the source currently lives under inbox/
 // or literature/.
 //
 // We mock filePathFor into a per-test tmp dir (same pattern as
@@ -52,14 +52,14 @@ beforeEach(async () => {
   await fs.mkdir(path.join(tmpRoot, 'literature'), { recursive: true })
   await fs.mkdir(path.join(tmpRoot, 'literature', 'draft'), { recursive: true })
   await fs.mkdir(path.join(tmpRoot, 'archive'), { recursive: true })
-  await fs.mkdir(path.join(tmpRoot, 'zettel'), { recursive: true })
-  await fs.mkdir(path.join(tmpRoot, 'zettel', 'concepts'), { recursive: true })
+  await fs.mkdir(path.join(tmpRoot, 'projects'), { recursive: true })
+  await fs.mkdir(path.join(tmpRoot, 'archive', 'concepts'), { recursive: true })
   await fs.writeFile(path.join(tmpRoot, 'inbox', 'foo.md'), '---\ntitle: Foo\n---\n\nbody\n', 'utf8')
   await fs.writeFile(path.join(tmpRoot, 'inbox', 'draft', 'draft-foo.md'), '---\ntitle: Draft Foo\n---\n\nbody\n', 'utf8')
   await fs.writeFile(path.join(tmpRoot, 'literature', 'ahrens.md'), '---\ntitle: Ahrens\n---\n\nbody\n', 'utf8')
   await fs.writeFile(path.join(tmpRoot, 'literature', 'draft', 'draft-ahrens.md'), '---\ntitle: Draft Ahrens\n---\n\nbody\n', 'utf8')
-  await fs.writeFile(path.join(tmpRoot, 'archive', 'old.md'), '---\ntitle: Old\n---\n\nbody\n', 'utf8')
-  await fs.writeFile(path.join(tmpRoot, 'zettel', 'perm.md'), '---\ntitle: Perm\n---\n\nbody\n', 'utf8')
+  await fs.writeFile(path.join(tmpRoot, 'projects', 'old.md'), '---\ntitle: Old\n---\n\nbody\n', 'utf8')
+  await fs.writeFile(path.join(tmpRoot, 'archive', 'perm.md'), '---\ntitle: Perm\n---\n\nbody\n', 'utf8')
 })
 
 afterEach(async () => {
@@ -69,107 +69,107 @@ afterEach(async () => {
 
 afterAll(() => db.close())
 
-describe('PATCH /api/posts/* archive-to-zettel whitelist', () => {
-  it('moves inbox/foo.md to zettel/foo.md', async () => {
-    const r = await patch('/api/posts/inbox/foo', { targetPath: 'zettel/foo' })
+describe('PATCH /api/posts/* archive-note whitelist', () => {
+  it('moves inbox/foo.md to archive/foo.md', async () => {
+    const r = await patch('/api/posts/inbox/foo', { targetPath: 'archive/foo' })
     expect(r.status).toBe(200)
-    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'foo.md'))).toBeTruthy()
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'foo.md'))).toBeTruthy()
     // Source is gone.
     await expect(fs.stat(path.join(tmpRoot, 'inbox', 'foo.md'))).rejects.toThrow()
   })
 
-  it('moves literature/ahrens.md to zettel/ahrens.md', async () => {
-    const r = await patch('/api/posts/literature/ahrens', { targetPath: 'zettel/ahrens' })
+  it('moves literature/ahrens.md to archive/ahrens.md', async () => {
+    const r = await patch('/api/posts/literature/ahrens', { targetPath: 'archive/ahrens' })
     expect(r.status).toBe(200)
-    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'ahrens.md'))).toBeTruthy()
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'ahrens.md'))).toBeTruthy()
   })
 
-  it('moves inbox draft files to zettel/<name>.md', async () => {
-    const r = await patch('/api/posts/inbox/draft/draft-foo', { targetPath: 'zettel/draft-foo' })
-    expect(r.status).toBe(200)
-    const body = await r.json() as { path: string }
-    expect(body.path).toBe('zettel/draft-foo')
-    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'draft-foo.md'))).toBeTruthy()
-  })
-
-  it('moves literature draft files to zettel/<name>.md', async () => {
-    const r = await patch('/api/posts/literature/draft/draft-ahrens', { targetPath: 'zettel/draft-ahrens' })
+  it('moves inbox draft files to archive/<name>.md', async () => {
+    const r = await patch('/api/posts/inbox/draft/draft-foo', { targetPath: 'archive/draft-foo' })
     expect(r.status).toBe(200)
     const body = await r.json() as { path: string }
-    expect(body.path).toBe('zettel/draft-ahrens')
-    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'draft-ahrens.md'))).toBeTruthy()
+    expect(body.path).toBe('archive/draft-foo')
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'draft-foo.md'))).toBeTruthy()
   })
 
-  it('appends a suffix when archiving into an existing zettel path', async () => {
-    await fs.writeFile(path.join(tmpRoot, 'zettel', 'foo.md'), '---\ntitle: Existing Foo\n---\n\nbody\n', 'utf8')
-    const r = await patch('/api/posts/inbox/foo', { targetPath: 'zettel/foo' })
+  it('moves literature draft files to archive/<name>.md', async () => {
+    const r = await patch('/api/posts/literature/draft/draft-ahrens', { targetPath: 'archive/draft-ahrens' })
     expect(r.status).toBe(200)
     const body = await r.json() as { path: string }
-    expect(body.path).toBe('zettel/foo-2')
-    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'foo-2.md'))).toBeTruthy()
+    expect(body.path).toBe('archive/draft-ahrens')
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'draft-ahrens.md'))).toBeTruthy()
   })
 
-  it('moves inbox/foo.md to a zettel subfolder for classified archiving', async () => {
-    const r = await patch('/api/posts/inbox/foo', { targetPath: 'zettel/concepts/foo' })
+  it('appends a suffix when archiving into an existing archive path', async () => {
+    await fs.writeFile(path.join(tmpRoot, 'archive', 'foo.md'), '---\ntitle: Existing Foo\n---\n\nbody\n', 'utf8')
+    const r = await patch('/api/posts/inbox/foo', { targetPath: 'archive/foo' })
     expect(r.status).toBe(200)
-    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'concepts', 'foo.md'))).toBeTruthy()
+    const body = await r.json() as { path: string }
+    expect(body.path).toBe('archive/foo-2')
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'foo-2.md'))).toBeTruthy()
   })
 
-  it('allows zettel/* → zettel/* reclassification', async () => {
-    const r = await patch('/api/posts/zettel/perm', { targetPath: 'zettel/concepts/perm' })
+  it('moves inbox/foo.md to a archive subfolder for classified archiving', async () => {
+    const r = await patch('/api/posts/inbox/foo', { targetPath: 'archive/concepts/foo' })
     expect(r.status).toBe(200)
-    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'concepts', 'perm.md'))).toBeTruthy()
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'concepts', 'foo.md'))).toBeTruthy()
   })
 
-  it('refuses zettel/* → inbox/* (permanent notes stay in zettel)', async () => {
-    const r = await patch('/api/posts/zettel/perm', { targetPath: 'inbox/perm' })
+  it('allows archive/* → archive/* reclassification', async () => {
+    const r = await patch('/api/posts/archive/perm', { targetPath: 'archive/concepts/perm' })
+    expect(r.status).toBe(200)
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'concepts', 'perm.md'))).toBeTruthy()
+  })
+
+  it('refuses archive/* → inbox/* (permanent notes stay in archive)', async () => {
+    const r = await patch('/api/posts/archive/perm', { targetPath: 'inbox/perm' })
     expect(r.status).toBe(422)
-    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'perm.md'))).toBeTruthy()
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'perm.md'))).toBeTruthy()
     await expect(fs.stat(path.join(tmpRoot, 'inbox', 'perm.md'))).rejects.toThrow()
   })
 
-  it('refuses zettel rename via PATCH body.name (server backstop)', async () => {
-    // The client hides the rename menu item inside zettel via canModify,
+  it('refuses archive rename via PATCH body.name (server backstop)', async () => {
+    // The client hides the rename menu item inside archive via canModify,
     // but a non-UI caller hitting the API directly must still be blocked.
-    const r = await patch('/api/posts/zettel/perm', { name: 'renamed' })
+    const r = await patch('/api/posts/archive/perm', { name: 'renamed' })
     expect(r.status).toBe(422)
-    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'perm.md'))).toBeTruthy()
-    await expect(fs.stat(path.join(tmpRoot, 'zettel', 'renamed.md'))).rejects.toThrow()
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'perm.md'))).toBeTruthy()
+    await expect(fs.stat(path.join(tmpRoot, 'archive', 'renamed.md'))).rejects.toThrow()
   })
 
-  it('refuses DELETE inside zettel/ (server backstop)', async () => {
+  it('refuses DELETE inside archive/ (server backstop)', async () => {
     // Same rationale as the rename guard: the client hides the menu
     // item, but a non-UI caller hitting the API directly must be blocked.
-    const r = await del('/api/posts/zettel/perm')
+    const r = await del('/api/posts/archive/perm')
     expect(r.status).toBe(422)
-    expect(await fs.stat(path.join(tmpRoot, 'zettel', 'perm.md'))).toBeTruthy()
+    expect(await fs.stat(path.join(tmpRoot, 'archive', 'perm.md'))).toBeTruthy()
   })
 
-  it('treats case-variant Zettel/ prefix as zettel (refuses zettel → non-zettel move)', async () => {
-    // isInZettel is case-insensitive on purpose: macOS APFS (the default
+  it('treats case-variant Archive/ prefix as archive (refuses archive → non-archive move)', async () => {
+    // isInArchive is case-insensitive on purpose: macOS APFS (the default
     // dev filesystem) collapses case variants to the same dir at the OS
-    // level, so the protocol layer must too. Without this, a capital-Z
-    // path could escape the "zettel notes stay in zettel" gate.
+    // level, so the protocol layer must too. Without this, a capital-A
+    // path could escape the "archive notes stay in archive" gate.
     // Seed a file under the case-variant path and try to move it out.
-    await fs.writeFile(path.join(tmpRoot, 'Zettel', 'perm.md'), '---\ntitle: P\n---\n\nbody\n', 'utf8')
-    const r = await patch('/api/posts/Zettel/perm', { targetPath: 'inbox/perm' })
+    await fs.writeFile(path.join(tmpRoot, 'Archive', 'perm.md'), '---\ntitle: P\n---\n\nbody\n', 'utf8')
+    const r = await patch('/api/posts/Archive/perm', { targetPath: 'inbox/perm' })
     expect(r.status).toBe(422)
-    expect(await fs.stat(path.join(tmpRoot, 'Zettel', 'perm.md'))).toBeTruthy()
+    expect(await fs.stat(path.join(tmpRoot, 'Archive', 'perm.md'))).toBeTruthy()
     await expect(fs.stat(path.join(tmpRoot, 'inbox', 'perm.md'))).rejects.toThrow()
   })
 
-  it('refuses archive/old.md → zettel/old (source not in inbox/literature)', async () => {
-    // The user-defined `archive/` folder is user content but not part
-    // of the Zettelkasten ingest flow — only inbox/ and literature/
+  it('refuses projects/old.md → archive/old (source not in inbox/literature)', async () => {
+    // The user-defined `projects/` folder is user content but not part
+    // of the vault ingest flow — only inbox/ and literature/
     // notes are eligible to be archived.
-    const r = await patch('/api/posts/archive/old', { targetPath: 'zettel/old' })
+    const r = await patch('/api/posts/projects/old', { targetPath: 'archive/old' })
     expect(r.status).toBe(422)
-    expect(await fs.stat(path.join(tmpRoot, 'archive', 'old.md'))).toBeTruthy()
-    await expect(fs.stat(path.join(tmpRoot, 'zettel', 'old.md'))).rejects.toThrow()
+    // File must still exist at source — the move was rejected.
+    expect(await fs.stat(path.join(tmpRoot, 'projects', 'old.md'))).toBeTruthy()
   })
 
   it('still allows ordinary inbox → literature moves (not blocked by whitelist)', async () => {
-    // The whitelist only catches moves INTO zettel/. Ordinary moves
+    // The whitelist only catches moves INTO archive/. Ordinary moves
     // between user folders must still work.
     const r = await patch('/api/posts/inbox/foo', { targetPath: 'literature/foo' })
     expect(r.status).toBe(200)
@@ -183,17 +183,17 @@ describe('PATCH /api/posts/* archive-to-zettel whitelist', () => {
     // actually moved. Capture the orphan first and run the rename only
     // after we know it's about to succeed.
     saveDocumentMetadata(db, {
-      path: 'zettel/foo', title: 'Original Foo', summary: 'Important', tags: ['keep'],
+      path: 'archive/foo', title: 'Original Foo', summary: 'Important', tags: ['keep'],
     })
     const spy = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('simulated cross-device'))
     try {
-      const r = await patch('/api/posts/inbox/foo', { targetPath: 'zettel/foo' })
+      const r = await patch('/api/posts/inbox/foo', { targetPath: 'archive/foo' })
       expect(r.status).toBeGreaterThanOrEqual(500)
     } finally {
       spy.mockRestore()
     }
-    expect(getDocumentMetadata(db, 'zettel/foo')?.title).toBe('Original Foo')
-    expect(getDocumentMetadata(db, 'zettel/foo')?.tags).toEqual(['keep'])
+    expect(getDocumentMetadata(db, 'archive/foo')?.title).toBe('Original Foo')
+    expect(getDocumentMetadata(db, 'archive/foo')?.tags).toEqual(['keep'])
     expect(await fs.readFile(path.join(tmpRoot, 'inbox', 'foo.md'), 'utf8')).toContain('Foo')
   })
 })

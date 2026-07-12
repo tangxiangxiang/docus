@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在 docus 的 vault 中接入 `force-graph` 知识图谱视图：节点是 `src/content/zettel/` 下的笔记，边是 `[[wiki]]` 双向链接；通过 ActivityBar 第 4 个按钮触发，画布占据 `editor-area`。
+**Goal:** 在 docus 的 vault 中接入 `force-graph` 知识图谱视图：节点是 `src/content/archive/` 下的笔记，边是 `[[wiki]]` 双向链接；通过 ActivityBar 第 4 个按钮触发，画布占据 `editor-area`。
 
-**Architecture:** 单文件 Vue 组件 + force-graph 原生库，通过 `onMounted` 动态 import 初始化。数据来自已有的 `/api/links/index`，前端在 composable 中按 `zettel/` 路径前缀过滤并计算节点尺寸。ActivityBar 复用现有的 `activePanel` 状态机。
+**Architecture:** 单文件 Vue 组件 + force-graph 原生库，通过 `onMounted` 动态 import 初始化。数据来自已有的 `/api/links/index`，前端在 composable 中按 `archive/` 路径前缀过滤并计算节点尺寸。ActivityBar 复用现有的 `activePanel` 状态机。
 
 **Tech Stack:** Vue 3 Composition API, force-graph ^1.51.4, Hono (no backend changes), vitest, jsdom
 
@@ -45,7 +45,7 @@ git commit -m "deps: add force-graph for knowledge graph view"
 // @vitest-environment jsdom
 // Tests for useGraphData — the pure projection from the server's
 // LinkIndexSnapshot down to force-graph's {nodes, links} shape,
-// restricted to the zettel/ subtree.
+// restricted to the archive/ subtree.
 //
 // The composable is fully reactive: it reads `getLinkIndex()` (a
 // module-level ShallowRef populated by useLinkIndexSubscription),
@@ -68,55 +68,55 @@ beforeEach(() => {
   __resetLinkIndexForTesting()
 })
 
-describe('useGraphData — zettel filter', () => {
-  it('only includes nodes under zettel/', () => {
+describe('useGraphData — archive filter', () => {
+  it('only includes nodes under archive/', () => {
     setIndex({
-      paths: ['zettel/init', 'zettel/alpha', 'zettel/draft/beta', 'inbox/todo', 'literature/book'],
+      paths: ['archive/init', 'archive/alpha', 'archive/draft/beta', 'inbox/todo', 'literature/book'],
       outgoing: {},
     })
     const ids = useGraphData().value.nodes.map((n) => n.id).sort()
-    expect(ids).toEqual(['zettel/alpha', 'zettel/draft/beta', 'zettel/init'])
+    expect(ids).toEqual(['archive/alpha', 'archive/draft/beta', 'archive/init'])
   })
 
-  it('does NOT include zettel/draft in the .md only filter', () => {
-    /* The spec says the graph is the zettel/ subtree, which INCLUDES
-       zettel/draft/. A future change that excludes draft would need
+  it('does NOT include archive/draft in the .md only filter', () => {
+    /* The spec says the graph is the archive/ subtree, which INCLUDES
+       archive/draft/. A future change that excludes draft would need
        a separate flag; pin "include draft" here so a refactor that
        silently drops it is caught. */
     setIndex({
-      paths: ['zettel/init', 'zettel/draft/new-card'],
+      paths: ['archive/init', 'archive/draft/new-card'],
       outgoing: {},
     })
     const ids = useGraphData().value.nodes.map((n) => n.id)
-    expect(ids).toContain('zettel/draft/new-card')
+    expect(ids).toContain('archive/draft/new-card')
   })
 
-  it('drops wiki links that point outside the zettel/ subtree', () => {
+  it('drops wiki links that point outside the archive/ subtree', () => {
     setIndex({
-      paths: ['zettel/a', 'zettel/b', 'inbox/c'],
+      paths: ['archive/a', 'archive/b', 'inbox/c'],
       outgoing: {
-        'zettel/a': [
-          { target: 'zettel/b', kind: 'wiki' },
+        'archive/a': [
+          { target: 'archive/b', kind: 'wiki' },
           { target: 'inbox/c', kind: 'wiki' }, // cross-tree — must be filtered
         ],
-        'zettel/b': [],
+        'archive/b': [],
       },
     })
     const links = useGraphData().value.links
     expect(links).toHaveLength(1)
-    expect(links[0]).toEqual({ source: 'zettel/a', target: 'zettel/b' })
+    expect(links[0]).toEqual({ source: 'archive/a', target: 'archive/b' })
   })
 
   it('drops non-wiki (md) links entirely', () => {
     /* docus distinguishes [[wiki]] from [text](file.md) in the link
        index. The knowledge graph shows knowledge connections (wiki
        links), not arbitrary markdown links. A regular [b](b.md)
-       link in a zettel note should NOT appear in the graph. */
+       link in a archive note should NOT appear in the graph. */
     setIndex({
-      paths: ['zettel/a', 'zettel/b'],
+      paths: ['archive/a', 'archive/b'],
       outgoing: {
-        'zettel/a': [
-          { target: 'zettel/b', kind: 'md' },
+        'archive/a': [
+          { target: 'archive/b', kind: 'md' },
         ],
       },
     })
@@ -124,18 +124,18 @@ describe('useGraphData — zettel filter', () => {
   })
 
   it('keeps isolated nodes (no edges in, no edges out)', () => {
-    /* A freshly-written zettel note may have no links yet. The
+    /* A freshly-written archive note may have no links yet. The
        user should still see it on the graph as an isolated dot
        so they know it exists. */
     setIndex({
-      paths: ['zettel/lonely', 'zettel/init'],
+      paths: ['archive/lonely', 'archive/init'],
       outgoing: {
-        'zettel/init': [{ target: 'zettel/lonely', kind: 'wiki' }],
+        'archive/init': [{ target: 'archive/lonely', kind: 'wiki' }],
       },
     })
     const nodes = useGraphData().value.nodes
     expect(nodes).toHaveLength(2)
-    const lonely = nodes.find((n) => n.id === 'zettel/lonely')!
+    const lonely = nodes.find((n) => n.id === 'archive/lonely')!
     expect(lonely).toBeDefined()
   })
 })
@@ -143,49 +143,49 @@ describe('useGraphData — zettel filter', () => {
 describe('useGraphData — node sizing', () => {
   it('marks root-like nodes (no incoming links) as val=24', () => {
     setIndex({
-      paths: ['zettel/root', 'zettel/child'],
+      paths: ['archive/root', 'archive/child'],
       outgoing: {
-        'zettel/root': [{ target: 'zettel/child', kind: 'wiki' }],
+        'archive/root': [{ target: 'archive/child', kind: 'wiki' }],
       },
     })
-    const root = useGraphData().value.nodes.find((n) => n.id === 'zettel/root')!
+    const root = useGraphData().value.nodes.find((n) => n.id === 'archive/root')!
     expect(root.val).toBe(24)
   })
 
   it('marks leaf nodes (no outgoing links) as val=12', () => {
     setIndex({
-      paths: ['zettel/root', 'zettel/leaf'],
+      paths: ['archive/root', 'archive/leaf'],
       outgoing: {
-        'zettel/root': [{ target: 'zettel/leaf', kind: 'wiki' }],
+        'archive/root': [{ target: 'archive/leaf', kind: 'wiki' }],
       },
     })
-    const leaf = useGraphData().value.nodes.find((n) => n.id === 'zettel/leaf')!
+    const leaf = useGraphData().value.nodes.find((n) => n.id === 'archive/leaf')!
     expect(leaf.val).toBe(12)
   })
 
   it('marks middle nodes (incoming and outgoing) as val=16', () => {
     setIndex({
-      paths: ['zettel/a', 'zettel/b', 'zettel/c'],
+      paths: ['archive/a', 'archive/b', 'archive/c'],
       outgoing: {
-        'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }],
-        'zettel/b': [{ target: 'zettel/c', kind: 'wiki' }],
+        'archive/a': [{ target: 'archive/b', kind: 'wiki' }],
+        'archive/b': [{ target: 'archive/c', kind: 'wiki' }],
       },
     })
-    const b = useGraphData().value.nodes.find((n) => n.id === 'zettel/b')!
+    const b = useGraphData().value.nodes.find((n) => n.id === 'archive/b')!
     expect(b.val).toBe(16)
   })
 })
 
 describe('useGraphData — reactiveness', () => {
   it('recomputes when the link index ref changes', () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     expect(useGraphData().value.nodes).toHaveLength(1)
 
     setIndex({
-      paths: ['zettel/a', 'zettel/b', 'zettel/c'],
+      paths: ['archive/a', 'archive/b', 'archive/c'],
       outgoing: {
-        'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }],
-        'zettel/b': [{ target: 'zettel/c', kind: 'wiki' }],
+        'archive/a': [{ target: 'archive/b', kind: 'wiki' }],
+        'archive/b': [{ target: 'archive/c', kind: 'wiki' }],
       },
     })
     const next = useGraphData().value
@@ -213,7 +213,7 @@ Expected: 失败，错误 `Cannot find module '../useGraphData'`。
 ```ts
 // Knowledge-graph data projection: take the server's link index
 // snapshot (see /api/links/index) and reduce it to force-graph's
-// { nodes, links } shape, restricted to the zettel/ subtree.
+// { nodes, links } shape, restricted to the archive/ subtree.
 //
 // The composable is reactive: it reads `getLinkIndex()` (a module-
 // level ShallowRef populated by useLinkIndexSubscription) and
@@ -225,8 +225,8 @@ Expected: 失败，错误 `Cannot find module '../useGraphData'`。
 // Why filter on the client and not in the link index endpoint:
 // the link index is a generic cross-cutting index (used by the
 // wiki link resolver, the LinksPanel, and the in-editor backlink
-// preview). Restricting it to zettel/ would couple those callers
-// to the zettel scope. The filter is a view-layer concern, so it
+// preview). Restricting it to archive/ would couple those callers
+// to the archive scope. The filter is a view-layer concern, so it
 // lives here.
 
 import { computed, type ComputedRef } from 'vue'
@@ -249,7 +249,7 @@ export interface GraphData {
   links: GraphLink[]
 }
 
-const ZETTEL_PREFIX = 'zettel/'
+const ZETTEL_PREFIX = 'archive/'
 
 function titleFromPath(path: string): string {
   /* docus notes are addressable by path; the title is the basename
@@ -262,7 +262,7 @@ function titleFromPath(path: string): string {
 export function useGraphData(): ComputedRef<GraphData> {
   return computed<GraphData>(() => {
     const idx = getLinkIndex().value
-    /* Stage 1: collect zettel nodes from the path index. The path
+    /* Stage 1: collect archive nodes from the path index. The path
        index is authoritative for "this note exists" — we don't
        need to scan the file system. */
     const zettelNodes = new Set<string>()
@@ -271,7 +271,7 @@ export function useGraphData(): ComputedRef<GraphData> {
     }
 
     /* Stage 2: collect intra-zettel wiki links. Both ends must be
-       in the zettel set; kind must be 'wiki' (we don't surface
+       in the archive set; kind must be 'wiki' (we don't surface
        regular .md links as "knowledge" connections). */
     const linkSet = new Map<string, GraphLink>()
     const inDegree = new Map<string, number>()
@@ -501,7 +501,7 @@ beforeEach(() => {
 
 describe('KnowledgeGraph — wiring', () => {
   it('mounts a force-graph instance into the container', async () => {
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: { 'archive/a': [{ target: 'archive/b', kind: 'wiki' }] } })
     const { unmount } = mountStandalone()
     await settle()
 
@@ -517,17 +517,17 @@ describe('KnowledgeGraph — wiring', () => {
   })
 
   it('receives the computed graph data on mount', async () => {
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: { 'archive/a': [{ target: 'archive/b', kind: 'wiki' }] } })
     const { unmount } = mountStandalone()
     await settle()
     const call = graphs[0].graphData.mock.calls[0]?.[0] as { nodes: Array<{ id: string }>; links: Array<{ source: string; target: string }> }
-    expect(call.nodes.map((n) => n.id).sort()).toEqual(['zettel/a', 'zettel/b'])
-    expect(call.links).toEqual([{ source: 'zettel/a', target: 'zettel/b' }])
+    expect(call.nodes.map((n) => n.id).sort()).toEqual(['archive/a', 'archive/b'])
+    expect(call.links).toEqual([{ source: 'archive/a', target: 'archive/b' }])
     unmount()
   })
 
   it('calls the force-graph destructor on unmount', async () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     expect(graphs[0]._destructor).not.toHaveBeenCalled()
@@ -538,7 +538,7 @@ describe('KnowledgeGraph — wiring', () => {
 
 describe('KnowledgeGraph — reactiveness', () => {
   it('re-fetches graph data and pushes it to the instance when the link index changes', async () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     expect(graphs[0].graphData.mock.calls).toHaveLength(1)
@@ -546,10 +546,10 @@ describe('KnowledgeGraph — reactiveness', () => {
     /* Mutate the singleton — the component's watch should re-run
        and call graphData() with the new payload. */
     setIndex({
-      paths: ['zettel/a', 'zettel/b', 'zettel/c'],
+      paths: ['archive/a', 'archive/b', 'archive/c'],
       outgoing: {
-        'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }],
-        'zettel/b': [{ target: 'zettel/c', kind: 'wiki' }],
+        'archive/a': [{ target: 'archive/b', kind: 'wiki' }],
+        'archive/b': [{ target: 'archive/c', kind: 'wiki' }],
       },
     })
     await settle()
@@ -563,32 +563,32 @@ describe('KnowledgeGraph — reactiveness', () => {
 
 describe('KnowledgeGraph — node click', () => {
   it('opens the clicked node via the shared openPost singleton', async () => {
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: { 'archive/a': [{ target: 'archive/b', kind: 'wiki' }] } })
     const { unmount, lastOpened } = mountStandalone()
     await settle()
 
     /* Drive the onNodeClick callback directly. We don't go
        through real pointer events — the closure is the load-
        bearing part. */
-    graphs[0]._lastOnNodeClick!({ id: 'zettel/a', path: 'zettel/a' })
+    graphs[0]._lastOnNodeClick!({ id: 'archive/a', path: 'archive/a' })
     await nextTick()
-    expect(lastOpened()).toBe('zettel/a')
+    expect(lastOpened()).toBe('archive/a')
     unmount()
   })
 
   it('does not crash if openPost is not registered yet', async () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     __resetOpenPostForClicks(null)
-    expect(() => graphs[0]._lastOnNodeClick!({ id: 'zettel/a', path: 'zettel/a' })).not.toThrow()
+    expect(() => graphs[0]._lastOnNodeClick!({ id: 'archive/a', path: 'archive/a' })).not.toThrow()
     unmount()
   })
 })
 
 describe('KnowledgeGraph — theme switch', () => {
   it('re-installs nodeCanvasObject so the new colors take effect', async () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     const callsBefore = graphs[0].nodeCanvasObject.mock.calls.length
@@ -607,12 +607,12 @@ describe('KnowledgeGraph — theme switch', () => {
 })
 
 describe('KnowledgeGraph — empty state', () => {
-  it('shows a friendly message when there are no zettel notes', async () => {
+  it('shows a friendly message when there are no archive notes', async () => {
     setIndex({ paths: ['inbox/x'], outgoing: {} })
     const { unmount, host } = mountStandalone()
     await settle()
     /* The component should not have called force-graph at all if
-       the zettel set is empty (force-graph is expensive to
+       the archive set is empty (force-graph is expensive to
        spin up for an empty graph). */
     expect(graphs).toHaveLength(0)
     expect(host.textContent).toMatch(/zettel|还没有|写一条/)
@@ -638,7 +638,7 @@ Expected: 失败，错误 `Cannot find module '../KnowledgeGraph.vue'`。
 
 ```vue
 <script setup lang="ts">
-// Knowledge-graph canvas. Renders the zettel/ subtree as a
+// Knowledge-graph canvas. Renders the archive/ subtree as a
 // force-directed graph using `force-graph` (canvas, not svg — the
 // library targets 1k+ nodes and uses d3-force under the hood).
 //
@@ -750,7 +750,7 @@ async function mountGraph() {
   if (graph) return
   const el = containerRef.value
   if (!el) return
-  /* Skip mount for an empty zettel set — force-graph renders a
+  /* Skip mount for an empty archive set — force-graph renders a
      black box for a 0-node graph, which is a worse UX than a
      one-line "no notes" message. The early return is what the
      test pins in the empty-state describe block. */
@@ -856,7 +856,7 @@ watch(theme, () => {
 <template>
   <div class="kg-wrap" :data-theme="theme">
     <div v-if="graphData.nodes.length === 0" class="kg-empty">
-      还没有 zettel 笔记，先去 inbox 写一条吧。
+      还没有 archive 笔记，先去 inbox 写一条吧。
     </div>
     <div v-else ref="containerRef" class="kg-canvas" />
   </div>
@@ -1105,15 +1105,15 @@ Expected: Vite 起来，浏览器打开 `http://localhost:5173/vault`。
 检查：
 - [ ] ActivityBar 出现第 4 个按钮（3 圆点+连线的图标）
 - [ ] 点击 graph 按钮 → editor-area 变成全宽 force-graph 画布
-- [ ] zettel 节点以圆点+title 标签显示
+- [ ] archive 节点以圆点+title 标签显示
 - [ ] 节点之间的 [[wiki]] 边以线段显示
 - [ ] 拖动节点 → 节点固定位置（不再被力拉动）
 - [ ] 滚轮缩放 → 0.5x ~ 3x 范围生效
 - [ ] 鼠标悬停节点 → 显示节点的 title（来自 force-graph 的 nodeLabel）
 - [ ] 点击节点 → 在编辑器中打开该笔记，graph 关闭
 - [ ] 切换到 dark theme → 画布背景与文字颜色翻转
-- [ ] 创建一条新 zettel 笔记 → 等 ~1 秒，graph 上出现新节点
-- [ ] 在 zettel 里写一个 `[[other]]` 链接 → 等 ~1 秒，graph 上多一条边
+- [ ] 创建一条新 archive 笔记 → 等 ~1 秒，graph 上出现新节点
+- [ ] 在 archive 里写一个 `[[other]]` 链接 → 等 ~1 秒，graph 上多一条边
 - [ ] 关闭浏览器再打开 → graph panel 状态被 localStorage 记忆（serializer 接受的 'graph'）
 
 - [ ] **Step 3: 提交运行笔记（可选）**
@@ -1127,16 +1127,16 @@ Expected: Vite 起来，浏览器打开 `http://localhost:5173/vault`。
 1. **Spec coverage:**
    - ActivityBar 第 4 按钮 ✅ (Task 6)
    - 替换 editor-area ✅ (Task 8)
-   - zettel 子树节点 + [[wiki]] 边 ✅ (Tasks 2-3, useGraphData 过滤)
+   - archive 子树节点 + [[wiki]] 边 ✅ (Tasks 2-3, useGraphData 过滤)
    - 节点点击 → openPost + 关闭图谱 ✅ (Task 5, onNodeClick + getOpenPostForClicks)
    - 主题适配 ✅ (Tasks 4-5, theme watcher + colors computed)
    - 数据源走 /api/links/index ✅ (Task 3, 无后端改动)
-   - 错误处理：空 zettel / dynamic import 失败 / 网络失败 ✅ (Task 5, empty-state + 注释)
+   - 错误处理：空 archive / dynamic import 失败 / 网络失败 ✅ (Task 5, empty-state + 注释)
 
 2. **Placeholder scan:** 无占位符 ✅
 
 3. **Type consistency:**
-   - `GraphNode.id` / `GraphNode.path` 同步用同一个 zettel path，Task 3 写好 ✅
+   - `GraphNode.id` / `GraphNode.path` 同步用同一个 archive path，Task 3 写好 ✅
    - `setOpenPostForClicks` / `getOpenPostForClicks` / `__resetOpenPostForClicks` 三个名字在 useEditorTabs 里都对得上 ✅
    - `ActivePanel` 联合类型 = `SidePanel | null`，扩 'graph' 时两处都改了（ActivityBar + useVaultLayout）✅
 

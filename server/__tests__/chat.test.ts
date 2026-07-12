@@ -18,8 +18,8 @@ describe('buildSystemPrompt', () => {
   })
 
   it('mentions the open note by path and tells the model to use read_file for the body', () => {
-    const out = buildSystemPrompt({ currentNotePath: 'zettel/foo.md' })
-    expect(out).toContain('zettel/foo.md')
+    const out = buildSystemPrompt({ currentNotePath: 'archive/foo.md' })
+    expect(out).toContain('archive/foo.md')
     // The system prompt no longer carries the body; the model is
     // pointed at read_file instead. This is the whole point of the
     // 📎 toggle change — we don't silently bloat the system
@@ -34,13 +34,13 @@ describe('buildSystemPrompt', () => {
     // currentNoteContent in the ctx, the system prompt must not
     // include it. The body now lives in the user message instead.
     const out = buildSystemPrompt({
-      currentNotePath: 'zettel/foo.md',
+      currentNotePath: 'archive/foo.md',
       // @ts-expect-error — TS would reject this; the test pins
       // the runtime behavior that the field is ignored.
       currentNoteContent: 'SENTINEL_NOTE_BODY_99',
     })
     expect(out).not.toContain('SENTINEL_NOTE_BODY_99')
-    expect(out).toContain('zettel/foo.md')
+    expect(out).toContain('archive/foo.md')
   })
 })
 
@@ -144,11 +144,11 @@ describe('runChat', () => {
     const sentinel = 'SENTINEL_NOTE_BODY_42_XYZ'
     await runChat({
       db, sessionId: id, userContent: 'hi',
-      ctx: { currentNotePath: 'zettel/note.md', /* legacy field */ currentNoteContent: sentinel } as any,
+      ctx: { currentNotePath: 'archive/note.md', /* legacy field */ currentNoteContent: sentinel } as any,
       model: 'm', signal: undefined, onEvent: () => {},
     })
     const systemArg = vi.mocked(streamClaude).mock.calls[0][0].system as string
-    expect(systemArg).toContain('zettel/note.md')
+    expect(systemArg).toContain('archive/note.md')
     // The body must not be in the system prompt. We check the
     // sentinel (not the literal word "body") so the assertion
     // doesn't trip on the word "body" appearing in the read_file

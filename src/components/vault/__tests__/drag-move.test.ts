@@ -23,9 +23,9 @@ const TREE: TreeNode[] = [
       },
       { kind: 'folder', name: 'literature', path: 'literature', children: [] },
       {
-        kind: 'folder', name: 'zettel', path: 'zettel', children: [
-          { kind: 'file', name: 'permanent', path: 'zettel/permanent', title: 'Permanent', mtime: 0 },
-          { kind: 'folder', name: 'concepts', path: 'zettel/concepts', children: [] },
+        kind: 'folder', name: 'archive', path: 'archive', children: [
+          { kind: 'file', name: 'permanent', path: 'archive/permanent', title: 'Permanent', mtime: 0 },
+          { kind: 'folder', name: 'concepts', path: 'archive/concepts', children: [] },
         ],
       },
     ],
@@ -81,9 +81,9 @@ describe('FileTree drag-move (sub-documents)', () => {
     w.unmount()
   })
 
-  it('still blocks dropping non-zettel notes directly onto the zettel root', async () => {
+  it('still blocks dropping non-archive notes directly onto the archive root', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'zettel/test1', title: 'test1', created: '', updated: '', tags: [], size: 0, mtime: 0,
+      path: 'archive/test1', title: 'test1', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
@@ -96,8 +96,8 @@ describe('FileTree drag-move (sub-documents)', () => {
     await testFolder.find('.chevron').trigger('click')
     await w.vm.$nextTick()
 
-    const zettel = rowByLabel(w.findAll('li.tree-row'), 'zettel')
-    await zettel.trigger('drop', {
+    const archive = rowByLabel(w.findAll('li.tree-row'), 'archive')
+    await archive.trigger('drop', {
       dataTransfer: {
         getData: (k: string) => {
           if (k === 'text/x-docus-path') return 'inbox/test/test1'
@@ -113,9 +113,9 @@ describe('FileTree drag-move (sub-documents)', () => {
     w.unmount()
   })
 
-  it('allows classifying an inbox note by dropping it onto a zettel subfolder', async () => {
+  it('allows classifying an inbox note by dropping it onto a archive subfolder', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'zettel/concepts/test1', title: 'test1', created: '', updated: '', tags: [], size: 0, mtime: 0,
+      path: 'archive/concepts/test1', title: 'test1', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
@@ -126,8 +126,8 @@ describe('FileTree drag-move (sub-documents)', () => {
     const testFolder = rowByLabel(w.findAll('li.tree-row'), 'test')
     await testFolder.find('.chevron').trigger('click')
     await w.vm.$nextTick()
-    const zettel = rowByLabel(w.findAll('li.tree-row'), 'zettel')
-    await zettel.find('.chevron').trigger('click')
+    const archive = rowByLabel(w.findAll('li.tree-row'), 'archive')
+    await archive.find('.chevron').trigger('click')
     await w.vm.$nextTick()
 
     const concepts = rowByLabel(w.findAll('li.tree-row'), 'concepts')
@@ -143,26 +143,26 @@ describe('FileTree drag-move (sub-documents)', () => {
     await w.vm.$nextTick()
     await flushPromises()
 
-    expect(patchSpy).toHaveBeenCalledWith('inbox/test/test1', { targetPath: 'zettel/concepts/test1' })
+    expect(patchSpy).toHaveBeenCalledWith('inbox/test/test1', { targetPath: 'archive/concepts/test1' })
     w.unmount()
   })
 
-  it('allows moving an existing zettel note into a zettel subfolder', async () => {
+  it('allows moving an existing archive note into a archive subfolder', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
-      path: 'zettel/concepts/permanent', title: 'permanent', created: '', updated: '', tags: [], size: 0, mtime: 0,
+      path: 'archive/concepts/permanent', title: 'permanent', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
 
-    const zettel = rowByLabel(w.findAll('li.tree-row'), 'zettel')
-    await zettel.find('.chevron').trigger('click')
+    const archive = rowByLabel(w.findAll('li.tree-row'), 'archive')
+    await archive.find('.chevron').trigger('click')
     await w.vm.$nextTick()
 
     const concepts = rowByLabel(w.findAll('li.tree-row'), 'concepts')
     await concepts.trigger('drop', {
       dataTransfer: {
         getData: (k: string) => {
-          if (k === 'text/x-docus-path') return 'zettel/permanent'
+          if (k === 'text/x-docus-path') return 'archive/permanent'
           if (k === 'text/x-docus-kind') return 'file'
           return ''
         },
@@ -171,11 +171,11 @@ describe('FileTree drag-move (sub-documents)', () => {
     await w.vm.$nextTick()
     await flushPromises()
 
-    expect(patchSpy).toHaveBeenCalledWith('zettel/permanent', { targetPath: 'zettel/concepts/permanent' })
+    expect(patchSpy).toHaveBeenCalledWith('archive/permanent', { targetPath: 'archive/concepts/permanent' })
     w.unmount()
   })
 
-  it('blocks moving a zettel note out to inbox', async () => {
+  it('blocks moving a archive note out to inbox', async () => {
     const patchSpy = vi.spyOn(api, 'patchPost').mockResolvedValue({
       path: 'inbox/permanent', title: 'permanent', created: '', updated: '', tags: [], size: 0, mtime: 0,
     })
@@ -186,7 +186,7 @@ describe('FileTree drag-move (sub-documents)', () => {
     await inbox.trigger('drop', {
       dataTransfer: {
         getData: (k: string) => {
-          if (k === 'text/x-docus-path') return 'zettel/permanent'
+          if (k === 'text/x-docus-path') return 'archive/permanent'
           if (k === 'text/x-docus-kind') return 'file'
           return ''
         },

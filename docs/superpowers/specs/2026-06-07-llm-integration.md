@@ -375,7 +375,7 @@ No new tables, no schema migration, no new persistent state on the client beyond
 
 - **Cancellable streams (Stop button).** The `AbortController` is wired but not exposed in the UI. Adding a Stop button is a follow-up; the wiring is in place to make it trivial.
 - **Tool use.** The model is given text-only context (note + history). No file editing, no search, no function-calling. The SDK supports it; we'd add it in a later spec.
-- **Multiple notes in context.** Only the active note is injected. Slash commands to add more notes (`/add zettel/foo.md`) are a future spec.
+- **Multiple notes in context.** Only the active note is injected. Slash commands to add more notes (`/add archive/foo.md`) are a future spec.
 - **Live editor state.** `useCurrentNote` reads the saved version, not the unsaved buffer. See §3.7.
 - **Token budget / cost display.** No UI for max-tokens, no cost counter. The server uses `max_tokens: 4096` for the response; longer answers are cut off at that limit (Anthropic's `end_turn` reason is the normal completion path).
 - **User-configurable model selection.** `ANTHROPIC_MODEL` env var only. No UI to switch.

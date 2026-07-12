@@ -254,7 +254,7 @@ beforeEach(() => {
 
 describe('KnowledgeGraph — wiring', () => {
   it('mounts a force-graph instance into the container', async () => {
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: { 'archive/a': [{ target: 'archive/b', kind: 'wiki' }] } })
     const { unmount } = mountStandalone()
     await settle()
 
@@ -271,17 +271,17 @@ describe('KnowledgeGraph — wiring', () => {
   })
 
   it('receives the computed graph data on mount', async () => {
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: { 'archive/a': [{ target: 'archive/b', kind: 'wiki' }] } })
     const { unmount } = mountStandalone()
     await settle()
     const call = graphs[0].graphData.mock.calls[0]?.[0] as { nodes: Array<{ id: string }>; links: Array<{ source: string; target: string }> }
-    expect(call.nodes.map((n) => n.id).sort()).toEqual(['zettel/a', 'zettel/b'])
-    expect(call.links).toEqual([{ source: 'zettel/a', target: 'zettel/b' }])
+    expect(call.nodes.map((n) => n.id).sort()).toEqual(['archive/a', 'archive/b'])
+    expect(call.links).toEqual([{ source: 'archive/a', target: 'archive/b' }])
     unmount()
   })
 
   it('calls the force-graph destructor on unmount', async () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     expect(graphs[0]._destructor).not.toHaveBeenCalled()
@@ -302,7 +302,7 @@ describe('KnowledgeGraph — wiring', () => {
        returns the literal string. The user reported a
        faint grey line that wouldn't go away — this was
        the cause. This test pins the function form. */
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: { 'archive/a': [{ target: 'archive/b', kind: 'wiki' }] } })
     const { unmount } = mountStandalone()
     await settle()
     const modeArg = graphs[0].linkCanvasObjectMode.mock.calls[0]?.[0]
@@ -317,7 +317,7 @@ describe('KnowledgeGraph — wiring', () => {
   })
 
   it('shrinks the clickable node area to the card body instead of using the default val-sized circle', async () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {}, titles: { 'zettel/a': 'A Card' } })
+    setIndex({ paths: ['archive/a'], outgoing: {}, titles: { 'archive/a': 'A Card' } })
     const { unmount } = mountStandalone()
     await settle()
     const pointerArg = graphs[0].nodePointerAreaPaint.mock.calls[0]?.[0]
@@ -337,7 +337,7 @@ describe('KnowledgeGraph — wiring', () => {
        "flickering" — the Barnes-Hut quadtree even briefly
        rendered isolated nodes twice during the warmup tick
        chain. 0.3 is the sweet spot. */
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: {} })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     expect(graphs[0].d3Force).toHaveBeenCalledWith('charge')
@@ -362,7 +362,7 @@ describe('KnowledgeGraph — wiring', () => {
        regression guard: if someone uses zoomToFit for tiny graphs,
        2-node edgeless graphs go back to "two dots at the canvas
        edges". */
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: {} })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     expect(graphs[0].zoom).toHaveBeenCalledWith(50)
@@ -373,7 +373,7 @@ describe('KnowledgeGraph — wiring', () => {
 
   it('fits larger graphs after initial force ticks so the opening view shows the whole graph', async () => {
     setIndex({
-      paths: Array.from({ length: 8 }, (_, i) => `zettel/n${i}`),
+      paths: Array.from({ length: 8 }, (_, i) => `archive/n${i}`),
       outgoing: {},
     })
     const { unmount } = mountStandalone()
@@ -397,7 +397,7 @@ describe('KnowledgeGraph — wiring', () => {
        freezing the canvas at the converged layout. This is the
        regression guard: removing either line means the flicker
        comes back. */
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: {} })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     expect(graphs[0].cooldownTime).toHaveBeenCalledWith(1500)
@@ -408,7 +408,7 @@ describe('KnowledgeGraph — wiring', () => {
 
 describe('KnowledgeGraph — reactiveness', () => {
   it('re-fetches graph data and pushes it to the instance when the link index changes', async () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     expect(graphs[0].graphData.mock.calls).toHaveLength(1)
@@ -416,10 +416,10 @@ describe('KnowledgeGraph — reactiveness', () => {
     /* Mutate the singleton — the component's watch should re-run
        and call graphData() with the new payload. */
     setIndex({
-      paths: ['zettel/a', 'zettel/b', 'zettel/c'],
+      paths: ['archive/a', 'archive/b', 'archive/c'],
       outgoing: {
-        'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }],
-        'zettel/b': [{ target: 'zettel/c', kind: 'wiki' }],
+        'archive/a': [{ target: 'archive/b', kind: 'wiki' }],
+        'archive/b': [{ target: 'archive/c', kind: 'wiki' }],
       },
     })
     await settle()
@@ -430,8 +430,8 @@ describe('KnowledgeGraph — reactiveness', () => {
     unmount()
   })
 
-  it('destroys the force-graph instance when the zettel set becomes empty', async () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+  it('destroys the force-graph instance when the archive set becomes empty', async () => {
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     const { unmount, host } = mountStandalone()
     await settle()
     expect(graphs).toHaveLength(1)
@@ -440,58 +440,58 @@ describe('KnowledgeGraph — reactiveness', () => {
     setIndex({ paths: ['inbox/a'], outgoing: {} })
     await settle()
     expect(graphs[0]._destructor).toHaveBeenCalledTimes(1)
-    expect(host.textContent).toMatch(/zettel|还没有|写一条/)
+    expect(host.textContent).toMatch(/archive|还没有|写一条/)
     unmount()
   })
 })
 
 describe('KnowledgeGraph — node click', () => {
   it('opens the clicked node via the shared openPost singleton', async () => {
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: { 'archive/a': [{ target: 'archive/b', kind: 'wiki' }] } })
     const { unmount, lastOpened } = mountStandalone()
     await settle()
 
     /* Drive the onNodeClick callback directly. We don't go
        through real pointer events — the closure is the load-
        bearing part. */
-    graphs[0]._lastOnNodeClick!({ id: 'zettel/a', path: 'zettel/a' })
+    graphs[0]._lastOnNodeClick!({ id: 'archive/a', path: 'archive/a' })
     await nextTick()
-    expect(lastOpened()).toBe('zettel/a')
+    expect(lastOpened()).toBe('archive/a')
     unmount()
   })
 
   it('does not crash if openPost is not registered yet', async () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     __resetOpenPostForClicks(null)
-    expect(() => graphs[0]._lastOnNodeClick!({ id: 'zettel/a', path: 'zettel/a' })).not.toThrow()
+    expect(() => graphs[0]._lastOnNodeClick!({ id: 'archive/a', path: 'archive/a' })).not.toThrow()
     unmount()
   })
 
   it('closes the graph panel by calling selectPanel("files") on node click', async () => {
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: { 'archive/a': [{ target: 'archive/b', kind: 'wiki' }] } })
     const { unmount, lastPanel } = mountStandalone()
     await settle()
-    graphs[0]._lastOnNodeClick!({ id: 'zettel/a', path: 'zettel/a' })
+    graphs[0]._lastOnNodeClick!({ id: 'archive/a', path: 'archive/a' })
     await nextTick()
     expect(lastPanel()).toBe('files')
     unmount()
   })
 
   it('does not crash if selectPanel is not registered yet', async () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     __resetSelectPanelForClicks()
-    expect(() => graphs[0]._lastOnNodeClick!({ id: 'zettel/a', path: 'zettel/a' })).not.toThrow()
+    expect(() => graphs[0]._lastOnNodeClick!({ id: 'archive/a', path: 'archive/a' })).not.toThrow()
     unmount()
   })
 })
 
 describe('KnowledgeGraph — theme switch', () => {
   it('re-installs nodeCanvasObject so the new colors take effect', async () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     const { unmount } = mountStandalone()
     await settle()
     const callsBefore = graphs[0].nodeCanvasObject.mock.calls.length
@@ -515,7 +515,7 @@ describe('KnowledgeGraph — theme switch', () => {
        linkColor. Without this re-install, switching to dark
        mode would keep the line painted in the light-mode
        color (or whatever the first closure captured). */
-    setIndex({ paths: ['zettel/a', 'zettel/b'], outgoing: { 'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }] } })
+    setIndex({ paths: ['archive/a', 'archive/b'], outgoing: { 'archive/a': [{ target: 'archive/b', kind: 'wiki' }] } })
     const { unmount } = mountStandalone()
     await settle()
     const callsBefore = graphs[0].linkCanvasObject.mock.calls.length
@@ -529,15 +529,15 @@ describe('KnowledgeGraph — theme switch', () => {
 })
 
 describe('KnowledgeGraph — empty state', () => {
-  it('shows a friendly message when there are no zettel notes', async () => {
+  it('shows a friendly message when there are no archive notes', async () => {
     setIndex({ paths: ['inbox/x'], outgoing: {} })
     const { unmount, host } = mountStandalone()
     await settle()
     /* The component should not have called force-graph at all if
-       the zettel set is empty (force-graph is expensive to
+       the archive set is empty (force-graph is expensive to
        spin up for an empty graph). */
     expect(graphs).toHaveLength(0)
-    expect(host.textContent).toMatch(/zettel|还没有|写一条/)
+    expect(host.textContent).toMatch(/archive|还没有|写一条/)
     unmount()
   })
 })
@@ -545,7 +545,7 @@ describe('KnowledgeGraph — empty state', () => {
 describe('KnowledgeGraph — load error', () => {
   it('surfaces a friendly message when the force-graph import fails', async () => {
     failNextImport = new Error('mocked chunk failure')
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     const { unmount, host } = mountStandalone()
     await settle()
     /* No graph was instantiated — the import threw and the

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { PostSummary } from '../../lib/api'
-import { PROTECTED_ROOTS } from '../../composables/zettelProtocol'
+import { PROTECTED_ROOTS } from '../../composables/archiveProtocol'
 import { ICON_SEARCH } from './icons'
 
 const props = defineProps<{
@@ -55,7 +55,7 @@ const filtered = computed(() => {
   return props.posts.filter((p) => p.tags.some((t) => set.has(t)))
 })
 
-/** Path display: drop the leading "inbox/" / "literature/" / "zettel/"
+/** Path display: drop the leading "inbox/" / "literature/" / "archive/"
  *  so the right-rail result row shows the meaningful tail, e.g. a file
  *  at `inbox/notes/draft.md` becomes "notes / draft". */
 function pathTail(p: string): string {

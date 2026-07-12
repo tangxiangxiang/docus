@@ -46,11 +46,10 @@ export const ICON_SEARCH = `
 </svg>`
 
 // Scope chip glyphs. Each is 14×14 line art, matching the file-tree
-// row icons. The three map to the Zettelkasten roots:
+// row icons. The three map to the vault roots:
 //   inbox       — capture bucket: an inbox tray with a downward arrow
 //   literature  — long-form reference: an open book
-//   zettel      — permanent note: a stacked card (the canonical
-//                 Zettelkasten card)
+//   archive     — archived note: a stacked card
 export const ICON_SCOPE_INBOX = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
   <path d="M2 9.5l1.5-5.5h9L14 9.5"/>
@@ -65,7 +64,7 @@ export const ICON_SCOPE_LITERATURE = `
   <path d="M8 4v8.5"/>
 </svg>`
 
-export const ICON_SCOPE_ZETTEL = `
+export const ICON_SCOPE_ARCHIVE = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
   <rect x="3" y="2" width="9" height="11" rx="1" transform="rotate(-6 3 2)"/>
   <rect x="4" y="3" width="9" height="11" rx="1" transform="rotate(4 4 3)"/>

@@ -15,10 +15,10 @@ afterEach(async () => {
 })
 
 describe('ensureInitialFolders', () => {
-  it('creates inbox / literature / zettel under an empty content dir', async () => {
+  it('creates inbox / literature / archive under an empty content dir', async () => {
     await ensureInitialFolders(tmpDir)
     const entries = await fs.readdir(tmpDir)
-    expect(entries.sort()).toEqual(['inbox', 'literature', 'zettel'])
+    expect(entries.sort()).toEqual(['archive', 'inbox', 'literature'])
   })
 
   it('is idempotent — running twice does not error or delete files', async () => {
@@ -33,7 +33,7 @@ describe('ensureInitialFolders', () => {
   })
 
   it('does not touch existing folders that the user already populated', async () => {
-    // User has `inbox` with content but no `literature` or `zettel`.
+    // User has `inbox` with content but no `literature` or `archive`.
     await fs.mkdir(path.join(tmpDir, 'inbox'), { recursive: true })
     await fs.writeFile(path.join(tmpDir, 'inbox', 'x.md'), 'x', 'utf8')
 
@@ -41,7 +41,7 @@ describe('ensureInitialFolders', () => {
     const inboxFiles = await fs.readdir(path.join(tmpDir, 'inbox'))
     expect(inboxFiles).toEqual(['x.md'])
     expect(await fs.readdir(tmpDir)).toEqual(
-      expect.arrayContaining(['inbox', 'literature', 'zettel']),
+      expect.arrayContaining(['inbox', 'literature', 'archive']),
     )
   })
 
@@ -53,6 +53,6 @@ describe('ensureInitialFolders', () => {
     // should not crash the server. EEXIST becomes a warning.
     await ensureInitialFolders(tmpDir)
     const entries = await fs.readdir(tmpDir)
-    expect(entries).toEqual(expect.arrayContaining(['literature', 'zettel']))
+    expect(entries).toEqual(expect.arrayContaining(['literature', 'archive']))
   })
 })

@@ -106,7 +106,7 @@ volumes:
 #     mkdir -p ./src/content
 #     chown -R 1000:1000 ./src/content
 #
-# 现有的 ./src/content 里已经有 inbox / literature / zettel + 一个 .git/(vault
+# 现有的 ./src/content 里已经有 inbox / literature / archive + 一个 .git/(vault
 # 的本地 history),直接保留即可。如果从一个空仓库部署,初始化可以走
 # `server/seed.ts`(开发期的种子脚本,生产环境不会自动跑)。
 #

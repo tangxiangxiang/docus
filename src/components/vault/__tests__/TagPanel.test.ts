@@ -12,7 +12,7 @@ import type { PostSummary } from '../../../lib/api'
 const POSTS: PostSummary[] = [
   { path: 'inbox/markdown-syntax',     title: 'Markdown syntax',     created: '', updated: '', tags: ['markdown', 'reference'], size: 100, mtime: 0 },
   { path: 'inbox/typescript-utility-types', title: 'TS utility types', created: '', updated: '', tags: ['typescript', 'reference'], size: 100, mtime: 0 },
-  { path: 'zettel/derivation',         title: 'Derivation',          created: '', updated: '', tags: ['math'],                    size: 100, mtime: 0 },
+  { path: 'archive/derivation',         title: 'Derivation',          created: '', updated: '', tags: ['math'],                    size: 100, mtime: 0 },
   { path: 'inbox/notes/draft',         title: 'Draft',               created: '', updated: '', tags: ['reference', 'draft'],      size: 100, mtime: 0 },
 ]
 
@@ -130,7 +130,7 @@ describe('TagPanel', () => {
     expect(w.emitted('open')?.[0]).toEqual([POSTS[0].path])
   })
 
-  it('trims the leading scope (inbox/literature/zettel) from the displayed path', () => {
+  it('trims the leading scope (inbox/literature/archive) from the displayed path', () => {
     const w = mountPanel({ activeTags: ['reference'] })
     const paths = w.findAll('.result-path').map((s) => s.text())
     // 'inbox/markdown-syntax' -> 'markdown-syntax'

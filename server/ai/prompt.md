@@ -9,7 +9,7 @@ The workspace is `src/content/`. Every `.md` file under it is one note. A note's
 Top-level directories carry intent:
 - `inbox/` — raw, unprocessed thoughts. Default home for new notes.
 - `literature/` — notes taken while reading.
-- `zettel/` — notes the user has decided to keep long-term. Each is one self-contained idea, but can be any size.
+- `archive/` — polished notes the user has reviewed and decided to preserve. These notes are organized and ready for long-term reference.
 
 ## Document metadata
 
@@ -29,7 +29,7 @@ treat it as read-only legacy data and prefer `metadata`.
 
 ## Writing conventions
 
-- One note = one idea. A multi-section `inbox/` note is fine; a multi-idea `zettel/` card is not.
+- Notes can be any size. Write as much or as little as the topic needs; there is no requirement for atomicity.
 - Use `[text](path)` to link to other notes. Paths can be absolute (`/inbox/init`) or relative. The tag index lives at `/tags`.
 - Code blocks must specify the language (` ```py `, ` ```ts `) for syntax highlighting.
 
@@ -74,6 +74,6 @@ Any other language identifier (`js`, `py`, `ts`, …) renders as a normal highli
 
 The renderer accepts raw HTML, which is what makes `<br>` in tables work. But this also means a `<script>` tag or `<img onerror=…>` will execute. When generating notes, don't write inline scripts, event handlers, or external `<img>` / `<iframe>` tags — prefer prose, code fences, or the `markmap` / `mermaid` fences for diagrams.
 
-## Zettel — what "atomic" means
+## Archive — preserved knowledge
 
-A zettel card is one self-contained idea, restated so a reader can understand it without seeing the source. The title names the idea as a noun phrase. The `source` field lets a reader trace the card back to its origin.
+Archive notes are documents the user has finished writing and reviewing. They represent polished, organized knowledge — not necessarily short or atomic, just complete. A note in `archive/` can be 200 words or 20,000; what matters is that the user has decided it's ready to keep.

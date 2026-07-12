@@ -5,12 +5,12 @@ import TreeRow from './TreeRow.vue'
 import { useConfirm } from '../../composables/useConfirm'
 import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
-import { blockedMessage, isInZettel } from '../../composables/zettelProtocol'
+import { blockedMessage, isInArchive } from '../../composables/archiveProtocol'
 import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder, getRenameImpact } from '../../lib/api'
 import { suggestSlug } from '../../lib/ai-api'
 import { isSlugSegment, toLocalSlug } from '../../lib/slug'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
-import { useArchiveToZettel } from '../../composables/vault/useArchiveToZettel'
+import { useArchiveNote } from '../../composables/vault/useArchiveNote'
 import { publishFileChange } from '../../composables/vault/useFileChangeBus'
 import { ICON_SEARCH } from './icons'
 import { useI18n } from '../../composables/useI18n'
@@ -28,17 +28,17 @@ const emit = defineEmits<{
   select: [path: string]
   refresh: []
   'remove-tag': [tag: string]
-  // archive-to-zettel is self-contained inside FileTree: handler calls
+  // archive-note is self-contained inside FileTree: handler calls
   // patchPost + emit('refresh') + (optionally) emit('select'). VaultView
-  // doesn't need to know. Distinct from `move` because move-into-zettel
+  // doesn't need to know. Distinct from `move` because move-into-archive
   // remains blocked by onMove — archive is a deliberate menu action that
   // bypasses that block.
-  'archive-to-zettel': [path: string]
+  'archive-note': [path: string]
 }>()
 
 const { confirm } = useConfirm()
 const { prompt } = usePrompt()
-const { archive: archiveToZettel } = useArchiveToZettel()
+const { archive: archiveNote } = useArchiveNote()
 const toast = useToast()
 const { t } = useI18n()
 const searchInputRef = ref<HTMLInputElement | null>(null)
@@ -176,7 +176,7 @@ function filterByQuery(node: TreeNode, q: string): TreeNode | null {
     return node
   }
   // Folder: a folder can satisfy content tokens via its own name
-  // (typing "zettel" → entire zettel subtree kept), but tag tokens
+  // (typing "archive" → entire archive subtree kept), but tag tokens
   // can only match file-level data, so they always recurse. Keeping
   // any content token matching the folder's own name is enough; the
   // AND with tag tokens happens during the descendant walk.
@@ -437,8 +437,8 @@ function toggle(path: string) {
   saveExpanded()
 }
 
-// Default-expand ancestors of currentPath. Zettel can now contain
-// classification folders, so the active permanent note should be revealed too.
+// Default-expand ancestors of currentPath. Archive can now contain
+// classification folders, so the active archived note should be revealed too.
 watch(() => props.currentPath, (p) => {
   if (!p) return
   const segs = p.split('/')
@@ -466,13 +466,13 @@ async function onRootDrop(e: DragEvent) {
   rootDragDepth.value = 0
   if (!src) return
   // Reject moves of protected roots (the three top-level folders are part
-  // of the Zettelkasten protocol and cannot be re-parented). Zettel children
-  // are handled below because they may move inside zettel but not out of it.
+  // of the vault protocol and cannot be re-parented). Archive children
+  // are handled below because they may move inside archive but not out of it.
   {
     const msg = blockedMessage(src, 'move')
     if (msg) { toast.error(msg); return }
   }
-  if (isInZettel(src)) { toast.error('Zettel 笔记只能在 zettel 内移动'); return }
+  if (isInArchive(src)) { toast.error('Archive 笔记只能在 archive 内移动'); return }
   const filename = src.split('/').pop()!
   const targetPath = filename
   if (targetPath === src) return
@@ -617,14 +617,14 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
     if (msg) { toast.error(msg); return }
   }
   // The three top-level folders keep their names but their contents are
-  // editable according to the protocol. Dropping a non-zettel note directly
-  // on zettel/ is still too vague, so the explicit archive action owns that
-  // path. Existing zettel items may move within zettel for reclassification,
+  // editable according to the protocol. Dropping a non-archive note directly
+  // on archive/ is still too vague, so the explicit archive action owns that
+  // path. Existing archive items may move within archive for reclassification,
   // but not out into inbox/literature/root.
-  const sourceInZettel = isInZettel(srcPath)
-  const targetInZettel = isInZettel(targetFolder)
-  if (!sourceInZettel && targetFolder === 'zettel') { toast.error('Zettel 是永久笔记，不能直接写入'); return }
-  if (sourceInZettel && !targetInZettel) { toast.error('Zettel 笔记只能在 zettel 内移动'); return }
+  const sourceInArchive = isInArchive(srcPath)
+  const targetInArchive = isInArchive(targetFolder)
+  if (!sourceInArchive && targetFolder === 'archive') { toast.error('Archive 是已归档笔记，不能直接写入'); return }
+  if (sourceInArchive && !targetInArchive) { toast.error('Archive 笔记只能在 archive 内移动'); return }
   const filename = srcPath.split('/').pop()!
   const newPath = targetFolder ? `${targetFolder}/${filename}` : filename
   if (newPath === srcPath) return
@@ -649,12 +649,12 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
 }
 
 // Archive handler. Distinct from onMove: this is the explicit product action
-// of promoting a finished note from inbox/ or literature/ straight into the
-// zettel/ root. Classified archiving can also happen by dragging an eligible
-// inbox/literature note onto a zettel subfolder; the server whitelist's
+// of archiving a finished note from inbox/ or literature/ straight into the
+// archive/ root. Classified archiving can also happen by dragging an eligible
+// inbox/literature note onto an archive subfolder; the server whitelist's
 // "source must be in inbox/ or literature/" check backs up both paths.
-async function onArchiveToZettel(path: string) {
-  const movedPath = await archiveToZettel(path)
+async function onArchiveNote(path: string) {
+  const movedPath = await archiveNote(path)
   if (!movedPath) return
   emit('refresh')
   if (props.currentPath === path) emit('select', movedPath)
@@ -782,7 +782,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @delete="onDelete"
         @move="onMove"
         @create-in="onCreateIn"
-        @archive-to-zettel="onArchiveToZettel"
+        @archive-note="onArchiveNote"
         @focus="setFocused"
       />
     </ul>

@@ -133,10 +133,10 @@ describe('buildSystemPrompt', () => {
 
   it('appends the current note path and content when ctx has both', () => {
     const out = buildSystemPrompt({
-      currentNotePath: 'zettel/foo.md',
+      currentNotePath: 'archive/foo.md',
       currentNoteContent: 'hello world',
     })
-    expect(out).toContain('zettel/foo.md')
+    expect(out).toContain('archive/foo.md')
     expect(out).toContain('hello world')
     expect(out.startsWith("You're a helpful assistant")).toBe(true)
   })
@@ -144,20 +144,20 @@ describe('buildSystemPrompt', () => {
   it('truncates content at 20_000 chars and appends a marker', () => {
     const big = 'a'.repeat(25_000)
     const out = buildSystemPrompt({
-      currentNotePath: 'zettel/big.md',
+      currentNotePath: 'archive/big.md',
       currentNoteContent: big,
     })
     // The full 25_000 a's are not in the output — only the first 20_000.
     expect(out).toContain('a'.repeat(20_000))
     expect(out).not.toContain('a'.repeat(20_001))
     // Truncation marker is present, naming the file.
-    expect(out).toContain('[... truncated; full file at zettel/big.md ...]')
+    expect(out).toContain('[... truncated; full file at archive/big.md ...]')
   })
 
   it('does not truncate when content is exactly 20_000 chars', () => {
     const exact = 'b'.repeat(20_000)
     const out = buildSystemPrompt({
-      currentNotePath: 'zettel/exact.md',
+      currentNotePath: 'archive/exact.md',
       currentNoteContent: exact,
     })
     expect(out).not.toContain('truncated')
@@ -524,12 +524,12 @@ describe('runChat', () => {
     const id = makeSession(db)
     await runChat({
       db, sessionId: id, userContent: 'hi',
-      ctx: { currentNotePath: 'zettel/note.md', currentNoteContent: 'body' },
+      ctx: { currentNotePath: 'archive/note.md', currentNoteContent: 'body' },
       model: 'm', onUserId: () => {}, onToken: () => {},
     })
     expect(vi.mocked(streamClaude)).toHaveBeenCalledWith(
       expect.objectContaining({
-        system: expect.stringContaining('zettel/note.md'),
+        system: expect.stringContaining('archive/note.md'),
       })
     )
     expect(vi.mocked(streamClaude)).toHaveBeenCalledWith(
@@ -1226,19 +1226,19 @@ describe('useCurrentNote', () => {
 
   it('derives path from /vault/:path and fetches the post', async () => {
     responses.push({ status: 200, body: { content: 'hello world', frontmatter: {} } })
-    const { note } = await mountAtRoute('/vault/zettel/foo.md')
-    expect(note.path.value).toBe('zettel/foo.md')
+    const { note } = await mountAtRoute('/vault/archive/foo.md')
+    expect(note.path.value).toBe('archive/foo.md')
     expect(note.content.value).toBe('hello world')
   })
 
   it('updates path and refetches content when the route changes', async () => {
     responses.push({ status: 200, body: { content: 'first' } })
     responses.push({ status: 200, body: { content: 'second' } })
-    const { router, note } = await mountAtRoute('/vault/zettel/a.md')
+    const { router, note } = await mountAtRoute('/vault/archive/a.md')
     expect(note.content.value).toBe('first')
-    await router.push('/vault/zettel/b.md')
+    await router.push('/vault/archive/b.md')
     await flushPromises()
-    expect(note.path.value).toBe('zettel/b.md')
+    expect(note.path.value).toBe('archive/b.md')
     expect(note.content.value).toBe('second')
   })
 

@@ -5,7 +5,7 @@ import PreviewPane from '../components/vault/PreviewPane.vue'
 import { useEditorPreviewScrollSync } from '../composables/vault/useEditorPreviewScrollSync'
 
 const STORAGE_KEY = 'docus.e2e.editor-content'
-const initial = `# 中文写作\n\n这是一个测试。\n\n[[zettel/linked-note|关联笔记]]\n\n${Array.from({ length: 120 }, (_, index) => `## 第 ${index + 1} 节\n\n这是用于滚动同步测试的第 ${index + 1} 段内容。`).join('\n\n')}`
+const initial = `# 中文写作\n\n这是一个测试。\n\n[[archive/linked-note|关联笔记]]\n\n${Array.from({ length: 120 }, (_, index) => `## 第 ${index + 1} 节\n\n这是用于滚动同步测试的第 ${index + 1} 段内容。`).join('\n\n')}`
 const content = ref(localStorage.getItem(STORAGE_KEY) ?? initial)
 const currentPath = ref('inbox/editor-test')
 const openedLink = ref('')
@@ -42,7 +42,7 @@ function openLink(path: string) {
         ref="editorRef"
         v-model="content"
         :path="currentPath"
-        :link-targets="[{ path: 'zettel/linked-note', title: '关联笔记' }]"
+        :link-targets="[{ path: 'archive/linked-note', title: '关联笔记' }]"
         @open-link="openLink"
         @scroll-change="(fraction) => { editorScrollFraction = fraction; editorPreviewScroll.syncPreviewFromEditor(currentPath, fraction) }"
       />

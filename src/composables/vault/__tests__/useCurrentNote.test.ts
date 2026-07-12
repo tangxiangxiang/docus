@@ -75,19 +75,19 @@ describe('useCurrentNote', () => {
 
   it('derives path from /vault/:path and fetches the post', async () => {
     responses.push({ status: 200, body: { content: 'hello world', frontmatter: {} } })
-    const { note } = await mountAtRoute('/vault/zettel/foo.md')
-    expect(note.path.value).toBe('zettel/foo.md')
+    const { note } = await mountAtRoute('/vault/archive/foo.md')
+    expect(note.path.value).toBe('archive/foo.md')
     expect(note.content.value).toBe('hello world')
   })
 
   it('updates path and refetches content when the route changes', async () => {
     responses.push({ status: 200, body: { content: 'first' } })
     responses.push({ status: 200, body: { content: 'second' } })
-    const { router, note } = await mountAtRoute('/vault/zettel/a.md')
+    const { router, note } = await mountAtRoute('/vault/archive/a.md')
     expect(note.content.value).toBe('first')
-    await router.push('/vault/zettel/b.md')
+    await router.push('/vault/archive/b.md')
     await flushPromises()
-    expect(note.path.value).toBe('zettel/b.md')
+    expect(note.path.value).toBe('archive/b.md')
     expect(note.content.value).toBe('second')
   })
 

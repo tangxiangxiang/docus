@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Tests for useGraphData — the pure projection from the server's
 // LinkIndexSnapshot down to force-graph's {nodes, links} shape,
-// restricted to the zettel/ subtree.
+// restricted to the archive/ subtree.
 //
 // The composable is fully reactive: it reads `getLinkIndex()` (a
 // module-level ShallowRef populated by useLinkIndexSubscription),
@@ -29,55 +29,55 @@ beforeEach(() => {
   __resetLinkIndexForTesting()
 })
 
-describe('useGraphData — zettel filter', () => {
-  it('only includes nodes under zettel/', () => {
+describe('useGraphData — archive filter', () => {
+  it('only includes nodes under archive/', () => {
     setIndex({
-      paths: ['zettel/init', 'zettel/alpha', 'zettel/draft/beta', 'inbox/todo', 'literature/book'],
+      paths: ['archive/init', 'archive/alpha', 'archive/draft/beta', 'inbox/todo', 'literature/book'],
       outgoing: {},
     })
     const ids = useGraphData().value.nodes.map((n) => n.id).sort()
-    expect(ids).toEqual(['zettel/alpha', 'zettel/draft/beta', 'zettel/init'])
+    expect(ids).toEqual(['archive/alpha', 'archive/draft/beta', 'archive/init'])
   })
 
-  it('includes zettel/draft/ in the zettel/ subtree', () => {
-    /* The spec says the graph is the zettel/ subtree, which INCLUDES
-       zettel/draft/. A future change that excludes draft would need
+  it('includes archive/draft/ in the archive/ subtree', () => {
+    /* The spec says the graph is the archive/ subtree, which INCLUDES
+       archive/draft/. A future change that excludes draft would need
        a separate flag; pin "include draft" here so a refactor that
        silently drops it is caught. */
     setIndex({
-      paths: ['zettel/init', 'zettel/draft/new-card'],
+      paths: ['archive/init', 'archive/draft/new-card'],
       outgoing: {},
     })
     const ids = useGraphData().value.nodes.map((n) => n.id)
-    expect(ids).toContain('zettel/draft/new-card')
+    expect(ids).toContain('archive/draft/new-card')
   })
 
-  it('drops wiki links that point outside the zettel/ subtree', () => {
+  it('drops wiki links that point outside the archive/ subtree', () => {
     setIndex({
-      paths: ['zettel/a', 'zettel/b', 'inbox/c'],
+      paths: ['archive/a', 'archive/b', 'inbox/c'],
       outgoing: {
-        'zettel/a': [
-          { target: 'zettel/b', kind: 'wiki' },
+        'archive/a': [
+          { target: 'archive/b', kind: 'wiki' },
           { target: 'inbox/c', kind: 'wiki' }, // cross-tree — must be filtered
         ],
-        'zettel/b': [],
+        'archive/b': [],
       },
     })
     const links = useGraphData().value.links
     expect(links).toHaveLength(1)
-    expect(links[0]).toEqual({ source: 'zettel/a', target: 'zettel/b' })
+    expect(links[0]).toEqual({ source: 'archive/a', target: 'archive/b' })
   })
 
   it('drops non-wiki (md) links entirely', () => {
     /* docus distinguishes [[wiki]] from [text](file.md) in the link
        index. The knowledge graph shows knowledge connections (wiki
        links), not arbitrary markdown links. A regular [b](b.md)
-       link in a zettel note should NOT appear in the graph. */
+       link in a archive note should NOT appear in the graph. */
     setIndex({
-      paths: ['zettel/a', 'zettel/b'],
+      paths: ['archive/a', 'archive/b'],
       outgoing: {
-        'zettel/a': [
-          { target: 'zettel/b', kind: 'md' },
+        'archive/a': [
+          { target: 'archive/b', kind: 'md' },
         ],
       },
     })
@@ -86,60 +86,60 @@ describe('useGraphData — zettel filter', () => {
 
   it('drops self-links so one note does not draw a loop back to itself', () => {
     setIndex({
-      paths: ['zettel/a', 'zettel/b'],
+      paths: ['archive/a', 'archive/b'],
       outgoing: {
-        'zettel/a': [
-          { target: 'zettel/a', kind: 'wiki' },
-          { target: 'zettel/b', kind: 'wiki' },
+        'archive/a': [
+          { target: 'archive/a', kind: 'wiki' },
+          { target: 'archive/b', kind: 'wiki' },
         ],
       },
     })
-    expect(useGraphData().value.links).toEqual([{ source: 'zettel/a', target: 'zettel/b' }])
+    expect(useGraphData().value.links).toEqual([{ source: 'archive/a', target: 'archive/b' }])
   })
 
   it('sorts links stably by source and target', () => {
     setIndex({
-      paths: ['zettel/c', 'zettel/b', 'zettel/a'],
+      paths: ['archive/c', 'archive/b', 'archive/a'],
       outgoing: {
-        'zettel/c': [{ target: 'zettel/a', kind: 'wiki' }],
-        'zettel/a': [{ target: 'zettel/c', kind: 'wiki' }],
-        'zettel/b': [{ target: 'zettel/a', kind: 'wiki' }],
+        'archive/c': [{ target: 'archive/a', kind: 'wiki' }],
+        'archive/a': [{ target: 'archive/c', kind: 'wiki' }],
+        'archive/b': [{ target: 'archive/a', kind: 'wiki' }],
       },
     })
     expect(useGraphData().value.links).toEqual([
-      { source: 'zettel/a', target: 'zettel/c' },
-      { source: 'zettel/b', target: 'zettel/a' },
-      { source: 'zettel/c', target: 'zettel/a' },
+      { source: 'archive/a', target: 'archive/c' },
+      { source: 'archive/b', target: 'archive/a' },
+      { source: 'archive/c', target: 'archive/a' },
     ])
   })
 
   it('keeps isolated nodes (no edges in, no edges out)', () => {
-    /* A freshly-written zettel note may have no links yet. The
+    /* A freshly-written archive note may have no links yet. The
        user should still see it on the graph as an isolated dot
        so they know it exists. */
     setIndex({
-      paths: ['zettel/lonely', 'zettel/init'],
+      paths: ['archive/lonely', 'archive/init'],
       outgoing: {
-        'zettel/init': [{ target: 'zettel/lonely', kind: 'wiki' }],
+        'archive/init': [{ target: 'archive/lonely', kind: 'wiki' }],
       },
     })
     const nodes = useGraphData().value.nodes
     expect(nodes).toHaveLength(2)
-    const lonely = nodes.find((n) => n.id === 'zettel/lonely')!
+    const lonely = nodes.find((n) => n.id === 'archive/lonely')!
     expect(lonely).toBeDefined()
   })
 
   it('uses document titles from the link index and falls back to the path basename', () => {
     setIndex({
-      paths: ['zettel/a', 'zettel/ch01-where-dreams-begin'],
+      paths: ['archive/a', 'archive/ch01-where-dreams-begin'],
       outgoing: {},
       titles: {
-        'zettel/a': 'Atomic Ideas',
+        'archive/a': 'Atomic Ideas',
       },
     })
     const nodes = useGraphData().value.nodes
-    expect(nodes.find((n) => n.id === 'zettel/a')?.title).toBe('Atomic Ideas')
-    expect(nodes.find((n) => n.id === 'zettel/ch01-where-dreams-begin')?.title).toBe('ch01-where-dreams-begin')
+    expect(nodes.find((n) => n.id === 'archive/a')?.title).toBe('Atomic Ideas')
+    expect(nodes.find((n) => n.id === 'archive/ch01-where-dreams-begin')?.title).toBe('ch01-where-dreams-begin')
   })
 })
 
@@ -171,13 +171,13 @@ describe('useGraphData — node sizing', () => {
     for (const { degree, expected } of cases) {
       // Build a star: a hub with `degree` incoming edges from
       // distinct sources, no outgoing edges of its own.
-      const paths = ['zettel/hub', ...Array.from({ length: degree }, (_, i) => `zettel/p${i}`)]
+      const paths = ['archive/hub', ...Array.from({ length: degree }, (_, i) => `archive/p${i}`)]
       const outgoing: Record<string, Array<{ target: string; kind: 'wiki' }>> = {}
       for (let i = 0; i < degree; i++) {
-        outgoing[`zettel/p${i}`] = [{ target: 'zettel/hub', kind: 'wiki' }]
+        outgoing[`archive/p${i}`] = [{ target: 'archive/hub', kind: 'wiki' }]
       }
       setIndex({ paths, outgoing })
-      const hub = useGraphData().value.nodes.find((n) => n.id === 'zettel/hub')!
+      const hub = useGraphData().value.nodes.find((n) => n.id === 'archive/hub')!
       expect(hub.val, `degree=${degree}`).toBe(expected)
     }
   })
@@ -186,13 +186,13 @@ describe('useGraphData — node sizing', () => {
     /* Regression guard for the "中间的圆太大" bug: 20 edges
        would give 8 + round(3*sqrt(20)) = 21, but the cap clamps
        to 18. If someone removes the cap, this fails loudly. */
-    const paths = ['zettel/hub', ...Array.from({ length: 20 }, (_, i) => `zettel/p${i}`)]
+    const paths = ['archive/hub', ...Array.from({ length: 20 }, (_, i) => `archive/p${i}`)]
     const outgoing: Record<string, Array<{ target: string; kind: 'wiki' }>> = {}
     for (let i = 0; i < 20; i++) {
-      outgoing[`zettel/p${i}`] = [{ target: 'zettel/hub', kind: 'wiki' }]
+      outgoing[`archive/p${i}`] = [{ target: 'archive/hub', kind: 'wiki' }]
     }
     setIndex({ paths, outgoing })
-    const hub = useGraphData().value.nodes.find((n) => n.id === 'zettel/hub')!
+    const hub = useGraphData().value.nodes.find((n) => n.id === 'archive/hub')!
     expect(hub.val).toBe(18)
   })
 
@@ -204,39 +204,39 @@ describe('useGraphData — node sizing', () => {
        should draw the same size — the previous binning violated
        this by giving root=24 and leaf=12. */
     setIndex({
-      paths: ['zettel/root', 'zettel/leaf'],
+      paths: ['archive/root', 'archive/leaf'],
       outgoing: {
-        'zettel/root': [{ target: 'zettel/leaf', kind: 'wiki' }],
+        'archive/root': [{ target: 'archive/leaf', kind: 'wiki' }],
       },
     })
-    const root = useGraphData().value.nodes.find((n) => n.id === 'zettel/root')!
-    const leaf = useGraphData().value.nodes.find((n) => n.id === 'zettel/leaf')!
+    const root = useGraphData().value.nodes.find((n) => n.id === 'archive/root')!
+    const leaf = useGraphData().value.nodes.find((n) => n.id === 'archive/leaf')!
     expect(root.val).toBe(leaf.val)
   })
 
   it('keeps isolated nodes above the visibility floor', () => {
-    /* A freshly-written zettel with no links yet has total=0. The
+    /* A freshly-written archive with no links yet has total=0. The
        formula returns BASE (8) so it shows up as a visible dot
        rather than vanishing from the graph. */
     setIndex({
-      paths: ['zettel/lonely'],
+      paths: ['archive/lonely'],
       outgoing: {},
     })
-    const lonely = useGraphData().value.nodes.find((n) => n.id === 'zettel/lonely')!
+    const lonely = useGraphData().value.nodes.find((n) => n.id === 'archive/lonely')!
     expect(lonely.val).toBeGreaterThanOrEqual(6)
   })
 })
 
 describe('useGraphData — reactiveness', () => {
   it('recomputes when the link index ref changes', () => {
-    setIndex({ paths: ['zettel/a'], outgoing: {} })
+    setIndex({ paths: ['archive/a'], outgoing: {} })
     expect(useGraphData().value.nodes).toHaveLength(1)
 
     setIndex({
-      paths: ['zettel/a', 'zettel/b', 'zettel/c'],
+      paths: ['archive/a', 'archive/b', 'archive/c'],
       outgoing: {
-        'zettel/a': [{ target: 'zettel/b', kind: 'wiki' }],
-        'zettel/b': [{ target: 'zettel/c', kind: 'wiki' }],
+        'archive/a': [{ target: 'archive/b', kind: 'wiki' }],
+        'archive/b': [{ target: 'archive/c', kind: 'wiki' }],
       },
     })
     const next = useGraphData().value

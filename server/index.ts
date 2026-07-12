@@ -9,7 +9,7 @@ import { listPostsFlat, buildTree, listSubtreePaths, readFrontmatter } from './t
 import { getIndex as getLinkIndex } from './linkIndex.js'
 import aiRoutes from './ai/routes.js'
 import historyRoutes from './history/routes.js'
-import { isInZettel } from '../src/composables/zettelProtocol.js'
+import { isInArchive } from '../src/composables/archiveProtocol.js'
 import type { PostSummary, PostDetail } from '../src/lib/api.js'
 import { getDb } from './db.js'
 import {
@@ -232,8 +232,8 @@ app.post('/api/posts', async (c) => {
   if (!isValidPathSyntax(body.path)) {
     return bad(c, 'invalid path syntax')
   }
-  if (isInZettel(body.path)) {
-    return bad(c, 'zettel notes must be created through archive flow', 422)
+  if (isInArchive(body.path)) {
+    return bad(c, 'archive notes must be created through archive flow', 422)
   }
   if (body.title !== undefined && typeof body.title !== 'string') {
     return bad(c, 'title must be a string', 400)
@@ -345,11 +345,11 @@ app.patch('/api/posts/*', async (c) => {
   if (body.name !== undefined) {
     if (!isValidSegment(body.name)) return bad(c, 'invalid name')
     // In-place rename within the same parent. The protocol forbids
-    // renaming zettel items, so block this branch server-side too —
+    // renaming archive items, so block this branch server-side too —
     // the client already hides the menu item via canModify, but the
     // API is the backstop for any non-UI caller.
-    if (isInZettel(srcPath)) {
-      return bad(c, 'zettel notes cannot be renamed', 422)
+    if (isInArchive(srcPath)) {
+      return bad(c, 'archive notes cannot be renamed', 422)
     }
     const parent = path.dirname(src)
     dest = path.join(parent, body.name + '.md')
@@ -362,28 +362,28 @@ app.patch('/api/posts/*', async (c) => {
     if (dest !== src && body.targetPath!.startsWith(srcPath + '/')) {
       return bad(c, 'cannot move into descendant', 422)
     }
-    // Zettel movement policy:
-    //   - inbox/ and literature/ notes may be archived into zettel/.
-    //   - existing zettel notes may move within zettel/ for reclassification.
-    //   - zettel notes may not be moved out of zettel/.
+    // Archive movement policy:
+    //   - inbox/ and literature/ notes may be archived into archive/.
+    //   - existing archive notes may move within archive/ for reclassification.
+    //   - archive notes may not be moved out of archive/.
     // This mirrors the file-tree UX while keeping the API as the backstop.
-    const targetInZettel = isInZettel(destPath)
-    const sourceInZettel = isInZettel(srcPath)
-    if (sourceInZettel && !targetInZettel) {
-      return bad(c, 'zettel notes can only be moved within zettel', 422)
+    const targetInArchive = isInArchive(destPath)
+    const sourceInArchive = isInArchive(srcPath)
+    if (sourceInArchive && !targetInArchive) {
+      return bad(c, 'archive notes can only be moved within archive', 422)
     }
-    if (targetInZettel) {
+    if (targetInArchive) {
       const sourceArchiveable =
         srcPath === 'inbox' || srcPath.startsWith('inbox/') ||
         srcPath === 'literature' || srcPath.startsWith('literature/') ||
-        sourceInZettel
+        sourceInArchive
       if (!sourceArchiveable) {
-        return bad(c, 'only inbox/ and literature/ notes can be archived to zettel', 422)
+        return bad(c, 'only inbox/ and literature/ notes can be archived to archive', 422)
       }
     }
   }
   if (await exists(dest)) {
-    if (body.targetPath !== undefined && isInZettel(destPath)) {
+    if (body.targetPath !== undefined && isInArchive(destPath)) {
       const unique = await uniqueMoveTarget(dest, destPath)
       dest = unique.abs
       destPath = unique.rel
@@ -488,12 +488,12 @@ app.patch('/api/posts/*', async (c) => {
   } satisfies PostSummary)
 })
 
-// Delete a file. Zettel items cannot be deleted per protocol; the client
+// Delete a file. Archive items cannot be deleted per protocol; the client
 // hides the menu item via canModify but the API is the backstop.
 app.delete('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
-  if (isInZettel(splat)) {
-    return bad(c, 'zettel notes cannot be deleted', 422)
+  if (isInArchive(splat)) {
+    return bad(c, 'archive notes cannot be deleted', 422)
   }
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }

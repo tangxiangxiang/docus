@@ -9,7 +9,7 @@ function call(patch: Partial<ToolCallRecord> = {}): ToolCallRecord {
   return {
     id: 'tool-1',
     name: 'read_file',
-    input: { path: 'zettel/example' },
+    input: { path: 'archive/example' },
     result: { content: 'x'.repeat(240), is_error: false },
     ...patch,
   }
@@ -19,7 +19,7 @@ describe('AiToolCallCard', () => {
   it('summarizes and expands long read results locally', async () => {
     const wrapper = mount(AiToolCallCard, { props: { call: call() } })
 
-    expect(wrapper.get('.ai-tool-summary').text()).toBe('zettel/example · 240 chars')
+    expect(wrapper.get('.ai-tool-summary').text()).toBe('archive/example · 240 chars')
     expect(wrapper.get('.ai-tool-result').classes()).toContain('ai-tool-collapsed')
     expect(wrapper.get('code').text()).toHaveLength(201)
 
