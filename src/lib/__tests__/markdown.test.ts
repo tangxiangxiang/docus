@@ -169,6 +169,12 @@ describe('markdown render()', () => {
     expect(sectionIdx).toBeGreaterThan(sepIdx)
   })
 
+  it('wraps tables in a dedicated horizontal scroll container', async () => {
+    const html = await render('| A | B |\n| --- | --- |\n| one | two |')
+    expect(html).toContain('<div class="table-scroll"><table>')
+    expect(html).toContain('</table></div>')
+  })
+
   it('leaves [^id] literal when no matching definition exists', async () => {
     const html = await render('A reference with no body[^orphan].')
     /* The plugin refuses to emit a <sup> for an unresolved ref —

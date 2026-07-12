@@ -154,6 +154,8 @@ async function getMd(): Promise<MarkdownIt> {
       .use(wikiLinkPlugin, {
         resolve: (ref: string, anchor?: string) => activeResolver(ref, anchor),
       })
+    md.renderer.rules.table_open = () => '<div class="table-scroll"><table>\n'
+    md.renderer.rules.table_close = () => '</table></div>\n'
     return md
   })()
   return mdPromise
