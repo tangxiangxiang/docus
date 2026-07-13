@@ -157,7 +157,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
   if (body.name !== undefined) {
     if (!isValidSegment(body.name)) return bad(c, 'invalid name')
     // In-place rename within the same parent. The protocol forbids
-    // renaming archive items, so block this branch server-side too 鈥?
+    // renaming archive items, so block this branch server-side too —
     // the client already hides the menu item via canModify, but the
     // API is the backstop for any non-UI caller.
     if (isInArchive(srcPath)) {
