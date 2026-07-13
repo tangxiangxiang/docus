@@ -263,11 +263,13 @@ hr {
 }
 .nav-search,
 .theme-toggle {
+  width: 28px;
+  height: 28px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
   border-radius: 6px;
-  padding: 6px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -280,8 +282,11 @@ hr {
   border-color: var(--border);
   background: var(--bg-soft);
 }
-.navbar.is-vault .nav-search,
-.navbar.is-vault .theme-toggle { padding: 4px; }
+.nav-actions :where(.nav-search, .theme-toggle, .ai-toggle, .view-mode-menu-trigger) svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
 
 /* Scope filter chips (vault roots: inbox / literature / archive).
    Rendered in the navbar in vault mode because the file tree's header
@@ -3465,15 +3470,17 @@ main.container {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   background: transparent;
-  border: 0;
+  border: 1px solid transparent;
   color: var(--text-muted);
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
   transition: background 0.1s, color 0.1s;
 }
-.ai-toggle:hover { background: var(--bg-soft); color: var(--text-h); }
+.ai-toggle:hover { background: var(--bg-soft); border-color: var(--border); color: var(--text-h); }
 .ai-toggle[aria-pressed='true'] {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
@@ -3501,7 +3508,9 @@ main.container {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);

@@ -23,6 +23,7 @@
 
 import { computed, nextTick, ref, watch } from 'vue'
 import { onClickOutside } from '@vueuse/core'
+import { ICON_EYE, ICON_READ, ICON_RENAME } from './vault/icons'
 
 type VaultViewMode = 'edit' | 'read'
 
@@ -153,37 +154,14 @@ function onItemKeydown(e: KeyboardEvent, idx: number) {
   }
 }
 
-/* Inline SVG icons for the trigger + each option. Same line-art
-   weight (stroke 1.5, currentColor) and 14×14 viewBox as the rest
-   of icons.ts, but kept inline here so the menu is self-contained
-   — there's no scenario where another component needs just the
-   "eye-pencil" combo. */
-const ICON_PENCIL = `
-<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M11 2l3 3-8 8H3v-3z"/>
-  <path d="M10 3l3 3"/>
-</svg>`
-
-const ICON_BOOK_OPEN = `
-<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M2 3h4a3 3 0 0 1 3 3v8a2 2 0 0 0-2-2H2z"/>
-  <path d="M14 3h-4a3 3 0 0 0-3 3v8a2 2 0 0 1 2-2h5z"/>
-</svg>`
-
-const ICON_EYE = `
-<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/>
-  <circle cx="8" cy="8" r="1.75"/>
-</svg>`
-
 /* Trigger shows the active icon (the one that represents the
    current state — pencil for edit, eye-pencil for edit+preview,
    book-open for read). The popover rows use a smaller version of
    the same icon for visual continuity. */
 function iconFor(key: OptionKey): string {
-  if (key === 'read') return ICON_BOOK_OPEN
+  if (key === 'read') return ICON_READ
   if (key === 'edit+preview') return ICON_EYE
-  return ICON_PENCIL
+  return ICON_RENAME
 }
 </script>
 
