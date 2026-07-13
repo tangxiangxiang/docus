@@ -2,7 +2,6 @@
 // composables under editor-tabs/; this module preserves the VaultView API and
 // wires lifecycle, persistence restore, command-palette creation, and cleanup.
 
-
 import { onBeforeUnmount, onMounted } from 'vue'
 import { createPost } from '../../lib/api'
 import { useToast } from '../useToast'
@@ -36,9 +35,6 @@ export {
   setOpenPostForClicks,
 } from './editor-tabs/liveTabPublishing'
 export { __setVaultIdForTesting } from './editor-tabs/useTabPersistence'
-
-
-
 
 export function useEditorTabs(opts: {
   selectPanel: (panel: SidePanel) => void
@@ -74,7 +70,6 @@ export function useEditorTabs(opts: {
 
   const { resolveVaultId } = useTabPersistence(tabs, activePath)
 
-
   const {
     scheduleSave,
     doSave,
@@ -90,7 +85,6 @@ export function useEditorTabs(opts: {
     toastError: toast.error,
   })
 
-
   const {
     handleOnline,
     pollExternalChanges,
@@ -98,7 +92,6 @@ export function useEditorTabs(opts: {
     startExternalPolling,
     stopExternalPolling,
   } = useDiskFileChanges({ tabs, doSave, scheduleSave })
-
 
   const { onKeydown } = useEditorShortcuts({
     tabs,
@@ -109,7 +102,6 @@ export function useEditorTabs(opts: {
     selectFilesPanel: () => opts.selectPanel('files'),
     togglePreview: opts.togglePreview,
   })
-
 
   async function onCommandPaletteNew(title: string) {
     const trimmed = (title ?? '').trim()
@@ -140,6 +132,8 @@ export function useEditorTabs(opts: {
     confirm,
     toastInfo: toast.info,
   })
+
+  const { routePath } = useRouteSync({ activePath, openPost })
 
   // Initial load: refresh the tree + posts, then restore any tabs
   // persisted from the previous session, then handle a deep-link
@@ -200,13 +194,6 @@ export function useEditorTabs(opts: {
     // still track it correctly).
     subscribeToFileChanges()
   })
-
-
-  // Apply one external file-change event. Mutates the tabs list in
-  // place (the refs are already reactive). Awaits the confirm
-  // prompt for dirty tabs; for renames, closes the old tab (with
-  // its own dirty-confirm) and opens a new one.
-  const { routePath } = useRouteSync({ activePath, openPost })
 
   publishLiveTabs(tabs)
   setOpenPostForClicks(openPost)
