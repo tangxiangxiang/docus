@@ -11,7 +11,8 @@ import { suggestSlug } from '../../lib/ai-api'
 import { isSlugSegment, toLocalSlug } from '../../lib/slug'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
 import { useArchiveNote } from '../../composables/vault/useArchiveNote'
-import { publishFileChange } from '../../composables/vault/useFileChangeBus'
+import { getFallbackVaultFileChanges } from '../../composables/vault/context/fileChanges'
+import { useOptionalVaultContext } from '../../composables/vault/context/useVaultContext'
 import { ICON_SEARCH } from './icons'
 import { useI18n } from '../../composables/useI18n'
 
@@ -42,6 +43,8 @@ const { prompt } = usePrompt()
 const { archive: archiveNote } = useArchiveNote()
 const toast = useToast()
 const { t } = useI18n()
+const vaultContext = useOptionalVaultContext()
+const publishChange = vaultContext?.fileChanges.publish ?? getFallbackVaultFileChanges().publish
 const searchInputRef = ref<HTMLInputElement | null>(null)
 
 const STORAGE_KEY = 'docus.vault.expandedPaths'
@@ -546,7 +549,7 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
         ? await renameFolder(oldPath, newPath, true)
         : await renameFolder(oldPath, newPath)
       for (const updated of res.updatedReferences ?? []) {
-        publishFileChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
+        publishChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
       }
       toast.success(`已重命名 (${res.moved.length} 项)`)
     } else {
@@ -559,7 +562,7 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
       } catch { /* impact preview is advisory; renaming still works */ }
       const renamed = await patchPost(oldPath, updateReferences ? { name: safeName, updateReferences: true } : { name: safeName })
       for (const updated of renamed.updatedReferences ?? []) {
-        if (updated.path !== renamed.path) publishFileChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
+        if (updated.path !== renamed.path) publishChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
       }
     }
     emit('refresh')

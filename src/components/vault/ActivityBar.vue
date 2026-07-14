@@ -5,7 +5,7 @@
 
    The History button carries a small numeric badge when there are
    dirty files in the working tree. The count comes from the
-   useHistory singleton (which subscribes to the file-change bus)
+   vault-scoped useHistory instance (which subscribes to the file-change bus)
    so the badge updates live as the user saves tabs. */
 import { useHistory } from '../../composables/vault/useHistory.js'
 export type SidePanel = 'files' | 'tags' | 'history'

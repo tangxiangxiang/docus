@@ -1,28 +1,17 @@
 import { useDebounceFn } from '@vueuse/core'
-import { watch, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
 
 const TAB_PERSIST_KEY = 'docus:tabs:v1'
 const TAB_PERSIST_MAX = 20
 const TAB_PERSIST_DEBOUNCE_MS = 100
 
-let vaultIdPromise: Promise<string | null> | null = null
-let cachedVaultId: string | null = null
+let vaultIdOverrideForTesting: { value: string | null } | null = null
 
 export interface PersistedTabs {
   v: number
   paths: string[]
   active: string | null
-}
-
-function fetchVaultId(): Promise<string | null> {
-  if (!vaultIdPromise) {
-    vaultIdPromise = fetch('/api/health')
-      .then((r) => r.json() as Promise<{ vaultId?: string }>)
-      .then((j) => j.vaultId ?? null)
-      .catch(() => null)
-  }
-  return vaultIdPromise
 }
 
 function storageKey(vaultId: string | null): string {
@@ -60,25 +49,37 @@ function writePersistedTabs(tabs: Tab[], active: string | null, vaultId: string 
 }
 
 export function useTabPersistence(tabs: Ref<Tab[]>, activePath: Ref<string | null>) {
+  const vaultId = ref<string | null>(null)
+  let vaultIdPromise: Promise<string | null> | null = null
+
+  function fetchVaultId(): Promise<string | null> {
+    if (vaultIdOverrideForTesting) return Promise.resolve(vaultIdOverrideForTesting.value)
+    if (!vaultIdPromise) {
+      vaultIdPromise = fetch('/api/health')
+        .then((response) => response.json() as Promise<{ vaultId?: string }>)
+        .then((payload) => payload.vaultId ?? null)
+        .catch(() => null)
+    }
+    return vaultIdPromise
+  }
+
   const debouncedPersist = useDebounceFn(
-    () => writePersistedTabs(tabs.value, activePath.value, cachedVaultId),
+    () => writePersistedTabs(tabs.value, activePath.value, vaultId.value),
     TAB_PERSIST_DEBOUNCE_MS,
   )
   watch([tabs, activePath], () => { debouncedPersist() }, { deep: false })
 
   async function resolveVaultId(): Promise<string | null> {
-    cachedVaultId = await fetchVaultId()
-    return cachedVaultId
+    vaultId.value = await fetchVaultId()
+    return vaultId.value
   }
-  return { resolveVaultId }
+  return { vaultId, resolveVaultId }
 }
 
 export function __setVaultIdForTesting(vaultId: string | null): void {
-  cachedVaultId = vaultId
-  vaultIdPromise = Promise.resolve(vaultId)
+  vaultIdOverrideForTesting = { value: vaultId }
 }
 
 export function resetTabPersistenceForTesting(): void {
-  cachedVaultId = null
-  vaultIdPromise = null
+  vaultIdOverrideForTesting = null
 }

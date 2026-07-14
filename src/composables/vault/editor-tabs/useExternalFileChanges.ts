@@ -1,6 +1,7 @@
 import { watch, type Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
-import { getFileChangeBus, type InternalFileChangeEvent } from '../useFileChangeBus.js'
+import type { InternalFileChangeEvent } from '../context/fileChanges.js'
+import type { VaultFileChanges } from '../context/fileChanges'
 import { makeEmptyTab } from './tabState'
 
 export function useExternalFileChanges(options: {
@@ -11,6 +12,7 @@ export function useExternalFileChanges(options: {
   navigateTo: (path: string) => void
   confirm: (message: string) => Promise<boolean>
   toastInfo: (message: string) => void
+  fileChanges: VaultFileChanges
 }) {
   async function applyExternalChange(event: InternalFileChangeEvent): Promise<void> {
     if (event.kind === 'rename') {
@@ -69,7 +71,7 @@ export function useExternalFileChanges(options: {
   }
 
   function subscribeToFileChanges() {
-    const fileBus = getFileChangeBus()
+    const fileBus = options.fileChanges.events
     let lastSeenSeq = 0
     watch(
       () => fileBus.value,

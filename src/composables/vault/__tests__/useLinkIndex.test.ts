@@ -12,8 +12,7 @@ import {
   __resetLinkIndexForTesting,
   __resetLinkIndexSubscriptionForTesting,
 } from '../useLinkIndex'
-import { publishFileChange, __resetFileChangeBusForTesting } from '../useFileChangeBus'
-import { setOpenPostForClicks, __resetLiveTabsForTesting } from '../useEditorTabs'
+import { createVaultFileChanges } from '../context/fileChanges'
 
 type FetchCall = { url: string; init: RequestInit }
 type FetchResponse = { status: number; body: unknown }
@@ -21,6 +20,7 @@ type FetchResponse = { status: number; body: unknown }
 let calls: FetchCall[] = []
 let responses: FetchResponse[] = []
 let pendingRoutes: Map<string, FetchResponse> = new Map()
+let testFileChanges = createVaultFileChanges()
 
 function enqueue(method: string, path: string, response: FetchResponse) {
   pendingRoutes.set(`${method} ${path}`, response)
@@ -30,11 +30,9 @@ beforeEach(() => {
   calls = []
   responses = []
   pendingRoutes = new Map()
+  testFileChanges = createVaultFileChanges()
   __resetLinkIndexForTesting()
   __resetLinkIndexSubscriptionForTesting()
-  __resetFileChangeBusForTesting()
-  __resetLiveTabsForTesting()
-  setOpenPostForClicks(null)
   globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const u = String(url)
     const m = init?.method ?? 'GET'
@@ -49,9 +47,6 @@ afterEach(() => {
   vi.useRealTimers()
   __resetLinkIndexForTesting()
   __resetLinkIndexSubscriptionForTesting()
-  __resetFileChangeBusForTesting()
-  __resetLiveTabsForTesting()
-  setOpenPostForClicks(null)
 })
 
 describe('useLinkIndex', () => {
@@ -68,6 +63,20 @@ describe('useLinkIndex', () => {
       const a = getLinkIndex()
       const b = getLinkIndex()
       expect(a).toBe(b)
+    })
+
+    it('keeps indexes owned by different vaults isolated', () => {
+      const vaultA = createVaultFileChanges()
+      const vaultB = createVaultFileChanges()
+      const a = getLinkIndex(vaultA)
+      const b = getLinkIndex(vaultB)
+
+      a.value = { paths: new Set(['a']), outgoing: {}, titles: { a: 'A' }, lastFetched: 1 }
+
+      expect(a).not.toBe(b)
+      expect(Array.from(a.value.paths)).toEqual(['a'])
+      expect(b.value.paths.size).toBe(0)
+      expect(b.value.titles).toEqual({})
     })
   })
 
@@ -121,7 +130,7 @@ describe('useLinkIndex', () => {
       let installed = false
       const Comp = defineComponent({
         setup() {
-          useLinkIndexSubscription()
+          useLinkIndexSubscription(testFileChanges)
           installed = true
           return () => h('div')
         },
@@ -153,8 +162,8 @@ describe('useLinkIndex', () => {
       // the debounced refresh.
       const beforeCount = calls.length
       // Two rapid bus publishes.
-      publishFileChange({ path: 'a.md', kind: 'write' })
-      publishFileChange({ path: 'b.md', kind: 'write' })
+      testFileChanges.publish({ path: 'a.md', kind: 'write' })
+      testFileChanges.publish({ path: 'b.md', kind: 'write' })
       // Advance less than 400ms — the debounce should not have fired.
       await vi.advanceTimersByTimeAsync(200)
       expect(calls.length).toBe(beforeCount)
@@ -171,11 +180,11 @@ describe('useLinkIndex', () => {
       await vi.runAllTimersAsync()
       const initial = calls.length
 
-      publishFileChange({ path: 'a.md', kind: 'write' })
+      testFileChanges.publish({ path: 'a.md', kind: 'write' })
       await vi.advanceTimersByTimeAsync(500)
       expect(calls.length - initial).toBe(1)
 
-      publishFileChange({ path: 'b.md', kind: 'write' })
+      testFileChanges.publish({ path: 'b.md', kind: 'write' })
       await vi.advanceTimersByTimeAsync(500)
       expect(calls.length - initial).toBe(2)
     })

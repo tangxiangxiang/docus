@@ -6,7 +6,8 @@ import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useConfirm } from '../../composables/useConfirm'
 import { useEditorPreferences } from '../../composables/vault/useEditorPreferences'
-import { publishFileChange } from '../../composables/vault/useFileChangeBus'
+import { getFallbackVaultFileChanges } from '../../composables/vault/context/fileChanges'
+import { useOptionalVaultContext } from '../../composables/vault/context/useVaultContext'
 import {
   cleanDocumentFrontmatter,
   getFrontmatterCleanupPreview,
@@ -31,6 +32,7 @@ const apiKey = ref('')
 const baseURL = ref('')
 const model = ref('claude-sonnet-4-6')
 const modalRef = ref<HTMLElement | null>(null)
+const vaultContext = useOptionalVaultContext()
 const migrationSummary = ref<MetadataMigrationSummary | null>(null)
 const cleanupPreview = ref<FrontmatterCleanupPreview | null>(null)
 const previewing = ref(false)
@@ -72,7 +74,8 @@ async function reloadMetadataStatus() {
 }
 
 function publishChanges(result: { changed: Array<{ path: string; newRaw: string; newMtime: number }> }) {
-  for (const change of result.changed) publishFileChange({ ...change, kind: 'write' })
+  const publishChange = vaultContext?.fileChanges.publish ?? getFallbackVaultFileChanges().publish
+  for (const change of result.changed) publishChange({ ...change, kind: 'write' })
 }
 
 async function removeFrontmatter() {

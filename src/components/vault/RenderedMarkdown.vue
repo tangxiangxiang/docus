@@ -3,7 +3,7 @@ import { nextTick, ref, toRef, watch } from 'vue'
 import { useMarkdownRender, type Heading } from '../../composables/vault/useMarkdownRender'
 import { useMarkmapMount } from '../../composables/useMarkmapMount'
 import { useMermaidMount } from '../../composables/useMermaidMount'
-import { getOpenPostForClicks } from '../../composables/vault/useEditorTabs'
+import { useVaultContext } from '../../composables/vault/context/useVaultContext'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 
 const props = withDefaults(defineProps<{
@@ -19,6 +19,7 @@ const emit = defineEmits<{
 
 const { html, error, headings } = useMarkdownRender(toRef(props, 'raw'), props.resolver)
 const articleEl = ref<HTMLElement | null>(null)
+const vaultContext = useVaultContext()
 useMarkmapMount(articleEl)
 useMermaidMount(articleEl)
 
@@ -34,7 +35,7 @@ function onArticleClick(event: MouseEvent) {
   const destination = anchor?.dataset.target
   if (!destination) return
   event.preventDefault()
-  getOpenPostForClicks()?.(destination)
+  void vaultContext.editor.openPost(destination)
 }
 
 defineExpose({ el: articleEl })

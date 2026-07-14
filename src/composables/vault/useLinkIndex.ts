@@ -1,5 +1,5 @@
-// Client-side link index store. A module-level singleton that
-// mirrors the server's `/api/links/index` snapshot, so the wiki
+// Client-side link index store. Each Vault file-change capability owns a
+// snapshot of the server's `/api/links/index`, so the wiki
 // link renderer can check existence and the LinksPanel can show
 // outgoing links without round-tripping the server for every note.
 //
@@ -22,7 +22,8 @@ import {
   type BacklinkRecord,
   type LinkIndexSnapshot,
 } from '../../lib/api'
-import { getFileChangeBus } from './useFileChangeBus.js'
+import { getFallbackVaultFileChanges, type VaultFileChanges } from './context/fileChanges'
+import { useOptionalVaultContext } from './context/useVaultContext'
 
 // Module-level state: a single shallowRef shared by every
 // component. `paths` is a Set for O(1) existence checks; `outgoing`
@@ -36,22 +37,42 @@ export interface LinkIndexState {
   lastFetched: number
 }
 
-let _state: ShallowRef<LinkIndexState> | null = null
+interface LinkIndexStore {
+  state: ShallowRef<LinkIndexState>
+  activeStop: (() => void) | null
+  subInstallCount: number
+}
+
+let stores = new WeakMap<VaultFileChanges, LinkIndexStore>()
+const legacyFileChanges = getFallbackVaultFileChanges()
 
 function makeInitialState(): LinkIndexState {
   return { paths: new Set(), outgoing: {}, titles: {}, lastFetched: 0 }
 }
 
-export function getLinkIndex(): ShallowRef<LinkIndexState> {
-  if (!_state) _state = shallowRef<LinkIndexState>(makeInitialState())
-  return _state
+function resolveFileChanges(explicit?: VaultFileChanges): VaultFileChanges {
+  return explicit ?? useOptionalVaultContext()?.fileChanges ?? legacyFileChanges
+}
+
+function getStore(fileChanges?: VaultFileChanges): LinkIndexStore {
+  const owner = resolveFileChanges(fileChanges)
+  let store = stores.get(owner)
+  if (!store) {
+    store = { state: shallowRef(makeInitialState()), activeStop: null, subInstallCount: 0 }
+    stores.set(owner, store)
+  }
+  return store
+}
+
+export function getLinkIndex(fileChanges?: VaultFileChanges): ShallowRef<LinkIndexState> {
+  return getStore(fileChanges).state
 }
 
 /** Force a fresh fetch from `/api/links/index`. Called on mount and
  *  from the debounced bus subscriber. Errors are swallowed: a
  *  transient network failure just leaves the previous state in
  *  place; the next bus event will retry. */
-export async function refreshLinkIndex(): Promise<void> {
+export async function refreshLinkIndex(fileChanges?: VaultFileChanges): Promise<void> {
   try {
     const snap: LinkIndexSnapshot = await getLinkIndexSnapshot()
     const next: LinkIndexState = {
@@ -60,41 +81,42 @@ export async function refreshLinkIndex(): Promise<void> {
       titles: snap.titles ?? {},
       lastFetched: Date.now(),
     }
-    // Always initialize the singleton (so a refresh called before
+    // Always initialize this Vault's store (so a refresh called before
     // any consumer reads `getLinkIndex()` still produces state).
-    getLinkIndex().value = next
+    getLinkIndex(fileChanges).value = next
   } catch {
     // ignore — keep the previous state
   }
 }
 
-/** Test-only escape hatch: drop the singleton so the next
+/** Test-only escape hatch: drop the legacy fallback so the next
  *  `getLinkIndex()` returns a fresh empty state. */
 export function __resetLinkIndexForTesting(): void {
-  _state = null
+  const store = stores.get(legacyFileChanges)
+  store?.activeStop?.()
+  stores.delete(legacyFileChanges)
 }
 
 // --- bus subscription (one per vault mount) ---
-
-let _subInstallCount = 0
-let _activeStop: (() => void) | null = null
 
 /** Install the file-change-bus subscription that refreshes the
  *  link index on every external change. Each call installs a
  *  fresh watch; the previous one is torn down if still active
  *  (e.g. across remounts in tests). */
-export function useLinkIndexSubscription(): void {
+export function useLinkIndexSubscription(fileChanges?: VaultFileChanges): void {
+  const owner = resolveFileChanges(fileChanges)
+  const store = getStore(owner)
   // Tear down any prior subscription so multiple mounts (e.g.
   // across test cases) each get their own watcher + debounce.
-  if (_activeStop) {
-    _activeStop()
-    _activeStop = null
+  if (store.activeStop) {
+    store.activeStop()
+    store.activeStop = null
   }
 
-  const bus = getFileChangeBus()
+  const bus = owner.events
   // Debounce: a save-burst (e.g. an AI tool call) can publish
   // multiple events in a few ms. Coalesce them into one refresh.
-  const debounced = useDebounceFn(() => { void refreshLinkIndex() }, 400)
+  const debounced = useDebounceFn(() => { void refreshLinkIndex(owner) }, 400)
 
   let lastSeenSeq = 0
   const stop = watch(
@@ -108,7 +130,7 @@ export function useLinkIndexSubscription(): void {
     { flush: 'post' },
   )
 
-  _activeStop = () => {
+  const cleanup = () => {
     stop()
     // Cancel any pending debounced refresh so a mid-flight debounce
     // can't fire after the watch is torn down. useDebounceFn exposes
@@ -118,27 +140,29 @@ export function useLinkIndexSubscription(): void {
     const d = debounced as { cancel?: () => void }
     d.cancel?.()
   }
-  _subInstallCount += 1
+  store.activeStop = cleanup
+  store.subInstallCount += 1
 
   // First refresh: do it immediately (no debounce) so the index is
   // populated before the user opens the first note.
-  onMounted(() => { void refreshLinkIndex() })
+  onMounted(() => { void refreshLinkIndex(owner) })
 
   onBeforeUnmount(() => {
-    if (_activeStop) {
-      _activeStop()
-      _activeStop = null
+    if (store.activeStop === cleanup) {
+      cleanup()
+      store.activeStop = null
     }
   })
 }
 
 /** Test-only escape hatch: reset subscription install count. */
 export function __resetLinkIndexSubscriptionForTesting(): void {
-  if (_activeStop) {
-    _activeStop()
-    _activeStop = null
+  const store = stores.get(legacyFileChanges)
+  if (store?.activeStop) {
+    store.activeStop()
+    store.activeStop = null
   }
-  _subInstallCount = 0
+  if (store) store.subInstallCount = 0
 }
 
 // Backlinks are NOT in the index snapshot (they'd bloat the wire

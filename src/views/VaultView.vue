@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, shallowRef, watch, computed, defineAsyncComponent } from 'vue'
+import { ref, inject, shallowRef, watch, computed, defineAsyncComponent, onBeforeUnmount } from 'vue'
 import { useStorage } from '@vueuse/core'
 import { useShortcutDisplay } from '../composables/useShortcutDisplay'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
@@ -15,6 +15,9 @@ import { createPost, type DocumentMetadata } from '../lib/api'
 import { isSlugSegment } from '../lib/slug'
 import { resolveWikiTarget } from '../lib/linkResolve'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
+import { createVaultContext } from '../composables/vault/context/createVaultContext'
+import { provideVaultContext } from '../composables/vault/context/useVaultContext'
+import { createVaultFileChanges } from '../composables/vault/context/fileChanges'
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import PreviewPane from '../components/vault/PreviewPane.vue'
@@ -118,17 +121,21 @@ function unregisterEditorScroll(path: string) {
 function openSearch() { paletteRef.value?.show() }
 
 /* ---------- Tabs / save / route sync ---------- */
+const fileChanges = createVaultFileChanges()
 const {
-  tree, posts, tabs, activePath, activeTab, isDirty, activeSize,
+  tree, vaultId, posts, tabs, activePath, activeTab, isDirty, activeSize,
   refresh, openPost, closeTab, closeMany, selectTab, onEditorChange, doSaveNow, resolveExternal, onKeydown, onCommandPaletteNew,
-} = useEditorTabs({ selectPanel, togglePreview })
+} = useEditorTabs({ selectPanel, togglePreview, fileChanges })
+const vaultContext = createVaultContext({ vaultId, fileChanges, tabs, activePath, activeTab, openPost })
+provideVaultContext(vaultContext)
+onBeforeUnmount(() => { vaultContext.dispose() })
 const editorLinkTargets = computed(() => posts.value.map((post) => ({ path: post.path, title: post.title })))
 
 async function onMetadataSaved(metadata: DocumentMetadata) {
   const tab = tabs.value.find((item) => item.path === metadata.path)
   if (tab) tab.title = metadata.title
   metadataOpen.value = false
-  await Promise.all([refresh(), refreshLinkIndex()])
+  await Promise.all([refresh(), refreshLinkIndex(fileChanges)])
 }
 
 function openDocumentProperties(path: string) {
@@ -182,8 +189,8 @@ const editorPreviewScroll = useEditorPreviewScrollSync({
 })
 
 /* ---------- Scope filter (NavBar chips) ---------- */
-// useScopeFilter is called here so the singleton state is wired up
-// (the localStorage watcher installs on first call). NavBar reads
+// useScopeFilter is application-shell state because NavBar lives above the
+// router view. This call installs its localStorage watcher; NavBar reads
 // `activeScope` / `toggleScope` from the same instance, and FileTree
 // filters `topLevel` off the same `activeScope` ref.
 useScopeFilter()
@@ -195,15 +202,15 @@ const { activeTagList, toggleTag, removeTag } = useTagFilter({ activePanel })
 // Mount the file-change-bus subscription so the link index stays
 // fresh as the user (or AI) edits. The initial fetch is triggered
 // by useLinkIndexSubscription's onMounted.
-useLinkIndexSubscription()
+useLinkIndexSubscription(fileChanges)
 
 // Wiki-link resolver: reads the *current* link index from
-// `useLinkIndex()` so updates flow through (the module-level
+// this Vault instance's link index so updates flow through. The
 // activeResolver in markdown.ts is set to a closure over this
 // ref on every render). We pass the resolver through a getter
 // function so the panes always see the latest index without
 // having to re-mount.
-const linkIndex = getLinkIndex()
+const linkIndex = getLinkIndex(fileChanges)
 const wikiResolver = (ref: string, _anchor?: string) => {
   const allPaths = Array.from(linkIndex.value.paths)
   return {
@@ -365,7 +372,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
       <div v-else class="content reading-content">
         <!-- Only the active tab is mounted. Mounting one ReadingPane
              per tab (v-for + v-show) would have every instance write
-             to the same module-level tocHeadings / tocActiveId, and
+             to the same Vault-scoped tocHeadings / tocActiveId, and
              whichever rendered last would "win" — so switching tabs
              could surface the wrong document's TOC. Mounting a single
              keyed-by-path ReadingPane keeps the mapping 1:1 between

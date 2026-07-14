@@ -246,9 +246,10 @@ describe('sendAndStream', () => {
     queue.push({ status: 200, body: [] })
     queue.push({ status: 200, body: [] }) // refreshSessions after done
 
-    const { __resetFileChangeBusForTesting, getFileChangeBus } = await import('../useFileChangeBus')
-    __resetFileChangeBusForTesting()
-    const bus = getFileChangeBus()
+    const { __resetFallbackFileChangesForTesting, getFallbackVaultFileChanges } = await import('../context/fileChanges')
+    __resetFallbackFileChangesForTesting()
+    __resetForTesting()
+    const bus = getFallbackVaultFileChanges().events
 
     const h = setup()
     await h.api.loadActive()

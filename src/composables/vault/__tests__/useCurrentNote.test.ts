@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { defineComponent, h, shallowRef } from 'vue'
+import { computed, defineComponent, h, ref, shallowRef } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { useCurrentNote, __resetForTesting } from '../useCurrentNote'
 import {
   useEditorTabs,
-  getLiveTabs,
-  __setLiveTabsForTesting,
-  __resetLiveTabsForTesting,
 } from '../useEditorTabs'
 import type { Tab } from '../../../components/vault/tabs'
+import { createVaultContext } from '../context/createVaultContext'
+import { provideVaultContext } from '../context/useVaultContext'
+import { createVaultFileChanges } from '../context/fileChanges'
 
 function makeTab(overrides: Partial<Tab> = {}): Tab {
   return {
@@ -31,9 +31,16 @@ function makeTab(overrides: Partial<Tab> = {}): Tab {
 }
 
 let responses: { status: number; body: unknown }[] = []
+let testTabs = shallowRef<Tab[]>([])
+let testFileChanges = createVaultFileChanges()
+const getLiveTabs = () => testTabs
+const __setLiveTabsForTesting = (tabs: typeof testTabs) => { testTabs = tabs }
+const __resetLiveTabsForTesting = () => { testTabs = shallowRef<Tab[]>([]) }
 
 beforeEach(() => {
   responses = []
+  testTabs = shallowRef<Tab[]>([])
+  testFileChanges = createVaultFileChanges()
   globalThis.fetch = vi.fn(async (_url: string | URL | Request) => {
     const next = responses.shift() ?? { status: 200, body: { content: '' } }
     return new Response(JSON.stringify(next.body), {
@@ -55,13 +62,27 @@ async function mountAtRoute(initialPath: string) {
   router.push(initialPath)
   await router.isReady()
   let captured: ReturnType<typeof useCurrentNote> | null = null
-  const Comp = defineComponent({
+  const Child = defineComponent({
     setup() {
       captured = useCurrentNote()
       return () => h('div')
     },
   })
-  const wrap = mount(Comp, { global: { plugins: [router] } })
+  const Provider = defineComponent({
+    setup() {
+      const activePath = ref<string | null>(null)
+      provideVaultContext(createVaultContext({
+        vaultId: ref('test-vault'),
+        fileChanges: testFileChanges,
+        tabs: testTabs,
+        activePath,
+        activeTab: computed(() => testTabs.value.find((tab) => tab.path === activePath.value) ?? null),
+        openPost: async () => {},
+      }))
+      return () => h(Child)
+    },
+  })
+  const wrap = mount(Provider, { global: { plugins: [router] } })
   await flushPromises()
   return { router, note: captured!, wrap }
 }
@@ -140,15 +161,10 @@ describe('useCurrentNote — live tab integration', () => {
   // seeing stale editor content. The previous test above passes
   // "for the wrong reason" — it reassigns live.value wholesale, which
   // shallowRef fires on even without the mirror being deep. The
-  // production path is different: useEditorTabs's onEditorChange does
-  // `tab.raw = val` IN PLACE on the reactive proxy, and the mirror
-  // watch in useEditorTabs has to fire to push the change to
-  // getLiveTabs(). So we mount useEditorTabs for real (which sets up
-  // the mirror) and drive onEditorChange.
-  it('updates content when useEditorTabs mutates tab.raw in place (real mirror path)', async () => {
-    // Mount useEditorTabs so the mirror watch is set up. Then mount
-    // useCurrentNote in a sibling component so it picks up the
-    // module-level _liveTabs ref.
+  // production path is different: useEditorTabs's onEditorChange mutates
+  // `tab.raw = val` in place; the shared VaultContext tabs ref must notify
+  // useCurrentNote immediately.
+  it('updates content when useEditorTabs mutates tab.raw in place', async () => {
     // refresh() in onMounted fires getTree() and listPosts() in
     // parallel — two responses consumed up front.
     responses.push({ status: 200, body: { tree: [], posts: [] } })
@@ -180,13 +196,25 @@ describe('useCurrentNote — live tab integration', () => {
     let editorApi: ReturnType<typeof useEditorTabs> | null = null
     let noteApi: ReturnType<typeof useCurrentNote> | null = null
 
-    const Parent = defineComponent({
+    const Child = defineComponent({
       setup() {
-        // NOTE: both composables live in the same setup so they share
-        // the same app instance and the module-level mirror ref.
-        editorApi = useEditorTabs({ selectPanel: () => {}, togglePreview: () => {} })
         noteApi = useCurrentNote()
         return () => h('div')
+      },
+    })
+    const Parent = defineComponent({
+      setup() {
+        const fileChanges = createVaultFileChanges()
+        editorApi = useEditorTabs({ selectPanel: () => {}, togglePreview: () => {}, fileChanges })
+        provideVaultContext(createVaultContext({
+          vaultId: editorApi.vaultId,
+          fileChanges,
+          tabs: editorApi.tabs,
+          activePath: editorApi.activePath,
+          activeTab: editorApi.activeTab,
+          openPost: editorApi.openPost,
+        }))
+        return () => h(Child)
       },
     })
     const wrap = mount(Parent, { global: { plugins: [router] } })
@@ -199,10 +227,8 @@ describe('useCurrentNote — live tab integration', () => {
     expect(noteApi!.content.value).toBe('a')
 
     // The real production path: user types a character. onEditorChange
-    // does `tab.raw = 'ab'` in place. The mirror watch in
-    // useEditorTabs must propagate this to the module-level
-    // getLiveTabs() ref. useCurrentNote's watch on that ref then
-    // re-resolves and updates content.
+    // does `tab.raw = 'ab'` in place. useCurrentNote watches the same
+    // context-owned tabs ref and must update without a delayed mirror.
     editorApi!.onEditorChange('foo.md', 'ab')
     await flushPromises()
     expect(noteApi!.content.value).toBe('ab')
@@ -217,20 +243,13 @@ describe('useCurrentNote — live tab integration', () => {
 
 // --- file-change bus integration ------------------------------------------
 
-import {
-  publishFileChange,
-  __resetFileChangeBusForTesting,
-} from '../useFileChangeBus'
-
 describe('useCurrentNote — file-change bus', () => {
   beforeEach(() => {
     __resetForTesting()
     __setLiveTabsForTesting(shallowRef<Tab[]>([]))
-    __resetFileChangeBusForTesting()
   })
   afterEach(() => {
     __resetForTesting()
-    __resetFileChangeBusForTesting()
   })
 
   it('mirrors an AI write to the active note into content', async () => {
@@ -240,7 +259,7 @@ describe('useCurrentNote — file-change bus', () => {
     })
     const { note } = await mountAtRoute('/vault/a.md')
     expect(note.content.value).toBe('A')
-    publishFileChange({ path: 'a.md', kind: 'write', newMtime: 1, newRaw: 'A from AI' })
+    testFileChanges.publish({ path: 'a.md', kind: 'write', newMtime: 1, newRaw: 'A from AI' })
     await flushPromises()
     expect(note.content.value).toBe('A from AI')
   })
@@ -252,7 +271,7 @@ describe('useCurrentNote — file-change bus', () => {
     })
     const { note } = await mountAtRoute('/vault/a.md')
     expect(note.content.value).toBe('A')
-    publishFileChange({ path: 'b.md', kind: 'write', newMtime: 1, newRaw: 'B' })
+    testFileChanges.publish({ path: 'b.md', kind: 'write', newMtime: 1, newRaw: 'B' })
     await flushPromises()
     expect(note.content.value).toBe('A')
   })
@@ -293,13 +312,27 @@ describe('useCurrentNote — production router config', () => {
 
   async function mountOn(router: ReturnType<typeof makeProdRouter>) {
     let note: ReturnType<typeof useCurrentNote> | null = null
-    const Comp = defineComponent({
+    const Child = defineComponent({
       setup() {
         note = useCurrentNote()
         return () => h('div')
       },
     })
-    const wrap = mount(Comp, { global: { plugins: [router] } })
+    const Provider = defineComponent({
+      setup() {
+        const activePath = ref<string | null>(null)
+        provideVaultContext(createVaultContext({
+          vaultId: ref('test-vault'),
+          fileChanges: testFileChanges,
+          tabs: testTabs,
+          activePath,
+          activeTab: computed(() => testTabs.value.find((tab) => tab.path === activePath.value) ?? null),
+          openPost: async () => {},
+        }))
+        return () => h(Child)
+      },
+    })
+    const wrap = mount(Provider, { global: { plugins: [router] } })
     await flushPromises()
     return { note: note!, wrap }
   }

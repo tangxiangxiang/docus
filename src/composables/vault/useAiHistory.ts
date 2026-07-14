@@ -1,6 +1,6 @@
-// AI history state + actions. Module-level singleton so NavBar,
-// AiPanel, and any future entry point share the same in-memory
-// state. Persistence is server-side; this composable is just a
+// AI history state + actions. Each VaultContext owns the instance shared by
+// AiPanel, the session picker, and settings. Persistence is server-side; this
+// composable is just a
 // thin read-through cache + the action helpers that drive it.
 //
 // sendMessage auto-creates a session if none is active. The
@@ -21,7 +21,10 @@ import { ref, type Ref } from 'vue'
 import * as api from '../../lib/ai-api.js'
 import type { Session, Message, ChatEvent, ToolCallRecord } from '../../lib/ai-api.js'
 import { streamChat } from '../../lib/ai-api.js'
-import { publishFileChange } from './useFileChangeBus.js'
+import type { FileChangeEvent } from '../../lib/ai-api.js'
+import { getFallbackVaultFileChanges } from './context/fileChanges.js'
+import { useOptionalVaultContext } from './context/useVaultContext.js'
+import type { VaultContext } from './context/types.js'
 
 export interface AiHistory {
   // state
@@ -44,29 +47,25 @@ export interface AiHistory {
   sendAndStream(text: string, opts?: { path?: string }): Promise<void>
   // Cancel the in-flight stream. No-op when nothing is running.
   // The AbortController lives in sendAndStream's closure so the
-  // composable's singleton interface doesn't have to expose the
+  // composable's public interface doesn't have to expose the
   // controller itself; stop() is the only handle the UI needs.
   stop(): void
 }
 
-let _state: AiHistory | null = null
+let stateByVault = new WeakMap<VaultContext, AiHistory>()
+let legacyState: AiHistory | null = null
 
-// The currently in-flight AbortController (or null when nothing is
-// streaming). Stored in module scope so stop() in the returned
-// closure can reach the same controller that sendAndStream created,
-// without leaking the controller into the public interface.
-let _activeController: AbortController | null = null
-
-// Test-only escape hatch: reset the singleton so each test starts
+// Test-only escape hatch: reset the fallback and scoped cache so each test starts
 // from a clean slate. Not exported in the public type — tests reach
 // for it via a re-export declared in __tests__.
 export function __resetForTesting(): void {
-  _state = null
-  _activeController = null
+  legacyState = null
+  stateByVault = new WeakMap()
 }
 
-export function useAiHistory(): AiHistory {
-  if (_state) return _state
+function createAiHistory(publishChange: (event: FileChangeEvent) => void): AiHistory {
+  // The currently in-flight stream belongs only to this Vault instance.
+  let activeController: AbortController | null = null
 
   const activeSession = ref<Session | null>(null)
   const messages = ref<Message[]>([])
@@ -175,7 +174,7 @@ export function useAiHistory(): AiHistory {
     busy.value = true
     errorState.value = null
     const ac = new AbortController()
-    _activeController = ac
+    activeController = ac
 
     try {
       for await (const event of streamChat(
@@ -214,7 +213,7 @@ export function useAiHistory(): AiHistory {
         throw e
       }
     } finally {
-      _activeController = null
+      activeController = null
       busy.value = false
     }
   }
@@ -223,7 +222,7 @@ export function useAiHistory(): AiHistory {
     // Just trigger the signal; the catch above handles the
     // visible side-effect. No busy-flag manipulation here —
     // that's the for-await's finally's job.
-    _activeController?.abort()
+    activeController?.abort()
   }
 
   function applyEvent(
@@ -274,7 +273,7 @@ export function useAiHistory(): AiHistory {
       // Forward to the file-change bus so the editor can refresh
       // any open tab. We don't mutate the message — the tool card
       // already shows what the AI did.
-      publishFileChange({
+      publishChange({
         path: event.path,
         kind: event.kind,
         newMtime: event.newMtime,
@@ -301,7 +300,7 @@ export function useAiHistory(): AiHistory {
     }
   }
 
-  _state = {
+  return {
     activeSession,
     messages,
     sessions,
@@ -319,5 +318,20 @@ export function useAiHistory(): AiHistory {
     sendAndStream,
     stop,
   }
-  return _state
+}
+
+export function useAiHistory(): AiHistory {
+  const vaultContext = useOptionalVaultContext()
+  if (!vaultContext) {
+    legacyState ??= createAiHistory(getFallbackVaultFileChanges().publish)
+    return legacyState
+  }
+
+  let state = stateByVault.get(vaultContext)
+  if (!state) {
+    state = createAiHistory(vaultContext.fileChanges.publish)
+    stateByVault.set(vaultContext, state)
+    vaultContext.onDispose(state.stop)
+  }
+  return state
 }

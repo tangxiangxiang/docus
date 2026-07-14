@@ -14,7 +14,7 @@
 // deterministic. The debounce is exercised via vi.useFakeTimers().
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent, h, nextTick, ref, shallowRef, type Ref } from 'vue'
+import { defineComponent, h, nextTick, ref, type Ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { flushPromises, mount } from '@vue/test-utils'
 
@@ -44,8 +44,8 @@ function answerConfirm(ok: boolean) {
   confirmResolve = null
 }
 
-import { useEditorTabs, getLiveTabs, __setLiveTabsForTesting, __resetLiveTabsForTesting } from '../useEditorTabs'
-import type { Tab } from '../../../components/vault/tabs'
+import { useEditorTabs } from '../useEditorTabs'
+import { createVaultFileChanges, type VaultFileChanges } from '../context/fileChanges'
 
 // --- helpers ---------------------------------------------------------------
 
@@ -62,6 +62,7 @@ function makeRouter() {
 }
 
 interface Harness {
+  fileChanges: VaultFileChanges
   openPost: (p: string) => Promise<void>
   closeTab: (p: string) => Promise<void>
   closeMany: (paths: string[]) => Promise<void>
@@ -88,8 +89,9 @@ function setup(): Promise<Harness> {
       setup() {
         const selectPanel = vi.fn()
         const togglePreview = vi.fn()
-        const api = useEditorTabs({ selectPanel, togglePreview })
-        captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'togglePreview'>), selectPanel, togglePreview }
+        const fileChanges = createVaultFileChanges()
+        const api = useEditorTabs({ selectPanel, togglePreview, fileChanges })
+        captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'togglePreview' | 'fileChanges'>), selectPanel, togglePreview, fileChanges }
         return () => h('div')
       },
     })
@@ -150,74 +152,6 @@ describe('useEditorTabs', () => {
     vi.restoreAllMocks()
     vi.useRealTimers()
   })
-
-describe('live tabs publish', () => {
-  beforeEach(() => {
-    __resetLiveTabsForTesting()
-  })
-
-  it('returns null from getLiveTabs() before useEditorTabs is mounted', () => {
-    expect(getLiveTabs()).toBeNull()
-  })
-
-  it('returns a ShallowRef<Tab[]> after useEditorTabs is mounted and mirrors tabs.value mutations', async () => {
-    // Stand up a no-op component to host useEditorTabs' router + side-effects.
-    const router = createRouter({
-      history: createMemoryHistory(),
-      routes: [{ path: '/vault/:path(.*)*', name: 'vault', component: { template: '<div/>' } }],
-    })
-    router.push('/not-vault') // path doesn't match /vault/:path, so openPost is not called
-    await router.isReady()
-
-    // Stub fetch — useEditorTabs.refresh() calls getTree() and listPosts()
-    globalThis.fetch = vi.fn(async () =>
-      new Response(JSON.stringify({ tree: [], posts: [] }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    ) as unknown as typeof fetch
-
-    let capturedTabs: any = null
-    const Comp = defineComponent({
-      setup() {
-        const t = useEditorTabs({ selectPanel: () => {}, togglePreview: () => {} })
-        capturedTabs = t.tabs
-        return () => h('div')
-      },
-    })
-    const wrap = mount(Comp, { global: { plugins: [router] } })
-    await flushPromises()
-
-    // After mount, getLiveTabs() must return a ref that points at the
-    // current tabs array.
-    const live = getLiveTabs()
-    expect(live).not.toBeNull()
-    expect(live!.value).toBe(capturedTabs.value)
-
-    // Mutating tabs.value (simulating openPost / onEditorChange) must
-    // propagate to _liveTabs via the flush:post mirror watch.
-    const newTab: Tab = {
-      path: 'x.md', title: 'x', raw: 'live', originalRaw: '',
-      revision: 1, savedRevision: 0, savingRevision: null,
-      saveStatus: 'idle', error: null, loadError: null, loading: false,
-      serverMtime: 0,
-    }
-    capturedTabs.value = [newTab]
-    await nextTick()
-    await nextTick() // flush:post runs after the next microtask
-    expect(live!.value).toEqual([newTab])
-
-    wrap.unmount()
-  })
-
-  it('__setLiveTabsForTesting overrides the published ref; __resetLiveTabsForTesting clears it', () => {
-    const fake = shallowRef<Tab[]>([])
-    __setLiveTabsForTesting(fake)
-    expect(getLiveTabs()).toBe(fake)
-    __resetLiveTabsForTesting()
-    expect(getLiveTabs()).toBeNull()
-  })
-})
 
   it('starts with no tabs and no active path', async () => {
     const h = await setup()
@@ -787,20 +721,13 @@ describe('live tabs publish', () => {
 
 // --- file-change bus integration ------------------------------------------
 
-import {
-  publishFileChange,
-  __resetFileChangeBusForTesting,
-} from '../useFileChangeBus'
-
 describe('useEditorTabs — file-change bus', () => {
   beforeEach(() => {
-    __resetFileChangeBusForTesting()
     // The confirm mock captures the resolve into a module-level
     // variable; clear it so each test starts from a clean state.
     confirmResolve = null
   })
   afterEach(() => {
-    __resetFileChangeBusForTesting()
     confirmResolve = null
   })
 
@@ -813,7 +740,7 @@ describe('useEditorTabs — file-change bus', () => {
     const h = await setup()
     await h.openPost('bus-a')
     expect(h.tabs.value[0].raw).toBe('A')
-    publishFileChange({ path: 'bus-a', kind: 'write', newMtime: 100, newRaw: 'A from AI' })
+    h.fileChanges.publish({ path: 'bus-a', kind: 'write', newMtime: 100, newRaw: 'A from AI' })
     await flushPromises()
     expect(h.tabs.value[0].raw).toBe('A from AI')
     expect(h.tabs.value[0].serverMtime).toBe(100)
@@ -830,10 +757,10 @@ describe('useEditorTabs — file-change bus', () => {
     const h = await setup()
     await h.openPost('bus-b')
     h.onEditorChange('bus-b', 'B modified by user')  // dirty
-    publishFileChange({ path: 'bus-b', kind: 'write', newMtime: 200, newRaw: 'B from AI' })
+    h.fileChanges.publish({ path: 'bus-b', kind: 'write', newMtime: 200, newRaw: 'B from AI' })
     await flushPromises()
     // Confirm should be pending
-    expect(confirmResolve).not.toBeNull()
+    await vi.waitFor(() => expect(confirmResolve).not.toBeNull())
     // User picks 保留本地 (false)
     answerConfirm(false)
     await flushPromises()
@@ -843,9 +770,9 @@ describe('useEditorTabs — file-change bus', () => {
     expect(h.tabs.value[0].saveStatus).toBe('dirty')
 
     // Second publish, user picks 覆盖 (true)
-    publishFileChange({ path: 'bus-b', kind: 'write', newMtime: 201, newRaw: 'B from AI 2' })
+    h.fileChanges.publish({ path: 'bus-b', kind: 'write', newMtime: 201, newRaw: 'B from AI 2' })
     await flushPromises()
-    expect(confirmResolve).not.toBeNull()
+    await vi.waitFor(() => expect(confirmResolve).not.toBeNull())
     answerConfirm(true)
     await flushPromises()
     expect(h.tabs.value[0].raw).toBe('B from AI 2')
@@ -861,7 +788,7 @@ describe('useEditorTabs — file-change bus', () => {
     const h = await setup()
     await h.openPost('bus-c')
     h.tabs.value[0].saveStatus = 'saving'  // simulate mid-save
-    publishFileChange({ path: 'bus-c', kind: 'write', newMtime: 1, newRaw: 'irrelevant' })
+    h.fileChanges.publish({ path: 'bus-c', kind: 'write', newMtime: 1, newRaw: 'irrelevant' })
     await flushPromises()
     expect(h.tabs.value[0].raw).toBe('C')  // unchanged
     expect(confirmResolve).toBeNull()
@@ -875,7 +802,7 @@ describe('useEditorTabs — file-change bus', () => {
     }))
     const h = await setup()
     await h.openPost('bus-d')
-    publishFileChange({ path: 'bus-d', kind: 'delete' })
+    h.fileChanges.publish({ path: 'bus-d', kind: 'delete' })
     await flushPromises()
     expect(h.tabs.value[0].loadError).toMatch(/已被 AI 删除/)
   })
@@ -889,7 +816,7 @@ describe('useEditorTabs — file-change bus', () => {
     const h = await setup()
     await h.openPost('bus-old')
     expect(h.tabs.value.map((t) => t.path)).toEqual(['bus-old'])
-    publishFileChange({ path: 'bus-new', kind: 'rename', oldPath: 'bus-old', newMtime: 1, newRaw: 'NEW' })
+    h.fileChanges.publish({ path: 'bus-new', kind: 'rename', oldPath: 'bus-old', newMtime: 1, newRaw: 'NEW' })
     await flushPromises()
     expect(h.tabs.value.map((t) => t.path)).toEqual(['bus-new'])
     expect(h.tabs.value[0].raw).toBe('NEW')
@@ -906,7 +833,7 @@ describe('useEditorTabs — file-change bus', () => {
     }))
     const h = await setup()
     await h.openPost('bus-e')
-    publishFileChange({ path: 'unrelated', kind: 'write', newMtime: 1, newRaw: 'X' })
+    h.fileChanges.publish({ path: 'unrelated', kind: 'write', newMtime: 1, newRaw: 'X' })
     await flushPromises()
     expect(h.tabs.value[0].raw).toBe('E')
     expect(confirmResolve).toBeNull()
@@ -1105,7 +1032,7 @@ describe('useEditorTabs — tab persistence', () => {
       setup() {
         const selectPanel = vi.fn()
         const togglePreview = vi.fn()
-        const api = useEditorTabs({ selectPanel, togglePreview })
+        const api = useEditorTabs({ selectPanel, togglePreview, fileChanges: createVaultFileChanges() })
         captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'togglePreview'>), selectPanel, togglePreview }
         return () => h('div')
       },
