@@ -324,16 +324,17 @@ watch(() => navSearch?.tick.value, () => openSearch())
           <div v-else-if="activeTab.loadError" class="empty error">{{ activeTab.loadError }}</div>
           <EditorPane
             v-else
+            :key="activeTab.path"
             :model-value="activeTab.raw"
             :path="activeTab.path"
             :focus-width="editorFocusWidth"
             :link-targets="editorLinkTargets"
-            @update:model-value="(val: string) => onEditorChange(activePath!, val)"
+            @update:model-value="(val: string) => onEditorChange(activeTab!.path, val)"
             @open-link="openPost"
             @create-link="createMissingWikiNote"
             @register-scroll="registerEditorScroll"
             @unregister-scroll="unregisterEditorScroll"
-            @scroll-change="(fraction: number) => editorPreviewScroll.syncPreviewFromEditor(activePath!, fraction)"
+            @scroll-change="(fraction: number) => editorPreviewScroll.syncPreviewFromEditor(activeTab!.path, fraction)"
           />
         </div>
         <div v-if="!tabs.length" class="content-empty">
