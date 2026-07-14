@@ -106,7 +106,7 @@ describe('useVaultLayout', () => {
     expect(second.rightRailTab.value).toBe('ai')
   })
 
-  it('drops unknown fields from persisted layout (forward-compat with old previewOpen)', () => {
+  it('drops unknown fields from persisted layout (forward-compat with old previewOpen)', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       rightRailTab: 'toc',
       rightRailWidth: 360,
@@ -118,8 +118,11 @@ describe('useVaultLayout', () => {
     // No crash; the legacy field is simply ignored.
     expect(layout.rightRailTab.value).toBe('toc')
     expect(layout.rightRailWidth.value).toBe(360)
-    // And it never re-emerges when the layout is rewritten.
-    void layout.rightRailCollapsed.value // no-op touch
+    // And it never re-emerges when the layout is rewritten. The
+    // persistence watcher only fires on real mutations, so toggle a tab
+    // and await a tick to flush the rewrite.
+    layout.rightRailTab.value = 'ai'
+    await nextTick()
     expect(localStorage.getItem(STORAGE_KEY)!).not.toContain('previewOpen')
   })
 })

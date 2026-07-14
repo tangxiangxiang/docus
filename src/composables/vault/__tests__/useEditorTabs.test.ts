@@ -658,7 +658,6 @@ describe('useEditorTabs', () => {
     const h = await setup()
     const evt = new KeyboardEvent('keydown', { key: 'e', metaKey: true, cancelable: true })
     h.onKeydown(evt)
-    await flushPromises()
     expect(h.toggleViewMode).toHaveBeenCalledOnce()
 
     // Ctrl on Windows / Linux maps to metaKey in the handler — make
@@ -666,7 +665,6 @@ describe('useEditorTabs', () => {
     h.toggleViewMode.mockClear()
     const ctrlEvt = new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, cancelable: true })
     h.onKeydown(ctrlEvt)
-    await flushPromises()
     expect(h.toggleViewMode).toHaveBeenCalledOnce()
   })
 
