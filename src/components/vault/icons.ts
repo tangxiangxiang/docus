@@ -203,14 +203,6 @@ export const ICON_TOC = `
   <line x1="7" y1="8"  x2="13"  y2="8"  />
   <line x1="7" y1="12" x2="13"  y2="12" />
 </svg>`
-
-// Eye — open eye (lens + iris). Used for the NavBar preview toggle.
-export const ICON_EYE = `
-<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <path d="M1.5 8s2-4.5 6.5-4.5S14.5 8 14.5 8s-2 4.5-6.5 4.5S1.5 8 1.5 8z"/>
-  <circle cx="8" cy="8" r="2"/>
-</svg>`
-
 // Reading mode — an open book with gently curved page edges. Both
 // pages meet at the spine without crossing below it, avoiding the
 // bookmark-like point produced by the previous icon at 14px.
