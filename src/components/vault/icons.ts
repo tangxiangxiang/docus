@@ -822,3 +822,26 @@ export const ICON_FILTER = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
   <path d="M2 3h12L9 9v4l-2 1V9z"/>
 </svg>`
+
+// --- Action buttons --------------------------------------------------------
+//
+// Two small but distinct action icons used by the AI composer and
+// similar submit surfaces. Both are universal UI conventions (paper
+// plane for "send", filled square for "stop") and they pair
+// naturally on the same button — same slot, same size, two states.
+
+// ICON_SEND — paper plane silhouette. The internal fold line
+// separates the wing from the body. Reads as "send this message".
+export const ICON_SEND = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M14 2L2 7l5 2 2 5z"/>
+  <path d="M7 9l5-5"/>
+</svg>`
+
+// ICON_STOP — a filled rounded square. Reads as "stop / halt
+// (current operation)". Listed in FILLED_ICONS so the root uses
+// fill="currentColor" stroke="none".
+export const ICON_STOP = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" stroke="none" aria-hidden="true" focusable="false">
+  <rect x="3" y="3" width="10" height="10" rx="1"/>
+</svg>`

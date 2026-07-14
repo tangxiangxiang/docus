@@ -38,6 +38,7 @@ const FILLED_ICONS = new Set<string>([
   'ICON_AI_MEMORY',
   'ICON_STATUS_SUCCESS',
   'ICON_STATUS_MODIFIED',
+  'ICON_STOP',
 ])
 
 // Surface-display exceptions. These icons live in toolbar slots

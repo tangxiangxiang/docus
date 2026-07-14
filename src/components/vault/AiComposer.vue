@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue'
-import { ICON_FILE_MD } from './icons'
+import { ICON_FILE_MD, ICON_SEND, ICON_STOP } from './icons'
 
 const props = defineProps<{
   modelValue: string
@@ -83,7 +83,9 @@ defineExpose({ focus })
             :aria-label="busy ? 'Stop' : 'Send'"
             :disabled="!busy && (!modelValue.trim() || !configured)"
             @click="onPrimaryAction"
-          >{{ busy ? '■' : '↑' }}</button>
+          >
+            <span class="ai-send-icon" v-html="busy ? ICON_STOP : ICON_SEND" aria-hidden="true" />
+          </button>
         </div>
       </div>
     </div>

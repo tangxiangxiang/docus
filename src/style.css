@@ -3453,9 +3453,9 @@ main.container {
 }
 /* The button doubles as Stop while a stream is in flight. A
    slightly deeper red makes the destructive semantics obvious at
-   a glance, and the box glyph (■) is intentionally different
-   from the arrow (↑) so a power user recognizes the toggle from
-   across the panel. */
+   a glance, and ICON_STOP (filled square) is intentionally different
+   from ICON_SEND (paper plane) so a power user recognizes the
+   toggle from across the panel. */
 .ai-panel .ai-send.ai-send-busy {
   background: #e85a4f;
   box-shadow: 0 1px 2px rgba(232, 90, 79, 0.35);
