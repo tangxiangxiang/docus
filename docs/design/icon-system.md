@@ -38,6 +38,33 @@ and on inline SVG in `src/components/**/*.vue`.
 | `aria-hidden` | `true` | Icons are decorative; the surrounding text carries meaning. |
 | `focusable` | `false` | Prevent IE/Edge tab-stop on `<svg>`. |
 
+### Filled-glyph exception
+
+A small set of icons deliberately opts out of the outline default:
+status dots, AI memory/data-point glyphs, and other solid-state
+marks where the concept is "presence" rather than "outline".
+
+For these icons only, the root attributes flip:
+
+| Property | Value |
+| --- | --- |
+| `fill` | `currentColor` |
+| `stroke` | `none` |
+
+All other shared attributes (size, viewBox, aria) still apply. The
+fill is `currentColor` so the icon follows the consuming
+component's text color, same as outline icons.
+
+Each filled exception must be:
+
+1. Listed in `FILLED_ICONS` in
+   [`src/components/vault/__tests__/icons.test.ts`](../../src/components/vault/__tests__/icons.test.ts)
+   so the test stays honest about which icons are filled.
+2. Justified in a comment in `icons.ts` — the comment must explain
+   *why* a filled glyph is the right metaphor (status dot, data
+   point, presence marker), not a workaround for an unrendered
+   outline version.
+
 ### Allowed exceptions
 
 - **Brand logos** (e.g. Docus wordmark) may use a different viewBox.

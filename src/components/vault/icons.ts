@@ -280,3 +280,68 @@ export const ICON_RENAME_FILE = `
   <path d="M2 12V8l8-8 4 4-8 8z"/>
   <path d="M6 6l4 4"/>
 </svg>`
+
+// --- AI concept vocabulary -------------------------------------------------
+//
+// Five glyphs that replace the over-used sparkle inside the AI panel.
+// They form a vocabulary, not a family: each one uses a distinct
+// geometric language so the user can scan a row of tool indicators
+// and tell which is which without reading the label.
+//
+// These are intentionally NOT variants of the document / folder /
+// trash bases — they live in their own visual lane.
+
+// ICON_AI_CONTEXT — two stacked cards (offset rectangles, each with a
+// short content line). Reads as "set of references the AI sees".
+// Distinct from ICON_FILE_MD by being two cards, not one folded page.
+export const ICON_AI_CONTEXT = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <rect x="2.5" y="2.5" width="9" height="9" rx="1"/>
+  <path d="M4.75 5.5h4.5M4.75 8h3"/>
+  <rect x="4.5" y="4.5" width="9" height="9" rx="1"/>
+  <path d="M6.75 7.5h4.5M6.75 10h3"/>
+</svg>`
+
+// ICON_AI_MEMORY — three filled dots in a vertical column. Pure fill
+// (no outline) so it reads as solid-state storage, distinct from the
+// stroke-only document/folder family. Each dot reads as one stored
+// entry; the column implies a stack.
+export const ICON_AI_MEMORY = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" stroke="none" aria-hidden="true" focusable="false">
+  <circle cx="8" cy="3.5" r="1.25"/>
+  <circle cx="8" cy="8" r="1.25"/>
+  <circle cx="8" cy="12.5" r="1.25"/>
+</svg>`
+
+// ICON_AI_REASONING — two outline circles connected by a horizontal
+// stroke that ends in a small chevron, suggesting a directed edge
+// between two reasoning steps. Reads as "A then B". Distinct from
+// the knowledge graph node language by having exactly two nodes
+// and an arrow, not a cluster.
+export const ICON_AI_REASONING = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="4" cy="8" r="1.5"/>
+  <circle cx="12" cy="8" r="1.5"/>
+  <path d="M5.5 8h4"/>
+  <path d="M9.5 6.5l1 1.5-1 1.5"/>
+</svg>`
+
+// ICON_AI_PROMPT — a chevron and a short underscore below it, the
+// universal terminal-prompt glyph (> _). Reads as "user input".
+// Pure stroke, no fills; deliberately similar to ICON_CHEVRON's
+// stroke language but with the trailing underscore to disambiguate.
+export const ICON_AI_PROMPT = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3 4l4 4-4 4"/>
+  <path d="M9 12h4"/>
+</svg>`
+
+// ICON_AI_CONVERSATION — two overlapping rounded rectangles, each
+// with a small tail at the bottom, suggesting two speakers trading
+// turns. Distinct from ICON_NEW_CHAT (single bubble with plus) by
+// being two bubbles with no plus sign.
+export const ICON_AI_CONVERSATION = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h6A1.5 1.5 0 0 1 11 4.5v3.75A1.5 1.5 0 0 1 9.5 9.75H6l-2 1.75V9.75H3.5A1.5 1.5 0 0 1 2 8.25z"/>
+  <path d="M7 7.75A1.5 1.5 0 0 1 8.5 6.25h4A1.5 1.5 0 0 1 14 7.75v3.75A1.5 1.5 0 0 1 12.5 13H12l-2 1.75V13H8.5A1.5 1.5 0 0 1 7 11.5z"/>
+</svg>`

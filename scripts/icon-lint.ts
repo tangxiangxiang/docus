@@ -97,6 +97,11 @@ function checkFile(filePath: string): { violations: Violation[]; svgCount: numbe
   const source = readFileSync(filePath, 'utf8')
   const violations: Violation[] = []
   let svgCount = 0
+  // icons.ts is the source of truth for the icon module; its fill/stroke
+  // contract is enforced by src/components/vault/__tests__/icons.test.ts
+  // (including the FILLED_ICONS exception). Don't re-report its soft
+  // attribute drift here.
+  const isIconModule = rel === 'src/components/vault/icons.ts'
 
   for (const openMatch of source.matchAll(SVG_OPEN)) {
     const index = openMatch.index ?? 0
@@ -134,16 +139,18 @@ function checkFile(filePath: string): { violations: Violation[]; svgCount: numbe
       })
     }
 
-    for (const [key, expected] of Object.entries(SHARED_ATTRIBUTES)) {
-      const actual = attrMap.get(key)
-      if (actual !== undefined && actual !== expected) {
-        violations.push({
-          file: rel,
-          line,
-          rule: 'shared-attributes',
-          message: `${key}="${actual}" should be "${expected}"`,
-          severity: 'soft',
-        })
+    if (!isIconModule) {
+      for (const [key, expected] of Object.entries(SHARED_ATTRIBUTES)) {
+        const actual = attrMap.get(key)
+        if (actual !== undefined && actual !== expected) {
+          violations.push({
+            file: rel,
+            line,
+            rule: 'shared-attributes',
+            message: `${key}="${actual}" should be "${expected}"`,
+            severity: 'soft',
+          })
+        }
       }
     }
 
