@@ -2118,7 +2118,7 @@ main.container {
 .tab.active .tab-close { opacity: 1; }
 .tab-close:hover { background: var(--vs-hover-bg); color: var(--vs-text-1); }
 
-/* Content area: editor + preview side by side */
+/* Content area: editor surface */
 .content {
   display: flex;
   min-height: 0;

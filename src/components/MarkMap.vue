@@ -237,7 +237,7 @@ onMounted(() => {
      switch, split open, etc.) and re-runs scheduleMount.
 
      We observe the WRAPPER, not the svg, so we get notified when
-     the *parent* surface (e.g. the v-show'ed preview-pane for an
+     the *parent* surface (e.g. a v-show container for an
      inactive tab) flips to `display: none`. The wrapper collapsing
      to 0×0 is the signal that the active markmap instance must be
      torn down — see the comment near `let resizeObserver` for the

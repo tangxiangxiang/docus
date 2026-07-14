@@ -404,9 +404,9 @@ describe('MarkMap hidden host teardown', () => {
        on document switch.
 
        Mechanism: in the vault, every tab keeps its PreviewPane in
-       the DOM (v-show on the preview-pane, not v-if). When the
+       the DOM (v-show on the parent container, not v-if). When the
        user switches away from the markmap tab, the active
-       preview-pane flips to `display: none` and the widget wrapper
+       the parent container flips to `display: none` and the widget wrapper
        collapses to 0×0. markmap's own internal ResizeObserver
        notices the foreignObject collapse and re-runs renderData()
        → fit(); fit() on a 0×0 svg produces
