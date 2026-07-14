@@ -2,7 +2,7 @@
 
 import { computed, defineComponent, h, ref } from 'vue'
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Tab } from '../../../../components/vault/tabs'
 import { createVaultContext } from '../createVaultContext'
 import { provideVaultContext, useVaultContext } from '../useVaultContext'
@@ -93,6 +93,30 @@ describe('Vault context', () => {
     expect(disposedB).toBe(0)
     contextB.dispose()
     expect(disposedB).toBe(1)
+  })
+
+  it('runs every cleanup once and immediately handles late registration', () => {
+    const tabs = ref<Tab[]>([])
+    const context = createVaultContext({
+      vaultId: ref('vault-a'),
+      fileChanges: createVaultFileChanges(),
+      tabs,
+      activePath: ref(null),
+      activeTab: computed(() => null),
+      openPost: async () => {},
+    })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const calls: string[] = []
+    context.onDispose(() => { calls.push('first'); throw new Error('cleanup failed') })
+    context.onDispose(() => { calls.push('second') })
+
+    context.dispose()
+    context.dispose()
+    context.onDispose(() => { calls.push('late') })
+
+    expect(calls).toEqual(['first', 'second', 'late'])
+    expect(error).toHaveBeenCalledOnce()
+    error.mockRestore()
   })
 
   it('provides the same typed context to descendants', () => {

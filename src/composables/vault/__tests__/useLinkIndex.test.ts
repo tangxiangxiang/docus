@@ -12,7 +12,7 @@ import {
   __resetLinkIndexForTesting,
   __resetLinkIndexSubscriptionForTesting,
 } from '../useLinkIndex'
-import { createVaultFileChanges } from '../context/fileChanges'
+import { __resetFallbackFileChangesForTesting, createVaultFileChanges } from '../context/fileChanges'
 
 type FetchCall = { url: string; init: RequestInit }
 type FetchResponse = { status: number; body: unknown }
@@ -77,6 +77,12 @@ describe('useLinkIndex', () => {
       expect(Array.from(a.value.paths)).toEqual(['a'])
       expect(b.value.paths.size).toBe(0)
       expect(b.value.titles).toEqual({})
+    })
+
+    it('uses the replacement fallback after its test reset', () => {
+      getLinkIndex().value = { paths: new Set(['old']), outgoing: {}, titles: {}, lastFetched: 1 }
+      __resetFallbackFileChangesForTesting()
+      expect(getLinkIndex().value.paths.size).toBe(0)
     })
   })
 

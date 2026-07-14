@@ -70,10 +70,10 @@ export function useExternalFileChanges(options: {
     tab.error = null
   }
 
-  function subscribeToFileChanges() {
+  function subscribeToFileChanges(): () => void {
     const fileBus = options.fileChanges.events
     let lastSeenSeq = 0
-    watch(
+    return watch(
       () => fileBus.value,
       (events) => {
         for (const event of events) {

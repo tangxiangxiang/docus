@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { useHistory, __resetHistoryStateForTesting } from '../composables/vault/useHistory'
+import { __resetFallbackFileChangesForTesting } from '../composables/vault/context/fileChanges'
 import * as api from '../lib/history-api'
 
 vi.mock('../lib/history-api', async () => {
@@ -31,6 +32,13 @@ afterEach(() => {
 })
 
 describe('useHistory singleton', () => {
+  it('rebinds the provider-less instance when the fallback owner is reset', () => {
+    const before = useHistory()
+    __resetFallbackFileChangesForTesting()
+    const after = useHistory()
+    expect(after.status).not.toBe(before.status)
+  })
+
   it('returns the same Ref instances across calls (module-level singleton)', () => {
     const a = useHistory()
     const b = useHistory()

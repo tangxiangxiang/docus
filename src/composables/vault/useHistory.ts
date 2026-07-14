@@ -393,11 +393,22 @@ function reset(): void {
 }
 
 const historyByVault = new WeakMap<VaultContext, HistoryInstance>()
-const legacyHistory = createHistoryInstance(getFallbackVaultFileChanges())
+let legacyOwner: VaultFileChanges | null = null
+let legacyHistory: HistoryInstance | null = null
+
+function getLegacyHistory(): HistoryInstance {
+  const owner = getFallbackVaultFileChanges()
+  if (!legacyHistory || legacyOwner !== owner) {
+    legacyHistory?.reset()
+    legacyOwner = owner
+    legacyHistory = createHistoryInstance(owner)
+  }
+  return legacyHistory
+}
 
 export function useHistory(): HistoryState {
   const context = useOptionalVaultContext()
-  if (!context) return legacyHistory.use()
+  if (!context) return getLegacyHistory().use()
 
   let history = historyByVault.get(context)
   if (!history) {
@@ -408,5 +419,7 @@ export function useHistory(): HistoryState {
 }
 
 export function __resetHistoryStateForTesting(): void {
-  legacyHistory.reset()
+  legacyHistory?.reset()
+  legacyHistory = null
+  legacyOwner = null
 }
