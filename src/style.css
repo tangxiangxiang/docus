@@ -2327,10 +2327,11 @@ main.container {
    custom scrollbar DOM. Shared tokens visually align all three. */
 .vault :where(.preview-pane, .reading-pane) {
   scrollbar-width: thin;
-  scrollbar-color: var(--sb-thumb) transparent;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.2s ease;
 }
 .vault :where(.preview-pane, .reading-pane):hover {
-  scrollbar-color: var(--sb-thumb-hover) transparent;
+  scrollbar-color: var(--sb-thumb) transparent;
 }
 .vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar {
   width: var(--sb-size);
@@ -2342,10 +2343,10 @@ main.container {
   box-shadow: none !important;
 }
 .vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-thumb {
-  background: var(--sb-thumb) !important;
-  border-radius: var(--sb-radius);
+  background: color-mix(in srgb, var(--sb-thumb) 45%, transparent) !important;
+  border-radius: var(--sb-size);
   box-shadow: none !important;
-  transition: background 0.15s;
+  transition: background 0.2s ease;
 }
 .vault :where(.preview-pane, .reading-pane):hover::-webkit-scrollbar-thumb,
 .vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-thumb:hover {
