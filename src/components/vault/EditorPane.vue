@@ -194,6 +194,26 @@ function headingsFor(path: string) {
   return pending
 }
 
+function wikiCompletionRange(
+  currentModel: monaco.editor.ITextModel,
+  position: monaco.Position,
+  typedLength: number,
+): monaco.IRange {
+  const suffix = currentModel.getValueInRange({
+    startLineNumber: position.lineNumber,
+    startColumn: position.column,
+    endLineNumber: position.lineNumber,
+    endColumn: Math.min(currentModel.getLineMaxColumn(position.lineNumber), position.column + 2),
+  })
+  const existingClosingLength = suffix.startsWith(']]') ? 2 : 0
+  return {
+    startLineNumber: position.lineNumber,
+    startColumn: position.column - typedLength,
+    endLineNumber: position.lineNumber,
+    endColumn: position.column + existingClosingLength,
+  }
+}
+
 function scheduleMarkdownDecorations() {
   if (decorationTimer) clearTimeout(decorationTimer)
   decorationTimer = setTimeout(refreshMarkdownDecorations, 120)
@@ -251,6 +271,7 @@ const completionProvider: monaco.languages.CompletionItemProvider = {
       if (!targetPath) return { suggestions: [] }
       const query = anchorMatch[2].toLocaleLowerCase()
       const headings = await headingsFor(targetPath)
+      const range = wikiCompletionRange(currentModel, position, anchorMatch[2].length)
       return {
         suggestions: headings
           .filter((heading) => `${heading.title} ${heading.anchor}`.toLocaleLowerCase().includes(query))
@@ -259,16 +280,11 @@ const completionProvider: monaco.languages.CompletionItemProvider = {
             detail: `${'#'.repeat(heading.level)} · ${heading.anchor}`,
             kind: monaco.languages.CompletionItemKind.Reference,
             insertText: `${heading.anchor}]]`,
-            range: {
-              startLineNumber: position.lineNumber,
-              startColumn: position.column - anchorMatch[2].length,
-              endLineNumber: position.lineNumber,
-              endColumn: position.column,
-            },
+            range,
           })),
       }
     }
-    const startColumn = position.column - match[1].length
+    const range = wikiCompletionRange(currentModel, position, match[1].length)
     const recency = recentLinks()
     return {
       suggestions: rankWikiTargets(props.linkTargets ?? [], match[1], recency, props.path)
@@ -279,12 +295,7 @@ const completionProvider: monaco.languages.CompletionItemProvider = {
             command: rememberLinkCommand
               ? { id: rememberLinkCommand, title: 'Remember wiki link', arguments: [target.path] }
               : undefined,
-            range: {
-              startLineNumber: position.lineNumber,
-              startColumn,
-              endLineNumber: position.lineNumber,
-              endColumn: position.column,
-            },
+            range,
           }
           const direct = { ...common, label: target.title || target.path, detail: target.path, insertText: `${target.path}]]` }
           return target.title && target.title !== target.path
@@ -402,6 +413,7 @@ onMounted(() => {
     id: 'docus.markdown-enter',
     label: 'Continue Markdown list',
     keybindings: [monaco.KeyCode.Enter],
+    keybindingContext: '!suggestWidgetVisible',
     run(instance) {
       if (!model) return
       const selection = instance.getSelection()

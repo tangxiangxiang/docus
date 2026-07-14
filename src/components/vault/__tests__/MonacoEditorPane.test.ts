@@ -172,11 +172,17 @@ describe('Monaco EditorPane', () => {
         linkTargets: [{ path: 'docs/guide', title: 'Guide' }],
       },
     })
+    mocks.model.getValueInRange
+      .mockReturnValueOnce('[[docs/guide#set')
+      .mockReturnValueOnce(']]')
+    mocks.model.getLineMaxColumn.mockReturnValue(20)
     const provider = mocks.completionProviders.at(-1)
     const result = await provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 18 })
     expect(mocks.getPost).toHaveBeenCalledWith('docs/guide')
     expect(result.suggestions).toEqual([expect.objectContaining({
-      label: 'Setup Guide', insertText: 'setup-guide]]',
+      label: 'Setup Guide',
+      insertText: 'setup-guide]]',
+      range: expect.objectContaining({ startColumn: 15, endColumn: 20 }),
     })])
     wrapper.unmount()
   })
@@ -190,6 +196,52 @@ describe('Monaco EditorPane', () => {
     expect(result.suggestions.map((item: any) => item.insertText)).toEqual([
       'docs/guide]]', 'docs/guide|Guide title]]',
     ])
+    wrapper.unmount()
+  })
+
+  it('replaces an existing Wiki Link closing pair during completion', async () => {
+    const wrapper = mount(EditorPane, {
+      props: { modelValue: '[[]]', path: 'inbox/source', linkTargets: [{ path: 'docs/guide', title: 'Guide' }] },
+    })
+    mocks.model.getValueInRange
+      .mockReturnValueOnce('[[')
+      .mockReturnValueOnce(']]')
+    mocks.model.getLineMaxColumn.mockReturnValue(5)
+    const provider = mocks.completionProviders.at(-1)
+    const result = await provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 3 })
+
+    expect(result.suggestions[0]).toMatchObject({
+      insertText: 'docs/guide]]',
+      range: { startColumn: 3, endColumn: 5 },
+    })
+    wrapper.unmount()
+  })
+
+  it('keeps supplying a Wiki Link closing pair when none exists', async () => {
+    const wrapper = mount(EditorPane, {
+      props: { modelValue: '[[gui', path: 'inbox/source', linkTargets: [{ path: 'docs/guide', title: 'Guide' }] },
+    })
+    mocks.model.getValueInRange
+      .mockReturnValueOnce('[[gui')
+      .mockReturnValueOnce('')
+    mocks.model.getLineMaxColumn.mockReturnValue(6)
+    const provider = mocks.completionProviders.at(-1)
+    const result = await provider.provideCompletionItems(mocks.model, { lineNumber: 1, column: 6 })
+
+    expect(result.suggestions[0]).toMatchObject({
+      insertText: 'docs/guide]]',
+      range: { startColumn: 3, endColumn: 6 },
+    })
+    wrapper.unmount()
+  })
+
+  it('leaves Enter to Monaco while the suggestion widget is visible', () => {
+    const wrapper = mount(EditorPane, { props: { modelValue: '- item', path: 'inbox/source' } })
+    const action = mocks.editor.addAction.mock.calls
+      .map(([options]) => options)
+      .find((options) => options.id === 'docus.markdown-enter')
+
+    expect(action).toMatchObject({ keybindingContext: '!suggestWidgetVisible' })
     wrapper.unmount()
   })
 
