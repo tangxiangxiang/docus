@@ -490,3 +490,90 @@ export const ICON_STATUS_MODIFIED = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" stroke="none" aria-hidden="true" focusable="false">
   <circle cx="8" cy="8" r="1.5"/>
 </svg>`
+
+// --- File-type vocabulary ---------------------------------------------------
+//
+// Seven document variants for the file tree. All share the Document
+// Base (folded corner) and only the inner content mark changes, so a
+// row of mixed files reads as "all documents, different contents".
+//
+// Existing ICON_FILE_MD and ICON_FILE_PROPERTIES stay as-is — they're
+// the canonical markdown and metadata icons. The seven here cover the
+// non-markdown attachments and binary files that can appear in a
+// vault's content directory.
+
+// ICON_FILE_IMAGE — document outline + small mountain silhouette +
+// filled dot sun. Reads as "image attachment".
+export const ICON_FILE_IMAGE = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3.5 2h5L13 6.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+  <path d="M8.5 2v4.5H13"/>
+  <path d="M4.5 11.5l2-2.25 1.75 2 1.75-2.25 2 2.5"/>
+  <circle cx="6" cy="6" r="0.75" fill="currentColor" stroke="none"/>
+</svg>`
+
+// ICON_FILE_PDF — document outline + three horizontal content lines
+// (descending length, the "list" pattern) + a filled corner dot that
+// tags it as a binary/external format. The dot is what separates this
+// from ICON_FILE_PROPERTIES — the reader learns "this row has a tag".
+export const ICON_FILE_PDF = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3.5 2h5L13 6.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+  <path d="M8.5 2v4.5H13"/>
+  <path d="M5 9h6M5 11h4"/>
+  <circle cx="11" cy="6.5" r="0.75" fill="currentColor" stroke="none"/>
+</svg>`
+
+// ICON_FILE_VIDEO — document outline + a right-pointing play
+// triangle. The triangle is centered in the document body so the
+// silhouette is unambiguous at 14px.
+export const ICON_FILE_VIDEO = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3.5 2h5L13 6.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+  <path d="M8.5 2v4.5H13"/>
+  <path d="M6.75 8.25v3.5l3-1.75z"/>
+</svg>`
+
+// ICON_FILE_AUDIO — document outline + three vertical bars of varying
+// height joined by a single horizontal stroke. The "waveform"
+// silhouette: shorter than a real waveform, but enough for a 14px
+// reader to associate with audio.
+export const ICON_FILE_AUDIO = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3.5 2h5L13 6.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+  <path d="M8.5 2v4.5H13"/>
+  <path d="M5 10.5v-2M8 11v-3M11 10.5v-2"/>
+  <path d="M4.5 9.5h7"/>
+</svg>`
+
+// ICON_FILE_CODE — document outline + left and right angle brackets.
+// The classic "<…>" code-file mark, condensed to two strokes that
+// bracket the empty middle of the document body.
+export const ICON_FILE_CODE = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3.5 2h5L13 6.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+  <path d="M8.5 2v4.5H13"/>
+  <path d="M6.5 8.5L5 10l1.5 1.5"/>
+  <path d="M9.5 8.5L11 10l-1.5 1.5"/>
+</svg>`
+
+// ICON_FILE_ATTACHMENT — document outline + a paperclip-style curve
+// sweeping diagonally inside the body. A real paperclip is too dense
+// for 14px; this is the silhouette: one curved stroke that reads as
+// "something is clipped to this file".
+export const ICON_FILE_ATTACHMENT = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3.5 2h5L13 6.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+  <path d="M8.5 2v4.5H13"/>
+  <path d="M5 11.5l4-4a1.25 1.25 0 0 1 1.75 1.75l-3 3a1 1 0 0 1-1.4-1.4l2.5-2.5"/>
+</svg>`
+
+// ICON_FILE_DRAFT — document outline + a small four-point star inside
+// the body. The star is the universal "marked / to-do" mark; combined
+// with the document outline it reads as "a draft (marked-up) file".
+export const ICON_FILE_DRAFT = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3.5 2h5L13 6.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+  <path d="M8.5 2v4.5H13"/>
+  <path d="M8 9v2M7 10h2M7.7 8.3l1.4 1.4M8.3 8.3l-1.4 1.4"/>
+</svg>`
