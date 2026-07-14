@@ -2625,10 +2625,11 @@ main.container {
 .sb-status[data-status='saved']  { color: var(--text); }
 .sb-status[data-status='saving'] { color: var(--accent); }
 .sb-status[data-status='error']  { color: #dc2626; }
-.sb-status[data-status='dirty']::before  { content: '● '; }
-.sb-status[data-status='saved']::before  { content: '✓ '; }
-.sb-status[data-status='saving']::before { content: '⟳ '; }
-.sb-status[data-status='error']::before  { content: '! '; }
+/* The leading glyphs used to be CSS ::before content rules; they
+   moved into StatusBar.vue as ICON_STATUS_* SVG icons (see
+   statusIcon computed). The ::before rules were removed so the
+   icons render exactly once. The data-status colors above still
+   apply — the icons inherit currentColor and tint accordingly. */
 
 /* Empty / loading state inside vault */
 .vault .empty {

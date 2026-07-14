@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { SaveStatus } from './tabs'
+import {
+  ICON_STATUS_ERROR,
+  ICON_STATUS_LOADING,
+  ICON_STATUS_MODIFIED,
+  ICON_STATUS_OFFLINE,
+  ICON_STATUS_SUCCESS,
+} from './icons'
 
 const props = defineProps<{
   path: string | null
@@ -19,11 +26,21 @@ const emit = defineEmits<{
   'external-local': []
 }>()
 
-// The leading glyphs (● ✓ ⟳ !) come from CSS `::before` on
-// `.sb-status[data-status=...]` (see style.css ~line 1351). This computed
-// only owns the *text* — prepending glyphs here would render the icon
-// twice. The `$(loading) Saving…` placeholder was a leftover from a
-// VSCode-status-bar port; the CSS-side `⟳ ` glyph now carries the state.
+// Status icon. Each SaveStatus maps to one of the ICON_STATUS_*
+// glyphs (or no glyph for "idle"). The glyph renders inline next
+// to the text label via v-html.
+const statusIcon = computed<string>(() => {
+  switch (props.saveStatus) {
+    case 'dirty':    return ICON_STATUS_MODIFIED
+    case 'saving':   return ICON_STATUS_LOADING
+    case 'saved':    return ICON_STATUS_SUCCESS
+    case 'error':    return ICON_STATUS_ERROR
+    case 'offline':  return ICON_STATUS_OFFLINE
+    case 'external': return ICON_STATUS_MODIFIED
+    default:         return ''
+  }
+})
+
 const statusLabel = computed(() => {
   if (!props.path) return '—'
   if (props.saveStatus === 'saving') return 'Saving…'
@@ -70,14 +87,20 @@ const pathLabel = computed(() => {
         :title="`${statusLabel}。点击重试保存`"
         aria-label="保存失败，点击重试"
         @click="emit('retry-save')"
-      >{{ statusLabel }}</button>
+      >
+        <span v-if="statusIcon" class="sb-status-glyph" v-html="statusIcon" aria-hidden="true" />
+        {{ statusLabel }}
+      </button>
       <span
         v-else
         class="sb-item sb-status"
         :data-status="saveStatus"
         aria-live="polite"
         aria-atomic="true"
-      >{{ statusLabel }}</span>
+      >
+        <span v-if="statusIcon" class="sb-status-glyph" v-html="statusIcon" aria-hidden="true" />
+        {{ statusLabel }}
+      </span>
     </div>
     <!-- Center group carries the document path (formerly the
          breadcrumb row above the editor). It owns the flexible
@@ -153,6 +176,14 @@ const pathLabel = computed(() => {
   font: inherit;
   cursor: pointer;
 }
+.sb-status-glyph {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -2px;
+  margin-right: 3px;
+  color: currentColor;
+}
+.sb-status-glyph :deep(svg) { display: block; }
 .sb-focus-width, .sb-copy-content {
   width: 22px;
   height: 18px;
