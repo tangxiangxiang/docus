@@ -123,7 +123,7 @@ export const ICON_SCOPE_LITERATURE = `
 // icons stay related but visually distinct.
 export const ICON_SCOPE_ARCHIVE = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <rect x="2.5" y="2.5" width="11" height="3" rx="0.5"/>
+  <rect x="2.5" y="2.5" width="11" height="3" rx="1"/>
   <path d="M3.5 6.5h9v6.5h-9z"/>
   <path d="M6.5 9h3"/>
 </svg>`
@@ -418,9 +418,9 @@ export const ICON_KNOWLEDGE_GRAPH = `
 // themselves, not the container.
 export const ICON_KNOWLEDGE_COLLECTION = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <rect x="2" y="6" width="3" height="4" rx="0.5"/>
-  <rect x="6.5" y="6" width="3" height="4" rx="0.5"/>
-  <rect x="11" y="6" width="3" height="4" rx="0.5"/>
+  <rect x="2" y="6" width="3" height="4" rx="1"/>
+  <rect x="6.5" y="6" width="3" height="4" rx="1"/>
+  <rect x="11" y="6" width="3" height="4" rx="1"/>
 </svg>`
 
 // ICON_KNOWLEDGE_MAP — three outline circles in a triangle with a
@@ -656,4 +656,112 @@ export const ICON_AB_SETTINGS = `
 <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
   <circle cx="12" cy="12" r="3"/>
   <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.04.04a2.1 2.1 0 0 1-2.98 2.98l-.04-.04a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.66V21a2.1 2.1 0 0 1-4.2 0v-.06A1.8 1.8 0 0 0 8.4 19.3a1.8 1.8 0 0 0-1.98.36l-.04.04A2.1 2.1 0 0 1 3.4 16.72l.04-.04A1.8 1.8 0 0 0 3.8 14.7a1.8 1.8 0 0 0-1.66-1.1H2a2.1 2.1 0 0 1 0-4.2h.06A1.8 1.8 0 0 0 3.7 8.3a1.8 1.8 0 0 0-.36-1.98l-.04-.04A2.1 2.1 0 0 1 6.28 3.3l.04.04A1.8 1.8 0 0 0 8.3 3.7h.1A1.8 1.8 0 0 0 9.5 2.06V2a2.1 2.1 0 0 1 4.2 0v.06a1.8 1.8 0 0 0 1.1 1.64 1.8 1.8 0 0 0 1.98-.36l.04-.04a2.1 2.1 0 0 1 2.98 2.98l-.04.04a1.8 1.8 0 0 0-.36 1.98v.1a1.8 1.8 0 0 0 1.66 1.1H21a2.1 2.1 0 0 1 0 4.2h-.06A1.8 1.8 0 0 0 19.4 15z"/>
+</svg>`
+
+// --- Editor state vocabulary -----------------------------------------------
+//
+// Seven icons covering view-mode toggles and editor chrome. These
+// are vocabulary ahead of feature: several surface controls
+// (Split, Zen, Wrap, Line Number, Minimap, Pin, Floating) are
+// aspirational today, but having the icons ready in the central
+// module means the first time a feature lands it ships with a
+// visually consistent glyph. Each uses a distinct geometric
+// language so a row of editor controls stays readable.
+
+// ICON_EDITOR_SPLIT — two side-by-side rectangles representing the
+// split-pane edit + preview layout. The dividing gutter is the
+// negative space between them.
+export const ICON_EDITOR_SPLIT = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <rect x="2" y="3" width="5" height="10" rx="0.5"/>
+  <rect x="9" y="3" width="5" height="10" rx="0.5"/>
+</svg>`
+
+// ICON_EDITOR_ZEN — four corner brackets expanding outward, the
+// "distraction-free mode" mark. Read as "expand to all four
+// corners" / "full attention".
+export const ICON_EDITOR_ZEN = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3 6V3h3"/>
+  <path d="M10 3h3v3"/>
+  <path d="M13 10v3h-3"/>
+  <path d="M6 13H3v-3"/>
+</svg>`
+
+// ICON_EDITOR_WRAP — a horizontal line that dips into a U-curve
+// before continuing. Reads as "soft-wrap: line returns to margin".
+export const ICON_EDITOR_WRAP = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3 5h10"/>
+  <path d="M5 5v2a3 3 0 0 0 6 0V5"/>
+</svg>`
+
+// ICON_EDITOR_LINE_NUMBER — left margin line + two short ticks +
+// a content line. Reads as "lines with numbers in the gutter".
+export const ICON_EDITOR_LINE_NUMBER = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3 3v10"/>
+  <path d="M5.5 6.5h1M5.5 9.5h1"/>
+  <path d="M8.5 6.5h5M8.5 9.5h3.5"/>
+</svg>`
+
+// ICON_EDITOR_MINIMAP — a small filled rectangle inside an outlined
+// window, with a horizontal stroke bisecting it as the scroll
+// indicator. The fill reads as "rendered preview".
+export const ICON_EDITOR_MINIMAP = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <rect x="2" y="3" width="12" height="10" rx="0.5"/>
+  <rect x="4" y="5" width="8" height="6" rx="0.25" fill="currentColor" stroke="none"/>
+  <path d="M4 8.5h8"/>
+</svg>`
+
+// ICON_EDITOR_PIN — a small filled circle on top of a vertical
+// line, the "pushpin" silhouette. Reads as "sticky / pinned".
+export const ICON_EDITOR_PIN = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="8" cy="4" r="2" fill="currentColor" stroke="none"/>
+  <path d="M8 6v8"/>
+</svg>`
+
+// ICON_EDITOR_FLOATING — two rounded rectangles overlapping
+// diagonally. The front rect's outline is partial so the back
+// rect reads through it; reads as "popped out / detached".
+export const ICON_EDITOR_FLOATING = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M10.5 2.5h3a.5.5 0 0 1 .5.5v3"/>
+  <rect x="2" y="6" width="8" height="8" rx="0.5"/>
+  <path d="M2.5 10.5v3a.5.5 0 0 0 .5.5h3"/>
+</svg>`
+
+// --- Context menu vocabulary -----------------------------------------------
+
+// ICON_MOVE — a horizontal arrow pointing right. Reads as "this
+// item moves (or is sent) somewhere else". Pairs with ICON_COPY
+// (which keeps a reference here).
+export const ICON_MOVE = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3 8h10"/>
+  <path d="M10 5l3 3-3 3"/>
+</svg>`
+
+// ICON_COPY — two stacked rounded rectangles, the back one offset
+// down-right. Reads as "two of these things". Distinct from
+// ICON_KNOWLEDGE_COLLECTION (3 in a row) and ICON_FILE_IMAGE
+// (document with content).
+export const ICON_COPY = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <rect x="2" y="2" width="9" height="9" rx="0.5"/>
+  <rect x="5" y="5" width="9" height="9" rx="0.5"/>
+</svg>`
+
+// ICON_DUPLICATE — document outline + a filled dot in the lower
+// right corner, the "plus one" indicator. Reads as "this document
+// plus a sibling". Distinct from ICON_FILE_PDF (which uses a
+// smaller corner tag dot) by the dot's larger radius and the
+// empty body (PDF has content lines; DUPLICATE does not).
+export const ICON_DUPLICATE = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3.5 2h5L13 6.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
+  <path d="M8.5 2v4.5H13"/>
+  <circle cx="11" cy="11" r="1.75" fill="currentColor" stroke="none"/>
 </svg>`

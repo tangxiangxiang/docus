@@ -59,6 +59,22 @@ const surfaceSet = new Set([
   'ICON_AB_SETTINGS',
 ])
 
+const editorSet = new Set([
+  'ICON_EDITOR_SPLIT',
+  'ICON_EDITOR_ZEN',
+  'ICON_EDITOR_WRAP',
+  'ICON_EDITOR_LINE_NUMBER',
+  'ICON_EDITOR_MINIMAP',
+  'ICON_EDITOR_PIN',
+  'ICON_EDITOR_FLOATING',
+])
+
+const contextMenuSet = new Set([
+  'ICON_MOVE',
+  'ICON_COPY',
+  'ICON_DUPLICATE',
+])
+
 const sizes = [14, 18, 22] as const
 </script>
 
@@ -92,6 +108,8 @@ const sizes = [14, 18, 22] as const
             'row-status': statusSet.has(name),
             'row-file-type': fileTypeSet.has(name),
             'row-surface': surfaceSet.has(name),
+            'row-editor': editorSet.has(name),
+            'row-context-menu': contextMenuSet.has(name),
             'row-filled': filled.has(name),
           }"
         >
@@ -108,6 +126,8 @@ const sizes = [14, 18, 22] as const
             <span v-else-if="statusSet.has(name)" class="badge badge-status">status</span>
             <span v-else-if="fileTypeSet.has(name)" class="badge badge-file-type">file type</span>
             <span v-else-if="surfaceSet.has(name)" class="badge badge-surface">surface</span>
+            <span v-else-if="editorSet.has(name)" class="badge badge-editor">editor</span>
+            <span v-else-if="contextMenuSet.has(name)" class="badge badge-context-menu">ctx menu</span>
             <span v-else class="muted">outline</span>
           </td>
         </tr>
@@ -120,13 +140,13 @@ const sizes = [14, 18, 22] as const
         Filled-glyph icons (Memory) follow currentColor, so they should
         invert cleanly between themes. The dark strip below shows the
         same grid on a dark surface for AI, knowledge, status, file
-        type, and surface-display vocabularies.
+        type, surface-display, editor, and context-menu vocabularies.
       </p>
       <div class="dark-strip">
         <table class="grid">
           <tbody>
             <tr
-              v-for="[name, svg] in entries.filter(([n]) => aiSet.has(n) || knowledgeSet.has(n) || statusSet.has(n) || fileTypeSet.has(n) || surfaceSet.has(n))"
+              v-for="[name, svg] in entries.filter(([n]) => aiSet.has(n) || knowledgeSet.has(n) || statusSet.has(n) || fileTypeSet.has(n) || surfaceSet.has(n) || editorSet.has(n) || contextMenuSet.has(n))"
               :key="`dark-${name}`"
               :class="{ 'row-filled': filled.has(name) }"
             >
@@ -237,6 +257,14 @@ const sizes = [14, 18, 22] as const
   background: color-mix(in srgb, #5fb8d4 7%, transparent);
 }
 
+.row-editor {
+  background: color-mix(in srgb, #d4789c 7%, transparent);
+}
+
+.row-context-menu {
+  background: color-mix(in srgb, #9aa0a6 7%, transparent);
+}
+
 .row-filled {
   background: color-mix(in srgb, #50aa6e 8%, transparent);
 }
@@ -272,6 +300,16 @@ const sizes = [14, 18, 22] as const
 .badge-surface {
   background: color-mix(in srgb, #5fb8d4 18%, transparent);
   color: #1f5d75;
+}
+
+.badge-editor {
+  background: color-mix(in srgb, #d4789c 18%, transparent);
+  color: #7a2e4a;
+}
+
+.badge-context-menu {
+  background: color-mix(in srgb, #9aa0a6 18%, transparent);
+  color: #444950;
 }
 
 .badge-filled {
@@ -338,6 +376,14 @@ const sizes = [14, 18, 22] as const
 
 .dark-strip :deep(.row-surface) {
   background: color-mix(in srgb, #5fb8d4 14%, transparent);
+}
+
+.dark-strip :deep(.row-editor) {
+  background: color-mix(in srgb, #d4789c 14%, transparent);
+}
+
+.dark-strip :deep(.row-context-menu) {
+  background: color-mix(in srgb, #9aa0a6 14%, transparent);
 }
 
 .dark-strip :deep(.row-filled) {
