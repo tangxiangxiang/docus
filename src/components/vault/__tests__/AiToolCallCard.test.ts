@@ -39,7 +39,8 @@ describe('AiToolCallCard', () => {
       props: { call: call({ name: 'delete_file', result: { content: 'not found', is_error: true } }) },
     })
     expect(error.get('.ai-tool-card').classes()).toContain('ai-tool-error')
-    expect(error.get('.ai-tool-pill').text()).toBe('error')
+    expect(error.get('.ai-tool-pill').attributes('aria-label')).toBe('error')
+    expect(error.get('.ai-tool-pill').classes()).toContain('ai-tool-pill-error')
     expect(error.find('.ai-tool-toggle').exists()).toBe(false)
   })
 })

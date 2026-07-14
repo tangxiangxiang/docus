@@ -8,6 +8,9 @@ import {
   ICON_PATCH_FILE,
   ICON_READ_FILE,
   ICON_RENAME_FILE,
+  ICON_STATUS_ERROR,
+  ICON_STATUS_LOADING,
+  ICON_STATUS_SUCCESS,
   ICON_WRITE_FILE,
 } from './icons'
 
@@ -28,6 +31,14 @@ const TOOL_ICONS: Record<string, string> = {
 }
 
 const icon = computed(() => TOOL_ICONS[props.call.name] ?? ICON_READ_FILE)
+
+// Status pill glyph. The pill is icon-only on the screen; the
+// aria-label carries the text meaning for screen readers.
+const statusPill = computed<{ icon: string; label: string; className: string }>(() => {
+  if (props.call.result.is_error) return { icon: ICON_STATUS_ERROR, label: 'error', className: 'ai-tool-pill-error' }
+  if (props.call.result.content) return { icon: ICON_STATUS_SUCCESS, label: 'ok', className: 'ai-tool-pill-ok' }
+  return { icon: ICON_STATUS_LOADING, label: 'pending', className: 'ai-tool-pill-pending' }
+})
 
 function stringInput(key: string): string {
   const value = props.call.input[key]
@@ -86,9 +97,12 @@ const visibleContent = computed(() => {
       <span class="ai-tool-icon" v-html="icon" aria-hidden="true" />
       <span class="ai-tool-name">{{ call.name }}</span>
       <span class="ai-tool-summary">{{ summary }}</span>
-      <span v-if="call.result.is_error" class="ai-tool-pill ai-tool-pill-error">error</span>
-      <span v-else-if="call.result.content" class="ai-tool-pill ai-tool-pill-ok">ok</span>
-      <span v-else class="ai-tool-pill ai-tool-pill-pending">…</span>
+      <span
+        class="ai-tool-pill"
+        :class="statusPill.className"
+        :aria-label="statusPill.label"
+        v-html="statusPill.icon"
+      />
     </div>
     <pre
       v-if="call.result.content"
@@ -112,7 +126,8 @@ const visibleContent = computed(() => {
 .ai-tool-icon { display: inline-flex; align-items: center; color: var(--vs-text-3, #8a93a6); }
 .ai-tool-name { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-weight: 500; color: var(--vs-text-2, #858585); }
 .ai-tool-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vs-text-3, #6a6a6a); font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.92em; }
-.ai-tool-pill { margin-left: auto; flex: 0 0 auto; padding: 0 5px; border-radius: 4px; font-size: 0.72em; line-height: 1.45; text-transform: lowercase; letter-spacing: 0; }
+.ai-tool-pill { margin-left: auto; flex: 0 0 auto; padding: 2px; border-radius: 4px; line-height: 0; display: inline-flex; align-items: center; justify-content: center; }
+.ai-tool-pill :deep(svg) { display: block; }
 .ai-tool-pill-ok { background: color-mix(in srgb, #50aa6e 16%, transparent); color: #6ec486; }
 .ai-tool-pill-error { background: color-mix(in srgb, #c14545 18%, transparent); color: #e06c75; }
 .ai-tool-pill-pending { background: color-mix(in srgb, var(--vs-text-3, #8a93a6) 16%, transparent); color: var(--vs-text-3, #8a93a6); }
