@@ -124,6 +124,8 @@ export function useEditorTabs(opts: {
   })
 
   const { routePath } = useRouteSync({ activePath, openPost })
+  let disposed = false
+  let stopFileChangeSubscription: (() => void) | null = null
 
   // Initial load: refresh the tree + posts, then restore any tabs
   // persisted from the previous session, then handle a deep-link
@@ -145,10 +147,12 @@ export function useEditorTabs(opts: {
     window.addEventListener('beforeunload', handleBeforeUnload)
     window.addEventListener('online', handleOnline)
     await refresh()
+    if (disposed) return
     // Resolve the vault id once and cache it for the persist watcher.
     // The cache lifetime is the page session — a refresh re-fetches,
     // but for the duration of one mount the id is stable.
     const vaultId = await resolveVaultId()
+    if (disposed) return
 
     const saved = readPersistedTabs(vaultId)
     if (saved && saved.paths.length > 0) {
@@ -156,6 +160,7 @@ export function useEditorTabs(opts: {
       const toRestore = saved.paths.slice(0, TAB_HARD_LIMIT)
       for (const p of toRestore) {
         const ok = await restoreOneTab(p)
+        if (disposed) return
         if (!ok) missing.push(p)
       }
       if (tabs.value.length > 0) {
@@ -177,15 +182,19 @@ export function useEditorTabs(opts: {
 
     if (routePath.value && routePath.value !== activePath.value) {
       await openPost(routePath.value)
+      if (disposed) return
     }
     // Subscribe to the file-change bus so AI tool writes/deletes/
     // renames get reflected in any open tab. The bus ref is stable
     // from module load (so a watcher set up before any publish can
     // still track it correctly).
-    subscribeToFileChanges()
+    stopFileChangeSubscription = subscribeToFileChanges()
   })
 
   onBeforeUnmount(() => {
+    disposed = true
+    stopFileChangeSubscription?.()
+    stopFileChangeSubscription = null
     window.removeEventListener('beforeunload', handleBeforeUnload)
     window.removeEventListener('online', handleOnline)
     stopExternalPolling()

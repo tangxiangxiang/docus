@@ -13,6 +13,7 @@ export function createVaultContext(options: {
   openPost: (path: string) => Promise<void>
 }): VaultContext {
   const cleanups = new Set<() => void>()
+  let disposed = false
   return {
     vaultId: options.vaultId,
     fileChanges: options.fileChanges,
@@ -28,12 +29,25 @@ export function createVaultContext(options: {
       },
     },
     onDispose(cleanup) {
+      if (disposed) {
+        cleanup()
+        return () => {}
+      }
       cleanups.add(cleanup)
       return () => { cleanups.delete(cleanup) }
     },
     dispose() {
-      for (const cleanup of cleanups) cleanup()
+      if (disposed) return
+      disposed = true
+      const callbacks = [...cleanups]
       cleanups.clear()
+      for (const cleanup of callbacks) {
+        try {
+          cleanup()
+        } catch (error) {
+          console.error('Vault cleanup failed', error)
+        }
+      }
     },
   }
 }

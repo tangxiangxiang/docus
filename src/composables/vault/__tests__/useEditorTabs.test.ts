@@ -62,6 +62,7 @@ function makeRouter() {
 }
 
 interface Harness {
+  unmount: () => void
   fileChanges: VaultFileChanges
   openPost: (p: string) => Promise<void>
   closeTab: (p: string) => Promise<void>
@@ -91,14 +92,15 @@ function setup(): Promise<Harness> {
         const togglePreview = vi.fn()
         const fileChanges = createVaultFileChanges()
         const api = useEditorTabs({ selectPanel, togglePreview, fileChanges })
-        captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'togglePreview' | 'fileChanges'>), selectPanel, togglePreview, fileChanges }
+        captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'togglePreview' | 'fileChanges' | 'unmount'>), selectPanel, togglePreview, fileChanges, unmount: () => {} }
         return () => h('div')
       },
     })
     const router = makeRouter()
     router.push('/vault').catch(() => {})
     await router.isReady()
-    mount(Comp, { global: { plugins: [router] } })
+    const wrapper = mount(Comp, { global: { plugins: [router] } })
+    captured!.unmount = () => { wrapper.unmount() }
     // useEditorTabs runs refresh() in onMounted; wait for it to settle.
     await nextTick()
     await Promise.resolve()
@@ -836,6 +838,24 @@ describe('useEditorTabs — file-change bus', () => {
     h.fileChanges.publish({ path: 'unrelated', kind: 'write', newMtime: 1, newRaw: 'X' })
     await flushPromises()
     expect(h.tabs.value[0].raw).toBe('E')
+    expect(confirmResolve).toBeNull()
+  })
+
+  it('stops reacting to file changes after unmount', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/bus-unmount': () => ({ path: 'bus-unmount', raw: 'before', content: 'before', frontmatter: {}, size: 6, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('bus-unmount')
+    h.onEditorChange('bus-unmount', 'local edit')
+    h.unmount()
+
+    h.fileChanges.publish({ path: 'bus-unmount', kind: 'write', newRaw: 'after' })
+    await flushPromises()
+
+    expect(h.tabs.value[0].raw).toBe('local edit')
     expect(confirmResolve).toBeNull()
   })
 })

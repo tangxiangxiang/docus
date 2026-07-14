@@ -44,14 +44,13 @@ interface LinkIndexStore {
 }
 
 let stores = new WeakMap<VaultFileChanges, LinkIndexStore>()
-const legacyFileChanges = getFallbackVaultFileChanges()
 
 function makeInitialState(): LinkIndexState {
   return { paths: new Set(), outgoing: {}, titles: {}, lastFetched: 0 }
 }
 
 function resolveFileChanges(explicit?: VaultFileChanges): VaultFileChanges {
-  return explicit ?? useOptionalVaultContext()?.fileChanges ?? legacyFileChanges
+  return explicit ?? useOptionalVaultContext()?.fileChanges ?? getFallbackVaultFileChanges()
 }
 
 function getStore(fileChanges?: VaultFileChanges): LinkIndexStore {
@@ -92,6 +91,7 @@ export async function refreshLinkIndex(fileChanges?: VaultFileChanges): Promise<
 /** Test-only escape hatch: drop the legacy fallback so the next
  *  `getLinkIndex()` returns a fresh empty state. */
 export function __resetLinkIndexForTesting(): void {
+  const legacyFileChanges = getFallbackVaultFileChanges()
   const store = stores.get(legacyFileChanges)
   store?.activeStop?.()
   stores.delete(legacyFileChanges)
@@ -157,6 +157,7 @@ export function useLinkIndexSubscription(fileChanges?: VaultFileChanges): void {
 
 /** Test-only escape hatch: reset subscription install count. */
 export function __resetLinkIndexSubscriptionForTesting(): void {
+  const legacyFileChanges = getFallbackVaultFileChanges()
   const store = stores.get(legacyFileChanges)
   if (store?.activeStop) {
     store.activeStop()
