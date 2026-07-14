@@ -5,9 +5,8 @@ import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { PROTECTED_ROOTS } from '../composables/archiveProtocol'
-import { ICON_PANEL_RIGHT_CLOSE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ARCHIVE, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
+import { ICON_EDIT, ICON_PANEL_RIGHT_CLOSE, ICON_PANEL_RIGHT_OPEN, ICON_READ, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ARCHIVE, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
-import ViewModeMenu from './ViewModeMenu.vue'
 
 defineProps<{ isVault?: boolean }>()
 const emit = defineEmits<{
@@ -26,14 +25,13 @@ const themeTitle = computed<string>(() => {
   return `Theme: ${cur} (click for ${next})`
 })
 
-/* View-mode is provided globally by App.vue. The picker itself
-   lives in <ViewModeMenu>; we just feed it the current state and
-   translate its emit back into the source-of-truth setters. Keeping
-   the source of truth in App.vue means keyboard shortcuts
-   (Cmd-\ toggles preview, Cmd-Shift-R toggles read) keep working
-   alongside the menu without duplicating logic. */
+/* View-mode toggle. The button shows the icon of the *opposite*
+   mode (i.e. "click to switch to that"), matching the convention
+   used by theme/AI toggles in this bar. State is owned by App.vue
+   (via VaultViewModeKey) so the keyboard shortcut Cmd/Ctrl+E and
+   this button share one source of truth and stay in sync. */
 const viewModeApi = inject(VaultViewModeKey, null)
-const viewMode = computed(() => viewModeApi?.mode.value ?? 'edit')
+const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
 
 /* Scope filter (vault root chips). Owned by the composable so
    FileTree can read the active scope and the chips here can write it.
@@ -41,21 +39,10 @@ const viewMode = computed(() => viewModeApi?.mode.value ?? 'edit')
 const { activeScope, toggleScope } = useScopeFilter()
 
 /* AI panel toggle. Lives here (not in VaultView) because the button
-   is a sibling of the existing nav-search / view-mode-menu, and the
+   is a sibling of the existing nav-search / view-toggle, and the
    useVaultLayout singleton makes this safe. */
 const { rightRailTab, rightRailCollapsed, toggleAi } = useVaultLayout()
 const aiRailOpen = computed(() => !rightRailCollapsed.value && rightRailTab.value === 'ai')
-
-/* The view-mode menu still emits a (mode, previewOpen) tuple, but the
-   preview axis has been removed from useVaultLayout (see Remove Preview
-   Mode plan) — read mode is now the only HTML render surface. We apply
-   the mode bit and ignore previewOpen here; the menu's Edit+Preview
-   option and this shim are removed in a follow-up task. */
-function onViewModeSelect(payload: { mode: 'edit' | 'read'; previewOpen: boolean }) {
-  if (viewModeApi && payload.mode !== viewModeApi.mode.value) {
-    viewModeApi.set(payload.mode)
-  }
-}
 
 const SCOPE_ICONS: Record<string, string> = {
   inbox: ICON_SCOPE_INBOX,
@@ -101,12 +88,18 @@ const SCOPE_ICONS: Record<string, string> = {
         >
           <span class="nav-search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
         </button>
-        <ViewModeMenu
-          v-if="isVault"
-          :mode="viewMode"
-          :preview-open="false"
-          @select="onViewModeSelect"
-        />
+        <button
+          v-if="isVault && viewModeApi"
+          class="view-toggle"
+          :class="{ 'is-read': isReadMode }"
+          type="button"
+          :aria-label="isReadMode ? 'Switch to edit' : 'Switch to read'"
+          :title="isReadMode ? 'Switch to edit (Cmd/Ctrl+E)' : 'Switch to read (Cmd/Ctrl+E)'"
+          data-testid="view-toggle"
+          @click="viewModeApi.toggle()"
+        >
+          <span class="view-toggle-icon" aria-hidden="true" v-html="isReadMode ? ICON_EDIT : ICON_READ" />
+        </button>
         <button
           class="theme-toggle"
           type="button"
