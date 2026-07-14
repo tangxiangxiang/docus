@@ -103,7 +103,7 @@ In `useEditorShortcuts.ts`:
   }
   ```
 
-- macOS uses `metaKey`; other platforms use `ctrlKey` (matches existing `Cmd+S` handling).
+- macOS uses `metaKey`; other platforms use `ctrlKey` (matches existing `Cmd+S` handling, which already uses an `isMeta` helper defined in the same file).
 - Bound at `window` level by the existing shortcut manager so it works regardless of focus, but the manager already short-circuits when a modal is open.
 - `options.toggleViewMode` is optional and `try/catch`-guarded: a missing callback logs a dev-only warning and does nothing.
 
@@ -129,6 +129,7 @@ In `NavBar.vue` at the location of the current `<ViewModeMenu>` (`:112-117`), in
   :class="{ 'is-read': isReadMode }"
   :aria-label="isReadMode ? 'Switch to edit' : 'Switch to read'"
   :title="isReadMode ? 'Switch to edit (Cmd/Ctrl+E)' : 'Switch to read (Cmd/Ctrl+E)'"
+  data-testid="view-toggle"
   @click="viewModeApi?.toggle()"
 >
   <component :is="isReadMode ? ICON_EDIT : ICON_READ" />
@@ -137,7 +138,8 @@ In `NavBar.vue` at the location of the current `<ViewModeMenu>` (`:112-117`), in
 
 - `viewModeApi` is already injected at `:35-36` via `VaultViewModeKey`.
 - `isReadMode` is already a computed in the component.
-- Icons: use existing `ICON_READ` and `ICON_EDIT` exports from `src/components/vault/icons.ts`. If `ICON_EDIT` does not exist, add it next to the existing icons.
+- Icons: use existing `ICON_READ` and `ICON_EDIT` exports from `src/components/vault/icons.ts`. If `ICON_EDIT` does not exist, add it next to the existing icons in the same file (a pencil/edit glyph is appropriate; do not introduce a new icon set).
+- `data-testid="view-toggle"` is for E2E selector stability.
 - The button fades between the two icons with a 120 ms opacity transition (reuses the project's existing transition variables — no new values).
 - Hover title advertises the `Cmd/Ctrl+E` shortcut.
 
@@ -172,6 +174,7 @@ In `NavBar.vue` at the location of the current `<ViewModeMenu>` (`:112-117`), in
 | `src/composables/vault/useVaultLayout.ts` | All deletions in §4.2. |
 | `src/composables/vault/useEditorTabs.ts` | Replace `togglePreview` parameter with `toggleViewMode` (`:32, :92`). |
 | `src/composables/vault/editor-tabs/useEditorShortcuts.ts` | Delete `Cmd+\` (`:27-30`); add `Cmd+E` per §4.3. |
+| `src/composables/vault/editor-tabs/useEditorShortcuts.test.ts` (if present) | Add unit cases per §7.1 (`Cmd+E` and `Ctrl+E` invocation; modal-open short-circuit; missing-callback warning). |
 | `src/router/index.ts` | Delete `/__editor-test` route (`:5`). |
 | `src/views/MarkdownTestView.vue` | Drop `mode === 'preview'` branch (`:74-76`); keep `?mode=reading`; drop preview-related CSS (`:86, :90-94`). |
 
@@ -191,7 +194,7 @@ In `NavBar.vue` at the location of the current `<ViewModeMenu>` (`:112-117`), in
 - `src/components/vault/__tests__/MonacoEditorPane.test.ts:330` — drop `previewPane.className = 'preview-pane'` setup
 - `e2e/markdown-visual.spec.ts:3-17` — drop preview-wrapper case
 - `e2e/view-mode.spec.ts` — **new file** covering the new toggle behavior (§7.2)
-- `useEditorShortcuts.test.ts` — **additions** for `Cmd+E` and `Ctrl+E` (§7.1)
+- `src/composables/vault/editor-tabs/useEditorShortcuts.test.ts` — **additions** for `Cmd+E`, `Ctrl+E`, modal-open short-circuit, and missing-callback cases (§7.1). Skip additions gracefully if the file does not yet exist.
 - `useVaultLayout.test.ts` — drop `previewOpen` cases; add "serializer ignores unknown fields" case
 
 ## 7. Test Strategy
