@@ -31,7 +31,6 @@ defineExpose({
   <RenderedMarkdown
     :raw="raw"
     :resolver="resolver"
-    mode="preview"
     @rendered="articleEl = $event"
   />
 </template>

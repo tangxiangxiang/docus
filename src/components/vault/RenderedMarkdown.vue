@@ -10,7 +10,6 @@ const props = withDefaults(defineProps<{
   raw: string
   resolver?: WikiResolver
   tag?: 'div' | 'article'
-  mode: 'preview' | 'reading'
 }>(), { tag: 'div' })
 const emit = defineEmits<{
   'update:headings': [headings: Heading[]]
@@ -47,8 +46,7 @@ defineExpose({ el: articleEl })
     :is="tag"
     v-else
     ref="articleEl"
-    class="article"
-    :class="mode"
+    class="article reading"
     v-html="html"
     @click="onArticleClick"
   />

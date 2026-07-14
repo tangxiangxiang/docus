@@ -203,7 +203,6 @@ watch(() => props.raw, () => {
         :raw="raw"
         :resolver="resolver"
         tag="article"
-        mode="reading"
         @update:headings="headings = $event"
         @rendered="articleEl = $event"
       />
