@@ -186,8 +186,8 @@ export function useEditorTabs(opts: {
     }
     // Subscribe to the file-change bus so AI tool writes/deletes/
     // renames get reflected in any open tab. The bus ref is stable
-    // from module load (so a watcher set up before any publish can
-    // still track it correctly).
+    // for the lifetime of this Vault instance (so a watcher set up
+    // before any publish can still track it correctly).
     stopFileChangeSubscription = subscribeToFileChanges()
   })
 
