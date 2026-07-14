@@ -25,11 +25,10 @@ export { __setVaultIdForTesting } from './editor-tabs/useTabPersistence'
 
 export function useEditorTabs(opts: {
   selectPanel: (panel: SidePanel) => void
-  /* Wired into the Cmd-\ shortcut to flip the preview pane open/closed
-     in edit mode. Accepted as a callback (not looked up globally) for
-     the same reason selectPanel is — keeps the layout dependency
-     explicit. */
-  togglePreview: () => void
+  /* Wired into the Cmd/Ctrl+E shortcut to toggle between edit and read
+     mode. Accepted as a callback (not looked up globally) for the same
+     reason selectPanel is — keeps the layout dependency explicit. */
+  toggleViewMode: () => void
   fileChanges: VaultFileChanges
 }) {
   const toast = useToast()
@@ -89,7 +88,7 @@ export function useEditorTabs(opts: {
     closeTab,
     selectTab,
     selectFilesPanel: () => opts.selectPanel('files'),
-    togglePreview: opts.togglePreview,
+    toggleViewMode: opts.toggleViewMode,
   })
 
   async function onCommandPaletteNew(title: string) {

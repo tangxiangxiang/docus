@@ -8,7 +8,7 @@ export function useEditorShortcuts(options: {
   closeTab: (path: string) => Promise<void>
   selectTab: (path: string) => void
   selectFilesPanel: () => void
-  togglePreview: () => void
+  toggleViewMode?: () => void
 }) {
   function onKeydown(e: KeyboardEvent) {
     const meta = e.metaKey || e.ctrlKey
@@ -24,9 +24,13 @@ export function useEditorShortcuts(options: {
       e.preventDefault()
       options.selectFilesPanel()
     }
-    if (meta && e.key === '\\') {
+    if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
       e.preventDefault()
-      options.togglePreview()
+      if (options.toggleViewMode) {
+        options.toggleViewMode()
+      } else if (import.meta.env.DEV) {
+        console.warn('[useEditorShortcuts] Cmd/Ctrl+E pressed but toggleViewMode is not wired')
+      }
     }
     if (meta && e.key === 'Tab' && options.tabs.value.length > 0) {
       e.preventDefault()

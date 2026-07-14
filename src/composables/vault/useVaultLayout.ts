@@ -34,12 +34,6 @@ export interface VaultLayout {
   editorRatio: number
   rightRailTab: RightRailTab
   rightRailWidth: number
-  /* Whether the side-by-side preview pane is open in edit mode. Defaults
-     to false: the vault's editor surface is full-width by default, and
-     the user opts into the split view (via the eye-icon next to the
-     mode-toggle, or `Cmd-\`). Persisted alongside the rest of the
-     layout so the user's last choice is restored on next load. */
-  previewOpen: boolean
   /* Whether the unified right rail is collapsed by user choice. */
   rightRailCollapsed: boolean
 }
@@ -51,7 +45,6 @@ const DEFAULTS: VaultLayout = {
   editorRatio: 1,
   rightRailTab: 'toc',
   rightRailWidth: 360,
-  previewOpen: false,
   rightRailCollapsed: false,
 }
 
@@ -78,7 +71,6 @@ const _sidePanelWidth = ref(DEFAULTS.sidePanelWidth)
 const _editorRatio = ref(DEFAULTS.editorRatio)
 const _rightRailTab = ref<RightRailTab>(DEFAULTS.rightRailTab)
 const _rightRailWidth = ref(DEFAULTS.rightRailWidth)
-const _previewOpen = ref(DEFAULTS.previewOpen)
 const _rightRailCollapsed = ref(DEFAULTS.rightRailCollapsed)
 
 /* Hydration guard. The first useVaultLayout() call (which is the
@@ -100,7 +92,6 @@ export function __resetVaultLayoutState(): void {
   _editorRatio.value = DEFAULTS.editorRatio
   _rightRailTab.value = DEFAULTS.rightRailTab
   _rightRailWidth.value = DEFAULTS.rightRailWidth
-  _previewOpen.value = DEFAULTS.previewOpen
   _rightRailCollapsed.value = DEFAULTS.rightRailCollapsed
 }
 
@@ -141,16 +132,6 @@ export function useVaultLayout() {
             editorRatio: r,
             rightRailTab,
             rightRailWidth: Math.max(320, Math.min(520, rightRailWidth)),
-            // previewOpen was added after the preview pane was made
-            // opt-in (Cmd-\ / eye-icon), so persisted layouts from
-            // the always-on era lack the field. Treat missing as the
-            // new default (false): the user starts in full-width
-            // editor mode and can re-enable the split if they want.
-            // This is a deliberate UX break — the old "preview always
-            // on" layout pushed the editor below scroll comfort on
-            // common screens, and we don't want to silently restore
-            // it for upgrading users.
-            previewOpen: typeof d.previewOpen === 'boolean' ? d.previewOpen : DEFAULTS.previewOpen,
             // Missing means expanded. The AI toolbar toggle is now the
             // only control that collapses the unified rail.
             rightRailCollapsed: legacyAiOpen ? false : typeof d.rightRailCollapsed === 'boolean' ? d.rightRailCollapsed : DEFAULTS.rightRailCollapsed,
@@ -163,7 +144,7 @@ export function useVaultLayout() {
     },
   })
 
-  /* The six live refs are MODULE-LEVEL (see comment block above the
+  /* The live refs are MODULE-LEVEL (see comment block above the
      ref declarations). The very first call to useVaultLayout() (which
      is the VaultView's setup) hydrates the module-level refs from the
      persisted payload, and registers a writer that persists back. Later
@@ -175,16 +156,15 @@ export function useVaultLayout() {
     _editorRatio.value = layout.value.editorRatio
     _rightRailTab.value = layout.value.rightRailTab
     _rightRailWidth.value = layout.value.rightRailWidth
-    _previewOpen.value = layout.value.previewOpen
     _rightRailCollapsed.value = layout.value.rightRailCollapsed
 
     // Persist on any change. useStorage's deep-compare avoids noop writes
     // (e.g. when the storage value already matches), so the round-trip
     // doesn't cause re-render storms.
     watch(
-      [_activePanel, _sidePanelWidth, _editorRatio, _rightRailTab, _rightRailWidth, _previewOpen, _rightRailCollapsed],
-      ([ap, w, r, tab, rw, po, rrc]) => {
-        layout.value = { activePanel: ap, sidePanelWidth: w, editorRatio: r, rightRailTab: tab, rightRailWidth: rw, previewOpen: po, rightRailCollapsed: rrc }
+      [_activePanel, _sidePanelWidth, _editorRatio, _rightRailTab, _rightRailWidth, _rightRailCollapsed],
+      ([ap, w, r, tab, rw, rrc]) => {
+        layout.value = { activePanel: ap, sidePanelWidth: w, editorRatio: r, rightRailTab: tab, rightRailWidth: rw, rightRailCollapsed: rrc }
       },
     )
   }
@@ -201,7 +181,6 @@ export function useVaultLayout() {
   const editorRatio: Ref<number> = _editorRatio
   const rightRailTab: Ref<RightRailTab> = _rightRailTab
   const rightRailWidth: Ref<number> = _rightRailWidth
-  const previewOpen: Ref<boolean> = _previewOpen
   const rightRailCollapsed: Ref<boolean> = _rightRailCollapsed
 
   const vaultStyle = computed(() => {
@@ -266,15 +245,6 @@ export function useVaultLayout() {
     }
   }
 
-  function togglePreview() {
-    previewOpen.value = !previewOpen.value
-    // The layout doesn't change tracks when preview toggles — the
-    // editor + preview are siblings inside .editor-area's content
-    // flex row, not grid columns. VaultView gates the splitter and
-    // preview-pane on previewOpen, so a `false` here both hides the
-    // preview and reclaims the horizontal space for the editor.
-  }
-
   return {
     activePanel,
     sidePanelOpen,
@@ -282,12 +252,10 @@ export function useVaultLayout() {
     editorRatio,
     rightRailTab,
     rightRailWidth,
-    previewOpen,
     rightRailCollapsed,
     vaultStyle,
     contentStyle,
     selectPanel,
     toggleAi,
-    togglePreview,
   }
 }

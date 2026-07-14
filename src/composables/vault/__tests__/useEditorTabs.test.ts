@@ -76,11 +76,11 @@ interface Harness {
   onCommandPaletteNew: (t: string) => Promise<void>
   activePath: Ref<string | null>
   tabs: Ref<{ path: string; raw: string; originalRaw: string; saveStatus: string; loadError: string | null; serverMtime?: number; externalRaw?: string | null }[]>
-  // The selectPanel / togglePreview spies are captured separately
+  // The selectPanel / toggleViewMode spies are captured separately
   // because the composable receives them as constructor args and
   // doesn't return them.
   selectPanel: ReturnType<typeof vi.fn>
-  togglePreview: ReturnType<typeof vi.fn>
+  toggleViewMode: ReturnType<typeof vi.fn>
 }
 
 function setup(): Promise<Harness> {
@@ -89,10 +89,10 @@ function setup(): Promise<Harness> {
     const Comp = defineComponent({
       setup() {
         const selectPanel = vi.fn()
-        const togglePreview = vi.fn()
+        const toggleViewMode = vi.fn()
         const fileChanges = createVaultFileChanges()
-        const api = useEditorTabs({ selectPanel, togglePreview, fileChanges })
-        captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'togglePreview' | 'fileChanges' | 'unmount'>), selectPanel, togglePreview, fileChanges, unmount: () => {} }
+        const api = useEditorTabs({ selectPanel, toggleViewMode, fileChanges })
+        captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'toggleViewMode' | 'fileChanges' | 'unmount'>), selectPanel, toggleViewMode, fileChanges, unmount: () => {} }
         return () => h('div')
       },
     })
@@ -646,26 +646,28 @@ describe('useEditorTabs', () => {
     expect(h.selectPanel).toHaveBeenCalledWith('files')
   })
 
-  it('onKeydown Cmd-\\ calls togglePreview (mirrors the NavBar eye-button)', async () => {
-    // The shortcut the NavBar preview-toggle button advertises. We
-    // assert by spy rather than reading the layout ref because the
-    // spy is the seam the production caller uses (see VaultView.vue),
-    // so a regression that renames the field or wires the bit
-    // directly would still surface here.
+  it('onKeydown Cmd+E calls toggleViewMode (NavBar toggle button)', async () => {
+    // Assert by spy rather than reading the layout ref because the spy
+    // is the seam the production caller uses (see VaultView.vue), so a
+    // regression that renames the field or wires the bit directly would
+    // still surface here.
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [],
       'GET /api/posts': () => [],
     }))
     const h = await setup()
-    const evt = new KeyboardEvent('keydown', { key: '\\', metaKey: true, cancelable: true })
+    const evt = new KeyboardEvent('keydown', { key: 'e', metaKey: true, cancelable: true })
     h.onKeydown(evt)
-    expect(h.togglePreview).toHaveBeenCalledOnce()
+    await flushPromises()
+    expect(h.toggleViewMode).toHaveBeenCalledOnce()
+
     // Ctrl on Windows / Linux maps to metaKey in the handler — make
     // sure the shortcut isn't gated to macOS only.
-    const ctrlEvt = new KeyboardEvent('keydown', { key: '\\', ctrlKey: true, cancelable: true })
-    h.togglePreview.mockClear()
+    h.toggleViewMode.mockClear()
+    const ctrlEvt = new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, cancelable: true })
     h.onKeydown(ctrlEvt)
-    expect(h.togglePreview).toHaveBeenCalledOnce()
+    await flushPromises()
+    expect(h.toggleViewMode).toHaveBeenCalledOnce()
   })
 
   it('onKeydown Ctrl-Tab cycles through open tabs', async () => {
@@ -1051,9 +1053,9 @@ describe('useEditorTabs — tab persistence', () => {
     const Comp = defineComponent({
       setup() {
         const selectPanel = vi.fn()
-        const togglePreview = vi.fn()
-        const api = useEditorTabs({ selectPanel, togglePreview, fileChanges: createVaultFileChanges() })
-        captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'togglePreview'>), selectPanel, togglePreview }
+        const toggleViewMode = vi.fn()
+        const api = useEditorTabs({ selectPanel, toggleViewMode, fileChanges: createVaultFileChanges() })
+        captured = { ...(api as unknown as Omit<Harness, 'selectPanel' | 'toggleViewMode'>), selectPanel, toggleViewMode }
         return () => h('div')
       },
     })

@@ -105,4 +105,21 @@ describe('useVaultLayout', () => {
     first.rightRailTab.value = 'ai'
     expect(second.rightRailTab.value).toBe('ai')
   })
+
+  it('drops unknown fields from persisted layout (forward-compat with old previewOpen)', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      rightRailTab: 'toc',
+      rightRailWidth: 360,
+      rightRailCollapsed: false,
+      previewOpen: true, // legacy field from before Preview was removed
+    }))
+    __resetVaultLayoutState()
+    const { layout } = setup()
+    // No crash; the legacy field is simply ignored.
+    expect(layout.rightRailTab.value).toBe('toc')
+    expect(layout.rightRailWidth.value).toBe(360)
+    // And it never re-emerges when the layout is rewritten.
+    void layout.rightRailCollapsed.value // no-op touch
+    expect(localStorage.getItem(STORAGE_KEY)!).not.toContain('previewOpen')
+  })
 })

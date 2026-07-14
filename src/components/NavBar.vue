@@ -46,22 +46,14 @@ const { activeScope, toggleScope } = useScopeFilter()
 const { rightRailTab, rightRailCollapsed, toggleAi } = useVaultLayout()
 const aiRailOpen = computed(() => !rightRailCollapsed.value && rightRailTab.value === 'ai')
 
-/* Preview-pane toggle state lives in useVaultLayout; the menu emits
-   a desired (mode, previewOpen) tuple and we apply each bit to its
-   respective setter. Toggling preview (rather than always writing
-   `previewOpen = opt.previewOpen`) preserves the user's existing
-   `previewOpen` bit when switching to read — switching to read
-   doesn't silently reset the preview flag, it just hides the
-   preview pane for as long as read mode is active (the underlying
-   bit sticks, mirroring the Cmd-\ shortcut's behavior). */
-const { previewOpen, togglePreview } = useVaultLayout()
-
+/* The view-mode menu still emits a (mode, previewOpen) tuple, but the
+   preview axis has been removed from useVaultLayout (see Remove Preview
+   Mode plan) — read mode is now the only HTML render surface. We apply
+   the mode bit and ignore previewOpen here; the menu's Edit+Preview
+   option and this shim are removed in a follow-up task. */
 function onViewModeSelect(payload: { mode: 'edit' | 'read'; previewOpen: boolean }) {
   if (viewModeApi && payload.mode !== viewModeApi.mode.value) {
     viewModeApi.set(payload.mode)
-  }
-  if (payload.previewOpen !== previewOpen.value) {
-    togglePreview()
   }
 }
 
@@ -112,7 +104,7 @@ const SCOPE_ICONS: Record<string, string> = {
         <ViewModeMenu
           v-if="isVault"
           :mode="viewMode"
-          :preview-open="previewOpen"
+          :preview-open="false"
           @select="onViewModeSelect"
         />
         <button

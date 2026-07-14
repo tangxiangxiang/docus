@@ -69,6 +69,12 @@ const emptyActions = computed(() => [
 const viewModeApi = inject(VaultViewModeKey, null)
 const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
 
+/* The side-by-side preview pane has been removed from the layout (see
+   Remove Preview Mode plan). This hard-false local keeps the (now dead)
+   preview template block compiling until the follow-up task deletes it
+   outright; read mode is the only HTML render surface. */
+const previewOpen: boolean = false
+
 /* ---------- Layout ---------- */
 const {
   activePanel,
@@ -80,8 +86,6 @@ const {
   contentStyle,
   selectPanel,
   rightRailTab,
-  previewOpen,
-  togglePreview,
   rightRailCollapsed,
 } = useVaultLayout()
 
@@ -125,7 +129,7 @@ const fileChanges = createVaultFileChanges()
 const {
   tree, vaultId, posts, tabs, activePath, activeTab, isDirty, activeSize,
   refresh, openPost, closeTab, closeMany, selectTab, onEditorChange, doSaveNow, resolveExternal, onKeydown, onCommandPaletteNew,
-} = useEditorTabs({ selectPanel, togglePreview, fileChanges })
+} = useEditorTabs({ selectPanel, toggleViewMode: () => viewModeApi?.toggle(), fileChanges })
 const vaultContext = createVaultContext({ vaultId, fileChanges, tabs, activePath, activeTab, openPost })
 provideVaultContext(vaultContext)
 onBeforeUnmount(() => { vaultContext.dispose() })
@@ -346,6 +350,10 @@ watch(() => navSearch?.tick.value, () => openSearch())
           </EmptyState>
         </div>
 
+        <!-- Preview split is being removed (see Remove Preview Mode plan).
+             previewOpen is now a hard-false local; the split is fully
+             deleted in a follow-up task. Read mode is the only HTML
+             render surface. -->
         <div
           v-if="tabs.length && previewOpen"
           class="splitter splitter-mid"
