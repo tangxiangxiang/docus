@@ -40,6 +40,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
   'open-link': [path: string]
   'create-link': [ref: string]
+  'toggle-view-mode': []
 }>()
 
 const host = ref<HTMLDivElement | null>(null)
@@ -387,6 +388,14 @@ onMounted(() => {
       },
     })
   }
+  editor.addAction({
+    id: 'docus.toggle-view-mode',
+    label: 'Toggle Edit / Reading Mode',
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyE],
+    run() {
+      emit('toggle-view-mode')
+    },
+  })
   editor.onDidCompositionStart(() => { composing = true })
   editor.onDidCompositionEnd(() => {
     composing = false

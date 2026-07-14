@@ -77,6 +77,23 @@ describe('useEditorShortcuts — Cmd/Ctrl+E toggles view mode', () => {
     warn.mockRestore()
   })
 
+  it('Cmd+E inside a .monaco-editor container does NOT call toggleViewMode', () => {
+    const h = makeHarness()
+    const monacoDiv = document.createElement('div')
+    monacoDiv.className = 'monaco-editor'
+    document.body.appendChild(monacoDiv)
+    const inner = document.createElement('span')
+    monacoDiv.appendChild(inner)
+
+    const ev = new KeyboardEvent('keydown', { key: 'e', metaKey: true, bubbles: true })
+    Object.defineProperty(ev, 'target', { value: inner })
+    h.onKeydown(ev)
+
+    expect(h.toggleViewMode).not.toHaveBeenCalled()
+    expect(ev.defaultPrevented).toBe(false)
+    document.body.removeChild(monacoDiv)
+  })
+
   it('Cmd+\\ no longer triggers anything (legacy preview shortcut removed)', () => {
     const h = makeHarness()
     h.fireKey('\\', { metaKey: true })

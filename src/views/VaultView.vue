@@ -308,6 +308,7 @@ watch(() => navSearch?.tick.value, () => openSearch())
             @update:model-value="(val: string) => onEditorChange(activeTab!.path, val)"
             @open-link="openPost"
             @create-link="createMissingWikiNote"
+            @toggle-view-mode="viewModeApi?.toggle()"
           />
         </div>
         <div v-if="!tabs.length" class="content-empty">

@@ -1,6 +1,11 @@
 import type { Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
 
+function isInsideMonaco(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && Boolean(target.closest('.monaco-editor'))
+}
+
 export function useEditorShortcuts(options: {
   tabs: Ref<Tab[]>
   activePath: Ref<string | null>
@@ -25,6 +30,7 @@ export function useEditorShortcuts(options: {
       options.selectFilesPanel()
     }
     if (meta && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
+      if (isInsideMonaco(e.target)) return
       e.preventDefault()
       if (options.toggleViewMode) {
         options.toggleViewMode()
