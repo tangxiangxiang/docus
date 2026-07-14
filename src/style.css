@@ -441,7 +441,7 @@ main.container {
 }
 .vault {
   /* Re-bind docus tokens to VSCode palette so existing components
-     (FileTree, EditorPane, PreviewPane) inherit VSCode colors. */
+     (FileTree, EditorPane, ReadingPane) inherit VSCode colors. */
   --text: var(--vs-text-1);
   --text-h: var(--vs-text-1);
   --text-muted: var(--vs-text-2);

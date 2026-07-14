@@ -2,8 +2,8 @@
 // the same `parseDoc` -> `render` pipeline the preview pane uses. The
 // frontmatter `title` is treated as the canonical H1 unless the body
 // already begins with one — in that case we honor the body's heading
-// instead of double-stacking. Extracted from PreviewPane so the new
-// reading pane and any future renderer stay in lockstep (no drift
+// instead of double-stacking. Extracted from the reading pane so
+// ReadingPane and any future renderer stay in lockstep (no drift
 // between title handling / render errors).
 //
 // Also extracts a flat list of headings (h2/h3/h4) with their slug

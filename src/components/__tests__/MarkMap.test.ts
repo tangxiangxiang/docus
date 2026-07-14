@@ -403,16 +403,9 @@ describe('MarkMap hidden host teardown', () => {
          <g> attribute transform: Expected number, "translate(NaN,NaN) scale(N…"
        on document switch.
 
-       Mechanism: in the vault, every tab keeps its PreviewPane in
-       the DOM (v-show on the parent container, not v-if). When the
-       user switches away from the markmap tab, the active
-       the parent container flips to `display: none` and the widget wrapper
-       collapses to 0×0. markmap's own internal ResizeObserver
-       notices the foreignObject collapse and re-runs renderData()
-       → fit(); fit() on a 0×0 svg produces
-       `translate(NaN,NaN) scale(NaN)` and d3-zoom's transition
-       writes that string on every animation frame for its
-       duration — ~30 frames, one console warning per frame.
+       In the vault, ReadingPane is keyed by the active path. Switching
+       documents unmounts the previous rendered Markdown tree. MarkMap must
+       tear down its ResizeObserver and SVG state on unmount.
 
        The fix is to observe the *wrapper* in MarkMap.vue and
        teardown the markmap instance the moment the wrapper

@@ -49,7 +49,7 @@ async function buildHighlight(): Promise<HighlightFn> {
   return (str: string, lang: string) => {
     /* ```markmap → placeholder div. The real widget is mounted by
        useMarkmapMount (in components that v-html the rendered
-       output: PreviewPane, ReadingPane). We emit a div
+       output: ReadingPane). We emit a div
        with the source in data-content rather than rendering the
        tree server-side because markmap's layout depends on the
        viewport, and we want the same interactive controls

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Distraction-free reading surface used when the vault is in read mode.
-// Same markdown pipeline as PreviewPane (so frontmatter title handling
+// Same markdown pipeline as ReadingPane (so frontmatter title handling
 // and render errors stay consistent), presented in a centered single
 // column with reading-friendly typography.
 //
@@ -19,7 +19,7 @@ const { tocHeadings, tocActiveId, tocScrollTo } = useVaultTocState()
 
 const props = defineProps<{
   raw: string
-  /** Resolver for [[wiki]] / [t](path.md) links. See PreviewPane. */
+  /** Resolver for [[wiki]] / [t](path.md) links. See ReadingPane. */
   resolver?: WikiResolver
 }>()
 const headings = ref<Heading[]>([])

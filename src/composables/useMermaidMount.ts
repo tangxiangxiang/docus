@@ -75,7 +75,7 @@ export function useMermaidMount(articleEl: Ref<HTMLElement | null>) {
      remount, route change) gets observed and the old observer is
      disconnected.
 
-     Editor-side throttle: in PreviewPane, the article ref is
+     Editor-side throttle: in the reading pane, the article ref is
      bound to a live markdown preview that re-renders on every
      keystroke. The MutationObserver fires per keystroke, and
      `mountAll` does a `createApp` + `mount` per placeholder
