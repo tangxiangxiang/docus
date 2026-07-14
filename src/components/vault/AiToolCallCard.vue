@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { ToolCallRecord } from '../../lib/ai-api'
+import {
+  ICON_CREATE_FILE,
+  ICON_DELETE_FILE,
+  ICON_LIST_FILES,
+  ICON_PATCH_FILE,
+  ICON_READ_FILE,
+  ICON_RENAME_FILE,
+  ICON_WRITE_FILE,
+} from './icons'
 
 const props = defineProps<{ call: ToolCallRecord }>()
 
@@ -9,16 +18,16 @@ const collapsible = computed(() => ['read_file', 'list_files'].includes(props.ca
 const COLLAPSE_THRESHOLD = 200
 
 const TOOL_ICONS: Record<string, string> = {
-  read_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h10l2 2v8H2z"/><path d="M2 3v10h12"/></svg>',
-  list_files: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h12"/></svg>',
-  create_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2h7l3 3v9H3z"/><path d="M8 7v4M6 9h4"/></svg>',
-  write_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2l3 3-8 8H3v-3z"/></svg>',
-  patch_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="2"/><circle cx="10" cy="10" r="2"/><path d="M7 8l2 0M7 8l-1 4M9 8l1-4"/></svg>',
-  delete_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M5 4V2h6v2M5 4l1 10h4l1-10"/></svg>',
-  rename_file: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12V8l8-8 4 4-8 8z"/><path d="M6 6l4 4"/></svg>',
+  read_file: ICON_READ_FILE,
+  list_files: ICON_LIST_FILES,
+  create_file: ICON_CREATE_FILE,
+  write_file: ICON_WRITE_FILE,
+  patch_file: ICON_PATCH_FILE,
+  delete_file: ICON_DELETE_FILE,
+  rename_file: ICON_RENAME_FILE,
 }
 
-const icon = computed(() => TOOL_ICONS[props.call.name] ?? TOOL_ICONS.read_file)
+const icon = computed(() => TOOL_ICONS[props.call.name] ?? ICON_READ_FILE)
 
 function stringInput(key: string): string {
   const value = props.call.input[key]
