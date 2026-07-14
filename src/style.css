@@ -281,7 +281,7 @@ hr {
   border-color: var(--border);
   background: var(--bg-soft);
 }
-.nav-actions :where(.nav-search, .theme-toggle, .ai-toggle, .view-mode-menu-trigger) svg {
+.nav-actions :where(.nav-search, .theme-toggle, .ai-toggle, .view-toggle) svg {
   display: block;
   width: 18px;
   height: 18px;
@@ -3525,24 +3525,12 @@ main.container {
 }
 .ai-toggle .ai-toggle-icon { display: inline-flex; line-height: 0; }
 
-/* ViewModeMenu — combined view-mode picker in the navbar. Replaces
-   the previous pair of toggle buttons (.mode-toggle +
-   .preview-toggle). The trigger is icon-only (matches the AI /
-   theme toggles next to it — three same-size icon buttons in a
-   row). The popover lists the three valid states as radio rows;
-   the active state is visible there (✓ mark + accent color), so
-   the trigger doesn't need to repeat the label inline. The label
-   + caret elements are still in the DOM (aria-hidden) so the
-   trigger's aria-label can be set from them by the component.
-
-   Hover and open both apply the same soft-filled style so the
-   trigger reads as the "active affordance" regardless of which
-   interaction opened the popover. */
-.view-mode-menu {
-  position: relative;
-  display: inline-block;
-}
-.view-mode-menu-trigger {
+/* NavBar view-mode toggle — single button that switches between
+   edit and read. Matches the AI / theme toggles next to it
+   (same 28×28 icon button, soft-filled on hover, accent-tinted
+   when read mode is active). Cmd/Ctrl+E is the keyboard twin
+   (wired in useEditorShortcuts) and calls the same viewModeApi.toggle(). */
+.view-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3557,90 +3545,21 @@ main.container {
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
-.view-mode-menu-trigger:hover {
+.view-toggle:hover {
   color: var(--text-h);
   border-color: var(--border);
   background: var(--bg-soft);
 }
-.view-mode-menu.is-open .view-mode-menu-trigger {
-  color: var(--text-h);
-  border-color: var(--border);
-  background: var(--bg-soft);
+/* The button represents the "switch to opposite mode" affordance,
+   so the read state is the one that should feel selected. */
+.view-toggle.is-read {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
 }
-.view-mode-menu-trigger-icon {
+.view-toggle .view-toggle-icon {
   display: inline-flex;
   align-items: center;
   line-height: 0;
-  color: var(--accent);
-}
-.view-mode-menu-trigger-label,
-.view-mode-menu-trigger-caret {
-  /* Still in the DOM (the component sets them so aria-label can be
-     derived) but visually hidden — the trigger is icon-only. */
-  display: none;
-}
-
-/* Popover sits absolutely below the trigger, anchored to its right
-   edge so the menu doesn't fly off-screen in the rightmost position
-   of the navbar. Width auto so the longest label ("Edit + Preview")
-   dictates it; the rows pad to match the trigger's interior rhythm. */
-.view-mode-menu-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 50;
-  min-width: 160px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
-  padding: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.view-mode-menu-item {
-  display: grid;
-  /* Three columns: icon (auto), label (1fr), check (auto). The
-     grid makes the check column line up across all three rows even
-     when only one row is "active" — the empty space stays reserved
-     so future additions don't shift the check position. */
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: transparent;
-  border: 0;
-  color: var(--text);
-  font: inherit;
-  font-size: 0.85rem;
-  text-align: left;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.1s;
-}
-.view-mode-menu-item:hover,
-.view-mode-menu-item:focus-visible {
-  background: var(--bg-soft);
-  outline: none;
-}
-/* Active row uses the same accent fill the AI toggle uses for its
-   pressed state, so the user gets a familiar "this is on" cue. */
-.view-mode-menu-item.is-active {
-  color: var(--accent);
-}
-.view-mode-menu-item-icon {
-  display: inline-flex;
-  align-items: center;
-  line-height: 0;
-  color: var(--text-muted);
-}
-.view-mode-menu-item.is-active .view-mode-menu-item-icon {
-  color: var(--accent);
-}
-.view-mode-menu-item-check {
-  color: var(--accent);
-  font-weight: 600;
 }
 
 /* Clickable session title in the AI panel header. The whole
