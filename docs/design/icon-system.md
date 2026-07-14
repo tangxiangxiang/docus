@@ -65,6 +65,40 @@ Each filled exception must be:
    point, presence marker), not a workaround for an unrendered
    outline version.
 
+### Surface-display exception
+
+A small set of icons lives in toolbar slots (NavBar buttons,
+ActivityBar rail buttons) that need a larger visual weight than
+the 14px inline default. The button chrome is 28-48px, and a 14px
+icon inside that chrome looks anemic.
+
+For these icons, four attributes change together:
+
+| Property | Functional default | Surface display |
+| --- | --- | --- |
+| `viewBox` | `0 0 16 16` | `0 0 24 24` |
+| `width` / `height` | `14` | `16` / `18` / `22` (per slot) |
+| `stroke-width` | `1.5` | `1.8` / `2.0` (per slot) |
+| stroke caps / joins / aria | unchanged | unchanged |
+
+The HARD rules still apply: no `<text>`, no color literals, no root
+`class`/`style`, no `1024`-style viewBox. Only the four attributes
+above diverge from the shared grid.
+
+Each surface-display icon must be:
+
+1. Listed in `SURFACE_DISPLAY_ICONS` in
+   [`src/components/vault/__tests__/icons.test.ts`](../../src/components/vault/__tests__/icons.test.ts)
+   so the test stays honest about which icons use the larger canvas.
+2. Justified in a comment in `icons.ts` — the comment must explain
+   *why* this slot needs the surface canvas, and link to a future
+   redraw at the shared grid if one is planned.
+
+Future work: redraw each surface-display icon at the 16×16 grid +
+1.5 stroke so the toolbar slot can render at the 14px default. The
+viewBox flip and stroke adjustment are then unnecessary; the icon
+moves out of `SURFACE_DISPLAY_ICONS` and back into the shared grid.
+
 ### Allowed exceptions
 
 - **Brand logos** (e.g. Docus wordmark) may use a different viewBox.

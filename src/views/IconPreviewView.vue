@@ -49,6 +49,16 @@ const fileTypeSet = new Set([
   'ICON_FILE_DRAFT',
 ])
 
+const surfaceSet = new Set([
+  'ICON_NAV_SEARCH',
+  'ICON_NAV_THEME_LIGHT',
+  'ICON_NAV_THEME_DARK',
+  'ICON_AB_FILES',
+  'ICON_AB_TAGS',
+  'ICON_AB_GIT_HISTORY',
+  'ICON_AB_SETTINGS',
+])
+
 const sizes = [14, 18, 22] as const
 </script>
 
@@ -81,6 +91,7 @@ const sizes = [14, 18, 22] as const
             'row-knowledge': knowledgeSet.has(name),
             'row-status': statusSet.has(name),
             'row-file-type': fileTypeSet.has(name),
+            'row-surface': surfaceSet.has(name),
             'row-filled': filled.has(name),
           }"
         >
@@ -96,6 +107,7 @@ const sizes = [14, 18, 22] as const
             <span v-else-if="knowledgeSet.has(name)" class="badge badge-knowledge">knowledge</span>
             <span v-else-if="statusSet.has(name)" class="badge badge-status">status</span>
             <span v-else-if="fileTypeSet.has(name)" class="badge badge-file-type">file type</span>
+            <span v-else-if="surfaceSet.has(name)" class="badge badge-surface">surface</span>
             <span v-else class="muted">outline</span>
           </td>
         </tr>
@@ -107,14 +119,14 @@ const sizes = [14, 18, 22] as const
       <p class="hint">
         Filled-glyph icons (Memory) follow currentColor, so they should
         invert cleanly between themes. The dark strip below shows the
-        same grid on a dark surface for AI, knowledge, status, and
-        file-type vocabularies.
+        same grid on a dark surface for AI, knowledge, status, file
+        type, and surface-display vocabularies.
       </p>
       <div class="dark-strip">
         <table class="grid">
           <tbody>
             <tr
-              v-for="[name, svg] in entries.filter(([n]) => aiSet.has(n) || knowledgeSet.has(n) || statusSet.has(n) || fileTypeSet.has(n))"
+              v-for="[name, svg] in entries.filter(([n]) => aiSet.has(n) || knowledgeSet.has(n) || statusSet.has(n) || fileTypeSet.has(n) || surfaceSet.has(n))"
               :key="`dark-${name}`"
               :class="{ 'row-filled': filled.has(name) }"
             >
@@ -221,6 +233,10 @@ const sizes = [14, 18, 22] as const
   background: color-mix(in srgb, #6ec486 7%, transparent);
 }
 
+.row-surface {
+  background: color-mix(in srgb, #5fb8d4 7%, transparent);
+}
+
 .row-filled {
   background: color-mix(in srgb, #50aa6e 8%, transparent);
 }
@@ -251,6 +267,11 @@ const sizes = [14, 18, 22] as const
 .badge-file-type {
   background: color-mix(in srgb, #6ec486 18%, transparent);
   color: #2e6b46;
+}
+
+.badge-surface {
+  background: color-mix(in srgb, #5fb8d4 18%, transparent);
+  color: #1f5d75;
 }
 
 .badge-filled {
@@ -313,6 +334,10 @@ const sizes = [14, 18, 22] as const
 
 .dark-strip :deep(.row-file-type) {
   background: color-mix(in srgb, #6ec486 14%, transparent);
+}
+
+.dark-strip :deep(.row-surface) {
+  background: color-mix(in srgb, #5fb8d4 14%, transparent);
 }
 
 .dark-strip :deep(.row-filled) {

@@ -27,6 +27,13 @@ const SRC = join(ROOT, 'src')
 const args = new Set(process.argv.slice(2))
 const STRICT = args.has('--strict')
 const ALLOW_FILES = new Set<string>()
+// Files that legitimately mention <svg>/<text> as strings without
+// actually declaring icons. These are always excluded; consumers can
+// add more via --allow-file.
+const DEFAULT_ALLOW_FILES = new Set<string>([
+  'src/components/vault/__tests__/icons.test.ts',
+  'src/components/__tests__/Mermaid.test.ts',
+])
 for (const arg of process.argv.slice(2)) {
   if (arg.startsWith('--allow-file=')) {
     ALLOW_FILES.add(arg.slice('--allow-file='.length))
@@ -92,7 +99,7 @@ function parseAttributes(tag: string): Map<string, string> {
 
 function checkFile(filePath: string): { violations: Violation[]; svgCount: number } {
   const rel = relative(ROOT, filePath).replace(/\\/g, '/')
-  if (ALLOW_FILES.has(rel)) return { violations: [], svgCount: 0 }
+  if (ALLOW_FILES.has(rel) || DEFAULT_ALLOW_FILES.has(rel)) return { violations: [], svgCount: 0 }
 
   const source = readFileSync(filePath, 'utf8')
   const violations: Violation[] = []

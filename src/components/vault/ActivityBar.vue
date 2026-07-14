@@ -8,6 +8,12 @@
    vault-scoped useHistory instance (which subscribes to the file-change bus)
    so the badge updates live as the user saves tabs. */
 import { useHistory } from '../../composables/vault/useHistory.js'
+import {
+  ICON_AB_FILES,
+  ICON_AB_GIT_HISTORY,
+  ICON_AB_SETTINGS,
+  ICON_AB_TAGS,
+} from './icons'
 export type SidePanel = 'files' | 'tags' | 'history'
 
 defineProps<{ activePanel: SidePanel | null }>()
@@ -28,9 +34,7 @@ const h = useHistory()
       :aria-pressed="activePanel === 'files'"
       @click="emit('select-panel', 'files')"
     >
-      <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-      </svg>
+      <span class="ab-btn-icon" v-html="ICON_AB_FILES" aria-hidden="true" />
     </button>
     <button
       class="ab-btn"
@@ -39,10 +43,7 @@ const h = useHistory()
       :aria-pressed="activePanel === 'tags'"
       @click="emit('select-panel', 'tags')"
     >
-      <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
-        <line x1="7" y1="7" x2="7.01" y2="7" />
-      </svg>
+      <span class="ab-btn-icon" v-html="ICON_AB_TAGS" aria-hidden="true" />
     </button>
     <button
       class="ab-btn"
@@ -51,14 +52,7 @@ const h = useHistory()
       :aria-pressed="activePanel === 'history'"
       @click="emit('select-panel', 'history')"
     >
-      <!-- Git-history icon: three commit dots connected by a curve. -->
-      <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="6" cy="5" r="1.6" fill="currentColor" stroke="none" />
-        <circle cx="6" cy="19" r="1.6" fill="currentColor" stroke="none" />
-        <circle cx="17" cy="12" r="1.6" fill="currentColor" stroke="none" />
-        <line x1="6" y1="6.5" x2="6" y2="17.5" />
-        <path d="M6 12 C 10 12, 12 12, 15.4 12" />
-      </svg>
+      <span class="ab-btn-icon" v-html="ICON_AB_GIT_HISTORY" aria-hidden="true" />
       <span
         v-if="h.dirtyCount.value > 0"
         class="ab-badge"
@@ -72,10 +66,7 @@ const h = useHistory()
       aria-label="Settings"
       @click="emit('open-settings')"
     >
-      <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.04.04a2.1 2.1 0 0 1-2.98 2.98l-.04-.04a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.66V21a2.1 2.1 0 0 1-4.2 0v-.06A1.8 1.8 0 0 0 8.4 19.3a1.8 1.8 0 0 0-1.98.36l-.04.04A2.1 2.1 0 0 1 3.4 16.72l.04-.04A1.8 1.8 0 0 0 3.8 14.7a1.8 1.8 0 0 0-1.66-1.1H2a2.1 2.1 0 0 1 0-4.2h.06A1.8 1.8 0 0 0 3.7 8.3a1.8 1.8 0 0 0-.36-1.98l-.04-.04A2.1 2.1 0 0 1 6.28 3.3l.04.04A1.8 1.8 0 0 0 8.3 3.7h.1A1.8 1.8 0 0 0 9.5 2.06V2a2.1 2.1 0 0 1 4.2 0v.06a1.8 1.8 0 0 0 1.1 1.64 1.8 1.8 0 0 0 1.98-.36l.04-.04a2.1 2.1 0 0 1 2.98 2.98l-.04.04a1.8 1.8 0 0 0-.36 1.98v.1a1.8 1.8 0 0 0 1.66 1.1H21a2.1 2.1 0 0 1 0 4.2h-.06A1.8 1.8 0 0 0 19.4 15z" />
-      </svg>
+      <span class="ab-btn-icon" v-html="ICON_AB_SETTINGS" aria-hidden="true" />
     </button>
   </aside>
 </template>

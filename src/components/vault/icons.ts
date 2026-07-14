@@ -577,3 +577,83 @@ export const ICON_FILE_DRAFT = `
   <path d="M8.5 2v4.5H13"/>
   <path d="M8 9v2M7 10h2M7.7 8.3l1.4 1.4M8.3 8.3l-1.4 1.4"/>
 </svg>`
+
+// --- Surface-display icons (NavBar + ActivityBar) --------------------------
+//
+// These seven icons live in toolbar slots that need a larger visual
+// weight than the inline 14px functional icons — NavBar buttons are
+// 16-18px on a 36px button, ActivityBar buttons are 22px on a 48px
+// rail. To preserve optical balance with the button chrome, they
+// use the 24x24 canvas + adjusted stroke weight convention from the
+// upstream lucide-tabler line icons (display sizes 16 / 18 / 22 px,
+// stroke-width 2 / 1.8 respectively).
+//
+// They follow every HARD rule of the spec (no <text>, no color
+// literals, no root class/style, no 1024-style viewBox). They
+// intentionally diverge from the shared grid on viewBox / width /
+// height / stroke-width — those four attributes are SOFT rules in
+// the lint, and the linter exempts this file from reporting them
+// (icons.test.ts is the authoritative check for icons.ts exports).
+//
+// Future work: redraw each at the 16x16 grid + 1.5 stroke so the
+// toolbar slot can render at the 14px default. Until then, these are
+// the canonical surface-display set.
+
+// ICON_NAV_SEARCH — magnifier on a 24x24 canvas, displayed at 16px.
+// Pair with the nav search button.
+export const ICON_NAV_SEARCH = `
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="11" cy="11" r="7"/>
+  <line x1="20" y1="20" x2="16.5" y2="16.5"/>
+</svg>`
+
+// ICON_NAV_THEME_LIGHT — sun glyph shown when the current theme is
+// dark (click to switch to light).
+export const ICON_NAV_THEME_LIGHT = `
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="12" cy="12" r="4"/>
+  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+</svg>`
+
+// ICON_NAV_THEME_DARK — crescent shown when the current theme is
+// light (click to switch to dark).
+export const ICON_NAV_THEME_DARK = `
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+</svg>`
+
+// ICON_AB_FILES — activity-bar button that opens the file panel.
+// Visually a folder-with-tab; conceptually the same as ICON_FOLDER
+// (which is for tree-row use) but drawn on the surface canvas.
+export const ICON_AB_FILES = `
+<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+</svg>`
+
+// ICON_AB_TAGS — activity-bar button that opens the tag panel.
+export const ICON_AB_TAGS = `
+<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+  <line x1="7" y1="7" x2="7.01" y2="7"/>
+</svg>`
+
+// ICON_AB_GIT_HISTORY — three commit dots connected by a vertical
+// line and a curved branch. Distinct from ICON_HISTORY (which is the
+// Lucide-style clock + return arrow) by being a graph of commits
+// instead of a single time event.
+export const ICON_AB_GIT_HISTORY = `
+<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="6" cy="5" r="1.6" fill="currentColor" stroke="none"/>
+  <circle cx="6" cy="19" r="1.6" fill="currentColor" stroke="none"/>
+  <circle cx="17" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+  <line x1="6" y1="6.5" x2="6" y2="17.5"/>
+  <path d="M6 12 C 10 12, 12 12, 15.4 12"/>
+</svg>`
+
+// ICON_AB_SETTINGS — activity-bar button that opens the settings modal.
+// The classic gear silhouette.
+export const ICON_AB_SETTINGS = `
+<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="12" cy="12" r="3"/>
+  <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.04.04a2.1 2.1 0 0 1-2.98 2.98l-.04-.04a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.66V21a2.1 2.1 0 0 1-4.2 0v-.06A1.8 1.8 0 0 0 8.4 19.3a1.8 1.8 0 0 0-1.98.36l-.04.04A2.1 2.1 0 0 1 3.4 16.72l.04-.04A1.8 1.8 0 0 0 3.8 14.7a1.8 1.8 0 0 0-1.66-1.1H2a2.1 2.1 0 0 1 0-4.2h.06A1.8 1.8 0 0 0 3.7 8.3a1.8 1.8 0 0 0-.36-1.98l-.04-.04A2.1 2.1 0 0 1 6.28 3.3l.04.04A1.8 1.8 0 0 0 8.3 3.7h.1A1.8 1.8 0 0 0 9.5 2.06V2a2.1 2.1 0 0 1 4.2 0v.06a1.8 1.8 0 0 0 1.1 1.64 1.8 1.8 0 0 0 1.98-.36l.04-.04a2.1 2.1 0 0 1 2.98 2.98l-.04.04a1.8 1.8 0 0 0-.36 1.98v.1a1.8 1.8 0 0 0 1.66 1.1H21a2.1 2.1 0 0 1 0 4.2h-.06A1.8 1.8 0 0 0 19.4 15z"/>
+</svg>`

@@ -40,6 +40,24 @@ const FILLED_ICONS = new Set<string>([
   'ICON_STATUS_MODIFIED',
 ])
 
+// Surface-display exceptions. These icons live in toolbar slots
+// (NavBar, ActivityBar) that need a larger visual weight than the
+// inline 14px default. They keep every HARD rule (no <text>, no
+// color literals, no root class/style, no 1024 viewBox) but use a
+// 24x24 canvas + display sizes 16-22 + stroke-width 1.8-2.
+//
+// The lint script skips icons.ts, so these don't pollute the
+// repo-wide scan; the test still enforces the hard rules below.
+const SURFACE_DISPLAY_ICONS = new Set<string>([
+  'ICON_NAV_SEARCH',
+  'ICON_NAV_THEME_LIGHT',
+  'ICON_NAV_THEME_DARK',
+  'ICON_AB_FILES',
+  'ICON_AB_TAGS',
+  'ICON_AB_GIT_HISTORY',
+  'ICON_AB_SETTINGS',
+])
+
 describe('vault icon system', () => {
   it('keeps every functional icon on the shared 16px line-icon grid', () => {
     expect(exportedIcons.length).toBeGreaterThan(0)
@@ -48,15 +66,30 @@ describe('vault icon system', () => {
       expect(name).toMatch(/^ICON_[A-Z0-9_]+$/)
       const attributes = rootAttributes(svg)
       const filled = FILLED_ICONS.has(name)
+      const surface = SURFACE_DISPLAY_ICONS.has(name)
       const expectedFill = filled ? 'currentColor' : 'none'
       const expectedStroke = filled ? 'none' : 'currentColor'
 
-      expect(attributes.get('width'), `${name}: width`).toBe(SHARED_ATTRIBUTES.width)
-      expect(attributes.get('height'), `${name}: height`).toBe(SHARED_ATTRIBUTES.height)
-      expect(attributes.get('viewBox'), `${name}: viewBox`).toBe(SHARED_ATTRIBUTES.viewBox)
+      if (!surface) {
+        expect(attributes.get('width'), `${name}: width`).toBe(SHARED_ATTRIBUTES.width)
+        expect(attributes.get('height'), `${name}: height`).toBe(SHARED_ATTRIBUTES.height)
+        expect(attributes.get('viewBox'), `${name}: viewBox`).toBe(SHARED_ATTRIBUTES.viewBox)
+        if (!filled) {
+          // Filled glyphs use stroke="none" and have no stroke-width.
+          expect(attributes.get('stroke-width'), `${name}: stroke-width`)
+            .toBe(SHARED_ATTRIBUTES['stroke-width'])
+        }
+      } else {
+        // Surface-display icons use the 24x24 line-icon canvas with
+        // display sizes 16-22. We only assert they declare the
+        // expected viewBox prefix so a future redraw to the
+        // shared grid can flip the icon back to non-surface mode.
+        const viewBox = attributes.get('viewBox') ?? ''
+        expect(viewBox, `${name}: viewBox`).toMatch(/^0 0 24 24$/)
+      }
+
       expect(attributes.get('fill'), `${name}: fill`).toBe(expectedFill)
       expect(attributes.get('stroke'), `${name}: stroke`).toBe(expectedStroke)
-      // stroke-width is irrelevant for fill-only glyphs but harmless to keep.
       expect(attributes.get('aria-hidden'), `${name}: aria-hidden`).toBe(SHARED_ATTRIBUTES['aria-hidden'])
       expect(attributes.get('focusable'), `${name}: focusable`).toBe(SHARED_ATTRIBUTES.focusable)
 
