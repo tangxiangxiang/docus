@@ -10,7 +10,7 @@ export default defineConfig({
   },
   webServer: {
     command: 'pnpm exec vite --host 127.0.0.1 --port 4174',
-    url: 'http://127.0.0.1:4174/__editor-test',
+    url: 'http://127.0.0.1:4174/__markdown-test?mode=reading',
     reuseExistingServer: true,
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],

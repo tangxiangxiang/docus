@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, shallowRef, watch, computed, defineAsyncComponent, onBeforeUnmount } from 'vue'
+import { ref, inject, shallowRef, watch, computed, defineAsyncComponent, onBeforeUnmount, nextTick } from 'vue'
 import { useStorage } from '@vueuse/core'
 import { useShortcutDisplay } from '../composables/useShortcutDisplay'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
@@ -194,6 +194,20 @@ const wikiResolver = (ref: string, _anchor?: string) => {
 }
 
 watch(() => navSearch?.tick.value, () => openSearch())
+
+/* After the Monaco addAction emits toggle-view-mode and isReadMode
+   flips to true, the EditorPane is unmounted — taking the focused
+   Monaco instance with it. The browser typically falls back to
+   <body>, which is outside .vault's @keydown target. We explicitly
+   move focus onto the vault container (which already has tabindex="0")
+   so the next Cmd/Ctrl+E lands on the @keydown handler and can toggle
+   back to edit mode. */
+watch(isReadMode, async (reading) => {
+  if (reading) {
+    await nextTick()
+    vaultRef.value?.focus()
+  }
+})
 
 /* The mode toggle only swaps the editor/preview split for a single
    reading surface — the side panel, activity bar, tabs, and status

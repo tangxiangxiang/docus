@@ -1,7 +1,19 @@
 import { expect, test } from '@playwright/test'
 
+/* Monaco's CtrlCmd key modifier maps to Meta on macOS and Control on
+   Linux / Windows. Use the host platform to pick the correct key so
+   the E2E suite works on dev machines (macOS) and CI (Linux) alike. */
+const primaryModifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+const TEST_DOC_PATH = 'inbox/e2e-shortcut-test'
+
 test.describe('View mode toggle', () => {
   test.beforeEach(async ({ page }) => {
+    // Ensure a known document exists so Monaco-focus tests don't
+    // silently skip when the vault is empty (e.g. in CI). 409
+    // Conflict (already exists) is a safe no-op.
+    await page.request.post('/api/posts', {
+      data: { path: TEST_DOC_PATH, title: 'Shortcut Test' },
+    }).catch(() => {})
     await page.goto('/vault')
   })
 
@@ -21,33 +33,31 @@ test.describe('View mode toggle', () => {
     await expect(btn).toHaveAttribute('aria-label', 'Switch to read')
   })
 
-  test('Cmd+E toggles edit↔read from the vault', async ({ page }) => {
+  test('Cmd/Ctrl+E toggles edit↔read from the vault', async ({ page }) => {
     const toggle = page.getByTestId('view-toggle')
     await expect(toggle).toHaveAttribute('aria-label', 'Switch to read')
     // Focus the vault container so that @keydown fires on it
     await page.locator('.vault').focus()
-    await page.keyboard.press('Meta+e')
+    await page.keyboard.press(`${primaryModifier}+e`)
     await expect(toggle).toHaveAttribute('aria-label', 'Switch to edit')
-    await page.keyboard.press('Meta+e')
+    await page.keyboard.press(`${primaryModifier}+e`)
     await expect(toggle).toHaveAttribute('aria-label', 'Switch to read')
   })
 
-  test('Cmd+E toggles mode while Monaco editor has focus', async ({ page }) => {
+  test('Cmd/Ctrl+E toggles mode while Monaco editor has focus', async ({ page }) => {
     const toggle = page.getByTestId('view-toggle')
 
-    // Open a file so Monaco is mounted — click the first tree row.
-    const treeRow = page.locator('.tree-row').first()
-    const rowCount = await treeRow.count()
-    if (rowCount === 0) {
-      test.skip(true, 'No vault files to open — skipping Monaco-focus test')
-    }
-    await treeRow.click()
+    // Open the known test document so Monaco is mounted
+    const testRow = page.locator('.tree-row').filter({ hasText: 'Shortcut Test' }).first()
+    await testRow.click()
+
     // Wait for the async Monaco component to load
     const editor = page.locator('.monaco-editor')
     await editor.waitFor({ state: 'visible', timeout: 10_000 })
     await editor.click()
 
-    await page.keyboard.press('Meta+e')
+    // Toggle to read mode from inside Monaco
+    await page.keyboard.press(`${primaryModifier}+e`)
     await expect(toggle).toHaveAttribute('aria-label', 'Switch to edit')
 
     // Verify Monaco's Find Widget did NOT open
@@ -55,37 +65,23 @@ test.describe('View mode toggle', () => {
       page.locator('.monaco-editor .find-widget.visible'),
     ).toHaveCount(0)
 
-    await page.keyboard.press('Meta+e')
+    // Toggle back to edit mode — the vault container was focused
+    // after the switch (see VaultView focus watcher), so this
+    // second Cmd/Ctrl+E lands on .vault's @keydown handler.
+    await page.keyboard.press(`${primaryModifier}+e`)
     await expect(toggle).toHaveAttribute('aria-label', 'Switch to read')
   })
 
-  test('Control+E toggles mode while Monaco editor has focus (non-macOS)', async ({ page }) => {
-    const toggle = page.getByTestId('view-toggle')
+  test('Cmd/Ctrl+F still opens Find Widget normally', async ({ page }) => {
+    // Open the known test document so Monaco is mounted
+    const testRow = page.locator('.tree-row').filter({ hasText: 'Shortcut Test' }).first()
+    await testRow.click()
 
-    const treeRow = page.locator('.tree-row').first()
-    if ((await treeRow.count()) === 0) {
-      test.skip(true, 'No vault files to open — skipping Monaco-focus test')
-    }
-    await treeRow.click()
     const editor = page.locator('.monaco-editor')
     await editor.waitFor({ state: 'visible', timeout: 10_000 })
     await editor.click()
 
-    await page.keyboard.press('Control+e')
-    await expect(toggle).toHaveAttribute('aria-label', 'Switch to edit')
-  })
-
-  test('Cmd+F still opens Find Widget normally', async ({ page }) => {
-    const treeRow = page.locator('.tree-row').first()
-    if ((await treeRow.count()) === 0) {
-      test.skip(true, 'No vault files to open — skipping Monaco-focus test')
-    }
-    await treeRow.click()
-    const editor = page.locator('.monaco-editor')
-    await editor.waitFor({ state: 'visible', timeout: 10_000 })
-    await editor.click()
-
-    await page.keyboard.press('Meta+f')
+    await page.keyboard.press(`${primaryModifier}+f`)
     await expect(
       page.locator('.monaco-editor .find-widget.visible'),
     ).toHaveCount(1)
