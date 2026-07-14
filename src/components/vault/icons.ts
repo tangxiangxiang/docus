@@ -345,3 +345,92 @@ export const ICON_AI_CONVERSATION = `
   <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h6A1.5 1.5 0 0 1 11 4.5v3.75A1.5 1.5 0 0 1 9.5 9.75H6l-2 1.75V9.75H3.5A1.5 1.5 0 0 1 2 8.25z"/>
   <path d="M7 7.75A1.5 1.5 0 0 1 8.5 6.25h4A1.5 1.5 0 0 1 14 7.75v3.75A1.5 1.5 0 0 1 12.5 13H12l-2 1.75V13H8.5A1.5 1.5 0 0 1 7 11.5z"/>
 </svg>`
+
+// --- Knowledge relationship vocabulary --------------------------------------
+//
+// Seven glyphs that name the relationships between notes. Where the
+// AI vocabulary replaces sparkle inside the AI panel, these replace
+// ad-hoc labels in the citation, backlinks, and graph surfaces.
+//
+// Each one uses a distinct geometric language so the user can scan
+// a row of relationship indicators and tell which is which without
+// reading the label. They are NOT variants of each other; the
+// metaphor for each is chosen for distinctness first, prettiness
+// second.
+
+// ICON_KNOWLEDGE_BACKLINK — a node on the right with an arrow
+// pointing into it from the left. Reads as "another note links to
+// this one". Pairs directionally with ICON_KNOWLEDGE_OUTGOING.
+export const ICON_KNOWLEDGE_BACKLINK = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="12" cy="8" r="2"/>
+  <path d="M2 8h7"/>
+  <path d="M4.5 6L2 8l2.5 2"/>
+</svg>`
+
+// ICON_KNOWLEDGE_OUTGOING — the same node + arrow composition but
+// mirrored: node on the left, arrow pointing away to the right.
+// Reads as "this note links to another".
+export const ICON_KNOWLEDGE_OUTGOING = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="4" cy="8" r="2"/>
+  <path d="M7 8h7"/>
+  <path d="M11.5 6L14 8l-2.5 2"/>
+</svg>`
+
+// ICON_KNOWLEDGE_REFERENCE — an inline anchor bracket on the left
+// with a single short content line. Reads as "[n] inline reference",
+// the marker you would find in body text pointing at a citation.
+// Distinct from ICON_KNOWLEDGE_CITATION by being a single bracket
+// (compact marker) rather than a vertical bar with multiple lines
+// (block quotation).
+export const ICON_KNOWLEDGE_REFERENCE = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3 4v8"/>
+  <path d="M3 4h2M3 12h2"/>
+  <path d="M8 8h6"/>
+</svg>`
+
+// ICON_KNOWLEDGE_CITATION — a left vertical bar plus three content
+// lines of decreasing length, the universal block-quote glyph.
+// Reads as "this is a cited passage". Pairs with ICON_KNOWLEDGE_REFERENCE:
+// reference points at the citation.
+export const ICON_KNOWLEDGE_CITATION = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3 3v10"/>
+  <path d="M6 6h8M6 8.5h6M6 11h4"/>
+</svg>`
+
+// ICON_KNOWLEDGE_GRAPH — three outline nodes connected by edges in
+// a triangle. Non-directional cluster, deliberately distinct from
+// ICON_AI_REASONING (which is two nodes + an arrow, directional).
+export const ICON_KNOWLEDGE_GRAPH = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="4" cy="4" r="1.25"/>
+  <circle cx="12" cy="4" r="1.25"/>
+  <circle cx="8" cy="11.5" r="1.25"/>
+  <path d="M5 5l2.5 5M11 5L8.5 10"/>
+</svg>`
+
+// ICON_KNOWLEDGE_COLLECTION — three small rounded squares in a row,
+// like pills or thumbnails. Reads as "a group of items, side by side".
+// Distinct from ICON_FOLDER (a single container) by being the items
+// themselves, not the container.
+export const ICON_KNOWLEDGE_COLLECTION = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <rect x="2" y="6" width="3" height="4" rx="0.5"/>
+  <rect x="6.5" y="6" width="3" height="4" rx="0.5"/>
+  <rect x="11" y="6" width="3" height="4" rx="0.5"/>
+</svg>`
+
+// ICON_KNOWLEDGE_MAP — three outline circles in a triangle with a
+// single connector between them. Reads as "waypoints, small graph".
+// Distinct from ICON_KNOWLEDGE_GRAPH (3 nodes + 2 edges, fully
+// connected) by being 3 nodes + 1 edge (a path, not a cluster).
+export const ICON_KNOWLEDGE_MAP = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="4" cy="8" r="1.25"/>
+  <circle cx="8" cy="4" r="1.25"/>
+  <circle cx="12" cy="8" r="1.25"/>
+  <path d="M5 8h6"/>
+</svg>`

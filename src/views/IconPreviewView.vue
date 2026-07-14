@@ -20,6 +20,16 @@ const aiSet = new Set([
   'ICON_AI_CONVERSATION',
 ])
 
+const knowledgeSet = new Set([
+  'ICON_KNOWLEDGE_BACKLINK',
+  'ICON_KNOWLEDGE_OUTGOING',
+  'ICON_KNOWLEDGE_REFERENCE',
+  'ICON_KNOWLEDGE_CITATION',
+  'ICON_KNOWLEDGE_GRAPH',
+  'ICON_KNOWLEDGE_COLLECTION',
+  'ICON_KNOWLEDGE_MAP',
+])
+
 const sizes = [14, 18, 22] as const
 </script>
 
@@ -49,6 +59,7 @@ const sizes = [14, 18, 22] as const
           :key="name"
           :class="{
             'row-ai': aiSet.has(name),
+            'row-knowledge': knowledgeSet.has(name),
             'row-filled': filled.has(name),
           }"
         >
@@ -61,6 +72,7 @@ const sizes = [14, 18, 22] as const
           <td class="cell-meta">
             <span v-if="filled.has(name)" class="badge badge-filled">filled</span>
             <span v-else-if="aiSet.has(name)" class="badge badge-ai">AI vocab</span>
+            <span v-else-if="knowledgeSet.has(name)" class="badge badge-knowledge">knowledge</span>
             <span v-else class="muted">outline</span>
           </td>
         </tr>
@@ -72,13 +84,13 @@ const sizes = [14, 18, 22] as const
       <p class="hint">
         Filled-glyph icons (Memory) follow currentColor, so they should
         invert cleanly between themes. The dark strip below shows the
-        same grid on a dark surface.
+        same grid on a dark surface for AI and knowledge vocabularies.
       </p>
       <div class="dark-strip">
         <table class="grid">
           <tbody>
             <tr
-              v-for="[name, svg] in entries.filter(([n]) => aiSet.has(n))"
+              v-for="[name, svg] in entries.filter(([n]) => aiSet.has(n) || knowledgeSet.has(n))"
               :key="`dark-${name}`"
               :class="{ 'row-filled': filled.has(name) }"
             >
@@ -173,6 +185,10 @@ const sizes = [14, 18, 22] as const
   background: color-mix(in srgb, #7aa2f7 8%, transparent);
 }
 
+.row-knowledge {
+  background: color-mix(in srgb, #c191ff 7%, transparent);
+}
+
 .row-filled {
   background: color-mix(in srgb, #50aa6e 8%, transparent);
 }
@@ -188,6 +204,11 @@ const sizes = [14, 18, 22] as const
 .badge-ai {
   background: color-mix(in srgb, #7aa2f7 18%, transparent);
   color: #4068b8;
+}
+
+.badge-knowledge {
+  background: color-mix(in srgb, #c191ff 18%, transparent);
+  color: #7540b8;
 }
 
 .badge-filled {
@@ -238,6 +259,10 @@ const sizes = [14, 18, 22] as const
 
 .dark-strip :deep(.row-ai) {
   background: color-mix(in srgb, #7aa2f7 16%, transparent);
+}
+
+.dark-strip :deep(.row-knowledge) {
+  background: color-mix(in srgb, #c191ff 14%, transparent);
 }
 
 .dark-strip :deep(.row-filled) {
