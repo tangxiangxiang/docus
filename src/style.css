@@ -106,7 +106,6 @@ body.vault-mode #app { height: 100%; }
 .tree:hover::-webkit-scrollbar-thumb,
 .tag-list:hover::-webkit-scrollbar-thumb,
 .results-list:hover::-webkit-scrollbar-thumb,
-.preview-pane .article:hover::-webkit-scrollbar-thumb,
 .palette-list:hover::-webkit-scrollbar-thumb,
 .vault .file-tree .tree:hover::-webkit-scrollbar-thumb {
   background: var(--sb-thumb-hover);
@@ -2322,6 +2321,43 @@ main.container {
 }
 .vault .monaco-host .decorationsOverviewRuler {
   display: none !important;
+}
+
+/* Preview and reading own their native scrolling; Monaco keeps its
+   custom scrollbar DOM. Shared tokens visually align all three. */
+.vault :where(.preview-pane, .reading-pane) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) transparent;
+}
+.vault :where(.preview-pane, .reading-pane):hover {
+  scrollbar-color: var(--sb-thumb-hover) transparent;
+}
+.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar {
+  width: var(--sb-size);
+  height: var(--sb-size);
+  background: transparent;
+}
+.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-track {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-thumb {
+  background: var(--sb-thumb) !important;
+  border-radius: var(--sb-radius);
+  box-shadow: none !important;
+  transition: background 0.15s;
+}
+.vault :where(.preview-pane, .reading-pane):hover::-webkit-scrollbar-thumb,
+.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-thumb:hover {
+  background: var(--sb-thumb-hover) !important;
+}
+.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-corner {
+  background: transparent;
 }
 .vault .editor-pane:has(> .monaco-host.focus-width) {
   align-items: center;
