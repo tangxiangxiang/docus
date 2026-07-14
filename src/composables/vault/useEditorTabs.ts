@@ -15,25 +15,12 @@ import { useExternalFileChanges } from './editor-tabs/useExternalFileChanges'
 import { useDiskFileChanges } from './editor-tabs/useDiskFileChanges'
 import { useTabWorkspace } from './editor-tabs/useTabWorkspace'
 import { useDocumentSave } from './editor-tabs/useDocumentSave'
+import type { VaultFileChanges } from './context/fileChanges'
 import {
   __setVaultIdForTesting,
   readPersistedTabs,
   useTabPersistence,
 } from './editor-tabs/useTabPersistence'
-import {
-  clearOpenPostForClicks,
-  publishLiveTabs,
-  setOpenPostForClicks,
-} from './editor-tabs/liveTabPublishing'
-
-export {
-  __resetLiveTabsForTesting,
-  __resetOpenPostForClicks,
-  __setLiveTabsForTesting,
-  getLiveTabs,
-  getOpenPostForClicks,
-  setOpenPostForClicks,
-} from './editor-tabs/liveTabPublishing'
 export { __setVaultIdForTesting } from './editor-tabs/useTabPersistence'
 
 export function useEditorTabs(opts: {
@@ -43,9 +30,11 @@ export function useEditorTabs(opts: {
      the same reason selectPanel is — keeps the layout dependency
      explicit. */
   togglePreview: () => void
+  fileChanges: VaultFileChanges
 }) {
   const toast = useToast()
   const { confirm } = useConfirm()
+  const fileChanges = opts.fileChanges
 
   const {
     tree,
@@ -68,7 +57,7 @@ export function useEditorTabs(opts: {
     toastInfo: toast.info,
   })
 
-  const { resolveVaultId } = useTabPersistence(tabs, activePath)
+  const { vaultId, resolveVaultId } = useTabPersistence(tabs, activePath)
 
   const {
     scheduleSave,
@@ -124,6 +113,7 @@ export function useEditorTabs(opts: {
   }
 
   const { subscribeToFileChanges } = useExternalFileChanges({
+    fileChanges,
     tabs,
     activePath,
     closeTab,
@@ -195,20 +185,18 @@ export function useEditorTabs(opts: {
     subscribeToFileChanges()
   })
 
-  publishLiveTabs(tabs)
-  setOpenPostForClicks(openPost)
   onBeforeUnmount(() => {
     window.removeEventListener('beforeunload', handleBeforeUnload)
     window.removeEventListener('online', handleOnline)
     stopExternalPolling()
     disposeDocumentSave()
-    clearOpenPostForClicks(openPost)
   })
 
   startExternalPolling()
 
   return {
     tree,
+    vaultId,
     posts,
     tabs,
     activePath,

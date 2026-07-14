@@ -16,20 +16,22 @@
 import { ref, watch, type Ref } from 'vue'
 import { useRoute, type RouteLocationNormalizedLoaded } from 'vue-router'
 import { getPost } from '../../lib/api'
-import { getLiveTabs, __resetLiveTabsForTesting as _resetLiveTabs } from './useEditorTabs.js'
-import { getFileChangeBus } from './useFileChangeBus.js'
+import { getFallbackVaultFileChanges } from './context/fileChanges'
+import { useOptionalVaultContext } from './context/useVaultContext'
+import type { VaultContext } from './context/types'
 
 export interface CurrentNote {
   path: Ref<string | null>
   content: Ref<string>
 }
 
-let _state: CurrentNote | null = null
+let stateByContext = new WeakMap<VaultContext, CurrentNote>()
+let fallbackState: CurrentNote | null = null
 
 // Test-only escape hatch.
 export function __resetForTesting(): void {
-  _state = null
-  _resetLiveTabs()
+  stateByContext = new WeakMap()
+  fallbackState = null
 }
 
 function pathFromRoute(route: RouteLocationNormalizedLoaded): string | null {
@@ -47,13 +49,15 @@ function pathFromRoute(route: RouteLocationNormalizedLoaded): string | null {
 }
 
 export function useCurrentNote(): CurrentNote {
-  if (_state) return _state
+  const vaultContext = useOptionalVaultContext()
+  const existing = vaultContext ? stateByContext.get(vaultContext) : fallbackState
+  if (existing) return existing
   const route = useRoute()
   const path = ref<string | null>(null)
   const content = ref<string>('')
 
-  const liveTabs = getLiveTabs()
-  const fileBus = getFileChangeBus()
+  const liveTabs = vaultContext?.editor.tabs
+  const fileBus = vaultContext?.fileChanges.events ?? getFallbackVaultFileChanges().events
 
   // Resolve content for a given path. Two-tier fallback:
   //   1. Live editor buffer (tab.raw) if a tab is open for this path
@@ -63,6 +67,8 @@ export function useCurrentNote(): CurrentNote {
   //      notes that haven't been opened in a tab yet, and when
   //      useEditorTabs has never been mounted in this session.
   async function resolveContent(p: string): Promise<string> {
+    const contextContent = vaultContext?.editor.getLiveContent(p)
+    if (contextContent !== null && contextContent !== undefined) return contextContent
     const tab = liveTabs?.value.find((t) => t.path === p)
     if (tab && !tab.loading) return tab.raw
     try {
@@ -120,6 +126,8 @@ export function useCurrentNote(): CurrentNote {
     { flush: 'post' },
   )
 
-  _state = { path, content }
-  return _state
+  const state = { path, content }
+  if (vaultContext) stateByContext.set(vaultContext, state)
+  else fallbackState = state
+  return state
 }

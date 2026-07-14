@@ -1,13 +1,13 @@
-// History state + actions. Module-level singleton so the side
-// panel, the activity-bar dirty badge, and the main DiffView all
-// share the same in-memory state. Persistence is server-side (the
+// History state + actions. Each VaultContext owns one instance so the side
+// panel, activity-bar dirty badge, and main DiffView in that vault share
+// state without leaking it to another vault. Persistence is server-side (the
 // `git` CLI under the hood); this composable is a thin read-through
 // cache + the action helpers that drive it.
 //
 // The "dirty" ref is reactive: ActivityBar.vue can read it directly
 // to render the small count badge next to the History button. It is
 // recomputed from `status()` and updates whenever the file-change
-// bus publishes an event (see the `useFileChangeBus` subscription
+// Vault file-change capability publishes an event (see the subscription
 // at the bottom of this file).
 //
 // `selectedFile` and `selectedOldRef` / `selectedNewRef` drive the
@@ -29,7 +29,9 @@ import type {
   FileDiff,
   CommitResult,
 } from '../../lib/history-api.js'
-import { publishFileChange, getFileChangeBus } from './useFileChangeBus.js'
+import type { VaultContext } from './context/types'
+import { getFallbackVaultFileChanges, type VaultFileChanges } from './context/fileChanges'
+import { useOptionalVaultContext } from './context/useVaultContext'
 
 export interface HistoryState {
   // raw state
@@ -38,7 +40,7 @@ export interface HistoryState {
   log: Ref<CommitRecord[]>
   available: Ref<boolean>
 
-  // Busy is shared because it gates mutations globally. Errors are scoped so
+  // Busy is shared within one Vault because it gates its mutations. Errors are scoped so
   // a failed diff never appears under the commit timeline (and vice versa).
   busy: Ref<boolean>
   diffError: Ref<string | null>
@@ -51,7 +53,7 @@ export interface HistoryState {
   currentDiff: Ref<FileDiff | null>
 
   // UI-only draft state (not persisted, not sent to server until
-  // the user clicks Commit). Lives on the singleton so the composer
+  // the user clicks Commit). Lives on the vault history instance so the composer
   // and the commit button in the same panel see the same value,
   // and so navigating away and back doesn't lose what the user
   // typed.
@@ -78,7 +80,12 @@ export interface HistoryState {
   toggleDirty(path: string, selected: Set<string>): void
 }
 
-// --- module-level singletons ----------------------------------------------
+interface HistoryInstance {
+  use(): HistoryState
+  reset(): void
+}
+
+function createHistoryInstance(fileChanges: VaultFileChanges): HistoryInstance {
 
 const _capability = ref<Capability | null>(null)
 const _status = ref<StatusEntry[]>([])
@@ -198,7 +205,7 @@ async function createCommit(paths: string[], message: string): Promise<CommitRes
     // bus so any open editor tab refreshes. The mtime is irrelevant
     // here — the bus is purely a "something changed" signal.
     for (const p of paths) {
-      publishFileChange({
+      fileChanges.publish({
         path: p,
         kind: 'write',
         newMtime: Date.now(),
@@ -227,7 +234,7 @@ async function dropCommit(sha: string): Promise<CommitResult | null> {
     const r = await api.dropCommit(sha)
     _actionError.value = null
     for (const p of r.filesCommitted) {
-      publishFileChange({
+      fileChanges.publish({
         path: p,
         kind: 'write',
         newMtime: Date.now(),
@@ -265,7 +272,7 @@ async function restoreFile(path: string, ref: string): Promise<boolean> {
     // Tell the file-change bus something changed on disk. The bus
     // doesn't carry the new content — the editor tab that owns the
     // file will re-read it from disk on the next self-save tick.
-    publishFileChange({
+    fileChanges.publish({
       path,
       kind: 'write',
       newMtime: Date.now(),
@@ -290,7 +297,7 @@ async function restoreFile(path: string, ref: string): Promise<boolean> {
 
 const dirtyCount = computed(() => _status.value.length)
 
-export function useHistory(): HistoryState {
+function use(): HistoryState {
   if (!_hydrated) {
     _hydrated = true
     // Fire-and-forget the initial probe. The UI can render
@@ -310,12 +317,12 @@ export function useHistory(): HistoryState {
     // dedup — if the user has a HistoryPanel open and switches
     // files, the editor will publish file-change events that we
     // also want to ignore once we've processed them. Each event
-    // has a unique `seq` (see useFileChangeBus.publishFileChange)
+    // has a unique `seq` assigned by VaultFileChanges.publish()
     // so we track the last one we acted on.
     if (!_fileChangeUnsub) {
       _lastSeenFileChangeSeq = 0
       const stop = watch(
-        () => getFileChangeBus().value,
+        () => fileChanges.events.value,
         (events) => {
           if (!_available.value) return
           for (const ev of events) {
@@ -356,10 +363,10 @@ export function useHistory(): HistoryState {
   }
 }
 
-/** Test-only reset. Restores the singleton refs to their defaults
+/** Test-only reset. Restores the legacy fallback refs to their defaults
  *  and unsubscribes the file-change listener so the next test
  *  gets a clean slate. */
-export function __resetHistoryStateForTesting(): void {
+function reset(): void {
   _capability.value = null
   _status.value = []
   _log.value = []
@@ -380,4 +387,26 @@ export function __resetHistoryStateForTesting(): void {
     _fileChangeUnsub()
     _fileChangeUnsub = null
   }
+}
+
+  return { use, reset }
+}
+
+const historyByVault = new WeakMap<VaultContext, HistoryInstance>()
+const legacyHistory = createHistoryInstance(getFallbackVaultFileChanges())
+
+export function useHistory(): HistoryState {
+  const context = useOptionalVaultContext()
+  if (!context) return legacyHistory.use()
+
+  let history = historyByVault.get(context)
+  if (!history) {
+    history = createHistoryInstance(context.fileChanges)
+    historyByVault.set(context, history)
+  }
+  return history.use()
+}
+
+export function __resetHistoryStateForTesting(): void {
+  legacyHistory.reset()
 }

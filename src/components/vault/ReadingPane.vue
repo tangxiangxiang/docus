@@ -12,8 +12,10 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import RenderedMarkdown from './RenderedMarkdown.vue'
 import type { Heading } from '../../composables/vault/useMarkdownRender'
-import { tocHeadings, tocActiveId, tocScrollTo } from '../../composables/vault/useTocState'
+import { useVaultTocState } from '../../composables/vault/useTocState'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
+
+const { tocHeadings, tocActiveId, tocScrollTo } = useVaultTocState()
 
 const props = defineProps<{
   raw: string

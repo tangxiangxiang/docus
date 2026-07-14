@@ -12,7 +12,6 @@ vi.mock('../../../composables/vault/useLinkIndex', () => ({
   getLinkIndex: () => mocks.index,
   fetchBacklinks: (...args: unknown[]) => mocks.fetchBacklinks(...args),
 }))
-vi.mock('../../../composables/vault/useFileChangeBus', () => ({ getFileChangeBus: () => ({ value: [] }) }))
 
 const posts = [
   { path: 'inbox/current', title: '当前文档', created: '', updated: '', tags: [], size: 0, mtime: 0 },

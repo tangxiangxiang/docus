@@ -3,8 +3,8 @@
 // region between the TOC, bi-directional links, and AI assistant.
 //
 // Components:
-//   - The TOC list comes from ReadingPane via the module-level
-//     useTocState (ReadingPane owns the IntersectionObserver scroll-
+//   - The TOC list comes from ReadingPane via Vault-scoped useTocState
+//     (ReadingPane owns the IntersectionObserver scroll-
 //     spy, TocPanel only renders the active-highlighted list).
 //   - The Links panel is a full embed of <LinksPanel>. It needs
 //     `path` and `posts` props, which VaultView passes through.
@@ -12,11 +12,13 @@
 //     parent can route through openPost.
 
 import { computed } from 'vue'
-import { tocHeadings, tocActiveId, tocScrollTo } from '../../composables/vault/useTocState'
+import { useVaultTocState } from '../../composables/vault/useTocState'
 import type { PostSummary } from '../../lib/api'
 import LinksPanel from './LinksPanel.vue'
 import AiPanel from './AiPanel.vue'
 import type { RightRailTab } from '../../composables/vault/useVaultLayout'
+
+const { tocHeadings, tocActiveId, tocScrollTo } = useVaultTocState()
 
 const props = defineProps<{
   /** Active note path. Forwarded to <LinksPanel>. */

@@ -16,8 +16,9 @@ import { computed, ref, watch, watchEffect, onMounted, onBeforeUnmount } from 'v
 import { useDebounceFn } from '@vueuse/core'
 import type { PostSummary, BacklinkRecord } from '../../lib/api'
 import { getLinkIndex, fetchBacklinks } from '../../composables/vault/useLinkIndex'
-import { getFileChangeBus } from '../../composables/vault/useFileChangeBus'
-import { linksEmpty } from '../../composables/vault/useTocState'
+import { getFallbackVaultFileChanges } from '../../composables/vault/context/fileChanges'
+import { useOptionalVaultContext } from '../../composables/vault/context/useVaultContext'
+import { useVaultTocState } from '../../composables/vault/useTocState'
 import { ICON_FILE_MD } from './icons'
 import { PROTECTED_ROOTS } from '../../composables/archiveProtocol'
 
@@ -33,7 +34,9 @@ const emit = defineEmits<{
 }>()
 
 const indexState = getLinkIndex()
-const fileBus = getFileChangeBus()
+const vaultContext = useOptionalVaultContext()
+const fileBus = vaultContext?.fileChanges.events ?? getFallbackVaultFileChanges().events
+const { linksEmpty } = useVaultTocState()
 
 const backlinks = ref<BacklinkRecord[]>([])
 
@@ -71,7 +74,7 @@ function directoryLabel(p: string): string {
 }
 
 /** Outgoing links for the current path, derived from the
- *  module-level index snapshot. No async fetch needed — the index
+ *  Vault-scoped index snapshot. No async fetch needed — the index
  *  is refreshed in the background by `useLinkIndexSubscription`. */
 const outgoing = computed(() => {
   const p = activePath.value

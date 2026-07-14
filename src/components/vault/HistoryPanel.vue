@@ -24,7 +24,7 @@
    layout stays stable while the user figures out what's going on. */
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useHistory } from '../../composables/vault/useHistory.js'
-import { getLiveTabs } from '../../composables/vault/useEditorTabs.js'
+import { useOptionalVaultContext } from '../../composables/vault/context/useVaultContext.js'
 import { useToast } from '../../composables/useToast.js'
 import { useI18n } from '../../composables/useI18n.js'
 import { WORKTREE_REF, type CommitRecord } from '../../lib/history-api.js'
@@ -34,6 +34,7 @@ import EmptyState from './EmptyState.vue'
 const props = defineProps<{
   currentPath?: string | null
 }>()
+const vaultContext = useOptionalVaultContext()
 
 const h = useHistory()
 const toast = useToast()
@@ -234,7 +235,7 @@ function toHistoryPath(path: string): string {
 }
 
 function selectInitialFile() {
-  const live = getLiveTabs()
+  const live = vaultContext?.editor.tabs
   const candidate =
     props.currentPath
     ?? live?.value.find((t) => t.path)?.path
