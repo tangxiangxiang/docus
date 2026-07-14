@@ -4,7 +4,6 @@ import { useStorage } from '@vueuse/core'
 import { useShortcutDisplay } from '../composables/useShortcutDisplay'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
-import { useEditorPreviewScrollSync } from '../composables/vault/useEditorPreviewScrollSync'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
@@ -20,7 +19,6 @@ import { provideVaultContext } from '../composables/vault/context/useVaultContex
 import { createVaultFileChanges } from '../composables/vault/context/fileChanges'
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
-import PreviewPane from '../components/vault/PreviewPane.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
 import TocPanel from '../components/vault/TocPanel.vue'
 import EmptyState from '../components/vault/EmptyState.vue'
@@ -69,12 +67,6 @@ const emptyActions = computed(() => [
 const viewModeApi = inject(VaultViewModeKey, null)
 const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
 
-/* The side-by-side preview pane has been removed from the layout (see
-   Remove Preview Mode plan). This hard-false local keeps the (now dead)
-   preview template block compiling until the follow-up task deletes it
-   outright; read mode is the only HTML render surface. */
-const previewOpen: boolean = false
-
 /* ---------- Layout ---------- */
 const {
   activePanel,
@@ -83,7 +75,6 @@ const {
   editorRatio,
   rightRailWidth,
   vaultStyle,
-  contentStyle,
   selectPanel,
   rightRailTab,
   rightRailCollapsed,
@@ -114,14 +105,6 @@ const { confirm } = useConfirm()
 // template binding resolves cleanly. startDrag takes the host as a parameter.
 const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
-type EditorScrollApi = { setScrollFraction: (fraction: number) => void }
-const editorRefs = new Map<string, EditorScrollApi>()
-function registerEditorScroll(registration: { path: string; setScrollFraction: (fraction: number) => void }) {
-  editorRefs.set(registration.path, { setScrollFraction: registration.setScrollFraction })
-}
-function unregisterEditorScroll(path: string) {
-  editorRefs.delete(path)
-}
 function openSearch() { paletteRef.value?.show() }
 
 /* ---------- Tabs / save / route sync ---------- */
@@ -180,17 +163,6 @@ async function showExternalDiff() {
   if (!tab) return
   await confirm(`本地版本：\n\n${tab.raw.slice(0, 1600)}\n\n────────\n磁盘版本：\n\n${(tab.externalRaw ?? '(文件已删除)').slice(0, 1600)}`)
 }
-
-/* Mirror the editor's scroll position onto the preview pane (and
-   vice versa) so the two stay aligned as the user scrolls in edit
-   mode. Read-only at the VaultView level — the composable finds the
-   right scroll containers inside the vault root via data-path
-   selectors. Wired after useEditorTabs because we need activePath. */
-const editorPreviewScroll = useEditorPreviewScrollSync({
-  vaultRoot: vaultRef,
-  activePath,
-  setEditorScrollFraction: (path, fraction) => editorRefs.get(path)?.setScrollFraction(fraction),
-})
 
 /* ---------- Scope filter (NavBar chips) ---------- */
 // useScopeFilter is application-shell state because NavBar lives above the
@@ -317,8 +289,8 @@ watch(() => navSearch?.tick.value, () => openSearch())
         <DiffView />
       </div>
 
-      <!-- Edit mode: editor + preview side-by-side, draggable mid-splitter. -->
-      <div v-else-if="!isReadMode" class="content" :style="contentStyle">
+      <!-- Edit mode: single Monaco editor surface. -->
+      <div v-else-if="!isReadMode" class="content">
         <div
           v-if="activeTab"
           class="editor-pane"
@@ -336,9 +308,6 @@ watch(() => navSearch?.tick.value, () => openSearch())
             @update:model-value="(val: string) => onEditorChange(activeTab!.path, val)"
             @open-link="openPost"
             @create-link="createMissingWikiNote"
-            @register-scroll="registerEditorScroll"
-            @unregister-scroll="unregisterEditorScroll"
-            @scroll-change="(fraction: number) => editorPreviewScroll.syncPreviewFromEditor(activeTab!.path, fraction)"
           />
         </div>
         <div v-if="!tabs.length" class="content-empty">
@@ -349,30 +318,6 @@ watch(() => navSearch?.tick.value, () => openSearch())
             </span>
           </EmptyState>
         </div>
-
-        <!-- Preview split is being removed (see Remove Preview Mode plan).
-             previewOpen is now a hard-false local; the split is fully
-             deleted in a follow-up task. Read mode is the only HTML
-             render surface. -->
-        <div
-          v-if="tabs.length && previewOpen"
-          class="splitter splitter-mid"
-          role="separator"
-          aria-orientation="vertical"
-          title="拖动调整编辑器 / 预览"
-          @pointerdown="startDrag(vaultRef!, 'middle', $event)"
-        />
-
-        <template v-if="previewOpen && activeTab">
-          <div
-            :key="`p-${activeTab.path}`"
-            class="preview-pane"
-            :data-path="activeTab.path"
-          >
-            <div v-if="activeTab.raw.length >= 500000" class="empty">大文档模式：实时预览与滚动同步已暂停</div>
-            <PreviewPane v-else-if="!activeTab.loading && !activeTab.loadError" :raw="activeTab.raw" :resolver="wikiResolver" />
-          </div>
-        </template>
       </div>
 
       <!-- Read mode: single reading surface in the same slot. The side

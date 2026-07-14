@@ -10,7 +10,6 @@ describe('VaultView editor tab wiring', () => {
     expect(editorPane).toBeDefined()
     expect(editorPane).toContain(':key="activeTab.path"')
     expect(editorPane).toContain('onEditorChange(activeTab!.path, val)')
-    expect(editorPane).toContain('syncPreviewFromEditor(activeTab!.path, fraction)')
     expect(editorPane).not.toContain('activePath!')
   })
 })

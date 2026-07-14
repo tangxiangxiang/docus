@@ -288,96 +288,10 @@ describe('Monaco EditorPane', () => {
     wrapper.unmount()
   })
 
-  it('emits Monaco scroll position as a document fraction', async () => {
-    const wrapper = mount(EditorPane, { props: { modelValue: '', path: 'inbox/scroll' } })
-    mocks.scrollListeners.forEach((fn) => fn({ scrollTopChanged: true }))
-    await wrapper.vm.$nextTick()
-    expect(wrapper.emitted('scroll-change')).toEqual([[0.5]])
-    wrapper.unmount()
-  })
-
-  it('disables expensive editor features and scroll sync for large documents', async () => {
+  it('disables expensive editor features for large documents', async () => {
     const wrapper = mount(EditorPane, { props: { modelValue: 'x'.repeat(500_000), path: 'inbox/large' } })
     const create = (await import('monaco-editor/esm/vs/editor/editor.api.js')).editor.create as any
     expect(create.mock.calls.at(-1)?.[1]).toMatchObject({ folding: false })
-    mocks.scrollListeners.forEach((fn) => fn({ scrollTopChanged: true }))
-    await wrapper.vm.$nextTick()
-    expect(wrapper.emitted('scroll-change')).toBeUndefined()
     wrapper.unmount()
-  })
-
-  it('drives the editor↔preview scroll sync end-to-end when wired like VaultView', async () => {
-    // The composable's preview→editor branch and the EditorPane's
-    // scroll-change emit are individually covered, but the wire
-    // between them lives in VaultView.vue's template and was not
-    // exercised by any test. Mount EditorPane inside the same
-    // .editor-pane[data-path] structure VaultView uses, pair its
-    // scroll-change emit with a real composable instance via a
-    // parent wrapper that mirrors VaultView's @scroll-change
-    // handler, fire Monaco's onDidScrollChange, and assert the
-    // preview actually scrolls. This catches anyone who renames
-    // the emit, removes the @scroll-change handler in VaultView,
-    // or stops calling syncPreviewFromEditor on the composable.
-    const { defineComponent, ref, effectScope, nextTick } = await import('vue')
-    const { useEditorPreviewScrollSync } = await import('../../../composables/vault/useEditorPreviewScrollSync')
-
-    const vaultRoot = document.createElement('div')
-    vaultRoot.className = 'vault'
-    const editorPaneHost = document.createElement('div')
-    editorPaneHost.className = 'editor-pane'
-    editorPaneHost.setAttribute('data-path', 'note')
-    const previewPane = document.createElement('div')
-    previewPane.className = 'preview-pane'
-    previewPane.setAttribute('data-path', 'note')
-    vaultRoot.appendChild(editorPaneHost)
-    vaultRoot.appendChild(previewPane)
-    document.body.appendChild(vaultRoot)
-
-    // jsdom does not compute layout — stub the preview's scroll
-    // metrics. previewMax = 2400 - 600 = 1800.
-    Object.defineProperty(previewPane, 'scrollHeight', { configurable: true, get: () => 2400 })
-    Object.defineProperty(previewPane, 'clientHeight', { configurable: true, get: () => 600 })
-
-    const api = effectScope().run(() => useEditorPreviewScrollSync({
-      vaultRoot: ref<HTMLElement | null>(vaultRoot),
-      activePath: ref<string | null>('note'),
-    }))!
-
-    const Wrapper = defineComponent({
-      components: { EditorPane },
-      template: `<EditorPane :path="path" :model-value="modelValue" @scroll-change="onScroll" />`,
-      setup() {
-        return {
-          path: 'note',
-          modelValue: '',
-          onScroll: (fraction: number) => api.syncPreviewFromEditor('note', fraction),
-        }
-      },
-    })
-
-    const wrapper = mount(Wrapper, { attachTo: editorPaneHost })
-    await nextTick()
-
-    // Monaco reports scrollTop = 250, layout height = 500, scroll
-    // height = 1000 → max = 500, fraction = 0.5. Preview fraction 0.5
-    // over previewMax = 1800 = scrollTop 900.
-    mocks.scrollListeners.forEach((fn) => fn({ scrollTopChanged: true }))
-    await wrapper.vm.$nextTick()
-    expect(previewPane.scrollTop).toBe(900)
-    wrapper.unmount()
-    vaultRoot.remove()
-  })
-
-  it('registers itself on mount and unregisters on unmount using its own path', async () => {
-    const wrapper = mount(EditorPane, { props: { modelValue: '', path: 'folder/a' } })
-    await wrapper.vm.$nextTick()
-    const registrations = wrapper.emitted('register-scroll') as Array<[{ path: string; setScrollFraction: (f: number) => void }]>
-    expect(registrations).toHaveLength(1)
-    expect(registrations[0][0].path).toBe('folder/a')
-    expect(typeof registrations[0][0].setScrollFraction).toBe('function')
-    wrapper.unmount()
-    // Unregister fires with the path the component was given, not whatever
-    // the parent's activePath is at unmount time.
-    expect(wrapper.emitted('unregister-scroll')).toEqual([['folder/a']])
   })
 })

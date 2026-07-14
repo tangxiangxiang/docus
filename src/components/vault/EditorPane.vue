@@ -40,14 +40,6 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
   'open-link': [path: string]
   'create-link': [ref: string]
-  'scroll-change': [fraction: number]
-  // Self-registration for the editor↔preview scroll sync. The component
-  // uses its own props.path (stable for the lifetime of this instance,
-  // because the parent re-keys on tab switch) instead of having the
-  // parent capture `activePath` in a closure — which races when the
-  // active tab changes between mount/unmount.
-  'register-scroll': [registration: { path: string; setScrollFraction: (fraction: number) => void }]
-  'unregister-scroll': [path: string]
 }>()
 
 const host = ref<HTMLDivElement | null>(null)
@@ -62,8 +54,6 @@ let composing = false
 let decorationTimer: ReturnType<typeof setTimeout> | null = null
 const VIEW_STATE_KEY = 'docus.monaco.view-state'
 const RECENT_LINKS_KEY = 'docus.monaco.recent-wiki-links'
-// `ScrollType` is type-only in Monaco's ESM build; 1 is Immediate.
-const IMMEDIATE_SCROLL = 1
 let linkPaths: string[] = []
 let targetsByPath = new Map<string, EditorLinkTarget>()
 const resolvedLinkCache = new Map<string, string | null>()
@@ -405,8 +395,6 @@ onMounted(() => {
   editor.onDidScrollChange((event) => {
     if (!editor || !event.scrollTopChanged) return
     if (isLargeDocument.value) return
-    const max = Math.max(0, editor.getScrollHeight() - editor.getLayoutInfo().height)
-    emit('scroll-change', max > 0 ? editor.getScrollTop() / max : 0)
     scheduleMarkdownDecorations()
   })
   editor.addAction({
@@ -516,7 +504,6 @@ watch(() => props.modelValue, (value) => {
 watch(() => props.path, (nextPath, previousPath) => {
   if (!editor) return
   saveViewState(previousPath)
-  emit('unregister-scroll', previousPath)
   if (model) unbindMarkdownProviderContext(model)
   model = acquireMarkdownModel(nextPath, props.modelValue)
   bindMarkdownProviderContext(model, { completion: completionProvider, hover: hoverProvider })
@@ -525,7 +512,6 @@ watch(() => props.path, (nextPath, previousPath) => {
   if (state) editor.restoreViewState(state)
   rebuildLinkIndex()
   refreshMarkdownDecorations()
-  emit('register-scroll', { path: nextPath, setScrollFraction })
 })
 
 watch(() => props.focusWidth, (focused) => {
@@ -551,7 +537,6 @@ watch(() => props.linkTargets, () => {
 })
 
 onBeforeUnmount(() => {
-  emit('unregister-scroll', props.path)
   saveViewState()
   themeObserver?.disconnect()
   if (decorationTimer) clearTimeout(decorationTimer)
@@ -562,18 +547,8 @@ onBeforeUnmount(() => {
   model = null
 })
 
-function setScrollFraction(fraction: number) {
-  if (!editor) return
-  const max = Math.max(0, editor.getScrollHeight() - editor.getLayoutInfo().height)
-  editor.setScrollTop(Math.max(0, Math.min(1, fraction)) * max, IMMEDIATE_SCROLL)
-}
-
-emit('register-scroll', { path: props.path, setScrollFraction })
-
 defineExpose({
   focus: () => editor?.focus(),
-  getScrollEl: () => host.value?.querySelector<HTMLElement>('.monaco-scrollable-element.editor-scrollable') ?? null,
-  setScrollFraction,
 })
 </script>
 
