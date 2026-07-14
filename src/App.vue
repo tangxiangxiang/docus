@@ -8,7 +8,16 @@ import PromptHost from './components/PromptHost.vue'
 import { VaultViewModeKey, type VaultViewMode } from './composables/vault/viewMode'
 
 const route = useRoute()
-const isVault = computed(() => route.meta.fullWidth === true)
+/* Vault routes AND dev previews both set `fullWidth: true` so the
+   navbar sits at its shorter height. But only vault routes should
+   lock the outer scroll — the dev previews (/__icon-preview,
+   /__markdown-test, /__editor-test) are standalone pages that
+   need to scroll vertically through their full content. The
+   `/__` path prefix is the marker; adding new dev previews
+   under that prefix automatically inherits the correct behavior. */
+const isVault = computed(() =>
+  route.meta.fullWidth === true && !route.path.startsWith('/__'),
+)
 
 /* The vault uses an internal scrollable surface (FileTree, Editor,
    Preview). It must NOT let the outer document scroll, otherwise
