@@ -220,6 +220,14 @@ export const ICON_READ = `
   <path d="M14 3.5c-2-.5 4-.2-6 1.25V13c2-1.45 4-1.75 6-1.25z"/>
 </svg>`
 
+// Edit — a pencil drawing a short stroke, the conventional "switch to
+// edit" glyph. Stroke weights match the rest of the 14px icon set.
+export const ICON_EDIT = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M11.5 2.5l2 2-8 8H3.5v-2z"/>
+  <path d="M10.5 3.5l2 2"/>
+</svg>`
+
 // File-operation icons used by AI tool cards. Each maps 1:1 to a tool
 // name returned by the AI executor. Tuned for the small 14px display
 // inside the AI panel header (fewer strokes than the general ICON_*
