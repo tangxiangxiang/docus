@@ -1,5 +1,5 @@
-// Pointer-drag handler for the three vault splitters (left tree, middle
-// editor/preview, unified right rail). Lives in its own composable
+// Pointer-drag handler for the two vault splitters (left tree, unified
+// right rail). Lives in its own composable
 // rather than inside useVaultLayout so the layout composable stays
 // focused on persisted reactive state — drag is a pure DOM concern.
 //
@@ -11,21 +11,15 @@
 
 import type { Ref } from 'vue'
 
-export type SplitterWhich = 'tree' | 'middle' | 'rightRail'
+export type SplitterWhich = 'tree' | 'rightRail'
 
 /* Refs the drag handler is allowed to mutate. Pass the same Ref
    instances useVaultLayout returned — that's what makes the grid
    track width update synchronously as the user drags. */
 export interface SplitterTargets {
   sidePanelWidth: Ref<number>
-  editorRatio: Ref<number>
   rightRailWidth: Ref<number>
 }
-
-// Must match the splitter's layout width in .vault .splitter { width: 1px }
-// and the .content flex track the mid-splitter sits in. The 7px hit area
-// (::before) is purely for grabbing and doesn't affect this math.
-const SPLITTER_PX = 1
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n))
@@ -37,7 +31,6 @@ export function useSplitterDrag(targets: SplitterTargets) {
     const rect = host.getBoundingClientRect()
     const startX = e.clientX
     const startTree = targets.sidePanelWidth.value
-    const startRatio = targets.editorRatio.value
     const startRightRail = targets.rightRailWidth.value
 
     const onMove = (ev: PointerEvent) => {
@@ -57,13 +50,6 @@ export function useSplitterDrag(targets: SplitterTargets) {
            column shrinks. So we SUBTRACT dx. */
         const max = Math.min(520, rect.width - 480)
         targets.rightRailWidth.value = clamp(startRightRail - dx, 320, max)
-      } else {
-        const content = host.querySelector<HTMLElement>('.content')
-        const total = content ? content.clientWidth - SPLITTER_PX : 0
-        if (total <= 0) return
-        const startEditor = (total * startRatio) / (1 + startRatio)
-        const editorWidth = clamp(startEditor + dx, total * 0.2, total * 0.8)
-        targets.editorRatio.value = editorWidth / (total - editorWidth)
       }
     }
     const onUp = () => {

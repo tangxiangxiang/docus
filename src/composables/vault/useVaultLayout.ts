@@ -6,8 +6,7 @@
 //   - the useStorage hydration + the load-bearing old-schema migration
 //     (fileTreeOpen / fileTreeWidth -> activePanel / sidePanelWidth)
 //   - the single watcher that bridges live refs -> persisted state
-//   - the two computed styles (vaultStyle for the outer grid, contentStyle
-//     for the editor/preview flex vars)
+//   - one computed style (vaultStyle for the outer grid)
 //
 // Pointer-drag handling lives in `useSplitterDrag` (separate file) —
 // it imports nothing here, the caller passes the width/ratio refs in.
@@ -31,7 +30,6 @@ export type RightRailTab = 'toc' | 'links' | 'ai'
 export interface VaultLayout {
   activePanel: ActivePanel
   sidePanelWidth: number
-  editorRatio: number
   rightRailTab: RightRailTab
   rightRailWidth: number
   /* Whether the unified right rail is collapsed by user choice. */
@@ -42,7 +40,6 @@ const STORAGE_KEY = 'docus.vault.layout'
 const DEFAULTS: VaultLayout = {
   activePanel: 'files',
   sidePanelWidth: 260,
-  editorRatio: 1,
   rightRailTab: 'toc',
   rightRailWidth: 360,
   rightRailCollapsed: false,
@@ -68,7 +65,6 @@ const DEFAULTS: VaultLayout = {
    driven by a single watcher below. */
 const _activePanel = ref<ActivePanel>(DEFAULTS.activePanel)
 const _sidePanelWidth = ref(DEFAULTS.sidePanelWidth)
-const _editorRatio = ref(DEFAULTS.editorRatio)
 const _rightRailTab = ref<RightRailTab>(DEFAULTS.rightRailTab)
 const _rightRailWidth = ref(DEFAULTS.rightRailWidth)
 const _rightRailCollapsed = ref(DEFAULTS.rightRailCollapsed)
@@ -89,7 +85,6 @@ export function __resetVaultLayoutState(): void {
   _hydrated = false
   _activePanel.value = DEFAULTS.activePanel
   _sidePanelWidth.value = DEFAULTS.sidePanelWidth
-  _editorRatio.value = DEFAULTS.editorRatio
   _rightRailTab.value = DEFAULTS.rightRailTab
   _rightRailWidth.value = DEFAULTS.rightRailWidth
   _rightRailCollapsed.value = DEFAULTS.rightRailCollapsed
@@ -115,7 +110,6 @@ export function useVaultLayout() {
           const w = typeof d.sidePanelWidth === 'number'
             ? d.sidePanelWidth
             : typeof d.fileTreeWidth === 'number' ? d.fileTreeWidth : DEFAULTS.sidePanelWidth
-          const r = typeof d.editorRatio === 'number' ? d.editorRatio : DEFAULTS.editorRatio
           const legacyAiOpen = d.aiOpen === true
           const storedTab = d.rightRailTab
           const rightRailTab: RightRailTab = legacyAiOpen
@@ -129,7 +123,6 @@ export function useVaultLayout() {
           return {
             activePanel: active,
             sidePanelWidth: w,
-            editorRatio: r,
             rightRailTab,
             rightRailWidth: Math.max(320, Math.min(520, rightRailWidth)),
             // Missing means expanded. The AI toolbar toggle is now the
@@ -153,7 +146,6 @@ export function useVaultLayout() {
     _hydrated = true
     _activePanel.value = layout.value.activePanel
     _sidePanelWidth.value = layout.value.sidePanelWidth
-    _editorRatio.value = layout.value.editorRatio
     _rightRailTab.value = layout.value.rightRailTab
     _rightRailWidth.value = layout.value.rightRailWidth
     _rightRailCollapsed.value = layout.value.rightRailCollapsed
@@ -162,9 +154,9 @@ export function useVaultLayout() {
     // (e.g. when the storage value already matches), so the round-trip
     // doesn't cause re-render storms.
     watch(
-      [_activePanel, _sidePanelWidth, _editorRatio, _rightRailTab, _rightRailWidth, _rightRailCollapsed],
-      ([ap, w, r, tab, rw, rrc]) => {
-        layout.value = { activePanel: ap, sidePanelWidth: w, editorRatio: r, rightRailTab: tab, rightRailWidth: rw, rightRailCollapsed: rrc }
+      [_activePanel, _sidePanelWidth, _rightRailTab, _rightRailWidth, _rightRailCollapsed],
+      ([ap, w, tab, rw, rrc]) => {
+        layout.value = { activePanel: ap, sidePanelWidth: w, rightRailTab: tab, rightRailWidth: rw, rightRailCollapsed: rrc }
       },
     )
   }
@@ -178,7 +170,6 @@ export function useVaultLayout() {
   )
   const activePanel: Ref<ActivePanel> = _activePanel
   const sidePanelWidth: Ref<number> = _sidePanelWidth
-  const editorRatio: Ref<number> = _editorRatio
   const rightRailTab: Ref<RightRailTab> = _rightRailTab
   const rightRailWidth: Ref<number> = _rightRailWidth
   const rightRailCollapsed: Ref<boolean> = _rightRailCollapsed
@@ -223,11 +214,6 @@ export function useVaultLayout() {
       gridTemplateRows: '1fr 24px',
     }
   })
-  const contentStyle = computed(() => ({
-    '--editor-flex': String(editorRatio.value),
-    '--preview-flex': '1',
-  }))
-
   // Template ref to the outer .vault element lives in VaultView.vue (so
   // vue-tsc is happy with the `ref="..."` string template binding). We
   // accept it as a parameter to startDrag so this composable does not
@@ -249,12 +235,10 @@ export function useVaultLayout() {
     activePanel,
     sidePanelOpen,
     sidePanelWidth,
-    editorRatio,
     rightRailTab,
     rightRailWidth,
     rightRailCollapsed,
     vaultStyle,
-    contentStyle,
     selectPanel,
     toggleAi,
   }

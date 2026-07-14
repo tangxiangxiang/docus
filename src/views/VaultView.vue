@@ -72,7 +72,6 @@ const {
   activePanel,
   sidePanelOpen,
   sidePanelWidth,
-  editorRatio,
   rightRailWidth,
   vaultStyle,
   selectPanel,
@@ -85,7 +84,6 @@ const {
    synchronously as the user drags. */
 const { startDrag } = useSplitterDrag({
   sidePanelWidth,
-  editorRatio,
   rightRailWidth,
 })
 
