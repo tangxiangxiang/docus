@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "lint:icons": "tsx scripts/icon-lint.ts",
+    "lint:icons:strict": "tsx scripts/icon-lint.ts --strict"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",
