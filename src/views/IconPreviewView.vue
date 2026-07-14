@@ -30,6 +30,15 @@ const knowledgeSet = new Set([
   'ICON_KNOWLEDGE_MAP',
 ])
 
+const statusSet = new Set([
+  'ICON_STATUS_SUCCESS',
+  'ICON_STATUS_WARNING',
+  'ICON_STATUS_ERROR',
+  'ICON_STATUS_LOADING',
+  'ICON_STATUS_OFFLINE',
+  'ICON_STATUS_MODIFIED',
+])
+
 const sizes = [14, 18, 22] as const
 </script>
 
@@ -60,6 +69,7 @@ const sizes = [14, 18, 22] as const
           :class="{
             'row-ai': aiSet.has(name),
             'row-knowledge': knowledgeSet.has(name),
+            'row-status': statusSet.has(name),
             'row-filled': filled.has(name),
           }"
         >
@@ -73,6 +83,7 @@ const sizes = [14, 18, 22] as const
             <span v-if="filled.has(name)" class="badge badge-filled">filled</span>
             <span v-else-if="aiSet.has(name)" class="badge badge-ai">AI vocab</span>
             <span v-else-if="knowledgeSet.has(name)" class="badge badge-knowledge">knowledge</span>
+            <span v-else-if="statusSet.has(name)" class="badge badge-status">status</span>
             <span v-else class="muted">outline</span>
           </td>
         </tr>
@@ -84,13 +95,14 @@ const sizes = [14, 18, 22] as const
       <p class="hint">
         Filled-glyph icons (Memory) follow currentColor, so they should
         invert cleanly between themes. The dark strip below shows the
-        same grid on a dark surface for AI and knowledge vocabularies.
+        same grid on a dark surface for AI, knowledge, and status
+        vocabularies.
       </p>
       <div class="dark-strip">
         <table class="grid">
           <tbody>
             <tr
-              v-for="[name, svg] in entries.filter(([n]) => aiSet.has(n) || knowledgeSet.has(n))"
+              v-for="[name, svg] in entries.filter(([n]) => aiSet.has(n) || knowledgeSet.has(n) || statusSet.has(n))"
               :key="`dark-${name}`"
               :class="{ 'row-filled': filled.has(name) }"
             >
@@ -189,6 +201,10 @@ const sizes = [14, 18, 22] as const
   background: color-mix(in srgb, #c191ff 7%, transparent);
 }
 
+.row-status {
+  background: color-mix(in srgb, #e0a458 7%, transparent);
+}
+
 .row-filled {
   background: color-mix(in srgb, #50aa6e 8%, transparent);
 }
@@ -209,6 +225,11 @@ const sizes = [14, 18, 22] as const
 .badge-knowledge {
   background: color-mix(in srgb, #c191ff 18%, transparent);
   color: #7540b8;
+}
+
+.badge-status {
+  background: color-mix(in srgb, #e0a458 18%, transparent);
+  color: #8a5a18;
 }
 
 .badge-filled {
@@ -263,6 +284,10 @@ const sizes = [14, 18, 22] as const
 
 .dark-strip :deep(.row-knowledge) {
   background: color-mix(in srgb, #c191ff 14%, transparent);
+}
+
+.dark-strip :deep(.row-status) {
+  background: color-mix(in srgb, #e0a458 14%, transparent);
 }
 
 .dark-strip :deep(.row-filled) {

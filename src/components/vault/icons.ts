@@ -434,3 +434,59 @@ export const ICON_KNOWLEDGE_MAP = `
   <circle cx="12" cy="8" r="1.25"/>
   <path d="M5 8h6"/>
 </svg>`
+
+// --- Status vocabulary ------------------------------------------------------
+//
+// Six glyphs covering the canonical product states. The spec defines
+// them as shape-coded first, color-coded second — see Status Base in
+// docs/design/icon-system.md. The icons themselves use currentColor
+// so consumers pair them with --status-{success,warning,error,...}
+// CSS variables. SUCCESS and MODIFIED are filled (listed in
+// FILLED_ICONS); the rest stay on the outline default.
+
+// ICON_STATUS_SUCCESS — a single large filled circle. Reads as
+// "completed / passed". Pair with --status-success.
+export const ICON_STATUS_SUCCESS = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" stroke="none" aria-hidden="true" focusable="false">
+  <circle cx="8" cy="8" r="3.25"/>
+</svg>`
+
+// ICON_STATUS_WARNING — outline triangle with apex up. The internal
+// mark (exclamation dot) is omitted at 14px to keep the silhouette
+// crisp; the consumer pairs the icon with surrounding text or a
+// tooltip for the message. Pair with --status-warning.
+export const ICON_STATUS_WARNING = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M8 3l5.5 9.5h-11z"/>
+</svg>`
+
+// ICON_STATUS_ERROR — outline diamond (square rotated 45°). Reads as
+// "stop / failed". Pair with --status-error.
+export const ICON_STATUS_ERROR = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M8 2.5L13.5 8L8 13.5L2.5 8z"/>
+</svg>`
+
+// ICON_STATUS_LOADING — a 3/4 outline arc, open at the lower-right.
+// Pure stroke so consumers can rotate the SVG with CSS for the
+// spinner animation. Pair with --status-neutral.
+export const ICON_STATUS_LOADING = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M13 8a5 5 0 1 1-2.5-4.33"/>
+</svg>`
+
+// ICON_STATUS_OFFLINE — an X cross. Two diagonal strokes, the
+// universal "disconnected" mark. Pair with --status-neutral.
+export const ICON_STATUS_OFFLINE = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M4 4l8 8M12 4l-8 8"/>
+</svg>`
+
+// ICON_STATUS_MODIFIED — a small filled dot. Geometrically smaller
+// than ICON_STATUS_SUCCESS so the two remain distinguishable by
+// shape even when currentColor is identical (e.g. a monochrome
+// printout). Pair with --status-modified.
+export const ICON_STATUS_MODIFIED = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" stroke="none" aria-hidden="true" focusable="false">
+  <circle cx="8" cy="8" r="1.5"/>
+</svg>`

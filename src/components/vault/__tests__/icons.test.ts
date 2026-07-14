@@ -36,6 +36,8 @@ const SHARED_ATTRIBUTES = {
 // deliberate fill, not a workaround for a missing outline version.
 const FILLED_ICONS = new Set<string>([
   'ICON_AI_MEMORY',
+  'ICON_STATUS_SUCCESS',
+  'ICON_STATUS_MODIFIED',
 ])
 
 describe('vault icon system', () => {
