@@ -765,3 +765,60 @@ export const ICON_DUPLICATE = `
   <path d="M8.5 2v4.5H13"/>
   <circle cx="11" cy="11" r="1.75" fill="currentColor" stroke="none"/>
 </svg>`
+
+// --- Toolbar / utility vocabulary -------------------------------------------
+//
+// Six icons for edit-history, clipboard, and view-state toolbar
+// slots. Each uses a distinct geometric language so a row of
+// toolbar controls stays scannable.
+
+// ICON_UNDO — a circular arrow that loops counter-clockwise with a
+// gap at the top and an arrowhead pointing down-left. Reads as
+// "step backward in time". Distinct from ICON_HISTORY (which has
+// clock hands) by being just a curved arrow with no timepiece.
+export const ICON_UNDO = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M3 8a5 5 0 1 0 1.5-3.5"/>
+  <path d="M3 3v3h3"/>
+</svg>`
+
+// ICON_REDO — mirror of UNDO: clockwise loop with arrowhead
+// pointing down-right. Reads as "step forward in time".
+export const ICON_REDO = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M13 8a5 5 0 1 1-1.5-3.5"/>
+  <path d="M13 3v3h-3"/>
+</svg>`
+
+// ICON_CUT — two small circles joined by two diagonal strokes that
+// cross between them. The classic scissors silhouette.
+export const ICON_CUT = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <circle cx="4" cy="4" r="1.5"/>
+  <circle cx="4" cy="12" r="1.5"/>
+  <path d="M5.5 5.5l7 5M5.5 10.5l7-5"/>
+</svg>`
+
+// ICON_PASTE — a clipboard: rounded rectangle body with a smaller
+// rounded rectangle on top representing the clip. Reads as "the
+// clipboard". Distinct from ICON_COPY (two stacked rectangles)
+// by being a single clipboard shape.
+export const ICON_PASTE = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <rect x="3.5" y="4" width="9" height="9" rx="0.5"/>
+  <rect x="6" y="2.5" width="4" height="3" rx="0.5"/>
+</svg>`
+
+// ICON_BOOKMARK — a flag / bookmark silhouette: rectangle with a
+// V-cut bottom edge. Reads as "marked / saved for later".
+export const ICON_BOOKMARK = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M4 3v10l4-3 4 3V3z"/>
+</svg>`
+
+// ICON_FILTER — a funnel silhouette: horizontal top, narrowing
+// sides, narrow stem at the bottom. Reads as "filter / refine".
+export const ICON_FILTER = `
+<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+  <path d="M2 3h12L9 9v4l-2 1V9z"/>
+</svg>`
