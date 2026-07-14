@@ -9,10 +9,10 @@
    so the badge updates live as the user saves tabs. */
 import { useHistory } from '../../composables/vault/useHistory.js'
 import {
-  ICON_AB_FILES,
   ICON_AB_GIT_HISTORY,
   ICON_AB_SETTINGS,
-  ICON_AB_TAGS,
+  ICON_FOLDER,
+  ICON_TAG,
 } from './icons'
 export type SidePanel = 'files' | 'tags' | 'history'
 
@@ -34,7 +34,7 @@ const h = useHistory()
       :aria-pressed="activePanel === 'files'"
       @click="emit('select-panel', 'files')"
     >
-      <span class="ab-btn-icon" v-html="ICON_AB_FILES" aria-hidden="true" />
+      <span class="ab-btn-icon" v-html="ICON_FOLDER" aria-hidden="true" />
     </button>
     <button
       class="ab-btn"
@@ -43,7 +43,7 @@ const h = useHistory()
       :aria-pressed="activePanel === 'tags'"
       @click="emit('select-panel', 'tags')"
     >
-      <span class="ab-btn-icon" v-html="ICON_AB_TAGS" aria-hidden="true" />
+      <span class="ab-btn-icon" v-html="ICON_TAG" aria-hidden="true" />
     </button>
     <button
       class="ab-btn"

@@ -5,7 +5,7 @@ import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { PROTECTED_ROOTS } from '../composables/archiveProtocol'
-import { ICON_PANEL_RIGHT_CLOSE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ARCHIVE, ICON_NAV_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
+import { ICON_PANEL_RIGHT_CLOSE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ARCHIVE, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import ViewModeMenu from './ViewModeMenu.vue'
 
@@ -107,7 +107,7 @@ const SCOPE_ICONS: Record<string, string> = {
           aria-label="Search"
           @click="emit('open-search')"
         >
-          <span class="nav-search-icon" v-html="ICON_NAV_SEARCH" aria-hidden="true" />
+          <span class="nav-search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
         </button>
         <ViewModeMenu
           v-if="isVault"

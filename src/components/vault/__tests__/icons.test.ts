@@ -50,11 +50,8 @@ const FILLED_ICONS = new Set<string>([
 // The lint script skips icons.ts, so these don't pollute the
 // repo-wide scan; the test still enforces the hard rules below.
 const SURFACE_DISPLAY_ICONS = new Set<string>([
-  'ICON_NAV_SEARCH',
   'ICON_NAV_THEME_LIGHT',
   'ICON_NAV_THEME_DARK',
-  'ICON_AB_FILES',
-  'ICON_AB_TAGS',
   'ICON_AB_GIT_HISTORY',
   'ICON_AB_SETTINGS',
 ])

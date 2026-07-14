@@ -580,13 +580,10 @@ export const ICON_FILE_DRAFT = `
 
 // --- Surface-display icons (NavBar + ActivityBar) --------------------------
 //
-// These seven icons live in toolbar slots that need a larger visual
-// weight than the inline 14px functional icons — NavBar buttons are
-// 16-18px on a 36px button, ActivityBar buttons are 22px on a 48px
-// rail. To preserve optical balance with the button chrome, they
-// use the 24x24 canvas + adjusted stroke weight convention from the
-// upstream lucide-tabler line icons (display sizes 16 / 18 / 22 px,
-// stroke-width 2 / 1.8 respectively).
+// Four icons that genuinely need the 24x24 surface canvas — their
+// geometry is too dense to redraw at 16x16 without losing detail
+// (sun rays, gear teeth, git-history commit graph, crescent
+// shadow).
 //
 // They follow every HARD rule of the spec (no <text>, no color
 // literals, no root class/style, no 1024-style viewBox). They
@@ -595,17 +592,14 @@ export const ICON_FILE_DRAFT = `
 // the lint, and the linter exempts this file from reporting them
 // (icons.test.ts is the authoritative check for icons.ts exports).
 //
-// Future work: redraw each at the 16x16 grid + 1.5 stroke so the
-// toolbar slot can render at the 14px default. Until then, these are
-// the canonical surface-display set.
-
-// ICON_NAV_SEARCH — magnifier on a 24x24 canvas, displayed at 16px.
-// Pair with the nav search button.
-export const ICON_NAV_SEARCH = `
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <circle cx="11" cy="11" r="7"/>
-  <line x1="20" y1="20" x2="16.5" y2="16.5"/>
-</svg>`
+// The other three surface-display icons that used to live here
+// (SEARCH, FILES, TAGS) were deduped against the existing
+// ICON_SEARCH / ICON_FOLDER / ICON_TAG at the shared 16x16 grid.
+// The toolbar slots now render those functional icons at the
+// 18px / 22px display sizes with a slightly heavier visual
+// weight than before (1.5 stroke at 16x16 scaled to 18/22px
+// reads marginally thicker than the prior 24x24 source scaled
+// down). The trade-off is one icon per concept instead of two.
 
 // ICON_NAV_THEME_LIGHT — sun glyph shown when the current theme is
 // dark (click to switch to light).
@@ -620,21 +614,6 @@ export const ICON_NAV_THEME_LIGHT = `
 export const ICON_NAV_THEME_DARK = `
 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
   <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-</svg>`
-
-// ICON_AB_FILES — activity-bar button that opens the file panel.
-// Visually a folder-with-tab; conceptually the same as ICON_FOLDER
-// (which is for tree-row use) but drawn on the surface canvas.
-export const ICON_AB_FILES = `
-<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-</svg>`
-
-// ICON_AB_TAGS — activity-bar button that opens the tag panel.
-export const ICON_AB_TAGS = `
-<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-  <line x1="7" y1="7" x2="7.01" y2="7"/>
 </svg>`
 
 // ICON_AB_GIT_HISTORY — three commit dots connected by a vertical
