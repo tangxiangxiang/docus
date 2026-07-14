@@ -1996,7 +1996,7 @@ main.container {
      full vault width at the bottom (see .status-bar) and absorbs
      the document path that used to live in its own breadcrumb row
      above the content. The remaining rows are tabs and the
-     editor/preview split; the 1fr row gets the ~22px the breadcrumb
+     editor surface; the 1fr row gets the ~22px the breadcrumb
      used to occupy. */
   display: grid;
   grid-template-rows: 36px minmax(0, 1fr);
@@ -2131,23 +2131,11 @@ main.container {
 }
 .editor-pane {
   flex: var(--editor-flex, 1) 1 0;
-}
-.preview-pane {
-  flex: var(--preview-flex, 1) 1 0;
-}
-.editor-pane,
-.preview-pane {
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--vs-bg-1);
-}
-.preview-pane > .article {
-  flex: 0 0 auto;
-  min-height: 0;
-  overflow: visible;
-  box-sizing: border-box;
 }
 .content-empty {
   /* Absolute-fill the parent (.content) so the card is always
@@ -2323,41 +2311,41 @@ main.container {
   display: none !important;
 }
 
-/* Preview and reading own their native scrolling; Monaco keeps its
-   custom scrollbar DOM. Shared tokens visually align all three. */
-.vault :where(.preview-pane, .reading-pane) {
+/* Reading pane owns its native scrolling; Monaco keeps its
+   custom scrollbar DOM. Shared tokens visually align both. */
+.vault .reading-pane {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
   transition: scrollbar-color 0.2s ease;
 }
-.vault :where(.preview-pane, .reading-pane):hover {
+.vault .reading-pane:hover {
   scrollbar-color: var(--sb-thumb) transparent;
 }
-.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar {
+.vault .reading-pane::-webkit-scrollbar {
   width: var(--sb-size);
   height: var(--sb-size);
   background: transparent;
 }
-.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-track {
+.vault .reading-pane::-webkit-scrollbar-track {
   background: transparent !important;
   box-shadow: none !important;
 }
-.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-thumb {
+.vault .reading-pane::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--sb-thumb) 45%, transparent) !important;
   border-radius: var(--sb-size);
   box-shadow: none !important;
   transition: background 0.2s ease;
 }
-.vault :where(.preview-pane, .reading-pane):hover::-webkit-scrollbar-thumb,
-.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-thumb:hover {
+.vault .reading-pane:hover::-webkit-scrollbar-thumb,
+.vault .reading-pane::-webkit-scrollbar-thumb:hover {
   background: var(--sb-thumb-hover) !important;
 }
-.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-button {
+.vault .reading-pane::-webkit-scrollbar-button {
   display: none;
   width: 0;
   height: 0;
 }
-.vault :where(.preview-pane, .reading-pane)::-webkit-scrollbar-corner {
+.vault .reading-pane::-webkit-scrollbar-corner {
   background: transparent;
 }
 .vault .editor-pane:has(> .monaco-host.focus-width) {
@@ -2375,17 +2363,6 @@ main.container {
   text-underline-offset: 3px;
 }
 
-/* PreviewPane inside vault: drop docus stylesheet padding to match */
-.vault .preview-pane {
-  background: var(--vs-bg-1);
-  overflow: auto;
-}
-.vault .preview-pane .article {
-  padding: 14px 20px;
-  max-width: 100%;
-  min-height: 100%;
-  box-sizing: border-box;
-}
 .vault .article {
   --article-flow: 0.72em;
   --article-heading-gap: 1.45em;
