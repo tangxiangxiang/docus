@@ -1,13 +1,25 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
-import PreviewPane from '../components/vault/PreviewPane.vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
+import { createVaultContext } from '../composables/vault/context/createVaultContext'
+import { createVaultFileChanges } from '../composables/vault/context/fileChanges'
+import { provideVaultContext } from '../composables/vault/context/useVaultContext'
 import type { Resolver } from '../lib/wikiLinks'
 
-const route = useRoute()
-const mode = computed(() => route.query.mode === 'reading' ? 'reading' : 'preview')
-const scrollTest = computed(() => route.query.scroll === '1')
+const fileChanges = createVaultFileChanges()
+const tabs = ref([])
+const activePath = ref<string | null>(null)
+const vaultContext = createVaultContext({
+  vaultId: ref(null),
+  fileChanges,
+  tabs,
+  activePath,
+  activeTab: computed(() => null),
+  openPost: async () => {},
+})
+provideVaultContext(vaultContext)
+onBeforeUnmount(() => vaultContext.dispose())
+
 const resolveLink: Resolver = (ref) => ({ target: ref === 'missing-note' ? null : ref })
 const sample = `---
 title: Markdown Style Specimen
@@ -71,10 +83,7 @@ Footnote reference.[^1]
 
 <template>
   <div class="vault markdown-test-view">
-    <div v-if="mode === 'preview'" class="preview-pane" :class="{ 'scroll-test': scrollTest }">
-      <PreviewPane :raw="sample" :resolver="resolveLink" />
-    </div>
-    <div v-else class="reading-slot">
+    <div class="reading-slot">
       <ReadingPane :raw="sample" :resolver="resolveLink" />
     </div>
   </div>
@@ -82,14 +91,7 @@ Footnote reference.[^1]
 
 <style scoped>
 .markdown-test-view { min-height: calc(100vh - var(--navbar-h)); background: var(--vs-bg-1); }
-.preview-pane, .reading-slot { width: 100%; min-height: calc(100vh - var(--navbar-h)); }
-.preview-pane { max-width: 760px; margin: 0 auto; }
-.markdown-test-view :deep(.preview-pane),
+.reading-slot { width: 100%; min-height: calc(100vh - var(--navbar-h)); }
 .markdown-test-view :deep(.reading-pane),
 .markdown-test-view :deep(.article) { height: auto; overflow: visible; }
-.markdown-test-view .preview-pane.scroll-test {
-  height: 320px;
-  min-height: 0;
-  overflow: auto;
-}
 </style>

@@ -2,8 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 const devRoutes = import.meta.env.DEV
   ? [
-      { path: '/__editor-test', component: () => import('../views/EditorTestView.vue'), meta: { fullWidth: true } },
-      { path: '/__markdown-test', component: () => import('../views/MarkdownTestView.vue'), meta: { fullWidth: true } },
+{ path: '/__markdown-test', component: () => import('../views/MarkdownTestView.vue'), meta: { fullWidth: true } },
       { path: '/__icon-preview', component: () => import('../views/IconPreviewView.vue'), meta: { fullWidth: true } },
     ]
   : []
