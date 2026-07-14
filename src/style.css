@@ -2310,6 +2310,11 @@ main.container {
 .vault .monaco-host .decorationsOverviewRuler {
   display: none !important;
 }
+/* Keep Monaco's floating Find/Replace widget inside the clipped editor area. */
+.vault .monaco-host .monaco-editor .find-widget.visible {
+  top: 30px !important;
+  right: 50px !important;
+}
 
 /* Reading pane owns its native scrolling; Monaco keeps its
    custom scrollbar DOM. Shared tokens visually align both. */
