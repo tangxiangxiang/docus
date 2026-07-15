@@ -334,6 +334,16 @@ onMounted(() => {
     insertSpaces: true,
     detectIndentation: false,
     padding: { top: 10, bottom: 48 },
+    // Disable Monaco's "extra space on top" view zone for the find
+    // widget. By default Monaco inserts a ~25px blank view zone above
+    // line 1 when the find widget opens (height = widget height -
+    // padding.top), which shows up as a visible empty strip between
+    // the editor's top edge and the first line of content. The widget
+    // itself is position:absolute and overlays line 1's row, so
+    // turning the view zone off removes the gap with no functional
+    // regression — line 1's text is short enough that the widget's
+    // right-aligned bar doesn't visually overlap it.
+    find: { addExtraSpaceOnTop: false },
     renderLineHighlight: 'line',
     scrollBeyondLastLine: false,
     smoothScrolling: true,
