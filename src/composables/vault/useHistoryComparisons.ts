@@ -10,6 +10,27 @@ export interface CurrentDocumentContent {
   dirty: boolean
 }
 
+interface EditorDocumentCandidate {
+  path: string
+  raw: string
+  originalRaw: string
+  loading: boolean
+  loadError: string | null
+}
+
+export function getLoadedEditorDocument(
+  tabs: readonly EditorDocumentCandidate[],
+  path: string,
+): CurrentDocumentContent | null {
+  const tab = tabs.find((item) => item.path === path)
+  if (!tab || tab.loading || tab.loadError) return null
+
+  return {
+    raw: tab.raw,
+    dirty: tab.raw !== tab.originalRaw,
+  }
+}
+
 export interface HistoryComparison {
   tabId: string
   documentPath: string

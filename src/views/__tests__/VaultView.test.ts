@@ -34,6 +34,7 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('const historySnapshots = useHistorySnapshots()')
     expect(source).toContain('const historyComparisons = useHistoryComparisons({')
     expect(source).toContain('getCurrentDocument(path)')
+    expect(source).toContain('return getLoadedEditorDocument(tabs.value, path)')
     expect(source).toContain('return (await getPost(path)).raw')
     expect(source).toContain("meta && event.key.toLowerCase() === 's'")
     expect(source).toContain('historyComparisons.closeComparison(readOnlyTab.tabId)')

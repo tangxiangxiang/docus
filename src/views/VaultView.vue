@@ -9,7 +9,11 @@ import { useConfirm } from '../composables/useConfirm'
 import { useI18n } from '../composables/useI18n'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { useHistorySnapshots, type HistoryRevisionSelection } from '../composables/vault/useHistorySnapshots'
-import { useHistoryComparisons, type HistoryComparison } from '../composables/vault/useHistoryComparisons'
+import {
+  getLoadedEditorDocument,
+  useHistoryComparisons,
+  type HistoryComparison,
+} from '../composables/vault/useHistoryComparisons'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
 import { createPost, getPost, type DocumentMetadata } from '../lib/api'
@@ -126,8 +130,7 @@ const historySnapshots = useHistorySnapshots()
 const activeHistorySnapshot = historySnapshots.activeSnapshot
 const historyComparisons = useHistoryComparisons({
   getCurrentDocument(path) {
-    const tab = tabs.value.find((item) => item.path === path)
-    return tab ? { raw: tab.raw, dirty: tab.raw !== tab.originalRaw } : null
+    return getLoadedEditorDocument(tabs.value, path)
   },
   async loadCurrentDocument(path) {
     return (await getPost(path)).raw

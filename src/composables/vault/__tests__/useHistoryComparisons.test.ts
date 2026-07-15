@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { watch } from 'vue'
-import { useHistoryComparisons } from '../useHistoryComparisons'
+import { getLoadedEditorDocument, useHistoryComparisons } from '../useHistoryComparisons'
 import type { HistorySnapshot } from '../useHistorySnapshots'
 
 function snapshot(overrides: Partial<HistorySnapshot> = {}): HistorySnapshot {
@@ -68,6 +68,42 @@ describe('useHistoryComparisons', () => {
     expect(loadCurrentDocument).toHaveBeenCalledWith('inbox/redis')
     expect(history.activeComparison.value?.newRaw).toContain('Saved current')
     expect(history.activeComparison.value?.currentDirty).toBe(false)
+  })
+
+  it('falls back to the saved document API while the editor tab is still loading', async () => {
+    const tabs = [{
+      path: 'inbox/redis',
+      raw: '',
+      originalRaw: '',
+      loading: true,
+      loadError: null,
+    }]
+    const loadCurrentDocument = vi.fn().mockResolvedValue('# Redis\n\nSaved current.')
+    const history = useHistoryComparisons({
+      getCurrentDocument: (path) => getLoadedEditorDocument(tabs, path),
+      loadCurrentDocument,
+    })
+
+    await history.openComparison(snapshot())
+
+    expect(loadCurrentDocument).toHaveBeenCalledWith('inbox/redis')
+    expect(history.activeComparison.value).toMatchObject({
+      newRaw: '# Redis\n\nSaved current.',
+      currentDirty: false,
+      status: 'ready',
+    })
+  })
+
+  it('does not trust an editor tab whose initial load failed', () => {
+    const tabs = [{
+      path: 'inbox/redis',
+      raw: '',
+      originalRaw: '',
+      loading: false,
+      loadError: 'HTTP 500',
+    }]
+
+    expect(getLoadedEditorDocument(tabs, 'inbox/redis')).toBeNull()
   })
 
   it('reuses one comparison tab and ignores a slower obsolete request', async () => {
