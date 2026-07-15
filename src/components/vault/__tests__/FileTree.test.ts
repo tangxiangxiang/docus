@@ -210,7 +210,7 @@ describe('FileTree search input', () => {
     const w = mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
     await w.find('.search-input').setValue('rough')
     const draftRow = rowByLabel(w.findAll('.tree-row'), 'draft')
-    expect(draftRow.find('.row-path-hint').text()).toBe('inbox/notes')
+    expect(draftRow.find('.row-path-hint').text()).toBe('inbox/notes/draft')
   })
 
   it('keeps an entire folder visible when the folder name matches', async () => {

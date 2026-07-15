@@ -1416,12 +1416,12 @@ main.container {
    default (it doesn't need to be above the line's `::before` — they
    don't overlap). */
 .vault .file-tree .row-line {
-  display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 5px;
   flex: 1 1 auto;
   position: relative;
-  min-height: 24px;
+  min-height: 30px;
   box-sizing: border-box;
-  padding: 2px 8px 2px calc(8px + var(--depth, 0) * 10px);
+  padding: 3px 8px 3px calc(6px + var(--depth, 0) * 10px);
   /* No `min-width: 0` here — that would let `.row-line` shrink to 0,
      which combined with `flex: 1` (basis 0%) lets it sit on the same
      flex line as `.tree-children` (basis 100%) without wrapping.
@@ -1438,13 +1438,13 @@ main.container {
    first line (title) instead. Folders keep center alignment since
    they only have a single line of content. */
 .vault .file-tree .tree-row:not(.folder) > .row-line {
-  align-items: flex-start;
+  align-items: center;
   /* The icon is 14px tall vs the title's ~15px line-box. With
      flex-start the icon sits ~2px higher than the title's
      optical center; this nudge keeps the two visually balanced. */
 }
 .vault .file-tree .tree-row:not(.folder) > .row-line .row-icon {
-  margin-top: 2px;
+  margin-top: 0;
 }
 /* Full-width hover/active background that extends through the indent
    area on the left, so deep rows don't show a gap between the
@@ -1509,7 +1509,7 @@ main.container {
 .vault .file-tree .chevron { cursor: pointer; transition: transform 120ms; }
 .vault .file-tree .chevron.expanded { transform: rotate(90deg); }
 .vault .file-tree .row-icon {
-  display: inline-flex; width: 14px; height: 14px; flex-shrink: 0;
+  display: inline-flex; width: 16px; height: 16px; flex-shrink: 0;
   color: var(--vs-text-2);
 }
 .vault .file-tree .tree-row.folder .row-icon { color: var(--vs-folder, #c8a96a); }
@@ -1517,6 +1517,8 @@ main.container {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  max-height: 18px;
+  transition: max-height 120ms ease;
 }
 .vault .file-tree .row-name {
   display: block;
@@ -1549,6 +1551,7 @@ main.container {
   line-height: 1.1;
   margin-top: 0;
 }
+.vault .file-tree .row-label:has(.row-path-hint) { max-height: 31px; }
 .vault .file-tree .row-file-name-hidden { display: none; }
 .vault .file-tree .row-path-hint {
   margin-top: 0;
@@ -1557,6 +1560,31 @@ main.container {
   font-size: 0.66rem;
   line-height: 1.1;
 }
+.tree-hover-card {
+  position: fixed;
+  z-index: 10000;
+  width: min(260px, calc(100vw - 24px));
+  display: grid;
+  gap: 5px;
+  padding: 9px 11px;
+  color: var(--text-h, #ddd);
+  background: var(--bg-soft, #252526);
+  border: 1px solid var(--border, #454545);
+  border-radius: 5px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35);
+  pointer-events: none;
+  font-size: .76rem;
+  line-height: 1.35;
+}
+.tree-hover-card strong, .tree-hover-card code, .tree-hover-card span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-hover-card code { color: var(--text-muted, #aaa); }
+.tree-hover-tags { color: var(--accent, #75beff); }
+.tree-hover-card-enter-active, .tree-hover-card-leave-active { transition: opacity 120ms ease; }
+.tree-hover-card-enter-from, .tree-hover-card-leave-to { opacity: 0; }
 .vault .file-tree .drop-hint {
   flex: 0 0 auto;
   color: var(--vs-accent);

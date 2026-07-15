@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onBeforeUnmount } from 'vue'
-import type { TreeNode } from '../../lib/api'
+import type { TreeNode, PostSummary } from '../../lib/api'
 import {
   ICON_ARCHIVE, ICON_CHEVRON, ICON_DELETE, ICON_FILE_MD, ICON_FILE_PLUS,
   ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FOLDER_PLUS, ICON_PROPERTIES, ICON_RENAME,
@@ -19,7 +19,10 @@ const props = defineProps<{
   currentPath: string | null
   focusedNodeKey: string | null
   expandedSet: Set<string>
-  showPathHint?: boolean
+  searchActive?: boolean
+  compact?: boolean
+  duplicateTitles?: Set<string>
+  metadataByPath?: Map<string, PostSummary>
   // Path → per-file match annotation from FileTree's search filter.
   // The whole map (not just this row's entry) is passed so the
   // recursive child rows can look up their own paths without
@@ -77,6 +80,32 @@ const displayTitle = computed(() => props.node.kind === 'file' && props.node.tit
   ? props.node.title.trim()
   : props.node.name)
 const showFilename = computed(() => props.node.kind === 'file' && displayTitle.value !== props.node.name)
+const isDuplicate = computed(() => props.node.kind === 'file' &&
+  props.duplicateTitles?.has(displayTitle.value.toLocaleLowerCase()))
+const revealPath = computed(() => !isFolder.value && (
+  props.searchActive || isDuplicate.value || (isActive.value && !props.compact)
+))
+const visiblePath = computed(() => isDuplicate.value && !props.searchActive && !isActive.value
+  ? (parentPath.value ? `${parentPath.value}/` : '/')
+  : props.node.path)
+const metadata = computed(() => props.metadataByPath?.get(props.node.path))
+const modifiedLabel = computed(() => {
+  const value = metadata.value?.mtime ?? (props.node.kind === 'file' ? props.node.mtime : 0)
+  return value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : ''
+})
+
+const hoverCardVisible = ref(false)
+const hoverCardStyle = ref<Record<string, string>>({})
+function showHoverCard(e: MouseEvent) {
+  if (isFolder.value) return
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  hoverCardStyle.value = {
+    left: `${Math.max(12, Math.min(rect.right + 8, window.innerWidth - 288))}px`,
+    top: `${Math.max(12, Math.min(rect.top, window.innerHeight - 180))}px`,
+  }
+  hoverCardVisible.value = true
+}
+function hideHoverCard() { hoverCardVisible.value = false }
 // Three independent write-permission flags. The protocol distinguishes:
 //   • canModify — rename / delete. Blocked for both the archive subtree AND
 //     protected roots (the three top-level folder names are pinned by the
@@ -266,6 +295,7 @@ function menuAction(fn: () => void) {
     :aria-level="depth + 1"
     :aria-expanded="isFolder ? isExpanded : undefined"
     :aria-selected="!isFolder ? isActive : undefined"
+    :aria-label="!isFolder ? `${displayTitle}, ${node.path}` : node.name"
     :tabindex="focusedNodeKey === `${node.kind}:${node.path}` ? 0 : -1"
     :draggable="canMoveRow"
     @dragstart="onDragStart"
@@ -276,6 +306,8 @@ function menuAction(fn: () => void) {
     @drop="onDrop"
     @contextmenu="showMenu"
     @focus="emit('focus', node.path, node.kind)"
+    @mouseenter="showHoverCard"
+    @mouseleave="hideHoverCard"
   >
     <!-- .row-line is the *row's visible content* — chevron + icon +
          name (or the rename input). It is a sibling of .tree-children,
@@ -322,18 +354,26 @@ function menuAction(fn: () => void) {
           class="row-name"
           :class="{ 'row-file-name': showFilename, 'row-file-name-hidden': !isFolder && !showFilename }"
           :title="matchTooltip"
-          :aria-label="displayTitle"
+          :aria-label="!isFolder ? `${displayTitle}, ${node.path}` : displayTitle"
           @click.stop="emit('focus', node.path, node.kind); isFolder ? emit('toggle', node.path) : emit('select', node.path)"
         >
           <span class="row-name-text">{{ node.name }}</span>
         </button>
-        <span
-          v-if="!isFolder && showPathHint && parentPath"
-          class="row-path-hint"
-        >{{ parentPath }}</span>
+        <span v-if="revealPath" class="row-path-hint">{{ visiblePath }}</span>
       </div>
       <span v-if="isDropTarget" class="drop-hint">{{ t('file_tree.move_here') }}</span>
     </div>
+
+    <Teleport to="body">
+      <Transition name="tree-hover-card">
+        <div v-if="hoverCardVisible && !isFolder" class="tree-hover-card" :style="hoverCardStyle" role="tooltip">
+          <strong>{{ displayTitle }}</strong>
+          <code>{{ node.path }}</code>
+          <span v-if="modifiedLabel">Modified {{ modifiedLabel }}</span>
+          <span v-if="metadata?.tags.length" class="tree-hover-tags">{{ metadata.tags.map(tag => `#${tag}`).join(' ') }}</span>
+        </div>
+      </Transition>
+    </Teleport>
 
     <Teleport to="body">
       <div
@@ -375,7 +415,10 @@ function menuAction(fn: () => void) {
         :focused-node-key="focusedNodeKey"
         :expanded-set="expandedSet"
         :matched-fields="matchedFields"
-        :show-path-hint="showPathHint"
+        :search-active="searchActive"
+        :compact="compact"
+        :duplicate-titles="duplicateTitles"
+        :metadata-by-path="metadataByPath"
         @select="(p) => emit('select', p)"
         @toggle="(p) => emit('toggle', p)"
         @rename="(oldP, n, kind) => emit('rename', oldP, n, kind)"

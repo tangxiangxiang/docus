@@ -15,6 +15,7 @@ import { getFallbackVaultFileChanges } from '../../composables/vault/context/fil
 import { useOptionalVaultContext } from '../../composables/vault/context/useVaultContext'
 import { ICON_SEARCH } from './icons'
 import { useI18n } from '../../composables/useI18n'
+import { useFileTreePreferences } from '../../composables/vault/useFileTreePreferences'
 
 const props = withDefaults(defineProps<{
   tree: TreeNode[]
@@ -43,6 +44,7 @@ const { prompt } = usePrompt()
 const { archive: archiveNote } = useArchiveNote()
 const toast = useToast()
 const { t } = useI18n()
+const { compactFileTree } = useFileTreePreferences()
 const vaultContext = useOptionalVaultContext()
 const publishChange = vaultContext?.fileChanges.publish ?? getFallbackVaultFileChanges().publish
 const searchInputRef = ref<HTMLInputElement | null>(null)
@@ -105,6 +107,24 @@ const postsByPath = computed<Map<string, Set<string>>>(() => {
   const m = new Map<string, Set<string>>()
   for (const p of props.posts) m.set(p.path, new Set(p.tags))
   return m
+})
+const postMetadataByPath = computed<Map<string, PostSummary>>(() =>
+  new Map(props.posts.map((post) => [post.path, post])),
+)
+
+// Only ambiguous display titles pay the cost of an always-visible path hint.
+// Count across the complete tree, not the filtered result, so a search/filter
+// cannot make an otherwise ambiguous title suddenly look unique.
+const duplicateTitles = computed<Set<string>>(() => {
+  const counts = new Map<string, number>()
+  const walk = (node: TreeNode) => {
+    if (node.kind === 'file') {
+      const title = (node.title.trim() || node.name).toLocaleLowerCase()
+      counts.set(title, (counts.get(title) ?? 0) + 1)
+    } else node.children.forEach(walk)
+  }
+  props.tree.forEach(walk)
+  return new Set([...counts].filter(([, count]) => count > 1).map(([title]) => title))
 })
 const tagFilterSet = computed<Set<string>>(() => new Set(props.activeTags))
 
@@ -778,7 +798,10 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         :focused-node-key="focusedNodeKey"
         :expanded-set="effectiveExpanded"
         :matched-fields="matchedFields"
-        :show-path-hint="Boolean(effectiveQuery)"
+        :search-active="Boolean(effectiveQuery)"
+        :compact="compactFileTree"
+        :duplicate-titles="duplicateTitles"
+        :metadata-by-path="postMetadataByPath"
         @select="onSelect"
         @toggle="onToggle"
         @rename="onRename"

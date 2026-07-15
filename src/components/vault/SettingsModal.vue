@@ -6,6 +6,7 @@ import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useConfirm } from '../../composables/useConfirm'
 import { useEditorPreferences } from '../../composables/vault/useEditorPreferences'
+import { useFileTreePreferences } from '../../composables/vault/useFileTreePreferences'
 import { getFallbackVaultFileChanges } from '../../composables/vault/context/fileChanges'
 import { useOptionalVaultContext } from '../../composables/vault/context/useVaultContext'
 import {
@@ -25,6 +26,7 @@ const aiHistory = useAiHistory()
 const trap = useFocusTrap()
 const { confirm } = useConfirm()
 const editorPreferences = useEditorPreferences()
+const fileTreePreferences = useFileTreePreferences()
 const loading = ref(false)
 const saving = ref(false)
 const settings = ref<AiSettings | null>(null)
@@ -282,6 +284,7 @@ onBeforeUnmount(() => {
               <label class="settings-field"><span>Wrap column</span><input v-model.number="editorPreferences.wrapColumn.value" type="number" min="60" max="160" /></label>
               <label class="settings-field"><span>Font family</span><input v-model="editorPreferences.fontFamily.value" type="text" placeholder="System monospace" maxlength="120" /></label>
               <label class="settings-field"><span>Writing diagnostics</span><input v-model="editorPreferences.typography.value" type="checkbox" /></label>
+              <label class="settings-field"><span>Compact File Tree</span><input v-model="fileTreePreferences.compactFileTree.value" type="checkbox" /></label>
               <button type="button" class="btn" @click="editorPreferences.reset">Reset editor defaults</button>
             </div>
           </section>
