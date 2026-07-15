@@ -79,6 +79,20 @@ describe('Tags filter', () => {
     expect(wrapper.emitted('open')?.[0]).toEqual([POSTS[0].path])
   })
 
+  it('uses the shared document hover card for tag results', async () => {
+    const wrapper = mountPanel({ selectedTag: 'reference' })
+    await wrapper.get('.result-entry').trigger('mouseenter')
+
+    const card = document.body.querySelector('.document-hover-card')
+    expect(card?.textContent).toContain(POSTS[0].title)
+    expect(card?.textContent).toContain(POSTS[0].path)
+    expect(card?.textContent).toContain('#markdown #reference')
+
+    await wrapper.get('.result-entry').trigger('mouseleave')
+    expect(document.body.querySelector('.document-hover-card')).toBeNull()
+    wrapper.unmount()
+  })
+
   it('keeps count/name ordering stable when a tag is selected', () => {
     const unselected = mountPanel()
     const selected = mountPanel({ selectedTag: 'Math' })

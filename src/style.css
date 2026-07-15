@@ -1560,7 +1560,7 @@ main.container {
   font-size: 0.66rem;
   line-height: 1.1;
 }
-.tree-hover-card {
+.document-hover-card {
   position: fixed;
   z-index: 10000;
   width: min(260px, calc(100vw - 24px));
@@ -1576,15 +1576,15 @@ main.container {
   font-size: .76rem;
   line-height: 1.35;
 }
-.tree-hover-card strong, .tree-hover-card code, .tree-hover-card span {
+.document-hover-card strong, .document-hover-card code, .document-hover-card span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tree-hover-card code { color: var(--text-muted, #aaa); }
-.tree-hover-tags { color: var(--accent, #75beff); }
-.tree-hover-card-enter-active, .tree-hover-card-leave-active { transition: opacity 120ms ease; }
-.tree-hover-card-enter-from, .tree-hover-card-leave-to { opacity: 0; }
+.document-hover-card code { color: var(--text-muted, #aaa); }
+.document-hover-tags { color: var(--accent, #75beff); }
+.document-hover-card-enter-active, .document-hover-card-leave-active { transition: opacity 120ms ease; }
+.document-hover-card-enter-from, .document-hover-card-leave-to { opacity: 0; }
 .palette-section-title {
   margin: 0;
   padding: 8px 12px 4px;

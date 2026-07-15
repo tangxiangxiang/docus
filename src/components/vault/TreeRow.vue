@@ -6,6 +6,8 @@ import {
   ICON_FOLDER, ICON_FOLDER_OPEN, ICON_FOLDER_PLUS, ICON_PROPERTIES, ICON_RENAME,
 } from './icons'
 import { useI18n } from '../../composables/useI18n'
+import { useDocumentHoverCard } from '../../composables/useDocumentHoverCard'
+import DocumentHoverCard from './DocumentHoverCard.vue'
 import {
   canModify,
   canMove,
@@ -89,23 +91,11 @@ const visiblePath = computed(() => isDuplicate.value && !props.searchActive && !
   ? (parentPath.value ? `${parentPath.value}/` : '/')
   : props.node.path)
 const metadata = computed(() => props.metadataByPath?.get(props.node.path))
-const modifiedLabel = computed(() => {
-  const value = metadata.value?.mtime ?? (props.node.kind === 'file' ? props.node.mtime : 0)
-  return value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : ''
-})
-
-const hoverCardVisible = ref(false)
-const hoverCardStyle = ref<Record<string, string>>({})
-function showHoverCard(e: MouseEvent) {
-  if (isFolder.value) return
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  hoverCardStyle.value = {
-    left: `${Math.max(12, Math.min(rect.right + 8, window.innerWidth - 288))}px`,
-    top: `${Math.max(12, Math.min(rect.top, window.innerHeight - 180))}px`,
-  }
-  hoverCardVisible.value = true
+const hoverMtime = computed(() => metadata.value?.mtime ?? (props.node.kind === 'file' ? props.node.mtime : 0))
+const { hoverCardVisible, hoverCardStyle, showHoverCard: showDocumentHoverCard, hideHoverCard } = useDocumentHoverCard()
+function showHoverCard(event: MouseEvent) {
+  if (!isFolder.value) showDocumentHoverCard(event)
 }
-function hideHoverCard() { hoverCardVisible.value = false }
 // Three independent write-permission flags. The protocol distinguishes:
 //   • canModify — rename / delete. Blocked for both the archive subtree AND
 //     protected roots (the three top-level folder names are pinned by the
@@ -363,16 +353,15 @@ function menuAction(fn: () => void) {
       <span v-if="isDropTarget" class="drop-hint">{{ t('file_tree.move_here') }}</span>
     </div>
 
-    <Teleport to="body">
-      <Transition name="tree-hover-card">
-        <div v-if="hoverCardVisible && !isFolder" class="tree-hover-card" :style="hoverCardStyle" role="tooltip">
-          <strong>{{ displayTitle }}</strong>
-          <code>{{ node.path }}</code>
-          <span v-if="modifiedLabel">Modified {{ modifiedLabel }}</span>
-          <span v-if="metadata?.tags.length" class="tree-hover-tags">{{ metadata.tags.map(tag => `#${tag}`).join(' ') }}</span>
-        </div>
-      </Transition>
-    </Teleport>
+    <DocumentHoverCard
+      v-if="!isFolder"
+      :visible="hoverCardVisible"
+      :position="hoverCardStyle"
+      :title="displayTitle"
+      :path="node.path"
+      :mtime="hoverMtime"
+      :tags="metadata?.tags"
+    />
 
     <Teleport to="body">
       <div
