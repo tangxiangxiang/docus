@@ -24,7 +24,11 @@ export interface SearchHit {
 }
 
 let mini: MiniSearch<SearchDoc> | null = null
-let bodyCache: Map<string, string> = new Map()
+interface BodyCacheEntry {
+  body: string
+  mtime: number
+}
+let bodyCache: Map<string, BodyCacheEntry> = new Map()
 
 function makeIndex(): MiniSearch<SearchDoc> {
   return new MiniSearch<SearchDoc>({
@@ -63,9 +67,12 @@ export function rebuildIndex(posts: PostSummary[]): void {
 
 /** 拉正文并缓存(供 body 搜索用) */
 export async function primeBody(posts: PostSummary[]): Promise<void> {
-  const missing = posts.filter((p) => !bodyCache.has(p.path))
+  const stale = posts.filter((post) => {
+    const cached = bodyCache.get(post.path)
+    return !cached || cached.mtime !== post.mtime
+  })
   await Promise.all(
-    missing.map(async (p) => {
+    stale.map(async (p) => {
       try {
         // encodeURI (not encodeURIComponent) — the splat route
         // /api/posts/* expects the path segments to be raw, not %2F
@@ -81,7 +88,12 @@ export async function primeBody(posts: PostSummary[]): Promise<void> {
         const res = await fetch(`/api/posts/${encodeURI(p.path)}`)
         if (!res.ok) return
         const data = (await res.json()) as { content: string }
-        bodyCache.set(p.path, data.content ?? '')
+        // A slower request for an older revision must not overwrite a
+        // newer body that finished first.
+        const current = bodyCache.get(p.path)
+        if (!current || current.mtime <= p.mtime) {
+          bodyCache.set(p.path, { body: data.content ?? '', mtime: p.mtime })
+        }
       } catch {
         /* ignore */
       }
@@ -118,8 +130,9 @@ export function search(query: string, limit = 12): SearchHit[] {
 
   // 正文补充:在 title 没吃饱时去 body 找
   if (hits.length < limit) {
-    for (const [path, body] of bodyCache) {
+    for (const [path, cached] of bodyCache) {
       if (seen.has(path)) continue
+      const body = cached.body
       if (body.toLowerCase().includes(q.toLowerCase())) {
         hits.push({ path, title: mini.getStoredFields(path)?.title as string || path, score: 0.1, match: 'body', snippet: snippet(body, q) })
         seen.add(path)

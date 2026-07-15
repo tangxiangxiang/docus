@@ -34,6 +34,20 @@ describe('Search Everywhere document provider', () => {
     expect((await provider('Old')).results).toHaveLength(0)
   })
 
+  it('refetches and replaces cached body content when mtime changes', async () => {
+    let posts = [makePost('inbox/redis', 'Redis')]
+    const bodies = ['old unique phrase', 'new unique phrase']
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ content: bodies.shift() ?? '' }) }))
+    vi.stubGlobal('fetch', fetchMock)
+    const provider = createDocumentSearchProvider(() => posts)
+
+    expect((await provider('old unique phrase')).results).toHaveLength(1)
+    posts = [{ ...posts[0], mtime: 2 }]
+    expect((await provider('new unique phrase')).results).toHaveLength(1)
+    expect((await provider('old unique phrase')).results).toHaveLength(0)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('composes future providers as independent sections', async () => {
     const posts = [makePost('inbox/redis', 'Redis')]
     const future: SearchProvider = () => ({ id: 'commands', label: 'Commands', results: [{ id: 'command:open', type: 'command', title: 'Open', score: 1, payload: {} }] })
