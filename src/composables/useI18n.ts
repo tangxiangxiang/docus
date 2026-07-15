@@ -23,6 +23,20 @@ type Locale = 'zh' | 'en'
 type Strings = Record<string, Record<Locale, string>>
 
 const STRINGS: Strings = {
+  'search.dialog_label': { zh: '全局搜索', en: 'Global search' },
+  'search.input_label': { zh: '搜索全部内容', en: 'Search all content' },
+  'search.placeholder': { zh: '搜索 {count} 篇文档…', en: 'Search {count} documents…' },
+  'search.section.files': { zh: '文件', en: 'Files' },
+  'search.no_results': { zh: '没有匹配结果', en: 'No matching results' },
+  'search.create': { zh: '新建“{query}”', en: 'Create “{query}”' },
+  'search.navigate': { zh: '↑↓ 切换', en: '↑↓ Navigate' },
+  'search.open': { zh: '↵ 打开', en: '↵ Open' },
+  'search.close': { zh: 'Esc 关闭', en: 'Esc Close' },
+  'search.match.title': { zh: '标题', en: 'Title' },
+  'search.match.path': { zh: '路径', en: 'Path' },
+  'search.match.tag': { zh: '标签', en: 'Tag' },
+  'search.match.summary': { zh: '摘要', en: 'Summary' },
+  'search.match.body': { zh: '正文', en: 'Content' },
   // AI panel quick prompts (note open)
   'quick_prompts.with_note.summarize.label': {
     zh: '总结当前笔记',

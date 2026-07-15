@@ -49,6 +49,8 @@ describe('useI18n', () => {
     setLocale('en')
     expect(t('history.changed', { count: 3 })).toBe('3 changed')
     expect(t('diff.unchanged')).toBe('{count} unchanged')
+    expect(t('search.placeholder', { count: 12 })).toBe('Search 12 documents…')
+    expect(t('search.create', { query: 'Redis' })).toBe('Create “Redis”')
   })
 
   it('falls back to zh when the active locale is missing a translation', () => {

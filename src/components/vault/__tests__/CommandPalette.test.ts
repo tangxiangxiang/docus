@@ -4,11 +4,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import CommandPalette from '../CommandPalette.vue'
 import { dispose } from '../../../lib/search'
 import type { PostSummary } from '../../../lib/api'
+import { useI18n } from '../../../composables/useI18n'
 
 const post: PostSummary = { path: 'inbox/redis', title: 'Redis', created: '', updated: '', tags: [], summary: '', size: 0, mtime: 1 }
 
 describe('CommandPalette Chinese copy', () => {
-  beforeEach(() => { dispose(); vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ content: '' }) }))) })
+  beforeEach(() => { useI18n().setLocale('zh'); dispose(); vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ content: '' }) }))) })
   afterEach(() => { vi.unstubAllGlobals(); dispose(); document.body.innerHTML = '' })
 
   it('uses a dynamic Chinese placeholder and accessibility labels', async () => {
@@ -41,6 +42,20 @@ describe('CommandPalette Chinese copy', () => {
     await flushPromises()
     expect(document.body.querySelector('.palette-section-title')?.textContent).toBe('文件')
     expect(document.body.querySelector('.palette-badge')?.textContent).toBe('标题')
+    wrapper.unmount()
+  })
+
+  it('renders the same Search UI in English through useI18n', async () => {
+    useI18n().setLocale('en')
+    const wrapper = mount(CommandPalette, { props: { posts: [post], activePath: null } })
+    ;(wrapper.vm as unknown as { show: () => void }).show()
+    await flushPromises()
+    const input = document.body.querySelector<HTMLInputElement>('.palette-input')!
+    expect(input.placeholder).toBe('Search 1 documents…')
+    expect(input.getAttribute('aria-label')).toBe('Search all content')
+    expect(document.body.querySelector('.palette')?.getAttribute('aria-label')).toBe('Global search')
+    expect(document.body.querySelector('.palette-section-title')?.textContent).toBe('Files')
+    expect(document.body.querySelector('.palette-badge')?.textContent).toBe('Title')
     wrapper.unmount()
   })
 })
