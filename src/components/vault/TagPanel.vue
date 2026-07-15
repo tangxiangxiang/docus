@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { PostSummary } from '../../lib/api'
-import { PROTECTED_ROOTS } from '../../composables/archiveProtocol'
 import { useI18n } from '../../composables/useI18n'
 import { ICON_FILE_MD, ICON_SEARCH } from './icons'
 
@@ -39,12 +38,6 @@ const filteredPosts = computed(() => {
   if (!props.selectedTag) return []
   return props.posts.filter((post) => post.tags.includes(props.selectedTag!))
 })
-
-function pathTail(path: string): string {
-  const parts = path.split('/')
-  if (parts.length > 1 && PROTECTED_ROOTS.has(parts[0])) parts.shift()
-  return parts.join(' / ')
-}
 
 function onFilterKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && filter.value) {
@@ -90,7 +83,6 @@ function onFilterKeydown(event: KeyboardEvent) {
             <span class="result-icon" aria-hidden="true" v-html="ICON_FILE_MD" />
             <span class="result-label">
               <span class="result-title">{{ post.title }}</span>
-              <span class="result-path">{{ pathTail(post.path) }}</span>
             </span>
           </button>
         </li>

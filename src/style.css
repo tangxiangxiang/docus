@@ -1987,9 +1987,8 @@ main.container {
   flex: 1 1 auto;
   min-height: 0;
 }
-.vault .tag-panel .result-entry {
+.vault .document-row {
   display: flex;
-  flex-direction: row;
   flex-wrap: nowrap;
   align-items: center;
   gap: 5px;
@@ -2000,21 +1999,23 @@ main.container {
   background: transparent;
   border: 0;
   color: var(--vs-text-1);
+  font-size: 0.84rem;
+  line-height: 1.35;
+  user-select: none;
+}
+.vault .document-row:hover { background: var(--vs-hover-bg); }
+.vault .document-row.active { background: var(--vs-active-bg); }
+.vault .document-row:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
+  outline-offset: -1px;
+}
+.vault .tag-panel .result-entry {
   text-align: left;
   cursor: pointer;
   font: inherit;
   font-size: 0.84rem;
   line-height: 1.35;
-  user-select: none;
   transition: background 100ms;
-}
-.vault .tag-panel .result-entry:hover { background: var(--vs-hover-bg); }
-.vault .tag-panel .result-entry.active {
-  background: var(--vs-active-bg);
-}
-.vault .tag-panel .result-entry:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
-  outline-offset: -1px;
 }
 .vault .tag-panel .result-chevron-spacer {
   width: 14px;
@@ -2027,12 +2028,12 @@ main.container {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
-  color: var(--vs-folder, #c8a96a);
+  color: var(--vs-text-2);
 }
 .vault .tag-panel .result-label {
   flex: 1;
   min-width: 0;
-  max-height: 31px;
+  max-height: 18px;
   overflow: hidden;
 }
 .vault .tag-panel .result-title {
@@ -2046,19 +2047,6 @@ main.container {
   white-space: nowrap;
   max-width: 100%;
 }
-.vault .tag-panel .result-path {
-  display: block;
-  min-width: 0;
-  font-family: var(--mono);
-  font-size: 0.66rem;
-  line-height: 1.1;
-  color: var(--vs-text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
 /* Tags navigation and selected-tag details are separate scroll regions. */
 .vault .tag-panel {
   min-height: 0;

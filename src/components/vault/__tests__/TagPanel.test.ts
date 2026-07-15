@@ -95,7 +95,7 @@ describe('Tags filter', () => {
     expect(wrapper.get('.result-entry').classes()).toContain('document-row')
     expect(wrapper.get('.result-entry').find('.result-chevron-spacer').exists()).toBe(true)
     expect(wrapper.get('.result-entry').find('.result-icon svg').exists()).toBe(true)
-    expect(wrapper.get('.result-entry').find('.result-label .result-path').exists()).toBe(true)
+    expect(wrapper.get('.result-entry').find('.result-path').exists()).toBe(false)
     expect(wrapper.get('.tag-name').find('.tag-hash').text()).toBe('#')
     expect(wrapper.get('.tag-name').find('.tag-label').exists()).toBe(true)
   })
