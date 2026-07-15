@@ -86,6 +86,16 @@ describe('Tags filter', () => {
     expect(tagOrder(selected)[0]).toBe('#reference')
   })
 
+  it('separates tag navigation from the selected-tag detail region', () => {
+    const wrapper = mountPanel({ selectedTag: 'reference' })
+    expect(wrapper.get('.tag-panel').classes()).toContain('has-results')
+    expect(wrapper.get('.tag-list-region').find('.tag-list').exists()).toBe(true)
+    expect(wrapper.get('.results').find('.results-header').exists()).toBe(true)
+    expect(wrapper.get('.results').find('.results-list').exists()).toBe(true)
+    expect(wrapper.get('.tag-name').find('.tag-hash').text()).toBe('#')
+    expect(wrapper.get('.tag-name').find('.tag-label').exists()).toBe(true)
+  })
+
   it('uses single-select ARIA and does not declare a multiselect list', () => {
     const wrapper = mountPanel({ selectedTag: 'reference' })
     expect(wrapper.get('.tag-list').attributes('aria-multiselectable')).toBeUndefined()

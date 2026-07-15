@@ -1727,7 +1727,7 @@ main.container {
   flex-direction: column;
   overflow: hidden;
 }
-.vault .tag-panel header {
+.vault .tag-panel > header {
   /* Mirrors .vault .file-tree header: a column container that holds
      one row (.tag-filter) at exactly 36px so it sits flush with the
      editor .tabs row above it. The border-bottom lives on .tag-filter
@@ -2025,6 +2025,86 @@ main.container {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
+}
+
+/* Tags navigation and selected-tag details are separate scroll regions. */
+.vault .tag-panel {
+  min-height: 0;
+}
+.vault .tag-panel .tag-list-region {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.vault .tag-panel.has-results .tag-list-region {
+  flex: 0 1 42%;
+  min-height: 100px;
+}
+.vault .tag-panel .tag-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Tags read as stable navigation rows: the hash is supporting chrome,
+   while selection changes weight and color without changing geometry. */
+.vault .tag-panel .tag-name {
+  gap: 5px;
+  font-family: inherit;
+}
+.vault .tag-panel .tag-hash {
+  color: var(--vs-text-3);
+  font-family: var(--mono);
+  font-weight: 400;
+  flex-shrink: 0;
+}
+.vault .tag-panel .tag-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vault .tag-panel .tag-entry.active .tag-name::before {
+  content: none;
+}
+.vault .tag-panel .tag-entry.active .tag-label {
+  font-weight: 600;
+}
+.vault .tag-panel .tag-entry.active .tag-count {
+  color: var(--vs-text-2);
+}
+
+/* Results are a detail region that owns the remaining height. The header
+   remains visible while the note list scrolls independently. */
+.vault .tag-panel .results {
+  flex: 1 1 58%;
+  max-height: none;
+}
+.vault .tag-panel .results-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  height: auto;
+  min-height: 52px;
+  padding: 8px 14px;
+}
+.vault .tag-panel .results-title {
+  gap: 4px;
+}
+.vault .tag-panel .results-count {
+  padding: 0;
+  color: var(--vs-text-3);
+  background: transparent;
+  border-radius: 0;
+  font-weight: 400;
+}
+.vault .tag-panel .result-entry {
+  padding-top: 9px;
+  padding-bottom: 9px;
 }
 
 /* Editor Area */

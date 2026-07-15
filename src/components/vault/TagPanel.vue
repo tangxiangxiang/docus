@@ -55,7 +55,7 @@ function onFilterKeydown(event: KeyboardEvent) {
 </script>
 
 <template>
-  <aside class="tag-panel" :aria-label="t('tags.panel_label')">
+  <aside class="tag-panel" :class="{ 'has-results': selectedTag }" :aria-label="t('tags.panel_label')">
     <header>
       <div class="tag-filter">
         <span class="tag-filter-icon" v-html="ICON_SEARCH" aria-hidden="true" />
@@ -65,20 +65,22 @@ function onFilterKeydown(event: KeyboardEvent) {
       </div>
     </header>
 
-    <ul v-if="visibleTags.length" class="tag-list" role="listbox" :aria-label="t('tags.list_label')">
-      <li v-for="[tag, count] in visibleTags" :key="tag" role="presentation">
-        <button class="tag-entry" role="option" :class="{ active: selectedTag === tag }" :aria-selected="selectedTag === tag" :title="selectedTag === tag ? t('tags.deselect', { tag }) : t('tags.browse', { tag })" @click="emit('select', tag)">
-          <span class="tag-name">#{{ tag }}</span>
-          <span class="tag-count">{{ count }}</span>
-        </button>
-      </li>
-    </ul>
-    <p v-else-if="filter" class="empty">{{ t('tags.no_match') }}</p>
-    <p v-else class="empty">{{ t('tags.empty') }}</p>
+    <div class="tag-list-region">
+      <ul v-if="visibleTags.length" class="tag-list" role="listbox" :aria-label="t('tags.list_label')">
+        <li v-for="[tag, count] in visibleTags" :key="tag" role="presentation">
+          <button class="tag-entry" role="option" :class="{ active: selectedTag === tag }" :aria-selected="selectedTag === tag" :title="selectedTag === tag ? t('tags.deselect', { tag }) : t('tags.browse', { tag })" @click="emit('select', tag)">
+            <span class="tag-name"><span class="tag-hash" aria-hidden="true">#</span><span class="tag-label">{{ tag }}</span></span>
+            <span class="tag-count">{{ count }}</span>
+          </button>
+        </li>
+      </ul>
+      <p v-else-if="filter" class="empty">{{ t('tags.no_match') }}</p>
+      <p v-else class="empty">{{ t('tags.empty') }}</p>
+    </div>
 
     <div v-if="selectedTag" class="results" aria-live="polite">
       <header class="results-header">
-        <span class="results-title">#{{ selectedTag }}</span>
+        <span class="results-title"><span class="tag-hash" aria-hidden="true">#</span>{{ selectedTag }}</span>
         <span class="results-count">{{ t('tags.note_count', { count: filteredPosts.length }) }}</span>
       </header>
       <ul v-if="filteredPosts.length" class="results-list">
