@@ -25,6 +25,7 @@ describe('VaultView editor tab wiring', () => {
 
   it('keeps Monaco mounted while a read-only history snapshot is visible', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const shortcutHandler = source.match(/function onVaultKeydown[\s\S]*?\n}/)?.[0]
 
     expect(source).toContain('v-show="!activeHistorySnapshot"')
     expect(source).toContain('<HistorySnapshotPane')
@@ -32,6 +33,9 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('const historySnapshots = useHistorySnapshots()')
     expect(source).toContain("meta && event.key.toLowerCase() === 's'")
     expect(source).toContain('historySnapshots.closeSnapshot(snapshot.tabId)')
+    expect(shortcutHandler).toBeDefined()
+    expect(shortcutHandler?.match(/onEditorKeydown\(event\)/g)).toHaveLength(1)
+    expect(shortcutHandler).toContain('if (!snapshot)')
     expect(source).not.toContain('snapshots.value.push(activeTab')
   })
 })

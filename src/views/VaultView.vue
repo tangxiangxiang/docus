@@ -204,7 +204,9 @@ function onVaultKeydown(event: KeyboardEvent): void {
     event.preventDefault()
     return
   }
-  onEditorKeydown(event)
+  // A history snapshot keeps Monaco mounted only to preserve its model,
+  // undo stack, and view state. Never forward snapshot key events to that
+  // hidden editable document; unhandled keys belong to the read-only viewer.
 }
 
 function openHistoryRevision(selection: HistoryRevisionSelection): void {
