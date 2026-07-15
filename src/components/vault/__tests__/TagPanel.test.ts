@@ -89,6 +89,14 @@ describe('Tags filter', () => {
     expect(card?.textContent).toContain('修改于')
     expect(card?.textContent).toContain('#markdown #reference')
 
+    const zhModified = card?.querySelector('span')?.textContent ?? ''
+    useI18n().setLocale('en')
+    await wrapper.vm.$nextTick()
+    const enModified = card?.querySelector('span')?.textContent ?? ''
+    expect(enModified).toContain('Modified')
+    expect(enModified).not.toContain('修改于')
+    expect(enModified.replace(/^Modified /, '')).not.toBe(zhModified.replace(/^修改于 /, ''))
+
     await wrapper.get('.result-entry').trigger('mouseleave')
     expect(document.body.querySelector('.document-hover-card')).toBeNull()
     wrapper.unmount()

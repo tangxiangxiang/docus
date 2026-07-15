@@ -11,10 +11,13 @@ const props = defineProps<{
   tags?: string[]
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const modifiedLabel = computed(() => props.mtime
-  ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(props.mtime))
+  ? new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(props.mtime))
   : '')
 </script>
 
