@@ -133,7 +133,7 @@ const STRINGS: Strings = {
   'diff.old': { zh: '旧版本', en: 'Old' },
   'diff.new': { zh: '新版本', en: 'New' },
   'file_tree.label': { zh: '文件资源管理器', en: 'File explorer' },
-  'file_tree.search': { zh: '搜索文件', en: 'Search files' },
+  'file_tree.search': { zh: '筛选文件…', en: 'Filter files...' },
   'file_tree.clear_search': { zh: '清空搜索', en: 'Clear search' },
   'file_tree.remove_filter': { zh: '移除过滤 {tag}', en: 'Remove filter {tag}' },
   'file_tree.remove_typed_tag': { zh: '移除输入标签 {tag}', en: 'Remove typed tag {tag}' },

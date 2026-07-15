@@ -6,7 +6,7 @@ import { ICON_SEARCH } from './icons'
 
 const props = defineProps<{
   posts: PostSummary[]
-  activeTags: string[]
+  selectedTag: string | null
   path: string | null
 }>()
 
@@ -32,8 +32,8 @@ const tagMap = computed(() => {
     // Selected tags float to the top so the user can find what they
     // picked without scrolling. Within each group, sort by count desc
     // so the most common tags come first.
-    const aSel = props.activeTags.includes(a[0]) ? 1 : 0
-    const bSel = props.activeTags.includes(b[0]) ? 1 : 0
+    const aSel = props.selectedTag === a[0] ? 1 : 0
+    const bSel = props.selectedTag === b[0] ? 1 : 0
     if (aSel !== bSel) return bSel - aSel
     if (a[1] !== b[1]) return b[1] - a[1]
     return a[0].localeCompare(b[0])
@@ -47,12 +47,9 @@ const visibleTags = computed(() => {
   return tagMap.value.filter(([t]) => t.toLowerCase().includes(q))
 })
 
-const activeSet = computed(() => new Set(props.activeTags))
-
 const filtered = computed(() => {
-  if (props.activeTags.length === 0) return []
-  const set = activeSet.value
-  return props.posts.filter((p) => p.tags.some((t) => set.has(t)))
+  if (!props.selectedTag) return []
+  return props.posts.filter((p) => p.tags.includes(props.selectedTag!))
 })
 
 /** Path display: drop the leading "inbox/" / "literature/" / "archive/"
@@ -84,8 +81,8 @@ function onFilterKeydown(e: KeyboardEvent) {
           v-model="filter"
           class="tag-filter-input"
           type="text"
-          placeholder="过滤 tag…"
-          aria-label="过滤 tag"
+          placeholder="Filter tags..."
+          aria-label="Filter tags"
           @keydown="onFilterKeydown"
         />
         <button
@@ -107,9 +104,9 @@ function onFilterKeydown(e: KeyboardEvent) {
       <li v-for="[tag, count] in visibleTags" :key="tag">
         <button
           class="tag-entry"
-          :class="{ active: activeSet.has(tag) }"
-          :aria-pressed="activeSet.has(tag)"
-          :title="activeSet.has(tag) ? `取消 #${tag}` : `筛选 #${tag}`"
+          :class="{ active: selectedTag === tag }"
+          :aria-pressed="selectedTag === tag"
+          :title="selectedTag === tag ? `取消 #${tag}` : `浏览 #${tag}`"
           @click="emit('select', tag)"
         >
           <span class="tag-name">#{{ tag }}</span>
@@ -120,14 +117,12 @@ function onFilterKeydown(e: KeyboardEvent) {
     <p v-else-if="filter" class="empty">没有匹配的 tag。</p>
     <p v-else class="empty">No tags yet.</p>
 
-    <div v-if="activeTags.length" class="results" aria-live="polite">
+    <div v-if="selectedTag" class="results" aria-live="polite">
       <header class="results-header">
         <span class="results-title">
-          <template v-for="(t, i) in activeTags" :key="t">
-            <span v-if="i > 0" class="results-sep" aria-hidden="true">∪</span>#{{ t }}
-          </template>
+          #{{ selectedTag }}
         </span>
-        <span class="results-count">{{ filtered.length }}</span>
+        <span class="results-count">{{ filtered.length }} Notes</span>
       </header>
       <ul v-if="filtered.length" class="results-list">
         <li v-for="p in filtered" :key="p.path">

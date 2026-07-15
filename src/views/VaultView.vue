@@ -7,7 +7,6 @@ import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
-import { useTagFilter } from '../composables/vault/useTagFilter'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
 import { createPost, type DocumentMetadata } from '../lib/api'
@@ -170,7 +169,7 @@ async function showExternalDiff() {
 useScopeFilter()
 
 /* ---------- Tag filter ---------- */
-const { activeTagList, toggleTag, removeTag } = useTagFilter({ activePanel })
+const selectedTag = ref<string | null>(null)
 
 /* ---------- Bi-directional links ---------- */
 // Mount the file-change-bus subscription so the link index stays
@@ -247,19 +246,17 @@ watch(isReadMode, async (reading) => {
       v-if="activePanel === 'files'"
       :tree="tree"
       :posts="posts"
-      :active-tags="activeTagList"
       :current-path="activePath"
       @select="openPost"
       @refresh="refresh"
-      @remove-tag="removeTag"
       @open-properties="openDocumentProperties"
     />
     <TagPanel
       v-else-if="activePanel === 'tags'"
       :posts="posts"
-      :active-tags="activeTagList"
+      :selected-tag="selectedTag"
       :path="activePath"
-      @select="toggleTag"
+      @select="selectedTag = selectedTag === $event ? null : $event"
       @open="openPost"
     />
     <!-- History panel: side-panel host for the commit composer +

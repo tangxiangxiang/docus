@@ -16,11 +16,11 @@ const POSTS: PostSummary[] = [
   { path: 'inbox/notes/draft',         title: 'Draft',               created: '', updated: '', tags: ['reference', 'draft'],      size: 100, mtime: 0 },
 ]
 
-function mountPanel(props: { activeTags?: string[]; path?: string | null; posts?: PostSummary[] } = {}) {
+function mountPanel(props: { selectedTag?: string | null; path?: string | null; posts?: PostSummary[] } = {}) {
   return mount(TagPanel, {
     props: {
       posts: props.posts ?? POSTS,
-      activeTags: props.activeTags ?? [],
+      selectedTag: props.selectedTag ?? null,
       path: props.path ?? null,
     },
   })
@@ -47,7 +47,7 @@ describe('TagPanel', () => {
   })
 
   it('marks active chips with .active and aria-pressed', () => {
-    const w = mountPanel({ activeTags: ['markdown', 'typescript'] })
+    const w = mountPanel({ selectedTag: 'markdown' })
     const items = w.findAll('.tag-entry')
     const markdown = items.find((b) => b.text().includes('markdown'))!
     const reference = items.find((b) => b.text().includes('reference'))!
@@ -58,7 +58,7 @@ describe('TagPanel', () => {
   })
 
   it('floats active tags to the top of the list', () => {
-    const w = mountPanel({ activeTags: ['math'] })
+    const w = mountPanel({ selectedTag: 'math' })
     const items = w.findAll('.tag-entry')
     // math has count 1; reference has count 3. With the active float,
     // math should appear before reference.
@@ -102,36 +102,35 @@ describe('TagPanel', () => {
     expect(w.find('.results').exists()).toBe(false)
   })
 
-  it('renders the OR-joined active tag header in results', () => {
-    const w = mountPanel({ activeTags: ['reference', 'typescript'] })
+  it('renders the selected tag header in results', () => {
+    const w = mountPanel({ selectedTag: 'reference' })
     const header = w.find('.results-title')
     expect(header.exists()).toBe(true)
     expect(header.text()).toContain('#reference')
-    expect(header.text()).toContain('#typescript')
-    expect(header.text()).toContain('∪')
+    expect(header.text()).not.toContain('#typescript')
   })
 
-  it('lists posts that match ANY of the active tags (OR semantics)', () => {
-    const w = mountPanel({ activeTags: ['reference', 'math'] })
+  it('lists posts containing the selected tag', () => {
+    const w = mountPanel({ selectedTag: 'reference' })
     // reference: 3 posts (markdown-syntax, typescript-utility-types, draft)
     // math:      1 post  (derivation)
     // OR:        4 unique posts
     const items = w.findAll('.result-entry')
-    expect(items.length).toBe(4)
+    expect(items.length).toBe(3)
     const titles = items.map((b) => b.text())
     expect(titles.some((t) => t.includes('Markdown syntax'))).toBe(true)
-    expect(titles.some((t) => t.includes('Derivation'))).toBe(true)
+    expect(titles.some((t) => t.includes('Derivation'))).toBe(false)
   })
 
   it('emits open with the post path when a result is clicked', async () => {
-    const w = mountPanel({ activeTags: ['reference'] })
+    const w = mountPanel({ selectedTag: 'reference' })
     const first = w.find('.result-entry')
     await first.trigger('click')
     expect(w.emitted('open')?.[0]).toEqual([POSTS[0].path])
   })
 
   it('trims the leading scope (inbox/literature/archive) from the displayed path', () => {
-    const w = mountPanel({ activeTags: ['reference'] })
+    const w = mountPanel({ selectedTag: 'reference' })
     const paths = w.findAll('.result-path').map((s) => s.text())
     // 'inbox/markdown-syntax' -> 'markdown-syntax'
     expect(paths.some((p) => p === 'markdown-syntax')).toBe(true)

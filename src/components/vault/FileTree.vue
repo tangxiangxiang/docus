@@ -85,11 +85,6 @@ const topLevel = computed<TreeNode[]>(() => {
   // Tag filter is OR: a file passes if it has at least one of the active
   // tags. We rebuild the subtree so non-matching files are hidden but
   // matching parents stay visible (so the user can navigate to the file).
-  if (tagFilterSet.value.size) {
-    children = children
-      .map((c) => filterByTags(c, tagFilterSet.value))
-      .filter((n): n is TreeNode => n !== null)
-  }
   // Free-text query is AND-composed with the tag filter — both must pass.
   // filterByQuery is a no-op when the query is empty, so the cost on the
   // unfiltered path is one tree walk that returns nodes unchanged.
@@ -103,11 +98,6 @@ const topLevel = computed<TreeNode[]>(() => {
 // Path -> tags lookup so the tree filter can run in O(n) without scanning
 // props.posts for every file node. Recomputed when posts or the active
 // tag set changes.
-const postsByPath = computed<Map<string, Set<string>>>(() => {
-  const m = new Map<string, Set<string>>()
-  for (const p of props.posts) m.set(p.path, new Set(p.tags))
-  return m
-})
 const postMetadataByPath = computed<Map<string, PostSummary>>(() =>
   new Map(props.posts.map((post) => [post.path, post])),
 )
@@ -126,22 +116,10 @@ const duplicateTitles = computed<Set<string>>(() => {
   props.tree.forEach(walk)
   return new Set([...counts].filter(([, count]) => count > 1).map(([title]) => title))
 })
-const tagFilterSet = computed<Set<string>>(() => new Set(props.activeTags))
 
 // Returns the node unchanged if it has no files (folder) but contains any
 // matching descendant, the file itself if it matches, or null when the
 // whole subtree is irrelevant under the active tag filter.
-function filterByTags(node: TreeNode, tags: Set<string>): TreeNode | null {
-  if (node.kind === 'file') {
-    const t = postsByPath.value.get(node.path)
-    return t && [...tags].some((tag) => t.has(tag)) ? node : null
-  }
-  const kids = node.children
-    .map((c) => filterByTags(c, tags))
-    .filter((n): n is TreeNode => n !== null)
-  if (kids.length === 0) return null
-  return { ...node, children: kids }
-}
 
 // Free-text search query, split into typed tag chips + content text.
 // The two pieces render differently in the header:
@@ -160,51 +138,27 @@ function filterByTags(node: TreeNode, tags: Set<string>): TreeNode | null {
 // still chips — matches the user's mental model of "I typed a tag,
 // that should be a chip now".
 const contentText = ref('')
-const tagTokens = ref<string[]>([])
 
-const effectiveQuery = computed(() => {
-  const parts: string[] = []
-  for (const t of tagTokens.value) parts.push('#' + t)
-  const ct = contentText.value.trim()
-  if (ct) parts.push(ct)
-  return parts.join(' ')
-})
+const effectiveQuery = computed(() => contentText.value.trim())
 
 // Summary join. Title already lives on TreeNode (file variant); summary
 // does not — it's only on PostSummary. We index by path so the filter
 // below can look it up in O(1) per file instead of scanning props.posts
 // at every node.
-const summaryByPath = computed<Map<string, string>>(() => {
-  const m = new Map<string, string>()
-  for (const p of props.posts) m.set(p.path, p.summary ?? '')
-  return m
-})
 
 function filterByQuery(node: TreeNode, q: string): TreeNode | null {
-  const parsed = parseQuery(q)
-  if (parsed.tagTokens.length === 0 && parsed.contentTokens.length === 0) return node
+  const tokens = q.toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  if (tokens.length === 0) return node
   if (node.kind === 'file') {
-    const summary = summaryByPath.value.get(node.path) ?? ''
-    const tags = postsByPath.value.get(node.path) ?? new Set<string>()
-    // AND across all tokens; OR within a tag token's matches (a file
-    // passes if any of its tags contains the needle as a substring).
-    const tagOk = parsed.tagTokens.every((needle) =>
-      [...tags].some((tag) => tag.toLowerCase().includes(needle)),
-    )
-    if (!tagOk) return null
-    const contentOk = parsed.contentTokens.every((needle) => {
-      const hay = `${node.name}\n${node.title}\n${summary}`.toLowerCase()
-      return hay.includes(needle)
-    })
-    if (!contentOk) return null
-    return node
+    const hay = `${node.path}\n${node.title}`.toLocaleLowerCase()
+    return tokens.every((token) => hay.includes(token)) ? node : null
   }
   // Folder: a folder can satisfy content tokens via its own name
   // (typing "archive" → entire archive subtree kept), but tag tokens
   // can only match file-level data, so they always recurse. Keeping
   // any content token matching the folder's own name is enough; the
   // AND with tag tokens happens during the descendant walk.
-  if (parsed.contentTokens.some((needle) => node.name.toLowerCase().includes(needle))) {
+  if (tokens.every((needle) => node.path.toLocaleLowerCase().includes(needle))) {
     return node
   }
   const kids = node.children
@@ -222,22 +176,10 @@ function filterByQuery(node: TreeNode, q: string): TreeNode | null {
 // the needle as a substring passes (consistent with TagPanel's
 // tag-list filter, which also uses substring).
 interface ParsedQuery {
-  tagTokens: string[]
   contentTokens: string[]
 }
 function parseQuery(q: string): ParsedQuery {
-  const tokens = q.trim().split(/\s+/).filter(Boolean)
-  const tagTokens: string[] = []
-  const contentTokens: string[] = []
-  for (const t of tokens) {
-    if (t.startsWith('#')) {
-      const tag = t.slice(1).toLowerCase()
-      if (tag) tagTokens.push(tag)
-    } else {
-      contentTokens.push(t.toLowerCase())
-    }
-  }
-  return { tagTokens, contentTokens }
+  return { contentTokens: q.trim().split(/\s+/).filter(Boolean).map((token) => token.toLowerCase()) }
 }
 
 // Per-file match annotation, derived by re-walking the already-filtered
@@ -252,43 +194,34 @@ function parseQuery(q: string): ParsedQuery {
 // entirely.
 export interface MatchInfo {
   name?: boolean
+  path?: boolean
   title?: boolean
-  summary?: boolean
-  tag?: boolean
 }
 const matchedFields = computed<Map<string, MatchInfo>>(() => {
   const parsed = parseQuery(effectiveQuery.value)
-  if (parsed.tagTokens.length === 0 && parsed.contentTokens.length === 0) return new Map()
+  if (parsed.contentTokens.length === 0) return new Map()
   const m = new Map<string, MatchInfo>()
   const walk = (node: TreeNode) => {
     if (node.kind !== 'file') {
       for (const c of node.children) walk(c)
       return
     }
-    const summary = summaryByPath.value.get(node.path) ?? ''
-    const tags = postsByPath.value.get(node.path) ?? new Set<string>()
     const info: MatchInfo = {}
     // A file only reaches this walk if it already passed filterByQuery
     // — i.e. all tag needles hit at least one tag. So `info.tag` is a
     // simple boolean of "the query had any tag tokens AND this file
     // satisfied all of them" — we don't need to re-check per-tag.
-    if (parsed.tagTokens.length > 0) {
-      const tagOk = parsed.tagTokens.every((needle) =>
-        [...tags].some((tag) => tag.toLowerCase().includes(needle)),
-      )
-      if (tagOk) info.tag = true
-    }
     if (parsed.contentTokens.length > 0) {
       const nameLc = node.name.toLowerCase()
+      const pathLc = node.path.toLowerCase()
       const titleLc = node.title.toLowerCase()
-      const summaryLc = summary.toLowerCase()
       for (const needle of parsed.contentTokens) {
         if (nameLc.includes(needle)) info.name = true
+        if (pathLc.includes(needle)) info.path = true
         if (titleLc.includes(needle)) info.title = true
-        if (summaryLc.includes(needle)) info.summary = true
       }
     }
-    if (info.tag || info.name || info.title || info.summary) m.set(node.path, info)
+    if (info.path || info.name || info.title) m.set(node.path, info)
   }
   for (const n of topLevel.value) walk(n)
   return m
@@ -402,27 +335,7 @@ watch([visibleItems, () => props.currentPath], ([items, currentPath]) => {
 // repositioning.
 function onContentInput(e: Event) {
   const input = e.target as HTMLInputElement
-  const value = input.value
-  const tokenRe = /(?:^|\s)(#[\w-]+)(?=\s)/g
-  const extracted: string[] = []
-  let m: RegExpExecArray | null
-  while ((m = tokenRe.exec(value)) !== null) {
-    const tag = m[1].slice(1).toLowerCase()
-    if (tag && !tagTokens.value.includes(tag) && !extracted.includes(tag)) {
-      extracted.push(tag)
-    }
-  }
-  if (extracted.length > 0) {
-    tagTokens.value = [...tagTokens.value, ...extracted]
-  }
-  const newValue = value.replace(tokenRe, '').replace(/^\s+/, '')
-  contentText.value = newValue
-  input.value = newValue
-  input.setSelectionRange(newValue.length, newValue.length)
-}
-
-function removeTypedToken(tag: string) {
-  tagTokens.value = tagTokens.value.filter((t) => t !== tag)
+  contentText.value = input.value
 }
 
 function clearContentText() {
@@ -435,10 +348,9 @@ function onQueryKeydown(e: KeyboardEvent) {
   // the vault's global Esc handler (which closes panels / tabs)
   // doesn't fire on the same keypress. Mirrors the same escape on
   // TagPanel's tag-filter input.
-  if (e.key === 'Escape' && (contentText.value || tagTokens.value.length)) {
+  if (e.key === 'Escape' && contentText.value) {
     e.stopPropagation()
     contentText.value = ''
-    tagTokens.value = []
   }
 }
 
@@ -743,32 +655,6 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
            chips and their plain search text in the input. -->
       <div class="search">
         <span class="search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
-        <span
-          v-for="tag in activeTags"
-          :key="`active-${tag}`"
-          class="tag-filter-chip"
-        >
-          <span class="tag-filter-chip-name">#{{ tag }}</span>
-          <button
-            class="tag-filter-chip-x"
-            :aria-label="t('file_tree.remove_filter', { tag })"
-            :title="t('file_tree.remove_filter', { tag })"
-            @click="emit('remove-tag', tag)"
-          >×</button>
-        </span>
-        <span
-          v-for="tag in tagTokens"
-          :key="`typed-${tag}`"
-          class="tag-filter-chip"
-        >
-          <span class="tag-filter-chip-name">#{{ tag }}</span>
-          <button
-            class="tag-filter-chip-x"
-            :aria-label="t('file_tree.remove_typed_tag', { tag })"
-            :title="t('file_tree.remove_typed_tag', { tag })"
-            @click="removeTypedToken(tag)"
-          >×</button>
-        </span>
         <input
           ref="searchInputRef"
           v-model="contentText"
@@ -814,9 +700,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @focus="setFocused"
       />
     </ul>
-    <p v-else-if="effectiveQuery && activeTags.length" class="empty">{{ t('file_tree.no_combined_match', { query: effectiveQuery }) }}</p>
     <p v-else-if="effectiveQuery" class="empty">{{ t('file_tree.no_query_match', { query: effectiveQuery }) }}</p>
-    <p v-else-if="activeTags.length" class="empty">{{ t('file_tree.no_tag_match') }}</p>
     <p v-else class="empty">{{ t('file_tree.empty') }}</p>
   </aside>
 </template>
