@@ -28,5 +28,5 @@ export interface WorkspaceTab {
   label: string
   title: string
   dirty: boolean
-  kind: 'document' | 'history'
+  kind: 'document' | 'history' | 'diff'
 }

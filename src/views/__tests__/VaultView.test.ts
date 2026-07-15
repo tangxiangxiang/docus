@@ -23,19 +23,36 @@ describe('VaultView editor tab wiring', () => {
     expect(source).not.toContain('activePanel === \'history\'" class="content content-diff"')
   })
 
-  it('keeps Monaco mounted while a read-only history snapshot is visible', () => {
+  it('keeps Monaco mounted and isolates shortcuts for read-only history tabs', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const shortcutHandler = source.match(/function onVaultKeydown[\s\S]*?\n}/)?.[0]
 
-    expect(source).toContain('v-show="!activeHistorySnapshot"')
+    expect(source).toContain('v-show="!activeHistorySnapshot && !activeHistoryComparison"')
     expect(source).toContain('<HistorySnapshotPane')
+    expect(source).toContain('<HistoryComparisonPane')
     expect(source).toContain(':snapshot="activeHistorySnapshot"')
     expect(source).toContain('const historySnapshots = useHistorySnapshots()')
+    expect(source).toContain('const historyComparisons = useHistoryComparisons({')
+    expect(source).toContain('getCurrentDocument(path)')
+    expect(source).toContain('return (await getPost(path)).raw')
     expect(source).toContain("meta && event.key.toLowerCase() === 's'")
-    expect(source).toContain('historySnapshots.closeSnapshot(snapshot.tabId)')
+    expect(source).toContain('historyComparisons.closeComparison(readOnlyTab.tabId)')
     expect(shortcutHandler).toBeDefined()
     expect(shortcutHandler?.match(/onEditorKeydown\(event\)/g)).toHaveLength(1)
-    expect(shortcutHandler).toContain('if (!snapshot)')
+    expect(shortcutHandler).toContain('if (!readOnlyTab)')
     expect(source).not.toContain('snapshots.value.push(activeTab')
+  })
+
+  it('opens one dedicated diff workspace tab from a ready snapshot', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    expect(source).toContain("id: comparison.tabId")
+    expect(source).toContain("kind: 'diff' as const")
+    expect(source).toContain('@open-diff="openHistoryComparison"')
+    expect(source).toContain('void historyComparisons.openComparison(snapshot)')
+    expect(source).toContain('historySnapshots.openCachedRevision({')
+    expect(source).toContain(':history-read-only="Boolean(activeHistorySnapshot || activeHistoryComparison)"')
+    expect(source).toContain('...historyComparisons.comparisons.value.map')
+    expect(source).not.toContain('restoreComparison')
   })
 })

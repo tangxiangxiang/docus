@@ -1113,11 +1113,94 @@ main.container {
 }
 .tab.history .tab-title { color: var(--vs-text-2); }
 .tab.history.active .tab-title { color: var(--vs-text-1); }
+.tab.diff .tab-title { color: var(--vs-text-2); }
+.tab.diff.active .tab-title { color: var(--vs-text-1); }
+
+.history-comparison-pane {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--vs-bg-1);
+}
+.history-comparison-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  box-sizing: border-box;
+  padding: 7px 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 68%, transparent);
+}
+.history-comparison-heading {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.history-comparison-heading strong {
+  color: var(--vs-text-1);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.history-comparison-heading span {
+  overflow: hidden;
+  color: var(--vs-text-3);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-comparison-header .history-readonly-badge { margin-left: auto; }
+.history-comparison-header .history-snapshot-toolbar { margin-left: 0; }
+.history-comparison-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  box-sizing: border-box;
+  padding: 5px 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 48%, transparent);
+  color: var(--vs-text-3);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+.history-comparison-current {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.history-comparison-current.is-dirty { color: var(--vs-accent); }
+.history-comparison-pane > .diff-table {
+  width: 100%;
+  min-height: 0;
+}
+.history-comparison-error {
+  gap: 10px;
+}
+.history-comparison-error button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--vs-border) 82%, transparent);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--vs-text-2);
+  font: inherit;
+  cursor: pointer;
+}
+.history-comparison-error button:hover {
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
 
 @media (max-width: 720px) {
   .history-snapshot-banner,
-  .history-snapshot-meta { padding-left: 12px; padding-right: 12px; }
+  .history-snapshot-meta,
+  .history-comparison-header,
+  .history-comparison-meta { padding-left: 12px; padding-right: 12px; }
   .history-snapshot-summary { display: none; }
+  .history-comparison-current { display: none; }
 }
 
 /* === DiffView === */

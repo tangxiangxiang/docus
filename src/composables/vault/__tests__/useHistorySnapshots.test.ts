@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { watch } from 'vue'
 import { useHistorySnapshots, type HistoryRevisionSelection } from '../useHistorySnapshots'
 import * as api from '../../../lib/history-api'
 
@@ -28,6 +29,12 @@ describe('useHistorySnapshots', () => {
       content: '# Historical Redis\n\nExact snapshot.',
     })
     const history = useHistorySnapshots()
+    const statuses: Array<string | undefined> = []
+    const stop = watch(
+      () => history.activeSnapshot.value?.status,
+      (status) => statuses.push(status),
+      { immediate: true },
+    )
 
     const request = history.openRevision(selection())
     expect(history.activeSnapshot.value?.status).toBe('loading')
@@ -37,6 +44,8 @@ describe('useHistorySnapshots', () => {
     expect(api.getFileAt).toHaveBeenCalledWith('inbox/redis.md', 'revision-a')
     expect(history.activeSnapshot.value?.rawMarkdown).toBe('# Historical Redis\n\nExact snapshot.')
     expect(history.activeSnapshot.value?.status).toBe('ready')
+    expect(statuses).toContain('ready')
+    stop()
 
     await history.openRevision(selection())
     expect(api.getFileAt).toHaveBeenCalledTimes(1)
@@ -66,5 +75,17 @@ describe('useHistorySnapshots', () => {
     expect(history.snapshots.value).toHaveLength(1)
     expect(history.activeSnapshot.value?.status).toBe('error')
     expect(history.activeSnapshot.value?.error).toBeNull()
+  })
+
+  it('reopens cached historical content without another Git request', async () => {
+    const history = useHistorySnapshots()
+    history.openCachedRevision(selection(), '# Cached historical content')
+
+    expect(history.activeSnapshot.value).toMatchObject({
+      status: 'ready',
+      rawMarkdown: '# Cached historical content',
+      revisionId: 'revision-a',
+    })
+    expect(api.getFileAt).not.toHaveBeenCalled()
   })
 })

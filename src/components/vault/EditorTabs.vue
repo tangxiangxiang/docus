@@ -84,7 +84,7 @@ function actionCloseMany(paths: string[]) {
       :aria-selected="t.id === activePath"
       :title="`${t.title}\n中键 / 右键 关闭\n右键菜单 · 多关`"
       class="tab"
-      :class="{ active: t.id === activePath, history: t.kind === 'history' }"
+      :class="{ active: t.id === activePath, history: t.kind === 'history', diff: t.kind === 'diff' }"
       @click="emit('select', t.id)"
       @auxclick.middle="emit('close', t.id)"
       @contextmenu="openMenu($event, t.id)"

@@ -192,4 +192,19 @@ describe('EditorTabs (existing behavior)', () => {
     expect(w.get('.tab-title').text()).toBe('Redis Notes (History)')
     expect(w.get('.tab-dot').classes()).not.toContain('dirty')
   })
+
+  it('renders a dedicated comparison presentation tab', () => {
+    const diffTab = makeTab('diff:inbox/redis', {
+      label: 'Redis Notes (Diff)',
+      title: 'Redis Notes',
+      kind: 'diff',
+    })
+    const wrapper = mount(EditorTabs, {
+      props: { tabs: [diffTab], activePath: diffTab.id },
+    })
+
+    expect(wrapper.get('.tab').classes()).toContain('diff')
+    expect(wrapper.get('.tab-title').text()).toBe('Redis Notes (Diff)')
+    expect(wrapper.get('.tab-dot').classes()).not.toContain('dirty')
+  })
 })

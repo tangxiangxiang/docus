@@ -51,14 +51,16 @@ export function useHistorySnapshots() {
     }
 
     if (!snapshot) {
-      snapshot = {
+      snapshots.value.push({
         ...selection,
         tabId,
         rawMarkdown: '',
         status: 'loading',
         error: null,
-      }
-      snapshots.value.push(snapshot)
+      })
+      // Read the item back from the ref array so subsequent async writes
+      // target Vue's reactive proxy and update the mounted viewer.
+      snapshot = snapshots.value.find((item) => item.tabId === tabId)!
     } else {
       Object.assign(snapshot, selection, {
         rawMarkdown: '',
@@ -81,6 +83,33 @@ export function useHistorySnapshots() {
       snapshot.status = 'error'
       snapshot.error = error instanceof Error && error.message ? error.message : null
     }
+    return snapshot
+  }
+
+  function openCachedRevision(
+    selection: HistoryRevisionSelection,
+    rawMarkdown: string,
+  ): HistorySnapshot {
+    const tabId = snapshotTabId(selection.documentPath)
+    nextRequestId(tabId)
+    let snapshot = snapshots.value.find((item) => item.tabId === tabId)
+    if (!snapshot) {
+      snapshots.value.push({
+        ...selection,
+        tabId,
+        rawMarkdown,
+        status: 'ready',
+        error: null,
+      })
+      snapshot = snapshots.value.find((item) => item.tabId === tabId)!
+    } else {
+      Object.assign(snapshot, selection, {
+        rawMarkdown,
+        status: 'ready' as const,
+        error: null,
+      })
+    }
+    activeSnapshotId.value = tabId
     return snapshot
   }
 
@@ -114,6 +143,7 @@ export function useHistorySnapshots() {
     activeSnapshotId,
     activeSnapshot,
     openRevision,
+    openCachedRevision,
     selectSnapshot,
     viewCurrent,
     closeSnapshot,

@@ -12,6 +12,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'view-current': [path: string]
+  'open-diff': [snapshot: HistorySnapshot]
   close: [tabId: string]
 }>()
 
@@ -51,8 +52,7 @@ const errorLabel = computed(() => props.snapshot.error || t('history.snapshot_lo
       <div class="history-snapshot-toolbar" role="toolbar" :aria-label="t('history.snapshot_toolbar')">
         <button
           type="button"
-          disabled
-          :title="t('history.diff_not_available')"
+          @click="emit('open-diff', snapshot)"
         >
           {{ t('history.open_diff') }}
         </button>
