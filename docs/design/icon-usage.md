@@ -36,8 +36,8 @@ menu, navbar, and view-mode menu.
 | `ICON_TAG` | [ActivityBar.vue](../../src/components/vault/ActivityBar.vue), [TreeRow.vue](../../src/components/vault/TreeRow.vue) | Tag silhouette with hole. ActivityBar reuses this for the Tags panel button. |
 | `ICON_HISTORY` | [AiPanel.vue](../../src/components/vault/AiPanel.vue) | Lucide-style history glyph (counter-clockwise circle + clock hands). The AI panel's history-list trigger. Distinct from ICON_AB_GIT_HISTORY (commit graph). |
 | `ICON_NEW_CHAT` | [AiPanel.vue](../../src/components/vault/AiPanel.vue) | Speech bubble with a plus inside. The "start a new chat" action. Distinct from ICON_AI_CONVERSATION (two overlapping bubbles). |
-| `ICON_EYE` | [ViewModeMenu.vue](../../src/components/ViewModeMenu.vue) | Open eye. The "edit + preview" split mode trigger. |
-| `ICON_READ` | [ViewModeMenu.vue](../../src/components/ViewModeMenu.vue) | Open book with curved page edges. The "read mode" trigger. |
+| `ICON_EYE` | [NavBar.vue](../../src/components/NavBar.vue) | Open eye. The NavBar view-toggle icon for "switch to read mode" — universally read as "observe / view". |
+| `ICON_READ` | (no current consumer) | Open book with curved page edges. Retained in `icons.ts` for documentation and possible future AI-panel reuse; not currently rendered anywhere. |
 | `ICON_PANEL_RIGHT_OPEN`, `ICON_PANEL_RIGHT_CLOSE` | [NavBar.vue](../../src/components/NavBar.vue) | Right-panel toggle, two states. The "show/hide AI panel" button. |
 | `ICON_SCOPE_INBOX`, `ICON_SCOPE_LITERATURE`, `ICON_SCOPE_ARCHIVE` | [NavBar.vue](../../src/components/NavBar.vue) | Vault-root chips. NavBar renders one per scope via the SCOPE_ICONS map. |
 

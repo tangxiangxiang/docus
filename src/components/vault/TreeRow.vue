@@ -150,7 +150,7 @@ const matchTooltip = computed<string | undefined>(() => {
   // matches the field the user thinks in terms of; "node.name" is the
   // internal TreeNode property name.
   if (m.name) fields.push(t('file_tree.field_filename'))
-  if (m.path) fields.push('path')
+  if (m.path) fields.push(t('file_tree.field_path'))
   if (m.title) fields.push(t('file_tree.field_title'))
   if (!fields.length) return undefined
   return t('file_tree.matched_in', { fields: fields.join(', ') })

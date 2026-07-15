@@ -20,16 +20,13 @@ import { useFileTreePreferences } from '../../composables/vault/useFileTreePrefe
 const props = withDefaults(defineProps<{
   tree: TreeNode[]
   posts?: PostSummary[]
-  activeTags?: string[]
   currentPath: string | null
 }>(), {
   posts: () => [],
-  activeTags: () => [],
 })
 const emit = defineEmits<{
   select: [path: string]
   refresh: []
-  'remove-tag': [tag: string]
   // archive-note is self-contained inside FileTree: handler calls
   // patchPost + emit('refresh') + (optionally) emit('select'). VaultView
   // doesn't need to know. Distinct from `move` because move-into-archive
@@ -82,22 +79,16 @@ const topLevel = computed<TreeNode[]>(() => {
   if (activeScope.value) {
     children = children.filter((c) => c.path === activeScope.value)
   }
-  // Tag filter is OR: a file passes if it has at least one of the active
-  // tags. We rebuild the subtree so non-matching files are hidden but
-  // matching parents stay visible (so the user can navigate to the file).
-  // Free-text query is AND-composed with the tag filter — both must pass.
-  // filterByQuery is a no-op when the query is empty, so the cost on the
-  // unfiltered path is one tree walk that returns nodes unchanged.
-  if (effectiveQuery.value) {
+  // Rebuild the subtree so non-matching files are hidden while matching
+  // ancestors remain visible. A matching folder keeps its complete subtree.
+  if (filterTokens.value.length > 0) {
     children = children
-      .map((c) => filterByQuery(c, effectiveQuery.value))
+      .map((c) => filterByQuery(c, filterTokens.value))
       .filter((n): n is TreeNode => n !== null)
   }
   return children
 })
-// Path -> tags lookup so the tree filter can run in O(n) without scanning
-// props.posts for every file node. Recomputed when posts or the active
-// tag set changes.
+// Post metadata is used by TreeRow for secondary file information.
 const postMetadataByPath = computed<Map<string, PostSummary>>(() =>
   new Map(props.posts.map((post) => [post.path, post])),
 )
@@ -117,76 +108,38 @@ const duplicateTitles = computed<Set<string>>(() => {
   return new Set([...counts].filter(([, count]) => count > 1).map(([title]) => title))
 })
 
-// Returns the node unchanged if it has no files (folder) but contains any
-// matching descendant, the file itself if it matches, or null when the
-// whole subtree is irrelevant under the active tag filter.
-
-// Free-text search query, split into typed tag chips + content text.
-// The two pieces render differently in the header:
-//   - `tagTokens` shows up as #tag chip pills (same visual as the
-//     activeTags chips that come from clicking a tag in TagPanel)
-//   - `contentText` is what stays in the native <input>
-// Both feed `effectiveQuery` (joined with a space) which the parser
-// splits back into tag/content tokens for filterByQuery. Empty input
-// + empty tagTokens = no filter. Composes AND with the tag filter
-// above: a file passes only if the activeTag set, the typed tag
-// tokens, AND the content tokens all let it through.
-//
-// Token extraction happens in `onContentInput`: any `#name` followed
-// by whitespace OR end-of-input becomes a chip immediately. The
-// end-of-input case means typing `#meta` alone (no trailing space)
-// still chips — matches the user's mental model of "I typed a tag,
-// that should be a chip now".
+// Files filter state is local to FileTree, so it survives view switches as
+// long as the component remains mounted.
 const contentText = ref('')
 
 const effectiveQuery = computed(() => contentText.value.trim())
+const filterTokens = computed(() =>
+  effectiveQuery.value
+    .toLocaleLowerCase()
+    .split(/\s+/)
+    .filter(Boolean),
+)
 
-// Summary join. Title already lives on TreeNode (file variant); summary
-// does not — it's only on PostSummary. We index by path so the filter
-// below can look it up in O(1) per file instead of scanning props.posts
-// at every node.
-
-function filterByQuery(node: TreeNode, q: string): TreeNode | null {
-  const tokens = q.toLocaleLowerCase().split(/\s+/).filter(Boolean)
-  if (tokens.length === 0) return node
+function filterByQuery(node: TreeNode, tokens: string[]): TreeNode | null {
   if (node.kind === 'file') {
     const hay = `${node.path}\n${node.title}`.toLocaleLowerCase()
     return tokens.every((token) => hay.includes(token)) ? node : null
   }
-  // Folder: a folder can satisfy content tokens via its own name
-  // (typing "archive" → entire archive subtree kept), but tag tokens
-  // can only match file-level data, so they always recurse. Keeping
-  // any content token matching the folder's own name is enough; the
-  // AND with tag tokens happens during the descendant walk.
+  // Matching a folder path keeps its complete subtree, which makes folder
+  // filtering behave like quick navigation rather than a file-only search.
   if (tokens.every((needle) => node.path.toLocaleLowerCase().includes(needle))) {
     return node
   }
   const kids = node.children
-    .map((c) => filterByQuery(c, q))
+    .map((c) => filterByQuery(c, tokens))
     .filter((n): n is TreeNode => n !== null)
   if (kids.length === 0) return null
   return { ...node, children: kids }
 }
 
-// Parse a free-text query into two token lists. Tokens starting with
-// `#` are tag tokens (the `#` is stripped, rest lowercased); the rest
-// are content tokens matched against filename / title / summary. Empty
-// tokens (just `#` or whitespace) are dropped. All tokens AND with
-// each other; within a tag token, any of the file's tags containing
-// the needle as a substring passes (consistent with TagPanel's
-// tag-list filter, which also uses substring).
-interface ParsedQuery {
-  contentTokens: string[]
-}
-function parseQuery(q: string): ParsedQuery {
-  return { contentTokens: q.trim().split(/\s+/).filter(Boolean).map((token) => token.toLowerCase()) }
-}
-
 // Per-file match annotation, derived by re-walking the already-filtered
-// tree. Each entry names the fields whose text contained the query, so
-// TreeRow can render a native tooltip like "Matched in: filename,
-// summary". Tag matches are reported as `tag: true` and rendered as
-// "tags" in the tooltip. Folder-name matches are NOT annotated — a
+// tree. Each token is assigned to its first matching field in this order:
+// title, filename, directory path. Folder matches are not annotated — a
 // folder kept because the user typed its name is a scope expansion,
 // not a "match", and adding a tooltip there would be noise. The
 // derived map is empty when the query is empty, so TreeRow's
@@ -198,8 +151,7 @@ export interface MatchInfo {
   title?: boolean
 }
 const matchedFields = computed<Map<string, MatchInfo>>(() => {
-  const parsed = parseQuery(effectiveQuery.value)
-  if (parsed.contentTokens.length === 0) return new Map()
+  if (filterTokens.value.length === 0) return new Map()
   const m = new Map<string, MatchInfo>()
   const walk = (node: TreeNode) => {
     if (node.kind !== 'file') {
@@ -207,19 +159,13 @@ const matchedFields = computed<Map<string, MatchInfo>>(() => {
       return
     }
     const info: MatchInfo = {}
-    // A file only reaches this walk if it already passed filterByQuery
-    // — i.e. all tag needles hit at least one tag. So `info.tag` is a
-    // simple boolean of "the query had any tag tokens AND this file
-    // satisfied all of them" — we don't need to re-check per-tag.
-    if (parsed.contentTokens.length > 0) {
-      const nameLc = node.name.toLowerCase()
-      const pathLc = node.path.toLowerCase()
-      const titleLc = node.title.toLowerCase()
-      for (const needle of parsed.contentTokens) {
-        if (nameLc.includes(needle)) info.name = true
-        if (pathLc.includes(needle)) info.path = true
-        if (titleLc.includes(needle)) info.title = true
-      }
+    const nameLc = node.name.toLocaleLowerCase()
+    const titleLc = node.title.toLocaleLowerCase()
+    const directoryLc = node.path.split('/').slice(0, -1).join('/').toLocaleLowerCase()
+    for (const needle of filterTokens.value) {
+      if (titleLc.includes(needle)) info.title = true
+      else if (nameLc.includes(needle)) info.name = true
+      else if (directoryLc.includes(needle)) info.path = true
     }
     if (info.path || info.name || info.title) m.set(node.path, info)
   }
@@ -322,29 +268,12 @@ watch([visibleItems, () => props.currentPath], ([items, currentPath]) => {
   focusedNodeKey.value = fallback ? nodeKey(fallback.node) : null
 }, { immediate: true })
 
-// Extract `#token`s out of the input value into `tagTokens`. A token
-// is only extracted when it's complete: preceded by start-of-input
-// or whitespace AND followed by whitespace. `#meta ` (with trailing
-// space) becomes a chip; `#meta` typed alone stays as text in the
-// input — the user hasn't committed the token yet (they might be
-// about to type `#metadata`, etc). To commit a trailing token, the
-// user types a space (or Esc clears everything). Tokens are matched
-// as `[a-z0-9-]+` after the `#`; characters outside that set abort
-// the match. Cursor is placed at the end of the stripped value so
-// the user can continue typing seamlessly without manually
-// repositioning.
-function onContentInput(e: Event) {
-  const input = e.target as HTMLInputElement
-  contentText.value = input.value
-}
-
 function clearContentText() {
   contentText.value = ''
 }
 
 function onQueryKeydown(e: KeyboardEvent) {
-  // Esc inside the search box clears BOTH the typed tag chips and the
-  // content text — the full search state — but does NOT propagate, so
+  // Esc inside the filter clears it but does not propagate, so
   // the vault's global Esc handler (which closes panels / tabs)
   // doesn't fire on the same keypress. Mirrors the same escape on
   // TagPanel's tag-filter input.
@@ -642,17 +571,9 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
     @keydown="onTreeKeydown"
   >
     <header>
-      <!-- Always-on search input. Filters the tree by file name /
-           title / summary (case-insensitive, contains) and AND-composes
-           with the tag chips inlined to the left of the input. Tag
-           chips come from two sources:
-             1. `activeTags` — tags clicked in TagPanel, persisted in
-                useTagFilter; × removes via `remove-tag` emit.
-             2. `tagTokens`  — `#tag` tokens extracted from typed input
-                on whitespace/end boundaries; × removes locally.
-           The native input only ever shows the content portion (after
-           tag extraction), so the user sees their typed tags as styled
-           chips and their plain search text in the input. -->
+      <!-- Filters by title, filename, and directory path. Matching is
+           case-insensitive and multiple tokens compose with AND.
+      -->
       <div class="search">
         <span class="search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
         <input
@@ -662,7 +583,6 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
           type="text"
           :placeholder="t('file_tree.search')"
           :aria-label="t('file_tree.search')"
-          @input="onContentInput"
           @keydown="onQueryKeydown"
         />
         <button

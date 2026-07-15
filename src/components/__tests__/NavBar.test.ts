@@ -40,7 +40,7 @@ describe('NavBar — view-toggle button', () => {
     expect(api.toggle).toHaveBeenCalledOnce()
   })
 
-  it('shows ICON_READ in edit mode (offering "switch to read")', () => {
+  it('shows ICON_EYE in edit mode (offering "switch to read")', () => {
     const { wrapper } = mountNavBar('edit')
     expect(wrapper.find('[data-testid="view-toggle"]').attributes('aria-label')).toBe('Switch to read')
   })
