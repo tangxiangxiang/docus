@@ -580,6 +580,9 @@ describe('restoreFile', () => {
     expect(onDisk).toBe('v1 content\n')
     // HEAD is unchanged — we restored the working tree, not the branch.
     expect(await git.rawAt(root, 'HEAD', 'note.md')).toBe('v2 content\n')
+    expect(await git.status(root)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'note.md', index: ' ', worktree: 'M' }),
+    ]))
   })
 
   it('is a no-op when the file is already at that ref (idempotent)', async () => {

@@ -4,11 +4,15 @@ import type { HistoryComparison } from '../../composables/vault/useHistoryCompar
 import { useI18n } from '../../composables/useI18n'
 import SideBySideDiff from './SideBySideDiff.vue'
 
-const props = defineProps<{ comparison: HistoryComparison }>()
+const props = defineProps<{
+  comparison: HistoryComparison
+  restoring?: boolean
+}>()
 
 const emit = defineEmits<{
   'view-historical': [comparison: HistoryComparison]
   'view-current': [path: string]
+  restore: [comparison: HistoryComparison]
   retry: [tabId: string]
   close: [tabId: string]
 }>()
@@ -26,7 +30,11 @@ const errorLabel = computed(() => (
 </script>
 
 <template>
-  <section class="history-comparison-pane" :aria-label="t('history.comparison_viewer')">
+  <section
+    class="history-comparison-pane"
+    :aria-label="t('history.comparison_viewer')"
+    :aria-busy="restoring || undefined"
+  >
     <header class="history-comparison-header">
       <div class="history-comparison-heading">
         <strong>{{ t('history.comparing_current') }}</strong>
@@ -34,6 +42,14 @@ const errorLabel = computed(() => (
       </div>
       <span class="history-readonly-badge">{{ t('history.read_only') }}</span>
       <div class="history-snapshot-toolbar" role="toolbar" :aria-label="t('history.comparison_toolbar')">
+        <button
+          type="button"
+          class="history-restore-button"
+          :disabled="comparison.status !== 'ready' || restoring"
+          @click="emit('restore', comparison)"
+        >
+          {{ restoring ? t('history.restoring') : t('history.restore_version') }}
+        </button>
         <button type="button" @click="emit('view-historical', comparison)">
           {{ t('history.view_historical') }}
         </button>

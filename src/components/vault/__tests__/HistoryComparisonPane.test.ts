@@ -50,15 +50,28 @@ describe('HistoryComparisonPane', () => {
     expect(wrapper.text()).toContain('Comparing with current')
     expect(wrapper.text()).toContain('Unsaved changes')
     expect(wrapper.get('.side-by-side-stub').text()).toBe('Historical Version / Current Version')
-    expect(wrapper.text()).not.toContain('Restore')
+    expect(wrapper.get('.history-restore-button').text()).toBe('Restore this version')
 
     const buttons = wrapper.findAll('.history-snapshot-toolbar button')
     await buttons[0]!.trigger('click')
     await buttons[1]!.trigger('click')
     await buttons[2]!.trigger('click')
+    await buttons[3]!.trigger('click')
+    expect(wrapper.emitted('restore')?.[0]?.[0]).toMatchObject({ revisionId: 'revision-a' })
     expect(wrapper.emitted('view-historical')?.[0]?.[0]).toMatchObject({ revisionId: 'revision-a' })
     expect(wrapper.emitted('view-current')).toEqual([['inbox/redis']])
     expect(wrapper.emitted('close')).toEqual([['diff:inbox/redis']])
+  })
+
+  it('disables restore and announces the busy state while restoring', () => {
+    const wrapper = mountPane(comparison())
+    void wrapper.setProps({ restoring: true })
+
+    return wrapper.vm.$nextTick().then(() => {
+      expect(wrapper.get('section').attributes('aria-busy')).toBe('true')
+      expect(wrapper.get('.history-restore-button').attributes('disabled')).toBeDefined()
+      expect(wrapper.get('.history-restore-button').text()).toBe('Restoring...')
+    })
   })
 
   it('renders loading, error, retry, and identical states inline', async () => {

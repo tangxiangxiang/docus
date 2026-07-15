@@ -577,9 +577,9 @@ export async function dropHeadCommit(
 // --- Restore --------------------------------------------------------------
 
 /**
- * Restore a single file to its content at `ref`. Implemented via
- * `git checkout <ref> -- <path>` — this overwrites the working-tree
- * copy with the blob at `<ref>` and leaves the index / HEAD alone.
+ * Restore a single file to its content at `ref`. `--worktree` is
+ * intentional: checkout-style restoration also updates the index,
+ * which would silently stage a destructive restore.
  *
  * The caller is expected to validate `path` and `ref`. We pass them
  * through to git verbatim, separated by `--` so a path that starts
@@ -593,11 +593,10 @@ export async function restoreFile(
   ref: string,
   path: string,
 ): Promise<void> {
-  const r = await run(repoRoot, ['checkout', ref, '--', path])
+  const r = await run(repoRoot, ['restore', `--source=${ref}`, '--worktree', '--', path])
   if (r.status !== 0) {
-    // "error: pathspec ... did not match any file(s) known to git"
-    // and "fatal: invalid reference" both end up here. Surface the
+    // Missing paths and invalid revisions both end up here. Surface the
     // raw stderr — the route maps it to a 4xx.
-    throw new Error(r.stderr.trim() || `git checkout failed (exit ${r.status})`)
+    throw new Error(r.stderr.trim() || `git restore failed (exit ${r.status})`)
   }
 }

@@ -142,6 +142,11 @@ export function useHistoryComparisons(options: HistoryComparisonOptions) {
     void refreshComparison(tabId)
   }
 
+  async function refreshDocumentComparison(path: string): Promise<void> {
+    const comparison = comparisons.value.find((item) => item.documentPath === path)
+    if (comparison) await refreshComparison(comparison.tabId)
+  }
+
   function deactivate(): void {
     activeComparisonId.value = null
   }
@@ -168,6 +173,7 @@ export function useHistoryComparisons(options: HistoryComparisonOptions) {
     openComparison,
     selectComparison,
     refreshComparison,
+    refreshDocumentComparison,
     deactivate,
     closeComparison,
     closeComparisons,

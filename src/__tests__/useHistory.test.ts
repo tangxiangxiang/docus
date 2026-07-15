@@ -228,7 +228,12 @@ describe('useHistory singleton', () => {
   })
 
   it('restoreFile calls the API and returns true on success', async () => {
-    vi.mocked(api.restoreFile).mockResolvedValueOnce({ path: 'a.md', ref: 'HEAD~1' })
+    vi.mocked(api.restoreFile).mockResolvedValueOnce({
+      path: 'a.md',
+      ref: 'HEAD~1',
+      raw: 'old content',
+      mtime: 1,
+    })
     // After restore the composable refreshes status; mock it to no-op.
     const h = useHistory()
     const r = await h.restoreFile('a.md', 'HEAD~1')

@@ -73,6 +73,27 @@ describe('createCommit', () => {
 })
 
 describe('restoreFile', () => {
+  it('posts one document path and revision and returns restored bytes', async () => {
+    responses.push({
+      status: 200,
+      body: { path: 'a.md', ref: 'abc1234', raw: '# Historical', mtime: 100 },
+    })
+
+    await expect(api.restoreFile('a.md', 'abc1234')).resolves.toEqual({
+      path: 'a.md',
+      ref: 'abc1234',
+      raw: '# Historical',
+      mtime: 100,
+    })
+    expect(calls).toEqual([expect.objectContaining({
+      url: '/api/history/restore',
+      init: expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ path: 'a.md', ref: 'abc1234' }),
+      }),
+    })])
+  })
+
   it('throws the server error message on a non-2xx', async () => {
     responses.push({ status: 404, body: { error: 'file does not exist at ref HEAD' } })
     await expect(api.restoreFile('a.md', 'HEAD'))

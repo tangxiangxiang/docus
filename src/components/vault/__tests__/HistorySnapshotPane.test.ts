@@ -41,15 +41,29 @@ describe('HistorySnapshotPane', () => {
     expect(wrapper.get('.reading-pane-stub').text()).toContain('const cached = true')
     expect(wrapper.find('textarea').exists()).toBe(false)
     expect(wrapper.find('.monaco-host').exists()).toBe(false)
-    expect(wrapper.get('.history-snapshot-toolbar button').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('.history-restore-button').text()).toBe('Restore this version')
+    expect(wrapper.get('.history-restore-button').attributes('disabled')).toBeUndefined()
 
     await wrapper.get('.history-snapshot-current').trigger('click')
     expect(wrapper.emitted('view-current')).toEqual([['inbox/redis']])
+    await wrapper.get('.history-restore-button').trigger('click')
+    expect(wrapper.emitted('restore')?.[0]?.[0]).toMatchObject({ revisionId: 'revision-a' })
     const toolbarButtons = wrapper.findAll('.history-snapshot-toolbar button')
-    await toolbarButtons[0]!.trigger('click')
-    expect(wrapper.emitted('open-diff')?.[0]?.[0]).toMatchObject({ revisionId: 'revision-a' })
     await toolbarButtons[1]!.trigger('click')
+    expect(wrapper.emitted('open-diff')?.[0]?.[0]).toMatchObject({ revisionId: 'revision-a' })
+    await toolbarButtons[2]!.trigger('click')
     expect(wrapper.emitted('close')).toEqual([['history:inbox/redis']])
+  })
+
+  it('disables restore and announces the busy state while restoring', () => {
+    const wrapper = mount(HistorySnapshotPane, {
+      props: { snapshot: snapshot(), restoring: true },
+      global: { stubs: { ReadingPane: true } },
+    })
+
+    expect(wrapper.get('section').attributes('aria-busy')).toBe('true')
+    expect(wrapper.get('.history-restore-button').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.history-restore-button').text()).toBe('Restoring...')
   })
 
   it('keeps loading and error states inside the history viewer', async () => {

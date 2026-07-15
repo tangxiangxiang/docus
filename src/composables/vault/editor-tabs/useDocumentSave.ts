@@ -99,6 +99,17 @@ export function useDocumentSave(options: {
     if (options.activePath.value) await doSave(options.activePath.value)
   }
 
+  async function prepareHistoryRestore(path: string): Promise<void> {
+    const timer = saveTimers.get(path)
+    if (timer) clearTimeout(timer)
+    saveTimers.delete(path)
+    await savePromises.get(path)
+    // A save that was already in flight may have scheduled another pass.
+    const trailingTimer = saveTimers.get(path)
+    if (trailingTimer) clearTimeout(trailingTimer)
+    saveTimers.delete(path)
+  }
+
   function disposeDocumentSave() {
     for (const timer of saveTimers.values()) clearTimeout(timer)
     saveTimers.clear()
@@ -110,6 +121,7 @@ export function useDocumentSave(options: {
     onEditorChange,
     handleBeforeUnload,
     doSaveNow,
+    prepareHistoryRestore,
     disposeDocumentSave,
   }
 }

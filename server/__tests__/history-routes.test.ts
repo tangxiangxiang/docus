@@ -509,7 +509,7 @@ describe('graceful degradation when git is unavailable', () => {
 })
 
 describe('POST /api/history/restore', () => {
-  // Body: { path, ref }. Returns { path, ref } on success.
+  // Body: { path, ref }. Returns the restored bytes and mtime on success.
   // - 400 if path or ref missing
   // - 404 if the file does not exist at ref (rawAt pre-check)
   // - 503 when git is unavailable
@@ -532,9 +532,11 @@ describe('POST /api/history/restore', () => {
 
     const r = await call('POST', '/restore', { path: 'note.md', ref: sha1 })
     expect(r.status).toBe(200)
-    const body = await r.json() as { path: string; ref: string }
+    const body = await r.json() as { path: string; ref: string; raw: string; mtime: number }
     expect(body.path).toBe('note.md')
     expect(body.ref).toBe(sha1)
+    expect(body.raw).toBe('v1\n')
+    expect(body.mtime).toBeGreaterThan(0)
     // On-disk content is now v1
     const onDisk = await fs.readFile(path.join(root, 'note.md'), 'utf8')
     expect(onDisk).toBe('v1\n')

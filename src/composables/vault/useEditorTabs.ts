@@ -64,6 +64,7 @@ export function useEditorTabs(opts: {
     onEditorChange,
     handleBeforeUnload,
     doSaveNow,
+    prepareHistoryRestore,
     disposeDocumentSave,
   } = useDocumentSave({
     tabs,
@@ -218,6 +219,7 @@ export function useEditorTabs(opts: {
     selectTab,
     onEditorChange,
     doSaveNow,
+    prepareHistoryRestore,
     resolveExternal,
     pollExternalChanges,
     onKeydown,

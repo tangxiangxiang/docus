@@ -173,7 +173,14 @@ export async function dropCommit(sha: string): Promise<CommitResult> {
  * the message comes from the server's `{ error }` body so the UI
  * can show it verbatim.
  */
-export async function restoreFile(path: string, ref: string): Promise<{ path: string; ref: string }> {
+export interface RestoreFileResult {
+  path: string
+  ref: string
+  raw: string
+  mtime: number
+}
+
+export async function restoreFile(path: string, ref: string): Promise<RestoreFileResult> {
   const r = await fetch('/api/history/restore', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

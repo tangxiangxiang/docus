@@ -16,6 +16,8 @@
 // ../paths.ts.
 
 import { Hono } from 'hono'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import * as git from './git.js'
 import { ensureRepo } from './repo.js'
 import { computeFileDiff } from './diff.js'
@@ -315,7 +317,7 @@ history.post('/drop', async (c) => {
 // already has the diff on screen, so the user has seen what they're
 // about to replace.
 //
-// Returns: { path, ref } on success. 404 if the file does not exist
+// Returns: { path, ref, raw, mtime } on success. 404 if the file does not exist
 // at that ref, 400 if the path/ref is malformed / missing.
 history.post('/restore', async (c) => {
   if (!(await probeGit())) return bad(c, 'git not available', 503)
@@ -349,10 +351,11 @@ history.post('/restore', async (c) => {
       return bad(c, `file does not exist at ref ${body.ref}`, 404)
     }
     await git.restoreFile(repoRoot(), body.ref, validPath)
-    return c.json({ path: validPath, ref: body.ref })
+    const stat = await fs.stat(path.join(repoRoot(), validPath))
+    return c.json({ path: validPath, ref: body.ref, raw: exists, mtime: stat.mtimeMs })
   } catch (e: any) {
     const msg = e.message ?? 'restore failed'
-    // git checkout's "pathspec ... did not match" / "invalid reference"
+    // git restore's missing-path / invalid-reference errors
     // both surface here as git stderr. The pre-check above catches
     // most not-found cases, but a race between rawAt and checkout
     // can still slip through (e.g. someone ran `git rm` in another

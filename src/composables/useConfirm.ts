@@ -10,17 +10,26 @@ export interface ConfirmRequest {
   id: number
   message: string
   detail?: string
+  confirmLabel?: string
+  cancelLabel?: string
+  destructive?: boolean
   resolve: (ok: boolean) => void
+}
+
+export interface ConfirmOptions {
+  confirmLabel?: string
+  cancelLabel?: string
+  destructive?: boolean
 }
 
 const queue = ref<ConfirmRequest[]>([])
 let nextId = 1
 
 export function useConfirm() {
-  function confirm(message: string, detail?: string): Promise<boolean> {
+  function confirm(message: string, detail?: string, options: ConfirmOptions = {}): Promise<boolean> {
     return new Promise((resolve) => {
       const id = nextId++
-      queue.value = [...queue.value, { id, message, detail, resolve }]
+      queue.value = [...queue.value, { id, message, detail, ...options, resolve }]
     })
   }
   function answer(id: number, ok: boolean) {

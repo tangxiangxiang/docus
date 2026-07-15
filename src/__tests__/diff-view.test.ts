@@ -342,7 +342,12 @@ describe('DiffView restore button', () => {
 
   it('calls restoreFile when the user accepts the confirm dialog', async () => {
     await loadDiffWithOneRemove()
-    vi.mocked(api.restoreFile).mockResolvedValue({ path: 'inbox/a.md', ref: 'HEAD~1' })
+    vi.mocked(api.restoreFile).mockResolvedValue({
+      path: 'inbox/a.md',
+      ref: 'HEAD~1',
+      raw: 'old content',
+      mtime: 1,
+    })
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     try {
       const wrapper = renderDiffView()

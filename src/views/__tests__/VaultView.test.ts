@@ -56,4 +56,16 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('...historyComparisons.comparisons.value.map')
     expect(source).not.toContain('restoreComparison')
   })
+
+  it('coordinates document restore outside the read-only viewers', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    expect(source).toContain('const historyRestore = useHistoryRestore({')
+    expect(source).toContain('prepareEditorRestore: prepareHistoryRestore')
+    expect(source).toContain('refreshComparison: historyComparisons.refreshDocumentComparison')
+    expect(source).toContain('@restore="restoreHistoricalVersion"')
+    expect(source).toContain("t('history.restore_unsaved')")
+    expect(source).toContain("t('history.restore_no_commit')")
+    expect(source).toContain('destructive: true')
+  })
 })

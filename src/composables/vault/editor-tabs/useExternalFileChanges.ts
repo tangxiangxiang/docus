@@ -44,6 +44,13 @@ export function useExternalFileChanges(options: {
 
     const tab = options.tabs.value.find((candidate) => candidate.path === event.path)
     if (!tab) return
+    // History restore updates the owning tab synchronously before publishing.
+    // Other consumers still need the event, but the editor must not treat its
+    // own applied restore as a second external overwrite.
+    if (event.source === 'history-restore') {
+      tab.serverMtime = event.newMtime ?? tab.serverMtime
+      return
+    }
     if (tab.saveStatus === 'saving') return
 
     if (event.kind === 'delete') {

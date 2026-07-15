@@ -8,11 +8,13 @@ import ReadingPane from './ReadingPane.vue'
 const props = defineProps<{
   snapshot: HistorySnapshot
   resolver?: WikiResolver
+  restoring?: boolean
 }>()
 
 const emit = defineEmits<{
   'view-current': [path: string]
   'open-diff': [snapshot: HistorySnapshot]
+  restore: [snapshot: HistorySnapshot]
   close: [tabId: string]
 }>()
 
@@ -27,7 +29,11 @@ const errorLabel = computed(() => props.snapshot.error || t('history.snapshot_lo
 </script>
 
 <template>
-  <section class="history-snapshot-pane" :aria-label="t('history.snapshot_viewer')">
+  <section
+    class="history-snapshot-pane"
+    :aria-label="t('history.snapshot_viewer')"
+    :aria-busy="restoring || undefined"
+  >
     <header class="history-snapshot-banner">
       <div class="history-snapshot-notice" role="status">
         <strong>{{ t('history.viewing_historical') }}</strong>
@@ -50,6 +56,14 @@ const errorLabel = computed(() => props.snapshot.error || t('history.snapshot_lo
       </div>
       <span class="history-readonly-badge">{{ t('history.read_only') }}</span>
       <div class="history-snapshot-toolbar" role="toolbar" :aria-label="t('history.snapshot_toolbar')">
+        <button
+          type="button"
+          class="history-restore-button"
+          :disabled="snapshot.status !== 'ready' || restoring"
+          @click="emit('restore', snapshot)"
+        >
+          {{ restoring ? t('history.restoring') : t('history.restore_version') }}
+        </button>
         <button
           type="button"
           @click="emit('open-diff', snapshot)"

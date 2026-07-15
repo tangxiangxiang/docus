@@ -10,6 +10,11 @@ import { useI18n } from '../composables/useI18n'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { useHistorySnapshots, type HistoryRevisionSelection } from '../composables/vault/useHistorySnapshots'
 import {
+  useHistoryRestore,
+  type HistoryRestoreRequest,
+  type HistoryRestoreSource,
+} from '../composables/vault/useHistoryRestore'
+import {
   getLoadedEditorDocument,
   useHistoryComparisons,
   type HistoryComparison,
@@ -110,7 +115,7 @@ const tagsFilter = ref('')
    bar), which is what produced the gray area the user reported. */
 const toast = useToast()
 const { confirm } = useConfirm()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 
 // Lives in VaultView (not the composable) so the string `ref="vaultRef"`
 // template binding resolves cleanly. startDrag takes the host as a parameter.
@@ -124,7 +129,7 @@ const {
   tree, vaultId, posts, tabs, activePath, activeTab, isDirty, activeSize,
   refresh, openPost: openEditorPost, closeTab: closeEditorTab, closeMany: closeManyEditorTabs,
   selectTab: selectEditorTab, onEditorChange, doSaveNow, resolveExternal,
-  onKeydown: onEditorKeydown, onCommandPaletteNew,
+  prepareHistoryRestore, onKeydown: onEditorKeydown, onCommandPaletteNew,
 } = useEditorTabs({ selectPanel, toggleViewMode: () => viewModeApi?.toggle(), fileChanges })
 const historySnapshots = useHistorySnapshots()
 const activeHistorySnapshot = historySnapshots.activeSnapshot
@@ -137,6 +142,63 @@ const historyComparisons = useHistoryComparisons({
   },
 })
 const activeHistoryComparison = historyComparisons.activeComparison
+
+function restoreSource(source: typeof activeHistorySnapshot.value | HistoryComparison): HistoryRestoreSource | null {
+  if (!source || source.status !== 'ready') return null
+  return {
+    documentPath: source.documentPath,
+    documentTitle: source.documentTitle,
+    revisionId: source.revisionId,
+    revisionTime: source.revisionTime,
+    historicalRaw: 'rawMarkdown' in source ? source.rawMarkdown : source.oldRaw,
+  }
+}
+
+function restoreDate(timestamp: number): string {
+  return new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(timestamp)
+}
+
+async function confirmHistoryRestore(request: HistoryRestoreRequest): Promise<boolean> {
+  const detail = [
+    t('history.restore_detail', {
+      title: request.documentTitle,
+      date: restoreDate(request.revisionTime),
+    }),
+    request.currentDirty ? t('history.restore_unsaved') : '',
+    t('history.restore_no_commit'),
+  ].filter(Boolean).join('\n\n')
+  return confirm(t('history.restore_title'), detail, {
+    confirmLabel: t('history.restore_confirm'),
+    cancelLabel: t('history.restore_cancel'),
+    destructive: true,
+  })
+}
+
+const historyRestore = useHistoryRestore({
+  tabs,
+  fileChanges,
+  confirm: confirmHistoryRestore,
+  prepareEditorRestore: prepareHistoryRestore,
+  refreshVault: refresh,
+  refreshComparison: historyComparisons.refreshDocumentComparison,
+  onSuccess(request) {
+    toast.success(t('history.restore_success', { title: request.documentTitle }))
+  },
+  onError(_request, error) {
+    const message = error instanceof Error && error.message
+      ? error.message
+      : t('history.comparison_load_failed')
+    toast.error(t('history.restore_failed', { error: message }))
+  },
+})
+
+function restoreHistoricalVersion(source: typeof activeHistorySnapshot.value | HistoryComparison): void {
+  const captured = restoreSource(source)
+  if (captured) void historyRestore.restore(captured)
+}
 
 function basename(path: string): string {
   const name = path.split('/').pop() ?? path
@@ -539,8 +601,10 @@ watch(isReadMode, async (reading) => {
         <HistorySnapshotPane
           :snapshot="activeHistorySnapshot"
           :resolver="historyWikiResolver"
+          :restoring="historyRestore.restoring.value && historyRestore.restoringPath.value === activeHistorySnapshot.documentPath"
           @view-current="viewCurrentDocument"
           @open-diff="openHistoryComparison"
+          @restore="restoreHistoricalVersion"
           @close="historySnapshots.closeSnapshot"
         />
       </div>
@@ -548,8 +612,10 @@ watch(isReadMode, async (reading) => {
       <div v-if="activeHistoryComparison" class="content history-snapshot-content">
         <HistoryComparisonPane
           :comparison="activeHistoryComparison"
+          :restoring="historyRestore.restoring.value && historyRestore.restoringPath.value === activeHistoryComparison.documentPath"
           @view-historical="viewHistoricalComparison"
           @view-current="viewCurrentDocument"
+          @restore="restoreHistoricalVersion"
           @retry="historyComparisons.refreshComparison"
           @close="historyComparisons.closeComparison"
         />

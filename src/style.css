@@ -1100,6 +1100,15 @@ main.container {
   cursor: not-allowed;
   opacity: 0.45;
 }
+.history-snapshot-toolbar .history-restore-button {
+  border-color: color-mix(in srgb, var(--vs-danger, #c94f4f) 42%, var(--vs-border));
+  color: var(--vs-danger, #c94f4f);
+}
+.history-snapshot-toolbar .history-restore-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--vs-danger, #c94f4f) 62%, var(--vs-border));
+  background: color-mix(in srgb, var(--vs-danger, #c94f4f) 8%, transparent);
+  color: var(--vs-danger, #c94f4f);
+}
 .history-snapshot-state {
   display: grid;
   place-items: center;
@@ -3225,7 +3234,7 @@ main.container {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
 }
 .confirm-message { font-size: 1rem; font-weight: 500; color: var(--text-h); }
-.confirm-detail  { margin-top: 6px; font-size: 0.875rem; color: var(--text-muted); }
+.confirm-detail  { margin-top: 6px; font-size: 0.875rem; color: var(--text-muted); white-space: pre-line; }
 .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
 
 /* ---------- Button (reused) ---------- */

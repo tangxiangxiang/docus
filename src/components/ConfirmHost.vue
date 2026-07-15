@@ -4,8 +4,12 @@ import { useConfirm } from '../composables/useConfirm'
 import { useFocusTrap } from '../composables/useFocusTrap'
 
 const { queue, answer } = useConfirm()
-const dialogRef = ref<HTMLElement | null>(null)
+const dialogRef = ref<HTMLElement | HTMLElement[] | null>(null)
 const trap = useFocusTrap()
+
+function activeDialog(): HTMLElement | null {
+  return Array.isArray(dialogRef.value) ? (dialogRef.value[0] ?? null) : dialogRef.value
+}
 
 // Capture / restore focus + run a Tab trap while a confirm dialog is
 // shown. The dialog is a single alertdialog; the trap only matters
@@ -20,7 +24,7 @@ watch(queue, async (q) => {
     // destructive action (OK) by default would make Enter a
     // destructive shortcut for anyone whose keyboard layout routes
     // Enter straight to the focused element.
-    const cancel = dialogRef.value?.querySelector<HTMLButtonElement>('.confirm-actions .btn')
+    const cancel = activeDialog()?.querySelector<HTMLButtonElement>('.confirm-actions .btn')
     cancel?.focus()
   } else {
     void trap.deactivate()
@@ -28,8 +32,8 @@ watch(queue, async (q) => {
 }, { immediate: true })
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Tab' && dialogRef.value) {
-    trap.onTab(() => dialogRef.value, e)
+  if (e.key === 'Tab' && activeDialog()) {
+    trap.onTab(activeDialog, e)
   }
 }
 onBeforeUnmount(() => {
@@ -60,8 +64,17 @@ onBeforeUnmount(() => {
           <div class="confirm-message">{{ r.message }}</div>
           <div v-if="r.detail" class="confirm-detail">{{ r.detail }}</div>
           <div class="confirm-actions">
-            <button type="button" class="btn" @click="answer(r.id, false)">取消</button>
-            <button type="button" class="btn btn-primary" @click="answer(r.id, true)">确定</button>
+            <button type="button" class="btn" @click="answer(r.id, false)">
+              {{ r.cancelLabel ?? '取消' }}
+            </button>
+            <button
+              type="button"
+              class="btn"
+              :class="r.destructive ? 'btn-danger' : 'btn-primary'"
+              @click="answer(r.id, true)"
+            >
+              {{ r.confirmLabel ?? '确定' }}
+            </button>
           </div>
         </div>
       </div>
