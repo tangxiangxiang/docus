@@ -8,7 +8,7 @@ import type { PostSummary } from '../../../lib/api'
 import TagPanel from '../TagPanel.vue'
 
 const POSTS: PostSummary[] = [
-  { path: 'inbox/markdown-syntax', title: 'Markdown syntax', summary: 'Redis appears only in this summary', created: '', updated: '', tags: ['markdown', 'reference'], size: 100, mtime: 0 },
+  { path: 'inbox/markdown-syntax', title: 'Markdown syntax', summary: 'Redis appears only in this summary', created: '', updated: '', tags: ['markdown', 'reference'], size: 100, mtime: Date.UTC(2026, 6, 15, 12, 10) },
   { path: 'inbox/redis-path-only', title: 'Redis title only', created: '', updated: '', tags: ['typescript', 'reference'], size: 100, mtime: 0 },
   { path: 'archive/derivation', title: 'Derivation', created: '', updated: '', tags: ['Math'], size: 100, mtime: 0 },
   { path: 'inbox/notes/draft', title: 'Draft', created: '', updated: '', tags: ['reference', 'draft'], size: 100, mtime: 0 },
@@ -86,6 +86,7 @@ describe('Tags filter', () => {
     const card = document.body.querySelector('.document-hover-card')
     expect(card?.textContent).toContain(POSTS[0].title)
     expect(card?.textContent).toContain(POSTS[0].path)
+    expect(card?.textContent).toContain('修改于')
     expect(card?.textContent).toContain('#markdown #reference')
 
     await wrapper.get('.result-entry').trigger('mouseleave')

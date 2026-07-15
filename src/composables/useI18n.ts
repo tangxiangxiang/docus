@@ -37,6 +37,7 @@ const STRINGS: Strings = {
   'search.match.tag': { zh: '标签', en: 'Tag' },
   'search.match.summary': { zh: '摘要', en: 'Summary' },
   'search.match.body': { zh: '正文', en: 'Content' },
+  'document_hover.modified': { zh: '修改于 {date}', en: 'Modified {date}' },
   // AI panel quick prompts (note open)
   'quick_prompts.with_note.summarize.label': {
     zh: '总结当前笔记',
