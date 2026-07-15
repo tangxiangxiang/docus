@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { PostSummary } from '../../lib/api'
-import { fileSearchProvider, searchEverywhere, type SearchResult, type SearchResultSection } from '../../lib/searchResults'
+import { createDocumentSearchProvider, createLatestSearchRunner, type DocumentSearchPayload, type SearchResult, type SearchResultSection } from '../../lib/searchResults'
 import { useFocusTrap } from '../../composables/useFocusTrap'
 
 const props = defineProps<{ posts: PostSummary[]; activePath: string | null }>()
@@ -13,10 +13,14 @@ const hits = computed(() => sections.value.flatMap((section) => section.results)
 const activeIdx = ref(0)
 const inputRef = ref<HTMLInputElement | null>(null)
 const trap = useFocusTrap()
+const documentProvider = createDocumentSearchProvider(() => props.posts)
+const runLatestSearch = createLatestSearchRunner(
+  () => [documentProvider],
+  (next) => { sections.value = next; activeIdx.value = 0 },
+)
 
 async function refresh() {
-  sections.value = await searchEverywhere(query.value, [fileSearchProvider(props.posts)])
-  activeIdx.value = 0
+  await runLatestSearch(query.value)
 }
 function show() { trap.activate(); open.value = true; query.value = ''; void refresh(); void nextTick(() => inputRef.value?.focus()) }
 function hide() { open.value = false; void trap.deactivate() }
@@ -53,7 +57,8 @@ defineExpose({ show, hide })
           <section v-for="section in sections" :key="section.id" class="palette-section">
             <h3 class="palette-section-title">{{ section.label }}</h3>
             <div v-for="hit in section.results" :key="hit.id" :class="['palette-item', { active: hits.indexOf(hit) === activeIdx }]" role="option" :aria-selected="hits.indexOf(hit) === activeIdx" @mouseenter="activeIdx = hits.indexOf(hit)" @click="commit(hit)">
-              <div class="palette-row"><span class="palette-title">{{ hit.title }}</span><span class="palette-badge">{{ hit.type }}</span></div>
+              <div class="palette-row"><span class="palette-title">{{ hit.title }}</span><span class="palette-badge">{{ (hit.payload as DocumentSearchPayload).match }}</span></div>
+              <div v-if="(hit.payload as DocumentSearchPayload).snippet" class="palette-snippet">{{ (hit.payload as DocumentSearchPayload).snippet }}</div>
               <div v-if="hit.subtitle" class="palette-path">{{ hit.subtitle }}</div>
             </div>
           </section>

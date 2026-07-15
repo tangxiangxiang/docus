@@ -19,7 +19,7 @@ export interface SearchHit {
   path: string
   title: string
   score: number
-  match: 'title' | 'tag' | 'summary' | 'body'
+  match: 'title' | 'path' | 'tag' | 'summary' | 'body'
   snippet?: string
 }
 
@@ -28,11 +28,11 @@ let bodyCache: Map<string, string> = new Map()
 
 function makeIndex(): MiniSearch<SearchDoc> {
   return new MiniSearch<SearchDoc>({
-    fields: ['title', 'tags', 'summary'],
-    storeFields: ['path', 'title'],
+    fields: ['title', 'path', 'tags', 'summary'],
+    storeFields: ['path', 'title', 'tags', 'summary'],
     idField: 'id',
     searchOptions: {
-      boost: { title: 3, tags: 2, summary: 1 },
+      boost: { title: 3, path: 2.5, tags: 2, summary: 1 },
       prefix: true,
       fuzzy: 0.2,
     },
@@ -103,19 +103,25 @@ export function search(query: string, limit = 12): SearchHit[] {
   const q = query.trim()
   const titleHits = mini.search(q).slice(0, limit)
   const seen = new Set(titleHits.map((h) => h.path))
-  const hits: SearchHit[] = titleHits.map((h) => ({
-    path: h.path as string,
-    title: h.title as string,
-    score: h.score,
-    match: 'title',
-  }))
+  const needle = q.toLowerCase()
+  const hits: SearchHit[] = titleHits.map((h) => {
+    const title = String(h.title ?? '')
+    const path = String(h.path ?? '')
+    const tags = String(h.tags ?? '')
+    const summary = String(h.summary ?? '')
+    const match: SearchHit['match'] = title.toLowerCase().includes(needle) ? 'title'
+      : path.toLowerCase().includes(needle) ? 'path'
+      : tags.toLowerCase().includes(needle) ? 'tag'
+      : 'summary'
+    return { path, title, score: h.score, match, ...(match === 'summary' && summary ? { snippet: snippet(summary, q) } : {}) }
+  })
 
   // 正文补充:在 title 没吃饱时去 body 找
   if (hits.length < limit) {
     for (const [path, body] of bodyCache) {
       if (seen.has(path)) continue
       if (body.toLowerCase().includes(q.toLowerCase())) {
-        hits.push({ path, title: path, score: 0.1, match: 'body', snippet: snippet(body, q) })
+        hits.push({ path, title: mini.getStoredFields(path)?.title as string || path, score: 0.1, match: 'body', snippet: snippet(body, q) })
         seen.add(path)
         if (hits.length >= limit) break
       }
