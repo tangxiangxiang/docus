@@ -108,9 +108,9 @@ const duplicateTitles = computed<Set<string>>(() => {
   return new Set([...counts].filter(([, count]) => count > 1).map(([title]) => title))
 })
 
-// Files filter state is local to FileTree, so it survives view switches as
-// long as the component remains mounted.
-const contentText = ref('')
+// VaultView owns the filter so it survives FileTree being unmounted while the
+// user visits another side-panel view. It intentionally remains session-only.
+const contentText = defineModel<string>('filter', { default: '' })
 
 const effectiveQuery = computed(() => contentText.value.trim())
 const filterTokens = computed(() =>

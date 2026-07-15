@@ -1,11 +1,22 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { defineComponent, ref } from 'vue'
 import FileTree from '../FileTree.vue'
 import type { PostSummary, TreeNode } from '../../../lib/api'
 import { installDialogMocks } from '../../../__test-helpers__/dialogs'
+import { useI18n } from '../../../composables/useI18n'
 
 installDialogMocks()
+
+beforeEach(() => {
+  localStorage.clear()
+  useI18n().setLocale('zh')
+})
+
+afterEach(() => {
+  useI18n().setLocale('zh')
+})
 
 const TREE: TreeNode[] = [{
   kind: 'folder', name: 'content', path: '', children: [
@@ -39,8 +50,6 @@ function rowByName(wrapper: any, name: string): any {
 }
 
 describe('FileTree', () => {
-  beforeEach(() => localStorage.clear())
-
   it('renders top-level folders and expands a folder from its row', async () => {
     const wrapper = mount(FileTree, { props: { tree: TREE, currentPath: null } })
     expect(wrapper.text()).toContain('inbox')
@@ -65,8 +74,6 @@ describe('FileTree', () => {
 })
 
 describe('Files filter', () => {
-  beforeEach(() => localStorage.clear())
-
   function mountTree() {
     return mount(FileTree, { props: { tree: TREE, posts: POSTS, currentPath: null } })
   }
@@ -127,6 +134,32 @@ describe('Files filter', () => {
     await input.setValue('redis')
     await wrapper.find('.search-clear-x').trigger('click')
     expect((input.element as HTMLInputElement).value).toBe('')
+  })
+
+  it('preserves the filter when FileTree is unmounted during a view switch', async () => {
+    const Harness = defineComponent({
+      components: { FileTree },
+      setup() {
+        return { activePanel: ref<'files' | 'tags'>('files'), filesFilter: ref(''), tree: TREE }
+      },
+      template: `
+        <button class="show-files" @click="activePanel = 'files'">Files</button>
+        <button class="show-tags" @click="activePanel = 'tags'">Tags</button>
+        <FileTree
+          v-if="activePanel === 'files'"
+          v-model:filter="filesFilter"
+          :tree="tree"
+          :current-path="null"
+        />
+        <div v-else class="tags-panel">Tags</div>
+      `,
+    })
+    const wrapper = mount(Harness)
+    await wrapper.find('.search-input').setValue('redis')
+    await wrapper.find('.show-tags').trigger('click')
+    expect(wrapper.find('.search-input').exists()).toBe(false)
+    await wrapper.find('.show-files').trigger('click')
+    expect((wrapper.find('.search-input').element as HTMLInputElement).value).toBe('redis')
   })
 
   it('reports one prioritized match field per token', async () => {
