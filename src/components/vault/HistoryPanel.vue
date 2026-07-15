@@ -170,7 +170,10 @@ function onListKeydown(event: KeyboardEvent): void {
             <span v-for="index in 5" :key="index" class="history-skeleton-row" />
           </div>
           <div v-else-if="timeline.revisionsError.value" class="history-error" role="alert">
-            {{ revisionsErrorLabel }}
+            <span>{{ revisionsErrorLabel }}</span>
+            <button type="button" @click="timeline.retrySelectedDocument">
+              {{ t('history.retry') }}
+            </button>
           </div>
           <div
             v-else-if="timeline.selectedDocument.value.revisions.length === 0"

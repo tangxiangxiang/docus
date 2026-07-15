@@ -48,12 +48,14 @@ function harness(options: {
   tabs?: Tab[]
   confirm?: (request: HistoryRestoreRequest) => Promise<boolean>
   restoreFile?: Mock
+  refreshVault?: Mock
+  refreshComparison?: Mock
 } = {}) {
   const tabs = ref(options.tabs ?? [tab()])
   const fileChanges = createVaultFileChanges()
   const prepareEditorRestore = vi.fn().mockResolvedValue(undefined)
-  const refreshVault = vi.fn().mockResolvedValue(undefined)
-  const refreshComparison = vi.fn().mockResolvedValue(undefined)
+  const refreshVault = options.refreshVault ?? vi.fn().mockResolvedValue(undefined)
+  const refreshComparison = options.refreshComparison ?? vi.fn().mockResolvedValue(true)
   const onSuccess = vi.fn()
   const onError = vi.fn()
   const restoreFile = options.restoreFile ?? vi.fn().mockResolvedValue({
@@ -132,7 +134,7 @@ describe('useHistoryRestore', () => {
         source: 'history-restore',
       }),
     ])
-    expect(h.onSuccess).toHaveBeenCalledOnce()
+    expect(h.onSuccess).toHaveBeenCalledWith(expect.any(Object), { refreshFailed: false })
   })
 
   it('restores a closed document and refreshes vault state without opening a tab', async () => {
@@ -194,5 +196,18 @@ describe('useHistoryRestore', () => {
 
     expect(loading.restore.buildRequest(source()).currentDirty).toBe(false)
     expect(failed.restore.buildRequest(source()).currentDirty).toBe(false)
+  })
+
+  it('reports partial refresh failure without treating a completed restore as failed', async () => {
+    const h = harness({
+      refreshVault: vi.fn().mockRejectedValue(new Error('refresh failed')),
+      refreshComparison: vi.fn().mockResolvedValue(false),
+    })
+
+    await expect(h.restore.restore(source())).resolves.toBe(true)
+
+    expect(h.tabs.value[0]?.raw).toBe('# Historical')
+    expect(h.onSuccess).toHaveBeenCalledWith(expect.any(Object), { refreshFailed: true })
+    expect(h.onError).not.toHaveBeenCalled()
   })
 })

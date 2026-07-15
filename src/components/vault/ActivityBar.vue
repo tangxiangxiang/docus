@@ -8,6 +8,7 @@
    vault-scoped useHistory instance (which subscribes to the file-change bus)
    so the badge updates live as the user saves tabs. */
 import { useHistory } from '../../composables/vault/useHistory.js'
+import { useI18n } from '../../composables/useI18n'
 import {
   ICON_AB_GIT_HISTORY,
   ICON_AB_SETTINGS,
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 }>()
 
 const h = useHistory()
+const { t } = useI18n()
 </script>
 
 <template>
@@ -48,7 +50,8 @@ const h = useHistory()
     <button
       class="ab-btn"
       :class="{ active: activePanel === 'history' }"
-      title="History"
+      :title="t('history.activity_label')"
+      :aria-label="t('history.activity_label')"
       :aria-pressed="activePanel === 'history'"
       @click="emit('select-panel', 'history')"
     >
@@ -56,7 +59,7 @@ const h = useHistory()
       <span
         v-if="h.dirtyCount.value > 0"
         class="ab-badge"
-        :aria-label="`${h.dirtyCount.value} changed files`"
+        :aria-label="t('history.changed_files', { count: h.dirtyCount.value })"
       >{{ h.dirtyCount.value }}</span>
     </button>
     <div class="ab-spacer" aria-hidden="true" />

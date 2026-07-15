@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import EditorTabs from '../EditorTabs.vue'
 import type { WorkspaceTab } from '../tabs'
+import { useI18n } from '../../../composables/useI18n'
 
 function makeTab(path: string, overrides: Partial<WorkspaceTab> = {}): WorkspaceTab {
   return {
@@ -45,6 +46,7 @@ function menuButtons(): HTMLButtonElement[] {
 
 describe('EditorTabs context menu', () => {
   beforeEach(() => {
+    useI18n().setLocale('zh')
     // The menu is teleported to <body>, so it survives w.unmount() and
     // would leak into the next case's document.querySelector. Wipe any
     // leftover menu before each case.
@@ -160,6 +162,7 @@ describe('EditorTabs context menu', () => {
 
 describe('EditorTabs (existing behavior)', () => {
   beforeEach(() => {
+    useI18n().setLocale('zh')
     document.querySelectorAll('.tab-context-menu').forEach((el) => el.remove())
   })
 
@@ -206,5 +209,18 @@ describe('EditorTabs (existing behavior)', () => {
     expect(wrapper.get('.tab').classes()).toContain('diff')
     expect(wrapper.get('.tab-title').text()).toBe('Redis Notes (Diff)')
     expect(wrapper.get('.tab-dot').classes()).not.toContain('dirty')
+  })
+
+  it('uses roving tabindex and can restore focus to a workspace tab', () => {
+    const wrapper = mount(EditorTabs, {
+      props: { tabs: TABS, activePath: 'b.md' },
+      attachTo: document.body,
+    })
+    const tabElements = wrapper.findAll<HTMLElement>('[role="tab"]')
+    expect(tabElements.map((tab) => tab.attributes('tabindex'))).toEqual(['-1', '0', '-1', '-1'])
+
+    wrapper.vm.focusTab('b.md')
+    expect(document.activeElement).toBe(tabElements[1]!.element)
+    wrapper.unmount()
   })
 })

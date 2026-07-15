@@ -48,7 +48,7 @@ describe('useI18n', () => {
     const { t, setLocale } = useI18n()
     setLocale('en')
     expect(t('history.changed', { count: 3 })).toBe('3 changed')
-    expect(t('diff.unchanged')).toBe('{count} unchanged')
+    expect(t('history.changed_files', { count: 3 })).toBe('3 changed files')
     expect(t('search.placeholder', { count: 12 })).toBe('Search 12 documents…')
     expect(t('search.create', { query: 'Redis' })).toBe('Create “Redis”')
   })

@@ -167,6 +167,29 @@ describe('useHistoryComparisons', () => {
     await vi.waitFor(() => {
       expect(history.activeComparison.value?.newRaw).toBe('current two with unsaved edits')
     })
+    expect(history.activeComparison.value?.oldRaw).toBe('# Redis\n\nHistorical.')
+  })
+
+  it('keeps comparison tabs isolated by document path', async () => {
+    const history = useHistoryComparisons({
+      getCurrentDocument: (path) => ({ raw: `current ${path}`, dirty: false }),
+      loadCurrentDocument: vi.fn(),
+    })
+    await history.openComparison(snapshot())
+    await history.openComparison(snapshot({
+      tabId: 'history:inbox/sqlite',
+      documentPath: 'inbox/sqlite',
+      documentTitle: 'SQLite Notes',
+      rawMarkdown: 'historical sqlite',
+    }))
+
+    expect(history.comparisons.value).toHaveLength(2)
+    expect(history.comparisons.value.find((item) => item.documentPath === 'inbox/redis')?.oldRaw)
+      .toContain('Historical')
+    expect(history.activeComparison.value).toMatchObject({
+      documentPath: 'inbox/sqlite',
+      newRaw: 'current inbox/sqlite',
+    })
   })
 
   it('keeps errors inline and supports retrying the current side', async () => {

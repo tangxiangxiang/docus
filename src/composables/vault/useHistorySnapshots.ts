@@ -119,6 +119,18 @@ export function useHistorySnapshots() {
     }
   }
 
+  async function retrySnapshot(tabId: string): Promise<HistorySnapshot | null> {
+    const snapshot = snapshots.value.find((item) => item.tabId === tabId)
+    if (!snapshot) return null
+    return openRevision({
+      documentPath: snapshot.documentPath,
+      documentTitle: snapshot.documentTitle,
+      revisionId: snapshot.revisionId,
+      revisionTime: snapshot.revisionTime,
+      summary: snapshot.summary,
+    })
+  }
+
   function viewCurrent(): void {
     activeSnapshotId.value = null
   }
@@ -145,6 +157,7 @@ export function useHistorySnapshots() {
     openRevision,
     openCachedRevision,
     selectSnapshot,
+    retrySnapshot,
     viewCurrent,
     closeSnapshot,
     closeSnapshots,

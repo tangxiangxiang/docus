@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { HistorySnapshot } from '../../composables/vault/useHistorySnapshots'
 import { useI18n } from '../../composables/useI18n'
 import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 import ReadingPane from './ReadingPane.vue'
+import { formatHistoryDate } from '../../lib/history-date'
 
 const props = defineProps<{
   snapshot: HistorySnapshot
@@ -15,17 +16,22 @@ const emit = defineEmits<{
   'view-current': [path: string]
   'open-diff': [snapshot: HistorySnapshot]
   restore: [snapshot: HistorySnapshot]
+  retry: [tabId: string]
   close: [tabId: string]
 }>()
 
 const { locale, t } = useI18n()
+const headingRef = ref<HTMLElement | null>(null)
 
-const revisionTimeLabel = computed(() => new Intl.DateTimeFormat(
-  locale.value === 'zh' ? 'zh-CN' : 'en-US',
-  { dateStyle: 'medium', timeStyle: 'short' },
-).format(props.snapshot.revisionTime))
+const revisionTimeLabel = computed(() => formatHistoryDate(props.snapshot.revisionTime, locale.value))
 
 const errorLabel = computed(() => props.snapshot.error || t('history.snapshot_load_failed'))
+
+function focusViewer(): void {
+  headingRef.value?.focus()
+}
+
+defineExpose({ focusViewer })
 </script>
 
 <template>
@@ -34,25 +40,10 @@ const errorLabel = computed(() => props.snapshot.error || t('history.snapshot_lo
     :aria-label="t('history.snapshot_viewer')"
     :aria-busy="restoring || undefined"
   >
-    <header class="history-snapshot-banner">
-      <div class="history-snapshot-notice" role="status">
-        <strong>{{ t('history.viewing_historical') }}</strong>
+    <header class="history-viewer-header history-snapshot-banner">
+      <div class="history-viewer-heading history-snapshot-notice" role="status">
+        <h2 ref="headingRef" tabindex="-1">{{ t('history.viewing_historical') }}</h2>
         <span>{{ t('history.current_unchanged') }}</span>
-      </div>
-      <button
-        type="button"
-        class="history-snapshot-current"
-        @click="emit('view-current', snapshot.documentPath)"
-      >
-        {{ t('history.view_current') }}
-      </button>
-    </header>
-
-    <div class="history-snapshot-meta">
-      <div class="history-snapshot-heading">
-        <span>{{ t('history.viewing_revision') }}</span>
-        <strong>{{ revisionTimeLabel }}</strong>
-        <span v-if="snapshot.summary" class="history-snapshot-summary">{{ snapshot.summary }}</span>
       </div>
       <span class="history-readonly-badge">{{ t('history.read_only') }}</span>
       <div class="history-snapshot-toolbar" role="toolbar" :aria-label="t('history.snapshot_toolbar')">
@@ -66,14 +57,23 @@ const errorLabel = computed(() => props.snapshot.error || t('history.snapshot_lo
         </button>
         <button
           type="button"
+          :disabled="snapshot.status !== 'ready'"
           @click="emit('open-diff', snapshot)"
         >
           {{ t('history.open_diff') }}
+        </button>
+        <button type="button" @click="emit('view-current', snapshot.documentPath)">
+          {{ t('history.view_current') }}
         </button>
         <button type="button" @click="emit('close', snapshot.tabId)">
           {{ t('history.close_history') }}
         </button>
       </div>
+    </header>
+
+    <div class="history-viewer-meta history-snapshot-meta">
+      <span>{{ t('history.viewing_revision') }} · {{ revisionTimeLabel }}</span>
+      <span v-if="snapshot.summary" class="history-snapshot-summary">{{ snapshot.summary }}</span>
     </div>
 
     <div
@@ -85,10 +85,13 @@ const errorLabel = computed(() => props.snapshot.error || t('history.snapshot_lo
     </div>
     <div
       v-else-if="snapshot.status === 'error'"
-      class="history-snapshot-state is-error"
+      class="history-snapshot-state history-viewer-error is-error"
       role="alert"
     >
-      {{ errorLabel }}
+      <span>{{ errorLabel }}</span>
+      <button type="button" @click="emit('retry', snapshot.tabId)">
+        {{ t('history.retry') }}
+      </button>
     </div>
     <ReadingPane
       v-else

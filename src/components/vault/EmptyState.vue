@@ -4,7 +4,6 @@
 // Used wherever a panel would otherwise render a blank area:
 //   - VaultView (edit / read mode when no tabs are open)
 //   - HistoryPanel (git missing / repo not initialized)
-//   - DiffView   (no file selected / identical refs)
 //
 // All visual rules live in src/style.css (`.empty-state*` block) so
 // the component stays portable and the `--vs-*` token usage stays
@@ -21,8 +20,7 @@ defineProps<{
   /** Bold headline. Single line. */
   title: string
   /** `'normal'` for the centered hero card (VaultView main pane),
-   *  `'compact'` for narrow side-pane wrappers (HistoryPanel,
-   *  DiffView) — drops padding and font-size. */
+   *  `'compact'` for narrow side-pane wrappers such as HistoryPanel. */
   size?: 'normal' | 'compact'
 }>()
 </script>

@@ -222,6 +222,11 @@ export function useHistoryTimeline(
     selectedRevisionId.value = revision.id
   }
 
+  async function retrySelectedDocument(): Promise<void> {
+    const document = selectedDocument.value
+    if (document) await selectDocument(document)
+  }
+
   function showDocuments(): void {
     revisionRequestId++
     selectedDocument.value = null
@@ -241,6 +246,7 @@ export function useHistoryTimeline(
     revisionsError,
     selectDocument,
     selectRevision,
+    retrySelectedDocument,
     showDocuments,
   }
 }

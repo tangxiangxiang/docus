@@ -22,9 +22,9 @@ interface HistoryRestoreOptions {
   confirm: (request: HistoryRestoreRequest) => Promise<boolean>
   prepareEditorRestore: (path: string) => Promise<void>
   refreshVault: () => Promise<void>
-  refreshComparison: (path: string) => Promise<void>
+  refreshComparison: (path: string) => Promise<boolean | void>
   restoreFile?: typeof historyApi.restoreFile
-  onSuccess: (request: HistoryRestoreRequest) => void
+  onSuccess: (request: HistoryRestoreRequest, result: { refreshFailed: boolean }) => void
   onError: (request: HistoryRestoreRequest, error: unknown) => void
 }
 
@@ -100,11 +100,15 @@ export function useHistoryRestore(options: HistoryRestoreOptions) {
         newRaw: request.historicalRaw,
         source: 'history-restore',
       })
-      await Promise.allSettled([
+      const refreshResults = await Promise.allSettled([
         options.refreshVault(),
         options.refreshComparison(request.documentPath),
       ])
-      options.onSuccess(request)
+      const refreshFailed = refreshResults.some((refreshResult) => (
+        refreshResult.status === 'rejected'
+        || (refreshResult.status === 'fulfilled' && refreshResult.value === false)
+      ))
+      options.onSuccess(request, { refreshFailed })
       return true
     } catch (cause) {
       error.value = cause instanceof Error && cause.message ? cause.message : null

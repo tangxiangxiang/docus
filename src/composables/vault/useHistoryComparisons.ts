@@ -142,9 +142,11 @@ export function useHistoryComparisons(options: HistoryComparisonOptions) {
     void refreshComparison(tabId)
   }
 
-  async function refreshDocumentComparison(path: string): Promise<void> {
+  async function refreshDocumentComparison(path: string): Promise<boolean> {
     const comparison = comparisons.value.find((item) => item.documentPath === path)
-    if (comparison) await refreshComparison(comparison.tabId)
+    if (!comparison) return true
+    const refreshed = await refreshComparison(comparison.tabId)
+    return refreshed?.status === 'ready'
   }
 
   function deactivate(): void {

@@ -530,283 +530,11 @@ main.container {
   background: color-mix(in srgb, var(--vs-bg-1) 88%, var(--vs-bg-2));
 }
 
-.history-composer {
-  flex-shrink: 0;
-  padding: 10px 10px 12px;
-  border-bottom: 1px solid var(--vs-border);
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--vs-bg-2) 46%, var(--vs-bg-1)),
-    var(--vs-bg-1)
-  );
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-.history-composer-input-wrap {
-  position: relative;
-  min-width: 0;
-}
-.history-composer-input {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  resize: none;
-  background: color-mix(in srgb, var(--vs-bg-1) 88%, white);
-  border: 1px solid color-mix(in srgb, var(--vs-border) 82%, white);
-  border-radius: 6px;
-  padding: 6px 32px 6px 10px;
-  font-family: var(--sans);
-  font-size: 0.85rem;
-  color: var(--vs-text-1);
-  line-height: 1.4;
-  outline: none;
-  min-height: 34px;
-  overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
-}
-.history-composer-input:focus {
-  border-color: color-mix(in srgb, var(--vs-accent) 62%, var(--vs-border));
-  background: color-mix(in srgb, var(--vs-bg-1) 92%, white);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-accent) 16%, transparent);
-}
-.history-composer-input::-webkit-scrollbar { width: 0; background: transparent; }
-.history-composer-input::placeholder {
-  color: color-mix(in srgb, var(--vs-text-2) 78%, var(--vs-text-3));
-  font-weight: 500;
-}
-.history-ai-message-btn {
-  position: absolute;
-  right: 4px;
-  top: 4px;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: color-mix(in srgb, var(--vs-text-2) 86%, var(--vs-text-1));
-  font-size: 0.95rem;
-  font-weight: 600;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
-}
-.history-ai-message-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--vs-accent) 10%, transparent);
-  color: var(--vs-accent);
-}
-.history-ai-message-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-.history-commit-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 7px;
-  border: 0;
-  background: var(--vs-accent);
-  color: #fff;
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.12s, opacity 0.12s, transform 0.12s;
-}
-.history-commit-btn:hover:not(:disabled) { background: var(--vs-accent-hover); }
-.history-commit-btn:active:not(:disabled) { transform: translateY(1px); }
-.history-commit-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-
-.history-section {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.history-section + .history-section { border-top: 1px solid var(--vs-border); }
-/* The Changes section stays at a fixed 220px so a vault with many
-   dirty files doesn't push the timeline off-screen — and so the
-   section keeps its height even when status is empty (no <ul>
-   rendered, only the .history-empty-inline placeholder). The
-   Timeline section grows with flex: 1 to consume whatever height
-   remains in the panel — that's the long list users scroll through,
-   and the section title row stays fixed via flex-shrink: 0 above.
-   The internal <ul> in each section becomes the scroll region.
-
-   Targeted via explicit .history-section-changes / -timeline classes
-   rather than :has(.history-dirty) — the empty-state branch doesn't
-   render <ul>, so :has() would miss it and the Changes section
-   would collapse to its title + placeholder's natural height. */
-.history-section-changes { flex: 0 0 220px; }
-.history-section-timeline { flex: 1 1 auto; min-height: 220px; }
-.history-section-title {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 28px;
-  box-sizing: border-box;
-  padding: 0 10px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--vs-text-3);
-  background: var(--vs-bg-2);
-  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 70%, transparent);
-}
-.history-section-count {
-  min-width: 18px;
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--vs-text-3) 16%, transparent);
-  color: var(--vs-text-2);
-  font-size: 0.66rem;
-  line-height: 1.35;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-.history-dirty,
-.history-timeline {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  flex: 1;
-  min-height: 0;
-}
-.history-dirty-row {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 8px;
-  align-items: center;
-  min-height: 30px;
-  padding: 4px 10px;
-  font-size: 0.8rem;
-  color: var(--vs-text-1);
-  cursor: pointer;
-  border-left: 2px solid transparent;
-}
-.history-dirty-row:hover { background: var(--vs-hover-bg); }
-.history-dirty-row:focus-visible,
-.history-commit-row:focus-visible {
-  outline: 1px solid var(--vs-accent);
-  outline-offset: -1px;
-}
-.history-dirty-row.selected {
-  background: var(--vs-active-bg);
-  border-left-color: var(--vs-accent);
-}
-.history-dirty-row input[type='checkbox'] {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  accent-color: var(--vs-accent);
-}
-.history-dirty-path {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: var(--mono);
-  font-size: 0.75rem;
-}
-.history-dirty-status {
-  font-family: var(--mono);
-  font-size: 0.7rem;
-  color: var(--vs-text-3);
-  min-width: 18px;
-  padding: 1px 4px;
-  border-radius: 3px;
-  text-align: center;
-  font-weight: 600;
-}
-.history-dirty-status.is-a { color: #5fbf78; background: color-mix(in srgb, #16a34a 14%, transparent); }
-.history-dirty-status.is-m,
-.history-dirty-status.is-r { color: #d2ad57; background: color-mix(in srgb, #d2ad57 14%, transparent); }
-.history-dirty-status.is-d { color: #e06c75; background: color-mix(in srgb, #dc2626 14%, transparent); }
-
-.history-commit-row {
-  padding: 8px 10px 9px;
-  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 72%, transparent);
-  cursor: pointer;
-  font-size: 0.8rem;
-  border-left: 2px solid transparent;
-  transition: background 0.12s, border-left-color 0.12s;
-}
-.history-commit-row:hover { background: var(--vs-hover-bg); }
-.history-commit-row.selected {
-  background: color-mix(in srgb, var(--vs-accent) 12%, var(--vs-bg-1));
-  border-left-color: var(--vs-accent);
-}
-.history-commit-row:focus-within {
-  background: color-mix(in srgb, var(--vs-accent) 7%, transparent);
-}
-.history-commit-row-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 3px;
-}
-.history-commit-sha {
-  font-family: var(--mono);
-  font-size: 0.7rem;
-  color: var(--vs-text-2);
-}
-.history-commit-when {
-  font-size: 0.7rem;
-  color: var(--vs-text-3);
-  white-space: nowrap;
-}
-.history-commit-subject {
-  color: var(--vs-text-1);
-  font-weight: 500;
-  line-height: 1.35;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.history-commit-files {
-  margin-top: 6px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-.history-commit-file-chip {
-  display: inline-block;
-  max-width: 100%;
-  padding: 1px 6px 2px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--vs-bg-2) 78%, var(--vs-bg-1));
-  border: 1px solid color-mix(in srgb, var(--vs-border) 48%, transparent);
-  color: var(--vs-text-2);
-  font-family: var(--mono);
-  font-size: 0.68rem;
-  line-height: 1.4;
-  text-align: left;
-  cursor: pointer;
-  /* Long paths need ellipsis but stay clickable across the full chip
-     width. Combined with the row's flex-wrap, multi-file commits
-     reflow gracefully even on narrow sidebars. */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
-}
-.history-commit-file-chip:hover {
-  background: color-mix(in srgb, var(--vs-accent) 14%, var(--vs-bg-2));
-  border-color: color-mix(in srgb, var(--vs-accent) 42%, var(--vs-border));
-  color: var(--vs-text-1);
-}
-.history-commit-file-chip.selected {
-  background: color-mix(in srgb, var(--vs-accent) 22%, var(--vs-bg-2));
-  border-color: var(--vs-accent);
-  color: var(--vs-text-1);
-}
 .history-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   flex-shrink: 0;
   padding: 8px 12px;
   background: color-mix(in srgb, #ef4444 12%, var(--vs-bg-1));
@@ -815,6 +543,18 @@ main.container {
   border-top: 1px solid var(--vs-border);
   border-left: 2px solid #ef4444;
 }
+.history-error button {
+  flex-shrink: 0;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--vs-border) 82%, transparent);
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.history-error button:hover { background: var(--vs-hover-bg); }
 
 /* Phase 1 document timeline. History remains one quiet, continuous sidebar. */
 .history-panel .history-header {
@@ -1004,33 +744,42 @@ main.container {
   min-height: 0;
   background: var(--vs-bg-1);
 }
-.history-snapshot-banner {
+.history-viewer-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
   min-height: 46px;
   box-sizing: border-box;
   padding: 7px 18px;
   border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 72%, transparent);
+}
+.history-snapshot-banner {
   background: color-mix(in srgb, var(--vs-accent) 5%, var(--vs-bg-1));
 }
-.history-snapshot-notice {
+.history-viewer-heading {
   display: flex;
   flex-direction: column;
   min-width: 0;
   gap: 1px;
 }
-.history-snapshot-notice strong {
+.history-viewer-heading h2 {
+  margin: 0;
   color: var(--vs-text-1);
   font-size: 0.78rem;
   font-weight: 600;
+  letter-spacing: 0;
 }
-.history-snapshot-notice span {
+.history-viewer-heading h2:focus-visible {
+  outline: none;
+  color: var(--vs-accent);
+}
+.history-viewer-heading span {
+  overflow: hidden;
   color: var(--vs-text-3);
   font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.history-snapshot-current,
 .history-snapshot-toolbar button {
   min-height: 28px;
   padding: 0 9px;
@@ -1042,38 +791,25 @@ main.container {
   font-size: 0.72rem;
   cursor: pointer;
 }
-.history-snapshot-current:hover,
 .history-snapshot-toolbar button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--vs-accent) 45%, var(--vs-border));
   background: var(--vs-hover-bg);
   color: var(--vs-text-1);
 }
-.history-snapshot-current:focus-visible,
 .history-snapshot-toolbar button:focus-visible {
   outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
   outline-offset: 2px;
 }
-.history-snapshot-meta {
+.history-viewer-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 42px;
+  gap: 8px;
+  min-height: 34px;
   box-sizing: border-box;
-  padding: 6px 18px;
-  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 58%, transparent);
-}
-.history-snapshot-heading {
-  display: flex;
-  align-items: baseline;
-  min-width: 0;
-  gap: 7px;
+  padding: 5px 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 48%, transparent);
   color: var(--vs-text-3);
-  font-size: 0.7rem;
-}
-.history-snapshot-heading strong {
-  flex-shrink: 0;
-  color: var(--vs-text-1);
-  font-weight: 500;
+  font-size: 0.68rem;
   font-variant-numeric: tabular-nums;
 }
 .history-snapshot-summary {
@@ -1084,6 +820,7 @@ main.container {
 }
 .history-readonly-badge {
   flex-shrink: 0;
+  margin-left: auto;
   padding: 1px 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--vs-text-3) 12%, transparent);
@@ -1094,7 +831,7 @@ main.container {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
+  margin-left: 0;
 }
 .history-snapshot-toolbar button:disabled {
   cursor: not-allowed;
@@ -1117,6 +854,21 @@ main.container {
   font-size: 0.82rem;
 }
 .history-snapshot-state.is-error { color: var(--vs-danger, #c94f4f); }
+.history-viewer-error { gap: 10px; }
+.history-viewer-error button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--vs-border) 82%, transparent);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--vs-text-2);
+  font: inherit;
+  cursor: pointer;
+}
+.history-viewer-error button:hover {
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
 .history-snapshot-pane > .reading-pane {
   min-height: 0;
 }
@@ -1135,47 +887,6 @@ main.container {
   overflow: hidden;
   background: var(--vs-bg-1);
 }
-.history-comparison-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  box-sizing: border-box;
-  padding: 7px 18px;
-  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 68%, transparent);
-}
-.history-comparison-heading {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 1px;
-}
-.history-comparison-heading strong {
-  color: var(--vs-text-1);
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-.history-comparison-heading span {
-  overflow: hidden;
-  color: var(--vs-text-3);
-  font-size: 0.68rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.history-comparison-header .history-readonly-badge { margin-left: auto; }
-.history-comparison-header .history-snapshot-toolbar { margin-left: 0; }
-.history-comparison-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  box-sizing: border-box;
-  padding: 5px 18px;
-  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 48%, transparent);
-  color: var(--vs-text-3);
-  font-size: 0.68rem;
-  font-variant-numeric: tabular-nums;
-}
 .history-comparison-current {
   flex-shrink: 0;
   margin-left: auto;
@@ -1185,144 +896,11 @@ main.container {
   width: 100%;
   min-height: 0;
 }
-.history-comparison-error {
-  gap: 10px;
-}
-.history-comparison-error button {
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--vs-border) 82%, transparent);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--vs-text-2);
-  font: inherit;
-  cursor: pointer;
-}
-.history-comparison-error button:hover {
-  background: var(--vs-hover-bg);
-  color: var(--vs-text-1);
-}
-
 @media (max-width: 720px) {
-  .history-snapshot-banner,
-  .history-snapshot-meta,
-  .history-comparison-header,
-  .history-comparison-meta { padding-left: 12px; padding-right: 12px; }
+  .history-viewer-header,
+  .history-viewer-meta { padding-left: 12px; padding-right: 12px; }
   .history-snapshot-summary { display: none; }
   .history-comparison-current { display: none; }
-}
-
-/* === DiffView === */
-.diff-view {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  /* min-height: 0 so the flex item can fill its parent (`.content`)
-     even when the diff content is shorter than the cell — the default
-     `min-height: auto` would cap us at content height. */
-  min-height: 0;
-  background: var(--vs-bg-1);
-  overflow: hidden;
-}
-.diff-header {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 36px;
-  box-sizing: border-box;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--vs-border);
-  background: var(--vs-bg-2);
-  font-size: 0.78rem;
-  color: var(--vs-text-2);
-}
-.diff-path {
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  color: var(--vs-text-1);
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.diff-stats {
-  display: flex;
-  gap: 8px;
-  font-family: var(--mono);
-  font-size: 0.72rem;
-}
-.diff-stat-add { color: #16a34a; }
-.diff-stat-del { color: #dc2626; }
-.diff-stat-eq  { color: var(--vs-text-3); }
-.diff-refs {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  color: var(--vs-text-3);
-}
-/* Header actions slot — currently just the restore button, but
-   flex:0 + gap means we can drop in a swap-refs / view-as-unified
-   button without breaking the layout. */
-.diff-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-}
-/* Restore old version: subtle outline so it doesn't compete with
-   the diff stats for attention. Hover lifts to accent; disabled
-   dims. The destructive intent is clear from the tooltip + the
-   confirm() dialog, not from a red button. */
-.diff-restore-btn {
-  appearance: none;
-  background: transparent;
-  color: var(--vs-text-2);
-  border: 1px solid color-mix(in srgb, var(--vs-border) 68%, transparent);
-  border-radius: 4px;
-  padding: 3px 10px;
-  font-size: 0.72rem;
-  font-family: var(--vs-ui);
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
-}
-.diff-restore-btn:hover:not(:disabled) {
-  background: var(--vs-bg-3);
-  color: var(--vs-text-1);
-  border-color: var(--vs-text-3);
-}
-.diff-restore-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.diff-loading,
-.diff-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  text-align: center;
-  color: var(--vs-text-3);
-  font-size: 0.85rem;
-}
-.diff-loading { gap: 10px; }
-.diff-loading-indicator {
-  width: 18px;
-  height: 18px;
-  box-sizing: border-box;
-  border: 2px solid color-mix(in srgb, var(--vs-text-3) 35%, transparent);
-  border-top-color: var(--vs-accent);
-  border-radius: 50%;
-  animation: diff-loading-spin 0.8s linear infinite;
-}
-.diff-error { color: #e06c75; }
-@keyframes diff-loading-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) {
-  .diff-loading-indicator { animation: none; }
 }
 
 .diff-table {
@@ -2653,11 +2231,10 @@ main.container {
   background: var(--vs-bg-1);
 }
 
-/* Shared empty-state family. Used by VaultView (main pane),
-   HistoryPanel (git missing / repo not initialized), and DiffView
-   (no file / identical refs). All three used to ship their own
-   `.empty-title` rule with subtly different colors; collapsing into
-   one block here keeps them in lockstep.
+/* Shared empty-state family. Used by VaultView (main pane) and
+   HistoryPanel (git missing / repo not initialized). Both used to
+   ship their own `.empty-title` rule with subtly different colors;
+   collapsing into one block here keeps them in lockstep.
 
    The two sizes share `.empty-state-title` / `.empty-state-hint`
    rules; only font-size and spacing differ between normal and
@@ -2734,11 +2311,9 @@ main.container {
   vertical-align: middle;
 }
 
-/* Compact variant: narrower side-pane wrappers (HistoryPanel,
-   DiffView). Slightly smaller font + tighter row spacing so the
-   empty state sits inside the surrounding list rhythm without
-   commanding attention. Hint font-size matches the surrounding
-   `.history-empty` / `.diff-empty` wrapper font-size. */
+/* Compact variant for narrow side-pane wrappers such as HistoryPanel.
+   Slightly smaller font + tighter row spacing keeps the empty state
+   inside the surrounding list rhythm without commanding attention. */
 .empty-state--compact .empty-state-title {
   font-size: 0.85rem;
   margin-bottom: 6px;

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { HistoryComparison } from '../../composables/vault/useHistoryComparisons'
 import { useI18n } from '../../composables/useI18n'
 import SideBySideDiff from './SideBySideDiff.vue'
+import { formatHistoryDate } from '../../lib/history-date'
 
 const props = defineProps<{
   comparison: HistoryComparison
@@ -18,15 +19,19 @@ const emit = defineEmits<{
 }>()
 
 const { locale, t } = useI18n()
+const headingRef = ref<HTMLElement | null>(null)
 
-const revisionTimeLabel = computed(() => new Intl.DateTimeFormat(
-  locale.value === 'zh' ? 'zh-CN' : 'en-US',
-  { dateStyle: 'medium', timeStyle: 'short' },
-).format(props.comparison.revisionTime))
+const revisionTimeLabel = computed(() => formatHistoryDate(props.comparison.revisionTime, locale.value))
 
 const errorLabel = computed(() => (
   props.comparison.error || t('history.comparison_load_failed')
 ))
+
+function focusViewer(): void {
+  headingRef.value?.focus()
+}
+
+defineExpose({ focusViewer })
 </script>
 
 <template>
@@ -35,9 +40,9 @@ const errorLabel = computed(() => (
     :aria-label="t('history.comparison_viewer')"
     :aria-busy="restoring || undefined"
   >
-    <header class="history-comparison-header">
-      <div class="history-comparison-heading">
-        <strong>{{ t('history.comparing_current') }}</strong>
+    <header class="history-viewer-header history-comparison-header">
+      <div class="history-viewer-heading history-comparison-heading">
+        <h2 ref="headingRef" tabindex="-1">{{ t('history.comparing_current') }}</h2>
         <span>{{ comparison.documentTitle }}</span>
       </div>
       <span class="history-readonly-badge">{{ t('history.read_only') }}</span>
@@ -62,7 +67,7 @@ const errorLabel = computed(() => (
       </div>
     </header>
 
-    <div class="history-comparison-meta">
+    <div class="history-viewer-meta history-comparison-meta">
       <span>{{ t('history.historical_version') }} · {{ revisionTimeLabel }}</span>
       <span v-if="comparison.summary" class="history-snapshot-summary">{{ comparison.summary }}</span>
       <span class="history-comparison-current" :class="{ 'is-dirty': comparison.currentDirty }">
@@ -76,12 +81,12 @@ const errorLabel = computed(() => (
     </div>
     <div
       v-else-if="comparison.status === 'error'"
-      class="history-snapshot-state history-comparison-error is-error"
+      class="history-snapshot-state history-viewer-error is-error"
       role="alert"
     >
       <span>{{ errorLabel }}</span>
       <button type="button" @click="emit('retry', comparison.tabId)">
-        {{ t('history.retry_comparison') }}
+        {{ t('history.retry') }}
       </button>
     </div>
     <div

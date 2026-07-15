@@ -178,7 +178,8 @@ describe('HistoryPanel document timeline', () => {
     await wrapper.get('.history-document-row').trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('.history-error').text()).toBe('加载历史记录失败。')
+    expect(wrapper.get('.history-error').text()).toContain('加载历史记录失败。')
+    expect(wrapper.get('.history-error button').text()).toBe('重试')
   })
 
   it('supports arrow navigation, Enter selection, and Escape back navigation', async () => {

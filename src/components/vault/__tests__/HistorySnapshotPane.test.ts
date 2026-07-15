@@ -44,14 +44,14 @@ describe('HistorySnapshotPane', () => {
     expect(wrapper.get('.history-restore-button').text()).toBe('Restore this version')
     expect(wrapper.get('.history-restore-button').attributes('disabled')).toBeUndefined()
 
-    await wrapper.get('.history-snapshot-current').trigger('click')
-    expect(wrapper.emitted('view-current')).toEqual([['inbox/redis']])
     await wrapper.get('.history-restore-button').trigger('click')
     expect(wrapper.emitted('restore')?.[0]?.[0]).toMatchObject({ revisionId: 'revision-a' })
     const toolbarButtons = wrapper.findAll('.history-snapshot-toolbar button')
     await toolbarButtons[1]!.trigger('click')
     expect(wrapper.emitted('open-diff')?.[0]?.[0]).toMatchObject({ revisionId: 'revision-a' })
     await toolbarButtons[2]!.trigger('click')
+    expect(wrapper.emitted('view-current')).toEqual([['inbox/redis']])
+    await toolbarButtons[3]!.trigger('click')
     expect(wrapper.emitted('close')).toEqual([['history:inbox/redis']])
   })
 
@@ -71,6 +71,19 @@ describe('HistorySnapshotPane', () => {
     expect(wrapper.get('.history-snapshot-state').text()).toBe('Loading revision...')
 
     await wrapper.setProps({ snapshot: snapshot({ status: 'error', rawMarkdown: '', error: null }) })
-    expect(wrapper.get('[role="alert"]').text()).toBe('Failed to load revision.')
+    expect(wrapper.get('[role="alert"]').text()).toContain('Failed to load revision.')
+    await wrapper.get('[role="alert"] button').trigger('click')
+    expect(wrapper.emitted('retry')).toEqual([['history:inbox/redis']])
+  })
+
+  it('exposes a focus target for the read-only viewer', () => {
+    const wrapper = mount(HistorySnapshotPane, {
+      props: { snapshot: snapshot() },
+      attachTo: document.body,
+      global: { stubs: { ReadingPane: true } },
+    })
+    wrapper.vm.focusViewer()
+    expect(document.activeElement).toBe(wrapper.get('h2').element)
+    wrapper.unmount()
   })
 })

@@ -22,6 +22,7 @@ import {
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
 import { createPost, getPost, type DocumentMetadata } from '../lib/api'
+import { formatHistoryDate } from '../lib/history-date'
 import { isSlugSegment } from '../lib/slug'
 import { resolveWikiTarget } from '../lib/linkResolve'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
@@ -40,6 +41,7 @@ import HistoryPanel from '../components/vault/HistoryPanel.vue'
 import HistorySnapshotPane from '../components/vault/HistorySnapshotPane.vue'
 import HistoryComparisonPane from '../components/vault/HistoryComparisonPane.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
+import { fallbackAfterClosingWorkspaceTab } from '../components/vault/workspaceNavigation'
 import type { WorkspaceTab } from '../components/vault/tabs'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
@@ -121,6 +123,9 @@ const { locale, t } = useI18n()
 // template binding resolves cleanly. startDrag takes the host as a parameter.
 const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
+const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
+const snapshotPaneRef = ref<InstanceType<typeof HistorySnapshotPane> | null>(null)
+const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>(null)
 function openSearch() { paletteRef.value?.show() }
 
 /* ---------- Tabs / save / route sync ---------- */
@@ -155,10 +160,7 @@ function restoreSource(source: typeof activeHistorySnapshot.value | HistoryCompa
 }
 
 function restoreDate(timestamp: number): string {
-  return new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(timestamp)
+  return formatHistoryDate(timestamp, locale.value)
 }
 
 async function confirmHistoryRestore(request: HistoryRestoreRequest): Promise<boolean> {
@@ -184,8 +186,12 @@ const historyRestore = useHistoryRestore({
   prepareEditorRestore: prepareHistoryRestore,
   refreshVault: refresh,
   refreshComparison: historyComparisons.refreshDocumentComparison,
-  onSuccess(request) {
-    toast.success(t('history.restore_success', { title: request.documentTitle }))
+  onSuccess(request, result) {
+    if (result.refreshFailed) {
+      toast.info(t('history.restore_partial', { title: request.documentTitle }), 5000)
+    } else {
+      toast.success(t('history.restore_success', { title: request.documentTitle }))
+    }
   },
   onError(_request, error) {
     const message = error instanceof Error && error.message
@@ -238,28 +244,57 @@ async function openPost(path: string): Promise<void> {
   await openEditorPost(path)
 }
 
-function selectWorkspaceTab(id: string): void {
+async function selectWorkspaceTab(id: string, focusViewer = true): Promise<void> {
   if (historyComparisons.comparisons.value.some((comparison) => comparison.tabId === id)) {
     historySnapshots.viewCurrent()
     historyComparisons.selectComparison(id)
+    if (focusViewer) {
+      await nextTick()
+      comparisonPaneRef.value?.focusViewer()
+    }
   } else if (historySnapshots.snapshots.value.some((snapshot) => snapshot.tabId === id)) {
     historyComparisons.deactivate()
     historySnapshots.selectSnapshot(id)
+    if (focusViewer) {
+      await nextTick()
+      snapshotPaneRef.value?.focusViewer()
+    }
   } else {
     historyComparisons.deactivate()
     historySnapshots.viewCurrent()
     selectEditorTab(id)
+    if (focusViewer) {
+      await nextTick()
+      editorTabsRef.value?.focusTab(id)
+    }
   }
 }
 
-function closeWorkspaceTab(id: string): void {
+async function closeWorkspaceTab(id: string): Promise<void> {
+  const wasActive = activeWorkspaceTabId.value === id
+  const fallbackId = wasActive
+    ? fallbackAfterClosingWorkspaceTab(workspaceTabs.value, id)
+    : null
+
   if (historyComparisons.comparisons.value.some((comparison) => comparison.tabId === id)) {
     historyComparisons.closeComparison(id)
   } else if (historySnapshots.snapshots.value.some((snapshot) => snapshot.tabId === id)) {
     historySnapshots.closeSnapshot(id)
   } else {
-    closeEditorTab(id)
+    await closeEditorTab(id)
+    return
   }
+
+  if (!wasActive) return
+  if (!fallbackId) {
+    await nextTick()
+    vaultRef.value?.focus()
+    return
+  }
+
+  await selectWorkspaceTab(fallbackId, false)
+  await nextTick()
+  editorTabsRef.value?.focusTab(fallbackId)
 }
 
 function closeManyWorkspaceTabs(ids: string[]): void {
@@ -284,8 +319,7 @@ function onVaultKeydown(event: KeyboardEvent): void {
   }
   if (meta && event.key.toLowerCase() === 'w') {
     event.preventDefault()
-    if (activeHistoryComparison.value) historyComparisons.closeComparison(readOnlyTab.tabId)
-    else historySnapshots.closeSnapshot(readOnlyTab.tabId)
+    void closeWorkspaceTab(readOnlyTab.tabId)
     return
   }
   if (meta && event.key === 'Tab' && workspaceTabs.value.length > 0) {
@@ -294,7 +328,7 @@ function onVaultKeydown(event: KeyboardEvent): void {
     const direction = event.shiftKey ? -1 : 1
     const next = (current + direction + workspaceTabs.value.length) % workspaceTabs.value.length
     const nextTab = workspaceTabs.value[next]
-    if (nextTab) selectWorkspaceTab(nextTab.id)
+    if (nextTab) void selectWorkspaceTab(nextTab.id)
     return
   }
   if (meta && event.key.toLowerCase() === 'e') {
@@ -306,24 +340,30 @@ function onVaultKeydown(event: KeyboardEvent): void {
   // hidden editable document; unhandled keys belong to the read-only viewer.
 }
 
-function openHistoryRevision(selection: HistoryRevisionSelection): void {
+async function openHistoryRevision(selection: HistoryRevisionSelection): Promise<void> {
   historyComparisons.deactivate()
-  void historySnapshots.openRevision(selection)
+  await historySnapshots.openRevision(selection)
+  await nextTick()
+  snapshotPaneRef.value?.focusViewer()
 }
 
 async function viewCurrentDocument(path: string): Promise<void> {
   historyComparisons.deactivate()
   historySnapshots.viewCurrent()
   await openEditorPost(path)
+  await nextTick()
+  editorTabsRef.value?.focusTab(path)
 }
 
-function openHistoryComparison(snapshot: typeof activeHistorySnapshot.value): void {
+async function openHistoryComparison(snapshot: typeof activeHistorySnapshot.value): Promise<void> {
   if (!snapshot || snapshot.status !== 'ready') return
   historySnapshots.viewCurrent()
-  void historyComparisons.openComparison(snapshot)
+  await historyComparisons.openComparison(snapshot)
+  await nextTick()
+  comparisonPaneRef.value?.focusViewer()
 }
 
-function viewHistoricalComparison(comparison: HistoryComparison): void {
+async function viewHistoricalComparison(comparison: HistoryComparison): Promise<void> {
   historyComparisons.deactivate()
   historySnapshots.openCachedRevision({
     documentPath: comparison.documentPath,
@@ -332,6 +372,8 @@ function viewHistoricalComparison(comparison: HistoryComparison): void {
     revisionTime: comparison.revisionTime,
     summary: comparison.summary,
   }, comparison.oldRaw)
+  await nextTick()
+  snapshotPaneRef.value?.focusViewer()
 }
 
 const vaultContext = createVaultContext({ vaultId, fileChanges, tabs, activePath, activeTab, openPost })
@@ -523,6 +565,7 @@ watch(isReadMode, async (reading) => {
     >
       <EditorTabs
         v-if="workspaceTabs.length > 0"
+        ref="editorTabsRef"
         :tabs="workspaceTabs"
         :active-path="activeWorkspaceTabId"
         @select="selectWorkspaceTab"
@@ -599,25 +642,28 @@ watch(isReadMode, async (reading) => {
 
       <div v-if="activeHistorySnapshot" class="content history-snapshot-content">
         <HistorySnapshotPane
+          ref="snapshotPaneRef"
           :snapshot="activeHistorySnapshot"
           :resolver="historyWikiResolver"
           :restoring="historyRestore.restoring.value && historyRestore.restoringPath.value === activeHistorySnapshot.documentPath"
           @view-current="viewCurrentDocument"
           @open-diff="openHistoryComparison"
           @restore="restoreHistoricalVersion"
-          @close="historySnapshots.closeSnapshot"
+          @retry="historySnapshots.retrySnapshot"
+          @close="closeWorkspaceTab"
         />
       </div>
 
       <div v-if="activeHistoryComparison" class="content history-snapshot-content">
         <HistoryComparisonPane
+          ref="comparisonPaneRef"
           :comparison="activeHistoryComparison"
           :restoring="historyRestore.restoring.value && historyRestore.restoringPath.value === activeHistoryComparison.documentPath"
           @view-historical="viewHistoricalComparison"
           @view-current="viewCurrentDocument"
           @restore="restoreHistoricalVersion"
           @retry="historyComparisons.refreshComparison"
-          @close="historyComparisons.closeComparison"
+          @close="closeWorkspaceTab"
         />
       </div>
     </section>

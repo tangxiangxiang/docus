@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { useI18n } from '../../composables/useI18n'
 import type { WorkspaceTab } from './tabs'
 
 const props = defineProps<{ tabs: WorkspaceTab[]; activePath: string | null }>()
@@ -8,6 +9,16 @@ const emit = defineEmits<{
   close: [path: string]
   'close-many': [paths: string[]]
 }>()
+const { t: translate } = useI18n()
+const tabsRef = ref<HTMLElement | null>(null)
+
+function focusTab(id: string): void {
+  const target = [...(tabsRef.value?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])]
+    .find((tab) => tab.dataset.tabId === id)
+  target?.focus()
+}
+
+defineExpose({ focusTab })
 
 // --- right-click context menu ---
 // Same lifecycle as TreeRow's context menu: capture coords, render via
@@ -59,6 +70,7 @@ function closeMenu() {
   menuVisible.value = false
   document.removeEventListener('keydown', onMenuEscape)
 }
+onBeforeUnmount(closeMenu)
 function onMenuEscape(e: KeyboardEvent) {
   if (e.key === 'Escape') closeMenu()
 }
@@ -76,13 +88,15 @@ function actionCloseMany(paths: string[]) {
 </script>
 
 <template>
-  <div class="tabs" role="tablist">
+  <div ref="tabsRef" class="tabs" role="tablist">
     <div
       v-for="t in tabs"
       :key="t.id"
       role="tab"
+      :data-tab-id="t.id"
+      :tabindex="t.id === activePath ? 0 : -1"
       :aria-selected="t.id === activePath"
-      :title="`${t.title}\n中键 / 右键 关闭\n右键菜单 · 多关`"
+      :title="`${t.title}\n${translate('workspace_tab.close_hint')}`"
       class="tab"
       :class="{ active: t.id === activePath, history: t.kind === 'history', diff: t.kind === 'diff' }"
       @click="emit('select', t.id)"
@@ -93,7 +107,8 @@ function actionCloseMany(paths: string[]) {
       <span class="tab-title">{{ t.label }}</span>
       <button
         class="tab-close"
-        title="关闭"
+        :title="translate('workspace_tab.close')"
+        :aria-label="translate('workspace_tab.close_named', { name: t.label })"
         @click.stop="emit('close', t.id)"
       >×</button>
     </div>
@@ -104,10 +119,10 @@ function actionCloseMany(paths: string[]) {
         :style="{ left: menuX + 'px', top: menuY + 'px' }"
         @click.stop
       >
-        <button @click="actionClose">关闭</button>
-        <button :disabled="!canCloseOthers" @click="actionCloseMany(othersPaths)">关闭其它</button>
-        <button :disabled="!canCloseRight" @click="actionCloseMany(rightPaths)">关闭右侧</button>
-        <button :disabled="!canCloseAll" @click="actionCloseMany(allPaths)">关闭所有</button>
+        <button @click="actionClose">{{ translate('workspace_tab.close') }}</button>
+        <button :disabled="!canCloseOthers" @click="actionCloseMany(othersPaths)">{{ translate('workspace_tab.close_others') }}</button>
+        <button :disabled="!canCloseRight" @click="actionCloseMany(rightPaths)">{{ translate('workspace_tab.close_right') }}</button>
+        <button :disabled="!canCloseAll" @click="actionCloseMany(allPaths)">{{ translate('workspace_tab.close_all') }}</button>
       </div>
     </Teleport>
   </div>

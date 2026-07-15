@@ -77,6 +77,27 @@ describe('useHistorySnapshots', () => {
     expect(history.activeSnapshot.value?.error).toBeNull()
   })
 
+  it('retries in the same tab without changing the selected revision', async () => {
+    vi.mocked(api.getFileAt)
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({
+        path: 'inbox/redis.md',
+        ref: 'revision-a',
+        content: '# Recovered snapshot',
+      })
+    const history = useHistorySnapshots()
+    await history.openRevision(selection())
+
+    await history.retrySnapshot('history:inbox/redis')
+
+    expect(history.snapshots.value).toHaveLength(1)
+    expect(history.activeSnapshot.value).toMatchObject({
+      revisionId: 'revision-a',
+      rawMarkdown: '# Recovered snapshot',
+      status: 'ready',
+    })
+  })
+
   it('reopens cached historical content without another Git request', async () => {
     const history = useHistorySnapshots()
     history.openCachedRevision(selection(), '# Cached historical content')
