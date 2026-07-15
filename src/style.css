@@ -468,9 +468,7 @@ main.container {
   flex: 1 1 auto;
 }
 
-/* History panel: a tall column split into three scrollable
-   sections (composer, changes, timeline). The composer echoes the
-   ai-composer's compact 40px-input + 40px-toolbar look. */
+/* History is a document-first timeline in the standard side-panel column. */
 .vault .side-panel-history {
   display: flex;
   flex-direction: column;
@@ -818,6 +816,181 @@ main.container {
   border-left: 2px solid #ef4444;
 }
 
+/* Phase 1 document timeline. History remains one quiet, continuous sidebar. */
+.history-panel .history-header {
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 10px;
+  background: var(--vs-bg-1);
+}
+.history-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vs-text-2);
+  cursor: pointer;
+}
+.history-back-button:hover { background: var(--vs-hover-bg); color: var(--vs-text-1); }
+.history-back-button:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
+  outline-offset: -1px;
+}
+.history-back-button svg { display: block; transform: rotate(180deg); }
+.history-document-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 10px 10px;
+  color: var(--vs-text-1);
+}
+.history-document-header-icon,
+.history-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  color: var(--vs-text-2);
+}
+.history-document-header-icon svg,
+.history-row-icon svg { display: block; }
+.history-document-header-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.history-document-header-copy strong {
+  overflow: hidden;
+  color: var(--vs-text-1);
+  font-size: 0.84rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-document-header-copy span {
+  color: var(--vs-text-3);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+}
+.history-timeline-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0 12px;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.history-timeline-scroll:hover { scrollbar-color: var(--sb-thumb) transparent; }
+.history-timeline-scroll::-webkit-scrollbar { width: var(--sb-size); }
+.history-timeline-scroll::-webkit-scrollbar-track { background: transparent; }
+.history-timeline-scroll::-webkit-scrollbar-thumb {
+  border-radius: var(--sb-size);
+  background: transparent;
+}
+.history-timeline-scroll:hover::-webkit-scrollbar-thumb { background: var(--sb-thumb); }
+.history-timeline-scroll::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
+.history-timeline-group + .history-timeline-group { margin-top: 12px; }
+.history-timeline-group-title {
+  margin: 0;
+  padding: 5px 10px 4px;
+  color: var(--vs-text-3);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.history-timeline-group-items {
+  display: flex;
+  flex-direction: column;
+}
+.history-panel .history-document-row,
+.history-panel .history-revision-row {
+  min-height: 42px;
+  padding: 5px 10px;
+  gap: 7px;
+  text-align: left;
+  cursor: pointer;
+}
+.history-row-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 1px;
+}
+.history-row-title {
+  overflow: hidden;
+  color: var(--vs-text-1);
+  font-size: 0.8rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-row-meta {
+  color: var(--vs-text-3);
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+.history-revision-marker {
+  position: relative;
+  align-self: stretch;
+  flex: 0 0 16px;
+}
+.history-revision-marker::before {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 5px;
+  height: 5px;
+  border: 1px solid var(--vs-text-3);
+  border-radius: 50%;
+  background: var(--vs-bg-1);
+  content: '';
+  transform: translateY(-50%);
+}
+.history-revision-row.active .history-revision-marker::before {
+  border-color: var(--vs-accent);
+  background: var(--vs-accent);
+}
+.history-panel .history-empty-inline {
+  padding: 18px 10px;
+  background: transparent;
+  font-style: normal;
+}
+.history-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+.history-skeleton-row {
+  display: block;
+  width: 72%;
+  height: 30px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vs-text-3) 10%, transparent);
+  animation: history-skeleton-pulse 1.2s ease-in-out infinite alternate;
+}
+.history-skeleton-row:nth-child(2n) { width: 58%; }
+@keyframes history-skeleton-pulse {
+  to { background: color-mix(in srgb, var(--vs-text-3) 18%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .history-skeleton-row { animation: none; }
+}
+
 /* === DiffView === */
 .diff-view {
   display: flex;
@@ -1054,24 +1227,6 @@ main.container {
 .diff-word-add { background: color-mix(in srgb, #16a34a 38%, transparent); border-radius: 2px; }
 .diff-word-remove { background: color-mix(in srgb, #dc2626 38%, transparent); border-radius: 2px; }
 .diff-word-equal { background: transparent; }
-
-/* `.editor-area.is-history` collapses the grid to one row (see line
-   ~1598), and `.content { height: 100% }` should already stretch the
-   only cell. But the base `.content { display: flex }` makes
-   `.diff-view` a flex item, and the cross-axis stretch
-   (`align-items: stretch` default) plus the `minmax(0, 1fr)` grid
-   track's height resolution don't reliably chain in all engines —
-   the section collapses to its content height for short diffs and
-   leaves a blank band below. Switching the cell to `display: block`
-   makes `.diff-view` a normal block child whose `height: 100%`
-   resolves directly against the cell, with no flex item
-   `min-height: auto` trap in the way. The section itself stays a
-   flex column, so the header/table layout inside is unaffected. */
-.vault .editor-area.is-history .content.content-diff {
-  display: block;
-  height: 100%;
-  min-height: 0;
-}
 
 .ab-btn {
   width: 100%;
@@ -2138,14 +2293,6 @@ main.container {
   min-height: 0;
   height: 100%;
   overflow: hidden;
-}
-/* History mode needs the same collapse: EditorTabs is v-if'd out,
-   and the diff content auto-places into the first grid cell, which
-   is the 36px tab row in the base grid. Without this override the
-   DiffView is squashed into 36px (header takes all of it) and the
-   diff table has zero height. */
-.editor-area.is-history {
-  grid-template-rows: minmax(0, 1fr);
 }
 /* Empty-tabs state: no files are open, so EditorTabs is v-if'd out
    in VaultView. Without this override the base 36px tab row would

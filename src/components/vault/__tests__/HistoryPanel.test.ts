@@ -13,145 +13,140 @@ vi.mock('../../../lib/history-api', async () => {
     getCapability: vi.fn(),
     getStatus: vi.fn(),
     getLog: vi.fn(),
-    getDiff: vi.fn(),
-    createCommit: vi.fn(),
-    dropCommit: vi.fn(),
-    restoreFile: vi.fn(),
   }
 })
 
-const EMPTY_DIFF = {
-  ops: [],
-  stats: { added: 0, removed: 0, equal: 0 },
-}
+const NOW = new Date(2026, 6, 15, 12, 0).getTime()
+const commit = (sha: string, date: number, subject: string, files: string[]): api.CommitRecord => ({
+  sha,
+  author: 'A',
+  date: new Date(date).toISOString(),
+  subject,
+  body: '',
+  files,
+})
 
 beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(NOW)
   __resetHistoryStateForTesting()
   vi.clearAllMocks()
+  useI18n().setLocale('en')
   vi.mocked(api.getCapability).mockResolvedValue({ gitAvailable: true, repoInitialized: true })
   vi.mocked(api.getStatus).mockResolvedValue({ dirty: [], available: true })
   vi.mocked(api.getLog).mockResolvedValue({ commits: [] })
-  vi.mocked(api.getDiff).mockResolvedValue({
-    path: 'inbox/new-note.md',
-    oldRef: 'HEAD',
-    newRef: api.WORKTREE_REF,
-    diff: EMPTY_DIFF,
-  })
-  vi.mocked(api.dropCommit).mockResolvedValue({ sha: 'parent123', filesCommitted: ['inbox/a.md'] })
 })
 
 afterEach(() => {
   __resetHistoryStateForTesting()
+  vi.useRealTimers()
 })
 
-describe('HistoryPanel timeline context menu', () => {
-  it('drops a commit from the right-click menu after confirmation', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
-    vi.mocked(api.getLog).mockResolvedValue({
-      commits: [{
-        sha: 'abc1234000000000000000000000000000000000',
-        author: 'A',
-        date: new Date().toISOString(),
-        subject: 'add note',
-        body: '',
-        files: ['inbox/a.md'],
-      }],
+describe('HistoryPanel document timeline', () => {
+  it('groups recent documents and opens one document revision list', async () => {
+    const commits = [
+      commit('today', NOW - 60_000, 'Update cache section', ['inbox/redis.md']),
+      commit('yesterday', NOW - 86_400_000, 'Add prompt examples', ['inbox/ai-prompt.md']),
+      commit('last-week', NOW - 8 * 86_400_000, 'Start cache note', ['inbox/redis.md']),
+    ]
+    vi.mocked(api.getLog).mockImplementation(async (options = {}) => ({
+      commits: options.path
+        ? commits.filter((entry) => entry.files.includes(options.path!))
+        : commits,
+    }))
+
+    const wrapper = mount(HistoryPanel, {
+      props: {
+        posts: [
+          { path: 'inbox/redis', title: 'Redis Notes', created: '', updated: '', tags: [], size: 0, mtime: 0 },
+          { path: 'inbox/ai-prompt', title: 'AI Prompt', created: '', updated: '', tags: [], size: 0, mtime: 0 },
+        ],
+      },
     })
+    await flushPromises()
+
+    expect(wrapper.findAll('.history-timeline-group-title').map((node) => node.text())).toEqual([
+      'Today',
+      'Yesterday',
+    ])
+    expect(wrapper.findAll('.history-document-row')).toHaveLength(2)
+    expect(wrapper.text()).not.toContain('today')
+    expect(wrapper.text()).not.toContain('last-week')
+
+    await wrapper.findAll('.history-document-row')[0]!.trigger('click')
+    await flushPromises()
+
+    expect(api.getLog).toHaveBeenLastCalledWith({ path: 'inbox/redis.md', limit: 200 })
+    expect(wrapper.get('.history-document-header').text()).toContain('Redis Notes')
+    expect(wrapper.get('.history-document-header').text()).toContain('2 revisions')
+    expect(wrapper.findAll('.history-revision-row')).toHaveLength(2)
+    expect(wrapper.text()).toContain('Update cache section')
+    expect(wrapper.text()).toContain('Start cache note')
+    expect(wrapper.text()).not.toContain('author')
+  })
+
+  it('shows Created for a document with one revision', async () => {
+    const only = commit('created-sha', NOW, 'Initial commit', ['inbox/first.md'])
+    vi.mocked(api.getLog).mockResolvedValue({ commits: [only] })
+
+    const wrapper = mount(HistoryPanel, {
+      props: {
+        posts: [{ path: 'inbox/first', title: 'First Note', created: '', updated: '', tags: [], size: 0, mtime: 0 }],
+      },
+    })
+    await flushPromises()
+    await wrapper.get('.history-document-row').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.history-revision-row').text()).toContain('Created')
+    expect(wrapper.text()).not.toContain('Initial commit')
+  })
+
+  it('supports arrow navigation, Enter selection, and Escape back navigation', async () => {
+    const commits = [
+      commit('a', NOW, 'A', ['inbox/a.md']),
+      commit('b', NOW - 60_000, 'B', ['inbox/b.md']),
+    ]
+    vi.mocked(api.getLog).mockImplementation(async (options = {}) => ({
+      commits: options.path ? commits.filter((entry) => entry.files.includes(options.path!)) : commits,
+    }))
+
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const wrapper = mount(HistoryPanel, { attachTo: host })
+    await flushPromises()
+    const rows = wrapper.findAll<HTMLButtonElement>('.history-document-row')
+    rows[0]!.element.focus()
+    await rows[0]!.trigger('keydown', { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(rows[1]!.element)
+
+    await rows[1]!.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(wrapper.get('.history-document-header').text()).toContain('B')
+
+    await wrapper.get('.history-revision-row').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.get('.history-revision-row').attributes('aria-selected')).toBe('true')
+
+    await wrapper.get('.history-revision-row').trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+    expect(wrapper.find('.history-document-header').exists()).toBe(false)
+    expect(wrapper.findAll('.history-document-row')).toHaveLength(2)
+    wrapper.unmount()
+    host.remove()
+  })
+
+  it('renders translated empty and loading states', async () => {
+    let resolveLog!: (value: { commits: api.CommitRecord[] }) => void
+    vi.mocked(api.getLog).mockReturnValue(new Promise((resolve) => { resolveLog = resolve }))
+    useI18n().setLocale('zh')
 
     const wrapper = mount(HistoryPanel)
     await flushPromises()
-    await wrapper.get('.history-commit-row').trigger('contextmenu', {
-      clientX: 10,
-      clientY: 20,
-    })
+    expect(wrapper.get('.history-title').text()).toBe('历史')
+    expect(wrapper.get('.history-skeleton').attributes('aria-label')).toBe('正在加载历史记录…')
+
+    resolveLog({ commits: [] })
     await flushPromises()
-
-    const menuButton = document.body.querySelector<HTMLButtonElement>('.history-context-menu button.danger')
-    expect(menuButton?.textContent).toContain('Drop commit')
-    menuButton?.click()
-    await flushPromises()
-
-    expect(api.dropCommit).toHaveBeenCalledWith('abc1234000000000000000000000000000000000')
-    expect(window.confirm).toHaveBeenCalled()
-  })
-})
-
-describe('HistoryPanel initial selection', () => {
-  it('opens an untracked current file as HEAD..WORKTREE instead of HEAD~1..HEAD', async () => {
-    vi.mocked(api.getStatus).mockResolvedValue({
-      dirty: [{ path: 'inbox/new-note.md', index: '?', worktree: '?' }],
-      available: true,
-    })
-
-    mount(HistoryPanel, {
-      props: { currentPath: 'inbox/new-note' },
-    })
-    await flushPromises()
-
-    expect(api.getDiff).toHaveBeenCalledWith('inbox/new-note.md', 'HEAD', api.WORKTREE_REF)
-  })
-
-  it('opens a clean current file as the latest committed change', async () => {
-    mount(HistoryPanel, {
-      props: { currentPath: 'inbox/old-note' },
-    })
-    await flushPromises()
-
-    expect(api.getDiff).toHaveBeenCalledWith('inbox/old-note.md', 'HEAD~1', 'HEAD')
-  })
-})
-
-describe('HistoryPanel state presentation', () => {
-  it('renders semantic status badges and keeps keyboard selection in sync', async () => {
-    const sha = 'abc1234000000000000000000000000000000000'
-    vi.mocked(api.getStatus).mockResolvedValue({
-      dirty: [
-        { path: 'inbox/added.md', index: '?', worktree: '?' },
-        { path: 'inbox/changed.md', index: ' ', worktree: 'M' },
-        { path: 'inbox/deleted.md', index: ' ', worktree: 'D' },
-      ],
-      available: true,
-    })
-    vi.mocked(api.getLog).mockResolvedValue({
-      commits: [{
-        sha,
-        author: 'A',
-        date: new Date().toISOString(),
-        subject: 'state boundary',
-        body: '',
-        files: ['inbox/changed.md'],
-      }],
-    })
-
-    const wrapper = mount(HistoryPanel)
-    await flushPromises()
-    expect(wrapper.findAll('.history-section-count').map((node) => node.text())).toEqual(['3', '1'])
-    expect(wrapper.findAll('.history-dirty-status').map((node) => node.text())).toEqual(['A', 'M', 'D'])
-    expect(wrapper.get('.history-dirty-status.is-a').attributes('title')).toBe('Added')
-    expect(wrapper.get('.history-dirty-status.is-d').attributes('title')).toBe('Deleted')
-
-    await wrapper.findAll('.history-dirty-row')[1].trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-    expect(api.getDiff).toHaveBeenLastCalledWith('inbox/changed.md', 'HEAD', api.WORKTREE_REF)
-
-    await wrapper.get('.history-commit-row').trigger('keydown', { key: 'Enter' })
-    await flushPromises()
-    expect(wrapper.get('.history-commit-row').classes()).toContain('selected')
-    expect(api.getDiff).toHaveBeenLastCalledWith('inbox/changed.md', `${sha}~1`, sha)
-  })
-
-  it('renders History controls in Chinese when the locale is zh', async () => {
-    const { setLocale } = useI18n()
-    setLocale('zh')
-    try {
-      const wrapper = mount(HistoryPanel)
-      await flushPromises()
-      expect(wrapper.get('.history-title').text()).toBe('历史')
-      expect(wrapper.get('.history-section-changes').text()).toContain('更改')
-      expect(wrapper.get('.history-composer-input').attributes('placeholder')).toBe('提交信息…')
-      expect(wrapper.get('.history-commit-btn').text()).toBe('提交 0 个文件')
-    } finally {
-      setLocale('en')
-    }
+    expect(wrapper.get('.history-empty-inline').text()).toBe('还没有历史记录。')
   })
 })

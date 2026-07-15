@@ -12,4 +12,13 @@ describe('VaultView editor tab wiring', () => {
     expect(editorPane).toContain('onEditorChange(activeTab!.path, val)')
     expect(editorPane).not.toContain('activePath!')
   })
+
+  it('keeps the editor and tabs mounted while the History sidebar is active', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    expect(source).toContain('<HistoryPanel v-else-if="activePanel === \'history\'" :posts="posts" />')
+    expect(source).not.toContain("import DiffView")
+    expect(source).not.toContain('activePanel !== \'history\' && tabs.length > 0')
+    expect(source).not.toContain('activePanel === \'history\'" class="content content-diff"')
+  })
 })

@@ -38,6 +38,8 @@ export interface HistoryState {
   capability: Ref<Capability | null>
   status: Ref<StatusEntry[]>
   log: Ref<CommitRecord[]>
+  logLoading: Ref<boolean>
+  logLoaded: Ref<boolean>
   available: Ref<boolean>
 
   // Busy is shared within one Vault because it gates its mutations. Errors are scoped so
@@ -90,6 +92,8 @@ function createHistoryInstance(fileChanges: VaultFileChanges): HistoryInstance {
 const _capability = ref<Capability | null>(null)
 const _status = ref<StatusEntry[]>([])
 const _log = ref<CommitRecord[]>([])
+const _logLoading = ref(false)
+const _logLoaded = ref(false)
 const _busy = ref(false)
 const _diffError = ref<string | null>(null)
 const _actionError = ref<string | null>(null)
@@ -140,6 +144,7 @@ async function refreshStatus(): Promise<void> {
 }
 
 async function refreshLog(opts: { path?: string } = {}): Promise<void> {
+  _logLoading.value = true
   try {
     const r = await api.getLog({ path: opts.path, limit: 200 })
     // Default to [] if the server's body is missing `commits` for any
@@ -152,6 +157,9 @@ async function refreshLog(opts: { path?: string } = {}): Promise<void> {
   } catch (e: any) {
     _log.value = []
     _actionError.value = e?.message ?? 'log failed'
+  } finally {
+    _logLoading.value = false
+    _logLoaded.value = true
   }
 }
 
@@ -341,6 +349,8 @@ function use(): HistoryState {
     capability: _capability,
     status: _status,
     log: _log,
+    logLoading: _logLoading,
+    logLoaded: _logLoaded,
     available: _available,
     busy: _busy,
     diffError: _diffError,
@@ -370,6 +380,8 @@ function reset(): void {
   _capability.value = null
   _status.value = []
   _log.value = []
+  _logLoading.value = false
+  _logLoaded.value = false
   _busy.value = false
   _diffError.value = null
   _actionError.value = null

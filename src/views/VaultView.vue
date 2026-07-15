@@ -25,7 +25,6 @@ import ActivityBar from '../components/vault/ActivityBar.vue'
 import SettingsModal from '../components/vault/SettingsModal.vue'
 import DocumentMetadataModal from '../components/vault/DocumentMetadataModal.vue'
 import HistoryPanel from '../components/vault/HistoryPanel.vue'
-import DiffView from '../components/vault/DiffView.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
@@ -265,14 +264,7 @@ watch(isReadMode, async (reading) => {
       @select="selectedTag = selectedTag === $event ? null : $event"
       @open="openPost"
     />
-    <!-- History panel: side-panel host for the commit composer +
-         changes list + commit timeline. The activity-bar button
-         toggles `activePanel === 'history'`. The main editor area
-         separately renders <DiffView> in the same mode (see below
-         — same `activePanel === 'history'` gate) so the diff sits
-         in the editor's grid track instead of fighting for the
-         side-panel column. -->
-    <HistoryPanel v-else-if="activePanel === 'history'" :current-path="activePath" />
+    <HistoryPanel v-else-if="activePanel === 'history'" :posts="posts" />
 
     <div
       v-show="sidePanelOpen"
@@ -285,10 +277,10 @@ watch(isReadMode, async (reading) => {
 
     <section
       class="editor-area"
-      :class="{ 'is-read': isReadMode, 'is-history': activePanel === 'history', 'is-empty': tabs.length === 0 }"
+      :class="{ 'is-read': isReadMode, 'is-empty': tabs.length === 0 }"
     >
       <EditorTabs
-        v-if="activePanel !== 'history' && tabs.length > 0"
+        v-if="tabs.length > 0"
         :tabs="tabs"
         :active-path="activePath"
         @select="selectTab"
@@ -296,16 +288,8 @@ watch(isReadMode, async (reading) => {
         @close-many="closeMany"
       />
 
-      <!-- History mode: side panel shows the HistoryPanel, this
-           main area shows the DiffView. EditorTabs is hidden so
-           the diff gets the full editor height. The side panel
-           drives what the diff renders via useHistory.selectFile. -->
-      <div v-if="activePanel === 'history'" class="content content-diff">
-        <DiffView />
-      </div>
-
       <!-- Edit mode: single Monaco editor surface. -->
-      <div v-else-if="!isReadMode" class="content">
+      <div v-if="!isReadMode" class="content">
         <div
           v-if="activeTab"
           class="editor-pane"
