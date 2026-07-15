@@ -543,6 +543,11 @@ describe('POST /api/history/restore', () => {
     // HEAD is unchanged — restore does not touch the branch
     const gitMod = await import('../history/git.js')
     expect(await gitMod.rawAt(root, 'HEAD', 'note.md')).toBe('v2\n')
+    const status = await call('GET', '/status')
+    expect(status.status).toBe(200)
+    expect(await status.json()).toMatchObject({
+      dirty: [expect.objectContaining({ path: 'note.md', index: ' ', worktree: 'M' })],
+    })
   })
 
   it('returns 400 when path is missing', async () => {

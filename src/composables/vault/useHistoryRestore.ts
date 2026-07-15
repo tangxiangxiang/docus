@@ -34,10 +34,11 @@ function historyPath(path: string): string {
 
 function applyRestoredContent(tab: Tab, raw: string, mtime: number): void {
   tab.raw = raw
+  tab.originalRaw = raw
   tab.revision += 1
+  tab.savedRevision = tab.revision
   tab.savingRevision = null
-  tab.saveStatus = raw === tab.originalRaw ? 'idle' : 'dirty'
-  if (tab.saveStatus === 'idle') tab.savedRevision = tab.revision
+  tab.saveStatus = 'idle'
   tab.error = null
   tab.loadError = null
   tab.loading = false

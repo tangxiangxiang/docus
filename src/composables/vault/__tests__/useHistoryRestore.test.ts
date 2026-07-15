@@ -112,14 +112,16 @@ describe('useHistoryRestore', () => {
     expect(h.tabs.value).toHaveLength(1)
     expect(h.tabs.value[0]).toMatchObject({
       raw: '# Historical',
-      originalRaw: '# Saved',
+      originalRaw: '# Historical',
       revision: 3,
-      saveStatus: 'dirty',
+      savedRevision: 3,
+      saveStatus: 'idle',
       error: null,
       loadError: null,
       externalRaw: null,
       serverMtime: 100,
     })
+    expect(h.restore.buildRequest(source()).currentDirty).toBe(false)
     expect(h.prepareEditorRestore).toHaveBeenCalledWith('inbox/redis')
     expect(h.refreshComparison).toHaveBeenCalledWith('inbox/redis')
     expect(h.fileChanges.events.value).toEqual([
