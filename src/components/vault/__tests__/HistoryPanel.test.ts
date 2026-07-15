@@ -26,6 +26,16 @@ const commit = (sha: string, date: number, subject: string, files: string[]): ap
   files,
 })
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(NOW)
@@ -100,6 +110,75 @@ describe('HistoryPanel document timeline', () => {
 
     expect(wrapper.get('.history-revision-row').text()).toContain('Created')
     expect(wrapper.text()).not.toContain('Initial commit')
+  })
+
+  it('ignores a stale revision response after navigating from document A to B', async () => {
+    const a = commit('a-global', NOW, 'A global', ['inbox/a.md'])
+    const b = commit('b-global', NOW - 60_000, 'B global', ['inbox/b.md'])
+    const aRequest = deferred<{ commits: api.CommitRecord[] }>()
+    const bRequest = deferred<{ commits: api.CommitRecord[] }>()
+    vi.mocked(api.getLog).mockImplementation((options = {}) => {
+      if (options.path === 'inbox/a.md') return aRequest.promise
+      if (options.path === 'inbox/b.md') return bRequest.promise
+      return Promise.resolve({ commits: [a, b] })
+    })
+
+    const wrapper = mount(HistoryPanel, {
+      props: {
+        posts: [
+          { path: 'inbox/a', title: 'Document A', created: '', updated: '', tags: [], size: 0, mtime: 0 },
+          { path: 'inbox/b', title: 'Document B', created: '', updated: '', tags: [], size: 0, mtime: 0 },
+        ],
+      },
+    })
+    await flushPromises()
+
+    await wrapper.findAll('.history-document-row')[0]!.trigger('click')
+    await wrapper.get('.history-back-button').trigger('click')
+    await wrapper.findAll('.history-document-row')[1]!.trigger('click')
+
+    bRequest.resolve({
+      commits: [commit('b-detail', NOW - 60_000, 'B detail', ['inbox/b.md'])],
+    })
+    await flushPromises()
+    expect(wrapper.get('.history-document-header').text()).toContain('Document B')
+    expect(wrapper.get('.history-revision-row').text()).toContain('Created')
+
+    aRequest.resolve({
+      commits: [commit('a-detail', NOW, 'A detail', ['inbox/a.md'])],
+    })
+    await flushPromises()
+    expect(wrapper.get('.history-document-header').text()).toContain('Document B')
+    expect(wrapper.text()).not.toContain('Document A')
+  })
+
+  it('renders an empty state when a document history request has no revisions', async () => {
+    const global = commit('global', NOW, 'Global revision', ['inbox/empty.md'])
+    vi.mocked(api.getLog).mockImplementation(async (options = {}) => ({
+      commits: options.path ? [] : [global],
+    }))
+
+    const wrapper = mount(HistoryPanel)
+    await flushPromises()
+    await wrapper.get('.history-document-row').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.history-empty-inline').text()).toBe('No revisions available for this document.')
+  })
+
+  it('uses an i18n fallback when revision loading throws a non-Error value', async () => {
+    const global = commit('global', NOW, 'Global revision', ['inbox/error.md'])
+    vi.mocked(api.getLog).mockImplementation((options = {}) => (
+      options.path ? Promise.reject('failed') : Promise.resolve({ commits: [global] })
+    ))
+    useI18n().setLocale('zh')
+
+    const wrapper = mount(HistoryPanel)
+    await flushPromises()
+    await wrapper.get('.history-document-row').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.history-error').text()).toBe('加载历史记录失败。')
   })
 
   it('supports arrow navigation, Enter selection, and Escape back navigation', async () => {

@@ -1,8 +1,8 @@
-// History state + actions. Each VaultContext owns one instance so the side
-// panel, activity-bar dirty badge, and main DiffView in that vault share
-// state without leaking it to another vault. Persistence is server-side (the
-// `git` CLI under the hood); this composable is a thin read-through
-// cache + the action helpers that drive it.
+// Low-level Git-backed history state and actions. Each VaultContext owns one
+// instance so consumers in one vault share state without leaking it to
+// another. The Phase 1 HistoryPanel consumes only capability, log, and log
+// loading state; commit, diff, drop, and restore APIs remain here for later
+// history phases and other low-level callers.
 //
 // The "dirty" ref is reactive: ActivityBar.vue can read it directly
 // to render the small count badge next to the History button. It is
@@ -10,10 +10,9 @@
 // Vault file-change capability publishes an event (see the subscription
 // at the bottom of this file).
 //
-// `selectedFile` and `selectedOldRef` / `selectedNewRef` drive the
-// DiffView. They are reset to a sensible default (current active
-// tab vs HEAD) by the HistoryPanel on mount; the user can then
-// click any commit to make it the new "old" or "new" side.
+// `selectedFile` and the selected refs still drive DiffView when a caller
+// explicitly requests a diff. Document Timeline browsing does not mutate
+// these refs or replace the editor.
 //
 // A note on caching: `log()` is reloaded only on user action (a
 // commit, or a panel open with stale data). We don't poll — git is

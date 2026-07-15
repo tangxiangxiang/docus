@@ -95,6 +95,8 @@ const STRINGS: Strings = {
   'history.earlier': { zh: '更早', en: 'Earlier' },
   'history.no_history': { zh: '还没有历史记录。', en: 'No history yet.' },
   'history.loading': { zh: '正在加载历史记录…', en: 'Loading history...' },
+  'history.load_failed': { zh: '加载历史记录失败。', en: 'Failed to load history.' },
+  'history.no_revisions': { zh: '这篇文档还没有可用版本。', en: 'No revisions available for this document.' },
   'history.created': { zh: '创建文档', en: 'Created' },
   'history.updated': { zh: '更新文档', en: 'Updated document' },
   'history.revisions': { zh: '{count} 个版本', en: '{count} revisions' },

@@ -24,6 +24,10 @@ export interface TimelineGroup<T> {
   items: T[]
 }
 
+export interface TimelineLoadError {
+  message: string | null
+}
+
 interface HistoryTimelineSource {
   log: Ref<CommitRecord[]>
   logLoading: Ref<boolean>
@@ -125,7 +129,8 @@ export function useHistoryTimeline(
   const selectedDocument = ref<DocumentHistory | null>(null)
   const selectedRevisionId = ref<string | null>(null)
   const revisionsLoading = ref(false)
-  const revisionsError = ref<string | null>(null)
+  const revisionsError = ref<TimelineLoadError | null>(null)
+  let revisionRequestId = 0
 
   const documents = computed<DocumentHistory[]>(() => {
     const titles = new Map(posts.value.map((post) => [post.path, post.title]))
@@ -175,12 +180,14 @@ export function useHistoryTimeline(
   ))
 
   async function selectDocument(document: DocumentHistory): Promise<void> {
+    const requestId = ++revisionRequestId
     selectedDocument.value = { ...document, revisions: [...document.revisions] }
     selectedRevisionId.value = null
     revisionsLoading.value = true
     revisionsError.value = null
     try {
       const response = await historyApi.getLog({ path: historyPath(document.path), limit: 200 })
+      if (requestId !== revisionRequestId) return
       const revisions = toRevisions(response.commits ?? [], document.path)
       selectedDocument.value = {
         ...document,
@@ -188,9 +195,12 @@ export function useHistoryTimeline(
         revisions,
       }
     } catch (error) {
-      revisionsError.value = error instanceof Error ? error.message : 'history failed'
+      if (requestId !== revisionRequestId) return
+      revisionsError.value = {
+        message: error instanceof Error && error.message ? error.message : null,
+      }
     } finally {
-      revisionsLoading.value = false
+      if (requestId === revisionRequestId) revisionsLoading.value = false
     }
   }
 
@@ -199,8 +209,10 @@ export function useHistoryTimeline(
   }
 
   function showDocuments(): void {
+    revisionRequestId++
     selectedDocument.value = null
     selectedRevisionId.value = null
+    revisionsLoading.value = false
     revisionsError.value = null
   }
 

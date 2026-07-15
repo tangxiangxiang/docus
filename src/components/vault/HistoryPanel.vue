@@ -32,6 +32,9 @@ const timelineLabels = computed(() => ({
 }))
 
 const timeline = useHistoryTimeline(h, toRef(props, 'posts'), locale, timelineLabels)
+const revisionsErrorLabel = computed(() => (
+  timeline.revisionsError.value?.message || t('history.load_failed')
+))
 
 function localeCode(): string {
   return locale.value === 'zh' ? 'zh-CN' : 'en-US'
@@ -73,6 +76,7 @@ function revisionSummary(revision: TimelineRevision): string {
 
 async function selectDocument(document: DocumentHistory): Promise<void> {
   await timeline.selectDocument(document)
+  if (timeline.selectedDocument.value?.path !== document.path) return
   await nextTick()
   focusFirstOption()
 }
@@ -154,7 +158,13 @@ function onListKeydown(event: KeyboardEvent): void {
             <span v-for="index in 5" :key="index" class="history-skeleton-row" />
           </div>
           <div v-else-if="timeline.revisionsError.value" class="history-error" role="alert">
-            {{ timeline.revisionsError.value }}
+            {{ revisionsErrorLabel }}
+          </div>
+          <div
+            v-else-if="timeline.selectedDocument.value.revisions.length === 0"
+            class="history-empty-inline"
+          >
+            {{ t('history.no_revisions') }}
           </div>
           <template v-else>
             <TimelineGroup
