@@ -91,6 +91,7 @@ const rightRailVisible = computed(() => !rightRailCollapsed.value)
 // Side-panel filters are temporary view state. Keep the Files value here so
 // switching to Tags or History can unmount FileTree without losing it.
 const filesFilter = ref('')
+const tagsFilter = ref('')
 /* The splitter is a grid child only when the rail is visible. In the
    collapsed state the chevron affordance is rendered as an absolutely-
    positioned button pinned to the vault's right edge (see template
@@ -257,6 +258,7 @@ watch(isReadMode, async (reading) => {
     />
     <TagPanel
       v-else-if="activePanel === 'tags'"
+      v-model:filter="tagsFilter"
       :posts="posts"
       :selected-tag="selectedTag"
       :path="activePath"

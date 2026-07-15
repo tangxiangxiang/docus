@@ -164,6 +164,18 @@ const STRINGS: Strings = {
   'file_tree.rename': { zh: '重命名', en: 'Rename' },
   'file_tree.archive': { zh: '归档', en: 'Archive' },
   'file_tree.delete': { zh: '删除', en: 'Delete' },
+  'tags.panel_label': { zh: '标签浏览器', en: 'Tag explorer' },
+  'tags.filter': { zh: '筛选标签…', en: 'Filter tags...' },
+  'tags.clear_filter': { zh: '清空过滤', en: 'Clear filter' },
+  'tags.total': { zh: '共 {count} 个标签', en: '{count} tags' },
+  'tags.filtered_count': { zh: '显示 {visible} / {total} 个标签', en: 'Showing {visible} of {total} tags' },
+  'tags.list_label': { zh: '标签列表', en: 'Tag list' },
+  'tags.browse': { zh: '浏览 #{tag}', en: 'Browse #{tag}' },
+  'tags.deselect': { zh: '取消选择 #{tag}', en: 'Deselect #{tag}' },
+  'tags.no_match': { zh: '没有匹配的标签。', en: 'No matching tags.' },
+  'tags.empty': { zh: '还没有标签。', en: 'No tags yet.' },
+  'tags.note_count': { zh: '{count} 篇笔记', en: '{count} notes' },
+  'tags.no_notes': { zh: '没有包含此标签的笔记。', en: 'No notes with this tag.' },
   'common.unknown_error': { zh: '未知错误', en: 'unknown error' },
 }
 
