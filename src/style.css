@@ -1989,28 +1989,57 @@ main.container {
 }
 .vault .tag-panel .result-entry {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 5px;
   width: 100%;
-  padding: 7px 14px;
+  min-height: 30px;
+  box-sizing: border-box;
+  padding: 3px 8px;
   background: transparent;
   border: 0;
-  border-left: 2px solid transparent;
   color: var(--vs-text-1);
   text-align: left;
   cursor: pointer;
   font: inherit;
-  transition: background 100ms, border-left-color 100ms;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  user-select: none;
+  transition: background 100ms;
 }
 .vault .tag-panel .result-entry:hover { background: var(--vs-hover-bg); }
 .vault .tag-panel .result-entry.active {
-  background: var(--vs-accent-bg);
-  border-left-color: var(--vs-accent);
+  background: var(--vs-active-bg);
+}
+.vault .tag-panel .result-entry:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
+  outline-offset: -1px;
+}
+.vault .tag-panel .result-chevron-spacer {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.vault .tag-panel .result-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--vs-folder, #c8a96a);
+}
+.vault .tag-panel .result-label {
+  flex: 1;
+  min-width: 0;
+  max-height: 31px;
+  overflow: hidden;
 }
 .vault .tag-panel .result-title {
-  font-size: 0.88rem;
-  font-weight: 500;
+  display: block;
+  min-width: 0;
+  font-size: 0.84rem;
+  font-weight: 450;
   color: var(--vs-text-1);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2018,8 +2047,11 @@ main.container {
   max-width: 100%;
 }
 .vault .tag-panel .result-path {
+  display: block;
+  min-width: 0;
   font-family: var(--mono);
-  font-size: 0.72rem;
+  font-size: 0.66rem;
+  line-height: 1.1;
   color: var(--vs-text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2102,11 +2134,6 @@ main.container {
   border-radius: 0;
   font-weight: 400;
 }
-.vault .tag-panel .result-entry {
-  padding-top: 9px;
-  padding-bottom: 9px;
-}
-
 /* Editor Area */
 .editor-area {
   /* Status bar used to live here as a 3rd row, but it now spans the
