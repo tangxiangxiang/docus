@@ -20,3 +20,13 @@ export interface Tab {
   // a future mtime-based check is a one-line change.
   serverMtime: number
 }
+
+/** Navigation-only tab shape. Editable documents and read-only history
+ * snapshots map into this at the workspace boundary without sharing state. */
+export interface WorkspaceTab {
+  id: string
+  label: string
+  title: string
+  dirty: boolean
+  kind: 'document' | 'history'
+}

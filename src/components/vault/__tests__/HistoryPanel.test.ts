@@ -205,6 +205,12 @@ describe('HistoryPanel document timeline', () => {
 
     await wrapper.get('.history-revision-row').trigger('keydown', { key: 'Enter' })
     expect(wrapper.get('.history-revision-row').attributes('aria-selected')).toBe('true')
+    expect(wrapper.emitted('open-revision')?.[0]?.[0]).toMatchObject({
+      documentPath: 'inbox/b',
+      documentTitle: 'B',
+      revisionId: 'b',
+      summary: 'B',
+    })
 
     await wrapper.get('.history-revision-row').trigger('keydown', { key: 'Escape' })
     await flushPromises()

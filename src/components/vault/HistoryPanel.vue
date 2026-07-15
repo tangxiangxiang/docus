@@ -3,10 +3,12 @@ import { computed, nextTick, ref, toRef } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import { useHistory } from '../../composables/vault/useHistory'
 import {
+  toHistoryRevisionSelection,
   useHistoryTimeline,
   type DocumentHistory,
   type TimelineRevision,
 } from '../../composables/vault/useHistoryTimeline'
+import type { HistoryRevisionSelection } from '../../composables/vault/useHistorySnapshots'
 import { useI18n } from '../../composables/useI18n'
 import { ICON_CHEVRON, ICON_FILE_MD } from './icons'
 import EmptyState from './EmptyState.vue'
@@ -19,6 +21,9 @@ const props = withDefaults(defineProps<{
 }>(), {
   posts: () => [],
 })
+const emit = defineEmits<{
+  'open-revision': [selection: HistoryRevisionSelection]
+}>()
 
 const h = useHistory()
 const { locale, t } = useI18n()
@@ -72,6 +77,13 @@ function documentTimeLabel(timestamp: number): string {
 function revisionSummary(revision: TimelineRevision): string {
   if (timeline.selectedDocument.value?.revisionCount === 1) return t('history.created')
   return revision.summary || t('history.updated')
+}
+
+function openRevision(revision: TimelineRevision): void {
+  const document = timeline.selectedDocument.value
+  if (!document) return
+  timeline.selectRevision(revision)
+  emit('open-revision', toHistoryRevisionSelection(document, revision))
 }
 
 async function selectDocument(document: DocumentHistory): Promise<void> {
@@ -179,7 +191,7 @@ function onListKeydown(event: KeyboardEvent): void {
                 :summary="revisionSummary(revision)"
                 :time-label="clockLabel(revision.modifiedAt)"
                 :selected="timeline.selectedRevisionId.value === revision.id"
-                @select="timeline.selectRevision"
+                @select="openRevision"
               />
             </TimelineGroup>
           </template>

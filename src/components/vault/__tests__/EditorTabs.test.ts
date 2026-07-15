@@ -2,27 +2,20 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import EditorTabs from '../EditorTabs.vue'
-import type { Tab } from '../tabs'
+import type { WorkspaceTab } from '../tabs'
 
-function makeTab(path: string, overrides: Partial<Tab> = {}): Tab {
+function makeTab(path: string, overrides: Partial<WorkspaceTab> = {}): WorkspaceTab {
   return {
-    path,
+    id: path,
+    label: path.endsWith('.md') ? path.slice(0, -3) : path,
     title: path,
-    raw: '',
-    originalRaw: '',
-    revision: 0,
-    savedRevision: 0,
-    savingRevision: null,
-    saveStatus: 'idle',
-    error: null,
-    loadError: null,
-    loading: false,
-    serverMtime: 0,
+    dirty: false,
+    kind: 'document',
     ...overrides,
   }
 }
 
-const TABS: Tab[] = [
+const TABS: WorkspaceTab[] = [
   makeTab('a.md'),
   makeTab('b.md'),
   makeTab('c.md'),
@@ -183,5 +176,20 @@ describe('EditorTabs (existing behavior)', () => {
     await tab.trigger('auxclick', { button: 1 })
     expect(w.emitted('close')?.[1]).toEqual(['b.md'])
     w.unmount()
+  })
+
+  it('renders a read-only history presentation tab without a dirty marker', () => {
+    const historyTab = makeTab('history:inbox/redis', {
+      label: 'Redis Notes (History)',
+      title: 'Redis Notes',
+      kind: 'history',
+    })
+    const w = mount(EditorTabs, {
+      props: { tabs: [historyTab], activePath: historyTab.id },
+    })
+
+    expect(w.get('.tab').classes()).toContain('history')
+    expect(w.get('.tab-title').text()).toBe('Redis Notes (History)')
+    expect(w.get('.tab-dot').classes()).not.toContain('dirty')
   })
 })

@@ -991,6 +991,135 @@ main.container {
   .history-skeleton-row { animation: none; }
 }
 
+.history-snapshot-content {
+  position: relative;
+  min-height: 0;
+}
+.history-snapshot-pane {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--vs-bg-1);
+}
+.history-snapshot-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 46px;
+  box-sizing: border-box;
+  padding: 7px 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 72%, transparent);
+  background: color-mix(in srgb, var(--vs-accent) 5%, var(--vs-bg-1));
+}
+.history-snapshot-notice {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+.history-snapshot-notice strong {
+  color: var(--vs-text-1);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.history-snapshot-notice span {
+  color: var(--vs-text-3);
+  font-size: 0.68rem;
+}
+.history-snapshot-current,
+.history-snapshot-toolbar button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--vs-border) 82%, transparent);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--vs-text-2);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.history-snapshot-current:hover,
+.history-snapshot-toolbar button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--vs-accent) 45%, var(--vs-border));
+  background: var(--vs-hover-bg);
+  color: var(--vs-text-1);
+}
+.history-snapshot-current:focus-visible,
+.history-snapshot-toolbar button:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
+  outline-offset: 2px;
+}
+.history-snapshot-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 6px 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 58%, transparent);
+}
+.history-snapshot-heading {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 7px;
+  color: var(--vs-text-3);
+  font-size: 0.7rem;
+}
+.history-snapshot-heading strong {
+  flex-shrink: 0;
+  color: var(--vs-text-1);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.history-snapshot-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-readonly-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vs-text-3) 12%, transparent);
+  color: var(--vs-text-2);
+  font-size: 0.64rem;
+}
+.history-snapshot-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.history-snapshot-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.history-snapshot-state {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  color: var(--vs-text-3);
+  font-size: 0.82rem;
+}
+.history-snapshot-state.is-error { color: var(--vs-danger, #c94f4f); }
+.history-snapshot-pane > .reading-pane {
+  min-height: 0;
+}
+.tab.history .tab-title { color: var(--vs-text-2); }
+.tab.history.active .tab-title { color: var(--vs-text-1); }
+
+@media (max-width: 720px) {
+  .history-snapshot-banner,
+  .history-snapshot-meta { padding-left: 12px; padding-right: 12px; }
+  .history-snapshot-summary { display: none; }
+}
+
 /* === DiffView === */
 .diff-view {
   display: flex;

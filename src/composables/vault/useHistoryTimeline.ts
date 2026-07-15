@@ -2,6 +2,7 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import * as historyApi from '../../lib/history-api'
 import type { CommitRecord } from '../../lib/history-api'
+import type { HistoryRevisionSelection } from './useHistorySnapshots'
 
 export interface TimelineRevision {
   id: string
@@ -26,6 +27,19 @@ export interface TimelineGroup<T> {
 
 export interface TimelineLoadError {
   message: string | null
+}
+
+export function toHistoryRevisionSelection(
+  document: DocumentHistory,
+  revision: TimelineRevision,
+): HistoryRevisionSelection {
+  return {
+    documentPath: document.path,
+    documentTitle: document.title,
+    revisionId: revision.id,
+    revisionTime: revision.modifiedAt,
+    summary: revision.summary,
+  }
 }
 
 interface HistoryTimelineSource {

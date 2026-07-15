@@ -13,12 +13,14 @@
 
 import { computed } from 'vue'
 import { useVaultTocState } from '../../composables/vault/useTocState'
+import { useI18n } from '../../composables/useI18n'
 import type { PostSummary } from '../../lib/api'
 import LinksPanel from './LinksPanel.vue'
 import AiPanel from './AiPanel.vue'
 import type { RightRailTab } from '../../composables/vault/useVaultLayout'
 
 const { tocHeadings, tocActiveId, tocScrollTo } = useVaultTocState()
+const { t } = useI18n()
 
 const props = defineProps<{
   /** Active note path. Forwarded to <LinksPanel>. */
@@ -26,6 +28,7 @@ const props = defineProps<{
   /** All posts (title resolution for link rows). Forwarded to <LinksPanel>. */
   posts: PostSummary[]
   activeTab: RightRailTab
+  historyReadOnly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -48,7 +51,15 @@ function onLinkNavigate(p: string) {
 <template>
   <div class="right-rail">
     <nav class="sidebar-tabs" role="tablist" aria-label="文档导航">
-      <button role="tab" :aria-selected="activeTab === 'ai'" :class="{ active: activeTab === 'ai' }" @click="emit('update:activeTab', 'ai')">AI</button>
+      <button
+        role="tab"
+        :aria-selected="activeTab === 'ai'"
+        :aria-disabled="historyReadOnly ? 'true' : 'false'"
+        :class="{ active: activeTab === 'ai' }"
+        :disabled="historyReadOnly"
+        :title="historyReadOnly ? t('history.ai_disabled') : undefined"
+        @click="emit('update:activeTab', 'ai')"
+      >AI</button>
       <button role="tab" :aria-selected="activeTab === 'toc'" :class="{ active: activeTab === 'toc' }" @click="emit('update:activeTab', 'toc')">目录</button>
       <button role="tab" :aria-selected="activeTab === 'links'" :class="{ active: activeTab === 'links' }" @click="emit('update:activeTab', 'links')">引用</button>
     </nav>
@@ -84,7 +95,7 @@ function onLinkNavigate(p: string) {
       />
     </section>
     <section v-show="activeTab === 'ai'" class="ai-slot" role="tabpanel" aria-label="AI">
-      <AiPanel />
+      <AiPanel v-if="!historyReadOnly" />
     </section>
   </div>
 </template>
@@ -136,6 +147,7 @@ function onLinkNavigate(p: string) {
   cursor: pointer;
 }
 .sidebar-tabs button:hover { color: var(--vs-text-1, var(--text)); }
+.sidebar-tabs button:disabled { cursor: not-allowed; opacity: 0.45; }
 .sidebar-tabs button.active {
   color: var(--vs-text-1, var(--text));
   font-weight: 600;

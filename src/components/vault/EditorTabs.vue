@@ -1,25 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
-import type { Tab } from './tabs'
+import type { WorkspaceTab } from './tabs'
 
-const props = defineProps<{ tabs: Tab[]; activePath: string | null }>()
+const props = defineProps<{ tabs: WorkspaceTab[]; activePath: string | null }>()
 const emit = defineEmits<{
   select: [path: string]
   close: [path: string]
   'close-many': [paths: string[]]
 }>()
-
-/* The tab label is just the file's basename, not the full path —
-   the status bar footer now carries the full path (formerly a
-   breadcrumb row above the editor). The tooltip on the tab keeps
-   the path available on hover for power users. */
-function basename(p: string): string {
-  const i = p.lastIndexOf('/')
-  return i >= 0 ? p.slice(i + 1) : p
-}
-function stripMd(name: string): string {
-  return name.endsWith('.md') ? name.slice(0, -3) : name
-}
 
 // --- right-click context menu ---
 // Same lifecycle as TreeRow's context menu: capture coords, render via
@@ -34,19 +22,19 @@ const menuY = ref(0)
 const menuTabPath = ref<string | null>(null)
 
 const menuTabIndex = computed<number>(() =>
-  menuTabPath.value ? props.tabs.findIndex((t) => t.path === menuTabPath.value) : -1,
+  menuTabPath.value ? props.tabs.findIndex((t) => t.id === menuTabPath.value) : -1,
 )
 
 const othersPaths = computed<string[]>(() => {
   if (!menuTabPath.value) return []
-  return props.tabs.filter((t) => t.path !== menuTabPath.value).map((t) => t.path)
+  return props.tabs.filter((t) => t.id !== menuTabPath.value).map((t) => t.id)
 })
 const rightPaths = computed<string[]>(() => {
   const i = menuTabIndex.value
   if (i < 0) return []
-  return props.tabs.slice(i + 1).map((t) => t.path)
+  return props.tabs.slice(i + 1).map((t) => t.id)
 })
-const allPaths = computed<string[]>(() => props.tabs.map((t) => t.path))
+const allPaths = computed<string[]>(() => props.tabs.map((t) => t.id))
 
 // Item enable rules: a single tab can't close others / right / all in
 // any meaningful sense, so disable those three. "Close to the Right"
@@ -91,28 +79,22 @@ function actionCloseMany(paths: string[]) {
   <div class="tabs" role="tablist">
     <div
       v-for="t in tabs"
-      :key="t.path"
+      :key="t.id"
       role="tab"
-      :aria-selected="t.path === activePath"
-      :title="`${t.title || t.path}\n${t.path}\n中键 / 右键 关闭\n右键菜单 · 多关`"
+      :aria-selected="t.id === activePath"
+      :title="`${t.title}\n中键 / 右键 关闭\n右键菜单 · 多关`"
       class="tab"
-      :class="{ active: t.path === activePath }"
-      @click="emit('select', t.path)"
-      @auxclick.middle="emit('close', t.path)"
-      @contextmenu="openMenu($event, t.path)"
+      :class="{ active: t.id === activePath, history: t.kind === 'history' }"
+      @click="emit('select', t.id)"
+      @auxclick.middle="emit('close', t.id)"
+      @contextmenu="openMenu($event, t.id)"
     >
-      <span class="tab-dot" :class="{ dirty: t.saveStatus === 'dirty' }" />
-      <!-- Tab label is the filename (no .md), period. The frontmatter
-           title still lives on Tab.title and surfaces in the hover
-           tooltip (line above), but tabs are a navigation surface —
-           they should anchor on the stable identifier (filename),
-           not the variable display field (title), or some notes
-           show one and some show the other. -->
-      <span class="tab-title">{{ stripMd(basename(t.path)) }}</span>
+      <span class="tab-dot" :class="{ dirty: t.dirty }" />
+      <span class="tab-title">{{ t.label }}</span>
       <button
         class="tab-close"
         title="关闭"
-        @click.stop="emit('close', t.path)"
+        @click.stop="emit('close', t.id)"
       >×</button>
     </div>
     <Teleport to="body">

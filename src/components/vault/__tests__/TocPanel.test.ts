@@ -10,9 +10,9 @@ const posts = [{
   tags: [], size: 0, mtime: 0,
 }]
 
-function mountPanel(activeTab: RightRailTab = 'toc') {
+function mountPanel(activeTab: RightRailTab = 'toc', historyReadOnly = false) {
   return mount(TocPanel, {
-    props: { path: 'inbox/english/subject', posts, activeTab },
+    props: { path: 'inbox/english/subject', posts, activeTab, historyReadOnly },
     global: {
       stubs: {
         LinksPanel: {
@@ -77,6 +77,15 @@ describe('unified document sidebar', () => {
     expect(wrapper.find('.stub-ai').exists()).toBe(true)
     expect(wrapper.get('.ai-slot').isVisible()).toBe(true)
     expect(wrapper.get('.toc-panel').attributes('style')).toContain('display: none')
+  })
+
+  it('disables and unmounts AI editing for a read-only history snapshot', () => {
+    const wrapper = mountPanel('toc', true)
+    const aiTab = wrapper.findAll('[role="tab"]')[0]!
+
+    expect(aiTab.attributes('disabled')).toBeDefined()
+    expect(aiTab.attributes('aria-disabled')).toBe('true')
+    expect(wrapper.find('.stub-ai').exists()).toBe(false)
   })
 
   it('navigates headings and forwards link navigation', async () => {

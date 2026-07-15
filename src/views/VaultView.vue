@@ -6,7 +6,9 @@ import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
+import { useI18n } from '../composables/useI18n'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
+import { useHistorySnapshots, type HistoryRevisionSelection } from '../composables/vault/useHistorySnapshots'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
 import { createPost, type DocumentMetadata } from '../lib/api'
@@ -25,7 +27,9 @@ import ActivityBar from '../components/vault/ActivityBar.vue'
 import SettingsModal from '../components/vault/SettingsModal.vue'
 import DocumentMetadataModal from '../components/vault/DocumentMetadataModal.vue'
 import HistoryPanel from '../components/vault/HistoryPanel.vue'
+import HistorySnapshotPane from '../components/vault/HistorySnapshotPane.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
+import type { WorkspaceTab } from '../components/vault/tabs'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
 
@@ -100,6 +104,7 @@ const tagsFilter = ref('')
    bar), which is what produced the gray area the user reported. */
 const toast = useToast()
 const { confirm } = useConfirm()
+const { t } = useI18n()
 
 // Lives in VaultView (not the composable) so the string `ref="vaultRef"`
 // template binding resolves cleanly. startDrag takes the host as a parameter.
@@ -111,8 +116,106 @@ function openSearch() { paletteRef.value?.show() }
 const fileChanges = createVaultFileChanges()
 const {
   tree, vaultId, posts, tabs, activePath, activeTab, isDirty, activeSize,
-  refresh, openPost, closeTab, closeMany, selectTab, onEditorChange, doSaveNow, resolveExternal, onKeydown, onCommandPaletteNew,
+  refresh, openPost: openEditorPost, closeTab: closeEditorTab, closeMany: closeManyEditorTabs,
+  selectTab: selectEditorTab, onEditorChange, doSaveNow, resolveExternal,
+  onKeydown: onEditorKeydown, onCommandPaletteNew,
 } = useEditorTabs({ selectPanel, toggleViewMode: () => viewModeApi?.toggle(), fileChanges })
+const historySnapshots = useHistorySnapshots()
+const activeHistorySnapshot = historySnapshots.activeSnapshot
+
+function basename(path: string): string {
+  const name = path.split('/').pop() ?? path
+  return name.endsWith('.md') ? name.slice(0, -3) : name
+}
+
+const workspaceTabs = computed<WorkspaceTab[]>(() => [
+  ...tabs.value.map((tab) => ({
+    id: tab.path,
+    label: basename(tab.path),
+    title: `${tab.title || tab.path}\n${tab.path}`,
+    dirty: tab.saveStatus === 'dirty',
+    kind: 'document' as const,
+  })),
+  ...historySnapshots.snapshots.value.map((snapshot) => ({
+    id: snapshot.tabId,
+    label: `${snapshot.documentTitle} (${t('history.snapshot_tab_suffix')})`,
+    title: `${snapshot.documentTitle}\n${snapshot.documentPath}`,
+    dirty: false,
+    kind: 'history' as const,
+  })),
+])
+const activeWorkspaceTabId = computed(() => activeHistorySnapshot.value?.tabId ?? activePath.value)
+
+async function openPost(path: string): Promise<void> {
+  historySnapshots.viewCurrent()
+  await openEditorPost(path)
+}
+
+function selectWorkspaceTab(id: string): void {
+  if (historySnapshots.snapshots.value.some((snapshot) => snapshot.tabId === id)) {
+    historySnapshots.selectSnapshot(id)
+  } else {
+    historySnapshots.viewCurrent()
+    selectEditorTab(id)
+  }
+}
+
+function closeWorkspaceTab(id: string): void {
+  if (historySnapshots.snapshots.value.some((snapshot) => snapshot.tabId === id)) {
+    historySnapshots.closeSnapshot(id)
+  } else {
+    closeEditorTab(id)
+  }
+}
+
+function closeManyWorkspaceTabs(ids: string[]): void {
+  const historyIds = ids.filter((id) => id.startsWith('history:'))
+  historySnapshots.closeSnapshots(historyIds)
+  closeManyEditorTabs(ids.filter((id) => !id.startsWith('history:')))
+}
+
+function onVaultKeydown(event: KeyboardEvent): void {
+  const snapshot = activeHistorySnapshot.value
+  if (!snapshot) {
+    onEditorKeydown(event)
+    return
+  }
+
+  const meta = event.metaKey || event.ctrlKey
+  if (meta && event.key.toLowerCase() === 's') {
+    event.preventDefault()
+    return
+  }
+  if (meta && event.key.toLowerCase() === 'w') {
+    event.preventDefault()
+    historySnapshots.closeSnapshot(snapshot.tabId)
+    return
+  }
+  if (meta && event.key === 'Tab' && workspaceTabs.value.length > 0) {
+    event.preventDefault()
+    const current = workspaceTabs.value.findIndex((tab) => tab.id === activeWorkspaceTabId.value)
+    const direction = event.shiftKey ? -1 : 1
+    const next = (current + direction + workspaceTabs.value.length) % workspaceTabs.value.length
+    const nextTab = workspaceTabs.value[next]
+    if (nextTab) selectWorkspaceTab(nextTab.id)
+    return
+  }
+  if (meta && event.key.toLowerCase() === 'e') {
+    event.preventDefault()
+    return
+  }
+  onEditorKeydown(event)
+}
+
+function openHistoryRevision(selection: HistoryRevisionSelection): void {
+  void historySnapshots.openRevision(selection)
+}
+
+async function viewCurrentDocument(path: string): Promise<void> {
+  historySnapshots.viewCurrent()
+  await openEditorPost(path)
+}
+
 const vaultContext = createVaultContext({ vaultId, fileChanges, tabs, activePath, activeTab, openPost })
 provideVaultContext(vaultContext)
 onBeforeUnmount(() => { vaultContext.dispose() })
@@ -151,9 +254,10 @@ async function createMissingWikiNote(ref: string) {
 }
 
 async function copyActiveContent() {
-  if (!activeTab.value) return
+  const raw = activeHistorySnapshot.value?.rawMarkdown ?? activeTab.value?.raw
+  if (raw === undefined) return
   try {
-    await navigator.clipboard.writeText(activeTab.value.raw)
+    await navigator.clipboard.writeText(raw)
     toast.success('已复制当前文档内容')
   } catch { toast.error('复制失败') }
 }
@@ -194,6 +298,17 @@ const wikiResolver = (ref: string, _anchor?: string) => {
     alias: ref,
   }
 }
+const historyWikiResolver = (ref: string, _anchor?: string) => {
+  const allPaths = Array.from(linkIndex.value.paths)
+  return {
+    target: resolveWikiTarget(ref, activeHistorySnapshot.value?.documentPath ?? '', allPaths),
+    alias: ref,
+  }
+}
+
+watch(activeHistorySnapshot, (snapshot) => {
+  if (snapshot && rightRailTab.value === 'ai') rightRailTab.value = 'toc'
+})
 
 watch(() => navSearch?.tick.value, () => openSearch())
 
@@ -225,7 +340,7 @@ watch(isReadMode, async (reading) => {
     :class="{ 'is-read': isReadMode, 'right-rail-open': rightRailVisible }"
     tabindex="0"
     :style="vaultStyle"
-    @keydown="onKeydown"
+    @keydown="onVaultKeydown"
   >
     <ActivityBar
       :active-panel="activePanel"
@@ -264,7 +379,11 @@ watch(isReadMode, async (reading) => {
       @select="selectedTag = selectedTag === $event ? null : $event"
       @open="openPost"
     />
-    <HistoryPanel v-else-if="activePanel === 'history'" :posts="posts" />
+    <HistoryPanel
+      v-else-if="activePanel === 'history'"
+      :posts="posts"
+      @open-revision="openHistoryRevision"
+    />
 
     <div
       v-show="sidePanelOpen"
@@ -277,19 +396,19 @@ watch(isReadMode, async (reading) => {
 
     <section
       class="editor-area"
-      :class="{ 'is-read': isReadMode, 'is-empty': tabs.length === 0 }"
+      :class="{ 'is-read': isReadMode, 'is-empty': workspaceTabs.length === 0 }"
     >
       <EditorTabs
-        v-if="tabs.length > 0"
-        :tabs="tabs"
-        :active-path="activePath"
-        @select="selectTab"
-        @close="closeTab"
-        @close-many="closeMany"
+        v-if="workspaceTabs.length > 0"
+        :tabs="workspaceTabs"
+        :active-path="activeWorkspaceTabId"
+        @select="selectWorkspaceTab"
+        @close="closeWorkspaceTab"
+        @close-many="closeManyWorkspaceTabs"
       />
 
       <!-- Edit mode: single Monaco editor surface. -->
-      <div v-if="!isReadMode" class="content">
+      <div v-if="!isReadMode" v-show="!activeHistorySnapshot" class="content">
         <div
           v-if="activeTab"
           class="editor-pane"
@@ -323,7 +442,7 @@ watch(isReadMode, async (reading) => {
       <!-- Read mode: single reading surface in the same slot. The side
            panel, tabs, and status bar above/below stay untouched so
            navigation still works while reading. -->
-      <div v-else class="content reading-content">
+      <div v-else-if="!activeHistorySnapshot" class="content reading-content">
         <!-- Only the active tab is mounted. Mounting one ReadingPane
              per tab (v-for + v-show) would have every instance write
              to the same Vault-scoped tocHeadings / tocActiveId, and
@@ -347,6 +466,15 @@ watch(isReadMode, async (reading) => {
           </EmptyState>
         </div>
       </div>
+
+      <div v-if="activeHistorySnapshot" class="content history-snapshot-content">
+        <HistorySnapshotPane
+          :snapshot="activeHistorySnapshot"
+          :resolver="historyWikiResolver"
+          @view-current="viewCurrentDocument"
+          @close="historySnapshots.closeSnapshot"
+        />
+      </div>
     </section>
 
     <div
@@ -360,20 +488,21 @@ watch(isReadMode, async (reading) => {
     <TocPanel
       v-if="rightRailVisible"
       class="toc-panel-slot"
-      :path="activePath"
+      :path="activeHistorySnapshot?.documentPath ?? activePath"
       :posts="posts"
       :active-tab="rightRailTab"
+      :history-read-only="Boolean(activeHistorySnapshot)"
       @update:active-tab="rightRailTab = $event"
       @link-navigate="openPost"
     />
 
     <StatusBar
       class="status-bar-row"
-      :path="activePath"
-      :save-status="activeTab?.saveStatus ?? 'idle'"
-      :error="activeTab?.error ?? null"
-      :size="activeSize"
-      :dirty="isDirty"
+      :path="activeHistorySnapshot?.documentPath ?? activePath"
+      :save-status="activeHistorySnapshot ? 'idle' : (activeTab?.saveStatus ?? 'idle')"
+      :error="activeHistorySnapshot ? null : (activeTab?.error ?? null)"
+      :size="activeHistorySnapshot ? activeHistorySnapshot.rawMarkdown.length : activeSize"
+      :dirty="activeHistorySnapshot ? false : isDirty"
       :focus-width="editorFocusWidth"
       @toggle-focus-width="editorFocusWidth = !editorFocusWidth"
       @retry-save="doSaveNow"

@@ -16,9 +16,22 @@ describe('VaultView editor tab wiring', () => {
   it('keeps the editor and tabs mounted while the History sidebar is active', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
 
-    expect(source).toContain('<HistoryPanel v-else-if="activePanel === \'history\'" :posts="posts" />')
+    expect(source).toContain('v-else-if="activePanel === \'history\'"')
+    expect(source).toContain('@open-revision="openHistoryRevision"')
     expect(source).not.toContain("import DiffView")
     expect(source).not.toContain('activePanel !== \'history\' && tabs.length > 0')
     expect(source).not.toContain('activePanel === \'history\'" class="content content-diff"')
+  })
+
+  it('keeps Monaco mounted while a read-only history snapshot is visible', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    expect(source).toContain('v-show="!activeHistorySnapshot"')
+    expect(source).toContain('<HistorySnapshotPane')
+    expect(source).toContain(':snapshot="activeHistorySnapshot"')
+    expect(source).toContain('const historySnapshots = useHistorySnapshots()')
+    expect(source).toContain("meta && event.key.toLowerCase() === 's'")
+    expect(source).toContain('historySnapshots.closeSnapshot(snapshot.tabId)')
+    expect(source).not.toContain('snapshots.value.push(activeTab')
   })
 })
