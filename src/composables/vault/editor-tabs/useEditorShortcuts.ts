@@ -10,7 +10,7 @@ export function useEditorShortcuts(options: {
   tabs: Ref<Tab[]>
   activePath: Ref<string | null>
   doSaveNow: () => Promise<void>
-  closeTab: (path: string) => Promise<void>
+  closeTab: (path: string) => Promise<boolean | void>
   selectTab: (path: string) => void
   selectFilesPanel: () => void
   toggleViewMode?: () => void

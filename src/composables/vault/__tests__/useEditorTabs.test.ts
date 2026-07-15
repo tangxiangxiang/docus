@@ -65,8 +65,8 @@ interface Harness {
   unmount: () => void
   fileChanges: VaultFileChanges
   openPost: (p: string) => Promise<void>
-  closeTab: (p: string) => Promise<void>
-  closeMany: (paths: string[]) => Promise<void>
+  closeTab: (p: string) => Promise<boolean>
+  closeMany: (paths: string[]) => Promise<boolean>
   selectTab: (p: string) => void
   doSaveNow: () => Promise<void>
   resolveExternal: (path: string, strategy: 'disk' | 'local') => Promise<void>
@@ -307,7 +307,7 @@ describe('useEditorTabs', () => {
     await Promise.resolve()
     // ONE confirm covering both dirty tabs.
     answerConfirm(true)
-    await closePromise
+    await expect(closePromise).resolves.toBe(true)
     expect(h.tabs.value).toEqual([])
   })
 
@@ -326,7 +326,7 @@ describe('useEditorTabs', () => {
     await Promise.resolve()
     await Promise.resolve()
     answerConfirm(false)                          // user says no
-    await closePromise
+    await expect(closePromise).resolves.toBe(false)
     // BOTH tabs stay — the batch is all-or-nothing on the dirty prompt.
     expect(h.tabs.value.map((t) => t.path)).toEqual(['a', 'b'])
   })

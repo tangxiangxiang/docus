@@ -48,6 +48,8 @@ export function useEditorTabs(opts: {
     restoreOneTab,
     closeTab,
     closeMany,
+    confirmCloseMany,
+    closeManyConfirmed,
     selectTab,
     navigateTo,
   } = useTabWorkspace({
@@ -216,6 +218,8 @@ export function useEditorTabs(opts: {
     openPost,
     closeTab,
     closeMany,
+    confirmCloseMany,
+    closeManyConfirmed,
     selectTab,
     onEditorChange,
     doSaveNow,

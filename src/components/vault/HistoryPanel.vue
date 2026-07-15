@@ -40,6 +40,7 @@ const timeline = useHistoryTimeline(h, toRef(props, 'posts'), locale, timelineLa
 const revisionsErrorLabel = computed(() => (
   timeline.revisionsError.value?.message || t('history.load_failed')
 ))
+const logErrorLabel = computed(() => h.logError.value?.message || t('history.load_failed'))
 
 function localeCode(): string {
   return locale.value === 'zh' ? 'zh-CN' : 'en-US'
@@ -150,6 +151,12 @@ function onListKeydown(event: KeyboardEvent): void {
     </div>
 
     <template v-else>
+      <div v-if="h.logError.value && !timeline.selectedDocument.value" class="history-error" role="alert">
+        <span>{{ logErrorLabel }}</span>
+        <button type="button" @click="h.refreshLog()">
+          {{ t('history.retry') }}
+        </button>
+      </div>
       <div v-if="timeline.selectedDocument.value" class="history-document-header">
         <span class="history-document-header-icon" v-html="ICON_FILE_MD" />
         <span class="history-document-header-copy">
@@ -205,7 +212,15 @@ function onListKeydown(event: KeyboardEvent): void {
             <span v-for="index in 7" :key="index" class="history-skeleton-row" />
           </div>
         </template>
-        <div v-else-if="timeline.documents.value.length === 0" class="history-empty-inline">
+        <template v-else-if="h.logLoading.value && timeline.documents.value.length === 0">
+          <div class="history-skeleton" :aria-label="t('history.loading')">
+            <span v-for="index in 7" :key="index" class="history-skeleton-row" />
+          </div>
+        </template>
+        <div
+          v-else-if="timeline.documents.value.length === 0 && !h.logError.value"
+          class="history-empty-inline"
+        >
           {{ t('history.no_history') }}
         </div>
         <template v-else>

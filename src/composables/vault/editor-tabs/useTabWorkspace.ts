@@ -89,13 +89,13 @@ export function useTabWorkspace(options: {
     }
   }
 
-  async function closeTab(path: string, closeOptions?: { skipDirtyCheck?: boolean }): Promise<void> {
+  async function closeTab(path: string, closeOptions?: { skipDirtyCheck?: boolean }): Promise<boolean> {
     const index = tabs.value.findIndex((tab) => tab.path === path)
-    if (index === -1) return
+    if (index === -1) return true
     const tab = tabs.value[index]
     if (!closeOptions?.skipDirtyCheck && tab.raw !== tab.originalRaw) {
       const ok = await options.confirm(`放弃对 "${tab.path}" 的未保存修改?`)
-      if (!ok) return
+      if (!ok) return false
     }
     tabs.value.splice(index, 1)
     disposeMarkdownModel(path)
@@ -104,30 +104,56 @@ export function useTabWorkspace(options: {
       activePath.value = next ? next.path : null
       navigateTo(activePath.value)
     }
+    return true
   }
 
-  async function closeMany(paths: string[]): Promise<void> {
-    if (paths.length === 0) return
-    const valid = paths.filter((path) => tabs.value.some((tab) => tab.path === path))
-    if (valid.length === 0) return
+  function validClosePaths(paths: string[]): string[] {
+    return paths.filter((path) => tabs.value.some((tab) => tab.path === path))
+  }
+
+  async function confirmCloseMany(paths: string[]): Promise<boolean> {
+    if (paths.length === 0) return true
+    const valid = validClosePaths(paths)
+    if (valid.length === 0) return true
     const dirty = valid.filter((path) => {
       const tab = tabs.value.find((candidate) => candidate.path === path)
       return tab && tab.raw !== tab.originalRaw
     })
-    if (dirty.length > 0) {
-      const ok = await options.confirm(
-        dirty.length === 1
-          ? `放弃对 "${dirty[0]}" 的未保存修改?`
-          : `${dirty.length} 个 tab 有未保存修改,确定要全部关闭吗?`,
-      )
-      if (!ok) return
-    }
+    if (dirty.length === 0) return true
+    return options.confirm(
+      dirty.length === 1
+        ? `放弃对 "${dirty[0]}" 的未保存修改?`
+        : `${dirty.length} 个 tab 有未保存修改,确定要全部关闭吗?`,
+    )
+  }
+
+  function closeManyConfirmed(paths: string[]): void {
+    const valid = paths.filter((path) => tabs.value.some((tab) => tab.path === path))
+    if (valid.length === 0) return
+    const activeIndex = tabs.value.findIndex((tab) => tab.path === activePath.value)
+    const closesActive = activePath.value !== null && valid.includes(activePath.value)
     const sorted = [...valid].sort((a, b) => {
       const aIndex = tabs.value.findIndex((tab) => tab.path === a)
       const bIndex = tabs.value.findIndex((tab) => tab.path === b)
       return bIndex - aIndex
     })
-    for (const path of sorted) await closeTab(path, { skipDirtyCheck: true })
+    for (const path of sorted) {
+      const index = tabs.value.findIndex((tab) => tab.path === path)
+      if (index !== -1) tabs.value.splice(index, 1)
+      disposeMarkdownModel(path)
+    }
+    if (closesActive) {
+      const next = tabs.value[activeIndex] ?? tabs.value[activeIndex - 1] ?? null
+      activePath.value = next?.path ?? null
+      navigateTo(activePath.value)
+    }
+  }
+
+  async function closeMany(paths: string[]): Promise<boolean> {
+    const confirmed = await confirmCloseMany(paths)
+    if (!confirmed) return false
+    closeManyConfirmed(paths)
+    return true
   }
 
   function selectTab(path: string) {
@@ -151,6 +177,8 @@ export function useTabWorkspace(options: {
     restoreOneTab,
     closeTab,
     closeMany,
+    confirmCloseMany,
+    closeManyConfirmed,
     selectTab,
     navigateTo,
   }

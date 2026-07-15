@@ -41,7 +41,10 @@ import HistoryPanel from '../components/vault/HistoryPanel.vue'
 import HistorySnapshotPane from '../components/vault/HistorySnapshotPane.vue'
 import HistoryComparisonPane from '../components/vault/HistoryComparisonPane.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
-import { fallbackAfterClosingWorkspaceTab } from '../components/vault/workspaceNavigation'
+import {
+  fallbackAfterClosingWorkspaceTab,
+  fallbackAfterClosingWorkspaceTabs,
+} from '../components/vault/workspaceNavigation'
 import type { WorkspaceTab } from '../components/vault/tabs'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
@@ -132,7 +135,9 @@ function openSearch() { paletteRef.value?.show() }
 const fileChanges = createVaultFileChanges()
 const {
   tree, vaultId, posts, tabs, activePath, activeTab, isDirty, activeSize,
-  refresh, openPost: openEditorPost, closeTab: closeEditorTab, closeMany: closeManyEditorTabs,
+  refresh, openPost: openEditorPost, closeTab: closeEditorTab,
+  confirmCloseMany: confirmCloseEditorTabs,
+  closeManyConfirmed: closeManyEditorTabsConfirmed,
   selectTab: selectEditorTab, onEditorChange, doSaveNow, resolveExternal,
   prepareHistoryRestore, onKeydown: onEditorKeydown, onCommandPaletteNew,
 } = useEditorTabs({ selectPanel, toggleViewMode: () => viewModeApi?.toggle(), fileChanges })
@@ -281,8 +286,8 @@ async function closeWorkspaceTab(id: string): Promise<void> {
   } else if (historySnapshots.snapshots.value.some((snapshot) => snapshot.tabId === id)) {
     historySnapshots.closeSnapshot(id)
   } else {
-    await closeEditorTab(id)
-    return
+    const closed = await closeEditorTab(id)
+    if (!closed) return
   }
 
   if (!wasActive) return
@@ -297,12 +302,34 @@ async function closeWorkspaceTab(id: string): Promise<void> {
   editorTabsRef.value?.focusTab(fallbackId)
 }
 
-function closeManyWorkspaceTabs(ids: string[]): void {
-  const historyIds = ids.filter((id) => id.startsWith('history:'))
-  const comparisonIds = ids.filter((id) => id.startsWith('diff:'))
+async function closeManyWorkspaceTabs(ids: string[]): Promise<void> {
+  const workspaceIds = new Set(workspaceTabs.value.map((tab) => tab.id))
+  const closingIds = ids.filter((id) => workspaceIds.has(id))
+  if (closingIds.length === 0) return
+  const activeId = activeWorkspaceTabId.value
+  const fallbackId = fallbackAfterClosingWorkspaceTabs(workspaceTabs.value, closingIds, activeId)
+  const activeWillClose = activeId !== null && closingIds.includes(activeId)
+  const historyIds = closingIds.filter((id) => id.startsWith('history:'))
+  const comparisonIds = closingIds.filter((id) => id.startsWith('diff:'))
+  const documentIds = closingIds.filter((id) => !id.startsWith('history:') && !id.startsWith('diff:'))
+
+  // Confirm every dirty editor tab before mutating any Workspace tab.
+  // Cancellation leaves documents, snapshots, comparisons, and activation intact.
+  const documentsConfirmed = await confirmCloseEditorTabs(documentIds)
+  if (!documentsConfirmed) return
+
+  closeManyEditorTabsConfirmed(documentIds)
   historySnapshots.closeSnapshots(historyIds)
   historyComparisons.closeComparisons(comparisonIds)
-  closeManyEditorTabs(ids.filter((id) => !id.startsWith('history:') && !id.startsWith('diff:')))
+  if (!activeWillClose) return
+  if (!fallbackId) {
+    await nextTick()
+    vaultRef.value?.focus()
+    return
+  }
+  await selectWorkspaceTab(fallbackId, false)
+  await nextTick()
+  editorTabsRef.value?.focusTab(fallbackId)
 }
 
 function onVaultKeydown(event: KeyboardEvent): void {
@@ -342,9 +369,10 @@ function onVaultKeydown(event: KeyboardEvent): void {
 
 async function openHistoryRevision(selection: HistoryRevisionSelection): Promise<void> {
   historyComparisons.deactivate()
-  await historySnapshots.openRevision(selection)
+  const request = historySnapshots.openRevision(selection)
   await nextTick()
   snapshotPaneRef.value?.focusViewer()
+  await request
 }
 
 async function viewCurrentDocument(path: string): Promise<void> {
@@ -358,9 +386,10 @@ async function viewCurrentDocument(path: string): Promise<void> {
 async function openHistoryComparison(snapshot: typeof activeHistorySnapshot.value): Promise<void> {
   if (!snapshot || snapshot.status !== 'ready') return
   historySnapshots.viewCurrent()
-  await historyComparisons.openComparison(snapshot)
+  const request = historyComparisons.openComparison(snapshot)
   await nextTick()
   comparisonPaneRef.value?.focusViewer()
+  await request
 }
 
 async function viewHistoricalComparison(comparison: HistoryComparison): Promise<void> {

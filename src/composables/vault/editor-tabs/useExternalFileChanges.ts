@@ -7,7 +7,7 @@ import { makeEmptyTab } from './tabState'
 export function useExternalFileChanges(options: {
   tabs: Ref<Tab[]>
   activePath: Ref<string | null>
-  closeTab: (path: string) => Promise<void>
+  closeTab: (path: string) => Promise<boolean | void>
   openPost: (path: string) => Promise<void>
   navigateTo: (path: string) => void
   confirm: (message: string) => Promise<boolean>

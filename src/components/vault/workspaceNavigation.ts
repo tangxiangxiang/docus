@@ -24,6 +24,47 @@ export function fallbackAfterClosingWorkspaceTab(
     const current = remaining.find((tab) => tab.kind === 'document' && tab.id === path)
     if (current) return current.id
   }
+  if (closing.kind === 'document') {
+    const history = remaining.find((tab) => tab.kind === 'history' && documentPath(tab) === path)
+    if (history) return history.id
+    const comparison = remaining.find((tab) => tab.kind === 'diff' && documentPath(tab) === path)
+    if (comparison) return comparison.id
+  }
 
   return remaining[closingIndex]?.id ?? remaining[closingIndex - 1]?.id ?? null
+}
+
+export function fallbackAfterClosingWorkspaceTabs(
+  tabs: readonly WorkspaceTab[],
+  closingIds: readonly string[],
+  activeId: string | null,
+): string | null {
+  if (!activeId) return null
+  const closing = new Set(closingIds)
+  if (!closing.has(activeId)) return activeId
+
+  const activeIndex = tabs.findIndex((tab) => tab.id === activeId)
+  const active = tabs[activeIndex]
+  if (!active) return null
+  const remaining = tabs.filter((tab) => !closing.has(tab.id))
+  const path = documentPath(active)
+
+  if (active.kind === 'diff') {
+    const history = remaining.find((tab) => tab.kind === 'history' && documentPath(tab) === path)
+    if (history) return history.id
+  }
+  if (active.kind === 'diff' || active.kind === 'history') {
+    const current = remaining.find((tab) => tab.kind === 'document' && tab.id === path)
+    if (current) return current.id
+  }
+  if (active.kind === 'document') {
+    const history = remaining.find((tab) => tab.kind === 'history' && documentPath(tab) === path)
+    if (history) return history.id
+    const comparison = remaining.find((tab) => tab.kind === 'diff' && documentPath(tab) === path)
+    if (comparison) return comparison.id
+  }
+
+  return remaining.find((tab) => tabs.indexOf(tab) > activeIndex)?.id
+    ?? [...remaining].reverse().find((tab) => tabs.indexOf(tab) < activeIndex)?.id
+    ?? null
 }

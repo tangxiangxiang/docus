@@ -16,6 +16,7 @@ export interface HistoryState {
   log: Ref<CommitRecord[]>
   logLoading: Ref<boolean>
   logLoaded: Ref<boolean>
+  logError: Ref<{ message: string | null } | null>
   available: Ref<boolean>
   dirtyCount: Ref<number>
   refreshCapability(): Promise<void>
@@ -34,6 +35,7 @@ function createHistoryInstance(fileChanges: VaultFileChanges): HistoryInstance {
   const log = ref<CommitRecord[]>([])
   const logLoading = ref(false)
   const logLoaded = ref(false)
+  const logError = ref<{ message: string | null } | null>(null)
   const available = ref(false)
   const dirtyCount = computed(() => status.value.length)
   let hydrated = false
@@ -64,11 +66,14 @@ function createHistoryInstance(fileChanges: VaultFileChanges): HistoryInstance {
 
   async function refreshLog(opts: { path?: string } = {}): Promise<void> {
     logLoading.value = true
+    logError.value = null
     try {
       const result = await api.getLog({ path: opts.path, limit: 200 })
       log.value = Array.isArray(result?.commits) ? result.commits : []
-    } catch {
-      log.value = []
+    } catch (error) {
+      logError.value = {
+        message: error instanceof Error && error.message ? error.message : null,
+      }
     } finally {
       logLoading.value = false
       logLoaded.value = true
@@ -104,6 +109,7 @@ function createHistoryInstance(fileChanges: VaultFileChanges): HistoryInstance {
       log,
       logLoading,
       logLoaded,
+      logError,
       available,
       dirtyCount,
       refreshCapability,
@@ -118,6 +124,7 @@ function createHistoryInstance(fileChanges: VaultFileChanges): HistoryInstance {
     log.value = []
     logLoading.value = false
     logLoaded.value = false
+    logError.value = null
     available.value = false
     hydrated = false
     lastSeenFileChangeSeq = 0

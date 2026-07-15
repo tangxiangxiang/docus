@@ -83,13 +83,22 @@ describe('useHistory document timeline state', () => {
     expect(history.available.value).toBe(true)
   })
 
-  it('finishes loading with an empty log when the request fails', async () => {
+  it('retains the existing Timeline and exposes an error when refresh fails', async () => {
     const history = useHistory()
     await flushPromises()
     await flushPromises()
+    history.log.value = [{
+      sha: 'a'.repeat(40),
+      author: 'A',
+      date: new Date().toISOString(),
+      subject: 'Existing history',
+      body: '',
+      files: ['inbox/a.md'],
+    }]
     vi.mocked(api.getLog).mockRejectedValueOnce(new Error('offline'))
     await history.refreshLog()
-    expect(history.log.value).toEqual([])
+    expect(history.log.value).toHaveLength(1)
+    expect(history.logError.value).toEqual({ message: 'offline' })
     expect(history.logLoading.value).toBe(false)
     expect(history.logLoaded.value).toBe(true)
   })

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceTab } from '../tabs'
-import { fallbackAfterClosingWorkspaceTab } from '../workspaceNavigation'
+import {
+  fallbackAfterClosingWorkspaceTab,
+  fallbackAfterClosingWorkspaceTabs,
+} from '../workspaceNavigation'
 
 function tab(id: string, kind: WorkspaceTab['kind']): WorkspaceTab {
   return { id, kind, label: id, title: id, dirty: false }
@@ -36,5 +39,28 @@ describe('workspace History navigation', () => {
 
   it('never crosses documents while a matching fallback exists', () => {
     expect(fallbackAfterClosingWorkspaceTab(tabs, 'diff:inbox/b')).toBe('history:inbox/b')
+  })
+
+  it('activates History when the last Current document closes', () => {
+    const oneDocument = [
+      tab('inbox/a', 'document'),
+      tab('history:inbox/a', 'history'),
+      tab('diff:inbox/a', 'diff'),
+    ]
+    expect(fallbackAfterClosingWorkspaceTabs(oneDocument, ['inbox/a'], 'inbox/a'))
+      .toBe('history:inbox/a')
+  })
+
+  it('activates the only retained special tab after Close Others', () => {
+    expect(fallbackAfterClosingWorkspaceTabs(
+      tabs,
+      tabs.filter((item) => item.id !== 'history:inbox/b').map((item) => item.id),
+      'diff:inbox/a',
+    )).toBe('history:inbox/b')
+  })
+
+  it('returns null only when a batch leaves no workspace tabs', () => {
+    expect(fallbackAfterClosingWorkspaceTabs(tabs, tabs.map((item) => item.id), 'inbox/a'))
+      .toBeNull()
   })
 })

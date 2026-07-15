@@ -51,7 +51,7 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain("id: comparison.tabId")
     expect(source).toContain("kind: 'diff' as const")
     expect(source).toContain('@open-diff="openHistoryComparison"')
-    expect(source).toContain('await historyComparisons.openComparison(snapshot)')
+    expect(source).toContain('const request = historyComparisons.openComparison(snapshot)')
     expect(source).toContain('comparisonPaneRef.value?.focusViewer()')
     expect(source).toContain('historySnapshots.openCachedRevision({')
     expect(source).toContain(':history-read-only="Boolean(activeHistorySnapshot || activeHistoryComparison)"')
@@ -69,5 +69,31 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain("t('history.restore_unsaved')")
     expect(source).toContain("t('history.restore_no_commit')")
     expect(source).toContain('destructive: true')
+  })
+
+  it('confirms document batches before closing special tabs and applies workspace fallback', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const closeMany = source.match(/async function closeManyWorkspaceTabs[\s\S]*?\n}/)?.[0]
+
+    expect(closeMany).toBeDefined()
+    expect(closeMany).toContain('fallbackAfterClosingWorkspaceTabs')
+    expect(closeMany).toContain('const documentsConfirmed = await confirmCloseEditorTabs(documentIds)')
+    expect(closeMany).toContain('if (!documentsConfirmed) return')
+    expect(closeMany!.indexOf('if (!documentsConfirmed) return'))
+      .toBeLessThan(closeMany!.indexOf('historySnapshots.closeSnapshots(historyIds)'))
+    expect(closeMany).toContain('closeManyEditorTabsConfirmed(documentIds)')
+    expect(closeMany).toContain('await selectWorkspaceTab(fallbackId, false)')
+  })
+
+  it('focuses loading History viewers before their network requests settle', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const openRevision = source.match(/async function openHistoryRevision[\s\S]*?\n}/)?.[0]
+    const openComparison = source.match(/async function openHistoryComparison[\s\S]*?\n}/)?.[0]
+
+    for (const handler of [openRevision, openComparison]) {
+      expect(handler).toBeDefined()
+      expect(handler).toContain('const request =')
+      expect(handler!.indexOf('focusViewer()')).toBeLessThan(handler!.indexOf('await request'))
+    }
   })
 })

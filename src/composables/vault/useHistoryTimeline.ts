@@ -241,7 +241,9 @@ export function useHistoryTimeline(
     selectedDocument,
     selectedRevisionId,
     revisionGroups,
-    loading: computed(() => source.logLoading.value || !source.logLoaded.value),
+    // Keep an existing Timeline visible during background refreshes. Only the
+    // first load owns the full skeleton state.
+    loading: computed(() => !source.logLoaded.value),
     revisionsLoading,
     revisionsError,
     selectDocument,

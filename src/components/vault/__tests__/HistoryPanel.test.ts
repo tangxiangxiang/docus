@@ -53,6 +53,21 @@ afterEach(() => {
 })
 
 describe('HistoryPanel document timeline', () => {
+  it('distinguishes an initial Timeline failure from an empty repository and retries', async () => {
+    vi.mocked(api.getLog).mockRejectedValueOnce(new Error('History API unavailable'))
+    const wrapper = mount(HistoryPanel)
+    await flushPromises()
+
+    expect(wrapper.get('.history-error').text()).toContain('History API unavailable')
+    expect(wrapper.text()).not.toContain('No history yet.')
+
+    vi.mocked(api.getLog).mockResolvedValueOnce({ commits: [] })
+    await wrapper.get('.history-error button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.history-error').exists()).toBe(false)
+    expect(wrapper.text()).toContain('No history yet.')
+  })
+
   it('groups recent documents and opens one document revision list', async () => {
     const commits = [
       commit('today', NOW - 60_000, 'Update cache section', ['inbox/redis.md']),
