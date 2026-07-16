@@ -68,6 +68,44 @@ describe('useHistoryCommit', () => {
     expect(commit.indexRepairTransactions.value).toEqual([])
   })
 
+  it('clears a replaced superseded token when the status refresh fails', async () => {
+    const superseded = {
+      ...repairTransaction,
+      token: 'd'.repeat(32),
+      status: 'superseded' as const,
+    }
+    vi.mocked(api.getIndexRepairStatus).mockResolvedValueOnce([superseded])
+    const commit = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(commit.indexRepairConflictToken.value).toBe(superseded.token)
+
+    const pending = { ...repairTransaction, token: 'e'.repeat(32) }
+    vi.mocked(api.getIndexRepairStatus).mockRejectedValueOnce(new Error('temporary failure'))
+    commit.registerIndexRepair(pending)
+
+    expect(commit.indexRepairTransactions.value).toEqual([pending])
+    expect(commit.indexRepairConflictToken.value).toBeNull()
+    expect(commit.indexRepairPaths.value).toEqual(['a.md'])
+    await expect(commit.refreshIndexRepairStatus()).resolves.toBe(false)
+    expect(commit.indexRepairConflictToken.value).toBeNull()
+    expect(commit.indexRepairPaths.value).toEqual(['a.md'])
+  })
+
+  it('clears the conflict token when settling its superseded transaction', async () => {
+    const superseded = { ...repairTransaction, status: 'superseded' as const }
+    vi.mocked(api.getIndexRepairStatus).mockResolvedValueOnce([superseded])
+    const commit = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(commit.indexRepairConflictToken.value).toBe(superseded.token)
+
+    commit.settleIndexRepairPaths(['a.md'])
+
+    expect(commit.indexRepairTransactions.value).toEqual([])
+    expect(commit.indexRepairConflictToken.value).toBeNull()
+  })
+
   it('selects the initial changed set, supports partial selection, and preserves exact .md paths', async () => {
     const h = history()
     const saveSelected = vi.fn().mockResolvedValue(undefined)

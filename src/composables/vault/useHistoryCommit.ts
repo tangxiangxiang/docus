@@ -42,12 +42,18 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
   const indexRepairConflictToken = ref<string | null>(null)
   let initializedSelection = false
 
+  function setIndexRepairTransactions(
+    transactions: readonly IndexRepairTransaction[],
+  ): void {
+    indexRepairTransactions.value = transactions
+    indexRepairConflictToken.value = transactions.find(
+      (transaction) => transaction.status === 'superseded',
+    )?.token ?? null
+  }
+
   async function refreshIndexRepairStatus(): Promise<boolean> {
     try {
-      indexRepairTransactions.value = await getIndexRepairStatus()
-      indexRepairConflictToken.value = indexRepairTransactions.value.find(
-        (transaction) => transaction.status === 'superseded',
-      )?.token ?? null
+      setIndexRepairTransactions(await getIndexRepairStatus())
       return true
     } catch {
       // Capability/repository initialization can still be in flight during
@@ -68,15 +74,17 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
         ))),
       }
     }).filter((item) => item.paths.length > 0 && item.token !== transaction.token)
-    indexRepairTransactions.value = [...retained, transaction]
+    setIndexRepairTransactions([...retained, transaction])
   }
 
   function settleIndexRepairPaths(paths: readonly string[]): void {
     const settled = new Set(paths)
-    indexRepairTransactions.value = indexRepairTransactions.value.map((transaction) => ({
-      ...transaction,
-      paths: transaction.paths.filter((filePath) => !settled.has(filePath)),
-    })).filter((transaction) => transaction.paths.length > 0)
+    setIndexRepairTransactions(
+      indexRepairTransactions.value.map((transaction) => ({
+        ...transaction,
+        paths: transaction.paths.filter((filePath) => !settled.has(filePath)),
+      })).filter((transaction) => transaction.paths.length > 0),
+    )
   }
 
   void refreshIndexRepairStatus()
