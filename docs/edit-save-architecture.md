@@ -531,7 +531,7 @@ Edit-02 采用最小方案：`editor-save` 事件不携带 `newRaw`。History、
 - 文件/函数：`useDocumentSave.saveLatest`。
 - 触发：自动或手动 PUT 成功。
 - 实际：History、client LinkIndex、LinksPanel 等 bus consumers 不刷新；History Changes 需页面/其他操作刷新后出现。
-- 期望：仅在确认 PUT 2xx 后发布一次 `{ path, kind:'write', newRaw, newMtime? }`。
+- 期望：仅在确认 PUT 2xx 后发布一次 `{ path, kind:'write', source:'editor-save', newMtime? }`，并明确不得携带 `newRaw`。
 - 推荐边界：由 `useDocumentSave` 的成功事务尾部统一 publish；通过 options 注入当前 VaultFileChanges，不能直接用 fallback。
 - 后续：Edit-02 必须处理。
 
