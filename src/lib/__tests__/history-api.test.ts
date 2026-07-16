@@ -83,14 +83,23 @@ describe('createCommit', () => {
     }))
   })
 
-  it('posts selected paths to the explicit index repair endpoint', async () => {
+  it('loads persisted repair transactions and posts the opaque token', async () => {
+    const transaction = {
+      token: 'a'.repeat(32),
+      head: 'b'.repeat(40),
+      paths: ['a.md'],
+      expectedIndex: { 'a.md': [{ mode: '100644', oid: 'c'.repeat(40), stage: 0 }] },
+    }
+    responses.push({ status: 200, body: { transactions: [transaction] } })
+    await expect(api.getIndexRepairStatus()).resolves.toEqual([transaction])
+
     responses.push({ status: 200, body: { repaired: true } })
-    await api.repairIndex(['a.md'])
-    expect(calls[0]).toEqual(expect.objectContaining({
+    await api.repairIndex(transaction.token)
+    expect(calls[1]).toEqual(expect.objectContaining({
       url: '/api/history/repair-index',
       init: expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ paths: ['a.md'] }),
+        body: JSON.stringify({ token: transaction.token }),
       }),
     }))
   })

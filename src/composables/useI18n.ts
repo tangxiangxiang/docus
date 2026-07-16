@@ -292,6 +292,7 @@ const STRINGS: Strings = {
   'history.index_repair_action': { zh: '重试修复 Git 状态', en: 'Retry Git status repair' },
   'history.index_repair_success': { zh: 'Git 状态已修复。', en: 'Git status repaired.' },
   'history.index_repair_failed': { zh: 'Git 状态修复失败：{error}', en: 'Could not repair Git status: {error}' },
+  'history.index_repair_conflict': { zh: 'Index 已被其他 Git 操作修改。为避免清除新暂存的内容，Docus 未执行修复。', en: 'The index was changed by another Git operation. Docus did not repair it because that could clear newly staged content.' },
   'history.today': { zh: '今天', en: 'Today' },
   'history.yesterday': { zh: '昨天', en: 'Yesterday' },
   'history.last_week': { zh: '上周', en: 'Last Week' },

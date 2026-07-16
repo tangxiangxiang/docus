@@ -319,22 +319,36 @@ history.post('/commits', async (c) => {
   }
 })
 
-// Repair selected real-index entries after a successful commit reported
-// indexRefreshFailed. This is intentionally explicit: GET /status is read-only
-// and must not pretend it repaired Git state.
-history.post('/repair-index', async (c) => {
+// Persisted repair transactions survive browser reloads. A repair token is
+// bound server-side to the commit and exact real-index entries observed after
+// synchronization failed; callers cannot use this endpoint as an arbitrary
+// `git reset <paths>` primitive.
+history.get('/repair-status', async (c) => {
   if (!(await probeGit())) return bad(c, 'git not available', 503)
-  const body = await c.req.json().catch(() => null) as { paths?: unknown } | null
-  const paths = validateHistoryPaths(body?.paths)
-  if (!paths) return bad(c, 'invalid paths')
   try {
     await ensureRepo(repoRoot())
-    const repaired = await git.repairIndex(repoRoot(), paths)
+    return c.json({ transactions: await git.getIndexRepairStatus(repoRoot()) })
+  } catch (e: any) {
+    return bad(c, e.message ?? 'index repair status failed', 500)
+  }
+})
+
+history.post('/repair-index', async (c) => {
+  if (!(await probeGit())) return bad(c, 'git not available', 503)
+  const body = await c.req.json().catch(() => null) as { token?: unknown } | null
+  if (typeof body?.token !== 'string' || !/^[0-9a-f]{32}$/.test(body.token)) {
+    return bad(c, 'invalid index repair token')
+  }
+  try {
+    await ensureRepo(repoRoot())
+    const repaired = await git.repairIndex(repoRoot(), body.token)
     if (!repaired) return bad(c, 'index repair could not be verified', 409)
     return c.json({ repaired: true })
   } catch (e: any) {
     const msg = e.message ?? 'index repair failed'
-    if (/repository operation in progress/i.test(msg)) return bad(c, msg, 409)
+    if (/repository operation in progress|transaction not found|repository changed|index changed after repair/i.test(msg)) {
+      return bad(c, msg, 409)
+    }
     return bad(c, msg, 500)
   }
 })

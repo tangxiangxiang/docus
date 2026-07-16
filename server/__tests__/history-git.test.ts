@@ -302,10 +302,57 @@ describe('addAndCommit + log', () => {
     })
 
     expect(result.indexRefreshFailed).toBe(true)
+    expect(result.indexRepair).toMatchObject({
+      head: result.sha,
+      paths: ['a.md'],
+    })
     expect(syncIndexForTesting).toHaveBeenCalledTimes(3)
     expect(await git.rawAt(root, result.sha, 'a.md')).toBe('snapshot')
-    await expect(git.repairIndex(root, ['a.md'])).resolves.toBe(true)
+    await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toBe(true)
     expect((await git.status(root)).find((entry) => entry.path === 'a.md')).toBeUndefined()
+    expect(await git.getIndexRepairStatus(root)).toEqual([])
+  })
+
+  it('keeps earlier repair transactions across later commits and accumulates failures', async () => {
+    const failSync = vi.fn().mockResolvedValue({ status: 1, stdout: '', stderr: 'locked' })
+    await write('a.md', 'A')
+    const first = await git.addAndCommit(root, ['a.md'], 'A', {
+      expected: { 'a.md': createHash('sha256').update('A').digest('hex') },
+      syncIndexForTesting: failSync,
+    })
+
+    await write('b.md', 'B')
+    await git.addAndCommit(root, ['b.md'], 'B', {
+      expected: { 'b.md': createHash('sha256').update('B').digest('hex') },
+    })
+    expect((await git.getIndexRepairStatus(root)).map((item) => item.paths)).toEqual([['a.md']])
+
+    await write('c.md', 'C')
+    await git.addAndCommit(root, ['c.md'], 'C', {
+      expected: { 'c.md': createHash('sha256').update('C').digest('hex') },
+      syncIndexForTesting: failSync,
+    })
+    expect((await git.getIndexRepairStatus(root)).flatMap((item) => item.paths).sort()).toEqual([
+      'a.md',
+      'c.md',
+    ])
+    expect(first.indexRepair?.token).toBeTruthy()
+  }, 15_000)
+
+  it('refuses repair after the user changes the real index entry', async () => {
+    await write('a.md', 'snapshot')
+    const result = await git.addAndCommit(root, ['a.md'], 'committed', {
+      expected: { 'a.md': createHash('sha256').update('snapshot').digest('hex') },
+      syncIndexForTesting: vi.fn().mockResolvedValue({ status: 1, stdout: '', stderr: 'locked' }),
+    })
+
+    await write('a.md', 'user staged this')
+    expect((await git.run(root, ['add', '--', 'a.md'])).status).toBe(0)
+    await expect(git.repairIndex(root, result.indexRepair!.token)).rejects.toThrow(
+      'index changed after repair was requested: a.md',
+    )
+    expect(await git.getIndexRepairStatus(root)).toHaveLength(1)
+    expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('user staged this')
   })
 
   it('does not report index repair success when HEAD changes between check and reset', async () => {

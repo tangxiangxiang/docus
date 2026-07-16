@@ -10,8 +10,21 @@ const toast = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
 vi.mock('../../useToast', () => ({ useToast: () => toast }))
 vi.mock('../../../lib/history-api', async () => {
   const actual = await vi.importActual<typeof api>('../../../lib/history-api')
-  return { ...actual, createCommit: vi.fn(), getContentHashes: vi.fn(), repairIndex: vi.fn() }
+  return {
+    ...actual,
+    createCommit: vi.fn(),
+    getContentHashes: vi.fn(),
+    getIndexRepairStatus: vi.fn(),
+    repairIndex: vi.fn(),
+  }
 })
+
+const repairTransaction: api.IndexRepairTransaction = {
+  token: 'a'.repeat(32),
+  head: 'b'.repeat(40),
+  paths: ['a.md'],
+  expectedIndex: { 'a.md': [{ mode: '100644', oid: 'c'.repeat(40), stage: 0 }] },
+}
 
 function history(paths = ['inbox/a.md', 'inbox/b.md']): HistoryState {
   const status = ref(paths.map((path) => ({ path, index: ' ', worktree: 'M' })))
@@ -37,6 +50,7 @@ beforeEach(() => {
     Object.fromEntries(paths.map((path) => [path, 'a'.repeat(64)]))
   ))
   vi.mocked(api.repairIndex).mockResolvedValue(undefined)
+  vi.mocked(api.getIndexRepairStatus).mockResolvedValue([])
 })
 
 describe('useHistoryCommit', () => {
@@ -66,10 +80,16 @@ describe('useHistoryCommit', () => {
 
   it('repairs a degraded real index and refreshes Changes', async () => {
     const h = history(['a.md'])
+    let repaired = false
+    vi.mocked(api.getIndexRepairStatus).mockImplementation(async () => (
+      repaired ? [] : [repairTransaction]
+    ))
+    vi.mocked(api.repairIndex).mockImplementation(async () => { repaired = true })
     vi.mocked(api.createCommit).mockResolvedValue({
       sha: 'abc',
       filesCommitted: ['a.md'],
       indexRefreshFailed: true,
+      indexRepair: repairTransaction,
     })
     const commit = useHistoryCommit({ history: h, saveSelected: vi.fn() })
     commit.message.value = 'Version'
@@ -77,10 +97,54 @@ describe('useHistoryCommit', () => {
 
     await expect(commit.retryIndexRepair()).resolves.toBe(true)
 
-    expect(api.repairIndex).toHaveBeenCalledWith(['a.md'])
+    expect(api.repairIndex).toHaveBeenCalledWith(repairTransaction.token)
     expect(commit.indexRepairPaths.value).toEqual([])
     expect(h.refreshStatus).toHaveBeenCalledTimes(2)
     expect(toast.success).toHaveBeenCalledWith('Git status repaired.')
+  })
+
+  it('restores persisted repair transactions when the Vault is recreated', async () => {
+    vi.mocked(api.getIndexRepairStatus).mockResolvedValue([repairTransaction])
+    const first = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(first.indexRepairPaths.value).toEqual(['a.md'])
+
+    const afterReload = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(afterReload.indexRepairTransactions.value).toEqual([repairTransaction])
+  })
+
+  it('keeps the repair transaction and explains a newer staged-index conflict', async () => {
+    vi.mocked(api.getIndexRepairStatus).mockResolvedValue([repairTransaction])
+    vi.mocked(api.repairIndex).mockRejectedValue(
+      new api.HistoryApiError('index changed after repair was requested: a.md', 409),
+    )
+    const commit = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await expect(commit.retryIndexRepair()).resolves.toBe(false)
+
+    expect(commit.indexRepairPaths.value).toEqual(['a.md'])
+    expect(commit.error.value).toBe(
+      'The index was changed by another Git operation. Docus did not repair it because that could clear newly staged content.',
+    )
+  })
+
+  it('keeps older pending repair paths after a later successful commit', async () => {
+    const h = history(['b.md'])
+    vi.mocked(api.getIndexRepairStatus).mockResolvedValue([repairTransaction])
+    vi.mocked(api.createCommit).mockResolvedValue({ sha: 'd'.repeat(40), filesCommitted: ['b.md'] })
+    const commit = useHistoryCommit({ history: h, saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+    commit.message.value = 'B'
+
+    await commit.submit()
+
+    expect(commit.indexRepairPaths.value).toEqual(['a.md'])
   })
 
   it('reports a repository operation conflict without attempting a commit retry', async () => {
@@ -265,6 +329,7 @@ describe('useHistoryCommit', () => {
       sha: 'abc',
       filesCommitted: ['a.md'],
       indexRefreshFailed: true,
+      indexRepair: repairTransaction,
     })
     const commit = useHistoryCommit({ history: h, saveSelected: vi.fn() })
     commit.message.value = 'Version'

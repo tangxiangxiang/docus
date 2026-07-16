@@ -17,6 +17,7 @@ vi.mock('../../../lib/history-api', async () => {
     createCommit: vi.fn(),
     getContentHashes: vi.fn(),
     repairIndex: vi.fn(),
+    getIndexRepairStatus: vi.fn().mockResolvedValue([]),
   }
 })
 

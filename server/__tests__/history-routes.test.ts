@@ -484,20 +484,45 @@ describe('POST /api/history/repair-index', () => {
     await configureGitUser()
   })
 
-  it('repairs selected stale index entries and clears false dirty status', async () => {
+  it('restores persisted repair status and repairs by opaque transaction token', async () => {
     await write('a.md', 'committed')
-    await call('POST', '/commits', { paths: ['a.md'], message: 'version' })
-    const { run } = await import('../history/git.js')
-    expect((await run(root, ['update-index', '--force-remove', '--', 'a.md'])).status).toBe(0)
+    const git = await import('../history/git.js')
+    const result = await git.addAndCommit(root, ['a.md'], 'version', {
+      expected: { 'a.md': createHash('sha256').update('committed').digest('hex') },
+      syncIndexForTesting: vi.fn().mockResolvedValue({ status: 1, stdout: '', stderr: 'locked' }),
+    })
 
     const before = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string }> }
     expect(before.dirty.map((entry) => entry.path)).toContain('a.md')
 
-    const response = await call('POST', '/repair-index', { paths: ['a.md'] })
+    const persisted = await (await call('GET', '/repair-status')).json() as {
+      transactions: Array<{ token: string; head: string; paths: string[] }>
+    }
+    expect(persisted.transactions).toEqual([
+      expect.objectContaining({ token: result.indexRepair?.token, head: result.sha, paths: ['a.md'] }),
+    ])
+
+    const response = await call('POST', '/repair-index', { token: result.indexRepair?.token })
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ repaired: true })
     const after = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string }> }
     expect(after.dirty.map((entry) => entry.path)).not.toContain('a.md')
+    expect(await (await call('GET', '/repair-status')).json()).toEqual({ transactions: [] })
+  })
+
+  it('returns 409 instead of clearing index content staged after the failure', async () => {
+    await write('a.md', 'committed')
+    const git = await import('../history/git.js')
+    const result = await git.addAndCommit(root, ['a.md'], 'version', {
+      expected: { 'a.md': createHash('sha256').update('committed').digest('hex') },
+      syncIndexForTesting: vi.fn().mockResolvedValue({ status: 1, stdout: '', stderr: 'locked' }),
+    })
+    await write('a.md', 'user staged this')
+    expect((await git.run(root, ['add', '--', 'a.md'])).status).toBe(0)
+
+    const response = await call('POST', '/repair-index', { token: result.indexRepair?.token })
+    expect(response.status).toBe(409)
+    expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('user staged this')
   })
 })
 

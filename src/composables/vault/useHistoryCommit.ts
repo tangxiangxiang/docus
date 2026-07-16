@@ -2,9 +2,11 @@ import { computed, ref, watch } from 'vue'
 import {
   createCommit,
   getContentHashes,
+  getIndexRepairStatus,
   HistoryApiError,
   repairIndex,
   type CommitResult,
+  type IndexRepairTransaction,
 } from '../../lib/history-api'
 import { useI18n } from '../useI18n'
 import { useToast } from '../useToast'
@@ -31,9 +33,25 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
   const lastCommittedPaths = ref<readonly string[]>([])
   const completionId = ref(0)
   const repositoryChangeId = ref(0)
-  const indexRepairPaths = ref<readonly string[]>([])
+  const indexRepairTransactions = ref<readonly IndexRepairTransaction[]>([])
+  const indexRepairPaths = computed<readonly string[]>(() => (
+    [...new Set(indexRepairTransactions.value.flatMap((transaction) => transaction.paths))]
+  ))
   const indexRepairBusy = ref(false)
   let initializedSelection = false
+
+  async function refreshIndexRepairStatus(): Promise<boolean> {
+    try {
+      indexRepairTransactions.value = await getIndexRepairStatus()
+      return true
+    } catch {
+      // Capability/repository initialization can still be in flight during
+      // Vault setup. A later commit or explicit repair retries this read.
+      return false
+    }
+  }
+
+  void refreshIndexRepairStatus()
 
   watch(
     () => options.history.status.value.map((entry) => entry.path),
@@ -138,12 +156,22 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
         ? t('history.commit_success')
         : t('history.commit_success_count', { count: result.filesCommitted.length })
       if (result.indexRefreshFailed) {
-        indexRepairPaths.value = result.filesCommitted
+        if (result.indexRepair) {
+          indexRepairTransactions.value = [
+            ...indexRepairTransactions.value.filter((item) => item.token !== result.indexRepair?.token),
+            result.indexRepair,
+          ]
+        }
         toast.info(t('history.commit_index_refresh_failed'), 5000)
       } else {
-        indexRepairPaths.value = []
+        const settled = new Set(result.filesCommitted)
+        indexRepairTransactions.value = indexRepairTransactions.value.map((transaction) => ({
+          ...transaction,
+          paths: transaction.paths.filter((filePath) => !settled.has(filePath)),
+        })).filter((transaction) => transaction.paths.length > 0)
         toast.success(success)
       }
+      await refreshIndexRepairStatus()
       return result
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
@@ -173,18 +201,25 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
   }
 
   async function retryIndexRepair(): Promise<boolean> {
-    if (indexRepairBusy.value || indexRepairPaths.value.length === 0) return false
+    if (indexRepairBusy.value || indexRepairTransactions.value.length === 0) return false
     indexRepairBusy.value = true
     error.value = null
     try {
-      await repairIndex([...indexRepairPaths.value])
+      for (const transaction of indexRepairTransactions.value) {
+        await repairIndex(transaction.token)
+      }
       await options.history.refreshStatus()
-      indexRepairPaths.value = []
+      await refreshIndexRepairStatus()
       toast.success(t('history.index_repair_success'))
       return true
     } catch (cause) {
+      await refreshIndexRepairStatus()
       const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
-      error.value = t('history.index_repair_failed', { error: detail })
+      error.value = cause instanceof HistoryApiError
+        && cause.status === 409
+        && /index changed after repair/i.test(detail)
+        ? t('history.index_repair_conflict')
+        : t('history.index_repair_failed', { error: detail })
       toast.error(error.value)
       return false
     } finally {
@@ -202,6 +237,7 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     lastCommittedPaths,
     completionId,
     repositoryChangeId,
+    indexRepairTransactions,
     indexRepairPaths,
     indexRepairBusy,
     canCommit,

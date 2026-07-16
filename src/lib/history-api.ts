@@ -153,6 +153,20 @@ export interface CommitResult {
   sha: string
   filesCommitted: string[]
   indexRefreshFailed?: boolean
+  indexRepair?: IndexRepairTransaction
+}
+
+export interface IndexEntryFingerprint {
+  mode: string
+  oid: string
+  stage: number
+}
+
+export interface IndexRepairTransaction {
+  token: string
+  head: string
+  paths: string[]
+  expectedIndex: Record<string, IndexEntryFingerprint[]>
 }
 
 export type ContentHashes = Record<string, string | null>
@@ -180,11 +194,20 @@ export async function createCommit(
   return readJson(r, 'createCommit failed')
 }
 
-export async function repairIndex(paths: string[]): Promise<void> {
+export async function getIndexRepairStatus(): Promise<IndexRepairTransaction[]> {
+  const r = await fetch('/api/history/repair-status')
+  const result = await readJson<{ transactions: IndexRepairTransaction[] }>(
+    r,
+    'getIndexRepairStatus failed',
+  )
+  return result.transactions
+}
+
+export async function repairIndex(token: string): Promise<void> {
   const r = await fetch('/api/history/repair-index', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ paths }),
+    body: JSON.stringify({ token }),
   })
   await readJson<{ repaired: true }>(r, 'repairIndex failed')
 }
