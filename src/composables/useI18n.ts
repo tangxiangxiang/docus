@@ -299,6 +299,7 @@ const STRINGS: Strings = {
   'history.index_repair_discarded': { zh: '已保留当前暂存并移除修复提示。', en: 'Current staged changes were kept and the repair notice was dismissed.' },
   'history.index_repair_discard_failed': { zh: '无法移除修复提示：{error}', en: 'Could not dismiss the repair notice: {error}' },
   'history.withdraw_latest': { zh: '撤回最新版本', en: 'Withdraw latest version' },
+  'history.version_actions': { zh: '版本操作', en: 'Version actions' },
   'history.withdrawing': { zh: '正在撤回…', en: 'Withdrawing...' },
   'history.withdraw_title': { zh: '撤回最新版本？', en: 'Withdraw the latest version?' },
   'history.withdraw_detail': { zh: '该版本将从历史中移除，但文档修改会保留。\n\n撤回后，你可以继续编辑或重新创建版本。', en: 'This version will be removed from history, but the document changes will be kept.\n\nAfter withdrawing it, you can continue editing or create the version again.' },

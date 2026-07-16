@@ -655,23 +655,6 @@ main.container {
   outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
   outline-offset: -1px;
 }
-.history-withdraw-version {
-  align-self: flex-start;
-  min-height: 24px;
-  margin: 1px 10px 5px 33px;
-  padding: 0 7px;
-  border: 1px solid color-mix(in srgb, #ef4444 48%, var(--vs-border));
-  border-radius: 4px;
-  background: transparent;
-  color: color-mix(in srgb, #ef4444 82%, var(--vs-text-1));
-  font: inherit;
-  font-size: 0.68rem;
-  cursor: pointer;
-}
-.history-withdraw-version:hover:not(:disabled) {
-  background: color-mix(in srgb, #ef4444 10%, transparent);
-}
-.history-withdraw-version:disabled { opacity: 0.45; cursor: default; }
 .history-title {
   min-width: 0;
   overflow: hidden;
@@ -1732,6 +1715,11 @@ main.container {
 .history-context-menu button.danger:hover {
   background: rgba(220, 60, 60, 0.18);
   color: #e06060;
+}
+.history-context-menu button.danger { color: #e06060; }
+.history-context-menu button:focus-visible {
+  outline: 1px solid var(--accent, #6aa9ff);
+  outline-offset: -1px;
 }
 .tree-context-menu hr,
 .tab-context-menu hr,

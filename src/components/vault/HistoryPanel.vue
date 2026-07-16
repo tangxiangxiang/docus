@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, toRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, toRef, watch } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import type { HistoryState } from '../../composables/vault/useHistory'
 import type { HistoryCommitState } from '../../composables/vault/useHistoryCommit'
@@ -36,6 +36,12 @@ const commit = props.commit
 const { locale, t } = useI18n()
 const listbox = ref<HTMLElement | null>(null)
 const timelineHeading = ref<HTMLElement | null>(null)
+const revisionMenu = ref<HTMLElement | null>(null)
+const revisionMenuOpen = ref(false)
+const revisionMenuX = ref(0)
+const revisionMenuY = ref(0)
+const revisionMenuRevision = ref<TimelineRevision | null>(null)
+let revisionMenuOrigin: HTMLElement | null = null
 
 const timelineLabels = computed(() => ({
   today: t('history.today'),
@@ -55,6 +61,7 @@ watch(commit.repositoryChangeId, async () => {
   if (document) await timeline.selectDocument(document)
 })
 watch(props.withdraw.completionId, async () => {
+  closeRevisionMenu()
   const document = timeline.selectedDocument.value
   if (document) {
     await timeline.selectDocument(document)
@@ -62,6 +69,12 @@ watch(props.withdraw.completionId, async () => {
   }
   await nextTick()
   timelineHeading.value?.focus()
+})
+watch(() => timeline.selectedDocument.value?.path, () => closeRevisionMenu())
+watch(timeline.revisionsLoading, () => closeRevisionMenu())
+watch(() => h.log.value, () => closeRevisionMenu())
+watch(props.withdraw.busy, (busy) => {
+  if (busy) closeRevisionMenu()
 })
 const revisionsErrorLabel = computed(() => (
   timeline.revisionsError.value?.message || t('history.load_failed')
@@ -107,11 +120,81 @@ function revisionSummary(revision: TimelineRevision): string {
 }
 
 function openRevision(revision: TimelineRevision): void {
+  closeRevisionMenu()
   const document = timeline.selectedDocument.value
   if (!document) return
   timeline.selectRevision(revision)
   emit('open-revision', toHistoryRevisionSelection(document, revision))
 }
+
+function isLatestRevision(revision: TimelineRevision): boolean {
+  return revision.id === h.log.value[0]?.sha
+}
+
+function closeRevisionMenu(restoreFocus = false): void {
+  revisionMenuOpen.value = false
+  revisionMenuRevision.value = null
+  document.removeEventListener('pointerdown', onRevisionMenuOutside)
+  document.removeEventListener('keydown', onRevisionMenuEscape)
+  if (restoreFocus) revisionMenuOrigin?.focus()
+  if (!restoreFocus) revisionMenuOrigin = null
+}
+
+function onRevisionMenuOutside(event: PointerEvent): void {
+  if (!revisionMenu.value?.contains(event.target as Node)) closeRevisionMenu()
+}
+
+function onRevisionMenuEscape(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return
+  event.preventDefault()
+  closeRevisionMenu(true)
+}
+
+async function showRevisionMenu(
+  revision: TimelineRevision,
+  origin: HTMLElement,
+  x: number,
+  y: number,
+): Promise<void> {
+  closeRevisionMenu()
+  if (!isLatestRevision(revision) || !props.withdraw.canWithdraw.value || props.withdraw.busy.value) return
+  revisionMenuRevision.value = revision
+  revisionMenuOrigin = origin
+  revisionMenuX.value = x
+  revisionMenuY.value = y
+  revisionMenuOpen.value = true
+  await nextTick()
+  const menu = revisionMenu.value
+  if (!menu) return
+  const gutter = 8
+  revisionMenuX.value = Math.max(gutter, Math.min(x, window.innerWidth - menu.offsetWidth - gutter))
+  revisionMenuY.value = Math.max(gutter, Math.min(y, window.innerHeight - menu.offsetHeight - gutter))
+  menu.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+  document.addEventListener('pointerdown', onRevisionMenuOutside)
+  document.addEventListener('keydown', onRevisionMenuEscape)
+}
+
+function onRevisionContextMenu(event: MouseEvent, revision: TimelineRevision): void {
+  event.preventDefault()
+  void showRevisionMenu(revision, event.currentTarget as HTMLElement, event.clientX, event.clientY)
+}
+
+function onRevisionMenuKeydown(event: KeyboardEvent, revision: TimelineRevision): void {
+  if (!(event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey))) return
+  event.preventDefault()
+  const origin = event.currentTarget as HTMLElement
+  const rect = origin.getBoundingClientRect()
+  void showRevisionMenu(revision, origin, rect.left + Math.min(24, rect.width / 2), rect.bottom)
+}
+
+function withdrawRevision(): void {
+  const revision = revisionMenuRevision.value
+  closeRevisionMenu()
+  if (!revision || !isLatestRevision(revision) || !props.withdraw.canWithdraw.value || props.withdraw.busy.value) return
+  void props.withdraw.withdraw(revision.id)
+}
+
+onBeforeUnmount(closeRevisionMenu)
 
 async function selectDocument(document: DocumentHistory): Promise<void> {
   await timeline.selectDocument(document)
@@ -247,16 +330,9 @@ function onListKeydown(event: KeyboardEvent): void {
                   :time-label="clockLabel(revision.modifiedAt)"
                   :selected="timeline.selectedRevisionId.value === revision.id"
                   @select="openRevision"
+                  @contextmenu="onRevisionContextMenu($event, revision)"
+                  @keydown="onRevisionMenuKeydown($event, revision)"
                 />
-                <button
-                  v-if="revision.id === h.log.value[0]?.sha"
-                  type="button"
-                  class="history-withdraw-version"
-                  :disabled="!props.withdraw.canWithdraw.value"
-                  @click="props.withdraw.withdraw(revision.id)"
-                >
-                  {{ props.withdraw.busy.value ? t('history.withdrawing') : t('history.withdraw_latest') }}
-                </button>
               </template>
             </TimelineGroup>
           </template>
@@ -294,6 +370,20 @@ function onListKeydown(event: KeyboardEvent): void {
           </TimelineGroup>
         </template>
       </div>
+      <Teleport to="body">
+        <div
+          v-if="revisionMenuOpen"
+          ref="revisionMenu"
+          class="history-context-menu"
+          role="menu"
+          :aria-label="t('history.version_actions')"
+          :style="{ left: revisionMenuX + 'px', top: revisionMenuY + 'px' }"
+        >
+          <button type="button" role="menuitem" class="danger" @click="withdrawRevision">
+            {{ t('history.withdraw_latest') }}
+          </button>
+        </div>
+      </Teleport>
     </template>
   </section>
 </template>

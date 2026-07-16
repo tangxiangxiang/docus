@@ -141,9 +141,20 @@ describe('HistoryPanel document timeline', () => {
     await flushPromises()
 
     expect(wrapper.findAll('.history-revision-row')).toHaveLength(2)
-    expect(wrapper.findAll('.history-withdraw-version')).toHaveLength(1)
+    expect(wrapper.find('.history-withdraw-version').exists()).toBe(false)
 
-    await wrapper.get('.history-withdraw-version').trigger('click')
+    const rows = wrapper.findAll('.history-revision-row')
+    await rows[1]!.trigger('contextmenu', { clientX: 80, clientY: 90 })
+    await flushPromises()
+    expect(document.querySelector('.history-context-menu')).toBeNull()
+
+    await rows[0]!.trigger('contextmenu', { clientX: 80, clientY: 90 })
+    await flushPromises()
+    let menu = document.querySelector<HTMLElement>('.history-context-menu')!
+    expect(menu).not.toBeNull()
+    expect(menu.textContent).toContain('Withdraw latest version')
+    expect(document.activeElement).toBe(menu.querySelector('[role="menuitem"]'))
+    ;(menu.querySelector('button') as HTMLButtonElement).click()
     await flushPromises()
     let dialog = document.querySelector<HTMLElement>('.confirm-dialog')!
     expect(dialog.textContent).toContain('Withdraw the latest version?')
@@ -154,16 +165,20 @@ describe('HistoryPanel document timeline', () => {
     await flushPromises()
     expect(api.dropCommit).not.toHaveBeenCalled()
 
-    await wrapper.get('.history-withdraw-version').trigger('click')
+    await rows[0]!.trigger('keydown', { key: 'F10', shiftKey: true })
+    await flushPromises()
+    menu = document.querySelector<HTMLElement>('.history-context-menu')!
+    ;(menu.querySelector('button') as HTMLButtonElement).click()
     await flushPromises()
     dialog = document.querySelector<HTMLElement>('.confirm-dialog')!
     ;(dialog.querySelectorAll('button')[1] as HTMLButtonElement).click()
     await flushPromises()
     expect(api.dropCommit).toHaveBeenCalledOnce()
-    expect(wrapper.get('.history-withdraw-version').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('.history-withdraw-version').text()).toContain('Withdrawing')
+    expect(withdraw.busy.value).toBe(true)
 
-    await wrapper.get('.history-withdraw-version').trigger('click')
+    await rows[0]!.trigger('contextmenu', { clientX: 80, clientY: 90 })
+    await flushPromises()
+    expect(document.querySelector('.history-context-menu')).toBeNull()
     expect(api.dropCommit).toHaveBeenCalledOnce()
     request.resolve({
       sha: 'older',
@@ -175,10 +190,38 @@ describe('HistoryPanel document timeline', () => {
     await flushPromises()
 
     expect(wrapper.findAll('.history-revision-row')).toHaveLength(1)
-    expect(wrapper.findAll('.history-withdraw-version')).toHaveLength(1)
+    expect(document.querySelector('.history-context-menu')).toBeNull()
     expect(document.activeElement).toBe(wrapper.get('.history-timeline-heading').element)
     wrapper.unmount()
     host.unmount()
+  })
+
+  it('closes the revision menu outside and on Escape, restoring row focus for Escape', async () => {
+    const latest = commit('latest', NOW, 'Latest version', ['inbox/a.md'])
+    vi.mocked(api.getLog).mockResolvedValue({ commits: [latest] })
+    const wrapper = mountPanel({
+      attachTo: document.body,
+      props: { posts: [{ path: 'inbox/a', title: 'A', created: '', updated: '', tags: [], size: 0, mtime: 0 }] },
+    })
+    await flushPromises()
+    await wrapper.get('.history-document-row').trigger('click')
+    await flushPromises()
+    const row = wrapper.get('.history-revision-row')
+
+    await row.trigger('contextmenu', { clientX: 80, clientY: 90 })
+    await flushPromises()
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    await flushPromises()
+    expect(document.querySelector('.history-context-menu')).toBeNull()
+
+    await row.trigger('keydown', { key: 'ContextMenu' })
+    await flushPromises()
+    expect(document.querySelector('.history-context-menu')).not.toBeNull()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(document.querySelector('.history-context-menu')).toBeNull()
+    expect(document.activeElement).toBe(row.element)
+    wrapper.unmount()
   })
 
   it('preserves message, selection, and single-flight state across sidebar remounts', async () => {
