@@ -365,6 +365,24 @@ describe('POST /api/history/commits', () => {
     expect(((await r.json()) as { error: string }).error).toBe('selection is stale; no longer changed: a.md')
   })
 
+  it('returns 409 without committing when content changes after hash capture', async () => {
+    await write('a.md', 'click-time content')
+    const hashesResponse = await call('POST', '/content-hashes', { paths: ['a.md'] })
+    const { hashes } = await hashesResponse.json() as { hashes: Record<string, string> }
+    await write('a.md', 'restored or externally changed content')
+
+    const r = await call('POST', '/commits', {
+      paths: ['a.md'],
+      message: 'must preserve click-time boundary',
+      expected: hashes,
+    })
+
+    expect(r.status).toBe(409)
+    expect(((await r.json()) as { error: string }).error).toBe('content changed before commit: a.md')
+    const log = await (await call('GET', '/log')).json() as { commits: unknown[] }
+    expect(log.commits).toEqual([])
+  })
+
   it('rejects the whole batch when one selected path became clean', async () => {
     await write('clean.md', 'clean')
     await call('POST', '/commits', { paths: ['clean.md'], message: 'seed' })

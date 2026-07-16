@@ -29,6 +29,9 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('const historyCommit = useHistoryCommit({')
     expect(source).toContain(':commit="historyCommit"')
     expect(source).toContain('refreshComparisons(committedPaths)')
+    expect(source).toContain('const historyMutationLock = createPathMutationLock()')
+    expect(source.match(/acquireMutation: historyMutationLock\.acquire/g)).toHaveLength(2)
+    expect(source.match(/:mutation-locked="historyMutationLock\.has/g)).toHaveLength(2)
     expect(source).not.toContain(':save-before-commit=')
   })
 

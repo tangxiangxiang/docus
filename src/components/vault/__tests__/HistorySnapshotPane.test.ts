@@ -32,6 +32,13 @@ function mountPane(value: HistorySnapshot) {
 }
 
 describe('HistorySnapshotPane', () => {
+  it('disables Restore while Create Version owns the document mutation lock', async () => {
+    const wrapper = mountPane(snapshot())
+    await wrapper.setProps({ mutationLocked: true })
+
+    expect(wrapper.get('.history-restore-button').attributes('disabled')).toBeDefined()
+  })
+
   it('renders the banner, read-only toolbar, and exact Markdown through ReadingPane', async () => {
     const wrapper = mountPane(snapshot())
 

@@ -15,6 +15,7 @@ vi.mock('../../../lib/history-api', async () => {
     getStatus: vi.fn(),
     getLog: vi.fn(),
     createCommit: vi.fn(),
+    getContentHashes: vi.fn(),
   }
 })
 
@@ -58,6 +59,9 @@ beforeEach(() => {
   vi.mocked(api.getStatus).mockResolvedValue({ dirty: [], available: true })
   vi.mocked(api.getLog).mockResolvedValue({ commits: [] })
   vi.mocked(api.createCommit).mockResolvedValue({ sha: 'new-version', filesCommitted: [] })
+  vi.mocked(api.getContentHashes).mockImplementation(async (paths) => (
+    Object.fromEntries(paths.map((path) => [path, 'a'.repeat(64)]))
+  ))
 })
 
 afterEach(() => {
@@ -113,7 +117,11 @@ describe('HistoryPanel document timeline', () => {
     await flushPromises()
 
     expect(saveBeforeCommit).toHaveBeenCalledWith(['inbox/a.md'])
-    expect(api.createCommit).toHaveBeenCalledWith(['inbox/a.md'], 'Update A')
+    expect(api.createCommit).toHaveBeenCalledWith(
+      ['inbox/a.md'],
+      'Update A',
+      { 'inbox/a.md': 'a'.repeat(64) },
+    )
     expect(saveBeforeCommit.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(api.createCommit).mock.invocationCallOrder[0]!,
     )

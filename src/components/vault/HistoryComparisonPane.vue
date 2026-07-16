@@ -8,6 +8,7 @@ import { formatHistoryDate } from '../../lib/history-date'
 const props = defineProps<{
   comparison: HistoryComparison
   restoring?: boolean
+  mutationLocked?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -50,7 +51,7 @@ defineExpose({ focusViewer })
         <button
           type="button"
           class="history-restore-button"
-          :disabled="comparison.status !== 'ready' || restoring"
+          :disabled="comparison.status !== 'ready' || restoring || mutationLocked"
           @click="emit('restore', comparison)"
         >
           {{ restoring ? t('history.restoring') : t('history.restore_version') }}

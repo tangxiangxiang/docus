@@ -23,6 +23,7 @@ interface HistoryRestoreOptions {
   prepareEditorRestore: (path: string) => Promise<void>
   refreshVault: () => Promise<void>
   refreshComparison: (path: string) => Promise<boolean | void>
+  acquireMutation?: (paths: readonly string[]) => (() => void) | null
   restoreFile?: typeof historyApi.restoreFile
   onSuccess: (request: HistoryRestoreRequest, result: { refreshFailed: boolean }) => void
   onError: (request: HistoryRestoreRequest, error: unknown) => void
@@ -80,6 +81,12 @@ export function useHistoryRestore(options: HistoryRestoreOptions) {
       return false
     }
 
+    const releaseMutation = options.acquireMutation?.([historyPath(request.documentPath)])
+    if (options.acquireMutation && !releaseMutation) {
+      pending = false
+      return false
+    }
+
     restoring.value = true
     restoringPath.value = request.documentPath
     error.value = null
@@ -118,6 +125,7 @@ export function useHistoryRestore(options: HistoryRestoreOptions) {
       restoring.value = false
       restoringPath.value = null
       pending = false
+      releaseMutation?.()
     }
   }
 

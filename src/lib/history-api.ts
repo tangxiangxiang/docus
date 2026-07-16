@@ -154,11 +154,27 @@ export interface CommitResult {
   filesCommitted: string[]
 }
 
-export async function createCommit(paths: string[], message: string): Promise<CommitResult> {
+export type ContentHashes = Record<string, string | null>
+
+export async function getContentHashes(paths: string[]): Promise<ContentHashes> {
+  const r = await fetch('/api/history/content-hashes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ paths }),
+  })
+  const result = await readJson<{ hashes: ContentHashes }>(r, 'getContentHashes failed')
+  return result.hashes
+}
+
+export async function createCommit(
+  paths: string[],
+  message: string,
+  expected?: ContentHashes,
+): Promise<CommitResult> {
   const r = await fetch('/api/history/commits', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ paths, message }),
+    body: JSON.stringify({ paths, message, expected }),
   })
   return readJson(r, 'createCommit failed')
 }

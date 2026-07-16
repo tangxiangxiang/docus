@@ -30,7 +30,7 @@ export function useDocumentSave(options: {
     if (!tab) return
     const barrier = commitBarriers.get(path)
     if (barrier ? tab.savedRevision >= barrier.revision : tab.revision === tab.savedRevision) {
-      tab.saveStatus = 'idle'
+      tab.saveStatus = tab.revision === tab.savedRevision ? 'idle' : 'dirty'
       return
     }
     const sentRevision = barrier?.revision ?? tab.revision
@@ -106,7 +106,9 @@ export function useDocumentSave(options: {
     if (options.activePath.value) await doSave(options.activePath.value)
   }
 
-  async function prepareHistoryCommit(historyPaths: readonly string[]): Promise<() => Promise<void>> {
+  async function prepareHistoryCommit(historyPaths: readonly string[]): Promise<(
+    options?: { flushPending?: boolean }
+  ) => Promise<void>> {
     const appPaths = historyPaths.map((path) => path.endsWith('.md') ? path.slice(0, -3) : path)
     const barrierPaths: string[] = []
     for (const path of appPaths) {
@@ -117,10 +119,11 @@ export function useDocumentSave(options: {
     }
 
     let released = false
-    const release = async (): Promise<void> => {
+    const release = async (releaseOptions: { flushPending?: boolean } = {}): Promise<void> => {
       if (released) return
       released = true
       for (const path of barrierPaths) commitBarriers.delete(path)
+      if (releaseOptions.flushPending === false) return
       await Promise.all(barrierPaths.map(async (path) => {
         const tab = options.tabs.value.find((candidate) => candidate.path === path)
         if (tab && tab.revision !== tab.savedRevision) await doSave(path)
@@ -145,7 +148,7 @@ export function useDocumentSave(options: {
       }
       return release
     } catch (error) {
-      await release()
+      await release({ flushPending: false })
       throw error
     }
   }

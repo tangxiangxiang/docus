@@ -18,6 +18,7 @@
 import { Hono } from 'hono'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import * as git from './git.js'
 import { ensureRepo } from './repo.js'
 import { computeFileDiff } from './diff.js'
@@ -156,6 +157,35 @@ history.get('/status', async (c) => {
   }
 })
 
+async function worktreeContentHash(filePath: string): Promise<string | null> {
+  try {
+    const bytes = await fs.readFile(path.join(repoRoot(), filePath))
+    return createHash('sha256').update(bytes).digest('hex')
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return null
+    throw error
+  }
+}
+
+// Capture the exact working-tree bytes that Create Version is about to commit.
+// The client keeps its mutation barrier active between this request and
+// POST /commits; /commits re-checks these hashes immediately before staging.
+history.post('/content-hashes', async (c) => {
+  if (!(await probeGit())) return bad(c, 'git not available', 503)
+  const body = await c.req.json().catch(() => null) as { paths?: unknown } | null
+  const paths = validateHistoryPaths(body?.paths)
+  if (!paths) return bad(c, 'invalid paths')
+  try {
+    await ensureRepo(repoRoot())
+    const entries = await Promise.all(paths.map(async (filePath) => (
+      [filePath, await worktreeContentHash(filePath)] as const
+    )))
+    return c.json({ hashes: Object.fromEntries(entries) })
+  } catch (e: any) {
+    return bad(c, e.message ?? 'content hash failed', 500)
+  }
+})
+
 // ---- /log ----
 // Commit history, newest-first. `?path=` filters to a single file.
 history.get('/log', async (c) => {
@@ -237,7 +267,7 @@ history.get('/diff', async (c) => {
 
 // ---- /commits ----
 // Create one commit from a list of paths and a message. Body:
-//   { paths: string[], message: string }
+//   { paths: string[], message: string, expected?: Record<string, string | null> }
 //
 // `message` must be non-empty after trim — empty messages defeat
 // the purpose of a manual commit. The L0 layer's addAndCommit
@@ -251,7 +281,7 @@ history.get('/diff', async (c) => {
 history.post('/commits', async (c) => {
   if (!(await probeGit())) return bad(c, 'git not available', 503)
   const body = await c.req.json().catch(() => null) as
-    | { paths?: unknown; message?: unknown }
+    | { paths?: unknown; message?: unknown; expected?: unknown }
     | null
   if (!body) return bad(c, 'body required')
   if (!Array.isArray(body.paths) || body.paths.length === 0) {
@@ -265,12 +295,35 @@ history.post('/commits', async (c) => {
   if (typeof body.message !== 'string' || body.message.trim().length === 0) {
     return bad(c, 'message must be a non-empty string')
   }
+  let expected: Record<string, string | null> | null = null
+  if (body.expected !== undefined) {
+    if (!body.expected || typeof body.expected !== 'object' || Array.isArray(body.expected)) {
+      return bad(c, 'invalid expected content hashes')
+    }
+    const record = body.expected as Record<string, unknown>
+    if (Object.keys(record).length !== paths.length || paths.some((filePath) => (
+      !(filePath in record)
+      || !(record[filePath] === null || (typeof record[filePath] === 'string' && /^[0-9a-f]{64}$/.test(record[filePath])))
+    ))) {
+      return bad(c, 'invalid expected content hashes')
+    }
+    expected = record as Record<string, string | null>
+  }
   try {
     await ensureRepo(repoRoot())
     const dirtyPaths = new Set((await git.status(repoRoot())).map((entry) => entry.path))
     const stalePaths = paths.filter((path) => !dirtyPaths.has(path))
     if (stalePaths.length > 0) {
       return bad(c, `selection is stale; no longer changed: ${stalePaths.join(', ')}`, 409)
+    }
+    if (expected) {
+      const changedPaths: string[] = []
+      for (const filePath of paths) {
+        if (await worktreeContentHash(filePath) !== expected[filePath]) changedPaths.push(filePath)
+      }
+      if (changedPaths.length > 0) {
+        return bad(c, `content changed before commit: ${changedPaths.join(', ')}`, 409)
+      }
     }
     const r = await git.addAndCommit(repoRoot(), paths, body.message)
     return c.json(r, 201)

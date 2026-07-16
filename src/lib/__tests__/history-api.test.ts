@@ -65,6 +65,24 @@ describe('getDiff', () => {
 })
 
 describe('createCommit', () => {
+  it('captures and sends expected working-tree content hashes', async () => {
+    const hash = 'a'.repeat(64)
+    responses.push({ status: 200, body: { hashes: { 'a.md': hash } } })
+    await expect(api.getContentHashes(['a.md'])).resolves.toEqual({ 'a.md': hash })
+    expect(calls[0]).toEqual(expect.objectContaining({
+      url: '/api/history/content-hashes',
+      init: expect.objectContaining({ body: JSON.stringify({ paths: ['a.md'] }) }),
+    }))
+
+    responses.push({ status: 201, body: { sha: 'abc', filesCommitted: ['a.md'] } })
+    await api.createCommit(['a.md'], 'msg', { 'a.md': hash })
+    expect(calls[1]?.init.body).toBe(JSON.stringify({
+      paths: ['a.md'],
+      message: 'msg',
+      expected: { 'a.md': hash },
+    }))
+  })
+
   it('throws the server error message on a non-2xx', async () => {
     responses.push({ status: 409, body: { error: 'nothing to commit' } })
     await expect(api.createCommit(['a.md'], 'msg'))

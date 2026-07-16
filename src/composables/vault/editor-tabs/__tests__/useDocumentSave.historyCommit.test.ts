@@ -62,6 +62,7 @@ describe('useDocumentSave prepareHistoryCommit', () => {
     })
 
     await expect(save.prepareHistoryCommit(['inbox/a.md'])).rejects.toThrow('HTTP 500')
+    expect(fetch).toHaveBeenCalledOnce()
     expect(current.raw).toBe('# Newer editor content')
     expect(current.saveStatus).toBe('error')
   })
@@ -128,5 +129,30 @@ describe('useDocumentSave prepareHistoryCommit', () => {
       body: JSON.stringify({ raw: '# Typed after click' }),
     }))
     expect(current.revision).toBe(current.savedRevision)
+  })
+
+  it('keeps the dirty state when manual save is pressed behind an active barrier', async () => {
+    const current = tab()
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ ok: true, raw: current.raw }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const save = useDocumentSave({
+      tabs: ref([current]),
+      posts: ref([]),
+      activePath: ref(current.path),
+      refresh: vi.fn(),
+      toastError: vi.fn(),
+    })
+    const release = await save.prepareHistoryCommit(['inbox/a.md'])
+    save.onEditorChange(current.path, '# After click')
+
+    await save.doSave(current.path)
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(current.revision).not.toBe(current.savedRevision)
+    expect(current.saveStatus).toBe('dirty')
+    await release()
   })
 })

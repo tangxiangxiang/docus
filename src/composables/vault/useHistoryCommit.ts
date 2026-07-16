@@ -1,13 +1,21 @@
 import { computed, ref, watch } from 'vue'
-import { createCommit, HistoryApiError, type CommitResult } from '../../lib/history-api'
+import {
+  createCommit,
+  getContentHashes,
+  HistoryApiError,
+  type CommitResult,
+} from '../../lib/history-api'
 import { useI18n } from '../useI18n'
 import { useToast } from '../useToast'
 import type { HistoryState } from './useHistory'
 
 export interface HistoryCommitOptions {
   history: HistoryState
-  saveSelected(paths: readonly string[]): Promise<void | (() => Promise<void>)>
+  saveSelected(paths: readonly string[]): Promise<void | ((
+    options?: { flushPending?: boolean }
+  ) => Promise<void>)>
   refreshComparisons?(committedPaths: readonly string[]): Promise<void>
+  acquireMutation?(paths: readonly string[]): (() => void) | null
 }
 
 export function useHistoryCommit(options: HistoryCommitOptions) {
@@ -16,6 +24,7 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
   const selectedPaths = ref<Set<string>>(new Set())
   const message = ref('')
   const busy = ref(false)
+  const busyPaths = ref<Set<string>>(new Set())
   const error = ref<string | null>(null)
   const lastCommittedPaths = ref<readonly string[]>([])
   const completionId = ref(0)
@@ -84,8 +93,11 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
       return null
     }
 
+    const releaseMutation = options.acquireMutation?.(paths)
+    if (options.acquireMutation && !releaseMutation) return null
     busy.value = true
-    let releaseBarrier: (() => Promise<void>) | null = null
+    busyPaths.value = new Set(paths)
+    let releaseBarrier: ((options?: { flushPending?: boolean }) => Promise<void>) | null = null
     try {
       releaseBarrier = await options.saveSelected(paths) ?? null
     } catch (cause) {
@@ -93,11 +105,14 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
       error.value = t('history.commit_save_failed', { error: detail })
       toast.error(error.value)
       busy.value = false
+      busyPaths.value = new Set()
+      releaseMutation?.()
       return null
     }
 
     try {
-      const result = await createCommit(paths, versionMessage)
+      const expected = await getContentHashes(paths)
+      const result = await createCommit(paths, versionMessage, expected)
       await releaseBarrier?.()
       releaseBarrier = null
       await refreshAfterCommit(result.filesCommitted)
@@ -125,6 +140,8 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     } finally {
       await releaseBarrier?.()
       busy.value = false
+      busyPaths.value = new Set()
+      releaseMutation?.()
     }
   }
 
@@ -133,6 +150,7 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     selectedCount,
     message,
     busy,
+    busyPaths,
     error,
     lastCommittedPaths,
     completionId,

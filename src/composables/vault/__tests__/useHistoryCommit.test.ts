@@ -10,7 +10,7 @@ const toast = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
 vi.mock('../../useToast', () => ({ useToast: () => toast }))
 vi.mock('../../../lib/history-api', async () => {
   const actual = await vi.importActual<typeof api>('../../../lib/history-api')
-  return { ...actual, createCommit: vi.fn() }
+  return { ...actual, createCommit: vi.fn(), getContentHashes: vi.fn() }
 })
 
 function history(paths = ['inbox/a.md', 'inbox/b.md']): HistoryState {
@@ -33,6 +33,9 @@ function history(paths = ['inbox/a.md', 'inbox/b.md']): HistoryState {
 beforeEach(() => {
   vi.clearAllMocks()
   useI18n().setLocale('en')
+  vi.mocked(api.getContentHashes).mockImplementation(async (paths) => (
+    Object.fromEntries(paths.map((path) => [path, 'a'.repeat(64)]))
+  ))
 })
 
 describe('useHistoryCommit', () => {
@@ -47,7 +50,11 @@ describe('useHistoryCommit', () => {
     await commit.submit()
 
     expect(saveSelected).toHaveBeenCalledWith(['inbox/a.md'])
-    expect(api.createCommit).toHaveBeenCalledWith(['inbox/a.md'], 'Update A')
+    expect(api.createCommit).toHaveBeenCalledWith(
+      ['inbox/a.md'],
+      'Update A',
+      { 'inbox/a.md': 'a'.repeat(64) },
+    )
     expect(api.createCommit).not.toHaveBeenCalledWith(expect.arrayContaining(['inbox/b.md']), expect.anything())
     expect(h.refreshStatus).toHaveBeenCalledOnce()
     expect(h.refreshLog).toHaveBeenCalledOnce()

@@ -44,6 +44,13 @@ function mountPane(value: HistoryComparison) {
 }
 
 describe('HistoryComparisonPane', () => {
+  it('disables Restore while Create Version owns the document mutation lock', () => {
+    const wrapper = mount(HistoryComparisonPane, {
+      props: { comparison: comparison(), mutationLocked: true },
+    })
+    expect(wrapper.get('.history-restore-button').attributes('disabled')).toBeDefined()
+  })
+
   it('renders a directional read-only comparison and exposes navigation actions', async () => {
     const wrapper = mountPane(comparison())
 

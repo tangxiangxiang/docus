@@ -10,6 +10,7 @@ import { useI18n } from '../composables/useI18n'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { useHistory } from '../composables/vault/useHistory'
 import { useHistoryCommit } from '../composables/vault/useHistoryCommit'
+import { createPathMutationLock } from '../composables/vault/pathMutationLock'
 import { useHistorySnapshots, type HistoryRevisionSelection } from '../composables/vault/useHistorySnapshots'
 import {
   useHistoryRestore,
@@ -158,9 +159,11 @@ const historyComparisons = useHistoryComparisons({
 })
 const activeHistoryComparison = historyComparisons.activeComparison
 const history = useHistory(vaultContext)
+const historyMutationLock = createPathMutationLock()
 const historyCommit = useHistoryCommit({
   history,
   saveSelected: prepareHistoryCommit,
+  acquireMutation: historyMutationLock.acquire,
   async refreshComparisons(committedPaths) {
     await Promise.all(committedPaths.map((path) => (
       historyComparisons.refreshDocumentComparison(path.endsWith('.md') ? path.slice(0, -3) : path)
@@ -206,6 +209,7 @@ const historyRestore = useHistoryRestore({
   prepareEditorRestore: prepareHistoryRestore,
   refreshVault: refresh,
   refreshComparison: historyComparisons.refreshDocumentComparison,
+  acquireMutation: historyMutationLock.acquire,
   onSuccess(request, result) {
     if (result.refreshFailed) {
       toast.info(t('history.restore_partial', { title: request.documentTitle }), 5000)
@@ -677,6 +681,7 @@ watch(isReadMode, async (reading) => {
           :snapshot="activeHistorySnapshot"
           :resolver="historyWikiResolver"
           :restoring="historyRestore.restoring.value && historyRestore.restoringPath.value === activeHistorySnapshot.documentPath"
+          :mutation-locked="historyMutationLock.has(`${activeHistorySnapshot.documentPath}.md`)"
           @view-current="viewCurrentDocument"
           @open-diff="openHistoryComparison"
           @restore="restoreHistoricalVersion"
@@ -690,6 +695,7 @@ watch(isReadMode, async (reading) => {
           ref="comparisonPaneRef"
           :comparison="activeHistoryComparison"
           :restoring="historyRestore.restoring.value && historyRestore.restoringPath.value === activeHistoryComparison.documentPath"
+          :mutation-locked="historyMutationLock.has(`${activeHistoryComparison.documentPath}.md`)"
           @view-historical="viewHistoricalComparison"
           @view-current="viewCurrentDocument"
           @restore="restoreHistoricalVersion"

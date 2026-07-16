@@ -10,6 +10,7 @@ const props = defineProps<{
   snapshot: HistorySnapshot
   resolver?: WikiResolver
   restoring?: boolean
+  mutationLocked?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -50,7 +51,7 @@ defineExpose({ focusViewer })
         <button
           type="button"
           class="history-restore-button"
-          :disabled="snapshot.status !== 'ready' || restoring"
+          :disabled="snapshot.status !== 'ready' || restoring || mutationLocked"
           @click="emit('restore', snapshot)"
         >
           {{ restoring ? t('history.restoring') : t('history.restore_version') }}
