@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { mount, RouterLinkStub } from '@vue/test-utils'
 import NavBar from '../NavBar.vue'
 import { VaultViewModeKey, type VaultViewMode } from '../../composables/vault/viewMode'
+import { useI18n } from '../../composables/useI18n'
 
 function makeViewModeApi(initial: VaultViewMode = 'edit') {
   const mode = ref<VaultViewMode>(initial)
@@ -27,7 +28,11 @@ function mountNavBar(initial: VaultViewMode = 'edit') {
 }
 
 describe('NavBar — view-toggle button', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useI18n().setLocale('en')
+  })
+  afterEach(() => useI18n().setLocale('zh'))
 
   it('renders a view-toggle button', () => {
     const { wrapper } = mountNavBar()

@@ -1,0 +1,103 @@
+import type { WorkspaceTab } from './tabs'
+import {
+  fallbackAfterClosingWorkspaceTab,
+  fallbackAfterClosingWorkspaceTabs,
+} from './workspaceNavigation'
+
+interface ComparisonRef {
+  tabId: string
+  documentPath: string
+}
+
+export interface WorkspaceCloseDependencies {
+  workspaceTabs: readonly WorkspaceTab[]
+  activeId: string | null
+  comparisons: readonly ComparisonRef[]
+  snapshotTabIds: readonly string[]
+  closeEditorTab: (id: string) => Promise<boolean>
+  closeComparison: (id: string) => void
+  closeSnapshot: (id: string) => void
+  refreshDocumentComparison: (path: string) => Promise<boolean>
+}
+
+export interface WorkspaceCloseManyDependencies {
+  workspaceTabs: readonly WorkspaceTab[]
+  activeId: string | null
+  comparisons: () => readonly ComparisonRef[]
+  confirmEditorTabs: (ids: string[]) => Promise<boolean>
+  closeEditorTabsConfirmed: (ids: string[]) => void
+  closeComparisons: (ids: string[]) => void
+  closeSnapshots: (ids: string[]) => void
+  refreshDocumentComparison: (path: string) => Promise<boolean>
+}
+
+export interface WorkspaceCloseResult {
+  closed: boolean
+  activeWillClose: boolean
+  fallbackId: string | null
+}
+
+export async function closeWorkspaceTabState(
+  id: string,
+  deps: WorkspaceCloseDependencies,
+): Promise<WorkspaceCloseResult> {
+  const activeWillClose = deps.activeId === id
+  const fallbackId = activeWillClose
+    ? fallbackAfterClosingWorkspaceTab(deps.workspaceTabs, id)
+    : null
+
+  if (deps.comparisons.some((comparison) => comparison.tabId === id)) {
+    deps.closeComparison(id)
+  } else if (deps.snapshotTabIds.includes(id)) {
+    deps.closeSnapshot(id)
+  } else {
+    const closed = await deps.closeEditorTab(id)
+    if (!closed) return { closed: false, activeWillClose, fallbackId }
+    // This must run after the editor disappears: the comparison then reads
+    // saved disk content instead of the discarded in-memory document.
+    await deps.refreshDocumentComparison(id)
+  }
+
+  return { closed: true, activeWillClose, fallbackId }
+}
+
+export async function closeManyWorkspaceTabState(
+  ids: readonly string[],
+  deps: WorkspaceCloseManyDependencies,
+): Promise<WorkspaceCloseResult> {
+  const workspaceIds = new Set(deps.workspaceTabs.map((tab) => tab.id))
+  const closingIds = ids.filter((id) => workspaceIds.has(id))
+  if (closingIds.length === 0) {
+    return { closed: false, activeWillClose: false, fallbackId: null }
+  }
+
+  const activeWillClose = deps.activeId !== null && closingIds.includes(deps.activeId)
+  const fallbackId = fallbackAfterClosingWorkspaceTabs(
+    deps.workspaceTabs,
+    closingIds,
+    deps.activeId,
+  )
+  const historyIds = closingIds.filter((id) => id.startsWith('history:'))
+  const comparisonIds = closingIds.filter((id) => id.startsWith('diff:'))
+  const documentIds = closingIds.filter(
+    (id) => !id.startsWith('history:') && !id.startsWith('diff:'),
+  )
+
+  // Confirm all dirty documents before mutating any kind of Workspace tab.
+  if (!(await deps.confirmEditorTabs(documentIds))) {
+    return { closed: false, activeWillClose, fallbackId }
+  }
+
+  deps.closeEditorTabsConfirmed(documentIds)
+  deps.closeSnapshots(historyIds)
+  deps.closeComparisons(comparisonIds)
+
+  const remainingComparisonPaths = documentIds.filter((path) =>
+    deps.comparisons().some((comparison) => comparison.documentPath === path),
+  )
+  await Promise.all(
+    remainingComparisonPaths.map((path) => deps.refreshDocumentComparison(path)),
+  )
+
+  return { closed: true, activeWillClose, fallbackId }
+}

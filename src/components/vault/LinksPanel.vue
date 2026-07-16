@@ -21,6 +21,7 @@ import { useOptionalVaultContext } from '../../composables/vault/context/useVaul
 import { useVaultTocState } from '../../composables/vault/useTocState'
 import { ICON_FILE_MD } from './icons'
 import { PROTECTED_ROOTS } from '../../composables/archiveProtocol'
+import { useI18n } from '../../composables/useI18n'
 
 const props = defineProps<{
   /** Path of the currently active note, or null if no note is open. */
@@ -32,6 +33,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   navigate: [path: string]
 }>()
+const { t } = useI18n()
 
 const indexState = getLinkIndex()
 const vaultContext = useOptionalVaultContext()
@@ -65,7 +67,7 @@ function displayTitle(p: string): string {
 function directoryLabel(p: string): string {
   const parts = p.split('/')
   parts.pop()
-  if (!parts.length) return '根目录'
+  if (!parts.length) return t('links.root')
   const labels = parts.map((part, index) => {
     if (index === 0 && PROTECTED_ROOTS.has(part)) return part.charAt(0).toUpperCase() + part.slice(1)
     return part.replace(/-/g, ' ')
@@ -162,12 +164,12 @@ watchEffect(() => {
 </script>
 
 <template>
-  <aside class="links-panel" aria-label="相关文档">
+  <aside class="links-panel" :aria-label="t('links.panel')">
     <div v-if="!activePath" class="empty">
-      打开文档后查看引用关系
+      {{ t('links.open_document') }}
     </div>
     <div v-else-if="isEmpty" class="empty">
-      暂无引用关系
+      {{ t('links.empty') }}
     </div>
 
     <div v-else class="links-content">
@@ -177,9 +179,9 @@ watchEffect(() => {
            and the section headers (with their "0" count) are
            redundant — dropping them keeps the panel down to what
            the note actually has. -->
-      <section v-if="backlinks.length" class="section" aria-label="被引用">
+      <section v-if="backlinks.length" class="section" :aria-label="t('links.backlinks')">
         <header class="section-header">
-          <span class="section-title">被引用（{{ backlinks.length }}）</span>
+          <span class="section-title">{{ t('links.count', { label: t('links.backlinks'), count: backlinks.length }) }}</span>
         </header>
         <ul class="link-list">
           <li v-for="b in backlinks" :key="b.source">
@@ -199,9 +201,9 @@ watchEffect(() => {
         </ul>
       </section>
 
-      <section v-if="outgoingDisplay.length" class="section" aria-label="引用">
+      <section v-if="outgoingDisplay.length" class="section" :aria-label="t('links.outgoing')">
         <header class="section-header">
-          <span class="section-title">引用（{{ outgoingDisplay.length }}）</span>
+          <span class="section-title">{{ t('links.count', { label: t('links.outgoing'), count: outgoingDisplay.length }) }}</span>
         </header>
         <ul class="link-list">
           <li v-for="l in outgoingDisplay" :key="l.target + (l.anchor ?? '')">

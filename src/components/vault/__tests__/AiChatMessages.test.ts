@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AiChatMessages from '../AiChatMessages.vue'
+import { useI18n } from '../../../composables/useI18n'
 
 describe('AiChatMessages', () => {
+  beforeEach(() => useI18n().setLocale('en'))
+  afterEach(() => useI18n().setLocale('zh'))
   it('renders the contextual empty state and emits a selected quick prompt', async () => {
     const wrapper = mount(AiChatMessages, {
       props: {

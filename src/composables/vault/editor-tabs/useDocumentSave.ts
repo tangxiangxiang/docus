@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
 import type { PostSummary } from '../../../lib/api'
+import { useI18n } from '../../useI18n'
 
 export function useDocumentSave(options: {
   tabs: Ref<Tab[]>
@@ -9,6 +10,7 @@ export function useDocumentSave(options: {
   refresh: () => Promise<void>
   toastError: (message: string) => void
 }) {
+  const { t } = useI18n()
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const savePromises = new Map<string, Promise<void>>()
 
@@ -55,7 +57,7 @@ export function useDocumentSave(options: {
     } catch (error) {
       tab.saveStatus = typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error'
       tab.error = (error as Error).message
-      options.toastError(`保存失败: ${tab.error}`)
+      options.toastError(t('editor.save_failed', { error: tab.error }))
     } finally {
       tab.savingRevision = null
     }
@@ -110,6 +112,26 @@ export function useDocumentSave(options: {
     saveTimers.delete(path)
   }
 
+  async function prepareDocumentClose(paths: readonly string[]): Promise<void> {
+    // A queued debounce can be discarded safely because no request has left
+    // the browser yet. An in-flight PUT cannot be reliably cancelled after
+    // the server starts writing, so wait for its complete serialized save
+    // chain before deciding whether a dirty confirmation is still needed.
+    for (const path of paths) {
+      const timer = saveTimers.get(path)
+      if (timer) clearTimeout(timer)
+      saveTimers.delete(path)
+    }
+    await Promise.allSettled(
+      paths.map((path) => savePromises.get(path)).filter((promise): promise is Promise<void> => Boolean(promise)),
+    )
+    for (const path of paths) {
+      const timer = saveTimers.get(path)
+      if (timer) clearTimeout(timer)
+      saveTimers.delete(path)
+    }
+  }
+
   function disposeDocumentSave() {
     for (const timer of saveTimers.values()) clearTimeout(timer)
     saveTimers.clear()
@@ -122,6 +144,7 @@ export function useDocumentSave(options: {
     handleBeforeUnload,
     doSaveNow,
     prepareHistoryRestore,
+    prepareDocumentClose,
     disposeDocumentSave,
   }
 }

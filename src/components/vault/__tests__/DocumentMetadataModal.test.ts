@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import DocumentMetadataModal from '../DocumentMetadataModal.vue'
+import { useI18n } from '../../../composables/useI18n'
 
 const getPost = vi.fn()
 const updateDocumentMetadata = vi.fn()
@@ -21,8 +22,13 @@ const metadata = {
 }
 
 beforeEach(() => {
+  useI18n().setLocale('zh')
   getPost.mockReset().mockResolvedValue({ metadata, frontmatter: {} })
   updateDocumentMetadata.mockReset().mockResolvedValue({ ...metadata, title: 'Updated' })
+})
+afterEach(() => {
+  useI18n().setLocale('zh')
+  document.body.innerHTML = ''
 })
 
 describe('DocumentMetadataModal', () => {

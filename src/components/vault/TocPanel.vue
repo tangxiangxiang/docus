@@ -50,7 +50,7 @@ function onLinkNavigate(p: string) {
 
 <template>
   <div class="right-rail">
-    <nav class="sidebar-tabs" role="tablist" aria-label="文档导航">
+    <nav class="sidebar-tabs" role="tablist" :aria-label="t('rail.navigation')">
       <button
         role="tab"
         :aria-selected="activeTab === 'ai'"
@@ -59,15 +59,15 @@ function onLinkNavigate(p: string) {
         :disabled="historyReadOnly"
         :title="historyReadOnly ? t('history.ai_disabled') : undefined"
         @click="emit('update:activeTab', 'ai')"
-      >AI</button>
-      <button role="tab" :aria-selected="activeTab === 'toc'" :class="{ active: activeTab === 'toc' }" @click="emit('update:activeTab', 'toc')">目录</button>
-      <button role="tab" :aria-selected="activeTab === 'links'" :class="{ active: activeTab === 'links' }" @click="emit('update:activeTab', 'links')">引用</button>
+      >{{ t('rail.ai') }}</button>
+      <button role="tab" :aria-selected="activeTab === 'toc'" :class="{ active: activeTab === 'toc' }" @click="emit('update:activeTab', 'toc')">{{ t('rail.toc') }}</button>
+      <button role="tab" :aria-selected="activeTab === 'links'" :class="{ active: activeTab === 'links' }" @click="emit('update:activeTab', 'links')">{{ t('rail.links') }}</button>
     </nav>
 
-    <section v-show="activeTab === 'toc'" class="toc-panel" role="tabpanel" aria-label="目录">
+    <section v-show="activeTab === 'toc'" class="toc-panel" role="tabpanel" :aria-label="t('rail.toc')">
 
       <div v-if="!hasHeadings" class="toc-panel-empty">
-        暂无目录
+        {{ t('rail.toc_empty') }}
       </div>
       <ul v-else class="toc-panel-list">
         <li
@@ -87,14 +87,14 @@ function onLinkNavigate(p: string) {
       </ul>
     </section>
 
-    <section v-show="activeTab === 'links'" class="links-slot" role="tabpanel" aria-label="引用关系">
+    <section v-show="activeTab === 'links'" class="links-slot" role="tabpanel" :aria-label="t('rail.links_panel')">
       <LinksPanel
         :path="path"
         :posts="posts"
         @navigate="onLinkNavigate"
       />
     </section>
-    <section v-show="activeTab === 'ai'" class="ai-slot" role="tabpanel" aria-label="AI">
+    <section v-show="activeTab === 'ai'" class="ai-slot" role="tabpanel" :aria-label="t('rail.ai')">
       <AiPanel v-if="!historyReadOnly" />
     </section>
   </div>

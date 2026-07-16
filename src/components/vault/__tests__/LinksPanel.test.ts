@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import LinksPanel from '../LinksPanel.vue'
+import { useI18n } from '../../../composables/useI18n'
 
 const mocks = vi.hoisted(() => ({
   index: { value: { paths: [], outgoing: {} as Record<string, Array<{ target: string; kind: 'wiki' }>> } },
@@ -21,9 +22,11 @@ const posts = [
 
 describe('LinksPanel', () => {
   beforeEach(() => {
+    useI18n().setLocale('zh')
     mocks.index.value = { paths: [], outgoing: { 'inbox/current': [{ target: 'inbox/english/object', kind: 'wiki' }] } }
     mocks.fetchBacklinks.mockReset().mockResolvedValue([{ source: 'archive/grammar/predicate' }])
   })
+  afterEach(() => useI18n().setLocale('zh'))
 
   it('renders both relationship groups with secondary paths and navigates rows', async () => {
     const wrapper = mount(LinksPanel, { props: { path: 'inbox/current', posts } })

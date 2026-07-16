@@ -7,6 +7,7 @@ import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { PROTECTED_ROOTS } from '../composables/archiveProtocol'
 import { ICON_EDIT, ICON_EYE, ICON_PANEL_RIGHT_CLOSE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ARCHIVE, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
+import { useI18n } from '../composables/useI18n'
 
 defineProps<{ isVault?: boolean }>()
 const emit = defineEmits<{
@@ -14,16 +15,23 @@ const emit = defineEmits<{
 }>()
 
 const { theme, toggle } = useTheme()
+const { t } = useI18n()
 
 /* Sun when current theme is dark (click to lighten),
    moon when current theme is light (click to darken). */
 const themeIcon = computed<'sun' | 'moon'>(() => (theme.value === 'dark' ? 'sun' : 'moon'))
 
 const themeTitle = computed<string>(() => {
-  const next = theme.value === 'dark' ? 'Light' : 'Dark'
-  const cur = theme.value === 'dark' ? 'Dark' : 'Light'
-  return `Theme: ${cur} (click for ${next})`
+  const next = t(theme.value === 'dark' ? 'nav.theme_light' : 'nav.theme_dark')
+  const current = t(theme.value === 'dark' ? 'nav.theme_dark' : 'nav.theme_light')
+  return t('nav.theme', { current, next })
 })
+
+function scopeLabel(root: string): string {
+  return activeScope.value === root
+    ? t('nav.scope_active', { scope: root })
+    : t('nav.scope_only', { scope: root })
+}
 
 /* View-mode toggle. The button shows the icon of the *opposite*
    mode (i.e. "click to switch to that"), matching the convention
@@ -54,22 +62,22 @@ const SCOPE_ICONS: Record<string, string> = {
 <template>
   <header :class="['navbar', { 'is-vault': isVault }]">
     <div :class="['navbar-inner', { container: !isVault, 'full-width': isVault }]">
-      <RouterLink to="/" class="brand" aria-label="docus home">
-        <img class="brand-logo" src="/logo.svg" alt="docus logo" width="24" height="24" />
+      <RouterLink to="/" class="brand" :aria-label="t('nav.home')">
+        <img class="brand-logo" :src="'/logo.svg'" :alt="t('nav.logo_alt')" width="24" height="24" />
         <span class="brand-wordmark">docus</span>
       </RouterLink>
       <!-- Scope filter: lives in the navbar (the file tree header is too
            narrow on 150px sidebars). Hidden outside the vault since the
            rest of the app doesn't have a file tree to filter. -->
-      <div v-if="isVault" class="scope-chips" role="tablist" aria-label="范围过滤">
+      <div v-if="isVault" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
         <button
           v-for="root in PROTECTED_ROOTS"
           :key="root"
           class="scope-chip"
           :class="{ active: activeScope === root }"
           :aria-pressed="activeScope === root"
-          :aria-label="activeScope === root ? `已过滤为 ${root}（再次点击取消）` : `只看 ${root}`"
-          :title="activeScope === root ? `已过滤为 ${root}（再次点击取消）` : `只看 ${root}`"
+          :aria-label="scopeLabel(root)"
+          :title="scopeLabel(root)"
           @click="toggleScope(root)"
         >
           <span class="scope-chip-icon" aria-hidden="true" v-html="SCOPE_ICONS[root]" />
@@ -82,8 +90,8 @@ const SCOPE_ICONS: Record<string, string> = {
           v-if="isVault"
           class="nav-search"
           type="button"
-          title="Search (Ctrl/Cmd+P)"
-          aria-label="Search"
+          :title="t('nav.search_hint')"
+          :aria-label="t('nav.search')"
           @click="emit('open-search')"
         >
           <span class="nav-search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
@@ -93,8 +101,8 @@ const SCOPE_ICONS: Record<string, string> = {
           class="view-toggle"
           :class="{ 'is-read': isReadMode }"
           type="button"
-          :aria-label="isReadMode ? 'Switch to edit' : 'Switch to read'"
-          :title="isReadMode ? 'Switch to edit (Cmd/Ctrl+E)' : 'Switch to read (Cmd/Ctrl+E)'"
+          :aria-label="t(isReadMode ? 'nav.switch_edit' : 'nav.switch_read')"
+          :title="t(isReadMode ? 'nav.switch_edit_hint' : 'nav.switch_read_hint')"
           data-testid="view-toggle"
           @click="viewModeApi.toggle()"
         >
@@ -117,8 +125,8 @@ const SCOPE_ICONS: Record<string, string> = {
           v-if="isVault"
           class="ai-toggle"
           type="button"
-          :title="aiRailOpen ? 'AI panel (click to close)' : 'AI panel'"
-          :aria-label="aiRailOpen ? 'AI panel (click to close)' : 'AI panel'"
+          :title="t(aiRailOpen ? 'nav.ai_panel_close' : 'nav.ai_panel')"
+          :aria-label="t(aiRailOpen ? 'nav.ai_panel_close' : 'nav.ai_panel')"
           :aria-pressed="aiRailOpen"
           @click="toggleAi"
         >

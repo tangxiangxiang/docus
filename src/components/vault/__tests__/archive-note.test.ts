@@ -6,6 +6,7 @@ import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
 import * as api from '../../../lib/api'
 import { installDialogMocks, resetDialogMocks } from '../../../__test-helpers__/dialogs'
+import { useI18n } from '../../../composables/useI18n'
 
 installDialogMocks()
 
@@ -46,6 +47,7 @@ const TREE: TreeNode[] = [
 
 describe('FileTree archive-note', () => {
   beforeEach(() => {
+    useI18n().setLocale('zh')
     localStorage.clear()
     vi.restoreAllMocks()
     resetDialogMocks()
@@ -141,7 +143,7 @@ describe('FileTree archive-note', () => {
     await vm.onArchiveNote('inbox/foo')
     await flushPromises()
 
-    expect(toastSpy.error).toHaveBeenCalledWith('归档失败: boom')
+    expect(toastSpy.error).toHaveBeenCalledWith('归档失败：boom')
     expect(toastSpy.success).not.toHaveBeenCalled()
     w.unmount()
   })

@@ -85,18 +85,18 @@ async function useQuickPrompt(text: string) {
 </script>
 
 <template>
-  <aside class="ai-panel" aria-label="AI assistant">
+  <aside class="ai-panel" :aria-label="t('ai.assistant')">
     <header class="ai-header">
       <span
         class="ai-title-session"
-        :title="history.activeSession.value?.title || '新对话'"
-      >{{ history.activeSession.value?.title || '新对话' }}</span>
+        :title="history.activeSession.value?.title || t('ai.new_conversation')"
+      >{{ history.activeSession.value?.title || t('ai.new_conversation') }}</span>
       <div class="ai-header-actions">
       <button
         class="ai-header-btn"
         type="button"
-        :title="pickerOpen ? 'Close history' : 'Open history'"
-        :aria-label="pickerOpen ? 'Close history' : 'Open history'"
+        :title="t(pickerOpen ? 'ai.close_history' : 'ai.open_history')"
+        :aria-label="t(pickerOpen ? 'ai.close_history' : 'ai.open_history')"
         aria-haspopup="dialog"
         :aria-expanded="pickerOpen"
         @click="togglePicker"
@@ -104,8 +104,8 @@ async function useQuickPrompt(text: string) {
       <button
         class="ai-header-btn"
         type="button"
-        title="New conversation"
-        aria-label="New conversation"
+        :title="t('ai.new_conversation')"
+        :aria-label="t('ai.new_conversation')"
         :disabled="history.busy.value"
         @click="onNewSession"
       ><span v-html="ICON_NEW_CHAT" aria-hidden="true" /></button>
@@ -116,7 +116,7 @@ async function useQuickPrompt(text: string) {
       v-if="!history.configured.value"
       class="ai-no-key-banner"
       role="status"
-    >AI not configured — open Settings from the activity bar.</div>
+    >{{ t('ai.not_configured') }}</div>
 
     <AiChatMessages
       :messages="history.messages.value"

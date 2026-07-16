@@ -28,11 +28,12 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <aside class="activity-bar" aria-label="Activity bar">
+  <aside class="activity-bar" :aria-label="t('activity.label')">
     <button
       class="ab-btn"
       :class="{ active: activePanel === 'files' }"
-      title="Explorer (Ctrl/Cmd+B)"
+      :title="t('activity.explorer')"
+      :aria-label="t('activity.explorer')"
       :aria-pressed="activePanel === 'files'"
       @click="emit('select-panel', 'files')"
     >
@@ -41,7 +42,8 @@ const { t } = useI18n()
     <button
       class="ab-btn"
       :class="{ active: activePanel === 'tags' }"
-      title="Tags"
+      :title="t('activity.tags')"
+      :aria-label="t('activity.tags')"
       :aria-pressed="activePanel === 'tags'"
       @click="emit('select-panel', 'tags')"
     >
@@ -65,8 +67,8 @@ const { t } = useI18n()
     <div class="ab-spacer" aria-hidden="true" />
     <button
       class="ab-btn ab-btn-settings"
-      title="Settings"
-      aria-label="Settings"
+      :title="t('activity.settings')"
+      :aria-label="t('activity.settings')"
       @click="emit('open-settings')"
     >
       <span class="ab-btn-icon" v-html="ICON_AB_SETTINGS" aria-hidden="true" />

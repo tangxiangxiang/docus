@@ -21,6 +21,7 @@ import {
   readPersistedTabs,
   useTabPersistence,
 } from './editor-tabs/useTabPersistence'
+import { useI18n } from '../useI18n'
 export { __setVaultIdForTesting } from './editor-tabs/useTabPersistence'
 
 export function useEditorTabs(opts: {
@@ -33,6 +34,7 @@ export function useEditorTabs(opts: {
 }) {
   const toast = useToast()
   const { confirm } = useConfirm()
+  const { t } = useI18n()
   const fileChanges = opts.fileChanges
 
   const {
@@ -46,9 +48,8 @@ export function useEditorTabs(opts: {
     refresh,
     openPost,
     restoreOneTab,
-    closeTab,
-    closeMany,
-    confirmCloseMany,
+    closeTab: closeTabState,
+    confirmCloseMany: confirmCloseManyState,
     closeManyConfirmed,
     selectTab,
     navigateTo,
@@ -67,6 +68,7 @@ export function useEditorTabs(opts: {
     handleBeforeUnload,
     doSaveNow,
     prepareHistoryRestore,
+    prepareDocumentClose,
     disposeDocumentSave,
   } = useDocumentSave({
     tabs,
@@ -75,6 +77,22 @@ export function useEditorTabs(opts: {
     refresh,
     toastError: toast.error,
   })
+
+  async function closeTab(path: string): Promise<boolean> {
+    await prepareDocumentClose([path])
+    return closeTabState(path)
+  }
+
+  async function confirmCloseMany(paths: string[]): Promise<boolean> {
+    await prepareDocumentClose(paths)
+    return confirmCloseManyState(paths)
+  }
+
+  async function closeMany(paths: string[]): Promise<boolean> {
+    if (!(await confirmCloseMany(paths))) return false
+    closeManyConfirmed(paths)
+    return true
+  }
 
   const {
     handleOnline,
@@ -100,7 +118,7 @@ export function useEditorTabs(opts: {
     const parent = activePath.value ? activePath.value.replace(/\/[^/]+$/, '') : ''
     const filename = toLocalSlug(trimmed)
     if (!filename || !isSlugSegment(filename)) {
-      toast.error('名称只能使用小写英文、数字和连字符')
+      toast.error(t('common.name_invalid'))
       return
     }
     const newPath = parent ? `${parent}/${filename}` : filename
@@ -108,9 +126,9 @@ export function useEditorTabs(opts: {
       await createPost({ path: newPath, title: trimmed })
       await refresh()
       await openPost(newPath)
-      toast.success(`已创建: ${newPath}`)
+      toast.success(t('common.created', { path: newPath }))
     } catch (e) {
-      toast.error(`创建失败: ${(e as Error).message}`)
+      toast.error(t('common.create_failed', { error: (e as Error).message }))
     }
   }
 
@@ -177,8 +195,8 @@ export function useEditorTabs(opts: {
       }
       if (missing.length > 0) {
         const sample = missing.slice(0, 3).map((p) => `· ${p}`).join('\n')
-        const more = missing.length > 3 ? `\n(还有 ${missing.length - 3} 个)` : ''
-        toast.info(`${missing.length} 个标签页已不存在:\n${sample}${more}`)
+        const more = missing.length > 3 ? t('editor.missing_more', { count: missing.length - 3 }) : ''
+        toast.info(t('editor.missing_tabs', { count: missing.length, paths: sample, more }))
       }
     }
 

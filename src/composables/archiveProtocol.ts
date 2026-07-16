@@ -99,21 +99,22 @@ export function canCreateFileChild(path: string | null | undefined): boolean {
 export function blockedMessage(
   path: string | null | undefined,
   op: 'rename' | 'delete' | 'move' | 'create-file' | 'create-folder',
+  t: (key: string, params?: Record<string, string | number>) => string,
 ): string | null {
   if (isProtectedRoot(path)) {
     const label = path!
-    if (op === 'rename') return `${label} 是固定目录，不能重命名`
-    if (op === 'delete') return `${label} 是固定目录，不能删除`
-    if (op === 'move')   return `${label} 是固定目录，不能移动`
+    if (op === 'rename') return t('file_tree.protected_rename', { path: label })
+    if (op === 'delete') return t('file_tree.protected_delete', { path: label })
+    if (op === 'move')   return t('file_tree.protected_move', { path: label })
     // create-file / create-folder on a protected root aren't blocked —
     // you can put files into inbox / literature. Only the create-into-archive
     // path is blocked, and that's the same as `isInArchive(path)` below.
   }
   if (isInArchive(path)) {
-    if (op === 'rename') return 'Archive 是已归档笔记，不能重命名'
-    if (op === 'delete') return 'Archive 是已归档笔记，不能删除'
+    if (op === 'rename') return t('file_tree.archive_rename')
+    if (op === 'delete') return t('file_tree.archive_delete')
     if (op === 'move')   return null
-    if (op === 'create-file') return 'Archive 是已归档笔记，不能直接新建笔记'
+    if (op === 'create-file') return t('file_tree.archive_create')
     if (op === 'create-folder') return null
   }
   return null

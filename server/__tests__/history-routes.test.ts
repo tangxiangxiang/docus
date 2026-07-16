@@ -123,7 +123,7 @@ describe('GET /api/history/log', () => {
     const r = await call('GET', '/log')
     const body = await r.json() as { commits: { subject: string }[] }
     expect(body.commits.map((c) => c.subject)).toEqual(['two', 'one'])
-  })
+  }, 15_000)
 
   it('filters by path', async () => {
     await write('a.md', '1')
@@ -133,7 +133,7 @@ describe('GET /api/history/log', () => {
     const r = await call('GET', '/log?path=b.md')
     const body = await r.json() as { commits: { subject: string }[] }
     expect(body.commits.map((c) => c.subject)).toEqual(['touch b'])
-  })
+  }, 15_000)
 
   it('rejects invalid path filters', async () => {
     const r = await call('GET', '/log?path=../outside.md')

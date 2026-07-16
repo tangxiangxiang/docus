@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue'
 import { ICON_FILE_MD, ICON_SEND, ICON_STOP } from './icons'
+import { useI18n } from '../../composables/useI18n'
 
 const props = defineProps<{
   modelValue: string
@@ -14,6 +15,7 @@ const emit = defineEmits<{
   send: []
   stop: []
 }>()
+const { t } = useI18n()
 
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 const INPUT_MAX_H = 160
@@ -61,8 +63,8 @@ defineExpose({ focus })
         :value="modelValue"
         class="ai-input"
         rows="1"
-        placeholder="Ask Claude…"
-        aria-label="Ask Claude"
+        :placeholder="t('ai.ask_claude')"
+        :aria-label="t('ai.ask_claude')"
         @keydown="onKeydown"
         @input="onInput"
       />
@@ -72,15 +74,15 @@ defineExpose({ focus })
             <span class="ai-context-icon" v-html="ICON_FILE_MD" aria-hidden="true" />
             <span class="ai-context-path">{{ currentPath }}</span>
           </span>
-          <span v-else class="ai-context ai-context-empty">no document</span>
+          <span v-else class="ai-context ai-context-empty">{{ t('ai.no_document') }}</span>
         </div>
         <div class="ai-toolbar-right">
           <button
             class="ai-send"
             :class="{ 'ai-send-busy': busy }"
             type="button"
-            :title="busy ? 'Stop' : 'Send (Enter)'"
-            :aria-label="busy ? 'Stop' : 'Send'"
+            :title="t(busy ? 'ai.stop' : 'ai.send_hint')"
+            :aria-label="t(busy ? 'ai.stop' : 'ai.send')"
             :disabled="!busy && (!modelValue.trim() || !configured)"
             @click="onPrimaryAction"
           >

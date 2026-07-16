@@ -3,12 +3,14 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { getPost, updateDocumentMetadata, type DocumentMetadata } from '../../lib/api'
 import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useToast } from '../../composables/useToast'
+import { useI18n } from '../../composables/useI18n'
 
 const props = defineProps<{ open: boolean; path: string | null }>()
 const emit = defineEmits<{ close: []; saved: [metadata: DocumentMetadata] }>()
 
 const trap = useFocusTrap()
 const toast = useToast()
+const { locale, t } = useI18n()
 const modalRef = ref<HTMLElement | null>(null)
 const titleInput = ref<HTMLInputElement | null>(null)
 const loading = ref(false)
@@ -21,12 +23,12 @@ const metadata = ref<DocumentMetadata | null>(null)
 const directory = computed(() => {
   if (!props.path) return '—'
   const index = props.path.lastIndexOf('/')
-  return index < 0 ? '根目录' : props.path.slice(0, index)
+  return index < 0 ? t('metadata.root') : props.path.slice(0, index)
 })
 
 function formatDate(value?: number): string {
   if (!value) return '—'
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat(locale.value === 'zh' ? 'zh-CN' : 'en-US', {
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   }).format(value)
@@ -59,7 +61,7 @@ async function load() {
     titleInput.value?.focus()
     titleInput.value?.select()
   } catch (error) {
-    toast.error('加载文档属性失败: ' + (error as Error).message)
+    toast.error(t('metadata.load_failed', { error: (error as Error).message }))
   } finally {
     loading.value = false
   }
@@ -74,10 +76,10 @@ async function save() {
       summary: summary.value.trim(),
       tags: split(tags.value),
     })
-    toast.success('文档属性已保存')
+    toast.success(t('metadata.saved'))
     emit('saved', metadata)
   } catch (error) {
-    toast.error('保存文档属性失败: ' + (error as Error).message)
+    toast.error(t('metadata.save_failed', { error: (error as Error).message }))
   } finally {
     saving.value = false
   }
@@ -122,43 +124,43 @@ onBeforeUnmount(() => { void trap.deactivate() })
         class="document-metadata-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="文档属性"
+        :aria-label="t('metadata.title')"
         @submit.prevent="save"
       >
         <header class="document-metadata-header">
           <div>
-            <h2>文档属性</h2>
+            <h2>{{ t('metadata.title') }}</h2>
             <span>{{ path }}</span>
           </div>
-          <button type="button" class="document-metadata-close" aria-label="关闭" title="关闭" @click="emit('close')">×</button>
+          <button type="button" class="document-metadata-close" :aria-label="t('metadata.close')" :title="t('metadata.close')" @click="emit('close')">×</button>
         </header>
 
         <div class="document-metadata-body" :aria-busy="loading">
           <label class="document-metadata-field">
-            <span>标题</span>
+            <span>{{ t('metadata.field_title') }}</span>
             <input ref="titleInput" v-model="title" maxlength="200" :disabled="loading || saving" required />
           </label>
           <label class="document-metadata-field">
-            <span>摘要</span>
+            <span>{{ t('metadata.summary') }}</span>
             <textarea v-model="summary" maxlength="2000" rows="4" :disabled="loading || saving" />
             <small>{{ summary.length }} / 2000</small>
           </label>
           <label class="document-metadata-field">
-            <span>标签</span>
+            <span>{{ t('metadata.tags') }}</span>
             <input v-model="tags" placeholder="rag, notes" :disabled="loading || saving" />
           </label>
-          <section class="document-metadata-readonly" aria-label="只读信息">
-            <div><span>创建时间</span><output>{{ formatDate(metadata?.createdAt) }}</output></div>
-            <div><span>更新时间</span><output>{{ formatDate(metadata?.updatedAt) }}</output></div>
-            <div><span>文档 ID</span><output class="is-mono" :title="metadata?.id">{{ metadata?.id ?? '—' }}</output></div>
-            <div><span>所属目录</span><output class="is-mono" :title="directory">{{ directory }}</output></div>
+          <section class="document-metadata-readonly" :aria-label="t('metadata.readonly')">
+            <div><span>{{ t('metadata.created_at') }}</span><output>{{ formatDate(metadata?.createdAt) }}</output></div>
+            <div><span>{{ t('metadata.updated_at') }}</span><output>{{ formatDate(metadata?.updatedAt) }}</output></div>
+            <div><span>{{ t('metadata.document_id') }}</span><output class="is-mono" :title="metadata?.id">{{ metadata?.id ?? '—' }}</output></div>
+            <div><span>{{ t('metadata.directory') }}</span><output class="is-mono" :title="directory">{{ directory }}</output></div>
           </section>
         </div>
 
         <footer class="document-metadata-actions">
-          <button type="button" class="btn" @click="emit('close')">取消</button>
+          <button type="button" class="btn" @click="emit('close')">{{ t('metadata.cancel') }}</button>
           <button type="submit" class="btn btn-primary" :disabled="loading || saving || !title.trim()">
-            {{ saving ? '保存中…' : '保存' }}
+            {{ t(saving ? 'metadata.saving' : 'metadata.save') }}
           </button>
         </footer>
       </form>

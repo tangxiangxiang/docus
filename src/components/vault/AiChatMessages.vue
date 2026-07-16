@@ -2,6 +2,7 @@
 import type { Message } from '../../lib/ai-api'
 import { ICON_AI } from './icons'
 import AiToolCallCard from './AiToolCallCard.vue'
+import { useI18n } from '../../composables/useI18n'
 
 defineProps<{
   messages: Message[]
@@ -12,6 +13,7 @@ defineProps<{
 const emit = defineEmits<{
   prompt: [text: string]
 }>()
+const { t } = useI18n()
 </script>
 
 <template>
@@ -21,14 +23,14 @@ const emit = defineEmits<{
         <span class="ai-empty-icon" v-html="ICON_AI" aria-hidden="true" />
         <div>
           <div class="ai-empty-title">
-            {{ currentPath ? 'Ask about current note' : 'Ask about your vault' }}
+            {{ t(currentPath ? 'ai.ask_note' : 'ai.ask_vault') }}
           </div>
           <div class="ai-empty-subtitle">
-            {{ currentPath || 'No document selected' }}
+            {{ currentPath || t('ai.no_document') }}
           </div>
         </div>
       </div>
-      <div class="ai-quick-prompts" aria-label="Quick prompts">
+      <div class="ai-quick-prompts" :aria-label="t('ai.quick_prompts')">
         <button
           v-for="prompt in quickPrompts"
           :key="prompt.label"

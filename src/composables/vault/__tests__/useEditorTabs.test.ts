@@ -46,6 +46,7 @@ function answerConfirm(ok: boolean) {
 
 import { useEditorTabs } from '../useEditorTabs'
 import { createVaultFileChanges, type VaultFileChanges } from '../context/fileChanges'
+import { useI18n } from '../../useI18n'
 
 // --- helpers ---------------------------------------------------------------
 
@@ -74,7 +75,9 @@ interface Harness {
   onEditorChange: (p: string, v: string) => void
   onKeydown: (e: KeyboardEvent) => void
   onCommandPaletteNew: (t: string) => Promise<void>
+  refresh: () => Promise<void>
   activePath: Ref<string | null>
+  posts: Ref<Array<{ path: string; title: string }>>
   tabs: Ref<{ path: string; raw: string; originalRaw: string; saveStatus: string; loadError: string | null; serverMtime?: number; externalRaw?: string | null }[]>
   // The selectPanel / toggleViewMode spies are captured separately
   // because the composable receives them as constructor args and
@@ -103,7 +106,7 @@ function setup(): Promise<Harness> {
     captured!.unmount = () => { wrapper.unmount() }
     // useEditorTabs runs refresh() in onMounted; wait for it to settle.
     await nextTick()
-    await Promise.resolve()
+    await flushPromises()
     resolveOuter(captured!)
   })
 }
@@ -127,10 +130,17 @@ function stubFetch(handlers: Record<string, (body?: unknown) => unknown | Promis
   })
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((onResolve) => { resolve = onResolve })
+  return { promise, resolve }
+}
+
 // --- tests -----------------------------------------------------------------
 
 describe('useEditorTabs', () => {
   beforeEach(() => {
+    useI18n().setLocale('zh')
     toastCalls.length = 0
     confirmResolve = null
     confirmAnswer.value = null
@@ -151,6 +161,7 @@ describe('useEditorTabs', () => {
   })
 
   afterEach(() => {
+    useI18n().setLocale('zh')
     vi.restoreAllMocks()
     vi.useRealTimers()
   })
@@ -394,6 +405,62 @@ describe('useEditorTabs', () => {
     expect(sent).toEqual(['A1', 'A2'])
     expect(h.tabs.value[0].originalRaw).toBe('A2')
     expect(h.tabs.value[0].saveStatus).toBe('saved')
+  })
+
+  it('ignores an older Vault refresh that resolves after a newer one', async () => {
+    const h = await setup()
+    const treeA = deferred<unknown[]>()
+    const postsA = deferred<unknown[]>()
+    const treeB = deferred<unknown[]>()
+    const postsB = deferred<unknown[]>()
+    let treeCalls = 0
+    let postCalls = 0
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      const payload = url === '/api/tree'
+        ? (++treeCalls === 1 ? treeA.promise : treeB.promise)
+        : (++postCalls === 1 ? postsA.promise : postsB.promise)
+      return Promise.resolve({ ok: true, status: 200, json: () => payload })
+    }))
+
+    const older = h.refresh()
+    const newer = h.refresh()
+    treeB.resolve([])
+    postsB.resolve([{ path: 'new.md', title: 'New', tags: [], size: 1, mtime: 2 }])
+    await newer
+    treeA.resolve([])
+    postsA.resolve([{ path: 'old.md', title: 'Old', tags: [], size: 1, mtime: 1 }])
+    await older
+
+    expect(h.posts.value.map((post) => post.path)).toEqual(['new.md'])
+  })
+
+  it('waits for an in-flight autosave before closing the document tab', async () => {
+    let releaseSave!: () => void
+    const pendingSave = new Promise<void>((resolve) => { releaseSave = resolve })
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'PUT /api/posts/a': async (body) => {
+        await pendingSave
+        return { ok: true, raw: (body as { raw: string }).raw }
+      },
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    h.onEditorChange('a', 'A saved while closing')
+    const saving = h.doSaveNow()
+    await vi.waitFor(() => expect(h.tabs.value[0].saveStatus).toBe('saving'))
+
+    const closing = h.closeTab('a')
+    await Promise.resolve()
+    expect(h.tabs.value).toHaveLength(1)
+
+    releaseSave()
+    await saving
+    await expect(closing).resolves.toBe(true)
+    expect(h.tabs.value).toEqual([])
+    expect(confirmResolve).toBeNull()
   })
 
   it('blocks page unload while a tab is dirty', async () => {
@@ -824,7 +891,7 @@ describe('useEditorTabs — file-change bus', () => {
     expect(h.tabs.value[0].raw).toBe('NEW')
     expect(h.tabs.value[0].serverMtime).toBe(1)
     expect(h.activePath.value).toBe('bus-new')
-    expect(toastCalls).toContainEqual({ type: 'info', message: 'AI renamed bus-old → bus-new' })
+    expect(toastCalls).toContainEqual({ type: 'info', message: 'AI 已将 bus-old 重命名为 bus-new' })
   })
 
   it('does not refresh a tab whose path does not match the event', async () => {
@@ -971,7 +1038,7 @@ describe('useEditorTabs — tab persistence', () => {
     expect(h.activePath.value).toBe('a')
     const toasts = toastCalls.filter((t) => t.type === 'info')
     expect(toasts.length).toBe(1)
-    expect(toasts[0].message).toContain('1 个标签页已不存在')
+    expect(toasts[0].message).toContain('1 个标签页对应的文件已不存在')
     expect(toasts[0].message).toContain('· b')
   })
 
@@ -1000,12 +1067,12 @@ describe('useEditorTabs — tab persistence', () => {
     expect(h.tabs.value.length).toBe(0)
     const toasts = toastCalls.filter((t) => t.type === 'info')
     expect(toasts.length).toBe(1)
-    expect(toasts[0].message).toContain('5 个标签页已不存在')
+    expect(toasts[0].message).toContain('5 个标签页对应的文件已不存在')
     expect(toasts[0].message).toContain('· m1')
     expect(toasts[0].message).toContain('· m2')
     expect(toasts[0].message).toContain('· m3')
     expect(toasts[0].message).not.toContain('· m4')
-    expect(toasts[0].message).toContain('还有 2 个')
+    expect(toasts[0].message).toContain('另有 2 个')
   })
 
   it('treats corrupt JSON in localStorage as empty (no crash)', async () => {

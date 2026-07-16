@@ -64,7 +64,7 @@ async function suggestEnglishSlug(input: string, kind: 'file' | 'folder'): Promi
     return out.slug
   } catch (e: any) {
     if (local) return local
-    toast.error('AI 文件名生成失败: ' + (e.message ?? '未知错误'))
+    toast.error(t('file_tree.ai_slug_failed', { error: e.message ?? t('common.unknown_error') }))
     return trimmed
   }
 }
@@ -334,10 +334,10 @@ async function onRootDrop(e: DragEvent) {
   // of the vault protocol and cannot be re-parented). Archive children
   // are handled below because they may move inside archive but not out of it.
   {
-    const msg = blockedMessage(src, 'move')
+    const msg = blockedMessage(src, 'move', t)
     if (msg) { toast.error(msg); return }
   }
-  if (isInArchive(src)) { toast.error('Archive 笔记只能在 archive 内移动'); return }
+  if (isInArchive(src)) { toast.error(t('file_tree.archive_inside_only')); return }
   const filename = src.split('/').pop()!
   const targetPath = filename
   if (targetPath === src) return
@@ -345,9 +345,9 @@ async function onRootDrop(e: DragEvent) {
     await patchPost(src, { targetPath })
     emit('refresh')
     if (props.currentPath === src) emit('select', targetPath)
-    toast.info('已移动到根目录')
+    toast.info(t('file_tree.moved_root'))
   } catch (err: any) {
-    toast.error('移动失败: ' + (err.message ?? '未知错误'))
+    toast.error(t('file_tree.move_failed', { error: err.message ?? t('common.unknown_error') }))
   }
 }
 
@@ -388,11 +388,11 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
   const node = findNode(props.tree, oldPath, kind)
   if (!node) return
   {
-    const msg = blockedMessage(oldPath, 'rename')
+    const msg = blockedMessage(oldPath, 'rename', t)
     if (msg) { toast.error(msg); return }
   }
   if (!isSlugSegment(safeName)) {
-    toast.error('名称只能使用小写英文、数字和连字符')
+    toast.error(t('common.name_invalid'))
     return
   }
   try {
@@ -403,7 +403,7 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
       try {
         const impact = await getRenameImpact(oldPath, true)
         updateReferences = impact.count > 0
-          ? await confirm(`有 ${impact.count} 篇文档引用此文件夹中的笔记。是否同时更新这些引用？\n\n取消将仅重命名文件夹。`)
+          ? await confirm(t('file_tree.rename_folder_refs', { count: impact.count }))
           : false
       } catch { /* advisory */ }
       const res = updateReferences
@@ -412,13 +412,13 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
       for (const updated of res.updatedReferences ?? []) {
         publishChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
       }
-      toast.success(`已重命名 (${res.moved.length} 项)`)
+      toast.success(t('file_tree.renamed_count', { count: res.moved.length }))
     } else {
       let updateReferences = false
       try {
         const impact = await getRenameImpact(oldPath)
         updateReferences = impact.count > 0
-          ? await confirm(`有 ${impact.count} 篇文档引用此笔记。是否同时更新这些引用？\n\n取消将仅重命名文件。`)
+          ? await confirm(t('file_tree.rename_file_refs', { count: impact.count }))
           : false
       } catch { /* impact preview is advisory; renaming still works */ }
       const renamed = await patchPost(oldPath, updateReferences ? { name: safeName, updateReferences: true } : { name: safeName })
@@ -428,7 +428,7 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
     }
     emit('refresh')
   } catch (e: any) {
-    toast.error('重命名失败: ' + e.message)
+    toast.error(t('file_tree.rename_failed', { error: e.message }))
   }
 }
 
@@ -436,15 +436,15 @@ async function onRequestRename(oldPath: string, kind: 'file' | 'folder') {
   const node = findNode(props.tree, oldPath, kind)
   if (!node) return
   {
-    const msg = blockedMessage(oldPath, 'rename')
+    const msg = blockedMessage(oldPath, 'rename', t)
     if (msg) { toast.error(msg); return }
   }
   const title = await prompt({
-    title: kind === 'file' ? `重命名文件 ${node.name}` : `重命名文件夹 ${node.name}`,
-    placeholder: '中文标题或英文路径名',
+    title: t(kind === 'file' ? 'file_tree.rename_file_prompt' : 'file_tree.rename_folder_prompt', { name: node.name }),
+    placeholder: t('file_tree.name_placeholder'),
     initial: node.name,
     actionLabel: '✧',
-    actionTitle: '翻译为英文路径名',
+    actionTitle: t('file_tree.translate_slug'),
     transform: async (value) => suggestEnglishSlug(value, kind),
   })
   if (!title) return
@@ -459,26 +459,26 @@ async function onDelete(p: string, kind: 'file' | 'folder') {
   const node = findNode(props.tree, p, kind)
   if (!node) return
   {
-    const msg = blockedMessage(p, 'delete')
+    const msg = blockedMessage(p, 'delete', t)
     if (msg) { toast.error(msg); return }
   }
   const count = node.kind === 'folder' ? countDescendants(node) + 1 : 1
   const ok = await confirm(
     node.kind === 'folder'
-      ? `删除文件夹 "${node.name}" 及其内 ${count - 1} 项?`
-      : `删除 "${node.name}"?`,
+      ? t('file_tree.delete_folder_confirm', { name: node.name, count: count - 1 })
+      : t('file_tree.delete_file_confirm', { name: node.name }),
   )
   if (!ok) return
   try {
     if (node.kind === 'folder') await deleteFolder(p, true)
     else await deletePost(p)
     emit('refresh')
-  } catch (e: any) { toast.error('删除失败: ' + e.message) }
+  } catch (e: any) { toast.error(t('file_tree.delete_failed', { error: e.message })) }
 }
 
 async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | 'folder') {
   {
-    const msg = blockedMessage(srcPath, 'move')
+    const msg = blockedMessage(srcPath, 'move', t)
     if (msg) { toast.error(msg); return }
   }
   // The three top-level folders keep their names but their contents are
@@ -488,8 +488,8 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
   // but not out into inbox/literature/root.
   const sourceInArchive = isInArchive(srcPath)
   const targetInArchive = isInArchive(targetFolder)
-  if (!sourceInArchive && targetFolder === 'archive') { toast.error('Archive 是已归档笔记，不能直接写入'); return }
-  if (sourceInArchive && !targetInArchive) { toast.error('Archive 笔记只能在 archive 内移动'); return }
+  if (!sourceInArchive && targetFolder === 'archive') { toast.error(t('file_tree.archive_direct_write')); return }
+  if (sourceInArchive && !targetInArchive) { toast.error(t('file_tree.archive_inside_only')); return }
   const filename = srcPath.split('/').pop()!
   const newPath = targetFolder ? `${targetFolder}/${filename}` : filename
   if (newPath === srcPath) return
@@ -501,7 +501,7 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
   // check runs against the actual source entity.
   const srcNode = findNode(props.tree, srcPath, srcKind)
   if (srcNode?.kind === 'folder' && (newPath === srcPath || newPath.startsWith(srcPath + '/'))) {
-    toast.error('不能将文件夹移动到自身')
+    toast.error(t('file_tree.move_into_self'))
     return
   }
   try {
@@ -509,7 +509,7 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
     emit('refresh')
     if (props.currentPath === srcPath) emit('select', newPath)
   } catch (e: any) {
-    toast.error('移动失败: ' + (e.message ?? '未知错误'))
+    toast.error(t('file_tree.move_failed', { error: e.message ?? t('common.unknown_error') }))
   }
 }
 
@@ -527,15 +527,15 @@ async function onArchiveNote(path: string) {
 
 async function onCreateIn(folder: string, kind: 'file' | 'folder') {
   {
-    const msg = blockedMessage(folder, kind === 'file' ? 'create-file' : 'create-folder')
+    const msg = blockedMessage(folder, kind === 'file' ? 'create-file' : 'create-folder', t)
     if (msg) { toast.error(msg); return }
   }
   let sourceTitle = ''
   const title = await prompt({
-    title: kind === 'file' ? `在 ${folder || 'inbox'} 中新建文件` : `在 ${folder || 'inbox'} 中新建文件夹`,
-    placeholder: '中文标题或英文路径名',
+    title: t(kind === 'file' ? 'file_tree.create_file_prompt' : 'file_tree.create_folder_prompt', { folder: folder || 'inbox' }),
+    placeholder: t('file_tree.name_placeholder'),
     actionLabel: '✧',
-    actionTitle: '翻译为英文路径名',
+    actionTitle: t('file_tree.translate_slug'),
     transform: async (value) => {
       sourceTitle = value.trim()
       return suggestEnglishSlug(value, kind)
@@ -544,7 +544,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
   if (!title) return
   const name = toLocalSlug(title)
   if (!name || !isSlugSegment(name)) {
-    toast.error('名称只能使用小写英文、数字和连字符')
+    toast.error(t('common.name_invalid'))
     return
   }
   const path = folder ? `${folder}/${name}` : name
@@ -555,7 +555,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
     expanded.value = new Set(expanded.value)
     saveExpanded()
     emit('refresh')
-  } catch (e: any) { toast.error('创建失败: ' + e.message) }
+  } catch (e: any) { toast.error(t('common.create_failed', { error: e.message })) }
 }
 </script>
 

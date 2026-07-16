@@ -3,6 +3,7 @@ import type { Tab } from '../../../components/vault/tabs'
 import type { InternalFileChangeEvent } from '../context/fileChanges.js'
 import type { VaultFileChanges } from '../context/fileChanges'
 import { makeEmptyTab } from './tabState'
+import { useI18n } from '../../useI18n'
 
 export function useExternalFileChanges(options: {
   tabs: Ref<Tab[]>
@@ -14,6 +15,7 @@ export function useExternalFileChanges(options: {
   toastInfo: (message: string) => void
   fileChanges: VaultFileChanges
 }) {
+  const { t } = useI18n()
   async function applyExternalChange(event: InternalFileChangeEvent): Promise<void> {
     if (event.kind === 'rename') {
       const oldTab = options.tabs.value.find((tab) => tab.path === event.oldPath)
@@ -38,7 +40,7 @@ export function useExternalFileChanges(options: {
       } else {
         await options.openPost(event.path)
       }
-      options.toastInfo(`AI renamed ${event.oldPath} → ${event.path}`)
+      options.toastInfo(t('editor.ai_renamed', { from: event.oldPath ?? '', to: event.path }))
       return
     }
 
@@ -54,14 +56,14 @@ export function useExternalFileChanges(options: {
     if (tab.saveStatus === 'saving') return
 
     if (event.kind === 'delete') {
-      tab.loadError = '该文件已被 AI 删除'
+      tab.loadError = t('editor.ai_deleted')
       return
     }
 
     const isDirty = tab.raw !== tab.originalRaw
     if (isDirty) {
       const ok = await options.confirm(
-        `AI 修改了 ${event.path}。是否用新版本覆盖你的未保存内容？`,
+        t('editor.ai_overwrite', { path: event.path }),
       )
       if (!ok) {
         tab.serverMtime = event.newMtime ?? tab.serverMtime

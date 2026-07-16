@@ -16,6 +16,7 @@ import { defineComponent, h } from 'vue'
 import { mount } from '@vue/test-utils'
 import * as api from '../../../lib/api'
 import { useArchiveNote } from '../useArchiveNote'
+import { useI18n } from '../../useI18n'
 
 // Per-test toast spy. The shared __test-helpers__/dialogs vi.mock
 // doesn't intercept the live useToast() reliably here (see comment in
@@ -31,6 +32,7 @@ vi.mock('../../useToast', () => ({
 }))
 
 beforeEach(() => {
+  useI18n().setLocale('zh')
   vi.restoreAllMocks()
   toastSpy.info.mockClear()
   toastSpy.success.mockClear()
@@ -82,7 +84,7 @@ describe('useArchiveNote', () => {
     const h = setup()
     const result = await h.archive('inbox/draft/foo')
     expect(result).toBeNull()
-    expect(toastSpy.error).toHaveBeenCalledWith('归档失败: disk full')
+    expect(toastSpy.error).toHaveBeenCalledWith('归档失败：disk full')
   })
 
   it('returns null without a network call when target equals source', async () => {

@@ -14,9 +14,11 @@
 
 import { useToast } from '../useToast'
 import { patchPost } from '../../lib/api'
+import { useI18n } from '../useI18n'
 
 export function useArchiveNote() {
   const toast = useToast()
+  const { t } = useI18n()
 
   /**
    * Move `path` to `targetPath` (default: archive/<filename>). Returns
@@ -40,12 +42,12 @@ export function useArchiveNote() {
       const displayFrom = finalTarget.replace(/^archive\//, '')
       const displayTo = moved.path.replace(/^archive\//, '').replace(/\.md$/, '')
       const toastMsg = displayFrom === displayTo
-        ? '已归档'
-        : `已归档到 ${moved.path}`
+        ? t('archive.done')
+        : t('archive.done_to', { path: moved.path })
       toast.success(toastMsg)
       return moved.path
     } catch (err: any) {
-      toast.error('归档失败: ' + (err.message ?? '未知错误'))
+      toast.error(t('archive.failed', { error: err.message ?? t('common.unknown_error') }))
       return null
     }
   }

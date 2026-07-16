@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json",
     "start": "tsx server/prod.ts",
     "preview": "vite preview",
     "test": "vitest run",

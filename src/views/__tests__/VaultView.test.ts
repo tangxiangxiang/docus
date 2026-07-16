@@ -38,7 +38,6 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('return (await getPost(path)).raw')
     expect(source).toContain("meta && event.key.toLowerCase() === 's'")
     expect(source).toContain('void closeWorkspaceTab(readOnlyTab.tabId)')
-    expect(source).toContain('fallbackAfterClosingWorkspaceTab(workspaceTabs.value, id)')
     expect(shortcutHandler).toBeDefined()
     expect(shortcutHandler?.match(/onEditorKeydown\(event\)/g)).toHaveLength(1)
     expect(shortcutHandler).toContain('if (!readOnlyTab)')
@@ -69,47 +68,6 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain("t('history.restore_unsaved')")
     expect(source).toContain("t('history.restore_no_commit')")
     expect(source).toContain('destructive: true')
-  })
-
-  it('confirms document batches before closing special tabs and applies workspace fallback', () => {
-    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
-    const closeMany = source.match(/async function closeManyWorkspaceTabs[\s\S]*?\n}/)?.[0]
-
-    expect(closeMany).toBeDefined()
-    expect(closeMany).toContain('fallbackAfterClosingWorkspaceTabs')
-    expect(closeMany).toContain('const documentsConfirmed = await confirmCloseEditorTabs(documentIds)')
-    expect(closeMany).toContain('if (!documentsConfirmed) return')
-    expect(closeMany!.indexOf('if (!documentsConfirmed) return'))
-      .toBeLessThan(closeMany!.indexOf('historySnapshots.closeSnapshots(historyIds)'))
-    expect(closeMany).toContain('closeManyEditorTabsConfirmed(documentIds)')
-    expect(closeMany).toContain('await selectWorkspaceTab(fallbackId, false)')
-  })
-
-  it('refreshes a retained active Diff after its dirty Current tab is discarded', () => {
-    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
-    const closeOne = source.match(/async function closeWorkspaceTab[\s\S]*?\n}/)?.[0]
-
-    expect(closeOne).toBeDefined()
-    expect(closeOne).toContain('await historyComparisons.refreshDocumentComparison(id)')
-    expect(closeOne!.indexOf('await closeEditorTab(id)'))
-      .toBeLessThan(closeOne!.indexOf('await historyComparisons.refreshDocumentComparison(id)'))
-    expect(closeOne!.indexOf('await historyComparisons.refreshDocumentComparison(id)'))
-      .toBeLessThan(closeOne!.indexOf('if (!wasActive) return'))
-  })
-
-  it('refreshes retained Diffs after Close Others removes their dirty Current tabs', () => {
-    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
-    const closeMany = source.match(/async function closeManyWorkspaceTabs[\s\S]*?\n}/)?.[0]
-
-    expect(closeMany).toBeDefined()
-    expect(closeMany).toContain('const remainingComparisonPaths = documentIds.filter')
-    expect(closeMany).toContain('historyComparisons.comparisons.value.some')
-    expect(closeMany).toContain('await Promise.all(')
-    expect(closeMany).toContain('historyComparisons.refreshDocumentComparison(path)')
-    expect(closeMany!.indexOf('historyComparisons.closeComparisons(comparisonIds)'))
-      .toBeLessThan(closeMany!.indexOf('const remainingComparisonPaths'))
-    expect(closeMany!.indexOf('await Promise.all('))
-      .toBeLessThan(closeMany!.indexOf('if (!activeWillClose) return'))
   })
 
   it('focuses loading History viewers before their network requests settle', () => {

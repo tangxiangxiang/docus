@@ -173,7 +173,7 @@ function onListKeydown(event: KeyboardEvent): void {
         @keydown="onListKeydown"
       >
         <template v-if="timeline.selectedDocument.value">
-          <div v-if="timeline.revisionsLoading.value" class="history-skeleton" :aria-label="t('history.loading')">
+          <div v-if="timeline.revisionsLoading.value" class="history-skeleton" role="status" :aria-label="t('history.loading')">
             <span v-for="index in 5" :key="index" class="history-skeleton-row" />
           </div>
           <div v-else-if="timeline.revisionsError.value" class="history-error" role="alert">
@@ -208,12 +208,12 @@ function onListKeydown(event: KeyboardEvent): void {
         </template>
 
         <template v-else-if="timeline.loading.value">
-          <div class="history-skeleton" :aria-label="t('history.loading')">
+          <div class="history-skeleton" role="status" :aria-label="t('history.loading')">
             <span v-for="index in 7" :key="index" class="history-skeleton-row" />
           </div>
         </template>
         <template v-else-if="h.logLoading.value && timeline.documents.value.length === 0">
-          <div class="history-skeleton" :aria-label="t('history.loading')">
+          <div class="history-skeleton" role="status" :aria-label="t('history.loading')">
             <span v-for="index in 7" :key="index" class="history-skeleton-row" />
           </div>
         </template>

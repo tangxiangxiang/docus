@@ -5,6 +5,7 @@ import { useToast } from '../../composables/useToast'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useFocusTrap } from '../../composables/useFocusTrap'
 import { useConfirm } from '../../composables/useConfirm'
+import { useI18n } from '../../composables/useI18n'
 import { useEditorPreferences } from '../../composables/vault/useEditorPreferences'
 import { useFileTreePreferences } from '../../composables/vault/useFileTreePreferences'
 import { getFallbackVaultFileChanges } from '../../composables/vault/context/fileChanges'
@@ -25,6 +26,7 @@ const toast = useToast()
 const aiHistory = useAiHistory()
 const trap = useFocusTrap()
 const { confirm } = useConfirm()
+const { t } = useI18n()
 const editorPreferences = useEditorPreferences()
 const fileTreePreferences = useFileTreePreferences()
 const loading = ref(false)
@@ -42,10 +44,10 @@ const mutatingMetadata = ref(false)
 const cleanedPaths = ref<string[]>([])
 
 const sourceLabel = computed(() => {
-  if (!settings.value) return 'Unknown'
-  if (settings.value.source === 'env') return 'Environment'
-  if (settings.value.source === 'db') return 'Saved'
-  return 'Not configured'
+  if (!settings.value) return t('settings.source_unknown')
+  if (settings.value.source === 'env') return t('settings.source_environment')
+  if (settings.value.source === 'db') return t('settings.source_saved')
+  return t('settings.source_none')
 })
 
 async function load() {
@@ -62,7 +64,7 @@ async function load() {
     migrationSummary.value = migration?.summary ?? null
     cleanedPaths.value = migration?.cleanedPaths ?? []
   } catch (e: any) {
-    toast.error('加载设置失败: ' + (e.message ?? '未知错误'))
+    toast.error(t('settings.load_failed', { error: e.message ?? t('common.unknown_error') }))
   } finally {
     loading.value = false
   }
@@ -84,8 +86,8 @@ async function removeFrontmatter() {
   const paths = cleanupPreview.value?.candidates.map((item) => item.path) ?? []
   if (!paths.length) return
   const ok = await confirm(
-    `从 ${paths.length} 篇文档中移除 Frontmatter?`,
-    '原始内容已备份到 SQLite，可在此处恢复。打开且有未保存修改的文档会再次询问是否刷新。',
+    t('settings.remove_confirm', { count: paths.length }),
+    t('settings.remove_detail'),
   )
   if (!ok) return
   mutatingMetadata.value = true
@@ -93,10 +95,10 @@ async function removeFrontmatter() {
     const result = await cleanDocumentFrontmatter(paths)
     publishChanges(result)
     await reloadMetadataStatus()
-    if (result.failed.length) toast.error(`${result.failed.length} 篇清理失败`)
-    if (result.changed.length) toast.success(`已清理 ${result.changed.length} 篇文档`)
+    if (result.failed.length) toast.error(t('settings.operation_failed_count', { count: result.failed.length }))
+    if (result.changed.length) toast.success(t('settings.cleaned_count', { count: result.changed.length }))
   } catch (e: any) {
-    toast.error('清理 Frontmatter 失败: ' + (e.message ?? '未知错误'))
+    toast.error(t('settings.remove_failed', { error: e.message ?? t('common.unknown_error') }))
   } finally {
     mutatingMetadata.value = false
   }
@@ -106,8 +108,8 @@ async function restoreOriginalFrontmatter() {
   if (!cleanedPaths.value.length) return
   const paths = [...cleanedPaths.value]
   const ok = await confirm(
-    `恢复 ${paths.length} 篇文档的原始 Frontmatter?`,
-    '将使用清理前逐字节保存的备份；正文哈希不一致的文档会被跳过。',
+    t('settings.restore_confirm', { count: paths.length }),
+    t('settings.restore_detail'),
   )
   if (!ok) return
   mutatingMetadata.value = true
@@ -115,10 +117,10 @@ async function restoreOriginalFrontmatter() {
     const result = await restoreDocumentFrontmatter(paths, 'original')
     publishChanges(result)
     await reloadMetadataStatus()
-    if (result.failed.length) toast.error(`${result.failed.length} 篇恢复失败`)
-    if (result.changed.length) toast.success(`已恢复 ${result.changed.length} 篇文档`)
+    if (result.failed.length) toast.error(t('settings.operation_failed_count', { count: result.failed.length }))
+    if (result.changed.length) toast.success(t('settings.restored_count', { count: result.changed.length }))
   } catch (e: any) {
-    toast.error('恢复 Frontmatter 失败: ' + (e.message ?? '未知错误'))
+    toast.error(t('settings.restore_failed', { error: e.message ?? t('common.unknown_error') }))
   } finally {
     mutatingMetadata.value = false
   }
@@ -129,7 +131,7 @@ async function previewCleanup() {
   try {
     cleanupPreview.value = await getFrontmatterCleanupPreview()
   } catch (e: any) {
-    toast.error('检查 Frontmatter 失败: ' + (e.message ?? '未知错误'))
+    toast.error(t('settings.cleanup_failed', { error: e.message ?? t('common.unknown_error') }))
   } finally {
     previewing.value = false
   }
@@ -146,9 +148,9 @@ async function onSave() {
     settings.value = next
     apiKey.value = ''
     await aiHistory.loadActive()
-    toast.success('AI 设置已保存')
+    toast.success(t('settings.saved'))
   } catch (e: any) {
-    toast.error('保存失败: ' + (e.message ?? '未知错误'))
+    toast.error(t('settings.save_failed', { error: e.message ?? t('common.unknown_error') }))
   } finally {
     saving.value = false
   }
@@ -160,9 +162,9 @@ async function onClearKey() {
     settings.value = await clearAiApiKey()
     apiKey.value = ''
     await aiHistory.loadActive()
-    toast.success('已清除保存的 API Key')
+    toast.success(t('settings.key_cleared'))
   } catch (e: any) {
-    toast.error('清除失败: ' + (e.message ?? '未知错误'))
+    toast.error(t('settings.clear_failed', { error: e.message ?? t('common.unknown_error') }))
   } finally {
     saving.value = false
   }
@@ -219,48 +221,48 @@ onBeforeUnmount(() => {
         class="settings-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Settings"
+        :aria-label="t('settings.title')"
       >
         <header class="settings-header">
-          <h2>Settings</h2>
-          <button type="button" class="settings-icon-btn" title="Close" @click="emit('close')">×</button>
+          <h2>{{ t('settings.title') }}</h2>
+          <button type="button" class="settings-icon-btn" :title="t('settings.close')" :aria-label="t('settings.close')" @click="emit('close')">×</button>
         </header>
 
         <div class="settings-body">
           <div class="settings-row settings-status">
-            <span>AI</span>
+            <span>{{ t('settings.ai') }}</span>
             <strong>{{ sourceLabel }}</strong>
             <code v-if="settings?.maskedKey">{{ settings.maskedKey }}</code>
           </div>
 
           <label class="settings-field">
-            <span>Provider</span>
+            <span>{{ t('settings.provider') }}</span>
             <input value="Anthropic" disabled />
           </label>
 
           <label class="settings-field">
-            <span>API Key</span>
+            <span>{{ t('settings.api_key') }}</span>
             <input
               v-model="apiKey"
               type="password"
               autocomplete="off"
-              :placeholder="settings?.maskedKey ? `Saved: ${settings.maskedKey}` : 'sk-ant-...'"
+              :placeholder="settings?.maskedKey ? t('settings.saved_key', { key: settings.maskedKey }) : 'sk-ant-...'"
               :disabled="loading || saving || settings?.envOverride"
             />
           </label>
 
           <label class="settings-field">
-            <span>Base URL</span>
+            <span>{{ t('settings.base_url') }}</span>
             <input
               v-model="baseURL"
               type="url"
-              placeholder="Optional"
+              :placeholder="t('settings.optional')"
               :disabled="loading || saving || settings?.envOverride"
             />
           </label>
 
           <label class="settings-field">
-            <span>Model</span>
+            <span>{{ t('settings.model') }}</span>
             <input
               v-model="model"
               type="text"
@@ -270,44 +272,44 @@ onBeforeUnmount(() => {
           </label>
 
           <p v-if="settings?.envOverride" class="settings-note">
-            当前由环境变量配置。保存到数据库的设置会保留，但不会覆盖环境变量。
+            {{ t('settings.env_override') }}
           </p>
 
           <section class="settings-metadata" aria-labelledby="settings-editor-title">
             <div class="settings-section-heading">
-              <div><h3 id="settings-editor-title">Editor</h3><p>Device-local Monaco preferences</p></div>
+              <div><h3 id="settings-editor-title">{{ t('settings.editor') }}</h3><p>{{ t('settings.editor_subtitle') }}</p></div>
             </div>
             <div class="settings-editor-grid">
-              <label class="settings-field"><span>Font size</span><input v-model.number="editorPreferences.fontSize.value" type="number" min="11" max="24" /></label>
-              <label class="settings-field"><span>Line height</span><input v-model.number="editorPreferences.lineHeight.value" type="number" min="16" max="40" /></label>
-              <label class="settings-field"><span>Tab width</span><select v-model.number="editorPreferences.tabSize.value"><option :value="2">2 spaces</option><option :value="4">4 spaces</option></select></label>
-              <label class="settings-field"><span>Wrap column</span><input v-model.number="editorPreferences.wrapColumn.value" type="number" min="60" max="160" /></label>
-              <label class="settings-field"><span>Font family</span><input v-model="editorPreferences.fontFamily.value" type="text" placeholder="System monospace" maxlength="120" /></label>
-              <label class="settings-field"><span>Writing diagnostics</span><input v-model="editorPreferences.typography.value" type="checkbox" /></label>
-              <label class="settings-field"><span>Compact File Tree</span><input v-model="fileTreePreferences.compactFileTree.value" type="checkbox" /></label>
-              <button type="button" class="btn" @click="editorPreferences.reset">Reset editor defaults</button>
+              <label class="settings-field"><span>{{ t('settings.font_size') }}</span><input v-model.number="editorPreferences.fontSize.value" type="number" min="11" max="24" /></label>
+              <label class="settings-field"><span>{{ t('settings.line_height') }}</span><input v-model.number="editorPreferences.lineHeight.value" type="number" min="16" max="40" /></label>
+              <label class="settings-field"><span>{{ t('settings.tab_width') }}</span><select v-model.number="editorPreferences.tabSize.value"><option :value="2">{{ t('settings.spaces', { count: 2 }) }}</option><option :value="4">{{ t('settings.spaces', { count: 4 }) }}</option></select></label>
+              <label class="settings-field"><span>{{ t('settings.wrap_column') }}</span><input v-model.number="editorPreferences.wrapColumn.value" type="number" min="60" max="160" /></label>
+              <label class="settings-field"><span>{{ t('settings.font_family') }}</span><input v-model="editorPreferences.fontFamily.value" type="text" :placeholder="t('settings.system_monospace')" maxlength="120" /></label>
+              <label class="settings-field"><span>{{ t('settings.writing_diagnostics') }}</span><input v-model="editorPreferences.typography.value" type="checkbox" /></label>
+              <label class="settings-field"><span>{{ t('settings.compact_tree') }}</span><input v-model="fileTreePreferences.compactFileTree.value" type="checkbox" /></label>
+              <button type="button" class="btn" @click="editorPreferences.reset">{{ t('settings.reset_editor') }}</button>
             </div>
           </section>
 
           <section class="settings-metadata" aria-labelledby="settings-metadata-title">
             <div class="settings-section-heading">
               <div>
-                <h3 id="settings-metadata-title">Document metadata</h3>
-                <p>SQLite migration and Frontmatter safety check</p>
+                <h3 id="settings-metadata-title">{{ t('settings.metadata') }}</h3>
+                <p>{{ t('settings.metadata_subtitle') }}</p>
               </div>
               <button type="button" class="btn" :disabled="previewing" @click="previewCleanup">
-                {{ previewing ? 'Checking...' : 'Check cleanup' }}
+                {{ t(previewing ? 'settings.checking' : 'settings.check_cleanup') }}
               </button>
             </div>
             <div v-if="migrationSummary" class="settings-metadata-stats">
-              <span><strong>{{ migrationSummary.verified }}</strong> verified</span>
-              <span><strong>{{ migrationSummary.cleaned }}</strong> cleaned</span>
-              <span :class="{ danger: migrationSummary.failed > 0 }"><strong>{{ migrationSummary.failed }}</strong> failed</span>
+              <span><strong>{{ migrationSummary.verified }}</strong> {{ t('settings.verified') }}</span>
+              <span><strong>{{ migrationSummary.cleaned }}</strong> {{ t('settings.cleaned') }}</span>
+              <span :class="{ danger: migrationSummary.failed > 0 }"><strong>{{ migrationSummary.failed }}</strong> {{ t('settings.failed') }}</span>
             </div>
             <div v-if="cleanupPreview" class="settings-cleanup-result" aria-live="polite">
-              <span><strong>{{ cleanupPreview.candidates.length }}</strong> ready</span>
-              <span><strong>{{ cleanupPreview.blocked.length }}</strong> blocked</span>
-              <span><strong>{{ cleanupPreview.candidates.filter(item => item.customFields.length).length }}</strong> with custom fields</span>
+              <span><strong>{{ cleanupPreview.candidates.length }}</strong> {{ t('settings.ready') }}</span>
+              <span><strong>{{ cleanupPreview.blocked.length }}</strong> {{ t('settings.blocked') }}</span>
+              <span><strong>{{ cleanupPreview.candidates.filter(item => item.customFields.length).length }}</strong> {{ t('settings.custom_fields') }}</span>
             </div>
             <div v-if="cleanupPreview" class="settings-metadata-actions">
               <button
@@ -316,14 +318,14 @@ onBeforeUnmount(() => {
                 class="btn"
                 :disabled="mutatingMetadata"
                 @click="restoreOriginalFrontmatter"
-              >Restore original ({{ cleanedPaths.length }})</button>
+              >{{ t('settings.restore_original', { count: cleanedPaths.length }) }}</button>
               <button
                 v-if="cleanupPreview.candidates.length"
                 type="button"
                 class="btn btn-danger"
                 :disabled="mutatingMetadata || cleanupPreview.blocked.length > 0"
                 @click="removeFrontmatter"
-              >Remove Frontmatter ({{ cleanupPreview.candidates.length }})</button>
+              >{{ t('settings.remove_frontmatter', { count: cleanupPreview.candidates.length }) }}</button>
             </div>
           </section>
         </div>
@@ -334,14 +336,14 @@ onBeforeUnmount(() => {
             class="btn"
             :disabled="saving || settings?.envOverride"
             @click="onClearKey"
-          >Clear key</button>
-          <button type="button" class="btn" @click="emit('close')">Cancel</button>
+          >{{ t('settings.clear_key') }}</button>
+          <button type="button" class="btn" @click="emit('close')">{{ t('settings.cancel') }}</button>
           <button
             type="button"
             class="btn btn-primary"
             :disabled="loading || saving || settings?.envOverride"
             @click="onSave"
-          >{{ saving ? 'Saving...' : 'Save' }}</button>
+          >{{ t(saving ? 'settings.saving' : 'settings.save') }}</button>
         </footer>
       </section>
     </div>

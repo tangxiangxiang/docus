@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import TocPanel from '../TocPanel.vue'
 import { tocActiveId, tocHeadings, tocScrollTo } from '../../../composables/vault/useTocState'
 import type { RightRailTab } from '../../../composables/vault/useVaultLayout'
+import { useI18n } from '../../../composables/useI18n'
 
 const posts = [{
   path: 'inbox/english/subject', title: '英语-主语', created: '', updated: '',
@@ -27,6 +28,7 @@ function mountPanel(activeTab: RightRailTab = 'toc', historyReadOnly = false) {
 
 describe('unified document sidebar', () => {
   beforeEach(() => {
+    useI18n().setLocale('zh')
     tocHeadings.value = [
       { id: 'definition', text: '基本定义', level: 2 },
       { id: 'example', text: '例句', level: 3 },
@@ -34,6 +36,7 @@ describe('unified document sidebar', () => {
     tocActiveId.value = 'example'
     tocScrollTo.value = vi.fn()
   })
+  afterEach(() => useI18n().setLocale('zh'))
 
   it('renders TOC as the controlled default view', () => {
     const wrapper = mountPanel()

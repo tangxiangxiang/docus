@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import AiComposer from '../AiComposer.vue'
+import { useI18n } from '../../../composables/useI18n'
 
 function mountComposer(props: Partial<InstanceType<typeof AiComposer>['$props']> = {}) {
   return mount(AiComposer, {
@@ -17,6 +18,8 @@ function mountComposer(props: Partial<InstanceType<typeof AiComposer>['$props']>
 }
 
 describe('AiComposer', () => {
+  beforeEach(() => useI18n().setLocale('en'))
+  afterEach(() => useI18n().setLocale('zh'))
   it('owns input updates and Enter/Shift+Enter behavior', async () => {
     const wrapper = mountComposer({ modelValue: 'hello' })
     const input = wrapper.get('textarea')

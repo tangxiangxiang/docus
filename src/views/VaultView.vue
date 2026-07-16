@@ -42,9 +42,9 @@ import HistorySnapshotPane from '../components/vault/HistorySnapshotPane.vue'
 import HistoryComparisonPane from '../components/vault/HistoryComparisonPane.vue'
 import EditorTabs from '../components/vault/EditorTabs.vue'
 import {
-  fallbackAfterClosingWorkspaceTab,
-  fallbackAfterClosingWorkspaceTabs,
-} from '../components/vault/workspaceNavigation'
+  closeManyWorkspaceTabState,
+  closeWorkspaceTabState,
+} from '../components/vault/workspaceClose'
 import type { WorkspaceTab } from '../components/vault/tabs'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
@@ -74,11 +74,6 @@ const shortcuts = useShortcutDisplay()
    template can `v-for` over them. The `.content-empty` wrapper
    around the card still owns the absolute-fill centering in either
    mode, so this list only describes the card body. */
-const emptyActions = computed(() => [
-  { label: 'Command palette', keys: shortcuts.format('mod+P') },
-  { label: 'Toggle sidebar', keys: shortcuts.format('mod+B') },
-])
-
 /* View mode is provided globally by App.vue (see VaultViewModeKey).
    Default to 'edit' so this view still renders sensibly if it's ever
    mounted outside the App provider (e.g. in a unit test harness). */
@@ -121,6 +116,10 @@ const tagsFilter = ref('')
 const toast = useToast()
 const { confirm } = useConfirm()
 const { locale, t } = useI18n()
+const emptyActions = computed(() => [
+  { label: t('vault.command_palette'), keys: shortcuts.format('mod+P') },
+  { label: t('vault.toggle_sidebar'), keys: shortcuts.format('mod+B') },
+])
 
 // Lives in VaultView (not the composable) so the string `ref="vaultRef"`
 // template binding resolves cleanly. startDrag takes the host as a parameter.
@@ -276,74 +275,48 @@ async function selectWorkspaceTab(id: string, focusViewer = true): Promise<void>
 }
 
 async function closeWorkspaceTab(id: string): Promise<void> {
-  const wasActive = activeWorkspaceTabId.value === id
-  const fallbackId = wasActive
-    ? fallbackAfterClosingWorkspaceTab(workspaceTabs.value, id)
-    : null
-
-  if (historyComparisons.comparisons.value.some((comparison) => comparison.tabId === id)) {
-    historyComparisons.closeComparison(id)
-  } else if (historySnapshots.snapshots.value.some((snapshot) => snapshot.tabId === id)) {
-    historySnapshots.closeSnapshot(id)
-  } else {
-    const closed = await closeEditorTab(id)
-    if (!closed) return
-    // A retained Diff may still be active while its Current editor tab is
-    // closed. Refresh after removing the editor tab so discarded in-memory
-    // content falls back to the saved document returned by getPost().
-    await historyComparisons.refreshDocumentComparison(id)
-  }
-
-  if (!wasActive) return
-  if (!fallbackId) {
+  const result = await closeWorkspaceTabState(id, {
+    workspaceTabs: workspaceTabs.value,
+    activeId: activeWorkspaceTabId.value,
+    comparisons: historyComparisons.comparisons.value,
+    snapshotTabIds: historySnapshots.snapshots.value.map((snapshot) => snapshot.tabId),
+    closeEditorTab,
+    closeComparison: historyComparisons.closeComparison,
+    closeSnapshot: historySnapshots.closeSnapshot,
+    refreshDocumentComparison: historyComparisons.refreshDocumentComparison,
+  })
+  if (!result.closed || !result.activeWillClose) return
+  if (!result.fallbackId) {
     await nextTick()
     vaultRef.value?.focus()
     return
   }
 
-  await selectWorkspaceTab(fallbackId, false)
+  await selectWorkspaceTab(result.fallbackId, false)
   await nextTick()
-  editorTabsRef.value?.focusTab(fallbackId)
+  editorTabsRef.value?.focusTab(result.fallbackId)
 }
 
 async function closeManyWorkspaceTabs(ids: string[]): Promise<void> {
-  const workspaceIds = new Set(workspaceTabs.value.map((tab) => tab.id))
-  const closingIds = ids.filter((id) => workspaceIds.has(id))
-  if (closingIds.length === 0) return
-  const activeId = activeWorkspaceTabId.value
-  const fallbackId = fallbackAfterClosingWorkspaceTabs(workspaceTabs.value, closingIds, activeId)
-  const activeWillClose = activeId !== null && closingIds.includes(activeId)
-  const historyIds = closingIds.filter((id) => id.startsWith('history:'))
-  const comparisonIds = closingIds.filter((id) => id.startsWith('diff:'))
-  const documentIds = closingIds.filter((id) => !id.startsWith('history:') && !id.startsWith('diff:'))
-
-  // Confirm every dirty editor tab before mutating any Workspace tab.
-  // Cancellation leaves documents, snapshots, comparisons, and activation intact.
-  const documentsConfirmed = await confirmCloseEditorTabs(documentIds)
-  if (!documentsConfirmed) return
-
-  closeManyEditorTabsConfirmed(documentIds)
-  historySnapshots.closeSnapshots(historyIds)
-  historyComparisons.closeComparisons(comparisonIds)
-  const remainingComparisonPaths = documentIds.filter((path) =>
-    historyComparisons.comparisons.value.some(
-      (comparison) => comparison.documentPath === path,
-    ),
-  )
-  await Promise.all(
-    remainingComparisonPaths.map((path) =>
-      historyComparisons.refreshDocumentComparison(path),
-    ),
-  )
-  if (!activeWillClose) return
-  if (!fallbackId) {
+  const result = await closeManyWorkspaceTabState(ids, {
+    workspaceTabs: workspaceTabs.value,
+    activeId: activeWorkspaceTabId.value,
+    comparisons: () => historyComparisons.comparisons.value,
+    confirmEditorTabs: confirmCloseEditorTabs,
+    closeEditorTabsConfirmed: closeManyEditorTabsConfirmed,
+    closeSnapshots: historySnapshots.closeSnapshots,
+    closeComparisons: historyComparisons.closeComparisons,
+    refreshDocumentComparison: historyComparisons.refreshDocumentComparison,
+  })
+  if (!result.closed || !result.activeWillClose) return
+  if (!result.fallbackId) {
     await nextTick()
     vaultRef.value?.focus()
     return
   }
-  await selectWorkspaceTab(fallbackId, false)
+  await selectWorkspaceTab(result.fallbackId, false)
   await nextTick()
-  editorTabsRef.value?.focusTab(fallbackId)
+  editorTabsRef.value?.focusTab(result.fallbackId)
 }
 
 function onVaultKeydown(event: KeyboardEvent): void {
@@ -440,7 +413,7 @@ async function createMissingWikiNote(ref: string) {
   const clean = ref.replace(/\.md$/i, '').trim()
   const segments = clean.split('/')
   if (!segments.length || segments.some((segment) => !isSlugSegment(segment))) {
-    toast.error('无法创建：Wiki Link 必须使用英文 kebab-case 路径')
+    toast.error(t('vault.wiki_path_invalid'))
     return
   }
   const path = clean.startsWith('inbox/') ? clean : `inbox/${clean}`
@@ -449,10 +422,10 @@ async function createMissingWikiNote(ref: string) {
     await createPost({ path, title })
     await refresh()
     await openPost(path)
-    toast.success(`已创建: ${path}`)
+    toast.success(t('common.created', { path }))
   } catch (error: any) {
     if (error?.status === 409) await openPost(path)
-    else toast.error(`创建失败: ${error?.message ?? '未知错误'}`)
+    else toast.error(t('common.create_failed', { error: error?.message ?? t('common.unknown_error') }))
   }
 }
 
@@ -463,14 +436,14 @@ async function copyActiveContent() {
   if (raw === undefined) return
   try {
     await navigator.clipboard.writeText(raw)
-    toast.success('已复制当前文档内容')
-  } catch { toast.error('复制失败') }
+    toast.success(t('vault.content_copied'))
+  } catch { toast.error(t('vault.copy_failed')) }
 }
 
 async function showExternalDiff() {
   const tab = activeTab.value
   if (!tab) return
-  await confirm(`本地版本：\n\n${tab.raw.slice(0, 1600)}\n\n────────\n磁盘版本：\n\n${(tab.externalRaw ?? '(文件已删除)').slice(0, 1600)}`)
+  await confirm(`${t('vault.local_version')}：\n\n${tab.raw.slice(0, 1600)}\n\n────────\n${t('vault.disk_version')}：\n\n${(tab.externalRaw ?? `(${t('vault.file_deleted')})`).slice(0, 1600)}`)
 }
 
 /* ---------- Scope filter (NavBar chips) ---------- */
@@ -598,7 +571,7 @@ watch(isReadMode, async (reading) => {
       class="splitter"
       role="separator"
       aria-orientation="vertical"
-      title="拖动调整侧栏宽度"
+      :title="t('vault.resize_sidebar')"
       @pointerdown="startDrag(vaultRef!, 'tree', $event)"
     />
 
@@ -627,8 +600,8 @@ watch(isReadMode, async (reading) => {
           class="editor-pane"
           :data-path="activeTab.path"
         >
-          <div v-if="activeTab.loading" class="empty">正在加载 {{ activeTab.path }}…</div>
-          <div v-else-if="activeTab.loadError" class="empty error">{{ activeTab.loadError }}</div>
+          <div v-if="activeTab.loading" class="empty" role="status">{{ t('vault.loading_document', { path: activeTab.path }) }}</div>
+          <div v-else-if="activeTab.loadError" class="empty error" role="alert">{{ activeTab.loadError }}</div>
           <EditorPane
             v-else
             :key="activeTab.path"
@@ -643,7 +616,7 @@ watch(isReadMode, async (reading) => {
           />
         </div>
         <div v-if="!tabs.length" class="content-empty">
-          <EmptyState title="No file open">
+          <EmptyState :title="t('vault.no_file_open')">
             <span v-for="a in emptyActions" :key="a.label" class="hint-row">
               <span class="hint-label">{{ a.label }}</span>
               <kbd class="hint-kbd">{{ a.keys }}</kbd>
@@ -674,7 +647,7 @@ watch(isReadMode, async (reading) => {
           <ReadingPane :raw="activeTab.raw" :resolver="wikiResolver" />
         </div>
         <div v-if="!tabs.length" class="content-empty">
-          <EmptyState title="No file open">
+          <EmptyState :title="t('vault.no_file_open')">
             <span v-for="a in emptyActions" :key="a.label" class="hint-row">
               <span class="hint-label">{{ a.label }}</span>
               <kbd class="hint-kbd">{{ a.keys }}</kbd>
@@ -716,7 +689,7 @@ watch(isReadMode, async (reading) => {
       class="splitter splitter-toc"
       role="separator"
       aria-orientation="vertical"
-      title="拖动调整右侧栏宽度"
+      :title="t('vault.resize_right_rail')"
       @pointerdown="startDrag(vaultRef!, 'rightRail', $event)"
     />
     <TocPanel

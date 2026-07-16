@@ -14,12 +14,14 @@ import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useConfirm } from '../../composables/useConfirm'
 import { useFocusTrap } from '../../composables/useFocusTrap'
+import { useI18n } from '../../composables/useI18n'
 
 const emit = defineEmits<{ close: [] }>()
 
 const history = useAiHistory()
 const { confirm } = useConfirm()
 const trap = useFocusTrap()
+const { t } = useI18n()
 
 const dialogRef = ref<HTMLElement | null>(null)
 const editingId = ref<number | null>(null)
@@ -46,10 +48,10 @@ function cancelEdit() {
 }
 
 async function onDelete(id: number, title: string) {
-  const label = title.trim() || 'this session'
+  const label = title.trim() || t('ai.new_session')
   const ok = await confirm(
-    `Delete "${label}" and all its messages?`,
-    'This cannot be undone.',
+    t('ai.delete_session_title', { title: label }),
+    t('ai.delete_session_detail'),
   )
   if (!ok) return
   await history.deleteSession(id)
@@ -110,21 +112,21 @@ onBeforeUnmount(async () => {
         class="ai-sp-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="AI sessions"
+        :aria-label="t('ai.sessions')"
         tabindex="-1"
       >
         <header class="ai-sp-header">
-          <span class="ai-sp-title">AI sessions</span>
+          <span class="ai-sp-title">{{ t('ai.sessions') }}</span>
           <button
             class="ai-sp-close"
             type="button"
-            title="Close"
-            aria-label="Close"
+            :title="t('ai.close')"
+            :aria-label="t('ai.close')"
             @click="emit('close')"
           >×</button>
         </header>
 
-        <ul class="ai-sp-list" role="listbox" aria-label="Sessions">
+        <ul class="ai-sp-list" role="listbox" :aria-label="t('ai.session_list')">
           <li
             v-for="s in history.sessions.value"
             :key="s.id"
@@ -147,27 +149,27 @@ onBeforeUnmount(async () => {
               />
             </template>
             <template v-else>
-              <span class="ai-sp-name">{{ s.title || 'New session' }}</span>
+              <span class="ai-sp-name">{{ s.title || t('ai.new_session') }}</span>
               <span class="ai-sp-actions" @click.stop>
                 <button
                   class="ai-sp-action"
                   type="button"
-                  title="Rename"
-                  aria-label="Rename"
+                  :title="t('ai.rename')"
+                  :aria-label="t('ai.rename')"
                   @click.stop="startEdit(s.id, s.title)"
                 >✎</button>
                 <button
                   class="ai-sp-action danger"
                   type="button"
-                  title="Delete"
-                  aria-label="Delete"
+                  :title="t('ai.delete')"
+                  :aria-label="t('ai.delete')"
                   @click.stop="onDelete(s.id, s.title)"
                 >×</button>
               </span>
             </template>
           </li>
           <li v-if="history.sessions.value.length === 0" class="ai-sp-empty">
-            No sessions yet. Send a message or click + below to start one.
+            {{ t('ai.no_sessions') }}
           </li>
         </ul>
 
@@ -176,7 +178,7 @@ onBeforeUnmount(async () => {
             class="ai-sp-new"
             type="button"
             @click="onNewSession"
-          >+ New session</button>
+          >+ {{ t('ai.new_session') }}</button>
         </footer>
       </div>
     </div>

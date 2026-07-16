@@ -6,6 +6,7 @@ import { dialogStubs, installDialogMocks, resetDialogMocks, rowByLabel } from '.
 import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
 import * as api from '../../../lib/api'
+import { useI18n } from '../../../composables/useI18n'
 
 installDialogMocks()
 
@@ -37,6 +38,7 @@ async function clickMenuButton(label: string) {
 
 describe('FileTree nested delete', () => {
   beforeEach(() => {
+    useI18n().setLocale('zh')
     localStorage.clear()
     vi.clearAllMocks()
     resetDialogMocks()
@@ -62,7 +64,7 @@ describe('FileTree nested delete', () => {
     await w.vm.$nextTick()
     await clickMenuButton('删除')
 
-    expect(dialogStubs.confirm).toHaveBeenCalledWith('删除 "old"?')
+    expect(dialogStubs.confirm).toHaveBeenCalledWith('删除“old”？')
     expect(deleteFolderSpy).not.toHaveBeenCalled()
     expect(deleteSpy).toHaveBeenCalledWith('inbox/notes/old')
     expect(w.emitted('refresh')).toBeTruthy()

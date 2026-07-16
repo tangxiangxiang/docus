@@ -3,8 +3,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it } from 'vitest'
 import ConfirmHost from '../ConfirmHost.vue'
 import { useConfirm } from '../../composables/useConfirm'
+import { useI18n } from '../../composables/useI18n'
 
 afterEach(() => {
+  useI18n().setLocale('zh')
   document.body.innerHTML = ''
 })
 
@@ -36,6 +38,9 @@ describe('ConfirmHost', () => {
     const wrapper = mount(ConfirmHost)
     const request = useConfirm().confirm('Restore historical version?')
     await flushPromises()
+
+    const cancel = document.querySelector<HTMLButtonElement>('.confirm-actions .btn')!
+    expect(document.activeElement).toBe(cancel)
 
     const host = document.querySelector<HTMLElement>('.confirm-host')!
     host.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))

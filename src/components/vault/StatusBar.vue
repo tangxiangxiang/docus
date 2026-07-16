@@ -8,6 +8,7 @@ import {
   ICON_STATUS_OFFLINE,
   ICON_STATUS_SUCCESS,
 } from './icons'
+import { useI18n } from '../../composables/useI18n'
 
 const props = defineProps<{
   path: string | null
@@ -25,6 +26,7 @@ const emit = defineEmits<{
   'external-disk': []
   'external-local': []
 }>()
+const { t } = useI18n()
 
 // Status icon. Each SaveStatus maps to one of the ICON_STATUS_*
 // glyphs (or no glyph for "idle"). The glyph renders inline next
@@ -43,13 +45,13 @@ const statusIcon = computed<string>(() => {
 
 const statusLabel = computed(() => {
   if (!props.path) return '—'
-  if (props.saveStatus === 'saving') return 'Saving…'
-  if (props.saveStatus === 'dirty') return 'Unsaved'
-  if (props.saveStatus === 'saved') return 'Saved'
-  if (props.saveStatus === 'error') return props.error ?? 'Error'
-  if (props.saveStatus === 'offline') return 'Offline · waiting to retry'
-  if (props.saveStatus === 'external') return 'File changed on disk'
-  return 'Idle'
+  if (props.saveStatus === 'saving') return t('status.saving')
+  if (props.saveStatus === 'dirty') return t('status.unsaved')
+  if (props.saveStatus === 'saved') return t('status.saved')
+  if (props.saveStatus === 'error') return props.error ?? t('status.error')
+  if (props.saveStatus === 'offline') return t('status.offline')
+  if (props.saveStatus === 'external') return t('status.external')
+  return t('status.idle')
 })
 
 const sizeLabel = computed(() => {
@@ -73,7 +75,7 @@ const pathLabel = computed(() => {
 </script>
 
 <template>
-  <footer class="status-bar" aria-label="Status bar">
+  <footer class="status-bar" :aria-label="t('status.label')">
     <div class="sb-left">
       <!-- aria-live="polite" so screen readers hear the save state
            change ("Unsaved" → "Saving…" → "Saved") without being
@@ -84,8 +86,8 @@ const pathLabel = computed(() => {
         type="button"
         class="sb-item sb-status sb-status-retry"
         :data-status="saveStatus"
-        :title="`${statusLabel}。点击重试保存`"
-        aria-label="保存失败，点击重试"
+        :title="t('status.retry_title', { status: statusLabel })"
+        :aria-label="t('status.retry')"
         @click="emit('retry-save')"
       >
         <span v-if="statusIcon" class="sb-status-glyph" v-html="statusIcon" aria-hidden="true" />
@@ -108,22 +110,22 @@ const pathLabel = computed(() => {
          size/format metadata never get squeezed. The chain
          ellipsizes from the right edge when the path is longer
          than the available width. -->
-    <div class="sb-center" aria-label="Path">
+    <div class="sb-center" :aria-label="t('status.path')">
       <span v-if="pathLabel" class="sb-path" :title="pathLabel">{{ pathLabel }}</span>
       <span v-else class="sb-path sb-path-empty">—</span>
     </div>
     <div class="sb-right">
       <template v-if="saveStatus === 'external'">
-        <button type="button" class="sb-copy-content" title="查看本地与磁盘差异" aria-label="查看外部修改差异" @click="emit('external-diff')">⇄</button>
-        <button type="button" class="sb-copy-content" title="使用磁盘版本" aria-label="使用磁盘版本" @click="emit('external-disk')">↓</button>
-        <button type="button" class="sb-copy-content" title="保留本地版本并覆盖磁盘" aria-label="保留本地版本" @click="emit('external-local')">↑</button>
+        <button type="button" class="sb-copy-content" :title="t('status.external_diff')" :aria-label="t('status.external_diff')" @click="emit('external-diff')">⇄</button>
+        <button type="button" class="sb-copy-content" :title="t('status.use_disk')" :aria-label="t('status.use_disk')" @click="emit('external-disk')">↓</button>
+        <button type="button" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">↑</button>
       </template>
       <button
         v-if="dirty || saveStatus === 'error' || saveStatus === 'offline' || saveStatus === 'external'"
         type="button"
         class="sb-copy-content"
-        aria-label="复制当前文档内容"
-        title="复制当前文档内容"
+        :aria-label="t('status.copy_content')"
+        :title="t('status.copy_content')"
         @click="emit('copy-content')"
       >⧉</button>
       <button
@@ -131,11 +133,11 @@ const pathLabel = computed(() => {
         class="sb-focus-width"
         :class="{ active: focusWidth }"
         :aria-pressed="focusWidth"
-        aria-label="切换专注宽度"
-        :title="focusWidth ? '使用完整编辑器宽度' : '使用专注宽度'"
+        :aria-label="t('status.toggle_focus')"
+        :title="t(focusWidth ? 'status.full_width' : 'status.focus_width')"
         @click="emit('toggle-focus-width')"
       >⇔</button>
-      <span class="sb-item">Markdown</span>
+      <span class="sb-item">{{ t('status.markdown') }}</span>
       <span v-if="sizeLabel" class="sb-item">{{ sizeLabel }}</span>
     </div>
   </footer>

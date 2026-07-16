@@ -2,10 +2,12 @@
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useFocusTrap } from '../composables/useFocusTrap'
+import { useI18n } from '../composables/useI18n'
 
 const { queue, answer } = useConfirm()
 const dialogRef = ref<HTMLElement | HTMLElement[] | null>(null)
 const trap = useFocusTrap()
+const { t } = useI18n()
 
 function activeDialog(): HTMLElement | null {
   return Array.isArray(dialogRef.value) ? (dialogRef.value[0] ?? null) : dialogRef.value
@@ -65,7 +67,7 @@ onBeforeUnmount(() => {
           <div v-if="r.detail" class="confirm-detail">{{ r.detail }}</div>
           <div class="confirm-actions">
             <button type="button" class="btn" @click="answer(r.id, false)">
-              {{ r.cancelLabel ?? '取消' }}
+              {{ r.cancelLabel ?? t('common.cancel') }}
             </button>
             <button
               type="button"
@@ -73,7 +75,7 @@ onBeforeUnmount(() => {
               :class="r.destructive ? 'btn-danger' : 'btn-primary'"
               @click="answer(r.id, true)"
             >
-              {{ r.confirmLabel ?? '确定' }}
+              {{ r.confirmLabel ?? t('common.confirm') }}
             </button>
           </div>
         </div>

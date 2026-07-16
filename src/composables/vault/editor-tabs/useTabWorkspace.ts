@@ -1,20 +1,23 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getPost, getTree, listPosts, type PostSummary, type TreeNode } from '../../../lib/api'
-import { disposeMarkdownModel } from '../../../components/vault/monacoModels'
+import { disposeMarkdownModel } from '../../../components/vault/monacoModelRegistry'
 import type { Tab } from '../../../components/vault/tabs'
 import { makeEmptyTab, pathToUrl, TAB_HARD_LIMIT, TAB_SOFT_LIMIT } from './tabState'
+import { useI18n } from '../../useI18n'
 
 export function useTabWorkspace(options: {
   confirm: (message: string) => Promise<boolean>
   toastError: (message: string) => void
   toastInfo: (message: string) => void
 }) {
+  const { t } = useI18n()
   const router = useRouter()
   const tree = ref<TreeNode[]>([])
   const posts = ref<PostSummary[]>([])
   const tabs = ref<Tab[]>([])
   const activePath = ref<string | null>(null)
+  let refreshRequestId = 0
 
   const activeTab = computed<Tab | null>(
     () => tabs.value.find((tab) => tab.path === activePath.value) ?? null,
@@ -33,7 +36,9 @@ export function useTabWorkspace(options: {
   }
 
   async function refresh() {
+    const requestId = ++refreshRequestId
     const [nextTree, nextPosts] = await Promise.all([getTree(), listPosts()])
+    if (requestId !== refreshRequestId) return
     tree.value = nextTree
     posts.value = nextPosts
   }
@@ -46,11 +51,11 @@ export function useTabWorkspace(options: {
       return
     }
     if (tabs.value.length >= TAB_HARD_LIMIT) {
-      options.toastError(`标签页已达上限 (${TAB_HARD_LIMIT}),请先关闭一些`)
+      options.toastError(t('editor.tab_limit', { count: TAB_HARD_LIMIT }))
       return
     }
     if (tabs.value.length >= TAB_SOFT_LIMIT) {
-      options.toastInfo('标签页较多,建议关闭不常用的 (按 ⌘P 用命令面板更快)')
+      options.toastInfo(t('editor.many_tabs'))
     }
     const tab = makeEmptyTab(path)
     tabs.value.push(tab)
@@ -94,7 +99,7 @@ export function useTabWorkspace(options: {
     if (index === -1) return true
     const tab = tabs.value[index]
     if (!closeOptions?.skipDirtyCheck && tab.raw !== tab.originalRaw) {
-      const ok = await options.confirm(`放弃对 "${tab.path}" 的未保存修改?`)
+      const ok = await options.confirm(t('editor.discard_one', { path: tab.path }))
       if (!ok) return false
     }
     tabs.value.splice(index, 1)
@@ -122,8 +127,8 @@ export function useTabWorkspace(options: {
     if (dirty.length === 0) return true
     return options.confirm(
       dirty.length === 1
-        ? `放弃对 "${dirty[0]}" 的未保存修改?`
-        : `${dirty.length} 个 tab 有未保存修改,确定要全部关闭吗?`,
+        ? t('editor.discard_one', { path: dirty[0] })
+        : t('editor.discard_many', { count: dirty.length }),
     )
   }
 
