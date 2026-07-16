@@ -13,6 +13,7 @@ vi.mock('../../../lib/history-api', async () => {
     getCapability: vi.fn(),
     getStatus: vi.fn(),
     getLog: vi.fn(),
+    createCommit: vi.fn(),
   }
 })
 
@@ -45,6 +46,7 @@ beforeEach(() => {
   vi.mocked(api.getCapability).mockResolvedValue({ gitAvailable: true, repoInitialized: true })
   vi.mocked(api.getStatus).mockResolvedValue({ dirty: [], available: true })
   vi.mocked(api.getLog).mockResolvedValue({ commits: [] })
+  vi.mocked(api.createCommit).mockResolvedValue({ sha: 'new-version', filesCommitted: [] })
 })
 
 afterEach(() => {
@@ -53,6 +55,68 @@ afterEach(() => {
 })
 
 describe('HistoryPanel document timeline', () => {
+  it('creates a version from only selected exact status paths after save coordination', async () => {
+    const dirty = [
+      { path: 'inbox/a.md', index: ' ', worktree: 'M' },
+      { path: 'inbox/b.md', index: '?', worktree: '?' },
+    ]
+    vi.mocked(api.getStatus)
+      .mockResolvedValueOnce({ dirty, available: true })
+      .mockResolvedValue({ dirty: [dirty[1]!], available: true })
+    vi.mocked(api.createCommit).mockResolvedValue({ sha: 'new-version', filesCommitted: ['inbox/a.md'] })
+    const saveBeforeCommit = vi.fn().mockResolvedValue(undefined)
+    const wrapper = mount(HistoryPanel, { props: { saveBeforeCommit } })
+    await flushPromises()
+
+    expect(wrapper.findAll('.history-change-row')).toHaveLength(2)
+    await wrapper.findAll('input[type="checkbox"]')[1]!.trigger('change')
+    await wrapper.get('#history-version-message').setValue('  Update A  ')
+    await wrapper.get('.history-create-version').trigger('click')
+    await flushPromises()
+
+    expect(saveBeforeCommit).toHaveBeenCalledWith(['inbox/a.md'])
+    expect(api.createCommit).toHaveBeenCalledWith(['inbox/a.md'], 'Update A')
+    expect(saveBeforeCommit.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(api.createCommit).mock.invocationCallOrder[0]!,
+    )
+    expect((wrapper.get('#history-version-message').element as HTMLTextAreaElement).value).toBe('')
+    expect(wrapper.findAll('.history-change-row')).toHaveLength(1)
+    expect(wrapper.text()).toContain('b.md')
+  })
+
+  it('shows a newly created version in Timeline and refreshes an open document revision list', async () => {
+    const oldCommit = commit('old', NOW - 60_000, 'Old version', ['inbox/a.md'])
+    const newCommit = commit('new', NOW, 'New version', ['inbox/a.md'])
+    vi.mocked(api.getStatus)
+      .mockResolvedValueOnce({ dirty: [{ path: 'inbox/a.md', index: ' ', worktree: 'M' }], available: true })
+      .mockResolvedValue({ dirty: [], available: true })
+    vi.mocked(api.getLog).mockImplementation(async (options = {}) => ({
+      commits: options.path
+        ? (vi.mocked(api.createCommit).mock.calls.length ? [newCommit, oldCommit] : [oldCommit])
+        : (vi.mocked(api.createCommit).mock.calls.length ? [newCommit, oldCommit] : [oldCommit]),
+    }))
+    vi.mocked(api.createCommit).mockResolvedValue({ sha: 'new', filesCommitted: ['inbox/a.md'] })
+    const wrapper = mount(HistoryPanel, {
+      props: {
+        posts: [{ path: 'inbox/a', title: 'A', created: '', updated: '', tags: [], size: 0, mtime: 0 }],
+      },
+    })
+    await flushPromises()
+    await wrapper.get('.history-document-row').trigger('click')
+    await flushPromises()
+    await wrapper.get('.history-revision-row').trigger('click')
+    expect(wrapper.get('.history-revision-row').attributes('aria-selected')).toBe('true')
+
+    await wrapper.get('#history-version-message').setValue('New version')
+    await wrapper.get('.history-create-version').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.history-document-header').text()).toContain('A')
+    expect(wrapper.findAll('.history-revision-row')).toHaveLength(2)
+    expect(wrapper.findAll('.history-revision-row').every((row) => row.attributes('aria-selected') === 'false')).toBe(true)
+    expect(vi.mocked(api.getLog).mock.calls.filter(([options]) => options?.path === 'inbox/a.md')).toHaveLength(2)
+  })
+
   it('distinguishes an initial Timeline failure from an empty repository and retries', async () => {
     vi.mocked(api.getLog).mockRejectedValueOnce(new Error('History API unavailable'))
     const wrapper = mount(HistoryPanel)

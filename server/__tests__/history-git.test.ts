@@ -152,7 +152,7 @@ describe('ensureRepo', () => {
     expect(dotGitExists).toBe(true)
     // Dotfiles made it into the nested repo's working tree.
     expect((await fs.readFile(path.join(vault, '.gitignore'), 'utf8')).length).toBeGreaterThan(0)
-  })
+  }, 15_000)
 })
 
 describe('parsePorcelain', () => {

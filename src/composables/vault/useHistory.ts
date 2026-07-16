@@ -41,6 +41,8 @@ function createHistoryInstance(fileChanges: VaultFileChanges): HistoryInstance {
   let hydrated = false
   let fileChangeUnsubscribe: (() => void) | null = null
   let lastSeenFileChangeSeq = 0
+  let statusRequestId = 0
+  let logRequestId = 0
 
   async function refreshCapability(): Promise<void> {
     try {
@@ -54,27 +56,34 @@ function createHistoryInstance(fileChanges: VaultFileChanges): HistoryInstance {
   }
 
   async function refreshStatus(): Promise<void> {
+    const requestId = ++statusRequestId
     try {
       const result = await api.getStatus()
+      if (requestId !== statusRequestId) return
       status.value = result.dirty
       available.value = result.available
     } catch {
+      if (requestId !== statusRequestId) return
       status.value = []
       available.value = false
     }
   }
 
   async function refreshLog(opts: { path?: string } = {}): Promise<void> {
+    const requestId = ++logRequestId
     logLoading.value = true
     logError.value = null
     try {
       const result = await api.getLog({ path: opts.path, limit: 200 })
+      if (requestId !== logRequestId) return
       log.value = Array.isArray(result?.commits) ? result.commits : []
     } catch (error) {
+      if (requestId !== logRequestId) return
       logError.value = {
         message: error instanceof Error && error.message ? error.message : null,
       }
     } finally {
+      if (requestId !== logRequestId) return
       logLoading.value = false
       logLoaded.value = true
     }
@@ -128,6 +137,8 @@ function createHistoryInstance(fileChanges: VaultFileChanges): HistoryInstance {
     available.value = false
     hydrated = false
     lastSeenFileChangeSeq = 0
+    statusRequestId++
+    logRequestId++
     fileChangeUnsubscribe?.()
     fileChangeUnsubscribe = null
   }

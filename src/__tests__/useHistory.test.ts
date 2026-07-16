@@ -29,6 +29,31 @@ beforeEach(() => {
 afterEach(() => __resetHistoryStateForTesting())
 
 describe('useHistory document timeline state', () => {
+  it('ignores stale Status and Timeline responses after a newer refresh completes', async () => {
+    let resolveOldStatus!: (value: { dirty: api.StatusEntry[]; available: boolean }) => void
+    let resolveOldLog!: (value: { commits: api.CommitRecord[] }) => void
+    vi.mocked(api.getStatus).mockReturnValueOnce(new Promise((resolve) => { resolveOldStatus = resolve }))
+    vi.mocked(api.getLog).mockReturnValueOnce(new Promise((resolve) => { resolveOldLog = resolve }))
+    const history = useHistory()
+    await flushPromises()
+
+    vi.mocked(api.getStatus).mockResolvedValueOnce({
+      dirty: [{ path: 'new.md', index: ' ', worktree: 'M' }],
+      available: true,
+    })
+    const newest = {
+      sha: 'new', author: 'A', date: new Date().toISOString(), subject: 'New', body: '', files: ['new.md'],
+    }
+    vi.mocked(api.getLog).mockResolvedValueOnce({ commits: [newest] })
+    await Promise.all([history.refreshStatus(), history.refreshLog()])
+
+    resolveOldStatus({ dirty: [{ path: 'old.md', index: ' ', worktree: 'M' }], available: true })
+    resolveOldLog({ commits: [{ ...newest, sha: 'old', subject: 'Old', files: ['old.md'] }] })
+    await flushPromises()
+    expect(history.status.value.map((entry) => entry.path)).toEqual(['new.md'])
+    expect(history.log.value.map((entry) => entry.sha)).toEqual(['new'])
+  })
+
   it('shares state within the same vault owner', () => {
     const first = useHistory()
     const second = useHistory()

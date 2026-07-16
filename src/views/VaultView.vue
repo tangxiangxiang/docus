@@ -139,6 +139,7 @@ const {
   closeManyConfirmed: closeManyEditorTabsConfirmed,
   selectTab: selectEditorTab, onEditorChange, doSaveNow, resolveExternal,
   prepareHistoryRestore, onKeydown: onEditorKeydown, onCommandPaletteNew,
+  prepareHistoryCommit,
 } = useEditorTabs({ selectPanel, toggleViewMode: () => viewModeApi?.toggle(), fileChanges })
 const historySnapshots = useHistorySnapshots()
 const activeHistorySnapshot = historySnapshots.activeSnapshot
@@ -563,6 +564,7 @@ watch(isReadMode, async (reading) => {
     <HistoryPanel
       v-else-if="activePanel === 'history'"
       :posts="posts"
+      :save-before-commit="prepareHistoryCommit"
       @open-revision="openHistoryRevision"
     />
 

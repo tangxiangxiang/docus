@@ -101,6 +101,24 @@ export function useDocumentSave(options: {
     if (options.activePath.value) await doSave(options.activePath.value)
   }
 
+  async function prepareHistoryCommit(historyPaths: readonly string[]): Promise<void> {
+    const appPaths = historyPaths.map((path) => path.endsWith('.md') ? path.slice(0, -3) : path)
+    for (const path of appPaths) {
+      const timer = saveTimers.get(path)
+      if (timer) clearTimeout(timer)
+      saveTimers.delete(path)
+    }
+
+    for (const path of appPaths) {
+      const tab = options.tabs.value.find((candidate) => candidate.path === path)
+      if (!tab || tab.revision === tab.savedRevision) continue
+      await doSave(path)
+      if (tab.revision !== tab.savedRevision || ['error', 'offline', 'external'].includes(tab.saveStatus)) {
+        throw new Error(tab.error || t('editor.save_failed', { error: path }))
+      }
+    }
+  }
+
   async function prepareHistoryRestore(path: string): Promise<void> {
     const timer = saveTimers.get(path)
     if (timer) clearTimeout(timer)
@@ -143,6 +161,7 @@ export function useDocumentSave(options: {
     onEditorChange,
     handleBeforeUnload,
     doSaveNow,
+    prepareHistoryCommit,
     prepareHistoryRestore,
     prepareDocumentClose,
     disposeDocumentSave,

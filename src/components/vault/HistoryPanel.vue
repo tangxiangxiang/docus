@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, toRef } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import { useHistory } from '../../composables/vault/useHistory'
+import { useHistoryCommit } from '../../composables/vault/useHistoryCommit'
 import {
   toHistoryRevisionSelection,
   useHistoryTimeline,
@@ -12,14 +13,17 @@ import type { HistoryRevisionSelection } from '../../composables/vault/useHistor
 import { useI18n } from '../../composables/useI18n'
 import { ICON_CHEVRON, ICON_FILE_MD } from './icons'
 import EmptyState from './EmptyState.vue'
+import HistoryChangesPanel from './HistoryChangesPanel.vue'
 import TimelineDocumentRow from './TimelineDocumentRow.vue'
 import TimelineGroup from './TimelineGroup.vue'
 import TimelineRevisionRow from './TimelineRevisionRow.vue'
 
 const props = withDefaults(defineProps<{
   posts?: PostSummary[]
+  saveBeforeCommit?: (paths: readonly string[]) => Promise<void>
 }>(), {
   posts: () => [],
+  saveBeforeCommit: async () => {},
 })
 const emit = defineEmits<{
   'open-revision': [selection: HistoryRevisionSelection]
@@ -37,6 +41,15 @@ const timelineLabels = computed(() => ({
 }))
 
 const timeline = useHistoryTimeline(h, toRef(props, 'posts'), locale, timelineLabels)
+const commit = useHistoryCommit({
+  history: h,
+  saveSelected: props.saveBeforeCommit,
+  async refreshSelectedDocument(committedPaths) {
+    const document = timeline.selectedDocument.value
+    if (!document || !committedPaths.includes(`${document.path}.md`)) return
+    await timeline.selectDocument(document)
+  },
+})
 const revisionsErrorLabel = computed(() => (
   timeline.revisionsError.value?.message || t('history.load_failed')
 ))
@@ -151,6 +164,20 @@ function onListKeydown(event: KeyboardEvent): void {
     </div>
 
     <template v-else>
+      <HistoryChangesPanel
+        :entries="h.status.value"
+        :selected-paths="commit.selectedPaths.value"
+        :message="commit.message.value"
+        :busy="commit.busy.value"
+        :can-commit="commit.canCommit.value"
+        :error="commit.error.value"
+        @toggle="commit.toggle"
+        @select-all="commit.selectAll"
+        @clear-selection="commit.clearSelection"
+        @update:message="commit.message.value = $event"
+        @submit="commit.submit"
+      />
+      <div class="history-timeline-heading">{{ t('history.timeline') }}</div>
       <div v-if="h.logError.value && !timeline.selectedDocument.value" class="history-error" role="alert">
         <span>{{ logErrorLabel }}</span>
         <button type="button" @click="h.refreshLog()">

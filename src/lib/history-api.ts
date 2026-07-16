@@ -84,13 +84,23 @@ export interface FileDiff {
    from the body, NOT an error. Pass `allowNonOkJson: true` for that
    case so the body comes through and refreshStatus can flip
    `_available` itself. */
+export class HistoryApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'HistoryApiError'
+    this.status = status
+  }
+}
+
 async function readJson<T>(r: Response, fallback: string, opts: { allowNonOkJson?: boolean } = {}): Promise<T> {
   if (r.ok || opts.allowNonOkJson) {
     return r.json() as Promise<T>
   }
   const body = (await r.json().catch(() => ({}))) as { error?: unknown }
   const message = typeof body.error === 'string' ? body.error : `${fallback}: ${r.status}`
-  throw new Error(message)
+  throw new HistoryApiError(message, r.status)
 }
 
 export async function getCapability(): Promise<Capability> {
