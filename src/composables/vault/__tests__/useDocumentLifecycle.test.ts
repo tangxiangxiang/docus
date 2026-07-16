@@ -405,6 +405,24 @@ describe('useDocumentLifecycle folder and delete operations', () => {
     expect(create).toHaveBeenCalledWith('inbox/new-folder')
   })
 
+  it('resumes the autosave of a dirty document sharing the created folder path', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(api, 'createFolder').mockResolvedValue({ path: 'inbox/notes' })
+    const puts: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const raw = (JSON.parse(String(init?.body)) as { raw: string }).raw
+      puts.push(`${url}:${raw}`)
+      return saveResponse(raw)
+    }))
+    const h = setup([tab('inbox/notes')])
+
+    h.save.onEditorChange('inbox/notes', 'dirty notes')
+    await h.lifecycle.createFolder('inbox/notes')
+    await vi.advanceTimersByTimeAsync(800)
+
+    expect(puts).toEqual(['/api/posts/inbox/notes:dirty notes'])
+  })
+
   it('keeps a successful create successful when refresh fails', async () => {
     vi.spyOn(api, 'createPost').mockResolvedValue({
       path: 'inbox/new', title: 'New', created: '', updated: '', tags: [], size: 1, mtime: 1,

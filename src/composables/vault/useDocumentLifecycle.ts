@@ -119,7 +119,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
   async function createFolderLifecycle(path: string): Promise<{ path: string }> {
     return withMutation([path], async (barrier) => {
       const created = await createFolder(path)
-      barrier.commit()
+      barrier.commit([path])
       await refreshBestEffort(`Create folder ${created.path}`)
       return created
     })
