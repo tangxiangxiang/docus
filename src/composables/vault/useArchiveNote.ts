@@ -15,10 +15,13 @@
 import { useToast } from '../useToast'
 import { patchPost } from '../../lib/api'
 import { useI18n } from '../useI18n'
+import { getFallbackVaultFileChanges } from './context/fileChanges'
+import { useOptionalVaultContext } from './context/useVaultContext'
 
 export function useArchiveNote() {
   const toast = useToast()
   const { t } = useI18n()
+  const vaultContext = useOptionalVaultContext()
 
   /**
    * Move `path` to `targetPath` (default: archive/<filename>). Returns
@@ -38,7 +41,17 @@ export function useArchiveNote() {
     const finalTarget = targetPath ?? `archive/${filename}`
     if (finalTarget === path) return null
     try {
-      const moved = await patchPost(path, { targetPath: finalTarget })
+      const moved = vaultContext?.lifecycle
+        ? await vaultContext.lifecycle.renameFile(path, { targetPath: finalTarget })
+        : await patchPost(path, { targetPath: finalTarget })
+      if (!vaultContext?.lifecycle) {
+        getFallbackVaultFileChanges().publish({
+          oldPath: path,
+          path: moved.path,
+          kind: 'rename',
+          source: 'editor-lifecycle',
+        })
+      }
       const displayFrom = finalTarget.replace(/^archive\//, '')
       const displayTo = moved.path.replace(/^archive\//, '').replace(/\.md$/, '')
       const toastMsg = displayFrom === displayTo

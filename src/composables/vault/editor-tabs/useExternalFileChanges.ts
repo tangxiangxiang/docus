@@ -17,6 +17,9 @@ export function useExternalFileChanges(options: {
 }) {
   const { t } = useI18n()
   async function applyExternalChange(event: InternalFileChangeEvent): Promise<void> {
+    // Local lifecycle transactions already migrated/closed the owning tabs.
+    // The event is for History, links, and other derived Vault consumers only.
+    if (event.source === 'editor-lifecycle') return
     if (event.kind === 'rename') {
       const oldTab = options.tabs.value.find((tab) => tab.path === event.oldPath)
       if (!oldTab) return

@@ -47,6 +47,11 @@ function answerConfirm(ok: boolean) {
 import { useEditorTabs } from '../useEditorTabs'
 import { createVaultFileChanges, type VaultFileChanges } from '../context/fileChanges'
 import { useI18n } from '../../useI18n'
+import {
+  getMarkdownModel,
+  registerMarkdownModel,
+  resetMarkdownModelsForTesting,
+} from '../../../components/vault/monacoModelRegistry'
 
 // --- helpers ---------------------------------------------------------------
 
@@ -76,6 +81,7 @@ interface Harness {
   onKeydown: (e: KeyboardEvent) => void
   onCommandPaletteNew: (t: string) => Promise<void>
   refresh: () => Promise<void>
+  renameOpenDocuments: (mappings: ReadonlyArray<{ from: string; to: string }>) => void
   activePath: Ref<string | null>
   posts: Ref<Array<{ path: string; title: string }>>
   tabs: Ref<{ path: string; raw: string; originalRaw: string; saveStatus: string; loadError: string | null; serverMtime?: number; externalRaw?: string | null }[]>
@@ -161,6 +167,7 @@ describe('useEditorTabs', () => {
   })
 
   afterEach(() => {
+    resetMarkdownModelsForTesting()
     useI18n().setLocale('zh')
     vi.restoreAllMocks()
     vi.useRealTimers()
@@ -210,6 +217,31 @@ describe('useEditorTabs', () => {
     await h.openPost('inbox/hello')
     expect(getPostCalls).toBe(1)
     expect(h.tabs.value).toHaveLength(1)
+  })
+
+  it('migrates an open tab path, active route, persistence signal, and Monaco registry', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    const oldModel = { isDisposed: vi.fn(() => false), dispose: vi.fn() }
+    const staleTarget = { isDisposed: vi.fn(() => false), dispose: vi.fn() }
+    registerMarkdownModel('a', oldModel)
+    registerMarkdownModel('b', staleTarget)
+
+    h.renameOpenDocuments([{ from: 'a', to: 'b' }])
+    await nextTick()
+
+    expect(h.tabs.value[0].path).toBe('b')
+    expect(h.activePath.value).toBe('b')
+    expect(oldModel.dispose).toHaveBeenCalledOnce()
+    expect(staleTarget.dispose).toHaveBeenCalledOnce()
+    expect(getMarkdownModel('a')).toBeUndefined()
+    expect(getMarkdownModel('b')).toBeUndefined()
+    resetMarkdownModelsForTesting()
   })
 
   it('openPost sets loadError when getPost fails and keeps the tab', async () => {
@@ -340,6 +372,40 @@ describe('useEditorTabs', () => {
     await expect(closePromise).resolves.toBe(false)
     // BOTH tabs stay — the batch is all-or-nothing on the dirty prompt.
     expect(h.tabs.value.map((t) => t.path)).toEqual(['a', 'b'])
+  })
+
+  it('restores autosave after a single or batch dirty close is cancelled', async () => {
+    vi.useFakeTimers()
+    const saved: string[] = []
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/b': () => ({ path: 'b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+      'PUT /api/posts/a': (body) => { saved.push((body as { raw: string }).raw); return { ok: true, raw: (body as { raw: string }).raw } },
+      'PUT /api/posts/b': (body) => { saved.push((body as { raw: string }).raw); return { ok: true, raw: (body as { raw: string }).raw } },
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    await h.openPost('b')
+    h.onEditorChange('a', 'A dirty')
+    const single = h.closeTab('a')
+    await Promise.resolve()
+    await Promise.resolve()
+    answerConfirm(false)
+    await expect(single).resolves.toBe(false)
+    await vi.advanceTimersByTimeAsync(800)
+    expect(saved).toContain('A dirty')
+
+    h.onEditorChange('a', 'A dirty again')
+    h.onEditorChange('b', 'B dirty')
+    const batch = h.closeMany(['a', 'b'])
+    await Promise.resolve()
+    await Promise.resolve()
+    answerConfirm(false)
+    await expect(batch).resolves.toBe(false)
+    await vi.advanceTimersByTimeAsync(800)
+    expect(saved).toEqual(expect.arrayContaining(['A dirty again', 'B dirty']))
   })
 
   it('closeMany skips the dirty prompt when no tab in the batch is dirty', async () => {

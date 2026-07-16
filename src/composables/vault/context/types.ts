@@ -2,6 +2,7 @@ import type { ComputedRef, Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
 import type { VaultFileChanges } from './fileChanges'
 import type { VaultTocState } from '../useTocState'
+import type { DocumentLifecycle } from '../useDocumentLifecycle'
 
 export interface VaultEditorContext {
   tabs: Ref<Tab[]>
@@ -16,6 +17,7 @@ export interface VaultContext {
   fileChanges: VaultFileChanges
   editor: VaultEditorContext
   toc: VaultTocState
+  lifecycle?: DocumentLifecycle
   onDispose: (cleanup: () => void) => () => void
   dispose: () => void
 }

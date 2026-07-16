@@ -22,6 +22,7 @@ import {
   useTabPersistence,
 } from './editor-tabs/useTabPersistence'
 import { useI18n } from '../useI18n'
+import { createPathMutationLock, toMutationPaths } from './pathMutationLock'
 export { __setVaultIdForTesting } from './editor-tabs/useTabPersistence'
 
 export function useEditorTabs(opts: {
@@ -31,6 +32,7 @@ export function useEditorTabs(opts: {
      reason selectPanel is — keeps the layout dependency explicit. */
   toggleViewMode: () => void
   fileChanges: VaultFileChanges
+  mutationLock?: ReturnType<typeof createPathMutationLock>
 }) {
   const toast = useToast()
   const { confirm } = useConfirm()
@@ -53,6 +55,8 @@ export function useEditorTabs(opts: {
     closeManyConfirmed,
     selectTab,
     navigateTo,
+    renameOpenDocuments,
+    removeOpenDocuments,
   } = useTabWorkspace({
     confirm,
     toastError: toast.error,
@@ -69,6 +73,7 @@ export function useEditorTabs(opts: {
     doSaveNow,
     prepareHistoryCommit,
     prepareHistoryRestore,
+    prepareDocumentMutation,
     prepareDocumentClose,
     disposeDocumentSave,
   } = useDocumentSave({
@@ -81,13 +86,31 @@ export function useEditorTabs(opts: {
   })
 
   async function closeTab(path: string): Promise<boolean> {
-    await prepareDocumentClose([path])
-    return closeTabState(path)
+    const release = opts.mutationLock?.acquire(toMutationPaths([path])) ?? null
+    if (opts.mutationLock && !release) return false
+    try {
+      const barrier = await prepareDocumentClose([path])
+      const closed = await closeTabState(path)
+      if (closed) barrier.commit()
+      else barrier.rollback()
+      return closed
+    } finally {
+      release?.()
+    }
   }
 
   async function confirmCloseMany(paths: string[]): Promise<boolean> {
-    await prepareDocumentClose(paths)
-    return confirmCloseManyState(paths)
+    const release = opts.mutationLock?.acquire(toMutationPaths(paths)) ?? null
+    if (opts.mutationLock && !release) return false
+    try {
+      const barrier = await prepareDocumentClose(paths)
+      const confirmed = await confirmCloseManyState(paths)
+      if (confirmed) barrier.commit()
+      else barrier.rollback()
+      return confirmed
+    } finally {
+      release?.()
+    }
   }
 
   async function closeMany(paths: string[]): Promise<boolean> {
@@ -126,6 +149,7 @@ export function useEditorTabs(opts: {
     const newPath = parent ? `${parent}/${filename}` : filename
     try {
       await createPost({ path: newPath, title: trimmed })
+      fileChanges.publish({ path: newPath, kind: 'write', source: 'editor-lifecycle' })
       await refresh()
       await openPost(newPath)
       toast.success(t('common.created', { path: newPath }))
@@ -240,11 +264,14 @@ export function useEditorTabs(opts: {
     closeMany,
     confirmCloseMany,
     closeManyConfirmed,
+    renameOpenDocuments,
+    removeOpenDocuments,
     selectTab,
     onEditorChange,
     doSaveNow,
     prepareHistoryCommit,
     prepareHistoryRestore,
+    prepareDocumentMutation,
     resolveExternal,
     pollExternalChanges,
     onKeydown,

@@ -3,6 +3,7 @@ import type { Tab } from '../../../components/vault/tabs'
 import type { VaultContext } from './types'
 import type { VaultFileChanges } from './fileChanges'
 import { createVaultTocState } from '../useTocState'
+import type { DocumentLifecycle } from '../useDocumentLifecycle'
 
 export function createVaultContext(options: {
   vaultId: Ref<string | null>
@@ -11,6 +12,7 @@ export function createVaultContext(options: {
   activePath: Ref<string | null>
   activeTab: ComputedRef<Tab | null>
   openPost: (path: string) => Promise<void>
+  lifecycle?: DocumentLifecycle
 }): VaultContext {
   const cleanups = new Set<() => void>()
   let disposed = false
@@ -18,6 +20,7 @@ export function createVaultContext(options: {
     vaultId: options.vaultId,
     fileChanges: options.fileChanges,
     toc: createVaultTocState(),
+    ...(options.lifecycle ? { lifecycle: options.lifecycle } : {}),
     editor: {
       tabs: options.tabs,
       activePath: options.activePath,

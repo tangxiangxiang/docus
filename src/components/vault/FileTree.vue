@@ -43,6 +43,7 @@ const toast = useToast()
 const { t } = useI18n()
 const { compactFileTree } = useFileTreePreferences()
 const vaultContext = useOptionalVaultContext()
+const lifecycle = vaultContext?.lifecycle
 const publishChange = vaultContext?.fileChanges.publish ?? getFallbackVaultFileChanges().publish
 const searchInputRef = ref<HTMLInputElement | null>(null)
 
@@ -327,9 +328,14 @@ function onRootDragOver(e: DragEvent) { e.preventDefault(); if (e.dataTransfer) 
 async function onRootDrop(e: DragEvent) {
   e.preventDefault()
   const src = e.dataTransfer?.getData('text/x-docus-path') ?? ''
+  const srcKind = e.dataTransfer?.getData('text/x-docus-kind') === 'folder' ? 'folder' : 'file'
   isRootDropTarget.value = false
   rootDragDepth.value = 0
   if (!src) return
+  if (srcKind === 'folder') {
+    toast.error(t('file_tree.move_failed', { error: 'folder move is not supported' }))
+    return
+  }
   // Reject moves of protected roots (the three top-level folders are part
   // of the vault protocol and cannot be re-parented). Archive children
   // are handled below because they may move inside archive but not out of it.
@@ -342,9 +348,11 @@ async function onRootDrop(e: DragEvent) {
   const targetPath = filename
   if (targetPath === src) return
   try {
-    await patchPost(src, { targetPath })
-    emit('refresh')
-    if (props.currentPath === src) emit('select', targetPath)
+    const moved = lifecycle
+      ? await lifecycle.renameFile(src, { targetPath })
+      : await patchPost(src, { targetPath })
+    if (!lifecycle) emit('refresh')
+    if (props.currentPath === src && !lifecycle) emit('select', moved.path)
     toast.info(t('file_tree.moved_root'))
   } catch (err: any) {
     toast.error(t('file_tree.move_failed', { error: err.message ?? t('common.unknown_error') }))
@@ -374,6 +382,10 @@ function findNode(nodes: TreeNode[], path: string, kind?: 'file' | 'folder'): Tr
 function countDescendants(n: TreeNode): number {
   if (n.kind !== 'folder') return 0
   return n.children.reduce((acc, c) => acc + 1 + countDescendants(c), 0)
+}
+function filePaths(n: TreeNode): string[] {
+  if (n.kind === 'file') return [n.path]
+  return n.children.flatMap(filePaths)
 }
 
 // --- row event handlers ---
@@ -406,11 +418,15 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
           ? await confirm(t('file_tree.rename_folder_refs', { count: impact.count }))
           : false
       } catch { /* advisory */ }
-      const res = updateReferences
-        ? await renameFolder(oldPath, newPath, true)
-        : await renameFolder(oldPath, newPath)
-      for (const updated of res.updatedReferences ?? []) {
-        publishChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
+      const res = lifecycle
+        ? await lifecycle.renameFolder(oldPath, newPath, filePaths(node), updateReferences)
+        : updateReferences
+          ? await renameFolder(oldPath, newPath, true)
+          : await renameFolder(oldPath, newPath)
+      if (!lifecycle) {
+        for (const updated of res.updatedReferences ?? []) {
+          publishChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
+        }
       }
       toast.success(t('file_tree.renamed_count', { count: res.moved.length }))
     } else {
@@ -421,12 +437,17 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
           ? await confirm(t('file_tree.rename_file_refs', { count: impact.count }))
           : false
       } catch { /* impact preview is advisory; renaming still works */ }
-      const renamed = await patchPost(oldPath, updateReferences ? { name: safeName, updateReferences: true } : { name: safeName })
-      for (const updated of renamed.updatedReferences ?? []) {
-        if (updated.path !== renamed.path) publishChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
+      const body = updateReferences ? { name: safeName, updateReferences: true } : { name: safeName }
+      const renamed = lifecycle
+        ? await lifecycle.renameFile(oldPath, body)
+        : await patchPost(oldPath, body)
+      if (!lifecycle) {
+        for (const updated of renamed.updatedReferences ?? []) {
+          if (updated.path !== renamed.path) publishChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
+        }
       }
     }
-    emit('refresh')
+    if (!lifecycle) emit('refresh')
   } catch (e: any) {
     toast.error(t('file_tree.rename_failed', { error: e.message }))
   }
@@ -470,9 +491,12 @@ async function onDelete(p: string, kind: 'file' | 'folder') {
   )
   if (!ok) return
   try {
-    if (node.kind === 'folder') await deleteFolder(p, true)
+    if (node.kind === 'folder') {
+      if (lifecycle) await lifecycle.deleteFolder(p, filePaths(node))
+      else await deleteFolder(p, true)
+    } else if (lifecycle) await lifecycle.deleteFile(p)
     else await deletePost(p)
-    emit('refresh')
+    if (!lifecycle) emit('refresh')
   } catch (e: any) { toast.error(t('file_tree.delete_failed', { error: e.message })) }
 }
 
@@ -490,6 +514,10 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
   const targetInArchive = isInArchive(targetFolder)
   if (!sourceInArchive && targetFolder === 'archive') { toast.error(t('file_tree.archive_direct_write')); return }
   if (sourceInArchive && !targetInArchive) { toast.error(t('file_tree.archive_inside_only')); return }
+  if (srcKind === 'folder') {
+    toast.error(t('file_tree.move_failed', { error: 'folder move is not supported' }))
+    return
+  }
   const filename = srcPath.split('/').pop()!
   const newPath = targetFolder ? `${targetFolder}/${filename}` : filename
   if (newPath === srcPath) return
@@ -505,9 +533,11 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
     return
   }
   try {
-    await patchPost(srcPath, { targetPath: newPath })
-    emit('refresh')
-    if (props.currentPath === srcPath) emit('select', newPath)
+    const moved = lifecycle
+      ? await lifecycle.renameFile(srcPath, { targetPath: newPath })
+      : await patchPost(srcPath, { targetPath: newPath })
+    if (!lifecycle) emit('refresh')
+    if (props.currentPath === srcPath && !lifecycle) emit('select', moved.path)
   } catch (e: any) {
     toast.error(t('file_tree.move_failed', { error: e.message ?? t('common.unknown_error') }))
   }
@@ -521,8 +551,10 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
 async function onArchiveNote(path: string) {
   const movedPath = await archiveNote(path)
   if (!movedPath) return
-  emit('refresh')
-  if (props.currentPath === path) emit('select', movedPath)
+  if (!lifecycle) {
+    emit('refresh')
+    if (props.currentPath === path) emit('select', movedPath)
+  }
 }
 
 async function onCreateIn(folder: string, kind: 'file' | 'folder') {
@@ -549,12 +581,18 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
   }
   const path = folder ? `${folder}/${name}` : name
   try {
-    if (kind === 'file') await createPost({ path, title: sourceTitle || title })
+    if (kind === 'file') {
+      if (lifecycle) await lifecycle.createFile({ path, title: sourceTitle || title })
+      else {
+        await createPost({ path, title: sourceTitle || title })
+        publishChange({ path, kind: 'write', source: 'editor-lifecycle' })
+      }
+    }
     else await createFolder(path)
     expanded.value.add(folder)
     expanded.value = new Set(expanded.value)
     saveExpanded()
-    emit('refresh')
+    if (!lifecycle || kind === 'folder') emit('refresh')
   } catch (e: any) { toast.error(t('common.create_failed', { error: e.message })) }
 }
 </script>

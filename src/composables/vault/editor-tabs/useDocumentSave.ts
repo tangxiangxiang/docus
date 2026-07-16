@@ -4,6 +4,12 @@ import type { PostSummary } from '../../../lib/api'
 import { useI18n } from '../../useI18n'
 import type { VaultFileChanges } from '../context/fileChanges'
 
+export interface DocumentMutationBarrier {
+  readonly paths: readonly string[]
+  commit(resumePaths?: readonly string[]): void
+  rollback(): void
+}
+
 export function useDocumentSave(options: {
   tabs: Ref<Tab[]>
   posts: Ref<PostSummary[]>
@@ -16,9 +22,11 @@ export function useDocumentSave(options: {
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const savePromises = new Map<string, Promise<void>>()
   const commitBarriers = new Map<string, { revision: number; raw: string }>()
+  const lifecycleLocks = new Set<string>()
+  let disposed = false
 
   function scheduleSave(path: string, delay = 800) {
-    if (commitBarriers.has(path)) return
+    if (disposed || commitBarriers.has(path) || lifecycleLocks.has(path)) return
     const current = saveTimers.get(path)
     if (current) clearTimeout(current)
     saveTimers.set(path, setTimeout(() => {
@@ -36,8 +44,13 @@ export function useDocumentSave(options: {
   }
 
   async function saveLatest(path: string): Promise<void> {
+    if (disposed) return
     const tab = options.tabs.value.find((candidate) => candidate.path === path)
     if (!tab) return
+    if (lifecycleLocks.has(path)) {
+      tab.saveStatus = tab.revision === tab.savedRevision ? 'idle' : 'dirty'
+      return
+    }
     const barrier = commitBarriers.get(path)
     if (barrier ? tab.savedRevision >= barrier.revision : tab.revision === tab.savedRevision) {
       tab.saveStatus = tab.revision === tab.savedRevision ? 'idle' : 'dirty'
@@ -58,12 +71,15 @@ export function useDocumentSave(options: {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       data = (await response.json()) as { ok: true; raw: string }
     } catch (error) {
+      if (disposed) return
       tab.saveStatus = typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error'
       tab.error = (error as Error).message
       options.toastError(t('editor.save_failed', { error: tab.error }))
       tab.savingRevision = null
       return
     }
+
+    if (disposed) return
 
     try {
       if (tab.raw === sentVersion) {
@@ -85,14 +101,16 @@ export function useDocumentSave(options: {
 
     try {
       await options.refresh()
+      if (disposed) return
       const post = options.posts.value.find((candidate) => candidate.path === path)
       if (post) tab.serverMtime = post.mtime
     } catch (error) {
-      console.warn(`[useDocumentSave] Saved ${path}, but Vault refresh failed`, error)
+      if (!disposed) console.warn(`[useDocumentSave] Saved ${path}, but Vault refresh failed`, error)
     }
   }
 
   async function doSave(path: string): Promise<void> {
+    if (disposed || lifecycleLocks.has(path)) return
     const active = savePromises.get(path)
     if (active) return active
     const promise = (async () => {
@@ -101,7 +119,8 @@ export function useDocumentSave(options: {
         const tab = options.tabs.value.find((candidate) => candidate.path === path)
         const barrier = commitBarriers.get(path)
         if (barrier && (!tab || tab.savedRevision >= barrier.revision)) break
-        if (!tab || ['error', 'offline', 'external'].includes(tab.saveStatus)
+        if (disposed || lifecycleLocks.has(path)
+            || !tab || ['error', 'offline', 'external'].includes(tab.saveStatus)
             || tab.revision === tab.savedRevision) break
       } while (true)
     })().finally(() => savePromises.delete(path))
@@ -110,6 +129,7 @@ export function useDocumentSave(options: {
   }
 
   function onEditorChange(path: string, value: string) {
+    if (disposed) return
     const tab = options.tabs.value.find((candidate) => candidate.path === path)
     if (!tab) return
     tab.raw = value
@@ -133,6 +153,37 @@ export function useDocumentSave(options: {
     if (!path) return
     cancelScheduledSave(path)
     await doSave(path)
+  }
+
+  async function prepareDocumentMutation(paths: readonly string[]): Promise<DocumentMutationBarrier> {
+    const uniquePaths = [...new Set(paths.filter((path) => path.trim().length > 0))]
+    if (disposed) return { paths: uniquePaths, commit() {}, rollback() {} }
+
+    for (const path of uniquePaths) lifecycleLocks.add(path)
+    for (const path of uniquePaths) cancelScheduledSave(path)
+    const activePromises = uniquePaths
+      .map((path) => savePromises.get(path))
+      .filter((promise): promise is Promise<void> => Boolean(promise))
+    if (activePromises.length > 0) await Promise.allSettled(activePromises)
+    for (const path of uniquePaths) cancelScheduledSave(path)
+
+    let settled = false
+    function settle(resumePaths: readonly string[]): void {
+      if (settled) return
+      settled = true
+      for (const path of uniquePaths) lifecycleLocks.delete(path)
+      if (disposed) return
+      for (const path of [...new Set(resumePaths)]) {
+        const tab = options.tabs.value.find((candidate) => candidate.path === path)
+        if (tab && tab.revision !== tab.savedRevision) scheduleSave(path)
+      }
+    }
+
+    return {
+      paths: uniquePaths,
+      commit(resumePaths = []) { settle(resumePaths) },
+      rollback() { settle(uniquePaths) },
+    }
   }
 
   async function prepareHistoryCommit(historyPaths: readonly string[]): Promise<(
@@ -187,26 +238,16 @@ export function useDocumentSave(options: {
     cancelScheduledSave(path)
   }
 
-  async function prepareDocumentClose(paths: readonly string[]): Promise<void> {
-    // A queued debounce can be discarded safely because no request has left
-    // the browser yet. An in-flight PUT cannot be reliably cancelled after
-    // the server starts writing, so wait for its complete serialized save
-    // chain before deciding whether a dirty confirmation is still needed.
-    for (const path of paths) {
-      cancelScheduledSave(path)
-    }
-    await Promise.allSettled(
-      paths.map((path) => savePromises.get(path)).filter((promise): promise is Promise<void> => Boolean(promise)),
-    )
-    for (const path of paths) {
-      cancelScheduledSave(path)
-    }
+  function prepareDocumentClose(paths: readonly string[]): Promise<DocumentMutationBarrier> {
+    return prepareDocumentMutation(paths)
   }
 
   function disposeDocumentSave() {
+    disposed = true
     for (const timer of saveTimers.values()) clearTimeout(timer)
     saveTimers.clear()
     commitBarriers.clear()
+    lifecycleLocks.clear()
   }
 
   return {
@@ -215,6 +256,7 @@ export function useDocumentSave(options: {
     onEditorChange,
     handleBeforeUnload,
     doSaveNow,
+    prepareDocumentMutation,
     prepareHistoryCommit,
     prepareHistoryRestore,
     prepareDocumentClose,

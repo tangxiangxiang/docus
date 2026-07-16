@@ -33,6 +33,7 @@ import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { createVaultContext } from '../composables/vault/context/createVaultContext'
 import { provideVaultContext } from '../composables/vault/context/useVaultContext'
 import { createVaultFileChanges } from '../composables/vault/context/fileChanges'
+import { useDocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
@@ -136,6 +137,7 @@ function openSearch() { paletteRef.value?.show() }
 
 /* ---------- Tabs / save / route sync ---------- */
 const fileChanges = createVaultFileChanges()
+const historyMutationLock = createPathMutationLock()
 const {
   tree, vaultId, posts, tabs, activePath, activeTab, isDirty, activeSize,
   refresh, openPost: openEditorPost, closeTab: closeEditorTab,
@@ -144,8 +146,30 @@ const {
   selectTab: selectEditorTab, onEditorChange, doSaveNow, resolveExternal,
   prepareHistoryRestore, onKeydown: onEditorKeydown, onCommandPaletteNew,
   prepareHistoryCommit,
-} = useEditorTabs({ selectPanel, toggleViewMode: () => viewModeApi?.toggle(), fileChanges })
-const vaultContext = createVaultContext({ vaultId, fileChanges, tabs, activePath, activeTab, openPost })
+  prepareDocumentMutation, renameOpenDocuments, removeOpenDocuments,
+} = useEditorTabs({
+  selectPanel,
+  toggleViewMode: () => viewModeApi?.toggle(),
+  fileChanges,
+  mutationLock: historyMutationLock,
+})
+const documentLifecycle = useDocumentLifecycle({
+  fileChanges,
+  mutationLock: historyMutationLock,
+  prepareDocumentMutation,
+  renameOpenDocuments,
+  removeOpenDocuments,
+  refresh,
+})
+const vaultContext = createVaultContext({
+  vaultId,
+  fileChanges,
+  tabs,
+  activePath,
+  activeTab,
+  openPost,
+  lifecycle: documentLifecycle,
+})
 provideVaultContext(vaultContext)
 onBeforeUnmount(() => { vaultContext.dispose() })
 const historySnapshots = useHistorySnapshots()
@@ -160,7 +184,6 @@ const historyComparisons = useHistoryComparisons({
 })
 const activeHistoryComparison = historyComparisons.activeComparison
 const history = useHistory(vaultContext)
-const historyMutationLock = createPathMutationLock()
 const historyCommit = useHistoryCommit({
   history,
   saveSelected: prepareHistoryCommit,
@@ -486,6 +509,7 @@ async function createMissingWikiNote(ref: string) {
   const title = segments.at(-1)!.split('-').join(' ')
   try {
     await createPost({ path, title })
+    fileChanges.publish({ path, kind: 'write', source: 'editor-lifecycle' })
     await refresh()
     await openPost(path)
     toast.success(t('common.created', { path }))

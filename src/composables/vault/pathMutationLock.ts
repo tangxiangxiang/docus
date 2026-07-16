@@ -1,5 +1,13 @@
 import { ref } from 'vue'
 
+export function toMutationPath(path: string): string {
+  return path.endsWith('.md') ? path : `${path}.md`
+}
+
+export function toMutationPaths(paths: readonly string[]): string[] {
+  return [...new Set(paths.filter(Boolean).map(toMutationPath))]
+}
+
 // Vault-scoped, in-memory exclusion for workflows that mutate document bytes.
 // Paths use the History API's exact `.md` representation.
 export function createPathMutationLock() {

@@ -72,7 +72,7 @@ export interface FileChangeEvent {
   newMtime?: number
   newRaw?: string
   oldPath?: string
-  source?: 'history-restore' | 'editor-save'
+  source?: 'history-restore' | 'editor-save' | 'editor-lifecycle'
 }
 
 export type ChatEvent =

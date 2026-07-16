@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getPost, getTree, listPosts, type PostSummary, type TreeNode } from '../../../lib/api'
-import { disposeMarkdownModel } from '../../../components/vault/monacoModelRegistry'
+import { disposeMarkdownModel, renameMarkdownModel } from '../../../components/vault/monacoModelRegistry'
 import type { Tab } from '../../../components/vault/tabs'
 import { makeEmptyTab, pathToUrl, TAB_HARD_LIMIT, TAB_SOFT_LIMIT } from './tabState'
 import { useI18n } from '../../useI18n'
@@ -169,6 +169,33 @@ export function useTabWorkspace(options: {
     navigateTo(path)
   }
 
+  function renameOpenDocuments(mappings: ReadonlyArray<{ from: string; to: string }>): void {
+    const bySource = new Map(
+      mappings.filter(({ from, to }) => from && to && from !== to).map((item) => [item.from, item.to]),
+    )
+    if (bySource.size === 0) return
+    for (const [fromPath, nextPath] of bySource) {
+      const source = tabs.value.find((tab) => tab.path === fromPath)
+      if (!source) continue
+      const duplicateIndex = tabs.value.findIndex((tab) => tab !== source && tab.path === nextPath)
+      if (duplicateIndex !== -1) tabs.value.splice(duplicateIndex, 1)
+      renameMarkdownModel(fromPath, nextPath)
+      source.path = nextPath
+    }
+    // Replace the array identity so shallow persistence/watch consumers record
+    // non-active tab migrations too.
+    tabs.value = [...tabs.value]
+    const nextActive = activePath.value ? bySource.get(activePath.value) : null
+    if (nextActive) {
+      activePath.value = nextActive
+      navigateTo(nextActive)
+    }
+  }
+
+  function removeOpenDocuments(paths: readonly string[]): void {
+    closeManyConfirmed([...new Set(paths)])
+  }
+
   return {
     tree,
     posts,
@@ -185,6 +212,8 @@ export function useTabWorkspace(options: {
     confirmCloseMany,
     closeManyConfirmed,
     selectTab,
+    renameOpenDocuments,
+    removeOpenDocuments,
     navigateTo,
   }
 }

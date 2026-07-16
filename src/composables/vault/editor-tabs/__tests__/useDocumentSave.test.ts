@@ -214,6 +214,81 @@ describe('useExternalFileChanges editor-save acknowledgement', () => {
       serverMtime: 42,
     })
   })
+
+  it('ignores local lifecycle events before rename/delete external handling', async () => {
+    const current = makeTab('inbox/test', 'v2')
+    const tabs = ref([current])
+    const closeTab = vi.fn()
+    const openPost = vi.fn()
+    const confirm = vi.fn()
+    const external = useExternalFileChanges({
+      tabs,
+      activePath: ref('inbox/test'),
+      closeTab,
+      openPost,
+      navigateTo: vi.fn(),
+      confirm,
+      toastInfo: vi.fn(),
+      fileChanges: createVaultFileChanges(),
+    })
+    await external.applyExternalChange({
+      seq: 1, oldPath: 'inbox/test', path: 'inbox/renamed', kind: 'rename', source: 'editor-lifecycle',
+    })
+    await external.applyExternalChange({
+      seq: 2, path: 'inbox/test', kind: 'delete', source: 'editor-lifecycle',
+    })
+    expect(closeTab).not.toHaveBeenCalled()
+    expect(openPost).not.toHaveBeenCalled()
+    expect(confirm).not.toHaveBeenCalled()
+    expect(current).toMatchObject({ path: 'inbox/test', raw: 'v2', loadError: null })
+  })
+})
+
+describe('useDocumentSave lifecycle barriers', () => {
+  it('rollback resumes a dirty queued save while commit does not resume a deleted path', async () => {
+    vi.useFakeTimers()
+    const sent: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const raw = (JSON.parse(String(init?.body)) as { raw: string }).raw
+      sent.push(`${url}:${raw}`)
+      return ok(raw)
+    }))
+    const h = setupSave()
+    h.save.onEditorChange('inbox/test', 'dirty')
+    const rollback = await h.save.prepareDocumentMutation(['inbox/test'])
+    await vi.advanceTimersByTimeAsync(800)
+    expect(sent).toEqual([])
+    rollback.rollback()
+    await vi.advanceTimersByTimeAsync(800)
+    expect(sent).toEqual(['/api/posts/inbox/test:dirty'])
+
+    h.save.onEditorChange('inbox/test', 'new dirty')
+    const commit = await h.save.prepareDocumentMutation(['inbox/test'])
+    commit.commit()
+    await vi.advanceTimersByTimeAsync(800)
+    expect(sent).toHaveLength(1)
+  })
+
+  it('dispose isolates a pending PUT completion from tabs, events, refresh, and toast', async () => {
+    let finish!: (response: Response) => void
+    const pending = new Promise<Response>((resolve) => { finish = resolve })
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(pending))
+    const h = setupSave()
+    h.save.onEditorChange('inbox/test', 'changed')
+    const saving = h.save.doSave('inbox/test')
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+    h.save.disposeDocumentSave()
+
+    finish(ok('changed'))
+    await saving
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'changed', originalRaw: 'saved', savedRevision: 0, saveStatus: 'saving',
+    })
+    expect(h.fileChanges.events.value).toEqual([])
+    expect(h.refresh).not.toHaveBeenCalled()
+    expect(h.toastError).not.toHaveBeenCalled()
+  })
 })
 
 describe('useDocumentSave scheduling', () => {
