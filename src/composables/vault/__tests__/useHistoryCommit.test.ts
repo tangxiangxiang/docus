@@ -181,6 +181,38 @@ describe('useHistoryCommit', () => {
     )
   })
 
+  it('removes a repaired transaction locally when the status refresh fails', async () => {
+    vi.mocked(api.getIndexRepairStatus)
+      .mockResolvedValueOnce([repairTransaction])
+      .mockRejectedValueOnce(new Error('temporary failure'))
+    const commit = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await expect(commit.retryIndexRepair()).resolves.toBe(true)
+
+    expect(commit.indexRepairTransactions.value).toEqual([])
+    expect(commit.indexRepairPaths.value).toEqual([])
+  })
+
+  it('keeps a repaired transaction locally when its metadata cannot be cleared', async () => {
+    vi.mocked(api.getIndexRepairStatus)
+      .mockResolvedValueOnce([repairTransaction])
+      .mockRejectedValueOnce(new Error('temporary failure'))
+    vi.mocked(api.repairIndex).mockResolvedValue({
+      repaired: true,
+      repairStatePersistenceFailed: true,
+    })
+    const commit = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await expect(commit.retryIndexRepair()).resolves.toBe(true)
+
+    expect(commit.indexRepairTransactions.value).toEqual([repairTransaction])
+    expect(commit.indexRepairPaths.value).toEqual(['a.md'])
+  })
+
   it('restores persisted repair transactions when the Vault is recreated', async () => {
     vi.mocked(api.getIndexRepairStatus).mockResolvedValue([repairTransaction])
     const first = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
@@ -230,6 +262,22 @@ describe('useHistoryCommit', () => {
     expect(toast.success).toHaveBeenCalledWith(
       'Current staged changes were kept and the repair notice was dismissed.',
     )
+  })
+
+  it('removes a discarded transaction locally when the status refresh fails', async () => {
+    const superseded = { ...repairTransaction, status: 'superseded' as const }
+    vi.mocked(api.getIndexRepairStatus)
+      .mockResolvedValueOnce([superseded])
+      .mockRejectedValueOnce(new Error('temporary failure'))
+    const commit = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await expect(commit.discardConflictingIndexRepair()).resolves.toBe(true)
+
+    expect(commit.indexRepairTransactions.value).toEqual([])
+    expect(commit.indexRepairConflictToken.value).toBeNull()
+    expect(commit.indexRepairPaths.value).toEqual([])
   })
 
   it('keeps older pending repair paths after a later successful commit', async () => {

@@ -87,6 +87,14 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     )
   }
 
+  function removeIndexRepairToken(token: string): void {
+    setIndexRepairTransactions(
+      indexRepairTransactions.value.filter(
+        (transaction) => transaction.token !== token,
+      ),
+    )
+  }
+
   void refreshIndexRepairStatus()
 
   watch(
@@ -246,6 +254,9 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
       for (const transaction of indexRepairTransactions.value) {
         repairingToken = transaction.token
         const result = await repairIndex(transaction.token)
+        if (!result.repairStatePersistenceFailed) {
+          removeIndexRepairToken(transaction.token)
+        }
         repairStatePersistenceFailed ||= result.repairStatePersistenceFailed === true
       }
       await options.history.refreshStatus()
@@ -283,7 +294,7 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     error.value = null
     try {
       await discardIndexRepair(token)
-      indexRepairConflictToken.value = null
+      removeIndexRepairToken(token)
       await refreshIndexRepairStatus()
       toast.success(t('history.index_repair_discarded'))
       return true
