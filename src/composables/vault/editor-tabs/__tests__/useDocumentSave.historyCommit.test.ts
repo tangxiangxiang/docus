@@ -83,4 +83,50 @@ describe('useDocumentSave prepareHistoryCommit', () => {
     expect(current.raw).toBe('# Newer editor content')
     expect(current.saveStatus).toBe('dirty')
   })
+
+  it('commits the click-time snapshot and saves edits made behind the barrier afterward', async () => {
+    const current = tab()
+    let finishSnapshotSave!: (response: Response) => void
+    const snapshotSave = new Promise<Response>((resolve) => { finishSnapshotSave = resolve })
+    const fetchMock = vi.fn()
+      .mockReturnValueOnce(snapshotSave)
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ ok: true, raw: '# Typed after click' }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ))
+    vi.stubGlobal('fetch', fetchMock)
+    const save = useDocumentSave({
+      tabs: ref([current]),
+      posts: ref([]),
+      activePath: ref(current.path),
+      refresh: vi.fn(),
+      toastError: vi.fn(),
+    })
+
+    const preparing = save.prepareHistoryCommit(['inbox/a.md'])
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    save.onEditorChange(current.path, '# Typed after click')
+    await Promise.resolve()
+    expect(fetchMock).toHaveBeenCalledOnce()
+
+    finishSnapshotSave(new Response(
+      JSON.stringify({ ok: true, raw: '# Newer editor content' }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ))
+    const release = await preparing
+
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      body: JSON.stringify({ raw: '# Newer editor content' }),
+    }))
+    expect(current.raw).toBe('# Typed after click')
+    expect(current.revision).not.toBe(current.savedRevision)
+
+    await release()
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+      body: JSON.stringify({ raw: '# Typed after click' }),
+    }))
+    expect(current.revision).toBe(current.savedRevision)
+  })
 })

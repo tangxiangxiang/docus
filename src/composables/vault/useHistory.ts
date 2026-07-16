@@ -160,8 +160,8 @@ function getLegacyHistory(): HistoryInstance {
   return legacyHistory
 }
 
-export function useHistory(): HistoryState {
-  const context = useOptionalVaultContext()
+export function useHistory(contextOverride?: VaultContext): HistoryState {
+  const context = contextOverride ?? useOptionalVaultContext()
   if (!context) return getLegacyHistory().use()
 
   let history = historyByVault.get(context)

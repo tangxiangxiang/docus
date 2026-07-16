@@ -2,7 +2,8 @@
 import { mount, flushPromises } from '@vue/test-utils'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import HistoryPanel from '../HistoryPanel.vue'
-import { __resetHistoryStateForTesting } from '../../../composables/vault/useHistory'
+import { __resetHistoryStateForTesting, useHistory } from '../../../composables/vault/useHistory'
+import { useHistoryCommit } from '../../../composables/vault/useHistoryCommit'
 import { useI18n } from '../../../composables/useI18n'
 import * as api from '../../../lib/history-api'
 
@@ -37,6 +38,16 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+function mountPanel(options: any = {}) {
+  const { saveBeforeCommit = async () => {}, ...props } = options.props ?? {}
+  const history = useHistory()
+  const historyCommit = useHistoryCommit({ history, saveSelected: saveBeforeCommit })
+  return mount(HistoryPanel, {
+    ...options,
+    props: { ...props, history, commit: historyCommit },
+  })
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(NOW)
@@ -55,6 +66,33 @@ afterEach(() => {
 })
 
 describe('HistoryPanel document timeline', () => {
+  it('preserves message, selection, and single-flight state across sidebar remounts', async () => {
+    const dirty = [{ path: 'inbox/a.md', index: ' ', worktree: 'M' }]
+    vi.mocked(api.getStatus).mockResolvedValue({ dirty, available: true })
+    const request = deferred<api.CommitResult>()
+    vi.mocked(api.createCommit).mockReturnValue(request.promise)
+    const history = useHistory()
+    const historyCommit = useHistoryCommit({ history, saveSelected: vi.fn() })
+    let wrapper = mount(HistoryPanel, { props: { history, commit: historyCommit } })
+    await flushPromises()
+
+    await wrapper.get('#history-version-message').setValue('Persistent version')
+    await wrapper.get('.history-create-version').trigger('click')
+    await flushPromises()
+    expect(historyCommit.busy.value).toBe(true)
+    wrapper.unmount()
+
+    wrapper = mount(HistoryPanel, { props: { history, commit: historyCommit } })
+    expect((wrapper.get('#history-version-message').element as HTMLTextAreaElement).value).toBe('Persistent version')
+    expect(wrapper.get('input[type="checkbox"]').attributes('checked')).toBeDefined()
+    expect(wrapper.get('.history-create-version').attributes('disabled')).toBeDefined()
+    await wrapper.get('.history-create-version').trigger('click')
+    expect(api.createCommit).toHaveBeenCalledOnce()
+
+    request.resolve({ sha: 'new-version', filesCommitted: ['inbox/a.md'] })
+    await flushPromises()
+  })
+
   it('creates a version from only selected exact status paths after save coordination', async () => {
     const dirty = [
       { path: 'inbox/a.md', index: ' ', worktree: 'M' },
@@ -65,7 +103,7 @@ describe('HistoryPanel document timeline', () => {
       .mockResolvedValue({ dirty: [dirty[1]!], available: true })
     vi.mocked(api.createCommit).mockResolvedValue({ sha: 'new-version', filesCommitted: ['inbox/a.md'] })
     const saveBeforeCommit = vi.fn().mockResolvedValue(undefined)
-    const wrapper = mount(HistoryPanel, { props: { saveBeforeCommit } })
+    const wrapper = mountPanel({ props: { saveBeforeCommit } })
     await flushPromises()
 
     expect(wrapper.findAll('.history-change-row')).toHaveLength(2)
@@ -96,7 +134,7 @@ describe('HistoryPanel document timeline', () => {
         : (vi.mocked(api.createCommit).mock.calls.length ? [newCommit, oldCommit] : [oldCommit]),
     }))
     vi.mocked(api.createCommit).mockResolvedValue({ sha: 'new', filesCommitted: ['inbox/a.md'] })
-    const wrapper = mount(HistoryPanel, {
+    const wrapper = mountPanel({
       props: {
         posts: [{ path: 'inbox/a', title: 'A', created: '', updated: '', tags: [], size: 0, mtime: 0 }],
       },
@@ -119,7 +157,7 @@ describe('HistoryPanel document timeline', () => {
 
   it('distinguishes an initial Timeline failure from an empty repository and retries', async () => {
     vi.mocked(api.getLog).mockRejectedValueOnce(new Error('History API unavailable'))
-    const wrapper = mount(HistoryPanel)
+    const wrapper = mountPanel()
     await flushPromises()
 
     expect(wrapper.get('.history-error').text()).toContain('History API unavailable')
@@ -144,7 +182,7 @@ describe('HistoryPanel document timeline', () => {
         : commits,
     }))
 
-    const wrapper = mount(HistoryPanel, {
+    const wrapper = mountPanel({
       props: {
         posts: [
           { path: 'inbox/redis', title: 'Redis Notes', created: '', updated: '', tags: [], size: 0, mtime: 0 },
@@ -178,7 +216,7 @@ describe('HistoryPanel document timeline', () => {
     const only = commit('created-sha', NOW, 'Initial commit', ['inbox/first.md'])
     vi.mocked(api.getLog).mockResolvedValue({ commits: [only] })
 
-    const wrapper = mount(HistoryPanel, {
+    const wrapper = mountPanel({
       props: {
         posts: [{ path: 'inbox/first', title: 'First Note', created: '', updated: '', tags: [], size: 0, mtime: 0 }],
       },
@@ -202,7 +240,7 @@ describe('HistoryPanel document timeline', () => {
       return Promise.resolve({ commits: [a, b] })
     })
 
-    const wrapper = mount(HistoryPanel, {
+    const wrapper = mountPanel({
       props: {
         posts: [
           { path: 'inbox/a', title: 'Document A', created: '', updated: '', tags: [], size: 0, mtime: 0 },
@@ -237,7 +275,7 @@ describe('HistoryPanel document timeline', () => {
       commits: options.path ? [] : [global],
     }))
 
-    const wrapper = mount(HistoryPanel)
+    const wrapper = mountPanel()
     await flushPromises()
     await wrapper.get('.history-document-row').trigger('click')
     await flushPromises()
@@ -252,7 +290,7 @@ describe('HistoryPanel document timeline', () => {
     ))
     useI18n().setLocale('zh')
 
-    const wrapper = mount(HistoryPanel)
+    const wrapper = mountPanel()
     await flushPromises()
     await wrapper.get('.history-document-row').trigger('click')
     await flushPromises()
@@ -272,7 +310,7 @@ describe('HistoryPanel document timeline', () => {
 
     const host = document.createElement('div')
     document.body.appendChild(host)
-    const wrapper = mount(HistoryPanel, { attachTo: host })
+    const wrapper = mountPanel({ attachTo: host })
     await flushPromises()
     const rows = wrapper.findAll<HTMLButtonElement>('.history-document-row')
     rows[0]!.element.focus()
@@ -305,7 +343,7 @@ describe('HistoryPanel document timeline', () => {
     vi.mocked(api.getLog).mockReturnValue(new Promise((resolve) => { resolveLog = resolve }))
     useI18n().setLocale('zh')
 
-    const wrapper = mount(HistoryPanel)
+    const wrapper = mountPanel()
     await flushPromises()
     expect(wrapper.get('.history-title').text()).toBe('历史')
     expect(wrapper.get('.history-skeleton').attributes('aria-label')).toBe('正在加载历史记录…')

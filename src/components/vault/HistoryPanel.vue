@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, toRef } from 'vue'
+import { computed, nextTick, ref, toRef, watch } from 'vue'
 import type { PostSummary } from '../../lib/api'
-import { useHistory } from '../../composables/vault/useHistory'
-import { useHistoryCommit } from '../../composables/vault/useHistoryCommit'
+import type { HistoryState } from '../../composables/vault/useHistory'
+import type { HistoryCommitState } from '../../composables/vault/useHistoryCommit'
 import {
   toHistoryRevisionSelection,
   useHistoryTimeline,
@@ -19,17 +19,18 @@ import TimelineGroup from './TimelineGroup.vue'
 import TimelineRevisionRow from './TimelineRevisionRow.vue'
 
 const props = withDefaults(defineProps<{
+  history: HistoryState
+  commit: HistoryCommitState
   posts?: PostSummary[]
-  saveBeforeCommit?: (paths: readonly string[]) => Promise<void>
 }>(), {
   posts: () => [],
-  saveBeforeCommit: async () => {},
 })
 const emit = defineEmits<{
   'open-revision': [selection: HistoryRevisionSelection]
 }>()
 
-const h = useHistory()
+const h = props.history
+const commit = props.commit
 const { locale, t } = useI18n()
 const listbox = ref<HTMLElement | null>(null)
 
@@ -41,14 +42,10 @@ const timelineLabels = computed(() => ({
 }))
 
 const timeline = useHistoryTimeline(h, toRef(props, 'posts'), locale, timelineLabels)
-const commit = useHistoryCommit({
-  history: h,
-  saveSelected: props.saveBeforeCommit,
-  async refreshSelectedDocument(committedPaths) {
-    const document = timeline.selectedDocument.value
-    if (!document || !committedPaths.includes(`${document.path}.md`)) return
-    await timeline.selectDocument(document)
-  },
+watch(commit.completionId, async () => {
+  const document = timeline.selectedDocument.value
+  if (!document || !commit.lastCommittedPaths.value.includes(`${document.path}.md`)) return
+  await timeline.selectDocument(document)
 })
 const revisionsErrorLabel = computed(() => (
   timeline.revisionsError.value?.message || t('history.load_failed')

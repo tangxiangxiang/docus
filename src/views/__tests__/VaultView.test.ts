@@ -23,6 +23,15 @@ describe('VaultView editor tab wiring', () => {
     expect(source).not.toContain('activePanel === \'history\'" class="content content-diff"')
   })
 
+  it('owns Create Version coordination at Vault scope across sidebar remounts', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    expect(source).toContain('const historyCommit = useHistoryCommit({')
+    expect(source).toContain(':commit="historyCommit"')
+    expect(source).toContain('refreshComparisons(committedPaths)')
+    expect(source).not.toContain(':save-before-commit=')
+  })
+
   it('keeps Monaco mounted and isolates shortcuts for read-only history tabs', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const shortcutHandler = source.match(/function onVaultKeydown[\s\S]*?\n}/)?.[0]

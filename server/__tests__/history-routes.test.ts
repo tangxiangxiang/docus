@@ -106,6 +106,20 @@ describe('GET /api/history/status', () => {
     expect(byPath['inbox/a.md'].worktree).toBe('M')
     expect(byPath['inbox/b.md']).toEqual({ index: '?', worktree: '?', path: 'inbox/b.md' })
   })
+
+  it('hides non-Markdown files that the commit contract cannot accept', async () => {
+    await write('note.md', 'note')
+    await write('assets/image.png', 'not really a png')
+    await write('attachment.pdf', 'not really a pdf')
+
+    const r = await call('GET', '/status')
+    const body = await r.json() as { dirty: { path: string }[] }
+
+    const paths = body.dirty.map((entry) => entry.path)
+    expect(paths).toContain('note.md')
+    expect(paths).not.toContain('assets/image.png')
+    expect(paths).not.toContain('attachment.pdf')
+  })
 })
 
 describe('GET /api/history/log', () => {

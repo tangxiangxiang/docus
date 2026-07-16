@@ -158,13 +158,41 @@ describe('useHistoryCommit', () => {
     expect(h.status.value[0]?.path).toBe('b.md')
   })
 
-  it('refreshes the selected document only when the successful commit includes it', async () => {
+  it('refreshes existing comparisons after a successful commit', async () => {
     const h = history(['a.md'])
-    const refreshSelectedDocument = vi.fn()
+    const refreshComparisons = vi.fn()
     vi.mocked(api.createCommit).mockResolvedValue({ sha: 'abc', filesCommitted: ['a.md'] })
-    const commit = useHistoryCommit({ history: h, saveSelected: vi.fn(), refreshSelectedDocument })
+    const commit = useHistoryCommit({ history: h, saveSelected: vi.fn(), refreshComparisons })
     commit.message.value = 'Version'
     await commit.submit()
-    expect(refreshSelectedDocument).toHaveBeenCalledWith(['a.md'])
+    expect(refreshComparisons).toHaveBeenCalledWith(['a.md'])
+  })
+
+  it('keeps the barrier through commit and releases it before post-commit refreshes', async () => {
+    const h = history(['a.md'])
+    const calls: string[] = []
+    const release = vi.fn(async () => { calls.push('release') })
+    vi.mocked(h.refreshStatus).mockImplementation(async () => { calls.push('status') })
+    vi.mocked(h.refreshLog).mockImplementation(async () => { calls.push('log') })
+    vi.mocked(api.createCommit).mockImplementation(async () => {
+      calls.push('commit')
+      return { sha: 'abc', filesCommitted: ['a.md'] }
+    })
+    const commit = useHistoryCommit({
+      history: h,
+      saveSelected: vi.fn(async () => {
+        calls.push('barrier')
+        return release
+      }),
+    })
+    commit.message.value = 'Version'
+
+    await commit.submit()
+
+    expect(calls[0]).toBe('barrier')
+    expect(calls[1]).toBe('commit')
+    expect(calls[2]).toBe('release')
+    expect(calls.slice(3).sort()).toEqual(['log', 'status'])
+    expect(release).toHaveBeenCalledOnce()
   })
 })

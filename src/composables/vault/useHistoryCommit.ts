@@ -6,8 +6,8 @@ import type { HistoryState } from './useHistory'
 
 export interface HistoryCommitOptions {
   history: HistoryState
-  saveSelected(paths: readonly string[]): Promise<void>
-  refreshSelectedDocument?(committedPaths: readonly string[]): Promise<void>
+  saveSelected(paths: readonly string[]): Promise<void | (() => Promise<void>)>
+  refreshComparisons?(committedPaths: readonly string[]): Promise<void>
 }
 
 export function useHistoryCommit(options: HistoryCommitOptions) {
@@ -17,6 +17,8 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
   const message = ref('')
   const busy = ref(false)
   const error = ref<string | null>(null)
+  const lastCommittedPaths = ref<readonly string[]>([])
+  const completionId = ref(0)
   let initializedSelection = false
 
   watch(
@@ -65,7 +67,7 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
       options.history.refreshStatus(),
       options.history.refreshLog(),
     ])
-    await options.refreshSelectedDocument?.(paths)
+    await options.refreshComparisons?.(paths)
   }
 
   async function submit(): Promise<CommitResult | null> {
@@ -83,8 +85,9 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     }
 
     busy.value = true
+    let releaseBarrier: (() => Promise<void>) | null = null
     try {
-      await options.saveSelected(paths)
+      releaseBarrier = await options.saveSelected(paths) ?? null
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
       error.value = t('history.commit_save_failed', { error: detail })
@@ -95,11 +98,15 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
 
     try {
       const result = await createCommit(paths, versionMessage)
+      await releaseBarrier?.()
+      releaseBarrier = null
       await refreshAfterCommit(result.filesCommitted)
       selectedPaths.value = new Set(
         [...selectedPaths.value].filter((path) => !result.filesCommitted.includes(path)),
       )
       message.value = ''
+      lastCommittedPaths.value = result.filesCommitted
+      completionId.value += 1
       const success = result.filesCommitted.length === 1
         ? t('history.commit_success')
         : t('history.commit_success_count', { count: result.filesCommitted.length })
@@ -116,6 +123,7 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
       toast.error(error.value)
       return null
     } finally {
+      await releaseBarrier?.()
       busy.value = false
     }
   }
@@ -126,6 +134,8 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     message,
     busy,
     error,
+    lastCommittedPaths,
+    completionId,
     canCommit,
     toggle,
     selectAll,
@@ -133,3 +143,5 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     submit,
   }
 }
+
+export type HistoryCommitState = ReturnType<typeof useHistoryCommit>

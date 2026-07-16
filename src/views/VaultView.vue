@@ -8,6 +8,8 @@ import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useI18n } from '../composables/useI18n'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
+import { useHistory } from '../composables/vault/useHistory'
+import { useHistoryCommit } from '../composables/vault/useHistoryCommit'
 import { useHistorySnapshots, type HistoryRevisionSelection } from '../composables/vault/useHistorySnapshots'
 import {
   useHistoryRestore,
@@ -141,6 +143,9 @@ const {
   prepareHistoryRestore, onKeydown: onEditorKeydown, onCommandPaletteNew,
   prepareHistoryCommit,
 } = useEditorTabs({ selectPanel, toggleViewMode: () => viewModeApi?.toggle(), fileChanges })
+const vaultContext = createVaultContext({ vaultId, fileChanges, tabs, activePath, activeTab, openPost })
+provideVaultContext(vaultContext)
+onBeforeUnmount(() => { vaultContext.dispose() })
 const historySnapshots = useHistorySnapshots()
 const activeHistorySnapshot = historySnapshots.activeSnapshot
 const historyComparisons = useHistoryComparisons({
@@ -152,6 +157,16 @@ const historyComparisons = useHistoryComparisons({
   },
 })
 const activeHistoryComparison = historyComparisons.activeComparison
+const history = useHistory(vaultContext)
+const historyCommit = useHistoryCommit({
+  history,
+  saveSelected: prepareHistoryCommit,
+  async refreshComparisons(committedPaths) {
+    await Promise.all(committedPaths.map((path) => (
+      historyComparisons.refreshDocumentComparison(path.endsWith('.md') ? path.slice(0, -3) : path)
+    )))
+  },
+})
 
 function restoreSource(source: typeof activeHistorySnapshot.value | HistoryComparison): HistoryRestoreSource | null {
   if (!source || source.status !== 'ready') return null
@@ -393,9 +408,6 @@ async function viewHistoricalComparison(comparison: HistoryComparison): Promise<
   snapshotPaneRef.value?.focusViewer()
 }
 
-const vaultContext = createVaultContext({ vaultId, fileChanges, tabs, activePath, activeTab, openPost })
-provideVaultContext(vaultContext)
-onBeforeUnmount(() => { vaultContext.dispose() })
 const editorLinkTargets = computed(() => posts.value.map((post) => ({ path: post.path, title: post.title })))
 
 async function onMetadataSaved(metadata: DocumentMetadata) {
@@ -563,8 +575,9 @@ watch(isReadMode, async (reading) => {
     />
     <HistoryPanel
       v-else-if="activePanel === 'history'"
+      :history="history"
+      :commit="historyCommit"
       :posts="posts"
-      :save-before-commit="prepareHistoryCommit"
       @open-revision="openHistoryRevision"
     />
 

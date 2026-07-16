@@ -13,8 +13,10 @@ export function useDocumentSave(options: {
   const { t } = useI18n()
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
   const savePromises = new Map<string, Promise<void>>()
+  const commitBarriers = new Map<string, { revision: number; raw: string }>()
 
   function scheduleSave(path: string, delay = 800) {
+    if (commitBarriers.has(path)) return
     const current = saveTimers.get(path)
     if (current) clearTimeout(current)
     saveTimers.set(path, setTimeout(() => {
@@ -26,12 +28,13 @@ export function useDocumentSave(options: {
   async function saveLatest(path: string): Promise<void> {
     const tab = options.tabs.value.find((candidate) => candidate.path === path)
     if (!tab) return
-    if (tab.revision === tab.savedRevision) {
+    const barrier = commitBarriers.get(path)
+    if (barrier ? tab.savedRevision >= barrier.revision : tab.revision === tab.savedRevision) {
       tab.saveStatus = 'idle'
       return
     }
-    const sentRevision = tab.revision
-    const sentVersion = tab.raw
+    const sentRevision = barrier?.revision ?? tab.revision
+    const sentVersion = barrier?.raw ?? tab.raw
     tab.savingRevision = sentRevision
     tab.saveStatus = 'saving'
     tab.error = null
@@ -70,6 +73,8 @@ export function useDocumentSave(options: {
       do {
         await saveLatest(path)
         const tab = options.tabs.value.find((candidate) => candidate.path === path)
+        const barrier = commitBarriers.get(path)
+        if (barrier && (!tab || tab.savedRevision >= barrier.revision)) break
         if (!tab || ['error', 'offline', 'external'].includes(tab.saveStatus)
             || tab.revision === tab.savedRevision) break
       } while (true)
@@ -101,21 +106,47 @@ export function useDocumentSave(options: {
     if (options.activePath.value) await doSave(options.activePath.value)
   }
 
-  async function prepareHistoryCommit(historyPaths: readonly string[]): Promise<void> {
+  async function prepareHistoryCommit(historyPaths: readonly string[]): Promise<() => Promise<void>> {
     const appPaths = historyPaths.map((path) => path.endsWith('.md') ? path.slice(0, -3) : path)
+    const barrierPaths: string[] = []
+    for (const path of appPaths) {
+      const tab = options.tabs.value.find((candidate) => candidate.path === path)
+      if (!tab) continue
+      commitBarriers.set(path, { revision: tab.revision, raw: tab.raw })
+      barrierPaths.push(path)
+    }
+
+    let released = false
+    const release = async (): Promise<void> => {
+      if (released) return
+      released = true
+      for (const path of barrierPaths) commitBarriers.delete(path)
+      await Promise.all(barrierPaths.map(async (path) => {
+        const tab = options.tabs.value.find((candidate) => candidate.path === path)
+        if (tab && tab.revision !== tab.savedRevision) await doSave(path)
+      }))
+    }
+
     for (const path of appPaths) {
       const timer = saveTimers.get(path)
       if (timer) clearTimeout(timer)
       saveTimers.delete(path)
     }
 
-    for (const path of appPaths) {
-      const tab = options.tabs.value.find((candidate) => candidate.path === path)
-      if (!tab || tab.revision === tab.savedRevision) continue
-      await doSave(path)
-      if (tab.revision !== tab.savedRevision || ['error', 'offline', 'external'].includes(tab.saveStatus)) {
-        throw new Error(tab.error || t('editor.save_failed', { error: path }))
+    try {
+      for (const path of barrierPaths) {
+        const tab = options.tabs.value.find((candidate) => candidate.path === path)
+        const barrier = commitBarriers.get(path)
+        if (!tab || !barrier) continue
+        if (tab.savedRevision < barrier.revision) await doSave(path)
+        if (tab.savedRevision < barrier.revision || ['error', 'offline', 'external'].includes(tab.saveStatus)) {
+          throw new Error(tab.error || t('editor.save_failed', { error: path }))
+        }
       }
+      return release
+    } catch (error) {
+      await release()
+      throw error
     }
   }
 
@@ -153,6 +184,7 @@ export function useDocumentSave(options: {
   function disposeDocumentSave() {
     for (const timer of saveTimers.values()) clearTimeout(timer)
     saveTimers.clear()
+    commitBarriers.clear()
   }
 
   return {

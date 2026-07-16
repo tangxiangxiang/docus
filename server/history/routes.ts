@@ -149,7 +149,7 @@ history.get('/status', async (c) => {
   try {
     await ensureRepo(repoRoot())
     const dirty = (await git.status(repoRoot()))
-      .filter((entry) => !isManagedHistoryPath(entry.path))
+      .filter((entry) => !isManagedHistoryPath(entry.path) && isValidHistoryPath(entry.path))
     return c.json({ dirty, available: true })
   } catch (e: any) {
     return bad(c, e.message ?? 'status failed', 500)
