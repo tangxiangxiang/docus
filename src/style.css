@@ -627,7 +627,30 @@ main.container {
 .history-change-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-change-copy strong { color: var(--vs-text-1); font-size: 0.78rem; font-weight: 500; }
 .history-change-copy span { color: var(--vs-text-3); font-size: 0.64rem; }
-.history-change-status { flex: 0 0 auto; color: var(--vs-text-3); font-size: 0.64rem; }
+.history-change-status {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 500;
+  line-height: 1.2;
+}
+.history-change-status.is-new {
+  border-color: color-mix(in srgb, #16a34a 24%, transparent);
+  background: color-mix(in srgb, #16a34a 10%, transparent);
+  color: color-mix(in srgb, #16a34a 82%, var(--vs-text-1));
+}
+.history-change-status.is-modified {
+  border-color: color-mix(in srgb, var(--vs-accent) 24%, transparent);
+  background: color-mix(in srgb, var(--vs-accent) 10%, transparent);
+  color: color-mix(in srgb, var(--vs-accent) 82%, var(--vs-text-1));
+}
+.history-change-status.is-deleted {
+  border-color: color-mix(in srgb, #ef4444 24%, transparent);
+  background: color-mix(in srgb, #ef4444 9%, transparent);
+  color: color-mix(in srgb, #ef4444 82%, var(--vs-text-1));
+}
 .history-changes-empty { padding: 7px 9px 11px; color: var(--vs-text-3); font-size: 0.74rem; }
 .history-version-composer {
   box-sizing: border-box;

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import type { StatusEntry } from '../../lib/history-api'
 import { useI18n } from '../../composables/useI18n'
@@ -32,6 +33,9 @@ const emit = defineEmits<{
   'discard-index-repair': []
 }>()
 const { t } = useI18n()
+const allSelected = computed(() => (
+  props.entries.length > 0 && props.entries.every((entry) => props.selectedPaths.has(entry.path))
+))
 
 function displayName(path: string): string {
   const name = path.split('/').pop() ?? path
@@ -49,8 +53,19 @@ function statusKey(entry: StatusEntry): string {
   return 'history.change_modified'
 }
 
+function statusTone(entry: StatusEntry): 'new' | 'deleted' | 'modified' {
+  if (entry.index === '?' || entry.worktree === '?' || entry.index === 'A') return 'new'
+  if (entry.index === 'D' || entry.worktree === 'D') return 'deleted'
+  return 'modified'
+}
+
 function onMessage(event: Event): void {
   emit('update:message', (event.target as HTMLTextAreaElement).value)
+}
+
+function toggleAll(): void {
+  if (allSelected.value) emit('clear-selection')
+  else emit('select-all')
 }
 </script>
 
@@ -61,11 +76,8 @@ function onMessage(event: Event): void {
         <h2 id="history-changes-title">{{ t('history.changes') }}</h2>
         <span>{{ entries.length }}</span>
         <span class="history-changes-actions">
-          <button type="button" :disabled="busy || mutationLocked || entries.length === 0" @click="emit('select-all')">
-            {{ t('history.select_all') }}
-          </button>
-          <button type="button" :disabled="busy || mutationLocked || selectedPaths.size === 0" @click="emit('clear-selection')">
-            {{ t('history.clear_selection') }}
+          <button type="button" :disabled="busy || mutationLocked || entries.length === 0" @click="toggleAll">
+            {{ t(allSelected ? 'history.clear_selection' : 'history.select_all') }}
           </button>
         </span>
       </header>
@@ -87,7 +99,7 @@ function onMessage(event: Event): void {
               <strong>{{ displayTitle(entry.path) }}</strong>
               <span :title="entry.path">{{ entry.path }}</span>
             </span>
-            <span class="history-change-status">{{ t(statusKey(entry)) }}</span>
+            <span class="history-change-status" :class="`is-${statusTone(entry)}`">{{ t(statusKey(entry)) }}</span>
           </label>
         </li>
       </ul>

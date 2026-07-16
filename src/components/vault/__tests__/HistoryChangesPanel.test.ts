@@ -57,7 +57,7 @@ describe('HistoryChangesPanel', () => {
     ])
   })
 
-  it('emits select-all, clear, message, and keyboard submission intents', async () => {
+  it('toggles the single selection action and emits message and keyboard submission intents', async () => {
     const wrapper = mount(HistoryChangesPanel, {
       props: {
         entries,
@@ -68,9 +68,12 @@ describe('HistoryChangesPanel', () => {
         error: null,
       },
     })
-    const actionButtons = wrapper.findAll('.history-changes-actions button')
-    await actionButtons[0]!.trigger('click')
-    await actionButtons[1]!.trigger('click')
+    const action = wrapper.get('.history-changes-actions button')
+    expect(action.text()).toBe('Select all')
+    await action.trigger('click')
+    await wrapper.setProps({ selectedPaths: new Set(entries.map((entry) => entry.path)) })
+    expect(action.text()).toBe('Deselect all')
+    await action.trigger('click')
     await wrapper.get('textarea').setValue('Next version')
     await wrapper.get('textarea').trigger('keydown', { key: 'Enter', ctrlKey: true })
     expect(wrapper.emitted('select-all')).toHaveLength(1)
