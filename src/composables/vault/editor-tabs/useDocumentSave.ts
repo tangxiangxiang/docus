@@ -2,12 +2,14 @@ import type { Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
 import type { PostSummary } from '../../../lib/api'
 import { useI18n } from '../../useI18n'
+import type { VaultFileChanges } from '../context/fileChanges'
 
 export function useDocumentSave(options: {
   tabs: Ref<Tab[]>
   posts: Ref<PostSummary[]>
   activePath: Ref<string | null>
   refresh: () => Promise<void>
+  fileChanges: VaultFileChanges
   toastError: (message: string) => void
 }) {
   const { t } = useI18n()
@@ -25,6 +27,14 @@ export function useDocumentSave(options: {
     }, delay))
   }
 
+  function cancelScheduledSave(path: string): boolean {
+    const timer = saveTimers.get(path)
+    if (!timer) return false
+    clearTimeout(timer)
+    saveTimers.delete(path)
+    return true
+  }
+
   async function saveLatest(path: string): Promise<void> {
     const tab = options.tabs.value.find((candidate) => candidate.path === path)
     if (!tab) return
@@ -38,6 +48,7 @@ export function useDocumentSave(options: {
     tab.savingRevision = sentRevision
     tab.saveStatus = 'saving'
     tab.error = null
+    let data: { ok: true; raw: string }
     try {
       const response = await fetch('/api/posts/' + encodeURI(path), {
         method: 'PUT',
@@ -45,7 +56,16 @@ export function useDocumentSave(options: {
         body: JSON.stringify({ raw: sentVersion }),
       })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const data = (await response.json()) as { ok: true; raw: string }
+      data = (await response.json()) as { ok: true; raw: string }
+    } catch (error) {
+      tab.saveStatus = typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error'
+      tab.error = (error as Error).message
+      options.toastError(t('editor.save_failed', { error: tab.error }))
+      tab.savingRevision = null
+      return
+    }
+
+    try {
       if (tab.raw === sentVersion) {
         tab.raw = data.raw
         tab.originalRaw = data.raw
@@ -54,15 +74,21 @@ export function useDocumentSave(options: {
       }
       tab.savedRevision = sentRevision
       tab.saveStatus = tab.revision === sentRevision ? 'saved' : 'dirty'
+      options.fileChanges.publish({
+        path,
+        kind: 'write',
+        source: 'editor-save',
+      })
+    } finally {
+      tab.savingRevision = null
+    }
+
+    try {
       await options.refresh()
       const post = options.posts.value.find((candidate) => candidate.path === path)
       if (post) tab.serverMtime = post.mtime
     } catch (error) {
-      tab.saveStatus = typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error'
-      tab.error = (error as Error).message
-      options.toastError(t('editor.save_failed', { error: tab.error }))
-    } finally {
-      tab.savingRevision = null
+      console.warn(`[useDocumentSave] Saved ${path}, but Vault refresh failed`, error)
     }
   }
 
@@ -103,7 +129,10 @@ export function useDocumentSave(options: {
   }
 
   async function doSaveNow() {
-    if (options.activePath.value) await doSave(options.activePath.value)
+    const path = options.activePath.value
+    if (!path) return
+    cancelScheduledSave(path)
+    await doSave(path)
   }
 
   async function prepareHistoryCommit(historyPaths: readonly string[]): Promise<(
@@ -131,9 +160,7 @@ export function useDocumentSave(options: {
     }
 
     for (const path of appPaths) {
-      const timer = saveTimers.get(path)
-      if (timer) clearTimeout(timer)
-      saveTimers.delete(path)
+      cancelScheduledSave(path)
     }
 
     try {
@@ -154,14 +181,10 @@ export function useDocumentSave(options: {
   }
 
   async function prepareHistoryRestore(path: string): Promise<void> {
-    const timer = saveTimers.get(path)
-    if (timer) clearTimeout(timer)
-    saveTimers.delete(path)
+    cancelScheduledSave(path)
     await savePromises.get(path)
     // A save that was already in flight may have scheduled another pass.
-    const trailingTimer = saveTimers.get(path)
-    if (trailingTimer) clearTimeout(trailingTimer)
-    saveTimers.delete(path)
+    cancelScheduledSave(path)
   }
 
   async function prepareDocumentClose(paths: readonly string[]): Promise<void> {
@@ -170,17 +193,13 @@ export function useDocumentSave(options: {
     // the server starts writing, so wait for its complete serialized save
     // chain before deciding whether a dirty confirmation is still needed.
     for (const path of paths) {
-      const timer = saveTimers.get(path)
-      if (timer) clearTimeout(timer)
-      saveTimers.delete(path)
+      cancelScheduledSave(path)
     }
     await Promise.allSettled(
       paths.map((path) => savePromises.get(path)).filter((promise): promise is Promise<void> => Boolean(promise)),
     )
     for (const path of paths) {
-      const timer = saveTimers.get(path)
-      if (timer) clearTimeout(timer)
-      saveTimers.delete(path)
+      cancelScheduledSave(path)
     }
   }
 

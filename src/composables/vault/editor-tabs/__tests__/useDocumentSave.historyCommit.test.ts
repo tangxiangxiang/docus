@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDocumentSave } from '../useDocumentSave'
 import type { Tab } from '../../../../components/vault/tabs'
+import { createVaultFileChanges } from '../../context/fileChanges'
 
 function tab(overrides: Partial<Tab> = {}): Tab {
   return {
@@ -37,6 +38,7 @@ describe('useDocumentSave prepareHistoryCommit', () => {
       posts: ref([]),
       activePath: ref(current.path),
       refresh: vi.fn(),
+      fileChanges: createVaultFileChanges(),
       toastError: vi.fn(),
     })
 
@@ -58,6 +60,7 @@ describe('useDocumentSave prepareHistoryCommit', () => {
       posts: ref([]),
       activePath: ref(current.path),
       refresh: vi.fn(),
+      fileChanges: createVaultFileChanges(),
       toastError: vi.fn(),
     })
 
@@ -76,6 +79,7 @@ describe('useDocumentSave prepareHistoryCommit', () => {
       posts: ref([]),
       activePath: ref(current.path),
       refresh: vi.fn(),
+      fileChanges: createVaultFileChanges(),
       toastError: vi.fn(),
     })
 
@@ -101,6 +105,7 @@ describe('useDocumentSave prepareHistoryCommit', () => {
       posts: ref([]),
       activePath: ref(current.path),
       refresh: vi.fn(),
+      fileChanges: createVaultFileChanges(),
       toastError: vi.fn(),
     })
 
@@ -143,6 +148,7 @@ describe('useDocumentSave prepareHistoryCommit', () => {
       posts: ref([]),
       activePath: ref(current.path),
       refresh: vi.fn(),
+      fileChanges: createVaultFileChanges(),
       toastError: vi.fn(),
     })
     const release = await save.prepareHistoryCommit(['inbox/a.md'])

@@ -76,6 +76,7 @@ export function useEditorTabs(opts: {
     posts,
     activePath,
     refresh,
+    fileChanges,
     toastError: toast.error,
   })
 

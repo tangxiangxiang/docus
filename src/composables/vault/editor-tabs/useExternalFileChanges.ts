@@ -46,6 +46,14 @@ export function useExternalFileChanges(options: {
 
     const tab = options.tabs.value.find((candidate) => candidate.path === event.path)
     if (!tab) return
+    // An editor save is an acknowledgement from this same editor/save
+    // coordinator. Other Vault consumers still need the event, but feeding the
+    // saved snapshot back through the external-change path would reset status
+    // or prompt over newer unsaved input. Only accept trusted metadata here.
+    if (event.source === 'editor-save') {
+      tab.serverMtime = event.newMtime ?? tab.serverMtime
+      return
+    }
     // History restore updates the owning tab synchronously before publishing.
     // Other consumers still need the event, but the editor must not treat its
     // own applied restore as a second external overwrite.

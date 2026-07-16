@@ -275,6 +275,19 @@ describe('useCurrentNote — file-change bus', () => {
     await flushPromises()
     expect(note.content.value).toBe('A')
   })
+
+  it('keeps live v2 content when an editor-save acknowledgement arrives', async () => {
+    const live = getLiveTabs()!
+    live.value = [makeTab({ path: 'a.md', raw: 'v2', originalRaw: 'v1' })]
+    const { note } = await mountAtRoute('/vault/a.md')
+    expect(note.content.value).toBe('v2')
+
+    testFileChanges.publish({ path: 'a.md', kind: 'write', source: 'editor-save' })
+    await flushPromises()
+
+    expect(note.content.value).toBe('v2')
+    expect(testFileChanges.events.value[0]).not.toHaveProperty('newRaw')
+  })
 })
 
 // Regression: the production router (src/router/index.ts) declares TWO
