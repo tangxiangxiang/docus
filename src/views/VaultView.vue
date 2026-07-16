@@ -215,9 +215,9 @@ const historyRestore = useHistoryRestore({
     toast.info(t('history.document_mutation_in_progress'))
     void nextTick(() => {
       if (activeHistorySnapshot.value?.documentPath === request.documentPath) {
-        snapshotPaneRef.value?.focusRestore()
+        snapshotPaneRef.value?.focusViewer()
       } else if (activeHistoryComparison.value?.documentPath === request.documentPath) {
-        comparisonPaneRef.value?.focusRestore()
+        comparisonPaneRef.value?.focusViewer()
       }
     })
   },

@@ -312,7 +312,7 @@ history.post('/commits', async (c) => {
     return c.json(r, 201)
   } catch (e: any) {
     const msg = e.message ?? 'commit failed'
-    if (/nothing to commit|selection is stale|content changed before commit/i.test(msg)) {
+    if (/nothing to commit|selection is stale|content changed before commit|repository changed before commit/i.test(msg)) {
       return bad(c, msg, 409)
     }
     return bad(c, msg, 500)

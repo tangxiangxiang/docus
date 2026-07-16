@@ -476,6 +476,7 @@ async function ensureAuthorIdentity(repoRoot: string): Promise<void> {
 export type CommitResult = {
   sha: string
   filesCommitted: string[]
+  indexRefreshFailed?: boolean
 }
 
 export type ExpectedContentHashes = Record<string, string | null>
@@ -534,6 +535,8 @@ export async function addAndCommit(
   options: {
     expected?: ExpectedContentHashes
     beforeStageForTesting?: () => Promise<void>
+    beforeUpdateRefForTesting?: () => Promise<void>
+    syncIndexForTesting?: (commitSha: string) => Promise<RunResult>
   } = {},
 ): Promise<CommitResult> {
   if (paths.length === 0) {
@@ -611,37 +614,54 @@ export async function addAndCommit(
       const add = await run(repoRoot, ['add', '--', ...paths], { env: indexEnv })
       if (add.status !== 0) throw new Error(`git add failed: ${add.stderr.trim()}`)
     }
-  // Limit the commit itself to the paths selected in the History panel.
-  // The index may contain files staged outside docus; a bare `git commit`
-  // would silently sweep those unrelated files into this commit.
-  const commit = await run(repoRoot, ['commit', '-m', message], { env: indexEnv })
-  if (commit.status !== 0) {
-    // "nothing to commit" is a normal caller's error, not a git failure.
-    // The wording varies across git versions ("nothing to commit, working
-    // tree clean" / "no changes added to commit" / "Your branch is up to
-    // date" with a hint to add). Match a substring that all of them
-    // share: "nothing" or "no changes" within a "to commit" context.
-    const all = `${commit.stdout}\n${commit.stderr}`
-    if (/nothing.*to commit/i.test(all) || /no changes added to commit/i.test(all)) {
-      throw new Error('nothing to commit')
+  const tree = await run(repoRoot, ['write-tree'], { env: indexEnv })
+  if (tree.status !== 0) throw new Error(`git write-tree failed: ${tree.stderr.trim()}`)
+  const treeSha = tree.stdout.trim()
+  if (headBefore.status === 0) {
+    const previousTree = await run(repoRoot, ['rev-parse', `${headBefore.stdout.trim()}^{tree}`])
+    if (previousTree.status !== 0) {
+      throw new Error(`git rev-parse tree failed: ${previousTree.stderr.trim()}`)
     }
-    throw new Error(`git commit failed: ${commit.stderr.trim() || commit.stdout.trim()}`)
+    if (previousTree.stdout.trim() === treeSha) throw new Error('nothing to commit')
   }
-  // Read the just-created sha via `git rev-parse HEAD` rather than
-  // scraping commit's stdout (different git versions format the
-  // "1 file changed" summary differently).
-  const head = await run(repoRoot, ['rev-parse', 'HEAD'])
-  if (head.status !== 0) {
-    throw new Error(`git rev-parse HEAD failed: ${head.stderr.trim()}`)
+
+  const commitArgs = ['commit-tree', treeSha]
+  if (headBefore.status === 0) commitArgs.push('-p', headBefore.stdout.trim())
+  commitArgs.push('-m', message)
+  const commit = await run(repoRoot, commitArgs)
+  if (commit.status !== 0) {
+    throw new Error(`git commit-tree failed: ${commit.stderr.trim() || commit.stdout.trim()}`)
   }
-  // And the files that the commit actually touched.
-  const show = await run(repoRoot, ['show', '--name-only', '--pretty=', 'HEAD'])
+  const commitSha = commit.stdout.trim()
+
+  await options.beforeUpdateRefForTesting?.()
+  const expectedHead = headBefore.status === 0 ? headBefore.stdout.trim() : '0'.repeat(40)
+  const updateHead = await run(repoRoot, ['update-ref', 'HEAD', commitSha, expectedHead])
+  if (updateHead.status !== 0) throw new Error('repository changed before commit')
+
+  // Query the immutable commit we created, never the mutable HEAD ref.
+  const show = await run(repoRoot, ['show', '--name-only', '--pretty=', commitSha])
   const filesCommitted = show.status === 0
     ? show.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
     : paths
-  const syncIndex = await run(repoRoot, ['reset', '-q', 'HEAD', '--', ...paths])
-  if (syncIndex.status !== 0) throw new Error(`git reset index failed: ${syncIndex.stderr.trim()}`)
-  return { sha: head.stdout.trim(), filesCommitted }
+
+  // HEAD is already committed. Index repair is auxiliary and must never turn
+  // a successful version into an API failure. Retry transient index.lock
+  // contention, bind reset to our immutable SHA, and report degradation.
+  let indexRefreshFailed = true
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const currentHead = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
+    if (currentHead.status !== 0 || currentHead.stdout.trim() !== commitSha) break
+    const syncIndex = options.syncIndexForTesting
+      ? await options.syncIndexForTesting(commitSha)
+      : await run(repoRoot, ['reset', '-q', commitSha, '--', ...paths])
+    if (syncIndex.status === 0) {
+      indexRefreshFailed = false
+      break
+    }
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)))
+  }
+  return { sha: commitSha, filesCommitted, indexRefreshFailed }
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true })
   }

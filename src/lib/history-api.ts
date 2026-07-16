@@ -152,6 +152,7 @@ export async function getDiff(path: string, oldRef: string, newRef: string): Pro
 export interface CommitResult {
   sha: string
   filesCommitted: string[]
+  indexRefreshFailed?: boolean
 }
 
 export type ContentHashes = Record<string, string | null>

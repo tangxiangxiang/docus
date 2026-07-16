@@ -116,12 +116,13 @@ describe('HistoryComparisonPane', () => {
 
   it('exposes a focus target for the comparison viewer', () => {
     const wrapper = mount(HistoryComparisonPane, {
-      props: { comparison: comparison() },
+      props: { comparison: comparison(), mutationLocked: true },
       attachTo: document.body,
       global: { stubs: { SideBySideDiff: true } },
     })
     wrapper.vm.focusViewer()
     expect(document.activeElement).toBe(wrapper.get('h2').element)
+    expect(document.activeElement).not.toBe(wrapper.get('.history-restore-button').element)
     wrapper.unmount()
   })
 })

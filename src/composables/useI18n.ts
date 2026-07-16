@@ -286,6 +286,8 @@ const STRINGS: Strings = {
   'history.commit_stale': { zh: '部分所选文档已不再有更改。已刷新列表，请检查后重试。{error}', en: 'Some selected documents are no longer changed. Review the refreshed list and retry. {error}' },
   'history.commit_save_failed': { zh: '保存所选文档失败，未创建版本：{error}', en: 'Could not save the selected documents, so no version was created: {error}' },
   'history.document_mutation_in_progress': { zh: '此文档正在执行其他更改，请稍后重试。', en: 'Another change is in progress for this document. Try again shortly.' },
+  'history.commit_index_refresh_failed': { zh: '版本已创建，但 Git 状态同步失败。请稍后刷新重试。', en: 'Version created, but Git status could not be synchronized. Try refreshing shortly.' },
+  'history.commit_repository_changed': { zh: '仓库在创建版本前发生了变化。已刷新状态，请检查后重试。', en: 'The repository changed before the version could be created. Review the refreshed status and retry.' },
   'history.today': { zh: '今天', en: 'Today' },
   'history.yesterday': { zh: '昨天', en: 'Yesterday' },
   'history.last_week': { zh: '上周', en: 'Last Week' },

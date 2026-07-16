@@ -268,6 +268,44 @@ describe('addAndCommit + log', () => {
     }))
   })
 
+  it('rejects with CAS conflict when HEAD changes before update-ref', async () => {
+    await write('selected.md', 'selected snapshot')
+    const expected = {
+      'selected.md': createHash('sha256').update('selected snapshot').digest('hex'),
+    }
+
+    await expect(git.addAndCommit(root, ['selected.md'], 'must lose CAS', {
+      expected,
+      beforeUpdateRefForTesting: async () => {
+        await write('other.md', 'external commit')
+        expect((await git.run(root, ['add', '--', 'other.md'])).status).toBe(0)
+        expect((await git.run(root, ['commit', '-m', 'external'])).status).toBe(0)
+      },
+    })).rejects.toThrow('repository changed before commit')
+
+    expect(await git.rawAt(root, 'HEAD', 'other.md')).toBe('external commit')
+    expect(await git.rawAt(root, 'HEAD', 'selected.md')).toBeNull()
+  })
+
+  it('reports index refresh degradation after a successful CAS commit', async () => {
+    await write('a.md', 'snapshot')
+    const syncIndexForTesting = vi.fn().mockResolvedValue({
+      status: 1,
+      stdout: '',
+      stderr: 'index.lock exists',
+    })
+    const result = await git.addAndCommit(root, ['a.md'], 'committed', {
+      expected: {
+        'a.md': createHash('sha256').update('snapshot').digest('hex'),
+      },
+      syncIndexForTesting,
+    })
+
+    expect(result.indexRefreshFailed).toBe(true)
+    expect(syncIndexForTesting).toHaveBeenCalledTimes(3)
+    expect(await git.rawAt(root, result.sha, 'a.md')).toBe('snapshot')
+  })
+
   it('rejects an empty path list', async () => {
     await expect(git.addAndCommit(root, [], 'x')).rejects.toThrow(/path/i)
   })

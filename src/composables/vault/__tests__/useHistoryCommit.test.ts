@@ -221,4 +221,41 @@ describe('useHistoryCommit', () => {
     expect(toast.info).toHaveBeenCalledWith(commit.error.value)
     expect(api.getContentHashes).not.toHaveBeenCalled()
   })
+
+  it('treats index refresh degradation as a successful version with a warning', async () => {
+    const h = history(['a.md'])
+    vi.mocked(api.createCommit).mockResolvedValue({
+      sha: 'abc',
+      filesCommitted: ['a.md'],
+      indexRefreshFailed: true,
+    })
+    const commit = useHistoryCommit({ history: h, saveSelected: vi.fn() })
+    commit.message.value = 'Version'
+
+    await expect(commit.submit()).resolves.toMatchObject({ sha: 'abc' })
+
+    expect(commit.message.value).toBe('')
+    expect(commit.selectedPaths.value.size).toBe(0)
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(toast.info).toHaveBeenCalledWith(
+      'Version created, but Git status could not be synchronized. Try refreshing shortly.',
+      5000,
+    )
+  })
+
+  it('reports an external HEAD CAS conflict distinctly and refreshes status', async () => {
+    const h = history(['a.md'])
+    vi.mocked(api.createCommit).mockRejectedValue(
+      new api.HistoryApiError('repository changed before commit', 409),
+    )
+    const commit = useHistoryCommit({ history: h, saveSelected: vi.fn() })
+    commit.message.value = 'Version'
+
+    await commit.submit()
+
+    expect(h.refreshStatus).toHaveBeenCalledOnce()
+    expect(commit.error.value).toBe(
+      'The repository changed before the version could be created. Review the refreshed status and retry.',
+    )
+  })
 })

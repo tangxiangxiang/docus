@@ -85,12 +85,13 @@ describe('HistorySnapshotPane', () => {
 
   it('exposes a focus target for the read-only viewer', () => {
     const wrapper = mount(HistorySnapshotPane, {
-      props: { snapshot: snapshot() },
+      props: { snapshot: snapshot(), mutationLocked: true },
       attachTo: document.body,
       global: { stubs: { ReadingPane: true } },
     })
     wrapper.vm.focusViewer()
     expect(document.activeElement).toBe(wrapper.get('h2').element)
+    expect(document.activeElement).not.toBe(wrapper.get('.history-restore-button').element)
     wrapper.unmount()
   })
 })

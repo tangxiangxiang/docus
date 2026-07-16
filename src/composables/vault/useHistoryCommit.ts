@@ -133,13 +133,19 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
       const success = result.filesCommitted.length === 1
         ? t('history.commit_success')
         : t('history.commit_success_count', { count: result.filesCommitted.length })
-      toast.success(success)
+      if (result.indexRefreshFailed) {
+        toast.info(t('history.commit_index_refresh_failed'), 5000)
+      } else {
+        toast.success(success)
+      }
       return result
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
       if (cause instanceof HistoryApiError && cause.status === 409) {
         await options.history.refreshStatus()
-        error.value = t('history.commit_stale', { error: detail })
+        error.value = /repository changed before commit/i.test(detail)
+          ? t('history.commit_repository_changed')
+          : t('history.commit_stale', { error: detail })
       } else {
         error.value = t('history.commit_failed', { error: detail })
       }
