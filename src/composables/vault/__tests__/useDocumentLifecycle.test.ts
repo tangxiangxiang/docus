@@ -33,7 +33,10 @@ function saveResponse(raw: string): Response {
   })
 }
 
-function setup(initialTabs: Tab[] = [tab()]) {
+function setup(
+  initialTabs: Tab[] = [tab()],
+  applyReferenceWrites = vi.fn().mockResolvedValue(undefined),
+) {
   const tabs = ref(initialTabs)
   const posts = ref([])
   const activePath = ref(initialTabs[0]?.path ?? null)
@@ -54,6 +57,8 @@ function setup(initialTabs: Tab[] = [tab()]) {
     fileChanges,
     mutationLock,
     prepareDocumentMutation: save.prepareDocumentMutation,
+    getOpenDocumentPaths: () => tabs.value.map((item) => item.path),
+    applyReferenceWrites,
     renameOpenDocuments(mappings) {
       renamed.push(...mappings)
       for (const mapping of mappings) {
@@ -123,6 +128,48 @@ describe('useDocumentLifecycle rename', () => {
     await saving
     await renaming
     expect(patch).toHaveBeenCalledOnce()
+  })
+
+  it('keeps every open document save-locked until reference conflicts are resolved', async () => {
+    vi.useFakeTimers()
+    let finishPatch!: (value: api.PostSummary) => void
+    const patchPending = new Promise<api.PostSummary>((resolve) => { finishPatch = resolve })
+    let finishReferenceApply!: () => void
+    const referenceApplyPending = new Promise<void>((resolve) => { finishReferenceApply = resolve })
+    const applyReferenceWrites = vi.fn().mockReturnValue(referenceApplyPending)
+    vi.spyOn(api, 'patchPost').mockReturnValue(patchPending)
+    const puts: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const raw = (JSON.parse(String(init?.body)) as { raw: string }).raw
+      puts.push(`${url}:${raw}`)
+      return saveResponse(raw)
+    }))
+    const h = setup([tab('inbox/a'), tab('refs/previewed'), tab('refs/new')], applyReferenceWrites)
+    const renaming = h.lifecycle.renameFile(
+      'inbox/a',
+      { name: 'b', updateReferences: true },
+      ['refs/previewed'],
+    )
+    await Promise.resolve()
+
+    // refs/new was absent from the preview set, but updateReferences uses a
+    // global save barrier so a newly discovered backlink cannot race PATCH.
+    h.save.onEditorChange('refs/new', 'new local edit')
+    await vi.advanceTimersByTimeAsync(800)
+    expect(puts).toEqual([])
+
+    finishPatch({
+      path: 'inbox/b', title: 'B', created: '', updated: '', tags: [], size: 1, mtime: 2,
+      updatedReferences: [{ path: 'refs/new', raw: 'server rewritten' }],
+    })
+    await vi.waitFor(() => expect(applyReferenceWrites).toHaveBeenCalledOnce())
+    await vi.advanceTimersByTimeAsync(800)
+    expect(puts).toEqual([])
+
+    finishReferenceApply()
+    await renaming
+    await vi.advanceTimersByTimeAsync(800)
+    expect(puts).toEqual(['/api/posts/refs/new:new local edit'])
   })
 
   it('cancels the old timer, preserves edits during PATCH, and saves only to the actual new path', async () => {
@@ -292,6 +339,8 @@ describe('useDocumentLifecycle folder and delete operations', () => {
       fileChanges: h.fileChanges,
       mutationLock,
       prepareDocumentMutation: h.save.prepareDocumentMutation,
+      getOpenDocumentPaths: () => h.tabs.value.map((item) => item.path),
+      applyReferenceWrites: vi.fn().mockResolvedValue(undefined),
       renameOpenDocuments: vi.fn(),
       removeOpenDocuments: vi.fn(),
       refresh: h.refresh,

@@ -105,6 +105,7 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('createDocument: (input) => {')
     expect(source).toContain('return lifecycleCreateFile(input)')
     expect(source).toContain('const created = await documentLifecycle.createFile({ path, title })')
+    expect(source).toContain('await openPost(created.path, { refresh: false })')
     expect(source).not.toContain("await createPost({ path, title })")
   })
 

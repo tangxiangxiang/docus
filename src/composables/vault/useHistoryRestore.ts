@@ -52,7 +52,15 @@ function applyRestoredContent(tab: Tab, raw: string, mtime: number): void {
 
 function applyRestoreWithoutOverwritingNewerEdit(tab: Tab, raw: string, mtime: number): void {
   tab.originalRaw = raw
-  tab.saveStatus = 'dirty'
+  if (tab.raw === raw) {
+    tab.savedRevision = tab.revision
+    tab.saveStatus = 'idle'
+  } else {
+    if (tab.savedRevision >= tab.revision) {
+      tab.savedRevision = Math.max(0, tab.revision - 1)
+    }
+    tab.saveStatus = 'dirty'
+  }
   tab.error = null
   tab.externalRaw = null
   tab.serverMtime = mtime

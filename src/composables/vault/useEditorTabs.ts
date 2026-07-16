@@ -161,14 +161,14 @@ export function useEditorTabs(opts: {
           console.warn(`[useEditorTabs] Created ${created.path}, but Vault refresh failed`, error)
         }
       }
-      await openPost(created.path)
+      await openPost(created.path, { refresh: false })
       toast.success(t('common.created', { path: created.path }))
     } catch (e) {
       toast.error(t('common.create_failed', { error: (e as Error).message }))
     }
   }
 
-  const { subscribeToFileChanges } = useExternalFileChanges({
+  const { applyLifecycleReferenceWrites, subscribeToFileChanges } = useExternalFileChanges({
     fileChanges,
     tabs,
     activePath,
@@ -276,6 +276,7 @@ export function useEditorTabs(opts: {
     closeManyConfirmed,
     renameOpenDocuments,
     removeOpenDocuments,
+    applyLifecycleReferenceWrites,
     selectTab,
     onEditorChange,
     doSaveNow,

@@ -421,7 +421,13 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
           : false
       } catch { /* advisory */ }
       const res = lifecycle
-        ? await lifecycle.renameFolder(oldPath, newPath, filePaths(node), updateReferences, referencePaths)
+        ? await lifecycle.renameFolder(
+            oldPath,
+            newPath,
+            filePaths(node),
+            updateReferences,
+            updateReferences ? referencePaths : [],
+          )
         : updateReferences
           ? await renameFolder(oldPath, newPath, true)
           : await renameFolder(oldPath, newPath)
@@ -443,7 +449,7 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
       } catch { /* impact preview is advisory; renaming still works */ }
       const body = updateReferences ? { name: safeName, updateReferences: true } : { name: safeName }
       const renamed = lifecycle
-        ? await lifecycle.renameFile(oldPath, body, referencePaths)
+        ? await lifecycle.renameFile(oldPath, body, updateReferences ? referencePaths : [])
         : await patchPost(oldPath, body)
       if (!lifecycle) {
         for (const updated of renamed.updatedReferences ?? []) {

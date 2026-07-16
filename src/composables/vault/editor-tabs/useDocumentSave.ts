@@ -23,10 +23,11 @@ export function useDocumentSave(options: {
   const savePromises = new Map<string, Promise<void>>()
   const commitBarriers = new Map<string, { revision: number; raw: string }>()
   const lifecycleLocks = new Set<string>()
+  let lifecycleGlobalLock = false
   let disposed = false
 
   function scheduleSave(path: string, delay = 800) {
-    if (disposed || commitBarriers.has(path) || lifecycleLocks.has(path)) return
+    if (disposed || lifecycleGlobalLock || commitBarriers.has(path) || lifecycleLocks.has(path)) return
     const current = saveTimers.get(path)
     if (current) clearTimeout(current)
     saveTimers.set(path, setTimeout(() => {
@@ -47,7 +48,7 @@ export function useDocumentSave(options: {
     if (disposed) return
     const tab = options.tabs.value.find((candidate) => candidate.path === path)
     if (!tab) return
-    if (lifecycleLocks.has(path)) {
+    if (lifecycleGlobalLock || lifecycleLocks.has(path)) {
       tab.saveStatus = tab.revision === tab.savedRevision ? 'idle' : 'dirty'
       return
     }
@@ -110,7 +111,7 @@ export function useDocumentSave(options: {
   }
 
   async function doSave(path: string): Promise<void> {
-    if (disposed || lifecycleLocks.has(path)) return
+    if (disposed || lifecycleGlobalLock || lifecycleLocks.has(path)) return
     const active = savePromises.get(path)
     if (active) return active
     const promise = (async () => {
@@ -119,7 +120,7 @@ export function useDocumentSave(options: {
         const tab = options.tabs.value.find((candidate) => candidate.path === path)
         const barrier = commitBarriers.get(path)
         if (barrier && (!tab || tab.savedRevision >= barrier.revision)) break
-        if (disposed || lifecycleLocks.has(path)
+        if (disposed || lifecycleGlobalLock || lifecycleLocks.has(path)
             || !tab || ['error', 'offline', 'external'].includes(tab.saveStatus)
             || tab.revision === tab.savedRevision) break
       } while (true)
@@ -141,7 +142,9 @@ export function useDocumentSave(options: {
 
   function handleBeforeUnload(event: BeforeUnloadEvent) {
     const hasUnsaved = options.tabs.value.some((tab) =>
-      tab.revision !== tab.savedRevision || ['error', 'offline', 'saving'].includes(tab.saveStatus),
+      tab.raw !== tab.originalRaw
+      || tab.revision !== tab.savedRevision
+      || ['error', 'offline', 'saving'].includes(tab.saveStatus),
     )
     if (!hasUnsaved) return
     event.preventDefault()
@@ -155,11 +158,15 @@ export function useDocumentSave(options: {
     await doSave(path)
   }
 
-  async function prepareDocumentMutation(paths: readonly string[]): Promise<DocumentMutationBarrier> {
+  async function prepareDocumentMutation(
+    paths: readonly string[],
+    lockAll = false,
+  ): Promise<DocumentMutationBarrier> {
     const uniquePaths = [...new Set(paths.filter((path) => path.trim().length > 0))]
     if (disposed) return { paths: uniquePaths, commit() {}, rollback() {} }
 
-    for (const path of uniquePaths) lifecycleLocks.add(path)
+    if (lockAll) lifecycleGlobalLock = true
+    else for (const path of uniquePaths) lifecycleLocks.add(path)
     for (const path of uniquePaths) cancelScheduledSave(path)
     const activePromises = uniquePaths
       .map((path) => savePromises.get(path))
@@ -171,7 +178,8 @@ export function useDocumentSave(options: {
     function settle(resumePaths: readonly string[]): void {
       if (settled) return
       settled = true
-      for (const path of uniquePaths) lifecycleLocks.delete(path)
+      if (lockAll) lifecycleGlobalLock = false
+      else for (const path of uniquePaths) lifecycleLocks.delete(path)
       if (disposed) return
       for (const path of [...new Set(resumePaths)]) {
         const tab = options.tabs.value.find((candidate) => candidate.path === path)
@@ -245,6 +253,7 @@ export function useDocumentSave(options: {
     saveTimers.clear()
     commitBarriers.clear()
     lifecycleLocks.clear()
+    lifecycleGlobalLock = false
   }
 
   return {

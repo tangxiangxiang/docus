@@ -242,6 +242,42 @@ describe('useExternalFileChanges editor-save acknowledgement', () => {
     expect(confirm).not.toHaveBeenCalled()
     expect(current).toMatchObject({ path: 'inbox/test', raw: 'v2', loadError: null })
   })
+
+  it('applies lifecycle reference writes before releasing the save barrier', async () => {
+    const clean = makeTab('refs/clean', 'old')
+    const dirty = makeTab('refs/dirty', 'local edit')
+    dirty.originalRaw = 'old disk'
+    dirty.revision = 4
+    dirty.savedRevision = 3
+    dirty.saveStatus = 'dirty'
+    const tabs = ref([clean, dirty])
+    const confirm = vi.fn().mockResolvedValue(false)
+    const external = useExternalFileChanges({
+      tabs,
+      activePath: ref('refs/dirty'),
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm,
+      toastInfo: vi.fn(),
+      fileChanges: createVaultFileChanges(),
+    })
+
+    await external.applyLifecycleReferenceWrites([
+      { path: 'refs/clean', raw: 'rewritten clean' },
+      { path: 'refs/dirty', raw: 'rewritten disk' },
+    ])
+
+    expect(clean).toMatchObject({
+      raw: 'rewritten clean', originalRaw: 'rewritten clean', saveStatus: 'idle',
+    })
+    expect(clean.revision).toBe(clean.savedRevision)
+    expect(dirty).toMatchObject({
+      raw: 'local edit', originalRaw: 'rewritten disk', saveStatus: 'dirty',
+    })
+    expect(dirty.revision).not.toBe(dirty.savedRevision)
+    expect(confirm).toHaveBeenCalledOnce()
+  })
 })
 
 describe('useDocumentSave lifecycle barriers', () => {

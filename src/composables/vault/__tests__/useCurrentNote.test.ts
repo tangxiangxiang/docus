@@ -288,6 +288,20 @@ describe('useCurrentNote — file-change bus', () => {
     expect(note.content.value).toBe('v2')
     expect(testFileChanges.events.value[0]).not.toHaveProperty('newRaw')
   })
+
+  it('keeps live content when history restore publishes an older disk snapshot', async () => {
+    const live = getLiveTabs()!
+    live.value = [makeTab({ path: 'a.md', raw: 'live A', originalRaw: 'historical H' })]
+    const { note } = await mountAtRoute('/vault/a.md')
+    expect(note.content.value).toBe('live A')
+
+    testFileChanges.publish({
+      path: 'a.md', kind: 'write', source: 'history-restore', newRaw: 'historical H',
+    })
+    await flushPromises()
+
+    expect(note.content.value).toBe('live A')
+  })
 })
 
 // Regression: the production router (src/router/index.ts) declares TWO

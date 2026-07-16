@@ -149,6 +149,7 @@ const {
   prepareHistoryRestore, onKeydown: onEditorKeydown, onCommandPaletteNew,
   prepareHistoryCommit,
   prepareDocumentMutation, renameOpenDocuments, removeOpenDocuments,
+  applyLifecycleReferenceWrites,
 } = useEditorTabs({
   selectPanel,
   toggleViewMode: () => viewModeApi?.toggle(),
@@ -163,6 +164,8 @@ const documentLifecycle = useDocumentLifecycle({
   fileChanges,
   mutationLock: historyMutationLock,
   prepareDocumentMutation,
+  getOpenDocumentPaths: () => tabs.value.map((tab) => tab.path),
+  applyReferenceWrites: applyLifecycleReferenceWrites,
   renameOpenDocuments,
   removeOpenDocuments,
   refresh,
@@ -341,10 +344,10 @@ const activeWorkspaceTabId = computed(() => (
   activeHistoryComparison.value?.tabId ?? activeHistorySnapshot.value?.tabId ?? activePath.value
 ))
 
-async function openPost(path: string): Promise<void> {
+async function openPost(path: string, options: { refresh?: boolean } = {}): Promise<void> {
   historyComparisons.deactivate()
   historySnapshots.viewCurrent()
-  await openEditorPost(path)
+  await openEditorPost(path, options)
 }
 
 async function selectWorkspaceTab(id: string, focusViewer = true): Promise<void> {
@@ -516,7 +519,7 @@ async function createMissingWikiNote(ref: string) {
   const title = segments.at(-1)!.split('-').join(' ')
   try {
     const created = await documentLifecycle.createFile({ path, title })
-    await openPost(created.path)
+    await openPost(created.path, { refresh: false })
     toast.success(t('common.created', { path: created.path }))
   } catch (error: any) {
     if (error?.status === 409) await openPost(path)

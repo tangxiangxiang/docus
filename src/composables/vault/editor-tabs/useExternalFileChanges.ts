@@ -90,6 +90,42 @@ export function useExternalFileChanges(options: {
     tab.error = null
   }
 
+  async function applyLifecycleReferenceWrites(
+    updatedReferences: ReadonlyArray<{ path: string; raw: string }>,
+  ): Promise<void> {
+    for (const updated of updatedReferences) {
+      const tab = options.tabs.value.find((candidate) => candidate.path === updated.path)
+      if (!tab) continue
+      const dirty = tab.raw !== tab.originalRaw || tab.revision !== tab.savedRevision
+      let overwriteLocal = !dirty
+      if (dirty) {
+        try {
+          overwriteLocal = await options.confirm(t('editor.ai_overwrite', { path: updated.path }))
+        } catch {
+          // The server rewrite has already succeeded. Treat a dismissed or
+          // failed prompt as "keep local" so the local buffer remains dirty
+          // and is saved only after this lifecycle transaction releases it.
+          overwriteLocal = false
+        }
+      }
+      if (overwriteLocal) {
+        tab.raw = updated.raw
+        tab.originalRaw = updated.raw
+        tab.revision += 1
+        tab.savedRevision = tab.revision
+        tab.saveStatus = 'idle'
+      } else {
+        tab.originalRaw = updated.raw
+        if (tab.savedRevision >= tab.revision) {
+          tab.savedRevision = Math.max(0, tab.revision - 1)
+        }
+        tab.saveStatus = 'dirty'
+      }
+      tab.error = null
+      tab.externalRaw = null
+    }
+  }
+
   function subscribeToFileChanges(): () => void {
     const fileBus = options.fileChanges.events
     let lastSeenSeq = 0
@@ -106,5 +142,5 @@ export function useExternalFileChanges(options: {
     )
   }
 
-  return { applyExternalChange, subscribeToFileChanges }
+  return { applyExternalChange, applyLifecycleReferenceWrites, subscribeToFileChanges }
 }

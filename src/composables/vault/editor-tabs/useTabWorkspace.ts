@@ -43,7 +43,7 @@ export function useTabWorkspace(options: {
     posts.value = nextPosts
   }
 
-  async function openPost(path: string) {
+  async function openPost(path: string, openOptions: { refresh?: boolean } = {}) {
     const existing = tabs.value.find((tab) => tab.path === path)
     if (existing) {
       activePath.value = path
@@ -72,7 +72,7 @@ export function useTabWorkspace(options: {
       tab.loadError = (error as Error).message
       tab.loading = false
     }
-    await refresh()
+    if (openOptions.refresh !== false) await refresh()
   }
 
   async function restoreOneTab(path: string): Promise<boolean> {

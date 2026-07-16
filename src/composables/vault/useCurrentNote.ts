@@ -112,7 +112,14 @@ export function useCurrentNote(): CurrentNote {
       if (!p) return
       for (const e of events) {
         if (e.seq <= lastSeenSeq) continue
-        if (e.kind === 'write' && e.path === p && e.newRaw != null) {
+        if (
+          (e.source === 'history-restore' || e.source === 'editor-lifecycle')
+          && e.kind === 'write'
+          && e.path === p
+        ) {
+          const live = vaultContext?.editor.getLiveContent(p)
+          content.value = live ?? e.newRaw ?? ''
+        } else if (e.kind === 'write' && e.path === p && e.newRaw != null) {
           content.value = e.newRaw
         } else if (e.kind === 'rename' && e.path === p && e.newRaw != null) {
           // The active path was just renamed; the route is
