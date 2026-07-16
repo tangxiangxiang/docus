@@ -2,20 +2,26 @@
 import type { StatusEntry } from '../../lib/history-api'
 import { useI18n } from '../../composables/useI18n'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   entries: StatusEntry[]
   selectedPaths: Set<string>
   message: string
   busy: boolean
   canCommit: boolean
   error: string | null
-}>()
+  indexRepairPending?: boolean
+  indexRepairBusy?: boolean
+}>(), {
+  indexRepairPending: false,
+  indexRepairBusy: false,
+})
 const emit = defineEmits<{
   toggle: [path: string]
   'select-all': []
   'clear-selection': []
   'update:message': [value: string]
   submit: []
+  'repair-index': []
 }>()
 const { t } = useI18n()
 
@@ -94,6 +100,12 @@ function onMessage(event: Event): void {
         {{ busy ? t('history.creating_version') : t('history.create_version') }}
       </button>
       <span v-if="busy" class="sr-only" role="status">{{ t('history.creating_version') }}</span>
+      <div v-if="indexRepairPending" class="history-commit-error" role="status">
+        <span>{{ t('history.commit_index_refresh_failed') }}</span>
+        <button type="button" :disabled="indexRepairBusy" @click="emit('repair-index')">
+          {{ t('history.index_repair_action') }}
+        </button>
+      </div>
     </div>
   </section>
 </template>

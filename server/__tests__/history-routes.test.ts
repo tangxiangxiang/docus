@@ -478,6 +478,29 @@ describe('POST /api/history/commits', () => {
   })
 })
 
+describe('POST /api/history/repair-index', () => {
+  beforeEach(async () => {
+    await call('GET', '/capability')
+    await configureGitUser()
+  })
+
+  it('repairs selected stale index entries and clears false dirty status', async () => {
+    await write('a.md', 'committed')
+    await call('POST', '/commits', { paths: ['a.md'], message: 'version' })
+    const { run } = await import('../history/git.js')
+    expect((await run(root, ['update-index', '--force-remove', '--', 'a.md'])).status).toBe(0)
+
+    const before = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string }> }
+    expect(before.dirty.map((entry) => entry.path)).toContain('a.md')
+
+    const response = await call('POST', '/repair-index', { paths: ['a.md'] })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ repaired: true })
+    const after = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string }> }
+    expect(after.dirty.map((entry) => entry.path)).not.toContain('a.md')
+  })
+})
+
 describe('POST /api/history/drop', () => {
   beforeEach(async () => {
     await call('GET', '/capability')

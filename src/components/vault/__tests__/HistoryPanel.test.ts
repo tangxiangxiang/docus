@@ -16,6 +16,7 @@ vi.mock('../../../lib/history-api', async () => {
     getLog: vi.fn(),
     createCommit: vi.fn(),
     getContentHashes: vi.fn(),
+    repairIndex: vi.fn(),
   }
 })
 
@@ -218,6 +219,44 @@ describe('HistoryPanel document timeline', () => {
     expect(wrapper.text()).toContain('Update cache section')
     expect(wrapper.text()).toContain('Start cache note')
     expect(wrapper.text()).not.toContain('author')
+  })
+
+  it('refreshes the selected document revisions after an external HEAD conflict', async () => {
+    const first = commit('first', NOW - 60_000, 'First version', ['inbox/redis.md'])
+    const external = commit('external', NOW, 'External version', ['inbox/redis.md'])
+    let documentRequests = 0
+    vi.mocked(api.getLog).mockImplementation(async (options = {}) => {
+      if (!options.path) return { commits: [external, first] }
+      documentRequests += 1
+      return { commits: documentRequests === 1 ? [first] : [external, first] }
+    })
+    const history = useHistory()
+    const historyCommit = useHistoryCommit({ history, saveSelected: vi.fn() })
+    const wrapper = mount(HistoryPanel, {
+      props: {
+        history,
+        commit: historyCommit,
+        posts: [{
+          path: 'inbox/redis',
+          title: 'Redis Notes',
+          created: '',
+          updated: '',
+          tags: [],
+          size: 0,
+          mtime: 0,
+        }],
+      },
+    })
+    await flushPromises()
+    await wrapper.get('.history-document-row').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.history-revision-row')).toHaveLength(1)
+
+    historyCommit.repositoryChangeId.value += 1
+    await flushPromises()
+
+    expect(documentRequests).toBe(2)
+    expect(wrapper.findAll('.history-revision-row')).toHaveLength(2)
   })
 
   it('shows Created for a document with one revision', async () => {

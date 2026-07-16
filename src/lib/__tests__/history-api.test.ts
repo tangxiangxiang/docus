@@ -83,6 +83,18 @@ describe('createCommit', () => {
     }))
   })
 
+  it('posts selected paths to the explicit index repair endpoint', async () => {
+    responses.push({ status: 200, body: { repaired: true } })
+    await api.repairIndex(['a.md'])
+    expect(calls[0]).toEqual(expect.objectContaining({
+      url: '/api/history/repair-index',
+      init: expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ paths: ['a.md'] }),
+      }),
+    }))
+  })
+
   it('throws the server error message on a non-2xx', async () => {
     responses.push({ status: 409, body: { error: 'nothing to commit' } })
     await expect(api.createCommit(['a.md'], 'msg', { 'a.md': 'a'.repeat(64) }))

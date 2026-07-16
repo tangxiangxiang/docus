@@ -304,6 +304,61 @@ describe('addAndCommit + log', () => {
     expect(result.indexRefreshFailed).toBe(true)
     expect(syncIndexForTesting).toHaveBeenCalledTimes(3)
     expect(await git.rawAt(root, result.sha, 'a.md')).toBe('snapshot')
+    await expect(git.repairIndex(root, ['a.md'])).resolves.toBe(true)
+    expect((await git.status(root)).find((entry) => entry.path === 'a.md')).toBeUndefined()
+  })
+
+  it('does not report index repair success when HEAD changes between check and reset', async () => {
+    await write('a.md', 'snapshot')
+    let movedHead = false
+    const result = await git.addAndCommit(root, ['a.md'], 'committed', {
+      expected: { 'a.md': createHash('sha256').update('snapshot').digest('hex') },
+      beforeIndexResetForTesting: async (_sha, attempt) => {
+        if (attempt !== 0 || movedHead) return
+        movedHead = true
+        await write('other.md', 'external')
+        expect((await git.run(root, ['add', '--', 'other.md'])).status).toBe(0)
+        expect((await git.run(root, ['commit', '-m', 'external', '--', 'other.md'])).status).toBe(0)
+      },
+    })
+
+    expect(result.indexRefreshFailed).toBe(true)
+    expect(await git.rawAt(root, 'HEAD', 'other.md')).toBe('external')
+    expect(await git.rawAt(root, 'HEAD', 'a.md')).toBe('snapshot')
+  })
+
+  for (const marker of ['MERGE_HEAD', 'CHERRY_PICK_HEAD']) {
+    it(`rejects Create Version while ${marker} is present`, async () => {
+      await write('blocked.md', 'snapshot')
+      await fs.writeFile(path.join(root, '.git', marker), 'deadbeef'.repeat(5), 'utf8')
+
+      await expect(git.addAndCommit(root, ['blocked.md'], 'blocked', {
+        expected: {
+          'blocked.md': createHash('sha256').update('snapshot').digest('hex'),
+        },
+      })).rejects.toThrow('repository operation in progress')
+
+      expect(await git.rawAt(root, 'HEAD', 'blocked.md')).toBeNull()
+    })
+  }
+
+  it('rejects when a repository operation starts after snapshot capture', async () => {
+    await write('blocked-late.md', 'snapshot')
+
+    await expect(git.addAndCommit(root, ['blocked-late.md'], 'blocked late', {
+      expected: {
+        'blocked-late.md': createHash('sha256').update('snapshot').digest('hex'),
+      },
+      beforeUpdateRefForTesting: async () => {
+        await fs.writeFile(
+          path.join(root, '.git', 'MERGE_HEAD'),
+          'deadbeef'.repeat(5),
+          'utf8',
+        )
+      },
+    })).rejects.toThrow('repository operation in progress')
+
+    expect(await git.rawAt(root, 'HEAD', 'blocked-late.md')).toBeNull()
   })
 
   it('rejects an empty path list', async () => {

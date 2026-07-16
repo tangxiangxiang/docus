@@ -312,9 +312,29 @@ history.post('/commits', async (c) => {
     return c.json(r, 201)
   } catch (e: any) {
     const msg = e.message ?? 'commit failed'
-    if (/nothing to commit|selection is stale|content changed before commit|repository changed before commit/i.test(msg)) {
+    if (/nothing to commit|selection is stale|content changed before commit|repository changed before commit|repository operation in progress/i.test(msg)) {
       return bad(c, msg, 409)
     }
+    return bad(c, msg, 500)
+  }
+})
+
+// Repair selected real-index entries after a successful commit reported
+// indexRefreshFailed. This is intentionally explicit: GET /status is read-only
+// and must not pretend it repaired Git state.
+history.post('/repair-index', async (c) => {
+  if (!(await probeGit())) return bad(c, 'git not available', 503)
+  const body = await c.req.json().catch(() => null) as { paths?: unknown } | null
+  const paths = validateHistoryPaths(body?.paths)
+  if (!paths) return bad(c, 'invalid paths')
+  try {
+    await ensureRepo(repoRoot())
+    const repaired = await git.repairIndex(repoRoot(), paths)
+    if (!repaired) return bad(c, 'index repair could not be verified', 409)
+    return c.json({ repaired: true })
+  } catch (e: any) {
+    const msg = e.message ?? 'index repair failed'
+    if (/repository operation in progress/i.test(msg)) return bad(c, msg, 409)
     return bad(c, msg, 500)
   }
 })

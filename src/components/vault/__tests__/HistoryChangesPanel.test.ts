@@ -75,4 +75,24 @@ describe('HistoryChangesPanel', () => {
     expect(wrapper.get('.history-create-version').text()).toBe('正在创建版本…')
     expect(wrapper.findAll('input:disabled')).toHaveLength(3)
   })
+
+  it('exposes an explicit retry when real-index repair is pending', async () => {
+    const wrapper = mount(HistoryChangesPanel, {
+      props: {
+        entries: [],
+        selectedPaths: new Set<string>(),
+        message: '',
+        busy: false,
+        canCommit: false,
+        error: null,
+        indexRepairPending: true,
+        indexRepairBusy: false,
+      },
+    })
+
+    const button = wrapper.get('.history-commit-error button')
+    expect(button.text()).toBe('Retry Git status repair')
+    await button.trigger('click')
+    expect(wrapper.emitted('repair-index')).toHaveLength(1)
+  })
 })

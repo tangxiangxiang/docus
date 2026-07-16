@@ -10,7 +10,7 @@ const toast = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
 vi.mock('../../useToast', () => ({ useToast: () => toast }))
 vi.mock('../../../lib/history-api', async () => {
   const actual = await vi.importActual<typeof api>('../../../lib/history-api')
-  return { ...actual, createCommit: vi.fn(), getContentHashes: vi.fn() }
+  return { ...actual, createCommit: vi.fn(), getContentHashes: vi.fn(), repairIndex: vi.fn() }
 })
 
 function history(paths = ['inbox/a.md', 'inbox/b.md']): HistoryState {
@@ -36,6 +36,7 @@ beforeEach(() => {
   vi.mocked(api.getContentHashes).mockImplementation(async (paths) => (
     Object.fromEntries(paths.map((path) => [path, 'a'.repeat(64)]))
   ))
+  vi.mocked(api.repairIndex).mockResolvedValue(undefined)
 })
 
 describe('useHistoryCommit', () => {
@@ -58,8 +59,44 @@ describe('useHistoryCommit', () => {
     expect(api.createCommit).not.toHaveBeenCalledWith(expect.arrayContaining(['inbox/b.md']), expect.anything())
     expect(h.refreshStatus).toHaveBeenCalledOnce()
     expect(h.refreshLog).toHaveBeenCalledOnce()
+    expect(commit.repositoryChangeId.value).toBe(0)
     expect(commit.message.value).toBe('')
     expect(commit.selectedPaths.value.size).toBe(0)
+  })
+
+  it('repairs a degraded real index and refreshes Changes', async () => {
+    const h = history(['a.md'])
+    vi.mocked(api.createCommit).mockResolvedValue({
+      sha: 'abc',
+      filesCommitted: ['a.md'],
+      indexRefreshFailed: true,
+    })
+    const commit = useHistoryCommit({ history: h, saveSelected: vi.fn() })
+    commit.message.value = 'Version'
+    await commit.submit()
+
+    await expect(commit.retryIndexRepair()).resolves.toBe(true)
+
+    expect(api.repairIndex).toHaveBeenCalledWith(['a.md'])
+    expect(commit.indexRepairPaths.value).toEqual([])
+    expect(h.refreshStatus).toHaveBeenCalledTimes(2)
+    expect(toast.success).toHaveBeenCalledWith('Git status repaired.')
+  })
+
+  it('reports a repository operation conflict without attempting a commit retry', async () => {
+    const h = history(['a.md'])
+    vi.mocked(api.createCommit).mockRejectedValue(
+      new api.HistoryApiError('repository operation in progress', 409),
+    )
+    const commit = useHistoryCommit({ history: h, saveSelected: vi.fn() })
+    commit.message.value = 'Version'
+
+    await commit.submit()
+
+    expect(commit.error.value).toBe(
+      'A merge, rebase, or similar Git operation is in progress. Complete or cancel it in Git first.',
+    )
+    expect(api.createCommit).toHaveBeenCalledOnce()
   })
 
   it('supports select all and clear selection without auto-selecting later status additions', async () => {
@@ -238,12 +275,12 @@ describe('useHistoryCommit', () => {
     expect(commit.selectedPaths.value.size).toBe(0)
     expect(toast.error).not.toHaveBeenCalled()
     expect(toast.info).toHaveBeenCalledWith(
-      'Version created, but Git status could not be synchronized. Try refreshing shortly.',
+      'Version created, but Git status could not be synchronized. Retry the repair.',
       5000,
     )
   })
 
-  it('reports an external HEAD CAS conflict distinctly and refreshes status', async () => {
+  it('reports an external HEAD CAS conflict and refreshes status and Timeline', async () => {
     const h = history(['a.md'])
     vi.mocked(api.createCommit).mockRejectedValue(
       new api.HistoryApiError('repository changed before commit', 409),
@@ -254,6 +291,8 @@ describe('useHistoryCommit', () => {
     await commit.submit()
 
     expect(h.refreshStatus).toHaveBeenCalledOnce()
+    expect(h.refreshLog).toHaveBeenCalledOnce()
+    expect(commit.repositoryChangeId.value).toBe(1)
     expect(commit.error.value).toBe(
       'The repository changed before the version could be created. Review the refreshed status and retry.',
     )

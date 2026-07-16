@@ -496,6 +496,75 @@ async function withRepoMutation<T>(repoRoot: string, operation: () => Promise<T>
   }
 }
 
+const REPOSITORY_OPERATION_MARKERS = [
+  'MERGE_HEAD',
+  'CHERRY_PICK_HEAD',
+  'REVERT_HEAD',
+  'REBASE_HEAD',
+  'rebase-merge',
+  'rebase-apply',
+  'sequencer',
+]
+
+async function repositoryOperationInProgress(repoRoot: string): Promise<boolean> {
+  const gitDirResult = await run(repoRoot, ['rev-parse', '--absolute-git-dir'])
+  if (gitDirResult.status !== 0) {
+    throw new Error(`git rev-parse git-dir failed: ${gitDirResult.stderr.trim()}`)
+  }
+  const gitDir = gitDirResult.stdout.trim()
+  for (const marker of REPOSITORY_OPERATION_MARKERS) {
+    try {
+      await fs.stat(path.join(gitDir, marker))
+      return true
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+  }
+  return false
+}
+
+async function assertRepositoryIdle(repoRoot: string): Promise<void> {
+  if (await repositoryOperationInProgress(repoRoot)) {
+    throw new Error('repository operation in progress')
+  }
+}
+
+async function syncIndexPaths(
+  repoRoot: string,
+  paths: readonly string[],
+  fixedHead?: string,
+  options: {
+    syncIndexForTesting?: (commitSha: string) => Promise<RunResult>
+    beforeIndexResetForTesting?: (commitSha: string, attempt: number) => Promise<void>
+  } = {},
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await repositoryOperationInProgress(repoRoot)) return false
+    const before = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
+    if (before.status !== 0) return false
+    const target = fixedHead ?? before.stdout.trim()
+    if (before.stdout.trim() !== target) return false
+    await options.beforeIndexResetForTesting?.(target, attempt)
+    const reset = options.syncIndexForTesting
+      ? await options.syncIndexForTesting(target)
+      : await run(repoRoot, ['reset', '-q', target, '--', ...paths])
+    if (reset.status === 0 && !(await repositoryOperationInProgress(repoRoot))) {
+      const after = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
+      const verify = await run(repoRoot, ['diff', '--cached', '--quiet', target, '--', ...paths])
+      if (after.status === 0 && after.stdout.trim() === target && verify.status === 0) return true
+    }
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)))
+  }
+  return false
+}
+
+export async function repairIndex(repoRoot: string, paths: string[]): Promise<boolean> {
+  return withRepoMutation(repoRoot, async () => {
+    await assertRepositoryIdle(repoRoot)
+    return syncIndexPaths(repoRoot, paths)
+  })
+}
+
 async function captureExpectedFiles(
   repoRoot: string,
   paths: readonly string[],
@@ -523,8 +592,10 @@ async function captureExpectedFiles(
  * `git add` each of `paths` and create one commit with `message`. All
  * paths are relative to `repoRoot` and use forward slashes (the same
  * shape `git status` reports). Throws if the resulting commit touches
- * zero files (nothing to commit) or if git itself rejects the message
- * (e.g. hooks). When `expected` is supplied, this function owns the complete
+ * zero files (nothing to commit). Manual Docus versions intentionally use
+ * plumbing commands for deterministic snapshot/CAS semantics, so ordinary
+ * `git commit` hooks and signing do not run here. When `expected` is supplied,
+ * this function owns the complete
  * transaction: dirty validation, byte capture, temporary-index staging,
  * staged-blob verification, and commit all run under the per-repo mutex.
  */
@@ -537,6 +608,7 @@ export async function addAndCommit(
     beforeStageForTesting?: () => Promise<void>
     beforeUpdateRefForTesting?: () => Promise<void>
     syncIndexForTesting?: (commitSha: string) => Promise<RunResult>
+    beforeIndexResetForTesting?: (commitSha: string, attempt: number) => Promise<void>
   } = {},
 ): Promise<CommitResult> {
   if (paths.length === 0) {
@@ -546,6 +618,7 @@ export async function addAndCommit(
     throw new Error('addAndCommit: message must not be empty')
   }
   return withRepoMutation(repoRoot, async () => {
+  await assertRepositoryIdle(repoRoot)
   let captured: Map<string, Buffer | null> | null = null
   if (options.expected) {
     const dirtyPaths = new Set((await status(repoRoot)).map((entry) => entry.path))
@@ -625,6 +698,9 @@ export async function addAndCommit(
     if (previousTree.stdout.trim() === treeSha) throw new Error('nothing to commit')
   }
 
+  // This is deliberately a plumbing commit. Running hooks or signing would
+  // require a separate product policy that preserves the fixed-tree and CAS
+  // guarantees below.
   const commitArgs = ['commit-tree', treeSha]
   if (headBefore.status === 0) commitArgs.push('-p', headBefore.stdout.trim())
   commitArgs.push('-m', message)
@@ -635,6 +711,7 @@ export async function addAndCommit(
   const commitSha = commit.stdout.trim()
 
   await options.beforeUpdateRefForTesting?.()
+  await assertRepositoryIdle(repoRoot)
   const expectedHead = headBefore.status === 0 ? headBefore.stdout.trim() : '0'.repeat(40)
   const updateHead = await run(repoRoot, ['update-ref', 'HEAD', commitSha, expectedHead])
   if (updateHead.status !== 0) throw new Error('repository changed before commit')
@@ -648,19 +725,7 @@ export async function addAndCommit(
   // HEAD is already committed. Index repair is auxiliary and must never turn
   // a successful version into an API failure. Retry transient index.lock
   // contention, bind reset to our immutable SHA, and report degradation.
-  let indexRefreshFailed = true
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const currentHead = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
-    if (currentHead.status !== 0 || currentHead.stdout.trim() !== commitSha) break
-    const syncIndex = options.syncIndexForTesting
-      ? await options.syncIndexForTesting(commitSha)
-      : await run(repoRoot, ['reset', '-q', commitSha, '--', ...paths])
-    if (syncIndex.status === 0) {
-      indexRefreshFailed = false
-      break
-    }
-    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)))
-  }
+  const indexRefreshFailed = !(await syncIndexPaths(repoRoot, paths, commitSha, options))
   return { sha: commitSha, filesCommitted, indexRefreshFailed }
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true })

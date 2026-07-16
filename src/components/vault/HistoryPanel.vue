@@ -47,6 +47,10 @@ watch(commit.completionId, async () => {
   if (!document || !commit.lastCommittedPaths.value.includes(`${document.path}.md`)) return
   await timeline.selectDocument(document)
 })
+watch(commit.repositoryChangeId, async () => {
+  const document = timeline.selectedDocument.value
+  if (document) await timeline.selectDocument(document)
+})
 const revisionsErrorLabel = computed(() => (
   timeline.revisionsError.value?.message || t('history.load_failed')
 ))
@@ -168,11 +172,14 @@ function onListKeydown(event: KeyboardEvent): void {
         :busy="commit.busy.value"
         :can-commit="commit.canCommit.value"
         :error="commit.error.value"
+        :index-repair-pending="commit.indexRepairPaths.value.length > 0"
+        :index-repair-busy="commit.indexRepairBusy.value"
         @toggle="commit.toggle"
         @select-all="commit.selectAll"
         @clear-selection="commit.clearSelection"
         @update:message="commit.message.value = $event"
         @submit="commit.submit"
+        @repair-index="commit.retryIndexRepair"
       />
       <div class="history-timeline-heading">{{ t('history.timeline') }}</div>
       <div v-if="h.logError.value && !timeline.selectedDocument.value" class="history-error" role="alert">

@@ -3,6 +3,7 @@ import {
   createCommit,
   getContentHashes,
   HistoryApiError,
+  repairIndex,
   type CommitResult,
 } from '../../lib/history-api'
 import { useI18n } from '../useI18n'
@@ -29,6 +30,9 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
   const error = ref<string | null>(null)
   const lastCommittedPaths = ref<readonly string[]>([])
   const completionId = ref(0)
+  const repositoryChangeId = ref(0)
+  const indexRepairPaths = ref<readonly string[]>([])
+  const indexRepairBusy = ref(false)
   let initializedSelection = false
 
   watch(
@@ -134,18 +138,27 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
         ? t('history.commit_success')
         : t('history.commit_success_count', { count: result.filesCommitted.length })
       if (result.indexRefreshFailed) {
+        indexRepairPaths.value = result.filesCommitted
         toast.info(t('history.commit_index_refresh_failed'), 5000)
       } else {
+        indexRepairPaths.value = []
         toast.success(success)
       }
       return result
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
       if (cause instanceof HistoryApiError && cause.status === 409) {
-        await options.history.refreshStatus()
-        error.value = /repository changed before commit/i.test(detail)
-          ? t('history.commit_repository_changed')
-          : t('history.commit_stale', { error: detail })
+        if (/repository changed before commit/i.test(detail)) {
+          await Promise.all([options.history.refreshStatus(), options.history.refreshLog()])
+          repositoryChangeId.value += 1
+          error.value = t('history.commit_repository_changed')
+        } else if (/repository operation in progress/i.test(detail)) {
+          await options.history.refreshStatus()
+          error.value = t('history.repository_operation_in_progress')
+        } else {
+          await options.history.refreshStatus()
+          error.value = t('history.commit_stale', { error: detail })
+        }
       } else {
         error.value = t('history.commit_failed', { error: detail })
       }
@@ -159,6 +172,26 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     }
   }
 
+  async function retryIndexRepair(): Promise<boolean> {
+    if (indexRepairBusy.value || indexRepairPaths.value.length === 0) return false
+    indexRepairBusy.value = true
+    error.value = null
+    try {
+      await repairIndex([...indexRepairPaths.value])
+      await options.history.refreshStatus()
+      indexRepairPaths.value = []
+      toast.success(t('history.index_repair_success'))
+      return true
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
+      error.value = t('history.index_repair_failed', { error: detail })
+      toast.error(error.value)
+      return false
+    } finally {
+      indexRepairBusy.value = false
+    }
+  }
+
   return {
     selectedPaths,
     selectedCount,
@@ -168,11 +201,15 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     error,
     lastCommittedPaths,
     completionId,
+    repositoryChangeId,
+    indexRepairPaths,
+    indexRepairBusy,
     canCommit,
     toggle,
     selectAll,
     clearSelection,
     submit,
+    retryIndexRepair,
   }
 }
 

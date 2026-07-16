@@ -180,6 +180,15 @@ export async function createCommit(
   return readJson(r, 'createCommit failed')
 }
 
+export async function repairIndex(paths: string[]): Promise<void> {
+  const r = await fetch('/api/history/repair-index', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ paths }),
+  })
+  await readJson<{ repaired: true }>(r, 'repairIndex failed')
+}
+
 export async function dropCommit(sha: string): Promise<CommitResult> {
   const r = await fetch('/api/history/drop', {
     method: 'POST',
