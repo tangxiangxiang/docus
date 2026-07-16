@@ -1,5 +1,6 @@
 import type { PostSummary } from '../../lib/api'
 import {
+  createFolder,
   createPost,
   deleteFolder,
   deletePost,
@@ -19,6 +20,7 @@ export class DocumentMutationConflictError extends Error {
 
 export interface DocumentLifecycle {
   createFile(input: { path: string; title?: string }): Promise<PostSummary>
+  createFolder(path: string): Promise<{ path: string }>
   renameFile(
     fromPath: string,
     body: { name?: string; targetPath?: string; updateReferences?: boolean },
@@ -30,7 +32,7 @@ export interface DocumentLifecycle {
     affectedPaths: readonly string[],
     updateReferences?: boolean,
     referencePaths?: readonly string[],
-  ): Promise<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string }> }>
+  ): Promise<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string; mtime: number }> }>
   deleteFile(path: string): Promise<{ ok: true }>
   deleteFolder(path: string, affectedPaths: readonly string[]): Promise<{ deleted: string[] }>
 }
@@ -40,7 +42,7 @@ interface LifecycleOptions {
   mutationLock: ReturnType<typeof createPathMutationLock>
   prepareDocumentMutation(paths: readonly string[], lockAll?: boolean): Promise<DocumentMutationBarrier>
   getOpenDocumentPaths(): readonly string[]
-  applyReferenceWrites(updatedReferences: ReadonlyArray<{ path: string; raw: string }>): Promise<void>
+  applyReferenceWrites(updatedReferences: ReadonlyArray<{ path: string; raw: string; mtime: number }>): Promise<void>
   renameOpenDocuments(mappings: ReadonlyArray<{ from: string; to: string }>): void
   removeOpenDocuments(paths: readonly string[]): void
   refresh(): Promise<void>
@@ -62,7 +64,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
   }
 
   async function applyAndPublishReferenceWrites(
-    updatedReferences: ReadonlyArray<{ path: string; raw: string }> = [],
+    updatedReferences: ReadonlyArray<{ path: string; raw: string; mtime: number }> = [],
   ): Promise<void> {
     await options.applyReferenceWrites(updatedReferences)
     const seen = new Set<string>()
@@ -74,6 +76,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         path: updated.path,
         kind: 'write',
         newRaw: updated.raw,
+        newMtime: updated.mtime,
         source: 'editor-lifecycle',
       })
     }
@@ -109,6 +112,15 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
       options.fileChanges.publish({ path: created.path, kind: 'write', source: 'editor-lifecycle' })
       barrier.commit()
       await refreshBestEffort(`Create ${created.path}`)
+      return created
+    })
+  }
+
+  async function createFolderLifecycle(path: string): Promise<{ path: string }> {
+    return withMutation([path], async (barrier) => {
+      const created = await createFolder(path)
+      barrier.commit()
+      await refreshBestEffort(`Create folder ${created.path}`)
       return created
     })
   }
@@ -210,6 +222,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
 
   return {
     createFile,
+    createFolder: createFolderLifecycle,
     renameFile,
     renameFolder: renameFolderLifecycle,
     deleteFile: deleteFileLifecycle,

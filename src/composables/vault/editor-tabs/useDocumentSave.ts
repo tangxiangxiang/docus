@@ -190,7 +190,9 @@ export function useDocumentSave(options: {
     return {
       paths: uniquePaths,
       commit(resumePaths = []) { settle(resumePaths) },
-      rollback() { settle(uniquePaths) },
+      rollback() {
+        settle(lockAll ? options.tabs.value.map((tab) => tab.path) : uniquePaths)
+      },
     }
   }
 

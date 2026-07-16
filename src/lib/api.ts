@@ -9,7 +9,7 @@ export interface PostSummary {
   summary?: string
   size: number
   mtime: number
-  updatedReferences?: Array<{ path: string; raw: string }>
+  updatedReferences?: Array<{ path: string; raw: string; mtime: number }>
 }
 
 export type TreeNode =
@@ -190,8 +190,8 @@ export async function createFolder(path: string): Promise<{ path: string }> {
   }))
 }
 
-export async function renameFolder(srcPath: string, newPath: string, updateReferences = false): Promise<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string }> }> {
-  return jsonOrThrow<{ path: string; moved: string[] }>(await fetch('/api/folders/' + splat(srcPath), {
+export async function renameFolder(srcPath: string, newPath: string, updateReferences = false): Promise<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string; mtime: number }> }> {
+  return jsonOrThrow<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string; mtime: number }> }>(await fetch('/api/folders/' + splat(srcPath), {
     method: 'PATCH', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ newPath, updateReferences }),
   }))

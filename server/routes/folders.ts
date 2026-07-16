@@ -56,6 +56,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   }
   const folderReferenceSnapshots: Array<{
     sourcePath: string; writePath: string; raw: string; updated: string
+    mtime: number
     metadata: ReturnType<typeof getDocumentMetadata>
   }> = []
   if (body.updateReferences) {
@@ -75,6 +76,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         writePath: source === srcPath || source.startsWith(srcPath + '/') ? newPath + source.slice(srcPath.length) : source,
         raw,
         updated,
+        mtime: 0,
         metadata: getDocumentMetadata(metadataDb(), source),
       })
     }
@@ -87,6 +89,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       const target = filePathFor(snapshot.writePath)
       await fs.writeFile(target, snapshot.updated, 'utf8')
       const stat = await fs.stat(target)
+      snapshot.mtime = stat.mtimeMs
       ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
     }
   } catch (error) {
@@ -130,7 +133,11 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   return c.json({
     path: body.newPath,
     moved,
-    updatedReferences: folderReferenceSnapshots.map((snapshot) => ({ path: snapshot.writePath, raw: snapshot.updated })),
+    updatedReferences: folderReferenceSnapshots.map((snapshot) => ({
+      path: snapshot.writePath,
+      raw: snapshot.updated,
+      mtime: snapshot.mtime,
+    })),
   })
 })
 

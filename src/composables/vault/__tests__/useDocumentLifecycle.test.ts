@@ -113,7 +113,7 @@ describe('useDocumentLifecycle rename', () => {
     vi.stubGlobal('fetch', vi.fn().mockReturnValue(pendingSave))
     const patch = vi.spyOn(api, 'patchPost').mockResolvedValue({
       path: 'inbox/b', title: 'B', created: '', updated: '', tags: [], size: 1, mtime: 2,
-      updatedReferences: [{ path: 'refs/source', raw: 'rewritten' }],
+      updatedReferences: [{ path: 'refs/source', raw: 'rewritten', mtime: 10 }],
     })
     const h = setup([tab('inbox/a'), tab('refs/source')])
     h.save.onEditorChange('refs/source', 'editing backlink')
@@ -160,7 +160,7 @@ describe('useDocumentLifecycle rename', () => {
 
     finishPatch({
       path: 'inbox/b', title: 'B', created: '', updated: '', tags: [], size: 1, mtime: 2,
-      updatedReferences: [{ path: 'refs/new', raw: 'server rewritten' }],
+      updatedReferences: [{ path: 'refs/new', raw: 'server rewritten', mtime: 11 }],
     })
     await vi.waitFor(() => expect(applyReferenceWrites).toHaveBeenCalledOnce())
     await vi.advanceTimersByTimeAsync(800)
@@ -224,13 +224,38 @@ describe('useDocumentLifecycle rename', () => {
     expect(puts).toEqual(['/api/posts/inbox/a:dirty'])
   })
 
+  it('resumes a newly opened dirty tab when a global rename rolls back', async () => {
+    vi.useFakeTimers()
+    let rejectRename!: (error: Error) => void
+    vi.spyOn(api, 'patchPost').mockReturnValue(new Promise((_, reject) => { rejectRename = reject }))
+    const puts: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const raw = (JSON.parse(String(init?.body)) as { raw: string }).raw
+      puts.push(`${url}:${raw}`)
+      return saveResponse(raw)
+    }))
+    const h = setup([tab('inbox/a')])
+    const renaming = h.lifecycle.renameFile('inbox/a', { name: 'b', updateReferences: true })
+    await vi.waitFor(() => expect(api.patchPost).toHaveBeenCalledOnce())
+
+    h.tabs.value.push(tab('inbox/c'))
+    h.save.onEditorChange('inbox/c', 'new dirty content')
+    await vi.advanceTimersByTimeAsync(800)
+    expect(puts).toEqual([])
+
+    rejectRename(new Error('rename failed'))
+    await expect(renaming).rejects.toThrow('rename failed')
+    await vi.advanceTimersByTimeAsync(800)
+    expect(puts).toEqual(['/api/posts/inbox/c:new dirty content'])
+  })
+
   it('publishes rename identity before deduplicated reference writes, including destination writes', async () => {
     vi.spyOn(api, 'patchPost').mockResolvedValue({
       path: 'inbox/b', title: 'B', created: '', updated: '', tags: [], size: 1, mtime: 2,
       updatedReferences: [
-        { path: 'inbox/b', raw: 'self rewritten' },
-        { path: 'refs/c', raw: 'ref rewritten' },
-        { path: 'refs/c', raw: 'ref rewritten' },
+        { path: 'inbox/b', raw: 'self rewritten', mtime: 20 },
+        { path: 'refs/c', raw: 'ref rewritten', mtime: 21 },
+        { path: 'refs/c', raw: 'ref rewritten', mtime: 21 },
       ],
     })
     const h = setup()
@@ -263,6 +288,7 @@ describe('useDocumentLifecycle folder and delete operations', () => {
     })
     vi.spyOn(api, 'renameFolder').mockReturnValue(pendingRename)
     const create = vi.spyOn(api, 'createPost')
+    const createFolder = vi.spyOn(api, 'createFolder')
     const h = setup([tab('folder/a')])
 
     const renaming = h.lifecycle.renameFolder('folder', 'renamed', ['folder/a'])
@@ -270,6 +296,9 @@ describe('useDocumentLifecycle folder and delete operations', () => {
     await expect(h.lifecycle.createFile({ path: 'folder/new' }))
       .rejects.toBeInstanceOf(DocumentMutationConflictError)
     expect(create).not.toHaveBeenCalled()
+    await expect(h.lifecycle.createFolder('folder/new-folder'))
+      .rejects.toBeInstanceOf(DocumentMutationConflictError)
+    expect(createFolder).not.toHaveBeenCalled()
 
     finishRename({ path: 'renamed', moved: ['renamed/a'], updatedReferences: [] })
     await renaming
@@ -363,6 +392,17 @@ describe('useDocumentLifecycle folder and delete operations', () => {
     await expect(h.lifecycle.createFile({ path: 'inbox/fail' })).rejects.toThrow('create failed')
     expect(create).toHaveBeenCalledTimes(2)
     expect(h.fileChanges.events.value).toHaveLength(1)
+  })
+
+  it('creates folders through the shared lifecycle and keeps refresh best-effort', async () => {
+    const create = vi.spyOn(api, 'createFolder').mockResolvedValue({ path: 'inbox/new-folder' })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const h = setup([])
+    h.refresh.mockRejectedValueOnce(new Error('refresh failed'))
+
+    await expect(h.lifecycle.createFolder('inbox/new-folder'))
+      .resolves.toEqual({ path: 'inbox/new-folder' })
+    expect(create).toHaveBeenCalledWith('inbox/new-folder')
   })
 
   it('keeps a successful create successful when refresh fails', async () => {

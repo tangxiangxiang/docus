@@ -264,16 +264,16 @@ describe('useExternalFileChanges editor-save acknowledgement', () => {
     })
 
     await external.applyLifecycleReferenceWrites([
-      { path: 'refs/clean', raw: 'rewritten clean' },
-      { path: 'refs/dirty', raw: 'rewritten disk' },
+      { path: 'refs/clean', raw: 'rewritten clean', mtime: 42 },
+      { path: 'refs/dirty', raw: 'rewritten disk', mtime: 43 },
     ])
 
     expect(clean).toMatchObject({
-      raw: 'rewritten clean', originalRaw: 'rewritten clean', saveStatus: 'idle',
+      raw: 'rewritten clean', originalRaw: 'rewritten clean', saveStatus: 'idle', serverMtime: 42,
     })
     expect(clean.revision).toBe(clean.savedRevision)
     expect(dirty).toMatchObject({
-      raw: 'local edit', originalRaw: 'rewritten disk', saveStatus: 'dirty',
+      raw: 'local edit', originalRaw: 'rewritten disk', saveStatus: 'dirty', serverMtime: 43,
     })
     expect(dirty.revision).not.toBe(dirty.savedRevision)
     expect(confirm).toHaveBeenCalledOnce()

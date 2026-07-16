@@ -88,6 +88,13 @@ describe('rename reference updates', () => {
       body: JSON.stringify({ name: 'renamed-b', updateReferences: true }),
     }))
     expect(renamed.status).toBe(200)
+    const renamedBody = await renamed.json() as {
+      updatedReferences: Array<{ path: string; raw: string; mtime: number }>
+    }
+    expect(renamedBody.updatedReferences).toEqual([
+      expect.objectContaining({ path: 'a', raw: '# a\nsee [[renamed-b]]', mtime: expect.any(Number) }),
+    ])
+    expect(renamedBody.updatedReferences[0]!.mtime).toBeGreaterThan(0)
     expect(await fs.readFile(path.join(sandbox, 'a.md'), 'utf8')).toBe('# a\nsee [[renamed-b]]')
     await expect(fs.stat(path.join(sandbox, 'b.md'))).rejects.toThrow()
     expect(await fs.readFile(path.join(sandbox, 'renamed-b.md'), 'utf8')).toBe('# b\nsee [a](a.md)')
@@ -226,6 +233,26 @@ describe('write routes update the index', () => {
 
     // 'archive/a' resolves [[b]] against its new same-dir → 'archive/b'.
     expect(snap.outgoing['archive/a']?.[0]?.target).toBe('archive/b')
+  })
+
+  it('returns the rewritten reference mtime after a folder rename', async () => {
+    await fs.mkdir(path.join(sandbox, 'notes'))
+    await fs.writeFile(path.join(sandbox, 'notes', 'target.md'), '# target', 'utf8')
+    await fs.writeFile(path.join(sandbox, 'source.md'), 'see [[notes/target]]', 'utf8')
+    __resetLinkIndexForTesting()
+
+    const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ newPath: 'archive', updateReferences: true }),
+    }))
+    expect(response.status).toBe(200)
+    const body = await response.json() as {
+      updatedReferences: Array<{ path: string; raw: string; mtime: number }>
+    }
+    expect(body.updatedReferences).toEqual([
+      expect.objectContaining({ path: 'source', raw: 'see [[archive/target]]', mtime: expect.any(Number) }),
+    ])
+    expect(body.updatedReferences[0]!.mtime).toBeGreaterThan(0)
   })
 
   it('restores reference metadata when a folder reference update rolls back', async () => {

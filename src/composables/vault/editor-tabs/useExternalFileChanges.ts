@@ -91,7 +91,7 @@ export function useExternalFileChanges(options: {
   }
 
   async function applyLifecycleReferenceWrites(
-    updatedReferences: ReadonlyArray<{ path: string; raw: string }>,
+    updatedReferences: ReadonlyArray<{ path: string; raw: string; mtime: number }>,
   ): Promise<void> {
     for (const updated of updatedReferences) {
       const tab = options.tabs.value.find((candidate) => candidate.path === updated.path)
@@ -123,6 +123,7 @@ export function useExternalFileChanges(options: {
       }
       tab.error = null
       tab.externalRaw = null
+      tab.serverMtime = updated.mtime
     }
   }
 

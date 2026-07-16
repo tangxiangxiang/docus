@@ -212,6 +212,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
     abs: string
     raw: string
     updated: string
+    mtime: number
     metadata: ReturnType<typeof getDocumentMetadata>
   }> = []
   if (body.updateReferences) {
@@ -232,6 +233,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
         abs: backlink.source === srcPath ? dest : filePathFor(backlink.source),
         raw,
         updated,
+        mtime: 0,
         metadata: getDocumentMetadata(metadataDb(), backlink.source),
       })
     }
@@ -242,6 +244,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
     for (const snapshot of referenceSnapshots) {
       await fs.writeFile(snapshot.abs, snapshot.updated, 'utf8')
       const stat = await fs.stat(snapshot.abs)
+      snapshot.mtime = stat.mtimeMs
       ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
       written.push(snapshot)
     }
@@ -296,6 +299,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
     updatedReferences: referenceSnapshots.map((snapshot) => ({
       path: snapshot.writePath,
       raw: snapshot.updated,
+      mtime: snapshot.mtime,
     })),
   } satisfies PostSummary)
 })

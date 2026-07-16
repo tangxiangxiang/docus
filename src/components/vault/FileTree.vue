@@ -6,7 +6,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { usePrompt } from '../../composables/usePrompt'
 import { useToast } from '../../composables/useToast'
 import { blockedMessage, isInArchive } from '../../composables/archiveProtocol'
-import { createPost, createFolder, patchPost, deletePost, renameFolder, deleteFolder, getRenameImpact } from '../../lib/api'
+import { createPost, createFolder as createFolderApi, patchPost, deletePost, renameFolder, deleteFolder, getRenameImpact } from '../../lib/api'
 import { suggestSlug } from '../../lib/ai-api'
 import { isSlugSegment, toLocalSlug } from '../../lib/slug'
 import { useScopeFilter } from '../../composables/vault/useScopeFilter'
@@ -598,11 +598,12 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         publishChange({ path, kind: 'write', source: 'editor-lifecycle' })
       }
     }
-    else await createFolder(path)
+    else if (lifecycle) await lifecycle.createFolder(path)
+    else await createFolderApi(path)
     expanded.value.add(folder)
     expanded.value = new Set(expanded.value)
     saveExpanded()
-    if (!lifecycle || kind === 'folder') emit('refresh')
+    if (!lifecycle) emit('refresh')
   } catch (e: any) { toast.error(t('common.create_failed', { error: e.message })) }
 }
 </script>
