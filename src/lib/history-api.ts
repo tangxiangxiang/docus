@@ -169,7 +169,6 @@ export interface IndexRepairTransaction {
   head: string
   paths: string[]
   expectedIndex: Record<string, IndexEntryFingerprint[]>
-  expectedIndexHash: string | null
 }
 
 export type ContentHashes = Record<string, string | null>

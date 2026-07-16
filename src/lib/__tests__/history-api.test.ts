@@ -90,7 +90,6 @@ describe('createCommit', () => {
       head: 'b'.repeat(40),
       paths: ['a.md'],
       expectedIndex: { 'a.md': [{ mode: '100644', oid: 'c'.repeat(40), stage: 0 }] },
-      expectedIndexHash: 'd'.repeat(64),
     }
     responses.push({ status: 200, body: { transactions: [transaction] } })
     await expect(api.getIndexRepairStatus()).resolves.toEqual([transaction])

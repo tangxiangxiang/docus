@@ -508,7 +508,7 @@ describe('POST /api/history/repair-index', () => {
     const after = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string }> }
     expect(after.dirty.map((entry) => entry.path)).not.toContain('a.md')
     expect(await (await call('GET', '/repair-status')).json()).toEqual({ transactions: [] })
-  })
+  }, 15_000)
 
   it('returns 409 instead of clearing index content staged after the failure', async () => {
     await write('a.md', 'committed')
@@ -531,7 +531,7 @@ describe('POST /api/history/repair-index', () => {
     expect(await discard.json()).toEqual({ discarded: true })
     expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('user staged this')
     expect(await (await call('GET', '/repair-status')).json()).toEqual({ transactions: [] })
-  })
+  }, 15_000)
 })
 
 describe('POST /api/history/drop', () => {

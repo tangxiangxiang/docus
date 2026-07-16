@@ -26,7 +26,6 @@ const repairTransaction: api.IndexRepairTransaction = {
   head: 'b'.repeat(40),
   paths: ['a.md'],
   expectedIndex: { 'a.md': [{ mode: '100644', oid: 'c'.repeat(40), stage: 0 }] },
-  expectedIndexHash: 'd'.repeat(64),
 }
 
 function history(paths = ['inbox/a.md', 'inbox/b.md']): HistoryState {
