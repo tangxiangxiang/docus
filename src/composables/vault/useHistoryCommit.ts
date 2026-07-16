@@ -16,6 +16,7 @@ export interface HistoryCommitOptions {
   ) => Promise<void>)>
   refreshComparisons?(committedPaths: readonly string[]): Promise<void>
   acquireMutation?(paths: readonly string[]): (() => void) | null
+  canMutate?(paths: readonly string[]): boolean
 }
 
 export function useHistoryCommit(options: HistoryCommitOptions) {
@@ -50,7 +51,10 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
   const selectedCount = computed(() => selectedPaths.value.size)
   const trimmedMessage = computed(() => message.value.trim())
   const canCommit = computed(() => (
-    selectedCount.value > 0 && trimmedMessage.value.length > 0 && !busy.value
+    selectedCount.value > 0
+    && trimmedMessage.value.length > 0
+    && !busy.value
+    && (options.canMutate?.([...selectedPaths.value]) ?? true)
   ))
 
   function toggle(path: string): void {
@@ -94,7 +98,11 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     }
 
     const releaseMutation = options.acquireMutation?.(paths)
-    if (options.acquireMutation && !releaseMutation) return null
+    if (options.acquireMutation && !releaseMutation) {
+      error.value = t('history.document_mutation_in_progress')
+      toast.info(error.value)
+      return null
+    }
     busy.value = true
     busyPaths.value = new Set(paths)
     let releaseBarrier: ((options?: { flushPending?: boolean }) => Promise<void>) | null = null

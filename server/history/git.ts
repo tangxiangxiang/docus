@@ -23,6 +23,8 @@
 import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
+import { createHash } from 'node:crypto'
 
 const DEFAULT_GIT_TIMEOUT_MS = 15_000
 const MAX_CAPTURE_BYTES = 10 * 1024 * 1024
@@ -66,9 +68,17 @@ function appendCapped(current: string, chunk: string): string {
  * only on spawn failure (no shell escaping concerns, args are passed
  * verbatim).
  */
-export function run(repoRoot: string, args: string[]): Promise<RunResult> {
+export function run(
+  repoRoot: string,
+  args: string[],
+  options: { env?: NodeJS.ProcessEnv; input?: Buffer | string } = {},
+): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd: repoRoot, windowsHide: true })
+    const child = spawn('git', args, {
+      cwd: repoRoot,
+      windowsHide: true,
+      env: options.env ? { ...process.env, ...options.env } : process.env,
+    })
     let stdout = ''
     let stderr = ''
     let settled = false
@@ -92,6 +102,7 @@ export function run(repoRoot: string, args: string[]): Promise<RunResult> {
       stderr = next
       if (capped) child.kill('SIGKILL')
     })
+    child.stdin.end(options.input)
     child.on('error', (err) => {
       if (settled) return
       settled = true
@@ -467,18 +478,63 @@ export type CommitResult = {
   filesCommitted: string[]
 }
 
+export type ExpectedContentHashes = Record<string, string | null>
+
+const repoMutationTails = new Map<string, Promise<void>>()
+
+async function withRepoMutation<T>(repoRoot: string, operation: () => Promise<T>): Promise<T> {
+  const key = path.resolve(repoRoot)
+  const previous = repoMutationTails.get(key) ?? Promise.resolve()
+  const result = previous.catch(() => {}).then(operation)
+  const tail = result.then(() => {}, () => {})
+  repoMutationTails.set(key, tail)
+  try {
+    return await result
+  } finally {
+    if (repoMutationTails.get(key) === tail) repoMutationTails.delete(key)
+  }
+}
+
+async function captureExpectedFiles(
+  repoRoot: string,
+  paths: readonly string[],
+  expected: ExpectedContentHashes,
+): Promise<Map<string, Buffer | null>> {
+  const captured = new Map<string, Buffer | null>()
+  const changed: string[] = []
+  for (const filePath of paths) {
+    let bytes: Buffer | null
+    try {
+      bytes = await fs.readFile(safeWorktreeFile(repoRoot, filePath))
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') throw error
+      bytes = null
+    }
+    const actual = bytes === null ? null : createHash('sha256').update(bytes).digest('hex')
+    if (actual !== expected[filePath]) changed.push(filePath)
+    captured.set(filePath, bytes)
+  }
+  if (changed.length > 0) throw new Error(`content changed before commit: ${changed.join(', ')}`)
+  return captured
+}
+
 /**
  * `git add` each of `paths` and create one commit with `message`. All
  * paths are relative to `repoRoot` and use forward slashes (the same
  * shape `git status` reports). Throws if the resulting commit touches
  * zero files (nothing to commit) or if git itself rejects the message
- * (e.g. hooks). The HTTP route validates that every selected path is
- * currently dirty immediately before calling this function.
+ * (e.g. hooks). When `expected` is supplied, this function owns the complete
+ * transaction: dirty validation, byte capture, temporary-index staging,
+ * staged-blob verification, and commit all run under the per-repo mutex.
  */
 export async function addAndCommit(
   repoRoot: string,
   paths: string[],
   message: string,
+  options: {
+    expected?: ExpectedContentHashes
+    beforeStageForTesting?: () => Promise<void>
+  } = {},
 ): Promise<CommitResult> {
   if (paths.length === 0) {
     throw new Error('addAndCommit: at least one path is required')
@@ -486,6 +542,17 @@ export async function addAndCommit(
   if (message.trim().length === 0) {
     throw new Error('addAndCommit: message must not be empty')
   }
+  return withRepoMutation(repoRoot, async () => {
+  let captured: Map<string, Buffer | null> | null = null
+  if (options.expected) {
+    const dirtyPaths = new Set((await status(repoRoot)).map((entry) => entry.path))
+    const stalePaths = paths.filter((filePath) => !dirtyPaths.has(filePath))
+    if (stalePaths.length > 0) {
+      throw new Error(`selection is stale; no longer changed: ${stalePaths.join(', ')}`)
+    }
+    captured = await captureExpectedFiles(repoRoot, paths, options.expected)
+  }
+
   // A fresh vault in production (or a vault that was `git init`-ed by
   // hand without setting a user.name / user.email) makes `git commit`
   // fail with "Author identity unknown", which the route maps to 500.
@@ -498,16 +565,56 @@ export async function addAndCommit(
   // vars match git's own convention for per-command overrides and let
   // operators pick the identity per-host without touching the image.
   await ensureAuthorIdentity(repoRoot)
-  // Stage. Use -- to disambiguate paths from refs, even though our
-  // paths are obviously paths.
-  const add = await run(repoRoot, ['add', '--', ...paths])
-  if (add.status !== 0) {
-    throw new Error(`git add failed: ${add.stderr.trim()}`)
-  }
+  await options.beforeStageForTesting?.()
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-history-index-'))
+  const indexPath = path.join(tempDir, 'index')
+  const indexEnv = { GIT_INDEX_FILE: indexPath }
+  try {
+    const headBefore = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
+    const initialize = headBefore.status === 0
+      ? await run(repoRoot, ['read-tree', headBefore.stdout.trim()], { env: indexEnv })
+      : await run(repoRoot, ['read-tree', '--empty'], { env: indexEnv })
+    if (initialize.status !== 0) throw new Error(`git read-tree failed: ${initialize.stderr.trim()}`)
+
+    if (captured) {
+      for (const filePath of paths) {
+        const bytes = captured.get(filePath) ?? null
+        if (bytes === null) {
+          const remove = await run(repoRoot, ['update-index', '--force-remove', '--', filePath], { env: indexEnv })
+          if (remove.status !== 0) throw new Error(`git update-index failed: ${remove.stderr.trim()}`)
+          const verify = await run(repoRoot, ['ls-files', '--stage', '--', filePath], { env: indexEnv })
+          if (verify.status !== 0 || verify.stdout.trim().length > 0) {
+            throw new Error(`staged content verification failed: ${filePath}`)
+          }
+          continue
+        }
+        const blob = await run(
+          repoRoot,
+          ['hash-object', '-w', `--path=${filePath}`, '--stdin'],
+          { input: bytes },
+        )
+        if (blob.status !== 0) throw new Error(`git hash-object failed: ${blob.stderr.trim()}`)
+        const oid = blob.stdout.trim()
+        const stage = await run(
+          repoRoot,
+          ['update-index', '--add', '--cacheinfo', '100644', oid, filePath],
+          { env: indexEnv },
+        )
+        if (stage.status !== 0) throw new Error(`git update-index failed: ${stage.stderr.trim()}`)
+        const verify = await run(repoRoot, ['ls-files', '--stage', '--', filePath], { env: indexEnv })
+        if (verify.status !== 0 || !verify.stdout.includes(oid)) {
+          throw new Error(`staged content verification failed: ${filePath}`)
+        }
+      }
+    } else {
+      const add = await run(repoRoot, ['add', '--', ...paths], { env: indexEnv })
+      if (add.status !== 0) throw new Error(`git add failed: ${add.stderr.trim()}`)
+    }
   // Limit the commit itself to the paths selected in the History panel.
   // The index may contain files staged outside docus; a bare `git commit`
   // would silently sweep those unrelated files into this commit.
-  const commit = await run(repoRoot, ['commit', '-m', message, '--', ...paths])
+  const commit = await run(repoRoot, ['commit', '-m', message], { env: indexEnv })
   if (commit.status !== 0) {
     // "nothing to commit" is a normal caller's error, not a git failure.
     // The wording varies across git versions ("nothing to commit, working
@@ -532,13 +639,20 @@ export async function addAndCommit(
   const filesCommitted = show.status === 0
     ? show.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
     : paths
+  const syncIndex = await run(repoRoot, ['reset', '-q', 'HEAD', '--', ...paths])
+  if (syncIndex.status !== 0) throw new Error(`git reset index failed: ${syncIndex.stderr.trim()}`)
   return { sha: head.stdout.trim(), filesCommitted }
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true })
+  }
+  })
 }
 
 export async function dropHeadCommit(
   repoRoot: string,
   sha: string,
 ): Promise<CommitResult> {
+  return withRepoMutation(repoRoot, async () => {
   const head = await run(repoRoot, ['rev-parse', 'HEAD'])
   if (head.status !== 0) {
     throw new Error(`git rev-parse HEAD failed: ${head.stderr.trim()}`)
@@ -572,6 +686,7 @@ export async function dropHeadCommit(
     throw new Error(all || `git reset failed (exit ${reset.status})`)
   }
   return { sha: parent.stdout.trim(), filesCommitted }
+  })
 }
 
 // --- Restore --------------------------------------------------------------
@@ -593,10 +708,12 @@ export async function restoreFile(
   ref: string,
   path: string,
 ): Promise<void> {
-  const r = await run(repoRoot, ['restore', `--source=${ref}`, '--worktree', '--', path])
-  if (r.status !== 0) {
+  return withRepoMutation(repoRoot, async () => {
+    const r = await run(repoRoot, ['restore', `--source=${ref}`, '--worktree', '--', path])
+    if (r.status !== 0) {
     // Missing paths and invalid revisions both end up here. Surface the
     // raw stderr — the route maps it to a 4xx.
-    throw new Error(r.stderr.trim() || `git restore failed (exit ${r.status})`)
-  }
+      throw new Error(r.stderr.trim() || `git restore failed (exit ${r.status})`)
+    }
+  })
 }

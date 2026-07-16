@@ -23,6 +23,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import * as git from '../history/git.js'
 import { ensureRepo } from '../history/repo.js'
@@ -243,6 +244,27 @@ describe('addAndCommit + log', () => {
       path: 'staged-elsewhere.md',
       index: 'A',
       worktree: ' ',
+    }))
+  })
+
+  it('commits the validated snapshot when the worktree changes before staging', async () => {
+    await write('race.md', 'click-time content')
+    const expected = {
+      'race.md': createHash('sha256').update('click-time content').digest('hex'),
+    }
+
+    const result = await git.addAndCommit(root, ['race.md'], 'fixed snapshot', {
+      expected,
+      beforeStageForTesting: async () => {
+        await write('race.md', 'changed after validation')
+      },
+    })
+
+    expect(await git.rawAt(root, result.sha, 'race.md')).toBe('click-time content')
+    expect(await fs.readFile(path.join(root, 'race.md'), 'utf8')).toBe('changed after validation')
+    expect(await git.status(root)).toContainEqual(expect.objectContaining({
+      path: 'race.md',
+      worktree: 'M',
     }))
   })
 

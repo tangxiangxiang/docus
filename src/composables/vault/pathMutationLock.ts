@@ -5,8 +5,12 @@ import { ref } from 'vue'
 export function createPathMutationLock() {
   const paths = ref<Set<string>>(new Set())
 
+  function canAcquire(requestedPaths: readonly string[]): boolean {
+    return requestedPaths.every((path) => !paths.value.has(path))
+  }
+
   function acquire(requestedPaths: readonly string[]): (() => void) | null {
-    if (requestedPaths.some((path) => paths.value.has(path))) return null
+    if (!canAcquire(requestedPaths)) return null
     const next = new Set(paths.value)
     for (const path of requestedPaths) next.add(path)
     paths.value = next
@@ -25,5 +29,5 @@ export function createPathMutationLock() {
     return paths.value.has(path)
   }
 
-  return { paths, acquire, has }
+  return { paths, canAcquire, acquire, has }
 }

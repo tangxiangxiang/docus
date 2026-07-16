@@ -169,7 +169,7 @@ export async function getContentHashes(paths: string[]): Promise<ContentHashes> 
 export async function createCommit(
   paths: string[],
   message: string,
-  expected?: ContentHashes,
+  expected: ContentHashes,
 ): Promise<CommitResult> {
   const r = await fetch('/api/history/commits', {
     method: 'POST',

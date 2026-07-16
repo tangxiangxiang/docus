@@ -267,7 +267,7 @@ history.get('/diff', async (c) => {
 
 // ---- /commits ----
 // Create one commit from a list of paths and a message. Body:
-//   { paths: string[], message: string, expected?: Record<string, string | null> }
+//   { paths: string[], message: string, expected: Record<string, string | null> }
 //
 // `message` must be non-empty after trim — empty messages defeat
 // the purpose of a manual commit. The L0 layer's addAndCommit
@@ -295,41 +295,26 @@ history.post('/commits', async (c) => {
   if (typeof body.message !== 'string' || body.message.trim().length === 0) {
     return bad(c, 'message must be a non-empty string')
   }
-  let expected: Record<string, string | null> | null = null
-  if (body.expected !== undefined) {
-    if (!body.expected || typeof body.expected !== 'object' || Array.isArray(body.expected)) {
-      return bad(c, 'invalid expected content hashes')
-    }
-    const record = body.expected as Record<string, unknown>
-    if (Object.keys(record).length !== paths.length || paths.some((filePath) => (
-      !(filePath in record)
-      || !(record[filePath] === null || (typeof record[filePath] === 'string' && /^[0-9a-f]{64}$/.test(record[filePath])))
-    ))) {
-      return bad(c, 'invalid expected content hashes')
-    }
-    expected = record as Record<string, string | null>
+  if (!body.expected || typeof body.expected !== 'object' || Array.isArray(body.expected)) {
+    return bad(c, 'expected content hashes required')
   }
+  const record = body.expected as Record<string, unknown>
+  if (Object.keys(record).length !== paths.length || paths.some((filePath) => (
+    !(filePath in record)
+    || !(record[filePath] === null || (typeof record[filePath] === 'string' && /^[0-9a-f]{64}$/.test(record[filePath])))
+  ))) {
+    return bad(c, 'invalid expected content hashes')
+  }
+  const expected = record as Record<string, string | null>
   try {
     await ensureRepo(repoRoot())
-    const dirtyPaths = new Set((await git.status(repoRoot())).map((entry) => entry.path))
-    const stalePaths = paths.filter((path) => !dirtyPaths.has(path))
-    if (stalePaths.length > 0) {
-      return bad(c, `selection is stale; no longer changed: ${stalePaths.join(', ')}`, 409)
-    }
-    if (expected) {
-      const changedPaths: string[] = []
-      for (const filePath of paths) {
-        if (await worktreeContentHash(filePath) !== expected[filePath]) changedPaths.push(filePath)
-      }
-      if (changedPaths.length > 0) {
-        return bad(c, `content changed before commit: ${changedPaths.join(', ')}`, 409)
-      }
-    }
-    const r = await git.addAndCommit(repoRoot(), paths, body.message)
+    const r = await git.addAndCommit(repoRoot(), paths, body.message, { expected })
     return c.json(r, 201)
   } catch (e: any) {
     const msg = e.message ?? 'commit failed'
-    if (/nothing to commit/i.test(msg)) return bad(c, 'nothing to commit', 409)
+    if (/nothing to commit|selection is stale|content changed before commit/i.test(msg)) {
+      return bad(c, msg, 409)
+    }
     return bad(c, msg, 500)
   }
 })

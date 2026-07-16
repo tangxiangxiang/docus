@@ -7,11 +7,13 @@ describe('createPathMutationLock', () => {
     const releaseCommit = lock.acquire(['inbox/a.md', 'inbox/b.md'])
 
     expect(releaseCommit).toBeTypeOf('function')
+    expect(lock.canAcquire(['inbox/a.md'])).toBe(false)
     expect(lock.acquire(['inbox/a.md'])).toBeNull()
     const releaseOther = lock.acquire(['inbox/c.md'])
     expect(releaseOther).toBeTypeOf('function')
 
     releaseCommit?.()
+    expect(lock.canAcquire(['inbox/a.md'])).toBe(true)
     expect(lock.has('inbox/a.md')).toBe(false)
     expect(lock.has('inbox/c.md')).toBe(true)
     releaseOther?.()

@@ -164,6 +164,7 @@ const historyCommit = useHistoryCommit({
   history,
   saveSelected: prepareHistoryCommit,
   acquireMutation: historyMutationLock.acquire,
+  canMutate: historyMutationLock.canAcquire,
   async refreshComparisons(committedPaths) {
     await Promise.all(committedPaths.map((path) => (
       historyComparisons.refreshDocumentComparison(path.endsWith('.md') ? path.slice(0, -3) : path)
@@ -210,6 +211,16 @@ const historyRestore = useHistoryRestore({
   refreshVault: refresh,
   refreshComparison: historyComparisons.refreshDocumentComparison,
   acquireMutation: historyMutationLock.acquire,
+  onConflict(request) {
+    toast.info(t('history.document_mutation_in_progress'))
+    void nextTick(() => {
+      if (activeHistorySnapshot.value?.documentPath === request.documentPath) {
+        snapshotPaneRef.value?.focusRestore()
+      } else if (activeHistoryComparison.value?.documentPath === request.documentPath) {
+        comparisonPaneRef.value?.focusRestore()
+      }
+    })
+  },
   onSuccess(request, result) {
     if (result.refreshFailed) {
       toast.info(t('history.restore_partial', { title: request.documentTitle }), 5000)

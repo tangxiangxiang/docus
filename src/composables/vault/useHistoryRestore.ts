@@ -3,6 +3,7 @@ import type { Tab } from '../../components/vault/tabs'
 import * as historyApi from '../../lib/history-api'
 import type { VaultFileChanges } from './context/fileChanges'
 import { getLoadedEditorDocument } from './useHistoryComparisons'
+import { useI18n } from '../useI18n'
 
 export interface HistoryRestoreSource {
   documentPath: string
@@ -24,6 +25,7 @@ interface HistoryRestoreOptions {
   refreshVault: () => Promise<void>
   refreshComparison: (path: string) => Promise<boolean | void>
   acquireMutation?: (paths: readonly string[]) => (() => void) | null
+  onConflict?: (request: HistoryRestoreRequest) => void
   restoreFile?: typeof historyApi.restoreFile
   onSuccess: (request: HistoryRestoreRequest, result: { refreshFailed: boolean }) => void
   onError: (request: HistoryRestoreRequest, error: unknown) => void
@@ -48,6 +50,7 @@ function applyRestoredContent(tab: Tab, raw: string, mtime: number): void {
 }
 
 export function useHistoryRestore(options: HistoryRestoreOptions) {
+  const { t } = useI18n()
   const restoring = ref(false)
   const restoringPath = ref<string | null>(null)
   const error = ref<string | null>(null)
@@ -83,6 +86,8 @@ export function useHistoryRestore(options: HistoryRestoreOptions) {
 
     const releaseMutation = options.acquireMutation?.([historyPath(request.documentPath)])
     if (options.acquireMutation && !releaseMutation) {
+      error.value = t('history.document_mutation_in_progress')
+      options.onConflict?.(request)
       pending = false
       return false
     }

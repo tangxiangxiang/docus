@@ -202,4 +202,23 @@ describe('useHistoryCommit', () => {
     expect(calls.slice(3).sort()).toEqual(['log', 'status'])
     expect(release).toHaveBeenCalledOnce()
   })
+
+  it('disables submission and reports a mutation-lock conflict', async () => {
+    const h = history(['a.md'])
+    const locked = ref(true)
+    const commit = useHistoryCommit({
+      history: h,
+      saveSelected: vi.fn(),
+      canMutate: () => !locked.value,
+      acquireMutation: () => null,
+    })
+    commit.message.value = 'Version'
+
+    expect(commit.canCommit.value).toBe(false)
+    await expect(commit.submit()).resolves.toBeNull()
+
+    expect(commit.error.value).toBe('Another change is in progress for this document. Try again shortly.')
+    expect(toast.info).toHaveBeenCalledWith(commit.error.value)
+    expect(api.getContentHashes).not.toHaveBeenCalled()
+  })
 })

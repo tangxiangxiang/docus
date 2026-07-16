@@ -85,13 +85,13 @@ describe('createCommit', () => {
 
   it('throws the server error message on a non-2xx', async () => {
     responses.push({ status: 409, body: { error: 'nothing to commit' } })
-    await expect(api.createCommit(['a.md'], 'msg'))
+    await expect(api.createCommit(['a.md'], 'msg', { 'a.md': 'a'.repeat(64) }))
       .rejects.toThrow('nothing to commit')
   })
 
   it('preserves the HTTP status for stale-selection handling', async () => {
     responses.push({ status: 409, body: { error: 'selection is stale' } })
-    const error = await api.createCommit(['a.md'], 'msg').catch((cause) => cause)
+    const error = await api.createCommit(['a.md'], 'msg', { 'a.md': 'a'.repeat(64) }).catch((cause) => cause)
     expect(error).toBeInstanceOf(api.HistoryApiError)
     expect(error.status).toBe(409)
   })

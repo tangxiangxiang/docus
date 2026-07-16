@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import historyRoutes, {
   setRepoRootForTesting,
   __resetRepoRootForTesting,
@@ -54,11 +55,36 @@ async function configureGitUser() {
   await run(root, ['config', 'user.email', 'test@example.com'])
 }
 
-async function call(method: string, urlPath: string, body?: unknown) {
+async function call(method: string, urlPath: string, body?: unknown, autoExpected = true) {
+  let requestBody = body
+  if (
+    autoExpected
+    && method === 'POST'
+    && urlPath === '/commits'
+    && body
+    && typeof body === 'object'
+    && !('expected' in body)
+  ) {
+    const candidate = body as { paths?: unknown; message?: unknown }
+    if (Array.isArray(candidate.paths) && candidate.paths.length > 0 && candidate.paths.every((filePath) => (
+      typeof filePath === 'string' && !filePath.includes('..') && /^[a-z0-9/-]+\.md$/.test(filePath)
+    ))) {
+      const entries = await Promise.all(candidate.paths.map(async (filePath) => {
+        try {
+          const bytes = await fs.readFile(path.join(root, filePath))
+          return [filePath, createHash('sha256').update(bytes).digest('hex')] as const
+        } catch (error: any) {
+          if (error?.code === 'ENOENT') return [filePath, null] as const
+          throw error
+        }
+      }))
+      requestBody = { ...candidate, expected: Object.fromEntries(entries) }
+    }
+  }
   const req = new Request(`http://localhost${urlPath}`, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
+    headers: requestBody ? { 'content-type': 'application/json' } : undefined,
+    body: requestBody ? JSON.stringify(requestBody) : undefined,
   })
   return historyRoutes.fetch(req)
 }
@@ -363,6 +389,13 @@ describe('POST /api/history/commits', () => {
     const r = await call('POST', '/commits', { paths: ['a.md'], message: 'second' })
     expect(r.status).toBe(409)
     expect(((await r.json()) as { error: string }).error).toBe('selection is stale; no longer changed: a.md')
+  })
+
+  it('requires expected content hashes for every commit request', async () => {
+    await write('a.md', 'x')
+    const r = await call('POST', '/commits', { paths: ['a.md'], message: 'x' }, false)
+    expect(r.status).toBe(400)
+    expect(((await r.json()) as { error: string }).error).toBe('expected content hashes required')
   })
 
   it('returns 409 without committing when content changes after hash capture', async () => {

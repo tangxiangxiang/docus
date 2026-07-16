@@ -23,6 +23,7 @@ const emit = defineEmits<{
 
 const { locale, t } = useI18n()
 const headingRef = ref<HTMLElement | null>(null)
+const restoreButtonRef = ref<HTMLButtonElement | null>(null)
 
 const revisionTimeLabel = computed(() => formatHistoryDate(props.snapshot.revisionTime, locale.value))
 
@@ -32,7 +33,11 @@ function focusViewer(): void {
   headingRef.value?.focus()
 }
 
-defineExpose({ focusViewer })
+function focusRestore(): void {
+  restoreButtonRef.value?.focus()
+}
+
+defineExpose({ focusViewer, focusRestore })
 </script>
 
 <template>
@@ -49,6 +54,7 @@ defineExpose({ focusViewer })
       <span class="history-readonly-badge">{{ t('history.read_only') }}</span>
       <div class="history-snapshot-toolbar" role="toolbar" :aria-label="t('history.snapshot_toolbar')">
         <button
+          ref="restoreButtonRef"
           type="button"
           class="history-restore-button"
           :disabled="snapshot.status !== 'ready' || restoring || mutationLocked"

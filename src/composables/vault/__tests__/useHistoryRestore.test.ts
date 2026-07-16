@@ -51,6 +51,7 @@ function harness(options: {
   refreshVault?: Mock
   refreshComparison?: Mock
   acquireMutation?: (paths: readonly string[]) => (() => void) | null
+  onConflict?: Mock
 } = {}) {
   const tabs = ref(options.tabs ?? [tab()])
   const fileChanges = createVaultFileChanges()
@@ -73,6 +74,7 @@ function harness(options: {
     refreshVault,
     refreshComparison,
     acquireMutation: options.acquireMutation,
+    onConflict: options.onConflict,
     restoreFile,
     onSuccess,
     onError,
@@ -180,13 +182,16 @@ describe('useHistoryRestore', () => {
 
   it('does not restore a document locked by Create Version', async () => {
     const acquireMutation = vi.fn().mockReturnValue(null)
-    const h = harness({ acquireMutation })
+    const onConflict = vi.fn()
+    const h = harness({ acquireMutation, onConflict })
 
     await expect(h.restore.restore(source())).resolves.toBe(false)
 
     expect(acquireMutation).toHaveBeenCalledWith(['inbox/redis.md'])
     expect(h.prepareEditorRestore).not.toHaveBeenCalled()
     expect(h.restoreFile).not.toHaveBeenCalled()
+    expect(h.restore.error.value).toBe('Another change is in progress for this document. Try again shortly.')
+    expect(onConflict).toHaveBeenCalledWith(expect.objectContaining({ documentPath: 'inbox/redis' }))
   })
 
   it('captures revision A even if the mutable viewer source changes before confirmation resolves', async () => {
