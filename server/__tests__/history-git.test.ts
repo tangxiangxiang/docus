@@ -308,7 +308,7 @@ describe('addAndCommit + log', () => {
     })
     expect(syncIndexForTesting).toHaveBeenCalledTimes(3)
     expect(await git.rawAt(root, result.sha, 'a.md')).toBe('snapshot')
-    await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toBe(true)
+    await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toEqual({ repaired: true })
     expect((await git.status(root)).find((entry) => entry.path === 'a.md')).toBeUndefined()
     expect(await git.getIndexRepairStatus(root)).toEqual([])
   })
@@ -348,7 +348,7 @@ describe('addAndCommit + log', () => {
     await write('b.md', 'staged B')
     expect((await git.run(root, ['add', '--', 'b.md'])).status).toBe(0)
 
-    await expect(git.repairIndex(root, first.indexRepair!.token)).resolves.toBe(true)
+    await expect(git.repairIndex(root, first.indexRepair!.token)).resolves.toEqual({ repaired: true })
 
     expect((await git.run(root, ['show', ':b.md'])).stdout).toBe('staged B')
     expect((await git.run(root, ['diff', '--cached', '--quiet', 'HEAD', '--', 'b.md'])).status).toBe(1)
@@ -366,7 +366,7 @@ describe('addAndCommit + log', () => {
       expected: { 'b.md': createHash('sha256').update('B').digest('hex') },
     })
 
-    await expect(git.repairIndex(root, first.indexRepair!.token)).resolves.toBe(true)
+    await expect(git.repairIndex(root, first.indexRepair!.token)).resolves.toEqual({ repaired: true })
 
     expect((await git.status(root)).filter((entry) => ['a.md', 'b.md'].includes(entry.path))).toEqual([])
   }, 15_000)
@@ -402,7 +402,7 @@ describe('addAndCommit + log', () => {
       afterIndexLockForTesting: async () => {
         externalAdd = await git.run(root, ['add', '--', 'a.md'])
       },
-    })).resolves.toBe(true)
+    })).resolves.toEqual({ repaired: true })
 
     expect(externalAdd?.status).not.toBe(0)
     expect(externalAdd?.stderr).toMatch(/index\.lock|another git process/i)
@@ -426,7 +426,7 @@ describe('addAndCommit + log', () => {
         movedHead = commit.stdout.trim()
         expect((await git.run(root, ['update-ref', 'HEAD', movedHead, oldHead])).status).toBe(0)
       },
-    })).resolves.toBe(false)
+    })).resolves.toEqual({ repaired: false })
 
     expect(movedHead).toBeTruthy()
     expect(await git.getIndexRepairStatus(root)).toEqual([
@@ -436,8 +436,30 @@ describe('addAndCommit + log', () => {
         head: movedHead,
       }),
     ])
-    await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toBe(true)
+    await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toEqual({ repaired: true })
     expect(await git.getIndexRepairStatus(root)).toEqual([])
+  }, 10_000)
+
+  it('reports degraded success when repaired Index metadata cannot be cleared', async () => {
+    await write('a.md', 'snapshot')
+    const result = await git.addAndCommit(root, ['a.md'], 'committed', {
+      expected: { 'a.md': createHash('sha256').update('snapshot').digest('hex') },
+      syncIndexForTesting: vi.fn().mockResolvedValue({ status: 1, stdout: '', stderr: 'locked' }),
+    })
+
+    await expect(git.repairIndex(root, result.indexRepair!.token, {
+      beforeRepairStatePersistenceForTesting: async () => {
+        throw new Error('disk full')
+      },
+    })).resolves.toEqual({
+      repaired: true,
+      repairStatePersistenceFailed: true,
+    })
+
+    expect((await git.run(root, ['diff', '--cached', '--quiet', 'HEAD', '--', 'a.md'])).status).toBe(0)
+    expect(await git.getIndexRepairStatus(root)).toEqual([
+      expect.objectContaining({ token: result.indexRepair!.token }),
+    ])
   }, 10_000)
 
   it('discards only repair metadata and preserves newer staged content', async () => {

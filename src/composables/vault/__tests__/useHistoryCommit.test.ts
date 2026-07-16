@@ -51,7 +51,7 @@ beforeEach(() => {
   vi.mocked(api.getContentHashes).mockImplementation(async (paths) => (
     Object.fromEntries(paths.map((path) => [path, 'a'.repeat(64)]))
   ))
-  vi.mocked(api.repairIndex).mockResolvedValue(undefined)
+  vi.mocked(api.repairIndex).mockResolvedValue({ repaired: true })
   vi.mocked(api.getIndexRepairStatus).mockResolvedValue([])
   vi.mocked(api.discardIndexRepair).mockResolvedValue(undefined)
 })
@@ -87,7 +87,10 @@ describe('useHistoryCommit', () => {
     vi.mocked(api.getIndexRepairStatus).mockImplementation(async () => (
       repaired ? [] : [repairTransaction]
     ))
-    vi.mocked(api.repairIndex).mockImplementation(async () => { repaired = true })
+    vi.mocked(api.repairIndex).mockImplementation(async () => {
+      repaired = true
+      return { repaired: true }
+    })
     vi.mocked(api.createCommit).mockResolvedValue({
       sha: 'abc',
       filesCommitted: ['a.md'],
@@ -104,6 +107,29 @@ describe('useHistoryCommit', () => {
     expect(commit.indexRepairPaths.value).toEqual([])
     expect(h.refreshStatus).toHaveBeenCalledTimes(2)
     expect(toast.success).toHaveBeenCalledWith('Git status repaired.')
+  })
+
+  it('warns without reporting failure when repaired Index metadata cannot be cleared', async () => {
+    const h = history(['a.md'])
+    vi.mocked(api.getIndexRepairStatus).mockResolvedValue([repairTransaction])
+    vi.mocked(api.repairIndex).mockResolvedValue({
+      repaired: true,
+      repairStatePersistenceFailed: true,
+    })
+    const commit = useHistoryCommit({ history: h, saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await expect(commit.retryIndexRepair()).resolves.toBe(true)
+
+    expect(h.refreshStatus).toHaveBeenCalledOnce()
+    expect(commit.error.value).toBeNull()
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.info).toHaveBeenCalledWith(
+      'The Git index was repaired, but the repair record could not be cleared. Current files and staged changes are unaffected.',
+      5000,
+    )
   })
 
   it('restores persisted repair transactions when the Vault is recreated', async () => {

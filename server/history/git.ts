@@ -930,8 +930,9 @@ export async function repairIndex(
   options: {
     afterIndexLockForTesting?: () => Promise<void>
     beforeIndexReplaceForTesting?: () => Promise<void>
+    beforeRepairStatePersistenceForTesting?: () => Promise<void>
   } = {},
-): Promise<boolean> {
+): Promise<{ repaired: boolean; repairStatePersistenceFailed?: boolean }> {
   return withRepoMutation(repoRoot, async () => {
     await assertRepositoryIdle(repoRoot)
     const state = await readIndexRepairFile(repoRoot)
@@ -974,11 +975,18 @@ export async function repairIndex(
         ))
         await writeIndexRepairFile(repoRoot, { version: 2, transactions })
       }
-      return false
+      return { repaired: false }
     }
     const next = state.transactions.filter((item) => item.token !== token)
-    await writeIndexRepairFile(repoRoot, { version: 2, transactions: next })
-    return true
+    try {
+      await options.beforeRepairStatePersistenceForTesting?.()
+      await writeIndexRepairFile(repoRoot, { version: 2, transactions: next })
+      return { repaired: true }
+    } catch {
+      // The real Index has already been replaced atomically. Failure to clear
+      // the recovery metadata is degraded success, never a failed repair.
+      return { repaired: true, repairStatePersistenceFailed: true }
+    }
   })
 }
 

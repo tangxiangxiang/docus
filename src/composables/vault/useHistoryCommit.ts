@@ -219,14 +219,20 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     indexRepairBusy.value = true
     error.value = null
     let repairingToken: string | null = null
+    let repairStatePersistenceFailed = false
     try {
       for (const transaction of indexRepairTransactions.value) {
         repairingToken = transaction.token
-        await repairIndex(transaction.token)
+        const result = await repairIndex(transaction.token)
+        repairStatePersistenceFailed ||= result.repairStatePersistenceFailed === true
       }
       await options.history.refreshStatus()
       await refreshIndexRepairStatus()
-      toast.success(t('history.index_repair_success'))
+      if (repairStatePersistenceFailed) {
+        toast.info(t('history.index_repair_state_persistence_failed'), 5000)
+      } else {
+        toast.success(t('history.index_repair_success'))
+      }
       return true
     } catch (cause) {
       await refreshIndexRepairStatus()

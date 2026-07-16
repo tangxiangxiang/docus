@@ -94,8 +94,14 @@ describe('createCommit', () => {
     responses.push({ status: 200, body: { transactions: [transaction] } })
     await expect(api.getIndexRepairStatus()).resolves.toEqual([transaction])
 
-    responses.push({ status: 200, body: { repaired: true } })
-    await api.repairIndex(transaction.token)
+    responses.push({
+      status: 200,
+      body: { repaired: true, repairStatePersistenceFailed: true },
+    })
+    await expect(api.repairIndex(transaction.token)).resolves.toEqual({
+      repaired: true,
+      repairStatePersistenceFailed: true,
+    })
     expect(calls[1]).toEqual(expect.objectContaining({
       url: '/api/history/repair-index',
       init: expect.objectContaining({

@@ -11,6 +11,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
+import * as historyGit from '../history/git.js'
 import historyRoutes, {
   setRepoRootForTesting,
   __resetRepoRootForTesting,
@@ -509,6 +510,28 @@ describe('POST /api/history/repair-index', () => {
     expect(after.dirty.map((entry) => entry.path)).not.toContain('a.md')
     expect(await (await call('GET', '/repair-status')).json()).toEqual({ transactions: [] })
   }, 15_000)
+
+  it('returns degraded success when the Index was repaired but its record was not cleared', async () => {
+    await call('GET', '/capability')
+    const repair = vi.spyOn(historyGit, 'repairIndex').mockResolvedValueOnce({
+      repaired: true,
+      repairStatePersistenceFailed: true,
+    })
+
+    try {
+      const token = 'a'.repeat(32)
+      const response = await call('POST', '/repair-index', { token })
+
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({
+        repaired: true,
+        repairStatePersistenceFailed: true,
+      })
+      expect(repair).toHaveBeenCalledWith(root, token)
+    } finally {
+      repair.mockRestore()
+    }
+  })
 
   it('returns 409 instead of clearing index content staged after the failure', async () => {
     await write('a.md', 'committed')

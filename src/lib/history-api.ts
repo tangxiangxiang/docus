@@ -205,13 +205,18 @@ export async function getIndexRepairStatus(): Promise<IndexRepairTransaction[]> 
   return result.transactions
 }
 
-export async function repairIndex(token: string): Promise<void> {
+export interface RepairIndexResult {
+  repaired: true
+  repairStatePersistenceFailed?: boolean
+}
+
+export async function repairIndex(token: string): Promise<RepairIndexResult> {
   const r = await fetch('/api/history/repair-index', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ token }),
   })
-  await readJson<{ repaired: true }>(r, 'repairIndex failed')
+  return readJson<RepairIndexResult>(r, 'repairIndex failed')
 }
 
 export async function discardIndexRepair(token: string): Promise<void> {

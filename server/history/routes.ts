@@ -341,9 +341,9 @@ history.post('/repair-index', async (c) => {
   }
   try {
     await ensureRepo(repoRoot())
-    const repaired = await git.repairIndex(repoRoot(), body.token)
-    if (!repaired) return bad(c, 'index repair could not be verified', 409)
-    return c.json({ repaired: true })
+    const result = await git.repairIndex(repoRoot(), body.token)
+    if (!result.repaired) return bad(c, 'index repair could not be verified', 409)
+    return c.json(result)
   } catch (e: any) {
     const msg = e.message ?? 'index repair failed'
     if (/repository operation in progress|transaction not found|repository changed|index changed after repair|git index is locked/i.test(msg)) {

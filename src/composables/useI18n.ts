@@ -292,6 +292,7 @@ const STRINGS: Strings = {
   'history.repository_operation_in_progress': { zh: '仓库正在执行合并或变基操作，请先在 Git 中完成或取消该操作。', en: 'A merge, rebase, or similar Git operation is in progress. Complete or cancel it in Git first.' },
   'history.index_repair_action': { zh: '重试修复 Git 状态', en: 'Retry Git status repair' },
   'history.index_repair_success': { zh: 'Git 状态已修复。', en: 'Git status repaired.' },
+  'history.index_repair_state_persistence_failed': { zh: 'Git 索引已修复，但修复记录未能清除。当前文件内容和暂存区不受影响。', en: 'The Git index was repaired, but the repair record could not be cleared. Current files and staged changes are unaffected.' },
   'history.index_repair_failed': { zh: 'Git 状态修复失败：{error}', en: 'Could not repair Git status: {error}' },
   'history.index_repair_conflict': { zh: 'Index 已被其他 Git 操作修改。为避免清除新暂存的内容，Docus 未执行修复。', en: 'The index was changed by another Git operation. Docus did not repair it because that could clear newly staged content.' },
   'history.index_repair_discard_action': { zh: '保留当前暂存并移除提示', en: 'Keep staged changes and dismiss' },
