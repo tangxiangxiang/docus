@@ -16,14 +16,17 @@ vi.mock('../../../lib/history-api', async () => {
     getContentHashes: vi.fn(),
     getIndexRepairStatus: vi.fn(),
     repairIndex: vi.fn(),
+    discardIndexRepair: vi.fn(),
   }
 })
 
 const repairTransaction: api.IndexRepairTransaction = {
   token: 'a'.repeat(32),
+  status: 'pending',
   head: 'b'.repeat(40),
   paths: ['a.md'],
   expectedIndex: { 'a.md': [{ mode: '100644', oid: 'c'.repeat(40), stage: 0 }] },
+  expectedIndexHash: 'd'.repeat(64),
 }
 
 function history(paths = ['inbox/a.md', 'inbox/b.md']): HistoryState {
@@ -51,6 +54,7 @@ beforeEach(() => {
   ))
   vi.mocked(api.repairIndex).mockResolvedValue(undefined)
   vi.mocked(api.getIndexRepairStatus).mockResolvedValue([])
+  vi.mocked(api.discardIndexRepair).mockResolvedValue(undefined)
 })
 
 describe('useHistoryCommit', () => {
@@ -116,8 +120,22 @@ describe('useHistoryCommit', () => {
     expect(afterReload.indexRepairTransactions.value).toEqual([repairTransaction])
   })
 
+  it('restores a superseded transaction directly as a dismissible conflict', async () => {
+    const superseded = { ...repairTransaction, status: 'superseded' as const }
+    vi.mocked(api.getIndexRepairStatus).mockResolvedValue([superseded])
+    const commit = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(commit.indexRepairConflictToken.value).toBe(superseded.token)
+  })
+
   it('keeps the repair transaction and explains a newer staged-index conflict', async () => {
-    vi.mocked(api.getIndexRepairStatus).mockResolvedValue([repairTransaction])
+    let discarded = false
+    vi.mocked(api.getIndexRepairStatus).mockImplementation(async () => (
+      discarded ? [] : [repairTransaction]
+    ))
+    vi.mocked(api.discardIndexRepair).mockImplementation(async () => { discarded = true })
     vi.mocked(api.repairIndex).mockRejectedValue(
       new api.HistoryApiError('index changed after repair was requested: a.md', 409),
     )
@@ -130,6 +148,13 @@ describe('useHistoryCommit', () => {
     expect(commit.indexRepairPaths.value).toEqual(['a.md'])
     expect(commit.error.value).toBe(
       'The index was changed by another Git operation. Docus did not repair it because that could clear newly staged content.',
+    )
+
+    await expect(commit.discardConflictingIndexRepair()).resolves.toBe(true)
+    expect(api.discardIndexRepair).toHaveBeenCalledWith(repairTransaction.token)
+    expect(commit.indexRepairPaths.value).toEqual([])
+    expect(toast.success).toHaveBeenCalledWith(
+      'Current staged changes were kept and the repair notice was dismissed.',
     )
   })
 
@@ -341,6 +366,28 @@ describe('useHistoryCommit', () => {
     expect(toast.error).not.toHaveBeenCalled()
     expect(toast.info).toHaveBeenCalledWith(
       'Version created, but Git status could not be synchronized. Retry the repair.',
+      5000,
+    )
+  })
+
+  it('reports repair-state persistence failure as a degraded successful version', async () => {
+    const h = history(['a.md'])
+    vi.mocked(api.createCommit).mockResolvedValue({
+      sha: 'abc',
+      filesCommitted: ['a.md'],
+      indexRefreshFailed: true,
+      repairStatePersistenceFailed: true,
+    })
+    const commit = useHistoryCommit({ history: h, saveSelected: vi.fn() })
+    commit.message.value = 'Version'
+
+    await expect(commit.submit()).resolves.toMatchObject({ sha: 'abc' })
+
+    expect(commit.error.value).toBeNull()
+    expect(commit.message.value).toBe('')
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(toast.info).toHaveBeenCalledWith(
+      'Version created, but automatic repair information could not be saved. Check Git status in a terminal.',
       5000,
     )
   })

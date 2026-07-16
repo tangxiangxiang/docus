@@ -346,10 +346,26 @@ history.post('/repair-index', async (c) => {
     return c.json({ repaired: true })
   } catch (e: any) {
     const msg = e.message ?? 'index repair failed'
-    if (/repository operation in progress|transaction not found|repository changed|index changed after repair/i.test(msg)) {
+    if (/repository operation in progress|transaction not found|repository changed|index changed after repair|git index is locked/i.test(msg)) {
       return bad(c, msg, 409)
     }
     return bad(c, msg, 500)
+  }
+})
+
+history.post('/repair-index/discard', async (c) => {
+  if (!(await probeGit())) return bad(c, 'git not available', 503)
+  const body = await c.req.json().catch(() => null) as { token?: unknown } | null
+  if (typeof body?.token !== 'string' || !/^[0-9a-f]{32}$/.test(body.token)) {
+    return bad(c, 'invalid index repair token')
+  }
+  try {
+    await ensureRepo(repoRoot())
+    const discarded = await git.discardIndexRepair(repoRoot(), body.token)
+    if (!discarded) return bad(c, 'index repair transaction not found', 409)
+    return c.json({ discarded: true })
+  } catch (e: any) {
+    return bad(c, e.message ?? 'discard index repair failed', 500)
   }
 })
 

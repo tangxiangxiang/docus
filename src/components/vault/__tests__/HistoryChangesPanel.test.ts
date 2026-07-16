@@ -95,4 +95,26 @@ describe('HistoryChangesPanel', () => {
     await button.trigger('click')
     expect(wrapper.emitted('repair-index')).toHaveLength(1)
   })
+
+  it('offers a metadata-only dismissal after a staged-index conflict', async () => {
+    const wrapper = mount(HistoryChangesPanel, {
+      props: {
+        entries: [],
+        selectedPaths: new Set<string>(),
+        message: '',
+        busy: false,
+        canCommit: false,
+        error: null,
+        indexRepairPending: true,
+        indexRepairBusy: false,
+        indexRepairConflict: true,
+      },
+    })
+
+    const button = wrapper.get('.history-commit-error button')
+    expect(button.text()).toBe('Keep staged changes and dismiss')
+    await button.trigger('click')
+    expect(wrapper.emitted('discard-index-repair')).toHaveLength(1)
+    expect(wrapper.emitted('repair-index')).toBeUndefined()
+  })
 })

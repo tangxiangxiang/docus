@@ -86,9 +86,11 @@ describe('createCommit', () => {
   it('loads persisted repair transactions and posts the opaque token', async () => {
     const transaction = {
       token: 'a'.repeat(32),
+      status: 'pending',
       head: 'b'.repeat(40),
       paths: ['a.md'],
       expectedIndex: { 'a.md': [{ mode: '100644', oid: 'c'.repeat(40), stage: 0 }] },
+      expectedIndexHash: 'd'.repeat(64),
     }
     responses.push({ status: 200, body: { transactions: [transaction] } })
     await expect(api.getIndexRepairStatus()).resolves.toEqual([transaction])
@@ -97,6 +99,16 @@ describe('createCommit', () => {
     await api.repairIndex(transaction.token)
     expect(calls[1]).toEqual(expect.objectContaining({
       url: '/api/history/repair-index',
+      init: expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ token: transaction.token }),
+      }),
+    }))
+
+    responses.push({ status: 200, body: { discarded: true } })
+    await api.discardIndexRepair(transaction.token)
+    expect(calls[2]).toEqual(expect.objectContaining({
+      url: '/api/history/repair-index/discard',
       init: expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ token: transaction.token }),

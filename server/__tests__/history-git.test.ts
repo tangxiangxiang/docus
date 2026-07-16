@@ -349,10 +349,107 @@ describe('addAndCommit + log', () => {
     await write('a.md', 'user staged this')
     expect((await git.run(root, ['add', '--', 'a.md'])).status).toBe(0)
     await expect(git.repairIndex(root, result.indexRepair!.token)).rejects.toThrow(
-      'index changed after repair was requested: a.md',
+      'index changed after repair was requested',
     )
-    expect(await git.getIndexRepairStatus(root)).toHaveLength(1)
+    expect(await git.getIndexRepairStatus(root)).toEqual([
+      expect.objectContaining({ token: result.indexRepair!.token, status: 'superseded' }),
+    ])
     expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('user staged this')
+  })
+
+  it('holds index.lock across validation and atomic replacement', async () => {
+    await write('a.md', 'snapshot')
+    const result = await git.addAndCommit(root, ['a.md'], 'committed', {
+      expected: { 'a.md': createHash('sha256').update('snapshot').digest('hex') },
+      syncIndexForTesting: vi.fn().mockResolvedValue({ status: 1, stdout: '', stderr: 'locked' }),
+    })
+    await write('a.md', 'edit during repair')
+    let externalAdd: git.RunResult | undefined
+
+    await expect(git.repairIndex(root, result.indexRepair!.token, {
+      afterIndexLockForTesting: async () => {
+        externalAdd = await git.run(root, ['add', '--', 'a.md'])
+      },
+    })).resolves.toBe(true)
+
+    expect(externalAdd?.status).not.toBe(0)
+    expect(externalAdd?.stderr).toMatch(/index\.lock|another git process/i)
+    expect((await git.run(root, ['diff', '--cached', '--quiet', 'HEAD', '--', 'a.md'])).status).toBe(0)
+    expect((await git.status(root)).find((entry) => entry.path === 'a.md')?.worktree).toBe('M')
+  }, 10_000)
+
+  it('discards only repair metadata and preserves newer staged content', async () => {
+    await write('a.md', 'snapshot')
+    const result = await git.addAndCommit(root, ['a.md'], 'committed', {
+      expected: { 'a.md': createHash('sha256').update('snapshot').digest('hex') },
+      syncIndexForTesting: vi.fn().mockResolvedValue({ status: 1, stdout: '', stderr: 'locked' }),
+    })
+    await write('a.md', 'user staged this')
+    expect((await git.run(root, ['add', '--', 'a.md'])).status).toBe(0)
+
+    await expect(git.discardIndexRepair(root, result.indexRepair!.token)).resolves.toBe(true)
+
+    expect(await git.getIndexRepairStatus(root)).toEqual([])
+    expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('user staged this')
+  })
+
+  it('reports repair-state persistence degradation without failing an existing commit', async () => {
+    await write('a.md', 'snapshot')
+    const result = await git.addAndCommit(root, ['a.md'], 'committed', {
+      expected: { 'a.md': createHash('sha256').update('snapshot').digest('hex') },
+      syncIndexForTesting: vi.fn().mockResolvedValue({ status: 1, stdout: '', stderr: 'locked' }),
+      beforeRepairStatePersistenceForTesting: async () => {
+        throw new Error('disk full')
+      },
+    })
+
+    expect(result).toMatchObject({
+      indexRefreshFailed: true,
+      repairStatePersistenceFailed: true,
+    })
+    expect(result.indexRepair).toBeUndefined()
+    expect(await git.rawAt(root, 'HEAD', 'a.md')).toBe('snapshot')
+  })
+
+  it('does not fail a commit when clearing old repair state cannot be persisted', async () => {
+    await write('a.md', 'snapshot')
+    const result = await git.addAndCommit(root, ['a.md'], 'committed', {
+      expected: { 'a.md': createHash('sha256').update('snapshot').digest('hex') },
+      beforeRepairStatePersistenceForTesting: async () => {
+        throw new Error('read-only repair state')
+      },
+    })
+
+    expect(result).toMatchObject({
+      indexRefreshFailed: false,
+      repairStatePersistenceFailed: true,
+    })
+    expect(await git.rawAt(root, 'HEAD', 'a.md')).toBe('snapshot')
+  })
+
+  it('quarantines corrupt repair state before committing', async () => {
+    const repairDir = path.join(root, '.git', 'docus')
+    await fs.mkdir(repairDir, { recursive: true })
+    await fs.writeFile(path.join(repairDir, 'index-repair.json'), '{broken', 'utf8')
+    await write('a.md', 'snapshot')
+
+    await expect(git.addAndCommit(root, ['a.md'], 'committed', {
+      expected: { 'a.md': createHash('sha256').update('snapshot').digest('hex') },
+    })).resolves.toMatchObject({ indexRefreshFailed: false })
+
+    const files = await fs.readdir(repairDir)
+    expect(files.some((name) => name.startsWith('index-repair.json.corrupt-'))).toBe(true)
+  })
+
+  it('fails the repair-storage preflight before moving HEAD', async () => {
+    await fs.writeFile(path.join(root, '.git', 'docus'), 'not a directory', 'utf8')
+    await write('a.md', 'snapshot')
+
+    await expect(git.addAndCommit(root, ['a.md'], 'must not commit', {
+      expected: { 'a.md': createHash('sha256').update('snapshot').digest('hex') },
+    })).rejects.toThrow()
+
+    expect((await git.run(root, ['rev-parse', '--verify', 'HEAD'])).status).not.toBe(0)
   })
 
   it('does not report index repair success when HEAD changes between check and reset', async () => {

@@ -174,12 +174,14 @@ function onListKeydown(event: KeyboardEvent): void {
         :error="commit.error.value"
         :index-repair-pending="commit.indexRepairPaths.value.length > 0"
         :index-repair-busy="commit.indexRepairBusy.value"
+        :index-repair-conflict="commit.indexRepairConflictToken.value !== null"
         @toggle="commit.toggle"
         @select-all="commit.selectAll"
         @clear-selection="commit.clearSelection"
         @update:message="commit.message.value = $event"
         @submit="commit.submit"
         @repair-index="commit.retryIndexRepair"
+        @discard-index-repair="commit.discardConflictingIndexRepair"
       />
       <div class="history-timeline-heading">{{ t('history.timeline') }}</div>
       <div v-if="h.logError.value && !timeline.selectedDocument.value" class="history-error" role="alert">

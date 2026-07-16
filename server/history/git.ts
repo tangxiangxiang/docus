@@ -478,6 +478,7 @@ export type CommitResult = {
   filesCommitted: string[]
   indexRefreshFailed?: boolean
   indexRepair?: IndexRepairTransaction
+  repairStatePersistenceFailed?: boolean
 }
 
 export type IndexEntryFingerprint = {
@@ -488,9 +489,11 @@ export type IndexEntryFingerprint = {
 
 export type IndexRepairTransaction = {
   token: string
+  status: 'pending' | 'superseded'
   head: string
   paths: string[]
   expectedIndex: Record<string, IndexEntryFingerprint[]>
+  expectedIndexHash: string | null
 }
 
 type IndexRepairFile = {
@@ -568,6 +571,7 @@ function validRepairFile(value: unknown): value is IndexRepairFile {
     transaction
     && typeof transaction.token === 'string'
     && /^[0-9a-f]{32}$/.test(transaction.token)
+    && (transaction.status === 'pending' || transaction.status === 'superseded')
     && /^[0-9a-f]{40,64}$/.test(transaction.head)
     && Array.isArray(transaction.paths)
     && transaction.paths.length > 0
@@ -579,6 +583,9 @@ function validRepairFile(value: unknown): value is IndexRepairFile {
     ))
     && transaction.expectedIndex
     && typeof transaction.expectedIndex === 'object'
+    && (transaction.expectedIndexHash === null
+      || (typeof transaction.expectedIndexHash === 'string'
+        && /^[0-9a-f]{64}$/.test(transaction.expectedIndexHash)))
     && transaction.paths.every((filePath) => {
       const entries = transaction.expectedIndex[filePath]
       return Array.isArray(entries) && entries.every((entry) => (
@@ -601,7 +608,28 @@ async function readIndexRepairFile(repoRoot: string): Promise<IndexRepairFile> {
     return parsed
   } catch (error: any) {
     if (error?.code === 'ENOENT') return { version: 1, transactions: [] }
-    throw error
+    const quarantined = `${filePath}.corrupt-${Date.now()}-${randomUUID()}.json`
+    await fs.rename(filePath, quarantined)
+    return { version: 1, transactions: [] }
+  }
+}
+
+async function ensureIndexRepairStorageReady(repoRoot: string): Promise<void> {
+  await readIndexRepairFile(repoRoot)
+  const filePath = await repairFilePath(repoRoot)
+  const directory = path.dirname(filePath)
+  await fs.mkdir(directory, { recursive: true })
+  const probe = path.join(directory, `.write-test-${process.pid}-${randomUUID()}`)
+  try {
+    const handle = await fs.open(probe, 'wx')
+    try {
+      await handle.writeFile('ready')
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+  } finally {
+    await fs.rm(probe, { force: true })
   }
 }
 
@@ -646,11 +674,17 @@ async function captureIndexFingerprints(
   ))))
 }
 
-function sameIndexEntries(
-  left: readonly IndexEntryFingerprint[],
-  right: readonly IndexEntryFingerprint[],
-): boolean {
-  return JSON.stringify(left) === JSON.stringify(right)
+async function indexStateHash(repoRoot: string): Promise<string | null> {
+  const indexPath = path.join(await absoluteGitDir(repoRoot), 'index')
+  try {
+    await fs.stat(indexPath)
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return null
+    throw error
+  }
+  const entries = await run(repoRoot, ['ls-files', '--stage', '-z'])
+  if (entries.status !== 0) throw new Error(`git ls-files failed: ${entries.stderr.trim()}`)
+  return createHash('sha256').update(entries.stdout).digest('hex')
 }
 
 async function settleIndexRepairPaths(
@@ -691,9 +725,11 @@ async function recordIndexRepair(
   }).filter((transaction) => transaction.paths.length > 0)
   const transaction: IndexRepairTransaction = {
     token: randomUUID().replaceAll('-', ''),
+    status: 'pending',
     head,
     paths: [...paths],
     expectedIndex: await captureIndexFingerprints(repoRoot, paths),
+    expectedIndexHash: await indexStateHash(repoRoot),
   }
   await writeIndexRepairFile(repoRoot, {
     version: 1,
@@ -704,6 +740,83 @@ async function recordIndexRepair(
 
 export async function getIndexRepairStatus(repoRoot: string): Promise<IndexRepairTransaction[]> {
   return (await readIndexRepairFile(repoRoot)).transactions
+}
+
+async function repairIndexWithLock(
+  repoRoot: string,
+  transaction: IndexRepairTransaction,
+  currentHead: string,
+  options: { afterIndexLockForTesting?: () => Promise<void> } = {},
+): Promise<boolean> {
+  const gitDir = await absoluteGitDir(repoRoot)
+  const indexPath = path.join(gitDir, 'index')
+  const lockPath = path.join(gitDir, 'index.lock')
+  let lockHandle: Awaited<ReturnType<typeof fs.open>> | undefined
+  try {
+    lockHandle = await fs.open(lockPath, 'wx')
+  } catch (error: any) {
+    if (error?.code === 'EEXIST') throw new Error('git index is locked')
+    throw error
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-index-repair-'))
+  const tempIndex = path.join(tempDir, 'index')
+  const indexEnv = { GIT_INDEX_FILE: tempIndex }
+  let committedLock = false
+  try {
+    let originalBytes: Buffer | null
+    try {
+      originalBytes = await fs.readFile(indexPath)
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') throw error
+      originalBytes = null
+    }
+    const actualHash = await indexStateHash(repoRoot)
+    if (actualHash !== transaction.expectedIndexHash) {
+      throw new Error('index changed after repair was requested')
+    }
+
+    // Standard Git writers observe index.lock, so an external `git add`
+    // cannot enter after this validation and before the atomic replacement.
+    await options.afterIndexLockForTesting?.()
+
+    if (originalBytes === null) {
+      const empty = await run(repoRoot, ['read-tree', '--empty'], { env: indexEnv })
+      if (empty.status !== 0) throw new Error(`git read-tree failed: ${empty.stderr.trim()}`)
+    } else {
+      await fs.writeFile(tempIndex, originalBytes)
+    }
+    const reset = await run(repoRoot, ['reset', '-q', currentHead, '--', ...transaction.paths], {
+      env: indexEnv,
+    })
+    if (reset.status !== 0 || await repositoryOperationInProgress(repoRoot)) return false
+    const afterHead = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
+    const verify = await run(
+      repoRoot,
+      ['diff', '--cached', '--quiet', currentHead, '--', ...transaction.paths],
+      { env: indexEnv },
+    )
+    if (afterHead.status !== 0 || afterHead.stdout.trim() !== currentHead || verify.status !== 0) {
+      return false
+    }
+    if (await indexStateHash(repoRoot) !== transaction.expectedIndexHash) {
+      throw new Error('index changed after repair was requested')
+    }
+
+    const repairedBytes = await fs.readFile(tempIndex)
+    await lockHandle.truncate(0)
+    await lockHandle.writeFile(repairedBytes)
+    await lockHandle.sync()
+    await lockHandle.close()
+    lockHandle = undefined
+    await fs.rename(lockPath, indexPath)
+    committedLock = true
+    return true
+  } finally {
+    await lockHandle?.close().catch(() => {})
+    if (!committedLock) await fs.rm(lockPath, { force: true })
+    await fs.rm(tempDir, { recursive: true, force: true })
+  }
 }
 
 async function syncIndexPaths(
@@ -735,12 +848,19 @@ async function syncIndexPaths(
   return false
 }
 
-export async function repairIndex(repoRoot: string, token: string): Promise<boolean> {
+export async function repairIndex(
+  repoRoot: string,
+  token: string,
+  options: { afterIndexLockForTesting?: () => Promise<void> } = {},
+): Promise<boolean> {
   return withRepoMutation(repoRoot, async () => {
     await assertRepositoryIdle(repoRoot)
     const state = await readIndexRepairFile(repoRoot)
     const transaction = state.transactions.find((item) => item.token === token)
     if (!transaction) throw new Error('index repair transaction not found')
+    if (transaction.status === 'superseded') {
+      throw new Error('index changed after repair was requested')
+    }
 
     const head = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
     if (head.status !== 0) throw new Error('index repair repository changed')
@@ -749,17 +869,31 @@ export async function repairIndex(repoRoot: string, token: string): Promise<bool
       || (await run(repoRoot, ['merge-base', '--is-ancestor', transaction.head, currentHead])).status === 0
     if (!compatible) throw new Error('index repair repository changed')
 
-    for (const filePath of transaction.paths) {
-      const current = await indexFingerprint(repoRoot, filePath)
-      if (!sameIndexEntries(current, transaction.expectedIndex[filePath] ?? [])) {
-        throw new Error(`index changed after repair was requested: ${filePath}`)
+    let repaired: boolean
+    try {
+      repaired = await repairIndexWithLock(repoRoot, transaction, currentHead, options)
+    } catch (error: any) {
+      if (/index changed after repair was requested/i.test(error?.message ?? '')) {
+        const transactions = state.transactions.map((item) => (
+          item.token === token ? { ...item, status: 'superseded' as const } : item
+        ))
+        await writeIndexRepairFile(repoRoot, { version: 1, transactions }).catch(() => {})
       }
+      throw error
     }
-
-    const repaired = await syncIndexPaths(repoRoot, transaction.paths, currentHead)
     if (!repaired) return false
     const next = state.transactions.filter((item) => item.token !== token)
     await writeIndexRepairFile(repoRoot, { version: 1, transactions: next })
+    return true
+  })
+}
+
+export async function discardIndexRepair(repoRoot: string, token: string): Promise<boolean> {
+  return withRepoMutation(repoRoot, async () => {
+    const state = await readIndexRepairFile(repoRoot)
+    const transactions = state.transactions.filter((item) => item.token !== token)
+    if (transactions.length === state.transactions.length) return false
+    await writeIndexRepairFile(repoRoot, { version: 1, transactions })
     return true
   })
 }
@@ -808,6 +942,7 @@ export async function addAndCommit(
     beforeUpdateRefForTesting?: () => Promise<void>
     syncIndexForTesting?: (commitSha: string) => Promise<RunResult>
     beforeIndexResetForTesting?: (commitSha: string, attempt: number) => Promise<void>
+    beforeRepairStatePersistenceForTesting?: () => Promise<void>
   } = {},
 ): Promise<CommitResult> {
   if (paths.length === 0) {
@@ -818,6 +953,7 @@ export async function addAndCommit(
   }
   return withRepoMutation(repoRoot, async () => {
   await assertRepositoryIdle(repoRoot)
+  await ensureIndexRepairStorageReady(repoRoot)
   let captured: Map<string, Buffer | null> | null = null
   if (options.expected) {
     const dirtyPaths = new Set((await status(repoRoot)).map((entry) => entry.path))
@@ -925,12 +1061,22 @@ export async function addAndCommit(
   // a successful version into an API failure. Retry transient index.lock
   // contention, bind reset to our immutable SHA, and report degradation.
   const indexRefreshFailed = !(await syncIndexPaths(repoRoot, paths, commitSha, options))
-  if (!indexRefreshFailed) {
-    await settleIndexRepairPaths(repoRoot, paths)
-    return { sha: commitSha, filesCommitted, indexRefreshFailed: false }
+  let indexRepair: IndexRepairTransaction | undefined
+  let repairStatePersistenceFailed = false
+  try {
+    await options.beforeRepairStatePersistenceForTesting?.()
+    if (indexRefreshFailed) indexRepair = await recordIndexRepair(repoRoot, commitSha, paths)
+    else await settleIndexRepairPaths(repoRoot, paths)
+  } catch {
+    repairStatePersistenceFailed = true
   }
-  const indexRepair = await recordIndexRepair(repoRoot, commitSha, paths)
-  return { sha: commitSha, filesCommitted, indexRefreshFailed: true, indexRepair }
+  return {
+    sha: commitSha,
+    filesCommitted,
+    indexRefreshFailed,
+    indexRepair,
+    repairStatePersistenceFailed,
+  }
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true })
   }

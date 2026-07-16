@@ -18,6 +18,7 @@ vi.mock('../../../lib/history-api', async () => {
     getContentHashes: vi.fn(),
     repairIndex: vi.fn(),
     getIndexRepairStatus: vi.fn().mockResolvedValue([]),
+    discardIndexRepair: vi.fn(),
   }
 })
 

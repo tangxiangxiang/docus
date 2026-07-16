@@ -11,9 +11,11 @@ const props = withDefaults(defineProps<{
   error: string | null
   indexRepairPending?: boolean
   indexRepairBusy?: boolean
+  indexRepairConflict?: boolean
 }>(), {
   indexRepairPending: false,
   indexRepairBusy: false,
+  indexRepairConflict: false,
 })
 const emit = defineEmits<{
   toggle: [path: string]
@@ -22,6 +24,7 @@ const emit = defineEmits<{
   'update:message': [value: string]
   submit: []
   'repair-index': []
+  'discard-index-repair': []
 }>()
 const { t } = useI18n()
 
@@ -101,9 +104,12 @@ function onMessage(event: Event): void {
       </button>
       <span v-if="busy" class="sr-only" role="status">{{ t('history.creating_version') }}</span>
       <div v-if="indexRepairPending" class="history-commit-error" role="status">
-        <span>{{ t('history.commit_index_refresh_failed') }}</span>
-        <button type="button" :disabled="indexRepairBusy" @click="emit('repair-index')">
+        <span>{{ t(indexRepairConflict ? 'history.index_repair_conflict' : 'history.commit_index_refresh_failed') }}</span>
+        <button v-if="!indexRepairConflict" type="button" :disabled="indexRepairBusy" @click="emit('repair-index')">
           {{ t('history.index_repair_action') }}
+        </button>
+        <button v-else type="button" :disabled="indexRepairBusy" @click="emit('discard-index-repair')">
+          {{ t('history.index_repair_discard_action') }}
         </button>
       </div>
     </div>

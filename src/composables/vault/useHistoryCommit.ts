@@ -1,6 +1,7 @@
 import { computed, ref, watch } from 'vue'
 import {
   createCommit,
+  discardIndexRepair,
   getContentHashes,
   getIndexRepairStatus,
   HistoryApiError,
@@ -38,11 +39,15 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     [...new Set(indexRepairTransactions.value.flatMap((transaction) => transaction.paths))]
   ))
   const indexRepairBusy = ref(false)
+  const indexRepairConflictToken = ref<string | null>(null)
   let initializedSelection = false
 
   async function refreshIndexRepairStatus(): Promise<boolean> {
     try {
       indexRepairTransactions.value = await getIndexRepairStatus()
+      indexRepairConflictToken.value = indexRepairTransactions.value.find(
+        (transaction) => transaction.status === 'superseded',
+      )?.token ?? null
       return true
     } catch {
       // Capability/repository initialization can still be in flight during
@@ -162,14 +167,23 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
             result.indexRepair,
           ]
         }
-        toast.info(t('history.commit_index_refresh_failed'), 5000)
+        toast.info(
+          result.repairStatePersistenceFailed
+            ? t('history.commit_repair_state_persistence_failed')
+            : t('history.commit_index_refresh_failed'),
+          5000,
+        )
       } else {
         const settled = new Set(result.filesCommitted)
         indexRepairTransactions.value = indexRepairTransactions.value.map((transaction) => ({
           ...transaction,
           paths: transaction.paths.filter((filePath) => !settled.has(filePath)),
         })).filter((transaction) => transaction.paths.length > 0)
-        toast.success(success)
+        if (result.repairStatePersistenceFailed) {
+          toast.info(t('history.commit_repair_state_persistence_failed'), 5000)
+        } else {
+          toast.success(success)
+        }
       }
       await refreshIndexRepairStatus()
       return result
@@ -204,8 +218,10 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     if (indexRepairBusy.value || indexRepairTransactions.value.length === 0) return false
     indexRepairBusy.value = true
     error.value = null
+    let repairingToken: string | null = null
     try {
       for (const transaction of indexRepairTransactions.value) {
+        repairingToken = transaction.token
         await repairIndex(transaction.token)
       }
       await options.history.refreshStatus()
@@ -220,6 +236,32 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
         && /index changed after repair/i.test(detail)
         ? t('history.index_repair_conflict')
         : t('history.index_repair_failed', { error: detail })
+      if (cause instanceof HistoryApiError
+        && cause.status === 409
+        && /index changed after repair/i.test(detail)) {
+        indexRepairConflictToken.value = repairingToken
+      }
+      toast.error(error.value)
+      return false
+    } finally {
+      indexRepairBusy.value = false
+    }
+  }
+
+  async function discardConflictingIndexRepair(): Promise<boolean> {
+    const token = indexRepairConflictToken.value
+    if (!token || indexRepairBusy.value) return false
+    indexRepairBusy.value = true
+    error.value = null
+    try {
+      await discardIndexRepair(token)
+      indexRepairConflictToken.value = null
+      await refreshIndexRepairStatus()
+      toast.success(t('history.index_repair_discarded'))
+      return true
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
+      error.value = t('history.index_repair_discard_failed', { error: detail })
       toast.error(error.value)
       return false
     } finally {
@@ -240,12 +282,14 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     indexRepairTransactions,
     indexRepairPaths,
     indexRepairBusy,
+    indexRepairConflictToken,
     canCommit,
     toggle,
     selectAll,
     clearSelection,
     submit,
     retryIndexRepair,
+    discardConflictingIndexRepair,
   }
 }
 

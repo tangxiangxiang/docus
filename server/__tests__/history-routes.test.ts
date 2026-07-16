@@ -523,6 +523,14 @@ describe('POST /api/history/repair-index', () => {
     const response = await call('POST', '/repair-index', { token: result.indexRepair?.token })
     expect(response.status).toBe(409)
     expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('user staged this')
+
+    const discard = await call('POST', '/repair-index/discard', {
+      token: result.indexRepair?.token,
+    })
+    expect(discard.status).toBe(200)
+    expect(await discard.json()).toEqual({ discarded: true })
+    expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('user staged this')
+    expect(await (await call('GET', '/repair-status')).json()).toEqual({ transactions: [] })
   })
 })
 
