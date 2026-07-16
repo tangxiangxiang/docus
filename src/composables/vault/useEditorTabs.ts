@@ -3,7 +3,7 @@
 // wires lifecycle, persistence restore, command-palette creation, and cleanup.
 
 import { onBeforeUnmount, onMounted } from 'vue'
-import { createPost } from '../../lib/api'
+import { createPost, type PostSummary } from '../../lib/api'
 import { useToast } from '../useToast'
 import { useConfirm } from '../useConfirm'
 import type { SidePanel } from '../../components/vault/ActivityBar.vue'
@@ -33,6 +33,7 @@ export function useEditorTabs(opts: {
   toggleViewMode: () => void
   fileChanges: VaultFileChanges
   mutationLock?: ReturnType<typeof createPathMutationLock>
+  createDocument?: (input: { path: string; title?: string }) => Promise<PostSummary>
 }) {
   const toast = useToast()
   const { confirm } = useConfirm()
@@ -148,11 +149,20 @@ export function useEditorTabs(opts: {
     }
     const newPath = parent ? `${parent}/${filename}` : filename
     try {
-      await createPost({ path: newPath, title: trimmed })
-      fileChanges.publish({ path: newPath, kind: 'write', source: 'editor-lifecycle' })
-      await refresh()
-      await openPost(newPath)
-      toast.success(t('common.created', { path: newPath }))
+      let created: PostSummary
+      if (opts.createDocument) {
+        created = await opts.createDocument({ path: newPath, title: trimmed })
+      } else {
+        created = await createPost({ path: newPath, title: trimmed })
+        fileChanges.publish({ path: created.path, kind: 'write', source: 'editor-lifecycle' })
+        try {
+          await refresh()
+        } catch (error) {
+          console.warn(`[useEditorTabs] Created ${created.path}, but Vault refresh failed`, error)
+        }
+      }
+      await openPost(created.path)
+      toast.success(t('common.created', { path: created.path }))
     } catch (e) {
       toast.error(t('common.create_failed', { error: (e as Error).message }))
     }

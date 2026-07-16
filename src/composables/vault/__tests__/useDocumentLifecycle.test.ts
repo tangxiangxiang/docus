@@ -39,6 +39,7 @@ function setup(initialTabs: Tab[] = [tab()]) {
   const activePath = ref(initialTabs[0]?.path ?? null)
   const fileChanges = createVaultFileChanges()
   const refresh = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+  const mutationLock = createPathMutationLock()
   const save = useDocumentSave({
     tabs,
     posts,
@@ -51,7 +52,7 @@ function setup(initialTabs: Tab[] = [tab()]) {
   const removed: string[] = []
   const lifecycle = useDocumentLifecycle({
     fileChanges,
-    mutationLock: createPathMutationLock(),
+    mutationLock,
     prepareDocumentMutation: save.prepareDocumentMutation,
     renameOpenDocuments(mappings) {
       renamed.push(...mappings)
@@ -68,7 +69,7 @@ function setup(initialTabs: Tab[] = [tab()]) {
     },
     refresh,
   })
-  return { tabs, activePath, fileChanges, refresh, save, lifecycle, renamed, removed }
+  return { tabs, activePath, fileChanges, refresh, save, lifecycle, mutationLock, renamed, removed }
 }
 
 beforeEach(() => vi.restoreAllMocks())
@@ -99,6 +100,29 @@ describe('useDocumentLifecycle rename', () => {
     await renaming
     expect(patch).toHaveBeenCalledOnce()
     expect(h.tabs.value[0].path).toBe('inbox/b')
+  })
+
+  it('waits for in-flight saves in reference sources before rewriting backlinks', async () => {
+    let finishSave!: (response: Response) => void
+    const pendingSave = new Promise<Response>((resolve) => { finishSave = resolve })
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(pendingSave))
+    const patch = vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'inbox/b', title: 'B', created: '', updated: '', tags: [], size: 1, mtime: 2,
+      updatedReferences: [{ path: 'refs/source', raw: 'rewritten' }],
+    })
+    const h = setup([tab('inbox/a'), tab('refs/source')])
+    h.save.onEditorChange('refs/source', 'editing backlink')
+    const saving = h.save.doSave('refs/source')
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+
+    const renaming = h.lifecycle.renameFile('inbox/a', { name: 'b', updateReferences: true }, ['refs/source'])
+    await Promise.resolve()
+    expect(patch).not.toHaveBeenCalled()
+
+    finishSave(saveResponse('editing backlink'))
+    await saving
+    await renaming
+    expect(patch).toHaveBeenCalledOnce()
   })
 
   it('cancels the old timer, preserves edits during PATCH, and saves only to the actual new path', async () => {
@@ -183,6 +207,25 @@ describe('useDocumentLifecycle folder and delete operations', () => {
     expect(h.tabs.value.map((item) => item.path)).toEqual(['renamed/a', 'renamed/sub/b', 'folderish/c'])
     expect(h.activePath.value).toBe('renamed/sub/b')
     expect(h.fileChanges.events.value.filter((event) => event.kind === 'rename')).toHaveLength(2)
+  })
+
+  it('uses a global namespace lock for folder mutations and blocks concurrent create', async () => {
+    let finishRename!: (value: { path: string; moved: string[]; updatedReferences: [] }) => void
+    const pendingRename = new Promise<{ path: string; moved: string[]; updatedReferences: [] }>((resolve) => {
+      finishRename = resolve
+    })
+    vi.spyOn(api, 'renameFolder').mockReturnValue(pendingRename)
+    const create = vi.spyOn(api, 'createPost')
+    const h = setup([tab('folder/a')])
+
+    const renaming = h.lifecycle.renameFolder('folder', 'renamed', ['folder/a'])
+    await vi.waitFor(() => expect(api.renameFolder).toHaveBeenCalledOnce())
+    await expect(h.lifecycle.createFile({ path: 'folder/new' }))
+      .rejects.toBeInstanceOf(DocumentMutationConflictError)
+    expect(create).not.toHaveBeenCalled()
+
+    finishRename({ path: 'renamed', moved: ['renamed/a'], updatedReferences: [] })
+    await renaming
   })
 
   it('waits for an in-flight save before delete, then closes and publishes once', async () => {
@@ -270,6 +313,18 @@ describe('useDocumentLifecycle folder and delete operations', () => {
     expect(h.fileChanges.events.value[0]).not.toHaveProperty('newRaw')
     await expect(h.lifecycle.createFile({ path: 'inbox/fail' })).rejects.toThrow('create failed')
     expect(create).toHaveBeenCalledTimes(2)
+    expect(h.fileChanges.events.value).toHaveLength(1)
+  })
+
+  it('keeps a successful create successful when refresh fails', async () => {
+    vi.spyOn(api, 'createPost').mockResolvedValue({
+      path: 'inbox/new', title: 'New', created: '', updated: '', tags: [], size: 1, mtime: 1,
+    })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const h = setup([])
+    h.refresh.mockRejectedValueOnce(new Error('refresh failed'))
+
+    await expect(h.lifecycle.createFile({ path: 'inbox/new' })).resolves.toMatchObject({ path: 'inbox/new' })
     expect(h.fileChanges.events.value).toHaveLength(1)
   })
 })

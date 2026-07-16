@@ -412,14 +412,16 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
       const parent = oldPath.split('/').slice(0, -1).join('/')
       const newPath = parent ? `${parent}/${safeName}` : safeName
       let updateReferences = false
+      let referencePaths: string[] = []
       try {
         const impact = await getRenameImpact(oldPath, true)
+        referencePaths = impact.sources
         updateReferences = impact.count > 0
           ? await confirm(t('file_tree.rename_folder_refs', { count: impact.count }))
           : false
       } catch { /* advisory */ }
       const res = lifecycle
-        ? await lifecycle.renameFolder(oldPath, newPath, filePaths(node), updateReferences)
+        ? await lifecycle.renameFolder(oldPath, newPath, filePaths(node), updateReferences, referencePaths)
         : updateReferences
           ? await renameFolder(oldPath, newPath, true)
           : await renameFolder(oldPath, newPath)
@@ -431,15 +433,17 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
       toast.success(t('file_tree.renamed_count', { count: res.moved.length }))
     } else {
       let updateReferences = false
+      let referencePaths: string[] = []
       try {
         const impact = await getRenameImpact(oldPath)
+        referencePaths = impact.sources
         updateReferences = impact.count > 0
           ? await confirm(t('file_tree.rename_file_refs', { count: impact.count }))
           : false
       } catch { /* impact preview is advisory; renaming still works */ }
       const body = updateReferences ? { name: safeName, updateReferences: true } : { name: safeName }
       const renamed = lifecycle
-        ? await lifecycle.renameFile(oldPath, body)
+        ? await lifecycle.renameFile(oldPath, body, referencePaths)
         : await patchPost(oldPath, body)
       if (!lifecycle) {
         for (const updated of renamed.updatedReferences ?? []) {

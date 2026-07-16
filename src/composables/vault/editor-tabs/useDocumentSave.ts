@@ -231,11 +231,8 @@ export function useDocumentSave(options: {
     }
   }
 
-  async function prepareHistoryRestore(path: string): Promise<void> {
-    cancelScheduledSave(path)
-    await savePromises.get(path)
-    // A save that was already in flight may have scheduled another pass.
-    cancelScheduledSave(path)
+  function prepareHistoryRestore(path: string): Promise<DocumentMutationBarrier> {
+    return prepareDocumentMutation([path])
   }
 
   function prepareDocumentClose(paths: readonly string[]): Promise<DocumentMutationBarrier> {

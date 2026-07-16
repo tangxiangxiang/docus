@@ -25,7 +25,7 @@ import {
 } from '../composables/vault/useHistoryComparisons'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
-import { createPost, getPost, type DocumentMetadata } from '../lib/api'
+import { getPost, type DocumentMetadata } from '../lib/api'
 import { formatHistoryDate } from '../lib/history-date'
 import { isSlugSegment } from '../lib/slug'
 import { resolveWikiTarget } from '../lib/linkResolve'
@@ -34,6 +34,7 @@ import { createVaultContext } from '../composables/vault/context/createVaultCont
 import { provideVaultContext } from '../composables/vault/context/useVaultContext'
 import { createVaultFileChanges } from '../composables/vault/context/fileChanges'
 import { useDocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
+import type { DocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
@@ -138,6 +139,7 @@ function openSearch() { paletteRef.value?.show() }
 /* ---------- Tabs / save / route sync ---------- */
 const fileChanges = createVaultFileChanges()
 const historyMutationLock = createPathMutationLock()
+let lifecycleCreateFile: DocumentLifecycle['createFile'] | null = null
 const {
   tree, vaultId, posts, tabs, activePath, activeTab, isDirty, activeSize,
   refresh, openPost: openEditorPost, closeTab: closeEditorTab,
@@ -152,6 +154,10 @@ const {
   toggleViewMode: () => viewModeApi?.toggle(),
   fileChanges,
   mutationLock: historyMutationLock,
+  createDocument: (input) => {
+    if (!lifecycleCreateFile) throw new Error('document lifecycle is not ready')
+    return lifecycleCreateFile(input)
+  },
 })
 const documentLifecycle = useDocumentLifecycle({
   fileChanges,
@@ -161,6 +167,7 @@ const documentLifecycle = useDocumentLifecycle({
   removeOpenDocuments,
   refresh,
 })
+lifecycleCreateFile = documentLifecycle.createFile
 const vaultContext = createVaultContext({
   vaultId,
   fileChanges,
@@ -508,11 +515,9 @@ async function createMissingWikiNote(ref: string) {
   const path = clean.startsWith('inbox/') ? clean : `inbox/${clean}`
   const title = segments.at(-1)!.split('-').join(' ')
   try {
-    await createPost({ path, title })
-    fileChanges.publish({ path, kind: 'write', source: 'editor-lifecycle' })
-    await refresh()
-    await openPost(path)
-    toast.success(t('common.created', { path }))
+    const created = await documentLifecycle.createFile({ path, title })
+    await openPost(created.path)
+    toast.success(t('common.created', { path: created.path }))
   } catch (error: any) {
     if (error?.status === 409) await openPost(path)
     else toast.error(t('common.create_failed', { error: error?.message ?? t('common.unknown_error') }))

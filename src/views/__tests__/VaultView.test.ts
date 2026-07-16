@@ -99,6 +99,15 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('destructive: true')
   })
 
+  it('routes command-palette and missing-wiki creation through the lifecycle service', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    expect(source).toContain('createDocument: (input) => {')
+    expect(source).toContain('return lifecycleCreateFile(input)')
+    expect(source).toContain('const created = await documentLifecycle.createFile({ path, title })')
+    expect(source).not.toContain("await createPost({ path, title })")
+  })
+
   it('focuses loading History viewers before their network requests settle', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const openRevision = source.match(/async function openHistoryRevision[\s\S]*?\n}/)?.[0]

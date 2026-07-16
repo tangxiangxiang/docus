@@ -4,6 +4,7 @@ import * as historyApi from '../../lib/history-api'
 import type { VaultFileChanges } from './context/fileChanges'
 import { getLoadedEditorDocument } from './useHistoryComparisons'
 import { useI18n } from '../useI18n'
+import type { DocumentMutationBarrier } from './editor-tabs/useDocumentSave'
 
 export interface HistoryRestoreSource {
   documentPath: string
@@ -21,7 +22,7 @@ interface HistoryRestoreOptions {
   tabs: Ref<Tab[]>
   fileChanges: VaultFileChanges
   confirm: (request: HistoryRestoreRequest) => Promise<boolean>
-  prepareEditorRestore: (path: string) => Promise<void>
+  prepareEditorRestore: (path: string) => Promise<DocumentMutationBarrier>
   refreshVault: () => Promise<void>
   refreshComparison: (path: string) => Promise<boolean | void>
   acquireMutation?: (paths: readonly string[]) => (() => void) | null
@@ -45,6 +46,14 @@ function applyRestoredContent(tab: Tab, raw: string, mtime: number): void {
   tab.error = null
   tab.loadError = null
   tab.loading = false
+  tab.externalRaw = null
+  tab.serverMtime = mtime
+}
+
+function applyRestoreWithoutOverwritingNewerEdit(tab: Tab, raw: string, mtime: number): void {
+  tab.originalRaw = raw
+  tab.saveStatus = 'dirty'
+  tab.error = null
   tab.externalRaw = null
   tab.serverMtime = mtime
 }
@@ -95,15 +104,25 @@ export function useHistoryRestore(options: HistoryRestoreOptions) {
     restoring.value = true
     restoringPath.value = request.documentPath
     error.value = null
+    let editorBarrier: DocumentMutationBarrier | null = null
     try {
-      await options.prepareEditorRestore(request.documentPath)
+      editorBarrier = await options.prepareEditorRestore(request.documentPath)
+      const preparedTab = options.tabs.value.find((item) => item.path === request.documentPath)
+      const preparedRevision = preparedTab?.revision ?? null
       const result = await (options.restoreFile ?? historyApi.restoreFile)(
         historyPath(request.documentPath),
         request.revisionId,
       )
 
       const tab = options.tabs.value.find((item) => item.path === request.documentPath)
-      if (tab) applyRestoredContent(tab, request.historicalRaw, result.mtime)
+      if (tab) {
+        if (preparedRevision != null && tab.revision !== preparedRevision) {
+          applyRestoreWithoutOverwritingNewerEdit(tab, request.historicalRaw, result.mtime)
+        } else {
+          applyRestoredContent(tab, request.historicalRaw, result.mtime)
+        }
+      }
+      editorBarrier.commit([request.documentPath])
 
       options.fileChanges.publish({
         path: request.documentPath,
@@ -123,6 +142,7 @@ export function useHistoryRestore(options: HistoryRestoreOptions) {
       options.onSuccess(request, { refreshFailed })
       return true
     } catch (cause) {
+      editorBarrier?.rollback()
       error.value = cause instanceof Error && cause.message ? cause.message : null
       options.onError(request, cause)
       return false

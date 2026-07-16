@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { Tab } from '../../../components/vault/tabs'
 import { createVaultFileChanges } from '../context/fileChanges'
+import { useDocumentSave } from '../editor-tabs/useDocumentSave'
 import {
   useHistoryRestore,
   type HistoryRestoreRequest,
@@ -53,10 +54,15 @@ function harness(options: {
   refreshComparison?: Mock
   acquireMutation?: (paths: readonly string[]) => (() => void) | null
   onConflict?: Mock
+  prepareEditorRestore?: Mock
 } = {}) {
   const tabs = ref(options.tabs ?? [tab()])
   const fileChanges = createVaultFileChanges()
-  const prepareEditorRestore = vi.fn().mockResolvedValue(undefined)
+  const prepareEditorRestore = options.prepareEditorRestore ?? vi.fn().mockResolvedValue({
+    paths: ['inbox/redis'],
+    commit: vi.fn(),
+    rollback: vi.fn(),
+  })
   const refreshVault = options.refreshVault ?? vi.fn().mockResolvedValue(undefined)
   const refreshComparison = options.refreshComparison ?? vi.fn().mockResolvedValue(true)
   const onSuccess = vi.fn()
@@ -183,6 +189,88 @@ describe('useHistoryRestore', () => {
     await first
 
     expect(restoreFile).toHaveBeenCalledOnce()
+  })
+
+  it('preserves edits made while restore is pending and resumes saving after commit', async () => {
+    const response = deferred<{ path: string; ref: string; raw: string; mtime: number }>()
+    const barrier = { paths: ['inbox/redis'], commit: vi.fn(), rollback: vi.fn() }
+    const h = harness({
+      restoreFile: vi.fn().mockReturnValue(response.promise),
+      prepareEditorRestore: vi.fn().mockResolvedValue(barrier),
+    })
+
+    const restoring = h.restore.restore(source())
+    await vi.waitFor(() => expect(h.restore.restoring.value).toBe(true))
+    h.tabs.value[0]!.raw = '# New edit'
+    h.tabs.value[0]!.revision += 1
+    h.tabs.value[0]!.saveStatus = 'dirty'
+    response.resolve({ path: 'inbox/redis.md', ref: 'revision-a', raw: '# Historical', mtime: 100 })
+
+    await expect(restoring).resolves.toBe(true)
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: '# New edit',
+      originalRaw: '# Historical',
+      saveStatus: 'dirty',
+    })
+    expect(barrier.commit).toHaveBeenCalledWith(['inbox/redis'])
+    expect(barrier.rollback).not.toHaveBeenCalled()
+  })
+
+  it('rolls back the editor save barrier when restore fails', async () => {
+    const barrier = { paths: ['inbox/redis'], commit: vi.fn(), rollback: vi.fn() }
+    const h = harness({
+      restoreFile: vi.fn().mockRejectedValue(new Error('restore failed')),
+      prepareEditorRestore: vi.fn().mockResolvedValue(barrier),
+    })
+
+    await expect(h.restore.restore(source())).resolves.toBe(false)
+    expect(barrier.rollback).toHaveBeenCalledOnce()
+    expect(barrier.commit).not.toHaveBeenCalled()
+  })
+
+  it('holds the real save barrier for the entire restore and saves a newer edit afterward', async () => {
+    vi.useFakeTimers()
+    const tabs = ref([tab({ raw: '# Current', originalRaw: '# Current', revision: 2, savedRevision: 2 })])
+    const fileChanges = createVaultFileChanges()
+    const save = useDocumentSave({
+      tabs,
+      posts: ref([]),
+      activePath: ref('inbox/redis'),
+      refresh: vi.fn().mockResolvedValue(undefined),
+      fileChanges,
+      toastError: vi.fn(),
+    })
+    const response = deferred<{ path: string; ref: string; raw: string; mtime: number }>()
+    const put = vi.fn(async (_url: string, init?: RequestInit) => {
+      const raw = (JSON.parse(String(init?.body)) as { raw: string }).raw
+      return new Response(JSON.stringify({ ok: true, raw }), { status: 200 })
+    })
+    vi.stubGlobal('fetch', put)
+    const restore = useHistoryRestore({
+      tabs,
+      fileChanges,
+      confirm: vi.fn().mockResolvedValue(true),
+      prepareEditorRestore: save.prepareHistoryRestore,
+      refreshVault: vi.fn().mockResolvedValue(undefined),
+      refreshComparison: vi.fn().mockResolvedValue(true),
+      acquireMutation: () => () => {},
+      restoreFile: vi.fn().mockReturnValue(response.promise),
+      onSuccess: vi.fn(),
+      onError: vi.fn(),
+    })
+
+    const restoring = restore.restore(source())
+    await vi.waitFor(() => expect(restore.restoring.value).toBe(true))
+    save.onEditorChange('inbox/redis', '# New edit')
+    await vi.advanceTimersByTimeAsync(800)
+    expect(put).not.toHaveBeenCalled()
+
+    response.resolve({ path: 'inbox/redis.md', ref: 'revision-a', raw: '# Historical', mtime: 100 })
+    await restoring
+    expect(tabs.value[0]).toMatchObject({ raw: '# New edit', originalRaw: '# Historical', saveStatus: 'dirty' })
+    await vi.advanceTimersByTimeAsync(800)
+    expect(put).toHaveBeenCalledOnce()
+    expect(JSON.parse(String(put.mock.calls[0]?.[1]?.body))).toEqual({ raw: '# New edit' })
   })
 
   it('does not restore a document locked by Create Version', async () => {

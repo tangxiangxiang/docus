@@ -22,12 +22,14 @@ export interface DocumentLifecycle {
   renameFile(
     fromPath: string,
     body: { name?: string; targetPath?: string; updateReferences?: boolean },
+    referencePaths?: readonly string[],
   ): Promise<PostSummary>
   renameFolder(
     fromFolder: string,
     toFolder: string,
     affectedPaths: readonly string[],
     updateReferences?: boolean,
+    referencePaths?: readonly string[],
   ): Promise<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string }> }>
   deleteFile(path: string): Promise<{ ok: true }>
   deleteFolder(path: string, affectedPaths: readonly string[]): Promise<{ deleted: string[] }>
@@ -70,8 +72,11 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
   async function withMutation<T>(
     paths: readonly string[],
     operation: (barrier: DocumentMutationBarrier) => Promise<T>,
+    lockAll = false,
   ): Promise<T> {
-    const release = options.mutationLock.acquire(toMutationPaths(paths))
+    const release = lockAll
+      ? options.mutationLock.acquireAll()
+      : options.mutationLock.acquire(toMutationPaths(paths))
     if (!release) throw new DocumentMutationConflictError()
     let barrier: DocumentMutationBarrier | null = null
     let committed = false
@@ -89,17 +94,33 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
   }
 
   async function createFile(input: { path: string; title?: string }): Promise<PostSummary> {
-    const created = await createPost(input)
-    options.fileChanges.publish({ path: created.path, kind: 'write', source: 'editor-lifecycle' })
-    await refreshBestEffort(`Create ${created.path}`)
-    return created
+    return withMutation([input.path], async (barrier) => {
+      const created = await createPost(input)
+      options.fileChanges.publish({ path: created.path, kind: 'write', source: 'editor-lifecycle' })
+      barrier.commit()
+      await refreshBestEffort(`Create ${created.path}`)
+      return created
+    })
+  }
+
+  function requestedTargetPath(
+    fromPath: string,
+    body: { name?: string; targetPath?: string },
+  ): string | null {
+    if (body.targetPath) return body.targetPath
+    if (!body.name) return null
+    const slash = fromPath.lastIndexOf('/')
+    return slash === -1 ? body.name : `${fromPath.slice(0, slash)}/${body.name}`
   }
 
   async function renameFile(
     fromPath: string,
     body: { name?: string; targetPath?: string; updateReferences?: boolean },
+    referencePaths: readonly string[] = [],
   ): Promise<PostSummary> {
-    return withMutation([fromPath], async (barrier) => {
+    const targetPath = requestedTargetPath(fromPath, body)
+    const mutationPaths = [fromPath, ...(targetPath ? [targetPath] : []), ...referencePaths]
+    return withMutation(mutationPaths, async (barrier) => {
       const renamed = await patchPost(fromPath, body)
       const mapping = { from: fromPath, to: renamed.path }
       options.renameOpenDocuments([mapping])
@@ -110,7 +131,11 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         source: 'editor-lifecycle',
       })
       publishReferenceWrites(renamed.updatedReferences)
-      barrier.commit([renamed.path])
+      barrier.commit([
+        renamed.path,
+        ...referencePaths,
+        ...(targetPath && targetPath !== renamed.path ? [targetPath] : []),
+      ])
       await refreshBestEffort(`Rename ${fromPath} to ${renamed.path}`)
       return renamed
     })
@@ -121,8 +146,9 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
     toFolder: string,
     affectedPaths: readonly string[],
     updateReferences = false,
+    referencePaths: readonly string[] = [],
   ) {
-    return withMutation(affectedPaths, async (barrier) => {
+    return withMutation([...affectedPaths, ...referencePaths], async (barrier) => {
       const result = await renameFolder(fromFolder, toFolder, updateReferences)
       const moved = new Set(result.moved)
       const mappings = affectedPaths.flatMap((from) => {
@@ -139,10 +165,10 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         })
       }
       publishReferenceWrites(result.updatedReferences)
-      barrier.commit(mappings.map(({ to }) => to))
+      barrier.commit([...mappings.map(({ to }) => to), ...referencePaths])
       await refreshBestEffort(`Rename folder ${fromFolder} to ${result.path}`)
       return result
-    })
+    }, true)
   }
 
   async function deleteFileLifecycle(path: string): Promise<{ ok: true }> {
@@ -166,7 +192,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
       barrier.commit()
       await refreshBestEffort(`Delete folder ${path}`)
       return result
-    })
+    }, true)
   }
 
   return {
