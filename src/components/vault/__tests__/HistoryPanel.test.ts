@@ -141,6 +141,8 @@ describe('HistoryPanel document timeline', () => {
     await flushPromises()
 
     expect(wrapper.findAll('.history-revision-row')).toHaveLength(2)
+    expect(wrapper.find('.history-header').exists()).toBe(false)
+    expect(wrapper.get('.history-timeline-heading').find('.history-back-button').exists()).toBe(true)
     expect(wrapper.find('.history-withdraw-version').exists()).toBe(false)
 
     const rows = wrapper.findAll('.history-revision-row')
@@ -548,7 +550,8 @@ describe('HistoryPanel document timeline', () => {
 
     const wrapper = mountPanel()
     await flushPromises()
-    expect(wrapper.get('.history-title').text()).toBe('历史')
+    expect(wrapper.find('.history-header').exists()).toBe(false)
+    expect(wrapper.get('.history-timeline-heading').text()).toContain('时间线')
     expect(wrapper.get('.history-skeleton').attributes('aria-label')).toBe('正在加载历史记录…')
 
     resolveLog({ commits: [] })

@@ -493,25 +493,14 @@ main.container {
 
 /* === HistoryPanel (real, replaces the old placeholder) === */
 .history-panel {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
   background: var(--vs-bg-1);
   overflow: hidden;
   height: 100%;
-}
-.history-header {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 12px;
-  height: 36px;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--vs-border);
-  background: var(--vs-bg-2);
-  color: var(--vs-text-2);
-  font-size: 0.8rem;
-  font-weight: 500;
 }
 .history-subtitle {
   font-weight: 400;
@@ -557,49 +546,67 @@ main.container {
 .history-error button:hover { background: var(--vs-hover-bg); }
 
 /* Phase 1 document timeline. History remains one quiet, continuous sidebar. */
-.history-panel .history-header {
-  justify-content: flex-start;
-  gap: 6px;
-  padding: 0 10px;
+.history-create-section {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 78%, transparent);
   background: var(--vs-bg-1);
 }
 .history-changes {
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: 48%;
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--vs-border);
+  overflow: hidden;
+  min-width: 0;
 }
 .history-changes-header,
 .history-timeline-heading {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 32px;
+  padding: 0 9px;
   gap: 6px;
   color: var(--vs-text-2);
   font-size: 0.7rem;
   font-weight: 600;
 }
 .history-changes-header h2 { margin: 0; font: inherit; }
-.history-changes-actions { margin-left: auto; display: inline-flex; gap: 2px; }
+.history-changes-header { min-height: 35px; }
+.history-changes-header > span:not(.history-changes-actions) {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vs-text-3) 10%, transparent);
+  color: var(--vs-text-3);
+  font-size: 0.64rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.history-changes-actions { display: inline-flex; flex: 0 0 auto; gap: 2px; margin-left: auto; }
 .history-changes-actions button {
   min-height: 24px;
   padding: 0 5px;
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: var(--vs-text-3);
+  color: var(--vs-text-2);
   font: inherit;
   cursor: pointer;
 }
 .history-changes-actions button:hover:not(:disabled) { background: var(--vs-hover-bg); color: var(--vs-text-1); }
 .history-changes-actions button:disabled { opacity: 0.45; cursor: default; }
 .history-changes-list {
-  min-height: 0;
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 180px;
+  min-width: 0;
   margin: 0;
-  padding: 0 4px;
+  padding: 2px 8px 6px;
+  border-top: 1px solid color-mix(in srgb, var(--vs-border) 50%, transparent);
   overflow-y: auto;
   list-style: none;
 }
@@ -607,12 +614,13 @@ main.container {
   display: flex;
   align-items: center;
   gap: 7px;
-  min-height: 38px;
-  padding: 3px 6px;
-  border-radius: 4px;
+  min-height: 36px;
+  padding: 3px 7px;
+  border-radius: 5px;
   cursor: pointer;
+  overflow: hidden;
 }
-.history-change-row label:hover { background: var(--vs-hover-bg); }
+.history-change-row label:hover { background: color-mix(in srgb, var(--vs-hover-bg) 82%, transparent); }
 .history-change-row input { flex: 0 0 auto; margin: 0; accent-color: var(--vs-accent); }
 .history-change-copy { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; }
 .history-change-copy strong,
@@ -620,53 +628,85 @@ main.container {
 .history-change-copy strong { color: var(--vs-text-1); font-size: 0.78rem; font-weight: 500; }
 .history-change-copy span { color: var(--vs-text-3); font-size: 0.64rem; }
 .history-change-status { flex: 0 0 auto; color: var(--vs-text-3); font-size: 0.64rem; }
-.history-changes-empty { padding: 5px 10px 9px; color: var(--vs-text-3); font-size: 0.74rem; }
-.history-version-composer { flex: 0 0 auto; display: grid; gap: 5px; padding: 8px 10px 10px; }
-.history-version-composer label { color: var(--vs-text-2); font-size: 0.7rem; font-weight: 600; }
+.history-changes-empty { padding: 7px 9px 11px; color: var(--vs-text-3); font-size: 0.74rem; }
+.history-version-composer {
+  box-sizing: border-box;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 7px;
+  padding: 9px 10px 11px;
+  border-top: 1px solid color-mix(in srgb, var(--vs-border) 62%, transparent);
+  background: color-mix(in srgb, var(--vs-bg-2) 22%, var(--vs-bg-1));
+}
 .history-version-composer textarea {
   box-sizing: border-box;
   width: 100%;
-  min-height: 44px;
+  max-width: 100%;
+  min-height: 46px;
   resize: vertical;
-  padding: 6px 7px;
-  border: 1px solid var(--vs-border);
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--vs-border) 88%, transparent);
   border-radius: 5px;
-  background: var(--vs-bg-2);
+  background: var(--vs-bg-1);
   color: var(--vs-text-1);
   font: inherit;
   font-size: 0.76rem;
+  line-height: 1.4;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.history-version-composer textarea:focus { border-color: var(--vs-accent); outline: none; }
+.history-version-composer textarea::placeholder { color: var(--vs-text-3); opacity: 0.75; }
+.history-version-composer textarea:focus {
+  border-color: color-mix(in srgb, var(--vs-accent) 72%, var(--vs-border));
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-accent) 14%, transparent);
+}
 .history-create-version {
-  min-height: 28px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 30px;
   border: 1px solid color-mix(in srgb, var(--vs-accent) 70%, var(--vs-border));
   border-radius: 5px;
   background: var(--vs-accent);
-  color: var(--vs-bg-1);
+  color: #fff;
   font: inherit;
   font-size: 0.74rem;
   font-weight: 600;
   cursor: pointer;
+  transition: filter 120ms ease, opacity 120ms ease;
 }
-.history-create-version:disabled { opacity: 0.45; cursor: default; }
+.history-create-version:hover:not(:disabled) { filter: brightness(1.08); }
+.history-create-version:disabled {
+  border-color: color-mix(in srgb, var(--vs-border) 86%, transparent);
+  background: color-mix(in srgb, var(--vs-text-3) 12%, var(--vs-bg-2));
+  color: var(--vs-text-3);
+  cursor: default;
+  opacity: 1;
+}
 .history-commit-error { color: #ef4444; font-size: 0.7rem; line-height: 1.35; }
-.history-timeline-heading { flex: 0 0 auto; border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 65%, transparent); }
+.history-timeline-section { display: flex; width: 100%; min-height: 0; min-width: 0; overflow: hidden; flex-direction: column; }
+.history-timeline-heading {
+  min-height: 36px;
+  padding: 0 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 55%, transparent);
+  background: var(--vs-bg-1);
+}
+.history-timeline-heading:has(.history-document-header) {
+  min-height: 36px;
+  gap: 5px;
+}
+.history-timeline-heading h2 { margin: 0; font: inherit; }
 .history-timeline-heading:focus-visible {
   outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
   outline-offset: -1px;
-}
-.history-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .history-back-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -682,9 +722,9 @@ main.container {
 .history-back-button svg { display: block; transform: rotate(180deg); }
 .history-document-header {
   display: flex;
+  flex: 1 1 auto;
   align-items: center;
-  gap: 8px;
-  padding: 12px 10px 10px;
+  min-width: 0;
   color: var(--vs-text-1);
 }
 .history-document-header-icon,
@@ -695,23 +735,28 @@ main.container {
   flex: 0 0 16px;
   color: var(--vs-text-2);
 }
+.history-row-icon { align-self: flex-start; margin-top: 1px; }
 .history-document-header-icon svg,
 .history-row-icon svg { display: block; }
 .history-document-header-copy {
   display: flex;
-  flex-direction: column;
+  flex: 1 1 auto;
+  flex-direction: row;
+  align-items: baseline;
   min-width: 0;
-  gap: 1px;
+  gap: 6px;
 }
 .history-document-header-copy strong {
+  min-width: 0;
   overflow: hidden;
   color: var(--vs-text-1);
-  font-size: 0.84rem;
+  font-size: 0.8rem;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .history-document-header-copy span {
+  flex: 0 0 auto;
   color: var(--vs-text-3);
   font-size: 0.68rem;
   font-variant-numeric: tabular-nums;
@@ -720,7 +765,7 @@ main.container {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 0 12px;
+  padding: 6px 4px 12px;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
@@ -736,7 +781,7 @@ main.container {
 .history-timeline-group + .history-timeline-group { margin-top: 12px; }
 .history-timeline-group-title {
   margin: 0;
-  padding: 5px 10px 4px;
+  padding: 5px 8px 4px;
   color: var(--vs-text-3);
   font-size: 0.68rem;
   font-weight: 600;
@@ -749,8 +794,9 @@ main.container {
 .history-panel .history-document-row,
 .history-panel .history-revision-row {
   min-height: 42px;
-  padding: 5px 10px;
+  padding: 5px 7px;
   gap: 7px;
+  border-radius: 5px;
   text-align: left;
   cursor: pointer;
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { PostSummary } from '../../lib/api'
 import type { StatusEntry } from '../../lib/history-api'
 import { useI18n } from '../../composables/useI18n'
 
@@ -10,6 +11,7 @@ const props = withDefaults(defineProps<{
   mutationLocked?: boolean
   canCommit: boolean
   error: string | null
+  posts?: PostSummary[]
   indexRepairPending?: boolean
   indexRepairBusy?: boolean
   indexRepairConflict?: boolean
@@ -18,6 +20,7 @@ const props = withDefaults(defineProps<{
   indexRepairBusy: false,
   indexRepairConflict: false,
   mutationLocked: false,
+  posts: () => [],
 })
 const emit = defineEmits<{
   toggle: [path: string]
@@ -35,6 +38,11 @@ function displayName(path: string): string {
   return name.endsWith('.md') ? name.slice(0, -3) : name
 }
 
+function displayTitle(path: string): string {
+  const postPath = path.endsWith('.md') ? path.slice(0, -3) : path
+  return props.posts.find((post) => post.path === postPath)?.title || displayName(path)
+}
+
 function statusKey(entry: StatusEntry): string {
   if (entry.index === '?' || entry.worktree === '?' || entry.index === 'A') return 'history.change_new'
   if (entry.index === 'D' || entry.worktree === 'D') return 'history.change_deleted'
@@ -47,46 +55,48 @@ function onMessage(event: Event): void {
 </script>
 
 <template>
-  <section class="history-changes" :aria-labelledby="'history-changes-title'" :aria-busy="busy || mutationLocked">
-    <header class="history-changes-header">
-      <h2 id="history-changes-title">{{ t('history.changes') }}</h2>
-      <span>{{ entries.length }}</span>
-      <span class="history-changes-actions">
-        <button type="button" :disabled="busy || mutationLocked || entries.length === 0" @click="emit('select-all')">
-          {{ t('history.select_all') }}
-        </button>
-        <button type="button" :disabled="busy || mutationLocked || selectedPaths.size === 0" @click="emit('clear-selection')">
-          {{ t('history.clear_selection') }}
-        </button>
-      </span>
-    </header>
+  <section class="history-create-section" :aria-busy="busy || mutationLocked">
+    <section class="history-changes" aria-labelledby="history-changes-title" :aria-busy="busy || mutationLocked">
+      <header class="history-changes-header">
+        <h2 id="history-changes-title">{{ t('history.changes') }}</h2>
+        <span>{{ entries.length }}</span>
+        <span class="history-changes-actions">
+          <button type="button" :disabled="busy || mutationLocked || entries.length === 0" @click="emit('select-all')">
+            {{ t('history.select_all') }}
+          </button>
+          <button type="button" :disabled="busy || mutationLocked || selectedPaths.size === 0" @click="emit('clear-selection')">
+            {{ t('history.clear_selection') }}
+          </button>
+        </span>
+      </header>
 
-    <div v-if="entries.length === 0" class="history-changes-empty">
-      {{ t('history.no_changed_documents') }}
-    </div>
-    <ul v-else class="history-changes-list" :aria-label="t('history.changed_document_list')">
-      <li v-for="entry in entries" :key="entry.path" class="history-change-row">
-        <label>
-          <input
-            type="checkbox"
-            :checked="selectedPaths.has(entry.path)"
-            :disabled="busy || mutationLocked"
-            :aria-label="t('history.include_document', { path: entry.path })"
-            @change="emit('toggle', entry.path)"
-          >
-          <span class="history-change-copy">
-            <strong>{{ displayName(entry.path) }}</strong>
-            <span :title="entry.path">{{ entry.path }}</span>
-          </span>
-          <span class="history-change-status">{{ t(statusKey(entry)) }}</span>
-        </label>
-      </li>
-    </ul>
+      <div v-if="entries.length === 0" class="history-changes-empty">
+        {{ t('history.no_changed_documents') }}
+      </div>
+      <ul v-else class="history-changes-list" :aria-label="t('history.changed_document_list')">
+        <li v-for="entry in entries" :key="entry.path" class="history-change-row">
+          <label>
+            <input
+              type="checkbox"
+              :checked="selectedPaths.has(entry.path)"
+              :disabled="busy || mutationLocked"
+              :aria-label="t('history.include_document', { path: entry.path })"
+              @change="emit('toggle', entry.path)"
+            >
+            <span class="history-change-copy">
+              <strong>{{ displayTitle(entry.path) }}</strong>
+              <span :title="entry.path">{{ entry.path }}</span>
+            </span>
+            <span class="history-change-status">{{ t(statusKey(entry)) }}</span>
+          </label>
+        </li>
+      </ul>
+    </section>
 
-    <div class="history-version-composer">
-      <label for="history-version-message">{{ t('history.version_message') }}</label>
+    <section class="history-version-composer" :aria-label="t('history.version_message')">
       <textarea
         id="history-version-message"
+        :aria-label="t('history.version_message')"
         :value="message"
         rows="2"
         :disabled="busy || mutationLocked"
@@ -114,6 +124,6 @@ function onMessage(event: Event): void {
           {{ t('history.index_repair_discard_action') }}
         </button>
       </div>
-    </div>
+    </section>
   </section>
 </template>

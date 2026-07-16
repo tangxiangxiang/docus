@@ -29,10 +29,32 @@ describe('HistoryChangesPanel', () => {
     expect(wrapper.text()).toContain('Deleted')
     expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(3)
     expect(wrapper.get('input').attributes('aria-label')).toContain('inbox/modified.md')
-    expect(wrapper.get('label[for="history-version-message"]').text()).toBe('Version message')
+    expect(wrapper.get('#history-version-message').attributes('aria-label')).toBe('Version message')
 
     await wrapper.findAll('input[type="checkbox"]')[1]!.trigger('change')
     expect(wrapper.emitted('toggle')?.[0]).toEqual(['inbox/new.md'])
+  })
+
+  it('shows document titles and falls back to file names', () => {
+    const wrapper = mount(HistoryChangesPanel, {
+      props: {
+        entries: [
+          { path: 'inbox/english-object.md', index: ' ', worktree: 'M' },
+          { path: 'inbox/no-title.md', index: ' ', worktree: 'M' },
+        ],
+        posts: [{ path: 'inbox/english-object', title: 'English Object', created: '', updated: '', tags: [], size: 0, mtime: 0 }],
+        selectedPaths: new Set<string>(),
+        message: '',
+        busy: false,
+        canCommit: false,
+        error: null,
+      },
+    })
+
+    expect(wrapper.findAll('.history-change-copy strong').map((item) => item.text())).toEqual([
+      'English Object',
+      'no-title',
+    ])
   })
 
   it('emits select-all, clear, message, and keyboard submission intents', async () => {

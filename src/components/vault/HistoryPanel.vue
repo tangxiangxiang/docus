@@ -12,7 +12,7 @@ import {
 } from '../../composables/vault/useHistoryTimeline'
 import type { HistoryRevisionSelection } from '../../composables/vault/useHistorySnapshots'
 import { useI18n } from '../../composables/useI18n'
-import { ICON_CHEVRON, ICON_FILE_MD } from './icons'
+import { ICON_CHEVRON } from './icons'
 import EmptyState from './EmptyState.vue'
 import HistoryChangesPanel from './HistoryChangesPanel.vue'
 import TimelineDocumentRow from './TimelineDocumentRow.vue'
@@ -234,20 +234,6 @@ function onListKeydown(event: KeyboardEvent): void {
 
 <template>
   <section class="history-panel" :aria-label="t('history.title')">
-    <header class="history-header">
-      <button
-        v-if="timeline.selectedDocument.value"
-        type="button"
-        class="history-back-button"
-        :title="t('history.back_to_documents')"
-        :aria-label="t('history.back_to_documents')"
-        @click="showDocuments"
-      >
-        <span v-html="ICON_CHEVRON" />
-      </button>
-      <span class="history-title">{{ t('history.title') }}</span>
-    </header>
-
     <div v-if="h.capability.value && !h.capability.value.gitAvailable" class="history-empty">
       <EmptyState size="compact" :title="t('history.git_unavailable')">
         {{ t('history.git_unavailable_body') }}
@@ -268,6 +254,7 @@ function onListKeydown(event: KeyboardEvent): void {
         :mutation-locked="props.withdraw.busy.value"
         :can-commit="commit.canCommit.value"
         :error="commit.error.value"
+        :posts="props.posts"
         :index-repair-pending="commit.indexRepairPaths.value.length > 0"
         :index-repair-busy="commit.indexRepairBusy.value"
         :index-repair-conflict="commit.indexRepairConflictToken.value !== null"
@@ -279,21 +266,33 @@ function onListKeydown(event: KeyboardEvent): void {
         @repair-index="commit.retryIndexRepair"
         @discard-index-repair="commit.discardConflictingIndexRepair"
       />
-      <div ref="timelineHeading" class="history-timeline-heading" tabindex="-1">{{ t('history.timeline') }}</div>
+      <section class="history-timeline-section" :aria-labelledby="'history-timeline-title'">
+      <div ref="timelineHeading" class="history-timeline-heading" tabindex="-1">
+        <template v-if="timeline.selectedDocument.value">
+          <button
+            type="button"
+            class="history-back-button"
+            :title="t('history.back_to_documents')"
+            :aria-label="t('history.back_to_documents')"
+            @click="showDocuments"
+          >
+            <span v-html="ICON_CHEVRON" />
+          </button>
+          <span class="history-document-header">
+            <span class="history-document-header-copy">
+              <strong id="history-timeline-title">{{ timeline.selectedDocument.value.title }}</strong>
+              <span>{{ t('history.revisions', { count: timeline.selectedDocument.value.revisionCount }) }}</span>
+            </span>
+          </span>
+        </template>
+        <h2 v-else id="history-timeline-title">{{ t('history.timeline') }}</h2>
+      </div>
       <div v-if="h.logError.value && !timeline.selectedDocument.value" class="history-error" role="alert">
         <span>{{ logErrorLabel }}</span>
         <button type="button" @click="h.refreshLog()">
           {{ t('history.retry') }}
         </button>
       </div>
-      <div v-if="timeline.selectedDocument.value" class="history-document-header">
-        <span class="history-document-header-icon" v-html="ICON_FILE_MD" />
-        <span class="history-document-header-copy">
-          <strong>{{ timeline.selectedDocument.value.title }}</strong>
-          <span>{{ t('history.revisions', { count: timeline.selectedDocument.value.revisionCount }) }}</span>
-        </span>
-      </div>
-
       <div
         ref="listbox"
         class="history-timeline-scroll"
@@ -370,6 +369,7 @@ function onListKeydown(event: KeyboardEvent): void {
           </TimelineGroup>
         </template>
       </div>
+      </section>
       <Teleport to="body">
         <div
           v-if="revisionMenuOpen"
