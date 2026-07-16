@@ -85,6 +85,33 @@ describe('VaultView editor tab wiring', () => {
     expect(closeMany).toContain('await selectWorkspaceTab(fallbackId, false)')
   })
 
+  it('refreshes a retained active Diff after its dirty Current tab is discarded', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const closeOne = source.match(/async function closeWorkspaceTab[\s\S]*?\n}/)?.[0]
+
+    expect(closeOne).toBeDefined()
+    expect(closeOne).toContain('await historyComparisons.refreshDocumentComparison(id)')
+    expect(closeOne!.indexOf('await closeEditorTab(id)'))
+      .toBeLessThan(closeOne!.indexOf('await historyComparisons.refreshDocumentComparison(id)'))
+    expect(closeOne!.indexOf('await historyComparisons.refreshDocumentComparison(id)'))
+      .toBeLessThan(closeOne!.indexOf('if (!wasActive) return'))
+  })
+
+  it('refreshes retained Diffs after Close Others removes their dirty Current tabs', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const closeMany = source.match(/async function closeManyWorkspaceTabs[\s\S]*?\n}/)?.[0]
+
+    expect(closeMany).toBeDefined()
+    expect(closeMany).toContain('const remainingComparisonPaths = documentIds.filter')
+    expect(closeMany).toContain('historyComparisons.comparisons.value.some')
+    expect(closeMany).toContain('await Promise.all(')
+    expect(closeMany).toContain('historyComparisons.refreshDocumentComparison(path)')
+    expect(closeMany!.indexOf('historyComparisons.closeComparisons(comparisonIds)'))
+      .toBeLessThan(closeMany!.indexOf('const remainingComparisonPaths'))
+    expect(closeMany!.indexOf('await Promise.all('))
+      .toBeLessThan(closeMany!.indexOf('if (!activeWillClose) return'))
+  })
+
   it('focuses loading History viewers before their network requests settle', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const openRevision = source.match(/async function openHistoryRevision[\s\S]*?\n}/)?.[0]

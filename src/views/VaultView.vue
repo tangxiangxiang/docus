@@ -288,6 +288,10 @@ async function closeWorkspaceTab(id: string): Promise<void> {
   } else {
     const closed = await closeEditorTab(id)
     if (!closed) return
+    // A retained Diff may still be active while its Current editor tab is
+    // closed. Refresh after removing the editor tab so discarded in-memory
+    // content falls back to the saved document returned by getPost().
+    await historyComparisons.refreshDocumentComparison(id)
   }
 
   if (!wasActive) return
@@ -321,6 +325,16 @@ async function closeManyWorkspaceTabs(ids: string[]): Promise<void> {
   closeManyEditorTabsConfirmed(documentIds)
   historySnapshots.closeSnapshots(historyIds)
   historyComparisons.closeComparisons(comparisonIds)
+  const remainingComparisonPaths = documentIds.filter((path) =>
+    historyComparisons.comparisons.value.some(
+      (comparison) => comparison.documentPath === path,
+    ),
+  )
+  await Promise.all(
+    remainingComparisonPaths.map((path) =>
+      historyComparisons.refreshDocumentComparison(path),
+    ),
+  )
   if (!activeWillClose) return
   if (!fallbackId) {
     await nextTick()

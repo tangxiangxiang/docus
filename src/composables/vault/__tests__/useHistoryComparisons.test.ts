@@ -70,6 +70,36 @@ describe('useHistoryComparisons', () => {
     expect(history.activeComparison.value?.currentDirty).toBe(false)
   })
 
+  it('replaces discarded editor content with saved content after the Current tab closes', async () => {
+    const tabs = [{
+      path: 'inbox/redis',
+      raw: '# Redis\n\nDiscarded unsaved current.',
+      originalRaw: '# Redis\n\nSaved current.',
+      loading: false,
+      loadError: null,
+    }]
+    const loadCurrentDocument = vi.fn().mockResolvedValue('# Redis\n\nSaved current.')
+    const history = useHistoryComparisons({
+      getCurrentDocument: (path) => getLoadedEditorDocument(tabs, path),
+      loadCurrentDocument,
+    })
+    await history.openComparison(snapshot())
+    expect(history.activeComparison.value).toMatchObject({
+      newRaw: '# Redis\n\nDiscarded unsaved current.',
+      currentDirty: true,
+    })
+
+    tabs.splice(0, 1)
+    await history.refreshDocumentComparison('inbox/redis')
+
+    expect(loadCurrentDocument).toHaveBeenCalledWith('inbox/redis')
+    expect(history.activeComparison.value).toMatchObject({
+      newRaw: '# Redis\n\nSaved current.',
+      currentDirty: false,
+      status: 'ready',
+    })
+  })
+
   it('falls back to the saved document API while the editor tab is still loading', async () => {
     const tabs = [{
       path: 'inbox/redis',
