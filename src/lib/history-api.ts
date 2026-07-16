@@ -166,7 +166,7 @@ export interface IndexEntryFingerprint {
 export interface IndexRepairTransaction {
   token: string
   status: 'pending' | 'superseded'
-  head: string
+  head: string | null
   paths: string[]
   expectedIndex: Record<string, IndexEntryFingerprint[]>
 }
@@ -228,7 +228,16 @@ export async function discardIndexRepair(token: string): Promise<void> {
   await readJson<{ discarded: true }>(r, 'discardIndexRepair failed')
 }
 
-export async function dropCommit(sha: string): Promise<CommitResult> {
+export interface DropCommitResult {
+  sha: string
+  droppedSha: string
+  filesChanged: string[]
+  indexRefreshFailed: boolean
+  indexRepair?: IndexRepairTransaction
+  repairStatePersistenceFailed: boolean
+}
+
+export async function dropCommit(sha: string): Promise<DropCommitResult> {
   const r = await fetch('/api/history/drop', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

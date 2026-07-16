@@ -30,13 +30,24 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain(':commit="historyCommit"')
     expect(source).toContain('refreshComparisons(committedPaths)')
     expect(source).toContain('const historyMutationLock = createPathMutationLock()')
-    expect(source.match(/acquireMutation: historyMutationLock\.acquire/g)).toHaveLength(2)
+    expect(source.match(/acquireMutation: historyMutationLock\.acquire\b/g)).toHaveLength(2)
     expect(source).toContain('canMutate: historyMutationLock.canAcquire')
     expect(source).toContain("toast.info(t('history.document_mutation_in_progress'))")
     expect(source).toContain('snapshotPaneRef.value?.focusViewer()')
     expect(source).toContain('comparisonPaneRef.value?.focusViewer()')
     expect(source.match(/:mutation-locked="historyMutationLock\.has/g)).toHaveLength(2)
     expect(source).not.toContain(':save-before-commit=')
+  })
+
+  it('coordinates latest-version withdrawal at Vault scope and closes dropped viewers', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    expect(source).toContain('const historyWithdraw = useHistoryWithdraw({')
+    expect(source).toContain('acquireMutation: historyMutationLock.acquireAll')
+    expect(source).toContain('refreshIndexRepairStatus: historyCommit.refreshIndexRepairStatus')
+    expect(source).toContain('.filter((snapshot) => snapshot.revisionId === sha)')
+    expect(source).toContain('.filter((comparison) => comparison.revisionId === sha)')
+    expect(source).toContain(':withdraw="historyWithdraw"')
   })
 
   it('keeps Monaco mounted and isolates shortcuts for read-only history tabs', () => {

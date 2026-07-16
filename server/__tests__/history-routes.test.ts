@@ -570,10 +570,11 @@ describe('POST /api/history/drop', () => {
     const c2 = (await (await call('POST', '/commits', { paths: ['note.md'], message: 'v2' })).json()) as { sha: string }
 
     const r = await call('POST', '/drop', { sha: c2.sha })
-    expect(r.status).toBe(201)
-    const body = await r.json() as { sha: string; filesCommitted: string[] }
+    expect(r.status).toBe(200)
+    const body = await r.json() as { sha: string; droppedSha: string; filesChanged: string[] }
     expect(body.sha).toBe(c1.sha)
-    expect(body.filesCommitted).toEqual(['note.md'])
+    expect(body.droppedSha).toBe(c2.sha)
+    expect(body.filesChanged).toEqual(['note.md'])
     expect(await read('note.md')).toBe('v2\n')
 
     const status = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string }> }
@@ -581,7 +582,7 @@ describe('POST /api/history/drop', () => {
 
     const log = await (await call('GET', '/log')).json() as { commits: Array<{ sha: string }> }
     expect(log.commits.map((c) => c.sha)).toEqual([c1.sha])
-  })
+  }, 15_000)
 
   it('rejects dropping an older commit', async () => {
     await write('note.md', 'v1\n')
@@ -591,17 +592,17 @@ describe('POST /api/history/drop', () => {
 
     const r = await call('POST', '/drop', { sha: c1.sha })
     expect(r.status).toBe(409)
-  })
+  }, 15_000)
 
   it('can drop the root commit and leave its files untracked', async () => {
     await write('note.md', 'root\n')
     const c1 = (await (await call('POST', '/commits', { paths: ['note.md'], message: 'root' })).json()) as { sha: string }
 
     const r = await call('POST', '/drop', { sha: c1.sha })
-    expect(r.status).toBe(201)
-    const body = await r.json() as { sha: string; filesCommitted: string[] }
+    expect(r.status).toBe(200)
+    const body = await r.json() as { sha: string; filesChanged: string[] }
     expect(body.sha).toBe('')
-    expect(body.filesCommitted).toEqual(['note.md'])
+    expect(body.filesChanged).toEqual(['note.md'])
     expect(await read('note.md')).toBe('root\n')
 
     const status = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string; index: string; worktree: string }> }
@@ -609,7 +610,7 @@ describe('POST /api/history/drop', () => {
 
     const log = await (await call('GET', '/log')).json() as { commits: Array<{ sha: string }> }
     expect(log.commits).toEqual([])
-  })
+  }, 15_000)
 
   it('keeps unrelated staged files staged when dropping the root commit', async () => {
     await write('root.md', 'root\n')
@@ -619,15 +620,52 @@ describe('POST /api/history/drop', () => {
     expect((await run(root, ['add', '--', 'staged-later.md'])).status).toBe(0)
 
     const r = await call('POST', '/drop', { sha: rootCommit.sha })
-    expect(r.status).toBe(201)
+    expect(r.status).toBe(200)
     const status = await (await call('GET', '/status')).json() as { dirty: Array<{ path: string; index: string; worktree: string }> }
     expect(status.dirty).toContainEqual(expect.objectContaining({ path: 'root.md', index: '?', worktree: '?' }))
     expect(status.dirty).toContainEqual(expect.objectContaining({ path: 'staged-later.md', index: 'A', worktree: ' ' }))
-  })
+  }, 15_000)
 
   it('rejects unsupported sha syntax', async () => {
     const r = await call('POST', '/drop', { sha: 'HEAD' })
     expect(r.status).toBe(400)
+  })
+
+  it('maps a CAS conflict and repository operation state to 409', async () => {
+    const drop = vi.spyOn(historyGit, 'dropHeadCommit')
+      .mockRejectedValueOnce(new Error('repository changed before withdrawal'))
+      .mockRejectedValueOnce(new Error('repository operation in progress'))
+    try {
+      expect((await call('POST', '/drop', { sha: 'a'.repeat(40) })).status).toBe(409)
+      expect((await call('POST', '/drop', { sha: 'b'.repeat(40) })).status).toBe(409)
+    } finally {
+      drop.mockRestore()
+    }
+  })
+
+  it('returns Index degradation as a successful withdrawal response', async () => {
+    const result: historyGit.DropCommitResult = {
+      sha: 'a'.repeat(40),
+      droppedSha: 'b'.repeat(40),
+      filesChanged: ['note.md'],
+      indexRefreshFailed: true,
+      indexRepair: {
+        token: 'c'.repeat(32),
+        status: 'pending',
+        head: 'a'.repeat(40),
+        paths: ['note.md'],
+        expectedIndex: { 'note.md': [] },
+      },
+      repairStatePersistenceFailed: false,
+    }
+    const drop = vi.spyOn(historyGit, 'dropHeadCommit').mockResolvedValueOnce(result)
+    try {
+      const response = await call('POST', '/drop', { sha: result.droppedSha })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual(result)
+    } finally {
+      drop.mockRestore()
+    }
   })
 })
 

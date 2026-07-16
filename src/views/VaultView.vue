@@ -10,6 +10,7 @@ import { useI18n } from '../composables/useI18n'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { useHistory } from '../composables/vault/useHistory'
 import { useHistoryCommit } from '../composables/vault/useHistoryCommit'
+import { useHistoryWithdraw } from '../composables/vault/useHistoryWithdraw'
 import { createPathMutationLock } from '../composables/vault/pathMutationLock'
 import { useHistorySnapshots, type HistoryRevisionSelection } from '../composables/vault/useHistorySnapshots'
 import {
@@ -169,6 +170,41 @@ const historyCommit = useHistoryCommit({
     await Promise.all(committedPaths.map((path) => (
       historyComparisons.refreshDocumentComparison(path.endsWith('.md') ? path.slice(0, -3) : path)
     )))
+  },
+})
+
+async function confirmHistoryWithdraw(): Promise<boolean> {
+  return confirm(t('history.withdraw_title'), t('history.withdraw_detail'), {
+    confirmLabel: t('history.withdraw_confirm'),
+    cancelLabel: t('history.withdraw_cancel'),
+    destructive: true,
+  })
+}
+
+const historyWithdraw = useHistoryWithdraw({
+  history,
+  confirm: confirmHistoryWithdraw,
+  acquireMutation: historyMutationLock.acquireAll,
+  canMutate: historyMutationLock.canAcquireAll,
+  refreshIndexRepairStatus: historyCommit.refreshIndexRepairStatus,
+  async refreshComparisons(paths) {
+    await Promise.all(paths.map((filePath) => (
+      historyComparisons.refreshDocumentComparison(
+        filePath.endsWith('.md') ? filePath.slice(0, -3) : filePath,
+      )
+    )))
+  },
+  closeDroppedRevision(sha) {
+    historySnapshots.closeSnapshots(
+      historySnapshots.snapshots.value
+        .filter((snapshot) => snapshot.revisionId === sha)
+        .map((snapshot) => snapshot.tabId),
+    )
+    historyComparisons.closeComparisons(
+      historyComparisons.comparisons.value
+        .filter((comparison) => comparison.revisionId === sha)
+        .map((comparison) => comparison.tabId),
+    )
   },
 })
 
@@ -592,6 +628,7 @@ watch(isReadMode, async (reading) => {
       v-else-if="activePanel === 'history'"
       :history="history"
       :commit="historyCommit"
+      :withdraw="historyWithdraw"
       :posts="posts"
       @open-revision="openHistoryRevision"
     />

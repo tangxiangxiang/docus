@@ -651,6 +651,27 @@ main.container {
 .history-create-version:disabled { opacity: 0.45; cursor: default; }
 .history-commit-error { color: #ef4444; font-size: 0.7rem; line-height: 1.35; }
 .history-timeline-heading { flex: 0 0 auto; border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 65%, transparent); }
+.history-timeline-heading:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
+  outline-offset: -1px;
+}
+.history-withdraw-version {
+  align-self: flex-start;
+  min-height: 24px;
+  margin: 1px 10px 5px 33px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, #ef4444 48%, var(--vs-border));
+  border-radius: 4px;
+  background: transparent;
+  color: color-mix(in srgb, #ef4444 82%, var(--vs-text-1));
+  font: inherit;
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+.history-withdraw-version:hover:not(:disabled) {
+  background: color-mix(in srgb, #ef4444 10%, transparent);
+}
+.history-withdraw-version:disabled { opacity: 0.45; cursor: default; }
 .history-title {
   min-width: 0;
   overflow: hidden;

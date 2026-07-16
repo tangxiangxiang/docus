@@ -481,6 +481,15 @@ export type CommitResult = {
   repairStatePersistenceFailed?: boolean
 }
 
+export type DropCommitResult = {
+  sha: string
+  droppedSha: string
+  filesChanged: string[]
+  indexRefreshFailed: boolean
+  indexRepair?: IndexRepairTransaction
+  repairStatePersistenceFailed: boolean
+}
+
 export type IndexEntryFingerprint = {
   mode: string
   oid: string
@@ -490,7 +499,7 @@ export type IndexEntryFingerprint = {
 export type IndexRepairTransaction = {
   token: string
   status: 'pending' | 'superseded'
-  head: string
+  head: string | null
   paths: string[]
   expectedIndex: Record<string, IndexEntryFingerprint[]>
 }
@@ -558,6 +567,11 @@ async function assertRepositoryIdle(repoRoot: string): Promise<void> {
   }
 }
 
+async function readCurrentHead(repoRoot: string): Promise<string | null> {
+  const head = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
+  return head.status === 0 ? head.stdout.trim() : null
+}
+
 async function absoluteGitDir(repoRoot: string): Promise<string> {
   const result = await run(repoRoot, ['rev-parse', '--absolute-git-dir'])
   if (result.status !== 0) {
@@ -575,7 +589,7 @@ function validRepairTransaction(transaction: any): boolean {
     transaction
     && typeof transaction.token === 'string'
     && /^[0-9a-f]{32}$/.test(transaction.token)
-    && /^[0-9a-f]{40,64}$/.test(transaction.head)
+    && (transaction.head === null || /^[0-9a-f]{40,64}$/.test(transaction.head))
     && Array.isArray(transaction.paths)
     && transaction.paths.length > 0
     && transaction.paths.every((filePath: string) => (
@@ -750,7 +764,7 @@ async function settleIndexRepairPaths(
 
 async function recordIndexRepair(
   repoRoot: string,
-  head: string,
+  head: string | null,
   paths: readonly string[],
 ): Promise<IndexRepairTransaction> {
   const state = await readIndexRepairFile(repoRoot)
@@ -786,14 +800,14 @@ export async function getIndexRepairStatus(repoRoot: string): Promise<IndexRepai
 async function repairIndexWithLock(
   repoRoot: string,
   transaction: IndexRepairTransaction,
-  currentHead: string,
+  currentHead: string | null,
   options: {
     afterIndexLockForTesting?: () => Promise<void>
     beforeIndexReplaceForTesting?: () => Promise<void>
   } = {},
 ): Promise<{
   repaired: boolean
-  finalHead?: string
+  finalHead?: string | null
   replacementApplied: boolean
   replacementExpectedIndex?: Record<string, IndexEntryFingerprint[]>
 }> {
@@ -837,19 +851,23 @@ async function repairIndexWithLock(
     } else {
       await fs.writeFile(tempIndex, originalBytes)
     }
-    const reset = await run(repoRoot, ['reset', '-q', currentHead, '--', ...transaction.paths], {
-      env: indexEnv,
-    })
+    const reset = currentHead === null
+      ? await run(repoRoot, ['update-index', '--force-remove', '--', ...transaction.paths], { env: indexEnv })
+      : await run(repoRoot, ['reset', '-q', currentHead, '--', ...transaction.paths], { env: indexEnv })
     if (reset.status !== 0 || await repositoryOperationInProgress(repoRoot)) {
       return { repaired: false, replacementApplied: false }
     }
-    const afterHead = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
-    const verify = await run(
-      repoRoot,
-      ['diff', '--cached', '--quiet', currentHead, '--', ...transaction.paths],
-      { env: indexEnv },
-    )
-    if (afterHead.status !== 0 || afterHead.stdout.trim() !== currentHead || verify.status !== 0) {
+    const afterHead = await readCurrentHead(repoRoot)
+    const verified = currentHead === null
+      ? Object.values(
+          await captureIndexFingerprints(repoRoot, transaction.paths, indexEnv),
+        ).every((entries) => entries.length === 0)
+      : (await run(
+          repoRoot,
+          ['diff', '--cached', '--quiet', currentHead, '--', ...transaction.paths],
+          { env: indexEnv },
+        )).status === 0
+    if (afterHead !== currentHead || !verified) {
       return { repaired: false, replacementApplied: false }
     }
     for (const filePath of transaction.paths) {
@@ -873,11 +891,11 @@ async function repairIndexWithLock(
     await options.beforeIndexReplaceForTesting?.()
     await fs.rename(lockPath, indexPath)
     committedLock = true
-    const finalHead = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
-    if (finalHead.status !== 0 || finalHead.stdout.trim() !== currentHead) {
+    const finalHead = await readCurrentHead(repoRoot)
+    if (finalHead !== currentHead) {
       return {
         repaired: false,
-        finalHead: finalHead.status === 0 ? finalHead.stdout.trim() : undefined,
+        finalHead,
         replacementApplied: true,
         replacementExpectedIndex,
       }
@@ -942,11 +960,11 @@ export async function repairIndex(
       throw new Error('index changed after repair was requested')
     }
 
-    const head = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
-    if (head.status !== 0) throw new Error('index repair repository changed')
-    const currentHead = head.stdout.trim()
+    const currentHead = await readCurrentHead(repoRoot)
     const compatible = currentHead === transaction.head
-      || (await run(repoRoot, ['merge-base', '--is-ancestor', transaction.head, currentHead])).status === 0
+      || (currentHead !== null
+        && transaction.head !== null
+        && (await run(repoRoot, ['merge-base', '--is-ancestor', transaction.head, currentHead])).status === 0)
     if (!compatible) throw new Error('index repair repository changed')
 
     let attempt: Awaited<ReturnType<typeof repairIndexWithLock>>
@@ -962,13 +980,18 @@ export async function repairIndex(
       throw error
     }
     if (!attempt.repaired) {
-      if (attempt.replacementApplied && attempt.finalHead && attempt.replacementExpectedIndex) {
+      const replacementHead = attempt.finalHead
+      if (
+        attempt.replacementApplied
+        && replacementHead !== undefined
+        && attempt.replacementExpectedIndex
+      ) {
         const transactions = state.transactions.map((item) => (
           item.token === token
             ? {
                 ...item,
                 status: 'pending' as const,
-                head: attempt.finalHead!,
+                head: replacementHead,
                 expectedIndex: attempt.replacementExpectedIndex!,
               }
             : item
@@ -1185,44 +1208,137 @@ export async function addAndCommit(
   })
 }
 
+async function syncDroppedIndexPaths(
+  repoRoot: string,
+  paths: readonly string[],
+  targetHead: string | null,
+  options: {
+    afterIndexLockForTesting?: () => Promise<void>
+    beforeIndexReplaceForTesting?: () => Promise<void>
+  } = {},
+): Promise<boolean> {
+  const gitDir = await absoluteGitDir(repoRoot)
+  const indexPath = path.join(gitDir, 'index')
+  const lockPath = path.join(gitDir, 'index.lock')
+  let lockHandle: Awaited<ReturnType<typeof fs.open>> | undefined
+  try {
+    lockHandle = await fs.open(lockPath, 'wx')
+  } catch (error: any) {
+    if (error?.code === 'EEXIST') return false
+    throw error
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-index-drop-'))
+  const tempIndex = path.join(tempDir, 'index')
+  const indexEnv = { GIT_INDEX_FILE: tempIndex }
+  let committedLock = false
+  try {
+    try {
+      await fs.copyFile(indexPath, tempIndex)
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') throw error
+      const empty = await run(repoRoot, ['read-tree', '--empty'], { env: indexEnv })
+      if (empty.status !== 0) throw new Error(`git read-tree failed: ${empty.stderr.trim()}`)
+    }
+
+    await options.afterIndexLockForTesting?.()
+    const update = targetHead === null
+      ? await run(repoRoot, ['update-index', '--force-remove', '--', ...paths], { env: indexEnv })
+      : await run(repoRoot, ['reset', '-q', targetHead, '--', ...paths], { env: indexEnv })
+    if (update.status !== 0 || await repositoryOperationInProgress(repoRoot)) return false
+    if (await readCurrentHead(repoRoot) !== targetHead) return false
+
+    const verified = targetHead === null
+      ? Object.values(await captureIndexFingerprints(repoRoot, paths, indexEnv))
+          .every((entries) => entries.length === 0)
+      : (await run(
+          repoRoot,
+          ['diff', '--cached', '--quiet', targetHead, '--', ...paths],
+          { env: indexEnv },
+        )).status === 0
+    if (!verified) return false
+
+    const replacement = await fs.readFile(tempIndex)
+    await lockHandle.truncate(0)
+    await lockHandle.writeFile(replacement)
+    await lockHandle.sync()
+    await lockHandle.close()
+    lockHandle = undefined
+    await options.beforeIndexReplaceForTesting?.()
+    await fs.rename(lockPath, indexPath)
+    committedLock = true
+    return await readCurrentHead(repoRoot) === targetHead
+  } finally {
+    await lockHandle?.close().catch(() => {})
+    if (!committedLock) await fs.rm(lockPath, { force: true })
+    await fs.rm(tempDir, { recursive: true, force: true })
+  }
+}
+
 export async function dropHeadCommit(
   repoRoot: string,
   sha: string,
-): Promise<CommitResult> {
+  options: {
+    beforeUpdateRefForTesting?: () => Promise<void>
+    syncIndexForTesting?: (targetHead: string | null, paths: readonly string[]) => Promise<boolean>
+    afterIndexLockForTesting?: () => Promise<void>
+    beforeIndexReplaceForTesting?: () => Promise<void>
+    beforeRepairStatePersistenceForTesting?: () => Promise<void>
+  } = {},
+): Promise<DropCommitResult> {
   return withRepoMutation(repoRoot, async () => {
-  const head = await run(repoRoot, ['rev-parse', 'HEAD'])
-  if (head.status !== 0) {
-    throw new Error(`git rev-parse HEAD failed: ${head.stderr.trim()}`)
-  }
-  if (head.stdout.trim() !== sha) {
-    throw new Error('only the latest commit can be dropped')
-  }
-  const show = await run(repoRoot, ['show', '--name-only', '--pretty=', sha])
-  const filesCommitted = show.status === 0
-    ? show.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
-    : []
-  const parent = await run(repoRoot, ['rev-parse', `${sha}^`])
-  if (parent.status !== 0) {
-    const deleteHead = await run(repoRoot, ['update-ref', '-d', 'HEAD'])
-    if (deleteHead.status !== 0) {
-      const all = `${deleteHead.stdout}\n${deleteHead.stderr}`.trim()
-      throw new Error(all || `git update-ref failed (exit ${deleteHead.status})`)
+    await assertRepositoryIdle(repoRoot)
+    await ensureIndexRepairStorageReady(repoRoot)
+    const head = await readCurrentHead(repoRoot)
+    if (head !== sha) throw new Error('only the latest version can be withdrawn')
+
+    const show = await run(repoRoot, ['show', '--no-renames', '--name-only', '--pretty=', sha])
+    if (show.status !== 0) throw new Error(`git show failed: ${show.stderr.trim()}`)
+    const filesChanged = show.stdout
+      .split('\n')
+      .map((filePath) => filePath.trim())
+      .filter((filePath) => filePath.endsWith('.md'))
+    const parentResult = await run(repoRoot, ['rev-parse', `${sha}^`])
+    const parent = parentResult.status === 0 ? parentResult.stdout.trim() : null
+
+    await options.beforeUpdateRefForTesting?.()
+    await assertRepositoryIdle(repoRoot)
+    const update = parent === null
+      ? await run(repoRoot, ['update-ref', '-d', 'HEAD', sha])
+      : await run(repoRoot, ['update-ref', 'HEAD', parent, sha])
+    if (update.status !== 0) throw new Error('repository changed before withdrawal')
+
+    let indexRefreshFailed = false
+    try {
+      const synchronized = filesChanged.length === 0
+        ? true
+        : options.syncIndexForTesting
+          ? await options.syncIndexForTesting(parent, filesChanged)
+          : await syncDroppedIndexPaths(repoRoot, filesChanged, parent, options)
+      indexRefreshFailed = !synchronized
+    } catch {
+      indexRefreshFailed = true
     }
-    if (filesCommitted.length > 0) {
-      const untrack = await run(repoRoot, ['rm', '--cached', '--', ...filesCommitted])
-      if (untrack.status !== 0) {
-        const all = `${untrack.stdout}\n${untrack.stderr}`.trim()
-        throw new Error(all || `git rm --cached failed (exit ${untrack.status})`)
-      }
+
+    const finalHead = await readCurrentHead(repoRoot)
+    let indexRepair: IndexRepairTransaction | undefined
+    let repairStatePersistenceFailed = false
+    try {
+      await options.beforeRepairStatePersistenceForTesting?.()
+      if (indexRefreshFailed) indexRepair = await recordIndexRepair(repoRoot, finalHead, filesChanged)
+      else await settleIndexRepairPaths(repoRoot, filesChanged)
+    } catch {
+      repairStatePersistenceFailed = true
     }
-    return { sha: '', filesCommitted }
-  }
-  const reset = await run(repoRoot, ['reset', '--mixed', parent.stdout.trim()])
-  if (reset.status !== 0) {
-    const all = `${reset.stdout}\n${reset.stderr}`.trim()
-    throw new Error(all || `git reset failed (exit ${reset.status})`)
-  }
-  return { sha: parent.stdout.trim(), filesCommitted }
+
+    return {
+      sha: finalHead ?? '',
+      droppedSha: sha,
+      filesChanged,
+      indexRefreshFailed,
+      indexRepair,
+      repairStatePersistenceFailed,
+    }
   })
 }
 

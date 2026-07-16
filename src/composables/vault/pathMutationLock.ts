@@ -4,9 +4,10 @@ import { ref } from 'vue'
 // Paths use the History API's exact `.md` representation.
 export function createPathMutationLock() {
   const paths = ref<Set<string>>(new Set())
+  const global = ref(false)
 
   function canAcquire(requestedPaths: readonly string[]): boolean {
-    return requestedPaths.every((path) => !paths.value.has(path))
+    return !global.value && requestedPaths.every((path) => !paths.value.has(path))
   }
 
   function acquire(requestedPaths: readonly string[]): (() => void) | null {
@@ -26,8 +27,23 @@ export function createPathMutationLock() {
   }
 
   function has(path: string): boolean {
-    return paths.value.has(path)
+    return global.value || paths.value.has(path)
   }
 
-  return { paths, canAcquire, acquire, has }
+  function acquireAll(): (() => void) | null {
+    if (!canAcquireAll()) return null
+    global.value = true
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      global.value = false
+    }
+  }
+
+  function canAcquireAll(): boolean {
+    return !global.value && paths.value.size === 0
+  }
+
+  return { paths, global, canAcquire, canAcquireAll, acquire, acquireAll, has }
 }

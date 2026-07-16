@@ -384,10 +384,12 @@ history.post('/drop', async (c) => {
   try {
     await ensureRepo(repoRoot())
     const r = await git.dropHeadCommit(repoRoot(), body.sha)
-    return c.json(r, 201)
+    return c.json(r)
   } catch (e: any) {
     const msg = e.message ?? 'drop failed'
-    if (/only the latest commit/i.test(msg)) return bad(c, msg, 409)
+    if (/only the latest version|repository changed before withdrawal|repository operation in progress/i.test(msg)) {
+      return bad(c, msg, 409)
+    }
     if (/bad revision|unknown revision|not a valid object name/i.test(msg)) return bad(c, msg, 404)
     return bad(c, msg, 500)
   }

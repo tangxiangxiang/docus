@@ -686,6 +686,151 @@ describe('addAndCommit + log', () => {
   })
 })
 
+describe('dropHeadCommit', () => {
+  beforeEach(initAndSeed)
+
+  it('withdraws only the latest version, preserves Worktree bytes, and keeps unrelated staged entries', async () => {
+    await write('a.md', 'v1\n')
+    const first = await git.addAndCommit(root, ['a.md'], 'v1')
+    await write('a.md', 'v2\n')
+    const latest = await git.addAndCommit(root, ['a.md'], 'v2')
+    await write('a.md', 'edited after version\n')
+    await write('unrelated.md', 'staged separately\n')
+    expect((await git.run(root, ['add', '--', 'unrelated.md'])).status).toBe(0)
+
+    const result = await git.dropHeadCommit(root, latest.sha)
+
+    expect(result).toMatchObject({
+      sha: first.sha,
+      droppedSha: latest.sha,
+      filesChanged: ['a.md'],
+      indexRefreshFailed: false,
+      repairStatePersistenceFailed: false,
+    })
+    expect(await fs.readFile(path.join(root, 'a.md'), 'utf8')).toBe('edited after version\n')
+    expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('v1\n')
+    expect((await git.run(root, ['show', ':unrelated.md'])).stdout).toBe('staged separately\n')
+    expect((await git.status(root))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'a.md', index: ' ', worktree: 'M' }),
+      expect.objectContaining({ path: 'unrelated.md', index: 'A', worktree: ' ' }),
+    ]))
+  }, 15_000)
+
+  it('withdraws the first version without deleting files or unrelated staged entries', async () => {
+    await write('root.md', 'root version\n')
+    const first = await git.addAndCommit(root, ['root.md'], 'root')
+    await write('later.md', 'staged separately\n')
+    expect((await git.run(root, ['add', '--', 'later.md'])).status).toBe(0)
+
+    const result = await git.dropHeadCommit(root, first.sha)
+
+    expect(result).toMatchObject({ sha: '', droppedSha: first.sha, filesChanged: ['root.md'] })
+    expect(await git.log(root)).toEqual([])
+    expect(await fs.readFile(path.join(root, 'root.md'), 'utf8')).toBe('root version\n')
+    expect((await git.run(root, ['ls-files', '--error-unmatch', 'root.md'])).status).not.toBe(0)
+    expect((await git.run(root, ['show', ':later.md'])).stdout).toBe('staged separately\n')
+  }, 15_000)
+
+  it('rejects an older version and uses CAS without overwriting an external version', async () => {
+    await write('a.md', 'v1')
+    const first = await git.addAndCommit(root, ['a.md'], 'v1')
+    await write('a.md', 'v2')
+    const latest = await git.addAndCommit(root, ['a.md'], 'v2')
+    await expect(git.dropHeadCommit(root, first.sha)).rejects.toThrow(
+      'only the latest version can be withdrawn',
+    )
+
+    let externalSha = ''
+    await expect(git.dropHeadCommit(root, latest.sha, {
+      beforeUpdateRefForTesting: async () => {
+        const tree = (await git.run(root, ['rev-parse', `${latest.sha}^{tree}`])).stdout.trim()
+        const external = await git.run(root, ['commit-tree', tree, '-p', latest.sha, '-m', 'external'])
+        externalSha = external.stdout.trim()
+        expect((await git.run(root, ['update-ref', 'HEAD', externalSha, latest.sha])).status).toBe(0)
+      },
+    })).rejects.toThrow('repository changed before withdrawal')
+    expect(await git.run(root, ['rev-parse', 'HEAD'])).toMatchObject({
+      status: 0,
+      stdout: `${externalSha}\n`,
+    })
+  }, 15_000)
+
+  it('returns degraded success and a persistent Repair transaction after Index synchronization fails', async () => {
+    await write('a.md', 'v1')
+    const first = await git.addAndCommit(root, ['a.md'], 'v1')
+    await write('a.md', 'v2')
+    const latest = await git.addAndCommit(root, ['a.md'], 'v2')
+
+    const result = await git.dropHeadCommit(root, latest.sha, {
+      syncIndexForTesting: vi.fn().mockResolvedValue(false),
+    })
+
+    expect(result).toMatchObject({
+      sha: first.sha,
+      droppedSha: latest.sha,
+      indexRefreshFailed: true,
+      repairStatePersistenceFailed: false,
+      indexRepair: expect.objectContaining({ head: first.sha, paths: ['a.md'] }),
+    })
+    expect(await git.getIndexRepairStatus(root)).toEqual([
+      expect.objectContaining({ token: result.indexRepair!.token, paths: ['a.md'] }),
+    ])
+  }, 15_000)
+
+  it('repairs a failed Index synchronization after withdrawing the first version', async () => {
+    await write('root.md', 'root')
+    const first = await git.addAndCommit(root, ['root.md'], 'root')
+    const result = await git.dropHeadCommit(root, first.sha, {
+      syncIndexForTesting: vi.fn().mockResolvedValue(false),
+    })
+
+    expect(result).toMatchObject({
+      sha: '',
+      indexRefreshFailed: true,
+      indexRepair: expect.objectContaining({ head: null, paths: ['root.md'] }),
+    })
+    expect((await git.run(root, ['ls-files', '--error-unmatch', 'root.md'])).status).toBe(0)
+
+    await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toEqual({ repaired: true })
+    expect((await git.run(root, ['ls-files', '--error-unmatch', 'root.md'])).status).not.toBe(0)
+    expect(await fs.readFile(path.join(root, 'root.md'), 'utf8')).toBe('root')
+  }, 15_000)
+
+  it('does not report failure after withdrawal when Repair metadata cannot be persisted', async () => {
+    await write('a.md', 'v1')
+    await git.addAndCommit(root, ['a.md'], 'v1')
+    await write('a.md', 'v2')
+    const latest = await git.addAndCommit(root, ['a.md'], 'v2')
+
+    const result = await git.dropHeadCommit(root, latest.sha, {
+      syncIndexForTesting: vi.fn().mockResolvedValue(false),
+      beforeRepairStatePersistenceForTesting: async () => {
+        throw new Error('disk full')
+      },
+    })
+
+    expect(result).toMatchObject({
+      droppedSha: latest.sha,
+      indexRefreshFailed: true,
+      repairStatePersistenceFailed: true,
+    })
+    expect((await git.run(root, ['rev-parse', 'HEAD'])).stdout.trim()).not.toBe(latest.sha)
+  }, 15_000)
+
+  it.each(['MERGE_HEAD', 'rebase-merge'])('rejects withdrawal while %s is present', async (marker) => {
+    await write('a.md', 'version')
+    const latest = await git.addAndCommit(root, ['a.md'], 'version')
+    const markerPath = path.join(root, '.git', marker)
+    if (marker.includes('-')) await fs.mkdir(markerPath, { recursive: true })
+    else await fs.writeFile(markerPath, latest.sha, 'utf8')
+
+    await expect(git.dropHeadCommit(root, latest.sha)).rejects.toThrow(
+      'repository operation in progress',
+    )
+    expect((await git.run(root, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(latest.sha)
+  }, 15_000)
+})
+
 // Regression: a fresh vault in production used to fail its first
 // commit with "fatal: Author identity unknown" because `git init`
 // doesn't set a committer identity, and the `node` user inside the

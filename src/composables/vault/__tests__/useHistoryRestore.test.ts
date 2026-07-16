@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { describe, expect, it, vi, type Mock } from 'vitest'
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { Tab } from '../../../components/vault/tabs'
 import { createVaultFileChanges } from '../context/fileChanges'
 import {
@@ -7,6 +7,7 @@ import {
   type HistoryRestoreRequest,
   type HistoryRestoreSource,
 } from '../useHistoryRestore'
+import { useI18n } from '../../useI18n'
 
 function tab(overrides: Partial<Tab> = {}): Tab {
   return {
@@ -93,6 +94,10 @@ function harness(options: {
 }
 
 describe('useHistoryRestore', () => {
+  beforeEach(() => {
+    useI18n().setLocale('en')
+  })
+
   it('requires confirmation and performs no work when cancelled', async () => {
     const confirm = vi.fn().mockResolvedValue(false)
     const h = harness({ confirm })

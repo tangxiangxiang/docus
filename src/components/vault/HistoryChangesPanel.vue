@@ -7,6 +7,7 @@ const props = withDefaults(defineProps<{
   selectedPaths: Set<string>
   message: string
   busy: boolean
+  mutationLocked?: boolean
   canCommit: boolean
   error: string | null
   indexRepairPending?: boolean
@@ -16,6 +17,7 @@ const props = withDefaults(defineProps<{
   indexRepairPending: false,
   indexRepairBusy: false,
   indexRepairConflict: false,
+  mutationLocked: false,
 })
 const emit = defineEmits<{
   toggle: [path: string]
@@ -45,15 +47,15 @@ function onMessage(event: Event): void {
 </script>
 
 <template>
-  <section class="history-changes" :aria-labelledby="'history-changes-title'" :aria-busy="busy">
+  <section class="history-changes" :aria-labelledby="'history-changes-title'" :aria-busy="busy || mutationLocked">
     <header class="history-changes-header">
       <h2 id="history-changes-title">{{ t('history.changes') }}</h2>
       <span>{{ entries.length }}</span>
       <span class="history-changes-actions">
-        <button type="button" :disabled="busy || entries.length === 0" @click="emit('select-all')">
+        <button type="button" :disabled="busy || mutationLocked || entries.length === 0" @click="emit('select-all')">
           {{ t('history.select_all') }}
         </button>
-        <button type="button" :disabled="busy || selectedPaths.size === 0" @click="emit('clear-selection')">
+        <button type="button" :disabled="busy || mutationLocked || selectedPaths.size === 0" @click="emit('clear-selection')">
           {{ t('history.clear_selection') }}
         </button>
       </span>
@@ -68,7 +70,7 @@ function onMessage(event: Event): void {
           <input
             type="checkbox"
             :checked="selectedPaths.has(entry.path)"
-            :disabled="busy"
+            :disabled="busy || mutationLocked"
             :aria-label="t('history.include_document', { path: entry.path })"
             @change="emit('toggle', entry.path)"
           >
@@ -87,7 +89,7 @@ function onMessage(event: Event): void {
         id="history-version-message"
         :value="message"
         rows="2"
-        :disabled="busy"
+        :disabled="busy || mutationLocked"
         :placeholder="t('history.version_message_placeholder')"
         @input="onMessage"
         @keydown.ctrl.enter.prevent="emit('submit')"

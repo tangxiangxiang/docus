@@ -19,4 +19,21 @@ describe('createPathMutationLock', () => {
     releaseOther?.()
     expect(lock.paths.value.size).toBe(0)
   })
+
+  it('uses a Vault-wide lock to exclude Create Version and Restore mutations', () => {
+    const lock = createPathMutationLock()
+    const releaseAll = lock.acquireAll()
+
+    expect(releaseAll).toBeTypeOf('function')
+    expect(lock.canAcquireAll()).toBe(false)
+    expect(lock.acquire(['inbox/a.md'])).toBeNull()
+    expect(lock.has('inbox/a.md')).toBe(true)
+    releaseAll?.()
+    expect(lock.canAcquireAll()).toBe(true)
+
+    const releasePath = lock.acquire(['inbox/a.md'])
+    expect(lock.acquireAll()).toBeNull()
+    releasePath?.()
+    expect(lock.acquireAll()).toBeTypeOf('function')
+  })
 })

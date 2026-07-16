@@ -127,6 +127,26 @@ describe('createCommit', () => {
       .rejects.toThrow('nothing to commit')
   })
 
+  it('withdraws the requested latest version and parses the complete result', async () => {
+    const result: api.DropCommitResult = {
+      sha: 'a'.repeat(40),
+      droppedSha: 'b'.repeat(40),
+      filesChanged: ['a.md'],
+      indexRefreshFailed: false,
+      repairStatePersistenceFailed: false,
+    }
+    responses.push({ status: 200, body: result })
+
+    await expect(api.dropCommit(result.droppedSha)).resolves.toEqual(result)
+    expect(calls.at(-1)).toEqual(expect.objectContaining({
+      url: '/api/history/drop',
+      init: expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ sha: result.droppedSha }),
+      }),
+    }))
+  })
+
   it('preserves the HTTP status for stale-selection handling', async () => {
     responses.push({ status: 409, body: { error: 'selection is stale' } })
     const error = await api.createCommit(['a.md'], 'msg', { 'a.md': 'a'.repeat(64) }).catch((cause) => cause)

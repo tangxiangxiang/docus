@@ -296,6 +296,7 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     submit,
     retryIndexRepair,
     discardConflictingIndexRepair,
+    refreshIndexRepairStatus,
   }
 }
 

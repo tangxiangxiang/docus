@@ -3,6 +3,7 @@ import { computed, nextTick, ref, toRef, watch } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import type { HistoryState } from '../../composables/vault/useHistory'
 import type { HistoryCommitState } from '../../composables/vault/useHistoryCommit'
+import type { HistoryWithdrawState } from '../../composables/vault/useHistoryWithdraw'
 import {
   toHistoryRevisionSelection,
   useHistoryTimeline,
@@ -21,6 +22,7 @@ import TimelineRevisionRow from './TimelineRevisionRow.vue'
 const props = withDefaults(defineProps<{
   history: HistoryState
   commit: HistoryCommitState
+  withdraw: HistoryWithdrawState
   posts?: PostSummary[]
 }>(), {
   posts: () => [],
@@ -33,6 +35,7 @@ const h = props.history
 const commit = props.commit
 const { locale, t } = useI18n()
 const listbox = ref<HTMLElement | null>(null)
+const timelineHeading = ref<HTMLElement | null>(null)
 
 const timelineLabels = computed(() => ({
   today: t('history.today'),
@@ -50,6 +53,15 @@ watch(commit.completionId, async () => {
 watch(commit.repositoryChangeId, async () => {
   const document = timeline.selectedDocument.value
   if (document) await timeline.selectDocument(document)
+})
+watch(props.withdraw.completionId, async () => {
+  const document = timeline.selectedDocument.value
+  if (document) {
+    await timeline.selectDocument(document)
+    if (timeline.selectedDocument.value?.revisions.length === 0) timeline.showDocuments()
+  }
+  await nextTick()
+  timelineHeading.value?.focus()
 })
 const revisionsErrorLabel = computed(() => (
   timeline.revisionsError.value?.message || t('history.load_failed')
@@ -170,6 +182,7 @@ function onListKeydown(event: KeyboardEvent): void {
         :selected-paths="commit.selectedPaths.value"
         :message="commit.message.value"
         :busy="commit.busy.value"
+        :mutation-locked="props.withdraw.busy.value"
         :can-commit="commit.canCommit.value"
         :error="commit.error.value"
         :index-repair-pending="commit.indexRepairPaths.value.length > 0"
@@ -183,7 +196,7 @@ function onListKeydown(event: KeyboardEvent): void {
         @repair-index="commit.retryIndexRepair"
         @discard-index-repair="commit.discardConflictingIndexRepair"
       />
-      <div class="history-timeline-heading">{{ t('history.timeline') }}</div>
+      <div ref="timelineHeading" class="history-timeline-heading" tabindex="-1">{{ t('history.timeline') }}</div>
       <div v-if="h.logError.value && !timeline.selectedDocument.value" class="history-error" role="alert">
         <span>{{ logErrorLabel }}</span>
         <button type="button" @click="h.refreshLog()">
@@ -227,15 +240,24 @@ function onListKeydown(event: KeyboardEvent): void {
               :key="group.key"
               :label="group.label"
             >
-              <TimelineRevisionRow
-                v-for="revision in group.items"
-                :key="revision.id"
-                :revision="revision"
-                :summary="revisionSummary(revision)"
-                :time-label="clockLabel(revision.modifiedAt)"
-                :selected="timeline.selectedRevisionId.value === revision.id"
-                @select="openRevision"
-              />
+              <template v-for="revision in group.items" :key="revision.id">
+                <TimelineRevisionRow
+                  :revision="revision"
+                  :summary="revisionSummary(revision)"
+                  :time-label="clockLabel(revision.modifiedAt)"
+                  :selected="timeline.selectedRevisionId.value === revision.id"
+                  @select="openRevision"
+                />
+                <button
+                  v-if="revision.id === h.log.value[0]?.sha"
+                  type="button"
+                  class="history-withdraw-version"
+                  :disabled="!props.withdraw.canWithdraw.value"
+                  @click="props.withdraw.withdraw(revision.id)"
+                >
+                  {{ props.withdraw.busy.value ? t('history.withdrawing') : t('history.withdraw_latest') }}
+                </button>
+              </template>
             </TimelineGroup>
           </template>
         </template>

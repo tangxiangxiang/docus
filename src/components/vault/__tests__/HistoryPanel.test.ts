@@ -4,8 +4,11 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import HistoryPanel from '../HistoryPanel.vue'
 import { __resetHistoryStateForTesting, useHistory } from '../../../composables/vault/useHistory'
 import { useHistoryCommit } from '../../../composables/vault/useHistoryCommit'
+import { useHistoryWithdraw } from '../../../composables/vault/useHistoryWithdraw'
 import { useI18n } from '../../../composables/useI18n'
+import { useConfirm } from '../../../composables/useConfirm'
 import * as api from '../../../lib/history-api'
+import ConfirmHost from '../../ConfirmHost.vue'
 
 vi.mock('../../../lib/history-api', async () => {
   const actual = await vi.importActual<typeof api>('../../../lib/history-api')
@@ -19,6 +22,7 @@ vi.mock('../../../lib/history-api', async () => {
     repairIndex: vi.fn(),
     getIndexRepairStatus: vi.fn().mockResolvedValue([]),
     discardIndexRepair: vi.fn(),
+    dropCommit: vi.fn(),
   }
 })
 
@@ -43,12 +47,24 @@ function deferred<T>() {
 }
 
 function mountPanel(options: any = {}) {
-  const { saveBeforeCommit = async () => {}, ...props } = options.props ?? {}
+  const { saveBeforeCommit = async () => {}, withdraw: suppliedWithdraw, ...props } = options.props ?? {}
   const history = useHistory()
   const historyCommit = useHistoryCommit({ history, saveSelected: saveBeforeCommit })
+  const withdraw = suppliedWithdraw ?? createWithdraw(history, historyCommit)
   return mount(HistoryPanel, {
     ...options,
-    props: { ...props, history, commit: historyCommit },
+    props: { ...props, history, commit: historyCommit, withdraw },
+  })
+}
+
+function createWithdraw(history: ReturnType<typeof useHistory>, commitState: ReturnType<typeof useHistoryCommit>) {
+  return useHistoryWithdraw({
+    history,
+    confirm: async () => true,
+    acquireMutation: () => () => {},
+    refreshComparisons: async () => {},
+    refreshIndexRepairStatus: commitState.refreshIndexRepairStatus,
+    closeDroppedRevision: () => {},
   })
 }
 
@@ -65,6 +81,13 @@ beforeEach(() => {
   vi.mocked(api.getContentHashes).mockImplementation(async (paths) => (
     Object.fromEntries(paths.map((path) => [path, 'a'.repeat(64)]))
   ))
+  vi.mocked(api.dropCommit).mockResolvedValue({
+    sha: '',
+    droppedSha: 'new-version',
+    filesChanged: [],
+    indexRefreshFailed: false,
+    repairStatePersistenceFailed: false,
+  })
 })
 
 afterEach(() => {
@@ -73,6 +96,87 @@ afterEach(() => {
 })
 
 describe('HistoryPanel document timeline', () => {
+  it('offers withdrawal only for the latest version and confirms, single-flights, and restores focus', async () => {
+    const latest = commit('latest', NOW, 'Latest version', ['inbox/a.md'])
+    const older = commit('older', NOW - 60_000, 'Older version', ['inbox/a.md'])
+    const request = deferred<api.DropCommitResult>()
+    vi.mocked(api.getLog).mockImplementation(async () => ({
+      commits: vi.mocked(api.dropCommit).mock.calls.length > 0
+        ? [older]
+        : [latest, older],
+    }))
+    vi.mocked(api.dropCommit).mockReturnValue(request.promise)
+    const history = useHistory()
+    const commitState = useHistoryCommit({ history, saveSelected: vi.fn() })
+    const { confirm } = useConfirm()
+    const { t } = useI18n()
+    const withdraw = useHistoryWithdraw({
+      history,
+      confirm: () => confirm(t('history.withdraw_title'), t('history.withdraw_detail'), {
+        confirmLabel: t('history.withdraw_confirm'),
+        cancelLabel: t('history.withdraw_cancel'),
+        destructive: true,
+      }),
+      acquireMutation: () => () => {},
+      refreshComparisons: async () => {},
+      refreshIndexRepairStatus: commitState.refreshIndexRepairStatus,
+      closeDroppedRevision: () => {},
+    })
+    const host = mount(ConfirmHost)
+    const wrapper = mount(HistoryPanel, {
+      attachTo: document.body,
+      props: {
+        history,
+        commit: commitState,
+        withdraw,
+        posts: [{ path: 'inbox/a', title: 'A', created: '', updated: '', tags: [], size: 0, mtime: 0 }],
+      },
+    })
+    await flushPromises()
+    await wrapper.get('.history-document-row').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.history-revision-row')).toHaveLength(2)
+    expect(wrapper.findAll('.history-withdraw-version')).toHaveLength(1)
+
+    await wrapper.get('.history-withdraw-version').trigger('click')
+    await flushPromises()
+    let dialog = document.querySelector<HTMLElement>('.confirm-dialog')!
+    expect(dialog.textContent).toContain('Withdraw the latest version?')
+    expect(dialog.textContent).toContain('This version will be removed from history')
+    expect(dialog.textContent).toContain('Cancel')
+    expect(dialog.textContent).toContain('Withdraw version')
+    ;(dialog.querySelectorAll('button')[0] as HTMLButtonElement).click()
+    await flushPromises()
+    expect(api.dropCommit).not.toHaveBeenCalled()
+
+    await wrapper.get('.history-withdraw-version').trigger('click')
+    await flushPromises()
+    dialog = document.querySelector<HTMLElement>('.confirm-dialog')!
+    ;(dialog.querySelectorAll('button')[1] as HTMLButtonElement).click()
+    await flushPromises()
+    expect(api.dropCommit).toHaveBeenCalledOnce()
+    expect(wrapper.get('.history-withdraw-version').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('.history-withdraw-version').text()).toContain('Withdrawing')
+
+    await wrapper.get('.history-withdraw-version').trigger('click')
+    expect(api.dropCommit).toHaveBeenCalledOnce()
+    request.resolve({
+      sha: 'older',
+      droppedSha: 'latest',
+      filesChanged: ['inbox/a.md'],
+      indexRefreshFailed: false,
+      repairStatePersistenceFailed: false,
+    })
+    await flushPromises()
+
+    expect(wrapper.findAll('.history-revision-row')).toHaveLength(1)
+    expect(wrapper.findAll('.history-withdraw-version')).toHaveLength(1)
+    expect(document.activeElement).toBe(wrapper.get('.history-timeline-heading').element)
+    wrapper.unmount()
+    host.unmount()
+  })
+
   it('preserves message, selection, and single-flight state across sidebar remounts', async () => {
     const dirty = [{ path: 'inbox/a.md', index: ' ', worktree: 'M' }]
     vi.mocked(api.getStatus).mockResolvedValue({ dirty, available: true })
@@ -80,7 +184,8 @@ describe('HistoryPanel document timeline', () => {
     vi.mocked(api.createCommit).mockReturnValue(request.promise)
     const history = useHistory()
     const historyCommit = useHistoryCommit({ history, saveSelected: vi.fn() })
-    let wrapper = mount(HistoryPanel, { props: { history, commit: historyCommit } })
+    const withdraw = createWithdraw(history, historyCommit)
+    let wrapper = mount(HistoryPanel, { props: { history, commit: historyCommit, withdraw } })
     await flushPromises()
 
     await wrapper.get('#history-version-message').setValue('Persistent version')
@@ -89,7 +194,7 @@ describe('HistoryPanel document timeline', () => {
     expect(historyCommit.busy.value).toBe(true)
     wrapper.unmount()
 
-    wrapper = mount(HistoryPanel, { props: { history, commit: historyCommit } })
+    wrapper = mount(HistoryPanel, { props: { history, commit: historyCommit, withdraw } })
     expect((wrapper.get('#history-version-message').element as HTMLTextAreaElement).value).toBe('Persistent version')
     expect(wrapper.get('input[type="checkbox"]').attributes('checked')).toBeDefined()
     expect(wrapper.get('.history-create-version').attributes('disabled')).toBeDefined()
@@ -234,10 +339,12 @@ describe('HistoryPanel document timeline', () => {
     })
     const history = useHistory()
     const historyCommit = useHistoryCommit({ history, saveSelected: vi.fn() })
+    const withdraw = createWithdraw(history, historyCommit)
     const wrapper = mount(HistoryPanel, {
       props: {
         history,
         commit: historyCommit,
+        withdraw,
         posts: [{
           path: 'inbox/redis',
           title: 'Redis Notes',
