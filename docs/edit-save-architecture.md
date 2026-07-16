@@ -33,7 +33,7 @@ EditorPane onDidChangeModelContent
 
 可信持久化边界是 `PUT /api/posts/*` 返回 HTTP 2xx：路由在响应前已经完成目标文件写入、SQLite metadata 更新（失败时尝试回写旧内容）和 `stat`；link index 更新是 best-effort，不属于成功条件。该写入使用 `fs.writeFile` 直接覆盖，并非临时文件 + 原子 rename。
 
-下一任务不需要重写 Edit 状态机。最小正确边界应位于 `useDocumentSave.saveLatest()`：把“磁盘 PUT 成功”与“后续派生状态刷新”分开，并在成功落盘、更新基线后由同一个保存协调器统一发布 VaultFileChanges。Rename/Delete/Move 还缺少与 pending/in-flight save 的协调，建议作为紧随其后的独立生命周期任务处理。
+下一任务不需要重写 Edit 状态机。最小正确边界应位于 `useDocumentSave.saveLatest()`：把“磁盘 PUT 成功”与“后续派生状态刷新”分开，并在成功落盘、更新基线后由同一个保存协调器统一发布带 `source: 'editor-save'` 的 VaultFileChanges。这个来源标记是必要的回路隔离：History、LinksPanel、LinkIndex 等派生消费者仍应收到事件，但 `useExternalFileChanges` 必须把同一编辑器产生的保存事件视为 acknowledgement，只同步必要的 mtime，不能重新覆盖 Tab 内容或重置保存展示状态。Rename/Delete/Move 还缺少与 pending/in-flight save 的协调，建议作为紧随其后的独立生命周期任务处理。
 
 ## 2. Current Ownership Map
 
@@ -213,6 +213,8 @@ closeTab(path)
 ```
 
 因此正常 UI close 不会让已开始请求在删除 Tab 后回写状态；但 queued debounce 被取消而非 flush，用户确认后可放弃它。VaultView 卸载只取消 timers/barriers，不等待或取消 `savePromises`（`:187-191`），已开始的 PUT 会继续，并且其闭包仍可能更新旧 Tab 和调用 refresh。
+
+这里还有一个取消关闭缺口：`prepareDocumentClose()` 在 dirty confirmation 之前就清除了 queued timer。如果用户在随后出现的“放弃修改”确认中选择取消，Tab 会保留且仍然 dirty，但先前的自动保存不会恢复；只有再次输入或手动保存才会落盘。关闭协调需要记住哪些 path 原本有 queued timer，并在关闭未完成且仍 dirty 时重新 schedule。
 
 ### E. 保存完成通知 History
 
@@ -412,6 +414,53 @@ VaultView.createVaultFileChanges() (VaultView.vue:138)
 
 普通 editor save、FileTree create、主文件 rename/move/delete当前均不 publish。
 
+### 8.4 Edit 保存事件的来源与回路隔离要求
+
+当前 `FileChangeEvent.source` 在 `src/lib/ai-api.ts:69-76` 只允许 `'history-restore'`。Edit-02 不能直接发布一个无来源的普通 `write`，因为生产 Vault 中 `useDocumentSave` 与 `useExternalFileChanges` 使用同一个 VaultFileChanges 实例，后者也会消费该事件。
+
+危险时序：
+
+```text
+输入 v1 → 发 S1
+S1 期间输入 v2（raw=v2, saveStatus=dirty）
+S1 成功 → publish write(newRaw=v1)
+watch(flush:'post') 稍后执行
+→ useExternalFileChanges 把它当外部 write
+→ dirty 分支弹覆盖确认
+→ 用户确认可能用 v1 覆盖 v2
+```
+
+即使没有后续编辑，保存函数先设置 `saveStatus='saved'`，post-flush watcher 随后处理自己的 write，又会在 `useExternalFileChanges.ts:78` 把状态改成 `idle`。不能依赖 `if (tab.saveStatus === 'saving') return`：watcher 执行时保存函数通常已经离开 saving。
+
+因此事件协议必须扩展为：
+
+```ts
+source?: 'history-restore' | 'editor-save'
+```
+
+Edit 保存成功发布：
+
+```ts
+fileChanges.publish({
+  path,
+  kind: 'write',
+  source: 'editor-save',
+  newRaw: data.raw,
+  newMtime,
+})
+```
+
+`useExternalFileChanges.applyExternalChange()` 应在通用 saving/dirty/write 逻辑之前处理 acknowledgement：
+
+```ts
+if (event.source === 'editor-save') {
+  tab.serverMtime = event.newMtime ?? tab.serverMtime
+  return
+}
+```
+
+这只阻止事件反向修改其所属 Tab；History、LinksPanel、LinkIndex 和其他 Vault 派生消费者仍收到同一 seq。若未来存在多个独立 Edit producer，仅 `source` 可能不足以区分“本实例自身”与“另一窗口的 editor save”，届时应增加 producer/instance id；当前单 VaultView 协议下 `editor-save` 已是最小方案。
+
 ### 8.4 消费者
 
 | Consumer | 行为 |
@@ -431,6 +480,15 @@ History 实时刷新断在 producer：Edit 保存从未 publish，consumer 和 V
 本次静态审计未发现“仅通过正常 Edit 输入 + 当前 save coordinator”即可稳定造成永久内容丢失的 P0。现有同 path 串行化与 snapshot 基线处理避免了最典型的旧响应覆盖新 buffer。
 
 ### P1
+
+#### P1-0 editor-save 事件若无来源隔离会被 Edit 自己重新消费
+
+- 文件/函数：拟修改的 `useDocumentSave.saveLatest`；现有 `useExternalFileChanges.applyExternalChange`；`FileChangeEvent` in `src/lib/ai-api.ts`。
+- 触发：Edit-02 在 PUT 成功后发布无来源的 `write`；尤其 S1 期间已经输入 v2。
+- 实际：post-flush external watcher 可能弹外部覆盖确认并以 v1 覆盖 v2；无后续编辑时也会把刚设置的 saved 改回 idle。
+- 期望：事件标记 `source:'editor-save'`；Edit consumer 只同步 mtime并 return，其他派生 consumers 正常处理。
+- 推荐修改边界：扩展共享 event type；在 `useExternalFileChanges` 通用处理之前增加 editor-save acknowledgement 分支；保存 producer 必须显式带 source。
+- 后续：Edit-02 的阻塞项，必须与 publish 同时实现和测试，不能先发布后补过滤。
 
 #### P1-1 Rename/Move 与 pending/in-flight Edit save 无统一屏障
 
@@ -515,6 +573,15 @@ History 实时刷新断在 producer：Edit 保存从未 publish，consumer 和 V
 - 推荐边界：优先让 PUT 返回 mtime/size 或复用单 post result；结构变化才刷新 tree。
 - 后续：性能优化，不必与 Edit-02 强绑定。
 
+#### P2-7 取消关闭后 queued 自动保存不会恢复
+
+- 文件/函数：`useEditorTabs.closeTab/confirmCloseMany`；`useDocumentSave.prepareDocumentClose`；`useTabWorkspace.closeTab/confirmCloseMany`。
+- 触发：dirty Tab 已有 800ms timer，用户点击关闭；prepare 阶段清 timer，随后在 dirty confirmation 选择取消。
+- 实际：Tab 保留且 dirty，但已无自动保存 timer；除非再次输入或手动保存，否则内容不会自动落盘。批量关闭取消同样受影响。
+- 期望：记录进入 close preparation 前哪些 path 有 queued timer；关闭最终取消且 Tab 仍 dirty 时重新 schedule。已经开始的 PUT 仍应等待，不能把 cancel fetch 当成安全回滚。
+- 推荐修改边界：让 close preparation 返回可 `commit()` / `rollback()` 的小型 barrier，或返回需要恢复 timer 的 path 集合；由 `useEditorTabs` 在 close 结果确定后完成或恢复。
+- 后续：生命周期任务必须处理；也可纳入 Edit-02 的 debounce/close correctness 子任务，但不应与 event publish 混成无测试的顺手修改。
+
 ## 10. Recommended Minimal Architecture
 
 当前已有 `revision/savedRevision/savingRevision`，不建议再平行引入一套重复 `SaveState`。最小方案是强化现有 `useDocumentSave` 为每文档保存协调器：
@@ -543,12 +610,13 @@ type SaveSnapshot = {
 6. **统一成功事务尾部**：
    - PUT 2xx；
    - 更新 snapshot 基线/revisions；
-   - 发布 `fileChanges.publish({ path, kind:'write', newRaw:data.raw, newMtime })`；
+   - 发布 `fileChanges.publish({ path, kind:'write', source:'editor-save', newRaw:data.raw, newMtime })`；
    - posts/tree refresh 独立 best-effort，失败不回滚 saveStatus。
-7. **PUT 响应增强（可选但推荐）**：返回 `mtime/size`，减少为更新 serverMtime 而全量 refresh 的需要。若暂不改服务端，可 publish 不带 mtime，之后 best-effort refresh。
-8. **关闭/Rename/Delete**：统一暴露 `prepareDocumentMutation(paths, mode)`；queued 可 cancel，in-flight 必须 wait，之后调用者才 mutation。Rename 成功后迁移 Tab path、Monaco model 和 runtime map key；Delete 成功后关闭/标错 Tab并 publish。
-9. **Restore/Create Version**：复用现有 barrier，不另建第二套锁；可逐步归一到统一 mutation API。
-10. **卸载**：cancel timers并设置 disposed；允许已发 PUT 完成，但忽略旧 UI/refresh side effects。
+7. **自事件 acknowledgement**：扩展 `FileChangeEvent.source`；`useExternalFileChanges` 对 `editor-save` 不走 dirty confirm/内容覆盖/saveStatus reset，只同步 mtime。该过滤必须先于通用 `saving`/`write` 分支。
+8. **PUT 响应增强（可选但推荐）**：返回 `mtime/size`，减少为更新 serverMtime 而全量 refresh 的需要。若暂不改服务端，可 publish 不带 mtime，之后 best-effort refresh。
+9. **关闭/Rename/Delete**：统一暴露可 commit/rollback 的 `prepareDocumentMutation(paths, mode)`；queued 可暂时取消，in-flight 必须 wait。用户取消 close 时 rollback 会为仍 dirty 的 path 恢复 timer；Rename/Delete 成功时 commit，随后迁移或关闭 Tab并 publish。
+10. **Restore/Create Version**：复用现有 barrier，不另建第二套锁；可逐步归一到统一 mutation API。
+11. **卸载**：cancel timers并设置 disposed；允许已发 PUT 完成，但忽略旧 UI/refresh side effects。
 
 是否抽 `useDocumentSaveCoordinator`：当前 `useDocumentSave` 已经就是该角色，建议改名可延后，Edit-02 不必为命名制造大 diff。是否抽统一 `savePost()` API：建议在 `src/lib/api.ts` 增加 typed `savePost(path, raw)`，让 URL encoding、错误 body 和响应类型统一；但事务编排仍属于 `useDocumentSave`，不能放进纯 API wrapper。
 
@@ -559,12 +627,14 @@ type SaveSnapshot = {
 最小修改范围：
 
 - `src/composables/vault/editor-tabs/useDocumentSave.ts`
+- `src/composables/vault/editor-tabs/useExternalFileChanges.ts`
 - `src/composables/vault/useEditorTabs.ts`（注入 fileChanges）
+- `src/lib/ai-api.ts`（扩展 `FileChangeEvent.source`）
 - `src/lib/api.ts`（可选 typed `savePost`）
 - `server/routes/posts.ts`（仅当响应补 mtime/size；不改变写盘语义）
 - 对应 `useEditorTabs` / `useDocumentSave` / `useHistory` integration tests
 
-验收重点：PUT 2xx 后恰好 publish 一次；PUT 失败不 publish；refresh 失败不误报 save failure；History 自动 getStatus；manual save 消费 debounce。
+验收重点：PUT 2xx 后恰好 publish 一次且 `source='editor-save'`；PUT 失败不 publish；自身事件不触发外部覆盖确认、不重写 Tab buffer、不把 saved 改回 idle；S1 publish(v1) 时 v2 保留并继续正常保存 S2；refresh 失败不误报 save failure；History 自动 getStatus；manual save 消费 debounce。
 
 ### Edit-03：文档生命周期 mutation barrier
 
@@ -588,15 +658,17 @@ type SaveSnapshot = {
 | 保存期间继续编辑 | 有 | `:382-408`，断言 A1/A2 串行并最终 saved |
 | 同文档请求乱序 | 由串行测试间接覆盖 | 无“并行 response reorder”测试，因为生产协议不会并行；应增加明确断言第二 PUT 在第一完成前未发 |
 | 多 Tab 交替输入 | 无 | 需断言 A/B timers 不互相取消、可独立保存 |
-| close 时 pending debounce | 部分 | in-flight close 等待有 `:437-464`；queued debounce cancel + dirty confirm 未专门断言 |
+| close 时 pending debounce | 部分 | in-flight close 等待有 `:437-464`；queued debounce 被取消后，取消关闭是否恢复 timer 无覆盖，当前也不会恢复 |
 | Vault unmount 时 pending/in-flight | 部分 | bus unsubscribe 有覆盖；save timer cancel/in-flight side-effect isolation 无覆盖 |
 | Rename/Delete 时 pending save | 无 | 只有 bus event 后 Editor 行为测试，不覆盖 FileTree mutation 与 Save 协调 |
 | Restore 时 pending/in-flight | 部分 | Restore success/duplicate/partial refresh 有覆盖；`prepareHistoryRestore` 与 queued/in-flight save 的集成时序缺失 |
 | Create Version save barrier | 有 | `useDocumentSave.historyCommit.test.ts:28-157`，含 click snapshot + barrier 后编辑 |
 | 保存成功后 publish | 无，且生产代码不存在 | Edit-02 必加 |
+| editor-save 自事件隔离 | 无，event source 尚不支持 | 必须覆盖“不 confirm、不改 buffer、不清 saved” |
+| S1 publish(v1) 时保留 v2 | 无 | 必须覆盖 v2 保持 dirty并随后串行保存 S2 |
 | History 收到 publish 自动刷新 | 现有 History/bus 单元语义有覆盖，但缺 Edit→History integration | Edit-02 必加端到端 composable test |
 | PUT 持久化/Frontmatter | 有 | `server/__tests__/put.test.ts:40-129`，验证 raw verbatim、metadata、无 Frontmatter 注入 |
 | refresh 乱序 | 有 | `useEditorTabs.test.ts:410-435` |
 | PUT 成功但 refresh 失败 | 无 | 当前会误报 error；Edit-02 必加 |
 
-本审计未修改生产代码或测试。建议在 Edit-02 开始前，把上述缺口中的“多 Tab debounce、manual timer、refresh failure、publish/History integration”作为第一批回归测试。
+本审计未修改生产代码或测试。建议在 Edit-02 开始前，把上述缺口中的“多 Tab debounce、manual timer、refresh failure、editor-save 自事件隔离、S1 acknowledgement 不覆盖 v2、publish/History integration”作为第一批回归测试；关闭取消后的 timer 恢复进入 lifecycle 测试清单。
