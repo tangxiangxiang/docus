@@ -64,6 +64,8 @@ function createWithdraw(history: ReturnType<typeof useHistory>, commitState: Ret
     acquireMutation: () => () => {},
     refreshComparisons: async () => {},
     refreshIndexRepairStatus: commitState.refreshIndexRepairStatus,
+    registerIndexRepair: commitState.registerIndexRepair,
+    settleIndexRepairPaths: commitState.settleIndexRepairPaths,
     closeDroppedRevision: () => {},
   })
 }
@@ -120,6 +122,8 @@ describe('HistoryPanel document timeline', () => {
       acquireMutation: () => () => {},
       refreshComparisons: async () => {},
       refreshIndexRepairStatus: commitState.refreshIndexRepairStatus,
+      registerIndexRepair: commitState.registerIndexRepair,
+      settleIndexRepairPaths: commitState.settleIndexRepairPaths,
       closeDroppedRevision: () => {},
     })
     const host = mount(ConfirmHost)

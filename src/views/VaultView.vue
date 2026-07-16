@@ -187,6 +187,8 @@ const historyWithdraw = useHistoryWithdraw({
   acquireMutation: historyMutationLock.acquireAll,
   canMutate: historyMutationLock.canAcquireAll,
   refreshIndexRepairStatus: historyCommit.refreshIndexRepairStatus,
+  registerIndexRepair: historyCommit.registerIndexRepair,
+  settleIndexRepairPaths: historyCommit.settleIndexRepairPaths,
   async refreshComparisons(paths) {
     await Promise.all(paths.map((filePath) => (
       historyComparisons.refreshDocumentComparison(

@@ -796,6 +796,29 @@ describe('dropHeadCommit', () => {
     expect(await fs.readFile(path.join(root, 'root.md'), 'utf8')).toBe('root')
   }, 15_000)
 
+  it('repairs a withdrawn-root transaction after an unrelated new version is created', async () => {
+    await write('root.md', 'root')
+    const first = await git.addAndCommit(root, ['root.md'], 'root')
+    const dropped = await git.dropHeadCommit(root, first.sha, {
+      syncIndexForTesting: vi.fn().mockResolvedValue(false),
+    })
+    expect(dropped.indexRepair).toMatchObject({ head: null, paths: ['root.md'] })
+
+    await write('unrelated.md', 'new version')
+    const unrelated = await git.addAndCommit(root, ['unrelated.md'], 'unrelated')
+    expect(await git.getIndexRepairStatus(root)).toEqual([
+      expect.objectContaining({ token: dropped.indexRepair!.token, head: null, paths: ['root.md'] }),
+    ])
+
+    await expect(git.repairIndex(root, dropped.indexRepair!.token)).resolves.toEqual({ repaired: true })
+
+    expect(await git.getIndexRepairStatus(root)).toEqual([])
+    expect((await git.run(root, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(unrelated.sha)
+    expect((await git.run(root, ['show', ':unrelated.md'])).stdout).toBe('new version')
+    expect((await git.run(root, ['ls-files', '--error-unmatch', 'root.md'])).status).not.toBe(0)
+    expect(await fs.readFile(path.join(root, 'root.md'), 'utf8')).toBe('root')
+  }, 15_000)
+
   it('does not report failure after withdrawal when Repair metadata cannot be persisted', async () => {
     await write('a.md', 'v1')
     await git.addAndCommit(root, ['a.md'], 'v1')

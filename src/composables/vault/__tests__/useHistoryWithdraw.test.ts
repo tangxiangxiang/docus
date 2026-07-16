@@ -54,6 +54,8 @@ describe('useHistoryWithdraw', () => {
     const release = vi.fn()
     const refreshComparisons = vi.fn()
     const refreshIndexRepairStatus = vi.fn().mockResolvedValue(true)
+    const registerIndexRepair = vi.fn()
+    const settleIndexRepairPaths = vi.fn()
     const closeDroppedRevision = vi.fn()
     const withdraw = useHistoryWithdraw({
       history: h,
@@ -61,6 +63,8 @@ describe('useHistoryWithdraw', () => {
       acquireMutation: () => release,
       refreshComparisons,
       refreshIndexRepairStatus,
+      registerIndexRepair,
+      settleIndexRepairPaths,
       closeDroppedRevision,
       drop,
     })
@@ -79,6 +83,7 @@ describe('useHistoryWithdraw', () => {
     expect(h.refreshLog).toHaveBeenCalledOnce()
     expect(refreshComparisons).toHaveBeenCalledWith(['inbox/a.md'])
     expect(refreshIndexRepairStatus).toHaveBeenCalledOnce()
+    expect(settleIndexRepairPaths).toHaveBeenCalledWith(['inbox/a.md'])
     expect(closeDroppedRevision).toHaveBeenCalledWith('b'.repeat(40))
     expect(withdraw.completionId.value).toBe(1)
     expect(release).toHaveBeenCalledOnce()
@@ -97,6 +102,8 @@ describe('useHistoryWithdraw', () => {
       acquireMutation: () => () => {},
       refreshComparisons,
       refreshIndexRepairStatus: vi.fn(),
+      registerIndexRepair: vi.fn(),
+      settleIndexRepairPaths: vi.fn(),
       closeDroppedRevision,
       drop: vi.fn().mockRejectedValue(new HistoryApiError('server failed', 500)),
     })
@@ -121,6 +128,8 @@ describe('useHistoryWithdraw', () => {
       acquireMutation: () => null,
       refreshComparisons: vi.fn(),
       refreshIndexRepairStatus: vi.fn(),
+      registerIndexRepair: vi.fn(),
+      settleIndexRepairPaths: vi.fn(),
       closeDroppedRevision: vi.fn(),
       drop,
     })
@@ -142,6 +151,8 @@ describe('useHistoryWithdraw', () => {
       acquireMutation: () => () => {},
       refreshComparisons: vi.fn(),
       refreshIndexRepairStatus: vi.fn(),
+      registerIndexRepair: vi.fn(),
+      settleIndexRepairPaths: vi.fn(),
       closeDroppedRevision: vi.fn(),
       drop: vi.fn().mockRejectedValue(
         new HistoryApiError('repository changed before withdrawal', 409),
@@ -169,6 +180,8 @@ describe('useHistoryWithdraw', () => {
       acquireMutation: () => () => {},
       refreshComparisons: vi.fn(),
       refreshIndexRepairStatus: vi.fn(),
+      registerIndexRepair: vi.fn(),
+      settleIndexRepairPaths: vi.fn(),
       closeDroppedRevision: vi.fn(),
       drop,
     })
@@ -185,6 +198,39 @@ describe('useHistoryWithdraw', () => {
     expect(toast.info).toHaveBeenLastCalledWith(
       'The latest version was withdrawn, but its Git repair record could not be saved. Check Git status.',
       5000,
+    )
+  })
+
+  it('registers a returned Repair transaction before a failed server-status refresh', async () => {
+    const transaction = {
+      token: 'c'.repeat(32),
+      status: 'pending' as const,
+      head: 'a'.repeat(40),
+      paths: ['inbox/a.md'],
+      expectedIndex: { 'inbox/a.md': [] },
+    }
+    const registerIndexRepair = vi.fn()
+    const refreshIndexRepairStatus = vi.fn().mockResolvedValue(false)
+    const withdraw = useHistoryWithdraw({
+      history: history(),
+      confirm: vi.fn().mockResolvedValue(true),
+      acquireMutation: () => () => {},
+      refreshComparisons: vi.fn(),
+      refreshIndexRepairStatus,
+      registerIndexRepair,
+      settleIndexRepairPaths: vi.fn(),
+      closeDroppedRevision: vi.fn(),
+      drop: vi.fn().mockResolvedValue(result({
+        indexRefreshFailed: true,
+        indexRepair: transaction,
+      })),
+    })
+
+    await withdraw.withdraw('b'.repeat(40))
+
+    expect(registerIndexRepair).toHaveBeenCalledWith(transaction)
+    expect(registerIndexRepair.mock.invocationCallOrder[0]).toBeLessThan(
+      refreshIndexRepairStatus.mock.invocationCallOrder[0]!,
     )
   })
 })

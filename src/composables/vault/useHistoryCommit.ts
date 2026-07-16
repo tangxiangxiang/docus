@@ -56,6 +56,29 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     }
   }
 
+  function registerIndexRepair(transaction: IndexRepairTransaction): void {
+    const replaced = new Set(transaction.paths)
+    const retained = indexRepairTransactions.value.map((item) => {
+      const paths = item.paths.filter((filePath) => !replaced.has(filePath))
+      return {
+        ...item,
+        paths,
+        expectedIndex: Object.fromEntries(paths.map((filePath) => (
+          [filePath, item.expectedIndex[filePath] ?? []]
+        ))),
+      }
+    }).filter((item) => item.paths.length > 0 && item.token !== transaction.token)
+    indexRepairTransactions.value = [...retained, transaction]
+  }
+
+  function settleIndexRepairPaths(paths: readonly string[]): void {
+    const settled = new Set(paths)
+    indexRepairTransactions.value = indexRepairTransactions.value.map((transaction) => ({
+      ...transaction,
+      paths: transaction.paths.filter((filePath) => !settled.has(filePath)),
+    })).filter((transaction) => transaction.paths.length > 0)
+  }
+
   void refreshIndexRepairStatus()
 
   watch(
@@ -161,12 +184,7 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
         ? t('history.commit_success')
         : t('history.commit_success_count', { count: result.filesCommitted.length })
       if (result.indexRefreshFailed) {
-        if (result.indexRepair) {
-          indexRepairTransactions.value = [
-            ...indexRepairTransactions.value.filter((item) => item.token !== result.indexRepair?.token),
-            result.indexRepair,
-          ]
-        }
+        if (result.indexRepair) registerIndexRepair(result.indexRepair)
         toast.info(
           result.repairStatePersistenceFailed
             ? t('history.commit_repair_state_persistence_failed')
@@ -174,11 +192,7 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
           5000,
         )
       } else {
-        const settled = new Set(result.filesCommitted)
-        indexRepairTransactions.value = indexRepairTransactions.value.map((transaction) => ({
-          ...transaction,
-          paths: transaction.paths.filter((filePath) => !settled.has(filePath)),
-        })).filter((transaction) => transaction.paths.length > 0)
+        settleIndexRepairPaths(result.filesCommitted)
         if (result.repairStatePersistenceFailed) {
           toast.info(t('history.commit_repair_state_persistence_failed'), 5000)
         } else {
@@ -297,6 +311,8 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     retryIndexRepair,
     discardConflictingIndexRepair,
     refreshIndexRepairStatus,
+    registerIndexRepair,
+    settleIndexRepairPaths,
   }
 }
 

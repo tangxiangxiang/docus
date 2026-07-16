@@ -961,7 +961,8 @@ export async function repairIndex(
     }
 
     const currentHead = await readCurrentHead(repoRoot)
-    const compatible = currentHead === transaction.head
+    const compatible = transaction.head === null
+      || currentHead === transaction.head
       || (currentHead !== null
         && transaction.head !== null
         && (await run(repoRoot, ['merge-base', '--is-ancestor', transaction.head, currentHead])).status === 0)

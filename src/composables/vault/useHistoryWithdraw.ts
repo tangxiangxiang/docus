@@ -15,6 +15,8 @@ interface HistoryWithdrawOptions {
   canMutate?(): boolean
   refreshComparisons(paths: readonly string[]): Promise<void>
   refreshIndexRepairStatus(): Promise<boolean>
+  registerIndexRepair(transaction: NonNullable<DropCommitResult['indexRepair']>): void
+  settleIndexRepairPaths(paths: readonly string[]): void
   closeDroppedRevision(sha: string): void
   drop?: typeof dropCommit
 }
@@ -61,6 +63,11 @@ export function useHistoryWithdraw(options: HistoryWithdrawOptions) {
       busy.value = true
       try {
         const result = await (options.drop ?? dropCommit)(sha)
+        if (result.indexRefreshFailed) {
+          if (result.indexRepair) options.registerIndexRepair(result.indexRepair)
+        } else {
+          options.settleIndexRepairPaths(result.filesChanged)
+        }
         options.closeDroppedRevision(result.droppedSha)
         await Promise.allSettled([
           options.history.refreshStatus(),

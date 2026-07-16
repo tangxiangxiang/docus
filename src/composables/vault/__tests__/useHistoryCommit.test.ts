@@ -57,6 +57,17 @@ beforeEach(() => {
 })
 
 describe('useHistoryCommit', () => {
+  it('registers and settles Repair transactions synchronously for sibling workflows', () => {
+    const commit = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
+    commit.registerIndexRepair(repairTransaction)
+
+    expect(commit.indexRepairTransactions.value).toEqual([repairTransaction])
+    expect(commit.indexRepairPaths.value).toEqual(['a.md'])
+
+    commit.settleIndexRepairPaths(['a.md'])
+    expect(commit.indexRepairTransactions.value).toEqual([])
+  })
+
   it('selects the initial changed set, supports partial selection, and preserves exact .md paths', async () => {
     const h = history()
     const saveSelected = vi.fn().mockResolvedValue(undefined)

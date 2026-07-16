@@ -45,6 +45,8 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('const historyWithdraw = useHistoryWithdraw({')
     expect(source).toContain('acquireMutation: historyMutationLock.acquireAll')
     expect(source).toContain('refreshIndexRepairStatus: historyCommit.refreshIndexRepairStatus')
+    expect(source).toContain('registerIndexRepair: historyCommit.registerIndexRepair')
+    expect(source).toContain('settleIndexRepairPaths: historyCommit.settleIndexRepairPaths')
     expect(source).toContain('.filter((snapshot) => snapshot.revisionId === sha)')
     expect(source).toContain('.filter((comparison) => comparison.revisionId === sha)')
     expect(source).toContain(':withdraw="historyWithdraw"')
