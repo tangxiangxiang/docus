@@ -1,12 +1,14 @@
 import type { Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
 import { getFileStates, getPost, recoverPost, type PostSummary } from '../../../lib/api'
+import type { VaultFileChanges } from '../context/fileChanges'
 
 export function useDiskFileChanges(options: {
   tabs: Ref<Tab[]>
   doSave: (path: string) => Promise<void>
   scheduleSave: (path: string, delay?: number) => void
   applyPostSummary: (post: PostSummary) => void
+  fileChanges: VaultFileChanges
 }) {
   let externalPollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -118,12 +120,25 @@ export function useDiskFileChanges(options: {
       tab.savingRevision = null
       tab.saveStatus = 'idle'
     } else if (tab.externalKind === 'deleted') {
-      const recovered = await recoverPost(path, tab.raw)
+      const sentRaw = tab.raw
+      const sentRevision = tab.revision
+      const recovered = await recoverPost(path, sentRaw)
       tab.originalRaw = recovered.raw
-      tab.savedRevision = tab.revision
+      tab.savedRevision = sentRevision
       tab.serverMtime = recovered.mtime
-      tab.saveStatus = 'saved'
       options.applyPostSummary(recovered.post)
+      options.fileChanges.publish({
+        path,
+        kind: 'write',
+        source: 'editor-lifecycle',
+        newMtime: recovered.mtime,
+      })
+      if (tab.revision === sentRevision) {
+        tab.saveStatus = 'saved'
+      } else {
+        tab.saveStatus = 'dirty'
+        options.scheduleSave(path, 0)
+      }
     } else {
       const diskRaw = tab.externalRaw
       if (diskRaw == null) return
@@ -141,6 +156,7 @@ export function useDiskFileChanges(options: {
     tab.externalRaw = null
     tab.externalKind = null
     tab.error = null
+    tab.loadError = null
   }
 
   function startExternalPolling() {

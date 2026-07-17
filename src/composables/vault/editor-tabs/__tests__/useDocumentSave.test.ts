@@ -325,6 +325,7 @@ describe('useDocumentSave optimistic conflicts', () => {
       doSave: h.save.doSave,
       scheduleSave: h.save.scheduleSave,
       applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
     })
 
     h.save.onEditorChange('inbox/test', 'v1')
@@ -366,6 +367,7 @@ describe('useDocumentSave optimistic conflicts', () => {
       doSave: h.save.doSave,
       scheduleSave: h.save.scheduleSave,
       applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
     })
 
     const polling = disk.pollExternalChanges()
@@ -423,6 +425,7 @@ describe('useDocumentSave optimistic conflicts', () => {
       doSave: h.save.doSave,
       scheduleSave: h.save.scheduleSave,
       applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
     })
 
     const polling = disk.pollExternalChanges()
@@ -468,6 +471,7 @@ describe('useDocumentSave optimistic conflicts', () => {
       doSave: h.save.doSave,
       scheduleSave: h.save.scheduleSave,
       applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
     })
 
     await disk.pollExternalChanges()
@@ -482,6 +486,55 @@ describe('useDocumentSave optimistic conflicts', () => {
     })
     expect(fetchMock.mock.calls.filter(([url]) => url === '/api/posts/inbox/test')).toHaveLength(2)
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/recover/'))).toBe(false)
+  })
+
+  it('continues autosave when editing advances during deleted-file recovery', async () => {
+    let finishRecover!: (response: Response) => void
+    const pendingRecover = new Promise<Response>((resolve) => { finishRecover = resolve })
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(pendingRecover))
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      loadError: 'deleted',
+    })
+    const scheduleSave = vi.fn()
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    const resolving = disk.resolveExternal('inbox/test', 'local')
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+    h.save.onEditorChange('inbox/test', 'newer B')
+    finishRecover(new Response(JSON.stringify({
+      ok: true,
+      raw: 'saved',
+      mtime: 30,
+      post: summary('saved', { mtime: 30 }),
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await resolving
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'newer B',
+      originalRaw: 'saved',
+      revision: 1,
+      savedRevision: 0,
+      saveStatus: 'dirty',
+      externalKind: null,
+      loadError: null,
+    })
+    expect(scheduleSave).toHaveBeenCalledWith('inbox/test', 0)
+    expect(h.fileChanges.events.value.at(-1)).toMatchObject({
+      path: 'inbox/test',
+      kind: 'write',
+      source: 'editor-lifecycle',
+      newMtime: 30,
+    })
+    expect(h.fileChanges.events.value.at(-1)).not.toHaveProperty('newRaw')
   })
 
   it('terminates the save loop if an external snapshot appears during a request', async () => {
@@ -701,6 +754,7 @@ describe('useDocumentSave scheduling', () => {
       doSave: h.save.doSave,
       scheduleSave: h.save.scheduleSave,
       applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
     })
     await disk.pollExternalChanges()
 

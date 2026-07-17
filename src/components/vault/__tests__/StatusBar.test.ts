@@ -84,6 +84,22 @@ describe('StatusBar save presentation', () => {
     expect(wrapper.find('[aria-label="Keep local version and overwrite disk"]').exists()).toBe(true)
   })
 
+  it('does not offer a misleading diff while the disk version is unreadable', () => {
+    const wrapper = mount(StatusBar, {
+      props: {
+        path: 'inbox/test',
+        save: save({ status: 'external', attention: true }),
+        error: 'unreadable',
+        size: 10,
+        focusWidth: false,
+        externalKind: 'unreadable',
+      },
+    })
+    expect(wrapper.find('[aria-label="View local and disk differences"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="Use disk version"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="Keep local version and overwrite disk"]').exists()).toBe(true)
+  })
+
   it('announces the complete status atomically and uses presentation data-status', () => {
     const wrapper = mountBar(save({ status: 'saved' }))
     expect(wrapper.get('.sb-left').attributes('aria-live')).toBe('polite')

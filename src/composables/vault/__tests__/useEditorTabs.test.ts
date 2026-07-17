@@ -1265,6 +1265,7 @@ describe('useEditorTabs — file-change bus', () => {
     expect(h.tabs.value[0]).toMatchObject({
       saveStatus: 'saved',
       externalKind: null,
+      loadError: null,
       serverMtime: 4,
     })
     expect(h.posts.value.find((post) => post.path === 'bus-d')).toMatchObject({ size: 1, mtime: 4 })

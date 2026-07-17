@@ -117,13 +117,17 @@ const pathLabel = computed(() => {
       <span v-else class="sb-path sb-path-empty">—</span>
     </div>
     <div class="sb-right">
-      <template v-if="save.status === 'external' && externalKind !== 'deleted'">
+      <template v-if="save.status === 'external' && externalKind !== 'deleted' && externalKind !== 'unreadable'">
         <button type="button" class="sb-copy-content" :title="t('status.external_diff')" :aria-label="t('status.external_diff')" @click="emit('external-diff')">⇄</button>
         <button type="button" class="sb-copy-content" :title="t('status.use_disk')" :aria-label="t('status.use_disk')" @click="emit('external-disk')">↓</button>
         <button type="button" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">↑</button>
       </template>
-      <template v-else-if="save.status === 'external'">
+      <template v-else-if="save.status === 'external' && externalKind === 'deleted'">
         <button type="button" class="sb-copy-content" :title="t('status.external_diff')" :aria-label="t('status.external_diff')" @click="emit('external-diff')">&#8644;</button>
+        <button type="button" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">&#8593;</button>
+      </template>
+      <template v-else-if="save.status === 'external'">
+        <button type="button" class="sb-copy-content" :title="t('status.use_disk')" :aria-label="t('status.use_disk')" @click="emit('external-disk')">&#8595;</button>
         <button type="button" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">&#8593;</button>
       </template>
       <button

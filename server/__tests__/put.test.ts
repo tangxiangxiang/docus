@@ -121,6 +121,39 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
     deleteDocumentMetadata(db, documentPath)
   })
 
+  it('does not remove a newer external body when recovery metadata creation fails', async () => {
+    const documentPath = 'put-recover-external'
+    const abs = path.join(CONTENT_DIR, `${documentPath}.md`)
+    const requested = '# Recovered A\n'
+    const external = '# External B\n'
+    await fs.rm(abs, { force: true })
+    deleteDocumentMetadata(db, documentPath)
+    db.function('write_external_recover_body', () => {
+      writeFileSync(abs, external, 'utf8')
+      return 1
+    })
+    db.exec(`
+      CREATE TRIGGER fail_recover_metadata_insert
+      BEFORE INSERT ON documents
+      WHEN NEW.path = '${documentPath}'
+      BEGIN
+        SELECT write_external_recover_body();
+        SELECT RAISE(ABORT, 'forced recover metadata failure');
+      END;
+    `)
+    try {
+      const response = await call('PUT', `/api/recover/${documentPath}`, { raw: requested })
+
+      expect(response.status).toBe(500)
+      expect(await fs.readFile(abs, 'utf8')).toBe(external)
+      expect(getDocumentMetadata(db, documentPath)).toBeNull()
+    } finally {
+      db.exec('DROP TRIGGER IF EXISTS fail_recover_metadata_insert')
+      await fs.rm(abs, { force: true })
+      deleteDocumentMetadata(db, documentPath)
+    }
+  })
+
   it('rejects body without an exact baseRaw string', async () => {
     const r = await call('PUT', '/api/posts/put-smoke', { raw: 'new value' })
     expect(r.status).toBe(400)

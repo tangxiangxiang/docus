@@ -169,6 +169,48 @@ export async function atomicReplaceTextIfUnchanged(
   }
 }
 
+/**
+ * Remove a text file only while the bytes being removed still match the
+ * caller's write. Renaming first means a writer that changes the same inode
+ * before cleanup is detected on the staged file and restored, rather than
+ * being silently deleted.
+ */
+export async function atomicRemoveTextIfUnchanged(
+  targetPath: string,
+  expectedRaw: string,
+): Promise<void> {
+  const stagedPath = path.join(
+    path.dirname(targetPath),
+    `.${path.basename(targetPath)}.docus-remove-${randomUUID()}`,
+  )
+  await renameWithTransientWindowsRetry(targetPath, stagedPath)
+  try {
+    const staged = await readStableTextSnapshot(stagedPath)
+    if (staged.raw !== expectedRaw) {
+      if (!await fs.stat(targetPath).then(() => true, () => false)) {
+        await renameWithTransientWindowsRetry(stagedPath, targetPath)
+      }
+      throw new AtomicTextWriteConflictError(staged)
+    }
+    await fs.rm(stagedPath)
+    await syncParentDirectoryBestEffort(targetPath)
+  } catch (error) {
+    const targetExists = await fs.stat(targetPath).then(() => true, () => false)
+    const stagedExists = await fs.stat(stagedPath).then(() => true, () => false)
+    if (!targetExists && stagedExists) {
+      try {
+        await renameWithTransientWindowsRetry(stagedPath, targetPath)
+      } catch (restoreError) {
+        throw new AggregateError(
+          [error, restoreError],
+          'conditional text removal failed and staged content could not be restored',
+        )
+      }
+    }
+    throw error
+  }
+}
+
 export async function atomicReplaceText(
   targetPath: string,
   raw: string,

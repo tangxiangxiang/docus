@@ -12,6 +12,7 @@ import {
 import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
 import {
   atomicReplaceTextIfUnchanged,
+  atomicRemoveTextIfUnchanged,
   prepareAtomicTextWrite,
   readStableTextSnapshot,
   UnstableTextSnapshotError,
@@ -243,9 +244,24 @@ postRoutes.put('/api/recover/*', async (c) => {
       if (previousMetadata) saveDocumentMetadata(metadataDb(), metadata)
       trackCleanedDocumentWrite(metadataDb(), documentPath, requestedRaw)
     } catch (error) {
-      await fs.rm(abs, { force: true })
-      if (previousMetadata) saveDocumentMetadata(metadataDb(), previousMetadata)
-      else deleteDocumentMetadata(metadataDb(), documentPath)
+      const failures: unknown[] = [error]
+      try {
+        await atomicRemoveTextIfUnchanged(abs, requestedRaw)
+      } catch (rollbackError) {
+        failures.push(rollbackError)
+      }
+      try {
+        if (previousMetadata) saveDocumentMetadata(metadataDb(), previousMetadata)
+        else deleteDocumentMetadata(metadataDb(), documentPath)
+      } catch (metadataRollbackError) {
+        failures.push(metadataRollbackError)
+      }
+      if (failures.length > 1) {
+        throw new AggregateError(
+          failures,
+          'metadata recovery failed and document rollback was incomplete',
+        )
+      }
       throw error
     }
     try { (await getLinkIndex()).applyWrite(documentPath, requestedRaw) } catch { /* next rebuild repairs it */ }
