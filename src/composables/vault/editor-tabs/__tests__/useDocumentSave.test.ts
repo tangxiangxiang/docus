@@ -2142,6 +2142,220 @@ describe('useDocumentSave optimistic conflicts', () => {
     expect(h.tabs.value.every((t) => t.raw !== 'C1 from stale rename')).toBe(true)
   })
 
+  it('preserves local content when rename target tab is in save error state', async () => {
+    // Simulates: newPath tab is in saveStatus='error' with unsaved local
+    // content B (raw != originalRaw, revision > savedRevision) →
+    // AI rename oldPath → newPath (newRaw=C). The previous `isClean`
+    // definition only checked saveStatus / externalKind / savingRevision
+    // and treated 'error' as clean — silently overwriting the user's
+    // unsaved B and clearing the save failure indicator. With the new
+    // definition (dirty := raw!=originalRaw || revision!=savedRevision),
+    // the local buffer must be preserved and rename content shown as
+    // external conflict for explicit resolution.
+    const h = setupSave()
+    h.tabs.value[0].path = 'inbox/new-path'
+    h.tabs.value[0].revision = 5
+    h.tabs.value[0].savedRevision = 4
+    Object.assign(h.tabs.value[0], {
+      raw: 'local buffer B',
+      originalRaw: 'original A',
+      saveStatus: 'error',
+      error: 'HTTP 500',
+      serverMtime: 10,
+    })
+
+    const oldTab = makeTab('inbox/old-path', 'old content')
+    h.tabs.value.push(oldTab)
+
+    const closeTab = vi.fn().mockResolvedValue(true)
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab,
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: vi.fn(),
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+    })
+
+    await external.applyExternalChange({
+      seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
+      kind: 'rename', source: 'ai-tool',
+      newRaw: 'C from rename', newMtime: 30,
+    })
+
+    const target = h.tabs.value.find((t) => t.path === 'inbox/new-path')
+    expect(target).toBeDefined()
+    expect(target!.raw).toBe('local buffer B')
+    expect(target!.originalRaw).toBe('original A')
+    expect(target!.externalRaw).toBe('C from rename')
+    expect(target!.externalKind).toBe('modified')
+    expect(target!.saveStatus).toBe('external')
+    expect(target!.serverMtime).toBe(30)
+    expect(target!.loadError).toBeNull()
+  })
+
+  it('preserves local content when rename target tab has revision > savedRevision (saveStatus=idle)', async () => {
+    // Simulates: newPath tab has saveStatus='idle' but raw != originalRaw
+    // AND revision > savedRevision. The presentation layer still treats
+    // the tab as dirty (the system's real dirty definition), so the
+    // rename must preserve the local buffer instead of overwriting with
+    // the rename content. The previous isClean definition only checked
+    // saveStatus !== 'dirty' and missed the raw/revision drift.
+    const h = setupSave()
+    h.tabs.value[0].path = 'inbox/new-path'
+    h.tabs.value[0].revision = 7
+    h.tabs.value[0].savedRevision = 5
+    Object.assign(h.tabs.value[0], {
+      raw: 'local buffer B',
+      originalRaw: 'original A',
+      saveStatus: 'idle',
+      serverMtime: 10,
+    })
+
+    const oldTab = makeTab('inbox/old-path', 'old content')
+    h.tabs.value.push(oldTab)
+
+    const closeTab = vi.fn().mockResolvedValue(true)
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab,
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: vi.fn(),
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+    })
+
+    await external.applyExternalChange({
+      seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
+      kind: 'rename', source: 'ai-tool',
+      newRaw: 'C from rename', newMtime: 30,
+    })
+
+    const target = h.tabs.value.find((t) => t.path === 'inbox/new-path')
+    expect(target).toBeDefined()
+    // Local buffer preserved.
+    expect(target!.raw).toBe('local buffer B')
+    expect(target!.originalRaw).toBe('original A')
+    // Rename content shown as external conflict.
+    expect(target!.externalRaw).toBe('C from rename')
+    expect(target!.externalKind).toBe('modified')
+    expect(target!.saveStatus).toBe('external')
+    expect(target!.serverMtime).toBe(30)
+  })
+
+  it('preserves rename external state when a stale poll files/state returns exists=false', async () => {
+    // Simulates: Poll A has getFileStates in flight for newPath (will
+    // return exists=false, observation id=1) → AI rename oldPath→newPath
+    // (newRaw=C, seq=1) → rename switches the tab to external/modified
+    // with externalRaw=C → Poll A's stale state response arrives →
+    // rename-driven external state must NOT be clobbered back to deleted.
+    let finishState!: (response: Response) => void
+    const pendingState = new Promise<Response>((resolve) => { finishState = resolve })
+    let stateCalls = 0
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        stateCalls += 1
+        if (stateCalls === 1) return pendingState
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/new-path', exists: true, mtime: 30, size: 7 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/new-path') {
+        return Promise.resolve(new Response(JSON.stringify({
+          path: 'inbox/new-path',
+          raw: 'stale body from deleted poll',
+          content: '',
+          frontmatter: {},
+          size: 7,
+          mtime: 30,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const h = setupSave()
+    // newPath tab in deleted/external state — poll A observed exists=false.
+    h.tabs.value[0].path = 'inbox/new-path'
+    Object.assign(h.tabs.value[0], {
+      raw: 'local buffer B',
+      originalRaw: 'original A',
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+      loadError: '文件已删除',
+      error: '文件已从磁盘删除',
+      serverMtime: 10,
+    })
+    // Add old-path tab so rename finds it.
+    const oldTab = makeTab('inbox/old-path', 'old content')
+    h.tabs.value.push(oldTab)
+
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+    const closeTab = vi.fn().mockResolvedValue(true)
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab,
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: vi.fn(),
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+      invalidateDiskObservation: disk.invalidateDiskObservation,
+    })
+
+    // Poll A: getFileStates is pending (will return exists=false).
+    const pollingA = disk.pollExternalChanges()
+    await vi.waitFor(() => expect(stateCalls).toBe(1))
+
+    // AI rename fires — must invalidate Poll A's state observation
+    // (and disk read generation) before mutating the tab.
+    await external.applyExternalChange({
+      seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
+      kind: 'rename', source: 'ai-tool',
+      newRaw: 'C from rename', newMtime: 30,
+    })
+
+    const target = h.tabs.value.find((t) => t.path === 'inbox/new-path')
+    expect(target).toMatchObject({
+      raw: 'local buffer B',
+      originalRaw: 'original A',
+      externalRaw: 'C from rename',
+      externalKind: 'modified',
+      saveStatus: 'external',
+      serverMtime: 30,
+    })
+
+    // Poll A's stale state response returns exists=false. Must be dropped
+    // — the rename invalidated the state observation. Otherwise the
+    // deleted branch would clobber externalRaw back to null and externalKind
+    // back to 'deleted', losing the rename's authoritative conflict content.
+    finishState(new Response(JSON.stringify([
+      { path: 'inbox/new-path', exists: false, mtime: 0, size: 0 },
+    ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await pollingA
+
+    expect(target).toMatchObject({
+      raw: 'local buffer B',
+      originalRaw: 'original A',
+      externalRaw: 'C from rename',
+      externalKind: 'modified',
+      saveStatus: 'external',
+      serverMtime: 30,
+    })
+  })
+
   it('turns a deleted conflict into modified when the file reappears', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/api/files/state') {

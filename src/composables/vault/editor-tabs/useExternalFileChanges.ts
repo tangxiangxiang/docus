@@ -40,6 +40,15 @@ export function useExternalFileChanges(options: {
     latestEventSeqs.set(event.path, event.seq)
 
     if (event.kind === 'rename') {
+      // Invalidate any in-flight disk poll read AND state observation for
+      // both the new path and the old path. The rename delivers authoritative
+      // file state (newRaw, newMtime) immediately, so any pending poll's
+      // getPost/getFileStates responses for either path must be dropped —
+      // otherwise a stale `exists=false` (or stale body) arriving after the
+      // rename could clobber the rename-driven state.
+      options.invalidateDiskObservation?.(event.path)
+      if (event.oldPath) options.invalidateDiskObservation?.(event.oldPath)
+
       // Invalidate any pending confirm on the old path — when a file is
       // renamed, its old identity is gone and any in-flight write confirm
       // must be silently discarded rather than writing into a potentially
@@ -66,18 +75,24 @@ export function useExternalFileChanges(options: {
         const existing = options.tabs.value.find((tab) => tab.path === event.path)
         if (existing) {
           // Target path already has an open tab. If it is fully clean
-          // (idle/saved, no external conflict, no pending save), converge
-          // it completely to the rename result — update content, sync the
-          // revision baseline, and clear any residual error state. If the
-          // tab has local changes (dirty) or an unresolved external
-          // conflict (modified/deleted/unreadable), never silently
-          // overwrite the local buffer. Instead present the rename content
-          // as an external change the user must explicitly resolve.
-          const isClean = !existing.externalKind
-            && existing.saveStatus !== 'dirty'
-            && existing.saveStatus !== 'external'
-            && existing.saveStatus !== 'offline'
+          // (no unsaved local edits, no external conflict, no pending
+          // save, no error), converge it completely to the rename result —
+          // update content, sync the revision baseline, and clear any
+          // residual error state. If the tab has local changes (dirty by
+          // raw/originalRaw mismatch OR revision/savedRevision mismatch)
+          // or an unresolved external conflict or a save failure, never
+          // silently overwrite the local buffer. Instead present the
+          // rename content as an external change the user must
+          // explicitly resolve.
+          const dirty = existing.raw !== existing.originalRaw
+            || existing.revision !== existing.savedRevision
+          const isClean = !dirty
             && existing.savingRevision === null
+            && existing.externalRaw == null
+            && !existing.externalKind
+            && !existing.loading
+            && !existing.loadError
+            && (existing.saveStatus === 'idle' || existing.saveStatus === 'saved')
 
           if (isClean) {
             existing.raw = event.newRaw
