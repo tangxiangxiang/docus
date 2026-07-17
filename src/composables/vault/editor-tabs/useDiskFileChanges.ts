@@ -50,7 +50,11 @@ export function useDiskFileChanges(options: {
         tab.externalKind = 'deleted'
         continue
       }
-      if (tab.externalKind !== 'deleted' && state.mtime === tab.serverMtime) continue
+      if (
+        tab.externalKind !== 'deleted'
+        && tab.externalKind !== 'unreadable'
+        && state.mtime === tab.serverMtime
+      ) continue
 
       const requestedPath = tab.path
       const requestedRevision = tab.revision
@@ -68,6 +72,7 @@ export function useDiskFileChanges(options: {
           || latestTab.savingRevision !== null
           || (
             requestedExternalKind !== 'deleted'
+            && requestedExternalKind !== 'unreadable'
             && state.mtime === latestTab.serverMtime
           )
           || latestTab.revision !== requestedRevision
@@ -119,6 +124,7 @@ export function useDiskFileChanges(options: {
           // evidence of deletion and must not route keep-local through recover.
           latestTab.externalKind = 'unreadable'
           latestTab.saveStatus = 'external'
+          latestTab.loadError = null
           latestTab.error = '暂时无法读取磁盘文件，将在下次检查时重试'
         }
       }
@@ -208,10 +214,16 @@ export function useDiskFileChanges(options: {
         // older request is the one that recreates the file, applying that
         // successful transaction also settles any newer duplicate request.
         const latestTab = options.tabs.value.find((item) => item.path === path)
+        const recoveryObservedByPoll = latestTab?.saveStatus === 'external'
+          && latestTab.externalKind === 'modified'
+          && latestTab.externalRaw === recovered.raw
         if (
           latestTab !== tab
           || latestTab.saveStatus !== 'external'
-          || latestTab.externalKind !== requestedExternalKind
+          || (
+            latestTab.externalKind !== requestedExternalKind
+            && !recoveryObservedByPoll
+          )
         ) return
       } catch (recoverError) {
         if (!isCurrentExternalResolution(

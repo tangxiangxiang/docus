@@ -639,6 +639,140 @@ describe('useDocumentSave optimistic conflicts', () => {
     })
   })
 
+  it('retries polling after a reappeared deleted file is temporarily unreadable', async () => {
+    let postReads = 0
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 20, size: 6 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') {
+        postReads += 1
+        if (postReads === 1) return Promise.resolve(new Response('', { status: 500 }))
+        return Promise.resolve(new Response(JSON.stringify({
+          path: 'inbox/test',
+          raw: 'disk C',
+          content: '',
+          frontmatter: {},
+          size: 6,
+          mtime: 20,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      loadError: 'deleted',
+      serverMtime: 20,
+    })
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    await disk.pollExternalChanges()
+    expect(h.tabs.value[0]).toMatchObject({
+      externalKind: 'unreadable',
+      saveStatus: 'external',
+      loadError: null,
+    })
+
+    await disk.pollExternalChanges()
+
+    expect(postReads).toBe(2)
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'disk C',
+      originalRaw: 'disk C',
+      externalKind: null,
+      saveStatus: 'idle',
+      loadError: null,
+      serverMtime: 20,
+    })
+  })
+
+  it('settles deleted recovery when polling observes the same recovered body first', async () => {
+    let finishRecover!: (response: Response) => void
+    const pendingRecover = new Promise<Response>((resolve) => { finishRecover = resolve })
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/recover/inbox/test') return pendingRecover
+      if (url === '/api/files/state') {
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 30, size: 5 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') {
+        return Promise.resolve(new Response(JSON.stringify({
+          path: 'inbox/test',
+          raw: 'saved',
+          content: '',
+          frontmatter: {},
+          size: 5,
+          mtime: 30,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      loadError: 'deleted',
+    })
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    const resolving = disk.resolveExternal('inbox/test', 'local')
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/recover/inbox/test',
+      expect.anything(),
+    ))
+    await disk.pollExternalChanges()
+    expect(h.tabs.value[0]).toMatchObject({
+      externalRaw: 'saved',
+      externalKind: 'modified',
+      saveStatus: 'external',
+    })
+
+    finishRecover(new Response(JSON.stringify({
+      ok: true,
+      raw: 'saved',
+      mtime: 30,
+      post: summary('saved', { mtime: 30 }),
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await resolving
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'saved',
+      originalRaw: 'saved',
+      saveStatus: 'saved',
+      externalRaw: null,
+      externalKind: null,
+      loadError: null,
+      serverMtime: 30,
+    })
+    expect(h.applyPostSummary).toHaveBeenCalledOnce()
+    expect(h.fileChanges.events.value).toHaveLength(1)
+    expect(h.fileChanges.events.value[0]).toMatchObject({
+      path: 'inbox/test',
+      kind: 'write',
+      source: 'editor-lifecycle',
+      newMtime: 30,
+    })
+  })
+
   it('keeps a deleted-file recovery resolved after a second concurrent recovery conflicts', async () => {
     let finishFirst!: (response: Response) => void
     let finishSecond!: (response: Response) => void
