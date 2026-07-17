@@ -8,6 +8,25 @@ export interface PreparedAtomicTextWrite {
   rollback(): Promise<void>
 }
 
+export interface StableTextSnapshot {
+  raw: string
+  stat: {
+    mtimeMs: number
+    size: number
+    mode: number
+  }
+}
+
+export class AtomicTextWriteConflictError extends Error {
+  readonly current: StableTextSnapshot
+
+  constructor(current: StableTextSnapshot) {
+    super('document changed before atomic replacement')
+    this.name = 'AtomicTextWriteConflictError'
+    this.current = current
+  }
+}
+
 async function syncParentDirectoryBestEffort(targetPath: string): Promise<void> {
   let directory: Awaited<ReturnType<typeof fs.open>> | null = null
   try {
@@ -88,6 +107,55 @@ export async function prepareAtomicTextWrite(
       settled = true
       await fs.rm(temporaryPath, { force: true }).catch(() => {})
     },
+  }
+}
+
+/**
+ * Read around stat so a content change observed during snapshot collection is
+ * retried instead of pairing an old body with a newer file status.
+ */
+export async function readStableTextSnapshot(
+  targetPath: string,
+  maxAttempts = 3,
+): Promise<StableTextSnapshot> {
+  let latest: StableTextSnapshot | null = null
+  const numericStat = async () => {
+    const stat = await fs.stat(targetPath)
+    return {
+      mtimeMs: Number(stat.mtimeMs),
+      size: Number(stat.size),
+      mode: Number(stat.mode),
+    }
+  }
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const before = await fs.readFile(targetPath, 'utf8')
+    const stat = await numericStat()
+    const after = await fs.readFile(targetPath, 'utf8')
+    latest = {
+      raw: after,
+      stat: after === before ? stat : await numericStat(),
+    }
+    if (after === before) return latest
+  }
+  return latest!
+}
+
+export async function atomicReplaceTextIfUnchanged(
+  targetPath: string,
+  expectedRaw: string,
+  replacementRaw: string,
+  options: { mode?: number } = {},
+): Promise<void> {
+  const prepared = await prepareAtomicTextWrite(targetPath, replacementRaw, options)
+  try {
+    const current = await readStableTextSnapshot(targetPath)
+    if (current.raw !== expectedRaw) {
+      throw new AtomicTextWriteConflictError(current)
+    }
+    await prepared.commit()
+  } catch (error) {
+    await prepared.rollback()
+    throw error
   }
 }
 

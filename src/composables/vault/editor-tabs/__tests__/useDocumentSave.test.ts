@@ -8,6 +8,7 @@ import { createVaultContext } from '../../context/createVaultContext'
 import { createVaultFileChanges } from '../../context/fileChanges'
 import { __resetHistoryStateForTesting, useHistory } from '../../useHistory'
 import { useDocumentSave } from '../useDocumentSave'
+import { useDiskFileChanges } from '../useDiskFileChanges'
 import { deriveDocumentSavePresentation } from '../savePresentation'
 import { useExternalFileChanges } from '../useExternalFileChanges'
 
@@ -298,6 +299,72 @@ describe('useDocumentSave optimistic conflicts', () => {
       savedRevision: 0,
     })
     expect(h.toastError).toHaveBeenCalledOnce()
+  })
+
+  it('ignores disk polling while savingRevision is in flight and continues with S2', async () => {
+    let finishFirst!: (response: Response) => void
+    const first = new Promise<Response>((resolve) => { finishFirst = resolve })
+    const sent: Array<{ raw: string; baseRaw: string }> = []
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/files/state') {
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 10, size: 2 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test' && init?.method === 'PUT') {
+        const input = JSON.parse(String(init.body)) as { raw: string; baseRaw: string }
+        sent.push(input)
+        return sent.length === 1 ? first : Promise.resolve(ok(input.raw, { mtime: 20 }))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+    })
+
+    h.save.onEditorChange('inbox/test', 'v1')
+    const saving = h.save.doSave('inbox/test')
+    await vi.waitFor(() => expect(sent).toHaveLength(1))
+    h.save.onEditorChange('inbox/test', 'v2')
+    expect(h.tabs.value[0]).toMatchObject({ saveStatus: 'dirty', savingRevision: 1 })
+
+    await disk.pollExternalChanges()
+    expect(h.tabs.value[0].externalRaw).toBeNull()
+
+    finishFirst(ok('v1', { mtime: 10 }))
+    await saving
+    expect(sent).toEqual([
+      { raw: 'v1', baseRaw: 'saved' },
+      { raw: 'v2', baseRaw: 'v1' },
+    ])
+  })
+
+  it('terminates the save loop if an external snapshot appears during a request', async () => {
+    let finish!: (response: Response) => void
+    const pending = new Promise<Response>((resolve) => { finish = resolve })
+    const fetchMock = vi.fn().mockReturnValue(pending)
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    h.save.onEditorChange('inbox/test', 'v1')
+    const saving = h.save.doSave('inbox/test')
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    h.save.onEditorChange('inbox/test', 'v2')
+    h.tabs.value[0].externalRaw = 'external C'
+
+    finish(ok('v1'))
+    await saving
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(h.tabs.value[0]).toMatchObject({
+      externalRaw: 'external C',
+      saveStatus: 'external',
+      serverMtime: 1,
+    })
+    expect(h.tabs.value[0].revision).not.toBe(h.tabs.value[0].savedRevision)
   })
 })
 

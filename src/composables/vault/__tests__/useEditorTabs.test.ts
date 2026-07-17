@@ -94,6 +94,7 @@ interface Harness {
     originalRaw: string
     revision: number
     savedRevision: number
+    savingRevision: number | null
     saveStatus: string
     loadError: string | null
     serverMtime?: number
@@ -1170,7 +1171,7 @@ describe('useEditorTabs — file-change bus', () => {
     expect(h.tabs.value[0].serverMtime).toBe(201)
   })
 
-  it('drops the event while a save is in flight (saveStatus === saving)', async () => {
+  it('drops the event while savingRevision is in flight even when status is dirty', async () => {
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [],
       'GET /api/posts': () => [],
@@ -1178,7 +1179,8 @@ describe('useEditorTabs — file-change bus', () => {
     }))
     const h = await setup()
     await h.openPost('bus-c')
-    h.tabs.value[0].saveStatus = 'saving'  // simulate mid-save
+    h.tabs.value[0].saveStatus = 'dirty'
+    h.tabs.value[0].savingRevision = h.tabs.value[0].revision
     h.fileChanges.publish({ path: 'bus-c', kind: 'write', newMtime: 1, newRaw: 'irrelevant' })
     await flushPromises()
     expect(h.tabs.value[0].raw).toBe('C')  // unchanged

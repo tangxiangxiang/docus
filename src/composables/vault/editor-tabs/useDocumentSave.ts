@@ -96,6 +96,7 @@ export function useDocumentSave(options: {
     if (disposed) return
 
     try {
+      const externalAppearedDuringSave = hasUnresolvedExternal(tab)
       if (tab.raw === sentVersion) {
         tab.raw = data.raw
         tab.originalRaw = data.raw
@@ -103,8 +104,12 @@ export function useDocumentSave(options: {
         tab.originalRaw = sentVersion
       }
       tab.savedRevision = sentRevision
-      tab.saveStatus = tab.revision === sentRevision ? 'saved' : 'dirty'
-      tab.serverMtime = data.post.mtime
+      tab.saveStatus = externalAppearedDuringSave
+        ? 'external'
+        : tab.revision === sentRevision ? 'saved' : 'dirty'
+      if (!externalAppearedDuringSave) {
+        tab.serverMtime = data.post.mtime
+      }
       try {
         options.applyPostSummary(data.post)
       } catch (error) {
@@ -134,7 +139,8 @@ export function useDocumentSave(options: {
         const barrier = commitBarriers.get(path)
         if (barrier && (!tab || tab.savedRevision >= barrier.revision)) break
         if (disposed || lifecycleGlobalLock || lifecycleLocks.has(path)
-            || !tab || ['error', 'offline', 'external'].includes(tab.saveStatus)
+            || !tab || hasUnresolvedExternal(tab)
+            || ['error', 'offline'].includes(tab.saveStatus)
             || tab.revision === tab.savedRevision) break
       } while (true)
     })().finally(() => savePromises.delete(path))

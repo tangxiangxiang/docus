@@ -2,7 +2,13 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { atomicReplaceText, prepareAtomicTextWrite } from '../atomicTextWrite'
+import {
+  AtomicTextWriteConflictError,
+  atomicReplaceText,
+  atomicReplaceTextIfUnchanged,
+  prepareAtomicTextWrite,
+  readStableTextSnapshot,
+} from '../atomicTextWrite'
 
 let directory = ''
 let target = ''
@@ -51,6 +57,32 @@ describe('atomic text writes', () => {
 
     await prepared.rollback()
     expect(await fs.readFile(target, 'utf8')).toBe('original')
+    expect(await temporaryFiles()).toEqual([])
+  })
+
+  it('retries a snapshot when content changes between read and stat', async () => {
+    const readFile = vi.spyOn(fs, 'readFile')
+      .mockResolvedValueOnce('B')
+      .mockResolvedValueOnce('C')
+      .mockResolvedValueOnce('C')
+      .mockResolvedValueOnce('C')
+
+    const snapshot = await readStableTextSnapshot(target)
+
+    expect(snapshot.raw).toBe('C')
+    expect(readFile).toHaveBeenCalledTimes(4)
+  })
+
+  it('does not restore over content that changed after the original replacement', async () => {
+    await fs.writeFile(target, 'external C', 'utf8')
+
+    await expect(atomicReplaceTextIfUnchanged(
+      target,
+      'written B',
+      'previous A',
+    )).rejects.toBeInstanceOf(AtomicTextWriteConflictError)
+
+    expect(await fs.readFile(target, 'utf8')).toBe('external C')
     expect(await temporaryFiles()).toEqual([])
   })
 })

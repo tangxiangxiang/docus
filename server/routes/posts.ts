@@ -10,7 +10,12 @@ import {
   saveDocumentMetadata,
 } from '../documentMetadata.js'
 import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
-import { atomicReplaceText, prepareAtomicTextWrite } from '../atomicTextWrite.js'
+import {
+  atomicReplaceTextIfUnchanged,
+  prepareAtomicTextWrite,
+  readStableTextSnapshot,
+  type StableTextSnapshot,
+} from '../atomicTextWrite.js'
 import { withDocumentWriteLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { trackCleanedDocumentWrite } from '../metadataMigration.js'
@@ -111,20 +116,21 @@ postRoutes.put('/api/posts/*', async (c) => {
   return withDocumentWriteLock(splat, async () => {
     if (!await exists(abs)) return bad(c, 'not found', 404)
 
-    const currentRaw = await fs.readFile(abs, 'utf8')
-    const currentStat = await fs.stat(abs)
-    const conflict = (raw: string, stat: Awaited<ReturnType<typeof fs.stat>>) => c.json({
+    const current = await readStableTextSnapshot(abs)
+    const currentRaw = current.raw
+    const currentStat = current.stat
+    const conflict = (snapshot: StableTextSnapshot) => c.json({
       error: 'document changed on disk',
       code: 'EDIT_CONFLICT' as const,
       current: {
-        raw,
-        mtime: Number(stat.mtimeMs),
-        size: Number(stat.size),
+        raw: snapshot.raw,
+        mtime: Number(snapshot.stat.mtimeMs),
+        size: Number(snapshot.stat.size),
       },
     }, 409)
     const result = (
       raw: string,
-      stat: Awaited<ReturnType<typeof fs.stat>>,
+      stat: { size: number | bigint; mtimeMs: number | bigint },
       metadata: ReturnType<typeof ensureMetadata>,
     ) => ({
       ok: true,
@@ -152,18 +158,17 @@ postRoutes.put('/api/posts/*', async (c) => {
     }
 
     if (currentRaw !== baseRaw) {
-      return conflict(currentRaw, currentStat)
+      return conflict(current)
     }
 
     const prepared = await prepareAtomicTextWrite(abs, requestedRaw, { mode: currentStat.mode })
     try {
       // Re-check after preparing the complete temporary file so a change
       // observed in that window is never knowingly overwritten.
-      const verifiedRaw = await fs.readFile(abs, 'utf8')
-      if (verifiedRaw !== currentRaw) {
-        const verifiedStat = await fs.stat(abs)
+      const verified = await readStableTextSnapshot(abs)
+      if (verified.raw !== currentRaw) {
         await prepared.rollback()
-        return conflict(verifiedRaw, verifiedStat)
+        return conflict(verified)
       }
 
       // Import legacy metadata before the editor can remove its Frontmatter.
@@ -182,7 +187,12 @@ postRoutes.put('/api/posts/*', async (c) => {
       trackCleanedDocumentWrite(metadataDb(), splat, requestedRaw)
     } catch (error) {
       try {
-        await atomicReplaceText(abs, currentRaw, { mode: currentStat.mode })
+        await atomicReplaceTextIfUnchanged(
+          abs,
+          requestedRaw,
+          currentRaw,
+          { mode: currentStat.mode },
+        )
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],

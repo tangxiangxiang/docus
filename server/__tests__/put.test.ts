@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { promises as fs } from 'node:fs'
+import { promises as fs, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import app, { __setMetadataDbForTesting } from '../index'
 import { CONTENT_DIR } from '../paths'
@@ -129,6 +129,33 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
     expect(await fs.readFile(TEST_ABS, 'utf8')).toBe(UPDATED_BODY)
   })
 
+  it('returns a conflict when an idempotent candidate changes during snapshot validation', async () => {
+    const external = 'external C'
+    await fs.writeFile(TEST_ABS, UPDATED_BODY, 'utf8')
+    const originalReadFile = fs.readFile.bind(fs)
+    const readFile = vi.spyOn(fs, 'readFile').mockImplementationOnce(async (...args) => {
+      const raw = await originalReadFile(...args)
+      await fs.writeFile(TEST_ABS, external, 'utf8')
+      return raw
+    })
+    try {
+      const r = await call('PUT', '/api/posts/put-smoke', {
+        raw: UPDATED_BODY,
+        baseRaw: ORIGINAL,
+      })
+
+      expect(r.status).toBe(409)
+      expect(await r.json()).toMatchObject({
+        code: 'EDIT_CONFLICT',
+        current: { raw: external },
+      })
+      expect(await fs.readFile(TEST_ABS, 'utf8')).toBe(external)
+    } finally {
+      readFile.mockRestore()
+      await fs.writeFile(TEST_ABS, UPDATED_BODY, 'utf8')
+    }
+  })
+
   it('serializes concurrent writes to the same document baseline', async () => {
     const abs = path.join(CONTENT_DIR, 'put-concurrent.md')
     const initial = 'A'
@@ -188,6 +215,58 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
       `)
       await fs.rm(abs, { force: true })
       deleteDocumentMetadata(db, 'put-metadata-rollback')
+    }
+  })
+
+  it('does not roll metadata failure back over a newer external body', async () => {
+    const abs = path.join(CONTENT_DIR, 'put-metadata-external.md')
+    const original = '# Original\n'
+    const requested = '# Replacement\n'
+    const external = '# External\n'
+    await fs.writeFile(abs, original, 'utf8')
+    saveDocumentMetadata(db, {
+      path: 'put-metadata-external',
+      title: 'External rollback guard',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    db.function('write_external_body_for_put_test', () => {
+      writeFileSync(abs, external, 'utf8')
+      return 1
+    })
+    db.exec(`
+      CREATE TABLE put_external_update_count (count INTEGER NOT NULL);
+      INSERT INTO put_external_update_count VALUES (0);
+      CREATE TRIGGER fail_second_put_external_update
+      BEFORE UPDATE ON documents
+      BEGIN
+        SELECT CASE
+          WHEN (SELECT count FROM put_external_update_count) >= 1
+          THEN write_external_body_for_put_test()
+        END;
+        UPDATE put_external_update_count SET count = count + 1;
+        SELECT CASE
+          WHEN (SELECT count FROM put_external_update_count) >= 2
+          THEN RAISE(ABORT, 'forced metadata failure after external write')
+        END;
+      END;
+    `)
+    try {
+      const r = await call('PUT', '/api/posts/put-metadata-external', {
+        raw: requested,
+        baseRaw: original,
+      })
+
+      expect(r.status).toBe(500)
+      expect(await fs.readFile(abs, 'utf8')).toBe(external)
+      expect((await fs.readdir(CONTENT_DIR)).some((name) => name.includes('.docus-save-'))).toBe(false)
+    } finally {
+      db.exec(`
+        DROP TRIGGER IF EXISTS fail_second_put_external_update;
+        DROP TABLE IF EXISTS put_external_update_count;
+      `)
+      await fs.rm(abs, { force: true })
+      deleteDocumentMetadata(db, 'put-metadata-external')
     }
   })
 

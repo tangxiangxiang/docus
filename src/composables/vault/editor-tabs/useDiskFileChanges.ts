@@ -16,7 +16,7 @@ export function useDiskFileChanges(options: {
     try { states = await getFileStates(loaded.map((tab) => tab.path)) } catch { return }
     for (const state of states) {
       const tab = options.tabs.value.find((item) => item.path === state.path)
-      if (!tab || tab.saveStatus === 'saving' || state.mtime === tab.serverMtime) continue
+      if (!tab || tab.savingRevision !== null || state.mtime === tab.serverMtime) continue
       if (!state.exists) {
         tab.saveStatus = 'external'
         tab.error = '文件已从磁盘删除'

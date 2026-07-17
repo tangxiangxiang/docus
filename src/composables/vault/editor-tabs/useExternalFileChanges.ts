@@ -54,7 +54,9 @@ export function useExternalFileChanges(options: {
     // saved snapshot back through the external-change path would reset status
     // or prompt over newer unsaved input. Only accept trusted metadata here.
     if (event.source === 'editor-save') {
-      tab.serverMtime = event.newMtime ?? tab.serverMtime
+      if (tab.saveStatus !== 'external' && tab.externalRaw == null) {
+        tab.serverMtime = event.newMtime ?? tab.serverMtime
+      }
       return
     }
     // History restore updates the owning tab synchronously before publishing.
@@ -64,7 +66,7 @@ export function useExternalFileChanges(options: {
       tab.serverMtime = event.newMtime ?? tab.serverMtime
       return
     }
-    if (tab.saveStatus === 'saving') return
+    if (tab.savingRevision !== null) return
 
     if (event.kind === 'delete') {
       tab.loadError = t('editor.ai_deleted')
