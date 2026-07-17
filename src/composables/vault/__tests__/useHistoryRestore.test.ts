@@ -281,7 +281,10 @@ describe('useHistoryRestore', () => {
     expect(beforeUnload.defaultPrevented).toBe(true)
     await vi.advanceTimersByTimeAsync(800)
     expect(put).toHaveBeenCalledOnce()
-    expect(JSON.parse(String(put.mock.calls[0]?.[1]?.body))).toEqual({ raw: '# Current' })
+    expect(JSON.parse(String(put.mock.calls[0]?.[1]?.body))).toEqual({
+      raw: '# Current',
+      baseRaw: '# Historical',
+    })
   })
 
   it('allows manual save after restore when editing returned to the old baseline', async () => {
@@ -321,7 +324,10 @@ describe('useHistoryRestore', () => {
 
     await save.doSaveNow()
     expect(put).toHaveBeenCalledOnce()
-    expect(JSON.parse(String(put.mock.calls[0]?.[1]?.body))).toEqual({ raw: 'A' })
+    expect(JSON.parse(String(put.mock.calls[0]?.[1]?.body))).toEqual({
+      raw: 'A',
+      baseRaw: 'H',
+    })
   })
 
   it('does not restore a document locked by Create Version', async () => {

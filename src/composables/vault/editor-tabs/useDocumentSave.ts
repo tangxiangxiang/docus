@@ -1,6 +1,11 @@
 import type { Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
-import { savePost, type PostSummary, type SavePostResult } from '../../../lib/api'
+import {
+  SavePostConflictError,
+  savePost,
+  type PostSummary,
+  type SavePostResult,
+} from '../../../lib/api'
 import { useI18n } from '../../useI18n'
 import type { VaultFileChanges } from '../context/fileChanges'
 
@@ -25,8 +30,14 @@ export function useDocumentSave(options: {
   let lifecycleGlobalLock = false
   let disposed = false
 
+  function hasUnresolvedExternal(tab: Tab): boolean {
+    return tab.saveStatus === 'external' || tab.externalRaw != null
+  }
+
   function scheduleSave(path: string, delay = 800) {
     if (disposed || lifecycleGlobalLock || commitBarriers.has(path) || lifecycleLocks.has(path)) return
+    const tab = options.tabs.value.find((candidate) => candidate.path === path)
+    if (!tab || hasUnresolvedExternal(tab)) return
     const current = saveTimers.get(path)
     if (current) clearTimeout(current)
     saveTimers.set(path, setTimeout(() => {
@@ -46,7 +57,7 @@ export function useDocumentSave(options: {
   async function saveLatest(path: string): Promise<void> {
     if (disposed) return
     const tab = options.tabs.value.find((candidate) => candidate.path === path)
-    if (!tab) return
+    if (!tab || hasUnresolvedExternal(tab)) return
     if (lifecycleGlobalLock || lifecycleLocks.has(path)) {
       tab.saveStatus = tab.revision === tab.savedRevision ? 'idle' : 'dirty'
       return
@@ -58,14 +69,23 @@ export function useDocumentSave(options: {
     }
     const sentRevision = barrier?.revision ?? tab.revision
     const sentVersion = barrier?.raw ?? tab.raw
+    const sentBaseRaw = tab.originalRaw
     tab.savingRevision = sentRevision
     tab.saveStatus = 'saving'
     tab.error = null
     let data: SavePostResult
     try {
-      data = await savePost(path, sentVersion)
+      data = await savePost(path, sentVersion, sentBaseRaw)
     } catch (error) {
       if (disposed) return
+      if (error instanceof SavePostConflictError) {
+        tab.externalRaw = error.current.raw
+        tab.serverMtime = error.current.mtime
+        tab.saveStatus = 'external'
+        tab.error = null
+        tab.savingRevision = null
+        return
+      }
       tab.saveStatus = typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error'
       tab.error = (error as Error).message
       options.toastError(t('editor.save_failed', { error: tab.error }))
@@ -103,6 +123,8 @@ export function useDocumentSave(options: {
 
   async function doSave(path: string): Promise<void> {
     if (disposed || lifecycleGlobalLock || lifecycleLocks.has(path)) return
+    const tab = options.tabs.value.find((candidate) => candidate.path === path)
+    if (!tab || hasUnresolvedExternal(tab)) return
     const active = savePromises.get(path)
     if (active) return active
     const promise = (async () => {
@@ -124,8 +146,13 @@ export function useDocumentSave(options: {
     if (disposed) return
     const tab = options.tabs.value.find((candidate) => candidate.path === path)
     if (!tab) return
+    const external = hasUnresolvedExternal(tab)
     tab.raw = value
     tab.revision += 1
+    if (external) {
+      tab.saveStatus = 'external'
+      return
+    }
     if (tab.raw === tab.originalRaw) tab.savedRevision = tab.revision
     tab.saveStatus = tab.revision === tab.savedRevision ? 'idle' : 'dirty'
     scheduleSave(path)

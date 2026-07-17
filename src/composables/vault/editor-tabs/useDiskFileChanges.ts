@@ -56,12 +56,15 @@ export function useDiskFileChanges(options: {
     const tab = options.tabs.value.find((item) => item.path === path)
     if (!tab || tab.saveStatus !== 'external') return
     if (strategy === 'disk') {
-      const post = await getPost(path)
-      tab.raw = post.raw
-      tab.originalRaw = post.raw
+      const diskRaw = tab.externalRaw
+      const post = diskRaw === null ? await getPost(path) : null
+      const resolvedRaw = diskRaw ?? post!.raw
+      tab.raw = resolvedRaw
+      tab.originalRaw = resolvedRaw
       tab.revision += 1
       tab.savedRevision = tab.revision
-      tab.serverMtime = post.mtime
+      if (post) tab.serverMtime = post.mtime
+      tab.savingRevision = null
       tab.saveStatus = 'idle'
     } else {
       if (tab.externalRaw == null) {
@@ -71,9 +74,16 @@ export function useDiskFileChanges(options: {
         tab.serverMtime = recovered.mtime
         tab.saveStatus = 'saved'
       } else {
-        tab.originalRaw = tab.externalRaw
-        tab.saveStatus = 'dirty'
-        options.scheduleSave(path, 0)
+        const diskRaw = tab.externalRaw
+        tab.originalRaw = diskRaw
+        tab.externalRaw = null
+        if (tab.raw === diskRaw) {
+          tab.savedRevision = tab.revision
+          tab.saveStatus = 'idle'
+        } else {
+          tab.saveStatus = 'dirty'
+          options.scheduleSave(path, 0)
+        }
       }
     }
     tab.externalRaw = null

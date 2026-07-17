@@ -50,6 +50,17 @@ function ok(raw: string, overrides: Partial<PostSummary> = {}): Response {
   })
 }
 
+function conflict(raw: string, mtime = 7, size = raw.length): Response {
+  return new Response(JSON.stringify({
+    error: 'document changed on disk',
+    code: 'EDIT_CONFLICT',
+    current: { raw, mtime, size },
+  }), {
+    status: 409,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
 function setupSave(tabs: Tab[] = [makeTab()]) {
   const tabRef = ref(tabs)
   const activePath = ref<string | null>(tabs[0]?.path ?? null)
@@ -78,6 +89,20 @@ afterEach(() => {
 })
 
 describe('useDocumentSave successful transaction', () => {
+  it('sends the immutable originalRaw baseline with the edited body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok('changed'))
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    h.save.onEditorChange('inbox/test', 'changed')
+
+    await h.save.doSave('inbox/test')
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/posts/inbox/test', expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify({ raw: 'changed', baseRaw: 'saved' }),
+    }))
+  })
+
   it('publishes exactly one editor-save event without newRaw after PUT succeeds', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok('changed')))
     const h = setupSave()
@@ -144,13 +169,13 @@ describe('useDocumentSave successful transaction', () => {
   it('serializes v1 and v2, preserving v2 when the v1 event is published', async () => {
     let finishFirst!: (response: Response) => void
     const first = new Promise<Response>((resolve) => { finishFirst = resolve })
-    const sent: string[] = []
+    const sent: Array<{ raw: string; baseRaw: string }> = []
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
-      const raw = (JSON.parse(String(init?.body)) as { raw: string }).raw
-      sent.push(raw)
+      const input = JSON.parse(String(init?.body)) as { raw: string; baseRaw: string }
+      sent.push(input)
       return sent.length === 1
         ? first
-        : Promise.resolve(ok(raw, { size: 20, mtime: 20 }))
+        : Promise.resolve(ok(input.raw, { size: 20, mtime: 20 }))
     })
     vi.stubGlobal('fetch', fetchMock)
     const h = setupSave()
@@ -183,7 +208,10 @@ describe('useDocumentSave successful transaction', () => {
     await saving
     await nextTick()
 
-    expect(sent).toEqual(['v1', 'v2'])
+    expect(sent).toEqual([
+      { raw: 'v1', baseRaw: 'saved' },
+      { raw: 'v2', baseRaw: 'v1' },
+    ])
     expect(h.applyPostSummary.mock.calls.map(([post]) => ({
       size: (post as PostSummary).size,
       mtime: (post as PostSummary).mtime,
@@ -203,6 +231,73 @@ describe('useDocumentSave successful transaction', () => {
     expect(h.fileChanges.events.value).toHaveLength(2)
     expect(h.fileChanges.events.value.every((event) => !('newRaw' in event))).toBe(true)
     stop()
+  })
+})
+
+describe('useDocumentSave optimistic conflicts', () => {
+  it('enters external without advancing or publishing on a typed 409', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(conflict('disk C', 9, 6)))
+    const h = setupSave()
+    h.save.onEditorChange('inbox/test', 'local B')
+
+    await h.save.doSave('inbox/test')
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local B',
+      originalRaw: 'saved',
+      revision: 1,
+      savedRevision: 0,
+      savingRevision: null,
+      externalRaw: 'disk C',
+      serverMtime: 9,
+      saveStatus: 'external',
+      error: null,
+    })
+    expect(h.applyPostSummary).not.toHaveBeenCalled()
+    expect(h.fileChanges.events.value).toEqual([])
+    expect(h.toastError).not.toHaveBeenCalled()
+  })
+
+  it('keeps external while editing and blocks queued and manual saves', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockResolvedValue(conflict('disk C'))
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    h.save.onEditorChange('inbox/test', 'local B')
+    await h.save.doSave('inbox/test')
+
+    h.save.onEditorChange('inbox/test', 'local B2')
+    await vi.advanceTimersByTimeAsync(800)
+    await h.save.doSaveNow()
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local B2',
+      originalRaw: 'saved',
+      externalRaw: 'disk C',
+      saveStatus: 'external',
+      revision: 2,
+      savedRevision: 0,
+    })
+  })
+
+  it('treats a malformed 409 as a normal save error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'document changed on disk',
+      code: 'EDIT_CONFLICT',
+      current: { mtime: 9, size: 6 },
+    }), { status: 409, headers: { 'content-type': 'application/json' } })))
+    const h = setupSave()
+    h.save.onEditorChange('inbox/test', 'local B')
+
+    await h.save.doSave('inbox/test')
+
+    expect(h.tabs.value[0]).toMatchObject({
+      externalRaw: null,
+      saveStatus: 'error',
+      savedRevision: 0,
+    })
+    expect(h.toastError).toHaveBeenCalledOnce()
   })
 })
 
@@ -355,6 +450,31 @@ describe('useDocumentSave lifecycle barriers', () => {
 
     expect(h.tabs.value[0]).toMatchObject({
       raw: 'changed', originalRaw: 'saved', savedRevision: 0, saveStatus: 'saving',
+    })
+    expect(h.fileChanges.events.value).toEqual([])
+    expect(h.applyPostSummary).not.toHaveBeenCalled()
+    expect(h.toastError).not.toHaveBeenCalled()
+  })
+
+  it('dispose isolates a pending conflict response from the old Workspace', async () => {
+    let finish!: (response: Response) => void
+    const pending = new Promise<Response>((resolve) => { finish = resolve })
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(pending))
+    const h = setupSave()
+    h.save.onEditorChange('inbox/test', 'changed')
+    const saving = h.save.doSave('inbox/test')
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+    h.save.disposeDocumentSave()
+
+    finish(conflict('disk C', 9))
+    await saving
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'changed',
+      originalRaw: 'saved',
+      externalRaw: null,
+      serverMtime: 1,
+      saveStatus: 'saving',
     })
     expect(h.fileChanges.events.value).toEqual([])
     expect(h.applyPostSummary).not.toHaveBeenCalled()

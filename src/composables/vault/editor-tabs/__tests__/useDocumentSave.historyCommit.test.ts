@@ -53,7 +53,10 @@ describe('useDocumentSave prepareHistoryCommit', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/posts/inbox/a', expect.objectContaining({
       method: 'PUT',
-      body: JSON.stringify({ raw: '# Newer editor content' }),
+      body: JSON.stringify({
+        raw: '# Newer editor content',
+        baseRaw: '# Saved content',
+      }),
     }))
     expect(current.originalRaw).toBe('# Newer editor content')
     expect(current.savedRevision).toBe(current.revision)
@@ -74,6 +77,32 @@ describe('useDocumentSave prepareHistoryCommit', () => {
     expect(fetch).toHaveBeenCalledOnce()
     expect(current.raw).toBe('# Newer editor content')
     expect(current.saveStatus).toBe('error')
+  })
+
+  it('stops version creation and preserves external state when saving conflicts', async () => {
+    const current = tab()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'document changed on disk',
+      code: 'EDIT_CONFLICT',
+      current: { raw: '# Disk content', mtime: 9, size: 14 },
+    }), { status: 409, headers: { 'content-type': 'application/json' } })))
+    const save = useDocumentSave({
+      tabs: ref([current]),
+      activePath: ref(current.path),
+      applyPostSummary: vi.fn(),
+      fileChanges: createVaultFileChanges(),
+      toastError: vi.fn(),
+    })
+
+    await expect(save.prepareHistoryCommit(['inbox/a.md'])).rejects.toThrow()
+    expect(current).toMatchObject({
+      raw: '# Newer editor content',
+      originalRaw: '# Saved content',
+      savedRevision: 1,
+      externalRaw: '# Disk content',
+      serverMtime: 9,
+      saveStatus: 'external',
+    })
   })
 
   it('does not touch open documents that are not selected', async () => {
@@ -120,7 +149,10 @@ describe('useDocumentSave prepareHistoryCommit', () => {
     const release = await preparing
 
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
-      body: JSON.stringify({ raw: '# Newer editor content' }),
+      body: JSON.stringify({
+        raw: '# Newer editor content',
+        baseRaw: '# Saved content',
+      }),
     }))
     expect(current.raw).toBe('# Typed after click')
     expect(current.revision).not.toBe(current.savedRevision)
@@ -129,7 +161,10 @@ describe('useDocumentSave prepareHistoryCommit', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
-      body: JSON.stringify({ raw: '# Typed after click' }),
+      body: JSON.stringify({
+        raw: '# Typed after click',
+        baseRaw: '# Newer editor content',
+      }),
     }))
     expect(current.revision).toBe(current.savedRevision)
   })

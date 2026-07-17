@@ -47,7 +47,10 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
       createdAt: Date.UTC(2025, 0, 2),
       updatedAt: Date.UTC(2025, 0, 3),
     })
-    const r = await call('PUT', '/api/posts/put-smoke', { raw: UPDATED_BODY })
+    const r = await call('PUT', '/api/posts/put-smoke', {
+      raw: UPDATED_BODY,
+      baseRaw: ORIGINAL,
+    })
     expect(r.status).toBe(200)
     const onDisk = await fs.readFile(TEST_ABS, 'utf8')
     // Content is byte-for-byte what the client submitted.
@@ -73,13 +76,119 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
   })
 
   it('returns 404 for non-existent file', async () => {
-    const r = await call('PUT', '/api/posts/does-not-exist-xyz', { raw: 'x' })
+    const r = await call('PUT', '/api/posts/does-not-exist-xyz', { raw: 'x', baseRaw: '' })
     expect(r.status).toBe(404)
   })
 
   it('rejects body without raw string', async () => {
     const r = await call('PUT', '/api/posts/put-smoke', { foo: 'bar' })
     expect(r.status).toBe(400)
+  })
+
+  it('rejects body without an exact baseRaw string', async () => {
+    const r = await call('PUT', '/api/posts/put-smoke', { raw: 'new value' })
+    expect(r.status).toBe(400)
+    expect(await fs.readFile(TEST_ABS, 'utf8')).toBe(UPDATED_BODY)
+  })
+
+  it('returns a typed conflict without changing content or metadata', async () => {
+    const metadataBefore = getDocumentMetadata(db, 'put-smoke')
+    const r = await call('PUT', '/api/posts/put-smoke', {
+      raw: 'client edit',
+      baseRaw: ORIGINAL,
+    })
+
+    expect(r.status).toBe(409)
+    const body = await r.json()
+    const stat = await fs.stat(TEST_ABS)
+    expect(body).toEqual({
+      error: 'document changed on disk',
+      code: 'EDIT_CONFLICT',
+      current: {
+        raw: UPDATED_BODY,
+        mtime: stat.mtimeMs,
+        size: stat.size,
+      },
+    })
+    expect(await fs.readFile(TEST_ABS, 'utf8')).toBe(UPDATED_BODY)
+    expect(getDocumentMetadata(db, 'put-smoke')).toEqual(metadataBefore)
+    expect((await fs.readdir(CONTENT_DIR)).some((name) => name.includes('.docus-save-'))).toBe(false)
+  })
+
+  it('treats an already-present requested body as an idempotent success', async () => {
+    const r = await call('PUT', '/api/posts/put-smoke', {
+      raw: UPDATED_BODY,
+      baseRaw: ORIGINAL,
+    })
+
+    expect(r.status).toBe(200)
+    const body = (await r.json()) as SavePostResult
+    expect(body.ok).toBe(true)
+    expect(body.raw).toBe(UPDATED_BODY)
+    expect(body.post.path).toBe('put-smoke')
+    expect(await fs.readFile(TEST_ABS, 'utf8')).toBe(UPDATED_BODY)
+  })
+
+  it('serializes concurrent writes to the same document baseline', async () => {
+    const abs = path.join(CONTENT_DIR, 'put-concurrent.md')
+    const initial = 'A'
+    await fs.writeFile(abs, initial, 'utf8')
+    try {
+      const responses = await Promise.all([
+        call('PUT', '/api/posts/put-concurrent', { raw: 'B', baseRaw: initial }),
+        call('PUT', '/api/posts/put-concurrent', { raw: 'C', baseRaw: initial }),
+      ])
+      const statuses = responses.map((response) => response.status).sort()
+      expect(statuses).toEqual([200, 409])
+      const successfulIndex = responses.findIndex((response) => response.status === 200)
+      expect(await fs.readFile(abs, 'utf8')).toBe(successfulIndex === 0 ? 'B' : 'C')
+      expect((await fs.readdir(CONTENT_DIR)).some((name) => name.includes('.docus-save-'))).toBe(false)
+    } finally {
+      await fs.rm(abs, { force: true })
+      deleteDocumentMetadata(db, 'put-concurrent')
+    }
+  })
+
+  it('atomically restores the previous body when metadata update fails after replacement', async () => {
+    const abs = path.join(CONTENT_DIR, 'put-metadata-rollback.md')
+    const original = '# Original\n'
+    await fs.writeFile(abs, original, 'utf8')
+    saveDocumentMetadata(db, {
+      path: 'put-metadata-rollback',
+      title: 'Rollback',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    db.exec(`
+      CREATE TABLE put_metadata_update_count (count INTEGER NOT NULL);
+      INSERT INTO put_metadata_update_count VALUES (0);
+      CREATE TRIGGER fail_second_put_metadata_update
+      BEFORE UPDATE ON documents
+      BEGIN
+        UPDATE put_metadata_update_count SET count = count + 1;
+        SELECT CASE
+          WHEN (SELECT count FROM put_metadata_update_count) >= 2
+          THEN RAISE(ABORT, 'forced metadata failure')
+        END;
+      END;
+    `)
+    try {
+      const r = await call('PUT', '/api/posts/put-metadata-rollback', {
+        raw: '# Replacement\n',
+        baseRaw: original,
+      })
+
+      expect(r.status).toBe(500)
+      expect(await fs.readFile(abs, 'utf8')).toBe(original)
+      expect((await fs.readdir(CONTENT_DIR)).some((name) => name.includes('.docus-save-'))).toBe(false)
+    } finally {
+      db.exec(`
+        DROP TRIGGER IF EXISTS fail_second_put_metadata_update;
+        DROP TABLE IF EXISTS put_metadata_update_count;
+      `)
+      await fs.rm(abs, { force: true })
+      deleteDocumentMetadata(db, 'put-metadata-rollback')
+    }
   })
 
   it('does not insert or replace legacy updated fields', async () => {
@@ -94,6 +203,7 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
     try {
       const r = await call('PUT', '/api/posts/put-replace', {
         raw: '---\ntitle: replace\n---\n\nbody\n',
+        baseRaw: `---\ntitle: replace\nupdated: 2020-01-01\n---\n\nbody\n`,
       })
       expect(r.status).toBe(200)
       const onDisk = await fs.readFile(abs, 'utf8')
@@ -111,6 +221,7 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
     try {
       const r = await call('PUT', '/api/posts/put-no-fm', {
         raw: '# Body only, no frontmatter\n',
+        baseRaw: '# Body only, no frontmatter\n',
       })
       expect(r.status).toBe(200)
       const onDisk = await fs.readFile(abs, 'utf8')
@@ -136,7 +247,8 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
     ].join('\n'), 'utf8')
     try {
       const raw = '# Body title\n'
-      const r = await call('PUT', '/api/posts/put-import-before-clean', { raw })
+      const baseRaw = await fs.readFile(abs, 'utf8')
+      const r = await call('PUT', '/api/posts/put-import-before-clean', { raw, baseRaw })
       expect(r.status).toBe(200)
       expect(await fs.readFile(abs, 'utf8')).toBe(raw)
       expect(getDocumentMetadata(db, 'put-import-before-clean')).toMatchObject({
@@ -151,7 +263,10 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
   })
 
   it('restores original content verbatim for downstream tests', async () => {
-    const r = await call('PUT', '/api/posts/put-smoke', { raw: ORIGINAL })
+    const r = await call('PUT', '/api/posts/put-smoke', {
+      raw: ORIGINAL,
+      baseRaw: UPDATED_BODY,
+    })
     expect(r.status).toBe(200)
     const onDisk = await fs.readFile(TEST_ABS, 'utf8')
     expect(onDisk).toBe(ORIGINAL)

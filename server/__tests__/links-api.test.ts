@@ -138,7 +138,7 @@ describe('write routes update the index', () => {
     const put = await app.fetch(new Request('http://localhost/api/posts/c', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ raw: '# c\nsee [[a]]' }),
+      body: JSON.stringify({ raw: '# c\nsee [[a]]', baseRaw: '# c' }),
     }))
     expect(put.status).toBe(200)
 

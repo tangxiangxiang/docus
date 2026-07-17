@@ -18,6 +18,32 @@ export interface SavePostResult {
   post: PostSummary
 }
 
+export interface SavePostInput {
+  raw: string
+  baseRaw: string
+}
+
+export interface SavePostConflictPayload {
+  error: string
+  code: 'EDIT_CONFLICT'
+  current: {
+    raw: string
+    mtime: number
+    size: number
+  }
+}
+
+export class SavePostConflictError extends Error {
+  readonly code = 'EDIT_CONFLICT'
+  readonly current: SavePostConflictPayload['current']
+
+  constructor(current: SavePostConflictPayload['current']) {
+    super('document changed on disk')
+    this.name = 'SavePostConflictError'
+    this.current = current
+  }
+}
+
 export type TreeNode =
   | { kind: 'file';   name: string; path: string; title: string; mtime: number }
   | { kind: 'folder'; name: string; path: string; children: TreeNode[] }
@@ -107,12 +133,37 @@ export async function getPost(path: string): Promise<PostDetail> {
   return jsonOrThrow<PostDetail>(await fetch('/api/posts/' + splat(path)))
 }
 
-export async function savePost(path: string, raw: string): Promise<SavePostResult> {
-  return jsonOrThrow<SavePostResult>(await fetch('/api/posts/' + splat(path), {
+function isSavePostConflictPayload(value: unknown): value is SavePostConflictPayload {
+  if (!value || typeof value !== 'object') return false
+  const payload = value as Partial<SavePostConflictPayload>
+  const current = payload.current
+  return payload.code === 'EDIT_CONFLICT'
+    && typeof payload.error === 'string'
+    && Boolean(current)
+    && typeof current?.raw === 'string'
+    && typeof current?.mtime === 'number'
+    && Number.isFinite(current.mtime)
+    && typeof current?.size === 'number'
+    && Number.isFinite(current.size)
+}
+
+export async function savePost(
+  path: string,
+  raw: string,
+  baseRaw: string,
+): Promise<SavePostResult> {
+  const response = await fetch('/api/posts/' + splat(path), {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ raw }),
-  }))
+    body: JSON.stringify({ raw, baseRaw } satisfies SavePostInput),
+  })
+  if (response.status === 409) {
+    const payload = await response.clone().json().catch(() => null)
+    if (isSavePostConflictPayload(payload)) {
+      throw new SavePostConflictError(payload.current)
+    }
+  }
+  return jsonOrThrow<SavePostResult>(response)
 }
 
 export async function recoverPost(path: string, raw: string): Promise<{ ok: true; raw: string; mtime: number }> {

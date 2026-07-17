@@ -1,0 +1,56 @@
+import { promises as fs } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { atomicReplaceText, prepareAtomicTextWrite } from '../atomicTextWrite'
+
+let directory = ''
+let target = ''
+
+async function temporaryFiles(): Promise<string[]> {
+  return (await fs.readdir(directory)).filter((name) => name.includes('.docus-save-'))
+}
+
+beforeEach(async () => {
+  directory = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-atomic-write-'))
+  target = path.join(directory, 'note.md')
+  await fs.writeFile(target, 'original', 'utf8')
+  await fs.chmod(target, 0o640)
+})
+
+afterEach(async () => {
+  vi.restoreAllMocks()
+  await fs.rm(directory, { recursive: true, force: true })
+})
+
+describe('atomic text writes', () => {
+  it('replaces complete content, preserves mode, and removes its temporary file', async () => {
+    const before = await fs.stat(target)
+    await atomicReplaceText(target, 'complete replacement', { mode: before.mode })
+
+    const after = await fs.stat(target)
+    expect(await fs.readFile(target, 'utf8')).toBe('complete replacement')
+    expect(after.mode & 0o777).toBe(before.mode & 0o777)
+    expect(await temporaryFiles()).toEqual([])
+  })
+
+  it('keeps the original intact and cleans up when rename fails', async () => {
+    const renameError = Object.assign(new Error('rename failed'), { code: 'EIO' })
+    const rename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(renameError)
+
+    await expect(atomicReplaceText(target, 'replacement')).rejects.toThrow('rename failed')
+    expect(rename).toHaveBeenCalledOnce()
+    expect(await fs.readFile(target, 'utf8')).toBe('original')
+    expect(await temporaryFiles()).toEqual([])
+  })
+
+  it('can discard a prepared complete write without touching the target', async () => {
+    const prepared = await prepareAtomicTextWrite(target, 'replacement')
+    expect(await fs.readFile(target, 'utf8')).toBe('original')
+    expect(await temporaryFiles()).toHaveLength(1)
+
+    await prepared.rollback()
+    expect(await fs.readFile(target, 'utf8')).toBe('original')
+    expect(await temporaryFiles()).toEqual([])
+  })
+})

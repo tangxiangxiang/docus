@@ -10,6 +10,8 @@ import {
   saveDocumentMetadata,
 } from '../documentMetadata.js'
 import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
+import { atomicReplaceText, prepareAtomicTextWrite } from '../atomicTextWrite.js'
+import { withDocumentWriteLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { trackCleanedDocumentWrite } from '../metadataMigration.js'
 import { CONTENT_DIR, filePathFor, isValidPathSyntax, isValidSegment } from '../paths.js'
@@ -96,42 +98,105 @@ postRoutes.put('/api/posts/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/posts\//, '')
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
-  if (!await exists(abs)) return bad(c, 'not found', 404)
-  const body = await c.req.json().catch(() => null) as { raw?: string } | null
-  if (!body || typeof body.raw !== 'string') return bad(c, 'raw required')
-  const previousRaw = await fs.readFile(abs, 'utf8')
-  const previousStat = await fs.stat(abs)
-  // Import legacy metadata before the editor can remove its Frontmatter.
-  ensureMetadata(splat, previousRaw, previousStat.mtimeMs)
-  await fs.writeFile(abs, body.raw, 'utf8')
-  let stat: Awaited<ReturnType<typeof fs.stat>>
-  let metadata: ReturnType<typeof ensureMetadata>
-  try {
-    stat = await fs.stat(abs)
-    metadata = ensureMetadata(splat, body.raw, stat.mtimeMs, Date.now())
-    trackCleanedDocumentWrite(metadataDb(), splat, body.raw)
-  } catch (error) {
-    await fs.writeFile(abs, previousRaw, 'utf8')
-    throw error
+  const body = await c.req.json().catch(() => null) as {
+    raw?: unknown
+    baseRaw?: unknown
+  } | null
+  if (!body || typeof body.raw !== 'string' || typeof body.baseRaw !== 'string') {
+    return bad(c, 'raw and baseRaw required')
   }
-  try {
-    const idx = await getLinkIndex()
-    idx.applyWrite(splat, body.raw)
-  } catch { /* ignore */ }
-  return c.json({
-    ok: true,
-    raw: body.raw,
-    post: {
-      path: splat,
-      title: metadata.title,
-      created: new Date(metadata.createdAt).toISOString().slice(0, 10),
-      updated: new Date(metadata.updatedAt).toISOString().slice(0, 10),
-      tags: [...metadata.tags],
-      summary: metadata.summary,
-      size: stat.size,
-      mtime: stat.mtimeMs,
-    },
-  } satisfies SavePostResult)
+  const requestedRaw = body.raw
+  const baseRaw = body.baseRaw
+
+  return withDocumentWriteLock(splat, async () => {
+    if (!await exists(abs)) return bad(c, 'not found', 404)
+
+    const currentRaw = await fs.readFile(abs, 'utf8')
+    const currentStat = await fs.stat(abs)
+    const conflict = (raw: string, stat: Awaited<ReturnType<typeof fs.stat>>) => c.json({
+      error: 'document changed on disk',
+      code: 'EDIT_CONFLICT' as const,
+      current: {
+        raw,
+        mtime: Number(stat.mtimeMs),
+        size: Number(stat.size),
+      },
+    }, 409)
+    const result = (
+      raw: string,
+      stat: Awaited<ReturnType<typeof fs.stat>>,
+      metadata: ReturnType<typeof ensureMetadata>,
+    ) => ({
+      ok: true,
+      raw,
+      post: {
+        path: splat,
+        title: metadata.title,
+        created: new Date(metadata.createdAt).toISOString().slice(0, 10),
+        updated: new Date(metadata.updatedAt).toISOString().slice(0, 10),
+        tags: [...metadata.tags],
+        summary: metadata.summary,
+        size: Number(stat.size),
+        mtime: Number(stat.mtimeMs),
+      },
+    } satisfies SavePostResult)
+
+    // A retry whose first response was lost is already durably complete.
+    if (currentRaw === requestedRaw) {
+      const metadata = ensureMetadata(splat, currentRaw, currentStat.mtimeMs)
+      try {
+        const idx = await getLinkIndex()
+        idx.applyWrite(splat, currentRaw)
+      } catch { /* ignore */ }
+      return c.json(result(currentRaw, currentStat, metadata))
+    }
+
+    if (currentRaw !== baseRaw) {
+      return conflict(currentRaw, currentStat)
+    }
+
+    const prepared = await prepareAtomicTextWrite(abs, requestedRaw, { mode: currentStat.mode })
+    try {
+      // Re-check after preparing the complete temporary file so a change
+      // observed in that window is never knowingly overwritten.
+      const verifiedRaw = await fs.readFile(abs, 'utf8')
+      if (verifiedRaw !== currentRaw) {
+        const verifiedStat = await fs.stat(abs)
+        await prepared.rollback()
+        return conflict(verifiedRaw, verifiedStat)
+      }
+
+      // Import legacy metadata before the editor can remove its Frontmatter.
+      ensureMetadata(splat, currentRaw, currentStat.mtimeMs)
+      await prepared.commit()
+    } catch (error) {
+      await prepared.rollback()
+      throw error
+    }
+
+    let stat: Awaited<ReturnType<typeof fs.stat>>
+    let metadata: ReturnType<typeof ensureMetadata>
+    try {
+      stat = await fs.stat(abs)
+      metadata = ensureMetadata(splat, requestedRaw, stat.mtimeMs, Date.now())
+      trackCleanedDocumentWrite(metadataDb(), splat, requestedRaw)
+    } catch (error) {
+      try {
+        await atomicReplaceText(abs, currentRaw, { mode: currentStat.mode })
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          'metadata update failed and document rollback was incomplete',
+        )
+      }
+      throw error
+    }
+    try {
+      const idx = await getLinkIndex()
+      idx.applyWrite(splat, requestedRaw)
+    } catch { /* ignore */ }
+    return c.json(result(requestedRaw, stat, metadata))
+  })
 })
 
 postRoutes.put('/api/recover/*', async (c) => {

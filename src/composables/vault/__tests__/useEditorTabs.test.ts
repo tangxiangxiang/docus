@@ -88,7 +88,17 @@ interface Harness {
   activeSize: Ref<number>
   posts: Ref<PostSummary[]>
   tree: Ref<TreeNode[]>
-  tabs: Ref<{ path: string; raw: string; originalRaw: string; saveStatus: string; loadError: string | null; serverMtime?: number; externalRaw?: string | null }[]>
+  tabs: Ref<{
+    path: string
+    raw: string
+    originalRaw: string
+    revision: number
+    savedRevision: number
+    saveStatus: string
+    loadError: string | null
+    serverMtime?: number
+    externalRaw?: string | null
+  }[]>
   // The selectPanel / toggleViewMode spies are captured separately
   // because the composable receives them as constructor args and
   // doesn't return them.
@@ -501,7 +511,7 @@ describe('useEditorTabs', () => {
     h.onEditorChange('a', 'A modified')
     expect(h.tabs.value[0].saveStatus).toBe('dirty')
     await h.doSaveNow()
-    expect(putBody).toEqual({ raw: 'A modified' })
+    expect(putBody).toEqual({ raw: 'A modified', baseRaw: 'A' })
     expect(h.tabs.value[0].saveStatus).toBe('saved')
     expect(h.tabs.value[0].originalRaw).toBe('A modified')
   })
@@ -804,11 +814,15 @@ describe('useEditorTabs', () => {
 
   it('keeps the local version after an external conflict and saves it', async () => {
     vi.useFakeTimers()
-    const writes: string[] = []
+    const writes: Array<{ raw: string; baseRaw: string }> = []
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [], 'GET /api/posts': () => [],
       'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: '', frontmatter: {}, size: 1, mtime: 1 }),
-      'PUT /api/posts/a': (body) => { writes.push((body as { raw: string }).raw); return saveResult('a', writes.at(-1)!) },
+      'PUT /api/posts/a': (body) => {
+        const input = body as { raw: string; baseRaw: string }
+        writes.push(input)
+        return saveResult('a', input.raw)
+      },
     }))
     const h = await setup()
     await h.openPost('a')
@@ -817,8 +831,38 @@ describe('useEditorTabs', () => {
     h.tabs.value[0].externalRaw = 'disk'
     await h.resolveExternal('a', 'local')
     await vi.advanceTimersByTimeAsync(1)
-    expect(writes).toContain('local')
+    expect(writes).toEqual([{ raw: 'local', baseRaw: 'disk' }])
     expect(h.tabs.value[0].saveStatus).toBe('saved')
+  })
+
+  it('keeps local without a redundant PUT when it already equals the disk snapshot', async () => {
+    vi.useFakeTimers()
+    let putCount = 0
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [], 'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: '', frontmatter: {}, size: 1, mtime: 1 }),
+      'PUT /api/posts/a': () => {
+        putCount += 1
+        return saveResult('a', 'disk')
+      },
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    h.onEditorChange('a', 'disk')
+    h.tabs.value[0].saveStatus = 'external'
+    h.tabs.value[0].externalRaw = 'disk'
+
+    await h.resolveExternal('a', 'local')
+    await vi.advanceTimersByTimeAsync(800)
+
+    expect(putCount).toBe(0)
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'disk',
+      originalRaw: 'disk',
+      externalRaw: null,
+      saveStatus: 'idle',
+    })
+    expect(h.tabs.value[0].revision).toBe(h.tabs.value[0].savedRevision)
   })
 
   it('marks a failed save offline and retries when connectivity returns', async () => {
