@@ -76,18 +76,38 @@ function positionTooltip(anchor: HTMLElement) {
   const margin = 8
   const preferredTop = rect.bottom + margin
   const tooltipMaxWidth = 360
-  const tooltipWidth = Math.min(tooltipMaxWidth, window.innerWidth - 16)
+  // First-pass clamp using the planned width. This gets the tooltip
+  // close enough that the post-render `getBoundingClientRect` check
+  // below doesn't have to move it far.
+  const plannedWidth = Math.min(tooltipMaxWidth, window.innerWidth - 16)
   let left = rect.left
-  // Keep the tooltip within the viewport horizontally.
-  if (left + tooltipWidth > window.innerWidth - 8) {
-    left = Math.max(8, window.innerWidth - 8 - tooltipWidth)
+  if (left + plannedWidth > window.innerWidth - 8) {
+    left = Math.max(8, window.innerWidth - 8 - plannedWidth)
   }
-  const style: Record<string, string> = {
+  tooltipStyle.value = {
     left: `${Math.round(left)}px`,
     top: `${Math.round(preferredTop)}px`,
     maxWidth: `${tooltipMaxWidth}px`,
   }
-  tooltipStyle.value = style
+  // Second-pass clamp: after the tooltip has rendered, read its
+  // actual outer width via getBoundingClientRect (which includes
+  // padding + border) and re-clamp. Without this, a long path line
+  // that wraps to multiple lines or a status row with extra glyphs
+  // can overflow the right edge by up to (padding + border) px even
+  // though the inline maxWidth looks fine.
+  nextTick(() => {
+    if (tooltipTabId.value === null) return
+    const el = document.getElementById(tooltipId(tooltipTabId.value))
+    if (!el) return
+    const actual = el.getBoundingClientRect()
+    const currentLeft = parseInt(tooltipStyle.value.left ?? '0', 10)
+    if (currentLeft + actual.width > window.innerWidth - 8) {
+      const nextLeft = Math.max(8, Math.round(window.innerWidth - 8 - actual.width))
+      tooltipStyle.value = { ...tooltipStyle.value, left: `${nextLeft}px` }
+    } else if (currentLeft < 8) {
+      tooltipStyle.value = { ...tooltipStyle.value, left: '8px' }
+    }
+  })
 }
 
 function onTooltipAnchorEnter(tab: WorkspaceTab, event: MouseEvent | FocusEvent) {
@@ -119,6 +139,18 @@ function onTooltipKeydown(event: KeyboardEvent) {
 // Hide the tooltip when the active tab switches — the new active tab
 // takes the focus anyway and the old tooltip is no longer relevant.
 const activePathRef = computed(() => props.activePath)
+
+// Hide the tooltip when its owning tab disappears from the props.
+// Without this watcher, tooltipTabId would still reference the
+// removed tab; a later re-mount of the same id would find the tab
+// in the (new) list and immediately re-show the tooltip without any
+// user hover or focus.
+const tabIds = computed(() => props.tabs.map((t) => t.id))
+watch(tabIds, (next) => {
+  if (tooltipTabId.value && !next.includes(tooltipTabId.value)) {
+    hideTooltip()
+  }
+})
 
 // --- tab close button click → hide tooltip before emission ---
 function onCloseClick(tab: WorkspaceTab) {
@@ -225,22 +257,29 @@ watch(activePathRef, () => { hideTooltip() })
       @focusout="onTooltipAnchorBlur($event)"
       @keydown="onTooltipKeydown"
     >
+      <!-- Dirty marker: independent of the save-status indicator so a
+           dirty buffer is still visible when error / offline / external
+           colours are painted. Shape (filled dot) is constant; color
+           comes from the .tab-dirty-indicator rule. -->
       <span
-        class="tab-dot"
-        :class="{
-          dirty: t.kind === 'document' && t.save.dirty,
-          'in-flight': t.kind === 'document' && t.save.inFlight,
-          'newer-changes': t.kind === 'document' && t.save.hasNewerChanges,
-          error: tabPresentations[i].statusKind === 'error',
-          offline: tabPresentations[i].statusKind === 'offline',
-          external: tabPresentations[i].statusKind === 'external',
-        }"
+        v-if="t.kind === 'document' && t.save.dirty"
+        class="tab-dirty-indicator"
+        :data-newer-changes="t.save.hasNewerChanges ? 'true' : undefined"
+        aria-hidden="true"
+      />
+      <!-- Save-status indicator: distinct per status kind so users
+           can tell saving / error / offline / external apart by shape,
+           not just by color. Skipped for 'none' and 'dirty' (dirty is
+           already covered by the dirty marker above). -->
+      <span
+        v-if="tabPresentations[i].statusKind !== 'none' && tabPresentations[i].statusKind !== 'dirty'"
+        class="tab-status-indicator"
+        :data-kind="tabPresentations[i].statusKind"
         aria-hidden="true"
       />
       <span class="tab-title">{{ tabPresentations[i].displayTitle }}</span>
       <button
         class="tab-close"
-        :title="translate('workspace_tab.close')"
         :aria-label="translate('workspace_tab.close_named', { name: tabPresentations[i].displayTitle })"
         @click.stop="onCloseClick(t)"
       >×</button>

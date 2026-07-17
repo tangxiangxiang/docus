@@ -207,7 +207,8 @@ describe('EditorTabs (existing behavior)', () => {
 
     expect(w.get('.tab').classes()).toContain('history')
     expect(w.get('.tab-title').text()).toBe('Redis Notes (History)')
-    expect(w.get('.tab-dot').classes()).not.toContain('dirty')
+    expect(w.find('.tab-dirty-indicator').exists()).toBe(false)
+    expect(w.find('.tab-status-indicator').exists()).toBe(false)
   })
 
   it('renders a dedicated comparison presentation tab', () => {
@@ -222,7 +223,8 @@ describe('EditorTabs (existing behavior)', () => {
 
     expect(wrapper.get('.tab').classes()).toContain('diff')
     expect(wrapper.get('.tab-title').text()).toBe('Redis Notes (Diff)')
-    expect(wrapper.get('.tab-dot').classes()).not.toContain('dirty')
+    expect(wrapper.find('.tab-dirty-indicator').exists()).toBe(false)
+    expect(wrapper.find('.tab-status-indicator').exists()).toBe(false)
   })
 
   it('keeps dirty and in-flight semantics visible while saving', () => {
@@ -244,10 +246,12 @@ describe('EditorTabs (existing behavior)', () => {
     const rendered = wrapper.findAll('.tab')
 
     expect(rendered[0]!.attributes('data-save-status')).toBe('saving')
-    expect(rendered[0]!.get('.tab-dot').classes()).toEqual(expect.arrayContaining(['dirty', 'in-flight']))
+    expect(rendered[0]!.find('.tab-dirty-indicator').exists()).toBe(true)
+    expect(rendered[0]!.find('.tab-status-indicator[data-kind="saving"]').exists()).toBe(true)
     expect(rendered[0]!.attributes('aria-label')).toContain('Saving…')
     expect(rendered[1]!.attributes('data-save-status')).toBe('saving-dirty')
-    expect(rendered[1]!.get('.tab-dot').classes()).toEqual(expect.arrayContaining(['dirty', 'in-flight', 'newer-changes']))
+    expect(rendered[1]!.find('.tab-dirty-indicator[data-newer-changes="true"]').exists()).toBe(true)
+    expect(rendered[1]!.find('.tab-status-indicator[data-kind="saving"]').exists()).toBe(true)
     expect(rendered[1]!.attributes('aria-label')).toContain('newer changes pending')
   })
 
@@ -257,8 +261,15 @@ describe('EditorTabs (existing behavior)', () => {
     }))
     const wrapper = mount(EditorTabs, { props: { tabs, activePath: tabs[0]!.id } })
 
-    for (const rendered of wrapper.findAll('.tab')) {
-      expect(rendered.get('.tab-dot').classes()).toContain('dirty')
+    for (let i = 0; i < tabs.length; i++) {
+      const rendered = wrapper.findAll('.tab')[i]!
+      // The dirty buffer marker MUST stay visible next to the status
+      // indicator — this is the regression that motivated the split
+      // (the old single `.tab-dot` let the status color overwrite the
+      // dirty fill, making `external + dirty` indistinguishable from
+      // `external + clean`).
+      expect(rendered.find('.tab-dirty-indicator').exists()).toBe(true)
+      expect(rendered.find(`.tab-status-indicator[data-kind="${tabs[i]!.save.status}"]`).exists()).toBe(true)
       expect(rendered.classes()).toContain('save-attention')
     }
   })
@@ -281,8 +292,8 @@ describe('EditorTabs (existing behavior)', () => {
     expect(rendered[4]!.attributes('data-save-status')).toBeUndefined()
     expect(rendered[3]!.attributes('aria-label')).not.toContain('Idle')
     expect(rendered[4]!.attributes('aria-label')).not.toContain('Idle')
-    expect(rendered[3]!.get('.tab-dot').classes()).not.toContain('dirty')
-    expect(rendered[4]!.get('.tab-dot').classes()).not.toContain('dirty')
+    expect(rendered[3]!.find('.tab-dirty-indicator').exists()).toBe(false)
+    expect(rendered[4]!.find('.tab-dirty-indicator').exists()).toBe(false)
   })
 
   it('uses roving tabindex and can restore focus to a workspace tab', () => {
@@ -633,5 +644,211 @@ describe('EditorTabs ARIA', () => {
     expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('Redis (History)')
     expect(tooltip.querySelector('.tab-tooltip-status')).toBeNull()
     w.unmount()
+  })
+})
+
+describe('EditorTabs — round-2 regression tests', () => {
+  beforeEach(() => {
+    useI18n().setLocale('zh')
+    document.querySelectorAll('.tab-context-menu').forEach((el) => el.remove())
+    document.querySelectorAll('.tab-tooltip').forEach((el) => el.remove())
+  })
+
+  // --- P1: path appears only once even when the upstream mapping
+  // produces a title that happens to include the path. The EditorTabs
+  // contract is that `title` is the pure document title and `id` is
+  // the full path — the presentation module derives displayTitle and
+  // fullPath independently and the tooltip suppresses the path line
+  // when it would just duplicate the title. ----------------
+  it('renders a real VaultView-shaped document WorkspaceTab without repeating the path', async () => {
+    useI18n().setLocale('zh')
+    // Mirror the VaultView mapping exactly: id = full path, title =
+    // pure title (or path fallback), label = basename.
+    const tab = makeTab('inbox/test-document-1', {
+      label: 'test-document-1',
+      title: 'inbox/test-document-1', // title fallback to path
+    })
+    const w = mount(EditorTabs, {
+      props: { tabs: [tab], activePath: tab.id },
+      attachTo: document.body,
+    })
+    await w.find('.tab').trigger('mouseenter')
+    await flushPromises()
+    const tooltip = document.querySelector('.tab-tooltip')!
+    const title = tooltip.querySelector('.tab-tooltip-title')!.textContent!
+    const pathEl = tooltip.querySelector('.tab-tooltip-path')
+    // The tab strip itself must show only the basename.
+    expect(w.find('.tab-title').text()).toBe('test-document-1')
+    // The tooltip title is the basename; the full path appears at
+    // most once, never as the title.
+    expect(title).toBe('test-document-1')
+    if (pathEl) {
+      // The full path is shown at most once and never as the title.
+      const occurrences = (tooltip.textContent ?? '').split('inbox/test-document-1').length - 1
+      expect(occurrences).toBe(1)
+    }
+    w.unmount()
+  })
+
+  it('renders a Chinese title alongside the path without duplicating either', async () => {
+    useI18n().setLocale('zh')
+    const tab = makeTab('inbox/test-document-1', {
+      label: '测试列表',
+      title: '测试列表',
+    })
+    const w = mount(EditorTabs, {
+      props: { tabs: [tab], activePath: tab.id },
+      attachTo: document.body,
+    })
+    expect(w.find('.tab-title').text()).toBe('测试列表')
+    await w.find('.tab').trigger('mouseenter')
+    await flushPromises()
+    const tooltip = document.querySelector('.tab-tooltip')!
+    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('测试列表')
+    expect(tooltip.querySelector('.tab-tooltip-path')!.textContent).toBe('inbox/test-document-1')
+    w.unmount()
+  })
+
+  // --- P1: dirty + error/offline/external indicators both visible.
+  it('shows the dirty marker AND the status indicator together for error/offline/external', () => {
+    const tabs = (['error', 'offline', 'external'] as const).map((status) =>
+      makeTab(`${status}-combined.md`, {
+        save: save({ status, dirty: true, retryable: status !== 'external', attention: true }),
+      }),
+    )
+    const w = mount(EditorTabs, { props: { tabs, activePath: tabs[0]!.id } })
+    for (const t of tabs) {
+      const row = w.findAll('.tab').find((r) => r.attributes('data-tab-id') === t.id)!
+      expect(row.find('.tab-dirty-indicator').exists()).toBe(true)
+      expect(row.find(`.tab-status-indicator[data-kind="${t.save.status}"]`).exists()).toBe(true)
+      // The two are siblings — independent DOM elements, not nested.
+      const dirty = row.find('.tab-dirty-indicator').element
+      const status = row.find(`.tab-status-indicator[data-kind="${t.save.status}"]`).element
+      expect(dirty).not.toBe(status)
+    }
+    w.unmount()
+  })
+
+  // --- P2: tooltip id cleanup when the parent removes the tab.
+  it('does not auto-revive a tooltip when the same id reappears later', async () => {
+    const tabB = TABS.find((t) => t.id === 'b.md')!
+    const initial = TABS
+    const w = mount(EditorTabs, {
+      props: { tabs: initial, activePath: 'a.md' },
+      attachTo: document.body,
+    })
+    const rowB = w.findAll('.tab').find((t) => t.find('.tab-title').text() === 'b')!
+    await rowB.trigger('mouseenter')
+    await flushPromises()
+    expect(document.querySelector('.tab-tooltip')!.getAttribute('id')).toBe('tab-tooltip-b_md')
+    // Parent removes b.md; activePath stays a.md so no other lifecycle
+    // path closes the tooltip.
+    await w.setProps({ tabs: TABS.filter((t) => t.id !== 'b.md'), activePath: 'a.md' })
+    await flushPromises()
+    expect(document.querySelector('.tab-tooltip')).toBeNull()
+    // Re-add b.md without any hover/focus — tooltip must stay closed.
+    await w.setProps({ tabs: [...TABS], activePath: 'a.md' })
+    await flushPromises()
+    expect(document.querySelector('.tab-tooltip')).toBeNull()
+    // Hovering b.md again opens it normally.
+    const rowBAfter = w.findAll('.tab').find((t) => t.find('.tab-title').text() === 'b')!
+    await rowBAfter.trigger('mouseenter')
+    await flushPromises()
+    expect(document.querySelector('.tab-tooltip')).not.toBeNull()
+    w.unmount()
+  })
+
+  // --- P2: close button has no native title attribute (so we don't
+  // get two tooltips on hover). The aria-label covers accessibility.
+  it('does not set a native title attribute on the close button', () => {
+    const w = mount(EditorTabs, {
+      props: { tabs: TABS, activePath: 'a.md' },
+    })
+    const closeButtons = w.findAll('.tab-close')
+    for (const btn of closeButtons) {
+      expect(btn.attributes('title')).toBeUndefined()
+      expect(btn.attributes('aria-label')).toBeTruthy()
+    }
+    w.unmount()
+  })
+
+  it('does not set a native title attribute on the tab row itself', () => {
+    const w = mount(EditorTabs, {
+      props: { tabs: TABS, activePath: 'a.md' },
+    })
+    for (const row of w.findAll('.tab')) {
+      expect(row.attributes('title')).toBeUndefined()
+    }
+    w.unmount()
+  })
+
+  // --- P2: tooltip viewport clamp uses actual rendered width.
+  it('keeps the tooltip fully inside the viewport for an oversize path', async () => {
+    const longPath = 'inbox/very-long-path-that-definitely-exceeds-the-viewport-width/document.md'
+    const w = mount(EditorTabs, {
+      props: {
+        tabs: [makeTab(longPath, { title: '' })],
+        activePath: longPath,
+      },
+      attachTo: document.body,
+    })
+    const row = w.find('.tab')
+    await row.trigger('mouseenter')
+    // Allow the post-render clamp (nextTick + getBoundingClientRect) to run.
+    await flushPromises()
+    await flushPromises()
+    const tooltip = document.querySelector<HTMLElement>('.tab-tooltip')!
+    const rect = tooltip.getBoundingClientRect()
+    expect(rect.left).toBeGreaterThanOrEqual(0)
+    expect(rect.right).toBeLessThanOrEqual(window.innerWidth + 0.5)
+    w.unmount()
+  })
+
+  it('keeps the tooltip inside the viewport when anchored at the right edge', async () => {
+    const shortPath = 'a.md'
+    const w = mount(EditorTabs, {
+      props: {
+        tabs: [makeTab(shortPath, { title: '' })],
+        activePath: shortPath,
+      },
+      attachTo: document.body,
+    })
+    // Force the anchor near the right edge of the viewport.
+    const row = w.find<HTMLElement>('.tab').element
+    row.getBoundingClientRect = () => ({
+      left: window.innerWidth - 20,
+      right: window.innerWidth - 1,
+      top: 0,
+      bottom: 36,
+      width: 19,
+      height: 36,
+      x: window.innerWidth - 20,
+      y: 0,
+      toJSON: () => '',
+    })
+    await row.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+    await flushPromises()
+    await flushPromises()
+    const tooltip = document.querySelector<HTMLElement>('.tab-tooltip')!
+    const rect = tooltip.getBoundingClientRect()
+    expect(rect.right).toBeLessThanOrEqual(window.innerWidth + 0.5)
+    expect(rect.left).toBeGreaterThanOrEqual(0)
+    w.unmount()
+  })
+
+  // --- history/diff keep the original title semantics; the change to
+  // VaultView must not strip the document title from their aria-label.
+  it('history and diff tabs continue to surface their document title', () => {
+    useI18n().setLocale('zh')
+    const tabs = [
+      makeTab('history:redis', { kind: 'history', label: 'Redis (历史)', title: 'Redis' }),
+      makeTab('diff:redis', { kind: 'diff', label: 'Redis (差异)', title: 'Redis' }),
+    ]
+    const w = mount(EditorTabs, { props: { tabs, activePath: tabs[0]!.id } })
+    const rendered = w.findAll('.tab')
+    expect(rendered[0]!.attributes('aria-label')).toBe('Redis (历史)')
+    expect(rendered[1]!.attributes('aria-label')).toBe('Redis (差异)')
+    expect(rendered[0]!.find('.tab-dirty-indicator').exists()).toBe(false)
+    expect(rendered[0]!.find('.tab-status-indicator').exists()).toBe(false)
   })
 })

@@ -1807,6 +1807,11 @@ main.container {
   display: grid;
   gap: 4px;
   padding: 8px 12px;
+  /* box-sizing: border-box so the inline maxWidth cap accounts for
+     padding (24px) + border (2px). Without it the right-edge clamp
+     can leave up to 26px of overflow because the inner width alone
+     is what the cap sees. */
+  box-sizing: border-box;
   background: var(--bg-soft, #252526);
   color: var(--text-h, #ddd);
   border: 1px solid var(--border, #454545);
@@ -2352,22 +2357,96 @@ main.container {
   height: 2px;
   background: var(--vs-accent);
 }
-.tab-dot {
+/* Dirty marker — independent of the save-status indicator so a
+   dirty buffer stays visible when error / offline / external paint
+   their own glyph next to it. Solid filled circle with the accent
+   color; when a save is in-flight AND the user has edited past the
+   saved baseline, an outer ring is added so the "saving but newer
+   changes pending" state is distinguishable from a plain dirty. */
+.tab-dirty-indicator {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: transparent;
+  background: var(--vs-accent);
   flex-shrink: 0;
+  box-sizing: border-box;
 }
-.tab-dot.dirty { background: var(--vs-accent); }
-.tab-dot.in-flight { box-shadow: 0 0 0 1px var(--vs-text-1); }
-.tab-dot.in-flight.newer-changes { box-shadow: 0 0 0 1px var(--vs-text-1), 0 0 0 2px var(--vs-accent); }
-/* Status-kind glyphs complement the dirty dot — the dot is the
-   primary signal, the glyph is the secondary one. History / diff /
-   idle / saved tabs use no glyph at all. */
-.tab-dot.error { background: var(--vs-error, #e06060); }
-.tab-dot.offline { background: var(--vs-text-3, #888); }
-.tab-dot.external { background: var(--vs-warning, #f0a040); }
+.tab-dirty-indicator[data-newer-changes="true"] {
+  /* outer ring for "saving-dirty" — the dirty fill plus an outline */
+  box-shadow: 0 0 0 1px var(--vs-text-1, #ddd);
+}
+
+/* Save-status indicator — distinct shape per kind so the user can
+   tell saving / error / offline / external apart by silhouette, not
+   only by color (the old color-only approach failed the
+   color-is-not-the-only-channel accessibility check). Width / height
+   match the dirty marker (6×6) so the row never grows wider when
+   the status changes. */
+.tab-status-indicator {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  /* Default — overridden per kind below. */
+  background: transparent;
+}
+/* saving: 3/4 outline arc (rotates via animation below). */
+.tab-status-indicator[data-kind="saving"] {
+  border: 1.5px solid var(--vs-text-1, #ddd);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: tab-status-spin 0.8s linear infinite;
+}
+/* error: outline diamond (square rotated 45°). */
+.tab-status-indicator[data-kind="error"] {
+  border: 1.5px solid var(--vs-error, #e06060);
+  background: transparent;
+  transform: rotate(45deg);
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+}
+/* offline: X cross — two short diagonal strokes. */
+.tab-status-indicator[data-kind="offline"] {
+  position: relative;
+  width: 8px;
+  height: 8px;
+}
+.tab-status-indicator[data-kind="offline"]::before,
+.tab-status-indicator[data-kind="offline"]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-left: 1.5px solid var(--vs-text-3, #888);
+  transform-origin: center;
+}
+.tab-status-indicator[data-kind="offline"]::before { transform: rotate(45deg); }
+.tab-status-indicator[data-kind="offline"]::after  { transform: rotate(-45deg); }
+/* external: two stacked horizontal arrows (up + down) — a conflict
+   marker that reads as "this changed both ways". */
+.tab-status-indicator[data-kind="external"] {
+  position: relative;
+  width: 9px;
+  height: 8px;
+}
+.tab-status-indicator[data-kind="external"]::before,
+.tab-status-indicator[data-kind="external"]::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1.5px;
+  background: var(--vs-warning, #f0a040);
+  border-radius: 1px;
+}
+.tab-status-indicator[data-kind="external"]::before { top: 1px; }
+.tab-status-indicator[data-kind="external"]::after  { top: 5px; }
+.tab-status-indicator[data-kind="external"]::before { box-shadow: 0 2px 0 var(--vs-warning, #f0a040); }
+
+@keyframes tab-status-spin {
+  to { transform: rotate(360deg); }
+}
+
 .tab.save-attention .tab-title { text-decoration: underline dotted; text-underline-offset: 2px; }
 .tab-title {
   /* flex: 1 + min-width: 0 so the title (not the close button) takes
