@@ -21,6 +21,16 @@ export function useDiskFileChanges(options: {
   // recovery), while `diskReadIds` handles the case where two reads race
   // without the captured fields having moved (same mtime, same revision).
   const diskReadIds = new Map<string, number>()
+  // Per-path record of which manual external resolution id is currently in
+  // flight. While a resolution is pending for a path, polls must neither
+  // read nor write the tab — the user's click is authoritative and a poll
+  // that races with it could otherwise change `externalKind` away from the
+  // value the resolution's `isCurrentExternalResolution` check expects
+  // (causing the resolution to silently drop) or set the tab to
+  // `unreadable` and make a subsequent `recoverPost` 200 invisible to the
+  // `recoveryObservedByPoll` shortcut. Cleared in `resolveExternal`'s
+  // `finally` once the id is no longer the latest for the path.
+  const pendingExternalResolutions = new Map<string, number>()
 
   function invalidateDiskRead(path: string): number {
     const id = (diskReadIds.get(path) ?? 0) + 1
@@ -39,7 +49,20 @@ export function useDiskFileChanges(options: {
     // poll read that began before this click so it cannot race the
     // resolution's writes once it returns.
     invalidateDiskRead(path)
+    // Also block any *new* poll that starts during this resolution from
+    // touching the path at all. Polls check this map at both the loaded
+    // filter and the per-state loop; the resolution clears it in `finally`.
+    pendingExternalResolutions.set(path, id)
     return id
+  }
+
+  function endExternalResolutionIfCurrent(path: string, id: number): void {
+    // Only the resolution whose id is still recorded as pending may clear
+    // the entry. A newer resolution will have overwritten the slot and
+    // owns the cleanup for its own lifetime.
+    if (pendingExternalResolutions.get(path) === id) {
+      pendingExternalResolutions.delete(path)
+    }
   }
 
   function isCurrentExternalResolution(
@@ -62,14 +85,26 @@ export function useDiskFileChanges(options: {
 
   async function pollExternalChanges() {
     const loaded = options.tabs.value.filter((tab) =>
-      !tab.loading && (!tab.loadError || tab.externalKind === 'deleted'),
+      !tab.loading
+      && (!tab.loadError || tab.externalKind === 'deleted')
+      && !pendingExternalResolutions.has(tab.path),
     )
     if (!loaded.length) return
     let states: Awaited<ReturnType<typeof getFileStates>>
     try { states = await getFileStates(loaded.map((tab) => tab.path)) } catch { return }
     for (const state of states) {
+      // A resolution may have begun between the loaded filter and now. Skip
+      // so the poll does not write intermediate state the resolution will
+      // overwrite (or that invalidates its `externalKind` check).
+      if (pendingExternalResolutions.has(state.path)) continue
       const tab = options.tabs.value.find((item) => item.path === state.path)
       if (!tab || tab.savingRevision !== null) continue
+      // Bump the read generation FIRST, before any state observation. This
+      // invalidates any in-flight `getPost` for this path from a previous
+      // poll as soon as we observe the new state — including the deleted
+      // branch below, where a pending content read would otherwise be
+      // allowed to write its stale body.
+      const readId = invalidateDiskRead(state.path)
       if (!state.exists) {
         tab.saveStatus = 'external'
         tab.error = '文件已从磁盘删除'
@@ -90,7 +125,6 @@ export function useDiskFileChanges(options: {
       const requestedServerMtime = tab.serverMtime
       const requestedExternalKind = tab.externalKind
       const requestedTab = tab
-      const readId = invalidateDiskRead(requestedPath)
       try {
         const post = await getPost(requestedPath)
         if (!isCurrentDiskRead(requestedPath, readId)) continue
@@ -173,6 +207,7 @@ export function useDiskFileChanges(options: {
     if (tab.externalKind === 'deleted' && strategy === 'disk') return
     const requestedExternalKind = tab.externalKind
     const resolutionId = beginExternalResolution(path)
+    try {
     if (tab.externalKind === 'unreadable') {
       const requestedTab = tab
       const requestedPath = tab.path
@@ -329,6 +364,11 @@ export function useDiskFileChanges(options: {
     tab.externalKind = null
     tab.error = null
     tab.loadError = null
+    } finally {
+      // Release the pending-resolution slot only if this resolution is still
+      // the latest one for the path; a newer resolution owns its own slot.
+      endExternalResolutionIfCurrent(path, resolutionId)
+    }
   }
 
   function startExternalPolling() {

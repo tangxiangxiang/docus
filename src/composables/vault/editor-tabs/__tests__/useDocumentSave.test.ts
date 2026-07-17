@@ -757,6 +757,147 @@ describe('useDocumentSave optimistic conflicts', () => {
     })
   })
 
+  it('invalidates an in-flight poll read when a newer observation reports deletion', async () => {
+    let finishGet!: (response: Response) => void
+    const pendingGet = new Promise<Response>((resolve) => { finishGet = resolve })
+    let stateCalls = 0
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        stateCalls += 1
+        if (stateCalls === 1) {
+          return Promise.resolve(new Response(JSON.stringify([
+            { path: 'inbox/test', exists: true, mtime: 10, size: 8 },
+          ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+        }
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: false, mtime: 0, size: 0 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') return pendingGet
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'unreadable',
+      serverMtime: 5,
+    })
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    // Poll A observes the file still exists; its getPost is in flight
+    // (readId=1). serverMtime/mtime mismatch + unreadable forces getPost.
+    const pollingA = disk.pollExternalChanges()
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/posts/inbox/test'))
+
+    // Poll B observes the file is now deleted. It must invalidate Poll A's
+    // readId as soon as it sees the new state.
+    await disk.pollExternalChanges()
+    expect(h.tabs.value[0]).toMatchObject({
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+      error: '文件已从磁盘删除',
+    })
+
+    // Poll A's stale getPost returns with the old body. diskReadIds was
+    // bumped by Poll B, so the write must be skipped — otherwise the
+    // deleted tab could be flipped back to idle via the clean-apply path.
+    finishGet(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'old body A',
+      content: '',
+      frontmatter: {},
+      size: 8,
+      mtime: 10,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await pollingA
+    expect(h.tabs.value[0]).toMatchObject({
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+      error: '文件已从磁盘删除',
+    })
+  })
+
+  it('blocks poll writes while manual external resolution is pending', async () => {
+    let finishResolveGet!: (response: Response) => void
+    const pendingResolveGet = new Promise<Response>((resolve) => { finishResolveGet = resolve })
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 10, size: 5 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') return pendingResolveGet
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      raw: 'local B',
+      originalRaw: 'saved',
+      revision: 1,
+      savedRevision: 0,
+      saveStatus: 'external',
+      externalKind: 'unreadable',
+      serverMtime: 10,
+    })
+    const scheduleSave = vi.fn()
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    // User clicks keep-local first; the resolution's getPost is pending.
+    const resolving = disk.resolveExternal('inbox/test', 'local')
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/posts/inbox/test'))
+
+    // A new poll fires (e.g., from the 5s timer). It must be blocked by
+    // the pending resolution: no getPost, no write to the tab.
+    await disk.pollExternalChanges()
+    expect(h.tabs.value[0]).toMatchObject({
+      externalKind: 'unreadable',
+      externalRaw: null,
+    })
+    const getPostCalls = fetchMock.mock.calls.filter(
+      ([url]) => url === '/api/posts/inbox/test',
+    ).length
+    expect(getPostCalls).toBe(1)
+
+    // Resolution's getPost returns with the disk body. The user's choice
+    // must run end-to-end because poll never raced in to change
+    // externalKind.
+    finishResolveGet(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'disk C',
+      content: '',
+      frontmatter: {},
+      size: 5,
+      mtime: 10,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await resolving
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local B',
+      originalRaw: 'disk C',
+      externalRaw: null,
+      externalKind: null,
+      saveStatus: 'dirty',
+      serverMtime: 10,
+    })
+    expect(scheduleSave).toHaveBeenCalledWith('inbox/test', 0)
+  })
+
   it('turns a deleted conflict into modified when the file reappears', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/api/files/state') {
@@ -862,7 +1003,7 @@ describe('useDocumentSave optimistic conflicts', () => {
     })
   })
 
-  it('settles deleted recovery when polling observes the same recovered body first', async () => {
+  it('settles deleted recovery without poll interference while recover is pending', async () => {
     let finishRecover!: (response: Response) => void
     const pendingRecover = new Promise<Response>((resolve) => { finishRecover = resolve })
     const fetchMock = vi.fn((url: string) => {
@@ -873,14 +1014,11 @@ describe('useDocumentSave optimistic conflicts', () => {
         ]), { status: 200, headers: { 'content-type': 'application/json' } }))
       }
       if (url === '/api/posts/inbox/test') {
-        return Promise.resolve(new Response(JSON.stringify({
-          path: 'inbox/test',
-          raw: 'saved',
-          content: '',
-          frontmatter: {},
-          size: 5,
-          mtime: 30,
-        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+        // If poll is incorrectly allowed to read, returning a 500 here would
+        // route the tab through `unreadable` and the recover's success below
+        // would be silently dropped by the `recoveryObservedByPoll` check
+        // (which only matches `modified + same raw`).
+        return Promise.resolve(new Response('', { status: 500 }))
       }
       throw new Error(`unexpected request: ${url}`)
     })
@@ -904,12 +1042,15 @@ describe('useDocumentSave optimistic conflicts', () => {
       '/api/recover/inbox/test',
       expect.anything(),
     ))
+    // Poll fires while recover is pending. The pending resolution must
+    // block it from calling getPost or writing any state.
     await disk.pollExternalChanges()
     expect(h.tabs.value[0]).toMatchObject({
-      externalRaw: 'saved',
-      externalKind: 'modified',
+      externalRaw: null,
+      externalKind: 'deleted',
       saveStatus: 'external',
     })
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/posts/inbox/test')).toHaveLength(0)
 
     finishRecover(new Response(JSON.stringify({
       ok: true,
