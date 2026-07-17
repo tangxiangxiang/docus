@@ -11,6 +11,27 @@ export function useDiskFileChanges(options: {
   fileChanges: VaultFileChanges
 }) {
   let externalPollTimer: ReturnType<typeof setInterval> | null = null
+  const externalResolutionIds = new Map<string, number>()
+
+  function beginExternalResolution(path: string): number {
+    const id = (externalResolutionIds.get(path) ?? 0) + 1
+    externalResolutionIds.set(path, id)
+    return id
+  }
+
+  function isCurrentExternalResolution(
+    path: string,
+    id: number,
+    tab: Tab,
+    externalKind: Tab['externalKind'],
+  ): boolean {
+    const latestTab = options.tabs.value.find((item) => item.path === path)
+    return externalResolutionIds.get(path) === id
+      && latestTab === tab
+      && latestTab.path === path
+      && latestTab.saveStatus === 'external'
+      && latestTab.externalKind === externalKind
+  }
 
   async function pollExternalChanges() {
     const loaded = options.tabs.value.filter((tab) =>
@@ -21,7 +42,7 @@ export function useDiskFileChanges(options: {
     try { states = await getFileStates(loaded.map((tab) => tab.path)) } catch { return }
     for (const state of states) {
       const tab = options.tabs.value.find((item) => item.path === state.path)
-      if (!tab || tab.savingRevision !== null || state.mtime === tab.serverMtime) continue
+      if (!tab || tab.savingRevision !== null) continue
       if (!state.exists) {
         tab.saveStatus = 'external'
         tab.error = '文件已从磁盘删除'
@@ -29,6 +50,7 @@ export function useDiskFileChanges(options: {
         tab.externalKind = 'deleted'
         continue
       }
+      if (tab.externalKind !== 'deleted' && state.mtime === tab.serverMtime) continue
 
       const requestedPath = tab.path
       const requestedRevision = tab.revision
@@ -44,7 +66,10 @@ export function useDiskFileChanges(options: {
           latestTab !== requestedTab
           || latestTab.path !== requestedPath
           || latestTab.savingRevision !== null
-          || state.mtime === latestTab.serverMtime
+          || (
+            requestedExternalKind !== 'deleted'
+            && state.mtime === latestTab.serverMtime
+          )
           || latestTab.revision !== requestedRevision
           || latestTab.savedRevision !== requestedSavedRevision
           || latestTab.originalRaw !== requestedOriginalRaw
@@ -110,12 +135,20 @@ export function useDiskFileChanges(options: {
     const tab = options.tabs.value.find((item) => item.path === path)
     if (!tab || tab.saveStatus !== 'external') return
     if (tab.externalKind === 'deleted' && strategy === 'disk') return
+    const requestedExternalKind = tab.externalKind
+    const resolutionId = beginExternalResolution(path)
     if (tab.externalKind === 'unreadable') {
       const requestedTab = tab
       const requestedPath = tab.path
       const requestedRevision = tab.revision
       try {
         const post = await getPost(requestedPath)
+        if (!isCurrentExternalResolution(
+          requestedPath,
+          resolutionId,
+          requestedTab,
+          requestedExternalKind,
+        )) return
         const latestTab = options.tabs.value.find((item) => item.path === requestedPath)
         if (latestTab !== requestedTab || latestTab.path !== requestedPath) return
 
@@ -135,10 +168,18 @@ export function useDiskFileChanges(options: {
               options.scheduleSave(path, 0)
             }
             latestTab.error = null
+          } else {
+            latestTab.error = null
           }
           return
         }
       } catch {
+        if (!isCurrentExternalResolution(
+          requestedPath,
+          resolutionId,
+          requestedTab,
+          requestedExternalKind,
+        )) return
         const latestTab = options.tabs.value.find((item) => item.path === requestedPath)
         if (latestTab === requestedTab) {
           latestTab.error = '暂时无法读取磁盘文件，将在下次检查时重试'
@@ -163,11 +204,44 @@ export function useDiskFileChanges(options: {
       let recovered: Awaited<ReturnType<typeof recoverPost>>
       try {
         recovered = await recoverPost(path, sentRaw)
+        // Concurrent deleted keep-local requests express the same intent. If an
+        // older request is the one that recreates the file, applying that
+        // successful transaction also settles any newer duplicate request.
+        const latestTab = options.tabs.value.find((item) => item.path === path)
+        if (
+          latestTab !== tab
+          || latestTab.saveStatus !== 'external'
+          || latestTab.externalKind !== requestedExternalKind
+        ) return
       } catch (recoverError) {
+        if (!isCurrentExternalResolution(
+          path,
+          resolutionId,
+          tab,
+          requestedExternalKind,
+        )) return
         try {
           const post = await getPost(path)
+          if (!isCurrentExternalResolution(
+            path,
+            resolutionId,
+            tab,
+            requestedExternalKind,
+          )) return
           const latestTab = options.tabs.value.find((item) => item.path === path)
           if (latestTab !== tab || latestTab.path !== path) return
+          if (post.raw === latestTab.raw) {
+            latestTab.originalRaw = post.raw
+            latestTab.savedRevision = latestTab.revision
+            latestTab.serverMtime = post.mtime
+            latestTab.savingRevision = null
+            latestTab.saveStatus = 'saved'
+            latestTab.externalRaw = null
+            latestTab.externalKind = null
+            latestTab.loadError = null
+            latestTab.error = null
+            return
+          }
           latestTab.externalRaw = post.raw
           latestTab.externalKind = 'modified'
           latestTab.serverMtime = post.mtime

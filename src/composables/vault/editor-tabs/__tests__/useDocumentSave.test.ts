@@ -529,7 +529,67 @@ describe('useDocumentSave optimistic conflicts', () => {
       externalKind: 'modified',
       saveStatus: 'external',
       serverMtime: 20,
+      error: null,
     })
+  })
+
+  it('keeps the latest external resolution when unreadable requests resolve out of order', async () => {
+    let finishDisk!: (response: Response) => void
+    let finishLocal!: (response: Response) => void
+    const diskGet = new Promise<Response>((resolve) => { finishDisk = resolve })
+    const localGet = new Promise<Response>((resolve) => { finishLocal = resolve })
+    vi.stubGlobal('fetch', vi.fn()
+      .mockReturnValueOnce(diskGet)
+      .mockReturnValueOnce(localGet))
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      raw: 'local B',
+      originalRaw: 'saved',
+      revision: 1,
+      savedRevision: 0,
+      saveStatus: 'external',
+      externalKind: 'unreadable',
+    })
+    const scheduleSave = vi.fn()
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    const useDisk = disk.resolveExternal('inbox/test', 'disk')
+    const keepLocal = disk.resolveExternal('inbox/test', 'local')
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+    finishLocal(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'disk C2',
+      content: '',
+      frontmatter: {},
+      size: 7,
+      mtime: 22,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await keepLocal
+    finishDisk(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'disk C1',
+      content: '',
+      frontmatter: {},
+      size: 7,
+      mtime: 21,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await useDisk
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local B',
+      originalRaw: 'disk C2',
+      externalRaw: null,
+      externalKind: null,
+      saveStatus: 'dirty',
+      serverMtime: 22,
+    })
+    expect(scheduleSave).toHaveBeenCalledWith('inbox/test', 0)
   })
 
   it('turns a deleted conflict into modified when the file reappears', async () => {
@@ -557,6 +617,7 @@ describe('useDocumentSave optimistic conflicts', () => {
       saveStatus: 'external',
       externalKind: 'deleted',
       loadError: 'deleted',
+      serverMtime: 20,
     })
     const disk = useDiskFileChanges({
       tabs: h.tabs,
@@ -575,6 +636,68 @@ describe('useDocumentSave optimistic conflicts', () => {
       saveStatus: 'external',
       loadError: null,
       serverMtime: 20,
+    })
+  })
+
+  it('keeps a deleted-file recovery resolved after a second concurrent recovery conflicts', async () => {
+    let finishFirst!: (response: Response) => void
+    let finishSecond!: (response: Response) => void
+    const firstRecover = new Promise<Response>((resolve) => { finishFirst = resolve })
+    const secondRecover = new Promise<Response>((resolve) => { finishSecond = resolve })
+    let recoverCalls = 0
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/recover/inbox/test') {
+        recoverCalls += 1
+        return recoverCalls === 1 ? firstRecover : secondRecover
+      }
+      if (url === '/api/posts/inbox/test') {
+        return Promise.resolve(new Response(JSON.stringify({
+          path: 'inbox/test',
+          raw: 'saved',
+          content: '',
+          frontmatter: {},
+          size: 5,
+          mtime: 30,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      loadError: 'deleted',
+    })
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    const first = disk.resolveExternal('inbox/test', 'local')
+    const second = disk.resolveExternal('inbox/test', 'local')
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    finishFirst(new Response(JSON.stringify({
+      ok: true,
+      raw: 'saved',
+      mtime: 30,
+      post: summary('saved', { mtime: 30 }),
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await first
+    finishSecond(new Response('', { status: 409 }))
+    await second
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'saved',
+      originalRaw: 'saved',
+      saveStatus: 'saved',
+      externalRaw: null,
+      externalKind: null,
+      loadError: null,
+      serverMtime: 30,
     })
   })
 
