@@ -85,6 +85,42 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
     expect(r.status).toBe(400)
   })
 
+  it('recovers a deleted document even when its metadata was removed', async () => {
+    const documentPath = 'put-ai-deleted'
+    const abs = path.join(CONTENT_DIR, `${documentPath}.md`)
+    const raw = '# Restored from the editor\n\nLast copy.\n'
+    await fs.rm(abs, { force: true })
+    deleteDocumentMetadata(db, documentPath)
+
+    const response = await call('PUT', `/api/recover/${documentPath}`, { raw })
+
+    expect(response.status).toBe(200)
+    expect(await fs.readFile(abs, 'utf8')).toBe(raw)
+    const metadata = getDocumentMetadata(db, documentPath)
+    expect(metadata).not.toBeNull()
+    const body = await response.json() as {
+      ok: true
+      raw: string
+      mtime: number
+      post: SavePostResult['post']
+    }
+    const stat = await fs.stat(abs)
+    expect(body).toMatchObject({
+      ok: true,
+      raw,
+      mtime: stat.mtimeMs,
+      post: {
+        path: documentPath,
+        title: metadata!.title,
+        size: stat.size,
+        mtime: stat.mtimeMs,
+      },
+    })
+
+    await fs.rm(abs, { force: true })
+    deleteDocumentMetadata(db, documentPath)
+  })
+
   it('rejects body without an exact baseRaw string', async () => {
     const r = await call('PUT', '/api/posts/put-smoke', { raw: 'new value' })
     expect(r.status).toBe(400)

@@ -1,11 +1,12 @@
 import type { Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
-import { getFileStates, getPost, recoverPost } from '../../../lib/api'
+import { getFileStates, getPost, recoverPost, type PostSummary } from '../../../lib/api'
 
 export function useDiskFileChanges(options: {
   tabs: Ref<Tab[]>
   doSave: (path: string) => Promise<void>
   scheduleSave: (path: string, delay?: number) => void
+  applyPostSummary: (post: PostSummary) => void
 }) {
   let externalPollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -77,6 +78,7 @@ export function useDiskFileChanges(options: {
           // State confirmed that the path exists. A failed body read is not
           // evidence of deletion and must not route keep-local through recover.
           latestTab.externalKind = 'unreadable'
+          latestTab.saveStatus = 'external'
           latestTab.error = '暂时无法读取磁盘文件，将在下次检查时重试'
         }
       }
@@ -92,6 +94,7 @@ export function useDiskFileChanges(options: {
   async function resolveExternal(path: string, strategy: 'disk' | 'local') {
     const tab = options.tabs.value.find((item) => item.path === path)
     if (!tab || tab.saveStatus !== 'external') return
+    if (tab.externalKind === 'deleted' && strategy === 'disk') return
     if (tab.externalKind === 'unreadable') {
       try {
         const post = await getPost(path)
@@ -120,6 +123,7 @@ export function useDiskFileChanges(options: {
       tab.savedRevision = tab.revision
       tab.serverMtime = recovered.mtime
       tab.saveStatus = 'saved'
+      options.applyPostSummary(recovered.post)
     } else {
       const diskRaw = tab.externalRaw
       if (diskRaw == null) return

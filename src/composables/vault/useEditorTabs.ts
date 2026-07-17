@@ -126,7 +126,7 @@ export function useEditorTabs(opts: {
     resolveExternal,
     startExternalPolling,
     stopExternalPolling,
-  } = useDiskFileChanges({ tabs, doSave, scheduleSave })
+  } = useDiskFileChanges({ tabs, doSave, scheduleSave, applyPostSummary })
 
   const { onKeydown } = useEditorShortcuts({
     tabs,

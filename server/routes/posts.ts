@@ -226,16 +226,41 @@ postRoutes.put('/api/recover/*', async (c) => {
   if (!isValidPathSyntax(documentPath)) return bad(c, 'invalid path')
   const body = await c.req.json().catch(() => null) as { raw?: unknown } | null
   if (!body || typeof body.raw !== 'string') return bad(c, 'raw required')
-  const abs = filePathFor(documentPath)
-  if (await exists(abs)) return bad(c, 'file already exists', 409)
-  const metadata = getDocumentMetadata(metadataDb(), documentPath)
-  if (!metadata) return bad(c, 'document metadata not found', 404)
-  await fs.mkdir(path.dirname(abs), { recursive: true })
-  await fs.writeFile(abs, body.raw, { encoding: 'utf8', flag: 'wx' })
-  const stat = await fs.stat(abs)
-  saveDocumentMetadata(metadataDb(), { ...metadata, updatedAt: Date.now() })
-  try { (await getLinkIndex()).applyWrite(documentPath, body.raw) } catch { /* next rebuild repairs it */ }
-  return c.json({ ok: true, raw: body.raw, mtime: stat.mtimeMs })
+  const requestedRaw = body.raw
+  return withDocumentWriteLock(documentPath, async () => {
+    const abs = filePathFor(documentPath)
+    if (await exists(abs)) return bad(c, 'file already exists', 409)
+    const previousMetadata = getDocumentMetadata(metadataDb(), documentPath)
+    await fs.mkdir(path.dirname(abs), { recursive: true })
+    await fs.writeFile(abs, requestedRaw, { encoding: 'utf8', flag: 'wx' })
+    let stat: Awaited<ReturnType<typeof fs.stat>>
+    let metadata: ReturnType<typeof ensureMetadata>
+    try {
+      stat = await fs.stat(abs)
+      metadata = previousMetadata
+        ? { ...previousMetadata, updatedAt: Date.now() }
+        : ensureMetadata(documentPath, requestedRaw, stat.mtimeMs, Date.now())
+      if (previousMetadata) saveDocumentMetadata(metadataDb(), metadata)
+      trackCleanedDocumentWrite(metadataDb(), documentPath, requestedRaw)
+    } catch (error) {
+      await fs.rm(abs, { force: true })
+      if (previousMetadata) saveDocumentMetadata(metadataDb(), previousMetadata)
+      else deleteDocumentMetadata(metadataDb(), documentPath)
+      throw error
+    }
+    try { (await getLinkIndex()).applyWrite(documentPath, requestedRaw) } catch { /* next rebuild repairs it */ }
+    const post: PostSummary = {
+      path: documentPath,
+      title: metadata.title,
+      created: new Date(metadata.createdAt).toISOString().slice(0, 10),
+      updated: new Date(metadata.updatedAt).toISOString().slice(0, 10),
+      tags: [...metadata.tags],
+      summary: metadata.summary,
+      size: stat.size,
+      mtime: stat.mtimeMs,
+    }
+    return c.json({ ok: true, raw: requestedRaw, mtime: stat.mtimeMs, post })
+  })
 })
 
 // PATCH a file: rename within folder (name) or move (targetPath). Exactly one.

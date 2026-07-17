@@ -819,6 +819,7 @@ watch(isReadMode, async (reading) => {
       :error="activeHistorySnapshot || activeHistoryComparison ? null : (activeTab?.error ?? null)"
       :size="activeHistoryComparison ? activeHistoryComparison.newRaw.length : (activeHistorySnapshot ? activeHistorySnapshot.rawMarkdown.length : activeSize)"
       :focus-width="editorFocusWidth"
+      :external-kind="activeHistorySnapshot || activeHistoryComparison ? null : (activeTab?.externalKind ?? null)"
       @toggle-focus-width="editorFocusWidth = !editorFocusWidth"
       @retry-save="doSaveNow"
       @copy-content="copyActiveContent"

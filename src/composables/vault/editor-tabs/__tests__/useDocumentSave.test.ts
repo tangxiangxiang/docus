@@ -324,6 +324,7 @@ describe('useDocumentSave optimistic conflicts', () => {
       tabs: h.tabs,
       doSave: h.save.doSave,
       scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
     })
 
     h.save.onEditorChange('inbox/test', 'v1')
@@ -364,6 +365,7 @@ describe('useDocumentSave optimistic conflicts', () => {
       tabs: h.tabs,
       doSave: h.save.doSave,
       scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
     })
 
     const polling = disk.pollExternalChanges()
@@ -420,6 +422,7 @@ describe('useDocumentSave optimistic conflicts', () => {
       tabs: h.tabs,
       doSave: h.save.doSave,
       scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
     })
 
     const polling = disk.pollExternalChanges()
@@ -464,6 +467,7 @@ describe('useDocumentSave optimistic conflicts', () => {
       tabs: h.tabs,
       doSave: h.save.doSave,
       scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
     })
 
     await disk.pollExternalChanges()
@@ -472,10 +476,11 @@ describe('useDocumentSave optimistic conflicts', () => {
     expect(h.tabs.value[0]).toMatchObject({
       raw: 'local B',
       originalRaw: 'saved',
-      saveStatus: 'dirty',
+      saveStatus: 'external',
       externalRaw: null,
       externalKind: 'unreadable',
     })
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/posts/inbox/test')).toHaveLength(2)
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/recover/'))).toBe(false)
   })
 
@@ -695,6 +700,7 @@ describe('useDocumentSave scheduling', () => {
       tabs: h.tabs,
       doSave: h.save.doSave,
       scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
     })
     await disk.pollExternalChanges()
 

@@ -166,7 +166,14 @@ export async function savePost(
   return jsonOrThrow<SavePostResult>(response)
 }
 
-export async function recoverPost(path: string, raw: string): Promise<{ ok: true; raw: string; mtime: number }> {
+export interface RecoverPostResult {
+  ok: true
+  raw: string
+  mtime: number
+  post: PostSummary
+}
+
+export async function recoverPost(path: string, raw: string): Promise<RecoverPostResult> {
   return jsonOrThrow(await fetch('/api/recover/' + splat(path), {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ raw }),
   }))

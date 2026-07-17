@@ -99,6 +99,7 @@ interface Harness {
     loadError: string | null
     serverMtime?: number
     externalRaw?: string | null
+    externalKind?: 'modified' | 'deleted' | 'unreadable' | null
   }[]>
   // The selectPanel / toggleViewMode spies are captured separately
   // because the composable receives them as constructor args and
@@ -383,6 +384,28 @@ describe('useEditorTabs', () => {
     expect(h.tabs.value).toHaveLength(0)
   })
 
+  it('asks for confirmation before closing a clean externally deleted tab', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+    })
+
+    const closing = h.closeTab('a')
+    await Promise.resolve()
+    expect(h.tabs.value).toHaveLength(1)
+    answerConfirm(false)
+    await expect(closing).resolves.toBe(false)
+    expect(h.tabs.value).toHaveLength(1)
+  })
+
   it('closeMany closes all listed tabs in reverse-index order so the active jump is consistent', async () => {
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [],
@@ -424,6 +447,29 @@ describe('useEditorTabs', () => {
     answerConfirm(true)
     await expect(closePromise).resolves.toBe(true)
     expect(h.tabs.value).toEqual([])
+  })
+
+  it('asks once before batch closing tabs that include an externally deleted document', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/b': () => ({ path: 'b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    await h.openPost('b')
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+    })
+
+    const closing = h.closeMany(['a', 'b'])
+    await Promise.resolve()
+    answerConfirm(false)
+    await expect(closing).resolves.toBe(false)
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['a', 'b'])
   })
 
   it('closeMany aborts entirely when the user declines the dirty prompt', async () => {
@@ -926,7 +972,12 @@ describe('useEditorTabs', () => {
       'POST /api/files/state': () => [{ path: 'a', exists: false, mtime: 0, size: 0 }],
       'PUT /api/recover/a': (body) => {
         recovered = (body as { raw: string }).raw
-        return { ok: true, raw: recovered, mtime: 3 }
+        return {
+          ok: true,
+          raw: recovered,
+          mtime: 3,
+          post: postSummary('a', { size: recovered.length, mtime: 3 }),
+        }
       },
     }))
     const h = await setup()
@@ -1188,16 +1239,35 @@ describe('useEditorTabs — file-change bus', () => {
   })
 
   it('marks a tab with a loadError on a delete event so the user sees the file is gone', async () => {
+    let recovered = ''
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [],
       'GET /api/posts': () => [],
       'GET /api/posts/bus-d': () => ({ path: 'bus-d', raw: 'D', content: 'D', frontmatter: {}, size: 1, mtime: 0 }),
+      'PUT /api/recover/bus-d': (body) => {
+        recovered = (body as { raw: string }).raw
+        return {
+          ok: true,
+          raw: recovered,
+          mtime: 4,
+          post: postSummary('bus-d', { size: recovered.length, mtime: 4 }),
+        }
+      },
     }))
     const h = await setup()
     await h.openPost('bus-d')
     h.fileChanges.publish({ path: 'bus-d', kind: 'delete' })
     await flushPromises()
     expect(h.tabs.value[0].loadError).toMatch(/已被 AI 删除/)
+    expect(h.tabs.value[0]).toMatchObject({ saveStatus: 'external', externalKind: 'deleted' })
+    await h.resolveExternal('bus-d', 'local')
+    expect(recovered).toBe('D')
+    expect(h.tabs.value[0]).toMatchObject({
+      saveStatus: 'saved',
+      externalKind: null,
+      serverMtime: 4,
+    })
+    expect(h.posts.value.find((post) => post.path === 'bus-d')).toMatchObject({ size: 1, mtime: 4 })
   })
 
   it('closes the old tab and opens the new one on a rename event', async () => {

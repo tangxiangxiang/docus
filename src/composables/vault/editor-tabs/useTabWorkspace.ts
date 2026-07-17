@@ -10,6 +10,15 @@ import {
   createLocalPostPatchTracker,
 } from './workspacePostSummary'
 
+export function requiresCloseConfirmation(tab: Tab): boolean {
+  return tab.raw !== tab.originalRaw
+    || tab.revision !== tab.savedRevision
+    || tab.savingRevision !== null
+    || tab.saveStatus === 'external'
+    || tab.externalRaw != null
+    || ['error', 'offline'].includes(tab.saveStatus)
+}
+
 export function useTabWorkspace(options: {
   confirm: (message: string) => Promise<boolean>
   toastError: (message: string) => void
@@ -121,7 +130,7 @@ export function useTabWorkspace(options: {
     const index = tabs.value.findIndex((tab) => tab.path === path)
     if (index === -1) return true
     const tab = tabs.value[index]
-    if (!closeOptions?.skipDirtyCheck && tab.raw !== tab.originalRaw) {
+    if (!closeOptions?.skipDirtyCheck && requiresCloseConfirmation(tab)) {
       const ok = await options.confirm(t('editor.discard_one', { path: tab.path }))
       if (!ok) return false
     }
@@ -145,7 +154,7 @@ export function useTabWorkspace(options: {
     if (valid.length === 0) return true
     const dirty = valid.filter((path) => {
       const tab = tabs.value.find((candidate) => candidate.path === path)
-      return tab && tab.raw !== tab.originalRaw
+      return tab && requiresCloseConfirmation(tab)
     })
     if (dirty.length === 0) return true
     return options.confirm(

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { DocumentSavePresentation } from '../../composables/vault/editor-tabs/savePresentation'
+import type { ExternalChangeKind } from './tabs'
 import {
   ICON_STATUS_ERROR,
   ICON_STATUS_LOADING,
@@ -16,6 +17,7 @@ const props = defineProps<{
   error: string | null
   size: number
   focusWidth: boolean
+  externalKind?: ExternalChangeKind | null
 }>()
 const emit = defineEmits<{
   'toggle-focus-width': []
@@ -115,10 +117,14 @@ const pathLabel = computed(() => {
       <span v-else class="sb-path sb-path-empty">—</span>
     </div>
     <div class="sb-right">
-      <template v-if="save.status === 'external'">
+      <template v-if="save.status === 'external' && externalKind !== 'deleted'">
         <button type="button" class="sb-copy-content" :title="t('status.external_diff')" :aria-label="t('status.external_diff')" @click="emit('external-diff')">⇄</button>
         <button type="button" class="sb-copy-content" :title="t('status.use_disk')" :aria-label="t('status.use_disk')" @click="emit('external-disk')">↓</button>
         <button type="button" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">↑</button>
+      </template>
+      <template v-else-if="save.status === 'external'">
+        <button type="button" class="sb-copy-content" :title="t('status.external_diff')" :aria-label="t('status.external_diff')" @click="emit('external-diff')">&#8644;</button>
+        <button type="button" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">&#8593;</button>
       </template>
       <button
         v-if="save.dirty || save.attention"
