@@ -12,6 +12,12 @@ export interface PostSummary {
   updatedReferences?: Array<{ path: string; raw: string; mtime: number }>
 }
 
+export interface SavePostResult {
+  ok: true
+  raw: string
+  post: PostSummary
+}
+
 export type TreeNode =
   | { kind: 'file';   name: string; path: string; title: string; mtime: number }
   | { kind: 'folder'; name: string; path: string; children: TreeNode[] }
@@ -71,7 +77,7 @@ async function jsonOrThrow<T>(r: Response): Promise<T> {
   if (!r.ok) {
     // See ai-api.ts: no error-body schema, cast to the shape we read.
     const body = (await r.json().catch(() => ({ error: r.statusText }))) as { error?: string }
-    throw Object.assign(new Error(body.error ?? `HTTP ${r.status}`), { status: r.status, body })
+    throw Object.assign(new Error(body.error || r.statusText || `HTTP ${r.status}`), { status: r.status, body })
   }
   return r.json() as Promise<T>
 }
@@ -99,6 +105,14 @@ export async function getFileStates(paths: string[]): Promise<Array<{
 
 export async function getPost(path: string): Promise<PostDetail> {
   return jsonOrThrow<PostDetail>(await fetch('/api/posts/' + splat(path)))
+}
+
+export async function savePost(path: string, raw: string): Promise<SavePostResult> {
+  return jsonOrThrow<SavePostResult>(await fetch('/api/posts/' + splat(path), {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ raw }),
+  }))
 }
 
 export async function recoverPost(path: string, raw: string): Promise<{ ok: true; raw: string; mtime: number }> {

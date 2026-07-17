@@ -23,21 +23,28 @@ function tab(overrides: Partial<Tab> = {}): Tab {
   }
 }
 
+function saveResponse(raw: string): Response {
+  return new Response(JSON.stringify({
+    ok: true,
+    raw,
+    post: {
+      path: 'inbox/a', title: 'A', created: '', updated: '', tags: [], summary: '',
+      size: raw.length, mtime: 2,
+    },
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+}
+
 beforeEach(() => vi.restoreAllMocks())
 
 describe('useDocumentSave prepareHistoryCommit', () => {
   it('flushes selected open editor content through the existing save pipeline', async () => {
     const current = tab()
-    const fetchMock = vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ ok: true, raw: current.raw }),
-      { status: 200, headers: { 'content-type': 'application/json' } },
-    ))
+    const fetchMock = vi.fn().mockResolvedValue(saveResponse(current.raw))
     vi.stubGlobal('fetch', fetchMock)
     const save = useDocumentSave({
       tabs: ref([current]),
-      posts: ref([]),
       activePath: ref(current.path),
-      refresh: vi.fn(),
+      applyPostSummary: vi.fn(),
       fileChanges: createVaultFileChanges(),
       toastError: vi.fn(),
     })
@@ -57,9 +64,8 @@ describe('useDocumentSave prepareHistoryCommit', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 500 })))
     const save = useDocumentSave({
       tabs: ref([current]),
-      posts: ref([]),
       activePath: ref(current.path),
-      refresh: vi.fn(),
+      applyPostSummary: vi.fn(),
       fileChanges: createVaultFileChanges(),
       toastError: vi.fn(),
     })
@@ -76,9 +82,8 @@ describe('useDocumentSave prepareHistoryCommit', () => {
     vi.stubGlobal('fetch', fetchMock)
     const save = useDocumentSave({
       tabs: ref([current]),
-      posts: ref([]),
       activePath: ref(current.path),
-      refresh: vi.fn(),
+      applyPostSummary: vi.fn(),
       fileChanges: createVaultFileChanges(),
       toastError: vi.fn(),
     })
@@ -95,16 +100,12 @@ describe('useDocumentSave prepareHistoryCommit', () => {
     const snapshotSave = new Promise<Response>((resolve) => { finishSnapshotSave = resolve })
     const fetchMock = vi.fn()
       .mockReturnValueOnce(snapshotSave)
-      .mockResolvedValueOnce(new Response(
-        JSON.stringify({ ok: true, raw: '# Typed after click' }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      ))
+      .mockResolvedValueOnce(saveResponse('# Typed after click'))
     vi.stubGlobal('fetch', fetchMock)
     const save = useDocumentSave({
       tabs: ref([current]),
-      posts: ref([]),
       activePath: ref(current.path),
-      refresh: vi.fn(),
+      applyPostSummary: vi.fn(),
       fileChanges: createVaultFileChanges(),
       toastError: vi.fn(),
     })
@@ -115,10 +116,7 @@ describe('useDocumentSave prepareHistoryCommit', () => {
     await Promise.resolve()
     expect(fetchMock).toHaveBeenCalledOnce()
 
-    finishSnapshotSave(new Response(
-      JSON.stringify({ ok: true, raw: '# Newer editor content' }),
-      { status: 200, headers: { 'content-type': 'application/json' } },
-    ))
+    finishSnapshotSave(saveResponse('# Newer editor content'))
     const release = await preparing
 
     expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
@@ -138,16 +136,12 @@ describe('useDocumentSave prepareHistoryCommit', () => {
 
   it('keeps the dirty state when manual save is pressed behind an active barrier', async () => {
     const current = tab()
-    const fetchMock = vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ ok: true, raw: current.raw }),
-      { status: 200, headers: { 'content-type': 'application/json' } },
-    ))
+    const fetchMock = vi.fn().mockResolvedValue(saveResponse(current.raw))
     vi.stubGlobal('fetch', fetchMock)
     const save = useDocumentSave({
       tabs: ref([current]),
-      posts: ref([]),
       activePath: ref(current.path),
-      refresh: vi.fn(),
+      applyPostSummary: vi.fn(),
       fileChanges: createVaultFileChanges(),
       toastError: vi.fn(),
     })

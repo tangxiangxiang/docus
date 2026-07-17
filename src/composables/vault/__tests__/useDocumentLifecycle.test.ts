@@ -27,7 +27,14 @@ function tab(path = 'inbox/a', raw = 'saved'): Tab {
 }
 
 function saveResponse(raw: string): Response {
-  return new Response(JSON.stringify({ ok: true, raw }), {
+  return new Response(JSON.stringify({
+    ok: true,
+    raw,
+    post: {
+      path: 'inbox/a', title: 'A', created: '', updated: '', tags: [], summary: '',
+      size: raw.length, mtime: 2,
+    },
+  }), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   })
@@ -38,16 +45,14 @@ function setup(
   applyReferenceWrites = vi.fn().mockResolvedValue(undefined),
 ) {
   const tabs = ref(initialTabs)
-  const posts = ref([])
   const activePath = ref(initialTabs[0]?.path ?? null)
   const fileChanges = createVaultFileChanges()
   const refresh = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
   const mutationLock = createPathMutationLock()
   const save = useDocumentSave({
     tabs,
-    posts,
     activePath,
-    refresh,
+    applyPostSummary: vi.fn(),
     fileChanges,
     toastError: vi.fn(),
   })

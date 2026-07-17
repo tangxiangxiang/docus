@@ -3,7 +3,7 @@ import path from 'node:path'
 import matter from 'gray-matter'
 import { Hono } from 'hono'
 import { isInArchive } from '../../src/composables/archiveProtocol.js'
-import type { PostDetail, PostSummary } from '../../src/lib/api.js'
+import type { PostDetail, PostSummary, SavePostResult } from '../../src/lib/api.js'
 import {
   deleteDocumentMetadata,
   getDocumentMetadata,
@@ -104,9 +104,11 @@ postRoutes.put('/api/posts/*', async (c) => {
   // Import legacy metadata before the editor can remove its Frontmatter.
   ensureMetadata(splat, previousRaw, previousStat.mtimeMs)
   await fs.writeFile(abs, body.raw, 'utf8')
+  let stat: Awaited<ReturnType<typeof fs.stat>>
+  let metadata: ReturnType<typeof ensureMetadata>
   try {
-    const stat = await fs.stat(abs)
-    ensureMetadata(splat, body.raw, stat.mtimeMs, Date.now())
+    stat = await fs.stat(abs)
+    metadata = ensureMetadata(splat, body.raw, stat.mtimeMs, Date.now())
     trackCleanedDocumentWrite(metadataDb(), splat, body.raw)
   } catch (error) {
     await fs.writeFile(abs, previousRaw, 'utf8')
@@ -116,7 +118,20 @@ postRoutes.put('/api/posts/*', async (c) => {
     const idx = await getLinkIndex()
     idx.applyWrite(splat, body.raw)
   } catch { /* ignore */ }
-  return c.json({ ok: true, raw: body.raw })
+  return c.json({
+    ok: true,
+    raw: body.raw,
+    post: {
+      path: splat,
+      title: metadata.title,
+      created: new Date(metadata.createdAt).toISOString().slice(0, 10),
+      updated: new Date(metadata.updatedAt).toISOString().slice(0, 10),
+      tags: [...metadata.tags],
+      summary: metadata.summary,
+      size: stat.size,
+      mtime: stat.mtimeMs,
+    },
+  } satisfies SavePostResult)
 })
 
 postRoutes.put('/api/recover/*', async (c) => {

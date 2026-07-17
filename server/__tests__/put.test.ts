@@ -5,7 +5,8 @@ import path from 'node:path'
 import app, { __setMetadataDbForTesting } from '../index'
 import { CONTENT_DIR } from '../paths'
 import { applyMigrations } from '../db'
-import { deleteDocumentMetadata, getDocumentMetadata } from '../documentMetadata'
+import { deleteDocumentMetadata, getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
+import type { SavePostResult } from '../../src/lib/api'
 
 const TEST_PATH = 'put-smoke.md'
 const TEST_ABS = path.join(CONTENT_DIR, 'put-smoke.md')
@@ -38,16 +39,37 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
   })
 
   it('writes raw content verbatim and updates metadata', async () => {
+    saveDocumentMetadata(db, {
+      path: 'put-smoke',
+      title: 'Database title',
+      summary: 'Database summary',
+      tags: ['metadata', 'save'],
+      createdAt: Date.UTC(2025, 0, 2),
+      updatedAt: Date.UTC(2025, 0, 3),
+    })
     const r = await call('PUT', '/api/posts/put-smoke', { raw: UPDATED_BODY })
     expect(r.status).toBe(200)
     const onDisk = await fs.readFile(TEST_ABS, 'utf8')
     // Content is byte-for-byte what the client submitted.
     expect(onDisk).toBe(UPDATED_BODY)
-    expect(getDocumentMetadata(db, 'put-smoke')?.title).toBe('smoke')
+    const metadata = getDocumentMetadata(db, 'put-smoke')!
+    expect(metadata.title).toBe('Database title')
     // The response mirrors the bytes persisted on disk.
-    const body = (await r.json()) as { ok: true; raw: string }
+    const body = (await r.json()) as SavePostResult
+    const stat = await fs.stat(TEST_ABS)
     expect(body.ok).toBe(true)
     expect(body.raw).toBe(onDisk)
+    expect(body.post).toEqual({
+      path: 'put-smoke',
+      title: metadata.title,
+      created: new Date(metadata.createdAt).toISOString().slice(0, 10),
+      updated: new Date(metadata.updatedAt).toISOString().slice(0, 10),
+      tags: metadata.tags,
+      summary: metadata.summary,
+      size: stat.size,
+      mtime: stat.mtimeMs,
+    })
+    expect(body.post).not.toHaveProperty('updatedReferences')
   })
 
   it('returns 404 for non-existent file', async () => {

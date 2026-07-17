@@ -234,16 +234,22 @@ describe('useHistoryRestore', () => {
     const fileChanges = createVaultFileChanges()
     const save = useDocumentSave({
       tabs,
-      posts: ref([]),
       activePath: ref('inbox/redis'),
-      refresh: vi.fn().mockResolvedValue(undefined),
+      applyPostSummary: vi.fn(),
       fileChanges,
       toastError: vi.fn(),
     })
     const response = deferred<{ path: string; ref: string; raw: string; mtime: number }>()
     const put = vi.fn(async (_url: string, init?: RequestInit) => {
       const raw = (JSON.parse(String(init?.body)) as { raw: string }).raw
-      return new Response(JSON.stringify({ ok: true, raw }), { status: 200 })
+      return new Response(JSON.stringify({
+        ok: true,
+        raw,
+        post: {
+          path: 'inbox/redis', title: 'Redis', created: '', updated: '', tags: [], summary: '',
+          size: raw.length, mtime: 2,
+        },
+      }), { status: 200 })
     })
     vi.stubGlobal('fetch', put)
     const restore = useHistoryRestore({
@@ -283,12 +289,19 @@ describe('useHistoryRestore', () => {
     const fileChanges = createVaultFileChanges()
     const put = vi.fn(async (_url: string, init?: RequestInit) => {
       const raw = (JSON.parse(String(init?.body)) as { raw: string }).raw
-      return new Response(JSON.stringify({ ok: true, raw }), { status: 200 })
+      return new Response(JSON.stringify({
+        ok: true,
+        raw,
+        post: {
+          path: 'inbox/redis', title: 'Redis', created: '', updated: '', tags: [], summary: '',
+          size: raw.length, mtime: 2,
+        },
+      }), { status: 200 })
     })
     vi.stubGlobal('fetch', put)
     const save = useDocumentSave({
-      tabs, posts: ref([]), activePath: ref('inbox/redis'),
-      refresh: vi.fn().mockResolvedValue(undefined), fileChanges, toastError: vi.fn(),
+      tabs, activePath: ref('inbox/redis'),
+      applyPostSummary: vi.fn(), fileChanges, toastError: vi.fn(),
     })
     const response = deferred<{ path: string; ref: string; raw: string; mtime: number }>()
     const restore = useHistoryRestore({

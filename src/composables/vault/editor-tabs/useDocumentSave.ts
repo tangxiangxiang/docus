@@ -1,6 +1,6 @@
 import type { Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
-import type { PostSummary } from '../../../lib/api'
+import { savePost, type PostSummary, type SavePostResult } from '../../../lib/api'
 import { useI18n } from '../../useI18n'
 import type { VaultFileChanges } from '../context/fileChanges'
 
@@ -12,9 +12,8 @@ export interface DocumentMutationBarrier {
 
 export function useDocumentSave(options: {
   tabs: Ref<Tab[]>
-  posts: Ref<PostSummary[]>
   activePath: Ref<string | null>
-  refresh: () => Promise<void>
+  applyPostSummary: (post: PostSummary) => void
   fileChanges: VaultFileChanges
   toastError: (message: string) => void
 }) {
@@ -62,15 +61,9 @@ export function useDocumentSave(options: {
     tab.savingRevision = sentRevision
     tab.saveStatus = 'saving'
     tab.error = null
-    let data: { ok: true; raw: string }
+    let data: SavePostResult
     try {
-      const response = await fetch('/api/posts/' + encodeURI(path), {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ raw: sentVersion }),
-      })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      data = (await response.json()) as { ok: true; raw: string }
+      data = await savePost(path, sentVersion)
     } catch (error) {
       if (disposed) return
       tab.saveStatus = typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'error'
@@ -91,22 +84,20 @@ export function useDocumentSave(options: {
       }
       tab.savedRevision = sentRevision
       tab.saveStatus = tab.revision === sentRevision ? 'saved' : 'dirty'
+      tab.serverMtime = data.post.mtime
+      try {
+        options.applyPostSummary(data.post)
+      } catch (error) {
+        console.warn(`[useDocumentSave] Saved ${path}, but the Workspace summary update failed`, error)
+      }
       options.fileChanges.publish({
         path,
         kind: 'write',
         source: 'editor-save',
+        newMtime: data.post.mtime,
       })
     } finally {
       tab.savingRevision = null
-    }
-
-    try {
-      await options.refresh()
-      if (disposed) return
-      const post = options.posts.value.find((candidate) => candidate.path === path)
-      if (post) tab.serverMtime = post.mtime
-    } catch (error) {
-      if (!disposed) console.warn(`[useDocumentSave] Saved ${path}, but Vault refresh failed`, error)
     }
   }
 

@@ -47,6 +47,7 @@ function answerConfirm(ok: boolean) {
 import { useEditorTabs } from '../useEditorTabs'
 import { createVaultFileChanges, type VaultFileChanges } from '../context/fileChanges'
 import { useI18n } from '../../useI18n'
+import type { PostSummary, TreeNode } from '../../../lib/api'
 import {
   getMarkdownModel,
   registerMarkdownModel,
@@ -81,9 +82,12 @@ interface Harness {
   onKeydown: (e: KeyboardEvent) => void
   onCommandPaletteNew: (t: string) => Promise<void>
   refresh: () => Promise<void>
+  applyPostSummary: (post: PostSummary) => void
   renameOpenDocuments: (mappings: ReadonlyArray<{ from: string; to: string }>) => void
   activePath: Ref<string | null>
-  posts: Ref<Array<{ path: string; title: string }>>
+  activeSize: Ref<number>
+  posts: Ref<PostSummary[]>
+  tree: Ref<TreeNode[]>
   tabs: Ref<{ path: string; raw: string; originalRaw: string; saveStatus: string; loadError: string | null; serverMtime?: number; externalRaw?: string | null }[]>
   // The selectPanel / toggleViewMode spies are captured separately
   // because the composable receives them as constructor args and
@@ -140,6 +144,63 @@ function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((onResolve) => { resolve = onResolve })
   return { promise, resolve }
+}
+
+function saveResult(path: string, raw: string, size = raw.length, mtime = 2) {
+  return {
+    ok: true,
+    raw,
+    post: {
+      path,
+      title: path.toUpperCase(),
+      created: '',
+      updated: '',
+      tags: [],
+      summary: '',
+      size,
+      mtime,
+    },
+  }
+}
+
+function postSummary(path: string, overrides: Partial<PostSummary> = {}): PostSummary {
+  return {
+    path,
+    title: path.toUpperCase(),
+    created: '',
+    updated: '',
+    tags: [],
+    summary: '',
+    size: 1,
+    mtime: 1,
+    ...overrides,
+  }
+}
+
+function treeFor(...posts: PostSummary[]): TreeNode[] {
+  return [{
+    kind: 'folder',
+    name: 'content',
+    path: '',
+    children: posts.map((post) => ({
+      kind: 'file' as const,
+      name: post.path.split('/').pop()!,
+      path: post.path,
+      title: post.title,
+      mtime: post.mtime,
+    })),
+  }]
+}
+
+function findTreeFile(nodes: readonly TreeNode[], path: string): Extract<TreeNode, { kind: 'file' }> | null {
+  for (const node of nodes) {
+    if (node.kind === 'file' && node.path === path) return node
+    if (node.kind === 'folder') {
+      const found = findTreeFile(node.children, path)
+      if (found) return found
+    }
+  }
+  return null
 }
 
 // --- tests -----------------------------------------------------------------
@@ -382,8 +443,8 @@ describe('useEditorTabs', () => {
       'GET /api/posts': () => [],
       'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
       'GET /api/posts/b': () => ({ path: 'b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
-      'PUT /api/posts/a': (body) => { saved.push((body as { raw: string }).raw); return { ok: true, raw: (body as { raw: string }).raw } },
-      'PUT /api/posts/b': (body) => { saved.push((body as { raw: string }).raw); return { ok: true, raw: (body as { raw: string }).raw } },
+      'PUT /api/posts/a': (body) => { saved.push((body as { raw: string }).raw); return saveResult('a', (body as { raw: string }).raw) },
+      'PUT /api/posts/b': (body) => { saved.push((body as { raw: string }).raw); return saveResult('b', (body as { raw: string }).raw) },
     }))
     const h = await setup()
     await h.openPost('a')
@@ -432,7 +493,7 @@ describe('useEditorTabs', () => {
       'PUT /api/posts/a': (body) => {
         putBody = body as { raw: string }
         // Server echoes the post-bump raw; mock returns the same shape.
-        return { ok: true, raw: putBody.raw }
+        return saveResult('a', putBody.raw)
       },
     }))
     const h = await setup()
@@ -457,7 +518,7 @@ describe('useEditorTabs', () => {
         const raw = (body as { raw: string }).raw
         sent.push(raw)
         if (sent.length === 1) await firstPending
-        return { ok: true, raw }
+        return saveResult('a', raw, sent.length === 1 ? 10 : 20, sent.length === 1 ? 10 : 20)
       },
     }))
     const h = await setup()
@@ -471,6 +532,156 @@ describe('useEditorTabs', () => {
     expect(sent).toEqual(['A1', 'A2'])
     expect(h.tabs.value[0].originalRaw).toBe('A2')
     expect(h.tabs.value[0].saveStatus).toBe('saved')
+    expect(h.tabs.value[0].serverMtime).toBe(20)
+    expect(h.posts.value[0]).toMatchObject({ size: 20, mtime: 20 })
+    expect(findTreeFile(h.tree.value, 'a')).toMatchObject({ mtime: 20 })
+  })
+
+  it('updates posts, tree, activeSize, and mtime from PUT without a full refresh', async () => {
+    const oldPost = postSummary('a', { title: 'Old', size: 1, mtime: 1 })
+    const savedPost = postSummary('a', { title: 'New', size: 20, mtime: 2 })
+    const fetchMock = stubFetch({
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 1 }),
+      'GET /api/tree': () => treeFor(oldPost),
+      'GET /api/posts': () => [oldPost],
+      'PUT /api/posts/a': (body) => ({
+        ok: true,
+        raw: (body as { raw: string }).raw,
+        post: savedPost,
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = await setup()
+    await h.openPost('a')
+    fetchMock.mockClear()
+
+    h.onEditorChange('a', 'A with more content')
+    await h.doSaveNow()
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/posts/a')
+    expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ method: 'PUT' }))
+    expect(h.posts.value).toEqual([savedPost])
+    expect(findTreeFile(h.tree.value, 'a')).toMatchObject({ title: 'New', mtime: 2 })
+    expect(h.activeSize.value).toBe(20)
+    expect(h.tabs.value[0]).toMatchObject({ title: 'New', serverMtime: 2 })
+    expect(h.fileChanges.events.value.at(-1)).toMatchObject({
+      path: 'a', kind: 'write', source: 'editor-save', newMtime: 2,
+    })
+    expect(h.fileChanges.events.value.at(-1)).not.toHaveProperty('newRaw')
+  })
+
+  it('keeps concurrent saves for different documents isolated without full GETs', async () => {
+    const oldA = postSummary('a')
+    const oldB = postSummary('b')
+    const responseA = deferred<unknown>()
+    const responseB = deferred<unknown>()
+    const fetchMock = stubFetch({
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 1 }),
+      'GET /api/posts/b': () => ({ path: 'b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 1 }),
+      'GET /api/tree': () => treeFor(oldA, oldB),
+      'GET /api/posts': () => [oldA, oldB],
+      'PUT /api/posts/a': () => responseA.promise,
+      'PUT /api/posts/b': () => responseB.promise,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = await setup()
+    await h.openPost('a')
+    await h.openPost('b')
+    fetchMock.mockClear()
+
+    h.selectTab('a')
+    h.onEditorChange('a', 'A2')
+    const savingA = h.doSaveNow()
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    h.selectTab('b')
+    h.onEditorChange('b', 'B2')
+    const savingB = h.doSaveNow()
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+
+    const savedB = postSummary('b', { title: 'New B', size: 22, mtime: 22 })
+    const savedA = postSummary('a', { title: 'New A', size: 11, mtime: 11 })
+    responseB.resolve({ ok: true, raw: 'B2', post: savedB })
+    responseA.resolve({ ok: true, raw: 'A2', post: savedA })
+    await Promise.all([savingA, savingB])
+
+    expect(fetchMock.mock.calls.every(([, init]) => init?.method === 'PUT')).toBe(true)
+    expect(h.posts.value).toEqual([savedA, savedB])
+    expect(findTreeFile(h.tree.value, 'a')).toMatchObject({ title: 'New A', mtime: 11 })
+    expect(findTreeFile(h.tree.value, 'b')).toMatchObject({ title: 'New B', mtime: 22 })
+  })
+
+  it('merges a save during refresh with unrelated returned structure', async () => {
+    const h = await setup()
+    const oldA = postSummary('a', { title: 'Old A', mtime: 1 })
+    const newA = postSummary('a', { title: 'New A', size: 20, mtime: 2 })
+    const newB = postSummary('b', { title: 'New B', mtime: 3 })
+    const pendingTree = deferred<TreeNode[]>()
+    const pendingPosts = deferred<PostSummary[]>()
+    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => url === '/api/tree' ? pendingTree.promise : pendingPosts.promise,
+    })))
+
+    const refreshing = h.refresh()
+    h.applyPostSummary(newA)
+    pendingTree.resolve(treeFor(oldA, newB))
+    pendingPosts.resolve([oldA, newB])
+    await refreshing
+
+    expect(h.posts.value).toEqual([newA, newB])
+    expect(findTreeFile(h.tree.value, 'a')).toMatchObject({ title: 'New A', mtime: 2 })
+    expect(findTreeFile(h.tree.value, 'b')).toMatchObject({ title: 'New B', mtime: 3 })
+  })
+
+  it('retains a locally confirmed missing path and the newest same-path patch', async () => {
+    const h = await setup()
+    h.applyPostSummary(postSummary('new/path', { title: 'First', mtime: 1 }))
+    const pendingTree = deferred<TreeNode[]>()
+    const pendingPosts = deferred<PostSummary[]>()
+    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => url === '/api/tree' ? pendingTree.promise : pendingPosts.promise,
+    })))
+
+    const refreshing = h.refresh()
+    const latest = postSummary('new/path', { title: 'Latest', size: 30, mtime: 3 })
+    h.applyPostSummary(latest)
+    pendingTree.resolve(treeFor())
+    pendingPosts.resolve([])
+    await refreshing
+
+    expect(h.posts.value).toEqual([latest])
+    expect(findTreeFile(h.tree.value, 'new/path')).toMatchObject({ title: 'Latest', mtime: 3 })
+    const rootNode = h.tree.value.find((node) => node.kind === 'folder' && node.path === '') as Extract<TreeNode, { kind: 'folder' }>
+    const newFolder = rootNode.children.find((node) => node.kind === 'folder' && node.path === 'new') as Extract<TreeNode, { kind: 'folder' }>
+    expect(newFolder.children.filter((node) => node.kind === 'file' && node.path === 'new/path')).toHaveLength(1)
+  })
+
+  it('lets accepted refreshes take over patches that existed before they started', async () => {
+    const h = await setup()
+    const localA = postSummary('a', { title: 'Local A', size: 20, mtime: 2 })
+    const serverA = postSummary('a', { title: 'Server A', size: 30, mtime: 3 })
+    const laterA = postSummary('a', { title: 'Later A', size: 40, mtime: 4 })
+    h.applyPostSummary(localA)
+
+    let treeCalls = 0
+    let postsCalls = 0
+    const fetchMock = stubFetch({
+      'GET /api/tree': () => (++treeCalls === 1 ? treeFor(serverA) : treeFor(laterA)),
+      'GET /api/posts': () => (++postsCalls === 1 ? [serverA] : [laterA]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await h.refresh()
+    expect(h.posts.value).toEqual([serverA])
+    expect(findTreeFile(h.tree.value, 'a')).toMatchObject({ title: 'Server A', mtime: 3 })
+
+    await h.refresh()
+    expect(h.posts.value).toEqual([laterA])
+    expect(findTreeFile(h.tree.value, 'a')).toMatchObject({ title: 'Later A', mtime: 4 })
   })
 
   it('ignores an older Vault refresh that resolves after a newer one', async () => {
@@ -509,11 +720,12 @@ describe('useEditorTabs', () => {
       'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
       'PUT /api/posts/a': async (body) => {
         await pendingSave
-        return { ok: true, raw: (body as { raw: string }).raw }
+        return saveResult('a', (body as { raw: string }).raw)
       },
     }))
     const h = await setup()
     await h.openPost('a')
+    await flushPromises()
     h.onEditorChange('a', 'A saved while closing')
     const saving = h.doSaveNow()
     await vi.waitFor(() => expect(h.tabs.value[0].saveStatus).toBe('saving'))
@@ -596,7 +808,7 @@ describe('useEditorTabs', () => {
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [], 'GET /api/posts': () => [],
       'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: '', frontmatter: {}, size: 1, mtime: 1 }),
-      'PUT /api/posts/a': (body) => { writes.push((body as { raw: string }).raw); return { ok: true, raw: writes.at(-1)! } },
+      'PUT /api/posts/a': (body) => { writes.push((body as { raw: string }).raw); return saveResult('a', writes.at(-1)!) },
     }))
     const h = await setup()
     await h.openPost('a')
@@ -619,7 +831,7 @@ describe('useEditorTabs', () => {
       'PUT /api/posts/a': () => {
         attempts += 1
         if (!online) throw new Error('network unavailable')
-        return { ok: true, raw: 'local' }
+        return saveResult('a', 'local')
       },
     }))
     const h = await setup()
@@ -688,7 +900,7 @@ describe('useEditorTabs', () => {
       'GET /api/tree': () => [],
       'GET /api/posts': () => [],
       'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
-      'PUT /api/posts/a': () => { putCount++; return { ok: true, raw: 'A3' } },
+      'PUT /api/posts/a': () => { putCount++; return saveResult('a', 'A3') },
     }))
     const h = await setup()
     await h.openPost('a')
@@ -739,7 +951,7 @@ describe('useEditorTabs', () => {
       'GET /api/tree': () => [],
       'GET /api/posts': () => [],
       'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
-      'PUT /api/posts/a': () => { saved++; return { ok: true, raw: 'A modified' } },
+      'PUT /api/posts/a': () => { saved++; return saveResult('a', 'A modified') },
     }))
     const h = await setup()
     await h.openPost('a')

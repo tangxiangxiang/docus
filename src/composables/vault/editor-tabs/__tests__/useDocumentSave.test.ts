@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Tab } from '../../../../components/vault/tabs'
+import type { PostSummary } from '../../../../lib/api'
 import * as historyApi from '../../../../lib/history-api'
 import { createVaultContext } from '../../context/createVaultContext'
 import { createVaultFileChanges } from '../../context/fileChanges'
@@ -28,8 +29,22 @@ function makeTab(path = 'inbox/test', raw = 'saved'): Tab {
   }
 }
 
-function ok(raw: string): Response {
-  return new Response(JSON.stringify({ ok: true, raw }), {
+function summary(raw: string, overrides: Partial<PostSummary> = {}): PostSummary {
+  return {
+    path: 'inbox/test',
+    title: 'Test',
+    created: '2026-01-01',
+    updated: '2026-01-01',
+    tags: [],
+    summary: '',
+    size: raw.length,
+    mtime: 42,
+    ...overrides,
+  }
+}
+
+function ok(raw: string, overrides: Partial<PostSummary> = {}): Response {
+  return new Response(JSON.stringify({ ok: true, raw, post: summary(raw, overrides) }), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   })
@@ -37,20 +52,18 @@ function ok(raw: string): Response {
 
 function setupSave(tabs: Tab[] = [makeTab()]) {
   const tabRef = ref(tabs)
-  const posts = ref([])
   const activePath = ref<string | null>(tabs[0]?.path ?? null)
   const fileChanges = createVaultFileChanges()
-  const refresh = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+  const applyPostSummary = vi.fn()
   const toastError = vi.fn()
   const save = useDocumentSave({
     tabs: tabRef,
-    posts,
     activePath,
-    refresh,
+    applyPostSummary,
     fileChanges,
     toastError,
   })
-  return { save, tabs: tabRef, posts, activePath, fileChanges, refresh, toastError }
+  return { save, tabs: tabRef, activePath, fileChanges, applyPostSummary, toastError }
 }
 
 beforeEach(() => {
@@ -77,13 +90,16 @@ describe('useDocumentSave successful transaction', () => {
       path: 'inbox/test',
       kind: 'write',
       source: 'editor-save',
+      newMtime: 42,
     })
     expect(h.fileChanges.events.value[0]).not.toHaveProperty('newRaw')
     expect(h.tabs.value[0]).toMatchObject({
       originalRaw: 'changed',
       savedRevision: 1,
       saveStatus: 'saved',
+      serverMtime: 42,
     })
+    expect(h.applyPostSummary).toHaveBeenCalledWith(summary('changed'))
   })
 
   it('does not publish or advance the baseline when persistence fails', async () => {
@@ -94,20 +110,22 @@ describe('useDocumentSave successful transaction', () => {
     await h.save.doSave('inbox/test')
 
     expect(h.fileChanges.events.value).toEqual([])
+    expect(h.applyPostSummary).not.toHaveBeenCalled()
     expect(h.tabs.value[0]).toMatchObject({
       originalRaw: 'saved',
       savedRevision: 0,
       saveStatus: 'error',
       error: 'HTTP 500',
+      serverMtime: 1,
     })
     expect(h.toastError).toHaveBeenCalledOnce()
   })
 
-  it('keeps a successful save successful when the derived Vault refresh fails', async () => {
+  it('keeps a successful save successful when the local Workspace update throws', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(ok('changed')))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const h = setupSave()
-    h.refresh.mockRejectedValueOnce(new Error('refresh failed'))
+    h.applyPostSummary.mockImplementationOnce(() => { throw new Error('patch failed') })
     h.save.onEditorChange('inbox/test', 'changed')
 
     await h.save.doSave('inbox/test')
@@ -130,7 +148,9 @@ describe('useDocumentSave successful transaction', () => {
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
       const raw = (JSON.parse(String(init?.body)) as { raw: string }).raw
       sent.push(raw)
-      return sent.length === 1 ? first : Promise.resolve(ok(raw))
+      return sent.length === 1
+        ? first
+        : Promise.resolve(ok(raw, { size: 20, mtime: 20 }))
     })
     vi.stubGlobal('fetch', fetchMock)
     const h = setupSave()
@@ -159,11 +179,15 @@ describe('useDocumentSave successful transaction', () => {
       status: 'saving-dirty', dirty: true, inFlight: true, hasNewerChanges: true,
     })
 
-    finishFirst(ok('v1'))
+    finishFirst(ok('v1', { size: 10, mtime: 10 }))
     await saving
     await nextTick()
 
     expect(sent).toEqual(['v1', 'v2'])
+    expect(h.applyPostSummary.mock.calls.map(([post]) => ({
+      size: (post as PostSummary).size,
+      mtime: (post as PostSummary).mtime,
+    }))).toEqual([{ size: 10, mtime: 10 }, { size: 20, mtime: 20 }])
     expect(deriveDocumentSavePresentation(h.tabs.value[0])).toMatchObject({
       status: 'saved', dirty: false, inFlight: false, hasNewerChanges: false,
     })
@@ -174,6 +198,7 @@ describe('useDocumentSave successful transaction', () => {
       revision: 2,
       savedRevision: 2,
       saveStatus: 'saved',
+      serverMtime: 20,
     })
     expect(h.fileChanges.events.value).toHaveLength(2)
     expect(h.fileChanges.events.value.every((event) => !('newRaw' in event))).toBe(true)
@@ -315,7 +340,7 @@ describe('useDocumentSave lifecycle barriers', () => {
     expect(sent).toHaveLength(1)
   })
 
-  it('dispose isolates a pending PUT completion from tabs, events, refresh, and toast', async () => {
+  it('dispose isolates a pending PUT completion from tabs, events, Workspace patches, and toast', async () => {
     let finish!: (response: Response) => void
     const pending = new Promise<Response>((resolve) => { finish = resolve })
     vi.stubGlobal('fetch', vi.fn().mockReturnValue(pending))
@@ -332,7 +357,7 @@ describe('useDocumentSave lifecycle barriers', () => {
       raw: 'changed', originalRaw: 'saved', savedRevision: 0, saveStatus: 'saving',
     })
     expect(h.fileChanges.events.value).toEqual([])
-    expect(h.refresh).not.toHaveBeenCalled()
+    expect(h.applyPostSummary).not.toHaveBeenCalled()
     expect(h.toastError).not.toHaveBeenCalled()
   })
 })

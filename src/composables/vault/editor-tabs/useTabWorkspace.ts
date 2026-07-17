@@ -5,6 +5,10 @@ import { disposeMarkdownModel, renameMarkdownModel } from '../../../components/v
 import type { Tab } from '../../../components/vault/tabs'
 import { makeEmptyTab, pathToUrl, TAB_HARD_LIMIT, TAB_SOFT_LIMIT } from './tabState'
 import { useI18n } from '../../useI18n'
+import {
+  applyPostSummaryToWorkspace,
+  createLocalPostPatchTracker,
+} from './workspacePostSummary'
 
 export function useTabWorkspace(options: {
   confirm: (message: string) => Promise<boolean>
@@ -18,6 +22,7 @@ export function useTabWorkspace(options: {
   const tabs = ref<Tab[]>([])
   const activePath = ref<string | null>(null)
   let refreshRequestId = 0
+  const localPostPatches = createLocalPostPatchTracker()
 
   const activeTab = computed<Tab | null>(
     () => tabs.value.find((tab) => tab.path === activePath.value) ?? null,
@@ -37,10 +42,28 @@ export function useTabWorkspace(options: {
 
   async function refresh() {
     const requestId = ++refreshRequestId
+    const startedAtPatchSeq = localPostPatches.currentSeq()
     const [nextTree, nextPosts] = await Promise.all([getTree(), listPosts()])
     if (requestId !== refreshRequestId) return
-    tree.value = nextTree
-    posts.value = nextPosts
+    let mergedTree = nextTree
+    let mergedPosts = nextPosts
+    for (const patch of localPostPatches.after(startedAtPatchSeq)) {
+      const merged = applyPostSummaryToWorkspace(mergedTree, mergedPosts, patch.post)
+      mergedTree = merged.tree
+      mergedPosts = merged.posts
+    }
+    tree.value = mergedTree
+    posts.value = mergedPosts
+    localPostPatches.settleThrough(startedAtPatchSeq)
+  }
+
+  function applyPostSummary(post: PostSummary): void {
+    const snapshot = localPostPatches.record(post).post
+    const next = applyPostSummaryToWorkspace(tree.value, posts.value, snapshot)
+    tree.value = next.tree
+    posts.value = next.posts
+    const tab = tabs.value.find((candidate) => candidate.path === post.path)
+    if (tab) tab.title = post.title
   }
 
   async function openPost(path: string, openOptions: { refresh?: boolean } = {}) {
@@ -205,6 +228,7 @@ export function useTabWorkspace(options: {
     isDirty,
     activeSize,
     refresh,
+    applyPostSummary,
     openPost,
     restoreOneTab,
     closeTab,

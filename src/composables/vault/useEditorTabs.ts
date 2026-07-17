@@ -49,6 +49,7 @@ export function useEditorTabs(opts: {
     isDirty,
     activeSize,
     refresh,
+    applyPostSummary,
     openPost,
     restoreOneTab,
     closeTab: closeTabState,
@@ -79,9 +80,8 @@ export function useEditorTabs(opts: {
     disposeDocumentSave,
   } = useDocumentSave({
     tabs,
-    posts,
     activePath,
-    refresh,
+    applyPostSummary,
     fileChanges,
     toastError: toast.error,
   })
@@ -269,6 +269,7 @@ export function useEditorTabs(opts: {
     isDirty,
     activeSize,
     refresh,
+    applyPostSummary,
     openPost,
     closeTab,
     closeMany,
