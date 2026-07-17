@@ -1410,20 +1410,23 @@ describe('useDocumentSave optimistic conflicts', () => {
       loadError: null,
     })
 
-    // Now resolve E1's older confirm. It must detect that a newer event
-    // already changed the tab and convert to external/modified instead of
-    // silently overwriting C2 with C1.
+    // Now resolve E1's older confirm. A newer event (E2) already bumped
+    // externalEventIds, so E1 is stale — it must be silently discarded
+    // without touching any tab state (raw, externalRaw, serverMtime, etc.).
     resolveConfirm1(true)
     await e1
 
-    // C2 must be preserved — E1's stale C1 must NOT overwrite.
+    // C2 must be preserved — E1's stale C1 must be completely ignored.
     expect(h.tabs.value[0]).toMatchObject({
       raw: 'C2 from newer event',
       originalRaw: 'C2 from newer event',
-      saveStatus: 'external',
-      externalKind: 'modified',
-      externalRaw: 'C1 from older event',
-      serverMtime: 20,
+      saveStatus: 'idle',
+      revision: 3,
+      savedRevision: 3,
+      externalKind: null,
+      externalRaw: null,
+      loadError: null,
+      serverMtime: 30,
     })
   })
 
@@ -1486,6 +1489,154 @@ describe('useDocumentSave optimistic conflicts', () => {
       externalKind: 'modified',
       externalRaw: 'C from AI',
       serverMtime: 20,
+    })
+  })
+
+  it('ignores stale write confirm when a delete arrives while confirm is pending', async () => {
+    // Simulates: local dirty B, AI write E1(C1) shows confirm and is pending,
+    // AI delete arrives setting the tab to external/deleted,
+    // then user confirms old write E1 — E1 must be silently discarded,
+    // tab must remain external/deleted.
+    let resolveConfirm!: (value: boolean) => void
+    const pendingConfirm = new Promise<boolean>((resolve) => { resolveConfirm = resolve })
+
+    const h = setupSave()
+    h.tabs.value[0].revision = 2
+    h.tabs.value[0].savedRevision = 1
+    Object.assign(h.tabs.value[0], {
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      serverMtime: 10,
+    })
+
+    const confirm = vi.fn().mockReturnValue(pendingConfirm)
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm,
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+      invalidateDiskObservation: disk.invalidateDiskObservation,
+    })
+
+    // Fire write event — confirm is pending.
+    const writePromise = external.applyExternalChange({
+      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      newRaw: 'C1 from write', newMtime: 20,
+    })
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
+
+    // Delete arrives while write confirm is pending — bumps externalEventIds
+    // so the stale write will be silently discarded.
+    await external.applyExternalChange({
+      seq: 2, path: 'inbox/test', kind: 'delete', source: 'ai-tool',
+      newMtime: 30,
+    })
+    expect(h.tabs.value[0]).toMatchObject({
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+      loadError: expect.any(String),
+    })
+
+    // User confirms the stale write. It must be silently discarded.
+    resolveConfirm(true)
+    await writePromise
+
+    // Tab must remain external/deleted — stale write must not clear it.
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+      serverMtime: 10,
+      loadError: expect.any(String),
+    })
+  })
+
+  it('keeps poll state when write confirm resolves after poll updates disk', async () => {
+    // Simulates: local dirty B, AI write E1(C1) shows confirm and is pending,
+    // disk poll reads newer content C2 from disk and sets external/modified,
+    // then user confirms E1 — E1 must not overwrite the poll's external
+    // state or regress serverMtime.
+    let resolveConfirm!: (value: boolean) => void
+    const pendingConfirm = new Promise<boolean>((resolve) => { resolveConfirm = resolve })
+
+    const h = setupSave()
+    h.tabs.value[0].revision = 2
+    h.tabs.value[0].savedRevision = 1
+    Object.assign(h.tabs.value[0], {
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      serverMtime: 10,
+    })
+
+    const confirm = vi.fn().mockReturnValue(pendingConfirm)
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm,
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+      invalidateDiskObservation: disk.invalidateDiskObservation,
+    })
+
+    // Fire write event — confirm is pending.
+    const writePromise = external.applyExternalChange({
+      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      newRaw: 'C1 from write', newMtime: 20,
+    })
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
+
+    // Simulate disk poll: the poll reads newer content C2 from disk and
+    // sets external/modified with the correct disk content. The event is
+    // still current (no newer external event arrived), but saveStatus
+    // changed to 'external' — the write must not overwrite it.
+    Object.assign(h.tabs.value[0], {
+      externalRaw: 'C2 from disk',
+      externalKind: 'modified',
+      serverMtime: 30,
+      saveStatus: 'external',
+      loadError: null,
+      error: '磁盘文件已变化，本地修改尚未保存',
+    })
+
+    // User confirms the write.
+    resolveConfirm(true)
+    await writePromise
+
+    // Poll state must be preserved — write must not overwrite externalRaw
+    // or regress serverMtime.
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'external',
+      externalKind: 'modified',
+      externalRaw: 'C2 from disk',
+      serverMtime: 30,
     })
   })
 

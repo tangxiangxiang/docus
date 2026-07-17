@@ -88,6 +88,10 @@ export function useExternalFileChanges(options: {
     if (tab.savingRevision !== null) return
 
     if (event.kind === 'delete') {
+      // Bump the external-event generation so any in-flight write confirm
+      // for this path can detect that a newer authoritative event has
+      // arrived and silently discard its stale application.
+      beginExternalEvent(event.path)
       // Invalidate any in-flight disk poll read AND state observation so a
       // pending getPost or getFileStates cannot overwrite the delete state
       // with stale content once it returns.
@@ -103,12 +107,18 @@ export function useExternalFileChanges(options: {
     const isDirty = tab.raw !== tab.originalRaw
     if (isDirty) {
       // Capture state BEFORE the async confirm so we can detect whether a
-      // newer event or user edit changed the tab while we were waiting.
+      // newer event, user edit, delete, or poll changed the tab while we
+      // were waiting.
       const eventId = beginExternalEvent(event.path)
       const requestedTab = tab
       const requestedRevision = tab.revision
       const requestedRaw = tab.raw
       const requestedOriginalRaw = tab.originalRaw
+      const requestedSaveStatus = tab.saveStatus
+      const requestedExternalKind = tab.externalKind
+      const requestedExternalRaw = tab.externalRaw
+      const requestedServerMtime = tab.serverMtime
+      const requestedLoadError = tab.loadError
 
       const ok = await options.confirm(
         t('editor.ai_overwrite', { path: event.path }),
@@ -125,19 +135,35 @@ export function useExternalFileChanges(options: {
         return
       }
 
-      // After confirm, validate that no other event or user edit changed the
-      // tab. If anything drifted, convert to external/modified so the user
-      // can explicitly resolve rather than silently losing work.
+      // After confirm, first check whether a newer event has arrived for
+      // this path. If so, this event is stale — silently discard it without
+      // touching any tab state (raw, external flags, serverMtime, revision,
+      // or error). Only a newer event (bumping externalEventIds) can make
+      // an event stale; user edits or poll updates do not bump the counter.
+      if (!isCurrentExternalEvent(event.path, eventId)) {
+        return
+      }
+
+      // The event is still current. Validate that no user edit or other
+      // state mutation changed the tab while the confirm was pending. If
+      // anything drifted, convert to external/modified so the user can
+      // explicitly resolve rather than silently losing work — but only if
+      // the tab is NOT already in an external state (which means another
+      // conflict source such as a poll already set it correctly).
       const latestTab = options.tabs.value.find((item) => item.path === event.path)
       if (
-        !isCurrentExternalEvent(event.path, eventId)
-        || latestTab !== requestedTab
+        latestTab !== requestedTab
         || latestTab?.path !== event.path
         || latestTab.revision !== requestedRevision
         || latestTab.raw !== requestedRaw
         || latestTab.originalRaw !== requestedOriginalRaw
+        || latestTab.saveStatus !== requestedSaveStatus
+        || latestTab.externalKind !== requestedExternalKind
+        || latestTab.externalRaw !== requestedExternalRaw
+        || latestTab.serverMtime !== requestedServerMtime
+        || latestTab.loadError !== requestedLoadError
       ) {
-        if (latestTab) {
+        if (latestTab && latestTab.saveStatus !== 'external') {
           latestTab.serverMtime = event.newMtime ?? latestTab.serverMtime
           if (event.newRaw != null) {
             latestTab.externalRaw = event.newRaw
