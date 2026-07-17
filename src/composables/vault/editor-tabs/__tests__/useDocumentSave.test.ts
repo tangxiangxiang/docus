@@ -1640,6 +1640,216 @@ describe('useDocumentSave optimistic conflicts', () => {
     })
   })
 
+  it('ignores stale write confirm when a clean write supersedes it while confirm is pending', async () => {
+    // Simulates: local dirty B, AI write E1(C1, seq=1) confirm pending,
+    // tab becomes clean (e.g. saved by another process), then a clean
+    // write E2(C2, seq=2) auto-applies without prompt. E1's confirm
+    // resolves after — E1 must be silently discarded, tab stays idle/C2.
+    let resolveConfirm!: (value: boolean) => void
+    const pendingConfirm = new Promise<boolean>((resolve) => { resolveConfirm = resolve })
+
+    const h = setupSave()
+    h.tabs.value[0].revision = 2
+    h.tabs.value[0].savedRevision = 1
+    Object.assign(h.tabs.value[0], {
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      serverMtime: 10,
+    })
+
+    const confirm = vi.fn().mockReturnValue(pendingConfirm)
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm,
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+    })
+
+    // Fire E1 — confirm is pending (dirty, seq=1).
+    const e1Promise = external.applyExternalChange({
+      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      newRaw: 'C1 from older event', newMtime: 20,
+    })
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
+
+    // Tab becomes clean (simulate save by another process) so the next
+    // write is auto-applied without a confirm prompt.
+    Object.assign(h.tabs.value[0], {
+      raw: 'saved Cx',
+      originalRaw: 'saved Cx',
+      saveStatus: 'idle',
+    })
+
+    // Fire E2 — clean write auto-applies (seq=2 > 1, makes E1 stale).
+    await external.applyExternalChange({
+      seq: 2, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      newRaw: 'C2 from clean write', newMtime: 30,
+    })
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'C2 from clean write',
+      originalRaw: 'C2 from clean write',
+      saveStatus: 'idle',
+      serverMtime: 30,
+    })
+
+    // User confirms stale E1 — must be silently discarded.
+    resolveConfirm(true)
+    await e1Promise
+
+    // Tab must stay idle with C2 content from E2.
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'C2 from clean write',
+      originalRaw: 'C2 from clean write',
+      saveStatus: 'idle',
+      externalKind: null,
+      externalRaw: null,
+      loadError: null,
+      serverMtime: 30,
+    })
+  })
+
+  it('ignores stale write confirm when a history-restore event supersedes it while confirm is pending', async () => {
+    // Simulates: local dirty B, AI write E1(C1, seq=1) confirm pending,
+    // history-restore event (seq=2) updates serverMtime, user confirms
+    // E1 — E1 is stale, tab must keep dirty B and restored mtime.
+    let resolveConfirm!: (value: boolean) => void
+    const pendingConfirm = new Promise<boolean>((resolve) => { resolveConfirm = resolve })
+
+    const h = setupSave()
+    h.tabs.value[0].revision = 2
+    h.tabs.value[0].savedRevision = 1
+    Object.assign(h.tabs.value[0], {
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      serverMtime: 10,
+    })
+
+    const confirm = vi.fn().mockReturnValue(pendingConfirm)
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm,
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+    })
+
+    // Fire E1 — confirm is pending (dirty, seq=1).
+    const e1Promise = external.applyExternalChange({
+      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      newRaw: 'C1 from write', newMtime: 20,
+    })
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
+
+    // History-restore event arrives (seq=2 > 1) — bumps latestEventSeqs
+    // and updates serverMtime without confirm.
+    await external.applyExternalChange({
+      seq: 2, path: 'inbox/test', kind: 'write', source: 'history-restore',
+      newMtime: 30,
+    })
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      serverMtime: 30,
+    })
+
+    // User confirms stale E1 — must be silently discarded.
+    resolveConfirm(true)
+    await e1Promise
+
+    // Tab must remain dirty with restored mtime — E1's C1 and mtime=20
+    // must not leak.
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      externalRaw: null,
+      loadError: null,
+      serverMtime: 30,
+    })
+    expect(h.tabs.value[0].externalKind).toBeUndefined()
+  })
+
+  it('does not regress serverMtime on cancel when poll updated state while confirm was pending', async () => {
+    // Simulates: local dirty B, AI write E1(C1, mtime=20) confirm pending,
+    // disk poll sets external/modified (C2, mtime=30), user cancels E1.
+    // Cancel must detect the state change and NOT regress serverMtime to 20.
+    let resolveConfirm!: (value: boolean) => void
+    const pendingConfirm = new Promise<boolean>((resolve) => { resolveConfirm = resolve })
+
+    const h = setupSave()
+    h.tabs.value[0].revision = 2
+    h.tabs.value[0].savedRevision = 1
+    Object.assign(h.tabs.value[0], {
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      serverMtime: 10,
+    })
+
+    const confirm = vi.fn().mockReturnValue(pendingConfirm)
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm,
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+      invalidateDiskObservation: disk.invalidateDiskObservation,
+    })
+
+    // Fire E1 — confirm is pending.
+    const e1Promise = external.applyExternalChange({
+      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      newRaw: 'C1 from write', newMtime: 20,
+    })
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
+
+    // Simulate disk poll: sets external/modified with correct disk content
+    // and newer mtime. saveStatus changes from 'dirty' to 'external'.
+    Object.assign(h.tabs.value[0], {
+      externalRaw: 'C2 from disk',
+      externalKind: 'modified',
+      serverMtime: 30,
+      saveStatus: 'external',
+      loadError: null,
+      error: '磁盘文件已变化，本地修改尚未保存',
+    })
+
+    // User cancels E1 — cancel must detect state change and NOT overwrite
+    // serverMtime, externalRaw, or externalKind.
+    resolveConfirm(false)
+    await e1Promise
+
+    // Poll state must be preserved intact.
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'external',
+      externalKind: 'modified',
+      externalRaw: 'C2 from disk',
+      serverMtime: 30,
+    })
+  })
+
   it('turns a deleted conflict into modified when the file reappears', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/api/files/state') {

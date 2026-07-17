@@ -18,27 +18,27 @@ export function useExternalFileChanges(options: {
   invalidateDiskObservation?: (path: string) => void
 }) {
   const { t } = useI18n()
-  // Per-path generation counter for external events that require confirmation.
-  // Bumped before `await confirm()` so that when multiple events for the same
-  // path race or the user edits during a pending confirm, the older event can
-  // detect the staleness and convert to external/modified instead of silently
-  // overwriting the newer state.
-  const externalEventIds = new Map<string, number>()
+  // Per-path record of the latest event seq. Every event that passes through
+  // applyExternalChange is tracked as the most recent authority for its path,
+  // so any in-flight write confirm can detect whether a newer event (including
+  // clean writes, history-restore, renames, and deletes) has superseded it.
+  const latestEventSeqs = new Map<string, number>()
 
-  function beginExternalEvent(path: string): number {
-    const id = (externalEventIds.get(path) ?? 0) + 1
-    externalEventIds.set(path, id)
-    return id
-  }
-
-  function isCurrentExternalEvent(path: string, id: number): boolean {
-    return externalEventIds.get(path) === id
+  function isLatestEvent(path: string, seq: number): boolean {
+    return latestEventSeqs.get(path) === seq
   }
 
   async function applyExternalChange(event: InternalFileChangeEvent): Promise<void> {
     // Local lifecycle transactions already migrated/closed the owning tabs.
     // The event is for History, links, and other derived Vault consumers only.
     if (event.source === 'editor-lifecycle') return
+
+    // Record this event as the latest authority for its path so any in-flight
+    // write confirm can detect staleness and silently discard its application.
+    // This covers ALL event types — rename, editor-save, history-restore,
+    // delete, and both clean and dirty writes.
+    latestEventSeqs.set(event.path, event.seq)
+
     if (event.kind === 'rename') {
       const oldTab = options.tabs.value.find((tab) => tab.path === event.oldPath)
       if (!oldTab) return
@@ -88,10 +88,6 @@ export function useExternalFileChanges(options: {
     if (tab.savingRevision !== null) return
 
     if (event.kind === 'delete') {
-      // Bump the external-event generation so any in-flight write confirm
-      // for this path can detect that a newer authoritative event has
-      // arrived and silently discard its stale application.
-      beginExternalEvent(event.path)
       // Invalidate any in-flight disk poll read AND state observation so a
       // pending getPost or getFileStates cannot overwrite the delete state
       // with stale content once it returns.
@@ -109,7 +105,7 @@ export function useExternalFileChanges(options: {
       // Capture state BEFORE the async confirm so we can detect whether a
       // newer event, user edit, delete, or poll changed the tab while we
       // were waiting.
-      const eventId = beginExternalEvent(event.path)
+      const capturedSeq = event.seq
       const requestedTab = tab
       const requestedRevision = tab.revision
       const requestedRaw = tab.raw
@@ -124,13 +120,26 @@ export function useExternalFileChanges(options: {
         t('editor.ai_overwrite', { path: event.path }),
       )
       if (!ok) {
-        // Only update mtime if no newer event arrived for this path and the
-        // tab is still the same object — avoid touching a stale reference.
+        // Only update mtime if no newer event arrived AND the tab state is
+        // completely unchanged. If a poll set external state, the user
+        // edited, or anything else changed the tab while the confirm was
+        // pending, we must not touch anything — partial updates would
+        // create inconsistent state (e.g. externalRaw from poll but old
+        // mtime from this event).
+        const latestTab = options.tabs.value.find((item) => item.path === event.path)
         if (
-          isCurrentExternalEvent(event.path, eventId)
-          && options.tabs.value.find((item) => item.path === event.path) === requestedTab
+          isLatestEvent(event.path, capturedSeq)
+          && latestTab === requestedTab
+          && latestTab?.revision === requestedRevision
+          && latestTab?.raw === requestedRaw
+          && latestTab?.originalRaw === requestedOriginalRaw
+          && latestTab?.saveStatus === requestedSaveStatus
+          && latestTab?.externalKind === requestedExternalKind
+          && latestTab?.externalRaw === requestedExternalRaw
+          && latestTab?.serverMtime === requestedServerMtime
+          && latestTab?.loadError === requestedLoadError
         ) {
-          requestedTab.serverMtime = event.newMtime ?? requestedTab.serverMtime
+          latestTab.serverMtime = event.newMtime ?? latestTab.serverMtime
         }
         return
       }
@@ -138,9 +147,9 @@ export function useExternalFileChanges(options: {
       // After confirm, first check whether a newer event has arrived for
       // this path. If so, this event is stale — silently discard it without
       // touching any tab state (raw, external flags, serverMtime, revision,
-      // or error). Only a newer event (bumping externalEventIds) can make
-      // an event stale; user edits or poll updates do not bump the counter.
-      if (!isCurrentExternalEvent(event.path, eventId)) {
+      // or error). A newer event (with higher seq) makes an event stale;
+      // user edits or poll updates do not change the latest seq.
+      if (!isLatestEvent(event.path, capturedSeq)) {
         return
       }
 
