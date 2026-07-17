@@ -57,6 +57,17 @@ export function useDiskFileChanges(options: {
     return stateObservationIds.get(path) === id
   }
 
+  // Unified invalidation for external events (AI deletes/writes). Bumps both
+  // the disk-read generation (so in-flight getPost responses are discarded)
+  // AND the state-observation generation (so in-flight getFileStates responses
+  // are discarded). Without the state-observation bump, a stale exists=true
+  // state response arriving after an AI delete could still route into getPost
+  // and flip the tab to unreadable.
+  function invalidateDiskObservation(path: string): void {
+    invalidateDiskRead(path)
+    beginStateObservation(path)
+  }
+
   function beginExternalResolution(path: string): number {
     const id = (externalResolutionIds.get(path) ?? 0) + 1
     externalResolutionIds.set(path, id)
@@ -427,5 +438,6 @@ export function useDiskFileChanges(options: {
     startExternalPolling,
     stopExternalPolling,
     invalidateDiskRead,
+    invalidateDiskObservation,
   }
 }

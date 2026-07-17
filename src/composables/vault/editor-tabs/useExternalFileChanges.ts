@@ -15,6 +15,7 @@ export function useExternalFileChanges(options: {
   toastInfo: (message: string) => void
   fileChanges: VaultFileChanges
   invalidateDiskRead?: (path: string) => number
+  invalidateDiskObservation?: (path: string) => void
 }) {
   const { t } = useI18n()
   async function applyExternalChange(event: InternalFileChangeEvent): Promise<void> {
@@ -70,9 +71,10 @@ export function useExternalFileChanges(options: {
     if (tab.savingRevision !== null) return
 
     if (event.kind === 'delete') {
-      // Invalidate any in-flight disk poll read so a pending getPost cannot
-      // overwrite the delete state with stale content once it returns.
-      options.invalidateDiskRead?.(event.path)
+      // Invalidate any in-flight disk poll read AND state observation so a
+      // pending getPost or getFileStates cannot overwrite the delete state
+      // with stale content once it returns.
+      options.invalidateDiskObservation?.(event.path)
       tab.loadError = t('editor.ai_deleted')
       tab.saveStatus = 'external'
       tab.externalRaw = null
@@ -92,9 +94,10 @@ export function useExternalFileChanges(options: {
       }
     }
     if (event.newRaw != null) {
-      // Invalidate any in-flight disk poll read so a pending getPost cannot
-      // overwrite the externally written content once it returns.
-      options.invalidateDiskRead?.(event.path)
+      // Invalidate any in-flight disk poll read AND state observation so a
+      // pending getPost or getFileStates cannot overwrite the externally
+      // written content once it returns.
+      options.invalidateDiskObservation?.(event.path)
       tab.raw = event.newRaw
       tab.originalRaw = event.newRaw
     }

@@ -1038,6 +1038,178 @@ describe('useDocumentSave optimistic conflicts', () => {
     })
   })
 
+  it('keeps delete state from external file change when a poll files/state is pending', async () => {
+    let finishState!: (response: Response) => void
+    const pendingState = new Promise<Response>((resolve) => { finishState = resolve })
+    let stateCalls = 0
+    let getPostCalled = false
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        stateCalls += 1
+        if (stateCalls === 1) return pendingState
+        // Subsequent polls return current state.
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: false, mtime: 0, size: 0 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') {
+        getPostCalled = true
+        return Promise.resolve(new Response(JSON.stringify({
+          path: 'inbox/test',
+          raw: 'old body',
+          content: '',
+          frontmatter: {},
+          size: 5,
+          mtime: 10,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: vi.fn(),
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+      invalidateDiskObservation: disk.invalidateDiskObservation,
+    })
+
+    // Poll starts: getFileStates is pending.
+    const polling = disk.pollExternalChanges()
+    await vi.waitFor(() => expect(stateCalls).toBe(1))
+
+    // AI delete event fires while getFileStates is in flight — must invalidate
+    // the state observation so the stale exists=true response is dropped.
+    await external.applyExternalChange({
+      seq: 1,
+      path: 'inbox/test',
+      kind: 'delete',
+      source: 'ai-tool',
+    })
+    expect(h.tabs.value[0]).toMatchObject({
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+      loadError: expect.any(String),
+    })
+
+    // Stale getFileStates returns with exists=true. The state observation was
+    // invalidated by the AI delete, so this response must be dropped — it must
+    // NOT route into getPost and must NOT overwrite the delete state.
+    finishState(new Response(JSON.stringify([
+      { path: 'inbox/test', exists: true, mtime: 10, size: 5 },
+    ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await polling
+
+    // Tab must remain external/deleted with loadError preserved.
+    expect(h.tabs.value[0]).toMatchObject({
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+      loadError: expect.any(String),
+    })
+    // The stale state response must not have triggered a getPost call.
+    expect(getPostCalled).toBe(false)
+  })
+
+  it('keeps new content from external write when a stale files/state response arrives', async () => {
+    let finishState!: (response: Response) => void
+    const pendingState = new Promise<Response>((resolve) => { finishState = resolve })
+    let stateCalls = 0
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        stateCalls += 1
+        if (stateCalls === 1) return pendingState
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 30, size: 7 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') {
+        return Promise.resolve(new Response(JSON.stringify({
+          path: 'inbox/test',
+          raw: 'new content C',
+          content: '',
+          frontmatter: {},
+          size: 7,
+          mtime: 30,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    // Tab starts in deleted state.
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      loadError: 'was deleted',
+    })
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: vi.fn(),
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+      invalidateDiskObservation: disk.invalidateDiskObservation,
+    })
+
+    // Poll A: getFileStates is pending (will return exists=false).
+    const pollingA = disk.pollExternalChanges()
+    await vi.waitFor(() => expect(stateCalls).toBe(1))
+
+    // AI write event fires with new content — must invalidate the stale state
+    // observation so the old exists=false response is dropped.
+    await external.applyExternalChange({
+      seq: 1,
+      path: 'inbox/test',
+      kind: 'write',
+      source: 'ai-tool',
+      newRaw: 'new content C',
+      newMtime: 30,
+    })
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'new content C',
+      originalRaw: 'new content C',
+      saveStatus: 'idle',
+    })
+
+    // Stale getFileStates returns exists=false. The state observation was
+    // invalidated by the AI write, so this response must be dropped — it must
+    // NOT flip the tab back to deleted.
+    finishState(new Response(JSON.stringify([
+      { path: 'inbox/test', exists: false, mtime: 0, size: 0 },
+    ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await pollingA
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'new content C',
+      originalRaw: 'new content C',
+      saveStatus: 'idle',
+    })
+  })
+
   it('turns a deleted conflict into modified when the file reappears', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/api/files/state') {
