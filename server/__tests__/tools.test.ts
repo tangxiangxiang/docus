@@ -347,6 +347,48 @@ describe('rename_file', () => {
     expect(fs.readFileSync(path.join(contentDir, 'a/source.md'), 'utf8')).toBe('see [[old]]')
     expect(r.changes).toEqual([])
   })
+
+  it('reports the final on-disk body in the rename event when the document self-references via the old path', async () => {
+    // The source document links to itself via its old path. The reference
+    // rewrite updates that link to the new path and writes the new body to
+    // dstAbs. The rename event must report the FINAL on-disk body (which
+    // now points to the new path), not the pre-rewrite `raw` captured
+    // before the rename — otherwise the client would trust the wrong
+    // body and disk polling would never repair it (mtime would match).
+    writeFile('a/old.md', 'see [[a/old]]')
+    const r = await executeToolCall('rename_file', { path: 'a/old', new_path: 'a/new' }, ctx)
+    expect(r.isError).toBe(false)
+    expect(r.changed?.kind).toBe('rename')
+    expect(r.changed?.path).toBe('a/new')
+    expect(r.changed?.oldPath).toBe('a/old')
+    // Disk final body — the self-reference has been rewritten to the new path.
+    const finalBody = fs.readFileSync(path.join(contentDir, 'a/new.md'), 'utf8')
+    expect(finalBody).toBe('see [[a/new]]')
+    // The event's newRaw must match the disk final body byte-for-byte.
+    expect(r.changed?.newRaw).toBe(finalBody)
+    // newMtime must correspond to the destination's final write, not the
+    // pre-rename stat. The destination was last touched by the self-ref
+    // rewrite (since the self-ref is the only backlink), so its mtime is
+    // the latest fs.writeFileSync timestamp.
+    const finalStat = fs.statSync(path.join(contentDir, 'a/new.md'))
+    expect(r.changed?.newMtime).toBe(finalStat.mtimeMs)
+  })
+
+  it('reports the final on-disk body in the rename event when an external backlink is rewritten to a different file', async () => {
+    // Sanity check that even when no self-reference is involved, the
+    // rename event reports the actual destination body. The destination
+    // was renamed from the source (no rewrite of its own body), so the
+    // pre-rewrite `raw` happens to equal the final disk body — the test
+    // guarantees the event uses the re-read disk body, not a stale
+    // pre-rename snapshot.
+    writeFile('a/old.md', 'hello world')
+    writeFile('a/source.md', 'see [[a/old]]')
+    const r = await executeToolCall('rename_file', { path: 'a/old', new_path: 'a/new' }, ctx)
+    expect(r.isError).toBe(false)
+    const finalBody = fs.readFileSync(path.join(contentDir, 'a/new.md'), 'utf8')
+    expect(finalBody).toBe('hello world')
+    expect(r.changed?.newRaw).toBe(finalBody)
+  })
 })
 
 // --- dispatcher / shape -----------------------------------------------------

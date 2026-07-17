@@ -2356,6 +2356,62 @@ describe('useDocumentSave optimistic conflicts', () => {
     })
   })
 
+  it('applies the final on-disk body from a rename event for a self-referencing document', async () => {
+    // End-to-end assertion of the contract: the server publishes the
+    // FINAL on-disk body of the renamed destination (after all reference
+    // rewrites have been written), not the pre-rename snapshot. The
+    // client must apply that body verbatim — a clean target tab gets the
+    // final body, and a dirty/external target tab gets the final body
+    // presented as the conflict content. Either way, the tab's local
+    // buffer (or externalRaw) must equal the disk's final state, so
+    // disk polling never needs to repair a stale body (mtime would
+    // match `serverMtime`).
+    const finalBody = 'see [[inbox/new-path]]'
+    const h = setupSave()
+    h.tabs.value[0].path = 'inbox/new-path'
+    h.tabs.value[0].revision = 0
+    h.tabs.value[0].savedRevision = 0
+    Object.assign(h.tabs.value[0], {
+      raw: 'old disk content',
+      originalRaw: 'old disk content',
+      saveStatus: 'idle',
+      serverMtime: 10,
+    })
+
+    const oldTab = makeTab('inbox/old-path', 'old content')
+    h.tabs.value.push(oldTab)
+
+    const closeTab = vi.fn().mockResolvedValue(true)
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab,
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: vi.fn(),
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+    })
+
+    // Server-side contract: rename event carries the FINAL disk body
+    // (post self-reference rewrite), not the pre-rewrite raw.
+    await external.applyExternalChange({
+      seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
+      kind: 'rename', source: 'ai-tool',
+      newRaw: finalBody, newMtime: 30,
+    })
+
+    const target = h.tabs.value.find((t) => t.path === 'inbox/new-path')
+    expect(target).toBeDefined()
+    // Tab body must equal the final disk body — not the pre-rename
+    // snapshot. Both raw and originalRaw converge to the authoritative
+    // post-rename content.
+    expect(target!.raw).toBe(finalBody)
+    expect(target!.originalRaw).toBe(finalBody)
+    expect(target!.saveStatus).toBe('idle')
+    expect(target!.serverMtime).toBe(30)
+  })
+
   it('turns a deleted conflict into modified when the file reappears', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/api/files/state') {

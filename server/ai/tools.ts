@@ -633,10 +633,19 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
   } catch (e) {
     return err(`rename_file: ${(e as Error).message}`)
   }
+  // After ALL disk writes complete (rename + every rewritten reference),
+  // re-read the destination so the event reports the final on-disk body
+  // — NOT the pre-rewrite `raw` captured before the rename. Self-references
+  // and other in-place body rewrites are written to dstAbs during the
+  // reference loop above, so the destination's final content may differ
+  // from `raw`. The client trusts `newRaw` as authoritative and skips the
+  // poll's getPost when `serverMtime` matches `state.mtime`, so any
+  // divergence here would be frozen into the tab until the next save.
   const stat = fs.statSync(dstAbs)
+  const finalRaw = fs.readFileSync(dstAbs, 'utf8')
   try {
     const idx = await getLinkIndex()
-    idx.applyRename(input.path, input.new_path, fs.readFileSync(dstAbs, 'utf8'))
+    idx.applyRename(input.path, input.new_path, finalRaw)
     for (const reference of references) if (reference.path !== input.new_path) idx.applyWrite(reference.path, reference.updated)
   } catch { /* next rebuild repairs the index */ }
   const renamedChange: FileChangeDescriptor = {
@@ -644,7 +653,7 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     oldPath: input.path,
     kind: 'rename',
     newMtime: stat.mtimeMs,
-    newRaw: raw,
+    newRaw: finalRaw,
   }
   return { content: `renamed ${input.path} → ${input.new_path}`, isError: false, changed: renamedChange, changes: references
     .filter((reference) => reference.path !== input.new_path)
