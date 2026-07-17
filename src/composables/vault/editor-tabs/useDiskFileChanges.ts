@@ -12,10 +12,33 @@ export function useDiskFileChanges(options: {
 }) {
   let externalPollTimer: ReturnType<typeof setInterval> | null = null
   const externalResolutionIds = new Map<string, number>()
+  // Per-path generation counter for every in-flight disk read (poll or
+  // manual resolution). Bumped by every poll read AND by
+  // `beginExternalResolution`, so a poll that began before a manual
+  // resolution cannot overwrite state the resolution writes and an older
+  // poll cannot overwrite state a newer poll observes. Field-snapshot
+  // equality still handles state changes between captures (edit, save,
+  // recovery), while `diskReadIds` handles the case where two reads race
+  // without the captured fields having moved (same mtime, same revision).
+  const diskReadIds = new Map<string, number>()
+
+  function invalidateDiskRead(path: string): number {
+    const id = (diskReadIds.get(path) ?? 0) + 1
+    diskReadIds.set(path, id)
+    return id
+  }
+
+  function isCurrentDiskRead(path: string, id: number): boolean {
+    return diskReadIds.get(path) === id
+  }
 
   function beginExternalResolution(path: string): number {
     const id = (externalResolutionIds.get(path) ?? 0) + 1
     externalResolutionIds.set(path, id)
+    // Manual resolution is the user's authoritative intent. Invalidate any
+    // poll read that began before this click so it cannot race the
+    // resolution's writes once it returns.
+    invalidateDiskRead(path)
     return id
   }
 
@@ -25,6 +48,10 @@ export function useDiskFileChanges(options: {
     tab: Tab,
     externalKind: Tab['externalKind'],
   ): boolean {
+    // Resolution-level check: only newer resolutions invalidate. A poll
+    // that runs concurrently is allowed to observe and write intermediate
+    // state (e.g. `recoveryObservedByPoll`) without forcing this
+    // resolution to drop its work.
     const latestTab = options.tabs.value.find((item) => item.path === path)
     return externalResolutionIds.get(path) === id
       && latestTab === tab
@@ -63,8 +90,10 @@ export function useDiskFileChanges(options: {
       const requestedServerMtime = tab.serverMtime
       const requestedExternalKind = tab.externalKind
       const requestedTab = tab
+      const readId = invalidateDiskRead(requestedPath)
       try {
         const post = await getPost(requestedPath)
+        if (!isCurrentDiskRead(requestedPath, readId)) continue
         const latestTab = options.tabs.value.find((item) => item.path === requestedPath)
         if (
           latestTab !== requestedTab
@@ -111,6 +140,7 @@ export function useDiskFileChanges(options: {
         latestTab.error = null
         latestTab.externalKind = null
       } catch {
+        if (!isCurrentDiskRead(requestedPath, readId)) continue
         const latestTab = options.tabs.value.find((item) => item.path === requestedPath)
         if (
           latestTab === requestedTab

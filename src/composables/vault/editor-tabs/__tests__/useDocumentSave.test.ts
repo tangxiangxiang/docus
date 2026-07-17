@@ -592,6 +592,171 @@ describe('useDocumentSave optimistic conflicts', () => {
     expect(scheduleSave).toHaveBeenCalledWith('inbox/test', 0)
   })
 
+  it('invalidates an in-flight poll read when manual external resolution begins', async () => {
+    let finishPollGet!: (response: Response) => void
+    let finishResolveGet!: (response: Response) => void
+    const pollGet = new Promise<Response>((resolve) => { finishPollGet = resolve })
+    const resolveGet = new Promise<Response>((resolve) => { finishResolveGet = resolve })
+    let getPostCalls = 0
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 10, size: 5 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') {
+        getPostCalls += 1
+        return getPostCalls === 1 ? pollGet : resolveGet
+      }
+      throw new Error(`unexpected request: ${url}`)
+    }))
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      raw: 'local B',
+      originalRaw: 'saved',
+      revision: 1,
+      savedRevision: 0,
+      saveStatus: 'external',
+      externalKind: 'unreadable',
+      serverMtime: 10,
+    })
+    const scheduleSave = vi.fn()
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    // Poll A starts first and is awaiting its getPost (readId=1).
+    const polling = disk.pollExternalChanges()
+    await vi.waitFor(() => expect(getPostCalls).toBe(1))
+    // User clicks "keep local" while the poll is in flight. The resolution
+    // bumps `diskReadIds`, so Poll A's readId is now stale.
+    const resolving = disk.resolveExternal('inbox/test', 'local')
+    await vi.waitFor(() => expect(getPostCalls).toBe(2))
+
+    // Poll A's response arrives first. Its readId is stale, so it must NOT
+    // overwrite `externalKind` (otherwise the resolution's check below would
+    // fail and the user click would be silently dropped).
+    finishPollGet(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'disk C',
+      content: '',
+      frontmatter: {},
+      size: 5,
+      mtime: 10,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await polling
+    expect(h.tabs.value[0].externalKind).toBe('unreadable')
+    expect(h.tabs.value[0].externalRaw).toBeNull()
+
+    // Resolution's response arrives. externalKind is still unreadable, so the
+    // user choice must run end-to-end into a dirty state and queue a save.
+    finishResolveGet(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'disk C',
+      content: '',
+      frontmatter: {},
+      size: 5,
+      mtime: 10,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await resolving
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local B',
+      originalRaw: 'disk C',
+      externalRaw: null,
+      externalKind: null,
+      saveStatus: 'dirty',
+      serverMtime: 10,
+    })
+    expect(scheduleSave).toHaveBeenCalledWith('inbox/test', 0)
+  })
+
+  it('keeps the newer poll result when two concurrent polls race with unchanged mtime', async () => {
+    let finishFirst!: (response: Response) => void
+    let finishSecond!: (response: Response) => void
+    const firstGet = new Promise<Response>((resolve) => { finishFirst = resolve })
+    const secondGet = new Promise<Response>((resolve) => { finishSecond = resolve })
+    let getPostCalls = 0
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 10, size: 6 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') {
+        getPostCalls += 1
+        return getPostCalls === 1 ? firstGet : secondGet
+      }
+      throw new Error(`unexpected request: ${url}`)
+    }))
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      raw: 'local B',
+      originalRaw: 'saved',
+      revision: 1,
+      savedRevision: 0,
+      saveStatus: 'external',
+      externalKind: 'unreadable',
+      serverMtime: 10,
+    })
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    // Poll A starts first (readId=1), Poll B starts second (readId=2).
+    // Both are awaiting getPost; mtime is unchanged so the unreadable retry
+    // path took the getPost for both.
+    const pollingA = disk.pollExternalChanges()
+    await vi.waitFor(() => expect(getPostCalls).toBe(1))
+    const pollingB = disk.pollExternalChanges()
+    await vi.waitFor(() => expect(getPostCalls).toBe(2))
+
+    // Poll B's response arrives first with the newer disk body. Its readId
+    // is still current, so it writes.
+    finishSecond(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'disk C2',
+      content: '',
+      frontmatter: {},
+      size: 6,
+      mtime: 10,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await pollingB
+    expect(h.tabs.value[0]).toMatchObject({
+      externalRaw: 'disk C2',
+      externalKind: 'modified',
+      saveStatus: 'external',
+      serverMtime: 10,
+    })
+
+    // Poll A's older response arrives. Its readId is stale (the field
+    // snapshot also matches because mtime did not move), so the older poll
+    // must NOT clobber Poll B's `externalRaw` with the stale disk C1.
+    finishFirst(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'disk C1',
+      content: '',
+      frontmatter: {},
+      size: 6,
+      mtime: 10,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await pollingA
+    expect(h.tabs.value[0]).toMatchObject({
+      externalRaw: 'disk C2',
+      externalKind: 'modified',
+      saveStatus: 'external',
+      serverMtime: 10,
+    })
+  })
+
   it('turns a deleted conflict into modified when the file reappears', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/api/files/state') {
