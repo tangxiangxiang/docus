@@ -126,6 +126,7 @@ export function useEditorTabs(opts: {
     resolveExternal,
     startExternalPolling,
     stopExternalPolling,
+    invalidateDiskRead,
   } = useDiskFileChanges({ tabs, doSave, scheduleSave, applyPostSummary, fileChanges })
 
   const { onKeydown } = useEditorShortcuts({
@@ -177,6 +178,7 @@ export function useEditorTabs(opts: {
     navigateTo: (path) => { navigateTo(path) },
     confirm,
     toastInfo: toast.info,
+    invalidateDiskRead,
   })
 
   const { routePath } = useRouteSync({ activePath, openPost })

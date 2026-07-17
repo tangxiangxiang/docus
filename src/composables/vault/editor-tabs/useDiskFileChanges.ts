@@ -21,6 +21,11 @@ export function useDiskFileChanges(options: {
   // recovery), while `diskReadIds` handles the case where two reads race
   // without the captured fields having moved (same mtime, same revision).
   const diskReadIds = new Map<string, number>()
+  // Per-path generation counter for `getFileStates()` observations. Allocated
+  // BEFORE the network call so that when two polls race, the newer poll's
+  // state observation invalidates the older one, preventing a stale
+  // exists=false from overwriting a fresh exists=true (and vice versa).
+  const stateObservationIds = new Map<string, number>()
   // Per-path record of which manual external resolution id is currently in
   // flight. While a resolution is pending for a path, polls must neither
   // read nor write the tab — the user's click is authoritative and a poll
@@ -42,6 +47,16 @@ export function useDiskFileChanges(options: {
     return diskReadIds.get(path) === id
   }
 
+  function beginStateObservation(path: string): number {
+    const id = (stateObservationIds.get(path) ?? 0) + 1
+    stateObservationIds.set(path, id)
+    return id
+  }
+
+  function isCurrentStateObservation(path: string, id: number): boolean {
+    return stateObservationIds.get(path) === id
+  }
+
   function beginExternalResolution(path: string): number {
     const id = (externalResolutionIds.get(path) ?? 0) + 1
     externalResolutionIds.set(path, id)
@@ -49,6 +64,10 @@ export function useDiskFileChanges(options: {
     // poll read that began before this click so it cannot race the
     // resolution's writes once it returns.
     invalidateDiskRead(path)
+    // Also invalidate any in-flight `getFileStates()` observation for this
+    // path so a poll whose state request was already in flight cannot
+    // overwrite the resolution's result once the request returns.
+    beginStateObservation(path)
     // Also block any *new* poll that starts during this resolution from
     // touching the path at all. Polls check this map at both the loaded
     // filter and the per-state loop; the resolution clears it in `finally`.
@@ -90,9 +109,21 @@ export function useDiskFileChanges(options: {
       && !pendingExternalResolutions.has(tab.path),
     )
     if (!loaded.length) return
+    // Allocate state observation IDs BEFORE the network call. When two
+    // polls race, the newer observation invalidates the older one so a
+    // stale `exists=false` response cannot overwrite a fresh `exists=true`
+    // (or vice versa).
+    const pathObservationIds = new Map<string, number>()
+    for (const tab of loaded) {
+      pathObservationIds.set(tab.path, beginStateObservation(tab.path))
+    }
     let states: Awaited<ReturnType<typeof getFileStates>>
     try { states = await getFileStates(loaded.map((tab) => tab.path)) } catch { return }
     for (const state of states) {
+      // Drop results from a state observation superseded by a newer poll or
+      // manual resolution.
+      const observationId = pathObservationIds.get(state.path)
+      if (observationId == null || !isCurrentStateObservation(state.path, observationId)) continue
       // A resolution may have begun between the loaded filter and now. Skip
       // so the poll does not write intermediate state the resolution will
       // overwrite (or that invalidates its `externalKind` check).
@@ -124,6 +155,9 @@ export function useDiskFileChanges(options: {
       const requestedOriginalRaw = tab.originalRaw
       const requestedServerMtime = tab.serverMtime
       const requestedExternalKind = tab.externalKind
+      const requestedSaveStatus = tab.saveStatus
+      const requestedExternalRaw = tab.externalRaw
+      const requestedLoadError = tab.loadError
       const requestedTab = tab
       try {
         const post = await getPost(requestedPath)
@@ -142,6 +176,9 @@ export function useDiskFileChanges(options: {
           || latestTab.savedRevision !== requestedSavedRevision
           || latestTab.originalRaw !== requestedOriginalRaw
           || latestTab.serverMtime !== requestedServerMtime
+          || latestTab.saveStatus !== requestedSaveStatus
+          || latestTab.externalRaw !== requestedExternalRaw
+          || latestTab.loadError !== requestedLoadError
         ) continue
 
         if (requestedExternalKind === 'deleted') {
@@ -183,6 +220,9 @@ export function useDiskFileChanges(options: {
           && latestTab.savedRevision === requestedSavedRevision
           && latestTab.originalRaw === requestedOriginalRaw
           && latestTab.serverMtime === requestedServerMtime
+          && latestTab.saveStatus === requestedSaveStatus
+          && latestTab.externalRaw === requestedExternalRaw
+          && latestTab.loadError === requestedLoadError
         ) {
           // State confirmed that the path exists. A failed body read is not
           // evidence of deletion and must not route keep-local through recover.
@@ -386,5 +426,6 @@ export function useDiskFileChanges(options: {
     resolveExternal,
     startExternalPolling,
     stopExternalPolling,
+    invalidateDiskRead,
   }
 }

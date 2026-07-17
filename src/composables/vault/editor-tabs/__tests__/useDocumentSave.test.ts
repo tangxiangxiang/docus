@@ -898,6 +898,146 @@ describe('useDocumentSave optimistic conflicts', () => {
     expect(scheduleSave).toHaveBeenCalledWith('inbox/test', 0)
   })
 
+  it('keeps delete state from external file change when a poll getPost is pending', async () => {
+    let finishGet!: (response: Response) => void
+    const pendingGet = new Promise<Response>((resolve) => { finishGet = resolve })
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 10, size: 5 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') return pendingGet
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: vi.fn(),
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+      invalidateDiskRead: disk.invalidateDiskRead,
+    })
+
+    // Poll starts: getFileStates confirms exists=true, getPost is pending.
+    const polling = disk.pollExternalChanges()
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/posts/inbox/test'))
+
+    // AI delete event fires while getPost is in flight — must invalidate
+    // the pending disk read so the stale response cannot restore idle.
+    await external.applyExternalChange({
+      seq: 1,
+      path: 'inbox/test',
+      kind: 'delete',
+      source: 'ai-tool',
+    })
+    expect(h.tabs.value[0]).toMatchObject({
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+      loadError: expect.any(String),
+    })
+
+    // Stale getPost returns with old body. Must NOT flip tab to idle/clean.
+    finishGet(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'old body A',
+      content: '',
+      frontmatter: {},
+      size: 5,
+      mtime: 10,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await polling
+
+    expect(h.tabs.value[0]).toMatchObject({
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+      loadError: expect.any(String),
+    })
+  })
+
+  it('keeps newer poll result when an older files/state response arrives out of order', async () => {
+    let finishStateA!: (response: Response) => void
+    const pendingStateA = new Promise<Response>((resolve) => { finishStateA = resolve })
+    let stateCalls = 0
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        stateCalls += 1
+        if (stateCalls === 1) return pendingStateA
+        // Poll B: file exists with new mtime/content.
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 20, size: 6 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') {
+        return Promise.resolve(new Response(JSON.stringify({
+          path: 'inbox/test',
+          raw: 'disk C',
+          content: '',
+          frontmatter: {},
+          size: 6,
+          mtime: 20,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      loadError: 'deleted',
+      serverMtime: 20,
+    })
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    // Poll A: getFileStates is pending (will return exists=false).
+    const pollingA = disk.pollExternalChanges()
+    await vi.waitFor(() => expect(stateCalls).toBe(1))
+
+    // Poll B: getFileStates returns exists=true, getPost returns disk C.
+    // The newer state observation must invalidate Poll A's observation.
+    await disk.pollExternalChanges()
+    expect(h.tabs.value[0]).toMatchObject({
+      saveStatus: 'external',
+      externalKind: 'modified',
+      externalRaw: 'disk C',
+      serverMtime: 20,
+    })
+
+    // Poll A's stale getFileStates finally returns with exists=false.
+    // Its state observation was superseded — must not overwrite Poll B.
+    finishStateA(new Response(JSON.stringify([
+      { path: 'inbox/test', exists: false, mtime: 0, size: 0 },
+    ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await pollingA
+
+    expect(h.tabs.value[0]).toMatchObject({
+      saveStatus: 'external',
+      externalKind: 'modified',
+      externalRaw: 'disk C',
+    })
+  })
+
   it('turns a deleted conflict into modified when the file reappears', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/api/files/state') {
