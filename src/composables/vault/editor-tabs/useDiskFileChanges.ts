@@ -23,26 +23,53 @@ export function useDiskFileChanges(options: {
         tab.externalRaw = null
         continue
       }
-      if (tab.revision !== tab.savedRevision) {
-        try {
-          const post = await getPost(tab.path)
-          tab.externalRaw = post.raw
-          tab.serverMtime = post.mtime
-        } catch { tab.externalRaw = null }
-        tab.saveStatus = 'external'
-        tab.error = '磁盘文件已变化，本地修改尚未保存'
-        continue
-      }
+
+      const requestedPath = tab.path
+      const requestedRevision = tab.revision
+      const requestedTab = tab
       try {
-        const post = await getPost(tab.path)
-        tab.raw = post.raw
-        tab.originalRaw = post.raw
-        tab.revision += 1
-        tab.savedRevision = tab.revision
-        tab.serverMtime = post.mtime
-        tab.saveStatus = 'idle'
-        tab.error = null
-      } catch { /* next poll retries */ }
+        const post = await getPost(requestedPath)
+        const latestTab = options.tabs.value.find((item) => item.path === requestedPath)
+        if (
+          latestTab !== requestedTab
+          || latestTab.path !== requestedPath
+          || latestTab.savingRevision !== null
+          || state.mtime === latestTab.serverMtime
+        ) continue
+
+        const dirty = latestTab.raw !== latestTab.originalRaw
+          || latestTab.revision !== latestTab.savedRevision
+        if (dirty) {
+          latestTab.externalRaw = post.raw
+          latestTab.serverMtime = post.mtime
+          latestTab.saveStatus = 'external'
+          latestTab.error = '磁盘文件已变化，本地修改尚未保存'
+          continue
+        }
+
+        if (latestTab.revision !== requestedRevision) continue
+        latestTab.raw = post.raw
+        latestTab.originalRaw = post.raw
+        latestTab.revision += 1
+        latestTab.savedRevision = latestTab.revision
+        latestTab.serverMtime = post.mtime
+        latestTab.saveStatus = 'idle'
+        latestTab.error = null
+      } catch {
+        const latestTab = options.tabs.value.find((item) => item.path === requestedPath)
+        if (
+          latestTab === requestedTab
+          && latestTab.savingRevision === null
+          && (
+            latestTab.raw !== latestTab.originalRaw
+            || latestTab.revision !== latestTab.savedRevision
+          )
+        ) {
+          latestTab.externalRaw = null
+          latestTab.saveStatus = 'external'
+          latestTab.error = '磁盘文件已变化，本地修改尚未保存'
+        }
+      }
     }
   }
 

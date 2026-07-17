@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AtomicTextWriteConflictError,
+  UnstableTextSnapshotError,
   atomicReplaceText,
   atomicReplaceTextIfUnchanged,
   prepareAtomicTextWrite,
@@ -71,6 +72,20 @@ describe('atomic text writes', () => {
 
     expect(snapshot.raw).toBe('C')
     expect(readFile).toHaveBeenCalledTimes(4)
+  })
+
+  it('fails closed when the content never stabilizes', async () => {
+    const readFile = vi.spyOn(fs, 'readFile')
+      .mockResolvedValueOnce('B')
+      .mockResolvedValueOnce('C')
+      .mockResolvedValueOnce('B')
+      .mockResolvedValueOnce('C')
+      .mockResolvedValueOnce('B')
+      .mockResolvedValueOnce('C')
+
+    await expect(readStableTextSnapshot(target)).rejects
+      .toBeInstanceOf(UnstableTextSnapshotError)
+    expect(readFile).toHaveBeenCalledTimes(6)
   })
 
   it('does not restore over content that changed after the original replacement', async () => {

@@ -27,6 +27,16 @@ export class AtomicTextWriteConflictError extends Error {
   }
 }
 
+export class UnstableTextSnapshotError extends Error {
+  readonly latest: StableTextSnapshot
+
+  constructor(latest: StableTextSnapshot) {
+    super('document did not stabilize while reading')
+    this.name = 'UnstableTextSnapshotError'
+    this.latest = latest
+  }
+}
+
 async function syncParentDirectoryBestEffort(targetPath: string): Promise<void> {
   let directory: Awaited<ReturnType<typeof fs.open>> | null = null
   try {
@@ -137,7 +147,7 @@ export async function readStableTextSnapshot(
     }
     if (after === before) return latest
   }
-  return latest!
+  throw new UnstableTextSnapshotError(latest!)
 }
 
 export async function atomicReplaceTextIfUnchanged(

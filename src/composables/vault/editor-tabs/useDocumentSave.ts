@@ -168,7 +168,8 @@ export function useDocumentSave(options: {
     const hasUnsaved = options.tabs.value.some((tab) =>
       tab.raw !== tab.originalRaw
       || tab.revision !== tab.savedRevision
-      || ['error', 'offline', 'saving'].includes(tab.saveStatus),
+      || tab.savingRevision !== null
+      || ['error', 'offline'].includes(tab.saveStatus),
     )
     if (!hasUnsaved) return
     event.preventDefault()

@@ -156,6 +156,37 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
     }
   })
 
+  it('fails closed without renaming when the disk snapshot never stabilizes', async () => {
+    await fs.writeFile(TEST_ABS, UPDATED_BODY, 'utf8')
+    const readFile = vi.spyOn(fs, 'readFile')
+      .mockResolvedValueOnce(UPDATED_BODY)
+      .mockResolvedValueOnce('external C')
+      .mockResolvedValueOnce(UPDATED_BODY)
+      .mockResolvedValueOnce('external C')
+      .mockResolvedValueOnce(UPDATED_BODY)
+      .mockResolvedValueOnce('external C')
+    const rename = vi.spyOn(fs, 'rename')
+
+    try {
+      const r = await call('PUT', '/api/posts/put-smoke', {
+        raw: 'requested B',
+        baseRaw: UPDATED_BODY,
+      })
+
+      expect(r.status).toBe(409)
+      expect(await r.json()).toMatchObject({
+        code: 'EDIT_CONFLICT',
+        current: { raw: 'external C' },
+      })
+      expect(readFile).toHaveBeenCalledTimes(6)
+      expect(rename).not.toHaveBeenCalled()
+    } finally {
+      readFile.mockRestore()
+      rename.mockRestore()
+    }
+    expect(await fs.readFile(TEST_ABS, 'utf8')).toBe(UPDATED_BODY)
+  })
+
   it('serializes concurrent writes to the same document baseline', async () => {
     const abs = path.join(CONTENT_DIR, 'put-concurrent.md')
     const initial = 'A'

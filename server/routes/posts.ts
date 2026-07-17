@@ -14,6 +14,7 @@ import {
   atomicReplaceTextIfUnchanged,
   prepareAtomicTextWrite,
   readStableTextSnapshot,
+  UnstableTextSnapshotError,
   type StableTextSnapshot,
 } from '../atomicTextWrite.js'
 import { withDocumentWriteLock } from '../documentWriteLock.js'
@@ -116,9 +117,6 @@ postRoutes.put('/api/posts/*', async (c) => {
   return withDocumentWriteLock(splat, async () => {
     if (!await exists(abs)) return bad(c, 'not found', 404)
 
-    const current = await readStableTextSnapshot(abs)
-    const currentRaw = current.raw
-    const currentStat = current.stat
     const conflict = (snapshot: StableTextSnapshot) => c.json({
       error: 'document changed on disk',
       code: 'EDIT_CONFLICT' as const,
@@ -128,6 +126,17 @@ postRoutes.put('/api/posts/*', async (c) => {
         size: Number(snapshot.stat.size),
       },
     }, 409)
+    let current: StableTextSnapshot
+    try {
+      current = await readStableTextSnapshot(abs)
+    } catch (error) {
+      if (error instanceof UnstableTextSnapshotError) {
+        return conflict(error.latest)
+      }
+      throw error
+    }
+    const currentRaw = current.raw
+    const currentStat = current.stat
     const result = (
       raw: string,
       stat: { size: number | bigint; mtimeMs: number | bigint },
@@ -176,6 +185,9 @@ postRoutes.put('/api/posts/*', async (c) => {
       await prepared.commit()
     } catch (error) {
       await prepared.rollback()
+      if (error instanceof UnstableTextSnapshotError) {
+        return conflict(error.latest)
+      }
       throw error
     }
 

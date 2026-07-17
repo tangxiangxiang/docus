@@ -343,6 +343,61 @@ describe('useDocumentSave optimistic conflicts', () => {
     ])
   })
 
+  it('does not apply a pending disk read after editing and saving begin', async () => {
+    let finishGet!: (response: Response) => void
+    let finishPut!: (response: Response) => void
+    const pendingGet = new Promise<Response>((resolve) => { finishGet = resolve })
+    const pendingPut = new Promise<Response>((resolve) => { finishPut = resolve })
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/files/state') {
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 10, size: 5 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test' && init?.method === 'PUT') return pendingPut
+      if (url === '/api/posts/inbox/test') return pendingGet
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+    })
+
+    const polling = disk.pollExternalChanges()
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/posts/inbox/test'))
+    h.save.onEditorChange('inbox/test', 'local B')
+    const saving = h.save.doSave('inbox/test')
+    await vi.waitFor(() => expect(h.tabs.value[0].savingRevision).toBe(1))
+
+    finishGet(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'saved',
+      content: '',
+      frontmatter: {},
+      size: 5,
+      mtime: 10,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await polling
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local B',
+      originalRaw: 'saved',
+      savingRevision: 1,
+      externalRaw: null,
+    })
+
+    finishPut(ok('local B', { mtime: 20 }))
+    await saving
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local B',
+      originalRaw: 'local B',
+      savingRevision: null,
+      saveStatus: 'saved',
+    })
+  })
+
   it('terminates the save loop if an external snapshot appears during a request', async () => {
     let finish!: (response: Response) => void
     const pending = new Promise<Response>((resolve) => { finish = resolve })
@@ -550,6 +605,41 @@ describe('useDocumentSave lifecycle barriers', () => {
 })
 
 describe('useDocumentSave scheduling', () => {
+  it('warns before unload while a save remains in flight after editing back to baseline', async () => {
+    let finishFirst!: (response: Response) => void
+    const first = new Promise<Response>((resolve) => { finishFirst = resolve })
+    const fetchMock = vi.fn()
+      .mockReturnValueOnce(first)
+      .mockResolvedValueOnce(ok('saved', { mtime: 20 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+
+    h.save.onEditorChange('inbox/test', 'changed')
+    const saving = h.save.doSave('inbox/test')
+    await vi.waitFor(() => expect(h.tabs.value[0].savingRevision).toBe(1))
+    h.save.onEditorChange('inbox/test', 'saved')
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'saved',
+      originalRaw: 'saved',
+      revision: 2,
+      savedRevision: 2,
+      savingRevision: 1,
+      saveStatus: 'idle',
+    })
+
+    const event = {
+      preventDefault: vi.fn(),
+      returnValue: undefined,
+    } as unknown as BeforeUnloadEvent
+    h.save.handleBeforeUnload(event)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(event.returnValue).toBe('')
+
+    finishFirst(ok('changed', { mtime: 10 }))
+    await saving
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('manual save consumes only the active path debounce', async () => {
     vi.useFakeTimers()
     const a = makeTab('a', 'A')
