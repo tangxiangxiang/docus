@@ -70,6 +70,10 @@ export function useExternalFileChanges(options: {
 
     if (event.kind === 'delete') {
       tab.loadError = t('editor.ai_deleted')
+      tab.saveStatus = 'external'
+      tab.externalRaw = null
+      tab.externalKind = 'deleted'
+      tab.error = t('editor.ai_deleted')
       return
     }
 
@@ -125,6 +129,7 @@ export function useExternalFileChanges(options: {
       }
       tab.error = null
       tab.externalRaw = null
+      tab.externalKind = null
       tab.serverMtime = updated.mtime
     }
   }

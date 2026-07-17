@@ -1,6 +1,7 @@
 import type { DocumentSavePresentation } from '../../composables/vault/editor-tabs/savePresentation'
 
 export type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'offline' | 'external'
+export type ExternalChangeKind = 'modified' | 'deleted' | 'unreadable'
 
 export interface Tab {
   path: string
@@ -15,6 +16,7 @@ export interface Tab {
   loadError: string | null
   loading: boolean
   externalRaw?: string | null
+  externalKind?: ExternalChangeKind | null
   // mtime of the file on disk at the last load/save. Used to detect
   // external changes (the AI file-change bus drives refreshes
   // off this). v1 doesn't strictly compare mtimes — `dirty` is

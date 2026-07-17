@@ -398,6 +398,87 @@ describe('useDocumentSave optimistic conflicts', () => {
     })
   })
 
+  it('does not apply a pending disk read after a save finishes', async () => {
+    let finishGet!: (response: Response) => void
+    const pendingGet = new Promise<Response>((resolve) => { finishGet = resolve })
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/files/state') {
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 10, size: 5 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test' && init?.method === 'PUT') {
+        return Promise.resolve(ok('local B', { mtime: 20 }))
+      }
+      if (url === '/api/posts/inbox/test') return pendingGet
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    h.save.onEditorChange('inbox/test', 'local B')
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+    })
+
+    const polling = disk.pollExternalChanges()
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/posts/inbox/test'))
+    await h.save.doSave('inbox/test')
+
+    finishGet(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'saved',
+      content: '',
+      frontmatter: {},
+      size: 5,
+      mtime: 10,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await polling
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local B',
+      originalRaw: 'local B',
+      savedRevision: 1,
+      serverMtime: 20,
+      saveStatus: 'saved',
+    })
+  })
+
+  it('does not treat a failed read of an existing file as deletion', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 10, size: 5 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') {
+        return Promise.resolve(new Response('', { status: 500 }))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    h.save.onEditorChange('inbox/test', 'local B')
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+    })
+
+    await disk.pollExternalChanges()
+    await disk.resolveExternal('inbox/test', 'local')
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local B',
+      originalRaw: 'saved',
+      saveStatus: 'dirty',
+      externalRaw: null,
+      externalKind: 'unreadable',
+    })
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/recover/'))).toBe(false)
+  })
+
   it('terminates the save loop if an external snapshot appears during a request', async () => {
     let finish!: (response: Response) => void
     const pending = new Promise<Response>((resolve) => { finish = resolve })
@@ -605,6 +686,36 @@ describe('useDocumentSave lifecycle barriers', () => {
 })
 
 describe('useDocumentSave scheduling', () => {
+  it('warns before unload when a clean buffer represents an externally deleted file', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { path: 'inbox/test', exists: false, mtime: 0, size: 0 },
+    ]), { status: 200, headers: { 'content-type': 'application/json' } })))
+    const h = setupSave()
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+    })
+    await disk.pollExternalChanges()
+
+    const event = {
+      preventDefault: vi.fn(),
+      returnValue: undefined,
+    } as unknown as BeforeUnloadEvent
+    h.save.handleBeforeUnload(event)
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'saved',
+      originalRaw: 'saved',
+      revision: 0,
+      savedRevision: 0,
+      saveStatus: 'external',
+      externalKind: 'deleted',
+    })
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(event.returnValue).toBe('')
+  })
+
   it('warns before unload while a save remains in flight after editing back to baseline', async () => {
     let finishFirst!: (response: Response) => void
     const first = new Promise<Response>((resolve) => { finishFirst = resolve })

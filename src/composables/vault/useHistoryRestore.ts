@@ -47,6 +47,7 @@ function applyRestoredContent(tab: Tab, raw: string, mtime: number): void {
   tab.loadError = null
   tab.loading = false
   tab.externalRaw = null
+  tab.externalKind = null
   tab.serverMtime = mtime
 }
 
@@ -63,6 +64,7 @@ function applyRestoreWithoutOverwritingNewerEdit(tab: Tab, raw: string, mtime: n
   }
   tab.error = null
   tab.externalRaw = null
+  tab.externalKind = null
   tab.serverMtime = mtime
 }
 

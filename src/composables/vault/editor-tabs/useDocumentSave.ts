@@ -80,6 +80,7 @@ export function useDocumentSave(options: {
       if (disposed) return
       if (error instanceof SavePostConflictError) {
         tab.externalRaw = error.current.raw
+        tab.externalKind = 'modified'
         tab.serverMtime = error.current.mtime
         tab.saveStatus = 'external'
         tab.error = null
@@ -109,6 +110,7 @@ export function useDocumentSave(options: {
         : tab.revision === sentRevision ? 'saved' : 'dirty'
       if (!externalAppearedDuringSave) {
         tab.serverMtime = data.post.mtime
+        tab.externalKind = null
       }
       try {
         options.applyPostSummary(data.post)
@@ -169,6 +171,7 @@ export function useDocumentSave(options: {
       tab.raw !== tab.originalRaw
       || tab.revision !== tab.savedRevision
       || tab.savingRevision !== null
+      || hasUnresolvedExternal(tab)
       || ['error', 'offline'].includes(tab.saveStatus),
     )
     if (!hasUnsaved) return

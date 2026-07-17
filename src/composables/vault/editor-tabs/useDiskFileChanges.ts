@@ -21,11 +21,15 @@ export function useDiskFileChanges(options: {
         tab.saveStatus = 'external'
         tab.error = '文件已从磁盘删除'
         tab.externalRaw = null
+        tab.externalKind = 'deleted'
         continue
       }
 
       const requestedPath = tab.path
       const requestedRevision = tab.revision
+      const requestedSavedRevision = tab.savedRevision
+      const requestedOriginalRaw = tab.originalRaw
+      const requestedServerMtime = tab.serverMtime
       const requestedTab = tab
       try {
         const post = await getPost(requestedPath)
@@ -35,19 +39,23 @@ export function useDiskFileChanges(options: {
           || latestTab.path !== requestedPath
           || latestTab.savingRevision !== null
           || state.mtime === latestTab.serverMtime
+          || latestTab.revision !== requestedRevision
+          || latestTab.savedRevision !== requestedSavedRevision
+          || latestTab.originalRaw !== requestedOriginalRaw
+          || latestTab.serverMtime !== requestedServerMtime
         ) continue
 
         const dirty = latestTab.raw !== latestTab.originalRaw
           || latestTab.revision !== latestTab.savedRevision
         if (dirty) {
           latestTab.externalRaw = post.raw
+          latestTab.externalKind = 'modified'
           latestTab.serverMtime = post.mtime
           latestTab.saveStatus = 'external'
           latestTab.error = '磁盘文件已变化，本地修改尚未保存'
           continue
         }
 
-        if (latestTab.revision !== requestedRevision) continue
         latestTab.raw = post.raw
         latestTab.originalRaw = post.raw
         latestTab.revision += 1
@@ -55,19 +63,21 @@ export function useDiskFileChanges(options: {
         latestTab.serverMtime = post.mtime
         latestTab.saveStatus = 'idle'
         latestTab.error = null
+        latestTab.externalKind = null
       } catch {
         const latestTab = options.tabs.value.find((item) => item.path === requestedPath)
         if (
           latestTab === requestedTab
           && latestTab.savingRevision === null
-          && (
-            latestTab.raw !== latestTab.originalRaw
-            || latestTab.revision !== latestTab.savedRevision
-          )
+          && latestTab.revision === requestedRevision
+          && latestTab.savedRevision === requestedSavedRevision
+          && latestTab.originalRaw === requestedOriginalRaw
+          && latestTab.serverMtime === requestedServerMtime
         ) {
-          latestTab.externalRaw = null
-          latestTab.saveStatus = 'external'
-          latestTab.error = '磁盘文件已变化，本地修改尚未保存'
+          // State confirmed that the path exists. A failed body read is not
+          // evidence of deletion and must not route keep-local through recover.
+          latestTab.externalKind = 'unreadable'
+          latestTab.error = '暂时无法读取磁盘文件，将在下次检查时重试'
         }
       }
     }
@@ -82,6 +92,17 @@ export function useDiskFileChanges(options: {
   async function resolveExternal(path: string, strategy: 'disk' | 'local') {
     const tab = options.tabs.value.find((item) => item.path === path)
     if (!tab || tab.saveStatus !== 'external') return
+    if (tab.externalKind === 'unreadable') {
+      try {
+        const post = await getPost(path)
+        tab.externalRaw = post.raw
+        tab.externalKind = 'modified'
+        tab.serverMtime = post.mtime
+      } catch {
+        tab.error = '暂时无法读取磁盘文件，将在下次检查时重试'
+        return
+      }
+    }
     if (strategy === 'disk') {
       const diskRaw = tab.externalRaw
       const post = diskRaw === null ? await getPost(path) : null
@@ -93,27 +114,28 @@ export function useDiskFileChanges(options: {
       if (post) tab.serverMtime = post.mtime
       tab.savingRevision = null
       tab.saveStatus = 'idle'
+    } else if (tab.externalKind === 'deleted') {
+      const recovered = await recoverPost(path, tab.raw)
+      tab.originalRaw = recovered.raw
+      tab.savedRevision = tab.revision
+      tab.serverMtime = recovered.mtime
+      tab.saveStatus = 'saved'
     } else {
-      if (tab.externalRaw == null) {
-        const recovered = await recoverPost(path, tab.raw)
-        tab.originalRaw = recovered.raw
+      const diskRaw = tab.externalRaw
+      if (diskRaw == null) return
+      tab.originalRaw = diskRaw
+      tab.externalRaw = null
+      tab.externalKind = null
+      if (tab.raw === diskRaw) {
         tab.savedRevision = tab.revision
-        tab.serverMtime = recovered.mtime
-        tab.saveStatus = 'saved'
+        tab.saveStatus = 'idle'
       } else {
-        const diskRaw = tab.externalRaw
-        tab.originalRaw = diskRaw
-        tab.externalRaw = null
-        if (tab.raw === diskRaw) {
-          tab.savedRevision = tab.revision
-          tab.saveStatus = 'idle'
-        } else {
-          tab.saveStatus = 'dirty'
-          options.scheduleSave(path, 0)
-        }
+        tab.saveStatus = 'dirty'
+        options.scheduleSave(path, 0)
       }
     }
     tab.externalRaw = null
+    tab.externalKind = null
     tab.error = null
   }
 

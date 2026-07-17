@@ -21,6 +21,7 @@ export function makeEmptyTab(path: string, title = ''): Tab {
     loading: true,
     serverMtime: 0,
     externalRaw: null,
+    externalKind: null,
   }
 }
 
