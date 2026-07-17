@@ -40,6 +40,12 @@ export function useExternalFileChanges(options: {
     latestEventSeqs.set(event.path, event.seq)
 
     if (event.kind === 'rename') {
+      // Invalidate any pending confirm on the old path — when a file is
+      // renamed, its old identity is gone and any in-flight write confirm
+      // must be silently discarded rather than writing into a potentially
+      // unrelated tab that now occupies the old path.
+      if (event.oldPath) latestEventSeqs.set(event.oldPath, event.seq)
+
       const oldTab = options.tabs.value.find((tab) => tab.path === event.oldPath)
       if (!oldTab) return
       await options.closeTab(event.oldPath!)
@@ -160,9 +166,16 @@ export function useExternalFileChanges(options: {
       // the tab is NOT already in an external state (which means another
       // conflict source such as a poll already set it correctly).
       const latestTab = options.tabs.value.find((item) => item.path === event.path)
+
+      // When the tab object has been replaced (closed + reopened, or any
+      // other path-identity reset), the old event must be unconditionally
+      // discarded — no state drift into the new tab. A newer event (higher
+      // seq) would already short-circuit via isLatestEvent above, but tab
+      // replacement can happen without a new event (user close → user open).
+      if (latestTab !== requestedTab) return
+
       if (
-        latestTab !== requestedTab
-        || latestTab?.path !== event.path
+        latestTab.path !== event.path
         || latestTab.revision !== requestedRevision
         || latestTab.raw !== requestedRaw
         || latestTab.originalRaw !== requestedOriginalRaw
@@ -172,7 +185,12 @@ export function useExternalFileChanges(options: {
         || latestTab.serverMtime !== requestedServerMtime
         || latestTab.loadError !== requestedLoadError
       ) {
-        if (latestTab && latestTab.saveStatus !== 'external') {
+        // Object identity matches, but field-level state has drifted. Convert
+        // to external/modified so the user resolves rather than silently
+        // losing work. The tab must not already be in an external state
+        // (which means another conflict source such as a poll already set
+        // it correctly).
+        if (latestTab.saveStatus !== 'external') {
           latestTab.serverMtime = event.newMtime ?? latestTab.serverMtime
           if (event.newRaw != null) {
             latestTab.externalRaw = event.newRaw

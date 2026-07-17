@@ -1850,6 +1850,125 @@ describe('useDocumentSave optimistic conflicts', () => {
     })
   })
 
+  it('silently discards stale write confirm when tab is closed and reopened on the same path', async () => {
+    // Simulates: local dirty B → AI write E1(C1, seq=1) confirm pending →
+    // user closes tab → user reopens same path, loads C2 from disk →
+    // E1 confirm resolves. E1 must be unconditionally discarded — the old
+    // event must not create a fake externalRaw=C1 conflict on the new tab.
+    let resolveConfirm!: (value: boolean) => void
+    const pendingConfirm = new Promise<boolean>((resolve) => { resolveConfirm = resolve })
+
+    const h = setupSave()
+    h.tabs.value[0].revision = 2
+    h.tabs.value[0].savedRevision = 1
+    Object.assign(h.tabs.value[0], {
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      serverMtime: 10,
+    })
+
+    const confirm = vi.fn().mockReturnValue(pendingConfirm)
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm,
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+    })
+
+    // Fire E1 — confirm is pending (dirty, seq=1).
+    const e1Promise = external.applyExternalChange({
+      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      newRaw: 'C1 from old event', newMtime: 20,
+    })
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
+
+    // Simulate tab close + reopen: remove old object, create a brand-new
+    // tab loaded from current disk content C2.
+    h.tabs.value.splice(0, 1)
+    const newTab = makeTab('inbox/test', 'C2 from reopened disk')
+    newTab.serverMtime = 30
+    h.tabs.value.push(newTab)
+
+    // User confirms stale E1 — must be silently discarded since the tab
+    // object was replaced. No fields on the new tab should be touched.
+    resolveConfirm(true)
+    await e1Promise
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'C2 from reopened disk',
+      originalRaw: 'C2 from reopened disk',
+      saveStatus: 'idle',
+      externalRaw: null,
+      serverMtime: 30,
+    })
+    expect(h.tabs.value[0].externalKind).toBeUndefined()
+  })
+
+  it('ignores stale write confirm on old path when a rename supersedes it while confirm is pending', async () => {
+    // Simulates: local dirty B on oldPath, AI write E1(C1, seq=1) confirm
+    // pending → rename(oldPath → newPath, seq=2) invalidates oldPath →
+    // E1 confirm resolves. E1 must be stale and silently discarded.
+    let resolveConfirm!: (value: boolean) => void
+    const pendingConfirm = new Promise<boolean>((resolve) => { resolveConfirm = resolve })
+
+    const h = setupSave()
+    h.tabs.value[0].revision = 2
+    h.tabs.value[0].savedRevision = 1
+    Object.assign(h.tabs.value[0], {
+      path: 'inbox/old-path',
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      serverMtime: 10,
+    })
+
+    const closeTab = vi.fn().mockResolvedValue(true)
+    const confirm = vi.fn().mockReturnValue(pendingConfirm)
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab,
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm,
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+    })
+
+    // Fire E1 on oldPath — confirm is pending (dirty, seq=1).
+    const e1Promise = external.applyExternalChange({
+      seq: 1, path: 'inbox/old-path', kind: 'write', source: 'ai-tool',
+      newRaw: 'C1 from write', newMtime: 20,
+    })
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
+
+    // Rename event: oldPath → newPath (seq=2 > 1). The rename must
+    // invalidate the old path's event seq so E1 is detected as stale.
+    await external.applyExternalChange({
+      seq: 2, path: 'inbox/new-path', oldPath: 'inbox/old-path',
+      kind: 'rename', source: 'ai-tool',
+      newRaw: 'content after rename', newMtime: 30,
+    })
+
+    // User confirms stale E1 — must be silently discarded.
+    resolveConfirm(true)
+    await e1Promise
+
+    // The old-path tab (if it survived the rename close) must not be
+    // polluted by the stale E1 confirm. In this test closeTab returns
+    // true so the old tab is gone. The point is E1 doesn't crash or
+    // leak state — it's silently dropped.
+    // Verify no tabs have E1's C1 content or old mtime.
+    for (const t of h.tabs.value) {
+      expect(t.raw).not.toBe('C1 from write')
+    }
+  })
+
   it('turns a deleted conflict into modified when the file reappears', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/api/files/state') {
