@@ -488,6 +488,140 @@ describe('useDocumentSave optimistic conflicts', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/recover/'))).toBe(false)
   })
 
+  it('does not overwrite newer input when an unreadable disk retry resolves', async () => {
+    let finishGet!: (response: Response) => void
+    const pendingGet = new Promise<Response>((resolve) => { finishGet = resolve })
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(pendingGet))
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      raw: 'local B',
+      originalRaw: 'saved',
+      revision: 1,
+      savedRevision: 0,
+      saveStatus: 'external',
+      externalKind: 'unreadable',
+    })
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    const resolving = disk.resolveExternal('inbox/test', 'disk')
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce())
+    h.save.onEditorChange('inbox/test', 'local B2')
+    finishGet(new Response(JSON.stringify({
+      path: 'inbox/test',
+      raw: 'disk C',
+      content: '',
+      frontmatter: {},
+      size: 6,
+      mtime: 20,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    await resolving
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'local B2',
+      originalRaw: 'saved',
+      externalRaw: 'disk C',
+      externalKind: 'modified',
+      saveStatus: 'external',
+      serverMtime: 20,
+    })
+  })
+
+  it('turns a deleted conflict into modified when the file reappears', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/files/state') {
+        return Promise.resolve(new Response(JSON.stringify([
+          { path: 'inbox/test', exists: true, mtime: 20, size: 6 },
+        ]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      if (url === '/api/posts/inbox/test') {
+        return Promise.resolve(new Response(JSON.stringify({
+          path: 'inbox/test',
+          raw: 'disk C',
+          content: '',
+          frontmatter: {},
+          size: 6,
+          mtime: 20,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      loadError: 'deleted',
+    })
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    await disk.pollExternalChanges()
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'saved',
+      externalRaw: 'disk C',
+      externalKind: 'modified',
+      saveStatus: 'external',
+      loadError: null,
+      serverMtime: 20,
+    })
+  })
+
+  it('reconciles a failed deleted recovery when the file has reappeared', async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/recover/inbox/test') {
+        return Promise.resolve(new Response('', { status: 409 }))
+      }
+      if (url === '/api/posts/inbox/test') {
+        return Promise.resolve(new Response(JSON.stringify({
+          path: 'inbox/test',
+          raw: 'disk C',
+          content: '',
+          frontmatter: {},
+          size: 6,
+          mtime: 20,
+        }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const h = setupSave()
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      loadError: 'deleted',
+    })
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+
+    await disk.resolveExternal('inbox/test', 'local')
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'saved',
+      externalRaw: 'disk C',
+      externalKind: 'modified',
+      saveStatus: 'external',
+      loadError: null,
+      serverMtime: 20,
+    })
+  })
+
   it('continues autosave when editing advances during deleted-file recovery', async () => {
     let finishRecover!: (response: Response) => void
     const pendingRecover = new Promise<Response>((resolve) => { finishRecover = resolve })

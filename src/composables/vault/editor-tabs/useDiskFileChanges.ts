@@ -13,7 +13,9 @@ export function useDiskFileChanges(options: {
   let externalPollTimer: ReturnType<typeof setInterval> | null = null
 
   async function pollExternalChanges() {
-    const loaded = options.tabs.value.filter((tab) => !tab.loading && !tab.loadError)
+    const loaded = options.tabs.value.filter((tab) =>
+      !tab.loading && (!tab.loadError || tab.externalKind === 'deleted'),
+    )
     if (!loaded.length) return
     let states: Awaited<ReturnType<typeof getFileStates>>
     try { states = await getFileStates(loaded.map((tab) => tab.path)) } catch { return }
@@ -33,6 +35,7 @@ export function useDiskFileChanges(options: {
       const requestedSavedRevision = tab.savedRevision
       const requestedOriginalRaw = tab.originalRaw
       const requestedServerMtime = tab.serverMtime
+      const requestedExternalKind = tab.externalKind
       const requestedTab = tab
       try {
         const post = await getPost(requestedPath)
@@ -47,6 +50,16 @@ export function useDiskFileChanges(options: {
           || latestTab.originalRaw !== requestedOriginalRaw
           || latestTab.serverMtime !== requestedServerMtime
         ) continue
+
+        if (requestedExternalKind === 'deleted') {
+          latestTab.externalRaw = post.raw
+          latestTab.externalKind = 'modified'
+          latestTab.serverMtime = post.mtime
+          latestTab.saveStatus = 'external'
+          latestTab.error = '磁盘文件已重新出现，请选择使用磁盘或保留本地版本'
+          latestTab.loadError = null
+          continue
+        }
 
         const dirty = latestTab.raw !== latestTab.originalRaw
           || latestTab.revision !== latestTab.savedRevision
@@ -98,13 +111,38 @@ export function useDiskFileChanges(options: {
     if (!tab || tab.saveStatus !== 'external') return
     if (tab.externalKind === 'deleted' && strategy === 'disk') return
     if (tab.externalKind === 'unreadable') {
+      const requestedTab = tab
+      const requestedPath = tab.path
+      const requestedRevision = tab.revision
       try {
-        const post = await getPost(path)
-        tab.externalRaw = post.raw
-        tab.externalKind = 'modified'
-        tab.serverMtime = post.mtime
+        const post = await getPost(requestedPath)
+        const latestTab = options.tabs.value.find((item) => item.path === requestedPath)
+        if (latestTab !== requestedTab || latestTab.path !== requestedPath) return
+
+        latestTab.externalRaw = post.raw
+        latestTab.externalKind = 'modified'
+        latestTab.serverMtime = post.mtime
+        latestTab.loadError = null
+        if (latestTab.revision !== requestedRevision) {
+          if (strategy === 'local') {
+            latestTab.originalRaw = post.raw
+            latestTab.externalRaw = null
+            latestTab.externalKind = null
+            latestTab.saveStatus = latestTab.raw === post.raw ? 'idle' : 'dirty'
+            if (latestTab.saveStatus === 'idle') {
+              latestTab.savedRevision = latestTab.revision
+            } else {
+              options.scheduleSave(path, 0)
+            }
+            latestTab.error = null
+          }
+          return
+        }
       } catch {
-        tab.error = '暂时无法读取磁盘文件，将在下次检查时重试'
+        const latestTab = options.tabs.value.find((item) => item.path === requestedPath)
+        if (latestTab === requestedTab) {
+          latestTab.error = '暂时无法读取磁盘文件，将在下次检查时重试'
+        }
         return
       }
     }
@@ -122,7 +160,25 @@ export function useDiskFileChanges(options: {
     } else if (tab.externalKind === 'deleted') {
       const sentRaw = tab.raw
       const sentRevision = tab.revision
-      const recovered = await recoverPost(path, sentRaw)
+      let recovered: Awaited<ReturnType<typeof recoverPost>>
+      try {
+        recovered = await recoverPost(path, sentRaw)
+      } catch (recoverError) {
+        try {
+          const post = await getPost(path)
+          const latestTab = options.tabs.value.find((item) => item.path === path)
+          if (latestTab !== tab || latestTab.path !== path) return
+          latestTab.externalRaw = post.raw
+          latestTab.externalKind = 'modified'
+          latestTab.serverMtime = post.mtime
+          latestTab.saveStatus = 'external'
+          latestTab.loadError = null
+          latestTab.error = '磁盘文件已重新出现，请重新选择使用磁盘或保留本地版本'
+          return
+        } catch {
+          throw recoverError
+        }
+      }
       tab.originalRaw = recovered.raw
       tab.savedRevision = sentRevision
       tab.serverMtime = recovered.mtime
