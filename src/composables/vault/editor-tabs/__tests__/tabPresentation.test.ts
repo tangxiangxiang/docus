@@ -1,16 +1,34 @@
 // Pure presentation tests — no Vue mounting required. The presentation
-// module is the single source of truth for tab title, status text, and
-// aria-label, so the unit tests here cover the full mapping.
+// module is the single source of truth for tab title, document title,
+// status text, and aria-label, so the unit tests here cover the full
+// mapping.
 
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceTab } from '../../../../components/vault/tabs'
 import type { DocumentSavePresentation } from '../savePresentation'
 import {
   deriveDisplayTitle,
+  deriveDocumentTitle,
   deriveTabUiPresentation,
 } from '../tabPresentation'
 
+// Minimal translator stub: only the keys the presentation module
+// looks up at runtime. Tests that need exact aria-label output
+// compose expectations off this map; tests that only care about
+// presence/absence still use NO_T.
 const NO_T = (key: string) => key
+const STUB_STRINGS: Record<string, string> = {
+  'status.saved': 'Saved',
+  'workspace_tab.aria_separator': ', ',
+  'workspace_tab.aria_file': 'file {name}',
+}
+function stubT(key: string, params: Record<string, string | number> = {}): string {
+  const template = STUB_STRINGS[key]
+  if (!template) return key
+  return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, name: string) => (
+    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match
+  ))
+}
 
 function save(overrides: Partial<DocumentSavePresentation> = {}): DocumentSavePresentation {
   return {
@@ -24,10 +42,16 @@ function save(overrides: Partial<DocumentSavePresentation> = {}): DocumentSavePr
   }
 }
 
+function basename(path: string): string {
+  const last = path.split('/').pop() ?? path
+  return last.endsWith('.md') ? last.slice(0, -3) : last
+}
+
 function tab(overrides: Partial<WorkspaceTab> = {}): WorkspaceTab {
+  const id = overrides.id ?? 'inbox/test-document-1.md'
   return {
-    id: 'inbox/test-document-1.md',
-    label: 'test-document-1',
+    id,
+    label: basename(id),
     title: 'Test Document 1',
     save: save(),
     kind: 'document',
@@ -36,66 +60,159 @@ function tab(overrides: Partial<WorkspaceTab> = {}): WorkspaceTab {
 }
 
 describe('deriveDisplayTitle', () => {
-  it('returns the title when it is set and not equal to the path', () => {
-    expect(deriveDisplayTitle('Inbox 测试', 'inbox/test-document-1.md')).toBe('Inbox 测试')
+  it('uses label when it is set and non-empty', () => {
+    expect(deriveDisplayTitle('test-document-1', 'inbox/test-document-1.md'))
+      .toBe('test-document-1')
   })
 
-  it('falls back to the path basename when title is empty', () => {
+  it('strips the .md extension from the label', () => {
+    expect(deriveDisplayTitle('test-document-1.md', 'inbox/test-document-1.md'))
+      .toBe('test-document-1')
+  })
+
+  it('falls back to the path basename when label is empty', () => {
     expect(deriveDisplayTitle('', 'inbox/test-document-1.md')).toBe('test-document-1')
   })
 
-  it('falls back to the path basename when title is only whitespace', () => {
+  it('falls back to the path basename when label is whitespace', () => {
     expect(deriveDisplayTitle('   ', 'inbox/test-document-1.md')).toBe('test-document-1')
   })
 
-  it('falls back to the path basename when title equals the path', () => {
-    expect(deriveDisplayTitle('inbox/test-document-1.md', 'inbox/test-document-1.md'))
-      .toBe('test-document-1')
-  })
-
-  it('falls back to the path basename when title is identical to the trimmed path', () => {
-    expect(deriveDisplayTitle('  inbox/test-document-1.md  ', 'inbox/test-document-1.md'))
-      .toBe('test-document-1')
-  })
-
-  it('strips the .md extension from the basename', () => {
-    expect(deriveDisplayTitle('', 'foo/bar/baz.md')).toBe('baz')
-  })
-
-  it('preserves non-md extensions', () => {
-    expect(deriveDisplayTitle('', 'foo/bar/data.json')).toBe('data.json')
-  })
-
-  it('falls back to the full path when there is no basename', () => {
-    expect(deriveDisplayTitle('', 'orphan')).toBe('orphan')
+  it('does NOT use tab.title even when it is set', () => {
+    // The original Edit-07A behavior (which mixed metadata title into
+    // the strip) is explicitly forbidden here — the tab strip must
+    // always be the filename/basename regardless of what
+    // frontmatter says.
+    expect(deriveDisplayTitle('test-document-1', 'inbox/test-document-1.md'))
+      .not.toBe('测试文档')
   })
 })
 
-describe('deriveTabUiPresentation — title + path rules', () => {
-  it('renders a document whose title equals its path without repeating the path twice', () => {
+describe('deriveDocumentTitle', () => {
+  it('returns the trimmed title when it is set and differs from the path', () => {
+    expect(deriveDocumentTitle('测试文档', 'inbox/test-document-1', 'test-document-1'))
+      .toBe('测试文档')
+  })
+
+  it('returns null when title is empty', () => {
+    expect(deriveDocumentTitle('', 'inbox/test-document-1', 'test-document-1'))
+      .toBeNull()
+  })
+
+  it('returns null when title is whitespace only', () => {
+    expect(deriveDocumentTitle('   ', 'inbox/test-document-1', 'test-document-1'))
+      .toBeNull()
+  })
+
+  it('returns null when title equals the full path', () => {
+    expect(deriveDocumentTitle('inbox/test-document-1', 'inbox/test-document-1', 'test-document-1'))
+      .toBeNull()
+  })
+
+  it('returns null when title equals displayTitle', () => {
+    expect(deriveDocumentTitle('test-document-1', 'inbox/test-document-1', 'test-document-1'))
+      .toBeNull()
+  })
+
+  it('returns null when title without .md equals displayTitle', () => {
+    expect(deriveDocumentTitle('test-document-1.md', 'inbox/test-document-1.md', 'test-document-1'))
+      .toBeNull()
+  })
+})
+
+describe('deriveTabUiPresentation — strip always uses label/basename', () => {
+  it('scenario 1 — label + Chinese title + path', () => {
     const t = tab({
       id: 'inbox/test-document-1',
+      label: 'test-document-1',
+      title: '测试文档',
+    })
+    const p = deriveTabUiPresentation(t, NO_T)
+    expect(p.displayTitle).toBe('test-document-1')
+    expect(p.documentTitle).toBe('测试文档')
+    expect(p.fullPath).toBe('inbox/test-document-1')
+  })
+
+  it('scenario 2 — title equals path; documentTitle line is suppressed', () => {
+    const t = tab({
+      id: 'inbox/test-document-1',
+      label: 'test-document-1',
       title: 'inbox/test-document-1',
     })
     const p = deriveTabUiPresentation(t, NO_T)
     expect(p.displayTitle).toBe('test-document-1')
+    expect(p.documentTitle).toBeNull()
     expect(p.fullPath).toBe('inbox/test-document-1')
-    // Tooltip shows the full path only when it differs from the title.
-    expect(p.fullPath !== p.displayTitle).toBe(true)
   })
 
-  it('renders an empty title using the path basename', () => {
-    const t = tab({ title: '' })
+  it('scenario 3 — title equals displayTitle; documentTitle line is suppressed', () => {
+    const t = tab({
+      id: 'inbox/test-document-1',
+      label: 'test-document-1',
+      title: 'test-document-1',
+    })
     const p = deriveTabUiPresentation(t, NO_T)
     expect(p.displayTitle).toBe('test-document-1')
-    expect(p.fullPath).toBe('inbox/test-document-1.md')
+    expect(p.documentTitle).toBeNull()
   })
 
-  it('preserves a Chinese title and shows the full path alongside it', () => {
-    const t = tab({ title: '测试列表' })
+  it('scenario 4 — empty title; documentTitle line is suppressed', () => {
+    const t = tab({
+      id: 'inbox/test-document-1',
+      label: 'test-document-1',
+      title: '',
+    })
     const p = deriveTabUiPresentation(t, NO_T)
-    expect(p.displayTitle).toBe('测试列表')
-    expect(p.fullPath).toBe('inbox/test-document-1.md')
+    expect(p.displayTitle).toBe('test-document-1')
+    expect(p.documentTitle).toBeNull()
+  })
+
+  it('scenario 5 — multiple tabs with mixed-language titles; strip always uses basename', () => {
+    const tabs: WorkspaceTab[] = [
+      tab({ id: 'inbox/a.md', label: 'a', title: '中文标题' }),
+      tab({ id: 'inbox/b.md', label: 'b', title: 'English Title' }),
+      tab({ id: 'inbox/c.md', label: 'c', title: '' }),
+    ]
+    const presentations = tabs.map((t) => deriveTabUiPresentation(t, NO_T))
+    expect(presentations.map((p) => p.displayTitle)).toEqual(['a', 'b', 'c'])
+    // Strip language NEVER comes from title.
+    expect(presentations.map((p) => p.displayTitle)).not.toContain('中文标题')
+    expect(presentations.map((p) => p.displayTitle)).not.toContain('English Title')
+    // Document titles preserved for tooltip lines.
+    expect(presentations[0]!.documentTitle).toBe('中文标题')
+    expect(presentations[1]!.documentTitle).toBe('English Title')
+    expect(presentations[2]!.documentTitle).toBeNull()
+  })
+
+  it('scenario 6 — history/diff keep their existing title semantics', () => {
+    const h = tab({
+      id: 'history:redis',
+      kind: 'history',
+      label: 'Redis (历史)',
+      title: 'Redis',
+    })
+    const d = tab({
+      id: 'diff:redis',
+      kind: 'diff',
+      label: 'Redis (差异)',
+      title: 'Redis',
+    })
+    expect(deriveTabUiPresentation(h, NO_T).displayTitle).toBe('Redis (历史)')
+    expect(deriveTabUiPresentation(d, NO_T).displayTitle).toBe('Redis (差异)')
+    expect(deriveTabUiPresentation(h, NO_T).documentTitle).toBeNull()
+    expect(deriveTabUiPresentation(d, NO_T).documentTitle).toBeNull()
+    expect(deriveTabUiPresentation(h, NO_T).fullPath).toBeNull()
+  })
+
+  it('falls back to path basename when label is empty', () => {
+    const t = tab({
+      id: 'inbox/production-plan.md',
+      label: '',
+      title: '',
+    })
+    const p = deriveTabUiPresentation(t, NO_T)
+    expect(p.displayTitle).toBe('production-plan')
+    expect(p.fullPath).toBe('inbox/production-plan.md')
   })
 })
 
@@ -192,17 +309,35 @@ describe('deriveTabUiPresentation — presentation priority', () => {
 })
 
 describe('deriveTabUiPresentation — aria-label', () => {
-  it('combines title + status for document tabs', () => {
-    const p = deriveTabUiPresentation(tab({ save: save({ status: 'dirty', dirty: true }) }), NO_T)
-    expect(p.ariaLabel).toBe('Test Document 1 status.unsaved')
+  it('includes documentTitle + "file <displayTitle>" when documentTitle is present', () => {
+    const p = deriveTabUiPresentation(
+      tab({ id: 'a.md', label: 'a', title: '测试文档' }),
+      stubT,
+    )
+    expect(p.ariaLabel).toBe('测试文档, file a, Saved')
   })
 
-  it('does not include any status for history / diff', () => {
+  it('falls back to displayTitle when documentTitle is null', () => {
+    const p = deriveTabUiPresentation(
+      tab({ id: 'a.md', label: 'a', title: '' }),
+      stubT,
+    )
+    expect(p.ariaLabel).toBe('a, Saved')
+  })
+
+  it('omits documentTitle when it would duplicate displayTitle', () => {
+    const p = deriveTabUiPresentation(
+      tab({ id: 'a.md', label: 'a', title: 'a' }),
+      stubT,
+    )
+    expect(p.ariaLabel).toBe('a, Saved')
+  })
+
+  it('history / diff aria-label keeps the legacy layout (no documentTitle, no status)', () => {
     const h = deriveTabUiPresentation(
-      tab({ kind: 'history', label: 'Redis (History)', title: 'Redis Notes' }),
+      tab({ kind: 'history', label: 'Redis (历史)', title: 'Redis' }),
       NO_T,
     )
-    expect(h.ariaLabel).toBe('Redis (History)')
-    expect(h.ariaLabel).not.toMatch(/status\.|Saved|Unsaved|Saving|Error|Offline|Externally/)
+    expect(h.ariaLabel).toBe('Redis (历史)')
   })
 })

@@ -338,8 +338,10 @@ describe('EditorTabs tooltip lifecycle', () => {
     const tooltip = document.querySelector('.tab-tooltip')
     expect(tooltip).not.toBeNull()
     expect(tooltip!.querySelector('.tab-tooltip-title')!.textContent).toBe('b')
-    expect(tooltip!.querySelector('.tab-tooltip-path')!.textContent).toBe('b.md')
-    expect(tooltip!.querySelector('.tab-tooltip-status')!.textContent).toBe('已保存')
+    expect(tooltip!.querySelector('.tab-tooltip-path')!.textContent).toContain('b.md')
+    expect(tooltip!.querySelector('.tab-tooltip-path')!.textContent).toContain('路径：')
+    expect(tooltip!.querySelector('.tab-tooltip-status')!.textContent).toContain('已保存')
+    expect(tooltip!.querySelector('.tab-tooltip-status')!.textContent).toContain('状态：')
     expect(tooltip!.querySelector('.tab-tooltip-hint')!.textContent).toBe('中键关闭 · 右键打开菜单')
     w.unmount()
   })
@@ -571,14 +573,17 @@ describe('EditorTabs ARIA', () => {
     ]
     const w = mount(EditorTabs, { props: { tabs, activePath: 'a.md' } })
     const rendered = w.findAll('.tab')
-    expect(rendered[0]!.attributes('aria-label')).toBe('a 已保存')
-    expect(rendered[1]!.attributes('aria-label')).toBe('b 已保存')
-    expect(rendered[2]!.attributes('aria-label')).toBe('c 未保存')
-    expect(rendered[3]!.attributes('aria-label')).toBe('d 保存中…')
-    expect(rendered[4]!.attributes('aria-label')).toBe('e 保存中…仍有较新修改')
-    expect(rendered[5]!.attributes('aria-label')).toBe('f 保存失败')
-    expect(rendered[6]!.attributes('aria-label')).toBe('g 离线，等待保存')
-    expect(rendered[7]!.attributes('aria-label')).toBe('h 检测到外部文件变化')
+    // New format (round-3): "<displayTitle>，<statusText>" — no
+    // documentTitle (these fixtures use title=path so the documentTitle
+    // line is suppressed).
+    expect(rendered[0]!.attributes('aria-label')).toBe('a，已保存')
+    expect(rendered[1]!.attributes('aria-label')).toBe('b，已保存')
+    expect(rendered[2]!.attributes('aria-label')).toBe('c，未保存')
+    expect(rendered[3]!.attributes('aria-label')).toBe('d，保存中…')
+    expect(rendered[4]!.attributes('aria-label')).toBe('e，保存中…仍有较新修改')
+    expect(rendered[5]!.attributes('aria-label')).toBe('f，保存失败')
+    expect(rendered[6]!.attributes('aria-label')).toBe('g，离线，等待保存')
+    expect(rendered[7]!.attributes('aria-label')).toBe('h，检测到外部文件变化')
     w.unmount()
   })
 
@@ -705,7 +710,7 @@ describe('EditorTabs — round-2 regression tests', () => {
     await flushPromises()
     const tooltip = document.querySelector('.tab-tooltip')!
     expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('测试列表')
-    expect(tooltip.querySelector('.tab-tooltip-path')!.textContent).toBe('inbox/test-document-1')
+    expect(tooltip.querySelector('.tab-tooltip-path')!.textContent).toContain('inbox/test-document-1')
     w.unmount()
   })
 
@@ -850,5 +855,176 @@ describe('EditorTabs — round-2 regression tests', () => {
     expect(rendered[1]!.attributes('aria-label')).toBe('Redis (差异)')
     expect(rendered[0]!.find('.tab-dirty-indicator').exists()).toBe(false)
     expect(rendered[0]!.find('.tab-status-indicator').exists()).toBe(false)
+  })
+})
+
+describe('EditorTabs — round-3 regression (label vs title split)', () => {
+  beforeEach(() => {
+    useI18n().setLocale('zh')
+    document.querySelectorAll('.tab-context-menu').forEach((el) => el.remove())
+    document.querySelectorAll('.tab-tooltip').forEach((el) => el.remove())
+  })
+
+  // 1. label=test-document-1, title=测试文档, path=inbox/test-document-1
+  //    tab strip = test-document-1
+  //    tooltip 文档标题 = 测试文档
+  //    tooltip 路径 = inbox/test-document-1
+  it('scenario 1 — Chinese title becomes documentTitle only; strip shows the basename', async () => {
+    const tab = makeTab('inbox/test-document-1', {
+      label: 'test-document-1',
+      title: '测试文档',
+    })
+    const w = mount(EditorTabs, {
+      props: { tabs: [tab], activePath: tab.id },
+      attachTo: document.body,
+    })
+    // Strip is the basename regardless of the metadata title.
+    expect(w.find('.tab-title').text()).toBe('test-document-1')
+    await w.find('.tab').trigger('mouseenter')
+    await flushPromises()
+    const tooltip = document.querySelector('.tab-tooltip')!
+    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('test-document-1')
+    expect(tooltip.querySelector('.tab-tooltip-document-title')!.textContent).toContain('测试文档')
+    expect(tooltip.querySelector('.tab-tooltip-document-title')!.textContent).toContain('文档标题：')
+    expect(tooltip.querySelector('.tab-tooltip-path')!.textContent).toContain('inbox/test-document-1')
+    expect(tooltip.querySelector('.tab-tooltip-path')!.textContent).toContain('路径：')
+    // aria-label includes the documentTitle via the "file" connector.
+    expect(w.find('.tab').attributes('aria-label')).toContain('测试文档')
+    expect(w.find('.tab').attributes('aria-label')).toContain('test-document-1')
+    w.unmount()
+  })
+
+  // 2. label=test-document-1, title=inbox/test-document-1, path=inbox/test-document-1
+  //    tab strip = test-document-1
+  //    no documentTitle line
+  //    path appears once
+  it('scenario 2 — title equals path; documentTitle line is suppressed', async () => {
+    const tab = makeTab('inbox/test-document-1', {
+      label: 'test-document-1',
+      title: 'inbox/test-document-1',
+    })
+    const w = mount(EditorTabs, {
+      props: { tabs: [tab], activePath: tab.id },
+      attachTo: document.body,
+    })
+    expect(w.find('.tab-title').text()).toBe('test-document-1')
+    await w.find('.tab').trigger('mouseenter')
+    await flushPromises()
+    const tooltip = document.querySelector('.tab-tooltip')!
+    expect(tooltip.querySelector('.tab-tooltip-document-title')).toBeNull()
+    expect(tooltip.querySelector('.tab-tooltip-path')).not.toBeNull()
+    // The full path appears at most once in the tooltip (in the
+    // "路径：" line). It MUST NOT be the title.
+    const occurrences = (tooltip.textContent ?? '').split('inbox/test-document-1').length - 1
+    expect(occurrences).toBe(1)
+    w.unmount()
+  })
+
+  // 3. label=test-document-1, title=test-document-1
+  //    no duplicate documentTitle line
+  it('scenario 3 — title equals displayTitle; documentTitle line is suppressed', async () => {
+    const tab = makeTab('inbox/test-document-1', {
+      label: 'test-document-1',
+      title: 'test-document-1',
+    })
+    const w = mount(EditorTabs, {
+      props: { tabs: [tab], activePath: tab.id },
+      attachTo: document.body,
+    })
+    expect(w.find('.tab-title').text()).toBe('test-document-1')
+    await w.find('.tab').trigger('mouseenter')
+    await flushPromises()
+    expect(document.querySelector('.tab-tooltip-document-title')).toBeNull()
+    w.unmount()
+  })
+
+  // 4. title 为空
+  //    tab strip 仍显示 test-document-1
+  //    no documentTitle line
+  it('scenario 4 — empty title; strip still shows the basename', async () => {
+    const tab = makeTab('inbox/test-document-1', {
+      label: 'test-document-1',
+      title: '',
+    })
+    const w = mount(EditorTabs, {
+      props: { tabs: [tab], activePath: tab.id },
+      attachTo: document.body,
+    })
+    expect(w.find('.tab-title').text()).toBe('test-document-1')
+    await w.find('.tab').trigger('mouseenter')
+    await flushPromises()
+    expect(document.querySelector('.tab-tooltip-document-title')).toBeNull()
+    w.unmount()
+  })
+
+  // 5. multiple tabs each with a different metadata title.
+  it('scenario 5 — strip uniformly uses basenames across mixed-language titles', async () => {
+    useI18n().setLocale('zh')
+    const tabs = [
+      makeTab('inbox/a.md', { label: 'a', title: '中文标题' }),
+      makeTab('inbox/b.md', { label: 'b', title: 'English Title' }),
+      makeTab('inbox/c.md', { label: 'c', title: '' }),
+    ]
+    const w = mount(EditorTabs, {
+      props: { tabs, activePath: tabs[0]!.id },
+      attachTo: document.body,
+    })
+    const stripTitles = w.findAll('.tab-title').map((el) => el.text())
+    expect(stripTitles).toEqual(['a', 'b', 'c'])
+    // Metadata titles appear ONLY in the tooltip, never in the strip.
+    expect(stripTitles).not.toContain('中文标题')
+    expect(stripTitles).not.toContain('English Title')
+    // Hover each tab in turn; documentTitle line only appears for the
+    // tabs that actually have a title.
+    const tabA = w.findAll('.tab')[0]!
+    await tabA.trigger('mouseenter')
+    await flushPromises()
+    expect(document.querySelector('.tab-tooltip-document-title')!.textContent)
+      .toContain('中文标题')
+    const tabB = w.findAll('.tab')[1]!
+    await tabB.trigger('mouseenter')
+    await flushPromises()
+    expect(document.querySelector('.tab-tooltip-document-title')!.textContent)
+      .toContain('English Title')
+    const tabC = w.findAll('.tab')[2]!
+    await tabC.trigger('mouseenter')
+    await flushPromises()
+    expect(document.querySelector('.tab-tooltip-document-title')).toBeNull()
+    w.unmount()
+  })
+
+  // 6. History / Diff keep their existing label-based semantics.
+  it('scenario 6 — history/diff still use label and never expose documentTitle', async () => {
+    useI18n().setLocale('zh')
+    const tabs = [
+      makeTab('history:redis', { kind: 'history', label: 'Redis (历史)', title: 'Redis' }),
+      makeTab('diff:redis', { kind: 'diff', label: 'Redis (差异)', title: 'Redis' }),
+    ]
+    const w = mount(EditorTabs, {
+      props: { tabs, activePath: tabs[0]!.id },
+      attachTo: document.body,
+    })
+    expect(w.findAll('.tab-title').map((el) => el.text())).toEqual(['Redis (历史)', 'Redis (差异)'])
+    await w.findAll('.tab')[0]!.trigger('mouseenter')
+    await flushPromises()
+    const tooltip = document.querySelector('.tab-tooltip')!
+    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('Redis (历史)')
+    expect(tooltip.querySelector('.tab-tooltip-document-title')).toBeNull()
+    expect(tooltip.querySelector('.tab-tooltip-path')).toBeNull()
+    expect(tooltip.querySelector('.tab-tooltip-status')).toBeNull()
+    w.unmount()
+  })
+
+  // English locale sanity check — separator is "file" + comma + space.
+  it('English aria-label uses the file-connector when documentTitle is present', () => {
+    useI18n().setLocale('en')
+    const tab = makeTab('inbox/test-document-1', {
+      label: 'test-document-1',
+      title: 'Test Document',
+    })
+    const w = mount(EditorTabs, { props: { tabs: [tab], activePath: tab.id } })
+    const aria = w.find('.tab').attributes('aria-label')!
+    expect(aria).toBe('Test Document, file test-document-1, Saved')
+    w.unmount()
   })
 })

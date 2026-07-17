@@ -294,14 +294,18 @@ watch(activePathRef, () => { hideTooltip() })
       >
         <span class="tab-tooltip-title">{{ tooltipPresentation.displayTitle }}</span>
         <span
-          v-if="tooltipPresentation.fullPath && tooltipPresentation.fullPath !== tooltipPresentation.displayTitle"
+          v-if="tooltipPresentation.documentTitle"
+          class="tab-tooltip-document-title"
+        ><span class="tab-tooltip-label">{{ translate('workspace_tab.tooltip_document_title') }}</span>{{ tooltipPresentation.documentTitle }}</span>
+        <span
+          v-if="tooltipPresentation.fullPath"
           class="tab-tooltip-path"
-        >{{ tooltipPresentation.fullPath }}</span>
+        ><span class="tab-tooltip-label">{{ translate('workspace_tab.tooltip_path') }}</span>{{ tooltipPresentation.fullPath }}</span>
         <span
           v-if="tooltipPresentation.statusText"
           class="tab-tooltip-status"
           :data-status-kind="tooltipPresentation.statusKind"
-        >{{ tooltipPresentation.statusText }}</span>
+        ><span class="tab-tooltip-label">{{ translate('workspace_tab.tooltip_status') }}</span>{{ tooltipPresentation.statusText }}</span>
         <span class="tab-tooltip-hint">{{ translate('workspace_tab.close_hint') }}</span>
       </div>
     </Teleport>

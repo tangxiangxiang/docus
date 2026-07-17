@@ -1,15 +1,29 @@
 // Pure tab UI presentation layer.
 //
 // Source of truth for everything the tab strip renders about a
-// WorkspaceTab: the title shown in the strip, the optional full path
-// shown in the tooltip, the save status text the user sees, and the
-// aria-label a screen reader announces.
+// WorkspaceTab: the title shown in the strip, the optional document
+// title (metadata/frontmatter) shown in the tooltip, the full path,
+// the save status text the user sees, and the aria-label.
 //
-// All state is derived from DocumentSavePresentation (Edit-04) — no
-// raw SaveStatus enum or `savingRevision`/`revision`/`savedRevision`
-// fields are read here. The presentation module is the single place
-// that decides which user-facing word each presentation status maps
-// to, so the tab strip, tooltip, and aria-label can never drift.
+// Two separate fields keep the strip and the tooltip coherent when
+// the upstream WorkspaceTab carries both a `label` (the file basename
+// in kebab-case) and a `title` (the metadata/frontmatter title, which
+// may be in any language):
+//
+//   - `displayTitle` comes from `label` and is what the tab strip
+//     shows. It is always the file basename (or path fallback when
+//     label is empty), so the tab strip language stays uniform
+//     across all documents regardless of metadata title.
+//
+//   - `documentTitle` comes from `title` and is only surfaced in the
+//     tooltip as an optional supplementary line. It is suppressed in
+//     every case where it would just duplicate `displayTitle` (equal
+//     to it, equal to the path, or its `.md`-stripped form equals
+//     displayTitle).
+//
+// All status text is derived from DocumentSavePresentation (Edit-04)
+// — no raw SaveStatus enum or `savingRevision`/`revision`/
+// `savedRevision` fields are read here.
 
 import type { WorkspaceTab } from '../../../components/vault/tabs'
 import type {
@@ -26,10 +40,16 @@ export type TabUiStatusKind =
   | 'external'
 
 export interface TabUiPresentation {
-  /** Title shown in the tab strip and as the strong line in the tooltip. */
+  /** Title shown in the tab strip and as the strong line in the tooltip.
+   *  Always derived from `tab.label` (file basename) so the strip's
+   *  language and shape stay uniform across documents. */
   displayTitle: string
+  /** Document title from metadata / frontmatter. Surfaced only in the
+   *  tooltip as an optional supplementary line. null when the title
+   *  is empty, equals the path, or duplicates `displayTitle`. */
+  documentTitle: string | null
   /** Full path shown as the secondary line in the tooltip; null when
-   *  the tab has no path (e.g. empty placeholder tab). */
+   *  the tab has no path (history/diff). */
   fullPath: string | null
   /** Save status word shown on its own line in the tooltip; null
    *  when the tab is read-only (history/diff). */
@@ -37,11 +57,11 @@ export interface TabUiPresentation {
   /** Status kind used to pick a glyph and tooltip row styling. 'none'
    *  means no badge (history/diff and idle/saved documents). */
   statusKind: TabUiStatusKind
-  /** Short aria-label for the tab — title + status, joined by a
-   *  space. Does NOT include the full path or operation hint (those
-   *  are surfaced via the tooltip / aria-describedby instead so the
-   *  screen reader doesn't have to read the whole sentence on every
-   *  focus). */
+  /** Short aria-label for the tab. When the document has a separate
+   *  metadata title, the aria-label includes "<documentTitle>, file
+   *  <displayTitle>, <status>" so screen readers can announce both
+   *  the file identity and the human-readable title. Without a
+   *  document title it falls back to "<displayTitle>, <status>". */
   ariaLabel: string
 }
 
@@ -99,20 +119,44 @@ function stripMarkdownExtension(segment: string): string {
 }
 
 /**
- * Build the title shown in the tab strip from the document's
- *   1. display title (from frontmatter / metadata)
- *   2. last path segment (with .md extension stripped)
- *   3. full path
+ * Build the title shown in the tab strip from the WorkspaceTab's
+ * `label` (the upstream basename). When label is empty, fall back
+ * to the last path segment with the .md extension stripped.
  *
- * The decision never modifies the underlying Tab — it only derives
- * a display string. Returns "" when both title and path are empty.
+ * The presentation NEVER falls back to `tab.title` (the metadata /
+ * frontmatter title) here — that field is a separate language and
+ * can produce mixed-language tabs if it ever wins. Use
+ * `documentTitle` for the optional tooltip line that surfaces the
+ * metadata title.
  */
-export function deriveDisplayTitle(title: string, path: string): string {
-  const trimmed = (title ?? '').trim()
-  if (trimmed && trimmed !== path) return trimmed
+export function deriveDisplayTitle(label: string, path: string): string {
+  const trimmed = (label ?? '').trim()
+  if (trimmed) return stripMarkdownExtension(trimmed)
   const lastSegment = path.split('/').pop() ?? ''
   if (lastSegment) return stripMarkdownExtension(lastSegment)
   return path
+}
+
+/**
+ * Compute the optional document title for the tooltip line. Returns
+ * null when the title would be redundant with the displayTitle or
+ * the path. Specifically:
+ *   - empty / whitespace-only title
+ *   - title equals the full path
+ *   - title equals displayTitle
+ *   - title with .md extension stripped equals displayTitle
+ */
+export function deriveDocumentTitle(
+  title: string,
+  path: string,
+  displayTitle: string,
+): string | null {
+  const trimmed = (title ?? '').trim()
+  if (!trimmed) return null
+  if (trimmed === path) return null
+  if (trimmed === displayTitle) return null
+  if (stripMarkdownExtension(trimmed) === displayTitle) return null
+  return trimmed
 }
 
 /**
@@ -128,9 +172,20 @@ export function deriveFullPath(kind: WorkspaceTab['kind'], path: string): string
 
 function buildAriaLabel(
   displayTitle: string,
+  documentTitle: string | null,
   statusText: string | null,
+  t: (key: string, params?: Record<string, string | number>) => string,
 ): string {
-  return statusText ? `${displayTitle} ${statusText}` : displayTitle
+  const sep = t('workspace_tab.aria_separator')
+  if (documentTitle) {
+    const filePart = t('workspace_tab.aria_file', { name: displayTitle })
+    const parts = [documentTitle, filePart]
+    if (statusText) parts.push(statusText)
+    return parts.join(sep)
+  }
+  const parts = [displayTitle]
+  if (statusText) parts.push(statusText)
+  return parts.join(sep)
 }
 
 /**
@@ -150,15 +205,17 @@ export function deriveTabUiPresentation(
   t: (key: string, params?: Record<string, string | number>) => string,
 ): TabUiPresentation {
   if (tab.kind === 'document') {
-    const displayTitle = deriveDisplayTitle(tab.title, tab.id)
+    const displayTitle = deriveDisplayTitle(tab.label ?? '', tab.id)
+    const documentTitle = deriveDocumentTitle(tab.title ?? '', tab.id, displayTitle)
     const fullPath = deriveFullPath('document', tab.id)
     const statusText = tab.save ? statusTextForPresentation(tab.save, t) : null
     return {
       displayTitle,
+      documentTitle,
       fullPath,
       statusText,
       statusKind: tab.save ? statusKindFor(tab.save.status) : 'none',
-      ariaLabel: buildAriaLabel(displayTitle, statusText),
+      ariaLabel: buildAriaLabel(displayTitle, documentTitle, statusText, t),
     }
   }
   // History / diff tabs keep their existing title semantics — the
@@ -169,6 +226,7 @@ export function deriveTabUiPresentation(
   const displayTitle = (tab.label ?? tab.title ?? '').trim() || tab.title || ''
   return {
     displayTitle,
+    documentTitle: null,
     fullPath: null,
     statusText: null,
     statusKind: 'none',

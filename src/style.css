@@ -1826,6 +1826,8 @@ main.container {
   white-space: normal;
 }
 .tab-tooltip-title { font-weight: 600; color: var(--text-h, #eee); }
+.tab-tooltip-label { color: var(--text-muted, #888); margin-right: 2px; }
+.tab-tooltip-document-title,
 .tab-tooltip-path { color: var(--text-muted, #aaa); }
 .tab-tooltip-status { color: var(--text-h, #ddd); }
 .tab-tooltip-status[data-status-kind="error"]   { color: var(--vs-error, #e06060); }
