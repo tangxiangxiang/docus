@@ -7,6 +7,7 @@ import { createVaultContext } from '../../context/createVaultContext'
 import { createVaultFileChanges } from '../../context/fileChanges'
 import { __resetHistoryStateForTesting, useHistory } from '../../useHistory'
 import { useDocumentSave } from '../useDocumentSave'
+import { deriveDocumentSavePresentation } from '../savePresentation'
 import { useExternalFileChanges } from '../useExternalFileChanges'
 
 function makeTab(path = 'inbox/test', raw = 'saved'): Tab {
@@ -149,14 +150,23 @@ describe('useDocumentSave successful transaction', () => {
     h.save.onEditorChange('inbox/test', 'v1')
     const saving = h.save.doSave('inbox/test')
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    expect(deriveDocumentSavePresentation(h.tabs.value[0])).toMatchObject({
+      status: 'saving', dirty: true, inFlight: true, hasNewerChanges: false,
+    })
     h.save.onEditorChange('inbox/test', 'v2')
     expect(fetchMock).toHaveBeenCalledOnce()
+    expect(deriveDocumentSavePresentation(h.tabs.value[0])).toMatchObject({
+      status: 'saving-dirty', dirty: true, inFlight: true, hasNewerChanges: true,
+    })
 
     finishFirst(ok('v1'))
     await saving
     await nextTick()
 
     expect(sent).toEqual(['v1', 'v2'])
+    expect(deriveDocumentSavePresentation(h.tabs.value[0])).toMatchObject({
+      status: 'saved', dirty: false, inFlight: false, hasNewerChanges: false,
+    })
     expect(confirm).not.toHaveBeenCalled()
     expect(h.tabs.value[0]).toMatchObject({
       raw: 'v2',

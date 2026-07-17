@@ -1,3 +1,5 @@
+import type { DocumentSavePresentation } from '../../composables/vault/editor-tabs/savePresentation'
+
 export type SaveStatus = 'idle' | 'dirty' | 'saving' | 'saved' | 'error' | 'offline' | 'external'
 
 export interface Tab {
@@ -27,6 +29,6 @@ export interface WorkspaceTab {
   id: string
   label: string
   title: string
-  dirty: boolean
+  save: DocumentSavePresentation
   kind: 'document' | 'history' | 'diff'
 }

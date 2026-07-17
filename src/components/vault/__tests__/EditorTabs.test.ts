@@ -4,13 +4,27 @@ import { mount, flushPromises } from '@vue/test-utils'
 import EditorTabs from '../EditorTabs.vue'
 import type { WorkspaceTab } from '../tabs'
 import { useI18n } from '../../../composables/useI18n'
+import { deriveDocumentSavePresentation } from '../../../composables/vault/editor-tabs/savePresentation'
+import type { DocumentSavePresentation } from '../../../composables/vault/editor-tabs/savePresentation'
+
+function save(overrides: Partial<DocumentSavePresentation> = {}): DocumentSavePresentation {
+  return {
+    status: 'idle',
+    dirty: false,
+    inFlight: false,
+    hasNewerChanges: false,
+    retryable: false,
+    attention: false,
+    ...overrides,
+  }
+}
 
 function makeTab(path: string, overrides: Partial<WorkspaceTab> = {}): WorkspaceTab {
   return {
     id: path,
     label: path.endsWith('.md') ? path.slice(0, -3) : path,
     title: path,
-    dirty: false,
+    save: deriveDocumentSavePresentation(null),
     kind: 'document',
     ...overrides,
   }
@@ -209,6 +223,66 @@ describe('EditorTabs (existing behavior)', () => {
     expect(wrapper.get('.tab').classes()).toContain('diff')
     expect(wrapper.get('.tab-title').text()).toBe('Redis Notes (Diff)')
     expect(wrapper.get('.tab-dot').classes()).not.toContain('dirty')
+  })
+
+  it('keeps dirty and in-flight semantics visible while saving', () => {
+    useI18n().setLocale('en')
+    const saving = makeTab('saving.md', {
+      save: save({ status: 'saving', dirty: true, inFlight: true }),
+    })
+    const savingDirty = makeTab('newer.md', {
+      save: save({
+        status: 'saving-dirty',
+        dirty: true,
+        inFlight: true,
+        hasNewerChanges: true,
+      }),
+    })
+    const wrapper = mount(EditorTabs, {
+      props: { tabs: [saving, savingDirty], activePath: saving.id },
+    })
+    const rendered = wrapper.findAll('.tab')
+
+    expect(rendered[0]!.attributes('data-save-status')).toBe('saving')
+    expect(rendered[0]!.get('.tab-dot').classes()).toEqual(expect.arrayContaining(['dirty', 'in-flight']))
+    expect(rendered[0]!.attributes('aria-label')).toContain('Saving…')
+    expect(rendered[1]!.attributes('data-save-status')).toBe('saving-dirty')
+    expect(rendered[1]!.get('.tab-dot').classes()).toEqual(expect.arrayContaining(['dirty', 'in-flight', 'newer-changes']))
+    expect(rendered[1]!.attributes('aria-label')).toContain('newer changes remain unsaved')
+  })
+
+  it('preserves dirty markers for error, offline, and external documents', () => {
+    const tabs = (['error', 'offline', 'external'] as const).map((status) => makeTab(`${status}.md`, {
+      save: save({ status, dirty: true, retryable: status !== 'external', attention: true }),
+    }))
+    const wrapper = mount(EditorTabs, { props: { tabs, activePath: tabs[0]!.id } })
+
+    for (const rendered of wrapper.findAll('.tab')) {
+      expect(rendered.get('.tab-dot').classes()).toContain('dirty')
+      expect(rendered.classes()).toContain('save-attention')
+    }
+  })
+
+  it('keeps per-document presentation independent and excludes read-only tabs', () => {
+    useI18n().setLocale('en')
+    const tabs = [
+      makeTab('a.md', { save: save({ status: 'saving', dirty: true, inFlight: true }) }),
+      makeTab('b.md', { save: save({ status: 'dirty', dirty: true }) }),
+      makeTab('c.md', { save: save({ status: 'error', dirty: true, retryable: true, attention: true }) }),
+      makeTab('history:a', { kind: 'history', save: save() }),
+      makeTab('diff:a', { kind: 'diff', save: save() }),
+    ]
+    const wrapper = mount(EditorTabs, { props: { tabs, activePath: 'a.md' } })
+    const rendered = wrapper.findAll('.tab')
+
+    expect(rendered.slice(0, 3).map((item) => item.attributes('data-save-status')))
+      .toEqual(['saving', 'dirty', 'error'])
+    expect(rendered[3]!.attributes('data-save-status')).toBeUndefined()
+    expect(rendered[4]!.attributes('data-save-status')).toBeUndefined()
+    expect(rendered[3]!.attributes('aria-label')).not.toContain('Idle')
+    expect(rendered[4]!.attributes('aria-label')).not.toContain('Idle')
+    expect(rendered[3]!.get('.tab-dot').classes()).not.toContain('dirty')
+    expect(rendered[4]!.get('.tab-dot').classes()).not.toContain('dirty')
   })
 
   it('uses roving tabindex and can restore focus to a workspace tab', () => {

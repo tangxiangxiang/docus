@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { SaveStatus } from './tabs'
+import type { DocumentSavePresentation } from '../../composables/vault/editor-tabs/savePresentation'
 import {
   ICON_STATUS_ERROR,
   ICON_STATUS_LOADING,
@@ -12,10 +12,9 @@ import { useI18n } from '../../composables/useI18n'
 
 const props = defineProps<{
   path: string | null
-  saveStatus: SaveStatus
+  save: DocumentSavePresentation
   error: string | null
   size: number
-  dirty: boolean
   focusWidth: boolean
 }>()
 const emit = defineEmits<{
@@ -28,13 +27,14 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 
-// Status icon. Each SaveStatus maps to one of the ICON_STATUS_*
+// Status icon. Each presentation status maps to one of the ICON_STATUS_*
 // glyphs (or no glyph for "idle"). The glyph renders inline next
 // to the text label via v-html.
 const statusIcon = computed<string>(() => {
-  switch (props.saveStatus) {
+  switch (props.save.status) {
     case 'dirty':    return ICON_STATUS_MODIFIED
     case 'saving':   return ICON_STATUS_LOADING
+    case 'saving-dirty': return ICON_STATUS_LOADING
     case 'saved':    return ICON_STATUS_SUCCESS
     case 'error':    return ICON_STATUS_ERROR
     case 'offline':  return ICON_STATUS_OFFLINE
@@ -45,12 +45,13 @@ const statusIcon = computed<string>(() => {
 
 const statusLabel = computed(() => {
   if (!props.path) return '—'
-  if (props.saveStatus === 'saving') return t('status.saving')
-  if (props.saveStatus === 'dirty') return t('status.unsaved')
-  if (props.saveStatus === 'saved') return t('status.saved')
-  if (props.saveStatus === 'error') return props.error ?? t('status.error')
-  if (props.saveStatus === 'offline') return t('status.offline')
-  if (props.saveStatus === 'external') return t('status.external')
+  if (props.save.status === 'saving') return t('status.saving')
+  if (props.save.status === 'saving-dirty') return t('status.saving_dirty')
+  if (props.save.status === 'dirty') return t('status.unsaved')
+  if (props.save.status === 'saved') return t('status.saved')
+  if (props.save.status === 'error') return props.error ?? t('status.error')
+  if (props.save.status === 'offline') return t('status.offline')
+  if (props.save.status === 'external') return t('status.external')
   return t('status.idle')
 })
 
@@ -76,16 +77,16 @@ const pathLabel = computed(() => {
 
 <template>
   <footer class="status-bar" :aria-label="t('status.label')">
-    <div class="sb-left">
+    <div class="sb-left" aria-live="polite" aria-atomic="true">
       <!-- aria-live="polite" so screen readers hear the save state
            change ("Unsaved" → "Saving…" → "Saved") without being
            interrupted. aria-atomic="true" re-announces the whole
            status instead of just the diff. -->
       <button
-        v-if="saveStatus === 'error' || saveStatus === 'offline'"
+        v-if="save.retryable"
         type="button"
         class="sb-item sb-status sb-status-retry"
-        :data-status="saveStatus"
+        :data-status="save.status"
         :title="t('status.retry_title', { status: statusLabel })"
         :aria-label="t('status.retry')"
         @click="emit('retry-save')"
@@ -96,9 +97,8 @@ const pathLabel = computed(() => {
       <span
         v-else
         class="sb-item sb-status"
-        :data-status="saveStatus"
-        aria-live="polite"
-        aria-atomic="true"
+        :data-status="save.status"
+        :title="save.status === 'error' ? statusLabel : undefined"
       >
         <span v-if="statusIcon" class="sb-status-glyph" v-html="statusIcon" aria-hidden="true" />
         {{ statusLabel }}
@@ -115,13 +115,13 @@ const pathLabel = computed(() => {
       <span v-else class="sb-path sb-path-empty">—</span>
     </div>
     <div class="sb-right">
-      <template v-if="saveStatus === 'external'">
+      <template v-if="save.status === 'external'">
         <button type="button" class="sb-copy-content" :title="t('status.external_diff')" :aria-label="t('status.external_diff')" @click="emit('external-diff')">⇄</button>
         <button type="button" class="sb-copy-content" :title="t('status.use_disk')" :aria-label="t('status.use_disk')" @click="emit('external-disk')">↓</button>
         <button type="button" class="sb-copy-content" :title="t('status.keep_local')" :aria-label="t('status.keep_local')" @click="emit('external-local')">↑</button>
       </template>
       <button
-        v-if="dirty || saveStatus === 'error' || saveStatus === 'offline' || saveStatus === 'external'"
+        v-if="save.dirty || save.attention"
         type="button"
         class="sb-copy-content"
         :aria-label="t('status.copy_content')"

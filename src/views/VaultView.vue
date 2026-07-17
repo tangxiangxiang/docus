@@ -8,6 +8,7 @@ import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useI18n } from '../composables/useI18n'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
+import { deriveDocumentSavePresentation } from '../composables/vault/editor-tabs/savePresentation'
 import { useHistory } from '../composables/vault/useHistory'
 import { useHistoryCommit } from '../composables/vault/useHistoryCommit'
 import { useHistoryWithdraw } from '../composables/vault/useHistoryWithdraw'
@@ -141,7 +142,7 @@ const fileChanges = createVaultFileChanges()
 const historyMutationLock = createPathMutationLock()
 let lifecycleCreateFile: DocumentLifecycle['createFile'] | null = null
 const {
-  tree, vaultId, posts, tabs, activePath, activeTab, isDirty, activeSize,
+  tree, vaultId, posts, tabs, activePath, activeTab, activeSize,
   refresh, openPost: openEditorPost, closeTab: closeEditorTab,
   confirmCloseMany: confirmCloseEditorTabs,
   closeManyConfirmed: closeManyEditorTabsConfirmed,
@@ -322,24 +323,29 @@ const workspaceTabs = computed<WorkspaceTab[]>(() => [
     id: tab.path,
     label: basename(tab.path),
     title: `${tab.title || tab.path}\n${tab.path}`,
-    dirty: tab.saveStatus === 'dirty',
+    save: deriveDocumentSavePresentation(tab),
     kind: 'document' as const,
   })),
   ...historySnapshots.snapshots.value.map((snapshot) => ({
     id: snapshot.tabId,
     label: `${snapshot.documentTitle} (${t('history.snapshot_tab_suffix')})`,
     title: `${snapshot.documentTitle}\n${snapshot.documentPath}`,
-    dirty: false,
+    save: deriveDocumentSavePresentation(null),
     kind: 'history' as const,
   })),
   ...historyComparisons.comparisons.value.map((comparison) => ({
     id: comparison.tabId,
     label: `${comparison.documentTitle} (${t('history.diff_tab_suffix')})`,
     title: `${comparison.documentTitle}\n${comparison.documentPath}`,
-    dirty: false,
+    save: deriveDocumentSavePresentation(null),
     kind: 'diff' as const,
   })),
 ])
+const activeSavePresentation = computed(() => (
+  activeHistorySnapshot.value || activeHistoryComparison.value
+    ? deriveDocumentSavePresentation(null)
+    : deriveDocumentSavePresentation(activeTab.value)
+))
 const activeWorkspaceTabId = computed(() => (
   activeHistoryComparison.value?.tabId ?? activeHistorySnapshot.value?.tabId ?? activePath.value
 ))
@@ -809,10 +815,9 @@ watch(isReadMode, async (reading) => {
     <StatusBar
       class="status-bar-row"
       :path="activeHistoryComparison?.documentPath ?? activeHistorySnapshot?.documentPath ?? activePath"
-      :save-status="activeHistorySnapshot || activeHistoryComparison ? 'idle' : (activeTab?.saveStatus ?? 'idle')"
+      :save="activeSavePresentation"
       :error="activeHistorySnapshot || activeHistoryComparison ? null : (activeTab?.error ?? null)"
       :size="activeHistoryComparison ? activeHistoryComparison.newRaw.length : (activeHistorySnapshot ? activeHistorySnapshot.rawMarkdown.length : activeSize)"
-      :dirty="activeHistoryComparison ? activeHistoryComparison.currentDirty : (activeHistorySnapshot ? false : isDirty)"
       :focus-width="editorFocusWidth"
       @toggle-focus-width="editorFocusWidth = !editorFocusWidth"
       @retry-save="doSaveNow"

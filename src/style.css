@@ -2327,6 +2327,9 @@ main.container {
   flex-shrink: 0;
 }
 .tab-dot.dirty { background: var(--vs-accent); }
+.tab-dot.in-flight { box-shadow: 0 0 0 1px var(--vs-text-1); }
+.tab-dot.in-flight.newer-changes { box-shadow: 0 0 0 1px var(--vs-text-1), 0 0 0 2px var(--vs-accent); }
+.tab.save-attention .tab-title { text-decoration: underline dotted; text-underline-offset: 2px; }
 .tab-title {
   /* flex: 1 + min-width: 0 so the title (not the close button) takes
      the available slack and truncates with ellipsis. The close button

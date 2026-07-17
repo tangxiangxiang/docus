@@ -12,6 +12,24 @@ const emit = defineEmits<{
 const { t: translate } = useI18n()
 const tabsRef = ref<HTMLElement | null>(null)
 
+function saveStatusLabel(tab: WorkspaceTab): string | null {
+  if (tab.kind !== 'document') return null
+  switch (tab.save.status) {
+    case 'dirty': return translate('status.unsaved')
+    case 'saving': return translate('status.saving')
+    case 'saving-dirty': return translate('status.saving_dirty')
+    case 'saved': return translate('status.saved')
+    case 'error': return translate('status.error')
+    case 'offline': return translate('status.offline')
+    case 'external': return translate('status.external')
+    default: return translate('status.idle')
+  }
+}
+
+function tabAccessibleLabel(tab: WorkspaceTab): string {
+  return [tab.title, saveStatusLabel(tab)].filter(Boolean).join('\n')
+}
+
 function focusTab(id: string): void {
   const target = [...(tabsRef.value?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])]
     .find((tab) => tab.dataset.tabId === id)
@@ -94,16 +112,32 @@ function actionCloseMany(paths: string[]) {
       :key="t.id"
       role="tab"
       :data-tab-id="t.id"
+      :data-save-status="t.kind === 'document' ? t.save.status : undefined"
       :tabindex="t.id === activePath ? 0 : -1"
       :aria-selected="t.id === activePath"
-      :title="`${t.title}\n${translate('workspace_tab.close_hint')}`"
+      :title="`${tabAccessibleLabel(t)}\n${translate('workspace_tab.close_hint')}`"
+      :aria-label="tabAccessibleLabel(t)"
       class="tab"
-      :class="{ active: t.id === activePath, history: t.kind === 'history', diff: t.kind === 'diff' }"
+      :class="{
+        active: t.id === activePath,
+        history: t.kind === 'history',
+        diff: t.kind === 'diff',
+        'save-in-flight': t.kind === 'document' && t.save.inFlight,
+        'save-attention': t.kind === 'document' && t.save.attention,
+      }"
       @click="emit('select', t.id)"
       @auxclick.middle="emit('close', t.id)"
       @contextmenu="openMenu($event, t.id)"
     >
-      <span class="tab-dot" :class="{ dirty: t.dirty }" />
+      <span
+        class="tab-dot"
+        :class="{
+          dirty: t.kind === 'document' && t.save.dirty,
+          'in-flight': t.kind === 'document' && t.save.inFlight,
+          'newer-changes': t.kind === 'document' && t.save.hasNewerChanges,
+        }"
+        aria-hidden="true"
+      />
       <span class="tab-title">{{ t.label }}</span>
       <button
         class="tab-close"

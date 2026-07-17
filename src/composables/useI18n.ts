@@ -52,6 +52,7 @@ const STRINGS: Strings = {
   'status.label': { zh: '状态栏', en: 'Status bar' },
   'status.path': { zh: '路径', en: 'Path' },
   'status.saving': { zh: '正在保存…', en: 'Saving…' },
+  'status.saving_dirty': { zh: '正在保存…仍有新修改', en: 'Saving… newer changes remain unsaved' },
   'status.unsaved': { zh: '未保存', en: 'Unsaved' },
   'status.saved': { zh: '已保存', en: 'Saved' },
   'status.error': { zh: '错误', en: 'Error' },

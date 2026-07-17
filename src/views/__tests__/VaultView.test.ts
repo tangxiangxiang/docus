@@ -3,6 +3,17 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 describe('VaultView editor tab wiring', () => {
+  it('derives one save presentation per document and shares the active result with StatusBar', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    expect(source).toContain('save: deriveDocumentSavePresentation(tab)')
+    expect(source).toContain('save: deriveDocumentSavePresentation(null)')
+    expect(source).toContain('const activeSavePresentation = computed(() => (')
+    expect(source).toContain(':save="activeSavePresentation"')
+    expect(source).not.toContain("dirty: tab.saveStatus === 'dirty'")
+    expect(source).not.toContain(':save-status=')
+  })
+
   it('re-keys EditorPane and binds events to the rendered tab path', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const editorPane = source.match(/<EditorPane[\s\S]*?\/>/)?.[0]

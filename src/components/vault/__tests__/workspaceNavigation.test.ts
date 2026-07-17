@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceTab } from '../tabs'
+import { deriveDocumentSavePresentation } from '../../../composables/vault/editor-tabs/savePresentation'
 import {
   fallbackAfterClosingWorkspaceTab,
   fallbackAfterClosingWorkspaceTabs,
 } from '../workspaceNavigation'
 
 function tab(id: string, kind: WorkspaceTab['kind']): WorkspaceTab {
-  return { id, kind, label: id, title: id, dirty: false }
+  return { id, kind, label: id, title: id, save: deriveDocumentSavePresentation(null) }
 }
 
 describe('workspace History navigation', () => {

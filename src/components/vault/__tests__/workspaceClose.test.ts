@@ -1,15 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { WorkspaceTab } from '../tabs'
+import { deriveDocumentSavePresentation } from '../../../composables/vault/editor-tabs/savePresentation'
 import {
   closeManyWorkspaceTabState,
   closeWorkspaceTabState,
 } from '../workspaceClose'
 
 const tabs: WorkspaceTab[] = [
-  { id: 'a.md', label: 'A', title: 'A', dirty: true, kind: 'document' },
-  { id: 'history:a.md:r1', label: 'A History', title: 'A History', dirty: false, kind: 'history' },
-  { id: 'diff:a.md', label: 'A Diff', title: 'A Diff', dirty: false, kind: 'diff' },
-  { id: 'b.md', label: 'B', title: 'B', dirty: false, kind: 'document' },
+  { id: 'a.md', label: 'A', title: 'A', save: deriveDocumentSavePresentation(null), kind: 'document' },
+  { id: 'history:a.md:r1', label: 'A History', title: 'A History', save: deriveDocumentSavePresentation(null), kind: 'history' },
+  { id: 'diff:a.md', label: 'A Diff', title: 'A Diff', save: deriveDocumentSavePresentation(null), kind: 'diff' },
+  { id: 'b.md', label: 'B', title: 'B', save: deriveDocumentSavePresentation(null), kind: 'document' },
 ]
 
 describe('Workspace close coordination', () => {
@@ -64,7 +65,7 @@ describe('Workspace close coordination', () => {
     await closeManyWorkspaceTabState(['a.md', 'b.md', 'diff:b.md'], {
       workspaceTabs: [
         ...tabs,
-        { id: 'diff:b.md', label: 'B Diff', title: 'B Diff', dirty: false, kind: 'diff' },
+        { id: 'diff:b.md', label: 'B Diff', title: 'B Diff', save: deriveDocumentSavePresentation(null), kind: 'diff' },
       ],
       activeId: 'diff:a.md',
       comparisons: () => remaining,
