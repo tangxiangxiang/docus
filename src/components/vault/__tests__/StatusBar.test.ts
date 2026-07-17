@@ -44,7 +44,7 @@ describe('StatusBar save presentation', () => {
       hasNewerChanges: true,
     }))
     expect(savingDirty.get('.sb-status').attributes('data-status')).toBe('saving-dirty')
-    expect(savingDirty.get('.sb-status').text()).toContain('newer changes remain unsaved')
+    expect(savingDirty.get('.sb-status').text()).toContain('newer changes pending')
     expect(savingDirty.find('.sb-status-retry').exists()).toBe(false)
     expect(savingDirty.find('[aria-label="Copy current document content"]').exists()).toBe(true)
   })
