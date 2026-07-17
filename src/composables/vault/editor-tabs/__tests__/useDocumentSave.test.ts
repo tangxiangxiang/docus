@@ -1193,6 +1193,9 @@ describe('useDocumentSave optimistic conflicts', () => {
       raw: 'new content C',
       originalRaw: 'new content C',
       saveStatus: 'idle',
+      externalKind: null,
+      externalRaw: null,
+      loadError: null,
     })
 
     // Stale getFileStates returns exists=false. The state observation was
@@ -1207,6 +1210,131 @@ describe('useDocumentSave optimistic conflicts', () => {
       raw: 'new content C',
       originalRaw: 'new content C',
       saveStatus: 'idle',
+      externalKind: null,
+      externalRaw: null,
+      loadError: null,
+    })
+  })
+
+  it('converges deleted tab to clean when AI write delivers newRaw', async () => {
+    // Tab is in deleted/external state — the file was deleted and the editor
+    // shows an error. An AI write with newRaw means the file was recreated
+    // externally with known content. The tab must fully converge: external
+    // flags cleared, loadError cleared, revision synced.
+    const h = setupSave()
+    h.tabs.value[0].revision = 5
+    h.tabs.value[0].savedRevision = 4
+    Object.assign(h.tabs.value[0], {
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      externalRaw: null,
+      loadError: 'was deleted',
+      error: 'was deleted',
+    })
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: vi.fn(),
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+      invalidateDiskObservation: disk.invalidateDiskObservation,
+    })
+
+    await external.applyExternalChange({
+      seq: 1,
+      path: 'inbox/test',
+      kind: 'write',
+      source: 'ai-tool',
+      newRaw: 'recreated content',
+      newMtime: 50,
+    })
+
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'recreated content',
+      originalRaw: 'recreated content',
+      saveStatus: 'idle',
+      externalKind: null,
+      externalRaw: null,
+      loadError: null,
+      error: null,
+      serverMtime: 50,
+      // Revision must be bumped and synced so presentation shows clean.
+      revision: 6,
+      savedRevision: 6,
+      savingRevision: null,
+    })
+  })
+
+  it('converges dirty tab to clean when user accepts AI overwrite', async () => {
+    // Tab has local unsaved edits: raw != originalRaw and revision > savedRevision.
+    // User confirms the overwrite prompt. The tab must fully converge: content
+    // replaced, revision synced, external flags cleared, presentation dirty=false.
+    const h = setupSave()
+    h.tabs.value[0].revision = 3
+    h.tabs.value[0].savedRevision = 1
+    Object.assign(h.tabs.value[0], {
+      raw: 'local edits B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      externalKind: 'modified' as const,
+      externalRaw: 'disk version',
+      loadError: null,
+      error: 'disk changed',
+      serverMtime: 10,
+    })
+    const confirm = vi.fn().mockResolvedValue(true)
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm,
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+      invalidateDiskObservation: disk.invalidateDiskObservation,
+    })
+
+    await external.applyExternalChange({
+      seq: 1,
+      path: 'inbox/test',
+      kind: 'write',
+      source: 'ai-tool',
+      newRaw: 'accepted C',
+      newMtime: 20,
+    })
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'accepted C',
+      originalRaw: 'accepted C',
+      saveStatus: 'idle',
+      externalKind: null,
+      externalRaw: null,
+      loadError: null,
+      error: null,
+      serverMtime: 20,
+      // Revision must be bumped and synced so presentation shows clean.
+      revision: 4,
+      savedRevision: 4,
+      savingRevision: null,
     })
   })
 

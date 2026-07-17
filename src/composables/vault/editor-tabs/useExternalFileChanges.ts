@@ -102,7 +102,16 @@ export function useExternalFileChanges(options: {
       tab.originalRaw = event.newRaw
     }
     tab.serverMtime = event.newMtime ?? tab.serverMtime
+    // Fully converge tab state: accepting an authoritative external write
+    // must clear any residual external/deleted flags and sync the revision
+    // baseline so the presentation layer shows clean (not dirty).
+    tab.revision += 1
+    tab.savedRevision = tab.revision
+    tab.savingRevision = null
     tab.saveStatus = 'idle'
+    tab.externalRaw = null
+    tab.externalKind = null
+    tab.loadError = null
     tab.error = null
   }
 
