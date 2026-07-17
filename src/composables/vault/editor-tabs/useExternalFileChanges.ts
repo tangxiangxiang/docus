@@ -48,13 +48,59 @@ export function useExternalFileChanges(options: {
 
       const oldTab = options.tabs.value.find((tab) => tab.path === event.oldPath)
       if (!oldTab) return
-      await options.closeTab(event.oldPath!)
+      const closed = await options.closeTab(event.oldPath!)
+
+      // After awaiting the close (which may involve a user confirm), this
+      // rename may no longer be the latest event for either path. A newer
+      // write to the target path or another rename supersedes it. Also
+      // verify the old-path authority hasn't been bumped by a newer event.
+      if (!isLatestEvent(event.path, event.seq)) return
+      if (event.oldPath && !isLatestEvent(event.oldPath, event.seq)) return
+
+      // If the user refused to close the old tab, the old path still has
+      // an active editor. Don't apply the target-path side of the rename
+      // while the old tab remains open — polling will eventually reconcile.
+      if (closed === false) return
+
       if (event.newRaw != null) {
         const existing = options.tabs.value.find((tab) => tab.path === event.path)
         if (existing) {
-          existing.raw = event.newRaw
-          existing.originalRaw = event.newRaw
-          existing.serverMtime = event.newMtime ?? existing.serverMtime
+          // Target path already has an open tab. If it is fully clean
+          // (idle/saved, no external conflict, no pending save), converge
+          // it completely to the rename result — update content, sync the
+          // revision baseline, and clear any residual error state. If the
+          // tab has local changes (dirty) or an unresolved external
+          // conflict (modified/deleted/unreadable), never silently
+          // overwrite the local buffer. Instead present the rename content
+          // as an external change the user must explicitly resolve.
+          const isClean = !existing.externalKind
+            && existing.saveStatus !== 'dirty'
+            && existing.saveStatus !== 'external'
+            && existing.saveStatus !== 'offline'
+            && existing.savingRevision === null
+
+          if (isClean) {
+            existing.raw = event.newRaw
+            existing.originalRaw = event.newRaw
+            existing.serverMtime = event.newMtime ?? existing.serverMtime
+            existing.revision += 1
+            existing.savedRevision = existing.revision
+            existing.savingRevision = null
+            existing.saveStatus = 'idle'
+            existing.externalRaw = null
+            existing.externalKind = null
+            existing.loadError = null
+            existing.error = null
+          } else {
+            // Preserve the local buffer. The rename result is shown as an
+            // external conflict so the user can explicitly choose.
+            existing.serverMtime = event.newMtime ?? existing.serverMtime
+            existing.externalRaw = event.newRaw
+            existing.externalKind = 'modified'
+            existing.saveStatus = 'external'
+            existing.loadError = null
+            existing.error = '磁盘文件已变化，本地修改尚未保存'
+          }
         } else {
           const newTab = makeEmptyTab(event.path)
           newTab.raw = event.newRaw

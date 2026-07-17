@@ -1969,6 +1969,179 @@ describe('useDocumentSave optimistic conflicts', () => {
     }
   })
 
+  it('preserves local content when rename target path already has a dirty or external tab', async () => {
+    // Simulates: newPath tab is external/deleted with unsaved local content
+    // B → AI rename oldPath → newPath (newRaw=C). The rename must NOT
+    // silently overwrite the local buffer. Instead it presents the rename
+    // content as an external conflict so the user explicitly chooses.
+    const h = setupSave()
+    // Pre-create the target tab at newPath with external/deleted state.
+    h.tabs.value[0].path = 'inbox/new-path'
+    h.tabs.value[0].revision = 2
+    h.tabs.value[0].savedRevision = 1
+    Object.assign(h.tabs.value[0], {
+      raw: 'local buffer B',
+      originalRaw: 'original A',
+      saveStatus: 'external',
+      externalKind: 'deleted',
+      loadError: '文件已删除',
+      error: '文件已从磁盘删除',
+      serverMtime: 10,
+    })
+
+    // Also add the old-path tab so the rename handler finds it.
+    const oldTab = makeTab('inbox/old-path', 'old content')
+    h.tabs.value.push(oldTab)
+
+    const closeTab = vi.fn().mockResolvedValue(true)
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab,
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: vi.fn(),
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+    })
+
+    // Fire rename: oldPath → newPath, newRaw=C.
+    await external.applyExternalChange({
+      seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
+      kind: 'rename', source: 'ai-tool',
+      newRaw: 'C from rename', newMtime: 30,
+    })
+
+    // The target tab must preserve its local buffer B, not be overwritten
+    // by the rename content C.
+    const target = h.tabs.value.find((t) => t.path === 'inbox/new-path')
+    expect(target).toBeDefined()
+    expect(target!.raw).toBe('local buffer B')
+    expect(target!.originalRaw).toBe('original A')
+    expect(target!.externalRaw).toBe('C from rename')
+    expect(target!.externalKind).toBe('modified')
+    expect(target!.saveStatus).toBe('external')
+    expect(target!.serverMtime).toBe(30)
+    expect(target!.loadError).toBeNull()
+  })
+
+  it('converges clean target tab fully when rename target path already has an idle tab', async () => {
+    // Simulates: newPath tab is clean (idle, no external conflict) →
+    // AI rename oldPath → newPath (newRaw=C). The rename should fully
+    // converge the tab: update content, revision baseline, clear errors.
+    const h = setupSave()
+    // Pre-create a clean target tab at newPath.
+    h.tabs.value[0].path = 'inbox/new-path'
+    h.tabs.value[0].revision = 3
+    h.tabs.value[0].savedRevision = 3
+    Object.assign(h.tabs.value[0], {
+      raw: 'old disk content',
+      originalRaw: 'old disk content',
+      saveStatus: 'idle',
+      serverMtime: 10,
+    })
+
+    // Add the old-path tab for rename to find.
+    const oldTab = makeTab('inbox/old-path', 'old content')
+    h.tabs.value.push(oldTab)
+
+    const closeTab = vi.fn().mockResolvedValue(true)
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab,
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: vi.fn(),
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+    })
+
+    // Fire rename: oldPath → newPath, newRaw=C.
+    await external.applyExternalChange({
+      seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
+      kind: 'rename', source: 'ai-tool',
+      newRaw: 'C from rename', newMtime: 30,
+    })
+
+    // The clean target tab must be fully converged to the rename result.
+    const target = h.tabs.value.find((t) => t.path === 'inbox/new-path')
+    expect(target).toBeDefined()
+    expect(target!.raw).toBe('C from rename')
+    expect(target!.originalRaw).toBe('C from rename')
+    expect(target!.saveStatus).toBe('idle')
+    expect(target!.externalRaw).toBeNull()
+    expect(target!.externalKind).toBeNull()
+    expect(target!.loadError).toBeNull()
+    expect(target!.error).toBeNull()
+    expect(target!.serverMtime).toBe(30)
+    expect(target!.revision).toBe(4)
+    expect(target!.savedRevision).toBe(4)
+    expect(target!.savingRevision).toBeNull()
+  })
+
+  it('discards rename when a newer write supersedes the target path while closeTab is pending', async () => {
+    // Simulates: Rename E1(seq=1) oldPath→newPath awaits closeTab →
+    // Write E2(seq=2) arrives at newPath → closeTab resolves →
+    // E1 checks isLatestEvent(newPath, 1) → false → E1 discarded.
+    // The newPath tab must keep E2's content, not E1's stale rename.
+    let resolveClose!: (value: boolean) => void
+    const pendingClose = new Promise<boolean>((resolve) => { resolveClose = resolve })
+
+    const h = setupSave()
+    // Old-path tab for rename to find.
+    h.tabs.value[0].path = 'inbox/old-path'
+    Object.assign(h.tabs.value[0], {
+      raw: 'old content',
+      originalRaw: 'old content',
+      saveStatus: 'idle',
+      serverMtime: 10,
+    })
+
+    const closeTab = vi.fn().mockReturnValue(pendingClose)
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab,
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: vi.fn(),
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+    })
+
+    // Fire rename E1 — will block at closeTab.
+    const e1Promise = external.applyExternalChange({
+      seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
+      kind: 'rename', source: 'ai-tool',
+      newRaw: 'C1 from stale rename', newMtime: 20,
+    })
+    // Wait for closeTab to have been called (E1 is now blocked).
+    await vi.waitFor(() => expect(closeTab).toHaveBeenCalledOnce())
+
+    // While E1 is blocked, E2 writes to newPath (seq=2 > 1). Since no
+    // tab exists at newPath yet, E2 hits the `!tab` early-return. But
+    // it still records seq=2 → latestEventSeqs[newPath]=2.
+    await external.applyExternalChange({
+      seq: 2, path: 'inbox/new-path', kind: 'write', source: 'ai-tool',
+      newRaw: 'C2 from newer write', newMtime: 30,
+    })
+
+    // Now resolve the closeTab. E1 resumes but must detect staleness.
+    resolveClose(true)
+    await e1Promise
+
+    // E1's stale rename must NOT create a tab at newPath with C1. Either
+    // no tab exists (correct), or if one exists it must have C2.
+    const target = h.tabs.value.find((t) => t.path === 'inbox/new-path')
+    if (target) {
+      expect(target.raw).not.toBe('C1 from stale rename')
+      expect(target.serverMtime).not.toBe(20)
+    }
+    // E1 must not have pushed any tab with stale content.
+    expect(h.tabs.value.every((t) => t.raw !== 'C1 from stale rename')).toBe(true)
+  })
+
   it('turns a deleted conflict into modified when the file reappears', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/api/files/state') {
