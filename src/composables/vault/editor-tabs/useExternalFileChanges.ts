@@ -18,6 +18,23 @@ export function useExternalFileChanges(options: {
   invalidateDiskObservation?: (path: string) => void
 }) {
   const { t } = useI18n()
+  // Per-path generation counter for external events that require confirmation.
+  // Bumped before `await confirm()` so that when multiple events for the same
+  // path race or the user edits during a pending confirm, the older event can
+  // detect the staleness and convert to external/modified instead of silently
+  // overwriting the newer state.
+  const externalEventIds = new Map<string, number>()
+
+  function beginExternalEvent(path: string): number {
+    const id = (externalEventIds.get(path) ?? 0) + 1
+    externalEventIds.set(path, id)
+    return id
+  }
+
+  function isCurrentExternalEvent(path: string, id: number): boolean {
+    return externalEventIds.get(path) === id
+  }
+
   async function applyExternalChange(event: InternalFileChangeEvent): Promise<void> {
     // Local lifecycle transactions already migrated/closed the owning tabs.
     // The event is for History, links, and other derived Vault consumers only.
@@ -85,11 +102,51 @@ export function useExternalFileChanges(options: {
 
     const isDirty = tab.raw !== tab.originalRaw
     if (isDirty) {
+      // Capture state BEFORE the async confirm so we can detect whether a
+      // newer event or user edit changed the tab while we were waiting.
+      const eventId = beginExternalEvent(event.path)
+      const requestedTab = tab
+      const requestedRevision = tab.revision
+      const requestedRaw = tab.raw
+      const requestedOriginalRaw = tab.originalRaw
+
       const ok = await options.confirm(
         t('editor.ai_overwrite', { path: event.path }),
       )
       if (!ok) {
-        tab.serverMtime = event.newMtime ?? tab.serverMtime
+        // Only update mtime if no newer event arrived for this path and the
+        // tab is still the same object — avoid touching a stale reference.
+        if (
+          isCurrentExternalEvent(event.path, eventId)
+          && options.tabs.value.find((item) => item.path === event.path) === requestedTab
+        ) {
+          requestedTab.serverMtime = event.newMtime ?? requestedTab.serverMtime
+        }
+        return
+      }
+
+      // After confirm, validate that no other event or user edit changed the
+      // tab. If anything drifted, convert to external/modified so the user
+      // can explicitly resolve rather than silently losing work.
+      const latestTab = options.tabs.value.find((item) => item.path === event.path)
+      if (
+        !isCurrentExternalEvent(event.path, eventId)
+        || latestTab !== requestedTab
+        || latestTab?.path !== event.path
+        || latestTab.revision !== requestedRevision
+        || latestTab.raw !== requestedRaw
+        || latestTab.originalRaw !== requestedOriginalRaw
+      ) {
+        if (latestTab) {
+          latestTab.serverMtime = event.newMtime ?? latestTab.serverMtime
+          if (event.newRaw != null) {
+            latestTab.externalRaw = event.newRaw
+          }
+          latestTab.externalKind = 'modified'
+          latestTab.saveStatus = 'external'
+          latestTab.loadError = null
+          latestTab.error = '磁盘文件已变化，本地修改尚未保存'
+        }
         return
       }
     }

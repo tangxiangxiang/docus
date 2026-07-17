@@ -1338,6 +1338,157 @@ describe('useDocumentSave optimistic conflicts', () => {
     })
   })
 
+  it('keeps C2 when newer AI write resolves before older confirm', async () => {
+    // Simulates: local dirty B, E1(C1) starts and confirm is pending,
+    // E2(C2) starts and its confirm resolves first applying C2 cleanly,
+    // then E1's older confirm resolves — E1 must NOT overwrite C2.
+    let resolveConfirm1!: (value: boolean) => void
+    let resolveConfirm2!: (value: boolean) => void
+    const confirm1 = new Promise<boolean>((resolve) => { resolveConfirm1 = resolve })
+    const confirm2 = new Promise<boolean>((resolve) => { resolveConfirm2 = resolve })
+
+    const h = setupSave()
+    h.tabs.value[0].revision = 2
+    h.tabs.value[0].savedRevision = 1
+    Object.assign(h.tabs.value[0], {
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      serverMtime: 10,
+    })
+
+    let confirmCallCount = 0
+    const confirmFn = vi.fn(() => {
+      confirmCallCount += 1
+      if (confirmCallCount === 1) return confirm1
+      return confirm2
+    })
+
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm: confirmFn,
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+      invalidateDiskObservation: disk.invalidateDiskObservation,
+    })
+
+    // Fire both events — both are dirty so both prompt.
+    const e1 = external.applyExternalChange({
+      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      newRaw: 'C1 from older event', newMtime: 20,
+    })
+    const e2 = external.applyExternalChange({
+      seq: 2, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      newRaw: 'C2 from newer event', newMtime: 30,
+    })
+
+    // Both confirms are pending.
+    await vi.waitFor(() => expect(confirmCallCount).toBe(2))
+
+    // Resolve E2's confirm first — it should apply C2.
+    resolveConfirm2(true)
+    await e2
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'C2 from newer event',
+      originalRaw: 'C2 from newer event',
+      saveStatus: 'idle',
+      revision: 3,
+      savedRevision: 3,
+      externalKind: null,
+      externalRaw: null,
+      loadError: null,
+    })
+
+    // Now resolve E1's older confirm. It must detect that a newer event
+    // already changed the tab and convert to external/modified instead of
+    // silently overwriting C2 with C1.
+    resolveConfirm1(true)
+    await e1
+
+    // C2 must be preserved — E1's stale C1 must NOT overwrite.
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'C2 from newer event',
+      originalRaw: 'C2 from newer event',
+      saveStatus: 'external',
+      externalKind: 'modified',
+      externalRaw: 'C1 from older event',
+      serverMtime: 20,
+    })
+  })
+
+  it('preserves user edits when confirm resolves after local typing', async () => {
+    // Simulates: dirty tab, AI write arrives and shows confirm dialog,
+    // user types new content D while dialog is open, then confirms.
+    // The event must NOT overwrite D — it should become external/modified.
+    let resolveConfirm!: (value: boolean) => void
+    const pendingConfirm = new Promise<boolean>((resolve) => { resolveConfirm = resolve })
+
+    const h = setupSave()
+    h.tabs.value[0].revision = 2
+    h.tabs.value[0].savedRevision = 1
+    Object.assign(h.tabs.value[0], {
+      raw: 'local dirty B',
+      originalRaw: 'saved A',
+      saveStatus: 'dirty',
+      serverMtime: 10,
+    })
+
+    const confirm = vi.fn().mockReturnValue(pendingConfirm)
+    const disk = useDiskFileChanges({
+      tabs: h.tabs,
+      doSave: h.save.doSave,
+      scheduleSave: h.save.scheduleSave,
+      applyPostSummary: h.applyPostSummary,
+      fileChanges: h.fileChanges,
+    })
+    const external = useExternalFileChanges({
+      tabs: h.tabs,
+      activePath: h.activePath,
+      closeTab: vi.fn(),
+      openPost: vi.fn(),
+      navigateTo: vi.fn(),
+      confirm,
+      toastInfo: vi.fn(),
+      fileChanges: h.fileChanges,
+      invalidateDiskObservation: disk.invalidateDiskObservation,
+    })
+
+    // Fire event — confirm is pending.
+    const promise = external.applyExternalChange({
+      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      newRaw: 'C from AI', newMtime: 20,
+    })
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
+
+    // User types new content while confirm dialog is open.
+    h.tabs.value[0].raw = 'user typed D'
+
+    // User confirms.
+    resolveConfirm(true)
+    await promise
+
+    // User's local edits must be preserved — AI content becomes external/modified.
+    expect(h.tabs.value[0]).toMatchObject({
+      raw: 'user typed D',
+      originalRaw: 'saved A',
+      saveStatus: 'external',
+      externalKind: 'modified',
+      externalRaw: 'C from AI',
+      serverMtime: 20,
+    })
+  })
+
   it('turns a deleted conflict into modified when the file reappears', async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === '/api/files/state') {
