@@ -858,18 +858,18 @@ describe('EditorTabs — round-2 regression tests', () => {
   })
 })
 
-describe('EditorTabs — round-3 regression (label vs title split)', () => {
+describe('EditorTabs — round-4 regression (title is primary; basename fallback)', () => {
   beforeEach(() => {
     useI18n().setLocale('zh')
     document.querySelectorAll('.tab-context-menu').forEach((el) => el.remove())
     document.querySelectorAll('.tab-tooltip').forEach((el) => el.remove())
   })
 
-  // 1. label=test-document-1, title=测试文档, path=inbox/test-document-1
-  //    tab strip = test-document-1
-  //    tooltip 文档标题 = 测试文档
+  // 1. tab.title='测试文档', path='inbox/test-document-1'
+  //    tab strip = 测试文档   (metadata title wins)
+  //    tooltip 文件名 = test-document-1   (the basename is the secondary line)
   //    tooltip 路径 = inbox/test-document-1
-  it('scenario 1 — Chinese title becomes documentTitle only; strip shows the basename', async () => {
+  it('scenario 1 — Chinese title takes the strip; filename goes to the tooltip', async () => {
     const tab = makeTab('inbox/test-document-1', {
       label: 'test-document-1',
       title: '测试文档',
@@ -878,27 +878,26 @@ describe('EditorTabs — round-3 regression (label vs title split)', () => {
       props: { tabs: [tab], activePath: tab.id },
       attachTo: document.body,
     })
-    // Strip is the basename regardless of the metadata title.
-    expect(w.find('.tab-title').text()).toBe('test-document-1')
+    // Strip shows the metadata title.
+    expect(w.find('.tab-title').text()).toBe('测试文档')
     await w.find('.tab').trigger('mouseenter')
     await flushPromises()
     const tooltip = document.querySelector('.tab-tooltip')!
-    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('test-document-1')
-    expect(tooltip.querySelector('.tab-tooltip-document-title')!.textContent).toContain('测试文档')
-    expect(tooltip.querySelector('.tab-tooltip-document-title')!.textContent).toContain('文档标题：')
+    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('测试文档')
+    expect(tooltip.querySelector('.tab-tooltip-filename')!.textContent).toContain('test-document-1')
+    expect(tooltip.querySelector('.tab-tooltip-filename')!.textContent).toContain('文件名：')
     expect(tooltip.querySelector('.tab-tooltip-path')!.textContent).toContain('inbox/test-document-1')
     expect(tooltip.querySelector('.tab-tooltip-path')!.textContent).toContain('路径：')
-    // aria-label includes the documentTitle via the "file" connector.
+    // aria-label includes the title and the filename separately.
     expect(w.find('.tab').attributes('aria-label')).toContain('测试文档')
     expect(w.find('.tab').attributes('aria-label')).toContain('test-document-1')
     w.unmount()
   })
 
-  // 2. label=test-document-1, title=inbox/test-document-1, path=inbox/test-document-1
-  //    tab strip = test-document-1
-  //    no documentTitle line
-  //    path appears once
-  it('scenario 2 — title equals path; documentTitle line is suppressed', async () => {
+  // 2. tab.title equals the full path → useless as a display title.
+  //    Strip falls back to the basename; the basename is the title,
+  //    so the tooltip filename line is suppressed.
+  it('scenario 2 — title equals the path; strip falls back to basename', async () => {
     const tab = makeTab('inbox/test-document-1', {
       label: 'test-document-1',
       title: 'inbox/test-document-1',
@@ -911,7 +910,7 @@ describe('EditorTabs — round-3 regression (label vs title split)', () => {
     await w.find('.tab').trigger('mouseenter')
     await flushPromises()
     const tooltip = document.querySelector('.tab-tooltip')!
-    expect(tooltip.querySelector('.tab-tooltip-document-title')).toBeNull()
+    expect(tooltip.querySelector('.tab-tooltip-filename')).toBeNull()
     expect(tooltip.querySelector('.tab-tooltip-path')).not.toBeNull()
     // The full path appears at most once in the tooltip (in the
     // "路径：" line). It MUST NOT be the title.
@@ -920,9 +919,10 @@ describe('EditorTabs — round-3 regression (label vs title split)', () => {
     w.unmount()
   })
 
-  // 3. label=test-document-1, title=test-document-1
-  //    no duplicate documentTitle line
-  it('scenario 3 — title equals displayTitle; documentTitle line is suppressed', async () => {
+  // 3. tab.title equals the basename → useless as a display title.
+  //    Strip falls back to the basename; tooltip filename line
+  //    suppressed (it would duplicate).
+  it('scenario 3 — title equals the basename; tooltip filename line suppressed', async () => {
     const tab = makeTab('inbox/test-document-1', {
       label: 'test-document-1',
       title: 'test-document-1',
@@ -934,13 +934,12 @@ describe('EditorTabs — round-3 regression (label vs title split)', () => {
     expect(w.find('.tab-title').text()).toBe('test-document-1')
     await w.find('.tab').trigger('mouseenter')
     await flushPromises()
-    expect(document.querySelector('.tab-tooltip-document-title')).toBeNull()
+    expect(document.querySelector('.tab-tooltip-filename')).toBeNull()
     w.unmount()
   })
 
-  // 4. title 为空
-  //    tab strip 仍显示 test-document-1
-  //    no documentTitle line
+  // 4. Empty title — strip still shows the basename; tooltip filename
+  //    line suppressed because the strip already carries it.
   it('scenario 4 — empty title; strip still shows the basename', async () => {
     const tab = makeTab('inbox/test-document-1', {
       label: 'test-document-1',
@@ -953,12 +952,14 @@ describe('EditorTabs — round-3 regression (label vs title split)', () => {
     expect(w.find('.tab-title').text()).toBe('test-document-1')
     await w.find('.tab').trigger('mouseenter')
     await flushPromises()
-    expect(document.querySelector('.tab-tooltip-document-title')).toBeNull()
+    expect(document.querySelector('.tab-tooltip-filename')).toBeNull()
     w.unmount()
   })
 
-  // 5. multiple tabs each with a different metadata title.
-  it('scenario 5 — strip uniformly uses basenames across mixed-language titles', async () => {
+  // 5. Each tab carries its own metadata title verbatim. Strip
+  //    languages come from the metadata, with fallback to basename
+  //    only when the title is missing.
+  it('scenario 5 — strip honors each document’s own title verbatim', async () => {
     useI18n().setLocale('zh')
     const tabs = [
       makeTab('inbox/a.md', { label: 'a', title: '中文标题' }),
@@ -970,31 +971,28 @@ describe('EditorTabs — round-3 regression (label vs title split)', () => {
       attachTo: document.body,
     })
     const stripTitles = w.findAll('.tab-title').map((el) => el.text())
-    expect(stripTitles).toEqual(['a', 'b', 'c'])
-    // Metadata titles appear ONLY in the tooltip, never in the strip.
-    expect(stripTitles).not.toContain('中文标题')
-    expect(stripTitles).not.toContain('English Title')
-    // Hover each tab in turn; documentTitle line only appears for the
-    // tabs that actually have a title.
+    // Strip: tab a and b use their metadata titles; c falls back to
+    // the basename.
+    expect(stripTitles).toEqual(['中文标题', 'English Title', 'c'])
+    // Hover each tab in turn; the tooltip filename line is only
+    // shown when the strip is NOT already the basename.
     const tabA = w.findAll('.tab')[0]!
     await tabA.trigger('mouseenter')
     await flushPromises()
-    expect(document.querySelector('.tab-tooltip-document-title')!.textContent)
-      .toContain('中文标题')
+    expect(document.querySelector('.tab-tooltip-filename')!.textContent).toContain('a')
     const tabB = w.findAll('.tab')[1]!
     await tabB.trigger('mouseenter')
     await flushPromises()
-    expect(document.querySelector('.tab-tooltip-document-title')!.textContent)
-      .toContain('English Title')
+    expect(document.querySelector('.tab-tooltip-filename')!.textContent).toContain('b')
     const tabC = w.findAll('.tab')[2]!
     await tabC.trigger('mouseenter')
     await flushPromises()
-    expect(document.querySelector('.tab-tooltip-document-title')).toBeNull()
+    expect(document.querySelector('.tab-tooltip-filename')).toBeNull()
     w.unmount()
   })
 
   // 6. History / Diff keep their existing label-based semantics.
-  it('scenario 6 — history/diff still use label and never expose documentTitle', async () => {
+  it('scenario 6 — history/diff still use label and never expose filename/path/status', async () => {
     useI18n().setLocale('zh')
     const tabs = [
       makeTab('history:redis', { kind: 'history', label: 'Redis (历史)', title: 'Redis' }),
@@ -1009,14 +1007,14 @@ describe('EditorTabs — round-3 regression (label vs title split)', () => {
     await flushPromises()
     const tooltip = document.querySelector('.tab-tooltip')!
     expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('Redis (历史)')
-    expect(tooltip.querySelector('.tab-tooltip-document-title')).toBeNull()
+    expect(tooltip.querySelector('.tab-tooltip-filename')).toBeNull()
     expect(tooltip.querySelector('.tab-tooltip-path')).toBeNull()
     expect(tooltip.querySelector('.tab-tooltip-status')).toBeNull()
     w.unmount()
   })
 
-  // English locale sanity check — separator is "file" + comma + space.
-  it('English aria-label uses the file-connector when documentTitle is present', () => {
+  // English locale sanity check — separator is comma + space.
+  it('English aria-label uses the title + file connectors when title is meaningful', () => {
     useI18n().setLocale('en')
     const tab = makeTab('inbox/test-document-1', {
       label: 'test-document-1',
@@ -1024,7 +1022,37 @@ describe('EditorTabs — round-3 regression (label vs title split)', () => {
     })
     const w = mount(EditorTabs, { props: { tabs: [tab], activePath: tab.id } })
     const aria = w.find('.tab').attributes('aria-label')!
-    expect(aria).toBe('Test Document, file test-document-1, Saved')
+    expect(aria).toBe('title Test Document, file test-document-1, Saved')
+    w.unmount()
+  })
+
+  // The original round-3 must-have: tabs with mixed-language titles
+  // do NOT collapse to basenames when the metadata title is present.
+  it('mixed-language tabs each show their own metadata title', () => {
+    const tabs = [
+      makeTab('inbox/a.md', { title: '中文标题' }),
+      makeTab('inbox/b.md', { title: 'English Title' }),
+      makeTab('inbox/c.md', { title: '' }),
+    ]
+    const w = mount(EditorTabs, {
+      props: { tabs, activePath: tabs[0]!.id },
+    })
+    const titles = w.findAll('.tab-title').map((el) => el.text())
+    expect(titles).toEqual(['中文标题', 'English Title', 'c'])
+    w.unmount()
+  })
+
+  // Two documents with the same title but different paths both keep
+  // the title in the strip and rely on the path line for identity.
+  it('same-title different-path tabs both keep the title; paths disambiguate', () => {
+    const tabs = [
+      makeTab('a/notes.md', { title: 'Notes' }),
+      makeTab('b/notes.md', { title: 'Notes' }),
+    ]
+    const w = mount(EditorTabs, {
+      props: { tabs, activePath: tabs[0]!.id },
+    })
+    expect(w.findAll('.tab-title').map((el) => el.text())).toEqual(['Notes', 'Notes'])
     w.unmount()
   })
 })

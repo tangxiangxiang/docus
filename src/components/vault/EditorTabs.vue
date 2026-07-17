@@ -294,9 +294,9 @@ watch(activePathRef, () => { hideTooltip() })
       >
         <span class="tab-tooltip-title">{{ tooltipPresentation.displayTitle }}</span>
         <span
-          v-if="tooltipPresentation.documentTitle"
-          class="tab-tooltip-document-title"
-        ><span class="tab-tooltip-label">{{ translate('workspace_tab.tooltip_document_title') }}</span>{{ tooltipPresentation.documentTitle }}</span>
+          v-if="tooltipPresentation.filenameLabel"
+          class="tab-tooltip-filename"
+        ><span class="tab-tooltip-label">{{ translate('workspace_tab.tooltip_filename') }}</span>{{ tooltipPresentation.filenameLabel }}</span>
         <span
           v-if="tooltipPresentation.fullPath"
           class="tab-tooltip-path"

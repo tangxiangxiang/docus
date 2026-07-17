@@ -23,6 +23,14 @@ export function useTabWorkspace(options: {
   confirm: (message: string) => Promise<boolean>
   toastError: (message: string) => void
   toastInfo: (message: string) => void
+  /**
+   * Synchronous session persist. Called after every close / rename /
+   * restore-failure that mutates `tabs.value`, so a refresh before
+   * the debounce flushes the watcher cannot resurrect a closed tab.
+   * Optional — callers can bind it later via the `setPersist`
+   * returned in the API.
+   */
+  persist?: () => void
 }) {
   const { t } = useI18n()
   const router = useRouter()
@@ -32,6 +40,12 @@ export function useTabWorkspace(options: {
   const activePath = ref<string | null>(null)
   let refreshRequestId = 0
   const localPostPatches = createLocalPostPatchTracker()
+  // The workspace holds an internal mutable slot for the persister.
+  // Callers can swap it later (see `setPersist` in the API) — needed
+  // because `useTabPersistence` reads `tabs` / `activePath` after the
+  // workspace has constructed them, and the persister depends on
+  // those refs.
+  let persistRef: (() => void) | undefined = options.persist
 
   const activeTab = computed<Tab | null>(
     () => tabs.value.find((tab) => tab.path === activePath.value) ?? null,
@@ -47,6 +61,16 @@ export function useTabWorkspace(options: {
 
   function navigateTo(path: string | null) {
     void router.replace(path ? pathToUrl(path) : '/vault')
+  }
+
+  /** Persist immediately. Best-effort — if persist is not bound
+   *  (e.g. unit tests that don't care), this is a no-op. */
+  function flushPersist(): void {
+    persistRef?.()
+  }
+
+  function setPersist(persist: () => void): void {
+    persistRef = persist
   }
 
   async function refresh() {
@@ -95,15 +119,24 @@ export function useTabWorkspace(options: {
     navigateTo(path)
     try {
       const post = await getPost(path)
+      // Race guard: the user may have closed this tab while getPost
+      // was in flight. If so, drop the populated data and remove the
+      // (now-orphan) placeholder. The watcher debounce will not have
+      // caught this yet, so we also persist synchronously.
+      const stillOpen = tabs.value.includes(tab)
+      if (!stillOpen) return
       tab.raw = post.raw
       tab.originalRaw = post.raw
       tab.title = post.metadata?.title || (post.frontmatter.title as string) || path
       tab.serverMtime = post.mtime
       tab.loading = false
     } catch (error) {
+      const stillOpen = tabs.value.includes(tab)
+      if (!stillOpen) return
       tab.loadError = (error as Error).message
       tab.loading = false
     }
+    flushPersist()
     if (openOptions.refresh !== false) await refresh()
   }
 
@@ -111,17 +144,28 @@ export function useTabWorkspace(options: {
     if (tabs.value.find((tab) => tab.path === path)) return true
     const tab = makeEmptyTab(path)
     tabs.value.push(tab)
+    flushPersist()
     try {
       const post = await getPost(path)
+      // Race guard: if the user closed this tab while the request was
+      // pending, the tab object has already been spliced from the
+      // array. Don't resurrect it, and make sure the persisted list
+      // doesn't carry a stale entry either.
+      if (!tabs.value.includes(tab)) {
+        flushPersist()
+        return false
+      }
       tab.raw = post.raw
       tab.originalRaw = post.raw
       tab.title = post.metadata?.title || (post.frontmatter.title as string) || path
       tab.serverMtime = post.mtime
       tab.loading = false
+      flushPersist()
       return true
     } catch {
       const index = tabs.value.findIndex((candidate) => candidate.path === path)
       if (index !== -1) tabs.value.splice(index, 1)
+      flushPersist()
       return false
     }
   }
@@ -141,6 +185,7 @@ export function useTabWorkspace(options: {
       activePath.value = next ? next.path : null
       navigateTo(activePath.value)
     }
+    flushPersist()
     return true
   }
 
@@ -184,6 +229,7 @@ export function useTabWorkspace(options: {
       activePath.value = next?.path ?? null
       navigateTo(activePath.value)
     }
+    flushPersist()
   }
 
   async function closeMany(paths: string[]): Promise<boolean> {
@@ -222,6 +268,7 @@ export function useTabWorkspace(options: {
       activePath.value = nextActive
       navigateTo(nextActive)
     }
+    flushPersist()
   }
 
   function removeOpenDocuments(paths: readonly string[]): void {
@@ -248,5 +295,6 @@ export function useTabWorkspace(options: {
     renameOpenDocuments,
     removeOpenDocuments,
     navigateTo,
+    setPersist,
   }
 }

@@ -48,6 +48,20 @@ function writePersistedTabs(tabs: Tab[], active: string | null, vaultId: string 
   } catch { /* persistence is best-effort */ }
 }
 
+/**
+ * Synchronous + debounced tab-set persistence.
+ *
+ * Returns:
+ *   - `vaultId` / `resolveVaultId`: fetches and caches the vault id
+ *     used to scope the localStorage key.
+ *   - `persist`: a SYNCHRONOUS writer. Every close / rename /
+ *     restore-failure mutation calls this so a page refresh before
+ *     the debounce flushes cannot resurrect a closed tab. This is
+ *     also called on `beforeunload` so the user closing the tab
+ *     keeps the latest state.
+ *   - the debounced watcher is wired internally; callers don't need
+ *     to touch it.
+ */
 export function useTabPersistence(tabs: Ref<Tab[]>, activePath: Ref<string | null>) {
   const vaultId = ref<string | null>(null)
   let vaultIdPromise: Promise<string | null> | null = null
@@ -63,17 +77,27 @@ export function useTabPersistence(tabs: Ref<Tab[]>, activePath: Ref<string | nul
     return vaultIdPromise
   }
 
-  const debouncedPersist = useDebounceFn(
-    () => writePersistedTabs(tabs.value, activePath.value, vaultId.value),
-    TAB_PERSIST_DEBOUNCE_MS,
-  )
+  function persist(): void {
+    writePersistedTabs(tabs.value, activePath.value, vaultId.value)
+  }
+
+  const debouncedPersist = useDebounceFn(persist, TAB_PERSIST_DEBOUNCE_MS)
   watch([tabs, activePath], () => { debouncedPersist() }, { deep: false })
+
+  // Flush any pending debounced write before the page is torn down.
+  // We can't truly cancel the debounce timer here, but the
+  // synchronous `persist()` runs first and writes the latest state;
+  // the trailing debounced write, if it lands later, writes the
+  // same thing.
+  if (typeof window !== 'undefined') {
+    window.addEventListener('beforeunload', persist)
+  }
 
   async function resolveVaultId(): Promise<string | null> {
     vaultId.value = await fetchVaultId()
     return vaultId.value
   }
-  return { vaultId, resolveVaultId }
+  return { vaultId, resolveVaultId, persist }
 }
 
 export function __setVaultIdForTesting(vaultId: string | null): void {

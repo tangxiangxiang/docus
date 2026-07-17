@@ -44,7 +44,7 @@ function answerConfirm(ok: boolean) {
   confirmResolve = null
 }
 
-import { useEditorTabs } from '../useEditorTabs'
+import { useEditorTabs, __setVaultIdForTesting } from '../useEditorTabs'
 import { createVaultFileChanges, type VaultFileChanges } from '../context/fileChanges'
 import { useI18n } from '../../useI18n'
 import type { PostSummary, TreeNode } from '../../../lib/api'
@@ -1549,8 +1549,6 @@ describe('useEditorTabs — tab persistence', () => {
 // the same browser shouldn't see each other's tabs. When the server
 // doesn't report an id, the bare key is used — no regression.
 
-import { __setVaultIdForTesting } from '../useEditorTabs'
-
 describe('useEditorTabs — vault-scoped persistence', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -1586,5 +1584,283 @@ describe('useEditorTabs — vault-scoped persistence', () => {
     await new Promise((r) => setTimeout(r, 150))
     expect(localStorage.getItem('docus:tabs:v1:vault-1234')).toBeTruthy()
     expect(localStorage.getItem('docus:tabs:v1')).toBeNull()
+  })
+})
+
+// --- round-4 regressions --------------------------------------------------
+//
+// The review identified two P1 issues:
+//
+//   1. The last opened tab's async title did not always surface in
+//      the strip — Vue's reactivity should track the inner `tab.title`
+//      mutation, but it relies on the workspace→tab mapping reading
+//      `tab.title` on every recompute. These tests pin the contract
+//      from the VaultView workspaceTabs computed: the title shown to
+//      the user is whatever `tab.title` holds at read time, with no
+//      need for a subsequent push / refresh / select.
+//
+//   2. Closing a tab only updated the in-memory `tabs.value`. The
+//      debounced persistence watcher could lose the write if the
+//      user refreshed inside the 100ms debounce window. Every close
+//      path (single / closeMany / close others / close right /
+//      close all / file delete / rename) now writes synchronously,
+//      and a closed-during-pending-restore tab is dropped from both
+//      memory and persistence.
+
+describe('useEditorTabs — round-4 async-title reactivity', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    toastCalls.length = 0
+    confirmResolve = null
+    __setVaultIdForTesting(null)
+  })
+  afterEach(() => {
+    __setVaultIdForTesting(null)
+  })
+
+  it('single open: strip title flips to the async title the moment getPost resolves', async () => {
+    const titleDeferred = deferred<unknown>()
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/inbox/c': () => titleDeferred.promise,
+    }))
+    const h = await setup()
+    const opening = h.openPost('inbox/c')
+    // While getPost is pending, the strip shows the path-derived
+    // basename (no title yet).
+    expect(h.tabs.value).toHaveLength(1)
+    expect(h.tabs.value[0]!.title).toBe('inbox/c')
+    titleDeferred.resolve({
+      path: 'inbox/c', raw: 'C', content: 'C',
+      frontmatter: { title: '文档 C' }, size: 1, mtime: 0,
+    })
+    await opening
+    expect(h.tabs.value[0]!.title).toBe('文档 C')
+    // No subsequent mutation is needed — the strip would already
+    // read '文档 C' through the VaultView workspaceTabs computed.
+  })
+
+  it('three sequential opens: the LAST opened tab surfaces its async title without a follow-up push', async () => {
+    const getPostCalls: Array<{ path: string, deferred: ReturnType<typeof deferred<unknown>> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/tree' || url === '/api/posts') {
+        return { ok: true, status: 200, json: async () => [] }
+      }
+      const match = url.match(/\/api\/posts\/(.+)$/)
+      if (!match) throw new Error(`Unexpected fetch: ${url}`)
+      const path = match[1]!
+      let entry = getPostCalls.find((e) => e.path === path)
+      if (!entry) {
+        entry = { path, deferred: deferred<unknown>() }
+        getPostCalls.push(entry)
+      }
+      return { ok: true, status: 200, json: async () => entry!.deferred.promise }
+    }))
+    const h = await setup()
+    const openA = h.openPost('a')
+    const openB = h.openPost('b')
+    const openC = h.openPost('c')
+    // Resolve a → b → c in order. Resolve each before the next so
+    // the test mirrors real "user clicks docs in sequence".
+    const a = getPostCalls.find((e) => e.path === 'a')!
+    a.deferred.resolve({ path: 'a', raw: 'A', content: 'A', frontmatter: { title: '文档 A' }, size: 1, mtime: 0 })
+    await openA
+    const b = getPostCalls.find((e) => e.path === 'b')!
+    b.deferred.resolve({ path: 'b', raw: 'B', content: 'B', frontmatter: { title: '文档 B' }, size: 1, mtime: 0 })
+    await openB
+    const c = getPostCalls.find((e) => e.path === 'c')!
+    c.deferred.resolve({ path: 'c', raw: 'C', content: 'C', frontmatter: { title: '文档 C' }, size: 1, mtime: 0 })
+    await openC
+
+    // The last opened tab C has the correct title — without any
+    // subsequent openPost / selectTab / refresh.
+    const cTab = h.tabs.value.find((t) => t.path === 'c')!
+    expect(cTab.title).toBe('文档 C')
+    expect(h.activePath.value).toBe('c')
+    // Sanity: every tab got its title.
+    expect(h.tabs.value.find((t) => t.path === 'a')!.title).toBe('文档 A')
+    expect(h.tabs.value.find((t) => t.path === 'b')!.title).toBe('文档 B')
+  })
+
+  it('save response carrying a new title updates the in-memory tab immediately', async () => {
+    const oldPost = postSummary('a', { title: 'Old', size: 1, mtime: 1 })
+    const newPost = postSummary('a', { title: 'New', size: 20, mtime: 2 })
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [oldPost],
+      // The getPost detail omits a frontmatter title so the opened
+      // tab starts with title='a' (the path-derived fallback).
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 1 }),
+      'PUT /api/posts/a': () => ({ ok: true, raw: 'A2', post: newPost }),
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    // On open, the title is the path-derived fallback (no metadata
+    // title in frontmatter). After a save the server returns a new
+    // title in `post`, and `applyPostSummary` writes it back into
+    // the tab immediately.
+    expect(h.tabs.value[0]!.title).toBe('a')
+    h.onEditorChange('a', 'A2')
+    await h.doSaveNow()
+    expect(h.tabs.value[0]!.title).toBe('New')
+  })
+})
+
+describe('useEditorTabs — round-4 synchronous persistence', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    toastCalls.length = 0
+    confirmResolve = null
+    __setVaultIdForTesting(null)
+  })
+  afterEach(() => {
+    __setVaultIdForTesting(null)
+  })
+
+  function readPersisted(): { paths: string[]; active: string | null } | null {
+    const raw = localStorage.getItem(PERSIST_KEY)
+    if (!raw) return null
+    return JSON.parse(raw)
+  }
+
+  it('closing a single tab updates persistence immediately, no debounce wait', async () => {
+    stubFetchForPaths({ a: 'A', b: 'B' })
+    const h = await setup()
+    await h.openPost('a')
+    await flushPromises()
+    await h.openPost('b')
+    await flushPromises()
+    await h.closeTab('b')
+    // NO setTimeout — the synchronous persist must already be on disk.
+    expect(readPersisted()).toMatchObject({ paths: ['a'], active: 'a' })
+  })
+
+  it('closing the only remaining tab clears persistence synchronously', async () => {
+    stubFetchForPaths({ a: 'A' })
+    const h = await setup()
+    await h.openPost('a')
+    await flushPromises()
+    await h.closeTab('a')
+    expect(readPersisted()).toMatchObject({ paths: [], active: null })
+  })
+
+  it('closing the last tab then refreshing restores nothing', async () => {
+    stubFetchForPaths({ a: 'A' })
+    const h1 = await setup()
+    await h1.openPost('a')
+    await flushPromises()
+    await h1.closeTab('a')
+    // Refresh — second mount.
+    const h2 = await setup()
+    await flushPromises()
+    expect(h2.tabs.value).toEqual([])
+    expect(h2.activePath.value).toBeNull()
+  })
+
+  it('closeMany on "close all" persists an empty tab set', async () => {
+    stubFetchForPaths({ a: 'A', b: 'B', c: 'C' })
+    const h = await setup()
+    await h.openPost('a')
+    await h.openPost('b')
+    await h.openPost('c')
+    await flushPromises()
+    await h.closeMany(['a', 'b', 'c'])
+    expect(readPersisted()).toMatchObject({ paths: [], active: null })
+  })
+
+  it('cancelling the dirty-close prompt does NOT mutate persistence', async () => {
+    stubFetchForPaths({ a: 'A', b: 'B' })
+    const h = await setup()
+    await h.openPost('a')
+    await h.openPost('b')
+    await flushPromises()
+    h.onEditorChange('a', 'A modified')
+    // Capture the persistence state set up by the previous opens.
+    const beforeClose = readPersisted()
+    expect(beforeClose).toMatchObject({ paths: ['a', 'b'], active: 'b' })
+    const closing = h.closeTab('a')
+    await Promise.resolve()
+    answerConfirm(false)
+    await expect(closing).resolves.toBe(false)
+    // Persistence is still { a, b } — neither tab was actually closed.
+    expect(readPersisted()).toMatchObject({ paths: ['a', 'b'], active: 'b' })
+  })
+
+  it('a tab closed while its restore is pending is NOT restored by the pending getPost', async () => {
+    const deferredPost = deferred<unknown>()
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/inbox/restore-pending': () => deferredPost.promise,
+    }))
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['inbox/restore-pending'], active: 'inbox/restore-pending',
+    }))
+    const h = await setup()
+    // Restore has pushed the empty tab; getPost is pending.
+    await flushPromises()
+    expect(h.tabs.value).toHaveLength(1)
+    expect(h.tabs.value[0]!.loading).toBe(true)
+    // User closes the tab before the pending restore resolves.
+    await h.closeTab('inbox/restore-pending')
+    expect(h.tabs.value).toHaveLength(0)
+    // Old getPost finally returns — must NOT resurrect the tab.
+    deferredPost.resolve({
+      path: 'inbox/restore-pending', raw: 'R', content: 'R',
+      frontmatter: { title: 'R' }, size: 1, mtime: 0,
+    })
+    await flushPromises()
+    await flushPromises()
+    expect(h.tabs.value).toEqual([])
+    // Persistence also reflects the close (no stale entry).
+    expect(readPersisted()).toMatchObject({ paths: [], active: null })
+  })
+
+  it('closing B after mount (restore A+B in progress) keeps only A on the next mount', async () => {
+    const aDeferred = deferred<unknown>()
+    const bDeferred = deferred<unknown>()
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/tree' || url === '/api/posts') {
+        return { ok: true, status: 200, json: async () => [] }
+      }
+      const path = url.match(/\/api\/posts\/(.+)$/)![1]!
+      const handler = path === 'a' ? aDeferred.promise : bDeferred.promise
+      return { ok: true, status: 200, json: async () => handler }
+    }))
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['a', 'b'], active: 'b',
+    }))
+    const h = await setup()
+    // Restore runs sequentially: A is pushed and awaited first.
+    // While A's getPost is pending, only A is in memory.
+    await flushPromises()
+    expect(h.tabs.value.map((t) => t.path)).toEqual(['a'])
+    // Resolve A — the restore loop pushes B and awaits it.
+    aDeferred.resolve({ path: 'a', raw: 'A', content: 'A', frontmatter: { title: 'A' }, size: 1, mtime: 0 })
+    await flushPromises()
+    await flushPromises()
+    expect(h.tabs.value.map((t) => t.path)).toEqual(['a', 'b'])
+    // Close B before its getPost resolves.
+    await h.closeTab('b')
+    expect(h.tabs.value.map((t) => t.path)).toEqual(['a'])
+    // Late B resolves — must NOT resurrect B.
+    bDeferred.resolve({ path: 'b', raw: 'B', content: 'B', frontmatter: { title: 'B' }, size: 1, mtime: 0 })
+    await flushPromises()
+    await flushPromises()
+    expect(h.tabs.value.map((t) => t.path)).toEqual(['a'])
+  })
+
+  it('removing the only open tab via the file-delete path persists an empty session', async () => {
+    stubFetchForPaths({ a: 'A' })
+    const h = await setup()
+    await h.openPost('a')
+    await flushPromises()
+    // Simulate the file-change bus reporting a delete — the
+    // composable's removeOpenDocuments path drives a synchronous
+    // closeManyConfirmed.
+    h.removeOpenDocuments(['a'])
+    expect(h.tabs.value).toEqual([])
+    expect(readPersisted()).toMatchObject({ paths: [], active: null })
   })
 })

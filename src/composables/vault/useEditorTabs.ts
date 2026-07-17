@@ -59,13 +59,19 @@ export function useEditorTabs(opts: {
     navigateTo,
     renameOpenDocuments,
     removeOpenDocuments,
+    setPersist,
   } = useTabWorkspace({
     confirm,
     toastError: toast.error,
     toastInfo: toast.info,
   })
 
-  const { vaultId, resolveVaultId } = useTabPersistence(tabs, activePath)
+  // Build persistence on top of the workspace's tab set, then bind
+  // the resulting synchronous persister into the workspace's close
+  // hooks so every close / rename / restore-failure path persists
+  // before the user can refresh.
+  const { vaultId, resolveVaultId, persist: persistOpenTabs } = useTabPersistence(tabs, activePath)
+  setPersist(persistOpenTabs)
 
   const {
     scheduleSave,

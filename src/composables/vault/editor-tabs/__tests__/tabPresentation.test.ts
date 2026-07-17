@@ -1,31 +1,29 @@
 // Pure presentation tests — no Vue mounting required. The presentation
-// module is the single source of truth for tab title, document title,
-// status text, and aria-label, so the unit tests here cover the full
-// mapping.
+// module is the single source of truth for tab title, filename, path,
+// status text, and aria-label.
 
 import { describe, expect, it } from 'vitest'
 import type { WorkspaceTab } from '../../../../components/vault/tabs'
 import type { DocumentSavePresentation } from '../savePresentation'
 import {
   deriveDisplayTitle,
-  deriveDocumentTitle,
+  deriveFilenameLabel,
   deriveTabUiPresentation,
 } from '../tabPresentation'
 
-// Minimal translator stub: only the keys the presentation module
-// looks up at runtime. Tests that need exact aria-label output
-// compose expectations off this map; tests that only care about
-// presence/absence still use NO_T.
+// Minimal translator stub. Tests that need exact aria-label output
+// compose expectations off this map.
 const NO_T = (key: string) => key
 const STUB_STRINGS: Record<string, string> = {
   'status.saved': 'Saved',
   'workspace_tab.aria_separator': ', ',
   'workspace_tab.aria_file': 'file {name}',
+  'workspace_tab.aria_title': 'title {name}',
 }
 function stubT(key: string, params: Record<string, string | number> = {}): string {
   const template = STUB_STRINGS[key]
   if (!template) return key
-  return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (match, name: string) => (
+  return template.replace(/\{([a-zA-Z0-9_-]+)\}/g, (match, name: string) => (
     Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match
   ))
 }
@@ -42,16 +40,11 @@ function save(overrides: Partial<DocumentSavePresentation> = {}): DocumentSavePr
   }
 }
 
-function basename(path: string): string {
-  const last = path.split('/').pop() ?? path
-  return last.endsWith('.md') ? last.slice(0, -3) : last
-}
-
 function tab(overrides: Partial<WorkspaceTab> = {}): WorkspaceTab {
   const id = overrides.id ?? 'inbox/test-document-1.md'
   return {
     id,
-    label: basename(id),
+    label: id.split('/').pop() ?? id,
     title: 'Test Document 1',
     save: save(),
     kind: 'document',
@@ -59,132 +52,133 @@ function tab(overrides: Partial<WorkspaceTab> = {}): WorkspaceTab {
   }
 }
 
-describe('deriveDisplayTitle', () => {
-  it('uses label when it is set and non-empty', () => {
+describe('deriveDisplayTitle — title priority', () => {
+  it('uses the metadata title when it is set and meaningful', () => {
+    expect(deriveDisplayTitle('测试文档', 'inbox/test-document-1.md'))
+      .toBe('测试文档')
+  })
+
+  it('falls back to the basename when the title is empty', () => {
+    expect(deriveDisplayTitle('', 'inbox/test-document-1.md'))
+      .toBe('test-document-1')
+  })
+
+  it('falls back to the basename when the title is whitespace only', () => {
+    expect(deriveDisplayTitle('   ', 'inbox/test-document-1.md'))
+      .toBe('test-document-1')
+  })
+
+  it('falls back to the basename when the title equals the full path', () => {
+    expect(deriveDisplayTitle('inbox/test-document-1.md', 'inbox/test-document-1.md'))
+      .toBe('test-document-1')
+  })
+
+  it('falls back to the basename when the title equals the basename', () => {
     expect(deriveDisplayTitle('test-document-1', 'inbox/test-document-1.md'))
       .toBe('test-document-1')
   })
 
-  it('strips the .md extension from the label', () => {
+  it('falls back to the basename when the title equals basename.md', () => {
     expect(deriveDisplayTitle('test-document-1.md', 'inbox/test-document-1.md'))
       .toBe('test-document-1')
   })
 
-  it('falls back to the path basename when label is empty', () => {
-    expect(deriveDisplayTitle('', 'inbox/test-document-1.md')).toBe('test-document-1')
-  })
-
-  it('falls back to the path basename when label is whitespace', () => {
-    expect(deriveDisplayTitle('   ', 'inbox/test-document-1.md')).toBe('test-document-1')
-  })
-
-  it('does NOT use tab.title even when it is set', () => {
-    // The original Edit-07A behavior (which mixed metadata title into
-    // the strip) is explicitly forbidden here — the tab strip must
-    // always be the filename/basename regardless of what
-    // frontmatter says.
-    expect(deriveDisplayTitle('test-document-1', 'inbox/test-document-1.md'))
-      .not.toBe('测试文档')
+  it('preserves mixed-language titles verbatim', () => {
+    expect(deriveDisplayTitle('Redis Notes', 'inbox/redis.md'))
+      .toBe('Redis Notes')
+    expect(deriveDisplayTitle('文档 C', 'inbox/c.md'))
+      .toBe('文档 C')
   })
 })
 
-describe('deriveDocumentTitle', () => {
-  it('returns the trimmed title when it is set and differs from the path', () => {
-    expect(deriveDocumentTitle('测试文档', 'inbox/test-document-1', 'test-document-1'))
-      .toBe('测试文档')
+describe('deriveFilenameLabel — tooltip secondary line', () => {
+  it('returns the basename when displayTitle came from the title', () => {
+    expect(deriveFilenameLabel('测试文档', 'inbox/test-document-1.md'))
+      .toBe('test-document-1')
   })
 
-  it('returns null when title is empty', () => {
-    expect(deriveDocumentTitle('', 'inbox/test-document-1', 'test-document-1'))
+  it('returns null when displayTitle already equals the basename', () => {
+    expect(deriveFilenameLabel('test-document-1', 'inbox/test-document-1.md'))
       .toBeNull()
   })
 
-  it('returns null when title is whitespace only', () => {
-    expect(deriveDocumentTitle('   ', 'inbox/test-document-1', 'test-document-1'))
+  it('returns null when displayTitle equals the basename with .md', () => {
+    expect(deriveFilenameLabel('test-document-1.md', 'inbox/test-document-1.md'))
       .toBeNull()
   })
 
-  it('returns null when title equals the full path', () => {
-    expect(deriveDocumentTitle('inbox/test-document-1', 'inbox/test-document-1', 'test-document-1'))
-      .toBeNull()
-  })
-
-  it('returns null when title equals displayTitle', () => {
-    expect(deriveDocumentTitle('test-document-1', 'inbox/test-document-1', 'test-document-1'))
-      .toBeNull()
-  })
-
-  it('returns null when title without .md equals displayTitle', () => {
-    expect(deriveDocumentTitle('test-document-1.md', 'inbox/test-document-1.md', 'test-document-1'))
-      .toBeNull()
+  it('returns null for empty paths', () => {
+    expect(deriveFilenameLabel('Test', '')).toBeNull()
   })
 })
 
-describe('deriveTabUiPresentation — strip always uses label/basename', () => {
-  it('scenario 1 — label + Chinese title + path', () => {
+describe('deriveTabUiPresentation — strip prefers title', () => {
+  it('shows the metadata title in the strip and the filename in the tooltip', () => {
     const t = tab({
       id: 'inbox/test-document-1',
-      label: 'test-document-1',
       title: '测试文档',
     })
     const p = deriveTabUiPresentation(t, NO_T)
-    expect(p.displayTitle).toBe('test-document-1')
-    expect(p.documentTitle).toBe('测试文档')
+    expect(p.displayTitle).toBe('测试文档')
+    expect(p.filenameLabel).toBe('test-document-1')
     expect(p.fullPath).toBe('inbox/test-document-1')
   })
 
-  it('scenario 2 — title equals path; documentTitle line is suppressed', () => {
+  it('falls back to the basename when the title equals the path', () => {
     const t = tab({
       id: 'inbox/test-document-1',
-      label: 'test-document-1',
       title: 'inbox/test-document-1',
     })
     const p = deriveTabUiPresentation(t, NO_T)
     expect(p.displayTitle).toBe('test-document-1')
-    expect(p.documentTitle).toBeNull()
-    expect(p.fullPath).toBe('inbox/test-document-1')
+    // No redundant filename line — the strip already shows the basename.
+    expect(p.filenameLabel).toBeNull()
   })
 
-  it('scenario 3 — title equals displayTitle; documentTitle line is suppressed', () => {
+  it('falls back to the basename when the title is empty', () => {
     const t = tab({
       id: 'inbox/test-document-1',
-      label: 'test-document-1',
-      title: 'test-document-1',
-    })
-    const p = deriveTabUiPresentation(t, NO_T)
-    expect(p.displayTitle).toBe('test-document-1')
-    expect(p.documentTitle).toBeNull()
-  })
-
-  it('scenario 4 — empty title; documentTitle line is suppressed', () => {
-    const t = tab({
-      id: 'inbox/test-document-1',
-      label: 'test-document-1',
       title: '',
     })
     const p = deriveTabUiPresentation(t, NO_T)
     expect(p.displayTitle).toBe('test-document-1')
-    expect(p.documentTitle).toBeNull()
+    expect(p.filenameLabel).toBeNull()
   })
 
-  it('scenario 5 — multiple tabs with mixed-language titles; strip always uses basename', () => {
+  it('falls back to the basename when the title equals the basename', () => {
+    const t = tab({
+      id: 'inbox/test-document-1',
+      title: 'test-document-1',
+    })
+    const p = deriveTabUiPresentation(t, NO_T)
+    expect(p.displayTitle).toBe('test-document-1')
+    expect(p.filenameLabel).toBeNull()
+  })
+
+  it('mixed-language titles — each tab shows its own title in the strip', () => {
     const tabs: WorkspaceTab[] = [
-      tab({ id: 'inbox/a.md', label: 'a', title: '中文标题' }),
-      tab({ id: 'inbox/b.md', label: 'b', title: 'English Title' }),
-      tab({ id: 'inbox/c.md', label: 'c', title: '' }),
+      tab({ id: 'inbox/a.md', title: '中文标题' }),
+      tab({ id: 'inbox/b.md', title: 'English Title' }),
+      tab({ id: 'inbox/c.md', title: '' }),
     ]
     const presentations = tabs.map((t) => deriveTabUiPresentation(t, NO_T))
-    expect(presentations.map((p) => p.displayTitle)).toEqual(['a', 'b', 'c'])
-    // Strip language NEVER comes from title.
-    expect(presentations.map((p) => p.displayTitle)).not.toContain('中文标题')
-    expect(presentations.map((p) => p.displayTitle)).not.toContain('English Title')
-    // Document titles preserved for tooltip lines.
-    expect(presentations[0]!.documentTitle).toBe('中文标题')
-    expect(presentations[1]!.documentTitle).toBe('English Title')
-    expect(presentations[2]!.documentTitle).toBeNull()
+    // Strip languages come from each document's metadata title,
+    // falling back to the filename when the title is missing.
+    expect(presentations.map((p) => p.displayTitle)).toEqual([
+      '中文标题',
+      'English Title',
+      'c',
+    ])
+    // Only the first two tabs have a meaningful metadata title, so
+    // their filename labels carry the file identity. The third tab
+    // already shows the basename in the strip, so its filename
+    // label is suppressed.
+    expect(presentations[0]!.filenameLabel).toBe('a')
+    expect(presentations[1]!.filenameLabel).toBe('b')
+    expect(presentations[2]!.filenameLabel).toBeNull()
   })
 
-  it('scenario 6 — history/diff keep their existing title semantics', () => {
+  it('history/diff keep their existing label semantics', () => {
     const h = tab({
       id: 'history:redis',
       kind: 'history',
@@ -199,20 +193,22 @@ describe('deriveTabUiPresentation — strip always uses label/basename', () => {
     })
     expect(deriveTabUiPresentation(h, NO_T).displayTitle).toBe('Redis (历史)')
     expect(deriveTabUiPresentation(d, NO_T).displayTitle).toBe('Redis (差异)')
-    expect(deriveTabUiPresentation(h, NO_T).documentTitle).toBeNull()
-    expect(deriveTabUiPresentation(d, NO_T).documentTitle).toBeNull()
+    expect(deriveTabUiPresentation(h, NO_T).filenameLabel).toBeNull()
+    expect(deriveTabUiPresentation(d, NO_T).filenameLabel).toBeNull()
     expect(deriveTabUiPresentation(h, NO_T).fullPath).toBeNull()
   })
 
-  it('falls back to path basename when label is empty', () => {
-    const t = tab({
-      id: 'inbox/production-plan.md',
-      label: '',
-      title: '',
-    })
-    const p = deriveTabUiPresentation(t, NO_T)
-    expect(p.displayTitle).toBe('production-plan')
-    expect(p.fullPath).toBe('inbox/production-plan.md')
+  it('two docs with same title but different paths both keep the title', () => {
+    const a = tab({ id: 'a/notes.md', title: 'Notes' })
+    const b = tab({ id: 'b/notes.md', title: 'Notes' })
+    expect(deriveTabUiPresentation(a, NO_T).displayTitle).toBe('Notes')
+    expect(deriveTabUiPresentation(b, NO_T).displayTitle).toBe('Notes')
+    // Tooltip filename lines keep them distinguishable.
+    expect(deriveTabUiPresentation(a, NO_T).filenameLabel).toBe('notes')
+    expect(deriveTabUiPresentation(b, NO_T).filenameLabel).toBe('notes')
+    // ...and the full path keeps them unambiguous in any context.
+    expect(deriveTabUiPresentation(a, NO_T).fullPath).toBe('a/notes.md')
+    expect(deriveTabUiPresentation(b, NO_T).fullPath).toBe('b/notes.md')
   })
 })
 
@@ -309,31 +305,31 @@ describe('deriveTabUiPresentation — presentation priority', () => {
 })
 
 describe('deriveTabUiPresentation — aria-label', () => {
-  it('includes documentTitle + "file <displayTitle>" when documentTitle is present', () => {
+  it('uses "<title>, file <filename>, <status>" when title differs from filename', () => {
     const p = deriveTabUiPresentation(
-      tab({ id: 'a.md', label: 'a', title: '测试文档' }),
+      tab({ id: 'a.md', title: '测试文档' }),
       stubT,
     )
-    expect(p.ariaLabel).toBe('测试文档, file a, Saved')
+    expect(p.ariaLabel).toBe('title 测试文档, file a, Saved')
   })
 
-  it('falls back to displayTitle when documentTitle is null', () => {
+  it('falls back to displayTitle only when filename would duplicate', () => {
     const p = deriveTabUiPresentation(
-      tab({ id: 'a.md', label: 'a', title: '' }),
-      stubT,
-    )
-    expect(p.ariaLabel).toBe('a, Saved')
-  })
-
-  it('omits documentTitle when it would duplicate displayTitle', () => {
-    const p = deriveTabUiPresentation(
-      tab({ id: 'a.md', label: 'a', title: 'a' }),
+      tab({ id: 'a.md', title: '' }),
       stubT,
     )
     expect(p.ariaLabel).toBe('a, Saved')
   })
 
-  it('history / diff aria-label keeps the legacy layout (no documentTitle, no status)', () => {
+  it('falls back to displayTitle when title equals the basename', () => {
+    const p = deriveTabUiPresentation(
+      tab({ id: 'a.md', title: 'a' }),
+      stubT,
+    )
+    expect(p.ariaLabel).toBe('a, Saved')
+  })
+
+  it('history / diff aria-label keeps the legacy layout (no filename, no status)', () => {
     const h = deriveTabUiPresentation(
       tab({ kind: 'history', label: 'Redis (历史)', title: 'Redis' }),
       NO_T,
