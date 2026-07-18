@@ -14,6 +14,7 @@ export function useEditorShortcuts(options: {
   selectTab: (path: string) => void
   selectFilesPanel: () => void
   toggleViewMode?: () => void
+  workspaceShortcuts?: boolean
 }) {
   function onKeydown(e: KeyboardEvent) {
     const meta = e.metaKey || e.ctrlKey
@@ -21,7 +22,7 @@ export function useEditorShortcuts(options: {
       e.preventDefault()
       void options.doSaveNow()
     }
-    if (meta && e.key === 'w' && options.activePath.value) {
+    if (options.workspaceShortcuts !== false && meta && e.key === 'w' && options.activePath.value) {
       e.preventDefault()
       void options.closeTab(options.activePath.value)
     }
@@ -38,7 +39,7 @@ export function useEditorShortcuts(options: {
         console.warn('[useEditorShortcuts] Cmd/Ctrl+E pressed but toggleViewMode is not wired')
       }
     }
-    if (meta && e.key === 'Tab' && options.tabs.value.length > 0) {
+    if (options.workspaceShortcuts !== false && meta && e.key === 'Tab' && options.tabs.value.length > 0) {
       e.preventDefault()
       const cur = options.tabs.value.findIndex((t) => t.path === options.activePath.value)
       const dir = e.shiftKey ? -1 : 1

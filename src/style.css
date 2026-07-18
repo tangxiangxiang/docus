@@ -2367,6 +2367,33 @@ main.container {
 }
 .tab:last-child { border-right: 0; }
 .tab:hover { color: var(--vs-text-1); }
+.tab.dragging { opacity: 0.48; }
+.tab.drop-before::after,
+.tab.drop-after::after {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--vs-accent);
+  box-shadow: 0 0 0 1px var(--vs-bg-1);
+  pointer-events: none;
+}
+.tab.drop-before::after { left: -2px; }
+.tab.drop-after::after { right: -2px; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .tab.active {
   background: var(--vs-tab-active-bg);
   color: var(--vs-text-1);

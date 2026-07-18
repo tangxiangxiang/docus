@@ -396,6 +396,11 @@ const STRINGS: Strings = {
   'workspace_tab.path_copied': { zh: '路径已复制：{path}', en: 'Path copied: {path}' },
   'workspace_tab.copy_path_failed': { zh: '复制路径失败', en: 'Failed to copy path' },
   'workspace_tab.reveal_failed': { zh: '无法在文件树中找到：{path}', en: 'Could not find in file tree: {path}' },
+  'workspace_tab.draggable': { zh: '可拖动标签', en: 'Draggable tab' },
+  'workspace_tab.moved_announcement': {
+    zh: '已将“{title}”移动到第 {position} 个，共 {count} 个标签',
+    en: 'Moved “{title}” to position {position} of {count}',
+  },
   'workspace_tab.tooltip_filename': { zh: '文件名：', en: 'File: ' },
   'workspace_tab.tooltip_path': { zh: '路径：', en: 'Path: ' },
   'workspace_tab.tooltip_status': { zh: '状态：', en: 'Status: ' },

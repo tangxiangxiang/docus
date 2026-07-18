@@ -77,7 +77,7 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('return getLoadedEditorDocument(tabs.value, path)')
     expect(source).toContain('return (await getPost(path)).raw')
     expect(source).toContain("meta && event.key.toLowerCase() === 's'")
-    expect(source).toContain('void closeWorkspaceTab(readOnlyTab.tabId)')
+    expect(source).toContain('void closeWorkspaceTab(activeId)')
     expect(shortcutHandler).toBeDefined()
     expect(shortcutHandler?.match(/onEditorKeydown\(event\)/g)).toHaveLength(1)
     expect(shortcutHandler).toContain('if (!readOnlyTab)')
@@ -144,5 +144,33 @@ describe('VaultView editor tab wiring', () => {
       expect(handler).toContain('editorTabsRef.value?.focusTab(activeId)')
       expect(handler).toContain('vaultRef.value?.focus()')
     }
+  })
+
+  it('maps all tab kinds through one stable workspace order and persists only documents', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const reorder = source.match(/async function reorderWorkspaceTabs[\s\S]*?\n}/)?.[0]
+
+    expect(source).toContain('const naturalWorkspaceTabs = computed<WorkspaceTab[]>')
+    expect(source).toContain('const workspaceTabOrder = ref<string[]>([])')
+    expect(source).toContain('reconcileWorkspaceTabOrder(workspaceTabOrder.value, availableIds)')
+    expect(source).toContain('const workspaceTabs = computed<WorkspaceTab[]>')
+    expect(reorder).toContain('applyWorkspaceTabOrder(')
+    expect(reorder).toContain("tab?.kind === 'document'")
+    expect(reorder).toContain('reorderOpenDocuments(documentPaths)')
+    expect(reorder).toContain("request.input === 'keyboard'")
+    expect(source).toContain('@reorder="reorderWorkspaceTabs"')
+  })
+
+  it('migrates renamed document IDs in place and owns Workspace close/cycle shortcuts', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const shortcut = source.match(/function onVaultKeydown[\s\S]*?\n}/)?.[0]
+
+    expect(source).toContain('workspaceTabOrder.value = migrateWorkspaceTabIds(')
+    expect(source).toContain('renameOpenDocuments: renameWorkspaceDocuments')
+    expect(source).toContain('workspaceShortcuts: false')
+    expect(shortcut).toContain("event.key.toLowerCase() === 'w' && activeId")
+    expect(shortcut).toContain("event.key === 'Tab' && workspaceTabs.value.length > 0")
+    expect(shortcut).toContain('const direction = event.shiftKey ? -1 : 1')
+    expect(shortcut).toContain('void selectWorkspaceTab(nextTab.id)')
   })
 })

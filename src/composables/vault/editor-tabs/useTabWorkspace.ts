@@ -296,6 +296,16 @@ export function useTabWorkspace(options: {
     navigateTo(path)
   }
 
+  function reorderTabs(paths: readonly string[]): boolean {
+    if (paths.length !== tabs.value.length || new Set(paths).size !== paths.length) return false
+    const byPath = new Map(tabs.value.map((tab) => [tab.path, tab]))
+    if (paths.some((path) => !byPath.has(path))) return false
+    if (paths.every((path, index) => tabs.value[index]?.path === path)) return false
+    tabs.value = paths.map((path) => byPath.get(path)!)
+    flushPersist()
+    return true
+  }
+
   function renameOpenDocuments(mappings: ReadonlyArray<{ from: string; to: string }>): void {
     const bySource = new Map(
       mappings.filter(({ from, to }) => from && to && from !== to).map((item) => [item.from, item.to]),
@@ -341,6 +351,7 @@ export function useTabWorkspace(options: {
     confirmCloseMany,
     closeManyConfirmed,
     selectTab,
+    reorderTabs,
     renameOpenDocuments,
     removeOpenDocuments,
     navigateTo,

@@ -40,6 +40,22 @@ const TABS: WorkspaceTab[] = [
   makeTab('d.md'),
 ]
 
+class TestDataTransfer {
+  effectAllowed = 'uninitialized'
+  dropEffect = 'none'
+  readonly types: string[] = []
+  private data = new Map<string, string>()
+
+  setData(type: string, value: string) {
+    if (!this.types.includes(type)) this.types.push(type)
+    this.data.set(type, value)
+  }
+
+  getData(type: string) {
+    return this.data.get(type) ?? ''
+  }
+}
+
 /** Find the tab whose basename (what .tab-title shows) equals `name`
  *  and trigger its contextmenu. The tab-title strips the .md
  *  extension, so callers pass "a" rather than "a.md". Returns the
@@ -366,6 +382,211 @@ describe('EditorTabs context menu', () => {
     await w.vm.$nextTick()
     await flushPromises()
     expect(document.querySelector('.tab-context-menu')).toBeNull()
+    w.unmount()
+  })
+})
+
+describe('EditorTabs workspace reordering', () => {
+  beforeEach(() => {
+    useI18n().setLocale('zh')
+  })
+
+  async function drag(
+    wrapper: ReturnType<typeof mount>,
+    sourceIndex: number,
+    targetIndex: number,
+    side: 'before' | 'after',
+  ) {
+    const transfer = new TestDataTransfer() as unknown as DataTransfer
+    const source = wrapper.findAll('.tab')[sourceIndex]
+    const target = wrapper.findAll('.tab')[targetIndex]
+    vi.spyOn(target.element, 'getBoundingClientRect').mockReturnValue({
+      left: 100,
+      right: 200,
+      top: 0,
+      bottom: 36,
+      width: 100,
+      height: 36,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    })
+    await source.trigger('dragstart', { dataTransfer: transfer })
+    await target.trigger('dragover', {
+      dataTransfer: transfer,
+      clientX: side === 'before' ? 120 : 180,
+    })
+    await target.trigger('drop', {
+      dataTransfer: transfer,
+      clientX: side === 'before' ? 120 : 180,
+    })
+    return { source, target, transfer }
+  }
+
+  it.each([
+    [1, 0, 'before', ['b.md', 'a.md', 'c.md', 'd.md']],
+    [1, 2, 'after', ['a.md', 'c.md', 'b.md', 'd.md']],
+    [3, 0, 'before', ['d.md', 'a.md', 'b.md', 'c.md']],
+    [0, 3, 'after', ['b.md', 'c.md', 'd.md', 'a.md']],
+  ] as const)('emits a complete pointer order for drag %i → %i %s', async (
+    source,
+    target,
+    side,
+    orderedIds,
+  ) => {
+    const w = mount(EditorTabs, { props: { tabs: TABS, activePath: 'a.md' } })
+    await drag(w, source, target, side)
+    expect(w.emitted('reorder')).toEqual([[{
+      orderedIds,
+      movedId: TABS[source].id,
+      input: 'pointer',
+    }]])
+    expect(w.emitted('select')).toBeUndefined()
+    expect(w.emitted('close')).toBeUndefined()
+    expect(w.findAll('.dragging')).toHaveLength(0)
+    expect(w.findAll('.drop-before, .drop-after')).toHaveLength(0)
+    w.unmount()
+  })
+
+  it('does not emit for the same position, blank, external, or stale drops', async () => {
+    const w = mount(EditorTabs, { props: { tabs: TABS, activePath: 'a.md' } })
+    await drag(w, 1, 2, 'before')
+    expect(w.emitted('reorder')).toBeUndefined()
+
+    const external = new TestDataTransfer() as unknown as DataTransfer
+    external.setData('text/plain', 'b.md')
+    await w.findAll('.tab')[1].trigger('dragover', { dataTransfer: external, clientX: 100 })
+    await w.findAll('.tab')[1].trigger('drop', { dataTransfer: external, clientX: 100 })
+    expect(w.emitted('reorder')).toBeUndefined()
+
+    const stale = new TestDataTransfer() as unknown as DataTransfer
+    await w.findAll('.tab')[1].trigger('dragstart', { dataTransfer: stale })
+    await w.setProps({ tabs: TABS.filter((tab) => tab.id !== 'd.md') })
+    await w.findAll('.tab')[0].trigger('drop', { dataTransfer: stale })
+    expect(w.emitted('reorder')).toBeUndefined()
+    w.unmount()
+  })
+
+  it('shows drag/drop classes, closes tooltip and menu, and suppresses the synthetic click', async () => {
+    const w = mount(EditorTabs, {
+      props: { tabs: TABS, activePath: 'a.md' },
+      attachTo: document.body,
+    })
+    await w.findAll('.tab')[1].trigger('mouseenter')
+    await rightClick(w, 'b')
+    expect(document.querySelector('.tab-context-menu')).not.toBeNull()
+    const transfer = new TestDataTransfer() as unknown as DataTransfer
+    await w.findAll('.tab')[1].trigger('dragstart', { dataTransfer: transfer })
+    expect(document.querySelector('.tab-tooltip')).toBeNull()
+    expect(document.querySelector('.tab-context-menu')).toBeNull()
+    expect(w.findAll('.tab')[1].classes()).toContain('dragging')
+    vi.spyOn(w.findAll('.tab')[0].element, 'getBoundingClientRect').mockReturnValue({
+      left: 0, right: 100, top: 0, bottom: 36, width: 100, height: 36, x: 0, y: 0,
+      toJSON: () => ({}),
+    })
+    await w.findAll('.tab')[0].trigger('dragover', { dataTransfer: transfer, clientX: 10 })
+    expect(w.findAll('.tab')[0].classes()).toContain('drop-before')
+    await w.findAll('.tab')[0].trigger('drop', { dataTransfer: transfer, clientX: 10 })
+    await w.findAll('.tab')[1].trigger('click')
+    expect(w.emitted('select')).toBeUndefined()
+    w.unmount()
+  })
+
+  it.each([
+    ['ArrowLeft', 'b.md', ['b.md', 'a.md', 'c.md', 'd.md'], 1],
+    ['ArrowRight', 'b.md', ['a.md', 'c.md', 'b.md', 'd.md'], 3],
+  ] as const)('supports Alt+Shift+%s and announces the move', async (
+    key,
+    movedId,
+    orderedIds,
+    position,
+  ) => {
+    const w = mount(EditorTabs, { props: { tabs: TABS, activePath: 'a.md' } })
+    const row = w.find(`[data-tab-id="${movedId}"]`)
+    await row.trigger('keydown', { key, altKey: true, shiftKey: true })
+    await nextTick()
+    expect(w.emitted('reorder')).toEqual([[{ orderedIds, movedId, input: 'keyboard' }]])
+    expect(w.emitted('select')).toBeUndefined()
+    expect(w.find('[aria-live="polite"]').text()).toContain(`第 ${position} 个`)
+    w.unmount()
+  })
+
+  it('does nothing at keyboard boundaries and supports History/Diff IDs', async () => {
+    const tabs = [
+      makeTab('history:a', { kind: 'history', title: 'History A' }),
+      makeTab('diff:b', { kind: 'diff', title: 'Diff B' }),
+    ]
+    const w = mount(EditorTabs, { props: { tabs, activePath: tabs[0].id } })
+    await w.findAll('.tab')[0].trigger('keydown', {
+      key: 'ArrowLeft', altKey: true, shiftKey: true,
+    })
+    expect(w.emitted('reorder')).toBeUndefined()
+    await w.findAll('.tab')[1].trigger('keydown', {
+      key: 'ArrowLeft', altKey: true, shiftKey: true,
+    })
+    expect(w.emitted('reorder')?.[0]).toEqual([{
+      orderedIds: ['diff:b', 'history:a'],
+      movedId: 'diff:b',
+      input: 'keyboard',
+    }])
+    w.unmount()
+  })
+
+  it('auto-scrolls the real tab strip at both edges with one RAF loop and stops on dragend', async () => {
+    const callbacks = new Map<number, FrameRequestCallback>()
+    let nextFrame = 1
+    const request = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      const id = nextFrame++
+      callbacks.set(id, callback)
+      return id
+    })
+    const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+      callbacks.delete(id)
+    })
+    const w = mount(EditorTabs, { props: { tabs: TABS, activePath: 'a.md' } })
+    const strip = w.find('.tabs').element as HTMLElement
+    strip.scrollLeft = 40
+    vi.spyOn(strip, 'getBoundingClientRect').mockReturnValue({
+      left: 0, right: 300, top: 0, bottom: 36, width: 300, height: 36, x: 0, y: 0,
+      toJSON: () => ({}),
+    })
+    const target = w.findAll('.tab')[2]
+    vi.spyOn(target.element, 'getBoundingClientRect').mockReturnValue({
+      left: 200, right: 300, top: 0, bottom: 36, width: 100, height: 36, x: 200, y: 0,
+      toJSON: () => ({}),
+    })
+    const transfer = new TestDataTransfer() as unknown as DataTransfer
+    await w.findAll('.tab')[1].trigger('dragstart', { dataTransfer: transfer })
+    await target.trigger('dragover', { dataTransfer: transfer, clientX: 295 })
+    await target.trigger('dragover', { dataTransfer: transfer, clientX: 295 })
+    expect(request).toHaveBeenCalledTimes(1)
+    const rightFrame = [...callbacks.values()][0]
+    callbacks.clear()
+    rightFrame(0)
+    expect(strip.scrollLeft).toBe(48)
+
+    await target.trigger('dragover', { dataTransfer: transfer, clientX: 2 })
+    const leftFrame = [...callbacks.values()].at(-1)!
+    callbacks.clear()
+    leftFrame(0)
+    expect(strip.scrollLeft).toBe(40)
+
+    await w.findAll('.tab')[1].trigger('dragend', { dataTransfer: transfer })
+    expect(cancel).toHaveBeenCalled()
+    w.unmount()
+    request.mockRestore()
+    cancel.mockRestore()
+  })
+
+  it('prevents the close button from becoming a drag source', async () => {
+    const w = mount(EditorTabs, { props: { tabs: TABS, activePath: 'a.md' } })
+    const event = new Event('dragstart', { bubbles: true, cancelable: true })
+    const transfer = new TestDataTransfer()
+    Object.defineProperty(event, 'dataTransfer', { value: transfer })
+    w.find('.tab-close').element.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(transfer.types).toEqual([])
+    expect(w.findAll('.dragging')).toHaveLength(0)
     w.unmount()
   })
 })
@@ -932,7 +1153,6 @@ describe('EditorTabs — round-2 regression tests', () => {
 
   // --- P2: tooltip id cleanup when the parent removes the tab.
   it('does not auto-revive a tooltip when the same id reappears later', async () => {
-    const tabB = TABS.find((t) => t.id === 'b.md')!
     const initial = TABS
     const w = mount(EditorTabs, {
       props: { tabs: initial, activePath: 'a.md' },

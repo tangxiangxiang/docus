@@ -47,12 +47,19 @@ import DocumentMetadataModal from '../components/vault/DocumentMetadataModal.vue
 import HistoryPanel from '../components/vault/HistoryPanel.vue'
 import HistorySnapshotPane from '../components/vault/HistorySnapshotPane.vue'
 import HistoryComparisonPane from '../components/vault/HistoryComparisonPane.vue'
-import EditorTabs from '../components/vault/EditorTabs.vue'
+import EditorTabs, {
+  type WorkspaceTabReorderRequest,
+} from '../components/vault/EditorTabs.vue'
 import {
   closeManyWorkspaceTabState,
   closeWorkspaceTabState,
 } from '../components/vault/workspaceClose'
 import type { WorkspaceTab } from '../components/vault/tabs'
+import {
+  applyWorkspaceTabOrder,
+  migrateWorkspaceTabIds,
+  reconcileWorkspaceTabOrder,
+} from '../components/vault/workspaceTabOrder'
 import {
   copyTextToClipboard,
   revealWorkspacePath,
@@ -140,6 +147,7 @@ const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
 const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const snapshotPaneRef = ref<InstanceType<typeof HistorySnapshotPane> | null>(null)
 const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>(null)
+const workspaceTabOrder = ref<string[]>([])
 function openSearch() { paletteRef.value?.show() }
 
 /* ---------- Tabs / save / route sync ---------- */
@@ -155,24 +163,34 @@ const {
   prepareHistoryRestore, onKeydown: onEditorKeydown, onCommandPaletteNew,
   prepareHistoryCommit,
   prepareDocumentMutation, renameOpenDocuments, removeOpenDocuments,
+  reorderOpenDocuments,
   applyLifecycleReferenceWrites,
 } = useEditorTabs({
   selectPanel,
   toggleViewMode: () => viewModeApi?.toggle(),
   fileChanges,
   mutationLock: historyMutationLock,
+  workspaceShortcuts: false,
   createDocument: (input) => {
     if (!lifecycleCreateFile) throw new Error('document lifecycle is not ready')
     return lifecycleCreateFile(input)
   },
 })
+
+function renameWorkspaceDocuments(
+  mappings: ReadonlyArray<{ from: string; to: string }>,
+): void {
+  workspaceTabOrder.value = migrateWorkspaceTabIds(workspaceTabOrder.value, mappings)
+  renameOpenDocuments(mappings)
+}
+
 const documentLifecycle = useDocumentLifecycle({
   fileChanges,
   mutationLock: historyMutationLock,
   prepareDocumentMutation,
   getOpenDocumentPaths: () => tabs.value.map((tab) => tab.path),
   applyReferenceWrites: applyLifecycleReferenceWrites,
-  renameOpenDocuments,
+  renameOpenDocuments: renameWorkspaceDocuments,
   removeOpenDocuments,
   refresh,
 })
@@ -323,7 +341,7 @@ function basename(path: string): string {
   return name.endsWith('.md') ? name.slice(0, -3) : name
 }
 
-const workspaceTabs = computed<WorkspaceTab[]>(() => [
+const naturalWorkspaceTabs = computed<WorkspaceTab[]>(() => [
   ...tabs.value.map((tab) => ({
     id: tab.path,
     label: basename(tab.path),
@@ -349,6 +367,21 @@ const workspaceTabs = computed<WorkspaceTab[]>(() => [
     documentPath: comparison.documentPath,
   })),
 ])
+const naturalWorkspaceTabIds = computed(() => naturalWorkspaceTabs.value.map((tab) => tab.id))
+watch(
+  naturalWorkspaceTabIds,
+  (availableIds) => {
+    workspaceTabOrder.value = reconcileWorkspaceTabOrder(workspaceTabOrder.value, availableIds)
+  },
+  { immediate: true },
+)
+const workspaceTabs = computed<WorkspaceTab[]>(() => {
+  const natural = naturalWorkspaceTabs.value
+  const byId = new Map(natural.map((tab) => [tab.id, tab]))
+  return reconcileWorkspaceTabOrder(workspaceTabOrder.value, natural.map((tab) => tab.id))
+    .map((id) => byId.get(id))
+    .filter((tab): tab is WorkspaceTab => Boolean(tab))
+})
 const activeSavePresentation = computed(() => (
   activeHistorySnapshot.value || activeHistoryComparison.value
     ? deriveDocumentSavePresentation(null)
@@ -357,6 +390,37 @@ const activeSavePresentation = computed(() => (
 const activeWorkspaceTabId = computed(() => (
   activeHistoryComparison.value?.tabId ?? activeHistorySnapshot.value?.tabId ?? activePath.value
 ))
+
+async function reorderWorkspaceTabs(request: WorkspaceTabReorderRequest): Promise<void> {
+  const availableIds = workspaceTabs.value.map((tab) => tab.id)
+  if (!availableIds.includes(request.movedId)) return
+  const nextOrder = applyWorkspaceTabOrder(
+    workspaceTabOrder.value,
+    request.orderedIds,
+    availableIds,
+  )
+  if (!nextOrder) return
+  workspaceTabOrder.value = nextOrder
+
+  const byId = new Map(workspaceTabs.value.map((tab) => [tab.id, tab]))
+  const documentPaths = nextOrder
+    .map((id) => byId.get(id))
+    .filter((tab): tab is WorkspaceTab => tab?.kind === 'document')
+    .map((tab) => tab.documentPath ?? tab.id)
+  reorderOpenDocuments(documentPaths)
+
+  if (request.input === 'keyboard' || !activeWorkspaceTabId.value) {
+    await nextTick()
+    if (
+      request.input === 'keyboard'
+      && workspaceTabs.value.some((tab) => tab.id === request.movedId)
+    ) {
+      editorTabsRef.value?.focusTab(request.movedId)
+    } else if (!activeWorkspaceTabId.value) {
+      vaultRef.value?.focus()
+    }
+  }
+}
 
 async function openPost(path: string, options: { refresh?: boolean } = {}): Promise<void> {
   historyComparisons.deactivate()
@@ -471,28 +535,30 @@ async function revealWorkspaceTabInTree(path: string): Promise<void> {
 
 function onVaultKeydown(event: KeyboardEvent): void {
   const readOnlyTab = activeHistoryComparison.value ?? activeHistorySnapshot.value
-  if (!readOnlyTab) {
-    onEditorKeydown(event)
-    return
-  }
-
   const meta = event.metaKey || event.ctrlKey
-  if (meta && event.key.toLowerCase() === 's') {
+  const activeId = activeWorkspaceTabId.value
+  if (meta && event.key.toLowerCase() === 'w' && activeId) {
     event.preventDefault()
-    return
-  }
-  if (meta && event.key.toLowerCase() === 'w') {
-    event.preventDefault()
-    void closeWorkspaceTab(readOnlyTab.tabId)
+    void closeWorkspaceTab(activeId)
     return
   }
   if (meta && event.key === 'Tab' && workspaceTabs.value.length > 0) {
     event.preventDefault()
-    const current = workspaceTabs.value.findIndex((tab) => tab.id === activeWorkspaceTabId.value)
+    const current = workspaceTabs.value.findIndex((tab) => tab.id === activeId)
     const direction = event.shiftKey ? -1 : 1
-    const next = (current + direction + workspaceTabs.value.length) % workspaceTabs.value.length
+    const next = current < 0
+      ? (direction > 0 ? 0 : workspaceTabs.value.length - 1)
+      : (current + direction + workspaceTabs.value.length) % workspaceTabs.value.length
     const nextTab = workspaceTabs.value[next]
     if (nextTab) void selectWorkspaceTab(nextTab.id)
+    return
+  }
+  if (!readOnlyTab) {
+    onEditorKeydown(event)
+    return
+  }
+  if (meta && event.key.toLowerCase() === 's') {
+    event.preventDefault()
     return
   }
   if (meta && event.key.toLowerCase() === 'e') {
@@ -739,6 +805,7 @@ watch(isReadMode, async (reading) => {
         @close-many="closeManyWorkspaceTabs"
         @copy-path="copyWorkspaceTabPath"
         @reveal-in-tree="revealWorkspaceTabInTree"
+        @reorder="reorderWorkspaceTabs"
       />
 
       <!-- Edit mode: single Monaco editor surface. -->

@@ -86,6 +86,7 @@ interface Harness {
   refresh: () => Promise<void>
   applyPostSummary: (post: PostSummary) => void
   renameOpenDocuments: (mappings: ReadonlyArray<{ from: string; to: string }>) => void
+  reorderOpenDocuments: (paths: readonly string[]) => boolean
   activePath: Ref<string | null>
   activeSize: Ref<number>
   posts: Ref<PostSummary[]>
@@ -296,6 +297,32 @@ describe('useEditorTabs', () => {
     await h.openPost('inbox/hello')
     expect(getPostCalls).toBe(1)
     expect(h.tabs.value).toHaveLength(1)
+  })
+
+  it('strictly reorders existing document proxies and persists immediately', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/a': () => ({ path: 'a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/b': () => ({ path: 'b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/c': () => ({ path: 'c', raw: 'C', content: 'C', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('a')
+    await h.openPost('b')
+    await h.openPost('c')
+    const identities = new Map(h.tabs.value.map((tab) => [tab.path, tab]))
+    const active = h.activePath.value
+
+    expect(h.reorderOpenDocuments(['c', 'a', 'b'])).toBe(true)
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['c', 'a', 'b'])
+    expect(h.tabs.value.every((tab) => tab === identities.get(tab.path))).toBe(true)
+    expect(h.activePath.value).toBe(active)
+    expect(JSON.parse(localStorage.getItem('docus:tabs:v1')!).paths).toEqual(['c', 'a', 'b'])
+    expect(h.reorderOpenDocuments(['c', 'a', 'b'])).toBe(false)
+    expect(h.reorderOpenDocuments(['c', 'a'])).toBe(false)
+    expect(h.reorderOpenDocuments(['c', 'a', 'unknown'])).toBe(false)
+    expect(h.reorderOpenDocuments(['c', 'c', 'a'])).toBe(false)
   })
 
   it('migrates an open tab path, active route, persistence signal, and Monaco registry', async () => {

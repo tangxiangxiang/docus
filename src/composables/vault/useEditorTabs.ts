@@ -34,6 +34,7 @@ export function useEditorTabs(opts: {
   fileChanges: VaultFileChanges
   mutationLock?: ReturnType<typeof createPathMutationLock>
   createDocument?: (input: { path: string; title?: string }) => Promise<PostSummary>
+  workspaceShortcuts?: boolean
 }) {
   const toast = useToast()
   const { confirm } = useConfirm()
@@ -56,6 +57,7 @@ export function useEditorTabs(opts: {
     confirmCloseMany: confirmCloseManyState,
     closeManyConfirmed,
     selectTab,
+    reorderTabs: reorderOpenDocuments,
     navigateTo,
     renameOpenDocuments,
     removeOpenDocuments,
@@ -144,6 +146,7 @@ export function useEditorTabs(opts: {
     selectTab,
     selectFilesPanel: () => opts.selectPanel('files'),
     toggleViewMode: opts.toggleViewMode,
+    workspaceShortcuts: opts.workspaceShortcuts,
   })
 
   async function onCommandPaletteNew(title: string) {
@@ -285,6 +288,7 @@ export function useEditorTabs(opts: {
     closeMany,
     confirmCloseMany,
     closeManyConfirmed,
+    reorderOpenDocuments,
     renameOpenDocuments,
     removeOpenDocuments,
     applyLifecycleReferenceWrites,

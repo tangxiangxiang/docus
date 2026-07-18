@@ -6,6 +6,16 @@ import {
   deriveTabUiPresentation,
   type TabUiPresentation,
 } from '../../composables/vault/editor-tabs/tabPresentation'
+import {
+  moveWorkspaceTab,
+  type WorkspaceTabDropPosition,
+} from './workspaceTabOrder'
+
+export interface WorkspaceTabReorderRequest {
+  orderedIds: string[]
+  movedId: string
+  input: 'pointer' | 'keyboard'
+}
 
 const props = defineProps<{ tabs: WorkspaceTab[]; activePath: string | null }>()
 const emit = defineEmits<{
@@ -14,6 +24,7 @@ const emit = defineEmits<{
   'close-many': [paths: string[]]
   'copy-path': [path: string]
   'reveal-in-tree': [path: string]
+  reorder: [request: WorkspaceTabReorderRequest]
 }>()
 const { t: translate } = useI18n()
 
@@ -113,6 +124,7 @@ function positionTooltip(anchor: HTMLElement) {
 }
 
 function onTooltipAnchorEnter(tab: WorkspaceTab, event: MouseEvent | FocusEvent) {
+  if (draggedId.value) return
   const target = event.currentTarget as HTMLElement | null
   if (target) showTooltipFor(tab.id, target)
 }
@@ -124,6 +136,7 @@ function onTooltipAnchorLeave(_tab: WorkspaceTab, event: MouseEvent | FocusEvent
 }
 
 function onTooltipAnchorFocus(tab: WorkspaceTab, event: FocusEvent) {
+  if (draggedId.value) return
   const target = event.currentTarget as HTMLElement | null
   if (target) showTooltipFor(tab.id, target)
 }
@@ -136,6 +149,19 @@ function onTooltipAnchorBlur(_event: FocusEvent) {
 
 function onTabKeydown(event: KeyboardEvent, tab: WorkspaceTab) {
   if (event.key === 'Escape') hideTooltip()
+  if (
+    event.altKey
+    && event.shiftKey
+    && !event.ctrlKey
+    && !event.metaKey
+    && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+  ) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (menuVisible.value) return
+    moveTabByKeyboard(tab, event.key === 'ArrowLeft' ? -1 : 1)
+    return
+  }
   if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
     event.preventDefault()
     event.stopPropagation()
@@ -165,6 +191,186 @@ watch(tabIds, (next) => {
 function onCloseClick(tab: WorkspaceTab) {
   hideTooltip()
   emit('close', tab.id)
+}
+
+// --- workspace tab reordering ---------------------------------------------
+const WORKSPACE_TAB_MIME = 'application/x-docus-workspace-tab'
+const draggedId = ref<string | null>(null)
+const dropTargetId = ref<string | null>(null)
+const dropPosition = ref<WorkspaceTabDropPosition | null>(null)
+const liveAnnouncement = ref('')
+let dragSignature = ''
+let suppressClick = false
+let suppressClickTimer: ReturnType<typeof setTimeout> | null = null
+let autoScrollFrame: number | null = null
+let autoScrollDirection: -1 | 0 | 1 = 0
+
+function idsSignature(): string {
+  return tabIds.value.join('\u0000')
+}
+
+function hasWorkspacePayload(
+  dataTransfer: DataTransfer | null,
+  validateValue = false,
+): boolean {
+  if (!dataTransfer || !draggedId.value) return false
+  if (!Array.from(dataTransfer.types).includes(WORKSPACE_TAB_MIME)) return false
+  return !validateValue || dataTransfer.getData(WORKSPACE_TAB_MIME) === draggedId.value
+}
+
+function clearSuppressClickSoon(): void {
+  if (suppressClickTimer) clearTimeout(suppressClickTimer)
+  suppressClick = true
+  suppressClickTimer = setTimeout(() => {
+    suppressClick = false
+    suppressClickTimer = null
+  }, 0)
+}
+
+function stopAutoScroll(): void {
+  autoScrollDirection = 0
+  if (autoScrollFrame !== null) cancelAnimationFrame(autoScrollFrame)
+  autoScrollFrame = null
+}
+
+function autoScrollStep(): void {
+  autoScrollFrame = null
+  const container = tabsRef.value
+  if (!container || autoScrollDirection === 0 || !draggedId.value) return
+  const previous = container.scrollLeft
+  container.scrollLeft += autoScrollDirection * 8
+  if (container.scrollLeft === previous) {
+    autoScrollDirection = 0
+    return
+  }
+  autoScrollFrame = requestAnimationFrame(autoScrollStep)
+}
+
+function updateAutoScroll(event: DragEvent): void {
+  const container = tabsRef.value
+  if (!container || !hasWorkspacePayload(event.dataTransfer)) {
+    stopAutoScroll()
+    return
+  }
+  const rect = container.getBoundingClientRect()
+  const edge = Math.min(32, rect.width / 3)
+  const direction = event.clientX <= rect.left + edge
+    ? -1
+    : event.clientX >= rect.right - edge ? 1 : 0
+  if (direction === autoScrollDirection) return
+  stopAutoScroll()
+  autoScrollDirection = direction
+  if (direction !== 0) autoScrollFrame = requestAnimationFrame(autoScrollStep)
+}
+
+function clearDragState(suppressSyntheticClick = false): void {
+  if (suppressSyntheticClick && draggedId.value) clearSuppressClickSoon()
+  draggedId.value = null
+  dragSignature = ''
+  dropTargetId.value = null
+  dropPosition.value = null
+  stopAutoScroll()
+}
+
+function onDragStart(event: DragEvent, tab: WorkspaceTab): void {
+  if (
+    !event.dataTransfer
+    || (event.target instanceof Element && event.target.closest('.tab-close'))
+  ) {
+    event.preventDefault()
+    return
+  }
+  closeMenu(false)
+  hideTooltip()
+  draggedId.value = tab.id
+  dragSignature = idsSignature()
+  dropTargetId.value = null
+  dropPosition.value = null
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData(WORKSPACE_TAB_MIME, tab.id)
+}
+
+function onDragOver(event: DragEvent, targetId: string): void {
+  if (
+    !hasWorkspacePayload(event.dataTransfer)
+    || dragSignature !== idsSignature()
+    || !tabIds.value.includes(targetId)
+  ) {
+    clearDragState()
+    return
+  }
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  const target = event.currentTarget as HTMLElement
+  const rect = target.getBoundingClientRect()
+  dropTargetId.value = targetId
+  dropPosition.value = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after'
+  updateAutoScroll(event)
+}
+
+function onTabsDragOver(event: DragEvent): void {
+  if (event.target === tabsRef.value) updateAutoScroll(event)
+}
+
+function onTabsDragLeave(event: DragEvent): void {
+  const next = event.relatedTarget
+  if (!(next instanceof Node) || !tabsRef.value?.contains(next)) stopAutoScroll()
+}
+
+function onDrop(event: DragEvent, targetId: string): void {
+  const sourceId = draggedId.value
+  const position = dropPosition.value
+  const valid = Boolean(
+    sourceId
+    && position
+    && dropTargetId.value === targetId
+    && dragSignature === idsSignature()
+    && hasWorkspacePayload(event.dataTransfer, true)
+    && tabIds.value.includes(sourceId)
+    && tabIds.value.includes(targetId),
+  )
+  if (valid) {
+    event.preventDefault()
+    const orderedIds = moveWorkspaceTab(tabIds.value, sourceId!, targetId, position!)
+    if (orderedIds.some((id, index) => id !== tabIds.value[index])) {
+      emit('reorder', { orderedIds, movedId: sourceId!, input: 'pointer' })
+    }
+  }
+  clearDragState(true)
+}
+
+function onDragEnd(): void {
+  clearDragState(true)
+}
+
+function onTabClick(tab: WorkspaceTab): void {
+  hideTooltip()
+  if (suppressClick) return
+  emit('select', tab.id)
+}
+
+function moveTabByKeyboard(tab: WorkspaceTab, direction: -1 | 1): void {
+  hideTooltip()
+  const index = tabIds.value.indexOf(tab.id)
+  const targetIndex = index + direction
+  const target = props.tabs[targetIndex]
+  if (index < 0 || !target) return
+  const displayTitle = tabPresentations.value[index]?.displayTitle ?? tab.title
+  const orderedIds = moveWorkspaceTab(
+    tabIds.value,
+    tab.id,
+    target.id,
+    direction < 0 ? 'before' : 'after',
+  )
+  emit('reorder', { orderedIds, movedId: tab.id, input: 'keyboard' })
+  liveAnnouncement.value = ''
+  void nextTick(() => {
+    liveAnnouncement.value = translate('workspace_tab.moved_announcement', {
+      title: displayTitle,
+      position: targetIndex + 1,
+      count: props.tabs.length,
+    })
+  })
 }
 
 // --- right-click / keyboard context menu ---
@@ -368,6 +574,10 @@ async function actionRevealInTree() {
 onBeforeUnmount(() => {
   closeMenu(false)
   hideTooltip()
+  clearDragState()
+  suppressClick = false
+  if (suppressClickTimer) clearTimeout(suppressClickTimer)
+  suppressClickTimer = null
 })
 
 // `activePath` is part of the reactive system; we read it through a
@@ -380,11 +590,19 @@ watch(activePathRef, () => {
 })
 watch(tabIds, (next) => {
   if (menuVisible.value && next.join('\u0000') !== menuOpeningSignature) closeMenu(false)
+  if (draggedId.value && next.join('\u0000') !== dragSignature) clearDragState()
 })
 </script>
 
 <template>
-  <div ref="tabsRef" class="tabs" role="tablist">
+  <div
+    ref="tabsRef"
+    class="tabs"
+    role="tablist"
+    @dragover="onTabsDragOver"
+    @dragleave="onTabsDragLeave"
+    @drop.self="clearDragState(true)"
+  >
     <div
       v-for="(t, i) in tabs"
       :key="t.id"
@@ -398,6 +616,8 @@ watch(tabIds, (next) => {
       :aria-expanded="menuVisible && menuTabPath === t.id ? 'true' : 'false'"
       :aria-label="tabPresentations[i].ariaLabel"
       :aria-describedby="tooltipTabId === t.id ? tooltipId(t.id) : undefined"
+      :aria-roledescription="translate('workspace_tab.draggable')"
+      draggable="true"
       class="tab"
       :class="{
         active: t.id === activePath,
@@ -405,8 +625,11 @@ watch(tabIds, (next) => {
         diff: t.kind === 'diff',
         'save-in-flight': t.kind === 'document' && t.save.inFlight,
         'save-attention': t.kind === 'document' && t.save.attention,
+        dragging: draggedId === t.id,
+        'drop-before': dropTargetId === t.id && dropPosition === 'before',
+        'drop-after': dropTargetId === t.id && dropPosition === 'after',
       }"
-      @click="() => { hideTooltip(); emit('select', t.id) }"
+      @click="onTabClick(t)"
       @auxclick.middle="() => { hideTooltip(); emit('close', t.id) }"
       @contextmenu="onContextMenu($event, t.id)"
       @mouseenter="onTooltipAnchorEnter(t, $event)"
@@ -414,6 +637,10 @@ watch(tabIds, (next) => {
       @focusin="onTooltipAnchorFocus(t, $event)"
       @focusout="onTooltipAnchorBlur($event)"
       @keydown="onTabKeydown($event, t)"
+      @dragstart="onDragStart($event, t)"
+      @dragover="onDragOver($event, t.id)"
+      @drop.stop="onDrop($event, t.id)"
+      @dragend="onDragEnd"
     >
       <!-- Dirty marker: independent of the save-status indicator so a
            dirty buffer is still visible when error / offline / external
@@ -438,10 +665,14 @@ watch(tabIds, (next) => {
       <span class="tab-title">{{ tabPresentations[i].displayTitle }}</span>
       <button
         class="tab-close"
+        draggable="false"
         :aria-label="translate('workspace_tab.close_named', { name: tabPresentations[i].displayTitle })"
+        @mousedown.stop
+        @dragstart.prevent.stop
         @click.stop="onCloseClick(t)"
       >×</button>
     </div>
+    <span class="sr-only" aria-live="polite" aria-atomic="true">{{ liveAnnouncement }}</span>
     <Teleport to="body">
       <div
         v-if="tooltipPresentation"
