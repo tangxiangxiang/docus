@@ -14,7 +14,7 @@
 // deterministic. The debounce is exercised via vi.useFakeTimers().
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent, h, nextTick, ref, type Ref } from 'vue'
+import { defineComponent, h, nextTick, ref, computed, type Ref } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { flushPromises, mount } from '@vue/test-utils'
 
@@ -45,6 +45,8 @@ function answerConfirm(ok: boolean) {
 }
 
 import { useEditorTabs, __setVaultIdForTesting } from '../useEditorTabs'
+import EditorTabs from '../../../components/vault/EditorTabs.vue'
+import { deriveDocumentSavePresentation } from '../editor-tabs/savePresentation'
 import { createVaultFileChanges, type VaultFileChanges } from '../context/fileChanges'
 import { useI18n } from '../../useI18n'
 import type { PostSummary, TreeNode } from '../../../lib/api'
@@ -1862,5 +1864,220 @@ describe('useEditorTabs — round-4 synchronous persistence', () => {
     h.removeOpenDocuments(['a'])
     expect(h.tabs.value).toEqual([])
     expect(readPersisted()).toMatchObject({ paths: [], active: null })
+  })
+})
+
+// --- round-5 DOM regressions ------------------------------------------------
+//
+// The previous round only checked `tabs.value[i].title` after the
+// await — but the underlying plain object IS mutated either way, so
+// the assertion passed even when the reactive Proxy never received
+// the update. These tests mount a minimal component that mirrors
+// VaultView's `tabs → workspaceTabs → EditorTabs` chain and check
+// the DOM directly. If async writes bypass the Proxy, the strip
+// title stays at the path-derived basename until some other array
+// mutation triggers a recompute (e.g. opening a fourth tab, which
+// is exactly the screenshot symptom).
+
+interface DomHarness {
+  unmount: () => void
+  openPost: (p: string) => Promise<void>
+  closeTab: (p: string) => Promise<boolean>
+  tabTitles: () => string[]
+  /** Last tab row text, for targeted assertions. */
+  lastTabTitle: () => string
+  activePath: Ref<string | null>
+  tabs: Ref<{ path: string; title: string }[]>
+}
+
+function mountWorkspaceTabsDom(): Promise<DomHarness> {
+  return new Promise(async (resolveOuter) => {
+    let captured: DomHarness | null = null
+    const router = makeRouter()
+    router.push('/vault').catch(() => {})
+    await router.isReady()
+    const Comp = defineComponent({
+      setup() {
+        const selectPanel = vi.fn()
+        const toggleViewMode = vi.fn()
+        const api = useEditorTabs({
+          selectPanel,
+          toggleViewMode,
+          fileChanges: createVaultFileChanges(),
+        })
+        const tabs = api.tabs
+        const activePath = api.activePath
+        const basename = (p: string) => (p.split('/').pop() ?? p).replace(/\.md$/, '')
+        // Mirror VaultView's workspaceTabs mapping exactly. The
+        // `title: tab.title || tab.path` fallback is the load-state
+        // behavior before getPost resolves.
+        const workspaceTabs = computed(() => tabs.value.map((tab) => ({
+          id: tab.path,
+          label: basename(tab.path),
+          title: tab.title || tab.path,
+          save: deriveDocumentSavePresentation(tab),
+          kind: 'document' as const,
+        })))
+        captured = {
+          unmount: () => {},
+          openPost: (p) => api.openPost(p),
+          closeTab: (p) => api.closeTab(p),
+          tabTitles: () => [...document.querySelectorAll('.tab-title')].map((el) => el.textContent ?? ''),
+          lastTabTitle: () => {
+            const nodes = document.querySelectorAll('.tab-title')
+            return nodes[nodes.length - 1]?.textContent ?? ''
+          },
+          activePath: api.activePath,
+          tabs: api.tabs,
+        }
+        // Render via JSX-equivalent using the template compiler
+        // instead of h() so child re-renders track reactive reads.
+        return () => h('div', { class: 'test-host' }, workspaceTabs.value.length > 0
+          ? [h(EditorTabs, {
+              tabs: workspaceTabs.value,
+              'active-path': activePath.value,
+              onSelect: (id: string) => api.selectTab(id),
+              onClose: (id: string) => api.closeTab(id),
+            })]
+          : [])
+      },
+    })
+    const wrapper = mount(Comp, {
+      global: { plugins: [router] },
+      attachTo: document.body,
+    })
+    captured!.unmount = () => { wrapper.unmount() }
+    // Wait for onMounted's refresh() to settle.
+    await nextTick()
+    await flushPromises()
+    resolveOuter(captured!)
+  })
+}
+
+describe('useEditorTabs — round-5 real-DOM async-title reactivity', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    toastCalls.length = 0
+    confirmResolve = null
+    __setVaultIdForTesting(null)
+  })
+  afterEach(() => {
+    __setVaultIdForTesting(null)
+    document.querySelectorAll('.tab-context-menu').forEach((el) => el.remove())
+    document.querySelectorAll('.tab-tooltip').forEach((el) => el.remove())
+  })
+
+  it('last opened tab flips its strip title the moment getPost resolves', async () => {
+    const aDeferred = deferred<unknown>()
+    const bDeferred = deferred<unknown>()
+    const cDeferred = deferred<unknown>()
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/tree' || url === '/api/posts') {
+        return { ok: true, status: 200, json: async () => [] }
+      }
+      const path = url.match(/\/api\/posts\/(.+)$/)![1]!
+      const handler = ({ a: aDeferred, b: bDeferred, c: cDeferred } as Record<string, ReturnType<typeof deferred<unknown>>>)[path]!
+      return { ok: true, status: 200, json: async () => handler.promise }
+    }))
+    const h = await mountWorkspaceTabsDom()
+    // Open A, B, C in sequence with getPost still pending on C.
+    const openA = h.openPost('a')
+    await flushPromises()
+    // While pending, the strip shows the path-derived basename.
+    expect(h.lastTabTitle()).toBe('a')
+    aDeferred.resolve({ path: 'a', raw: 'A', content: 'A', frontmatter: { title: '英语-主语' }, size: 1, mtime: 0 })
+    await openA
+
+    const openB = h.openPost('b')
+    await flushPromises()
+    expect(h.lastTabTitle()).toBe('b')
+    bDeferred.resolve({ path: 'b', raw: 'B', content: 'B', frontmatter: { title: '英语-宾语' }, size: 1, mtime: 0 })
+    await openB
+
+    const openC = h.openPost('c')
+    await flushPromises()
+    // CRITICAL: before resolving C, the strip shows the basename.
+    expect(h.lastTabTitle()).toBe('c')
+    expect(h.lastTabTitle()).not.toBe('英语-主语')
+    expect(h.lastTabTitle()).not.toContain('english-su')
+
+    // Resolve C WITHOUT opening a fourth tab or switching.
+    cDeferred.resolve({ path: 'c', raw: 'C', content: 'C', frontmatter: { title: '英语-谓语' }, size: 1, mtime: 0 })
+    await openC
+    await flushPromises()
+    await nextTick()
+
+    // The DOM must reflect the metadata title for C — without any
+    // subsequent openPost / selectTab / refresh.
+    const titles = h.tabTitles()
+    expect(titles).toEqual(['英语-主语', '英语-宾语', '英语-谓语'])
+    expect(h.lastTabTitle()).toBe('英语-谓语')
+    expect(h.lastTabTitle()).not.toContain('c')
+
+    h.unmount()
+  })
+
+  it('restoreOnMount: the last restored tab shows its metadata title without a follow-up push', async () => {
+    const aDeferred = deferred<unknown>()
+    const bDeferred = deferred<unknown>()
+    const cDeferred = deferred<unknown>()
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/tree' || url === '/api/posts') {
+        return { ok: true, status: 200, json: async () => [] }
+      }
+      const path = url.match(/\/api\/posts\/(.+)$/)![1]!
+      const handler = ({ a: aDeferred, b: bDeferred, c: cDeferred } as Record<string, ReturnType<typeof deferred<unknown>>>)[path]!
+      return { ok: true, status: 200, json: async () => handler.promise }
+    }))
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['a', 'b', 'c'], active: 'c',
+    }))
+    const h = await mountWorkspaceTabsDom()
+    // Restore runs sequentially. Resolve each as restore reaches it.
+    await flushPromises()
+    expect(h.lastTabTitle()).toBe('a')
+    aDeferred.resolve({ path: 'a', raw: 'A', content: 'A', frontmatter: { title: '英语-主语' }, size: 1, mtime: 0 })
+    await flushPromises()
+    await flushPromises()
+    expect(h.lastTabTitle()).toBe('b')
+    bDeferred.resolve({ path: 'b', raw: 'B', content: 'B', frontmatter: { title: '英语-宾语' }, size: 1, mtime: 0 })
+    await flushPromises()
+    await flushPromises()
+    expect(h.lastTabTitle()).toBe('c')
+    cDeferred.resolve({ path: 'c', raw: 'C', content: 'C', frontmatter: { title: '英语-谓语' }, size: 1, mtime: 0 })
+    await flushPromises()
+    await flushPromises()
+    await nextTick()
+
+    expect(h.tabTitles()).toEqual(['英语-主语', '英语-宾语', '英语-谓语'])
+    expect(h.lastTabTitle()).toBe('英语-谓语')
+    h.unmount()
+  })
+
+  it('loading indicator clears on the tab whose getPost just resolved (even if it is the last tab)', async () => {
+    // Round-5 surface test for the broader "async field never
+    // notifies" bug: `loading=false` and `serverMtime` must also
+    // land on the Proxy so the editor pane clears its spinner.
+    const cDeferred = deferred<unknown>()
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/tree' || url === '/api/posts') {
+        return { ok: true, status: 200, json: async () => [] }
+      }
+      const path = url.match(/\/api\/posts\/(.+)$/)![1]!
+      if (path !== 'c') throw new Error(`Unexpected getPost: ${path}`)
+      return { ok: true, status: 200, json: async () => cDeferred.promise }
+    }))
+    const h = await mountWorkspaceTabsDom()
+    const opening = h.openPost('c')
+    await flushPromises()
+    // Tab exists with loading=true until getPost resolves.
+    expect(h.tabs.value[0]!.title).toBe('c') // path fallback
+    cDeferred.resolve({ path: 'c', raw: 'C', content: 'C', frontmatter: { title: '英语-谓语' }, size: 1, mtime: 7 })
+    await opening
+    await flushPromises()
+    await nextTick()
+    expect(h.tabs.value[0]!.title).toBe('英语-谓语')
+    expect(h.lastTabTitle()).toBe('英语-谓语')
+    h.unmount()
   })
 })

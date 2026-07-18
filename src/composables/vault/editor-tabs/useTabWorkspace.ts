@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, toRaw } from 'vue'
 import { useRouter } from 'vue-router'
 import { getPost, getTree, listPosts, type PostSummary, type TreeNode } from '../../../lib/api'
 import { disposeMarkdownModel, renameMarkdownModel } from '../../../components/vault/monacoModelRegistry'
@@ -99,6 +99,25 @@ export function useTabWorkspace(options: {
     if (tab) tab.title = post.title
   }
 
+  /**
+   * Find the reactive proxy for a plain tab object inside `tabs.value`.
+   * Vue's `reactive()` wraps array elements in proxies on push, so
+   * writes must go through the proxy to fire effect notifications.
+   * Plain-object writes bypass the proxy `set` trap and silently
+   * miss downstream computed recomputations (workspaceTabs, strip
+   * title, save status, etc).
+   *
+   * The plain object is what we hold across `await getPost(...)` —
+   * comparing with `===` against stored elements doesn't work because
+   * the array stores proxies, so we unwrap with `toRaw` to check
+   * membership. Returns null when the tab has been spliced from the
+   * array — the caller must NOT resurrect it.
+   */
+  function liveTabFor(plainTab: Tab): Tab | null {
+    const live = tabs.value.find((candidate) => toRaw(candidate) === plainTab)
+    return live ?? null
+  }
+
   async function openPost(path: string, openOptions: { refresh?: boolean } = {}) {
     const existing = tabs.value.find((tab) => tab.path === path)
     if (existing) {
@@ -113,28 +132,38 @@ export function useTabWorkspace(options: {
     if (tabs.value.length >= TAB_SOFT_LIMIT) {
       options.toastInfo(t('editor.many_tabs'))
     }
-    const tab = makeEmptyTab(path)
-    tabs.value.push(tab)
+    const plainTab = makeEmptyTab(path)
+    tabs.value.push(plainTab)
     activePath.value = path
     navigateTo(path)
     try {
       const post = await getPost(path)
       // Race guard: the user may have closed this tab while getPost
-      // was in flight. If so, drop the populated data and remove the
-      // (now-orphan) placeholder. The watcher debounce will not have
-      // caught this yet, so we also persist synchronously.
-      const stillOpen = tabs.value.includes(tab)
-      if (!stillOpen) return
-      tab.raw = post.raw
-      tab.originalRaw = post.raw
-      tab.title = post.metadata?.title || (post.frontmatter.title as string) || path
-      tab.serverMtime = post.mtime
-      tab.loading = false
+      // was in flight. If so, drop the populated data — the watcher
+      // debounce will not have caught this yet, so we also persist
+      // synchronously. We compare against the plain object identity,
+      // not a Proxy field read, because Vue wraps array elements in
+      // a Proxy only on read.
+      const live = liveTabFor(plainTab)
+      if (!live) {
+        flushPersist()
+        return
+      }
+      // Must go through the proxy so dependent computeds recompute.
+      live.raw = post.raw
+      live.originalRaw = post.raw
+      live.title = post.metadata?.title || (post.frontmatter.title as string) || path
+      live.serverMtime = post.mtime
+      live.loading = false
+      live.loadError = null
     } catch (error) {
-      const stillOpen = tabs.value.includes(tab)
-      if (!stillOpen) return
-      tab.loadError = (error as Error).message
-      tab.loading = false
+      const live = liveTabFor(plainTab)
+      if (!live) {
+        flushPersist()
+        return
+      }
+      live.loadError = (error as Error).message
+      live.loading = false
     }
     flushPersist()
     if (openOptions.refresh !== false) await refresh()
@@ -142,24 +171,26 @@ export function useTabWorkspace(options: {
 
   async function restoreOneTab(path: string): Promise<boolean> {
     if (tabs.value.find((tab) => tab.path === path)) return true
-    const tab = makeEmptyTab(path)
-    tabs.value.push(tab)
+    const plainTab = makeEmptyTab(path)
+    tabs.value.push(plainTab)
     flushPersist()
     try {
       const post = await getPost(path)
       // Race guard: if the user closed this tab while the request was
-      // pending, the tab object has already been spliced from the
+      // pending, the plainTab has already been spliced from the
       // array. Don't resurrect it, and make sure the persisted list
       // doesn't carry a stale entry either.
-      if (!tabs.value.includes(tab)) {
+      const live = liveTabFor(plainTab)
+      if (!live) {
         flushPersist()
         return false
       }
-      tab.raw = post.raw
-      tab.originalRaw = post.raw
-      tab.title = post.metadata?.title || (post.frontmatter.title as string) || path
-      tab.serverMtime = post.mtime
-      tab.loading = false
+      live.raw = post.raw
+      live.originalRaw = post.raw
+      live.title = post.metadata?.title || (post.frontmatter.title as string) || path
+      live.serverMtime = post.mtime
+      live.loading = false
+      live.loadError = null
       flushPersist()
       return true
     } catch {
