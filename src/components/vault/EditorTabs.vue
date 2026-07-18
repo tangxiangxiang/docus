@@ -6,6 +6,7 @@ import {
   deriveTabUiPresentation,
   type TabUiPresentation,
 } from '../../composables/vault/editor-tabs/tabPresentation'
+import { useWorkspaceTabTooltip } from '../../composables/vault/workspace-tabs/useWorkspaceTabTooltip'
 import {
   moveWorkspaceTab,
   type WorkspaceTabDropPosition,
@@ -35,20 +36,7 @@ const tabPresentations = computed<TabUiPresentation[]>(() =>
   props.tabs.map((tab) => deriveTabUiPresentation(tab, translate)),
 )
 
-// Active tooltip presentation — single computed so the template
-// doesn't have to re-find the tab row every render.
-const tooltipPresentation = computed<TabUiPresentation | null>(() => {
-  if (tooltipTabId.value === null) return null
-  const idx = props.tabs.findIndex((t) => t.id === tooltipTabId.value)
-  if (idx < 0) return null
-  return tabPresentations.value[idx] ?? null
-})
-
 const tabsRef = ref<HTMLElement | null>(null)
-
-// Stable id base for tooltips — appended with the active path so
-// aria-describedby stays unique even when multiple tabs are mounted.
-const tooltipId = (path: string): string => `tab-tooltip-${path.replace(/[^a-zA-Z0-9_-]/g, '_')}`
 
 function focusTab(id: string): void {
   const target = [...(tabsRef.value?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])]
@@ -59,72 +47,31 @@ function focusTab(id: string): void {
 defineExpose({ focusTab })
 
 // --- custom tooltip --------------------------------------------------------
-//
-// One tooltip shown at a time across the whole tab strip. Lifecycle:
-//   hover/focus IN  → show
-//   mouseleave/blur → hide
-//   contextmenu     → hide + open menu
-//   click / middle-click on tab → hide
-//   switching tabs  → hide
-//   closing tab     → hide (parent removes the tab row entirely)
-//   Escape          → hide
-//   unmount         → hide
-// Only the row the tooltip is for sets aria-describedby so screen
-// readers don't keep an invisible "describedby" pointer after the
-// tooltip is gone.
-const tooltipTabId = ref<string | null>(null)
-const tooltipStyle = ref<Record<string, string>>({})
+const activePathRef = computed(() => props.activePath)
+const tabIds = computed(() => props.tabs.map((t) => t.id))
+const {
+  tooltipTabId,
+  tooltipStyle,
+  tooltipId,
+  show: showTooltipFor,
+  hide: hideTooltip,
+  handleEscape: handleTooltipEscape,
+} = useWorkspaceTabTooltip({
+  activeId: activePathRef,
+  tabIds,
+  isSuppressed: () => draggedId.value !== null,
+})
 
-function hideTooltip() {
-  tooltipTabId.value = null
-}
-
-function showTooltipFor(tabId: string, anchor: HTMLElement) {
-  tooltipTabId.value = tabId
-  positionTooltip(anchor)
-}
-
-function positionTooltip(anchor: HTMLElement) {
-  const rect = anchor.getBoundingClientRect()
-  const margin = 8
-  const preferredTop = rect.bottom + margin
-  const tooltipMaxWidth = 360
-  // First-pass clamp using the planned width. This gets the tooltip
-  // close enough that the post-render `getBoundingClientRect` check
-  // below doesn't have to move it far.
-  const plannedWidth = Math.min(tooltipMaxWidth, window.innerWidth - 16)
-  let left = rect.left
-  if (left + plannedWidth > window.innerWidth - 8) {
-    left = Math.max(8, window.innerWidth - 8 - plannedWidth)
-  }
-  tooltipStyle.value = {
-    left: `${Math.round(left)}px`,
-    top: `${Math.round(preferredTop)}px`,
-    maxWidth: `${tooltipMaxWidth}px`,
-  }
-  // Second-pass clamp: after the tooltip has rendered, read its
-  // actual outer width via getBoundingClientRect (which includes
-  // padding + border) and re-clamp. Without this, a long path line
-  // that wraps to multiple lines or a status row with extra glyphs
-  // can overflow the right edge by up to (padding + border) px even
-  // though the inline maxWidth looks fine.
-  nextTick(() => {
-    if (tooltipTabId.value === null) return
-    const el = document.getElementById(tooltipId(tooltipTabId.value))
-    if (!el) return
-    const actual = el.getBoundingClientRect()
-    const currentLeft = parseInt(tooltipStyle.value.left ?? '0', 10)
-    if (currentLeft + actual.width > window.innerWidth - 8) {
-      const nextLeft = Math.max(8, Math.round(window.innerWidth - 8 - actual.width))
-      tooltipStyle.value = { ...tooltipStyle.value, left: `${nextLeft}px` }
-    } else if (currentLeft < 8) {
-      tooltipStyle.value = { ...tooltipStyle.value, left: '8px' }
-    }
-  })
-}
+// Active tooltip presentation — single computed so the template
+// doesn't have to re-find the tab row every render.
+const tooltipPresentation = computed<TabUiPresentation | null>(() => {
+  if (tooltipTabId.value === null) return null
+  const idx = props.tabs.findIndex((t) => t.id === tooltipTabId.value)
+  if (idx < 0) return null
+  return tabPresentations.value[idx] ?? null
+})
 
 function onTooltipAnchorEnter(tab: WorkspaceTab, event: MouseEvent | FocusEvent) {
-  if (draggedId.value) return
   const target = event.currentTarget as HTMLElement | null
   if (target) showTooltipFor(tab.id, target)
 }
@@ -136,7 +83,6 @@ function onTooltipAnchorLeave(_tab: WorkspaceTab, event: MouseEvent | FocusEvent
 }
 
 function onTooltipAnchorFocus(tab: WorkspaceTab, event: FocusEvent) {
-  if (draggedId.value) return
   const target = event.currentTarget as HTMLElement | null
   if (target) showTooltipFor(tab.id, target)
 }
@@ -148,7 +94,7 @@ function onTooltipAnchorBlur(_event: FocusEvent) {
 }
 
 function onTabKeydown(event: KeyboardEvent, tab: WorkspaceTab) {
-  if (event.key === 'Escape') hideTooltip()
+  handleTooltipEscape(event)
   if (
     event.altKey
     && event.shiftKey
@@ -170,22 +116,6 @@ function onTabKeydown(event: KeyboardEvent, tab: WorkspaceTab) {
     openMenu(tab.id, rect.left, rect.bottom, anchor)
   }
 }
-
-// Hide the tooltip when the active tab switches — the new active tab
-// takes the focus anyway and the old tooltip is no longer relevant.
-const activePathRef = computed(() => props.activePath)
-
-// Hide the tooltip when its owning tab disappears from the props.
-// Without this watcher, tooltipTabId would still reference the
-// removed tab; a later re-mount of the same id would find the tab
-// in the (new) list and immediately re-show the tooltip without any
-// user hover or focus.
-const tabIds = computed(() => props.tabs.map((t) => t.id))
-watch(tabIds, (next) => {
-  if (tooltipTabId.value && !next.includes(tooltipTabId.value)) {
-    hideTooltip()
-  }
-})
 
 // --- tab close button click → hide tooltip before emission ---
 function onCloseClick(tab: WorkspaceTab) {
@@ -593,7 +523,6 @@ async function actionRevealInTree() {
 
 onBeforeUnmount(() => {
   closeMenu(false)
-  hideTooltip()
   clearDragState()
   clearBlockedDrag()
   suppressClick = false
@@ -601,12 +530,7 @@ onBeforeUnmount(() => {
   suppressClickTimer = null
 })
 
-// `activePath` is part of the reactive system; we read it through a
-// computed and re-run hideTooltip whenever it changes. Implementing
-// the watcher here keeps the tooltip-lifecycle logic colocated with
-// the tooltip state itself.
 watch(activePathRef, () => {
-  hideTooltip()
   if (menuVisible.value) closeMenu(false)
 })
 watch(tabIds, (next) => {
