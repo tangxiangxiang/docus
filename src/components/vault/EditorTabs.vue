@@ -177,6 +177,7 @@ const menuItemRefs = ref<HTMLElement[]>([])
 const activeMenuItem = ref(0)
 let menuSource: HTMLElement | null = null
 let menuOpeningSignature = ''
+let menuGeneration = 0
 
 const menuTabIndex = computed<number>(() =>
   menuTabPath.value ? props.tabs.findIndex((t) => t.id === menuTabPath.value) : -1,
@@ -224,6 +225,7 @@ function onContextMenu(e: MouseEvent, path: string) {
 }
 
 function openMenu(path: string, x: number, y: number, source: HTMLElement) {
+  const generation = ++menuGeneration
   removeMenuListeners()
   hideTooltip()
   menuTabPath.value = path
@@ -233,6 +235,11 @@ function openMenu(path: string, x: number, y: number, source: HTMLElement) {
   menuY.value = y
   menuVisible.value = true
   void nextTick(() => {
+    if (
+      generation !== menuGeneration
+      || !menuVisible.value
+      || !menuRef.value
+    ) return
     positionMenu()
     activeMenuItem.value = firstEnabledItem()
     focusActiveMenuItem()
@@ -253,15 +260,16 @@ function addMenuListeners() {
   document.addEventListener('pointerdown', onOutsidePointerDown, true)
   document.addEventListener('keydown', onMenuKeydown)
   window.addEventListener('resize', closeMenuWithoutFocus)
-  window.addEventListener('scroll', closeMenuWithoutFocus, true)
+  window.addEventListener('scroll', onMenuScroll, true)
 }
 function removeMenuListeners() {
   document.removeEventListener('pointerdown', onOutsidePointerDown, true)
   document.removeEventListener('keydown', onMenuKeydown)
   window.removeEventListener('resize', closeMenuWithoutFocus)
-  window.removeEventListener('scroll', closeMenuWithoutFocus, true)
+  window.removeEventListener('scroll', onMenuScroll, true)
 }
 function closeMenu(restoreFocus = false) {
+  menuGeneration++
   const source = menuSource
   menuVisible.value = false
   menuTabPath.value = null
@@ -271,6 +279,15 @@ function closeMenu(restoreFocus = false) {
 }
 function closeMenuWithoutFocus() {
   closeMenu(false)
+}
+function onMenuScroll(event: Event) {
+  const target = event.target
+  if (
+    menuRef.value
+    && target instanceof Node
+    && (target === menuRef.value || menuRef.value.contains(target))
+  ) return
+  closeMenuWithoutFocus()
 }
 function onOutsidePointerDown(event: PointerEvent) {
   if (!menuRef.value?.contains(event.target as Node)) closeMenu(false)
@@ -316,28 +333,35 @@ function onMenuKeydown(event: KeyboardEvent) {
   }
 }
 
-function actionClose() {
+async function prepareMenuAction(): Promise<void> {
+  const source = menuSource
+  closeMenu(false)
+  await nextTick()
+  if (source?.isConnected) source.focus()
+}
+
+async function actionClose() {
   if (!menuTabPath.value) return
   const path = menuTabPath.value
-  closeMenu(true)
+  await prepareMenuAction()
   emit('close', path)
 }
-function actionCloseMany(paths: string[]) {
+async function actionCloseMany(paths: string[]) {
   if (paths.length === 0) return
   const targets = [...paths]
-  closeMenu(true)
+  await prepareMenuAction()
   emit('close-many', targets)
 }
-function actionCopyPath() {
+async function actionCopyPath() {
   const path = menuDocumentPath.value
   if (!path) return
-  closeMenu(true)
+  await prepareMenuAction()
   emit('copy-path', path)
 }
-function actionRevealInTree() {
+async function actionRevealInTree() {
   const path = menuDocumentPath.value
   if (!path) return
-  closeMenu(true)
+  await prepareMenuAction()
   emit('reveal-in-tree', path)
 }
 

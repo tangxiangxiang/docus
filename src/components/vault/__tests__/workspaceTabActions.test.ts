@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { copyTextToClipboard } from '../workspaceTabActions'
+import { copyTextToClipboard, revealWorkspacePath } from '../workspaceTabActions'
 
 describe('Workspace tab path actions', () => {
   it('uses the Clipboard API when available', async () => {
@@ -24,5 +24,27 @@ describe('Workspace tab path actions', () => {
       value: vi.fn().mockReturnValue(false),
     })
     expect(await copyTextToClipboard('inbox/a', undefined, document)).toBe(false)
+  })
+})
+
+describe('Workspace tab file-tree reveal', () => {
+  it('catches refresh failures and reports one error without retrying reveal', async () => {
+    const revealPath = vi.fn().mockResolvedValue(false)
+    const refresh = vi.fn().mockRejectedValue(new Error('tree unavailable'))
+    const onNotFound = vi.fn()
+    const onError = vi.fn()
+
+    await expect(revealWorkspacePath('inbox/a', {
+      revealPath,
+      refresh,
+      afterRefresh: vi.fn(),
+      onNotFound,
+      onError,
+    })).resolves.toBeUndefined()
+
+    expect(revealPath).toHaveBeenCalledOnce()
+    expect(refresh).toHaveBeenCalledOnce()
+    expect(onNotFound).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith('inbox/a')
   })
 })

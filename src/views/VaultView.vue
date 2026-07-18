@@ -53,7 +53,10 @@ import {
   closeWorkspaceTabState,
 } from '../components/vault/workspaceClose'
 import type { WorkspaceTab } from '../components/vault/tabs'
-import { copyTextToClipboard } from '../components/vault/workspaceTabActions'
+import {
+  copyTextToClipboard,
+  revealWorkspacePath,
+} from '../components/vault/workspaceTabActions'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
 
@@ -443,11 +446,13 @@ async function revealWorkspaceTabInTree(path: string): Promise<void> {
   filesFilter.value = ''
   activeScope.value = null
   await nextTick()
-  if (await fileTreeRef.value?.revealPath(path)) return
-  await refresh()
-  await nextTick()
-  if (await fileTreeRef.value?.revealPath(path)) return
-  toast.info(t('workspace_tab.reveal_failed', { path }))
+  await revealWorkspacePath(path, {
+    revealPath: async (targetPath) => fileTreeRef.value?.revealPath(targetPath),
+    refresh,
+    afterRefresh: nextTick,
+    onNotFound: (targetPath) => toast.info(t('workspace_tab.reveal_failed', { path: targetPath })),
+    onError: (targetPath) => toast.error(t('workspace_tab.reveal_failed', { path: targetPath })),
+  })
 }
 
 function onVaultKeydown(event: KeyboardEvent): void {

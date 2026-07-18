@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { defineComponent } from 'vue'
 import EditorTabs from '../EditorTabs.vue'
+import ConfirmHost from '../../ConfirmHost.vue'
 import type { WorkspaceTab } from '../tabs'
 import { useI18n } from '../../../composables/useI18n'
 import { deriveDocumentSavePresentation } from '../../../composables/vault/editor-tabs/savePresentation'
 import type { DocumentSavePresentation } from '../../../composables/vault/editor-tabs/savePresentation'
+import { useConfirm } from '../../../composables/useConfirm'
 
 function save(overrides: Partial<DocumentSavePresentation> = {}): DocumentSavePresentation {
   return {
@@ -98,6 +101,7 @@ describe('EditorTabs context menu', () => {
     await rightClick(w, 'b')
     const btns = menuButtons()
     btns[0].click()  // 关闭
+    await flushPromises()
     expect(w.emitted('close')).toEqual([['b.md']])
     expect(w.emitted('close-many')).toBeUndefined()
     w.unmount()
@@ -110,6 +114,7 @@ describe('EditorTabs context menu', () => {
     })
     await rightClick(w, 'b')
     menuButtons().find((b) => b.textContent === '关闭其它')!.click()
+    await flushPromises()
     expect(w.emitted('close-many')).toEqual([[['a.md', 'c.md', 'd.md']]])
     w.unmount()
   })
@@ -121,6 +126,7 @@ describe('EditorTabs context menu', () => {
     })
     await rightClick(w, 'b')
     menuButtons().find((b) => b.textContent === '关闭右侧')!.click()
+    await flushPromises()
     // Right-clicked on b.md (index 1) → to-the-right is c.md, d.md.
     expect(w.emitted('close-many')).toEqual([[['c.md', 'd.md']]])
     w.unmount()
@@ -137,6 +143,7 @@ describe('EditorTabs context menu', () => {
     const w = mount(EditorTabs, { props: { tabs, activePath: 'a.md' }, attachTo: document.body })
     await rightClick(w, 'b')
     menuButtons().find((b) => b.textContent === '关闭左侧')!.click()
+    await flushPromises()
     expect(w.emitted('close-many')).toEqual([[['a.md', 'history:a']]])
     w.unmount()
   })
@@ -159,6 +166,7 @@ describe('EditorTabs context menu', () => {
     })
     await rightClick(w, 'b')
     menuButtons().find((b) => b.textContent === '关闭所有')!.click()
+    await flushPromises()
     expect(w.emitted('close-many')).toEqual([[['a.md', 'b.md', 'c.md', 'd.md']]])
     w.unmount()
   })
@@ -176,6 +184,7 @@ describe('EditorTabs context menu', () => {
     expect(btns[3].disabled).toBe(true)  // 关闭右侧
     expect(btns[4].disabled).toBe(false) // 关闭所有
     btns[4].click()
+    await flushPromises()
     expect(w.emitted('close-many')).toEqual([[['only.md']]])
     w.unmount()
   })
@@ -194,10 +203,12 @@ describe('EditorTabs context menu', () => {
     const w = mount(EditorTabs, { props: { tabs: [makeTab('a.md'), history], activePath: 'a.md' }, attachTo: document.body })
     await rightClick(w, 'history:internal')
     menuButtons().find((b) => b.textContent === '复制路径')!.click()
+    await flushPromises()
     expect(w.emitted('copy-path')).toEqual([['inbox/a']])
     expect(w.emitted('select')).toBeUndefined()
     await rightClick(w, 'history:internal')
     menuButtons().find((b) => b.textContent === '在文件树中显示')!.click()
+    await flushPromises()
     expect(w.emitted('reveal-in-tree')).toEqual([['inbox/a']])
     w.unmount()
   })
@@ -212,8 +223,8 @@ describe('EditorTabs context menu', () => {
     expect(document.activeElement?.textContent).toBe('在文件树中显示')
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    expect(w.emitted('close')).toEqual([['b.md']])
     await flushPromises()
+    expect(w.emitted('close')).toEqual([['b.md']])
     expect(document.activeElement).toBe(source.element)
 
     await source.trigger('keydown', { key: 'ContextMenu' })
@@ -221,6 +232,71 @@ describe('EditorTabs context menu', () => {
     await flushPromises()
     expect(document.activeElement).toBe(source.element)
     w.unmount()
+  })
+
+  it('restores the source tab before a dirty-close confirmation captures focus', async () => {
+    const Harness = defineComponent({
+      components: { EditorTabs, ConfirmHost },
+      setup() {
+        const { confirm } = useConfirm()
+        return {
+          tabs: [makeTab('dirty.md', { save: save({ status: 'dirty', dirty: true }) })],
+          onClose: () => confirm('Discard changes?'),
+        }
+      },
+      template: `
+        <EditorTabs :tabs="tabs" active-path="dirty.md" @close="onClose" />
+        <ConfirmHost />
+      `,
+    })
+    const w = mount(Harness, { attachTo: document.body })
+    const source = w.get<HTMLElement>('.tab')
+    source.element.focus()
+    await source.trigger('keydown', { key: 'F10', shiftKey: true })
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flushPromises()
+
+    expect(document.querySelector('.tab-context-menu')).toBeNull()
+    expect(document.querySelector('.confirm-host')).not.toBeNull()
+    document.querySelector<HTMLButtonElement>('.confirm-actions .btn')!.click()
+    await flushPromises()
+    expect(document.activeElement).toBe(source.element)
+    w.unmount()
+  })
+
+  it('keeps an overflowed menu open while the menu itself scrolls', async () => {
+    const w = mount(EditorTabs, {
+      props: { tabs: TABS, activePath: 'a.md' },
+      attachTo: document.body,
+    })
+    await rightClick(w, 'a')
+    const menu = document.querySelector<HTMLElement>('.tab-context-menu')!
+    menu.dispatchEvent(new Event('scroll'))
+    expect(document.querySelector('.tab-context-menu')).toBe(menu)
+    w.unmount()
+  })
+
+  it('does not register queued menu listeners after unmount', async () => {
+    const documentAdd = vi.spyOn(document, 'addEventListener')
+    const windowAdd = vi.spyOn(window, 'addEventListener')
+    const w = mount(EditorTabs, {
+      props: { tabs: TABS, activePath: 'a.md' },
+      attachTo: document.body,
+    })
+    documentAdd.mockClear()
+    windowAdd.mockClear()
+    w.get<HTMLElement>('.tab').element.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true,
+      clientX: 100,
+      clientY: 50,
+    }))
+    w.unmount()
+    await flushPromises()
+
+    expect(documentAdd.mock.calls.some(([type]) => type === 'pointerdown' || type === 'keydown')).toBe(false)
+    expect(windowAdd.mock.calls.some(([type]) => type === 'resize' || type === 'scroll')).toBe(false)
+    documentAdd.mockRestore()
+    windowAdd.mockRestore()
   })
 
   it('clamps the rendered menu rect to an 8px viewport margin', async () => {

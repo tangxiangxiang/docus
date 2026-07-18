@@ -34,3 +34,26 @@ export async function copyTextToClipboard(
   }
   return legacyCopyText(text, targetDocument)
 }
+
+export interface RevealWorkspacePathOptions {
+  revealPath: (path: string) => Promise<boolean | undefined>
+  refresh: () => Promise<unknown>
+  afterRefresh: () => Promise<unknown>
+  onNotFound: (path: string) => void
+  onError: (path: string) => void
+}
+
+export async function revealWorkspacePath(
+  path: string,
+  options: RevealWorkspacePathOptions,
+): Promise<void> {
+  try {
+    if (await options.revealPath(path)) return
+    await options.refresh()
+    await options.afterRefresh()
+    if (await options.revealPath(path)) return
+    options.onNotFound(path)
+  } catch {
+    options.onError(path)
+  }
+}
