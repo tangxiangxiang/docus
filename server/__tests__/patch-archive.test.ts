@@ -151,6 +151,7 @@ describe('PATCH /api/posts/* archive-note whitelist', () => {
     // level, so the protocol layer must too. Without this, a capital-A
     // path could escape the "archive notes stay in archive" gate.
     // Seed a file under the case-variant path and try to move it out.
+    await fs.mkdir(path.join(tmpRoot, 'Archive'), { recursive: true })
     await fs.writeFile(path.join(tmpRoot, 'Archive', 'perm.md'), '---\ntitle: P\n---\n\nbody\n', 'utf8')
     const r = await patch('/api/posts/Archive/perm', { targetPath: 'inbox/perm' })
     expect(r.status).toBe(422)
