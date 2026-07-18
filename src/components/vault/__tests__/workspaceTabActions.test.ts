@@ -12,10 +12,15 @@ describe('Workspace tab path actions', () => {
   it('falls back when Clipboard API rejects', async () => {
     const writeText = vi.fn().mockRejectedValue(new Error('denied'))
     const execCommand = vi.fn().mockReturnValue(true)
+    const source = document.createElement('button')
+    document.body.appendChild(source)
+    source.focus()
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
     expect(await copyTextToClipboard('inbox/a', { writeText }, document)).toBe(true)
     expect(execCommand).toHaveBeenCalledWith('copy')
     expect(document.querySelector('textarea')).toBeNull()
+    expect(document.activeElement).toBe(source)
+    source.remove()
   })
 
   it('reports failure when neither clipboard path succeeds', async () => {

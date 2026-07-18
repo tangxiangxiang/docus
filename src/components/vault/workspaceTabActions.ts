@@ -3,19 +3,26 @@ export interface ClipboardWriter {
 }
 
 function legacyCopyText(text: string, targetDocument: Document): boolean {
+  const previousFocus = targetDocument.activeElement instanceof HTMLElement
+    ? targetDocument.activeElement
+    : null
   const textarea = targetDocument.createElement('textarea')
   textarea.value = text
   textarea.setAttribute('readonly', '')
   textarea.style.position = 'fixed'
   textarea.style.opacity = '0'
   targetDocument.body.appendChild(textarea)
-  textarea.select()
   try {
+    textarea.focus({ preventScroll: true })
+    textarea.select()
     return targetDocument.execCommand('copy')
   } catch {
     return false
   } finally {
     textarea.remove()
+    if (previousFocus?.isConnected) {
+      previousFocus.focus({ preventScroll: true })
+    }
   }
 }
 

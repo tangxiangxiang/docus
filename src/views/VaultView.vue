@@ -401,7 +401,14 @@ async function closeWorkspaceTab(id: string): Promise<void> {
     closeSnapshot: historySnapshots.closeSnapshot,
     refreshDocumentComparison: historyComparisons.refreshDocumentComparison,
   })
-  if (!result.closed || !result.activeWillClose) return
+  if (!result.closed) return
+  if (!result.activeWillClose) {
+    await nextTick()
+    const activeId = activeWorkspaceTabId.value
+    if (activeId) editorTabsRef.value?.focusTab(activeId)
+    else vaultRef.value?.focus()
+    return
+  }
   if (!result.fallbackId) {
     await nextTick()
     vaultRef.value?.focus()
@@ -424,7 +431,14 @@ async function closeManyWorkspaceTabs(ids: string[]): Promise<void> {
     closeComparisons: historyComparisons.closeComparisons,
     refreshDocumentComparison: historyComparisons.refreshDocumentComparison,
   })
-  if (!result.closed || !result.activeWillClose) return
+  if (!result.closed) return
+  if (!result.activeWillClose) {
+    await nextTick()
+    const activeId = activeWorkspaceTabId.value
+    if (activeId) editorTabsRef.value?.focusTab(activeId)
+    else vaultRef.value?.focus()
+    return
+  }
   if (!result.fallbackId) {
     await nextTick()
     vaultRef.value?.focus()

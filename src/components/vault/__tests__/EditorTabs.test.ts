@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, nextTick, ref } from 'vue'
 import EditorTabs from '../EditorTabs.vue'
 import ConfirmHost from '../../ConfirmHost.vue'
 import type { WorkspaceTab } from '../tabs'
@@ -104,6 +104,41 @@ describe('EditorTabs context menu', () => {
     await flushPromises()
     expect(w.emitted('close')).toEqual([['b.md']])
     expect(w.emitted('close-many')).toBeUndefined()
+    w.unmount()
+  })
+
+  it.each([
+    ['Document', makeTab('b.md')],
+    ['History', makeTab('history:b', { kind: 'history', label: 'B History' })],
+    ['Diff', makeTab('diff:b', { kind: 'diff', label: 'B Diff' })],
+  ])('focuses the active tab after the parent successfully removes a non-active %s tab', async (_name, closingTab) => {
+    const Harness = defineComponent({
+      components: { EditorTabs },
+      setup() {
+        const tabs = ref([makeTab('a.md'), closingTab])
+        const editorTabs = ref<InstanceType<typeof EditorTabs> | null>(null)
+        async function close(id: string) {
+          tabs.value = tabs.value.filter((tab) => tab.id !== id)
+          await nextTick()
+          editorTabs.value?.focusTab('a.md')
+        }
+        return { tabs, editorTabs, close }
+      },
+      template: '<EditorTabs ref="editorTabs" :tabs="tabs" active-path="a.md" @close="close" />',
+    })
+    const w = mount(Harness, { attachTo: document.body })
+    const source = w.find(`[data-tab-id="${closingTab.id}"]`)
+    const sourceElement = source.element as HTMLElement
+    sourceElement.focus()
+    await source.trigger('keydown', { key: 'ContextMenu' })
+    menuButtons().find((button) => button.textContent === '关闭')!.click()
+    await flushPromises()
+    await nextTick()
+
+    expect(w.find(`[data-tab-id="${closingTab.id}"]`).exists()).toBe(false)
+    expect(w.find('[data-tab-id="a.md"]').attributes('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(w.find('[data-tab-id="a.md"]').element)
+    expect(document.activeElement).not.toBe(document.body)
     w.unmount()
   })
 

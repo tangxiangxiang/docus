@@ -131,4 +131,18 @@ describe('VaultView editor tab wiring', () => {
       expect(handler!.indexOf('focusViewer()')).toBeLessThan(handler!.indexOf('await request'))
     }
   })
+
+  it('hands focus to the active tab after closing a non-active workspace tab', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const closeOne = source.match(/async function closeWorkspaceTab[\s\S]*?\n}/)?.[0]
+    const closeMany = source.match(/async function closeManyWorkspaceTabs[\s\S]*?\n}/)?.[0]
+
+    for (const handler of [closeOne, closeMany]) {
+      expect(handler).toBeDefined()
+      expect(handler).toContain('if (!result.activeWillClose)')
+      expect(handler).toContain('const activeId = activeWorkspaceTabId.value')
+      expect(handler).toContain('editorTabsRef.value?.focusTab(activeId)')
+      expect(handler).toContain('vaultRef.value?.focus()')
+    }
+  })
 })
