@@ -53,6 +53,7 @@ import {
   closeWorkspaceTabState,
 } from '../components/vault/workspaceClose'
 import type { WorkspaceTab } from '../components/vault/tabs'
+import { copyTextToClipboard } from '../components/vault/workspaceTabActions'
 import StatusBar from '../components/vault/StatusBar.vue'
 import CommandPalette from '../components/vault/CommandPalette.vue'
 
@@ -133,6 +134,7 @@ const emptyActions = computed(() => [
 const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
+const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const snapshotPaneRef = ref<InstanceType<typeof HistorySnapshotPane> | null>(null)
 const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>(null)
 function openSearch() { paletteRef.value?.show() }
@@ -325,6 +327,7 @@ const workspaceTabs = computed<WorkspaceTab[]>(() => [
     title: tab.title || tab.path,
     save: deriveDocumentSavePresentation(tab),
     kind: 'document' as const,
+    documentPath: tab.path,
   })),
   ...historySnapshots.snapshots.value.map((snapshot) => ({
     id: snapshot.tabId,
@@ -332,6 +335,7 @@ const workspaceTabs = computed<WorkspaceTab[]>(() => [
     title: snapshot.documentTitle,
     save: deriveDocumentSavePresentation(null),
     kind: 'history' as const,
+    documentPath: snapshot.documentPath,
   })),
   ...historyComparisons.comparisons.value.map((comparison) => ({
     id: comparison.tabId,
@@ -339,6 +343,7 @@ const workspaceTabs = computed<WorkspaceTab[]>(() => [
     title: comparison.documentTitle,
     save: deriveDocumentSavePresentation(null),
     kind: 'diff' as const,
+    documentPath: comparison.documentPath,
   })),
 ])
 const activeSavePresentation = computed(() => (
@@ -425,6 +430,24 @@ async function closeManyWorkspaceTabs(ids: string[]): Promise<void> {
   await selectWorkspaceTab(result.fallbackId, false)
   await nextTick()
   editorTabsRef.value?.focusTab(result.fallbackId)
+}
+
+async function copyWorkspaceTabPath(path: string): Promise<void> {
+  const copied = await copyTextToClipboard(path)
+  if (copied) toast.success(t('workspace_tab.path_copied', { path }))
+  else toast.error(t('workspace_tab.copy_path_failed'))
+}
+
+async function revealWorkspaceTabInTree(path: string): Promise<void> {
+  activePanel.value = 'files'
+  filesFilter.value = ''
+  activeScope.value = null
+  await nextTick()
+  if (await fileTreeRef.value?.revealPath(path)) return
+  await refresh()
+  await nextTick()
+  if (await fileTreeRef.value?.revealPath(path)) return
+  toast.info(t('workspace_tab.reveal_failed', { path }))
 }
 
 function onVaultKeydown(event: KeyboardEvent): void {
@@ -555,7 +578,7 @@ async function showExternalDiff() {
 // router view. This call installs its localStorage watcher; NavBar reads
 // `activeScope` / `toggleScope` from the same instance, and FileTree
 // filters `topLevel` off the same `activeScope` ref.
-useScopeFilter()
+const { activeScope } = useScopeFilter()
 
 /* ---------- Tag filter ---------- */
 const selectedTag = ref<string | null>(null)
@@ -647,6 +670,7 @@ watch(isReadMode, async (reading) => {
 
     <FileTree
       v-if="activePanel === 'files'"
+      ref="fileTreeRef"
       v-model:filter="filesFilter"
       :tree="tree"
       :posts="posts"
@@ -694,6 +718,8 @@ watch(isReadMode, async (reading) => {
         @select="selectWorkspaceTab"
         @close="closeWorkspaceTab"
         @close-many="closeManyWorkspaceTabs"
+        @copy-path="copyWorkspaceTabPath"
+        @reveal-in-tree="revealWorkspaceTabInTree"
       />
 
       <!-- Edit mode: single Monaco editor surface. -->

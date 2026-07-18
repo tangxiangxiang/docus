@@ -14,6 +14,34 @@ const tabs: WorkspaceTab[] = [
 ]
 
 describe('Workspace close coordination', () => {
+  it('classifies mixed tabs by kind and confirms all documents once before any mutation', async () => {
+    const calls: string[] = []
+    const mixed: WorkspaceTab[] = [
+      { ...tabs[0]!, id: 'history-looking-document', kind: 'document', documentPath: 'a.md' },
+      { ...tabs[1]!, id: 'opaque-history', kind: 'history', documentPath: 'a.md' },
+      { ...tabs[2]!, id: 'opaque-diff', kind: 'diff', documentPath: 'b.md' },
+    ]
+    const result = await closeManyWorkspaceTabState(mixed.map((tab) => tab.id), {
+      workspaceTabs: mixed,
+      activeId: 'opaque-history',
+      comparisons: () => [],
+      confirmEditorTabs: async (ids) => { calls.push(`confirm:${ids.join(',')}`); return true },
+      closeEditorTabsConfirmed: (ids) => calls.push(`documents:${ids.join(',')}`),
+      closeSnapshots: (ids) => calls.push(`history:${ids.join(',')}`),
+      closeComparisons: (ids) => calls.push(`diff:${ids.join(',')}`),
+      refreshDocumentComparison: vi.fn().mockResolvedValue(true),
+    })
+
+    expect(calls).toEqual([
+      'confirm:history-looking-document',
+      'documents:history-looking-document',
+      'history:opaque-history',
+      'diff:opaque-diff',
+    ])
+    expect(result.closed).toBe(true)
+    expect(result.fallbackId).toBeNull()
+  })
+
   it('refreshes a retained active Diff only after its dirty Current tab closes', async () => {
     const calls: string[] = []
     const result = await closeWorkspaceTabState('a.md', {

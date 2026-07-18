@@ -1,9 +1,7 @@
 import type { WorkspaceTab } from './tabs'
 
 function documentPath(tab: WorkspaceTab): string {
-  if (tab.kind === 'history') return tab.id.slice('history:'.length)
-  if (tab.kind === 'diff') return tab.id.slice('diff:'.length)
-  return tab.id
+  return tab.documentPath ?? (tab.kind === 'document' ? tab.id : '')
 }
 
 export function fallbackAfterClosingWorkspaceTab(

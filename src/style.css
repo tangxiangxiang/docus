@@ -1722,7 +1722,7 @@ main.container {
 .tab-context-menu,
 .history-context-menu {
   position: fixed; z-index: 9999;
-  min-width: 140px;
+  min-width: 180px;
   padding: 4px;
   background: var(--bg-soft, #252526);
   color: var(--text-h, #ddd);
@@ -1731,12 +1731,24 @@ main.container {
   box-shadow: 0 4px 16px rgba(0,0,0,0.45);
   display: flex; flex-direction: column;
 }
+.tab-context-menu {
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  z-index: 10001;
+}
 .tree-context-menu button,
 .tab-context-menu button,
 .history-context-menu button {
   background: transparent; border: 0; color: inherit;
   padding: 5px 10px; border-radius: 4px; cursor: pointer; font: inherit;
   font-size: 0.85rem; text-align: left;
+}
+.tab-context-menu button {
+  min-height: 32px;
+  width: 100%;
+  overflow-wrap: anywhere;
 }
 .tree-context-menu button {
   display: grid;
@@ -1773,6 +1785,11 @@ main.container {
 .history-context-menu button:hover {
   background: var(--border, rgba(255,255,255,0.08));
 }
+.tab-context-menu button:focus-visible {
+  outline: 1px solid var(--accent, #6aa9ff);
+  outline-offset: -1px;
+  background: var(--border, rgba(255,255,255,0.08));
+}
 .tree-context-menu button:disabled,
 .tab-context-menu button:disabled,
 .history-context-menu button:disabled {
@@ -1794,6 +1811,10 @@ main.container {
 .tab-context-menu hr,
 .history-context-menu hr {
   border: 0; border-top: 1px solid var(--border, rgba(255,255,255,0.08));
+  margin: 4px 0;
+}
+.tab-context-menu [role="separator"] {
+  border-top: 1px solid var(--border, rgba(255,255,255,0.08));
   margin: 4px 0;
 }
 

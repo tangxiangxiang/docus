@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
 import FileTree from '../FileTree.vue'
@@ -50,6 +50,23 @@ function rowByName(wrapper: any, name: string): any {
 }
 
 describe('FileTree', () => {
+  it('reveals a path by expanding ancestors and focusing without selecting', async () => {
+    const scrollIntoView = vi.fn()
+    HTMLElement.prototype.scrollIntoView = scrollIntoView
+    const wrapper = mount(FileTree, {
+      props: { tree: TREE, currentPath: null },
+      attachTo: document.body,
+    })
+    expect(await wrapper.vm.revealPath('inbox/backend/redis-note')).toBe(true)
+    expect(JSON.parse(localStorage.getItem('docus.vault.expandedPaths') ?? '[]'))
+      .toEqual(expect.arrayContaining(['inbox', 'inbox/backend']))
+    expect(document.activeElement?.getAttribute('data-tree-key')).toBe('file:inbox/backend/redis-note')
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    expect(wrapper.emitted('select')).toBeUndefined()
+    expect(await wrapper.vm.revealPath('missing')).toBe(false)
+    wrapper.unmount()
+  })
+
   it('renders top-level folders and expands a folder from its row', async () => {
     const wrapper = mount(FileTree, { props: { tree: TREE, currentPath: null } })
     expect(wrapper.text()).toContain('inbox')

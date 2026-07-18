@@ -77,11 +77,10 @@ export async function closeManyWorkspaceTabState(
     closingIds,
     deps.activeId,
   )
-  const historyIds = closingIds.filter((id) => id.startsWith('history:'))
-  const comparisonIds = closingIds.filter((id) => id.startsWith('diff:'))
-  const documentIds = closingIds.filter(
-    (id) => !id.startsWith('history:') && !id.startsWith('diff:'),
-  )
+  const closingTabs = deps.workspaceTabs.filter((tab) => closingIds.includes(tab.id))
+  const historyIds = closingTabs.filter((tab) => tab.kind === 'history').map((tab) => tab.id)
+  const comparisonIds = closingTabs.filter((tab) => tab.kind === 'diff').map((tab) => tab.id)
+  const documentIds = closingTabs.filter((tab) => tab.kind === 'document').map((tab) => tab.id)
 
   // Confirm all dirty documents before mutating any kind of Workspace tab.
   if (!(await deps.confirmEditorTabs(documentIds))) {

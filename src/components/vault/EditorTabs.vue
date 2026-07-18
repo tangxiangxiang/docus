@@ -12,6 +12,8 @@ const emit = defineEmits<{
   select: [path: string]
   close: [path: string]
   'close-many': [paths: string[]]
+  'copy-path': [path: string]
+  'reveal-in-tree': [path: string]
 }>()
 const { t: translate } = useI18n()
 
@@ -132,8 +134,15 @@ function onTooltipAnchorBlur(_event: FocusEvent) {
   hideTooltip()
 }
 
-function onTooltipKeydown(event: KeyboardEvent) {
+function onTabKeydown(event: KeyboardEvent, tab: WorkspaceTab) {
   if (event.key === 'Escape') hideTooltip()
+  if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+    event.preventDefault()
+    event.stopPropagation()
+    const anchor = event.currentTarget as HTMLElement
+    const rect = anchor.getBoundingClientRect()
+    openMenu(tab.id, rect.left, rect.bottom, anchor)
+  }
 }
 
 // Hide the tooltip when the active tab switches — the new active tab
@@ -158,15 +167,21 @@ function onCloseClick(tab: WorkspaceTab) {
   emit('close', tab.id)
 }
 
-// --- right-click context menu (unchanged behavior, now also hides tooltip) ---
+// --- right-click / keyboard context menu ---
 const menuVisible = ref(false)
 const menuX = ref(0)
 const menuY = ref(0)
 const menuTabPath = ref<string | null>(null)
+const menuRef = ref<HTMLElement | null>(null)
+const menuItemRefs = ref<HTMLElement[]>([])
+const activeMenuItem = ref(0)
+let menuSource: HTMLElement | null = null
+let menuOpeningSignature = ''
 
 const menuTabIndex = computed<number>(() =>
   menuTabPath.value ? props.tabs.findIndex((t) => t.id === menuTabPath.value) : -1,
 )
+const menuTab = computed(() => props.tabs[menuTabIndex.value] ?? null)
 
 const othersPaths = computed<string[]>(() => {
   if (!menuTabPath.value) return []
@@ -177,54 +192,171 @@ const rightPaths = computed<string[]>(() => {
   if (i < 0) return []
   return props.tabs.slice(i + 1).map((t) => t.id)
 })
+const leftPaths = computed<string[]>(() => {
+  const i = menuTabIndex.value
+  if (i < 0) return []
+  return props.tabs.slice(0, i).map((t) => t.id)
+})
 const allPaths = computed<string[]>(() => props.tabs.map((t) => t.id))
+const menuDocumentPath = computed<string | null>(() => {
+  const tab = menuTab.value
+  if (!tab) return null
+  return tab.documentPath ?? (tab.kind === 'document' ? tab.id : null)
+})
 
 const canCloseOthers = computed(() => props.tabs.length > 1)
+const canCloseLeft = computed(() => leftPaths.value.length > 0)
 const canCloseRight = computed(() => rightPaths.value.length > 0)
-const canCloseAll = computed(() => props.tabs.length > 1)
+const menuItems = computed(() => [
+  { action: actionClose, disabled: false },
+  { action: () => actionCloseMany(othersPaths.value), disabled: !canCloseOthers.value },
+  { action: () => actionCloseMany(leftPaths.value), disabled: !canCloseLeft.value },
+  { action: () => actionCloseMany(rightPaths.value), disabled: !canCloseRight.value },
+  { action: () => actionCloseMany(allPaths.value), disabled: false },
+  { action: actionCopyPath, disabled: !menuDocumentPath.value },
+  { action: actionRevealInTree, disabled: !menuDocumentPath.value },
+])
 
-function openMenu(e: MouseEvent, path: string) {
+function onContextMenu(e: MouseEvent, path: string) {
   e.preventDefault()
   e.stopPropagation()
-  // The context menu is the canonical interaction — close any open
-  // tooltip so the user doesn't see two overlapping affordances.
+  openMenu(path, e.clientX, e.clientY, e.currentTarget as HTMLElement)
+}
+
+function openMenu(path: string, x: number, y: number, source: HTMLElement) {
+  removeMenuListeners()
   hideTooltip()
   menuTabPath.value = path
-  menuX.value = e.clientX
-  menuY.value = e.clientY
+  menuSource = source
+  menuOpeningSignature = tabIds.value.join('\u0000')
+  menuX.value = x
+  menuY.value = y
   menuVisible.value = true
-  nextTick(() => {
-    document.addEventListener('click', closeMenu, { once: true })
-    document.addEventListener('keydown', onMenuEscape)
+  void nextTick(() => {
+    positionMenu()
+    activeMenuItem.value = firstEnabledItem()
+    focusActiveMenuItem()
+    addMenuListeners()
   })
 }
-function closeMenu() {
-  menuVisible.value = false
-  document.removeEventListener('keydown', onMenuEscape)
+
+function positionMenu() {
+  const el = menuRef.value
+  if (!el) return
+  const margin = 8
+  const rect = el.getBoundingClientRect()
+  menuX.value = Math.max(margin, Math.min(menuX.value, window.innerWidth - margin - rect.width))
+  menuY.value = Math.max(margin, Math.min(menuY.value, window.innerHeight - margin - rect.height))
 }
-onBeforeUnmount(closeMenu)
-function onMenuEscape(e: KeyboardEvent) {
-  if (e.key === 'Escape') closeMenu()
+
+function addMenuListeners() {
+  document.addEventListener('pointerdown', onOutsidePointerDown, true)
+  document.addEventListener('keydown', onMenuKeydown)
+  window.addEventListener('resize', closeMenuWithoutFocus)
+  window.addEventListener('scroll', closeMenuWithoutFocus, true)
+}
+function removeMenuListeners() {
+  document.removeEventListener('pointerdown', onOutsidePointerDown, true)
+  document.removeEventListener('keydown', onMenuKeydown)
+  window.removeEventListener('resize', closeMenuWithoutFocus)
+  window.removeEventListener('scroll', closeMenuWithoutFocus, true)
+}
+function closeMenu(restoreFocus = false) {
+  const source = menuSource
+  menuVisible.value = false
+  menuTabPath.value = null
+  menuItemRefs.value = []
+  removeMenuListeners()
+  if (restoreFocus) void nextTick(() => source?.isConnected && source.focus())
+}
+function closeMenuWithoutFocus() {
+  closeMenu(false)
+}
+function onOutsidePointerDown(event: PointerEvent) {
+  if (!menuRef.value?.contains(event.target as Node)) closeMenu(false)
+}
+function firstEnabledItem() {
+  return menuItems.value.findIndex((item) => !item.disabled)
+}
+function lastEnabledItem() {
+  for (let i = menuItems.value.length - 1; i >= 0; i--) {
+    if (!menuItems.value[i].disabled) return i
+  }
+  return 0
+}
+function moveMenuFocus(direction: 1 | -1) {
+  let next = activeMenuItem.value
+  do next = (next + direction + menuItems.value.length) % menuItems.value.length
+  while (menuItems.value[next].disabled)
+  activeMenuItem.value = next
+  focusActiveMenuItem()
+}
+function focusActiveMenuItem() {
+  menuItemRefs.value[activeMenuItem.value]?.focus()
+}
+function setMenuItemRef(el: unknown, index: number) {
+  if (el instanceof HTMLElement) menuItemRefs.value[index] = el
+}
+function onMenuKeydown(event: KeyboardEvent) {
+  if (!menuVisible.value) return
+  if (event.key === 'Escape' || event.key === 'Tab') {
+    event.preventDefault()
+    closeMenu(true)
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault()
+    moveMenuFocus(event.key === 'ArrowDown' ? 1 : -1)
+  } else if (event.key === 'Home' || event.key === 'End') {
+    event.preventDefault()
+    activeMenuItem.value = event.key === 'Home' ? firstEnabledItem() : lastEnabledItem()
+    focusActiveMenuItem()
+  } else if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    const item = menuItems.value[activeMenuItem.value]
+    if (item && !item.disabled) item.action()
+  }
 }
 
 function actionClose() {
   if (!menuTabPath.value) return
-  emit('close', menuTabPath.value)
-  closeMenu()
+  const path = menuTabPath.value
+  closeMenu(true)
+  emit('close', path)
 }
 function actionCloseMany(paths: string[]) {
   if (paths.length === 0) return
-  emit('close-many', paths)
-  closeMenu()
+  const targets = [...paths]
+  closeMenu(true)
+  emit('close-many', targets)
+}
+function actionCopyPath() {
+  const path = menuDocumentPath.value
+  if (!path) return
+  closeMenu(true)
+  emit('copy-path', path)
+}
+function actionRevealInTree() {
+  const path = menuDocumentPath.value
+  if (!path) return
+  closeMenu(true)
+  emit('reveal-in-tree', path)
 }
 
-onBeforeUnmount(hideTooltip)
+onBeforeUnmount(() => {
+  closeMenu(false)
+  hideTooltip()
+})
 
 // `activePath` is part of the reactive system; we read it through a
 // computed and re-run hideTooltip whenever it changes. Implementing
 // the watcher here keeps the tooltip-lifecycle logic colocated with
 // the tooltip state itself.
-watch(activePathRef, () => { hideTooltip() })
+watch(activePathRef, () => {
+  hideTooltip()
+  if (menuVisible.value) closeMenu(false)
+})
+watch(tabIds, (next) => {
+  if (menuVisible.value && next.join('\u0000') !== menuOpeningSignature) closeMenu(false)
+})
 </script>
 
 <template>
@@ -238,6 +370,8 @@ watch(activePathRef, () => { hideTooltip() })
       :data-status-kind="tabPresentations[i].statusKind"
       :tabindex="t.id === activePath ? 0 : -1"
       :aria-selected="t.id === activePath"
+      aria-haspopup="menu"
+      :aria-expanded="menuVisible && menuTabPath === t.id ? 'true' : 'false'"
       :aria-label="tabPresentations[i].ariaLabel"
       :aria-describedby="tooltipTabId === t.id ? tooltipId(t.id) : undefined"
       class="tab"
@@ -250,12 +384,12 @@ watch(activePathRef, () => { hideTooltip() })
       }"
       @click="() => { hideTooltip(); emit('select', t.id) }"
       @auxclick.middle="() => { hideTooltip(); emit('close', t.id) }"
-      @contextmenu="openMenu($event, t.id)"
+      @contextmenu="onContextMenu($event, t.id)"
       @mouseenter="onTooltipAnchorEnter(t, $event)"
       @mouseleave="onTooltipAnchorLeave(t, $event)"
       @focusin="onTooltipAnchorFocus(t, $event)"
       @focusout="onTooltipAnchorBlur($event)"
-      @keydown="onTooltipKeydown"
+      @keydown="onTabKeydown($event, t)"
     >
       <!-- Dirty marker: independent of the save-status indicator so a
            dirty buffer is still visible when error / offline / external
@@ -312,14 +446,20 @@ watch(activePathRef, () => { hideTooltip() })
     <Teleport to="body">
       <div
         v-if="menuVisible"
+        ref="menuRef"
         class="tab-context-menu"
         :style="{ left: menuX + 'px', top: menuY + 'px' }"
+        role="menu"
         @click.stop
       >
-        <button @click="actionClose">{{ translate('workspace_tab.close') }}</button>
-        <button :disabled="!canCloseOthers" @click="actionCloseMany(othersPaths)">{{ translate('workspace_tab.close_others') }}</button>
-        <button :disabled="!canCloseRight" @click="actionCloseMany(rightPaths)">{{ translate('workspace_tab.close_right') }}</button>
-        <button :disabled="!canCloseAll" @click="actionCloseMany(allPaths)">{{ translate('workspace_tab.close_all') }}</button>
+        <button :ref="(el) => setMenuItemRef(el, 0)" role="menuitem" :tabindex="activeMenuItem === 0 ? 0 : -1" @mouseenter="activeMenuItem = 0" @click="actionClose">{{ translate('workspace_tab.close') }}</button>
+        <button :ref="(el) => setMenuItemRef(el, 1)" role="menuitem" :tabindex="activeMenuItem === 1 ? 0 : -1" :disabled="!canCloseOthers" @mouseenter="!canCloseOthers || (activeMenuItem = 1)" @click="actionCloseMany(othersPaths)">{{ translate('workspace_tab.close_others') }}</button>
+        <button :ref="(el) => setMenuItemRef(el, 2)" role="menuitem" :tabindex="activeMenuItem === 2 ? 0 : -1" :disabled="!canCloseLeft" @mouseenter="!canCloseLeft || (activeMenuItem = 2)" @click="actionCloseMany(leftPaths)">{{ translate('workspace_tab.close_left') }}</button>
+        <button :ref="(el) => setMenuItemRef(el, 3)" role="menuitem" :tabindex="activeMenuItem === 3 ? 0 : -1" :disabled="!canCloseRight" @mouseenter="!canCloseRight || (activeMenuItem = 3)" @click="actionCloseMany(rightPaths)">{{ translate('workspace_tab.close_right') }}</button>
+        <button :ref="(el) => setMenuItemRef(el, 4)" role="menuitem" :tabindex="activeMenuItem === 4 ? 0 : -1" @mouseenter="activeMenuItem = 4" @click="actionCloseMany(allPaths)">{{ translate('workspace_tab.close_all') }}</button>
+        <div role="separator" />
+        <button :ref="(el) => setMenuItemRef(el, 5)" role="menuitem" :tabindex="activeMenuItem === 5 ? 0 : -1" :disabled="!menuDocumentPath" @mouseenter="!menuDocumentPath || (activeMenuItem = 5)" @click="actionCopyPath">{{ translate('workspace_tab.copy_path') }}</button>
+        <button :ref="(el) => setMenuItemRef(el, 6)" role="menuitem" :tabindex="activeMenuItem === 6 ? 0 : -1" :disabled="!menuDocumentPath" @mouseenter="!menuDocumentPath || (activeMenuItem = 6)" @click="actionRevealInTree">{{ translate('workspace_tab.reveal_in_tree') }}</button>
       </div>
     </Teleport>
   </div>

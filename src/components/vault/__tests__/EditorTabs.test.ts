@@ -76,14 +76,17 @@ describe('EditorTabs context menu', () => {
     w.unmount()
   })
 
-  it('opens the menu on right-click and renders all four items', async () => {
+  it('opens the menu on right-click and renders the complete ordered menu', async () => {
     const w = mount(EditorTabs, {
       props: { tabs: TABS, activePath: 'a.md' },
       attachTo: document.body,
     })
     await rightClick(w, 'a')
     const items = menuButtons().map((b) => b.textContent)
-    expect(items).toEqual(['关闭', '关闭其它', '关闭右侧', '关闭所有'])
+    expect(items).toEqual(['关闭', '关闭其它', '关闭左侧', '关闭右侧', '关闭所有', '复制路径', '在文件树中显示'])
+    expect(document.querySelector('.tab-context-menu')?.getAttribute('role')).toBe('menu')
+    expect(menuButtons().every((button) => button.getAttribute('role') === 'menuitem')).toBe(true)
+    expect(document.querySelector('[role="separator"]')).not.toBeNull()
     w.unmount()
   })
 
@@ -123,6 +126,21 @@ describe('EditorTabs context menu', () => {
     w.unmount()
   })
 
+  it('"关闭左侧" uses visual order including History and Diff tabs', async () => {
+    const tabs = [
+      makeTab('a.md'),
+      makeTab('history:a', { kind: 'history' }),
+      makeTab('b.md'),
+      makeTab('diff:b', { kind: 'diff' }),
+      makeTab('c.md'),
+    ]
+    const w = mount(EditorTabs, { props: { tabs, activePath: 'a.md' }, attachTo: document.body })
+    await rightClick(w, 'b')
+    menuButtons().find((b) => b.textContent === '关闭左侧')!.click()
+    expect(w.emitted('close-many')).toEqual([[['a.md', 'history:a']]])
+    w.unmount()
+  })
+
   it('"关闭右侧" on the rightmost tab disables the item', async () => {
     const w = mount(EditorTabs, {
       props: { tabs: TABS, activePath: 'a.md' },
@@ -145,7 +163,7 @@ describe('EditorTabs context menu', () => {
     w.unmount()
   })
 
-  it('disables the three multi-close items when only one tab is open', async () => {
+  it('keeps Close All available when only one tab is open', async () => {
     const w = mount(EditorTabs, {
       props: { tabs: [makeTab('only.md')], activePath: 'only.md' },
       attachTo: document.body,
@@ -154,9 +172,76 @@ describe('EditorTabs context menu', () => {
     const btns = menuButtons()
     expect(btns[0].disabled).toBe(false) // 关闭
     expect(btns[1].disabled).toBe(true)  // 关闭其它
-    expect(btns[2].disabled).toBe(true)  // 关闭右侧
-    expect(btns[3].disabled).toBe(true)  // 关闭所有
+    expect(btns[2].disabled).toBe(true)  // 关闭左侧
+    expect(btns[3].disabled).toBe(true)  // 关闭右侧
+    expect(btns[4].disabled).toBe(false) // 关闭所有
+    btns[4].click()
+    expect(w.emitted('close-many')).toEqual([[['only.md']]])
     w.unmount()
+  })
+
+  it('closes an open menu when tab order changes', async () => {
+    const w = mount(EditorTabs, { props: { tabs: TABS, activePath: 'a.md' }, attachTo: document.body })
+    await rightClick(w, 'b')
+    await w.setProps({ tabs: [TABS[1]!, TABS[0]!, TABS[2]!, TABS[3]!] })
+    expect(document.querySelector('.tab-context-menu')).toBeNull()
+    expect(w.emitted('close-many')).toBeUndefined()
+    w.unmount()
+  })
+
+  it('copies and reveals the explicit documentPath without selecting the tab', async () => {
+    const history = makeTab('history:internal', { kind: 'history', documentPath: 'inbox/a' })
+    const w = mount(EditorTabs, { props: { tabs: [makeTab('a.md'), history], activePath: 'a.md' }, attachTo: document.body })
+    await rightClick(w, 'history:internal')
+    menuButtons().find((b) => b.textContent === '复制路径')!.click()
+    expect(w.emitted('copy-path')).toEqual([['inbox/a']])
+    expect(w.emitted('select')).toBeUndefined()
+    await rightClick(w, 'history:internal')
+    menuButtons().find((b) => b.textContent === '在文件树中显示')!.click()
+    expect(w.emitted('reveal-in-tree')).toEqual([['inbox/a']])
+    w.unmount()
+  })
+
+  it('supports keyboard opening, roving focus, activation, and Escape focus restore', async () => {
+    const w = mount(EditorTabs, { props: { tabs: TABS, activePath: 'a.md' }, attachTo: document.body })
+    const source = w.findAll<HTMLElement>('.tab')[1]!
+    source.element.focus()
+    await source.trigger('keydown', { key: 'F10', shiftKey: true })
+    expect(document.activeElement?.textContent).toBe('关闭')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    expect(document.activeElement?.textContent).toBe('在文件树中显示')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(w.emitted('close')).toEqual([['b.md']])
+    await flushPromises()
+    expect(document.activeElement).toBe(source.element)
+
+    await source.trigger('keydown', { key: 'ContextMenu' })
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(document.activeElement).toBe(source.element)
+    w.unmount()
+  })
+
+  it('clamps the rendered menu rect to an 8px viewport margin', async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.classList.contains('tab-context-menu')) {
+        return { x: 0, y: 0, left: 0, top: 0, right: 202, bottom: 302, width: 202, height: 302, toJSON() {} }
+      }
+      return originalRect.call(this)
+    }
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 400 })
+    const w = mount(EditorTabs, { props: { tabs: TABS, activePath: 'a.md' }, attachTo: document.body })
+    const tab = w.find('.tab')
+    await tab.trigger('contextmenu', { clientX: 490, clientY: 390 })
+    await flushPromises()
+    const menu = document.querySelector<HTMLElement>('.tab-context-menu')!
+    expect(parseInt(menu.style.left, 10)).toBe(290)
+    expect(parseInt(menu.style.top, 10)).toBe(90)
+    w.unmount()
+    HTMLElement.prototype.getBoundingClientRect = originalRect
   })
 
   it('dismisses the menu after a menu item is clicked', async () => {

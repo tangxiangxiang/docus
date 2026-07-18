@@ -33,4 +33,5 @@ export interface WorkspaceTab {
   title: string
   save: DocumentSavePresentation
   kind: 'document' | 'history' | 'diff'
+  documentPath?: string | null
 }

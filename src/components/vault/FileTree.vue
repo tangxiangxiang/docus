@@ -46,6 +46,7 @@ const vaultContext = useOptionalVaultContext()
 const lifecycle = vaultContext?.lifecycle
 const publishChange = vaultContext?.fileChanges.publish ?? getFallbackVaultFileChanges().publish
 const searchInputRef = ref<HTMLInputElement | null>(null)
+const fileTreeRootRef = ref<HTMLElement | null>(null)
 
 const STORAGE_KEY = 'docus.vault.expandedPaths'
 const expanded = ref<Set<string>>(new Set(loadExpanded()))
@@ -295,6 +296,36 @@ function loadExpanded(): string[] {
 function saveExpanded() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...expanded.value])) } catch { /* ignore */ }
 }
+
+function containsFile(nodes: readonly TreeNode[], path: string): boolean {
+  for (const node of nodes) {
+    if (node.kind === 'file' && node.path === path) return true
+    if (node.kind === 'folder' && containsFile(node.children, path)) return true
+  }
+  return false
+}
+
+async function revealPath(path: string): Promise<boolean> {
+  if (!containsFile(props.tree, path)) return false
+  const segments = path.split('/')
+  let ancestor = ''
+  for (let i = 0; i < segments.length - 1; i++) {
+    ancestor = ancestor ? `${ancestor}/${segments[i]}` : segments[i]
+    expanded.value.add(ancestor)
+  }
+  expanded.value = new Set(expanded.value)
+  saveExpanded()
+  focusedNodeKey.value = `file:${path}`
+  await nextTick()
+  const rows = fileTreeRootRef.value?.querySelectorAll<HTMLElement>('[data-tree-key]') ?? []
+  const row = Array.from(rows).find((candidate) => candidate.dataset.treeKey === `file:${path}`)
+  if (!row) return false
+  row.focus()
+  row.scrollIntoView({ block: 'nearest' })
+  return true
+}
+
+defineExpose({ revealPath })
 
 function toggle(path: string) {
   if (expanded.value.has(path)) expanded.value.delete(path)
@@ -610,6 +641,7 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
 
 <template>
   <aside
+    ref="fileTreeRootRef"
     class="file-tree"
     :aria-label="t('file_tree.label')"
     :class="{ 'drop-target-root': isRootDropTarget }"

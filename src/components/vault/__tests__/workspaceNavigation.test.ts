@@ -6,18 +6,18 @@ import {
   fallbackAfterClosingWorkspaceTabs,
 } from '../workspaceNavigation'
 
-function tab(id: string, kind: WorkspaceTab['kind']): WorkspaceTab {
-  return { id, kind, label: id, title: id, save: deriveDocumentSavePresentation(null) }
+function tab(id: string, kind: WorkspaceTab['kind'], documentPath?: string): WorkspaceTab {
+  return { id, kind, label: id, title: id, save: deriveDocumentSavePresentation(null), documentPath }
 }
 
 describe('workspace History navigation', () => {
   const tabs = [
     tab('inbox/a', 'document'),
     tab('inbox/b', 'document'),
-    tab('history:inbox/a', 'history'),
-    tab('diff:inbox/a', 'diff'),
-    tab('history:inbox/b', 'history'),
-    tab('diff:inbox/b', 'diff'),
+    tab('history:inbox/a', 'history', 'inbox/a'),
+    tab('diff:inbox/a', 'diff', 'inbox/a'),
+    tab('history:inbox/b', 'history', 'inbox/b'),
+    tab('diff:inbox/b', 'diff', 'inbox/b'),
   ]
 
   it('closes Diff to its matching History tab', () => {
@@ -45,8 +45,8 @@ describe('workspace History navigation', () => {
   it('activates History when the last Current document closes', () => {
     const oneDocument = [
       tab('inbox/a', 'document'),
-      tab('history:inbox/a', 'history'),
-      tab('diff:inbox/a', 'diff'),
+      tab('history:inbox/a', 'history', 'inbox/a'),
+      tab('diff:inbox/a', 'diff', 'inbox/a'),
     ]
     expect(fallbackAfterClosingWorkspaceTabs(oneDocument, ['inbox/a'], 'inbox/a'))
       .toBe('history:inbox/a')
