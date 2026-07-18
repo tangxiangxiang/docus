@@ -61,6 +61,10 @@ import {
   reconcileWorkspaceTabOrder,
 } from '../components/vault/workspaceTabOrder'
 import {
+  focusedWorkspaceTabId,
+  restoreRenamedWorkspaceTabFocus,
+} from '../components/vault/workspaceTabFocus'
+import {
   copyTextToClipboard,
   revealWorkspacePath,
 } from '../components/vault/workspaceTabActions'
@@ -171,17 +175,43 @@ const {
   fileChanges,
   mutationLock: historyMutationLock,
   workspaceShortcuts: false,
+  prepareWorkspaceRename,
   createDocument: (input) => {
     if (!lifecycleCreateFile) throw new Error('document lifecycle is not ready')
     return lifecycleCreateFile(input)
   },
 })
 
+function restoreRenamedTabFocus(
+  focusedId: string | null,
+  mappings: ReadonlyArray<{ from: string; to: string }>,
+): void {
+  void restoreRenamedWorkspaceTabFocus(
+    focusedId,
+    mappings,
+    (id) => editorTabsRef.value?.focusTab(id),
+  )
+}
+
+function prepareWorkspaceRename(from: string, to: string): () => void {
+  const capturedOrder = [...workspaceTabOrder.value]
+  const focusedId = focusedWorkspaceTabId()
+  return () => {
+    workspaceTabOrder.value = reconcileWorkspaceTabOrder(
+      migrateWorkspaceTabIds(capturedOrder, [{ from, to }]),
+      naturalWorkspaceTabIds.value,
+    )
+    restoreRenamedTabFocus(focusedId, [{ from, to }])
+  }
+}
+
 function renameWorkspaceDocuments(
   mappings: ReadonlyArray<{ from: string; to: string }>,
 ): void {
+  const focusedId = focusedWorkspaceTabId()
   workspaceTabOrder.value = migrateWorkspaceTabIds(workspaceTabOrder.value, mappings)
   renameOpenDocuments(mappings)
+  restoreRenamedTabFocus(focusedId, mappings)
 }
 
 const documentLifecycle = useDocumentLifecycle({

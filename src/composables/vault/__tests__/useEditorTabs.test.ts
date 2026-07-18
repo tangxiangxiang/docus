@@ -1322,6 +1322,150 @@ describe('useEditorTabs — file-change bus', () => {
     expect(toastCalls).toContainEqual({ type: 'info', message: 'AI 已将 bus-old 重命名为 bus-new' })
   })
 
+  it('keeps the source position and persists immediately for an external rename', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/order-b': () => ({ path: 'order-b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/order-a': () => ({ path: 'order-a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/order-c': () => ({ path: 'order-c', raw: 'C', content: 'C', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('order-b')
+    await h.openPost('order-a')
+    await h.openPost('order-c')
+
+    h.fileChanges.publish({
+      path: 'order-x',
+      kind: 'rename',
+      oldPath: 'order-a',
+      newMtime: 7,
+      newRaw: 'X',
+    })
+    await flushPromises()
+
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['order-b', 'order-x', 'order-c'])
+    expect(h.activePath.value).toBe('order-c')
+    expect(JSON.parse(localStorage.getItem('docus:tabs:v1')!).paths)
+      .toEqual(['order-b', 'order-x', 'order-c'])
+    h.unmount()
+  })
+
+  it('leaves order and persistence unchanged when a dirty external rename is cancelled', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/cancel-b': () => ({ path: 'cancel-b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/cancel-a': () => ({ path: 'cancel-a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/cancel-c': () => ({ path: 'cancel-c', raw: 'C', content: 'C', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('cancel-b')
+    await h.openPost('cancel-a')
+    await h.openPost('cancel-c')
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['cancel-b', 'cancel-a', 'cancel-c'])
+    h.onEditorChange('cancel-a', 'A dirty')
+    const before = localStorage.getItem('docus:tabs:v1')
+
+    h.fileChanges.publish({ path: 'cancel-x', kind: 'rename', oldPath: 'cancel-a', newRaw: 'X' })
+    await Promise.resolve()
+    await Promise.resolve()
+    answerConfirm(false)
+    await flushPromises()
+
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['cancel-b', 'cancel-a', 'cancel-c'])
+    expect(localStorage.getItem('docus:tabs:v1')).toBe(before)
+    h.unmount()
+  })
+
+  it('gives the rename source position priority when the external target is already open', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/duplicate-b': () => ({ path: 'duplicate-b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/duplicate-a': () => ({ path: 'duplicate-a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/duplicate-x': () => ({ path: 'duplicate-x', raw: 'old X', content: 'old X', frontmatter: {}, size: 5, mtime: 0 }),
+      'GET /api/posts/duplicate-c': () => ({ path: 'duplicate-c', raw: 'C', content: 'C', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('duplicate-b')
+    await h.openPost('duplicate-a')
+    await h.openPost('duplicate-x')
+    await h.openPost('duplicate-c')
+    expect(h.tabs.value.map((tab) => tab.path))
+      .toEqual(['duplicate-b', 'duplicate-a', 'duplicate-x', 'duplicate-c'])
+    const source = h.tabs.value.find((tab) => tab.path === 'duplicate-a')
+
+    h.fileChanges.publish({
+      path: 'duplicate-x',
+      kind: 'rename',
+      oldPath: 'duplicate-a',
+      newRaw: 'new X',
+    })
+    await flushPromises()
+
+    expect(h.tabs.value.map((tab) => tab.path))
+      .toEqual(['duplicate-b', 'duplicate-x', 'duplicate-c'])
+    expect(h.tabs.value.find((tab) => tab.path === 'duplicate-x')).toBe(source)
+    expect(source?.raw).toBe('new X')
+    h.unmount()
+  })
+
+  it('restores a no-body external rename at the source position after loading the target', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/load-b': () => ({ path: 'load-b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/load-a': () => ({ path: 'load-a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/load-c': () => ({ path: 'load-c', raw: 'C', content: 'C', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/load-x': () => ({ path: 'load-x', raw: 'X loaded', content: 'X loaded', frontmatter: {}, size: 8, mtime: 9 }),
+    }))
+    const h = await setup()
+    await h.openPost('load-b')
+    await h.openPost('load-a')
+    await h.openPost('load-c')
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['load-b', 'load-a', 'load-c'])
+
+    h.fileChanges.publish({ path: 'load-x', kind: 'rename', oldPath: 'load-a' })
+    await flushPromises()
+
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['load-b', 'load-x', 'load-c'])
+    expect(h.tabs.value[1].raw).toBe('X loaded')
+    h.unmount()
+  })
+
+  it('does not close or reorder the source when a newer event supersedes rename confirmation', async () => {
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/stale-b': () => ({ path: 'stale-b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/stale-a': () => ({ path: 'stale-a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/stale-c': () => ({ path: 'stale-c', raw: 'C', content: 'C', frontmatter: {}, size: 1, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('stale-b')
+    await h.openPost('stale-a')
+    await h.openPost('stale-c')
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['stale-b', 'stale-a', 'stale-c'])
+    h.onEditorChange('stale-a', 'A dirty')
+
+    h.fileChanges.publish({
+      path: 'stale-x',
+      kind: 'rename',
+      oldPath: 'stale-a',
+      newRaw: 'stale X',
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    h.fileChanges.publish({ path: 'stale-x', kind: 'write', newRaw: 'newer X' })
+    answerConfirm(true)
+    await flushPromises()
+
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['stale-b', 'stale-a', 'stale-c'])
+    expect(h.tabs.value.find((tab) => tab.path === 'stale-a')?.raw).toBe('A dirty')
+    h.unmount()
+  })
+
   it('does not refresh a tab whose path does not match the event', async () => {
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [],

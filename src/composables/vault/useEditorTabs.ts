@@ -35,6 +35,7 @@ export function useEditorTabs(opts: {
   mutationLock?: ReturnType<typeof createPathMutationLock>
   createDocument?: (input: { path: string; title?: string }) => Promise<PostSummary>
   workspaceShortcuts?: boolean
+  prepareWorkspaceRename?: (from: string, to: string) => () => void
 }) {
   const toast = useToast()
   const { confirm } = useConfirm()
@@ -128,6 +129,26 @@ export function useEditorTabs(opts: {
     return true
   }
 
+  async function confirmTabForExternalRename(
+    path: string,
+    isCurrent: () => boolean,
+  ): Promise<boolean> {
+    const release = opts.mutationLock?.acquire(toMutationPaths([path])) ?? null
+    if (opts.mutationLock && !release) return false
+    try {
+      const barrier = await prepareDocumentClose([path])
+      const confirmed = await confirmCloseManyState([path])
+      if (!confirmed || !isCurrent()) {
+        barrier.rollback()
+        return false
+      }
+      barrier.commit()
+      return true
+    } finally {
+      release?.()
+    }
+  }
+
   const {
     handleOnline,
     pollExternalChanges,
@@ -184,12 +205,15 @@ export function useEditorTabs(opts: {
     tabs,
     activePath,
     closeTab,
+    confirmTabRename: confirmTabForExternalRename,
+    renameOpenDocument: (from, to) => renameOpenDocuments([{ from, to }]),
     openPost,
     navigateTo: (path) => { navigateTo(path) },
     confirm,
     toastInfo: toast.info,
     invalidateDiskRead,
     invalidateDiskObservation,
+    prepareWorkspaceRename: opts.prepareWorkspaceRename,
   })
 
   const { routePath } = useRouteSync({ activePath, openPost })

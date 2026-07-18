@@ -578,15 +578,20 @@ describe('EditorTabs workspace reordering', () => {
     cancel.mockRestore()
   })
 
-  it('prevents the close button from becoming a drag source', async () => {
+  it('blocks an ancestor tab drag that started from the close button pointer', async () => {
     const w = mount(EditorTabs, { props: { tabs: TABS, activePath: 'a.md' } })
+    const close = w.find('.tab-close')
+    await close.trigger('pointerdown')
     const event = new Event('dragstart', { bubbles: true, cancelable: true })
     const transfer = new TestDataTransfer()
     Object.defineProperty(event, 'dataTransfer', { value: transfer })
-    w.find('.tab-close').element.dispatchEvent(event)
+    w.find('.tab').element.dispatchEvent(event)
     expect(event.defaultPrevented).toBe(true)
     expect(transfer.types).toEqual([])
     expect(w.findAll('.dragging')).toHaveLength(0)
+    expect(w.emitted('reorder')).toBeUndefined()
+    await close.trigger('click')
+    expect(w.emitted('close')).toEqual([['a.md']])
     w.unmount()
   })
 })

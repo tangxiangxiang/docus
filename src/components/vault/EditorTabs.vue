@@ -189,6 +189,7 @@ watch(tabIds, (next) => {
 
 // --- tab close button click → hide tooltip before emission ---
 function onCloseClick(tab: WorkspaceTab) {
+  clearBlockedDrag()
   hideTooltip()
   emit('close', tab.id)
 }
@@ -204,6 +205,21 @@ let suppressClick = false
 let suppressClickTimer: ReturnType<typeof setTimeout> | null = null
 let autoScrollFrame: number | null = null
 let autoScrollDirection: -1 | 0 | 1 = 0
+let blockedDragTabId: string | null = null
+
+function clearBlockedDrag(): void {
+  blockedDragTabId = null
+  window.removeEventListener('pointerup', clearBlockedDrag)
+  window.removeEventListener('pointercancel', clearBlockedDrag)
+}
+
+function onClosePointerDown(tabId: string, event: PointerEvent): void {
+  event.stopPropagation()
+  clearBlockedDrag()
+  blockedDragTabId = tabId
+  window.addEventListener('pointerup', clearBlockedDrag)
+  window.addEventListener('pointercancel', clearBlockedDrag)
+}
 
 function idsSignature(): string {
   return tabIds.value.join('\u0000')
@@ -275,11 +291,14 @@ function clearDragState(suppressSyntheticClick = false): void {
 function onDragStart(event: DragEvent, tab: WorkspaceTab): void {
   if (
     !event.dataTransfer
+    || blockedDragTabId === tab.id
     || (event.target instanceof Element && event.target.closest('.tab-close'))
   ) {
     event.preventDefault()
+    clearBlockedDrag()
     return
   }
+  clearBlockedDrag()
   closeMenu(false)
   hideTooltip()
   draggedId.value = tab.id
@@ -340,6 +359,7 @@ function onDrop(event: DragEvent, targetId: string): void {
 }
 
 function onDragEnd(): void {
+  clearBlockedDrag()
   clearDragState(true)
 }
 
@@ -575,6 +595,7 @@ onBeforeUnmount(() => {
   closeMenu(false)
   hideTooltip()
   clearDragState()
+  clearBlockedDrag()
   suppressClick = false
   if (suppressClickTimer) clearTimeout(suppressClickTimer)
   suppressClickTimer = null
@@ -667,7 +688,7 @@ watch(tabIds, (next) => {
         class="tab-close"
         draggable="false"
         :aria-label="translate('workspace_tab.close_named', { name: tabPresentations[i].displayTitle })"
-        @mousedown.stop
+        @pointerdown="onClosePointerDown(t.id, $event)"
         @dragstart.prevent.stop
         @click.stop="onCloseClick(t)"
       >×</button>

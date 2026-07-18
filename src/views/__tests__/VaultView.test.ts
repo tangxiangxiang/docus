@@ -167,6 +167,8 @@ describe('VaultView editor tab wiring', () => {
 
     expect(source).toContain('workspaceTabOrder.value = migrateWorkspaceTabIds(')
     expect(source).toContain('renameOpenDocuments: renameWorkspaceDocuments')
+    expect(source).toContain('prepareWorkspaceRename,')
+    expect(source).toContain('restoreRenamedWorkspaceTabFocus(')
     expect(source).toContain('workspaceShortcuts: false')
     expect(shortcut).toContain("event.key.toLowerCase() === 'w' && activeId")
     expect(shortcut).toContain("event.key === 'Tab' && workspaceTabs.value.length > 0")
