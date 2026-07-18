@@ -178,13 +178,17 @@ export function useTabWorkspace(options: {
       const post = await getPost(path)
       // Race guard: if the user closed this tab while the request was
       // pending, the plainTab has already been spliced from the
-      // array. Don't resurrect it, and make sure the persisted list
-      // doesn't carry a stale entry either.
+      // array. Don't resurrect it. If a NEW tab for the same path
+      // has since been opened (e.g. via the file tree), the restore
+      // is a no-op — the new tab stands on its own and the missing
+      // toast must NOT fire for it.
       const live = liveTabFor(plainTab)
       if (!live) {
         flushPersist()
-        return false
+        return tabs.value.some((candidate) => candidate.path === path)
       }
+      // Writes go through the reactive Proxy so dependent computeds
+      // (workspaceTabs, EditorTabs re-render) actually recompute.
       live.raw = post.raw
       live.originalRaw = post.raw
       live.title = post.metadata?.title || (post.frontmatter.title as string) || path
@@ -194,10 +198,24 @@ export function useTabWorkspace(options: {
       flushPersist()
       return true
     } catch {
-      const index = tabs.value.findIndex((candidate) => candidate.path === path)
-      if (index !== -1) tabs.value.splice(index, 1)
+      // Failure branch must NOT splice a same-path tab opened by the
+      // user in the meantime — that would silently discard any
+      // local edits. Compare by plain-object identity, falling back
+      // to path-based membership only when our own placeholder is
+      // still in the array.
+      const live = liveTabFor(plainTab)
+      if (live) {
+        const index = tabs.value.findIndex(
+          (candidate) => toRaw(candidate) === plainTab,
+        )
+        if (index !== -1) tabs.value.splice(index, 1)
+      }
       flushPersist()
-      return false
+      // If a same-path tab is now open (e.g. the user reopened it
+      // while our restore was in flight), the restore failure is a
+      // no-op for the user — don't report "file missing" for a tab
+      // they can see and edit.
+      return tabs.value.some((candidate) => candidate.path === path)
     }
   }
 

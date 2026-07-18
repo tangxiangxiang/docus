@@ -156,8 +156,12 @@ function stubFetch(handlers: Record<string, (body?: unknown) => unknown | Promis
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((onResolve) => { resolve = onResolve })
-  return { promise, resolve }
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve
+    reject = onReject
+  })
+  return { promise, resolve, reject }
 }
 
 function saveResult(path: string, raw: string, size = raw.length, mtime = 2) {
@@ -2079,5 +2083,146 @@ describe('useEditorTabs — round-5 real-DOM async-title reactivity', () => {
     expect(h.tabs.value[0]!.title).toBe('英语-谓语')
     expect(h.lastTabTitle()).toBe('英语-谓语')
     h.unmount()
+  })
+})
+
+// --- round-6 restore-failure-vs-reopen race --------------------------------
+//
+// Reproducing the time-of-check / time-of-use race:
+//
+//   1. Restore A → placeholder pushed, R1 pending.
+//   2. User closes the placeholder.
+//   3. User reopens A from the file tree → a NEW tab Q is created
+//      and the user starts editing it.
+//   4. R1 (the old restore) finally FAILS.
+//
+// The failure branch must:
+//   - splice by plain-object identity, NOT by path — otherwise it
+//     would silently delete the user's new tab Q.
+//   - preserve Q's local edits.
+//   - keep A in persistence (the new Q is now the canonical tab).
+//   - NOT report a "missing-tab" toast (the file is open again).
+
+describe('useEditorTabs — round-6 restore-failure race vs reopen', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    toastCalls.length = 0
+    confirmResolve = null
+    __setVaultIdForTesting(null)
+  })
+  afterEach(() => {
+    __setVaultIdForTesting(null)
+  })
+
+  it('a same-path tab reopened while the old restore is pending survives the old restore failure', async () => {
+    const oldRestore = deferred<unknown>()
+    const newOpen = deferred<unknown>()
+    let openCount = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/tree' || url === '/api/posts') {
+        return { ok: true, status: 200, json: async () => [] }
+      }
+      if (url === '/api/health') {
+        return { ok: true, status: 200, json: async () => ({}) }
+      }
+      const path = url.match(/\/api\/posts\/(.+)$/)![1]!
+      if (path !== 'english-subject') throw new Error(`Unexpected getPost: ${path}`)
+      openCount++
+      return {
+        ok: true,
+        status: 200,
+        json: async () => (openCount === 1 ? oldRestore.promise : newOpen.promise),
+      }
+    }))
+    // Pre-seed persistence with the restored path so the onMounted
+    // restore loop tries to open it.
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['english-subject'], active: 'english-subject',
+    }))
+    const h = await setup()
+    // Restore has pushed the placeholder; R1 is pending.
+    await flushPromises()
+    expect(h.tabs.value).toHaveLength(1)
+    expect(h.tabs.value[0]!.loading).toBe(true)
+    // User closes the placeholder.
+    await h.closeTab('english-subject')
+    expect(h.tabs.value).toHaveLength(0)
+    // User reopens A from the file tree — a NEW tab Q is pushed and
+    // a new request R2 fires. openPost's "already open" check does
+    // NOT match because the previous placeholder was closed.
+    const reopening = h.openPost('english-subject')
+    await flushPromises()
+    expect(h.tabs.value).toHaveLength(1)
+    // R2 succeeds, populating Q.
+    newOpen.resolve({
+      path: 'english-subject', raw: 'live', content: 'live',
+      frontmatter: { title: '英语-主语' }, size: 4, mtime: 1,
+    })
+    await reopening
+    expect(h.tabs.value[0]!.title).toBe('英语-主语')
+    // User edits the buffer — this dirties the tab.
+    h.onEditorChange('english-subject', 'local edit')
+    expect(h.tabs.value[0]!.saveStatus).toBe('dirty')
+    expect(h.tabs.value[0]!.raw).toBe('local edit')
+    // Old R1 finally FAILS. The old restoreOneTab's catch must NOT
+    // splice the user's Q (which is a different plain object).
+    oldRestore.reject(new Error('HTTP 500'))
+    await flushPromises()
+    await flushPromises()
+    // Q survives with its title AND its dirty edit intact.
+    expect(h.tabs.value).toHaveLength(1)
+    expect(h.tabs.value[0]!.title).toBe('英语-主语')
+    expect(h.tabs.value[0]!.raw).toBe('local edit')
+    expect(h.tabs.value[0]!.saveStatus).toBe('dirty')
+    // Persistence still has the path — the user's tab is canonical.
+    const persisted = JSON.parse(localStorage.getItem(PERSIST_KEY)!)
+    expect(persisted.paths).toEqual(['english-subject'])
+    // No "missing-tab" toast — the file is open again.
+    const toasts = toastCalls.filter((t) => t.type === 'info' && t.message.includes('已不存在'))
+    expect(toasts).toEqual([])
+  })
+
+  it('late failure of an old restore does NOT remove a same-path tab opened during the await', async () => {
+    // Variant: the restore-then-close-then-reopen flow without
+    // explicitly seeding persistence — the restore happens via the
+    // session restore loop on mount, then the user closes the
+    // loading tab and reopens it via the file tree.
+    const restore = deferred<unknown>()
+    const reopen = deferred<unknown>()
+    let openCount = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/tree' || url === '/api/posts') {
+        return { ok: true, status: 200, json: async () => [] }
+      }
+      if (url === '/api/health') {
+        return { ok: true, status: 200, json: async () => ({}) }
+      }
+      const path = url.match(/\/api\/posts\/(.+)$/)![1]!
+      openCount++
+      return {
+        ok: true,
+        status: 200,
+        json: async () => (openCount === 1 ? restore.promise : reopen.promise),
+      }
+    }))
+    localStorage.setItem(PERSIST_KEY, JSON.stringify({
+      v: 1, paths: ['a'], active: 'a',
+    }))
+    const h = await setup()
+    await flushPromises()
+    expect(h.tabs.value).toHaveLength(1)
+    await h.closeTab('a')
+    const reopening = h.openPost('a')
+    await flushPromises()
+    reopen.resolve({ path: 'a', raw: 'A', content: 'A', frontmatter: { title: 'A' }, size: 1, mtime: 1 })
+    await reopening
+    h.onEditorChange('a', 'edit')
+    expect(h.tabs.value[0]!.saveStatus).toBe('dirty')
+    restore.reject(new Error('HTTP 500'))
+    await flushPromises()
+    await flushPromises()
+    expect(h.tabs.value).toHaveLength(1)
+    expect(h.tabs.value[0]!.saveStatus).toBe('dirty')
+    expect(h.tabs.value[0]!.raw).toBe('edit')
   })
 })
