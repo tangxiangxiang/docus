@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import EditorTabs from '../EditorTabs.vue'
 import type { WorkspaceTab } from '../tabs'
 import { deriveDocumentSavePresentation } from '../../../composables/vault/editor-tabs/savePresentation'
@@ -58,5 +58,28 @@ describe('workspaceTabFocus', () => {
     expect(focusedId).toBeNull()
     expect(document.activeElement).toBe(button)
     button.remove()
+  })
+
+  it('does not restore stale focus when the user moves elsewhere before the rename renders', async () => {
+    const oldTab = document.createElement('button')
+    const sidebar = document.createElement('button')
+    oldTab.dataset.tabId = 'a'
+    document.body.append(oldTab, sidebar)
+    oldTab.focus()
+    const focusTab = vi.fn()
+
+    const restoring = restoreRenamedWorkspaceTabFocus(
+      'a',
+      [{ from: 'a', to: 'x' }],
+      focusTab,
+      oldTab,
+    )
+    sidebar.focus()
+    await restoring
+
+    expect(focusTab).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(sidebar)
+    oldTab.remove()
+    sidebar.remove()
   })
 })

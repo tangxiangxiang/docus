@@ -129,21 +129,33 @@ export function useEditorTabs(opts: {
     return true
   }
 
-  async function confirmTabForExternalRename(
-    path: string,
+  async function runTabExternalRenameTransaction(
+    from: string,
+    to: string,
     isCurrent: () => boolean,
+    apply: () => Promise<boolean>,
   ): Promise<boolean> {
-    const release = opts.mutationLock?.acquire(toMutationPaths([path])) ?? null
+    const paths = [from, to]
+    const release = opts.mutationLock?.acquire(toMutationPaths(paths)) ?? null
     if (opts.mutationLock && !release) return false
+    let barrier: Awaited<ReturnType<typeof prepareDocumentClose>> | null = null
     try {
-      const barrier = await prepareDocumentClose([path])
-      const confirmed = await confirmCloseManyState([path])
+      barrier = await prepareDocumentClose(paths)
+      const confirmed = await confirmCloseManyState([from])
       if (!confirmed || !isCurrent()) {
         barrier.rollback()
         return false
       }
+      const applied = await apply()
+      if (!applied) {
+        barrier.rollback()
+        return false
+      }
       barrier.commit()
-      return true
+      return applied
+    } catch {
+      barrier?.rollback()
+      return false
     } finally {
       release?.()
     }
@@ -205,8 +217,9 @@ export function useEditorTabs(opts: {
     tabs,
     activePath,
     closeTab,
-    confirmTabRename: confirmTabForExternalRename,
+    runTabRenameTransaction: runTabExternalRenameTransaction,
     renameOpenDocument: (from, to) => renameOpenDocuments([{ from, to }]),
+    removeOpenDocument: (path) => closeManyConfirmed([path]),
     openPost,
     navigateTo: (path) => { navigateTo(path) },
     confirm,

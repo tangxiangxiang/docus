@@ -185,23 +185,27 @@ const {
 function restoreRenamedTabFocus(
   focusedId: string | null,
   mappings: ReadonlyArray<{ from: string; to: string }>,
+  expectedFocus?: Element | null,
 ): void {
   void restoreRenamedWorkspaceTabFocus(
     focusedId,
     mappings,
     (id) => editorTabsRef.value?.focusTab(id),
+    expectedFocus,
   )
 }
 
 function prepareWorkspaceRename(from: string, to: string): () => void {
-  const capturedOrder = [...workspaceTabOrder.value]
   const focusedId = focusedWorkspaceTabId()
+  const focusedElement = document.activeElement
   return () => {
     workspaceTabOrder.value = reconcileWorkspaceTabOrder(
-      migrateWorkspaceTabIds(capturedOrder, [{ from, to }]),
+      migrateWorkspaceTabIds(workspaceTabOrder.value, [{ from, to }]),
       naturalWorkspaceTabIds.value,
     )
-    restoreRenamedTabFocus(focusedId, [{ from, to }])
+    if (document.activeElement === focusedElement) {
+      restoreRenamedTabFocus(focusedId, [{ from, to }], focusedElement)
+    }
   }
 }
 
@@ -209,9 +213,10 @@ function renameWorkspaceDocuments(
   mappings: ReadonlyArray<{ from: string; to: string }>,
 ): void {
   const focusedId = focusedWorkspaceTabId()
+  const focusedElement = document.activeElement
   workspaceTabOrder.value = migrateWorkspaceTabIds(workspaceTabOrder.value, mappings)
   renameOpenDocuments(mappings)
-  restoreRenamedTabFocus(focusedId, mappings)
+  restoreRenamedTabFocus(focusedId, mappings, focusedElement)
 }
 
 const documentLifecycle = useDocumentLifecycle({

@@ -10,8 +10,14 @@ export function useExternalFileChanges(options: {
   tabs: Ref<Tab[]>
   activePath: Ref<string | null>
   closeTab: (path: string) => Promise<boolean | void>
-  confirmTabRename?: (path: string, isCurrent: () => boolean) => Promise<boolean>
+  runTabRenameTransaction?: (
+    from: string,
+    to: string,
+    isCurrent: () => boolean,
+    apply: () => Promise<boolean>,
+  ) => Promise<boolean>
   renameOpenDocument?: (from: string, to: string) => void
+  removeOpenDocument?: (path: string) => void
   openPost: (path: string) => Promise<void>
   navigateTo: (path: string) => void
   confirm: (message: string) => Promise<boolean>
@@ -61,35 +67,18 @@ export function useExternalFileChanges(options: {
 
       const oldTab = options.tabs.value.find((tab) => tab.path === event.oldPath)
       if (!oldTab) return
-      const commitWorkspaceRename = options.prepareWorkspaceRename?.(
-        event.oldPath!,
-        event.path,
-      )
       const renameIsCurrent = () => (
         isLatestEvent(event.path, event.seq)
         && isLatestEvent(event.oldPath!, event.seq)
       )
-      const confirmed = options.confirmTabRename
-        ? await options.confirmTabRename(event.oldPath!, renameIsCurrent)
-        : await options.closeTab(event.oldPath!)
-
-      // After awaiting the close (which may involve a user confirm), this
-      // rename may no longer be the latest event for either path. A newer
-      // write to the target path or another rename supersedes it. Also
-      // verify the old-path authority hasn't been bumped by a newer event.
-      if (!isLatestEvent(event.path, event.seq)) return
-      if (event.oldPath && !isLatestEvent(event.oldPath, event.seq)) return
-
-      // If the user refused to close the old tab, the old path still has
-      // an active editor. Don't apply the target-path side of the rename
-      // while the old tab remains open — polling will eventually reconcile.
-      if (confirmed === false) return
 
       // Standalone composable consumers that do not provide the Workspace
       // rename coordinator retain the legacy conflict-safe target handling.
       // The application always provides `renameOpenDocument`, which keeps the
       // source proxy, Monaco model, and source position.
       if (!options.renameOpenDocument) {
+        const confirmed = await options.closeTab(event.oldPath!)
+        if (!renameIsCurrent() || confirmed === false) return
         if (event.newRaw == null) {
           await options.openPost(event.path)
           options.toastInfo(t('editor.ai_renamed', { from: event.oldPath ?? '', to: event.path }))
@@ -140,41 +129,101 @@ export function useExternalFileChanges(options: {
         return
       }
 
-      let authoritativeRaw = event.newRaw
-      let authoritativeMtime = event.newMtime
-      let authoritativeTitle: string | null = null
-      if (authoritativeRaw == null) {
-        try {
-          const post = await getPost(event.path)
-          authoritativeRaw = post.raw
-          authoritativeMtime = post.mtime
-          authoritativeTitle = post.metadata?.title
-            || (post.frontmatter.title as string)
-            || null
-        } catch {
-          return
+      const applyRename = async (): Promise<boolean> => {
+        const source = options.tabs.value.find((tab) => tab.path === event.oldPath)
+        if (!source || source !== oldTab) return false
+        const sourceRevision = source.revision
+        const sourceRaw = source.raw
+        const target = options.tabs.value.find((tab) => tab !== source && tab.path === event.path)
+        const targetRevision = target?.revision
+        const targetRaw = target?.raw
+
+        let authoritativeRaw = event.newRaw
+        let authoritativeMtime = event.newMtime
+        let authoritativeTitle: string | null = null
+        if (authoritativeRaw == null) {
+          try {
+            const post = await getPost(event.path)
+            authoritativeRaw = post.raw
+            authoritativeMtime = post.mtime
+            authoritativeTitle = post.metadata?.title
+              || (post.frontmatter.title as string)
+              || null
+          } catch {
+            return false
+          }
         }
-        if (!renameIsCurrent()) return
+
+        if (!renameIsCurrent()) return false
+        if (!options.tabs.value.includes(source)
+            || source.path !== event.oldPath
+            || source.revision !== sourceRevision
+            || source.raw !== sourceRaw) return false
+        if (target && (!options.tabs.value.includes(target)
+            || target.path !== event.path
+            || target.revision !== targetRevision
+            || target.raw !== targetRaw)) return false
+
+        const targetDirty = target && (
+          target.raw !== target.originalRaw
+          || target.revision !== target.savedRevision
+          || target.savingRevision !== null
+          || target.externalRaw != null
+          || Boolean(target.externalKind)
+          || target.loading
+          || Boolean(target.loadError)
+          || !['idle', 'saved'].includes(target.saveStatus)
+        )
+        if (targetDirty && target) {
+          // Never feed a dirty duplicate through renameOpenDocuments(): that
+          // helper intentionally gives the source identity priority and would
+          // discard the target proxy. Preserve the local target and surface
+          // the authoritative renamed bytes as an external conflict instead.
+          target.serverMtime = authoritativeMtime ?? target.serverMtime
+          target.externalRaw = authoritativeRaw
+          target.externalKind = 'modified'
+          target.saveStatus = 'external'
+          target.loadError = null
+          target.error = '磁盘文件已变化，本地修改尚未保存'
+          options.removeOpenDocument?.(event.oldPath!)
+          return true
+        }
+
+        const commitWorkspaceRename = options.prepareWorkspaceRename?.(
+          event.oldPath!,
+          event.path,
+        )
+        options.renameOpenDocument?.(event.oldPath!, event.path)
+        commitWorkspaceRename?.()
+        const renamed = options.tabs.value.find((tab) => tab.path === event.path)
+        if (!renamed || renamed !== source) return false
+        renamed.raw = authoritativeRaw
+        renamed.originalRaw = authoritativeRaw
+        renamed.serverMtime = authoritativeMtime ?? renamed.serverMtime
+        renamed.revision += 1
+        renamed.savedRevision = renamed.revision
+        renamed.savingRevision = null
+        renamed.saveStatus = 'idle'
+        renamed.externalRaw = null
+        renamed.externalKind = null
+        renamed.loading = false
+        renamed.loadError = null
+        renamed.error = null
+        if (authoritativeTitle) renamed.title = authoritativeTitle
+        return true
       }
 
-      options.renameOpenDocument?.(event.oldPath!, event.path)
-      commitWorkspaceRename?.()
-      const renamed = options.tabs.value.find((tab) => tab.path === event.path)
-      if (!renamed) return
-      renamed.raw = authoritativeRaw
-      renamed.originalRaw = authoritativeRaw
-      renamed.serverMtime = authoritativeMtime ?? renamed.serverMtime
-      renamed.revision += 1
-      renamed.savedRevision = renamed.revision
-      renamed.savingRevision = null
-      renamed.saveStatus = 'idle'
-      renamed.externalRaw = null
-      renamed.externalKind = null
-      renamed.loading = false
-      renamed.loadError = null
-      renamed.error = null
-      if (authoritativeTitle) renamed.title = authoritativeTitle
-      options.toastInfo(t('editor.ai_renamed', { from: event.oldPath ?? '', to: event.path }))
+      const applied = options.runTabRenameTransaction
+        ? await options.runTabRenameTransaction(
+            event.oldPath!,
+            event.path,
+            renameIsCurrent,
+            applyRename,
+          )
+        : await applyRename()
+      if (applied) {
+        options.toastInfo(t('editor.ai_renamed', { from: event.oldPath ?? '', to: event.path }))
+      }
       return
     }
 

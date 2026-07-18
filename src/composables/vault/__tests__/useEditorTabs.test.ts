@@ -1411,6 +1411,40 @@ describe('useEditorTabs — file-change bus', () => {
     h.unmount()
   })
 
+  it('preserves a dirty target when the external rename target is already open', async () => {
+    __setVaultIdForTesting('dirty-target-rename')
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/dirty-target-a': () => ({ path: 'dirty-target-a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/dirty-target-x': () => ({ path: 'dirty-target-x', raw: 'old X', content: 'old X', frontmatter: {}, size: 5, mtime: 0 }),
+    }))
+    const h = await setup()
+    await h.openPost('dirty-target-a')
+    await h.openPost('dirty-target-x')
+    const target = h.tabs.value.find((tab) => tab.path === 'dirty-target-x')!
+    h.onEditorChange('dirty-target-x', 'unsaved target')
+
+    h.fileChanges.publish({
+      path: 'dirty-target-x',
+      kind: 'rename',
+      oldPath: 'dirty-target-a',
+      newRaw: 'renamed file bytes',
+      newMtime: 9,
+    })
+    await flushPromises()
+
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['dirty-target-x'])
+    expect(h.tabs.value[0]).toBe(target)
+    expect(target.raw).toBe('unsaved target')
+    expect(target.externalRaw).toBe('renamed file bytes')
+    expect(target.saveStatus).toBe('external')
+    expect(JSON.parse(localStorage.getItem('docus:tabs:v1:dirty-target-rename')!).paths)
+      .toEqual(['dirty-target-x'])
+    h.unmount()
+    __setVaultIdForTesting(null)
+  })
+
   it('restores a no-body external rename at the source position after loading the target', async () => {
     vi.stubGlobal('fetch', stubFetch({
       'GET /api/tree': () => [],
@@ -1432,6 +1466,119 @@ describe('useEditorTabs — file-change bus', () => {
     expect(h.tabs.value.map((tab) => tab.path)).toEqual(['load-b', 'load-x', 'load-c'])
     expect(h.tabs.value[1].raw).toBe('X loaded')
     h.unmount()
+  })
+
+  it('does not overwrite source edits made while rename target content is loading', async () => {
+    const targetPost = deferred<unknown>()
+    const targetRequested = deferred<void>()
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/loading-edit-a': () => ({ path: 'loading-edit-a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/loading-edit-x': () => {
+        targetRequested.resolve()
+        return targetPost.promise
+      },
+    }))
+    const h = await setup()
+    await h.openPost('loading-edit-a')
+
+    h.fileChanges.publish({ path: 'loading-edit-x', kind: 'rename', oldPath: 'loading-edit-a' })
+    await targetRequested.promise
+    h.onEditorChange('loading-edit-a', 'edit during load')
+    targetPost.resolve({
+      path: 'loading-edit-x',
+      raw: 'disk X',
+      content: 'disk X',
+      frontmatter: {},
+      size: 6,
+      mtime: 8,
+    })
+    await flushPromises()
+
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['loading-edit-a'])
+    expect(h.tabs.value[0].raw).toBe('edit during load')
+    expect(h.tabs.value[0].saveStatus).toBe('dirty')
+    h.unmount()
+  })
+
+  it('does not mutate a source tab that was closed and reopened while rename content loads', async () => {
+    const targetPost = deferred<unknown>()
+    const targetRequested = deferred<void>()
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/reopen-a': () => ({ path: 'reopen-a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/reopen-x': () => {
+        targetRequested.resolve()
+        return targetPost.promise
+      },
+    }))
+    const h = await setup()
+    await h.openPost('reopen-a')
+    const original = h.tabs.value[0]
+
+    h.fileChanges.publish({ path: 'reopen-x', kind: 'rename', oldPath: 'reopen-a' })
+    await targetRequested.promise
+    await h.closeTab('reopen-a')
+    await h.openPost('reopen-a')
+    const reopened = h.tabs.value[0]
+    expect(reopened).not.toBe(original)
+    targetPost.resolve({
+      path: 'reopen-x',
+      raw: 'disk X',
+      content: 'disk X',
+      frontmatter: {},
+      size: 6,
+      mtime: 8,
+    })
+    await flushPromises()
+
+    expect(h.tabs.value.map((tab) => tab.path)).toEqual(['reopen-a'])
+    expect(h.tabs.value[0]).toBe(reopened)
+    expect(h.tabs.value[0].raw).toBe('A')
+    h.unmount()
+  })
+
+  it('migrates the current order instead of restoring a stale order after rename loading', async () => {
+    __setVaultIdForTesting('async-rename-order')
+    const targetPost = deferred<unknown>()
+    const targetRequested = deferred<void>()
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/order-load-b': () => ({ path: 'order-load-b', raw: 'B', content: 'B', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/order-load-a': () => ({ path: 'order-load-a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/order-load-c': () => ({ path: 'order-load-c', raw: 'C', content: 'C', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/order-load-x': () => {
+        targetRequested.resolve()
+        return targetPost.promise
+      },
+    }))
+    const h = await setup()
+    await h.openPost('order-load-b')
+    await h.openPost('order-load-a')
+    await h.openPost('order-load-c')
+
+    h.fileChanges.publish({ path: 'order-load-x', kind: 'rename', oldPath: 'order-load-a' })
+    await targetRequested.promise
+    expect(h.reorderOpenDocuments(['order-load-c', 'order-load-a', 'order-load-b'])).toBe(true)
+    targetPost.resolve({
+      path: 'order-load-x',
+      raw: 'X',
+      content: 'X',
+      frontmatter: {},
+      size: 1,
+      mtime: 8,
+    })
+    await flushPromises()
+
+    expect(h.tabs.value.map((tab) => tab.path))
+      .toEqual(['order-load-c', 'order-load-x', 'order-load-b'])
+    expect(JSON.parse(localStorage.getItem('docus:tabs:v1:async-rename-order')!).paths)
+      .toEqual(['order-load-c', 'order-load-x', 'order-load-b'])
+    h.unmount()
+    __setVaultIdForTesting(null)
   })
 
   it('does not close or reorder the source when a newer event supersedes rename confirmation', async () => {
