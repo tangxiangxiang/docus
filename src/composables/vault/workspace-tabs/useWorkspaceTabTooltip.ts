@@ -1,6 +1,7 @@
 import {
   nextTick,
   onBeforeUnmount,
+  readonly,
   ref,
   watch,
   type Ref,
@@ -82,8 +83,8 @@ export function useWorkspaceTabTooltip({
   onBeforeUnmount(hide)
 
   return {
-    tooltipTabId,
-    tooltipStyle,
+    tooltipTabId: readonly(tooltipTabId),
+    tooltipStyle: readonly(tooltipStyle),
     tooltipId,
     show,
     hide,

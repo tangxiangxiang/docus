@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { deriveDocumentSavePresentation } from '../../../composables/vault/editor-tabs/savePresentation'
@@ -19,6 +19,9 @@ function makeTab(id: string): WorkspaceTab {
 }
 
 const TABS = [makeTab('a.md'), makeTab('b.md')]
+const originalInnerWidth = window.innerWidth
+
+enableAutoUnmount(afterEach)
 
 class TestDataTransfer {
   effectAllowed = 'uninitialized'
@@ -47,6 +50,10 @@ describe('EditorTabs tooltip behavior characterization', () => {
   })
 
   afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: originalInnerWidth,
+    })
     vi.restoreAllMocks()
   })
 
@@ -71,7 +78,6 @@ describe('EditorTabs tooltip behavior characterization', () => {
 
     await row.trigger('focusout')
     expect(tooltip()).toBeNull()
-    wrapper.unmount()
   })
 
   it('hides on Escape', async () => {
@@ -86,7 +92,6 @@ describe('EditorTabs tooltip behavior characterization', () => {
     await row.trigger('keydown', { key: 'Escape' })
 
     expect(tooltip()).toBeNull()
-    wrapper.unmount()
   })
 
   it('hides when the active tab changes', async () => {
@@ -100,7 +105,6 @@ describe('EditorTabs tooltip behavior characterization', () => {
     await wrapper.setProps({ activePath: 'b.md' })
 
     expect(tooltip()).toBeNull()
-    wrapper.unmount()
   })
 
   it('hides when its tab is removed and does not revive when the id returns', async () => {
@@ -116,7 +120,6 @@ describe('EditorTabs tooltip behavior characterization', () => {
 
     await wrapper.setProps({ tabs: [...TABS] })
     expect(tooltip()).toBeNull()
-    wrapper.unmount()
   })
 
   it('suppresses tooltip display for the duration of a drag', async () => {
@@ -136,11 +139,9 @@ describe('EditorTabs tooltip behavior characterization', () => {
 
     expect(tooltip()).toBeNull()
     row.element.dispatchEvent(new Event('dragend', { bubbles: true }))
-    wrapper.unmount()
   })
 
   it('uses the rendered tooltip rect for the second viewport clamp', async () => {
-    const originalWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 })
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: HTMLElement,
@@ -183,8 +184,6 @@ describe('EditorTabs tooltip behavior characterization', () => {
     expect(Number.parseInt(tooltip()!.style.left, 10)).toBe(92)
     expect(Number.parseInt(tooltip()!.style.left, 10) + tooltip()!.getBoundingClientRect().width)
       .toBeLessThanOrEqual(492)
-    wrapper.unmount()
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth })
   })
 
   it('does not apply a queued post-render update after unmount', async () => {
