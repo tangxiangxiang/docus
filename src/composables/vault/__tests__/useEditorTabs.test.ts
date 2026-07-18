@@ -114,6 +114,15 @@ interface Harness {
   toggleViewMode: ReturnType<typeof vi.fn>
 }
 
+const mountedWrappers = new Set<{ unmount: () => void }>()
+
+afterEach(() => {
+  for (const wrapper of mountedWrappers) {
+    wrapper.unmount()
+  }
+  mountedWrappers.clear()
+})
+
 function setup(): Promise<Harness> {
   return new Promise(async (resolveOuter) => {
     let captured: Harness | null = null
@@ -131,7 +140,11 @@ function setup(): Promise<Harness> {
     router.push('/vault').catch(() => {})
     await router.isReady()
     const wrapper = mount(Comp, { global: { plugins: [router] } })
-    captured!.unmount = () => { wrapper.unmount() }
+    mountedWrappers.add(wrapper)
+    captured!.unmount = () => {
+      if (!mountedWrappers.delete(wrapper)) return
+      wrapper.unmount()
+    }
     // useEditorTabs runs refresh() in onMounted; wait for it to settle.
     await nextTick()
     await flushPromises()
@@ -1905,7 +1918,8 @@ describe('useEditorTabs — tab persistence', () => {
         return () => h('div')
       },
     })
-    mount(Comp, { global: { plugins: [router] } })
+    const wrapper = mount(Comp, { global: { plugins: [router] } })
+    mountedWrappers.add(wrapper)
     await nextTick()
     await Promise.resolve()
     await flushPromises()
@@ -2330,7 +2344,11 @@ function mountWorkspaceTabsDom(): Promise<DomHarness> {
       global: { plugins: [router] },
       attachTo: document.body,
     })
-    captured!.unmount = () => { wrapper.unmount() }
+    mountedWrappers.add(wrapper)
+    captured!.unmount = () => {
+      if (!mountedWrappers.delete(wrapper)) return
+      wrapper.unmount()
+    }
     // Wait for onMounted's refresh() to settle.
     await nextTick()
     await flushPromises()
