@@ -70,6 +70,9 @@ The Edit-07 baseline is the contract for this refactor. In particular:
 5. Dirty confirmation remains all-or-nothing for mixed Document, History, and Diff
    batches.
 6. Menu actions restore focus before a confirmation can activate its focus trap.
+   Action targets are snapshotted before `nextTick()`, focus restoration,
+   confirmation, or any other asynchronous boundary; later tab changes must not
+   silently change the emitted intent.
 7. Successful close operations leave focus on the active or fallback tab, or on
    the Vault when no tab remains.
 8. Clipboard fallback restores its prior focus.
@@ -107,11 +110,20 @@ Existing pure modules keep their current ownership during the extraction:
 ```text
 src/composables/vault/editor-tabs/tabPresentation.ts
 src/components/vault/workspaceTabOrder.ts
+src/components/vault/workspaceTabFocus.ts
 ```
 
 Moving `tabPresentation.ts` to `workspace-tabs/` is optional cleanup after all
 interaction extractions are complete. It must be a mechanical move with no
 presentation changes.
+
+The existing `workspaceTabFocus.ts` remains the `VaultView`-level rename-focus
+policy: it identifies the focused Workspace tab, maps renamed IDs, and applies the
+`expectedFocus` guard that prevents stealing focus after an asynchronous rename.
+The new `useWorkspaceTabFocus.ts` is limited to `EditorTabs`-local element lookup
+and `focusTab()`. It must not duplicate rename mappings or the `expectedFocus`
+policy. Renaming the existing module to `workspaceRenameFocus.ts` may be considered
+as a separate mechanical cleanup, but is not required by Edit-08.
 
 ## 5. Ownership Boundaries
 
@@ -122,6 +134,8 @@ The component continues to own:
 - props, emits, and the public `focusTab(id)` method;
 - tab and menu markup, Teleports, CSS classes, and ARIA bindings;
 - mapping DOM events to composable commands;
+- coordinating interactions explicitly across composables before emitting an
+  action;
 - rendering `TabUiPresentation`;
 - emitting `select`, `close`, `close-many`, `copy-path`, `reveal-in-tree`, and
   `reorder`.
@@ -140,15 +154,15 @@ It must not:
 Owns:
 
 - active tooltip tab ID and style;
-- hover/focus show and mouseleave/blur hide rules;
-- Escape, click, middle-click, context-menu, active-tab-change, tab-removal, and
-  unmount lifecycle;
+- show/hide commands used by hover, focus, mouseleave, and blur event wiring;
+- Escape handling plus active-tab-change, tab-removal, and unmount lifecycle;
 - first-pass positioning and post-render real-rect viewport clamping;
 - stable tooltip IDs and `aria-describedby` state;
 - suppression while dragging.
 
 Inputs are readonly tab IDs/presentations, active ID, element lookup callbacks, and
-a readonly drag-active signal. The composable does not emit tab actions.
+a readonly drag-active signal. The composable does not interpret click,
+middle-click, or context-menu business intent and does not emit tab actions.
 
 ### 5.3 `useWorkspaceTabMenu`
 
@@ -162,7 +176,9 @@ Owns:
 - outside pointer, external scroll, resize, active-tab-change, tab-signature-change,
   and unmount cleanup;
 - real-rect viewport clamping;
-- synchronous source-focus preparation before an action callback.
+- synchronous source-focus preparation before an action callback;
+- snapshotting the selected action and its target IDs before focus preparation or
+  any other asynchronous boundary.
 
 The composable returns user intents; it never mutates tabs or calls close
 coordinators. Path operations use `WorkspaceTab.documentPath`, with the existing
@@ -190,11 +206,12 @@ Owns component-local DOM focus helpers:
 
 - find a tab element by Workspace ID;
 - expose `focusTab(id)`;
-- restore focus only when the expected source still owns focus;
 - provide the small focus primitives shared by menu and keyboard reorder.
 
 Workspace close and rename focus policy stays in `VaultView`; this composable does
-not select a tab or decide fallback order.
+not select a tab or decide fallback order. In particular, rename ID mappings and
+the asynchronous `expectedFocus` guard remain exclusively in the existing
+`src/components/vault/workspaceTabFocus.ts`.
 
 ## 6. API Design Rules
 
@@ -210,6 +227,11 @@ not select a tab or decide fallback order.
 - Composables do not call each other through hidden module state. Coordination is
   explicit in `EditorTabs.vue` (for example, starting drag first closes tooltip and
   menu).
+- Composables own state transitions and resource cleanup. `EditorTabs.vue` parses
+  DOM events and is the sole cross-composable coordinator: for example, a context
+  menu event hides the tooltip, cancels reorder state as required, and then opens
+  the menu. The component must not also reimplement the state transition delegated
+  to the composable.
 - Existing emitted payloads remain unchanged so `VaultView` does not need a
   behavior change.
 
@@ -238,6 +260,8 @@ longer owns tooltip listeners or positioning.
 
 - Characterize focus-trap timing, menu generation, internal scrolling, and stale-tab
   invalidation.
+- Characterize action-target snapshots across focus preparation and asynchronous
+  boundaries.
 - Extract menu state, positioning, keyboard navigation, and listener lifecycle.
 - Keep menu action emits and close coordination unchanged.
 - Preserve one-menu-only Teleport and all ARIA roles.
@@ -283,12 +307,15 @@ Proposed focused suites:
 - `useWorkspaceTabTooltip.test.ts`: lifecycle, viewport clamping, stale generations,
   tab removal, active change, and drag suppression.
 - `useWorkspaceTabMenu.test.ts`: target calculation, keyboard navigation, focus
-  preparation, global-listener cleanup, menu scrolling, and viewport clamping.
+  preparation, action-target snapshots, global-listener cleanup, menu scrolling,
+  and viewport clamping. This includes preserving the original `close-many`
+  targets when tabs change during focus preparation.
 - `useWorkspaceTabReorder.test.ts`: MIME/signature validation, pointer moves,
   keyboard moves, close-button blocking, synthetic clicks, classes, announcements,
   and single-loop auto-scroll.
-- `useWorkspaceTabFocus.test.ts`: element lookup, connected-element checks, and
-  expected-focus preservation.
+- `useWorkspaceTabFocus.test.ts`: component-local element lookup and
+  connected-element checks. Rename `expectedFocus` coverage remains with
+  `workspaceTabFocus.ts`.
 - `EditorTabs.test.ts`: presentation rendering, core emits, public `focusTab`, basic
   ARIA/Teleport wiring, and cross-interaction exclusions.
 
