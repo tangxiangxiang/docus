@@ -30,7 +30,7 @@ Notes flow one way: Literature feeds Inbox, where AI helps you think; what earns
 ```bash
 npm install
 npm run dev          # vite + Hono middleware, http://localhost:5173
-npm test             # vitest, 27 files / 223 tests
+npm test             # run Vitest and print the current totals
 npm run build        # vue-tsc -b && vite build
 ```
 
@@ -266,28 +266,28 @@ it to `.env` and fill in real values. `.env` is gitignored.
 npm test
 ```
 
-223 tests across 27 files:
+The test suite includes:
 
-- **7 component tests** under `src/components/vault/__tests__/` —
+- **Component tests** under `src/components/**/__tests__/` —
   cover the file tree, context menu, drag-and-drop, inline rename,
   the kind-aware lookup that prevents a same-name file/folder
   collision from misrouting renames, and the tag panel. The
   composables `useConfirm` / `usePrompt` / `useToast` are
   `vi.mock`-ed; tree fixtures are inline literals.
-- **6 composable tests** under `src/composables/vault/__tests__/` —
+- **Composable tests** under `src/composables/**/__tests__/` —
   cover the editor tabs state machine, the tag filter, the vault
   layout persistence, the markdown render, the `useAiHistory`
   singleton (including the new `sendAndStream` happy / error /
   busy-guard paths), and the `useCurrentNote` singleton. The AI
   singletons expose `__resetForTesting` exports to isolate state
   between tests.
-- **3 lib tests** under `src/lib/__tests__/` — cover the full-text
+- **Library tests** under `src/lib/__tests__/` — cover the full-text
   search index, the AI HTTP wire format (including the `streamChat`
   SSE parser), and the AI typed fetch wrappers (`fetch` is
   `vi.mock`-ed).
-- **1 view test** under `src/views/__tests__/` — covers the Tags
-  view.
-- **10 server tests** under `server/__tests__/` — exercise the path
+- **View tests** under `src/views/__tests__/` — cover VaultView and
+  the Tags view.
+- **Server tests** under `server/__tests__/` — exercise the path
   validation, the PUT handler, the tree builder, the SQLite
   migration runner, the AI sessions and messages services, the AI
   HTTP sub-router (with `vi.mock` of the DB module), the LLM SDK
@@ -298,8 +298,8 @@ npm test
   `streamClaude` is `vi.mock`-ed at the module boundary so the
   tests don't hit the network.
 
-VaultView itself has no dedicated tests; behavior changes there
-rely on the dev server's manual smoke (open / edit / save / drag).
+Run `npm test` to see the current test-file and test-case totals.
+Manual smoke testing remains useful for browser-specific editor behavior.
 
 ## Conventions
 

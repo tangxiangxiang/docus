@@ -941,7 +941,6 @@ describe('useDocumentSave optimistic conflicts', () => {
       seq: 1,
       path: 'inbox/test',
       kind: 'delete',
-      source: 'ai-tool',
     })
     expect(h.tabs.value[0]).toMatchObject({
       saveStatus: 'external',
@@ -1096,7 +1095,6 @@ describe('useDocumentSave optimistic conflicts', () => {
       seq: 1,
       path: 'inbox/test',
       kind: 'delete',
-      source: 'ai-tool',
     })
     expect(h.tabs.value[0]).toMatchObject({
       saveStatus: 'external',
@@ -1185,7 +1183,6 @@ describe('useDocumentSave optimistic conflicts', () => {
       seq: 1,
       path: 'inbox/test',
       kind: 'write',
-      source: 'ai-tool',
       newRaw: 'new content C',
       newMtime: 30,
     })
@@ -1254,7 +1251,6 @@ describe('useDocumentSave optimistic conflicts', () => {
       seq: 1,
       path: 'inbox/test',
       kind: 'write',
-      source: 'ai-tool',
       newRaw: 'recreated content',
       newMtime: 50,
     })
@@ -1316,7 +1312,6 @@ describe('useDocumentSave optimistic conflicts', () => {
       seq: 1,
       path: 'inbox/test',
       kind: 'write',
-      source: 'ai-tool',
       newRaw: 'accepted C',
       newMtime: 20,
     })
@@ -1385,11 +1380,11 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     // Fire both events — both are dirty so both prompt.
     const e1 = external.applyExternalChange({
-      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      seq: 1, path: 'inbox/test', kind: 'write',
       newRaw: 'C1 from older event', newMtime: 20,
     })
     const e2 = external.applyExternalChange({
-      seq: 2, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      seq: 2, path: 'inbox/test', kind: 'write',
       newRaw: 'C2 from newer event', newMtime: 30,
     })
 
@@ -1469,7 +1464,7 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     // Fire event — confirm is pending.
     const promise = external.applyExternalChange({
-      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      seq: 1, path: 'inbox/test', kind: 'write',
       newRaw: 'C from AI', newMtime: 20,
     })
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
@@ -1532,7 +1527,7 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     // Fire write event — confirm is pending.
     const writePromise = external.applyExternalChange({
-      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      seq: 1, path: 'inbox/test', kind: 'write',
       newRaw: 'C1 from write', newMtime: 20,
     })
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
@@ -1540,7 +1535,7 @@ describe('useDocumentSave optimistic conflicts', () => {
     // Delete arrives while write confirm is pending — bumps externalEventIds
     // so the stale write will be silently discarded.
     await external.applyExternalChange({
-      seq: 2, path: 'inbox/test', kind: 'delete', source: 'ai-tool',
+      seq: 2, path: 'inbox/test', kind: 'delete',
       newMtime: 30,
     })
     expect(h.tabs.value[0]).toMatchObject({
@@ -1606,7 +1601,7 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     // Fire write event — confirm is pending.
     const writePromise = external.applyExternalChange({
-      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      seq: 1, path: 'inbox/test', kind: 'write',
       newRaw: 'C1 from write', newMtime: 20,
     })
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
@@ -1672,7 +1667,7 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     // Fire E1 — confirm is pending (dirty, seq=1).
     const e1Promise = external.applyExternalChange({
-      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      seq: 1, path: 'inbox/test', kind: 'write',
       newRaw: 'C1 from older event', newMtime: 20,
     })
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
@@ -1687,7 +1682,7 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     // Fire E2 — clean write auto-applies (seq=2 > 1, makes E1 stale).
     await external.applyExternalChange({
-      seq: 2, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      seq: 2, path: 'inbox/test', kind: 'write',
       newRaw: 'C2 from clean write', newMtime: 30,
     })
     expect(h.tabs.value[0]).toMatchObject({
@@ -1744,7 +1739,7 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     // Fire E1 — confirm is pending (dirty, seq=1).
     const e1Promise = external.applyExternalChange({
-      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      seq: 1, path: 'inbox/test', kind: 'write',
       newRaw: 'C1 from write', newMtime: 20,
     })
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
@@ -1818,7 +1813,7 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     // Fire E1 — confirm is pending.
     const e1Promise = external.applyExternalChange({
-      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      seq: 1, path: 'inbox/test', kind: 'write',
       newRaw: 'C1 from write', newMtime: 20,
     })
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
@@ -1882,7 +1877,7 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     // Fire E1 — confirm is pending (dirty, seq=1).
     const e1Promise = external.applyExternalChange({
-      seq: 1, path: 'inbox/test', kind: 'write', source: 'ai-tool',
+      seq: 1, path: 'inbox/test', kind: 'write',
       newRaw: 'C1 from old event', newMtime: 20,
     })
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
@@ -1942,7 +1937,7 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     // Fire E1 on oldPath — confirm is pending (dirty, seq=1).
     const e1Promise = external.applyExternalChange({
-      seq: 1, path: 'inbox/old-path', kind: 'write', source: 'ai-tool',
+      seq: 1, path: 'inbox/old-path', kind: 'write',
       newRaw: 'C1 from write', newMtime: 20,
     })
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce())
@@ -1951,7 +1946,7 @@ describe('useDocumentSave optimistic conflicts', () => {
     // invalidate the old path's event seq so E1 is detected as stale.
     await external.applyExternalChange({
       seq: 2, path: 'inbox/new-path', oldPath: 'inbox/old-path',
-      kind: 'rename', source: 'ai-tool',
+      kind: 'rename',
       newRaw: 'content after rename', newMtime: 30,
     })
 
@@ -2008,7 +2003,7 @@ describe('useDocumentSave optimistic conflicts', () => {
     // Fire rename: oldPath → newPath, newRaw=C.
     await external.applyExternalChange({
       seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
-      kind: 'rename', source: 'ai-tool',
+      kind: 'rename',
       newRaw: 'C from rename', newMtime: 30,
     })
 
@@ -2060,7 +2055,7 @@ describe('useDocumentSave optimistic conflicts', () => {
     // Fire rename: oldPath → newPath, newRaw=C.
     await external.applyExternalChange({
       seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
-      kind: 'rename', source: 'ai-tool',
+      kind: 'rename',
       newRaw: 'C from rename', newMtime: 30,
     })
 
@@ -2113,7 +2108,7 @@ describe('useDocumentSave optimistic conflicts', () => {
     // Fire rename E1 — will block at closeTab.
     const e1Promise = external.applyExternalChange({
       seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
-      kind: 'rename', source: 'ai-tool',
+      kind: 'rename',
       newRaw: 'C1 from stale rename', newMtime: 20,
     })
     // Wait for closeTab to have been called (E1 is now blocked).
@@ -2123,7 +2118,7 @@ describe('useDocumentSave optimistic conflicts', () => {
     // tab exists at newPath yet, E2 hits the `!tab` early-return. But
     // it still records seq=2 → latestEventSeqs[newPath]=2.
     await external.applyExternalChange({
-      seq: 2, path: 'inbox/new-path', kind: 'write', source: 'ai-tool',
+      seq: 2, path: 'inbox/new-path', kind: 'write',
       newRaw: 'C2 from newer write', newMtime: 30,
     })
 
@@ -2181,7 +2176,7 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     await external.applyExternalChange({
       seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
-      kind: 'rename', source: 'ai-tool',
+      kind: 'rename',
       newRaw: 'C from rename', newMtime: 30,
     })
 
@@ -2231,7 +2226,7 @@ describe('useDocumentSave optimistic conflicts', () => {
 
     await external.applyExternalChange({
       seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
-      kind: 'rename', source: 'ai-tool',
+      kind: 'rename',
       newRaw: 'C from rename', newMtime: 30,
     })
 
@@ -2323,7 +2318,7 @@ describe('useDocumentSave optimistic conflicts', () => {
     // (and disk read generation) before mutating the tab.
     await external.applyExternalChange({
       seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
-      kind: 'rename', source: 'ai-tool',
+      kind: 'rename',
       newRaw: 'C from rename', newMtime: 30,
     })
 
@@ -2397,7 +2392,7 @@ describe('useDocumentSave optimistic conflicts', () => {
     // (post self-reference rewrite), not the pre-rewrite raw.
     await external.applyExternalChange({
       seq: 1, path: 'inbox/new-path', oldPath: 'inbox/old-path',
-      kind: 'rename', source: 'ai-tool',
+      kind: 'rename',
       newRaw: finalBody, newMtime: 30,
     })
 

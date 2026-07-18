@@ -29,7 +29,7 @@ SQLite 数据库里。
 ```bash
 npm install
 npm run dev          # vite + Hono 中间件, http://localhost:5173
-npm test             # vitest, 27 个文件 / 223 个测试
+npm test             # 运行 Vitest，并输出当前测试总数
 npm run build        # vue-tsc -b && vite build
 ```
 
@@ -242,23 +242,23 @@ debounce，v1 接受这个延迟，缩小差距是另一个 spec 的事。
 npm test
 ```
 
-223 个测试，分布在 27 个文件中：
+测试套件包括：
 
-- **7 个组件测试**（`src/components/vault/__tests__/`）—— 覆盖文件
+- **组件测试**（`src/components/**/__tests__/`）—— 覆盖文件
   树、右键菜单、拖放、内联重命名、防止"同名文件/目录"重命名串扰
   的 kind 感知查找，以及 TagPanel。`useConfirm` / `usePrompt` /
   `useToast` 三个 composable 用 `vi.mock` 替换；树结构 fixture 是
   内联的字面量。
-- **6 个 composable 测试**（`src/composables/vault/__tests__/`）——
+- **composable 测试**（`src/composables/**/__tests__/`）——
   覆盖编辑器标签页状态机、tag filter、vault layout 持久化、markdown
   渲染、`useAiHistory` singleton（含新增的 `sendAndStream` 正常
   / 异常 / 忙时拦截分支），以及 `useCurrentNote` singleton。AI
   singleton 暴露 `__resetForTesting` 导出，用来在测试间隔离状态。
-- **3 个 lib 测试**（`src/lib/__tests__/`）—— 覆盖全文搜索索引、
+- **lib 测试**（`src/lib/__tests__/`）—— 覆盖全文搜索索引、
   AI 线缆格式（含 `streamChat` 的 SSE 解析器），以及 AI 的带类型
   fetch 封装（`fetch` 用 `vi.mock` 替换）。
-- **1 个视图测试**（`src/views/__tests__/`）—— 覆盖 Tags 视图。
-- **10 个后台测试**（`server/__tests__/`）—— 覆盖路径校验、PUT
+- **视图测试**（`src/views/__tests__/`）—— 覆盖 VaultView 和 Tags 视图。
+- **后台测试**（`server/__tests__/`）—— 覆盖路径校验、PUT
   handler、tree builder、SQLite 迁移执行器、AI sessions/messages
   service、AI HTTP 子路由（用 `vi.mock` 替换 DB 模块）、LLM SDK
   封装、`runChat` / `buildSystemPrompt` 协调器，以及一个挂载完整
@@ -267,8 +267,8 @@ npm test
   干净的 DB；`streamClaude` 在模块边界用 `vi.mock` 替换，测试不会
   触达真实网络。
 
-VaultView 本身没有专门测试，相关行为变更依赖 dev server 手动验证
-（打开 / 编辑 / 保存 / 拖动）。
+运行 `npm test` 可查看当前测试文件和测试用例总数。
+浏览器特有的编辑器行为仍建议配合 dev server 做手动 smoke test。
 
 ## 约定
 

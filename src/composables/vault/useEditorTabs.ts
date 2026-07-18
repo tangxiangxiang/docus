@@ -73,7 +73,12 @@ export function useEditorTabs(opts: {
   // the resulting synchronous persister into the workspace's close
   // hooks so every close / rename / restore-failure path persists
   // before the user can refresh.
-  const { vaultId, resolveVaultId, persist: persistOpenTabs } = useTabPersistence(tabs, activePath)
+  const {
+    vaultId,
+    resolveVaultId,
+    persist: persistOpenTabs,
+    dispose: disposeTabPersistence,
+  } = useTabPersistence(tabs, activePath)
   setPersist(persistOpenTabs)
 
   const {
@@ -305,6 +310,7 @@ export function useEditorTabs(opts: {
     window.removeEventListener('online', handleOnline)
     stopExternalPolling()
     disposeDocumentSave()
+    disposeTabPersistence()
   })
 
   startExternalPolling()

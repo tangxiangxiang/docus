@@ -86,6 +86,7 @@ interface Harness {
   refresh: () => Promise<void>
   applyPostSummary: (post: PostSummary) => void
   renameOpenDocuments: (mappings: ReadonlyArray<{ from: string; to: string }>) => void
+  removeOpenDocuments: (paths: readonly string[]) => void
   reorderOpenDocuments: (paths: readonly string[]) => boolean
   activePath: Ref<string | null>
   activeSize: Ref<number>
@@ -93,12 +94,14 @@ interface Harness {
   tree: Ref<TreeNode[]>
   tabs: Ref<{
     path: string
+    title: string
     raw: string
     originalRaw: string
     revision: number
     savedRevision: number
     savingRevision: number | null
     saveStatus: string
+    loading: boolean
     loadError: string | null
     serverMtime?: number
     externalRaw?: string | null
@@ -1502,6 +1505,65 @@ describe('useEditorTabs — file-change bus', () => {
     h.unmount()
   })
 
+  it('does not overwrite target edits made while rename content is loading', async () => {
+    const targetPost = deferred<unknown>()
+    const targetRequested = deferred<void>()
+    vi.stubGlobal('fetch', stubFetch({
+      'GET /api/tree': () => [],
+      'GET /api/posts': () => [],
+      'GET /api/posts/loading-target-a': () => ({ path: 'loading-target-a', raw: 'A', content: 'A', frontmatter: {}, size: 1, mtime: 0 }),
+      'GET /api/posts/loading-target-x': (() => {
+        let calls = 0
+        return () => {
+          calls++
+          if (calls === 1) {
+            return {
+              path: 'loading-target-x',
+              raw: 'old X',
+              content: 'old X',
+              frontmatter: {},
+              size: 5,
+              mtime: 0,
+            }
+          }
+          targetRequested.resolve()
+          return targetPost.promise
+        }
+      })(),
+    }))
+    const h = await setup()
+    await h.openPost('loading-target-a')
+    await h.openPost('loading-target-x')
+    const source = h.tabs.value.find((tab) => tab.path === 'loading-target-a')!
+    const target = h.tabs.value.find((tab) => tab.path === 'loading-target-x')!
+
+    h.fileChanges.publish({
+      path: 'loading-target-x',
+      kind: 'rename',
+      oldPath: 'loading-target-a',
+    })
+    await targetRequested.promise
+    h.onEditorChange('loading-target-x', 'target edit during load')
+    targetPost.resolve({
+      path: 'loading-target-x',
+      raw: 'disk X',
+      content: 'disk X',
+      frontmatter: {},
+      size: 6,
+      mtime: 8,
+    })
+    await flushPromises()
+
+    expect(h.tabs.value.map((tab) => tab.path))
+      .toEqual(['loading-target-a', 'loading-target-x'])
+    expect(h.tabs.value[0]).toBe(source)
+    expect(h.tabs.value[1]).toBe(target)
+    expect(source.raw).toBe('A')
+    expect(target.raw).toBe('target edit during load')
+    expect(target.saveStatus).toBe('dirty')
+    h.unmount()
+  })
+
   it('does not mutate a source tab that was closed and reopened while rename content loads', async () => {
     const targetPost = deferred<unknown>()
     const targetRequested = deferred<void>()
@@ -2257,7 +2319,7 @@ function mountWorkspaceTabsDom(): Promise<DomHarness> {
         return () => h('div', { class: 'test-host' }, workspaceTabs.value.length > 0
           ? [h(EditorTabs, {
               tabs: workspaceTabs.value,
-              'active-path': activePath.value,
+              activePath: activePath.value,
               onSelect: (id: string) => api.selectTab(id),
               onClose: (id: string) => api.closeTab(id),
             })]
@@ -2515,7 +2577,6 @@ describe('useEditorTabs — round-6 restore-failure race vs reopen', () => {
       if (url === '/api/health') {
         return { ok: true, status: 200, json: async () => ({}) }
       }
-      const path = url.match(/\/api\/posts\/(.+)$/)![1]!
       openCount++
       return {
         ok: true,
