@@ -50,6 +50,7 @@ export function useWorkspaceTabMenu({
   let sourceElement: HTMLElement | null = null
   let openingSignature = ''
   let generation = 0
+  let disposed = false
 
   const tabIds = computed(() => tabs.value.map((tab) => tab.id))
   const targetIndex = computed(() =>
@@ -157,6 +158,7 @@ export function useWorkspaceTabMenu({
     nextY: number,
     source: HTMLElement,
   ): void {
+    if (disposed) return
     const currentGeneration = ++generation
     removeListeners()
     targetId.value = id
@@ -272,9 +274,20 @@ export function useWorkspaceTabMenu({
   }
 
   async function activate(action: WorkspaceTabMenuAction): Promise<void> {
+    if (
+      disposed
+      || !visible.value
+      || !targetId.value
+      || !tabIds.value.includes(targetId.value)
+      || signature() !== openingSignature
+    ) {
+      close(false)
+      return
+    }
     const intent = snapshotIntent(action)
     if (!intent) return
     await prepareAction()
+    if (disposed) return
     onIntent(intent)
   }
 
@@ -284,7 +297,10 @@ export function useWorkspaceTabMenu({
   watch(tabIds, () => {
     if (visible.value && signature() !== openingSignature) close(false)
   })
-  onBeforeUnmount(() => close(false))
+  onBeforeUnmount(() => {
+    disposed = true
+    close(false)
+  })
 
   return {
     visible: readonly(visible),

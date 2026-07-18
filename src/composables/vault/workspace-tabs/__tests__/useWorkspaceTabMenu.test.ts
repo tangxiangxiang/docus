@@ -224,6 +224,19 @@ describe('useWorkspaceTabMenu', () => {
     expect(api.visible.value).toBe(false)
   })
 
+  it('fails closed when the tab signature changes before the watcher flushes', async () => {
+    const { api } = setup()
+    connectMenu(api)
+    api.open('b', 10, 20, fixture('button'))
+    await nextTick()
+
+    api.tabs.value = [makeTab('b'), makeTab('a'), makeTab('c')]
+    await api.activate('close-right')
+
+    expect(api.intents).toEqual([])
+    expect(api.visible.value).toBe(false)
+  })
+
   it('ignores menu-internal scroll and closes for external scroll', async () => {
     const { api } = setup()
     const { menu } = connectMenu(api)
@@ -258,5 +271,18 @@ describe('useWorkspaceTabMenu', () => {
     expect(windowAdd.mock.calls.some(
       ([type]) => type === 'resize' || type === 'scroll',
     )).toBe(false)
+  })
+
+  it('does not emit a queued intent after unmount', async () => {
+    const { api, unmount } = setup()
+    connectMenu(api)
+    api.open('b', 10, 20, fixture('button'))
+    await nextTick()
+
+    const activation = api.activate('close')
+    unmount()
+    await activation
+
+    expect(api.intents).toEqual([])
   })
 })
