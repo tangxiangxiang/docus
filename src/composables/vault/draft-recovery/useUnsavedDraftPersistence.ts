@@ -546,7 +546,7 @@ export function createUnsavedDraftPersistence(
         releaseEntry(
           state,
           mapping.toPath,
-          status === 'moved' || status === 'missing',
+          true,
         )
         results.push({
           documentId: mapping.documentId,
@@ -586,7 +586,7 @@ export function createUnsavedDraftPersistence(
         }
         deletedKeys.add(identityKey)
         if (deletion.policy === 'preserve') {
-          releaseEntry(state, deletion.documentPath, false)
+          releaseEntry(state, deletion.documentPath, true)
           results.push({
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,

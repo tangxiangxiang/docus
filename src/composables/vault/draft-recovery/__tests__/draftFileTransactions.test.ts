@@ -239,6 +239,35 @@ describe('draft file transaction integration', () => {
     await persistence.dispose()
   })
 
+  it('persists edits captured by a preserve delete as orphan recovery', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 20,
+      targetWindow: undefined,
+    })
+    const barrier = await persistence.prepareFileMutation([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }])
+    persistence.schedule(snapshot('orphan', 'notes/a', 2))
+    await barrier.commitDeletes([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      policy: 'preserve',
+    }])
+    await persistence.flush('vault', 'doc-a')
+
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'orphan',
+      documentPath: 'notes/a',
+    })
+    await persistence.dispose()
+  })
+
   it('settles a barrier only once', async () => {
     const store = createDraftStore({ backend: createMemoryDraftBackend() })
     const persistence = createUnsavedDraftPersistence({
