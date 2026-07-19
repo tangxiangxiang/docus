@@ -53,6 +53,7 @@ interface DraftEntry {
   pendingWrite: Promise<boolean> | null
   previousUpdatedAt: number
   createdAt: number | null
+  persistedDraft: UnsavedDraft | null
 }
 
 interface CreateOptions {
@@ -94,6 +95,7 @@ export function createUnsavedDraftPersistence(
         pendingWrite: null,
         previousUpdatedAt: -1,
         createdAt: null,
+        persistedDraft: null,
       }
       entries.set(identity, entry)
     }
@@ -169,6 +171,17 @@ export function createUnsavedDraftPersistence(
         if (saved && current(owner, entry)
           && entry.latestSnapshot?.revision === snapshot.revision) {
           entry.latestSnapshotNeedsWrite = false
+          // DraftStore preserves an existing record's original createdAt.
+          // Read back the exact stored value before claiming delete ownership;
+          // a concurrent context with a different payload makes this fail
+          // closed instead of granting ownership over its record.
+          const stored = await store.getDraft(draft.vaultId, draft.documentId)
+          if (stored
+            && current(owner, entry)
+            && entry.latestSnapshot?.revision === snapshot.revision
+            && draftsEqual(stored, { ...draft, createdAt: stored.createdAt })) {
+            entry.persistedDraft = stored
+          }
         }
         return saved
       } catch {
@@ -232,7 +245,8 @@ export function createUnsavedDraftPersistence(
 
   async function deleteOwned(
     owner: DraftOwner,
-    expected?: UnsavedDraft,
+    expected = entries.get(key(owner.vaultId, owner.documentId))?.persistedDraft
+      ?? null,
   ): Promise<boolean> {
     const entry = entries.get(key(owner.vaultId, owner.documentId))
     if (!current(owner, entry)) return false
@@ -246,11 +260,20 @@ export function createUnsavedDraftPersistence(
       if (entry.generation !== deleteGeneration || entry.latestSnapshot !== null) {
         return false
       }
+      // Runtime ownership is not enough to delete a cross-context record.
+      // Only the exact draft this coordinator persisted or adopted may be
+      // removed; an absent ownership record fails closed.
+      if (!expected) return false
       try {
-        const result = expected
-          ? await store.deleteDraftIfUnchanged(expected)
-          : await store.deleteDraft(owner.vaultId, owner.documentId)
-        return result.status === 'deleted' || result.status === 'missing'
+        const result = await store.deleteDraftIfUnchanged(expected)
+        const deleted = result.status === 'deleted' || result.status === 'missing'
+        if (deleted
+          && entry.generation === deleteGeneration
+          && entry.persistedDraft
+          && draftsEqual(entry.persistedDraft, expected)) {
+          entry.persistedDraft = null
+        }
+        return deleted
       } catch {
         return false
       }
@@ -382,6 +405,7 @@ export function createUnsavedDraftPersistence(
     entry.latestSnapshotNeedsWrite = false
     entry.previousUpdatedAt = expected.updatedAt
     entry.createdAt = expected.createdAt
+    entry.persistedDraft = expected
     return {
       vaultId: expected.vaultId,
       documentId: expected.documentId,

@@ -334,7 +334,10 @@ Implemented in:
   It observes generation, timer, snapshot, and pending-operation ownership
   across every storage read, so concurrent local edits fail adoption without
   losing their debounce work. Failed application rolls back only the exact
-  adoption owner, never a newer editor generation;
+  adoption owner, never a newer editor generation. Each coordinator entry also
+  retains the exact draft it successfully persisted or adopted; clean,
+  return-to-baseline, and discard cleanup use atomic compare-and-delete and
+  cannot remove a newer draft written by another browser context;
 - `useDocumentSave.ts`: `applyRecoveredDraft()` revalidates stable identity,
   clean state, external state, disk raw, and disk mtime before creating a dirty
   editor revision. It adopts the already-persisted browser draft without a
@@ -350,7 +353,11 @@ Implemented in:
 This stage never restores automatically, never writes recovered content to disk,
 and deletes a stored draft only after an explicit Use Disk/Discard action.
 Document opening and View Current navigation both reclassify again after their
-asynchronous boundary; a changed stored draft or disk identity fails closed.
+asynchronous boundary; View Current additionally verifies the actual loaded
+Document tab's stable identity and load state before focusing it. A changed
+stored draft, disk identity, or cached tab identity fails closed. Failed draft
+application refreshes classification once more before showing Recovery content,
+so the pane never falls back to the pre-adoption snapshot.
 Closing a Recovery tab or choosing Later keeps IndexedDB unchanged. Rename,
 move, delete migration, recovery-center management, retention, and capacity
 cleanup remain deferred to Edit-09.5/09.6.

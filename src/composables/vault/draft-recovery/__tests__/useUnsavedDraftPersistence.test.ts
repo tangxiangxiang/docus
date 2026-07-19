@@ -124,9 +124,9 @@ describe('createUnsavedDraftPersistence', () => {
 
   it('serializes a reopened document write after discard deletion', async () => {
     const deletion = deferred<{ status: 'deleted' }>()
-    const deleteDraft = vi.fn().mockReturnValue(deletion.promise)
+    const deleteDraftIfUnchanged = vi.fn().mockReturnValue(deletion.promise)
     const persistence = createUnsavedDraftPersistence({
-      store: { ...store, deleteDraft },
+      store: { ...store, deleteDraftIfUnchanged },
     })
 
     const owner = persistence.schedule(snapshot('a', 'old', 1))!
@@ -337,6 +337,82 @@ describe('createUnsavedDraftPersistence', () => {
     expect(await store.getDraft('vault-1', 'a')).toBeNull()
   })
 
+  it('keeps a newer cross-context draft when an older owner becomes clean', async () => {
+    const persistence = createUnsavedDraftPersistence({ store, now: () => 100 })
+    const owner = persistence.schedule(snapshot('a', 'local v1', 1))!
+    await persistence.flush('vault-1', 'a')
+    const local = (await store.getDraft('vault-1', 'a'))!
+    await store.saveDraft({
+      ...local,
+      content: 'other context v2',
+      updatedAt: local.updatedAt + 1,
+    })
+
+    await persistence.markClean(owner, 1)
+
+    expect(await store.getDraft('vault-1', 'a')).toMatchObject({
+      content: 'other context v2',
+      updatedAt: local.updatedAt + 1,
+    })
+  })
+
+  it('keeps a newer cross-context draft when local content returns to baseline', async () => {
+    const persistence = createUnsavedDraftPersistence({ store, now: () => 100 })
+    persistence.schedule(snapshot('a', 'local v1', 1))
+    await persistence.flush('vault-1', 'a')
+    const local = (await store.getDraft('vault-1', 'a'))!
+    await store.saveDraft({
+      ...local,
+      content: 'other context v2',
+      updatedAt: local.updatedAt + 1,
+    })
+
+    await persistence.returnedToBaseline('vault-1', 'a')
+
+    expect((await store.getDraft('vault-1', 'a'))?.content)
+      .toBe('other context v2')
+  })
+
+  it('keeps a newer cross-context draft when an older tab is discarded', async () => {
+    const persistence = createUnsavedDraftPersistence({ store, now: () => 100 })
+    const owner = persistence.schedule(snapshot('a', 'local v1', 1))!
+    await persistence.flush('vault-1', 'a')
+    const local = (await store.getDraft('vault-1', 'a'))!
+    await store.saveDraft({
+      ...local,
+      content: 'other context v2',
+      updatedAt: local.updatedAt + 1,
+    })
+
+    await expect(persistence.discard(owner)).resolves.toBe(false)
+    expect((await store.getDraft('vault-1', 'a'))?.content)
+      .toBe('other context v2')
+  })
+
+  it('conditionally deletes the exact adopted recovery record after save', async () => {
+    const expected: UnsavedDraft = {
+      version: 1,
+      vaultId: 'vault-1',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'recovered',
+      baseContentHash: 'baseline-hash',
+      baseModifiedAt: 10,
+      createdAt: 25,
+      updatedAt: 40,
+    }
+    await store.saveDraft(expected)
+    const persistence = createUnsavedDraftPersistence({ store })
+    const owner = await persistence.adoptRecoveredDraft(
+      expected,
+      snapshot('a', 'recovered', 1),
+    )
+
+    expect(owner).not.toBeNull()
+    await persistence.markClean(owner!, 1)
+    expect(await store.getDraft('vault-1', 'a')).toBeNull()
+  })
+
   it('cancels and deletes when content returns to the authoritative baseline', async () => {
     const persistence = createUnsavedDraftPersistence({ store })
     persistence.schedule(snapshot('a', 'dirty'))
@@ -354,6 +430,8 @@ describe('createUnsavedDraftPersistence', () => {
     await expect(persistence.discard(owner)).resolves.toBe(true)
 
     const nextOwner = persistence.schedule(snapshot('a', 'again', 2))!
+    await persistence.flush('vault-1', 'a')
+    await store.deleteDraft('vault-1', 'a')
     await expect(persistence.discard(nextOwner)).resolves.toBe(true)
   })
 
@@ -377,9 +455,10 @@ describe('createUnsavedDraftPersistence', () => {
     const saveDraft = vi.fn()
       .mockRejectedValueOnce(new Error('write failed'))
       .mockResolvedValueOnce(true)
-    const deleteDraft = vi.fn().mockRejectedValue(new Error('delete failed'))
+    const deleteDraftIfUnchanged = vi.fn()
+      .mockRejectedValue(new Error('delete failed'))
     const persistence = createUnsavedDraftPersistence({
-      store: { ...store, saveDraft, deleteDraft },
+      store: { ...store, saveDraft, deleteDraftIfUnchanged },
     })
 
     persistence.schedule(snapshot('a', 'v1'))

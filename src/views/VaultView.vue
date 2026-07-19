@@ -364,7 +364,16 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
       editorTabsRef.value?.focusTab(result.path)
       return
     }
-    recoveryTabs.open(item, 'content')
+    // Adoption may fail because the stored draft changed across its own
+    // asynchronous checks. Refresh once more and show the latest classified
+    // recovery bytes rather than the snapshot captured before adoption.
+    await draftRecovery.retry(recoveryId)
+    const latest = recoveryItem(recoveryId)
+    if (latest?.status === 'ready' && latest.decision) {
+      recoveryTabs.open(latest, 'content')
+    } else {
+      recoveryTabs.open(refreshed, 'content')
+    }
     draftRecovery.dismissForSession(recoveryId)
   } finally {
     recoveryBusy.value = false
@@ -812,6 +821,18 @@ async function viewCurrentRecoveryDocument(recoveryId: string): Promise<void> {
       await nextTick()
       editorTabsRef.value?.focusTab(requestedTabId)
     }
+    return
+  }
+  const opened = tabs.value.find(
+    (tab) => tab.path === refreshedDisk.documentPath,
+  )
+  if (!opened
+    || opened.loading
+    || opened.loadError
+    || opened.documentId !== refreshed.draft.documentId) {
+    const recoveryTab = recoveryTabs.open(refreshed, requestedView)
+    await nextTick()
+    if (recoveryTab) editorTabsRef.value?.focusTab(recoveryTab.tabId)
     return
   }
   await nextTick()

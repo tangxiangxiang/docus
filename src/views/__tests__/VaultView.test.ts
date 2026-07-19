@@ -94,8 +94,24 @@ describe('VaultView editor tab wiring', () => {
     expect(handler?.match(/await draftRecovery\.retry\(recoveryId\)/g)).toHaveLength(2)
     expect(handler).toContain('await openEditorPost(disk.documentPath)')
     expect(handler).toContain('refreshedDisk.documentId !== refreshed.draft.documentId')
+    expect(handler).toContain('opened.documentId !== refreshed.draft.documentId')
+    expect(handler).toContain('opened.loading')
+    expect(handler).toContain('opened.loadError')
     expect(handler).toContain('recoveryTabs.open(refreshed, requestedView)')
     expect(handler).toContain('focusTab(refreshedDisk.documentPath)')
+  })
+
+  it('refreshes a failed recovery adoption before opening recovery content', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const handler = source.match(
+      /async function restoreRecoveryDraft[\s\S]*?\n}/,
+    )?.[0]
+
+    expect(handler).toBeDefined()
+    expect(handler?.match(/await draftRecovery\.retry\(recoveryId\)/g)).toHaveLength(3)
+    expect(handler).toContain("if (latest?.status === 'ready' && latest.decision)")
+    expect(handler).toContain("recoveryTabs.open(latest, 'content')")
+    expect(handler).not.toContain("recoveryTabs.open(item, 'content')")
   })
 
   it('opens one dedicated diff workspace tab from a ready snapshot', () => {
