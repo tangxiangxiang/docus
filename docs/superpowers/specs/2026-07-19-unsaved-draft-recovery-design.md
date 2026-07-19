@@ -1,0 +1,303 @@
+# Unsaved Draft Recovery — Design Spec
+
+**Date:** 2026-07-19
+**Status:** Accepted for staged implementation
+**Scope:** Edit-09 — preserve unsaved editor buffers across abnormal exits without silently replacing newer disk content.
+**Baseline:** Edit-08 is closed at `f094456`.
+
+## 1. Principle
+
+The file on disk is always the authoritative persisted document. An unsaved draft is
+only a recovery copy of an editor buffer.
+
+Recovering a draft must never silently write it to disk, replace a newer disk
+version, select a destructive conflict outcome, or bypass the existing save,
+external-change, rename, and close coordinators.
+
+## 2. Goals
+
+- Persist dirty editor buffers locally so refreshes, crashes, browser termination,
+  and system restarts do not discard recent typing.
+- Scope drafts to the current vault and a stable document identity.
+- Record the disk baseline used when editing began so recovery can distinguish an
+  unchanged disk file from a divergent one.
+- Delete obsolete drafts after a confirmed clean save or an explicit discard.
+- Preserve drafts when storage, network, rename, or recovery work fails.
+- Support document rename, move, deletion, and duplicate-target transactions
+  without losing either draft.
+- Bound local storage use and expose enough metadata for a later recovery center.
+
+## 3. Non-Goals
+
+- Edit-09.1 and Edit-09.2 do not modify the editor, save pipeline, `VaultView`, file
+  transactions, or recovery UI.
+- Drafts are not server backups, revision history, collaborative edits, or an
+  alternative save protocol.
+- No draft is uploaded to the server or synchronized between browsers.
+- No automatic merge is attempted in the first recovery UI.
+- No third-party storage, hashing, diff, or compression dependency is added.
+
+## 4. Draft Identity and Shape
+
+```ts
+interface UnsavedDraft {
+  version: 1
+  vaultId: string
+  documentId: string
+  documentPath: string
+  content: string
+  baseContentHash: string | null
+  baseModifiedAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+```
+
+- `vaultId` is the stable identifier already returned by `/api/health`. Draft
+  persistence does not start until a non-empty vault ID is available.
+- `documentId` is the stable document identity supplied by the document lifecycle.
+  It is never derived by parsing History or Diff tab IDs.
+- The primary identity is `(vaultId, documentId)`.
+- `documentPath` is current display and compatibility metadata. It is not the
+  primary key.
+- `content` is the complete editor buffer at `updatedAt`.
+- `baseContentHash` identifies the authoritative disk content from which the dirty
+  buffer diverged. Hash creation belongs to the integration phase; the store treats
+  it as opaque.
+- `baseModifiedAt` is the corresponding server modification time when known.
+- `createdAt` is preserved when an existing draft is updated or moved.
+- `updatedAt` is monotonic for accepted writes and drives recovery ordering and
+  cleanup.
+
+Malformed, unsupported-version, empty-identity, or impossible timestamp records are
+ignored on read. A corrupt record must not make other drafts unavailable.
+
+## 5. Storage
+
+Draft bodies are stored in a dedicated browser IndexedDB database:
+
+```text
+database: docus-draft-recovery
+object store: drafts
+key: [vaultId, documentId]
+index: vaultUpdatedAt → [vaultId, updatedAt]
+schema version: 1
+```
+
+IndexedDB is preferred over `localStorage` because editor buffers can be large,
+transactions are required for identity migration, and synchronous storage would
+block the main thread. No new dependency is required.
+
+The storage layer is asynchronous and best-effort. It exposes a backend boundary so
+tests can use a deterministic in-memory backend. Opening or writing IndexedDB may
+fail because storage is disabled, quota is exhausted, or the database is blocked;
+callers receive a failure result and normal editing continues.
+
+The Edit-09.2 API is:
+
+```ts
+saveDraft(draft): Promise<boolean>
+getDraft(vaultId, documentId): Promise<UnsavedDraft | null>
+listDrafts(vaultId): Promise<UnsavedDraft[]>
+deleteDraft(vaultId, documentId): Promise<boolean>
+moveDraft(vaultId, oldDocumentId, newDocumentId, newPath): Promise<boolean>
+clearVaultDrafts(vaultId): Promise<boolean>
+```
+
+Rules:
+
+- Inputs and outputs are copied so callers cannot mutate stored state by reference.
+- `saveDraft` rejects an older `updatedAt` for the same identity; delayed work cannot
+  overwrite a newer buffer.
+- Equal timestamps are idempotent only when the complete record is equal; a
+  conflicting equal-timestamp write fails closed.
+- `listDrafts` returns only the requested vault, newest first, with deterministic
+  document-ID tie breaking.
+- Delete and clear are idempotent.
+- `moveDraft` is atomic: either the old key remains unchanged or the new key is
+  committed and the old key is removed.
+- If the target identity already has a draft, the newer `updatedAt` wins. Equal,
+  different drafts fail closed so neither is silently selected.
+- A successful move keeps the winning draft's content and baseline, changes its
+  identity/path, and preserves its original `createdAt`.
+- Unsupported or corrupt records are skipped rather than rewritten automatically.
+
+## 6. Draft Creation and Removal
+
+The later editor integration creates or updates a draft only when:
+
+- a loaded Document tab has a resolved vault and document identity;
+- its editor buffer differs from its authoritative clean baseline; and
+- the current close/save/rename generation still owns that tab.
+
+Writes are independently debounced per document (target range 500–1000 ms). The
+latest buffer is synchronously snapshotted before scheduling asynchronous storage
+work. Each document has a generation so an older write cannot replace newer content
+or recreate a draft after it was saved or discarded.
+
+A draft is deleted only after:
+
+- a save is authoritatively confirmed and the tab is clean;
+- the buffer independently returns to the authoritative baseline; or
+- the user explicitly confirms that the dirty content should be discarded.
+
+A failed, offline, conflicted, or cancelled save retains the draft. Merely closing a
+clean view, changing the active tab, or losing the source file externally does not
+delete it. Teardown and `pagehide` flush the latest dirty snapshots where the
+platform permits, but recovery correctness cannot depend solely on unload events.
+
+## 7. Discovery and Recovery Decisions
+
+After the vault ID is resolved, startup lists that vault's drafts. Opening a
+document also checks its stable document identity. Draft discovery does not mutate
+tabs or disk content.
+
+### Disk equals the recorded baseline
+
+The user is offered:
+
+```text
+Unsaved editing content was found.
+[Recover draft] [Use disk version]
+```
+
+Recovering places the draft into the editor as dirty content. It does not save it.
+Choosing the disk version is an explicit discard and removes the draft only after
+the choice is committed.
+
+### Disk differs from the recorded baseline
+
+The user is told that both versions changed and is offered:
+
+```text
+[View differences] [Open draft as recovery] [Use disk version]
+```
+
+The default safe path is an independent Recovery/Diff view. The draft must not
+replace the open document or be written to disk automatically.
+
+### Source file no longer exists
+
+The draft remains stored and can be opened as an orphan recovery document labelled
+`Recovered: <original name>`. It has no writable disk target until the user chooses
+a new path.
+
+If hashing or disk metadata cannot be obtained, recovery follows the divergent/unknown
+path rather than assuming the disk is unchanged.
+
+## 8. Rename, Move, and Delete Transactions
+
+Draft migration joins the existing file transaction; it is not a watcher that
+reacts after paths change.
+
+- A successful rename/move atomically migrates the source draft identity and path.
+- If the target already has a draft, the conflict rules in section 5 apply before
+  either source is removed.
+- Failure to commit the draft migration must leave the old draft recoverable. File
+  transaction integration will define whether the file operation rolls back or
+  reports a recoverable draft warning; it may not silently delete the old draft.
+- A failed or cancelled file operation leaves all draft keys and contents unchanged.
+- Pending writes using an old ID are invalidated before migration commits.
+- An explicit permanent delete may delete its draft only after the user confirms
+  discard.
+- An external delete never deletes the draft. It becomes orphaned recovery data.
+
+## 9. Concurrency and Lifecycle
+
+- Every scheduled editor write carries tab identity, document identity, revision,
+  content snapshot, and generation.
+- Completion validates ownership again before it can affect storage state.
+- Save success, discard, close, rename, move, and restore increment the relevant
+  generation and await/neutralize older work.
+- Storage-level timestamp rejection is the final guard against late writes from a
+  previous component owner.
+- Multiple app instances may observe the same IndexedDB. Last-newer timestamp wins;
+  equal conflicting writes fail closed rather than relying on tab ordering.
+
+## 10. Privacy and Capacity
+
+Draft content is local browser data and may contain sensitive notes.
+
+- It is never included in analytics, logs, URLs, toast text, or server requests.
+- UI must state that drafts are stored on this device/browser.
+- A later recovery center supports individual and bulk deletion.
+- Initial limits for the integration phase are:
+  - maximum 2 MiB UTF-8 content per draft;
+  - maximum 100 drafts per vault;
+  - maximum 20 MiB estimated content per vault;
+  - orphan retention target of 30 days.
+- Cleanup orders candidates by `updatedAt`, oldest first.
+- Cleanup never removes the currently dirty buffer's draft or a draft participating
+  in save/rename/recovery work.
+- Oversized active buffers remain editable and savable; draft persistence reports a
+  non-blocking failure instead of truncating content silently.
+
+The pure Edit-09.2 store preserves records and supplies deterministic ordering. The
+limits and protected-record cleanup policy are implemented with editor integration,
+where active ownership is known.
+
+## 11. Staged Delivery
+
+### Edit-09.1 — Design and behavior freeze
+
+- This specification only.
+
+### Edit-09.2 — Pure storage model
+
+- `draftTypes.ts`
+- `draftKey.ts`
+- `draftStore.ts`
+- deterministic backend contract and IndexedDB implementation
+- characterization and implementation tests
+
+No editor, save, `VaultView`, or file-transaction integration.
+
+### Edit-09.3 — Dirty-buffer persistence
+
+- per-document debounce and generation ownership;
+- clean/save/discard deletion;
+- teardown flush and non-blocking storage failures.
+
+### Edit-09.4 — Recovery decisions
+
+- startup discovery;
+- baseline comparison;
+- safe recovery and divergent/orphan flows.
+
+### Edit-09.5 — File transactions
+
+- rename/move/delete migration and rollback behavior.
+
+### Edit-09.6 — Recovery center and cleanup
+
+- management UI, retention, protected-record cleanup, capacity reporting.
+
+## 12. Edit-09.2 Acceptance Tests
+
+- Stable, vault-scoped keys do not collide across documents or vaults.
+- A valid draft round-trips without sharing mutable references.
+- Updating a draft preserves caller-provided metadata.
+- Older and conflicting equal-timestamp writes cannot overwrite newer state.
+- Listing is vault-scoped, newest first, and deterministic.
+- Delete and clear are idempotent and isolated by vault.
+- Move changes identity/path and removes the old key atomically.
+- Move preserves the winning content, baseline, and `createdAt`.
+- Duplicate-target move chooses the strictly newer draft.
+- Equal-timestamp duplicate conflict fails without changing either record.
+- Invalid inputs are rejected.
+- Corrupt and future-version records do not break valid reads.
+- IndexedDB unavailable/open/request/transaction failures resolve as safe failures;
+  they do not create unhandled promises.
+
+## 13. Quality Gates
+
+Each stage is an independent commit and must pass its focused tests. The completed
+Edit-09.2 batch additionally runs:
+
+```bash
+npm test
+npm run typecheck
+npm run build
+npm run lint:icons
+```
+
