@@ -10,7 +10,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'npm exec vite -- --host 127.0.0.1 --port 4175',
+    command: 'mkdir -p /tmp/docus-draft-e2e-vault/inbox /tmp/docus-draft-e2e-vault/archive /tmp/docus-draft-e2e-vault/literature && VAULT_DIR=/tmp/docus-draft-e2e-vault npm exec vite -- --host 127.0.0.1 --port 4175',
     url: 'http://127.0.0.1:4175/',
     reuseExistingServer: false,
   },

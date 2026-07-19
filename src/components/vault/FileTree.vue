@@ -531,18 +531,26 @@ async function onDelete(p: string, kind: 'file' | 'folder') {
       : t('file_tree.delete_file_confirm_drafts', { name: node.name }),
   )
   if (!ok) return
+  // Capture discard authority synchronously at the user's confirmation
+  // boundary, before lifecycle waits on any save or file mutation barrier.
+  const draftConfirmations = lifecycle?.captureDraftDeleteConfirmations(
+    node.kind === 'folder' ? filePaths(node) : [p],
+  ) ?? []
   try {
     if (node.kind === 'folder') {
       if (lifecycle) {
         await lifecycle.deleteFolder(
           p,
           filePaths(node),
-          { draftPolicy: 'discard-confirmed' },
+          { draftPolicy: 'discard-confirmed', draftConfirmations },
         )
       }
       else await deleteFolder(p, true)
     } else if (lifecycle) {
-      await lifecycle.deleteFile(p, { draftPolicy: 'discard-confirmed' })
+      await lifecycle.deleteFile(p, {
+        draftPolicy: 'discard-confirmed',
+        draftConfirmations,
+      })
     }
     else await deletePost(p)
     if (!lifecycle) emit('refresh')

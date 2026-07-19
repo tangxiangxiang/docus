@@ -74,7 +74,7 @@ describe('draft file transaction integration', () => {
       fromPath: 'notes/a',
       toPath: 'archive/a-2',
     }])
-    await persistence.flush('vault', 'doc-a')
+    await barrier.finalizeAfterTabMigration()
 
     expect(result.status).toBe('missing')
     expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
@@ -93,7 +93,6 @@ describe('draft file transaction integration', () => {
       store,
       targetWindow: undefined,
     })
-
     const barrier = await persistence.prepareFileMutation([{
       vaultId: 'vault',
       documentId: 'doc-a',
@@ -149,6 +148,7 @@ describe('draft file transaction integration', () => {
       store,
       targetWindow: undefined,
     })
+    await persistence.adoptRecoveredDraft(original, snapshot('confirmed'))
 
     const preserved = await persistence.prepareFileMutation([{
       vaultId: 'vault',
@@ -168,13 +168,111 @@ describe('draft file transaction integration', () => {
       documentId: 'doc-a',
       documentPath: 'notes/a',
     }])
+    const confirmation = persistence.captureDeleteConfirmation({
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }, 1)
     expect((await discarded.commitDeletes([{
       vaultId: 'vault',
       documentId: 'doc-a',
       documentPath: 'notes/a',
       policy: 'discard-confirmed',
+      confirmation,
     }]))[0].status).toBe('deleted')
     expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    await persistence.dispose()
+  })
+
+  it('preserves edits created after delete confirmation', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 0,
+      now: () => 30,
+      targetWindow: undefined,
+    })
+    const owner = persistence.schedule(snapshot('confirmed', 'notes/a', 1))!
+    await persistence.flush('vault', 'doc-a')
+    const identity = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }
+    const confirmation = persistence.captureDeleteConfirmation(identity, 1)
+    const barrier = await persistence.prepareFileMutation([identity])
+
+    persistence.schedule(snapshot('after-confirmation', 'notes/a', 2))
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+
+    expect(owner.generation).toBe(1)
+    expect(result.status).toBe('stale')
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'after-confirmation',
+      documentPath: 'notes/a',
+    })
+    await persistence.dispose()
+  })
+
+  it('keeps move scheduling paused until the tab path migration is finalized', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 0,
+      now: () => 40,
+      targetWindow: undefined,
+    })
+    const identity = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }
+    const barrier = await persistence.prepareFileMutation([identity])
+    await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a-2',
+    }])
+
+    // The UI can still emit an old-path snapshot until its tab migration.
+    persistence.schedule(snapshot('during-report-gap', 'notes/a', 2))
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+
+    await barrier.finalizeAfterTabMigration()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'during-report-gap',
+      documentPath: 'archive/a-2',
+    })
+    await persistence.dispose()
+  })
+
+  it('persists transaction-time edits at the old path when identity is preserved', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 0,
+      now: () => 50,
+      targetWindow: undefined,
+    })
+    const identity = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }
+    const barrier = await persistence.prepareFileMutation([identity])
+    persistence.schedule(snapshot('orphan-latest', 'notes/a', 2))
+
+    await barrier.commitMoves([], [identity])
+    await barrier.finalizeAfterTabMigration()
+
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'orphan-latest',
+      documentPath: 'notes/a',
+    })
     await persistence.dispose()
   })
 

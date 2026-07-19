@@ -8,6 +8,7 @@ import {
 } from './draftTypes'
 import type {
   DraftDeleteRequest,
+  DraftDeleteConfirmation,
   DraftDocumentIdentity,
   DraftFileMutationBarrier,
   DraftFileTransactionResult,
@@ -50,6 +51,14 @@ export interface UnsavedDraftPersistence {
   prepareFileMutation(
     identities: readonly DraftDocumentIdentity[],
   ): Promise<DraftFileMutationBarrier>
+  captureDeleteConfirmation(
+    identity: DraftDocumentIdentity,
+    revision: number,
+    expectedDraft?: UnsavedDraft | null,
+  ): DraftDeleteConfirmation
+  findTrackedIdentitiesByPaths(
+    paths: readonly string[],
+  ): DraftDocumentIdentity[]
   invalidateOwner(owner: DraftOwner): void
   invalidate(vaultId: string, documentId: string): void
   dispose(): Promise<void>
@@ -475,12 +484,15 @@ export function createUnsavedDraftPersistence(
     }
 
     let settled = false
+    let finalized = false
+    const pendingReleases = new Map<string, { path: string; writeLatest: boolean }>()
 
-    function releaseEntry(
+    async function releaseEntry(
       state: typeof held extends Map<string, infer V> ? V : never,
       path: string,
       writeLatest: boolean,
-    ): void {
+      immediate = false,
+    ): Promise<void> {
       const { entry, identity } = state
       if (entry.fileTransaction !== token) return
       entry.fileTransaction = null
@@ -498,10 +510,14 @@ export function createUnsavedDraftPersistence(
         generation: entry.generation,
       }
       const captured = cloneSnapshot(entry.latestSnapshot)
-      entry.timer = setTimeout(() => {
-        entry.timer = null
-        void queueWrite(owner, captured)
-      }, debounceMs)
+      if (immediate) {
+        await queueWrite(owner, captured)
+      } else {
+        entry.timer = setTimeout(() => {
+          entry.timer = null
+          void queueWrite(owner, captured)
+        }, debounceMs)
+      }
     }
 
     async function commitMoves(
@@ -512,9 +528,7 @@ export function createUnsavedDraftPersistence(
       settled = true
       const results: DraftFileTransactionResult[] = []
       const mappedKeys = new Set<string>()
-      const preservedKeys = new Set(preserved.map((identity) => (
-        key(identity.vaultId, identity.documentId)
-      )))
+      void preserved
       for (const mapping of mappings) {
         const identityKey = key(mapping.vaultId, mapping.documentId)
         const state = held.get(identityKey)
@@ -543,11 +557,12 @@ export function createUnsavedDraftPersistence(
             mapping.documentId,
           )
         }
-        releaseEntry(
-          state,
-          mapping.toPath,
-          true,
-        )
+        pendingReleases.set(identityKey, {
+          path: status === 'moved' || status === 'missing'
+            ? mapping.toPath
+            : state.identity.documentPath,
+          writeLatest: true,
+        })
         results.push({
           documentId: mapping.documentId,
           oldPath: mapping.fromPath,
@@ -557,11 +572,12 @@ export function createUnsavedDraftPersistence(
       }
       for (const [identityKey, state] of held) {
         if (mappedKeys.has(identityKey)) continue
-        releaseEntry(
-          state,
-          state.identity.documentPath,
-          !preservedKeys.has(identityKey),
-        )
+        pendingReleases.set(identityKey, {
+          path: state.identity.documentPath,
+          // Identity mismatch preserves the record at its old identity, but
+          // transaction-time edits must also be persisted as orphan recovery.
+          writeLatest: true,
+        })
       }
       return results
     }
@@ -586,7 +602,7 @@ export function createUnsavedDraftPersistence(
         }
         deletedKeys.add(identityKey)
         if (deletion.policy === 'preserve') {
-          releaseEntry(state, deletion.documentPath, true)
+          await releaseEntry(state, deletion.documentPath, true, true)
           results.push({
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,
@@ -594,9 +610,17 @@ export function createUnsavedDraftPersistence(
           })
           continue
         }
-        if (state.entry.generation !== state.preparedGeneration
+        const confirmation = deletion.confirmation
+        if (!confirmation
+          || confirmation.vaultId !== deletion.vaultId
+          || confirmation.documentId !== deletion.documentId
+          || confirmation.documentPath !== deletion.documentPath
+          || confirmation.ownerGeneration !== state.preparedGeneration
+          || state.entry.generation !== confirmation.ownerGeneration
+          || (state.entry.latestSnapshot !== null
+            && state.entry.latestSnapshot.revision !== confirmation.revision)
           || state.entry.latestSnapshotNeedsWrite) {
-          releaseEntry(state, deletion.documentPath, true)
+          await releaseEntry(state, deletion.documentPath, true, true)
           results.push({
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,
@@ -604,11 +628,11 @@ export function createUnsavedDraftPersistence(
           })
           continue
         }
-        const expected = state.confirmedDraft
+        const expected = confirmation.expectedDraft
         const outcome = expected
           ? await store.deleteDraftIfUnchanged(expected)
           : { status: 'missing' as const }
-        releaseEntry(state, deletion.documentPath, false)
+        await releaseEntry(state, deletion.documentPath, false)
         results.push({
           documentId: deletion.documentId,
           oldPath: deletion.documentPath,
@@ -617,21 +641,69 @@ export function createUnsavedDraftPersistence(
       }
       for (const [identityKey, state] of held) {
         if (!deletedKeys.has(identityKey)) {
-          releaseEntry(state, state.identity.documentPath, true)
+          await releaseEntry(state, state.identity.documentPath, true, true)
         }
       }
       return results
+    }
+
+    async function finalizeAfterTabMigration(): Promise<void> {
+      if (finalized) return
+      finalized = true
+      for (const [identityKey, release] of pendingReleases) {
+        const state = held.get(identityKey)
+        if (state) await releaseEntry(state, release.path, release.writeLatest, true)
+      }
+      pendingReleases.clear()
     }
 
     async function rollback(): Promise<void> {
       if (settled) return
       settled = true
       for (const state of held.values()) {
-        releaseEntry(state, state.identity.documentPath, true)
+        await releaseEntry(state, state.identity.documentPath, true)
       }
     }
 
-    return { commitMoves, commitDeletes, rollback }
+    return { commitMoves, commitDeletes, finalizeAfterTabMigration, rollback }
+  }
+
+  function captureDeleteConfirmation(
+    identity: DraftDocumentIdentity,
+    revision: number,
+    expectedDraft?: UnsavedDraft | null,
+  ): DraftDeleteConfirmation {
+    const entry = entryFor(identity.vaultId, identity.documentId)
+    const expected = expectedDraft
+      && expectedDraft.vaultId === identity.vaultId
+      && expectedDraft.documentId === identity.documentId
+      ? expectedDraft
+      : entry.persistedDraft
+    return {
+      ...identity,
+      revision,
+      ownerGeneration: entry.generation,
+      expectedDraft: expected
+        ? { ...expected }
+        : null,
+    }
+  }
+
+  function findTrackedIdentitiesByPaths(
+    paths: readonly string[],
+  ): DraftDocumentIdentity[] {
+    const wanted = new Set(paths)
+    const found = new Map<string, DraftDocumentIdentity>()
+    for (const entry of entries.values()) {
+      const snapshot = entry.latestSnapshot
+      if (!snapshot || !wanted.has(snapshot.documentPath)) continue
+      found.set(key(snapshot.vaultId, snapshot.documentId), {
+        vaultId: snapshot.vaultId,
+        documentId: snapshot.documentId,
+        documentPath: snapshot.documentPath,
+      })
+    }
+    return [...found.values()]
   }
 
   function onPageHide(): void {
@@ -662,6 +734,8 @@ export function createUnsavedDraftPersistence(
     discardIdentityIfUnchanged,
     adoptRecoveredDraft,
     prepareFileMutation,
+    captureDeleteConfirmation,
+    findTrackedIdentitiesByPaths,
     invalidateOwner,
     invalidate,
     dispose,

@@ -383,8 +383,12 @@ Implemented in:
   the exact IndexedDB record without changing its content, baseline, or
   timestamps and then persists newer input only at the server-returned path;
   rollback resumes the latest input at the old path. Explicit delete uses the
-  exact draft observed at preparation time, while a newer local generation or
-  cross-context record is preserved as orphan recovery content;
+  exact draft and editor generation synchronously captured when the user
+  confirms deletion, before any save or lifecycle await. A newer local
+  revision/generation or cross-context record is preserved as orphan recovery
+  content. Move commit and entry release are separate phases: Document tab
+  paths migrate before the barrier unlocks, and transaction-time snapshots are
+  then flushed immediately at the actual server path before Recovery retry;
 - `useDocumentLifecycle.ts`: rename, drag move, archive, folder rename, file
   delete, and folder delete share the document-save and draft barriers. Stable
   identity is resolved before and after path changes, folder identity loading
@@ -392,8 +396,9 @@ Implemented in:
   Draft conflict/unsupported/failure is reported as a non-blocking warning and
   never converts an already-successful server file operation into failure;
 - `FileTree.vue`: destructive user confirmation explicitly authorizes
-  `discard-confirmed`; all programmatic lifecycle deletion defaults to
-  `preserve`;
+  `discard-confirmed` and captures its delete token in the same synchronous
+  call chain after confirmation; all programmatic lifecycle deletion defaults
+  to `preserve`;
 - `VaultView.vue`: loaded Document metadata is the preferred identity source,
   with `getPost()` as the safe fallback. Recovery items and open Recovery tabs
   are retried after moves/preserved deletes and removed only after an exact
@@ -403,6 +408,18 @@ Create and external-delete paths do not migrate or discard drafts. A newly
 created document at an orphan path therefore remains isolated by stable
 `documentId`. This stage does not add recovery management, retention, or
 capacity cleanup.
+
+If source identity resolution fails, path matching is used only to detect
+possibly affected stored or in-memory drafts. Those identities are paused and
+their latest transaction-time snapshot is flushed at the old path as orphan
+recovery; they are never migrated by path inference. The completed file
+operation reports one non-blocking warning without exposing draft content.
+
+Browser coverage uses an isolated temporary vault and exercises real
+`useDocumentLifecycle` rename/delete calls, the server-returned archive suffix,
+Document tab path migration, and IndexedDB conditional-delete behavior. A
+FileTree component test freezes confirmation-token capture before the lifecycle
+call.
 
 ### Edit-09.6 — Recovery center and cleanup
 

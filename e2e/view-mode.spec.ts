@@ -6,6 +6,23 @@ import { expect, test } from '@playwright/test'
 const primaryModifier = process.platform === 'darwin' ? 'Meta' : 'Control'
 const TEST_DOC_PATH = 'inbox/e2e-shortcut-test'
 
+async function openShortcutDocument(page: import('@playwright/test').Page) {
+  const testRow = page.locator('.tree-row').filter({ hasText: 'Shortcut Test' }).first()
+  if (!await testRow.isVisible()) {
+    const inbox = page.locator('.tree-row.folder').filter({ hasText: 'inbox' }).first()
+    await inbox.locator('.chevron').click()
+  }
+  await testRow.click()
+}
+
+async function focusMonacoInput(page: import('@playwright/test').Page) {
+  const editor = page.locator('.monaco-editor')
+  await editor.waitFor({ state: 'visible', timeout: 10_000 })
+  const input = editor.locator('textarea.inputarea')
+  await input.focus()
+  await expect(input).toBeFocused()
+}
+
 test.describe('View mode toggle', () => {
   test.beforeEach(async ({ page }) => {
     // Ensure a known document exists so Monaco-focus tests don't
@@ -48,13 +65,10 @@ test.describe('View mode toggle', () => {
     const toggle = page.getByTestId('view-toggle')
 
     // Open the known test document so Monaco is mounted
-    const testRow = page.locator('.tree-row').filter({ hasText: 'Shortcut Test' }).first()
-    await testRow.click()
+    await openShortcutDocument(page)
 
     // Wait for the async Monaco component to load
-    const editor = page.locator('.monaco-editor')
-    await editor.waitFor({ state: 'visible', timeout: 10_000 })
-    await editor.click()
+    await focusMonacoInput(page)
 
     // Toggle to read mode from inside Monaco
     await page.keyboard.press(`${primaryModifier}+e`)
@@ -74,12 +88,9 @@ test.describe('View mode toggle', () => {
 
   test('Cmd/Ctrl+F still opens Find Widget normally', async ({ page }) => {
     // Open the known test document so Monaco is mounted
-    const testRow = page.locator('.tree-row').filter({ hasText: 'Shortcut Test' }).first()
-    await testRow.click()
+    await openShortcutDocument(page)
 
-    const editor = page.locator('.monaco-editor')
-    await editor.waitFor({ state: 'visible', timeout: 10_000 })
-    await editor.click()
+    await focusMonacoInput(page)
 
     await page.keyboard.press(`${primaryModifier}+f`)
     await expect(

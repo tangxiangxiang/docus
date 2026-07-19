@@ -7,6 +7,8 @@ import FileTree from '../FileTree.vue'
 import type { TreeNode } from '../../../lib/api'
 import * as api from '../../../lib/api'
 import { useI18n } from '../../../composables/useI18n'
+import { VaultContextKey } from '../../../composables/vault/context/vaultContext'
+import { createVaultFileChanges } from '../../../composables/vault/context/fileChanges'
 
 installDialogMocks()
 
@@ -70,6 +72,55 @@ describe('FileTree nested delete', () => {
     expect(deleteFolderSpy).not.toHaveBeenCalled()
     expect(deleteSpy).toHaveBeenCalledWith('inbox/notes/old')
     expect(w.emitted('refresh')).toBeTruthy()
+    w.unmount()
+  })
+
+  it('captures the draft delete token immediately after confirmation', async () => {
+    const confirmation = {
+      vaultId: 'vault',
+      documentId: 'doc-old',
+      documentPath: 'inbox/notes/old',
+      revision: 3,
+      ownerGeneration: 7,
+      expectedDraft: null,
+    }
+    const capture = vi.fn(() => [confirmation])
+    const deleteFile = vi.fn().mockResolvedValue({ ok: true })
+    const lifecycle = {
+      captureDraftDeleteConfirmations: capture,
+      deleteFile,
+    }
+    const w = mount(FileTree, {
+      props: { tree: TREE, currentPath: null },
+      attachTo: document.body,
+      global: {
+        provide: {
+          [VaultContextKey as symbol]: {
+            lifecycle,
+            fileChanges: createVaultFileChanges(),
+          },
+        },
+      },
+    })
+    const inbox = rowByLabel(w.findAll('li.tree-row'), 'inbox')
+    await inbox.find('.chevron').trigger('click')
+    const notes = rowByLabel(w.findAll('li.tree-row'), 'notes')
+    await notes.find('.chevron').trigger('click')
+    const old = rowByLabel(w.findAll('li.tree-row'), 'old', 'file')
+    await old.trigger('contextmenu', { clientX: 10, clientY: 10 })
+    await clickMenuButton('删除')
+
+    expect(capture).toHaveBeenCalledWith(['inbox/notes/old'])
+    expect(capture.mock.invocationCallOrder[0]).toBeGreaterThan(
+      dialogStubs.confirm.mock.invocationCallOrder[0]!,
+    )
+    expect(deleteFile).toHaveBeenCalledWith('inbox/notes/old', {
+      draftPolicy: 'discard-confirmed',
+      draftConfirmations: [confirmation],
+    })
+    expect(deleteFile.mock.invocationCallOrder[0]).toBeGreaterThan(
+      capture.mock.invocationCallOrder[0]!,
+    )
     w.unmount()
   })
 

@@ -1,3 +1,5 @@
+import type { UnsavedDraft } from './draftTypes'
+
 export type DraftDeletePolicy = 'preserve' | 'discard-confirmed'
 
 export interface DraftDocumentIdentity {
@@ -13,9 +15,15 @@ export interface DraftPathMapping {
   toPath: string
 }
 
+export interface DraftDeleteConfirmation extends DraftDocumentIdentity {
+  revision: number
+  ownerGeneration: number
+  expectedDraft: UnsavedDraft | null
+}
+
 export interface DraftDeleteRequest extends DraftDocumentIdentity {
   policy: DraftDeletePolicy
-  confirmedRevision?: number | null
+  confirmation?: DraftDeleteConfirmation | null
 }
 
 export type DraftFileTransactionStatus =
@@ -44,5 +52,6 @@ export interface DraftFileMutationBarrier {
   commitDeletes(
     deletions: readonly DraftDeleteRequest[],
   ): Promise<DraftFileTransactionResult[]>
+  finalizeAfterTabMigration(): Promise<void>
   rollback(): Promise<void>
 }

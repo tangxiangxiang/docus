@@ -106,16 +106,22 @@ describe('useDocumentLifecycle rename', () => {
       status: 'moved',
     }])
     const rollback = vi.fn()
+    let h!: ReturnType<typeof setup>
+    const finalizeAfterTabMigration = vi.fn(() => {
+      expect(h.tabs.value[0].path).toBe('archive/a-2')
+      return Promise.resolve()
+    })
     const resolveDocumentIdentity = vi.fn(async (path: string) => ({
       vaultId: 'vault',
       documentId: 'doc-a',
       documentPath: path,
     }))
-    const h = setup([tab()], undefined, {
+    h = setup([tab()], undefined, {
       resolveDocumentIdentity,
       prepareDraftFileMutation: vi.fn().mockResolvedValue({
         commitMoves,
         commitDeletes: vi.fn(),
+        finalizeAfterTabMigration,
         rollback,
       }),
     })
@@ -129,6 +135,7 @@ describe('useDocumentLifecycle rename', () => {
       toPath: 'archive/a-2',
     }])
     expect(rollback).not.toHaveBeenCalled()
+    expect(finalizeAfterTabMigration).toHaveBeenCalledOnce()
   })
 
   it('keeps file success when draft migration reports a warning', async () => {
@@ -159,6 +166,45 @@ describe('useDocumentLifecycle rename', () => {
       .resolves.toMatchObject({ path: 'inbox/b' })
     expect(h.tabs.value[0].path).toBe('inbox/b')
     expect(warnings).toHaveBeenCalledOnce()
+  })
+
+  it('pauses and preserves a path-matched draft when source identity cannot be resolved', async () => {
+    vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'inbox/b', title: 'B', created: '', updated: '', tags: [], size: 1, mtime: 2,
+    })
+    const unresolved = {
+      vaultId: 'vault',
+      documentId: 'draft-doc',
+      documentPath: 'inbox/a',
+    }
+    const commitMoves = vi.fn().mockResolvedValue([])
+    const finalizeAfterTabMigration = vi.fn()
+    const warnings = vi.fn()
+    const prepareDraftFileMutation = vi.fn().mockResolvedValue({
+      commitMoves,
+      commitDeletes: vi.fn(),
+      finalizeAfterTabMigration,
+      rollback: vi.fn(),
+    })
+    const h = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn().mockResolvedValue(null),
+      findDraftsByPaths: vi.fn().mockResolvedValue([unresolved]),
+      prepareDraftFileMutation,
+      warnDraftTransaction: warnings,
+    })
+
+    await h.lifecycle.renameFile('inbox/a', { name: 'b' })
+
+    expect(prepareDraftFileMutation).toHaveBeenCalledWith([unresolved])
+    expect(commitMoves).toHaveBeenCalledWith([], [unresolved])
+    expect(h.tabs.value[0].path).toBe('inbox/b')
+    expect(finalizeAfterTabMigration).toHaveBeenCalledOnce()
+    expect(warnings).toHaveBeenCalledWith([
+      expect.objectContaining({
+        documentId: 'draft-doc',
+        status: 'identity-mismatch',
+      }),
+    ])
   })
 
   it('waits for an in-flight save before PATCH rename', async () => {

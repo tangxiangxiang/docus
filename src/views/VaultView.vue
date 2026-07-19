@@ -271,6 +271,45 @@ const documentLifecycle = useDocumentLifecycle({
   prepareDraftFileMutation: (identities) => (
     draftPersistence.prepareFileMutation(identities)
   ),
+  captureDraftDeleteConfirmation(path) {
+    const currentVaultId = vaultId.value
+    const tab = tabs.value.find((candidate) => (
+      candidate.path === path
+      && !candidate.loading
+      && !candidate.loadError
+      && Boolean(candidate.documentId)
+    ))
+    const recovery = draftRecovery.items.value.find((item) => (
+      item.draft.vaultId === currentVaultId
+      && item.draft.documentPath === path
+    ))
+    const documentId = tab?.documentId ?? recovery?.draft.documentId
+    if (!currentVaultId || !documentId) return null
+    return draftPersistence.captureDeleteConfirmation({
+      vaultId: currentVaultId,
+      documentId,
+      documentPath: path,
+    }, tab?.revision ?? 0, recovery?.draft)
+  },
+  async findDraftsByPaths(paths) {
+    const currentVaultId = vaultId.value
+    if (!currentVaultId) return []
+    const wanted = new Set(paths)
+    const drafts = await draftStore.listDrafts(currentVaultId)
+    const identities = [
+      ...draftPersistence.findTrackedIdentitiesByPaths(paths),
+      ...drafts
+      .filter((draft) => wanted.has(draft.documentPath))
+      .map((draft) => ({
+        vaultId: draft.vaultId,
+        documentId: draft.documentId,
+        documentPath: draft.documentPath,
+      })),
+    ]
+    return [...new Map(identities.map((identity) => (
+      [`${identity.vaultId}\0${identity.documentId}`, identity]
+    ))).values()]
+  },
   warnDraftTransaction(results) {
     toast.info(t('draft_recovery.file_transaction_warning', {
       count: results.length,
