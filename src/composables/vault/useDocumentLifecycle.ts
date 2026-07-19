@@ -261,48 +261,61 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         throw error
       }
       const mapping = { from: fromPath, to: renamed.path }
-      if (draftBarrier && before) {
-        const after = (await identities([renamed.path]))[0] ?? null
-        const draftResults = after?.documentId === before.documentId
-          ? await draftBarrier.commitMoves([{
-              vaultId: before.vaultId,
+      // The server rename has already succeeded. Tab migration is a
+      // best-effort UX step — if it throws, the server state is
+      // already moved, so we MUST still publish the rename, refresh
+      // the tree, and return success to the caller. Otherwise the
+      // user sees a "rename failed" toast while the file is already
+      // moved on disk, leaving the tree / tabs inconsistent with the
+      // server.
+      let migrationWarning: unknown = null
+      try {
+        if (draftBarrier && before) {
+          const after = (await identities([renamed.path]))[0] ?? null
+          const draftResults = after?.documentId === before.documentId
+            ? await draftBarrier.commitMoves([{
+                vaultId: before.vaultId,
+                documentId: before.documentId,
+                fromPath,
+                toPath: renamed.path,
+              }])
+            : await draftBarrier.commitMoves([], [before])
+          if (!after || after.documentId !== before.documentId) {
+            draftResults.push({
               documentId: before.documentId,
-              fromPath,
-              toPath: renamed.path,
-            }])
-          : await draftBarrier.commitMoves([], [before])
-        if (!after || after.documentId !== before.documentId) {
-          draftResults.push({
-            documentId: before.documentId,
-            oldPath: fromPath,
-            newPath: renamed.path,
-            status: 'identity-mismatch',
-          })
-        }
-        try {
+              oldPath: fromPath,
+              newPath: renamed.path,
+              status: 'identity-mismatch',
+            })
+          }
+          try {
+            options.renameOpenDocuments([mapping])
+          } finally {
+            await draftBarrier.finalizeAfterTabMigration?.()
+          }
+          await reportDraftResults(draftResults)
+        } else if (draftBarrier) {
+          const draftResults = await draftBarrier.commitMoves([], unresolvedDrafts)
+          try {
+            options.renameOpenDocuments([mapping])
+          } finally {
+            await draftBarrier.finalizeAfterTabMigration?.()
+          }
+          await reportDraftResults([
+            ...draftResults,
+            ...unresolvedDrafts.map((draft) => ({
+              documentId: draft.documentId,
+              oldPath: draft.documentPath,
+              newPath: renamed.path,
+              status: 'identity-mismatch' as const,
+            })),
+          ])
+        } else {
           options.renameOpenDocuments([mapping])
-        } finally {
-          await draftBarrier.finalizeAfterTabMigration?.()
         }
-        await reportDraftResults(draftResults)
-      } else if (draftBarrier) {
-        const draftResults = await draftBarrier.commitMoves([], unresolvedDrafts)
-        try {
-          options.renameOpenDocuments([mapping])
-        } finally {
-          await draftBarrier.finalizeAfterTabMigration?.()
-        }
-        await reportDraftResults([
-          ...draftResults,
-          ...unresolvedDrafts.map((draft) => ({
-            documentId: draft.documentId,
-            oldPath: draft.documentPath,
-            newPath: renamed.path,
-            status: 'identity-mismatch' as const,
-          })),
-        ])
-      } else {
-        options.renameOpenDocuments([mapping])
+      } catch (error) {
+        migrationWarning = error
+        console.warn(`[useDocumentLifecycle] Server rename ${fromPath} → ${renamed.path} succeeded, but Tab migration threw:`, error)
       }
       options.fileChanges.publish({
         oldPath: fromPath,
@@ -383,7 +396,14 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         }
         await reportDraftResults([...draftResults, ...mismatches])
       } else {
-        options.renameOpenDocuments(mappings)
+        try {
+          options.renameOpenDocuments(mappings)
+        } catch (error) {
+          // Server rename already succeeded — Tab migration is best
+          // effort; swallow the error so the rename event still
+          // publishes and refresh runs below.
+          console.warn(`[useDocumentLifecycle] Server rename folder ${fromFolder} → ${result.path} succeeded, but Tab migration threw:`, error)
+        }
       }
       for (const mapping of mappings) {
         options.fileChanges.publish({

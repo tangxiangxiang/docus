@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createDraftStore,
   createMemoryDraftBackend,
@@ -508,6 +508,270 @@ describe('draft file transaction integration', () => {
     await expect(barrier.commitMoves([])).resolves.toEqual([])
     await expect(barrier.commitDeletes([])).resolves.toEqual([])
     await expect(barrier.rollback()).resolves.toBeUndefined()
+    await persistence.dispose()
+  })
+})
+
+// --- round-2 conditional-delete race regressions --------------------------
+//
+// The previous round's commitDeletes() did its ownership check
+// BEFORE awaiting IndexedDB CAS, but trusted the CAS result
+// blindly after the await — leading to three race windows:
+//   (a) new local edits during CAS got silently cleared when CAS
+//       returned 'deleted'
+//   (b) CAS returning 'stale' triggered a fresh-timestamp
+//       queueWrite() that could overwrite the cross-context record
+//   (c) CAS returning 'missing' for a record that existed at
+//       prepare time was indistinguishable from a real missing
+//       record, leaving Recovery to silently drop the identity
+
+describe('draft file transactions — post-CAS race regression', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function makePersistence(store = createDraftStore({ backend: createMemoryDraftBackend() })) {
+    return {
+      store,
+      persistence: createUnsavedDraftPersistence({
+        store,
+        debounceMs: 800,
+        now: () => 10,
+        targetWindow: undefined,
+      }),
+    }
+  }
+
+  it('preserves an edit created while the conditional delete is in flight', async () => {
+    // Wire a deferred deleteIfUnchanged so we can mutate the entry
+    // (simulate a post-CAS edit) while the IndexedDB CAS is awaiting.
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    let releaseDelete!: () => void
+    const deleteGate = new Promise<void>((resolve) => { releaseDelete = resolve })
+    let deleteStarted = false
+    const originalDelete = backend.deleteIfUnchanged
+    backend.deleteIfUnchanged = vi.fn(async (expected) => {
+      deleteStarted = true
+      await deleteGate
+      return originalDelete.call(backend, expected)
+    })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 10,
+      targetWindow: undefined,
+    })
+    const identity = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }
+    persistence.schedule(snapshot('rev1', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    const persistedBefore = await store.getDraft('vault', 'doc-a')
+    expect(persistedBefore?.content).toBe('rev1')
+    const confirmation = persistence.captureDeleteConfirmation(identity, 1)
+    expect(confirmation.expectedDraft).not.toBeNull()
+
+    const barrier = await persistence.prepareFileMutation([identity])
+    const deleting = barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+    // Wait until the CAS has actually started awaiting.
+    await vi.waitFor(() => expect(deleteStarted).toBe(true))
+    // Simulate the user typing a new edit while CAS is in flight.
+    persistence.schedule(snapshot('rev2', 'notes/a', 2))
+    // Now release CAS. It must succeed (rev1 matches the stored
+    // record), but the post-CAS check sees the entry advanced, so
+    // we must NOT clear the entry — instead re-queue rev2.
+    releaseDelete()
+    const [result] = await deleting
+    expect(result.status).toBe('conflict')
+    // Let the post-CAS write of rev2 land.
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    const stored = await store.getDraft('vault', 'doc-a')
+    expect(stored?.content).toBe('rev2')
+    await persistence.dispose()
+  })
+
+  it('does not overwrite a cross-context draft after conditional delete returns stale', async () => {
+    // Wire a deferred deleteIfUnchanged so we can mutate the entry
+    // (simulate a post-CAS edit that pushes latestSnapshotNeedsWrite=true)
+    // while the IndexedDB CAS is awaiting a newer cross-context record.
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    let releaseDelete!: () => void
+    const deleteGate = new Promise<void>((resolve) => { releaseDelete = resolve })
+    let deleteStarted = false
+    const originalDelete = backend.deleteIfUnchanged
+    backend.deleteIfUnchanged = vi.fn(async (expected) => {
+      deleteStarted = true
+      await deleteGate
+      return originalDelete.call(backend, expected)
+    })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      targetWindow: undefined,
+    })
+    const identity = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }
+    // Local session has v2 with the latestSnapshot revision we'll
+    // confirm for delete.
+    persistence.schedule(snapshot('local-v2', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    const localStored = await store.getDraft('vault', 'doc-a')
+    expect(localStored?.content).toBe('local-v2')
+    expect(localStored?.updatedAt).toBe(100)
+    // Another context seeds v3 with a NEWER updatedAt. The CAS
+    // will see the newer record and return 'stale'.
+    await backend.seedRaw({
+      version: 1,
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'remote-v3',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 110,
+    })
+    const confirmation = persistence.captureDeleteConfirmation(identity, 2)
+    const barrier = await persistence.prepareFileMutation([identity])
+    const deleting = barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+    // Wait until the CAS is awaiting.
+    await vi.waitFor(() => expect(deleteStarted).toBe(true))
+    // User typed a new edit during CAS — entry generation / snapshot
+    // advance and latestSnapshotNeedsWrite flips to true.
+    persistence.schedule(snapshot('local-v3', 'notes/a', 3))
+    releaseDelete()
+    const [result] = await deleting
+
+    expect(result.status).toBe('conflict')
+    // IndexedDB must still hold the cross-context record — the fix
+    // path does NOT call queueWrite() with a fresh timestamp when
+    // CAS returned stale, even with a post-CAS local edit.
+    await vi.advanceTimersByTimeAsync(2000)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    const stored = await store.getDraft('vault', 'doc-a')
+    expect(stored?.content).toBe('remote-v3')
+    expect(stored?.updatedAt).toBe(110)
+    await persistence.dispose()
+  })
+
+  it('does not retry the confirmed snapshot with a newer timestamp after stale (no post-CAS edit)', async () => {
+    // No post-CAS edit: latestSnapshotNeedsWrite stays false, so
+    // the stale branch must not produce ANY IndexedDB write. Even
+    // though `releaseEntry(writeLatest=true)` would no-op here, the
+    // test pins the contract so a future refactor doesn't
+    // accidentally bypass that guard.
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      targetWindow: undefined,
+    })
+    const identity = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }
+    persistence.schedule(snapshot('local', 'notes/a', 1))
+    await backend.seedRaw({
+      version: 1,
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'cross-context',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 200,
+    })
+    const confirmation = persistence.captureDeleteConfirmation(identity, 1)
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+
+    expect(result.status).toBe('stale')
+    await vi.advanceTimersByTimeAsync(2000)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    const stored = await store.getDraft('vault', 'doc-a')
+    expect(stored?.content).toBe('cross-context')
+    expect(stored?.updatedAt).toBe(200)
+    await persistence.dispose()
+  })
+
+  it('reports stale (not missing) when CAS finds no record but prepare saw one', async () => {
+    // Refinement of the medium issue: confirmedDraft was non-null
+    // at prepareFileMutation, but the IndexedDB record vanished
+    // before CAS ran. Surface as 'stale' so the UI can refresh
+    // Recovery instead of silently dropping the identity.
+    const { store, persistence } = makePersistence()
+    const identity = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }
+    // Schedule a snapshot so the entry has a latestSnapshot, then
+    // seed a matching IndexedDB record, then let the debounce write.
+    persistence.schedule(snapshot('seeded', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    // Let the queueWrite microtask chain run to completion so
+    // entry.persistedDraft is populated.
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    const persistedAfter = await store.getDraft('vault', 'doc-a')
+    expect(persistedAfter?.content).toBe('seeded')
+    const confirmation = persistence.captureDeleteConfirmation(identity, 1)
+    expect(confirmation.expectedDraft?.content).toBe('seeded')
+    // Delete the IndexedDB record between capture and prepare.
+    await store.deleteDraft('vault', 'doc-a')
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+
+    // The IndexedDB record vanished — but at prepare time the store
+    // getDraft() populated confirmedDraft, so the refined outcome
+    // must be 'stale' (refresh Recovery) rather than 'missing'
+    // (drop the identity silently).
+    expect(result.status).toBe('stale')
     await persistence.dispose()
   })
 })

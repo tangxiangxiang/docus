@@ -207,11 +207,18 @@ describe('useDocumentLifecycle rename', () => {
     ])
   })
 
-  it('finalizes the draft barrier when tab path migration throws', async () => {
+  it('keeps server success and finalizes the barrier when tab path migration throws', async () => {
+    // The server rename has already succeeded by the time Tab
+    // migration runs — throwing here must NOT cause the rename to
+    // report failure, because the file has actually moved on disk.
+    // The barrier must still finalize (so draft persistence isn't
+    // permanently locked) and the rename event must still publish +
+    // refresh.
     vi.spyOn(api, 'patchPost').mockResolvedValue({
       path: 'inbox/b', title: 'B', created: '', updated: '', tags: [], size: 1, mtime: 2,
     })
     const finalizeAfterTabMigration = vi.fn().mockResolvedValue(undefined)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const h = setup([tab()], undefined, {
       resolveDocumentIdentity: vi.fn(async (path: string) => ({
         vaultId: 'vault',
@@ -229,9 +236,14 @@ describe('useDocumentLifecycle rename', () => {
       }),
     })
 
-    await expect(h.lifecycle.renameFile('inbox/a', { name: 'b' }))
-      .rejects.toThrow('tab migration failed')
+    const result = await h.lifecycle.renameFile('inbox/a', { name: 'b' })
+    // Server result returned even though Tab migration threw.
+    expect(result.path).toBe('inbox/b')
     expect(finalizeAfterTabMigration).toHaveBeenCalledOnce()
+    // Non-blocking warning was logged so the issue is still visible
+    // in dev tools.
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
   })
 
   it('waits for an in-flight save before PATCH rename', async () => {

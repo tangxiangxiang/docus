@@ -668,24 +668,98 @@ export function createUnsavedDraftPersistence(
           )
           ? state.entry.persistedDraft
           : confirmation.expectedDraft
+        // Snapshot the entry's pre-CAS ownership so the post-CAS
+        // branch can detect edits that landed during the await.
+        const preCasGeneration = state.entry.generation
+        const preCasRevision = state.entry.latestSnapshot?.revision ?? null
+        const preCasSnapshotRef = state.entry.latestSnapshot
+        const preCasConfirmedDraft = state.confirmedDraft
         const outcome = expected
           ? await store.deleteDraftIfUnchanged(expected)
           : { status: 'missing' as const }
-        if (outcome.status === 'deleted' || outcome.status === 'missing') {
-          const entry = state.entry
+        const entry = state.entry
+        // Refine the CAS outcome using the pre-prepare confirmedDraft.
+        // - `missing` + confirmedDraft: at prepare time the store had
+        //   a record; CAS found none → a concurrent context deleted
+        //   it. Surface as 'stale' so the UI refreshes Recovery
+        //   instead of silently dropping the identity.
+        const refinedStatus: typeof outcome.status = (() => {
+          if (outcome.status === 'missing' && preCasConfirmedDraft) {
+            return 'stale'
+          }
+          return outcome.status
+        })()
+        // Post-CAS ownership check: detect edits made during the
+        // CAS await. `schedule()` advances `entry.generation` even
+        // while a file transaction is held, so a strict generation
+        // check catches them.
+        const entryAdvancedDuringAwait = entry.generation !== preCasGeneration
+          || entry.latestSnapshot?.revision !== preCasRevision
+          || entry.latestSnapshot !== preCasSnapshotRef
+        if ((refinedStatus === 'deleted' || refinedStatus === 'missing')
+          && !entryAdvancedDuringAwait) {
+          // Truly confirmed: clear the entry's snapshot and ownership.
           clearTimer(entry)
           entry.generation += 1
           entry.latestSnapshot = null
           entry.latestSnapshotNeedsWrite = false
           entry.persistedDraft = null
           entry.fileTransaction = null
-        } else {
-          await releaseEntry(state, deletion.documentPath, true, true)
+          results.push({
+            documentId: deletion.documentId,
+            oldPath: deletion.documentPath,
+            status: refinedStatus,
+          })
+          continue
         }
+        if ((refinedStatus === 'deleted' || refinedStatus === 'missing')
+          && entryAdvancedDuringAwait) {
+          // CAS succeeded on the IndexedDB record the user
+          // confirmed, but a new local edit (post-CAS) owns a
+          // different generation / revision. Preserve the new
+          // snapshot by NOT clearing the entry — `releaseEntry`'s
+          // normal write path will re-queue the new snapshot with
+          // a bumped generation. Report 'conflict' so callers can
+          // surface "the deleted source had a newer edit that was
+          // preserved as a new orphan recovery entry" instead of
+          // treating the operation as a clean delete.
+          await releaseEntry(state, deletion.documentPath, true, true)
+          results.push({
+            documentId: deletion.documentId,
+            oldPath: deletion.documentPath,
+            status: 'conflict',
+          })
+          continue
+        }
+        if (refinedStatus === 'stale' && entryAdvancedDuringAwait) {
+          // CAS found a newer cross-context record AND the user
+          // made a new local edit during the await. Auto-writing
+          // the new local edit with a fresh `safeTimestamp()` would
+          // overwrite the cross-context record, which is exactly
+          // what the spec forbids. Surface as 'conflict' so the
+          // caller can hand the orphan back to Recovery without
+          // touching IndexedDB.
+          await releaseEntry(state, deletion.documentPath, false, true)
+          results.push({
+            documentId: deletion.documentId,
+            oldPath: deletion.documentPath,
+            status: 'conflict',
+          })
+          continue
+        }
+        // 'stale' / 'failed' / 'unsupported' without a waiting-period
+        // edit: the IndexedDB record (or lack thereof) is the source
+        // of truth. Never call queueWrite here — releaseEntry's
+        // writeLatest=true path would assign a fresh `safeTimestamp()`
+        // that could overwrite a cross-context newer record. Instead,
+        // just release the transaction lock without re-writing so
+        // Recovery refresh can pick up whatever IndexedDB actually
+        // holds.
+        await releaseEntry(state, deletion.documentPath, false, true)
         results.push({
           documentId: deletion.documentId,
           oldPath: deletion.documentPath,
-          status: outcome.status,
+          status: refinedStatus,
         })
       }
       for (const [identityKey, state] of held) {
