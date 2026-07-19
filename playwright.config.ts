@@ -2,6 +2,9 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
+  // IndexedDB transaction suites use a single dedicated Vite origin/config so
+  // they cannot race the visual/view-mode workers over database lifecycle.
+  testIgnore: ['draft-store.spec.ts', 'draft-file-transactions.spec.ts'],
   fullyParallel: false,
   retries: 0,
   use: {
