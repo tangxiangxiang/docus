@@ -67,6 +67,19 @@ describe('createUnsavedDraftPersistence', () => {
     expect((await store.getDraft('vault-1', 'b'))?.content).toBe('b1')
   })
 
+  it('persists drafts with fractional filesystem mtime', async () => {
+    const persistence = createUnsavedDraftPersistence({ store })
+    persistence.schedule({
+      ...snapshot('a', 'dirty'),
+      baseModifiedAt: 1_721_234_567_890.625,
+    })
+
+    await vi.advanceTimersByTimeAsync(800)
+
+    expect((await store.getDraft('vault-1', 'a'))?.baseModifiedAt)
+      .toBe(1_721_234_567_890.625)
+  })
+
   it('does not let an old pending write recreate a discarded draft', async () => {
     const write = deferred<boolean>()
     const saveDraft = vi.fn()
@@ -84,6 +97,49 @@ describe('createUnsavedDraftPersistence', () => {
 
     expect(await store.getDraft('vault-1', 'a')).toBeNull()
     expect(saveDraft).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not let a clean deletion remove a newer scheduled generation', async () => {
+    const oldWrite = deferred<boolean>()
+    const saveDraft = vi.fn()
+      .mockImplementationOnce(() => oldWrite.promise)
+      .mockImplementation((draft) => store.saveDraft(draft))
+    const persistence = createUnsavedDraftPersistence({
+      store: { ...store, saveDraft },
+    })
+
+    const owner = persistence.schedule(snapshot('a', 'old', 1))!
+    await vi.advanceTimersByTimeAsync(800)
+    const clean = persistence.markClean(owner, 1)
+    persistence.schedule(snapshot('a', 'new', 2))
+    await vi.advanceTimersByTimeAsync(800)
+
+    oldWrite.resolve(true)
+    await clean
+    await persistence.flush('vault-1', 'a')
+
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('new')
+  })
+
+  it('serializes a reopened document write after discard deletion', async () => {
+    const deletion = deferred<{ status: 'deleted' }>()
+    const deleteDraft = vi.fn().mockReturnValue(deletion.promise)
+    const persistence = createUnsavedDraftPersistence({
+      store: { ...store, deleteDraft },
+    })
+
+    const owner = persistence.schedule(snapshot('a', 'old', 1))!
+    await persistence.flush('vault-1', 'a')
+    const discarded = persistence.discard(owner)
+    persistence.schedule(snapshot('a', 'reopened', 1))
+    await vi.advanceTimersByTimeAsync(800)
+
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('old')
+    deletion.resolve({ status: 'deleted' })
+    await discarded
+    await persistence.flush('vault-1', 'a')
+
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('reopened')
   })
 
   it('isolates a reopened document from work owned by the closed tab', async () => {
@@ -202,7 +258,7 @@ describe('createUnsavedDraftPersistence', () => {
     expect(saveDraft).not.toHaveBeenCalled()
   })
 
-  it('uses monotonically increasing safe timestamps', async () => {
+  it('fails closed when a document timestamp reaches MAX_SAFE_INTEGER', async () => {
     const persistence = createUnsavedDraftPersistence({
       store,
       now: () => Number.MAX_SAFE_INTEGER,
@@ -215,6 +271,7 @@ describe('createUnsavedDraftPersistence', () => {
     const draft = await store.getDraft('vault-1', 'a')
     expect(draft?.createdAt).toBe(Number.MAX_SAFE_INTEGER)
     expect(draft?.updatedAt).toBe(Number.MAX_SAFE_INTEGER)
+    expect(draft?.content).toBe('v1')
   })
 
   it('registers one pagehide listener and removes it on dispose', async () => {

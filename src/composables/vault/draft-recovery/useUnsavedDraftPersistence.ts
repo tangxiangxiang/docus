@@ -217,15 +217,26 @@ export function createUnsavedDraftPersistence(
     const entry = entries.get(key(owner.vaultId, owner.documentId))
     if (!current(owner, entry)) return false
     clearTimer(entry)
-    entry.generation += 1
+    const deleteGeneration = ++entry.generation
     entry.latestSnapshot = null
-    if (entry.pendingWrite) await entry.pendingWrite.catch(() => false)
-    try {
-      const result = await store.deleteDraft(owner.vaultId, owner.documentId)
-      return result.status === 'deleted' || result.status === 'missing'
-    } catch {
-      return false
-    }
+    const previous = entry.pendingWrite
+    const task = (async () => {
+      if (previous) await previous.catch(() => false)
+      if (entry.generation !== deleteGeneration || entry.latestSnapshot !== null) {
+        return false
+      }
+      try {
+        const result = await store.deleteDraft(owner.vaultId, owner.documentId)
+        return result.status === 'deleted' || result.status === 'missing'
+      } catch {
+        return false
+      }
+    })()
+    entry.pendingWrite = task
+    void task.finally(() => {
+      if (entry.pendingWrite === task) entry.pendingWrite = null
+    })
+    return task
   }
 
   async function markClean(

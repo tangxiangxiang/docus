@@ -293,8 +293,11 @@ Implemented in:
 - `draftHash.ts`: best-effort SHA-256 hashing of the synchronously captured
   authoritative baseline;
 - `useUnsavedDraftPersistence.ts`: per-vault-context, per-document debounce,
-  generation ownership, monotonic timestamps, flush, clean/discard deletion,
-  `pagehide` best-effort flushing, and idempotent disposal;
+  generation ownership, monotonic record timestamps, a shared write/delete
+  operation chain, flush, clean/discard deletion, `pagehide` best-effort
+  flushing, and idempotent disposal;
+- `draftTypes.ts`: record timestamps remain safe integers while
+  `baseModifiedAt` preserves finite fractional filesystem `mtimeMs` values;
 - `useDocumentSave.ts`: the existing editor-change and
   `revision`/`savedRevision` acknowledgement paths schedule or remove drafts;
 - `useTabWorkspace.ts` and `Tab`: loaded Document tabs retain the stable
@@ -305,7 +308,7 @@ Implemented in:
 
 Behavior remains write/delete only. This stage does not list or recover drafts,
 add recovery UI, or migrate draft identities for rename/move/delete. Focused
-coverage consists of 40 tests across the draft storage, hashing, persistence
+coverage consists of 43 tests across the draft storage, hashing, persistence
 coordinator, and save-state wiring suites.
 
 ### Edit-09.4 — Recovery decisions

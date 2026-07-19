@@ -126,21 +126,24 @@ describe('draftStore characterization', () => {
     expect(await store.getDraft('vault-a', 'valid')).toBeNull()
   })
 
-  it('lists the safe-integer timestamp boundary and rejects values beyond it', async () => {
+  it('lists safe-integer record timestamps and accepts finite filesystem mtimes', async () => {
     const unsafe = Number.MAX_SAFE_INTEGER + 1
 
     expect(await store.saveDraft(draft('boundary', Number.MAX_SAFE_INTEGER, {
-      baseModifiedAt: Number.MAX_SAFE_INTEGER,
+      baseModifiedAt: 1_721_234_567_890.625,
     }))).toBe(true)
     expect(await store.saveDraft(draft('created', unsafe, {
       createdAt: unsafe,
     }))).toBe(false)
     expect(await store.saveDraft(draft('updated', unsafe))).toBe(false)
-    expect(await store.saveDraft(draft('mtime', 30, {
+    expect(await store.saveDraft(draft('large-mtime', 30, {
       baseModifiedAt: unsafe,
+    }))).toBe(true)
+    expect(await store.saveDraft(draft('infinite-mtime', 31, {
+      baseModifiedAt: Number.POSITIVE_INFINITY,
     }))).toBe(false)
     expect((await store.listDrafts('vault-a')).map((value) => value.documentId))
-      .toEqual(['boundary'])
+      .toEqual(['boundary', 'large-mtime'])
   })
 
   it('moves a draft atomically while preserving its content and baseline', async () => {

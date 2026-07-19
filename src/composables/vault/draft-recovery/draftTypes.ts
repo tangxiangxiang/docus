@@ -24,7 +24,7 @@ export function isUnsavedDraft(value: unknown): value is UnsavedDraft {
     && (candidate.baseContentHash === null
       || typeof candidate.baseContentHash === 'string')
     && (candidate.baseModifiedAt === null
-      || isNonNegativeSafeInteger(candidate.baseModifiedAt))
+      || isNonNegativeFiniteNumber(candidate.baseModifiedAt))
     && isNonNegativeSafeInteger(candidate.createdAt)
     && isNonNegativeSafeInteger(candidate.updatedAt)
     && candidate.createdAt <= candidate.updatedAt
@@ -37,6 +37,12 @@ function isNonEmptyString(value: unknown): value is string {
 function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number'
     && Number.isSafeInteger(value)
+    && value >= 0
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isFinite(value)
     && value >= 0
 }
 
