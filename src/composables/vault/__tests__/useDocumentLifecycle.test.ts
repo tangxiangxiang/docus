@@ -207,6 +207,33 @@ describe('useDocumentLifecycle rename', () => {
     ])
   })
 
+  it('finalizes the draft barrier when tab path migration throws', async () => {
+    vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'inbox/b', title: 'B', created: '', updated: '', tags: [], size: 1, mtime: 2,
+    })
+    const finalizeAfterTabMigration = vi.fn().mockResolvedValue(undefined)
+    const h = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn().mockResolvedValue([]),
+        commitDeletes: vi.fn(),
+        finalizeAfterTabMigration,
+        rollback: vi.fn(),
+      }),
+      renameOpenDocuments: vi.fn(() => {
+        throw new Error('tab migration failed')
+      }),
+    })
+
+    await expect(h.lifecycle.renameFile('inbox/a', { name: 'b' }))
+      .rejects.toThrow('tab migration failed')
+    expect(finalizeAfterTabMigration).toHaveBeenCalledOnce()
+  })
+
   it('waits for an in-flight save before PATCH rename', async () => {
     let finishSave!: (response: Response) => void
     const pendingSave = new Promise<Response>((resolve) => { finishSave = resolve })

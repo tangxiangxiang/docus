@@ -383,10 +383,13 @@ Implemented in:
   the exact IndexedDB record without changing its content, baseline, or
   timestamps and then persists newer input only at the server-returned path;
   rollback resumes the latest input at the old path. Explicit delete uses the
-  exact draft and editor generation synchronously captured when the user
-  confirms deletion, before any save or lifecycle await. A newer local
-  revision/generation or cross-context record is preserved as orphan recovery
-  content. Move commit and entry release are separate phases: Document tab
+  exact draft, pending buffer snapshot, editor revision, and generation
+  synchronously captured when the user confirms deletion, before any save or
+  lifecycle await. Confirmation can therefore discard a debounce or in-flight
+  write that it actually covered, while a newer local revision/generation or
+  cross-context record is preserved as orphan recovery content. Successful
+  deletion also relinquishes the matching in-memory snapshot and persisted
+  ownership. Move commit and entry release are separate phases: Document tab
   paths migrate before the barrier unlocks, and transaction-time snapshots are
   then flushed immediately at the actual server path before Recovery retry;
 - `useDocumentLifecycle.ts`: rename, drag move, archive, folder rename, file
@@ -394,15 +397,18 @@ Implemented in:
   identity is resolved before and after path changes, folder identity loading
   is bounded to four workers, and only server-confirmed results are committed.
   Draft conflict/unsupported/failure is reported as a non-blocking warning and
-  never converts an already-successful server file operation into failure;
+  never converts an already-successful server file operation into failure.
+  Barrier finalization runs in `finally` around tab migration so an unexpected
+  UI migration error cannot leave draft persistence paused;
 - `FileTree.vue`: destructive user confirmation explicitly authorizes
   `discard-confirmed` and captures its delete token in the same synchronous
   call chain after confirmation; all programmatic lifecycle deletion defaults
   to `preserve`;
 - `VaultView.vue`: loaded Document metadata is the preferred identity source,
   with `getPost()` as the safe fallback. Recovery items and open Recovery tabs
-  are retried after moves/preserved deletes and removed only after an exact
-  confirmed draft deletion.
+  are refreshed after moves/preserved deletes and removed only after an exact
+  confirmed draft deletion. Refresh is an upsert, so a newly orphaned draft is
+  visible in the current session without requiring a page reload.
 
 Create and external-delete paths do not migrate or discard drafts. A newly
 created document at an orphan path therefore remains isolated by stable

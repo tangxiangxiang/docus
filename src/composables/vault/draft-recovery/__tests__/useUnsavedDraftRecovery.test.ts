@@ -60,6 +60,56 @@ async function seededStore(...drafts: UnsavedDraft[]) {
 }
 
 describe('createUnsavedDraftRecovery', () => {
+  it('upserts a newly orphaned draft into the current recovery session', async () => {
+    const store = await seededStore()
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: vi.fn().mockRejectedValue(
+        Object.assign(new Error('gone'), { status: 404 }),
+      ),
+    })
+    await recovery.discover('vault')
+    await store.saveDraft(draft('orphan'))
+
+    await recovery.refreshIdentity('vault', 'orphan')
+
+    expect(recovery.items.value).toHaveLength(1)
+    expect(recovery.items.value[0]).toMatchObject({
+      draft: { documentId: 'orphan' },
+      status: 'ready',
+      decision: { kind: 'missing-source' },
+    })
+  })
+
+  it('ignores an older identity refresh that finishes after a newer one', async () => {
+    const original = draft('orphan')
+    const updated = {
+      ...original,
+      content: 'new orphan content',
+      updatedAt: original.updatedAt + 1,
+    }
+    const store = await seededStore(original)
+    const originalGet = store.getDraft.bind(store)
+    const staleRead = deferred<UnsavedDraft | null>()
+    vi.spyOn(store, 'getDraft')
+      .mockImplementationOnce(() => staleRead.promise)
+      .mockImplementation((vaultId, documentId) => originalGet(vaultId, documentId))
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: vi.fn().mockRejectedValue(
+        Object.assign(new Error('gone'), { status: 404 }),
+      ),
+    })
+
+    const olderRefresh = recovery.refreshIdentity('vault', 'orphan')
+    await store.saveDraft(updated)
+    await recovery.refreshIdentity('vault', 'orphan')
+    staleRead.resolve(original)
+    await olderRefresh
+
+    expect(recovery.items.value[0]?.draft).toEqual(updated)
+  })
+
   it('removes a settled draft identity from the current recovery session', async () => {
     const store = await seededStore(draft('a'))
     const recovery = createUnsavedDraftRecovery({

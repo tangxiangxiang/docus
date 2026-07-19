@@ -316,30 +316,30 @@ const documentLifecycle = useDocumentLifecycle({
     }))
   },
   async onDraftTransactionSettled(results) {
-    const recoveryIds = new Set(results.flatMap((result) => {
-      const item = draftRecovery.items.value.find((candidate) => (
-        candidate.draft.vaultId === vaultId.value
-        && candidate.draft.documentId === result.documentId
+    const currentVaultId = vaultId.value
+    if (!currentVaultId) return
+    for (const transaction of results) {
+      const existing = draftRecovery.items.value.find((candidate) => (
+        candidate.draft.vaultId === currentVaultId
+        && candidate.draft.documentId === transaction.documentId
       ))
-      return item ? [item.recoveryId] : []
-    }))
-    for (const recoveryId of recoveryIds) {
-      const transaction = results.find((result) => {
-        const item = draftRecovery.items.value.find(
-          (candidate) => candidate.recoveryId === recoveryId,
-        )
-        return item?.draft.documentId === result.documentId
-      })
-      if (transaction && ['deleted', 'missing'].includes(transaction.status)) {
-        const item = recoveryItem(recoveryId)
-        if (item) draftRecovery.removeIdentity(item.draft.vaultId, item.draft.documentId)
+      if (transaction.status === 'deleted'
+        || (transaction.status === 'missing' && transaction.newPath === undefined)) {
+        draftRecovery.removeIdentity(currentVaultId, transaction.documentId)
+        const recoveryId = existing?.recoveryId
+        if (!recoveryId) continue
         for (const tab of recoveryTabs.tabs.value.filter(
           (candidate) => candidate.recoveryId === recoveryId,
         )) recoveryTabs.close(tab.tabId)
         continue
       }
-      await draftRecovery.retry(recoveryId)
-      const refreshed = recoveryItem(recoveryId)
+      await draftRecovery.refreshIdentity(currentVaultId, transaction.documentId)
+      const refreshed = draftRecovery.items.value.find((candidate) => (
+        candidate.draft.vaultId === currentVaultId
+        && candidate.draft.documentId === transaction.documentId
+      ))
+      const recoveryId = refreshed?.recoveryId ?? existing?.recoveryId
+      if (!recoveryId) continue
       const open = recoveryTabs.tabs.value.find((tab) => tab.recoveryId === recoveryId)
       if (refreshed?.status === 'ready' && open) recoveryTabs.open(refreshed, open.view)
       if (!refreshed && open) recoveryTabs.close(open.tabId)

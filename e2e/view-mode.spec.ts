@@ -1,9 +1,8 @@
 import { expect, test } from '@playwright/test'
 
-/* Monaco's CtrlCmd key modifier maps to Meta on macOS and Control on
-   Linux / Windows. Use the host platform to pick the correct key so
-   the E2E suite works on dev machines (macOS) and CI (Linux) alike. */
-const primaryModifier = process.platform === 'darwin' ? 'Meta' : 'Control'
+/* Control is accepted by both the vault handler and Monaco in Chromium on
+   every CI host, avoiding a Node-host/browser-platform mismatch. */
+const primaryModifier = 'Control'
 const TEST_DOC_PATH = 'inbox/e2e-shortcut-test'
 
 async function openShortcutDocument(page: import('@playwright/test').Page) {
@@ -18,9 +17,11 @@ async function openShortcutDocument(page: import('@playwright/test').Page) {
 async function focusMonacoInput(page: import('@playwright/test').Page) {
   const editor = page.locator('.monaco-editor')
   await editor.waitFor({ state: 'visible', timeout: 10_000 })
-  const input = editor.locator('textarea.inputarea')
-  await input.focus()
-  await expect(input).toBeFocused()
+  // Use Monaco's pointer surface so its controller, cursor, and EditContext
+  // all acquire focus together; directly focusing an ARIA mirror textbox does
+  // not activate Monaco's keybinding service.
+  await editor.locator('.view-lines').click({ position: { x: 40, y: 12 } })
+  await expect(editor).toHaveClass(/focused/)
 }
 
 test.describe('View mode toggle', () => {

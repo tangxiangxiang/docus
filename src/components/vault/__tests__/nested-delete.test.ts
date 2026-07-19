@@ -83,6 +83,7 @@ describe('FileTree nested delete', () => {
       revision: 3,
       ownerGeneration: 7,
       expectedDraft: null,
+      expectedSnapshot: null,
     }
     const capture = vi.fn(() => [confirmation])
     const deleteFile = vi.fn().mockResolvedValue({ ok: true })

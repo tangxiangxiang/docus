@@ -279,13 +279,19 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
             status: 'identity-mismatch',
           })
         }
-        options.renameOpenDocuments([mapping])
-        await draftBarrier.finalizeAfterTabMigration?.()
+        try {
+          options.renameOpenDocuments([mapping])
+        } finally {
+          await draftBarrier.finalizeAfterTabMigration?.()
+        }
         await reportDraftResults(draftResults)
       } else if (draftBarrier) {
         const draftResults = await draftBarrier.commitMoves([], unresolvedDrafts)
-        options.renameOpenDocuments([mapping])
-        await draftBarrier.finalizeAfterTabMigration?.()
+        try {
+          options.renameOpenDocuments([mapping])
+        } finally {
+          await draftBarrier.finalizeAfterTabMigration?.()
+        }
         await reportDraftResults([
           ...draftResults,
           ...unresolvedDrafts.map((draft) => ({
@@ -370,8 +376,11 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
           }
         }
         const draftResults = await draftBarrier.commitMoves(draftMappings, preserved)
-        options.renameOpenDocuments(mappings)
-        await draftBarrier.finalizeAfterTabMigration?.()
+        try {
+          options.renameOpenDocuments(mappings)
+        } finally {
+          await draftBarrier.finalizeAfterTabMigration?.()
+        }
         await reportDraftResults([...draftResults, ...mismatches])
       } else {
         options.renameOpenDocuments(mappings)

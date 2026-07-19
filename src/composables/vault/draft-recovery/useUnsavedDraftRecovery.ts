@@ -36,6 +36,7 @@ export interface UnsavedDraftRecovery {
   activeRecoveryId: DeepReadonly<Ref<string | null>>
   discover(vaultId: string): Promise<void>
   retry(recoveryId: string): Promise<void>
+  refreshIdentity(vaultId: string, documentId: string): Promise<void>
   removeIdentity(vaultId: string, documentId: string): void
   dismissForSession(recoveryId: string): void
   selectRecovery(recoveryId: string | null): void
@@ -79,6 +80,10 @@ function recoveryId(draft: UnsavedDraft): string {
   return JSON.stringify([draft.vaultId, draft.documentId])
 }
 
+function recoveryIdentityId(vaultId: string, documentId: string): string {
+  return JSON.stringify([vaultId, documentId])
+}
+
 function errorStatus(error: unknown): number | null {
   if (!error || typeof error !== 'object') return null
   const status = (error as { status?: unknown }).status
@@ -97,6 +102,8 @@ export function createUnsavedDraftRecovery(
   const concurrency = Math.max(1, Math.min(8, Math.floor(options.concurrency ?? 4)))
   const mutableItems = ref<OwnedItem[]>([])
   const activeRecoveryId = ref<string | null>(null)
+  const identityRefreshGenerations = new Map<string, number>()
+  let identityRefreshEpoch = 0
   let discoverGeneration = 0
   let disposed = false
 
@@ -164,6 +171,8 @@ export function createUnsavedDraftRecovery(
 
   async function discover(vaultId: string): Promise<void> {
     const generation = ++discoverGeneration
+    identityRefreshEpoch += 1
+    identityRefreshGenerations.clear()
     activeRecoveryId.value = null
     if (disposed || vaultId.trim().length === 0) {
       mutableItems.value = []
@@ -217,6 +226,39 @@ export function createUnsavedDraftRecovery(
     await classify(item)
   }
 
+  async function refreshIdentity(vaultId: string, documentId: string): Promise<void> {
+    if (disposed) return
+    const id = recoveryIdentityId(vaultId, documentId)
+    const epoch = identityRefreshEpoch
+    const generation = (identityRefreshGenerations.get(id) ?? 0) + 1
+    identityRefreshGenerations.set(id, generation)
+    const latest = await store.getDraft(vaultId, documentId)
+    if (disposed
+      || identityRefreshEpoch !== epoch
+      || identityRefreshGenerations.get(id) !== generation) return
+    const existing = mutableItems.value.find((candidate) => candidate.recoveryId === id)
+    if (!latest) {
+      if (existing) removeIdentity(vaultId, documentId)
+      return
+    }
+    if (existing) {
+      existing.draft = latest
+      await classify(existing)
+      return
+    }
+    const item: OwnedItem = {
+      recoveryId: id,
+      draft: latest,
+      decision: null,
+      status: 'unresolved',
+      error: null,
+      discoverGeneration,
+      classifyGeneration: 0,
+    }
+    mutableItems.value = [...mutableItems.value, item]
+    await classify(item)
+  }
+
   function dismissForSession(id: string): void {
     if (disposed) return
     const item = mutableItems.value.find((candidate) => candidate.recoveryId === id)
@@ -227,6 +269,11 @@ export function createUnsavedDraftRecovery(
 
   function removeIdentity(vaultId: string, documentId: string): void {
     if (disposed) return
+    const id = recoveryIdentityId(vaultId, documentId)
+    identityRefreshGenerations.set(
+      id,
+      (identityRefreshGenerations.get(id) ?? 0) + 1,
+    )
     const removed = mutableItems.value.filter((item) => (
       item.draft.vaultId === vaultId && item.draft.documentId === documentId
     ))
@@ -250,6 +297,8 @@ export function createUnsavedDraftRecovery(
     if (disposed) return
     disposed = true
     discoverGeneration += 1
+    identityRefreshEpoch += 1
+    identityRefreshGenerations.clear()
     for (const item of mutableItems.value) item.classifyGeneration += 1
     activeRecoveryId.value = null
   }
@@ -260,6 +309,7 @@ export function createUnsavedDraftRecovery(
     activeRecoveryId: readonly(activeRecoveryId),
     discover,
     retry,
+    refreshIdentity,
     removeIdentity,
     dismissForSession,
     selectRecovery,

@@ -46,6 +46,132 @@ function draft(
 }
 
 describe('draft file transaction integration', () => {
+  it('discards an unpersisted debounce snapshot captured at confirmation', async () => {
+    vi.useFakeTimers()
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 10,
+      targetWindow: undefined,
+    })
+    const identity = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }
+    persistence.schedule(snapshot('confirmed'))
+    const confirmation = persistence.captureDeleteConfirmation(identity, 1)
+    const barrier = await persistence.prepareFileMutation([identity])
+
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+    vi.advanceTimersByTime(800)
+
+    expect(result.status).toBe('missing')
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([])
+    expect(persistence.captureDeleteConfirmation(identity, 1)).toMatchObject({
+      expectedDraft: null,
+      expectedSnapshot: null,
+    })
+    await persistence.dispose()
+    vi.useRealTimers()
+  })
+
+  it('discards a confirmation-time pending write after it completes', async () => {
+    vi.useFakeTimers()
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    const originalSave = store.saveDraft.bind(store)
+    let releaseSave!: () => void
+    const saveGate = new Promise<void>((resolve) => {
+      releaseSave = resolve
+    })
+    vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+      await saveGate
+      return originalSave(value)
+    })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 10,
+      targetWindow: undefined,
+    })
+    const identity = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }
+    persistence.schedule(snapshot('confirmed'))
+    const confirmation = persistence.captureDeleteConfirmation(identity, 1)
+    vi.advanceTimersByTime(800)
+    const preparing = persistence.prepareFileMutation([identity])
+    releaseSave()
+    const barrier = await preparing
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+
+    expect(result.status).toBe('deleted')
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    await persistence.dispose()
+    vi.useRealTimers()
+  })
+
+  it('rolls a confirmation snapshot back when the server delete fails', async () => {
+    vi.useFakeTimers()
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 10,
+      targetWindow: undefined,
+    })
+    const identity = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }
+    persistence.schedule(snapshot('confirmed'))
+    persistence.captureDeleteConfirmation(identity, 1)
+    const barrier = await persistence.prepareFileMutation([identity])
+
+    await barrier.rollback()
+    await vi.advanceTimersByTimeAsync(800)
+
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'confirmed',
+    })
+    await persistence.dispose()
+    vi.useRealTimers()
+  })
+
+  it('prefers the coordinator-owned draft over a stale recovery snapshot', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    const stale = draft('stale', 'notes/a', 10)
+    const current = draft('current', 'notes/a', 20)
+    await store.saveDraft(current)
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      targetWindow: undefined,
+    })
+    await persistence.adoptRecoveredDraft(current, snapshot('current'))
+    const confirmation = persistence.captureDeleteConfirmation({
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }, 1, stale)
+
+    expect(confirmation.expectedDraft).toEqual(current)
+    await persistence.dispose()
+  })
+
   it('holds edits during a move and writes only the actual server path', async () => {
     vi.useFakeTimers()
     const store = createDraftStore({ backend: createMemoryDraftBackend() })

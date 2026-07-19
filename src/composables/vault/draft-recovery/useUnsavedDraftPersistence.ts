@@ -142,6 +142,35 @@ export function createUnsavedDraftPersistence(
     return { ...snapshot }
   }
 
+  function snapshotMatches(
+    current: DraftBufferSnapshot | null,
+    expected: DraftBufferSnapshot | null,
+  ): boolean {
+    if (!current || !expected) return current === expected
+    return current.vaultId === expected.vaultId
+      && current.documentId === expected.documentId
+      && current.documentPath === expected.documentPath
+      && current.content === expected.content
+      && current.authoritativeContent === expected.authoritativeContent
+      && current.baseContentHash === expected.baseContentHash
+      && current.baseModifiedAt === expected.baseModifiedAt
+      && current.revision === expected.revision
+      && current.loaded === expected.loaded
+  }
+
+  function draftMatchesSnapshot(
+    draft: UnsavedDraft,
+    snapshot: DraftBufferSnapshot,
+  ): boolean {
+    return draft.vaultId === snapshot.vaultId
+      && draft.documentId === snapshot.documentId
+      && draft.documentPath === snapshot.documentPath
+      && draft.content === snapshot.content
+      && draft.baseModifiedAt === snapshot.baseModifiedAt
+      && (snapshot.baseContentHash === null
+        || draft.baseContentHash === snapshot.baseContentHash)
+  }
+
   function current(
     owner: DraftOwner,
     entry: DraftEntry | undefined,
@@ -619,7 +648,10 @@ export function createUnsavedDraftPersistence(
           || state.entry.generation !== confirmation.ownerGeneration
           || (state.entry.latestSnapshot !== null
             && state.entry.latestSnapshot.revision !== confirmation.revision)
-          || state.entry.latestSnapshotNeedsWrite) {
+          || !snapshotMatches(
+            state.entry.latestSnapshot,
+            confirmation.expectedSnapshot,
+          )) {
           await releaseEntry(state, deletion.documentPath, true, true)
           results.push({
             documentId: deletion.documentId,
@@ -628,11 +660,28 @@ export function createUnsavedDraftPersistence(
           })
           continue
         }
-        const expected = confirmation.expectedDraft
+        const expected = state.entry.persistedDraft
+          && confirmation.expectedSnapshot
+          && draftMatchesSnapshot(
+            state.entry.persistedDraft,
+            confirmation.expectedSnapshot,
+          )
+          ? state.entry.persistedDraft
+          : confirmation.expectedDraft
         const outcome = expected
           ? await store.deleteDraftIfUnchanged(expected)
           : { status: 'missing' as const }
-        await releaseEntry(state, deletion.documentPath, false)
+        if (outcome.status === 'deleted' || outcome.status === 'missing') {
+          const entry = state.entry
+          clearTimer(entry)
+          entry.generation += 1
+          entry.latestSnapshot = null
+          entry.latestSnapshotNeedsWrite = false
+          entry.persistedDraft = null
+          entry.fileTransaction = null
+        } else {
+          await releaseEntry(state, deletion.documentPath, true, true)
+        }
         results.push({
           documentId: deletion.documentId,
           oldPath: deletion.documentPath,
@@ -674,17 +723,20 @@ export function createUnsavedDraftPersistence(
     expectedDraft?: UnsavedDraft | null,
   ): DraftDeleteConfirmation {
     const entry = entryFor(identity.vaultId, identity.documentId)
-    const expected = expectedDraft
+    const expected = entry.persistedDraft ?? (expectedDraft
       && expectedDraft.vaultId === identity.vaultId
       && expectedDraft.documentId === identity.documentId
       ? expectedDraft
-      : entry.persistedDraft
+      : null)
     return {
       ...identity,
       revision,
       ownerGeneration: entry.generation,
       expectedDraft: expected
         ? { ...expected }
+        : null,
+      expectedSnapshot: entry.latestSnapshot
+        ? cloneSnapshot(entry.latestSnapshot)
         : null,
     }
   }

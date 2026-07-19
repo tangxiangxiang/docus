@@ -1,4 +1,5 @@
 import type { UnsavedDraft } from './draftTypes'
+import type { DraftBufferSnapshot } from './useUnsavedDraftPersistence'
 
 export type DraftDeletePolicy = 'preserve' | 'discard-confirmed'
 
@@ -19,6 +20,7 @@ export interface DraftDeleteConfirmation extends DraftDocumentIdentity {
   revision: number
   ownerGeneration: number
   expectedDraft: UnsavedDraft | null
+  expectedSnapshot: DraftBufferSnapshot | null
 }
 
 export interface DraftDeleteRequest extends DraftDocumentIdentity {
