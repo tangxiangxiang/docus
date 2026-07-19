@@ -6,6 +6,19 @@ import type { WorkspaceTab } from '../tabs'
 
 enableAutoUnmount(afterEach)
 
+const detachedFixtures = new Set<HTMLElement>()
+
+afterEach(() => {
+  for (const fixture of detachedFixtures) fixture.remove()
+  detachedFixtures.clear()
+})
+
+function appendFixture(element: HTMLElement): HTMLElement {
+  document.body.appendChild(element)
+  detachedFixtures.add(element)
+  return element
+}
+
 function makeTab(id: string): WorkspaceTab {
   return {
     id,
@@ -43,8 +56,7 @@ describe('EditorTabs focus behavior characterization', () => {
   })
 
   it('leaves the current focus unchanged when the workspace ID is unknown', () => {
-    const outside = document.createElement('button')
-    document.body.appendChild(outside)
+    const outside = appendFixture(document.createElement('button'))
     outside.focus()
 
     const wrapper = mount(EditorTabs, {
@@ -57,14 +69,12 @@ describe('EditorTabs focus behavior characterization', () => {
 
     wrapper.vm.focusTab('missing')
     expect(document.activeElement).toBe(outside)
-    outside.remove()
   })
 
   it('scopes workspace tab lookup to its own tab strip', () => {
-    const foreignTab = document.createElement('button')
+    const foreignTab = appendFixture(document.createElement('button'))
     foreignTab.dataset.tabId = 'foreign'
     foreignTab.setAttribute('role', 'tab')
-    document.body.appendChild(foreignTab)
     foreignTab.focus()
 
     const wrapper = mount(EditorTabs, {
@@ -77,6 +87,5 @@ describe('EditorTabs focus behavior characterization', () => {
 
     wrapper.vm.focusTab('foreign')
     expect(document.activeElement).toBe(foreignTab)
-    foreignTab.remove()
   })
 })
