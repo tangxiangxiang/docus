@@ -245,18 +245,27 @@ export function createUnsavedDraftPersistence(
 
   async function deleteOwned(
     owner: DraftOwner,
-    expected = entries.get(key(owner.vaultId, owner.documentId))?.persistedDraft
-      ?? null,
+    explicitExpected?: UnsavedDraft,
   ): Promise<boolean> {
     const entry = entries.get(key(owner.vaultId, owner.documentId))
     if (!current(owner, entry)) return false
     clearTimer(entry)
+    const previous = entry.pendingWrite
+    if (previous) await previous.catch(() => false)
+    // Waiting for an in-flight write must not invalidate its ownership before
+    // it can record the exact persisted draft. Conversely, any schedule that
+    // occurs while waiting advances the generation and owns all newer work.
+    if (!current(owner, entry)) return false
+    const expected = explicitExpected ?? entry.persistedDraft
+
     const deleteGeneration = ++entry.generation
     entry.latestSnapshot = null
     entry.latestSnapshotNeedsWrite = false
-    const previous = entry.pendingWrite
+    // A clean/discarded buffer must still relinquish its in-memory snapshot
+    // when no record was persisted. It simply has no cross-context authority
+    // to delete anything from the store.
+    if (!expected) return false
     const task = (async () => {
-      if (previous) await previous.catch(() => false)
       if (entry.generation !== deleteGeneration || entry.latestSnapshot !== null) {
         return false
       }

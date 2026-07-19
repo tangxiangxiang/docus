@@ -371,10 +371,8 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
     const latest = recoveryItem(recoveryId)
     if (latest?.status === 'ready' && latest.decision) {
       recoveryTabs.open(latest, 'content')
-    } else {
-      recoveryTabs.open(refreshed, 'content')
+      draftRecovery.dismissForSession(recoveryId)
     }
-    draftRecovery.dismissForSession(recoveryId)
   } finally {
     recoveryBusy.value = false
   }

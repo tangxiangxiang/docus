@@ -337,7 +337,10 @@ Implemented in:
   adoption owner, never a newer editor generation. Each coordinator entry also
   retains the exact draft it successfully persisted or adopted; clean,
   return-to-baseline, and discard cleanup use atomic compare-and-delete and
-  cannot remove a newer draft written by another browser context;
+  cannot remove a newer draft written by another browser context. Cleanup
+  waits for an already-running draft write before reading that write's exact
+  persisted record and advancing the generation; a new schedule during that
+  wait invalidates the cleanup without touching the newer timer or snapshot;
 - `useDocumentSave.ts`: `applyRecoveredDraft()` revalidates stable identity,
   clean state, external state, disk raw, and disk mtime before creating a dirty
   editor revision. It adopts the already-persisted browser draft without a
@@ -357,7 +360,9 @@ asynchronous boundary; View Current additionally verifies the actual loaded
 Document tab's stable identity and load state before focusing it. A changed
 stored draft, disk identity, or cached tab identity fails closed. Failed draft
 application refreshes classification once more before showing Recovery content,
-so the pane never falls back to the pre-adoption snapshot.
+so the pane never falls back to the pre-adoption snapshot. If that refresh
+cannot produce a current ready item, the recovery remains unresolved and
+retryable instead of displaying or dismissing stale bytes.
 Closing a Recovery tab or choosing Later keeps IndexedDB unchanged. Rename,
 move, delete migration, recovery-center management, retention, and capacity
 cleanup remain deferred to Edit-09.5/09.6.

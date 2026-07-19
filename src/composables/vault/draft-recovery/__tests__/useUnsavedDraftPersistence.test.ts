@@ -100,6 +100,90 @@ describe('createUnsavedDraftPersistence', () => {
     expect(saveDraft).toHaveBeenCalledTimes(1)
   })
 
+  it('markClean waits for an in-flight draft write and deletes the exact result', async () => {
+    const write = deferred<void>()
+    const saveDraft = vi.fn(async (draft: UnsavedDraft) => {
+      await write.promise
+      return store.saveDraft(draft)
+    })
+    const persistence = createUnsavedDraftPersistence({
+      store: { ...store, saveDraft },
+    })
+
+    const owner = persistence.schedule(snapshot('a', 'dirty'))!
+    await vi.advanceTimersByTimeAsync(800)
+    const clean = persistence.markClean(owner, 1)
+
+    write.resolve()
+    await clean
+
+    expect(await store.getDraft('vault-1', 'a')).toBeNull()
+  })
+
+  it('returnedToBaseline waits for an in-flight draft write', async () => {
+    const write = deferred<void>()
+    const saveDraft = vi.fn(async (draft: UnsavedDraft) => {
+      await write.promise
+      return store.saveDraft(draft)
+    })
+    const persistence = createUnsavedDraftPersistence({
+      store: { ...store, saveDraft },
+    })
+
+    persistence.schedule(snapshot('a', 'dirty'))
+    await vi.advanceTimersByTimeAsync(800)
+    const returned = persistence.returnedToBaseline('vault-1', 'a')
+
+    write.resolve()
+    await returned
+
+    expect(await store.getDraft('vault-1', 'a')).toBeNull()
+  })
+
+  it('discard waits for an in-flight draft write', async () => {
+    const write = deferred<void>()
+    const saveDraft = vi.fn(async (draft: UnsavedDraft) => {
+      await write.promise
+      return store.saveDraft(draft)
+    })
+    const persistence = createUnsavedDraftPersistence({
+      store: { ...store, saveDraft },
+    })
+
+    const owner = persistence.schedule(snapshot('a', 'dirty'))!
+    await vi.advanceTimersByTimeAsync(800)
+    const discarded = persistence.discard(owner)
+
+    write.resolve()
+    await expect(discarded).resolves.toBe(true)
+    expect(await store.getDraft('vault-1', 'a')).toBeNull()
+  })
+
+  it('aborts cleanup when a new schedule appears while waiting for a write', async () => {
+    const write = deferred<void>()
+    const saveDraft = vi.fn()
+      .mockImplementationOnce(async (draft: UnsavedDraft) => {
+        await write.promise
+        return store.saveDraft(draft)
+      })
+      .mockImplementation((draft: UnsavedDraft) => store.saveDraft(draft))
+    const persistence = createUnsavedDraftPersistence({
+      store: { ...store, saveDraft },
+    })
+
+    const owner = persistence.schedule(snapshot('a', 'old', 1))!
+    await vi.advanceTimersByTimeAsync(800)
+    const clean = persistence.markClean(owner, 1)
+    persistence.schedule(snapshot('a', 'new', 2))
+
+    write.resolve()
+    await clean
+    await vi.advanceTimersByTimeAsync(800)
+    await persistence.flush('vault-1', 'a')
+
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('new')
+  })
+
   it('does not let a clean deletion remove a newer scheduled generation', async () => {
     const oldWrite = deferred<boolean>()
     const saveDraft = vi.fn()

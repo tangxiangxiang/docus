@@ -112,6 +112,7 @@ describe('VaultView editor tab wiring', () => {
     expect(handler).toContain("if (latest?.status === 'ready' && latest.decision)")
     expect(handler).toContain("recoveryTabs.open(latest, 'content')")
     expect(handler).not.toContain("recoveryTabs.open(item, 'content')")
+    expect(handler).not.toContain("recoveryTabs.open(refreshed, 'content')")
   })
 
   it('opens one dedicated diff workspace tab from a ready snapshot', () => {
