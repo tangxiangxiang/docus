@@ -8,7 +8,10 @@ import {
   UNSAVED_DRAFT_VERSION,
   type UnsavedDraft,
 } from '../draftTypes'
-import { createUnsavedDraftRecovery } from '../useUnsavedDraftRecovery'
+import {
+  createUnsavedDraftRecovery,
+  hasUnsafeOpenDraftDocument,
+} from '../useUnsavedDraftRecovery'
 
 function draft(id: string, path = `notes/${id}`): UnsavedDraft {
   return {
@@ -57,6 +60,25 @@ async function seededStore(...drafts: UnsavedDraft[]) {
 }
 
 describe('createUnsavedDraftRecovery', () => {
+  it('blocks discard while the matching document is dirty, saving, or external', () => {
+    const clean = {
+      documentId: 'a',
+      raw: 'disk',
+      originalRaw: 'disk',
+      savingRevision: null,
+      saveStatus: 'idle',
+      externalRaw: null,
+    }
+    expect(hasUnsafeOpenDraftDocument([clean], 'a')).toBe(false)
+    expect(hasUnsafeOpenDraftDocument([{ ...clean, raw: 'dirty' }], 'a')).toBe(true)
+    expect(hasUnsafeOpenDraftDocument([{ ...clean, savingRevision: 2 }], 'a')).toBe(true)
+    expect(hasUnsafeOpenDraftDocument([{
+      ...clean,
+      saveStatus: 'external',
+      externalRaw: 'disk changed',
+    }], 'a')).toBe(true)
+  })
+
   it('discovers only the requested vault without deleting or opening documents', async () => {
     const store = await seededStore(draft('a'))
     await store.saveDraft({ ...draft('other'), vaultId: 'other-vault' })
@@ -162,6 +184,46 @@ describe('createUnsavedDraftRecovery', () => {
     await discovering
 
     expect(recovery.items.value[0]?.decision?.kind).toBe('baseline-match')
+  })
+
+  it('reloads the stored draft before retrying a recovery action', async () => {
+    const store = await seededStore(draft('a'))
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: async (path) => post('a', path),
+    })
+    await recovery.discover('vault')
+    const id = recovery.items.value[0]!.recoveryId
+
+    await store.saveDraft({
+      ...draft('a'),
+      content: 'newer draft',
+      updatedAt: 3,
+    })
+    await recovery.retry(id)
+
+    expect(recovery.items.value[0]?.draft).toMatchObject({
+      content: 'newer draft',
+      updatedAt: 3,
+    })
+  })
+
+  it('fails closed when the stored draft disappears before retry', async () => {
+    const store = await seededStore(draft('a'))
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: async (path) => post('a', path),
+    })
+    await recovery.discover('vault')
+    const id = recovery.items.value[0]!.recoveryId
+    await store.deleteDraft('vault', 'a')
+
+    await recovery.retry(id)
+
+    expect(recovery.items.value[0]).toMatchObject({
+      status: 'error',
+      decision: null,
+    })
   })
 
   it('ignores late work after dispose and dismisses only for the session', async () => {

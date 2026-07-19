@@ -20,10 +20,6 @@ const diff = computed(() =>
     ? null
     : computeFileDiff(props.recovery.diskRaw, props.recovery.draftRaw),
 )
-const canViewCurrent = computed(() =>
-  !['missing-source', 'identity-mismatch'].includes(props.recovery.decisionKind),
-)
-
 function focusViewer(): void {
   heading.value?.focus()
 }
@@ -42,7 +38,7 @@ defineExpose({ focusViewer })
       <span class="history-readonly-badge">{{ t('history.read_only') }}</span>
       <div class="history-snapshot-toolbar" role="toolbar" :aria-label="t('draft_recovery.toolbar')">
         <button
-          v-if="recovery.diskRaw !== null && recovery.view !== 'diff'"
+          v-if="recovery.canViewDiff && recovery.view !== 'diff'"
           type="button"
           @click="emit('update-view', 'diff')"
         >
@@ -56,7 +52,7 @@ defineExpose({ focusViewer })
           {{ t('draft_recovery.open_content') }}
         </button>
         <button
-          v-if="canViewCurrent"
+          v-if="recovery.canViewCurrent"
           type="button"
           @click="emit('view-current', recovery.documentPath)"
         >

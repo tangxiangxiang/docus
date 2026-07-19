@@ -16,6 +16,7 @@ type SaveDecision =
   | { result: Exclude<SaveResult, 'saved'>; draft?: never }
 type MoveResult = 'moved' | 'missing' | 'conflict' | 'unsupported'
 type DeleteResult = 'deleted' | 'missing' | 'unsupported'
+type ConditionalDeleteResult = DeleteResult | 'stale'
 type BackendOperation = 'save' | 'get' | 'list' | 'delete' | 'move' | 'clear'
 
 export interface DraftStorageBackend {
@@ -23,6 +24,7 @@ export interface DraftStorageBackend {
   get(key: DraftKey): Promise<unknown | null>
   list(vaultId: string): Promise<unknown[]>
   delete(key: DraftKey): Promise<DeleteResult>
+  deleteIfUnchanged(expected: UnsavedDraft): Promise<ConditionalDeleteResult>
   move(
     vaultId: string,
     oldDocumentId: string,
@@ -45,6 +47,13 @@ export type DraftDeleteOutcome =
   | { status: 'unsupported' }
   | { status: 'failed' }
 
+export type DraftConditionalDeleteOutcome =
+  | { status: 'deleted' }
+  | { status: 'missing' }
+  | { status: 'stale' }
+  | { status: 'unsupported' }
+  | { status: 'failed' }
+
 export interface MemoryDraftStorageBackend extends DraftStorageBackend {
   failNext(operation: BackendOperation): void
   seedRaw(value: unknown): Promise<void>
@@ -55,6 +64,9 @@ export interface DraftStore {
   getDraft(vaultId: string, documentId: string): Promise<UnsavedDraft | null>
   listDrafts(vaultId: string): Promise<UnsavedDraft[]>
   deleteDraft(vaultId: string, documentId: string): Promise<DraftDeleteOutcome>
+  deleteDraftIfUnchanged(
+    expected: UnsavedDraft,
+  ): Promise<DraftConditionalDeleteOutcome>
   moveDraft(
     vaultId: string,
     oldDocumentId: string,
@@ -111,6 +123,15 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       if (!isDraftIdentity(vaultId, documentId)) return { status: 'failed' }
       try {
         return { status: await backend.delete(draftKey(vaultId, documentId)) }
+      } catch {
+        return { status: 'failed' }
+      }
+    },
+
+    async deleteDraftIfUnchanged(expected) {
+      if (!isUnsavedDraft(expected)) return { status: 'failed' }
+      try {
+        return { status: await backend.deleteIfUnchanged(cloneDraft(expected)) }
       } catch {
         return { status: 'failed' }
       }
@@ -190,6 +211,17 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       const value = records.get(key)
       if (value === undefined || value === null) return 'missing'
       if (!isUnsavedDraft(value)) return 'unsupported'
+      records.delete(key)
+      return 'deleted'
+    },
+
+    async deleteIfUnchanged(expected) {
+      consumeFailure('delete')
+      const key = serializedKey(expected.vaultId, expected.documentId)
+      const value = records.get(key)
+      if (value === undefined || value === null) return 'missing'
+      if (!isUnsavedDraft(value)) return 'unsupported'
+      if (!draftsEqual(value, expected)) return 'stale'
       records.delete(key)
       return 'deleted'
     },
@@ -310,6 +342,24 @@ export function createIndexedDbDraftBackend(
       store.delete(idbKey(...key))
       await transactionDone(transaction)
       return 'deleted'
+    },
+
+    async deleteIfUnchanged(expected) {
+      const db = await database()
+      const transaction = db.transaction(DRAFT_STORE_NAME, 'readwrite')
+      const store = transaction.objectStore(DRAFT_STORE_NAME)
+      const key = idbKey(expected.vaultId, expected.documentId)
+      const value = await request(store.get(key))
+      let result: ConditionalDeleteResult
+      if (value === undefined || value === null) result = 'missing'
+      else if (!isUnsavedDraft(value)) result = 'unsupported'
+      else if (!draftsEqual(value, expected)) result = 'stale'
+      else {
+        store.delete(key)
+        result = 'deleted'
+      }
+      await transactionDone(transaction)
+      return result
     },
 
     async move(vaultId, oldDocumentId, newDocumentId, newPath) {

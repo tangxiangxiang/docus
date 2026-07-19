@@ -75,6 +75,28 @@ describe('DraftRecoveryPrompt', () => {
     ])
   })
 
+  it('offers retry instead of diff when an unknown disk snapshot is unreadable', () => {
+    const unreadable = item('unknown')
+    unreadable.decision!.disk = {
+      status: 'unreadable',
+      documentPath: 'notes/a',
+      error: 'private',
+    }
+    mount(DraftRecoveryPrompt, {
+      props: { item: unreadable },
+      attachTo: document.body,
+    })
+
+    const values = [...document.querySelectorAll('.draft-recovery-dialog button')]
+      .map((button) => button.textContent?.trim() ?? '')
+    expect(values).toEqual([
+      'Retry',
+      'Open Recovered Content',
+      'Use Disk Version',
+      'Later',
+    ])
+  })
+
   it('never offers restore-to-document for missing or mismatched identities', () => {
     expect(labels('missing-source')).toEqual(['Open Recovered Content', 'Discard Draft', 'Later'])
     expect(labels('identity-mismatch')).toEqual(['Open Recovered Content', 'Discard Draft', 'Later'])

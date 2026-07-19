@@ -52,6 +52,28 @@ interface OwnedItem extends DraftRecoveryItem {
   classifyGeneration: number
 }
 
+export interface OpenDraftDocumentState {
+  documentId?: string | null
+  raw: string
+  originalRaw: string
+  savingRevision: number | null
+  saveStatus: string
+  externalRaw?: string | null
+}
+
+export function hasUnsafeOpenDraftDocument(
+  documents: readonly OpenDraftDocumentState[],
+  documentId: string,
+): boolean {
+  const document = documents.find((candidate) => candidate.documentId === documentId)
+  return Boolean(document && (
+    document.raw !== document.originalRaw
+    || document.savingRevision !== null
+    || document.externalRaw != null
+    || !['idle', 'saved'].includes(document.saveStatus)
+  ))
+}
+
 function recoveryId(draft: UnsavedDraft): string {
   return JSON.stringify([draft.vaultId, draft.documentId])
 }
@@ -177,6 +199,20 @@ export function createUnsavedDraftRecovery(
     if (disposed) return
     const item = mutableItems.value.find((candidate) => candidate.recoveryId === id)
     if (!item) return
+    const itemDiscoverGeneration = item.discoverGeneration
+    const refreshGeneration = ++item.classifyGeneration
+    item.status = 'loading'
+    item.error = null
+    const latest = await store.getDraft(item.draft.vaultId, item.draft.documentId)
+    const current = currentItem(id, itemDiscoverGeneration, refreshGeneration)
+    if (!current) return
+    if (!latest) {
+      current.decision = null
+      current.status = 'error'
+      current.error = 'draft-unavailable'
+      return
+    }
+    current.draft = latest
     await classify(item)
   }
 

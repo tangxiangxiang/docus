@@ -142,6 +142,19 @@ describe('createUnsavedDraftPersistence', () => {
     expect((await store.getDraft('vault-1', 'a'))?.content).toBe('reopened')
   })
 
+  it('does not discard a newer stored draft through an older recovery snapshot', async () => {
+    const persistence = createUnsavedDraftPersistence({ store, debounceMs: 0 })
+    persistence.schedule(snapshot('a', 'v1', 1))
+    await vi.runAllTimersAsync()
+    const original = (await store.getDraft('vault-1', 'a'))!
+
+    persistence.schedule(snapshot('a', 'v2', 2))
+    await vi.runAllTimersAsync()
+
+    await expect(persistence.discardIdentityIfUnchanged(original)).resolves.toBe(false)
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('v2')
+  })
+
   it('safely discards by identity and does not delete a newer generation', async () => {
     const deletion = deferred<{ status: 'deleted' }>()
     const deleteDraft = vi.fn().mockReturnValue(deletion.promise)

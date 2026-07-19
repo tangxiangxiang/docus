@@ -19,6 +19,8 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const heading = ref<HTMLElement | null>(null)
 const kind = computed(() => props.item?.decision?.kind ?? null)
+const diskReady = computed(() => props.item?.decision?.disk.status === 'ready')
+const diskUnreadable = computed(() => props.item?.decision?.disk.status === 'unreadable')
 
 watch(() => props.item?.recoveryId, async (id) => {
   if (!id) return
@@ -95,12 +97,20 @@ function onKeydown(event: KeyboardEvent): void {
               {{ t('draft_recovery.restore') }}
             </button>
             <button
-              v-if="kind === 'divergent' || kind === 'unknown'"
+              v-if="(kind === 'divergent' || kind === 'unknown') && diskReady"
               type="button"
               :disabled="busy"
               @click="emit('diff', item.recoveryId)"
             >
               {{ t('draft_recovery.view_diff') }}
+            </button>
+            <button
+              v-if="kind === 'unknown' && diskUnreadable"
+              type="button"
+              :disabled="busy"
+              @click="emit('retry', item.recoveryId)"
+            >
+              {{ t('draft_recovery.retry') }}
             </button>
             <button
               v-if="kind !== 'baseline-match'"

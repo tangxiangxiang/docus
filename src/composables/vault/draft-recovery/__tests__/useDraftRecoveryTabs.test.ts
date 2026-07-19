@@ -58,4 +58,37 @@ describe('useDraftRecoveryTabs', () => {
     expect(recovery.tabs.value).toEqual([])
     expect(recovery.activeTab.value).toBeNull()
   })
+
+  it('derives current-document and diff capabilities from the disk snapshot', () => {
+    const recovery = useDraftRecoveryTabs()
+    const matching = recovery.open(item('unknown'), 'diff')!
+    expect(matching).toMatchObject({
+      canViewCurrent: true,
+      canViewDiff: true,
+      view: 'diff',
+    })
+
+    const unreadable = item('unknown')
+    unreadable.decision!.disk = {
+      status: 'unreadable',
+      documentPath: 'notes/a',
+      error: 'private',
+    }
+    const unavailable = recovery.open(unreadable, 'diff')!
+    expect(unavailable).toMatchObject({
+      diskStatus: 'unreadable',
+      diskDocumentId: null,
+      canViewCurrent: false,
+      canViewDiff: false,
+      view: 'content',
+    })
+
+    const mismatched = item('identity-mismatch')
+    if (mismatched.decision?.disk.status === 'ready') {
+      mismatched.decision.disk.documentId = 'replacement'
+    }
+    const reused = recovery.open(mismatched, 'content')!
+    expect(reused.canViewCurrent).toBe(false)
+    expect(reused.canViewDiff).toBe(true)
+  })
 })

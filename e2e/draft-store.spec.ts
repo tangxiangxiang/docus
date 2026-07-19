@@ -107,6 +107,39 @@ test('keeps both IndexedDB records when an atomic move conflicts', async ({
   expect(result.target?.content).toBe('target buffer')
 })
 
+test('atomically keeps a newer draft when conditional deletion is stale', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const store = createDraftStore()
+    const original = {
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'v1',
+      baseContentHash: null,
+      baseModifiedAt: 10,
+      createdAt: 10,
+      updatedAt: 20,
+    }
+    const newer = { ...original, content: 'v2', updatedAt: 30 }
+    await store.saveDraft(original)
+    await store.saveDraft(newer)
+
+    return {
+      outcome: await store.deleteDraftIfUnchanged(original),
+      current: await store.getDraft('vault-a', 'a'),
+    }
+  })
+
+  expect(result.outcome).toEqual({ status: 'stale' })
+  expect(result.current).toMatchObject({ content: 'v2', updatedAt: 30 })
+})
+
 test('does not rewrite unsupported records in IndexedDB', async ({ page }) => {
   const result = await page.evaluate(async (databaseName) => {
     const { createDraftStore } = await import(

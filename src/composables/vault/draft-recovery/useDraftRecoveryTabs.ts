@@ -9,6 +9,10 @@ export interface DraftRecoveryTab {
   documentPath: string
   documentTitle: string
   decisionKind: DraftRecoveryDecisionKind
+  diskStatus: 'ready' | 'missing' | 'unreadable'
+  diskDocumentId: string | null
+  canViewCurrent: boolean
+  canViewDiff: boolean
   view: 'content' | 'diff'
   draftRaw: string
   diskRaw: string | null
@@ -39,6 +43,12 @@ export function useDraftRecoveryTabs() {
     const diskRaw = item.decision.disk.status === 'ready'
       ? item.decision.disk.raw
       : null
+    const diskDocumentId = item.decision.disk.status === 'ready'
+      ? item.decision.disk.documentId
+      : null
+    const canViewCurrent = item.decision.disk.status === 'ready'
+      && diskDocumentId === item.draft.documentId
+    const canViewDiff = item.decision.disk.status === 'ready'
     const next: DraftRecoveryTab = {
       tabId: id,
       recoveryId: item.recoveryId,
@@ -46,7 +56,11 @@ export function useDraftRecoveryTabs() {
       documentPath: item.draft.documentPath,
       documentTitle: titleFromPath(item.draft.documentPath),
       decisionKind: item.decision.kind,
-      view: view === 'diff' && diskRaw === null ? 'content' : view,
+      diskStatus: item.decision.disk.status,
+      diskDocumentId,
+      canViewCurrent,
+      canViewDiff,
+      view: view === 'diff' && !canViewDiff ? 'content' : view,
       draftRaw: item.draft.content,
       diskRaw,
       status: 'ready',

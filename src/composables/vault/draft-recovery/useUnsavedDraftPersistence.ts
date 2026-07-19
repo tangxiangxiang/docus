@@ -34,6 +34,7 @@ export interface UnsavedDraftPersistence {
   returnedToBaseline(vaultId: string, documentId: string): Promise<void>
   discard(owner: DraftOwner): Promise<boolean>
   discardIdentity(vaultId: string, documentId: string): Promise<boolean>
+  discardIdentityIfUnchanged(expected: UnsavedDraft): Promise<boolean>
   invalidate(vaultId: string, documentId: string): void
   dispose(): Promise<void>
 }
@@ -214,7 +215,10 @@ export function createUnsavedDraftPersistence(
     }))
   }
 
-  async function deleteOwned(owner: DraftOwner): Promise<boolean> {
+  async function deleteOwned(
+    owner: DraftOwner,
+    expected?: UnsavedDraft,
+  ): Promise<boolean> {
     const entry = entries.get(key(owner.vaultId, owner.documentId))
     if (!current(owner, entry)) return false
     clearTimer(entry)
@@ -227,7 +231,9 @@ export function createUnsavedDraftPersistence(
         return false
       }
       try {
-        const result = await store.deleteDraft(owner.vaultId, owner.documentId)
+        const result = expected
+          ? await store.deleteDraftIfUnchanged(expected)
+          : await store.deleteDraft(owner.vaultId, owner.documentId)
         return result.status === 'deleted' || result.status === 'missing'
       } catch {
         return false
@@ -278,6 +284,16 @@ export function createUnsavedDraftPersistence(
     return deleteOwned({ vaultId, documentId, generation: entry.generation })
   }
 
+  async function discardIdentityIfUnchanged(expected: UnsavedDraft): Promise<boolean> {
+    if (disposed || !isUnsavedDraft(expected)) return false
+    const entry = entryFor(expected.vaultId, expected.documentId)
+    return deleteOwned({
+      vaultId: expected.vaultId,
+      documentId: expected.documentId,
+      generation: entry.generation,
+    }, expected)
+  }
+
   function onPageHide(): void {
     void flushAllInternal().catch(() => {})
   }
@@ -303,6 +319,7 @@ export function createUnsavedDraftPersistence(
     returnedToBaseline,
     discard,
     discardIdentity,
+    discardIdentityIfUnchanged,
     invalidate,
     dispose,
   }

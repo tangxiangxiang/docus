@@ -10,7 +10,10 @@ import { useI18n } from '../composables/useI18n'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { createDraftStore } from '../composables/vault/draft-recovery/draftStore'
 import { createUnsavedDraftPersistence } from '../composables/vault/draft-recovery/useUnsavedDraftPersistence'
-import { createUnsavedDraftRecovery } from '../composables/vault/draft-recovery/useUnsavedDraftRecovery'
+import {
+  createUnsavedDraftRecovery,
+  hasUnsafeOpenDraftDocument,
+} from '../composables/vault/draft-recovery/useUnsavedDraftRecovery'
 import { useDraftRecoveryTabs } from '../composables/vault/draft-recovery/useDraftRecoveryTabs'
 import { deriveDocumentSavePresentation } from '../composables/vault/editor-tabs/savePresentation'
 import { useHistory } from '../composables/vault/useHistory'
@@ -272,7 +275,11 @@ function recoveryItem(recoveryId: string) {
   return draftRecovery.items.value.find((item) => item.recoveryId === recoveryId) ?? null
 }
 
-function openRecoveryView(recoveryId: string, view: 'content' | 'diff'): void {
+async function openRecoveryView(
+  recoveryId: string,
+  view: 'content' | 'diff',
+): Promise<void> {
+  await draftRecovery.retry(recoveryId)
   const item = recoveryItem(recoveryId)
   if (!item || item.status !== 'ready') return
   historyComparisons.deactivate()
@@ -282,14 +289,17 @@ function openRecoveryView(recoveryId: string, view: 'content' | 'diff'): void {
 }
 
 async function discardRecoveryDraft(recoveryId: string): Promise<void> {
-  const item = recoveryItem(recoveryId)
-  if (!item || recoveryBusy.value) return
+  if (recoveryBusy.value) return
   recoveryBusy.value = true
   try {
-    const deleted = await draftPersistence.discardIdentity(
-      item.draft.vaultId,
-      item.draft.documentId,
-    )
+    await draftRecovery.retry(recoveryId)
+    const item = recoveryItem(recoveryId)
+    if (!item || item.status !== 'ready') return
+    if (hasUnsafeOpenDraftDocument(tabs.value, item.draft.documentId)) {
+      toast.error(t('draft_recovery.delete_failed'))
+      return
+    }
+    const deleted = await draftPersistence.discardIdentityIfUnchanged(item.draft)
     if (!deleted) {
       toast.error(t('draft_recovery.delete_failed'))
       return
@@ -313,10 +323,11 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
     const decision = item?.decision
     if (!item || item.status !== 'ready' || !decision) return
     if (decision.kind !== 'baseline-match' || decision.disk.status !== 'ready') {
-      openRecoveryView(
-        recoveryId,
+      recoveryTabs.open(
+        item,
         decision.disk.status === 'ready' ? 'diff' : 'content',
       )
+      draftRecovery.dismissForSession(recoveryId)
       return
     }
 
@@ -336,7 +347,8 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
       editorTabsRef.value?.focusTab(result.path)
       return
     }
-    openRecoveryView(recoveryId, 'content')
+    recoveryTabs.open(item, 'content')
+    draftRecovery.dismissForSession(recoveryId)
   } finally {
     recoveryBusy.value = false
   }

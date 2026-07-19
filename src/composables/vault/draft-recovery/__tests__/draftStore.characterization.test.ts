@@ -85,6 +85,22 @@ describe('draftStore characterization', () => {
     )
   })
 
+  it('atomically refuses to delete a draft changed by another context', async () => {
+    const original = draft('a', 20, { content: 'v1' })
+    const newer = draft('a', 30, { content: 'v2' })
+    await expect(store.saveDraft(original)).resolves.toBe(true)
+    await expect(store.saveDraft(newer)).resolves.toBe(true)
+
+    await expect(store.deleteDraftIfUnchanged(original))
+      .resolves.toEqual({ status: 'stale' })
+    await expect(store.getDraft('vault-a', 'a')).resolves.toMatchObject({
+      content: 'v2',
+      updatedAt: 30,
+    })
+    await expect(store.deleteDraftIfUnchanged(newer))
+      .resolves.toEqual({ status: 'deleted' })
+  })
+
   it('rejects invalid records without affecting existing drafts', async () => {
     await store.saveDraft(draft('valid', 20))
 
