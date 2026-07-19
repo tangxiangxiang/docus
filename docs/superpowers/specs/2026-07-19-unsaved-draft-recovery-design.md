@@ -371,6 +371,39 @@ cleanup remain deferred to Edit-09.5/09.6.
 
 - rename/move/delete migration and rollback behavior.
 
+Implemented in:
+
+- `useDraftFileTransactions.ts`: explicit stable document identities, actual
+  path mappings, preserve/discard delete policy, exhaustive non-throwing draft
+  transaction results, and the idempotent barrier contract;
+- `useUnsavedDraftPersistence.ts`: per-document file-transaction pause state.
+  Preparing a mutation cancels an unstarted old-path debounce and waits for an
+  already-running write. Input during the server request is synchronously
+  retained as the latest snapshot without writing the old path. Commit moves
+  the exact IndexedDB record without changing its content, baseline, or
+  timestamps and then persists newer input only at the server-returned path;
+  rollback resumes the latest input at the old path. Explicit delete uses the
+  exact draft observed at preparation time, while a newer local generation or
+  cross-context record is preserved as orphan recovery content;
+- `useDocumentLifecycle.ts`: rename, drag move, archive, folder rename, file
+  delete, and folder delete share the document-save and draft barriers. Stable
+  identity is resolved before and after path changes, folder identity loading
+  is bounded to four workers, and only server-confirmed results are committed.
+  Draft conflict/unsupported/failure is reported as a non-blocking warning and
+  never converts an already-successful server file operation into failure;
+- `FileTree.vue`: destructive user confirmation explicitly authorizes
+  `discard-confirmed`; all programmatic lifecycle deletion defaults to
+  `preserve`;
+- `VaultView.vue`: loaded Document metadata is the preferred identity source,
+  with `getPost()` as the safe fallback. Recovery items and open Recovery tabs
+  are retried after moves/preserved deletes and removed only after an exact
+  confirmed draft deletion.
+
+Create and external-delete paths do not migrate or discard drafts. A newly
+created document at an orphan path therefore remains isolated by stable
+`documentId`. This stage does not add recovery management, retention, or
+capacity cleanup.
+
 ### Edit-09.6 — Recovery center and cleanup
 
 - management UI, retention, protected-record cleanup, capacity reporting.
