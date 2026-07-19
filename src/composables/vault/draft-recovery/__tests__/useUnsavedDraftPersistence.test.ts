@@ -20,7 +20,7 @@ function snapshot(
     documentPath: `notes/${documentId}`,
     content,
     authoritativeContent: 'disk',
-    baseContentHash: null,
+    baseContentHash: 'baseline-hash',
     baseModifiedAt: 10,
     revision,
   }
@@ -94,6 +94,29 @@ describe('createUnsavedDraftPersistence', () => {
 
     await vi.advanceTimersByTimeAsync(800)
     expect((await store.getDraft('vault-1', 'a'))?.content).toBe('new')
+  })
+
+  it('does not let a stale asynchronous baseline hash write for a new owner', async () => {
+    const firstHash = deferred<ArrayBuffer>()
+    const digest = vi.fn()
+      .mockReturnValueOnce(firstHash.promise)
+      .mockResolvedValueOnce(new Uint8Array([2]).buffer)
+    vi.stubGlobal('crypto', { subtle: { digest } })
+    const persistence = createUnsavedDraftPersistence({ store })
+
+    persistence.schedule({ ...snapshot('a', 'old'), baseContentHash: null })
+    await vi.advanceTimersByTimeAsync(800)
+    persistence.schedule({
+      ...snapshot('a', 'new', 2),
+      baseContentHash: null,
+      authoritativeContent: 'new baseline',
+    })
+    firstHash.resolve(new Uint8Array([1]).buffer)
+    await persistence.flush('vault-1', 'a')
+
+    const draft = await store.getDraft('vault-1', 'a')
+    expect(draft?.content).toBe('new')
+    expect(draft?.baseContentHash).toBe('02')
   })
 
   it('deletes only a clean acknowledged revision owned by the current generation', async () => {
@@ -195,12 +218,22 @@ describe('createUnsavedDraftPersistence', () => {
   })
 
   it('registers one pagehide listener and removes it on dispose', async () => {
-    const add = vi.spyOn(window, 'addEventListener')
-    const remove = vi.spyOn(window, 'removeEventListener')
-    const persistence = createUnsavedDraftPersistence({ store })
+    const targetWindow = {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
+    const persistence = createUnsavedDraftPersistence({ store, targetWindow })
 
-    expect(add.mock.calls.filter(([type]) => type === 'pagehide')).toHaveLength(1)
+    expect(targetWindow.addEventListener).toHaveBeenCalledOnce()
+    expect(targetWindow.addEventListener).toHaveBeenCalledWith(
+      'pagehide',
+      expect.any(Function),
+    )
     await persistence.dispose()
-    expect(remove.mock.calls.filter(([type]) => type === 'pagehide')).toHaveLength(1)
+    expect(targetWindow.removeEventListener).toHaveBeenCalledOnce()
+    expect(targetWindow.removeEventListener).toHaveBeenCalledWith(
+      'pagehide',
+      expect.any(Function),
+    )
   })
 })

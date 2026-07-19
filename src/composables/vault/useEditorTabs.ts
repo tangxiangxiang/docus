@@ -23,6 +23,11 @@ import {
 } from './editor-tabs/useTabPersistence'
 import { useI18n } from '../useI18n'
 import { createPathMutationLock, toMutationPaths } from './pathMutationLock'
+import { createDraftStore, type DraftStore } from './draft-recovery/draftStore'
+import {
+  createUnsavedDraftPersistence,
+  type UnsavedDraftPersistence,
+} from './draft-recovery/useUnsavedDraftPersistence'
 export { __setVaultIdForTesting } from './editor-tabs/useTabPersistence'
 
 export function useEditorTabs(opts: {
@@ -36,6 +41,8 @@ export function useEditorTabs(opts: {
   createDocument?: (input: { path: string; title?: string }) => Promise<PostSummary>
   workspaceShortcuts?: boolean
   prepareWorkspaceRename?: (from: string, to: string) => () => void
+  draftStore?: DraftStore
+  draftPersistence?: UnsavedDraftPersistence
 }) {
   const toast = useToast()
   const { confirm } = useConfirm()
@@ -81,6 +88,10 @@ export function useEditorTabs(opts: {
   } = useTabPersistence(tabs, activePath)
   setPersist(persistOpenTabs)
 
+  const draftPersistence = opts.draftPersistence ?? createUnsavedDraftPersistence({
+    store: opts.draftStore ?? createDraftStore(),
+  })
+
   const {
     scheduleSave,
     doSave,
@@ -91,6 +102,8 @@ export function useEditorTabs(opts: {
     prepareHistoryRestore,
     prepareDocumentMutation,
     prepareDocumentClose,
+    discardDocumentDraft,
+    discardDocumentDrafts,
     disposeDocumentSave,
   } = useDocumentSave({
     tabs,
@@ -98,15 +111,21 @@ export function useEditorTabs(opts: {
     applyPostSummary,
     fileChanges,
     toastError: toast.error,
+    draftPersistence,
+    draftVaultId: () => vaultId.value,
   })
 
   async function closeTab(path: string): Promise<boolean> {
     const release = opts.mutationLock?.acquire(toMutationPaths([path])) ?? null
     if (opts.mutationLock && !release) return false
     try {
+      const closingTab = tabs.value.find((tab) => tab.path === path)
       const barrier = await prepareDocumentClose([path])
       const closed = await closeTabState(path)
-      if (closed) barrier.commit()
+      if (closed) {
+        await discardDocumentDraft(closingTab)
+        barrier.commit()
+      }
       else barrier.rollback()
       return closed
     } finally {
@@ -130,8 +149,14 @@ export function useEditorTabs(opts: {
 
   async function closeMany(paths: string[]): Promise<boolean> {
     if (!(await confirmCloseMany(paths))) return false
+    await discardDocumentDrafts(paths)
     closeManyConfirmed(paths)
     return true
+  }
+
+  function closeManyConfirmedWithDrafts(paths: string[]): void {
+    void discardDocumentDrafts(paths)
+    closeManyConfirmed(paths)
   }
 
   async function runTabExternalRenameTransaction(
@@ -224,6 +249,8 @@ export function useEditorTabs(opts: {
     closeTab,
     runTabRenameTransaction: runTabExternalRenameTransaction,
     renameOpenDocument: (from, to) => renameOpenDocuments([{ from, to }]),
+    // External deletion is not an explicit user discard. Edit-09.5 decides
+    // orphan/migration behavior; this stage must preserve its draft.
     removeOpenDocument: (path) => closeManyConfirmed([path]),
     openPost,
     navigateTo: (path) => { navigateTo(path) },
@@ -310,6 +337,7 @@ export function useEditorTabs(opts: {
     window.removeEventListener('online', handleOnline)
     stopExternalPolling()
     disposeDocumentSave()
+    void draftPersistence.dispose()
     disposeTabPersistence()
   })
 
@@ -330,7 +358,7 @@ export function useEditorTabs(opts: {
     closeTab,
     closeMany,
     confirmCloseMany,
-    closeManyConfirmed,
+    closeManyConfirmed: closeManyConfirmedWithDrafts,
     reorderOpenDocuments,
     renameOpenDocuments,
     removeOpenDocuments,

@@ -152,6 +152,7 @@ export function useTabWorkspace(options: {
       // Must go through the proxy so dependent computeds recompute.
       live.raw = post.raw
       live.originalRaw = post.raw
+      live.documentId = post.metadata?.id ?? null
       live.title = post.metadata?.title || (post.frontmatter.title as string) || path
       live.serverMtime = post.mtime
       live.loading = false
@@ -191,6 +192,7 @@ export function useTabWorkspace(options: {
       // (workspaceTabs, EditorTabs re-render) actually recompute.
       live.raw = post.raw
       live.originalRaw = post.raw
+      live.documentId = post.metadata?.id ?? null
       live.title = post.metadata?.title || (post.frontmatter.title as string) || path
       live.serverMtime = post.mtime
       live.loading = false

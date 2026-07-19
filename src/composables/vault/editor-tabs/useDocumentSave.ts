@@ -8,6 +8,10 @@ import {
 } from '../../../lib/api'
 import { useI18n } from '../../useI18n'
 import type { VaultFileChanges } from '../context/fileChanges'
+import type {
+  DraftOwner,
+  UnsavedDraftPersistence,
+} from '../draft-recovery/useUnsavedDraftPersistence'
 
 export interface DocumentMutationBarrier {
   readonly paths: readonly string[]
@@ -21,6 +25,8 @@ export function useDocumentSave(options: {
   applyPostSummary: (post: PostSummary) => void
   fileChanges: VaultFileChanges
   toastError: (message: string) => void
+  draftPersistence?: UnsavedDraftPersistence
+  draftVaultId?: () => string | null
 }) {
   const { t } = useI18n()
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -29,6 +35,64 @@ export function useDocumentSave(options: {
   const lifecycleLocks = new Set<string>()
   let lifecycleGlobalLock = false
   let disposed = false
+  const draftOwners = new WeakMap<Tab, DraftOwner>()
+
+  function draftIdentity(tab: Tab): { vaultId: string; documentId: string } | null {
+    const vaultId = options.draftVaultId?.() ?? null
+    const documentId = tab.documentId ?? null
+    return vaultId && documentId ? { vaultId, documentId } : null
+  }
+
+  function scheduleDraft(tab: Tab): void {
+    const identity = draftIdentity(tab)
+    if (!identity || tab.loading || tab.loadError) return
+    const owner = options.draftPersistence?.schedule({
+      ...identity,
+      documentPath: tab.path,
+      content: tab.raw,
+      authoritativeContent: tab.originalRaw,
+      baseContentHash: null,
+      baseModifiedAt: tab.serverMtime,
+      revision: tab.revision,
+    })
+    if (owner) draftOwners.set(tab, owner)
+  }
+
+  function clearReturnedToBaseline(tab: Tab): void {
+    const identity = draftIdentity(tab)
+    if (!identity) return
+    draftOwners.delete(tab)
+    void options.draftPersistence
+      ?.returnedToBaseline(identity.vaultId, identity.documentId)
+      .catch(() => {})
+  }
+
+  async function discardDocumentDrafts(paths: readonly string[]): Promise<void> {
+    await Promise.all(paths.map(async (path) => {
+      const tab = options.tabs.value.find((candidate) => candidate.path === path)
+      if (!tab) return
+      const owner = draftOwners.get(tab)
+      if (!owner) return
+      draftOwners.delete(tab)
+      try {
+        await options.draftPersistence?.discard(owner)
+      } catch {
+        // Draft persistence is best-effort and never changes close behavior.
+      }
+    }))
+  }
+
+  async function discardDocumentDraft(tab: Tab | undefined): Promise<void> {
+    if (!tab) return
+    const owner = draftOwners.get(tab)
+    if (!owner) return
+    draftOwners.delete(tab)
+    try {
+      await options.draftPersistence?.discard(owner)
+    } catch {
+      // Draft persistence is best-effort and never changes close behavior.
+    }
+  }
 
   function hasUnresolvedExternal(tab: Tab): boolean {
     return tab.saveStatus === 'external' || tab.externalRaw != null
@@ -123,6 +187,20 @@ export function useDocumentSave(options: {
         source: 'editor-save',
         newMtime: data.post.mtime,
       })
+      if (!externalAppearedDuringSave
+        && tab.revision === sentRevision
+        && tab.raw === tab.originalRaw) {
+        const owner = draftOwners.get(tab)
+        if (owner) {
+          draftOwners.delete(tab)
+          void options.draftPersistence?.markClean(owner, sentRevision).catch(() => {})
+        }
+      } else if (!externalAppearedDuringSave && tab.revision !== tab.savedRevision) {
+        // The acknowledged bytes are now the authoritative baseline while a
+        // newer editor revision remains dirty. Refresh the draft snapshot so
+        // recovery compares against that new baseline, not the pre-save one.
+        scheduleDraft(tab)
+      }
     } finally {
       tab.savingRevision = null
     }
@@ -159,9 +237,15 @@ export function useDocumentSave(options: {
     tab.revision += 1
     if (external) {
       tab.saveStatus = 'external'
+      scheduleDraft(tab)
       return
     }
-    if (tab.raw === tab.originalRaw) tab.savedRevision = tab.revision
+    if (tab.raw === tab.originalRaw) {
+      tab.savedRevision = tab.revision
+      clearReturnedToBaseline(tab)
+    } else {
+      scheduleDraft(tab)
+    }
     tab.saveStatus = tab.revision === tab.savedRevision ? 'idle' : 'dirty'
     scheduleSave(path)
   }
@@ -296,6 +380,8 @@ export function useDocumentSave(options: {
     prepareHistoryCommit,
     prepareHistoryRestore,
     prepareDocumentClose,
+    discardDocumentDraft,
+    discardDocumentDrafts,
     disposeDocumentSave,
   }
 }

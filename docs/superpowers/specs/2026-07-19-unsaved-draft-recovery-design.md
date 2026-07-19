@@ -288,6 +288,26 @@ No editor, save, `VaultView`, or file-transaction integration.
 - clean/save/discard deletion;
 - teardown flush and non-blocking storage failures.
 
+Implemented in:
+
+- `draftHash.ts`: best-effort SHA-256 hashing of the synchronously captured
+  authoritative baseline;
+- `useUnsavedDraftPersistence.ts`: per-vault-context, per-document debounce,
+  generation ownership, monotonic timestamps, flush, clean/discard deletion,
+  `pagehide` best-effort flushing, and idempotent disposal;
+- `useDocumentSave.ts`: the existing editor-change and
+  `revision`/`savedRevision` acknowledgement paths schedule or remove drafts;
+- `useTabWorkspace.ts` and `Tab`: loaded Document tabs retain the stable
+  `PostDetail.metadata.id`; paths are metadata and are never substituted for
+  missing document identity;
+- `useEditorTabs.ts`: owns one coordinator instance and connects confirmed
+  close/discard and context teardown.
+
+Behavior remains write/delete only. This stage does not list or recover drafts,
+add recovery UI, or migrate draft identities for rename/move/delete. Focused
+coverage consists of 40 tests across the draft storage, hashing, persistence
+coordinator, and save-state wiring suites.
+
 ### Edit-09.4 — Recovery decisions
 
 - startup discovery;

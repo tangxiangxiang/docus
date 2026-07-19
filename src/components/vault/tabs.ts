@@ -5,6 +5,8 @@ export type ExternalChangeKind = 'modified' | 'deleted' | 'unreadable'
 
 export interface Tab {
   path: string
+  /** Stable server metadata identity. Draft persistence must not substitute path. */
+  documentId?: string | null
   title: string
   raw: string
   originalRaw: string

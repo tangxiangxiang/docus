@@ -9,6 +9,7 @@ export const TAB_HARD_LIMIT = 9
 export function makeEmptyTab(path: string, title = ''): Tab {
   return {
     path,
+    documentId: null,
     title: title || path,
     raw: '',
     originalRaw: '',
