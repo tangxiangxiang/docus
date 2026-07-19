@@ -38,7 +38,7 @@ test('creates the production schema and persists compound-key records', async ({
     await store.saveDraft(makeDraft('vault-b', 'same', 30))
 
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(databaseName, 1)
+      const request = indexedDB.open(databaseName, 2)
       request.onsuccess = () => resolve(request.result)
       request.onerror = () => reject(request.error)
     })
@@ -105,6 +105,70 @@ test('keeps both IndexedDB records when an atomic move conflicts', async ({
   expect(result.outcome).toEqual({ status: 'conflict' })
   expect(result.source?.content).toBe('source buffer')
   expect(result.target?.content).toBe('target buffer')
+})
+
+test('persists primary and local conflict recovery candidates in separate IndexedDB stores', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const store = createDraftStore()
+    const primary = {
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'cross-context candidate',
+      baseContentHash: null,
+      baseModifiedAt: 10,
+      createdAt: 10,
+      updatedAt: 30,
+    }
+    const conflict = {
+      version: 1 as const,
+      conflictId: 'local-conflict',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local candidate',
+      baseContentHash: null,
+      baseModifiedAt: 10,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict' as const,
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveDraft(primary)
+    const saved = await store.saveConflictDraft(conflict)
+    const replacement = await store.saveConflictDraft({
+      ...conflict,
+      content: 'must not replace',
+    })
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const stores = [...database.objectStoreNames]
+    database.close()
+    return {
+      saved,
+      replacement,
+      stores,
+      primary: await store.getDraft('vault-a', 'a'),
+      conflicts: await store.listConflictDrafts('vault-a'),
+    }
+  }, DATABASE_NAME)
+
+  expect(result.saved).toEqual({ status: 'saved' })
+  expect(result.replacement).toEqual({ status: 'failed' })
+  expect(result.stores).toEqual(['draftConflicts', 'drafts'])
+  expect(result.primary?.content).toBe('cross-context candidate')
+  expect(result.conflicts).toHaveLength(1)
+  expect(result.conflicts[0]?.content).toBe('local candidate')
 })
 
 test('atomically keeps a newer draft when conditional deletion is stale', async ({
@@ -220,7 +284,7 @@ test('does not rewrite unsupported records in IndexedDB', async ({ page }) => {
       content: 42,
     }
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(databaseName, 1)
+      const request = indexedDB.open(databaseName, 2)
       request.onsuccess = () => resolve(request.result)
       request.onerror = () => reject(request.error)
     })
@@ -311,7 +375,7 @@ test('closes a cached connection when another context upgrades the database', as
     })
 
     const upgraded = await new Promise<number>((resolve, reject) => {
-      const request = indexedDB.open(databaseName, 2)
+      const request = indexedDB.open(databaseName, 3)
       request.onsuccess = () => {
         const version = request.result.version
         request.result.close()
@@ -328,7 +392,7 @@ test('closes a cached connection when another context upgrades the database', as
   }, DATABASE_NAME)
 
   expect(result).toEqual({
-    upgraded: 2,
+    upgraded: 3,
     oldStoreFailsClosed: [],
   })
 })
@@ -383,7 +447,7 @@ test('fails safely when opening the production database fails', async ({
 }) => {
   const result = await page.evaluate(async (databaseName) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(databaseName, 2)
+      const request = indexedDB.open(databaseName, 3)
       request.onsuccess = () => resolve(request.result)
       request.onerror = () => reject(request.error)
     })

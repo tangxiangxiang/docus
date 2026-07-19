@@ -6,6 +6,7 @@ import {
 } from '../draftStore'
 import {
   UNSAVED_DRAFT_VERSION,
+  type DraftConflictRecord,
   type UnsavedDraft,
 } from '../draftTypes'
 import {
@@ -60,6 +61,46 @@ async function seededStore(...drafts: UnsavedDraft[]) {
 }
 
 describe('createUnsavedDraftRecovery', () => {
+  it('discovers primary and local conflict candidates for the same document independently', async () => {
+    const primary = draft('a')
+    const store = await seededStore(primary)
+    const conflict: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'local-after-delete',
+      vaultId: 'vault',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local candidate',
+      baseContentHash: null,
+      baseModifiedAt: 10,
+      createdAt: 1,
+      updatedAt: 3,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 2,
+      recordedAt: 3,
+    }
+    await store.saveConflictDraft(conflict)
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: vi.fn().mockRejectedValue(
+        Object.assign(new Error('gone'), { status: 404 }),
+      ),
+    })
+
+    await recovery.discover('vault')
+
+    expect(recovery.items.value).toHaveLength(2)
+    expect(recovery.items.value.map((item) => ({
+      source: item.source,
+      content: item.draft.content,
+      kind: item.decision?.kind,
+    }))).toEqual([
+      { source: 'primary', content: 'draft:a', kind: 'missing-source' },
+      { source: 'conflict', content: 'local candidate', kind: 'missing-source' },
+    ])
+    expect(new Set(recovery.items.value.map((item) => item.recoveryId)).size).toBe(2)
+  })
+
   it('upserts a newly orphaned draft into the current recovery session', async () => {
     const store = await seededStore()
     const recovery = createUnsavedDraftRecovery({

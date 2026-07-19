@@ -392,6 +392,16 @@ Implemented in:
   ownership. Move commit and entry release are separate phases: Document tab
   paths migrate before the barrier unlocks, and transaction-time snapshots are
   then flushed immediately at the actual server path before Recovery retry;
+- `draftStore.ts`: schema version 2 adds an immutable `draftConflicts` store.
+  If confirmed deletion finds both a newer cross-context primary draft and a
+  post-CAS local edit, the primary record remains untouched while the local
+  snapshot is persisted under a distinct conflict identity. Pagehide and
+  disposal never flush that detached candidate back over the primary record;
+- `useUnsavedDraftRecovery.ts` and `useDraftRecoveryTabs.ts`: primary and local
+  conflict candidates for the same stable document identity are discovered,
+  classified, and displayed as separate Recovery items/tabs. Conflict
+  candidates are read-only and may be discarded independently; they cannot be
+  restored directly over a Document tab;
 - `useDocumentLifecycle.ts`: rename, drag move, archive, folder rename, file
   delete, and folder delete share the document-save and draft barriers. Stable
   identity is resolved before and after path changes, folder identity loading

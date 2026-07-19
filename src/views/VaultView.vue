@@ -402,7 +402,13 @@ async function discardRecoveryDraft(recoveryId: string): Promise<void> {
       toast.error(t('draft_recovery.delete_failed'))
       return
     }
-    const deleted = await draftPersistence.discardIdentityIfUnchanged(item.draft)
+    const deleted = item.source === 'conflict' && item.conflict
+      ? await draftPersistence.discardConflict(
+          item.conflict.vaultId,
+          item.conflict.documentId,
+          item.conflict.conflictId,
+        )
+      : await draftPersistence.discardIdentityIfUnchanged(item.draft)
     if (!deleted) {
       toast.error(t('draft_recovery.delete_failed'))
       return
@@ -410,7 +416,11 @@ async function discardRecoveryDraft(recoveryId: string): Promise<void> {
     const openTabIds = recoveryTabs.tabs.value
       .filter((tab) => tab.recoveryId === recoveryId)
       .map((tab) => tab.tabId)
-    draftRecovery.dismissForSession(recoveryId)
+    if (item.source === 'conflict') {
+      await draftRecovery.refreshIdentity(item.draft.vaultId, item.draft.documentId)
+    } else {
+      draftRecovery.dismissForSession(recoveryId)
+    }
     for (const tabId of openTabIds) await closeWorkspaceTab(tabId)
   } finally {
     recoveryBusy.value = false
@@ -425,6 +435,14 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
     const item = recoveryItem(recoveryId)
     const decision = item?.decision
     if (!item || item.status !== 'ready' || !decision) return
+    if (item.source === 'conflict') {
+      recoveryTabs.open(
+        item,
+        decision.disk.status === 'ready' ? 'diff' : 'content',
+      )
+      draftRecovery.dismissForSession(recoveryId)
+      return
+    }
     if (decision.kind !== 'baseline-match' || decision.disk.status !== 'ready') {
       recoveryTabs.open(
         item,

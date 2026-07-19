@@ -4,6 +4,7 @@ import {
   UNSAVED_DRAFT_VERSION,
   draftsEqual,
   isUnsavedDraft,
+  type DraftConflictRecord,
   type UnsavedDraft,
 } from './draftTypes'
 import type {
@@ -44,6 +45,11 @@ export interface UnsavedDraftPersistence {
   discard(owner: DraftOwner): Promise<boolean>
   discardIdentity(vaultId: string, documentId: string): Promise<boolean>
   discardIdentityIfUnchanged(expected: UnsavedDraft): Promise<boolean>
+  discardConflict(
+    vaultId: string,
+    documentId: string,
+    conflictId: string,
+  ): Promise<boolean>
   adoptRecoveredDraft(
     expected: UnsavedDraft,
     snapshot: DraftBufferSnapshot,
@@ -74,6 +80,12 @@ interface DraftEntry {
   createdAt: number | null
   persistedDraft: UnsavedDraft | null
   fileTransaction: symbol | null
+  /** Set when the local snapshot has been promoted to a separate
+   *  conflict record (stale + post-CAS edit). `flushAll` and
+   *  `dispose` MUST skip this entry — otherwise `safeTimestamp()`
+   *  would mint a fresh `updatedAt` that overwrites the cross-
+   *  context record. */
+  pendingConflictId: string | null
 }
 
 interface CreateOptions {
@@ -103,6 +115,14 @@ export function createUnsavedDraftPersistence(
     return vaultId.trim().length > 0 && documentId.trim().length > 0
   }
 
+  function conflictId(documentId: string, generation: number): string {
+    const uuid = typeof crypto !== 'undefined'
+      && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+    return `delete-conflict:${documentId}:${generation}:${uuid}`
+  }
+
   function entryFor(vaultId: string, documentId: string): DraftEntry {
     const identity = key(vaultId, documentId)
     let entry = entries.get(identity)
@@ -117,6 +137,7 @@ export function createUnsavedDraftPersistence(
         createdAt: null,
         persistedDraft: null,
         fileTransaction: null,
+        pendingConflictId: null,
       }
       entries.set(identity, entry)
     }
@@ -255,6 +276,12 @@ export function createUnsavedDraftPersistence(
     const captured = cloneSnapshot(snapshot)
     const entry = entryFor(captured.vaultId, captured.documentId)
     clearTimer(entry)
+    // A fresh schedule after a conflict-pinned entry means the user
+    // has typed new edits that supersede the orphaned conflict
+    // record. Clear `pendingConflictId` so `flushAll` / `dispose`
+    // start treating the entry as a normal draft again — the
+    // conflict record remains in IndexedDB as a parallel candidate.
+    entry.pendingConflictId = null
     entry.generation += 1
     entry.latestSnapshot = captured
     entry.latestSnapshotNeedsWrite = true
@@ -280,6 +307,10 @@ export function createUnsavedDraftPersistence(
     const entry = entries.get(key(vaultId, documentId))
     if (!entry || (!allowDisposed && disposed)) return false
     if (entry.fileTransaction) return false
+    // Conflict-pinned entries must not be flushed back to the
+    // primary IndexedDB record. The conflict path already
+    // persisted the snapshot under a fresh conflictId.
+    if (entry.pendingConflictId !== null) return false
     clearTimer(entry)
     const snapshot = entry.latestSnapshot
     if (!snapshot) return false
@@ -291,6 +322,12 @@ export function createUnsavedDraftPersistence(
   async function flushAllInternal(allowDisposed = false): Promise<void> {
     await Promise.all([...entries.entries()].map(async ([serialized, entry]) => {
       if (!entry.latestSnapshot) return
+      // Entries promoted to a separate conflict record must NEVER
+      // be flushed back to the primary IndexedDB record. The
+      // conflict path has already persisted the snapshot under a
+      // fresh conflictId; re-flushing would mint a new safeTimestamp
+      // and overwrite the cross-context record.
+      if (entry.pendingConflictId !== null) return
       const [vaultId, documentId] = JSON.parse(serialized) as [string, string]
       await flush(vaultId, documentId, allowDisposed)
     }))
@@ -403,6 +440,18 @@ export function createUnsavedDraftPersistence(
       documentId: expected.documentId,
       generation: entry.generation,
     }, expected)
+  }
+
+  async function discardConflict(
+    vaultId: string,
+    documentId: string,
+    conflictId: string,
+  ): Promise<boolean> {
+    if (disposed || !validIdentity(vaultId, documentId) || conflictId.trim().length === 0) {
+      return false
+    }
+    const result = await store.deleteConflictDraft(vaultId, documentId, conflictId)
+    return result === 'deleted' || result === 'missing'
   }
 
   async function adoptRecoveredDraft(
@@ -547,6 +596,92 @@ export function createUnsavedDraftPersistence(
           void queueWrite(owner, captured)
         }, debounceMs)
       }
+    }
+
+    /**
+     * Promote a CAS-confirmed-then-superseded local snapshot into a
+     * separate conflict record so the in-memory entry cannot later
+     * be flushed back to the primary record (which would overwrite
+     * the cross-context source via a fresh `safeTimestamp()`).
+     *
+     * This is the dual-source conflict storage the spec demands: the
+     * IndexedDB primary keeps the cross-context draft, the conflict
+     * record holds the local orphan, and the entry is marked
+     * `pendingConflictId` so `flushAll` / `dispose` skip it.
+     */
+    async function persistLocalAsConflict(
+      state: typeof held extends Map<string, infer V> ? V : never,
+      entry: DraftEntry,
+      outcome: string,
+      crossContextUpdatedAt: number | null,
+    ): Promise<void> {
+      const snapshot = entry.latestSnapshot
+      const { identity } = state
+      // If the entry has no snapshot, there's nothing to preserve —
+      // release the file transaction lock and let the cross-context
+      // record stand alone.
+      if (!snapshot) {
+        await releaseEntry(state, identity.documentPath, false, true)
+        return
+      }
+      const localConflictId = conflictId(identity.documentId, entry.generation)
+      // safeTimestamp would have us mint a strictly-greater-than-
+      // previousUpdatedAt timestamp; conflict records live under a
+      // separate key, so the previousUpdatedAt constraint that
+      // protects the primary record doesn't apply. We just need a
+      // monotonically-increasing timestamp that's newer than the
+      // cross-context source so the recovery UI can sort candidates.
+      const recordedAt = Math.max(safeTimestamp(entry), (crossContextUpdatedAt ?? 0) + 1)
+      entry.previousUpdatedAt = recordedAt
+      if (entry.createdAt === null) entry.createdAt = recordedAt
+      const record: DraftConflictRecord = {
+        version: UNSAVED_DRAFT_VERSION,
+        conflictId: localConflictId,
+        vaultId: identity.vaultId,
+        documentId: identity.documentId,
+        documentPath: snapshot.documentPath,
+        content: snapshot.content,
+        baseContentHash: snapshot.baseContentHash,
+        baseModifiedAt: snapshot.baseModifiedAt,
+        createdAt: entry.createdAt,
+        updatedAt: recordedAt,
+        origin: 'delete-conflict',
+        crossContextUpdatedAt,
+        recordedAt,
+      }
+      try {
+        const result = await store.saveConflictDraft(record)
+        if (result.status !== 'saved') {
+          // Never let pagehide/dispose flush this local candidate
+          // over the cross-context primary record, even if the
+          // separate conflict store is unavailable.
+          entry.pendingConflictId = `failed:${localConflictId}`
+          clearTimer(entry)
+          console.warn(`[commitDeletes] Conflict record save failed for ${identity.documentPath} (${outcome}): ${result.status}`)
+          await releaseEntry(state, identity.documentPath, false, true)
+          return
+        }
+      } catch (error) {
+        entry.pendingConflictId = `failed:${localConflictId}`
+        clearTimer(entry)
+        console.warn(`[commitDeletes] Conflict record save threw for ${identity.documentPath}:`, error)
+        await releaseEntry(state, identity.documentPath, false, true)
+        return
+      }
+      // Mark the entry so flushAll/dispose skip it.
+      entry.pendingConflictId = localConflictId
+      clearTimer(entry)
+      // Drop the in-memory snapshot — it now lives in IndexedDB under
+      // the conflictId. Holding it would risk another schedule()
+      // bumping the generation and re-running the CAS path against
+      // an already-conflicting state.
+      entry.latestSnapshot = null
+      entry.latestSnapshotNeedsWrite = false
+      // Release the file transaction. writeLatest=false because the
+      // snapshot has already been persisted as a conflict record;
+      // flushing it back to the primary would overwrite the cross-
+      // context source.
+      await releaseEntry(state, identity.documentPath, false, true)
     }
 
     async function commitMoves(
@@ -739,7 +874,18 @@ export function createUnsavedDraftPersistence(
           // what the spec forbids. Surface as 'conflict' so the
           // caller can hand the orphan back to Recovery without
           // touching IndexedDB.
-          await releaseEntry(state, deletion.documentPath, false, true)
+          // Re-read the IndexedDB record so the conflict record
+          // captures the cross-context source's updatedAt —
+          // `state.confirmedDraft` may hold the LOCAL persisted
+          // draft, not the cross-context record that won the CAS.
+          let crossContextUpdatedAt: number | null = null
+          try {
+            const remote = await store.getDraft(deletion.vaultId, deletion.documentId)
+            if (remote) crossContextUpdatedAt = remote.updatedAt
+          } catch {
+            crossContextUpdatedAt = null
+          }
+          await persistLocalAsConflict(state, entry, refinedStatus, crossContextUpdatedAt)
           results.push({
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,
@@ -858,6 +1004,7 @@ export function createUnsavedDraftPersistence(
     discard,
     discardIdentity,
     discardIdentityIfUnchanged,
+    discardConflict,
     adoptRecoveredDraft,
     prepareFileMutation,
     captureDeleteConfirmation,

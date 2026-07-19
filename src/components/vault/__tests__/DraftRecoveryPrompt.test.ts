@@ -26,6 +26,8 @@ function item(kind: DraftRecoveryDecisionKind): DraftRecoveryItem {
   return {
     recoveryId: 'recovery-a',
     draft,
+    source: 'primary',
+    conflict: null,
     status: 'ready',
     error: null,
     decision: {
@@ -56,6 +58,38 @@ function labels(kind: DraftRecoveryDecisionKind): string[] {
 }
 
 describe('DraftRecoveryPrompt', () => {
+  it('offers a conflict candidate as read-only recovery content instead of restoring it over the document', () => {
+    const conflict = item('baseline-match')
+    conflict.source = 'conflict'
+    conflict.conflict = {
+      version: 1,
+      conflictId: 'local-conflict',
+      vaultId: 'vault',
+      documentId: 'document-a',
+      documentPath: 'notes/a',
+      content: 'secret body',
+      baseContentHash: null,
+      baseModifiedAt: 1,
+      createdAt: 1,
+      updatedAt: 3,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 2,
+      recordedAt: 3,
+    }
+    const wrapper = mount(DraftRecoveryPrompt, {
+      props: { item: conflict },
+      attachTo: document.body,
+    })
+
+    const actions = [...document.querySelectorAll('.draft-recovery-dialog button')]
+      .map((button) => button.textContent?.trim() ?? '')
+    expect(actions).toContain('Open Recovered Content')
+    expect(actions).toContain('Discard Draft')
+    expect(actions).not.toContain('Restore Draft')
+    expect(actions).not.toContain('Use Disk Version')
+    wrapper.unmount()
+  })
+
   it('offers direct restore only for a baseline match', () => {
     expect(labels('baseline-match')).toEqual(['Restore Draft', 'Use Disk Version', 'Later'])
   })

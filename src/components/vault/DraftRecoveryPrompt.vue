@@ -21,6 +21,7 @@ const heading = ref<HTMLElement | null>(null)
 const kind = computed(() => props.item?.decision?.kind ?? null)
 const diskReady = computed(() => props.item?.decision?.disk.status === 'ready')
 const diskUnreadable = computed(() => props.item?.decision?.disk.status === 'unreadable')
+const isConflict = computed(() => props.item?.source === 'conflict')
 
 watch(() => props.item?.recoveryId, async (id) => {
   if (!id) return
@@ -89,7 +90,7 @@ function onKeydown(event: KeyboardEvent): void {
           </button>
           <template v-else-if="item.status === 'ready'">
             <button
-              v-if="kind === 'baseline-match'"
+              v-if="kind === 'baseline-match' && !isConflict"
               type="button"
               :disabled="busy"
               @click="emit('restore', item.recoveryId)"
@@ -113,7 +114,7 @@ function onKeydown(event: KeyboardEvent): void {
               {{ t('draft_recovery.retry') }}
             </button>
             <button
-              v-if="kind !== 'baseline-match'"
+              v-if="kind !== 'baseline-match' || isConflict"
               type="button"
               :disabled="busy"
               @click="emit('content', item.recoveryId)"
@@ -121,7 +122,7 @@ function onKeydown(event: KeyboardEvent): void {
               {{ t('draft_recovery.open_content') }}
             </button>
             <button
-              v-if="kind === 'baseline-match' || kind === 'divergent' || kind === 'unknown'"
+              v-if="!isConflict && (kind === 'baseline-match' || kind === 'divergent' || kind === 'unknown')"
               type="button"
               :disabled="busy"
               @click="emit('disk', item.recoveryId)"

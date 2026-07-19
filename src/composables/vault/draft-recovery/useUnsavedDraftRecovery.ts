@@ -13,7 +13,11 @@ import {
   type RecoveryDiskSnapshot,
 } from './draftRecoveryDecision'
 import { createDraftStore, type DraftStore } from './draftStore'
-import type { UnsavedDraft } from './draftTypes'
+import {
+  UNSAVED_DRAFT_VERSION,
+  type DraftConflictRecord,
+  type UnsavedDraft,
+} from './draftTypes'
 
 export type DraftRecoveryItemStatus =
   | 'unresolved'
@@ -25,6 +29,8 @@ export type DraftRecoveryItemStatus =
 export interface DraftRecoveryItem {
   recoveryId: string
   draft: UnsavedDraft
+  source: 'primary' | 'conflict'
+  conflict: DraftConflictRecord | null
   decision: DraftRecoveryDecision | null
   status: DraftRecoveryItemStatus
   error: string | null
@@ -78,6 +84,29 @@ export function hasUnsafeOpenDraftDocument(
 
 function recoveryId(draft: UnsavedDraft): string {
   return JSON.stringify([draft.vaultId, draft.documentId])
+}
+
+function conflictRecoveryId(record: DraftConflictRecord): string {
+  return JSON.stringify([
+    record.vaultId,
+    record.documentId,
+    'conflict',
+    record.conflictId,
+  ])
+}
+
+function conflictDraft(record: DraftConflictRecord): UnsavedDraft {
+  return {
+    version: UNSAVED_DRAFT_VERSION,
+    vaultId: record.vaultId,
+    documentId: record.documentId,
+    documentPath: record.documentPath,
+    content: record.content,
+    baseContentHash: record.baseContentHash,
+    baseModifiedAt: record.baseModifiedAt,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  }
 }
 
 function recoveryIdentityId(vaultId: string, documentId: string): string {
@@ -178,17 +207,34 @@ export function createUnsavedDraftRecovery(
       mutableItems.value = []
       return
     }
-    const drafts = await store.listDrafts(vaultId)
+    const [drafts, conflicts] = await Promise.all([
+      store.listDrafts(vaultId),
+      store.listConflictDrafts(vaultId),
+    ])
     if (disposed || generation !== discoverGeneration) return
-    mutableItems.value = drafts.map((draft) => ({
+    const discovered: OwnedItem[] = drafts.map((draft) => ({
       recoveryId: recoveryId(draft),
       draft,
+      source: 'primary' as const,
+      conflict: null,
+      decision: null,
+      status: 'unresolved' as const,
+      error: null,
+      discoverGeneration: generation,
+      classifyGeneration: 0,
+    }))
+    discovered.push(...conflicts.map((conflict): OwnedItem => ({
+      recoveryId: conflictRecoveryId(conflict),
+      draft: conflictDraft(conflict),
+      source: 'conflict',
+      conflict,
       decision: null,
       status: 'unresolved',
       error: null,
       discoverGeneration: generation,
       classifyGeneration: 0,
-    }))
+    })))
+    mutableItems.value = discovered
 
     let cursor = 0
     const workers = Array.from(
@@ -213,7 +259,10 @@ export function createUnsavedDraftRecovery(
     const refreshGeneration = ++item.classifyGeneration
     item.status = 'loading'
     item.error = null
-    const latest = await store.getDraft(item.draft.vaultId, item.draft.documentId)
+    const latest = item.source === 'conflict'
+      ? (await store.listConflictDrafts(item.draft.vaultId))
+          .find((candidate) => candidate.conflictId === item.conflict?.conflictId)
+      : await store.getDraft(item.draft.vaultId, item.draft.documentId)
     const current = currentItem(id, itemDiscoverGeneration, refreshGeneration)
     if (!current) return
     if (!latest) {
@@ -222,7 +271,12 @@ export function createUnsavedDraftRecovery(
       current.error = 'draft-unavailable'
       return
     }
-    current.draft = latest
+    if (item.source === 'conflict') {
+      current.conflict = latest as DraftConflictRecord
+      current.draft = conflictDraft(latest as DraftConflictRecord)
+    } else {
+      current.draft = latest as UnsavedDraft
+    }
     await classify(item)
   }
 
@@ -232,31 +286,70 @@ export function createUnsavedDraftRecovery(
     const epoch = identityRefreshEpoch
     const generation = (identityRefreshGenerations.get(id) ?? 0) + 1
     identityRefreshGenerations.set(id, generation)
-    const latest = await store.getDraft(vaultId, documentId)
+    const [latest, conflicts] = await Promise.all([
+      store.getDraft(vaultId, documentId),
+      store.listConflictDrafts(vaultId),
+    ])
     if (disposed
       || identityRefreshEpoch !== epoch
       || identityRefreshGenerations.get(id) !== generation) return
-    const existing = mutableItems.value.find((candidate) => candidate.recoveryId === id)
-    if (!latest) {
-      if (existing) removeIdentity(vaultId, documentId)
-      return
+    const relevantConflicts = conflicts.filter((candidate) => (
+      candidate.documentId === documentId
+    ))
+    const wanted = new Map<string, {
+      draft: UnsavedDraft
+      source: 'primary' | 'conflict'
+      conflict: DraftConflictRecord | null
+    }>()
+    if (latest) {
+      wanted.set(id, { draft: latest, source: 'primary', conflict: null })
     }
-    if (existing) {
-      existing.draft = latest
-      await classify(existing)
-      return
+    for (const conflict of relevantConflicts) {
+      wanted.set(conflictRecoveryId(conflict), {
+        draft: conflictDraft(conflict),
+        source: 'conflict',
+        conflict,
+      })
     }
-    const item: OwnedItem = {
-      recoveryId: id,
-      draft: latest,
-      decision: null,
-      status: 'unresolved',
-      error: null,
-      discoverGeneration,
-      classifyGeneration: 0,
+    const existingForIdentity = mutableItems.value.filter((candidate) => (
+      candidate.draft.vaultId === vaultId
+      && candidate.draft.documentId === documentId
+    ))
+    const wantedIds = new Set(wanted.keys())
+    mutableItems.value = mutableItems.value.filter((candidate) => (
+      candidate.draft.vaultId !== vaultId
+      || candidate.draft.documentId !== documentId
+      || wantedIds.has(candidate.recoveryId)
+    ))
+    const toClassify: OwnedItem[] = []
+    for (const [recoveryId, candidate] of wanted) {
+      const existing = mutableItems.value.find((item) => item.recoveryId === recoveryId)
+      if (existing) {
+        existing.draft = candidate.draft
+        existing.source = candidate.source
+        existing.conflict = candidate.conflict
+        toClassify.push(existing)
+      } else {
+        const item: OwnedItem = {
+          recoveryId,
+          ...candidate,
+          decision: null,
+          status: 'unresolved',
+          error: null,
+          discoverGeneration,
+          classifyGeneration: 0,
+        }
+        mutableItems.value = [...mutableItems.value, item]
+        toClassify.push(item)
+      }
     }
-    mutableItems.value = [...mutableItems.value, item]
-    await classify(item)
+    const removedIds = new Set(existingForIdentity
+      .filter((candidate) => !wantedIds.has(candidate.recoveryId))
+      .map((candidate) => candidate.recoveryId))
+    if (activeRecoveryId.value && removedIds.has(activeRecoveryId.value)) {
+      activeRecoveryId.value = null
+    }
+    await Promise.all(toClassify.map(classify))
   }
 
   function dismissForSession(id: string): void {

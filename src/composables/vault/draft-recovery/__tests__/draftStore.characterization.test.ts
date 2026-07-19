@@ -4,7 +4,7 @@ import {
   createMemoryDraftBackend,
   type MemoryDraftStorageBackend,
 } from '../draftStore'
-import type { UnsavedDraft } from '../draftTypes'
+import type { DraftConflictRecord, UnsavedDraft } from '../draftTypes'
 
 function draft(
   documentId: string,
@@ -45,6 +45,38 @@ describe('draftStore characterization', () => {
 
     firstRead!.content = 'read mutation'
     expect((await store.getDraft('vault-a', 'a'))?.content).toBe('content:a:20')
+  })
+
+  it('stores immutable parallel conflict candidates without replacing the primary draft', async () => {
+    const primary = draft('a', 30, { content: 'cross-context' })
+    const conflict: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'local-conflict',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local edit',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveDraft(primary)
+
+    await expect(store.saveConflictDraft(conflict))
+      .resolves.toEqual({ status: 'saved' })
+    await expect(store.saveConflictDraft({ ...conflict, content: 'replacement' }))
+      .resolves.toEqual({ status: 'failed' })
+
+    expect(await store.getDraft('vault-a', 'a')).toEqual(primary)
+    expect(await store.listConflictDrafts('vault-a')).toEqual([conflict])
+    await expect(store.deleteConflictDraft('vault-a', 'a', 'local-conflict'))
+      .resolves.toBe('deleted')
+    await expect(store.deleteConflictDraft('vault-a', 'a', 'local-conflict'))
+      .resolves.toBe('missing')
   })
 
   it('keeps vaults isolated and lists newest drafts first deterministically', async () => {

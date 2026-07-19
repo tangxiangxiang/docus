@@ -59,7 +59,9 @@ defineExpose({ focusViewer })
           {{ t('draft_recovery.view_current') }}
         </button>
         <button type="button" @click="emit('discard', recovery.recoveryId)">
-          {{ recovery.diskRaw === null ? t('draft_recovery.discard') : t('draft_recovery.use_disk') }}
+          {{ recovery.source === 'conflict' || recovery.diskRaw === null
+            ? t('draft_recovery.discard')
+            : t('draft_recovery.use_disk') }}
         </button>
         <button type="button" @click="emit('close', recovery.tabId)">
           {{ t('draft_recovery.close') }}

@@ -268,7 +268,6 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
       // user sees a "rename failed" toast while the file is already
       // moved on disk, leaving the tree / tabs inconsistent with the
       // server.
-      let migrationWarning: unknown = null
       try {
         if (draftBarrier && before) {
           const after = (await identities([renamed.path]))[0] ?? null
@@ -314,7 +313,6 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
           options.renameOpenDocuments([mapping])
         }
       } catch (error) {
-        migrationWarning = error
         console.warn(`[useDocumentLifecycle] Server rename ${fromPath} → ${renamed.path} succeeded, but Tab migration threw:`, error)
       }
       options.fileChanges.publish({
@@ -389,8 +387,18 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
           }
         }
         const draftResults = await draftBarrier.commitMoves(draftMappings, preserved)
+        // Server folder rename already succeeded. If Tab migration
+        // throws, swallow the error so the rename event still
+        // publishes and refresh runs below. The barrier still
+        // finalizes in the `finally` so draft persistence is
+        // never permanently locked.
         try {
           options.renameOpenDocuments(mappings)
+        } catch (error) {
+          console.warn(
+            `[useDocumentLifecycle] Server folder rename ${fromFolder} → ${result.path} succeeded, but Tab migration threw:`,
+            error,
+          )
         } finally {
           await draftBarrier.finalizeAfterTabMigration?.()
         }

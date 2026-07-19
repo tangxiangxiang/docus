@@ -12,6 +12,7 @@ function recovery(
   return {
     tabId: 'recovery:vault:document-a',
     recoveryId: 'recovery-a',
+    source: 'primary',
     documentId: 'document-a',
     documentPath: 'notes/a',
     documentTitle: 'A',

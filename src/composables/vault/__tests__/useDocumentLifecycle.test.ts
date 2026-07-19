@@ -246,6 +246,44 @@ describe('useDocumentLifecycle rename', () => {
     warnSpy.mockRestore()
   })
 
+  it('keeps server success when folder tab path migration throws (with draft barrier)', async () => {
+    // Round-3 regression: previously the folder-rename path with a
+    // draft barrier did NOT swallow Tab-migration throws, so the
+    // rename event + reference writes + barrier commit + refresh
+    // were skipped. The user saw 'rename failed' even though the
+    // server had moved the folder.
+    vi.spyOn(api, 'renameFolder').mockResolvedValue({
+      path: 'renamed', moved: ['renamed/a'], updatedReferences: [],
+    })
+    const finalizeAfterTabMigration = vi.fn().mockResolvedValue(undefined)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const h = setup([tab('folder/a')], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn().mockResolvedValue([]),
+        commitDeletes: vi.fn(),
+        finalizeAfterTabMigration,
+        rollback: vi.fn(),
+      }),
+      renameOpenDocuments: vi.fn(() => {
+        throw new Error('folder tab migration failed')
+      }),
+    })
+
+    const result = await h.lifecycle.renameFolder('folder', 'renamed', ['folder/a'])
+    expect(result.path).toBe('renamed')
+    expect(finalizeAfterTabMigration).toHaveBeenCalledOnce()
+    // The folder rename event still publishes despite Tab migration throwing.
+    const renameEvents = h.fileChanges.events.value.filter((event) => event.kind === 'rename')
+    expect(renameEvents).toHaveLength(1)
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
   it('waits for an in-flight save before PATCH rename', async () => {
     let finishSave!: (response: Response) => void
     const pendingSave = new Promise<Response>((resolve) => { finishSave = resolve })

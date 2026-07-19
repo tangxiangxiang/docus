@@ -5,6 +5,7 @@ import type { DraftRecoveryItem } from './useUnsavedDraftRecovery'
 export interface DraftRecoveryTab {
   tabId: string
   recoveryId: string
+  source: 'primary' | 'conflict'
   documentId: string
   documentPath: string
   documentTitle: string
@@ -25,8 +26,15 @@ function titleFromPath(path: string): string {
   return filename.endsWith('.md') ? filename.slice(0, -3) : filename
 }
 
-export function recoveryTabId(vaultId: string, documentId: string): string {
-  return `recovery:${encodeURIComponent(vaultId)}:${encodeURIComponent(documentId)}`
+export function recoveryTabId(
+  vaultId: string,
+  documentId: string,
+  recoveryId?: string,
+): string {
+  const candidate = recoveryId
+    ? `:${encodeURIComponent(recoveryId)}`
+    : ''
+  return `recovery:${encodeURIComponent(vaultId)}:${encodeURIComponent(documentId)}${candidate}`
 }
 
 export function useDraftRecoveryTabs() {
@@ -38,7 +46,11 @@ export function useDraftRecoveryTabs() {
 
   function open(item: DraftRecoveryItem, view: 'content' | 'diff'): DraftRecoveryTab | null {
     if (item.status !== 'ready' || !item.decision) return null
-    const id = recoveryTabId(item.draft.vaultId, item.draft.documentId)
+    const id = recoveryTabId(
+      item.draft.vaultId,
+      item.draft.documentId,
+      item.source === 'conflict' ? item.recoveryId : undefined,
+    )
     let tab = tabs.value.find((candidate) => candidate.tabId === id)
     const diskRaw = item.decision.disk.status === 'ready'
       ? item.decision.disk.raw
@@ -52,6 +64,7 @@ export function useDraftRecoveryTabs() {
     const next: DraftRecoveryTab = {
       tabId: id,
       recoveryId: item.recoveryId,
+      source: item.source,
       documentId: item.draft.documentId,
       documentPath: item.draft.documentPath,
       documentTitle: titleFromPath(item.draft.documentPath),

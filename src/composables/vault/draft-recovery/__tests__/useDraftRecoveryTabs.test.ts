@@ -22,6 +22,8 @@ function item(kind: DraftRecoveryDecisionKind = 'baseline-match'): DraftRecovery
   return {
     recoveryId: 'recovery-a',
     draft,
+    source: 'primary',
+    conflict: null,
     status: 'ready',
     error: null,
     decision: {
@@ -49,6 +51,44 @@ describe('useDraftRecoveryTabs', () => {
     recovery.open(item('divergent'), 'content')
     expect(recovery.tabs.value).toHaveLength(1)
     expect(recovery.activeTab.value?.view).toBe('content')
+  })
+
+  it('keeps primary and conflict candidates visible in separate Recovery tabs', () => {
+    const recovery = useDraftRecoveryTabs()
+    const primary = item('divergent')
+    const conflict: DraftRecoveryItem = {
+      ...item('divergent'),
+      recoveryId: 'conflict-recovery-a',
+      source: 'conflict',
+      conflict: {
+        version: 1,
+        conflictId: 'local-conflict',
+        vaultId: 'vault',
+        documentId: 'document-a',
+        documentPath: 'notes/a',
+        content: 'parallel local content',
+        baseContentHash: null,
+        baseModifiedAt: 1,
+        createdAt: 1,
+        updatedAt: 3,
+        origin: 'delete-conflict',
+        crossContextUpdatedAt: 2,
+        recordedAt: 3,
+      },
+      draft: {
+        ...primary.draft,
+        content: 'parallel local content',
+        updatedAt: 3,
+      },
+    }
+
+    const primaryTab = recovery.open(primary, 'content')
+    const conflictTab = recovery.open(conflict, 'content')
+
+    expect(recovery.tabs.value).toHaveLength(2)
+    expect(primaryTab?.tabId).not.toBe(conflictTab?.tabId)
+    expect(recovery.tabs.value.map((tab) => tab.draftRaw))
+      .toEqual(['private draft body', 'parallel local content'])
   })
 
   it('closes views without changing recovery storage state', () => {

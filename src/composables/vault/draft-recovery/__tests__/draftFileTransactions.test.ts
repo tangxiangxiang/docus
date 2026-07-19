@@ -681,7 +681,98 @@ describe('draft file transactions — post-CAS race regression', () => {
     const stored = await store.getDraft('vault', 'doc-a')
     expect(stored?.content).toBe('remote-v3')
     expect(stored?.updatedAt).toBe(110)
+    // The local post-CAS edit was promoted to a separate conflict
+    // record so the user can still see both candidates in Recovery
+    // — the primary draft keeps the cross-context source, the
+    // conflict record keeps the local orphan.
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]?.content).toBe('local-v3')
+    expect(conflicts[0]?.origin).toBe('delete-conflict')
+    expect(conflicts[0]?.crossContextUpdatedAt).toBe(110)
+    expect(conflicts[0]?.vaultId).toBe('vault')
+    expect(conflicts[0]?.documentId).toBe('doc-a')
     await persistence.dispose()
+  })
+
+  it('does not overwrite the cross-context draft during dispose (pagehide simulation)', async () => {
+    // Regression: after a stale + post-CAS edit, the entry's
+    // pendingConflictId is set. dispose() (called on pagehide or
+    // unmount) runs flushAllInternal — that path MUST skip the
+    // conflict-pinned entry, otherwise safeTimestamp() would mint a
+    // fresh updatedAt > 110 and overwrite the cross-context record.
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    let releaseDelete!: () => void
+    const deleteGate = new Promise<void>((resolve) => { releaseDelete = resolve })
+    let deleteStarted = false
+    const originalDelete = backend.deleteIfUnchanged
+    backend.deleteIfUnchanged = vi.fn(async (expected) => {
+      deleteStarted = true
+      await deleteGate
+      return originalDelete.call(backend, expected)
+    })
+    const targetWindow = new EventTarget()
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      targetWindow: targetWindow as unknown as Pick<
+        Window,
+        'addEventListener' | 'removeEventListener'
+      >,
+    })
+    const identity = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }
+    // Pre-persist a local draft so the CAS path runs (an empty
+    // expected would short-circuit to `missing` without calling
+    // deleteIfUnchanged).
+    persistence.schedule(snapshot('local-v2', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    const localStored = await store.getDraft('vault', 'doc-a')
+    expect(localStored?.content).toBe('local-v2')
+    expect(localStored?.updatedAt).toBe(100)
+    // Another context seeds v3 with a NEWER updatedAt.
+    await backend.seedRaw({
+      version: 1,
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'remote-v3',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 110,
+    })
+    const confirmation = persistence.captureDeleteConfirmation(identity, 2)
+    const barrier = await persistence.prepareFileMutation([identity])
+    const deleting = barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+    await vi.waitFor(() => expect(deleteStarted).toBe(true))
+    persistence.schedule(snapshot('local-v3', 'notes/a', 3))
+    releaseDelete()
+    await deleting
+
+    targetWindow.dispatchEvent(new Event('pagehide'))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
+
+    // dispose() must likewise NOT overwrite the cross-context record
+    // with a fresh timestamp.
+    await persistence.dispose()
+    const stored = await store.getDraft('vault', 'doc-a')
+    expect(stored?.content).toBe('remote-v3')
+    expect(stored?.updatedAt).toBe(110)
   })
 
   it('does not retry the confirmed snapshot with a newer timestamp after stale (no post-CAS edit)', async () => {
