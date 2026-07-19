@@ -1,9 +1,10 @@
 # Workspace Tab Architecture — Design Spec
 
 **Date:** 2026-07-19
-**Status:** Proposed
+**Status:** Closed — implemented and verified
 **Scope:** Edit-08 — extract the interaction state machines from `EditorTabs.vue` without changing Workspace Tab behavior.
 **Baseline:** Edit-07 is behaviorally complete at `9afb4e1`.
+**Final implementation:** `33bd621` (`test: split workspace tab component coverage`)
 
 ## 1. Motivation
 
@@ -239,12 +240,16 @@ the asynchronous `expectedFocus` guard remain exclusively in the existing
 
 ### Edit-08.1 — Seal and document
 
+**Completed:** `9f8c0ae`, `9c370ff`
+
 - Run `npm test`, `npm run typecheck`, and `npm run build`.
 - Record this architecture and behavior-freeze specification.
 - Create a standalone Edit-07 closure commit.
 - Do not move production code.
 
 ### Edit-08.2 — Extract tooltip
+
+**Completed:** `c04c849`, `1fa5c91`, `31935ed`
 
 Tooltip is first because it has the narrowest output surface and no mutation intent.
 
@@ -257,6 +262,8 @@ Exit condition: tooltip behavior is independently tested and `EditorTabs.vue` no
 longer owns tooltip listeners or positioning.
 
 ### Edit-08.3 — Extract context menu
+
+**Completed:** `b34395f`, `7704159`, `c507763`
 
 - Characterize focus-trap timing, menu generation, internal scrolling, and stale-tab
   invalidation.
@@ -271,6 +278,8 @@ Exit condition: menu actions are independently tested as intents and the existin
 
 ### Edit-08.4 — Extract reorder
 
+**Completed:** `6b3f1b6`, `03c5366`, `4639477`
+
 - Characterize pointer-source blocking, payload/signature validation, synthetic
   click suppression, and auto-scroll.
 - Extract pointer and keyboard interaction state.
@@ -282,6 +291,8 @@ Exit condition: reorder state and cleanup are independently tested, while
 
 ### Edit-08.5 — Consolidate focus and split tests
 
+**Completed:** `de4ee85`, `72b5949`, `33bd621`
+
 - Extract only the focus primitives that are still duplicated after menu/reorder
   extraction.
 - Move detailed scenarios from `EditorTabs.test.ts` to composable suites.
@@ -291,6 +302,9 @@ Exit condition: reorder state and cleanup are independently tested, while
 
 Exit condition: no loss of regression coverage, and the component test describes
 component wiring rather than re-testing every state-machine branch.
+
+All five stages are closed. The final quality gate passed with 111 test files and
+1,254 tests, followed by successful typecheck, production build, and icon lint.
 
 ## 8. Test Strategy
 
