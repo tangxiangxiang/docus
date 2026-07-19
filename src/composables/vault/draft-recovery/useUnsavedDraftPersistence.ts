@@ -2,6 +2,7 @@ import { hashDraftBaseline } from './draftHash'
 import { createDraftStore, type DraftStore } from './draftStore'
 import {
   UNSAVED_DRAFT_VERSION,
+  draftsEqual,
   isUnsavedDraft,
   type UnsavedDraft,
 } from './draftTypes'
@@ -35,6 +36,10 @@ export interface UnsavedDraftPersistence {
   discard(owner: DraftOwner): Promise<boolean>
   discardIdentity(vaultId: string, documentId: string): Promise<boolean>
   discardIdentityIfUnchanged(expected: UnsavedDraft): Promise<boolean>
+  adoptRecoveredDraft(
+    expected: UnsavedDraft,
+    snapshot: DraftBufferSnapshot,
+  ): Promise<DraftOwner | null>
   invalidate(vaultId: string, documentId: string): void
   dispose(): Promise<void>
 }
@@ -43,6 +48,7 @@ interface DraftEntry {
   generation: number
   timer: ReturnType<typeof setTimeout> | null
   latestSnapshot: DraftBufferSnapshot | null
+  latestSnapshotNeedsWrite: boolean
   pendingWrite: Promise<boolean> | null
   previousUpdatedAt: number
   createdAt: number | null
@@ -83,6 +89,7 @@ export function createUnsavedDraftPersistence(
         generation: 0,
         timer: null,
         latestSnapshot: null,
+        latestSnapshotNeedsWrite: false,
         pendingWrite: null,
         previousUpdatedAt: -1,
         createdAt: null,
@@ -157,7 +164,12 @@ export function createUnsavedDraftPersistence(
       const draft = await buildDraft(snapshot, owner, entry)
       if (!draft || (!allowDisposed && disposed) || !current(owner, entry)) return false
       try {
-        return await store.saveDraft(draft)
+        const saved = await store.saveDraft(draft)
+        if (saved && current(owner, entry)
+          && entry.latestSnapshot?.revision === snapshot.revision) {
+          entry.latestSnapshotNeedsWrite = false
+        }
+        return saved
       } catch {
         return false
       }
@@ -181,6 +193,7 @@ export function createUnsavedDraftPersistence(
     clearTimer(entry)
     entry.generation += 1
     entry.latestSnapshot = captured
+    entry.latestSnapshotNeedsWrite = true
     const owner: DraftOwner = {
       vaultId: captured.vaultId,
       documentId: captured.documentId,
@@ -203,6 +216,7 @@ export function createUnsavedDraftPersistence(
     clearTimer(entry)
     const snapshot = entry.latestSnapshot
     if (!snapshot) return false
+    if (!entry.latestSnapshotNeedsWrite) return true
     const owner = { vaultId, documentId, generation: entry.generation }
     return queueWrite(owner, cloneSnapshot(snapshot), allowDisposed)
   }
@@ -224,6 +238,7 @@ export function createUnsavedDraftPersistence(
     clearTimer(entry)
     const deleteGeneration = ++entry.generation
     entry.latestSnapshot = null
+    entry.latestSnapshotNeedsWrite = false
     const previous = entry.pendingWrite
     const task = (async () => {
       if (previous) await previous.catch(() => false)
@@ -271,6 +286,7 @@ export function createUnsavedDraftPersistence(
     clearTimer(entry)
     entry.generation += 1
     entry.latestSnapshot = null
+    entry.latestSnapshotNeedsWrite = false
   }
 
   async function discard(owner: DraftOwner): Promise<boolean> {
@@ -292,6 +308,52 @@ export function createUnsavedDraftPersistence(
       documentId: expected.documentId,
       generation: entry.generation,
     }, expected)
+  }
+
+  async function adoptRecoveredDraft(
+    expected: UnsavedDraft,
+    snapshot: DraftBufferSnapshot,
+  ): Promise<DraftOwner | null> {
+    if (disposed
+      || !isUnsavedDraft(expected)
+      || snapshot.loaded === false
+      || expected.vaultId !== snapshot.vaultId
+      || expected.documentId !== snapshot.documentId
+      || !validIdentity(snapshot.vaultId, snapshot.documentId)) {
+      return null
+    }
+    let stored: UnsavedDraft | null
+    try {
+      stored = await store.getDraft(expected.vaultId, expected.documentId)
+    } catch {
+      return null
+    }
+    if (disposed || !stored || !draftsEqual(stored, expected)) return null
+
+    const entry = entryFor(expected.vaultId, expected.documentId)
+    clearTimer(entry)
+    if (entry.pendingWrite) await entry.pendingWrite.catch(() => false)
+    if (disposed) return null
+
+    // Recheck after local queued work settles. Adoption establishes runtime
+    // ownership of the existing record; it deliberately does not rewrite it
+    // with a newer timestamp.
+    try {
+      stored = await store.getDraft(expected.vaultId, expected.documentId)
+    } catch {
+      return null
+    }
+    if (disposed || !stored || !draftsEqual(stored, expected)) return null
+    entry.generation += 1
+    entry.latestSnapshot = cloneSnapshot(snapshot)
+    entry.latestSnapshotNeedsWrite = false
+    entry.previousUpdatedAt = expected.updatedAt
+    entry.createdAt = expected.createdAt
+    return {
+      vaultId: expected.vaultId,
+      documentId: expected.documentId,
+      generation: entry.generation,
+    }
   }
 
   function onPageHide(): void {
@@ -320,6 +382,7 @@ export function createUnsavedDraftPersistence(
     discard,
     discardIdentity,
     discardIdentityIfUnchanged,
+    adoptRecoveredDraft,
     invalidate,
     dispose,
   }

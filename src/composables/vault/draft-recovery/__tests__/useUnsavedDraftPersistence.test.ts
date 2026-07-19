@@ -8,6 +8,7 @@ import {
   createUnsavedDraftPersistence,
   type DraftBufferSnapshot,
 } from '../useUnsavedDraftPersistence'
+import type { UnsavedDraft } from '../draftTypes'
 
 function snapshot(
   documentId: string,
@@ -152,6 +153,55 @@ describe('createUnsavedDraftPersistence', () => {
     await vi.runAllTimersAsync()
 
     await expect(persistence.discardIdentityIfUnchanged(original)).resolves.toBe(false)
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('v2')
+  })
+
+  it('adopts an existing recovery draft without changing its timestamp', async () => {
+    const expected: UnsavedDraft = {
+      version: 1,
+      vaultId: 'vault-1',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'recovered',
+      baseContentHash: 'baseline-hash',
+      baseModifiedAt: 10,
+      createdAt: 25,
+      updatedAt: 40,
+    }
+    await store.saveDraft(expected)
+    const saveDraft = vi.spyOn(store, 'saveDraft')
+    const persistence = createUnsavedDraftPersistence({ store })
+
+    await expect(
+      persistence.adoptRecoveredDraft(expected, snapshot('a', 'recovered', 1)),
+    ).resolves.toMatchObject({
+      vaultId: 'vault-1',
+      documentId: 'a',
+    })
+
+    expect(saveDraft).not.toHaveBeenCalled()
+    expect(await store.getDraft('vault-1', 'a')).toEqual(expected)
+  })
+
+  it('does not adopt a recovery draft updated by another context', async () => {
+    const expected: UnsavedDraft = {
+      version: 1,
+      vaultId: 'vault-1',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'v1',
+      baseContentHash: 'baseline-hash',
+      baseModifiedAt: 10,
+      createdAt: 25,
+      updatedAt: 40,
+    }
+    await store.saveDraft(expected)
+    await store.saveDraft({ ...expected, content: 'v2', updatedAt: 41 })
+    const persistence = createUnsavedDraftPersistence({ store })
+
+    await expect(
+      persistence.adoptRecoveredDraft(expected, snapshot('a', 'v1', 1)),
+    ).resolves.toBeNull()
     expect((await store.getDraft('vault-1', 'a'))?.content).toBe('v2')
   })
 

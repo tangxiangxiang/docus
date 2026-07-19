@@ -43,6 +43,19 @@ function toolbarLabels(tab: DraftRecoveryTab): string[] {
 }
 
 describe('DraftRecoveryPane', () => {
+  it('emits the recovery identity when viewing the current document', async () => {
+    const wrapper = mount(DraftRecoveryPane, {
+      props: { recovery: recovery() },
+      global: { stubs: { ReadingPane: true, SideBySideDiff: true } },
+    })
+
+    await wrapper.findAll('[role="toolbar"] button')
+      .find((button) => button.text() === 'View Current Document')!
+      .trigger('click')
+
+    expect(wrapper.emitted('view-current')).toEqual([['recovery-a']])
+  })
+
   it('shows View Current only when stable disk identity matches', () => {
     expect(toolbarLabels(recovery())).toContain('View Current Document')
     expect(toolbarLabels(recovery({

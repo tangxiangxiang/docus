@@ -1,6 +1,7 @@
 import { draftKey, isDraftIdentity, type DraftKey } from './draftKey'
 import {
   cloneDraft,
+  draftsEqual,
   isUnsavedDraft,
   type UnsavedDraft,
 } from './draftTypes'
@@ -446,18 +447,6 @@ function decideMove(
     return { result: 'moved', draft: movedSource }
   }
   return { result: 'conflict' }
-}
-
-function draftsEqual(left: UnsavedDraft, right: UnsavedDraft): boolean {
-  return left.version === right.version
-    && left.vaultId === right.vaultId
-    && left.documentId === right.documentId
-    && left.documentPath === right.documentPath
-    && left.content === right.content
-    && left.baseContentHash === right.baseContentHash
-    && left.baseModifiedAt === right.baseModifiedAt
-    && left.createdAt === right.createdAt
-    && left.updatedAt === right.updatedAt
 }
 
 function recordVaultId(value: unknown): unknown {

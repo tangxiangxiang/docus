@@ -9,7 +9,7 @@ import SideBySideDiff from './SideBySideDiff.vue'
 const props = defineProps<{ recovery: DraftRecoveryTab }>()
 const emit = defineEmits<{
   'update-view': [view: 'content' | 'diff']
-  'view-current': [path: string]
+  'view-current': [recoveryId: string]
   discard: [recoveryId: string]
   close: [tabId: string]
 }>()
@@ -54,7 +54,7 @@ defineExpose({ focusViewer })
         <button
           v-if="recovery.canViewCurrent"
           type="button"
-          @click="emit('view-current', recovery.documentPath)"
+          @click="emit('view-current', recovery.recoveryId)"
         >
           {{ t('draft_recovery.view_current') }}
         </button>

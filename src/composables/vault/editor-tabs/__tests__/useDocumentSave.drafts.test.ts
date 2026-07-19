@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Tab } from '../../../../components/vault/tabs'
 import type { PostSummary } from '../../../../lib/api'
 import { createMemoryDraftBackend, createDraftStore } from '../../draft-recovery/draftStore'
+import type { UnsavedDraft } from '../../draft-recovery/draftTypes'
 import { createUnsavedDraftPersistence } from '../../draft-recovery/useUnsavedDraftPersistence'
 import { createVaultFileChanges } from '../../context/fileChanges'
 import { useDocumentSave } from '../useDocumentSave'
@@ -66,6 +67,20 @@ function setup() {
   return { current, store, drafts, save }
 }
 
+function recoveredDraft(content = 'recovered unsaved content'): UnsavedDraft {
+  return {
+    version: 1,
+    vaultId: 'vault-1',
+    documentId: 'document-a',
+    documentPath: 'inbox/a',
+    content,
+    baseContentHash: null,
+    baseModifiedAt: 10,
+    createdAt: 100,
+    updatedAt: 100,
+  }
+}
+
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -77,19 +92,21 @@ describe('useDocumentSave draft persistence wiring', () => {
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
     const h = setup()
+    const draft = recoveredDraft()
+    await h.store.saveDraft(draft)
 
-    expect(h.save.applyRecoveredDraft({
-      documentId: 'document-a',
+    await expect(h.save.applyRecoveredDraft({
+      draft,
       expectedDiskRaw: 'disk',
       expectedDiskMtime: 10,
-      draftContent: 'recovered unsaved content',
-    })).toEqual({ status: 'applied', path: 'inbox/a' })
+    })).resolves.toEqual({ status: 'applied', path: 'inbox/a' })
 
     expect(h.current.raw).toBe('recovered unsaved content')
     expect(h.current.originalRaw).toBe('disk')
     expect(h.current.revision).toBe(1)
     expect(h.current.savedRevision).toBe(0)
     expect(h.current.saveStatus).toBe('dirty')
+    expect((await h.store.getDraft('vault-1', 'document-a'))?.updatedAt).toBe(100)
     await vi.advanceTimersByTimeAsync(1_600)
     await h.drafts.flush('vault-1', 'document-a')
     expect(fetch).not.toHaveBeenCalled()
@@ -98,35 +115,51 @@ describe('useDocumentSave draft persistence wiring', () => {
     vi.useRealTimers()
   })
 
-  it('fails closed when the recovery target changed or is unsafe', () => {
+  it('does not apply or rewrite a draft changed before recovery adoption', async () => {
+    const h = setup()
+    const stale = recoveredDraft('v1')
+    await h.store.saveDraft(stale)
+    await h.store.saveDraft({ ...stale, content: 'v2', updatedAt: 101 })
+
+    await expect(h.save.applyRecoveredDraft({
+      draft: stale,
+      expectedDiskRaw: 'disk',
+      expectedDiskMtime: 10,
+    })).resolves.toEqual({ status: 'stale' })
+
+    expect(h.current.raw).toBe('disk')
+    expect(await h.store.getDraft('vault-1', 'document-a')).toMatchObject({
+      content: 'v2',
+      updatedAt: 101,
+    })
+  })
+
+  it('fails closed when the recovery target changed or is unsafe', async () => {
     const stale = setup()
-    expect(stale.save.applyRecoveredDraft({
-      documentId: 'document-a',
+    await expect(stale.save.applyRecoveredDraft({
+      draft: recoveredDraft('draft'),
       expectedDiskRaw: 'other',
       expectedDiskMtime: 10,
-      draftContent: 'draft',
-    })).toEqual({ status: 'stale' })
+    })).resolves.toEqual({ status: 'stale' })
     expect(stale.current.raw).toBe('disk')
 
     const dirty = setup()
     dirty.current.raw = 'local edit'
     dirty.current.revision = 1
-    expect(dirty.save.applyRecoveredDraft({
-      documentId: 'document-a',
+    await expect(dirty.save.applyRecoveredDraft({
+      draft: recoveredDraft('draft'),
       expectedDiskRaw: 'disk',
       expectedDiskMtime: 10,
-      draftContent: 'draft',
-    })).toEqual({ status: 'dirty' })
+    })).resolves.toEqual({ status: 'dirty' })
 
     const external = setup()
     external.current.saveStatus = 'external'
     external.current.externalRaw = 'changed disk'
-    expect(external.save.applyRecoveredDraft({
-      documentId: 'document-a',
+    await expect(external.save.applyRecoveredDraft({
+      draft: recoveredDraft('draft'),
       expectedDiskRaw: 'disk',
       expectedDiskMtime: 10,
-      draftContent: 'draft',
-    })).toEqual({ status: 'external' })
+    })).resolves.toEqual({ status: 'external' })
   })
 
   it('deletes the owned draft after the acknowledged revision stays clean', async () => {

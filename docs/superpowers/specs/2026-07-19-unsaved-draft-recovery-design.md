@@ -328,11 +328,13 @@ Implemented in:
   concurrency, discover/item generations, retry, session-only dismissal, and
   disposal guards;
 - `useUnsavedDraftPersistence.ts`: identity-based explicit discard remains on
-  the same per-document write/delete operation chain as editor-owned drafts;
+  the same per-document write/delete operation chain as editor-owned drafts.
+  Recovery adoption compares the complete current stored record, establishes a
+  runtime owner, and does not rewrite identical content with a newer timestamp;
 - `useDocumentSave.ts`: `applyRecoveredDraft()` revalidates stable identity,
   clean state, external state, disk raw, and disk mtime before creating a dirty
-  editor revision. It schedules browser draft persistence but intentionally
-  bypasses `onEditorChange()` and server autosave;
+  editor revision. It adopts the already-persisted browser draft without a
+  write, and intentionally bypasses `onEditorChange()` and server autosave;
 - `useDraftRecoveryTabs.ts`, `DraftRecoveryPrompt.vue`, and
   `DraftRecoveryPane.vue`: session-only read-only Recovery workspace tabs,
   decision-specific actions, local content view, and disk-versus-draft diff;
@@ -343,6 +345,8 @@ Implemented in:
 
 This stage never restores automatically, never writes recovered content to disk,
 and deletes a stored draft only after an explicit Use Disk/Discard action.
+Document opening and View Current navigation both reclassify again after their
+asynchronous boundary; a changed stored draft or disk identity fails closed.
 Closing a Recovery tab or choosing Later keeps IndexedDB unchanged. Rename,
 move, delete migration, recovery-center management, retention, and capacity
 cleanup remain deferred to Edit-09.5/09.6.

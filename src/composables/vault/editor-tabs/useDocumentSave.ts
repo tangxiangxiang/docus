@@ -12,6 +12,7 @@ import type {
   DraftOwner,
   UnsavedDraftPersistence,
 } from '../draft-recovery/useUnsavedDraftPersistence'
+import type { UnsavedDraft } from '../draft-recovery/draftTypes'
 
 export interface DocumentMutationBarrier {
   readonly paths: readonly string[]
@@ -20,10 +21,9 @@ export interface DocumentMutationBarrier {
 }
 
 export interface ApplyRecoveredDraftInput {
-  documentId: string
+  draft: UnsavedDraft
   expectedDiskRaw: string
   expectedDiskMtime: number
-  draftContent: string
 }
 
 export type ApplyRecoveredDraftResult =
@@ -264,12 +264,12 @@ export function useDocumentSave(options: {
     scheduleSave(path)
   }
 
-  function applyRecoveredDraft(
+  async function applyRecoveredDraft(
     input: ApplyRecoveredDraftInput,
-  ): ApplyRecoveredDraftResult {
+  ): Promise<ApplyRecoveredDraftResult> {
     if (disposed) return { status: 'missing' }
     const tab = options.tabs.value.find(
-      (candidate) => candidate.documentId === input.documentId,
+      (candidate) => candidate.documentId === input.draft.documentId,
     )
     if (!tab || tab.loading || tab.loadError) return { status: 'missing' }
     if (hasUnresolvedExternal(tab)
@@ -290,13 +290,52 @@ export function useDocumentSave(options: {
       return { status: 'stale' }
     }
 
+    const identity = draftIdentity(tab)
+    if (!identity
+      || identity.vaultId !== input.draft.vaultId
+      || tab.path !== input.draft.documentPath) {
+      return { status: 'missing' }
+    }
+    const expectedTabState = {
+      raw: tab.raw,
+      originalRaw: tab.originalRaw,
+      revision: tab.revision,
+      savedRevision: tab.savedRevision,
+      savingRevision: tab.savingRevision,
+      saveStatus: tab.saveStatus,
+      serverMtime: tab.serverMtime,
+    }
+    const nextRevision = tab.revision + 1
+    const owner = await options.draftPersistence?.adoptRecoveredDraft(
+      input.draft,
+      {
+        ...identity,
+        documentPath: tab.path,
+        content: input.draft.content,
+        authoritativeContent: tab.originalRaw,
+        baseContentHash: input.draft.baseContentHash,
+        baseModifiedAt: input.draft.baseModifiedAt,
+        revision: nextRevision,
+      },
+    )
+    if (!owner) return { status: 'stale' }
+    if (disposed
+      || !options.tabs.value.includes(tab)
+      || Object.entries(expectedTabState).some(
+        ([field, value]) => tab[field as keyof Tab] !== value,
+      )) {
+      options.draftPersistence?.invalidate(identity.vaultId, identity.documentId)
+      return { status: 'stale' }
+    }
+
     // Recovery intentionally bypasses onEditorChange(): it creates a dirty
-    // editor revision and a browser draft, but never schedules a server save.
-    tab.raw = input.draftContent
-    tab.revision += 1
+    // editor revision and adopts the existing browser draft without rewriting
+    // it or scheduling a server save.
+    tab.raw = input.draft.content
+    tab.revision = nextRevision
     tab.saveStatus = 'dirty'
     tab.error = null
-    scheduleDraft(tab)
+    draftOwners.set(tab, owner)
     return { status: 'applied', path: tab.path }
   }
 

@@ -140,6 +140,53 @@ test('atomically keeps a newer draft when conditional deletion is stale', async 
   expect(result.current).toMatchObject({ content: 'v2', updatedAt: 30 })
 })
 
+test('does not adopt or rewrite a newer cross-context recovery draft', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const { createUnsavedDraftPersistence } = await import(
+      '/src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts'
+    )
+    const store = createDraftStore()
+    const original = {
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'v1',
+      baseContentHash: null,
+      baseModifiedAt: 10,
+      createdAt: 10,
+      updatedAt: 20,
+    }
+    await store.saveDraft(original)
+    await store.saveDraft({ ...original, content: 'v2', updatedAt: 30 })
+    const persistence = createUnsavedDraftPersistence({ store })
+    const owner = await persistence.adoptRecoveredDraft(original, {
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'v1',
+      authoritativeContent: 'disk',
+      baseContentHash: null,
+      baseModifiedAt: 10,
+      revision: 1,
+    })
+    await persistence.dispose()
+
+    return {
+      owner,
+      current: await store.getDraft('vault-a', 'a'),
+    }
+  })
+
+  expect(result.owner).toBeNull()
+  expect(result.current).toMatchObject({ content: 'v2', updatedAt: 30 })
+})
+
 test('does not rewrite unsupported records in IndexedDB', async ({ page }) => {
   const result = await page.evaluate(async (databaseName) => {
     const { createDraftStore } = await import(

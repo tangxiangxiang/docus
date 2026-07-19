@@ -335,11 +335,28 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
     historyComparisons.deactivate()
     historySnapshots.viewCurrent()
     await openEditorPost(item.draft.documentPath)
-    const result = applyRecoveredDraft({
-      documentId: item.draft.documentId,
-      expectedDiskRaw: decision.disk.raw,
-      expectedDiskMtime: decision.disk.mtime,
-      draftContent: item.draft.content,
+    // Opening the document crosses a network boundary. Refresh both the
+    // stored draft and disk classification again before adopting any bytes.
+    await draftRecovery.retry(recoveryId)
+    const refreshed = recoveryItem(recoveryId)
+    const refreshedDecision = refreshed?.decision
+    if (!refreshed || refreshed.status !== 'ready'
+      || !refreshedDecision
+      || refreshedDecision.kind !== 'baseline-match'
+      || refreshedDecision.disk.status !== 'ready') {
+      if (refreshed?.status === 'ready' && refreshed.decision) {
+        recoveryTabs.open(
+          refreshed,
+          refreshed.decision.disk.status === 'ready' ? 'diff' : 'content',
+        )
+        draftRecovery.dismissForSession(recoveryId)
+      }
+      return
+    }
+    const result = await applyRecoveredDraft({
+      draft: refreshed.draft,
+      expectedDiskRaw: refreshedDecision.disk.raw,
+      expectedDiskMtime: refreshedDecision.disk.mtime,
     })
     if (result.status === 'applied') {
       draftRecovery.dismissForSession(recoveryId)
@@ -760,6 +777,23 @@ async function viewCurrentDocument(path: string): Promise<void> {
   editorTabsRef.value?.focusTab(path)
 }
 
+async function viewCurrentRecoveryDocument(recoveryId: string): Promise<void> {
+  await draftRecovery.retry(recoveryId)
+  const item = recoveryItem(recoveryId)
+  if (!item || item.status !== 'ready' || !item.decision) return
+  const disk = item.decision.disk
+  if (disk.status !== 'ready' || disk.documentId !== item.draft.documentId) {
+    recoveryTabs.open(item, activeDraftRecovery.value?.view ?? 'content')
+    return
+  }
+  recoveryTabs.deactivate()
+  historyComparisons.deactivate()
+  historySnapshots.viewCurrent()
+  await openEditorPost(disk.documentPath)
+  await nextTick()
+  editorTabsRef.value?.focusTab(disk.documentPath)
+}
+
 async function openHistoryComparison(snapshot: typeof activeHistorySnapshot.value): Promise<void> {
   if (!snapshot || snapshot.status !== 'ready') return
   recoveryTabs.deactivate()
@@ -1098,7 +1132,7 @@ watch(isReadMode, async (reading) => {
           ref="recoveryPaneRef"
           :recovery="activeDraftRecovery"
           @update-view="updateRecoveryView"
-          @view-current="viewCurrentDocument"
+          @view-current="viewCurrentRecoveryDocument"
           @discard="discardRecoveryDraft"
           @close="closeWorkspaceTab"
         />

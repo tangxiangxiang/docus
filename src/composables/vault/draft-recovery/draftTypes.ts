@@ -49,3 +49,15 @@ function isNonNegativeFiniteNumber(value: unknown): value is number {
 export function cloneDraft(draft: UnsavedDraft): UnsavedDraft {
   return { ...draft }
 }
+
+export function draftsEqual(left: UnsavedDraft, right: UnsavedDraft): boolean {
+  return left.version === right.version
+    && left.vaultId === right.vaultId
+    && left.documentId === right.documentId
+    && left.documentPath === right.documentPath
+    && left.content === right.content
+    && left.baseContentHash === right.baseContentHash
+    && left.baseModifiedAt === right.baseModifiedAt
+    && left.createdAt === right.createdAt
+    && left.updatedAt === right.updatedAt
+}
