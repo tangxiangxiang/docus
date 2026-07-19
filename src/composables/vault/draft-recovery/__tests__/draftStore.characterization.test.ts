@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   createDraftStore,
   createMemoryDraftBackend,
-  type DraftStorageBackend,
+  type MemoryDraftStorageBackend,
 } from '../draftStore'
 import type { UnsavedDraft } from '../draftTypes'
 
@@ -26,7 +26,7 @@ function draft(
 }
 
 describe('draftStore characterization', () => {
-  let backend: DraftStorageBackend
+  let backend: MemoryDraftStorageBackend
   let store: ReturnType<typeof createDraftStore>
 
   beforeEach(() => {
@@ -196,5 +196,17 @@ describe('draftStore characterization', () => {
     backend.failNext('clear')
     await expect(store.clearVaultDrafts('vault-a')).resolves.toBe(false)
   })
-})
 
+  it('fails safely when IndexedDB is unavailable', async () => {
+    const unavailable = createDraftStore({ indexedDB: undefined })
+
+    await expect(unavailable.saveDraft(draft('a', 20))).resolves.toBe(false)
+    await expect(unavailable.getDraft('vault-a', 'a')).resolves.toBeNull()
+    await expect(unavailable.listDrafts('vault-a')).resolves.toEqual([])
+    await expect(unavailable.deleteDraft('vault-a', 'a')).resolves.toBe(false)
+    await expect(
+      unavailable.moveDraft('vault-a', 'a', 'x', 'notes/x'),
+    ).resolves.toBe(false)
+    await expect(unavailable.clearVaultDrafts('vault-a')).resolves.toBe(false)
+  })
+})
