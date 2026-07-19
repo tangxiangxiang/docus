@@ -188,6 +188,45 @@ describe('useWorkspaceTabReorder', () => {
     expect(harness.requests).toHaveLength(1)
   })
 
+  it('snapshots the announcement title before emitting reorder', async () => {
+    let title = 'Original title'
+    let api!: ReturnType<typeof useWorkspaceTabReorder>
+    const Comp = defineComponent({
+      setup() {
+        const tabIds = ref<readonly string[]>(['a', 'b'])
+        api = useWorkspaceTabReorder({
+          tabIds,
+          container: ref<HTMLElement | null>(null),
+          displayTitle: () => title,
+          announce: (value) => value,
+          onReorder: () => {
+            title = 'Changed title'
+          },
+        })
+        return () => h('div')
+      },
+    })
+    const wrapper = mount(Comp)
+    wrappers.add(wrapper)
+
+    api.moveByKeyboard('a', 1)
+    await nextTick()
+
+    expect(api.liveAnnouncement.value).toBe('Original title')
+  })
+
+  it('does not add listeners or emit reorder after unmount', () => {
+    const addListener = vi.spyOn(window, 'addEventListener')
+    const { harness, unmount } = setup()
+    unmount()
+
+    harness.api.blockCloseButtonDrag('a', new Event('pointerdown') as PointerEvent)
+    harness.api.moveByKeyboard('a', 1)
+
+    expect(addListener).not.toHaveBeenCalled()
+    expect(harness.requests).toEqual([])
+  })
+
   it('keeps a single auto-scroll RAF and clears it on cancel', () => {
     const callbacks = new Map<number, FrameRequestCallback>()
     let nextFrame = 1

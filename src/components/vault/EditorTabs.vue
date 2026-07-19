@@ -14,13 +14,10 @@ import {
 } from '../../composables/vault/workspace-tabs/useWorkspaceTabMenu'
 import {
   useWorkspaceTabReorder,
+  type WorkspaceTabReorderRequest,
 } from '../../composables/vault/workspace-tabs/useWorkspaceTabReorder'
 
-export interface WorkspaceTabReorderRequest {
-  orderedIds: string[]
-  movedId: string
-  input: 'pointer' | 'keyboard'
-}
+export type { WorkspaceTabReorderRequest }
 
 const props = defineProps<{ tabs: WorkspaceTab[]; activePath: string | null }>()
 const emit = defineEmits<{

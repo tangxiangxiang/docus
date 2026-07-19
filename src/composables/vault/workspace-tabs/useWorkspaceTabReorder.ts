@@ -58,6 +58,7 @@ export function useWorkspaceTabReorder({
   }
 
   function blockCloseButtonDrag(tabId: string, event: PointerEvent): void {
+    if (disposed) return
     event.stopPropagation()
     clearBlockedDrag()
     blockedDragTabId = tabId
@@ -216,10 +217,12 @@ export function useWorkspaceTabReorder({
   }
 
   function moveByKeyboard(tabId: string, direction: -1 | 1): void {
+    if (disposed) return
     const index = tabIds.value.indexOf(tabId)
     const targetIndex = index + direction
     const targetId = tabIds.value[targetIndex]
     if (index < 0 || !targetId) return
+    const announcementTitle = displayTitle(tabId)
     const orderedIds = moveWorkspaceTab(
       tabIds.value,
       tabId,
@@ -232,7 +235,7 @@ export function useWorkspaceTabReorder({
     void nextTick(() => {
       if (disposed || generation !== announcementGeneration) return
       liveAnnouncement.value = announce(
-        displayTitle(tabId),
+        announcementTitle,
         targetIndex + 1,
         tabIds.value.length,
       )
