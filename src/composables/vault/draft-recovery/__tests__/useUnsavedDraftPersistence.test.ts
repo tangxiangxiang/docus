@@ -1,0 +1,206 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  createDraftStore,
+  createMemoryDraftBackend,
+  type DraftStore,
+} from '../draftStore'
+import {
+  createUnsavedDraftPersistence,
+  type DraftBufferSnapshot,
+} from '../useUnsavedDraftPersistence'
+
+function snapshot(
+  documentId: string,
+  content: string,
+  revision = 1,
+): DraftBufferSnapshot {
+  return {
+    vaultId: 'vault-1',
+    documentId,
+    documentPath: `notes/${documentId}`,
+    content,
+    authoritativeContent: 'disk',
+    baseContentHash: null,
+    baseModifiedAt: 10,
+    revision,
+  }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes
+    reject = no
+  })
+  return { promise, resolve, reject }
+}
+
+describe('createUnsavedDraftPersistence', () => {
+  let store: DraftStore
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    store = createDraftStore({ backend: createMemoryDraftBackend() })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('debounces each document independently and snapshots input synchronously', async () => {
+    const persistence = createUnsavedDraftPersistence({ store, now: () => 100 })
+    const a = snapshot('a', 'a1')
+    persistence.schedule(a)
+    a.content = 'mutated after schedule'
+    vi.advanceTimersByTime(400)
+    persistence.schedule(snapshot('a', 'a2', 2))
+    persistence.schedule(snapshot('b', 'b1'))
+
+    await vi.advanceTimersByTimeAsync(400)
+    expect(await store.getDraft('vault-1', 'a')).toBeNull()
+    expect(await store.getDraft('vault-1', 'b')).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(400)
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('a2')
+    expect((await store.getDraft('vault-1', 'b'))?.content).toBe('b1')
+  })
+
+  it('does not let an old pending write recreate a discarded draft', async () => {
+    const write = deferred<boolean>()
+    const saveDraft = vi.fn()
+      .mockImplementationOnce(() => write.promise)
+      .mockResolvedValue(true)
+    const persistence = createUnsavedDraftPersistence({
+      store: { ...store, saveDraft },
+    })
+
+    const owner = persistence.schedule(snapshot('a', 'old'))!
+    await vi.advanceTimersByTimeAsync(800)
+    const discarded = persistence.discard(owner)
+    write.resolve(true)
+    await discarded
+
+    expect(await store.getDraft('vault-1', 'a')).toBeNull()
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+  })
+
+  it('isolates a reopened document from work owned by the closed tab', async () => {
+    const persistence = createUnsavedDraftPersistence({ store })
+    persistence.schedule(snapshot('a', 'old'))
+    persistence.invalidate('vault-1', 'a')
+    persistence.schedule(snapshot('a', 'new', 1))
+
+    await vi.advanceTimersByTimeAsync(800)
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('new')
+  })
+
+  it('deletes only a clean acknowledged revision owned by the current generation', async () => {
+    const persistence = createUnsavedDraftPersistence({ store })
+    const first = persistence.schedule(snapshot('a', 'v1', 1))!
+    await persistence.flush('vault-1', 'a')
+
+    const second = persistence.schedule(snapshot('a', 'v2', 2))!
+    await persistence.markClean(first, 1)
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('v1')
+
+    await persistence.flush('vault-1', 'a')
+    await persistence.markClean(second, 1)
+    expect(await store.getDraft('vault-1', 'a')).not.toBeNull()
+
+    await persistence.markClean(second, 2)
+    expect(await store.getDraft('vault-1', 'a')).toBeNull()
+  })
+
+  it('cancels and deletes when content returns to the authoritative baseline', async () => {
+    const persistence = createUnsavedDraftPersistence({ store })
+    persistence.schedule(snapshot('a', 'dirty'))
+    await persistence.flush('vault-1', 'a')
+
+    await persistence.returnedToBaseline('vault-1', 'a')
+    await vi.advanceTimersByTimeAsync(800)
+    expect(await store.getDraft('vault-1', 'a')).toBeNull()
+  })
+
+  it('treats deleted and missing discard outcomes as success without throwing', async () => {
+    const persistence = createUnsavedDraftPersistence({ store })
+    const owner = persistence.schedule(snapshot('a', 'dirty'))!
+    await persistence.flush('vault-1', 'a')
+    await expect(persistence.discard(owner)).resolves.toBe(true)
+
+    const nextOwner = persistence.schedule(snapshot('a', 'again', 2))!
+    await expect(persistence.discard(nextOwner)).resolves.toBe(true)
+  })
+
+  it('flushes only the latest dirty snapshot once during idempotent dispose', async () => {
+    const saveDraft = vi.spyOn(store, 'saveDraft')
+    const persistence = createUnsavedDraftPersistence({ store })
+    persistence.schedule(snapshot('a', 'a1'))
+    persistence.schedule(snapshot('a', 'a2', 2))
+    persistence.schedule(snapshot('b', 'b1'))
+    await persistence.returnedToBaseline('vault-1', 'b')
+
+    await persistence.dispose()
+    await persistence.dispose()
+
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('a2')
+    expect(await store.getDraft('vault-1', 'b')).toBeNull()
+  })
+
+  it('contains save, delete, and rejected store failures and retries later input', async () => {
+    const saveDraft = vi.fn()
+      .mockRejectedValueOnce(new Error('write failed'))
+      .mockResolvedValueOnce(true)
+    const deleteDraft = vi.fn().mockRejectedValue(new Error('delete failed'))
+    const persistence = createUnsavedDraftPersistence({
+      store: { ...store, saveDraft, deleteDraft },
+    })
+
+    persistence.schedule(snapshot('a', 'v1'))
+    await vi.advanceTimersByTimeAsync(800)
+    const owner = persistence.schedule(snapshot('a', 'v2', 2))!
+    await vi.advanceTimersByTimeAsync(800)
+    await expect(persistence.discard(owner)).resolves.toBe(false)
+
+    expect(saveDraft).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not schedule snapshots with unavailable identity or unloaded documents', async () => {
+    const saveDraft = vi.spyOn(store, 'saveDraft')
+    const persistence = createUnsavedDraftPersistence({ store })
+
+    expect(persistence.schedule({ ...snapshot('a', 'x'), vaultId: '' })).toBeNull()
+    expect(persistence.schedule({ ...snapshot('a', 'x'), documentId: '' })).toBeNull()
+    expect(persistence.schedule({ ...snapshot('a', 'x'), loaded: false })).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(800)
+    expect(saveDraft).not.toHaveBeenCalled()
+  })
+
+  it('uses monotonically increasing safe timestamps', async () => {
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      now: () => Number.MAX_SAFE_INTEGER,
+    })
+    persistence.schedule(snapshot('a', 'v1'))
+    await vi.advanceTimersByTimeAsync(800)
+    persistence.schedule(snapshot('a', 'v2', 2))
+    await vi.advanceTimersByTimeAsync(800)
+
+    const draft = await store.getDraft('vault-1', 'a')
+    expect(draft?.createdAt).toBe(Number.MAX_SAFE_INTEGER)
+    expect(draft?.updatedAt).toBe(Number.MAX_SAFE_INTEGER)
+  })
+
+  it('registers one pagehide listener and removes it on dispose', async () => {
+    const add = vi.spyOn(window, 'addEventListener')
+    const remove = vi.spyOn(window, 'removeEventListener')
+    const persistence = createUnsavedDraftPersistence({ store })
+
+    expect(add.mock.calls.filter(([type]) => type === 'pagehide')).toHaveLength(1)
+    await persistence.dispose()
+    expect(remove.mock.calls.filter(([type]) => type === 'pagehide')).toHaveLength(1)
+  })
+})
