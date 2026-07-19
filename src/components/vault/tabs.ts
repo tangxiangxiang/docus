@@ -34,6 +34,6 @@ export interface WorkspaceTab {
   label: string
   title: string
   save: DocumentSavePresentation
-  kind: 'document' | 'history' | 'diff'
+  kind: 'document' | 'history' | 'diff' | 'recovery'
   documentPath?: string | null
 }

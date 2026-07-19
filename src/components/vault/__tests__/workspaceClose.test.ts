@@ -42,6 +42,62 @@ describe('Workspace close coordination', () => {
     expect(result.fallbackId).toBeNull()
   })
 
+  it('closes Recovery views explicitly without routing them to editor close', async () => {
+    const recovery: WorkspaceTab = {
+      id: 'recovery:vault:document-a',
+      label: 'Recovered A',
+      title: 'Recovered A',
+      save: deriveDocumentSavePresentation(null),
+      kind: 'recovery',
+      documentPath: 'a.md',
+    }
+    const closeEditorTab = vi.fn()
+    const closeRecovery = vi.fn()
+
+    const result = await closeWorkspaceTabState(recovery.id, {
+      workspaceTabs: [tabs[0]!, recovery],
+      activeId: recovery.id,
+      comparisons: [],
+      snapshotTabIds: [],
+      closeEditorTab,
+      closeComparison: vi.fn(),
+      closeSnapshot: vi.fn(),
+      closeRecovery,
+      refreshDocumentComparison: vi.fn(),
+    })
+
+    expect(result.closed).toBe(true)
+    expect(closeRecovery).toHaveBeenCalledWith(recovery.id)
+    expect(closeEditorTab).not.toHaveBeenCalled()
+  })
+
+  it('batch closes Recovery views without dirty document confirmation', async () => {
+    const recovery: WorkspaceTab = {
+      id: 'recovery:vault:document-a',
+      label: 'Recovered A',
+      title: 'Recovered A',
+      save: deriveDocumentSavePresentation(null),
+      kind: 'recovery',
+    }
+    const confirmEditorTabs = vi.fn().mockResolvedValue(true)
+    const closeRecoveries = vi.fn()
+
+    await closeManyWorkspaceTabState([recovery.id], {
+      workspaceTabs: [recovery],
+      activeId: recovery.id,
+      comparisons: () => [],
+      confirmEditorTabs,
+      closeEditorTabsConfirmed: vi.fn(),
+      closeSnapshots: vi.fn(),
+      closeComparisons: vi.fn(),
+      closeRecoveries,
+      refreshDocumentComparison: vi.fn(),
+    })
+
+    expect(confirmEditorTabs).toHaveBeenCalledWith([])
+    expect(closeRecoveries).toHaveBeenCalledWith([recovery.id])
+  })
+
   it('refreshes a retained active Diff only after its dirty Current tab closes', async () => {
     const calls: string[] = []
     const result = await closeWorkspaceTabState('a.md', {

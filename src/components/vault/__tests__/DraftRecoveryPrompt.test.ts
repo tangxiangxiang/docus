@@ -1,0 +1,96 @@
+// @vitest-environment jsdom
+import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it } from 'vitest'
+import type { DraftRecoveryDecisionKind } from '../../../composables/vault/draft-recovery/draftRecoveryDecision'
+import {
+  UNSAVED_DRAFT_VERSION,
+  type UnsavedDraft,
+} from '../../../composables/vault/draft-recovery/draftTypes'
+import type { DraftRecoveryItem } from '../../../composables/vault/draft-recovery/useUnsavedDraftRecovery'
+import DraftRecoveryPrompt from '../DraftRecoveryPrompt.vue'
+
+enableAutoUnmount(afterEach)
+
+function item(kind: DraftRecoveryDecisionKind): DraftRecoveryItem {
+  const draft: UnsavedDraft = {
+    version: UNSAVED_DRAFT_VERSION,
+    vaultId: 'vault',
+    documentId: 'document-a',
+    documentPath: 'notes/a',
+    content: 'secret body',
+    baseContentHash: null,
+    baseModifiedAt: 1,
+    createdAt: 1,
+    updatedAt: 2,
+  }
+  return {
+    recoveryId: 'recovery-a',
+    draft,
+    status: 'ready',
+    error: null,
+    decision: {
+      kind,
+      draft,
+      disk: kind === 'missing-source'
+        ? { status: 'missing', documentPath: 'notes/a' }
+        : {
+            status: 'ready',
+            documentPath: 'notes/a',
+            documentId: kind === 'identity-mismatch' ? 'replacement' : 'document-a',
+            raw: 'disk',
+            mtime: 1,
+          },
+    },
+  }
+}
+
+function labels(kind: DraftRecoveryDecisionKind): string[] {
+  const wrapper = mount(DraftRecoveryPrompt, {
+    props: { item: item(kind) },
+    attachTo: document.body,
+  })
+  const values = [...document.querySelectorAll('.draft-recovery-dialog button')]
+    .map((button) => button.textContent?.trim() ?? '')
+  wrapper.unmount()
+  return values
+}
+
+describe('DraftRecoveryPrompt', () => {
+  it('offers direct restore only for a baseline match', () => {
+    expect(labels('baseline-match')).toEqual(['Restore Draft', 'Use Disk Version', 'Later'])
+  })
+
+  it('offers safe read-only views for divergent and unknown drafts', () => {
+    expect(labels('divergent')).toEqual([
+      'View Diff',
+      'Open Recovered Content',
+      'Use Disk Version',
+      'Later',
+    ])
+    expect(labels('unknown')).toEqual([
+      'View Diff',
+      'Open Recovered Content',
+      'Use Disk Version',
+      'Later',
+    ])
+  })
+
+  it('never offers restore-to-document for missing or mismatched identities', () => {
+    expect(labels('missing-source')).toEqual(['Open Recovered Content', 'Discard Draft', 'Later'])
+    expect(labels('identity-mismatch')).toEqual(['Open Recovered Content', 'Discard Draft', 'Later'])
+  })
+
+  it('treats Escape as Later without exposing draft content', async () => {
+    const wrapper = mount(DraftRecoveryPrompt, {
+      props: { item: item('baseline-match') },
+      attachTo: document.body,
+    })
+    document.querySelector('[role="dialog"]')?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    )
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('later')).toEqual([['recovery-a']])
+    expect(document.querySelector('[role="dialog"]')?.textContent)
+      .not.toContain('secret body')
+  })
+})

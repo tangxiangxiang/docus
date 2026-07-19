@@ -17,6 +17,7 @@ export interface WorkspaceCloseDependencies {
   closeEditorTab: (id: string) => Promise<boolean>
   closeComparison: (id: string) => void
   closeSnapshot: (id: string) => void
+  closeRecovery?: (id: string) => void
   refreshDocumentComparison: (path: string) => Promise<boolean>
 }
 
@@ -28,6 +29,7 @@ export interface WorkspaceCloseManyDependencies {
   closeEditorTabsConfirmed: (ids: string[]) => void
   closeComparisons: (ids: string[]) => void
   closeSnapshots: (ids: string[]) => void
+  closeRecoveries?: (ids: string[]) => void
   refreshDocumentComparison: (path: string) => Promise<boolean>
 }
 
@@ -46,16 +48,26 @@ export async function closeWorkspaceTabState(
     ? fallbackAfterClosingWorkspaceTab(deps.workspaceTabs, id)
     : null
 
-  if (deps.comparisons.some((comparison) => comparison.tabId === id)) {
-    deps.closeComparison(id)
-  } else if (deps.snapshotTabIds.includes(id)) {
-    deps.closeSnapshot(id)
-  } else {
-    const closed = await deps.closeEditorTab(id)
-    if (!closed) return { closed: false, activeWillClose, fallbackId }
-    // This must run after the editor disappears: the comparison then reads
-    // saved disk content instead of the discarded in-memory document.
-    await deps.refreshDocumentComparison(id)
+  const tab = deps.workspaceTabs.find((candidate) => candidate.id === id)
+  if (!tab) return { closed: false, activeWillClose, fallbackId }
+  switch (tab.kind) {
+    case 'diff':
+      deps.closeComparison(id)
+      break
+    case 'history':
+      deps.closeSnapshot(id)
+      break
+    case 'recovery':
+      deps.closeRecovery?.(id)
+      break
+    case 'document': {
+      const closed = await deps.closeEditorTab(id)
+      if (!closed) return { closed: false, activeWillClose, fallbackId }
+      // This must run after the editor disappears: the comparison then reads
+      // saved disk content instead of the discarded in-memory document.
+      await deps.refreshDocumentComparison(id)
+      break
+    }
   }
 
   return { closed: true, activeWillClose, fallbackId }
@@ -81,6 +93,7 @@ export async function closeManyWorkspaceTabState(
   const historyIds = closingTabs.filter((tab) => tab.kind === 'history').map((tab) => tab.id)
   const comparisonIds = closingTabs.filter((tab) => tab.kind === 'diff').map((tab) => tab.id)
   const documentIds = closingTabs.filter((tab) => tab.kind === 'document').map((tab) => tab.id)
+  const recoveryIds = closingTabs.filter((tab) => tab.kind === 'recovery').map((tab) => tab.id)
 
   // Confirm all dirty documents before mutating any kind of Workspace tab.
   if (!(await deps.confirmEditorTabs(documentIds))) {
@@ -90,6 +103,7 @@ export async function closeManyWorkspaceTabState(
   deps.closeEditorTabsConfirmed(documentIds)
   deps.closeSnapshots(historyIds)
   deps.closeComparisons(comparisonIds)
+  deps.closeRecoveries?.(recoveryIds)
 
   const remainingComparisonPaths = documentIds.filter((path) =>
     deps.comparisons().some((comparison) => comparison.documentPath === path),

@@ -211,6 +211,18 @@ export function deriveTabUiPresentation(
       ariaLabel: buildAriaLabel(displayTitle, filenameLabel, statusText, t),
     }
   }
+  if (tab.kind === 'recovery') {
+    const displayTitle = (tab.label ?? tab.title ?? '').trim() || tab.title || ''
+    const localOnly = t('draft_recovery.local_only')
+    return {
+      displayTitle,
+      filenameLabel: null,
+      fullPath: null,
+      statusText: localOnly,
+      statusKind: 'none',
+      ariaLabel: [displayTitle, localOnly].join(t('workspace_tab.aria_separator')),
+    }
+  }
   // History / diff tabs keep their existing label semantics — the
   // WorkspaceTab shape provides a separate `label` (the user-facing
   // text shown in the tab strip, e.g. "Redis Notes (History)") and a

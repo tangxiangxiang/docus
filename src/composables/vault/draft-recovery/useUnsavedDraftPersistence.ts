@@ -33,6 +33,7 @@ export interface UnsavedDraftPersistence {
   markClean(owner: DraftOwner, acknowledgedRevision: number): Promise<void>
   returnedToBaseline(vaultId: string, documentId: string): Promise<void>
   discard(owner: DraftOwner): Promise<boolean>
+  discardIdentity(vaultId: string, documentId: string): Promise<boolean>
   invalidate(vaultId: string, documentId: string): void
   dispose(): Promise<void>
 }
@@ -271,6 +272,12 @@ export function createUnsavedDraftPersistence(
     return deleteOwned(owner)
   }
 
+  async function discardIdentity(vaultId: string, documentId: string): Promise<boolean> {
+    if (disposed || !validIdentity(vaultId, documentId)) return false
+    const entry = entryFor(vaultId, documentId)
+    return deleteOwned({ vaultId, documentId, generation: entry.generation })
+  }
+
   function onPageHide(): void {
     void flushAllInternal().catch(() => {})
   }
@@ -295,6 +302,7 @@ export function createUnsavedDraftPersistence(
     markClean,
     returnedToBaseline,
     discard,
+    discardIdentity,
     invalidate,
     dispose,
   }

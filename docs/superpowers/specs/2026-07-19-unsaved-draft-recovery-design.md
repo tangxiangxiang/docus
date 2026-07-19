@@ -319,6 +319,34 @@ coordinator, and save-state wiring suites.
 - baseline comparison;
 - safe recovery and divergent/orphan flows.
 
+Implemented in:
+
+- `draftRecoveryDecision.ts`: pure stable-identity, SHA-256, and fractional
+  `mtimeMs` decision matrix with fail-closed `unknown`, `missing-source`, and
+  `identity-mismatch` outcomes;
+- `useUnsavedDraftRecovery.ts`: vault-scoped discovery with four-request bounded
+  concurrency, discover/item generations, retry, session-only dismissal, and
+  disposal guards;
+- `useUnsavedDraftPersistence.ts`: identity-based explicit discard remains on
+  the same per-document write/delete operation chain as editor-owned drafts;
+- `useDocumentSave.ts`: `applyRecoveredDraft()` revalidates stable identity,
+  clean state, external state, disk raw, and disk mtime before creating a dirty
+  editor revision. It schedules browser draft persistence but intentionally
+  bypasses `onEditorChange()` and server autosave;
+- `useDraftRecoveryTabs.ts`, `DraftRecoveryPrompt.vue`, and
+  `DraftRecoveryPane.vue`: session-only read-only Recovery workspace tabs,
+  decision-specific actions, local content view, and disk-versus-draft diff;
+- `WorkspaceTab`, `workspaceClose.ts`, and `VaultView.vue`: Recovery is an
+  explicit fourth workspace kind participating in visual order, keyboard
+  navigation, fallback, focus, single close, and batch close without entering
+  Document dirty-confirmation or session persistence.
+
+This stage never restores automatically, never writes recovered content to disk,
+and deletes a stored draft only after an explicit Use Disk/Discard action.
+Closing a Recovery tab or choosing Later keeps IndexedDB unchanged. Rename,
+move, delete migration, recovery-center management, retention, and capacity
+cleanup remain deferred to Edit-09.5/09.6.
+
 ### Edit-09.5 — File transactions
 
 - rename/move/delete migration and rollback behavior.

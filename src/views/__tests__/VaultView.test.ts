@@ -67,7 +67,7 @@ describe('VaultView editor tab wiring', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const shortcutHandler = source.match(/function onVaultKeydown[\s\S]*?\n}/)?.[0]
 
-    expect(source).toContain('v-show="!activeHistorySnapshot && !activeHistoryComparison"')
+    expect(source).toContain('v-show="!activeHistorySnapshot && !activeHistoryComparison && !activeDraftRecovery"')
     expect(source).toContain('<HistorySnapshotPane')
     expect(source).toContain('<HistoryComparisonPane')
     expect(source).toContain(':snapshot="activeHistorySnapshot"')
@@ -93,7 +93,7 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('const request = historyComparisons.openComparison(snapshot)')
     expect(source).toContain('comparisonPaneRef.value?.focusViewer()')
     expect(source).toContain('historySnapshots.openCachedRevision({')
-    expect(source).toContain(':history-read-only="Boolean(activeHistorySnapshot || activeHistoryComparison)"')
+    expect(source).toContain(':history-read-only="Boolean(activeHistorySnapshot || activeHistoryComparison || activeDraftRecovery)"')
     expect(source).toContain('...historyComparisons.comparisons.value.map')
     expect(source).not.toContain('restoreComparison')
   })

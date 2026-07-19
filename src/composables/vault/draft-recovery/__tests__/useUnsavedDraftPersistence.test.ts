@@ -142,6 +142,26 @@ describe('createUnsavedDraftPersistence', () => {
     expect((await store.getDraft('vault-1', 'a'))?.content).toBe('reopened')
   })
 
+  it('safely discards by identity and does not delete a newer generation', async () => {
+    const deletion = deferred<{ status: 'deleted' }>()
+    const deleteDraft = vi.fn().mockReturnValue(deletion.promise)
+    const persistence = createUnsavedDraftPersistence({
+      store: { ...store, deleteDraft },
+    })
+
+    persistence.schedule(snapshot('a', 'old', 1))
+    await persistence.flush('vault-1', 'a')
+    const discarded = persistence.discardIdentity('vault-1', 'a')
+    persistence.schedule(snapshot('a', 'new', 2))
+    await vi.advanceTimersByTimeAsync(800)
+
+    deletion.resolve({ status: 'deleted' })
+    await discarded
+    await persistence.flush('vault-1', 'a')
+
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('new')
+  })
+
   it('isolates a reopened document from work owned by the closed tab', async () => {
     const persistence = createUnsavedDraftPersistence({ store })
     persistence.schedule(snapshot('a', 'old'))

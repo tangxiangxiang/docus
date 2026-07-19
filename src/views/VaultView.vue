@@ -8,6 +8,10 @@ import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useI18n } from '../composables/useI18n'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
+import { createDraftStore } from '../composables/vault/draft-recovery/draftStore'
+import { createUnsavedDraftPersistence } from '../composables/vault/draft-recovery/useUnsavedDraftPersistence'
+import { createUnsavedDraftRecovery } from '../composables/vault/draft-recovery/useUnsavedDraftRecovery'
+import { useDraftRecoveryTabs } from '../composables/vault/draft-recovery/useDraftRecoveryTabs'
 import { deriveDocumentSavePresentation } from '../composables/vault/editor-tabs/savePresentation'
 import { useHistory } from '../composables/vault/useHistory'
 import { useHistoryCommit } from '../composables/vault/useHistoryCommit'
@@ -47,6 +51,8 @@ import DocumentMetadataModal from '../components/vault/DocumentMetadataModal.vue
 import HistoryPanel from '../components/vault/HistoryPanel.vue'
 import HistorySnapshotPane from '../components/vault/HistorySnapshotPane.vue'
 import HistoryComparisonPane from '../components/vault/HistoryComparisonPane.vue'
+import DraftRecoveryPrompt from '../components/vault/DraftRecoveryPrompt.vue'
+import DraftRecoveryPane from '../components/vault/DraftRecoveryPane.vue'
 import EditorTabs, {
   type WorkspaceTabReorderRequest,
 } from '../components/vault/EditorTabs.vue'
@@ -151,19 +157,22 @@ const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
 const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const snapshotPaneRef = ref<InstanceType<typeof HistorySnapshotPane> | null>(null)
 const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>(null)
+const recoveryPaneRef = ref<InstanceType<typeof DraftRecoveryPane> | null>(null)
 const workspaceTabOrder = ref<string[]>([])
 function openSearch() { paletteRef.value?.show() }
 
 /* ---------- Tabs / save / route sync ---------- */
 const fileChanges = createVaultFileChanges()
 const historyMutationLock = createPathMutationLock()
+const draftStore = createDraftStore()
+const draftPersistence = createUnsavedDraftPersistence({ store: draftStore })
 let lifecycleCreateFile: DocumentLifecycle['createFile'] | null = null
 const {
   tree, vaultId, posts, tabs, activePath, activeTab, activeSize,
   refresh, openPost: openEditorPost, closeTab: closeEditorTab,
   confirmCloseMany: confirmCloseEditorTabs,
   closeManyConfirmed: closeManyEditorTabsConfirmed,
-  selectTab: selectEditorTab, onEditorChange, doSaveNow, resolveExternal,
+  selectTab: selectEditorTab, onEditorChange, applyRecoveredDraft, doSaveNow, resolveExternal,
   prepareHistoryRestore, onKeydown: onEditorKeydown, onCommandPaletteNew,
   prepareHistoryCommit,
   prepareDocumentMutation, renameOpenDocuments, removeOpenDocuments,
@@ -180,6 +189,8 @@ const {
     if (!lifecycleCreateFile) throw new Error('document lifecycle is not ready')
     return lifecycleCreateFile(input)
   },
+  draftStore,
+  draftPersistence,
 })
 
 function restoreRenamedTabFocus(
@@ -252,6 +263,93 @@ const historyComparisons = useHistoryComparisons({
   },
 })
 const activeHistoryComparison = historyComparisons.activeComparison
+const draftRecovery = createUnsavedDraftRecovery({ store: draftStore })
+const recoveryTabs = useDraftRecoveryTabs()
+const activeDraftRecovery = recoveryTabs.activeTab
+const recoveryBusy = ref(false)
+
+function recoveryItem(recoveryId: string) {
+  return draftRecovery.items.value.find((item) => item.recoveryId === recoveryId) ?? null
+}
+
+function openRecoveryView(recoveryId: string, view: 'content' | 'diff'): void {
+  const item = recoveryItem(recoveryId)
+  if (!item || item.status !== 'ready') return
+  historyComparisons.deactivate()
+  historySnapshots.viewCurrent()
+  recoveryTabs.open(item, view)
+  draftRecovery.dismissForSession(recoveryId)
+}
+
+async function discardRecoveryDraft(recoveryId: string): Promise<void> {
+  const item = recoveryItem(recoveryId)
+  if (!item || recoveryBusy.value) return
+  recoveryBusy.value = true
+  try {
+    const deleted = await draftPersistence.discardIdentity(
+      item.draft.vaultId,
+      item.draft.documentId,
+    )
+    if (!deleted) {
+      toast.error(t('draft_recovery.delete_failed'))
+      return
+    }
+    const openTabIds = recoveryTabs.tabs.value
+      .filter((tab) => tab.recoveryId === recoveryId)
+      .map((tab) => tab.tabId)
+    draftRecovery.dismissForSession(recoveryId)
+    for (const tabId of openTabIds) await closeWorkspaceTab(tabId)
+  } finally {
+    recoveryBusy.value = false
+  }
+}
+
+async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
+  if (recoveryBusy.value) return
+  recoveryBusy.value = true
+  try {
+    await draftRecovery.retry(recoveryId)
+    const item = recoveryItem(recoveryId)
+    const decision = item?.decision
+    if (!item || item.status !== 'ready' || !decision) return
+    if (decision.kind !== 'baseline-match' || decision.disk.status !== 'ready') {
+      openRecoveryView(
+        recoveryId,
+        decision.disk.status === 'ready' ? 'diff' : 'content',
+      )
+      return
+    }
+
+    recoveryTabs.deactivate()
+    historyComparisons.deactivate()
+    historySnapshots.viewCurrent()
+    await openEditorPost(item.draft.documentPath)
+    const result = applyRecoveredDraft({
+      documentId: item.draft.documentId,
+      expectedDiskRaw: decision.disk.raw,
+      expectedDiskMtime: decision.disk.mtime,
+      draftContent: item.draft.content,
+    })
+    if (result.status === 'applied') {
+      draftRecovery.dismissForSession(recoveryId)
+      await nextTick()
+      editorTabsRef.value?.focusTab(result.path)
+      return
+    }
+    openRecoveryView(recoveryId, 'content')
+  } finally {
+    recoveryBusy.value = false
+  }
+}
+
+function updateRecoveryView(view: 'content' | 'diff'): void {
+  if (activeDraftRecovery.value) activeDraftRecovery.value.view = view
+}
+
+watch(vaultId, (id) => {
+  if (id) void draftRecovery.discover(id)
+}, { immediate: true })
+onBeforeUnmount(() => { draftRecovery.dispose() })
 const history = useHistory(vaultContext)
 const historyCommit = useHistoryCommit({
   history,
@@ -401,6 +499,14 @@ const naturalWorkspaceTabs = computed<WorkspaceTab[]>(() => [
     kind: 'diff' as const,
     documentPath: comparison.documentPath,
   })),
+  ...recoveryTabs.tabs.value.map((recovery) => ({
+    id: recovery.tabId,
+    label: t('draft_recovery.recovered_title', { title: recovery.documentTitle }),
+    title: t('draft_recovery.recovered_title', { title: recovery.documentTitle }),
+    save: deriveDocumentSavePresentation(null),
+    kind: 'recovery' as const,
+    documentPath: recovery.documentPath,
+  })),
 ])
 const naturalWorkspaceTabIds = computed(() => naturalWorkspaceTabs.value.map((tab) => tab.id))
 watch(
@@ -418,12 +524,15 @@ const workspaceTabs = computed<WorkspaceTab[]>(() => {
     .filter((tab): tab is WorkspaceTab => Boolean(tab))
 })
 const activeSavePresentation = computed(() => (
-  activeHistorySnapshot.value || activeHistoryComparison.value
+  activeHistorySnapshot.value || activeHistoryComparison.value || activeDraftRecovery.value
     ? deriveDocumentSavePresentation(null)
     : deriveDocumentSavePresentation(activeTab.value)
 ))
 const activeWorkspaceTabId = computed(() => (
-  activeHistoryComparison.value?.tabId ?? activeHistorySnapshot.value?.tabId ?? activePath.value
+  activeDraftRecovery.value?.tabId
+  ?? activeHistoryComparison.value?.tabId
+  ?? activeHistorySnapshot.value?.tabId
+  ?? activePath.value
 ))
 
 async function reorderWorkspaceTabs(request: WorkspaceTabReorderRequest): Promise<void> {
@@ -458,13 +567,23 @@ async function reorderWorkspaceTabs(request: WorkspaceTabReorderRequest): Promis
 }
 
 async function openPost(path: string, options: { refresh?: boolean } = {}): Promise<void> {
+  recoveryTabs.deactivate()
   historyComparisons.deactivate()
   historySnapshots.viewCurrent()
   await openEditorPost(path, options)
 }
 
 async function selectWorkspaceTab(id: string, focusViewer = true): Promise<void> {
-  if (historyComparisons.comparisons.value.some((comparison) => comparison.tabId === id)) {
+  if (recoveryTabs.tabs.value.some((recovery) => recovery.tabId === id)) {
+    historyComparisons.deactivate()
+    historySnapshots.viewCurrent()
+    recoveryTabs.select(id)
+    if (focusViewer) {
+      await nextTick()
+      recoveryPaneRef.value?.focusViewer()
+    }
+  } else if (historyComparisons.comparisons.value.some((comparison) => comparison.tabId === id)) {
+    recoveryTabs.deactivate()
     historySnapshots.viewCurrent()
     historyComparisons.selectComparison(id)
     if (focusViewer) {
@@ -472,6 +591,7 @@ async function selectWorkspaceTab(id: string, focusViewer = true): Promise<void>
       comparisonPaneRef.value?.focusViewer()
     }
   } else if (historySnapshots.snapshots.value.some((snapshot) => snapshot.tabId === id)) {
+    recoveryTabs.deactivate()
     historyComparisons.deactivate()
     historySnapshots.selectSnapshot(id)
     if (focusViewer) {
@@ -479,6 +599,7 @@ async function selectWorkspaceTab(id: string, focusViewer = true): Promise<void>
       snapshotPaneRef.value?.focusViewer()
     }
   } else {
+    recoveryTabs.deactivate()
     historyComparisons.deactivate()
     historySnapshots.viewCurrent()
     selectEditorTab(id)
@@ -498,6 +619,7 @@ async function closeWorkspaceTab(id: string): Promise<void> {
     closeEditorTab,
     closeComparison: historyComparisons.closeComparison,
     closeSnapshot: historySnapshots.closeSnapshot,
+    closeRecovery: recoveryTabs.close,
     refreshDocumentComparison: historyComparisons.refreshDocumentComparison,
   })
   if (!result.closed) return
@@ -528,6 +650,7 @@ async function closeManyWorkspaceTabs(ids: string[]): Promise<void> {
     closeEditorTabsConfirmed: closeManyEditorTabsConfirmed,
     closeSnapshots: historySnapshots.closeSnapshots,
     closeComparisons: historyComparisons.closeComparisons,
+    closeRecoveries: recoveryTabs.closeMany,
     refreshDocumentComparison: historyComparisons.refreshDocumentComparison,
   })
   if (!result.closed) return
@@ -569,7 +692,9 @@ async function revealWorkspaceTabInTree(path: string): Promise<void> {
 }
 
 function onVaultKeydown(event: KeyboardEvent): void {
-  const readOnlyTab = activeHistoryComparison.value ?? activeHistorySnapshot.value
+  const readOnlyTab = activeDraftRecovery.value
+    ?? activeHistoryComparison.value
+    ?? activeHistorySnapshot.value
   const meta = event.metaKey || event.ctrlKey
   const activeId = activeWorkspaceTabId.value
   if (meta && event.key.toLowerCase() === 'w' && activeId) {
@@ -606,6 +731,7 @@ function onVaultKeydown(event: KeyboardEvent): void {
 }
 
 async function openHistoryRevision(selection: HistoryRevisionSelection): Promise<void> {
+  recoveryTabs.deactivate()
   historyComparisons.deactivate()
   const request = historySnapshots.openRevision(selection)
   await nextTick()
@@ -614,6 +740,7 @@ async function openHistoryRevision(selection: HistoryRevisionSelection): Promise
 }
 
 async function viewCurrentDocument(path: string): Promise<void> {
+  recoveryTabs.deactivate()
   historyComparisons.deactivate()
   historySnapshots.viewCurrent()
   await openEditorPost(path)
@@ -623,6 +750,7 @@ async function viewCurrentDocument(path: string): Promise<void> {
 
 async function openHistoryComparison(snapshot: typeof activeHistorySnapshot.value): Promise<void> {
   if (!snapshot || snapshot.status !== 'ready') return
+  recoveryTabs.deactivate()
   historySnapshots.viewCurrent()
   const request = historyComparisons.openComparison(snapshot)
   await nextTick()
@@ -631,6 +759,7 @@ async function openHistoryComparison(snapshot: typeof activeHistorySnapshot.valu
 }
 
 async function viewHistoricalComparison(comparison: HistoryComparison): Promise<void> {
+  recoveryTabs.deactivate()
   historyComparisons.deactivate()
   historySnapshots.openCachedRevision({
     documentPath: comparison.documentPath,
@@ -677,7 +806,8 @@ async function createMissingWikiNote(ref: string) {
 }
 
 async function copyActiveContent() {
-  const raw = activeHistoryComparison.value?.newRaw
+  const raw = activeDraftRecovery.value?.draftRaw
+    ?? activeHistoryComparison.value?.newRaw
     ?? activeHistorySnapshot.value?.rawMarkdown
     ?? activeTab.value?.raw
   if (raw === undefined) return
@@ -781,6 +911,18 @@ watch(isReadMode, async (reading) => {
       @close="settingsOpen = false"
     />
 
+    <DraftRecoveryPrompt
+      :item="draftRecovery.pendingItem.value"
+      :busy="recoveryBusy"
+      @restore="restoreRecoveryDraft"
+      @diff="(id) => openRecoveryView(id, 'diff')"
+      @content="(id) => openRecoveryView(id, 'content')"
+      @disk="discardRecoveryDraft"
+      @discard="discardRecoveryDraft"
+      @later="draftRecovery.dismissForSession"
+      @retry="draftRecovery.retry"
+    />
+
     <DocumentMetadataModal
       :open="metadataOpen"
       :path="metadataPath"
@@ -846,7 +988,7 @@ watch(isReadMode, async (reading) => {
       <!-- Edit mode: single Monaco editor surface. -->
       <div
         v-if="!isReadMode"
-        v-show="!activeHistorySnapshot && !activeHistoryComparison"
+        v-show="!activeHistorySnapshot && !activeHistoryComparison && !activeDraftRecovery"
         class="content"
       >
         <div
@@ -883,7 +1025,7 @@ watch(isReadMode, async (reading) => {
            panel, tabs, and status bar above/below stay untouched so
            navigation still works while reading. -->
       <div
-        v-else-if="!activeHistorySnapshot && !activeHistoryComparison"
+        v-else-if="!activeHistorySnapshot && !activeHistoryComparison && !activeDraftRecovery"
         class="content reading-content"
       >
         <!-- Only the active tab is mounted. Mounting one ReadingPane
@@ -938,6 +1080,17 @@ watch(isReadMode, async (reading) => {
           @close="closeWorkspaceTab"
         />
       </div>
+
+      <div v-if="activeDraftRecovery" class="content history-snapshot-content">
+        <DraftRecoveryPane
+          ref="recoveryPaneRef"
+          :recovery="activeDraftRecovery"
+          @update-view="updateRecoveryView"
+          @view-current="viewCurrentDocument"
+          @discard="discardRecoveryDraft"
+          @close="closeWorkspaceTab"
+        />
+      </div>
     </section>
 
     <div
@@ -951,22 +1104,22 @@ watch(isReadMode, async (reading) => {
     <TocPanel
       v-if="rightRailVisible"
       class="toc-panel-slot"
-      :path="activeHistoryComparison?.documentPath ?? activeHistorySnapshot?.documentPath ?? activePath"
+      :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activeHistorySnapshot?.documentPath ?? activePath"
       :posts="posts"
       :active-tab="rightRailTab"
-      :history-read-only="Boolean(activeHistorySnapshot || activeHistoryComparison)"
+      :history-read-only="Boolean(activeHistorySnapshot || activeHistoryComparison || activeDraftRecovery)"
       @update:active-tab="rightRailTab = $event"
       @link-navigate="openPost"
     />
 
     <StatusBar
       class="status-bar-row"
-      :path="activeHistoryComparison?.documentPath ?? activeHistorySnapshot?.documentPath ?? activePath"
+      :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activeHistorySnapshot?.documentPath ?? activePath"
       :save="activeSavePresentation"
-      :error="activeHistorySnapshot || activeHistoryComparison ? null : (activeTab?.error ?? null)"
-      :size="activeHistoryComparison ? activeHistoryComparison.newRaw.length : (activeHistorySnapshot ? activeHistorySnapshot.rawMarkdown.length : activeSize)"
+      :error="activeHistorySnapshot || activeHistoryComparison || activeDraftRecovery ? null : (activeTab?.error ?? null)"
+      :size="activeDraftRecovery ? activeDraftRecovery.draftRaw.length : (activeHistoryComparison ? activeHistoryComparison.newRaw.length : (activeHistorySnapshot ? activeHistorySnapshot.rawMarkdown.length : activeSize))"
       :focus-width="editorFocusWidth"
-      :external-kind="activeHistorySnapshot || activeHistoryComparison ? null : (activeTab?.externalKind ?? null)"
+      :external-kind="activeHistorySnapshot || activeHistoryComparison || activeDraftRecovery ? null : (activeTab?.externalKind ?? null)"
       @toggle-focus-width="editorFocusWidth = !editorFocusWidth"
       @retry-save="doSaveNow"
       @copy-content="copyActiveContent"

@@ -336,4 +336,21 @@ describe('deriveTabUiPresentation — aria-label', () => {
     )
     expect(h.ariaLabel).toBe('Redis (历史)')
   })
+
+  it('identifies Recovery tabs as local-only without exposing content or a path', () => {
+    const recovery = deriveTabUiPresentation(
+      tab({
+        id: 'recovery:vault:document-a',
+        kind: 'recovery',
+        label: 'Recovered: A',
+        title: 'Recovered: A',
+        documentPath: 'notes/a',
+      }),
+      NO_T,
+    )
+    expect(recovery.fullPath).toBeNull()
+    expect(recovery.statusText).toBe('draft_recovery.local_only')
+    expect(recovery.ariaLabel).toContain('draft_recovery.local_only')
+    expect(recovery.ariaLabel).not.toContain('notes/a')
+  })
 })

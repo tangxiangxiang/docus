@@ -19,6 +19,20 @@ export interface DocumentMutationBarrier {
   rollback(): void
 }
 
+export interface ApplyRecoveredDraftInput {
+  documentId: string
+  expectedDiskRaw: string
+  expectedDiskMtime: number
+  draftContent: string
+}
+
+export type ApplyRecoveredDraftResult =
+  | { status: 'applied'; path: string }
+  | { status: 'stale' }
+  | { status: 'dirty' }
+  | { status: 'external' }
+  | { status: 'missing' }
+
 export function useDocumentSave(options: {
   tabs: Ref<Tab[]>
   activePath: Ref<string | null>
@@ -250,6 +264,42 @@ export function useDocumentSave(options: {
     scheduleSave(path)
   }
 
+  function applyRecoveredDraft(
+    input: ApplyRecoveredDraftInput,
+  ): ApplyRecoveredDraftResult {
+    if (disposed) return { status: 'missing' }
+    const tab = options.tabs.value.find(
+      (candidate) => candidate.documentId === input.documentId,
+    )
+    if (!tab || tab.loading || tab.loadError) return { status: 'missing' }
+    if (hasUnresolvedExternal(tab)
+      || ['error', 'offline'].includes(tab.saveStatus)) {
+      return { status: 'external' }
+    }
+    if (
+      tab.raw !== tab.originalRaw
+      || tab.revision !== tab.savedRevision
+      || tab.savingRevision !== null
+    ) {
+      return { status: 'dirty' }
+    }
+    if (
+      tab.originalRaw !== input.expectedDiskRaw
+      || tab.serverMtime !== input.expectedDiskMtime
+    ) {
+      return { status: 'stale' }
+    }
+
+    // Recovery intentionally bypasses onEditorChange(): it creates a dirty
+    // editor revision and a browser draft, but never schedules a server save.
+    tab.raw = input.draftContent
+    tab.revision += 1
+    tab.saveStatus = 'dirty'
+    tab.error = null
+    scheduleDraft(tab)
+    return { status: 'applied', path: tab.path }
+  }
+
   function handleBeforeUnload(event: BeforeUnloadEvent) {
     const hasUnsaved = options.tabs.value.some((tab) =>
       tab.raw !== tab.originalRaw
@@ -374,6 +424,7 @@ export function useDocumentSave(options: {
     scheduleSave,
     doSave,
     onEditorChange,
+    applyRecoveredDraft,
     handleBeforeUnload,
     doSaveNow,
     prepareDocumentMutation,

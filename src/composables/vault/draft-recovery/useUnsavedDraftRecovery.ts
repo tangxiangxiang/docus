@@ -78,7 +78,7 @@ export function createUnsavedDraftRecovery(
   let disposed = false
 
   const pendingItem = computed(() =>
-    mutableItems.value.find((item) => item.status === 'ready') ?? null,
+    mutableItems.value.find((item) => item.status !== 'dismissed') ?? null,
   )
 
   function currentItem(

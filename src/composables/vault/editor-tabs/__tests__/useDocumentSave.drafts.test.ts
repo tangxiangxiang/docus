@@ -72,6 +72,63 @@ afterEach(() => {
 })
 
 describe('useDocumentSave draft persistence wiring', () => {
+  it('applies recovered content as dirty without scheduling a server save', async () => {
+    vi.useFakeTimers()
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const h = setup()
+
+    expect(h.save.applyRecoveredDraft({
+      documentId: 'document-a',
+      expectedDiskRaw: 'disk',
+      expectedDiskMtime: 10,
+      draftContent: 'recovered unsaved content',
+    })).toEqual({ status: 'applied', path: 'inbox/a' })
+
+    expect(h.current.raw).toBe('recovered unsaved content')
+    expect(h.current.originalRaw).toBe('disk')
+    expect(h.current.revision).toBe(1)
+    expect(h.current.savedRevision).toBe(0)
+    expect(h.current.saveStatus).toBe('dirty')
+    await vi.advanceTimersByTimeAsync(1_600)
+    await h.drafts.flush('vault-1', 'document-a')
+    expect(fetch).not.toHaveBeenCalled()
+    expect((await h.store.getDraft('vault-1', 'document-a'))?.content)
+      .toBe('recovered unsaved content')
+    vi.useRealTimers()
+  })
+
+  it('fails closed when the recovery target changed or is unsafe', () => {
+    const stale = setup()
+    expect(stale.save.applyRecoveredDraft({
+      documentId: 'document-a',
+      expectedDiskRaw: 'other',
+      expectedDiskMtime: 10,
+      draftContent: 'draft',
+    })).toEqual({ status: 'stale' })
+    expect(stale.current.raw).toBe('disk')
+
+    const dirty = setup()
+    dirty.current.raw = 'local edit'
+    dirty.current.revision = 1
+    expect(dirty.save.applyRecoveredDraft({
+      documentId: 'document-a',
+      expectedDiskRaw: 'disk',
+      expectedDiskMtime: 10,
+      draftContent: 'draft',
+    })).toEqual({ status: 'dirty' })
+
+    const external = setup()
+    external.current.saveStatus = 'external'
+    external.current.externalRaw = 'changed disk'
+    expect(external.save.applyRecoveredDraft({
+      documentId: 'document-a',
+      expectedDiskRaw: 'disk',
+      expectedDiskMtime: 10,
+      draftContent: 'draft',
+    })).toEqual({ status: 'external' })
+  })
+
   it('deletes the owned draft after the acknowledged revision stays clean', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response('edited')))
     const h = setup()
