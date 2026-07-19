@@ -16,6 +16,7 @@ import {
   useWorkspaceTabReorder,
   type WorkspaceTabReorderRequest,
 } from '../../composables/vault/workspace-tabs/useWorkspaceTabReorder'
+import { useWorkspaceTabFocus } from '../../composables/vault/workspace-tabs/useWorkspaceTabFocus'
 
 export type { WorkspaceTabReorderRequest }
 
@@ -39,6 +40,7 @@ const tabPresentations = computed<TabUiPresentation[]>(() =>
 
 const tabsRef = ref<HTMLElement | null>(null)
 const tabIds = computed(() => props.tabs.map((t) => t.id))
+const { focusTab } = useWorkspaceTabFocus({ container: tabsRef })
 
 const {
   draggedId,
@@ -71,12 +73,6 @@ const {
   ),
   onReorder: (request) => emit('reorder', request),
 })
-
-function focusTab(id: string): void {
-  const target = [...(tabsRef.value?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])]
-    .find((tab) => tab.dataset.tabId === id)
-  target?.focus()
-}
 
 defineExpose({ focusTab })
 

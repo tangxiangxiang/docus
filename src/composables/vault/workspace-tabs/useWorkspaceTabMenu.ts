@@ -8,6 +8,7 @@ import {
   type Ref,
 } from 'vue'
 import type { WorkspaceTab } from '../../../components/vault/tabs'
+import { focusConnectedElement } from './useWorkspaceTabFocus'
 
 export type WorkspaceTabMenuAction =
   | 'close'
@@ -189,7 +190,7 @@ export function useWorkspaceTabMenu({
     removeListeners()
     if (restoreFocus) {
       void nextTick(() => {
-        if (source?.isConnected) source.focus()
+        focusConnectedElement(source)
       })
     }
   }
@@ -270,7 +271,7 @@ export function useWorkspaceTabMenu({
     const source = sourceElement
     close(false)
     await nextTick()
-    if (source?.isConnected) source.focus()
+    focusConnectedElement(source)
   }
 
   async function activate(action: WorkspaceTabMenuAction): Promise<void> {
