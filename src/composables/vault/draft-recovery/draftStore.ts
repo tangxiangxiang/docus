@@ -10,8 +10,11 @@ const DATABASE_VERSION = 1
 const DRAFT_STORE_NAME = 'drafts'
 const VAULT_UPDATED_INDEX = 'vaultUpdatedAt'
 
-type SaveResult = 'saved' | 'stale' | 'conflict'
-type MoveResult = 'moved' | 'missing' | 'conflict'
+type SaveResult = 'saved' | 'stale' | 'conflict' | 'unsupported'
+type SaveDecision =
+  | { result: 'saved'; draft: UnsavedDraft }
+  | { result: Exclude<SaveResult, 'saved'>; draft?: never }
+type MoveResult = 'moved' | 'missing' | 'conflict' | 'unsupported'
 type BackendOperation = 'save' | 'get' | 'list' | 'delete' | 'move' | 'clear'
 
 export interface DraftStorageBackend {
@@ -28,6 +31,13 @@ export interface DraftStorageBackend {
   clear(vaultId: string): Promise<void>
 }
 
+export type DraftMoveOutcome =
+  | { status: 'moved' }
+  | { status: 'missing' }
+  | { status: 'conflict' }
+  | { status: 'unsupported' }
+  | { status: 'failed' }
+
 export interface MemoryDraftStorageBackend extends DraftStorageBackend {
   failNext(operation: BackendOperation): void
   seedRaw(value: unknown): Promise<void>
@@ -43,7 +53,7 @@ export interface DraftStore {
     oldDocumentId: string,
     newDocumentId: string,
     newPath: string,
-  ): Promise<boolean>
+  ): Promise<DraftMoveOutcome>
   clearVaultDrafts(vaultId: string): Promise<boolean>
 }
 
@@ -104,17 +114,18 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       if (!isDraftIdentity(vaultId, oldDocumentId)
         || !isDraftIdentity(vaultId, newDocumentId)
         || newPath.trim().length === 0) {
-        return false
+        return { status: 'failed' }
       }
       try {
-        return await backend.move(
+        const status = await backend.move(
           vaultId,
           oldDocumentId,
           newDocumentId,
           newPath,
-        ) === 'moved'
+        )
+        return { status }
       } catch {
-        return false
+        return { status: 'failed' }
       }
     },
 
@@ -148,9 +159,11 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       consumeFailure('save')
       const key = serializedKey(draft.vaultId, draft.documentId)
       const current = records.get(key)
-      const result = decideSave(current, draft)
-      if (result === 'saved') records.set(key, cloneDraft(draft))
-      return result
+      const decision = decideSave(current, draft)
+      if (decision.result === 'saved') {
+        records.set(key, cloneDraft(decision.draft))
+      }
+      return decision.result
     },
 
     async get([vaultId, documentId]) {
@@ -175,7 +188,7 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       const oldKey = serializedKey(vaultId, oldDocumentId)
       const newKey = serializedKey(vaultId, newDocumentId)
       const source = records.get(oldKey)
-      const target = records.get(newKey)
+      const target = oldKey === newKey ? undefined : records.get(newKey)
       const decision = decideMove(source, target, newDocumentId, newPath)
       if (decision.result !== 'moved') return decision.result
 
@@ -230,10 +243,10 @@ export function createIndexedDbDraftBackend(
       const current = await request(store.get(
         idbKey(draft.vaultId, draft.documentId),
       ))
-      const result = decideSave(current, draft)
-      if (result === 'saved') store.put(cloneDraft(draft))
+      const decision = decideSave(current, draft)
+      if (decision.result === 'saved') store.put(cloneDraft(decision.draft))
       await transactionDone(transaction)
-      return result
+      return decision.result
     },
 
     async get(key) {
@@ -270,10 +283,10 @@ export function createIndexedDbDraftBackend(
       const store = transaction.objectStore(DRAFT_STORE_NAME)
       const oldKey = idbKey(vaultId, oldDocumentId)
       const newKey = idbKey(vaultId, newDocumentId)
-      const [source, target] = await Promise.all([
-        request(store.get(oldKey)),
-        request(store.get(newKey)),
-      ])
+      const source = await request(store.get(oldKey))
+      const target = oldDocumentId === newDocumentId
+        ? undefined
+        : await request(store.get(newKey))
       const decision = decideMove(source, target, newDocumentId, newPath)
       if (decision.result === 'moved') {
         store.put(cloneDraft(decision.draft))
@@ -296,11 +309,23 @@ export function createIndexedDbDraftBackend(
   }
 }
 
-function decideSave(current: unknown, incoming: UnsavedDraft): SaveResult {
-  if (!isUnsavedDraft(current)) return 'saved'
-  if (incoming.updatedAt > current.updatedAt) return 'saved'
-  if (incoming.updatedAt < current.updatedAt) return 'stale'
-  return draftsEqual(current, incoming) ? 'saved' : 'conflict'
+function decideSave(current: unknown, incoming: UnsavedDraft): SaveDecision {
+  if (current === undefined || current === null) {
+    return { result: 'saved', draft: cloneDraft(incoming) }
+  }
+  if (!isUnsavedDraft(current)) return { result: 'unsupported' }
+
+  const normalized = {
+    ...incoming,
+    createdAt: current.createdAt,
+  }
+  if (normalized.updatedAt > current.updatedAt) {
+    return { result: 'saved', draft: normalized }
+  }
+  if (normalized.updatedAt < current.updatedAt) return { result: 'stale' }
+  return draftsEqual(current, normalized)
+    ? { result: 'saved', draft: normalized }
+    : { result: 'conflict' }
 }
 
 function decideMove(
@@ -310,27 +335,25 @@ function decideMove(
   newPath: string,
 ): { result: Exclude<MoveResult, 'moved'>; draft?: never }
   | { result: 'moved'; draft: UnsavedDraft } {
-  if (!isUnsavedDraft(sourceValue)) return { result: 'missing' }
+  if (sourceValue === undefined || sourceValue === null) {
+    return { result: 'missing' }
+  }
+  if (!isUnsavedDraft(sourceValue)) return { result: 'unsupported' }
 
   const movedSource: UnsavedDraft = {
     ...sourceValue,
     documentId: newDocumentId,
     documentPath: newPath,
   }
-  if (!isUnsavedDraft(targetValue)) {
+  if (targetValue === undefined || targetValue === null) {
     return { result: 'moved', draft: movedSource }
   }
+  if (!isUnsavedDraft(targetValue)) return { result: 'unsupported' }
 
   const movedTarget: UnsavedDraft = {
     ...targetValue,
     documentId: newDocumentId,
     documentPath: newPath,
-  }
-  if (movedSource.updatedAt > movedTarget.updatedAt) {
-    return { result: 'moved', draft: movedSource }
-  }
-  if (movedTarget.updatedAt > movedSource.updatedAt) {
-    return { result: 'moved', draft: movedTarget }
   }
   if (draftsEqual(movedSource, movedTarget)) {
     return { result: 'moved', draft: movedSource }

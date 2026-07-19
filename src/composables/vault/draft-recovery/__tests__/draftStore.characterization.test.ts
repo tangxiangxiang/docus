@@ -68,6 +68,23 @@ describe('draftStore characterization', () => {
     expect((await store.getDraft('vault-a', 'a'))?.content).toBe('content:a:30')
   })
 
+  it('does not overwrite a future-version record at the same identity', async () => {
+    const future = { ...draft('a', 40), version: 2, content: 'future data' }
+    await backend.seedRaw(future)
+
+    expect(await store.saveDraft(draft('a', 50))).toBe(false)
+    expect(await backend.get(['vault-a', 'a'])).toEqual(future)
+  })
+
+  it('preserves the original createdAt when updating a draft', async () => {
+    await store.saveDraft(draft('a', 20, { createdAt: 5 }))
+
+    expect(await store.saveDraft(draft('a', 30, { createdAt: 25 }))).toBe(true)
+    expect(await store.getDraft('vault-a', 'a')).toEqual(
+      draft('a', 30, { createdAt: 5 }),
+    )
+  })
+
   it('rejects invalid records without affecting existing drafts', async () => {
     await store.saveDraft(draft('valid', 20))
 
@@ -98,7 +115,8 @@ describe('draftStore characterization', () => {
     const original = draft('a', 20)
     await store.saveDraft(original)
 
-    expect(await store.moveDraft('vault-a', 'a', 'x', 'renamed/x')).toBe(true)
+    expect(await store.moveDraft('vault-a', 'a', 'x', 'renamed/x'))
+      .toEqual({ status: 'moved' })
     expect(await store.getDraft('vault-a', 'a')).toBeNull()
     expect(await store.getDraft('vault-a', 'x')).toEqual({
       ...original,
@@ -107,35 +125,23 @@ describe('draftStore characterization', () => {
     })
   })
 
-  it('uses the strictly newer draft when a move target already exists', async () => {
+  it('preserves both drafts when a different move target already exists', async () => {
     await store.saveDraft(draft('source', 40, { createdAt: 4 }))
-    await store.saveDraft(draft('target', 30, {
-      content: 'older target',
+    const target = draft('target', 30, {
+      content: 'different target',
       createdAt: 3,
-    }))
+    })
+    await store.saveDraft(target)
 
     expect(await store.moveDraft(
       'vault-a',
       'source',
       'target',
       'renamed/target',
-    )).toBe(true)
-    expect(await store.getDraft('vault-a', 'source')).toBeNull()
-    expect(await store.getDraft('vault-a', 'target')).toEqual({
-      ...draft('source', 40, { createdAt: 4 }),
-      documentId: 'target',
-      documentPath: 'renamed/target',
-    })
-
-    await store.saveDraft(draft('new-source', 20))
-    expect(await store.moveDraft(
-      'vault-a',
-      'new-source',
-      'target',
-      'renamed/target',
-    )).toBe(true)
-    expect(await store.getDraft('vault-a', 'new-source')).toBeNull()
-    expect((await store.getDraft('vault-a', 'target'))?.updatedAt).toBe(40)
+    )).toEqual({ status: 'conflict' })
+    expect(await store.getDraft('vault-a', 'source'))
+      .toEqual(draft('source', 40, { createdAt: 4 }))
+    expect(await store.getDraft('vault-a', 'target')).toEqual(target)
   })
 
   it('fails an equal-timestamp duplicate move without changing either record', async () => {
@@ -149,7 +155,7 @@ describe('draftStore characterization', () => {
       'source',
       'target',
       'renamed/target',
-    )).toBe(false)
+    )).toEqual({ status: 'conflict' })
     expect(await store.getDraft('vault-a', 'source')).toEqual(source)
     expect(await store.getDraft('vault-a', 'target')).toEqual(target)
   })
@@ -164,9 +170,34 @@ describe('draftStore characterization', () => {
       'source',
       'target',
       'renamed/target',
-    )).toBe(false)
+    )).toEqual({ status: 'failed' })
     expect(await store.getDraft('vault-a', 'source')).toEqual(original)
     expect(await store.getDraft('vault-a', 'target')).toBeNull()
+  })
+
+  it('does not overwrite a corrupt move target', async () => {
+    const source = draft('source', 30)
+    const corruptTarget = { ...draft('target', 20), content: 42 }
+    await store.saveDraft(source)
+    await backend.seedRaw(corruptTarget)
+
+    expect(await store.moveDraft(
+      'vault-a',
+      'source',
+      'target',
+      'renamed/target',
+    )).toEqual({ status: 'unsupported' })
+    expect(await store.getDraft('vault-a', 'source')).toEqual(source)
+    expect(await backend.get(['vault-a', 'target'])).toEqual(corruptTarget)
+  })
+
+  it('reports a missing source as an idempotent no-op', async () => {
+    expect(await store.moveDraft(
+      'vault-a',
+      'missing',
+      'target',
+      'renamed/target',
+    )).toEqual({ status: 'missing' })
   })
 
   it('skips corrupt and future records without hiding valid drafts', async () => {
@@ -206,7 +237,7 @@ describe('draftStore characterization', () => {
     await expect(unavailable.deleteDraft('vault-a', 'a')).resolves.toBe(false)
     await expect(
       unavailable.moveDraft('vault-a', 'a', 'x', 'notes/x'),
-    ).resolves.toBe(false)
+    ).resolves.toEqual({ status: 'failed' })
     await expect(unavailable.clearVaultDrafts('vault-a')).resolves.toBe(false)
   })
 })

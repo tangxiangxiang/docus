@@ -100,7 +100,14 @@ saveDraft(draft): Promise<boolean>
 getDraft(vaultId, documentId): Promise<UnsavedDraft | null>
 listDrafts(vaultId): Promise<UnsavedDraft[]>
 deleteDraft(vaultId, documentId): Promise<boolean>
-moveDraft(vaultId, oldDocumentId, newDocumentId, newPath): Promise<boolean>
+moveDraft(vaultId, oldDocumentId, newDocumentId, newPath):
+  Promise<
+    | { status: 'moved' }
+    | { status: 'missing' }
+    | { status: 'conflict' }
+    | { status: 'unsupported' }
+    | { status: 'failed' }
+  >
 clearVaultDrafts(vaultId): Promise<boolean>
 ```
 
@@ -111,16 +118,24 @@ Rules:
   overwrite a newer buffer.
 - Equal timestamps are idempotent only when the complete record is equal; a
   conflicting equal-timestamp write fails closed.
+- Updating an existing valid record preserves the first draft's `createdAt`.
+- An occupied key containing a corrupt or unsupported-version record fails closed;
+  a current-version save never overwrites it.
 - `listDrafts` returns only the requested vault, newest first, with deterministic
   document-ID tie breaking.
 - Delete and clear are idempotent.
 - `moveDraft` is atomic: either the old key remains unchanged or the new key is
   committed and the old key is removed.
-- If the target identity already has a draft, the newer `updatedAt` wins. Equal,
-  different drafts fail closed so neither is silently selected.
-- A successful move keeps the winning draft's content and baseline, changes its
+- If the target identity already has a different draft, the move reports `conflict`
+  and preserves both records regardless of their timestamps. Exact duplicate
+  records may be coalesced.
+- A successful move keeps the source draft's content and baseline, changes its
   identity/path, and preserves its original `createdAt`.
-- Unsupported or corrupt records are skipped rather than rewritten automatically.
+- A missing source reports the idempotent `missing` outcome. Unsupported/corrupt
+  occupied source or target keys report `unsupported`; storage faults report
+  `failed`.
+- Unsupported or corrupt records are skipped on reads and are never rewritten
+  automatically.
 
 ## 6. Draft Creation and Removal
 
@@ -276,14 +291,15 @@ No editor, save, `VaultView`, or file-transaction integration.
 
 - Stable, vault-scoped keys do not collide across documents or vaults.
 - A valid draft round-trips without sharing mutable references.
-- Updating a draft preserves caller-provided metadata.
+- Updating a draft preserves the original `createdAt`.
 - Older and conflicting equal-timestamp writes cannot overwrite newer state.
+- Corrupt and future-version records occupying a key cannot be overwritten.
 - Listing is vault-scoped, newest first, and deterministic.
 - Delete and clear are idempotent and isolated by vault.
 - Move changes identity/path and removes the old key atomically.
-- Move preserves the winning content, baseline, and `createdAt`.
-- Duplicate-target move chooses the strictly newer draft.
-- Equal-timestamp duplicate conflict fails without changing either record.
+- Move preserves source content, baseline, and `createdAt`.
+- Any different duplicate-target draft conflicts without changing either record.
+- Move distinguishes moved, missing, conflict, unsupported, and backend failure.
 - Invalid inputs are rejected.
 - Corrupt and future-version records do not break valid reads.
 - IndexedDB unavailable/open/request/transaction failures resolve as safe failures;
@@ -300,4 +316,3 @@ npm run typecheck
 npm run build
 npm run lint:icons
 ```
-
