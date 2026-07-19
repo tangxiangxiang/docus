@@ -134,6 +134,44 @@ describe('useDocumentSave draft persistence wiring', () => {
     })
   })
 
+  it('does not invalidate a newer draft owner when the tab changes after adoption', async () => {
+    vi.useFakeTimers()
+    const h = setup()
+    const draft = recoveredDraft()
+    await h.store.saveDraft(draft)
+    const adopt = h.drafts.adoptRecoveredDraft.bind(h.drafts)
+    const invalidateOwner = vi.spyOn(h.drafts, 'invalidateOwner')
+    vi.spyOn(h.drafts, 'adoptRecoveredDraft').mockImplementation(async (...args) => {
+      const owner = await adopt(...args)
+      h.current.raw = 'new local edit'
+      h.current.revision = 1
+      h.drafts.schedule({
+        vaultId: 'vault-1',
+        documentId: 'document-a',
+        documentPath: 'inbox/a',
+        content: 'new local edit',
+        authoritativeContent: 'disk',
+        baseContentHash: null,
+        baseModifiedAt: 10,
+        revision: 1,
+      })
+      return owner
+    })
+
+    await expect(h.save.applyRecoveredDraft({
+      draft,
+      expectedDiskRaw: 'disk',
+      expectedDiskMtime: 10,
+    })).resolves.toEqual({ status: 'stale' })
+    await vi.advanceTimersByTimeAsync(800)
+    await h.drafts.flush('vault-1', 'document-a')
+
+    expect(invalidateOwner).toHaveBeenCalledTimes(1)
+    expect((await h.store.getDraft('vault-1', 'document-a'))?.content)
+      .toBe('new local edit')
+    vi.useRealTimers()
+  })
+
   it('fails closed when the recovery target changed or is unsafe', async () => {
     const stale = setup()
     await expect(stale.save.applyRecoveredDraft({

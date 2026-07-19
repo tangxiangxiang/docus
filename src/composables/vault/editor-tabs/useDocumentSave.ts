@@ -324,7 +324,7 @@ export function useDocumentSave(options: {
       || Object.entries(expectedTabState).some(
         ([field, value]) => tab[field as keyof Tab] !== value,
       )) {
-      options.draftPersistence?.invalidate(identity.vaultId, identity.documentId)
+      options.draftPersistence?.invalidateOwner(owner)
       return { status: 'stale' }
     }
 

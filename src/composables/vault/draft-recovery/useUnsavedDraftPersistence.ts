@@ -40,6 +40,7 @@ export interface UnsavedDraftPersistence {
     expected: UnsavedDraft,
     snapshot: DraftBufferSnapshot,
   ): Promise<DraftOwner | null>
+  invalidateOwner(owner: DraftOwner): void
   invalidate(vaultId: string, documentId: string): void
   dispose(): Promise<void>
 }
@@ -289,6 +290,15 @@ export function createUnsavedDraftPersistence(
     entry.latestSnapshotNeedsWrite = false
   }
 
+  function invalidateOwner(owner: DraftOwner): void {
+    const entry = entries.get(key(owner.vaultId, owner.documentId))
+    if (!current(owner, entry)) return
+    clearTimer(entry)
+    entry.generation += 1
+    entry.latestSnapshot = null
+    entry.latestSnapshotNeedsWrite = false
+  }
+
   async function discard(owner: DraftOwner): Promise<boolean> {
     if (disposed) return false
     return deleteOwned(owner)
@@ -322,28 +332,51 @@ export function createUnsavedDraftPersistence(
       || !validIdentity(snapshot.vaultId, snapshot.documentId)) {
       return null
     }
+    const entry = entryFor(expected.vaultId, expected.documentId)
+    if (entry.timer !== null
+      || entry.pendingWrite !== null
+      || entry.latestSnapshotNeedsWrite
+      || entry.latestSnapshot !== null) {
+      return null
+    }
+    const expectedGeneration = entry.generation
+    const expectedTimer = entry.timer
+    const expectedPendingWrite = entry.pendingWrite
+    const expectedSnapshot = entry.latestSnapshot
+    const entryIsUnchanged = () =>
+      entry.generation === expectedGeneration
+      && entry.timer === expectedTimer
+      && entry.pendingWrite === expectedPendingWrite
+      && entry.latestSnapshot === expectedSnapshot
+      && !entry.latestSnapshotNeedsWrite
+
     let stored: UnsavedDraft | null
     try {
       stored = await store.getDraft(expected.vaultId, expected.documentId)
     } catch {
       return null
     }
-    if (disposed || !stored || !draftsEqual(stored, expected)) return null
+    if (disposed
+      || !entryIsUnchanged()
+      || !stored
+      || !draftsEqual(stored, expected)) {
+      return null
+    }
 
-    const entry = entryFor(expected.vaultId, expected.documentId)
-    clearTimer(entry)
-    if (entry.pendingWrite) await entry.pendingWrite.catch(() => false)
-    if (disposed) return null
-
-    // Recheck after local queued work settles. Adoption establishes runtime
-    // ownership of the existing record; it deliberately does not rewrite it
-    // with a newer timestamp.
+    // Recheck the stored record across a second asynchronous boundary. Local
+    // entry state is observed, never cleared: concurrent edits own their timer
+    // and generation and make this adoption fail closed.
     try {
       stored = await store.getDraft(expected.vaultId, expected.documentId)
     } catch {
       return null
     }
-    if (disposed || !stored || !draftsEqual(stored, expected)) return null
+    if (disposed
+      || !entryIsUnchanged()
+      || !stored
+      || !draftsEqual(stored, expected)) {
+      return null
+    }
     entry.generation += 1
     entry.latestSnapshot = cloneSnapshot(snapshot)
     entry.latestSnapshotNeedsWrite = false
@@ -383,6 +416,7 @@ export function createUnsavedDraftPersistence(
     discardIdentity,
     discardIdentityIfUnchanged,
     adoptRecoveredDraft,
+    invalidateOwner,
     invalidate,
     dispose,
   }

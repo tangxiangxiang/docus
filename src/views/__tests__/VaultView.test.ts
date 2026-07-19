@@ -84,6 +84,20 @@ describe('VaultView editor tab wiring', () => {
     expect(source).not.toContain('snapshots.value.push(activeTab')
   })
 
+  it('revalidates recovery identity after View Current opens the document', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const handler = source.match(
+      /async function viewCurrentRecoveryDocument[\s\S]*?\n}/,
+    )?.[0]
+
+    expect(handler).toBeDefined()
+    expect(handler?.match(/await draftRecovery\.retry\(recoveryId\)/g)).toHaveLength(2)
+    expect(handler).toContain('await openEditorPost(disk.documentPath)')
+    expect(handler).toContain('refreshedDisk.documentId !== refreshed.draft.documentId')
+    expect(handler).toContain('recoveryTabs.open(refreshed, requestedView)')
+    expect(handler).toContain('focusTab(refreshedDisk.documentPath)')
+  })
+
   it('opens one dedicated diff workspace tab from a ready snapshot', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
 

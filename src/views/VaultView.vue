@@ -778,6 +778,8 @@ async function viewCurrentDocument(path: string): Promise<void> {
 }
 
 async function viewCurrentRecoveryDocument(recoveryId: string): Promise<void> {
+  const requestedView = activeDraftRecovery.value?.view ?? 'content'
+  const requestedTabId = activeDraftRecovery.value?.tabId ?? null
   await draftRecovery.retry(recoveryId)
   const item = recoveryItem(recoveryId)
   if (!item || item.status !== 'ready' || !item.decision) return
@@ -790,8 +792,30 @@ async function viewCurrentRecoveryDocument(recoveryId: string): Promise<void> {
   historyComparisons.deactivate()
   historySnapshots.viewCurrent()
   await openEditorPost(disk.documentPath)
+  // Opening by path crosses a network boundary during which that path may be
+  // reused by another stable document identity. Reclassify after the open and
+  // only focus the Document tab if identity ownership still matches.
+  await draftRecovery.retry(recoveryId)
+  const refreshed = recoveryItem(recoveryId)
+  const refreshedDisk = refreshed?.decision?.disk
+  if (!refreshed
+    || refreshed.status !== 'ready'
+    || !refreshed.decision
+    || refreshedDisk?.status !== 'ready'
+    || refreshedDisk.documentId !== refreshed.draft.documentId) {
+    if (refreshed?.status === 'ready' && refreshed.decision) {
+      const recoveryTab = recoveryTabs.open(refreshed, requestedView)
+      await nextTick()
+      if (recoveryTab) editorTabsRef.value?.focusTab(recoveryTab.tabId)
+    } else if (requestedTabId) {
+      recoveryTabs.select(requestedTabId)
+      await nextTick()
+      editorTabsRef.value?.focusTab(requestedTabId)
+    }
+    return
+  }
   await nextTick()
-  editorTabsRef.value?.focusTab(disk.documentPath)
+  editorTabsRef.value?.focusTab(refreshedDisk.documentPath)
 }
 
 async function openHistoryComparison(snapshot: typeof activeHistorySnapshot.value): Promise<void> {

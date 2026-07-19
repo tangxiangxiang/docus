@@ -205,6 +205,68 @@ describe('createUnsavedDraftPersistence', () => {
     expect((await store.getDraft('vault-1', 'a'))?.content).toBe('v2')
   })
 
+  it('preserves a local draft scheduled while recovery adoption is reading storage', async () => {
+    const expected: UnsavedDraft = {
+      version: 1,
+      vaultId: 'vault-1',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'recovered',
+      baseContentHash: 'baseline-hash',
+      baseModifiedAt: 10,
+      createdAt: 25,
+      updatedAt: 40,
+    }
+    await store.saveDraft(expected)
+    const read = deferred<UnsavedDraft | null>()
+    const getDraft = vi.fn()
+      .mockReturnValueOnce(read.promise)
+      .mockImplementation((vaultId, documentId) =>
+        store.getDraft(vaultId, documentId))
+    const persistence = createUnsavedDraftPersistence({
+      store: { ...store, getDraft },
+    })
+
+    const adoption = persistence.adoptRecoveredDraft(
+      expected,
+      snapshot('a', 'recovered', 1),
+    )
+    persistence.schedule(snapshot('a', 'new local edit', 2))
+    read.resolve(expected)
+
+    await expect(adoption).resolves.toBeNull()
+    await vi.advanceTimersByTimeAsync(800)
+
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('new local edit')
+  })
+
+  it('does not invalidate a newer owner when rolling back an adoption owner', async () => {
+    const expected: UnsavedDraft = {
+      version: 1,
+      vaultId: 'vault-1',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'recovered',
+      baseContentHash: 'baseline-hash',
+      baseModifiedAt: 10,
+      createdAt: 25,
+      updatedAt: 40,
+    }
+    await store.saveDraft(expected)
+    const persistence = createUnsavedDraftPersistence({ store })
+    const adoptedOwner = await persistence.adoptRecoveredDraft(
+      expected,
+      snapshot('a', 'recovered', 1),
+    )
+    expect(adoptedOwner).not.toBeNull()
+
+    persistence.schedule(snapshot('a', 'new local edit', 2))
+    persistence.invalidateOwner(adoptedOwner!)
+    await vi.advanceTimersByTimeAsync(800)
+
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('new local edit')
+  })
+
   it('safely discards by identity and does not delete a newer generation', async () => {
     const deletion = deferred<{ status: 'deleted' }>()
     const deleteDraft = vi.fn().mockReturnValue(deletion.promise)

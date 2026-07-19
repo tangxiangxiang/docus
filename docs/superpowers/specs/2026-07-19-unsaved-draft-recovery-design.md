@@ -330,7 +330,11 @@ Implemented in:
 - `useUnsavedDraftPersistence.ts`: identity-based explicit discard remains on
   the same per-document write/delete operation chain as editor-owned drafts.
   Recovery adoption compares the complete current stored record, establishes a
-  runtime owner, and does not rewrite identical content with a newer timestamp;
+  runtime owner, and does not rewrite identical content with a newer timestamp.
+  It observes generation, timer, snapshot, and pending-operation ownership
+  across every storage read, so concurrent local edits fail adoption without
+  losing their debounce work. Failed application rolls back only the exact
+  adoption owner, never a newer editor generation;
 - `useDocumentSave.ts`: `applyRecoveredDraft()` revalidates stable identity,
   clean state, external state, disk raw, and disk mtime before creating a dirty
   editor revision. It adopts the already-persisted browser draft without a
