@@ -146,8 +146,10 @@ Rules:
   `failed`.
 - Unsupported or corrupt records are skipped on reads and are never rewritten
   automatically.
-- `createdAt`, `updatedAt`, and non-null `baseModifiedAt` are non-negative safe
-  integers, matching the IndexedDB range used by vault listing.
+- `createdAt` and `updatedAt` are non-negative safe integers, matching the
+  IndexedDB range used by vault listing. A non-null `baseModifiedAt` is a
+  non-negative finite number so fractional filesystem `mtimeMs` values are
+  preserved without truncation.
 - Cached IndexedDB connections close on `versionchange` and clear themselves on
   `close`, so another application instance can upgrade the schema. A connection
   that succeeds after an already-rejected blocked open is closed immediately.
