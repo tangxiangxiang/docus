@@ -242,6 +242,70 @@ const documentLifecycle = useDocumentLifecycle({
   renameOpenDocuments: renameWorkspaceDocuments,
   removeOpenDocuments,
   refresh,
+  async resolveDocumentIdentity(path) {
+    const currentVaultId = vaultId.value
+    if (!currentVaultId) return null
+    const loaded = tabs.value.find((tab) => (
+      tab.path === path
+      && !tab.loading
+      && !tab.loadError
+      && Boolean(tab.documentId)
+    ))
+    if (loaded?.documentId) {
+      return {
+        vaultId: currentVaultId,
+        documentId: loaded.documentId,
+        documentPath: path,
+      }
+    }
+    try {
+      const post = await getPost(path)
+      const documentId = post.metadata?.id
+      return documentId
+        ? { vaultId: currentVaultId, documentId, documentPath: post.path }
+        : null
+    } catch {
+      return null
+    }
+  },
+  prepareDraftFileMutation: (identities) => (
+    draftPersistence.prepareFileMutation(identities)
+  ),
+  warnDraftTransaction(results) {
+    toast.info(t('draft_recovery.file_transaction_warning', {
+      count: results.length,
+    }))
+  },
+  async onDraftTransactionSettled(results) {
+    const recoveryIds = new Set(results.flatMap((result) => {
+      const item = draftRecovery.items.value.find((candidate) => (
+        candidate.draft.vaultId === vaultId.value
+        && candidate.draft.documentId === result.documentId
+      ))
+      return item ? [item.recoveryId] : []
+    }))
+    for (const recoveryId of recoveryIds) {
+      const transaction = results.find((result) => {
+        const item = draftRecovery.items.value.find(
+          (candidate) => candidate.recoveryId === recoveryId,
+        )
+        return item?.draft.documentId === result.documentId
+      })
+      if (transaction && ['deleted', 'missing'].includes(transaction.status)) {
+        const item = recoveryItem(recoveryId)
+        if (item) draftRecovery.removeIdentity(item.draft.vaultId, item.draft.documentId)
+        for (const tab of recoveryTabs.tabs.value.filter(
+          (candidate) => candidate.recoveryId === recoveryId,
+        )) recoveryTabs.close(tab.tabId)
+        continue
+      }
+      await draftRecovery.retry(recoveryId)
+      const refreshed = recoveryItem(recoveryId)
+      const open = recoveryTabs.tabs.value.find((tab) => tab.recoveryId === recoveryId)
+      if (refreshed?.status === 'ready' && open) recoveryTabs.open(refreshed, open.view)
+      if (!refreshed && open) recoveryTabs.close(open.tabId)
+    }
+  },
 })
 lifecycleCreateFile = documentLifecycle.createFile
 const vaultContext = createVaultContext({

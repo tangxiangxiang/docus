@@ -241,6 +241,7 @@ export function createUnsavedDraftPersistence(
   ): Promise<boolean> {
     const entry = entries.get(key(vaultId, documentId))
     if (!entry || (!allowDisposed && disposed)) return false
+    if (entry.fileTransaction) return false
     clearTimer(entry)
     const snapshot = entry.latestSnapshot
     if (!snapshot) return false
@@ -444,6 +445,7 @@ export function createUnsavedDraftPersistence(
       identity: DraftDocumentIdentity
       entry: DraftEntry
       confirmedDraft: UnsavedDraft | null
+      preparedGeneration: number
     }>()
 
     for (const identity of identities) {
@@ -456,6 +458,7 @@ export function createUnsavedDraftPersistence(
         identity: { ...identity },
         entry,
         confirmedDraft: null,
+        preparedGeneration: entry.generation,
       })
     }
     await Promise.all([...held.values()].map(async ({ entry }) => {
@@ -468,6 +471,7 @@ export function createUnsavedDraftPersistence(
           state.identity.vaultId,
           state.identity.documentId,
         ).catch(() => null)
+      state.preparedGeneration = state.entry.generation
     }
 
     let settled = false
@@ -502,11 +506,15 @@ export function createUnsavedDraftPersistence(
 
     async function commitMoves(
       mappings: readonly DraftPathMapping[],
+      preserved: readonly DraftDocumentIdentity[] = [],
     ): Promise<DraftFileTransactionResult[]> {
       if (settled) return []
       settled = true
       const results: DraftFileTransactionResult[] = []
       const mappedKeys = new Set<string>()
+      const preservedKeys = new Set(preserved.map((identity) => (
+        key(identity.vaultId, identity.documentId)
+      )))
       for (const mapping of mappings) {
         const identityKey = key(mapping.vaultId, mapping.documentId)
         const state = held.get(identityKey)
@@ -548,9 +556,12 @@ export function createUnsavedDraftPersistence(
         })
       }
       for (const [identityKey, state] of held) {
-        if (!mappedKeys.has(identityKey)) {
-          releaseEntry(state, state.identity.documentPath, true)
-        }
+        if (mappedKeys.has(identityKey)) continue
+        releaseEntry(
+          state,
+          state.identity.documentPath,
+          !preservedKeys.has(identityKey),
+        )
       }
       return results
     }
@@ -580,6 +591,16 @@ export function createUnsavedDraftPersistence(
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,
             status: 'preserved',
+          })
+          continue
+        }
+        if (state.entry.generation !== state.preparedGeneration
+          || state.entry.latestSnapshotNeedsWrite) {
+          releaseEntry(state, deletion.documentPath, true)
+          results.push({
+            documentId: deletion.documentId,
+            oldPath: deletion.documentPath,
+            status: 'stale',
           })
           continue
         }

@@ -9,6 +9,13 @@ import {
 } from '../../lib/api'
 import type { VaultFileChanges } from './context/fileChanges'
 import type { DocumentMutationBarrier } from './editor-tabs/useDocumentSave'
+import type {
+  DraftDeletePolicy,
+  DraftDocumentIdentity,
+  DraftFileMutationBarrier,
+  DraftFileTransactionResult,
+  DraftPathMapping,
+} from './draft-recovery/useDraftFileTransactions'
 import { createPathMutationLock, toMutationPaths } from './pathMutationLock'
 
 export class DocumentMutationConflictError extends Error {
@@ -33,11 +40,18 @@ export interface DocumentLifecycle {
     updateReferences?: boolean,
     referencePaths?: readonly string[],
   ): Promise<{ path: string; moved: string[]; updatedReferences?: Array<{ path: string; raw: string; mtime: number }> }>
-  deleteFile(path: string): Promise<{ ok: true }>
-  deleteFolder(path: string, affectedPaths: readonly string[]): Promise<{ deleted: string[] }>
+  deleteFile(
+    path: string,
+    options?: { draftPolicy?: DraftDeletePolicy },
+  ): Promise<{ ok: true }>
+  deleteFolder(
+    path: string,
+    affectedPaths: readonly string[],
+    options?: { draftPolicy?: DraftDeletePolicy },
+  ): Promise<{ deleted: string[] }>
 }
 
-interface LifecycleOptions {
+export interface LifecycleOptions {
   fileChanges: VaultFileChanges
   mutationLock: ReturnType<typeof createPathMutationLock>
   prepareDocumentMutation(paths: readonly string[], lockAll?: boolean): Promise<DocumentMutationBarrier>
@@ -46,6 +60,14 @@ interface LifecycleOptions {
   renameOpenDocuments(mappings: ReadonlyArray<{ from: string; to: string }>): void
   removeOpenDocuments(paths: readonly string[]): void
   refresh(): Promise<void>
+  resolveDocumentIdentity?(path: string): Promise<DraftDocumentIdentity | null>
+  prepareDraftFileMutation?(
+    identities: readonly DraftDocumentIdentity[],
+  ): Promise<DraftFileMutationBarrier>
+  onDraftTransactionSettled?(
+    results: readonly DraftFileTransactionResult[],
+  ): Promise<void> | void
+  warnDraftTransaction?(results: readonly DraftFileTransactionResult[]): void
 }
 
 function folderMapping(fromFolder: string, toFolder: string, path: string): string | null {
@@ -55,6 +77,43 @@ function folderMapping(fromFolder: string, toFolder: string, path: string): stri
 }
 
 export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecycle {
+  async function identities(paths: readonly string[]): Promise<DraftDocumentIdentity[]> {
+    if (!options.resolveDocumentIdentity) return []
+    const resolved: DraftDocumentIdentity[] = []
+    let cursor = 0
+    const workers = Array.from(
+      { length: Math.min(4, paths.length) },
+      async () => {
+        while (cursor < paths.length) {
+          const path = paths[cursor++]
+          const identity = await options.resolveDocumentIdentity!(path)
+          if (identity) resolved.push(identity)
+        }
+      },
+    )
+    await Promise.all(workers)
+    return resolved
+  }
+
+  async function reportDraftResults(
+    results: readonly DraftFileTransactionResult[],
+  ): Promise<void> {
+    try {
+      await options.onDraftTransactionSettled?.(results)
+    } catch {
+      // Recovery UI synchronization is best-effort. The authoritative file
+      // transaction has already succeeded and must not be reported as failed.
+    }
+    const warnings = results.filter(({ status }) => (
+      status === 'identity-mismatch'
+      || status === 'conflict'
+      || status === 'unsupported'
+      || status === 'failed'
+      || status === 'stale'
+    ))
+    if (warnings.length > 0) options.warnDraftTransaction?.(warnings)
+  }
+
   async function refreshBestEffort(label: string): Promise<void> {
     try {
       await options.refresh()
@@ -149,8 +208,38 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
       ...(lockAll ? options.getOpenDocumentPaths() : []),
     ]
     return withMutation(mutationPaths, async (barrier) => {
-      const renamed = await patchPost(fromPath, body)
+      const before = (await identities([fromPath]))[0] ?? null
+      const draftBarrier = before && options.prepareDraftFileMutation
+        ? await options.prepareDraftFileMutation([before])
+        : null
+      let renamed: PostSummary
+      try {
+        renamed = await patchPost(fromPath, body)
+      } catch (error) {
+        await draftBarrier?.rollback()
+        throw error
+      }
       const mapping = { from: fromPath, to: renamed.path }
+      if (draftBarrier && before) {
+        const after = (await identities([renamed.path]))[0] ?? null
+        const draftResults = after?.documentId === before.documentId
+          ? await draftBarrier.commitMoves([{
+              vaultId: before.vaultId,
+              documentId: before.documentId,
+              fromPath,
+              toPath: renamed.path,
+            }])
+          : await draftBarrier.commitMoves([], [before])
+        if (!after || after.documentId !== before.documentId) {
+          draftResults.push({
+            documentId: before.documentId,
+            oldPath: fromPath,
+            newPath: renamed.path,
+            status: 'identity-mismatch',
+          })
+        }
+        await reportDraftResults(draftResults)
+      }
       options.renameOpenDocuments([mapping])
       options.fileChanges.publish({
         oldPath: fromPath,
@@ -174,12 +263,52 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
   ) {
     const mutationPaths = [...affectedPaths, ...referencePaths, ...options.getOpenDocumentPaths()]
     return withMutation(mutationPaths, async (barrier) => {
-      const result = await renameFolder(fromFolder, toFolder, updateReferences)
+      const before = await identities(affectedPaths)
+      const draftBarrier = options.prepareDraftFileMutation
+        ? await options.prepareDraftFileMutation(before)
+        : null
+      let result: Awaited<ReturnType<typeof renameFolder>>
+      try {
+        result = await renameFolder(fromFolder, toFolder, updateReferences)
+      } catch (error) {
+        await draftBarrier?.rollback()
+        throw error
+      }
       const moved = new Set(result.moved)
       const mappings = affectedPaths.flatMap((from) => {
         const to = folderMapping(fromFolder, result.path, from)
         return to && moved.has(to) ? [{ from, to }] : []
       })
+      if (draftBarrier) {
+        const byOldPath = new Map(before.map((identity) => [identity.documentPath, identity]))
+        const after = await identities(mappings.map(({ to }) => to))
+        const afterByPath = new Map(after.map((identity) => [identity.documentPath, identity]))
+        const draftMappings: DraftPathMapping[] = []
+        const preserved: DraftDocumentIdentity[] = []
+        const mismatches: DraftFileTransactionResult[] = []
+        for (const mapping of mappings) {
+          const source = byOldPath.get(mapping.from)
+          const target = afterByPath.get(mapping.to)
+          if (source && target?.documentId === source.documentId) {
+            draftMappings.push({
+              vaultId: source.vaultId,
+              documentId: source.documentId,
+              fromPath: mapping.from,
+              toPath: mapping.to,
+            })
+          } else if (source) {
+            preserved.push(source)
+            mismatches.push({
+              documentId: source.documentId,
+              oldPath: mapping.from,
+              newPath: mapping.to,
+              status: 'identity-mismatch',
+            })
+          }
+        }
+        const draftResults = await draftBarrier.commitMoves(draftMappings, preserved)
+        await reportDraftResults([...draftResults, ...mismatches])
+      }
       options.renameOpenDocuments(mappings)
       for (const mapping of mappings) {
         options.fileChanges.publish({
@@ -196,9 +325,29 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
     }, true)
   }
 
-  async function deleteFileLifecycle(path: string): Promise<{ ok: true }> {
+  async function deleteFileLifecycle(
+    path: string,
+    lifecycleOptions: { draftPolicy?: DraftDeletePolicy } = {},
+  ): Promise<{ ok: true }> {
     return withMutation([path], async (barrier) => {
-      const result = await deletePost(path)
+      const before = (await identities([path]))[0] ?? null
+      const draftBarrier = before && options.prepareDraftFileMutation
+        ? await options.prepareDraftFileMutation([before])
+        : null
+      let result: { ok: true }
+      try {
+        result = await deletePost(path)
+      } catch (error) {
+        await draftBarrier?.rollback()
+        throw error
+      }
+      if (draftBarrier && before) {
+        const draftResults = await draftBarrier.commitDeletes([{
+          ...before,
+          policy: lifecycleOptions.draftPolicy ?? 'preserve',
+        }])
+        await reportDraftResults(draftResults)
+      }
       options.removeOpenDocuments([path])
       options.fileChanges.publish({ path, kind: 'delete', source: 'editor-lifecycle' })
       barrier.commit()
@@ -207,9 +356,33 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
     })
   }
 
-  async function deleteFolderLifecycle(path: string, affectedPaths: readonly string[]): Promise<{ deleted: string[] }> {
+  async function deleteFolderLifecycle(
+    path: string,
+    affectedPaths: readonly string[],
+    lifecycleOptions: { draftPolicy?: DraftDeletePolicy } = {},
+  ): Promise<{ deleted: string[] }> {
     return withMutation([...affectedPaths, ...options.getOpenDocumentPaths()], async (barrier) => {
-      const result = await deleteFolder(path, true)
+      const before = await identities(affectedPaths)
+      const draftBarrier = options.prepareDraftFileMutation
+        ? await options.prepareDraftFileMutation(before)
+        : null
+      let result: { deleted: string[] }
+      try {
+        result = await deleteFolder(path, true)
+      } catch (error) {
+        await draftBarrier?.rollback()
+        throw error
+      }
+      if (draftBarrier) {
+        const deleted = new Set(result.deleted)
+        const draftResults = await draftBarrier.commitDeletes(
+          before.filter((identity) => deleted.has(identity.documentPath)).map((identity) => ({
+            ...identity,
+            policy: lifecycleOptions.draftPolicy ?? 'preserve',
+          })),
+        )
+        await reportDraftResults(draftResults)
+      }
       options.removeOpenDocuments(result.deleted)
       for (const deletedPath of result.deleted) {
         options.fileChanges.publish({ path: deletedPath, kind: 'delete', source: 'editor-lifecycle' })

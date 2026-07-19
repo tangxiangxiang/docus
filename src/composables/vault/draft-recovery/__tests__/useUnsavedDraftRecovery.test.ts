@@ -60,6 +60,20 @@ async function seededStore(...drafts: UnsavedDraft[]) {
 }
 
 describe('createUnsavedDraftRecovery', () => {
+  it('removes a settled draft identity from the current recovery session', async () => {
+    const store = await seededStore(draft('a'))
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: vi.fn().mockResolvedValue(post('a')),
+    })
+    await recovery.discover('vault')
+    expect(recovery.items.value).toHaveLength(1)
+
+    recovery.removeIdentity('vault', 'a')
+
+    expect(recovery.items.value).toEqual([])
+  })
+
   it('blocks discard while the matching document is dirty, saving, or external', () => {
     const clean = {
       documentId: 'a',

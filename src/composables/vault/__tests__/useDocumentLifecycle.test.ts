@@ -6,7 +6,11 @@ import * as api from '../../../lib/api'
 import { createVaultFileChanges } from '../context/fileChanges'
 import { useDocumentSave } from '../editor-tabs/useDocumentSave'
 import { createPathMutationLock } from '../pathMutationLock'
-import { DocumentMutationConflictError, useDocumentLifecycle } from '../useDocumentLifecycle'
+import {
+  DocumentMutationConflictError,
+  useDocumentLifecycle,
+  type LifecycleOptions,
+} from '../useDocumentLifecycle'
 
 function tab(path = 'inbox/a', raw = 'saved'): Tab {
   return {
@@ -43,6 +47,7 @@ function saveResponse(raw: string): Response {
 function setup(
   initialTabs: Tab[] = [tab()],
   applyReferenceWrites = vi.fn().mockResolvedValue(undefined),
+  lifecycleExtras: Partial<LifecycleOptions> = {},
 ) {
   const tabs = ref(initialTabs)
   const activePath = ref(initialTabs[0]?.path ?? null)
@@ -78,6 +83,7 @@ function setup(
       if (activePath.value && paths.includes(activePath.value)) activePath.value = tabs.value[0]?.path ?? null
     },
     refresh,
+    ...lifecycleExtras,
   })
   return { tabs, activePath, fileChanges, refresh, save, lifecycle, mutationLock, renamed, removed }
 }
@@ -89,6 +95,72 @@ afterEach(() => {
 })
 
 describe('useDocumentLifecycle rename', () => {
+  it('commits a draft move with the actual suffixed server path after identity validation', async () => {
+    vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'archive/a-2', title: 'A', created: '', updated: '', tags: [], size: 1, mtime: 2,
+    })
+    const commitMoves = vi.fn().mockResolvedValue([{
+      documentId: 'doc-a',
+      oldPath: 'inbox/a',
+      newPath: 'archive/a-2',
+      status: 'moved',
+    }])
+    const rollback = vi.fn()
+    const resolveDocumentIdentity = vi.fn(async (path: string) => ({
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: path,
+    }))
+    const h = setup([tab()], undefined, {
+      resolveDocumentIdentity,
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves,
+        commitDeletes: vi.fn(),
+        rollback,
+      }),
+    })
+
+    await h.lifecycle.renameFile('inbox/a', { targetPath: 'archive/a' })
+
+    expect(commitMoves).toHaveBeenCalledWith([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      fromPath: 'inbox/a',
+      toPath: 'archive/a-2',
+    }])
+    expect(rollback).not.toHaveBeenCalled()
+  })
+
+  it('keeps file success when draft migration reports a warning', async () => {
+    vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'inbox/b', title: 'B', created: '', updated: '', tags: [], size: 1, mtime: 2,
+    })
+    const warnings = vi.fn()
+    const h = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn().mockResolvedValue([{
+          documentId: 'doc-a',
+          oldPath: 'inbox/a',
+          newPath: 'inbox/b',
+          status: 'failed',
+        }]),
+        commitDeletes: vi.fn(),
+        rollback: vi.fn(),
+      }),
+      warnDraftTransaction: warnings,
+    })
+
+    await expect(h.lifecycle.renameFile('inbox/a', { name: 'b' }))
+      .resolves.toMatchObject({ path: 'inbox/b' })
+    expect(h.tabs.value[0].path).toBe('inbox/b')
+    expect(warnings).toHaveBeenCalledOnce()
+  })
+
   it('waits for an in-flight save before PATCH rename', async () => {
     let finishSave!: (response: Response) => void
     const pendingSave = new Promise<Response>((resolve) => { finishSave = resolve })
@@ -274,6 +346,46 @@ describe('useDocumentLifecycle rename', () => {
 })
 
 describe('useDocumentLifecycle folder and delete operations', () => {
+  it('preserves drafts by default and uses explicit discard policy from FileTree', async () => {
+    vi.spyOn(api, 'deletePost').mockResolvedValue({ ok: true })
+    const commitDeletes = vi.fn().mockResolvedValue([])
+    const h = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn(),
+        commitDeletes,
+        rollback: vi.fn(),
+      }),
+    })
+    await h.lifecycle.deleteFile('inbox/a')
+    expect(commitDeletes).toHaveBeenLastCalledWith([expect.objectContaining({
+      policy: 'preserve',
+    })])
+
+    const explicit = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn(),
+        commitDeletes,
+        rollback: vi.fn(),
+      }),
+    })
+    await explicit.lifecycle.deleteFile('inbox/a', {
+      draftPolicy: 'discard-confirmed',
+    })
+    expect(commitDeletes).toHaveBeenLastCalledWith([expect.objectContaining({
+      policy: 'discard-confirmed',
+    })])
+  })
+
   it('migrates every exact folder descendant and leaves prefix-similar paths alone', async () => {
     vi.spyOn(api, 'renameFolder').mockResolvedValue({
       path: 'renamed', moved: ['renamed/a', 'renamed/sub/b'], updatedReferences: [],

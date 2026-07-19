@@ -527,15 +527,23 @@ async function onDelete(p: string, kind: 'file' | 'folder') {
   const count = node.kind === 'folder' ? countDescendants(node) + 1 : 1
   const ok = await confirm(
     node.kind === 'folder'
-      ? t('file_tree.delete_folder_confirm', { name: node.name, count: count - 1 })
-      : t('file_tree.delete_file_confirm', { name: node.name }),
+      ? t('file_tree.delete_folder_confirm_drafts', { name: node.name, count: count - 1 })
+      : t('file_tree.delete_file_confirm_drafts', { name: node.name }),
   )
   if (!ok) return
   try {
     if (node.kind === 'folder') {
-      if (lifecycle) await lifecycle.deleteFolder(p, filePaths(node))
+      if (lifecycle) {
+        await lifecycle.deleteFolder(
+          p,
+          filePaths(node),
+          { draftPolicy: 'discard-confirmed' },
+        )
+      }
       else await deleteFolder(p, true)
-    } else if (lifecycle) await lifecycle.deleteFile(p)
+    } else if (lifecycle) {
+      await lifecycle.deleteFile(p, { draftPolicy: 'discard-confirmed' })
+    }
     else await deletePost(p)
     if (!lifecycle) emit('refresh')
   } catch (e: any) { toast.error(t('file_tree.delete_failed', { error: e.message })) }

@@ -207,6 +207,38 @@ describe('draft file transaction integration', () => {
     await persistence.dispose()
   })
 
+  it('preserves and persists edits made after delete confirmation', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    await store.saveDraft(draft('confirmed'))
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 20,
+      targetWindow: undefined,
+    })
+    const barrier = await persistence.prepareFileMutation([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }])
+    persistence.schedule(snapshot('after-confirmation', 'notes/a', 2))
+
+    const [result] = await barrier.commitDeletes([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      policy: 'discard-confirmed',
+    }])
+    await persistence.flush('vault', 'doc-a')
+
+    expect(result.status).toBe('stale')
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'after-confirmation',
+      documentPath: 'notes/a',
+    })
+    await persistence.dispose()
+  })
+
   it('settles a barrier only once', async () => {
     const store = createDraftStore({ backend: createMemoryDraftBackend() })
     const persistence = createUnsavedDraftPersistence({

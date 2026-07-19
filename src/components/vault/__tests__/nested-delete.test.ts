@@ -64,7 +64,9 @@ describe('FileTree nested delete', () => {
     await w.vm.$nextTick()
     await clickMenuButton('删除')
 
-    expect(dialogStubs.confirm).toHaveBeenCalledWith('删除“old”？')
+    expect(dialogStubs.confirm).toHaveBeenCalledWith(
+      '删除“old”？如果存在本地未保存的恢复内容，也会被丢弃。',
+    )
     expect(deleteFolderSpy).not.toHaveBeenCalled()
     expect(deleteSpy).toHaveBeenCalledWith('inbox/notes/old')
     expect(w.emitted('refresh')).toBeTruthy()

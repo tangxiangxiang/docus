@@ -39,6 +39,7 @@ export interface DraftFileTransactionResult {
 export interface DraftFileMutationBarrier {
   commitMoves(
     mappings: readonly DraftPathMapping[],
+    preserved?: readonly DraftDocumentIdentity[],
   ): Promise<DraftFileTransactionResult[]>
   commitDeletes(
     deletions: readonly DraftDeleteRequest[],

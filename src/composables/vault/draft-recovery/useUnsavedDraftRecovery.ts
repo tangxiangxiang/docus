@@ -36,6 +36,7 @@ export interface UnsavedDraftRecovery {
   activeRecoveryId: DeepReadonly<Ref<string | null>>
   discover(vaultId: string): Promise<void>
   retry(recoveryId: string): Promise<void>
+  removeIdentity(vaultId: string, documentId: string): void
   dismissForSession(recoveryId: string): void
   selectRecovery(recoveryId: string | null): void
   dispose(): void
@@ -224,6 +225,19 @@ export function createUnsavedDraftRecovery(
     if (activeRecoveryId.value === id) activeRecoveryId.value = null
   }
 
+  function removeIdentity(vaultId: string, documentId: string): void {
+    if (disposed) return
+    const removed = mutableItems.value.filter((item) => (
+      item.draft.vaultId === vaultId && item.draft.documentId === documentId
+    ))
+    if (removed.length === 0) return
+    const removedIds = new Set(removed.map((item) => item.recoveryId))
+    mutableItems.value = mutableItems.value.filter((item) => !removedIds.has(item.recoveryId))
+    if (activeRecoveryId.value && removedIds.has(activeRecoveryId.value)) {
+      activeRecoveryId.value = null
+    }
+  }
+
   function selectRecovery(id: string | null): void {
     if (disposed) return
     activeRecoveryId.value = id !== null
@@ -246,6 +260,7 @@ export function createUnsavedDraftRecovery(
     activeRecoveryId: readonly(activeRecoveryId),
     discover,
     retry,
+    removeIdentity,
     dismissForSession,
     selectRecovery,
     dispose,
