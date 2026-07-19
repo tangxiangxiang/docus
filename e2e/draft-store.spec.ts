@@ -174,6 +174,8 @@ test('does not rewrite unsupported records in IndexedDB', async ({ page }) => {
       'target',
       'renamed/target',
     )
+    const deleted = await store.deleteDraft('vault-a', 'future')
+    const cleared = await store.clearVaultDrafts('vault-a')
 
     const read = database.transaction('drafts', 'readonly').objectStore('drafts')
     const readRecord = (key: IDBValidKey) => new Promise<unknown>((resolve, reject) => {
@@ -191,6 +193,8 @@ test('does not rewrite unsupported records in IndexedDB', async ({ page }) => {
     return {
       saved,
       moved,
+      deleted,
+      cleared,
       rawFuture,
       rawTarget,
       rawSource,
@@ -199,9 +203,99 @@ test('does not rewrite unsupported records in IndexedDB', async ({ page }) => {
 
   expect(result.saved).toBe(false)
   expect(result.moved).toEqual({ status: 'unsupported' })
+  expect(result.deleted).toEqual({ status: 'unsupported' })
+  expect(result.cleared).toBe(true)
   expect(result.rawFuture).toMatchObject({ version: 2, content: 'future buffer' })
   expect(result.rawTarget).toMatchObject({ content: 42 })
-  expect(result.rawSource).toMatchObject({ content: 'source buffer' })
+  expect(result.rawSource).toBeUndefined()
+})
+
+test('closes a cached connection when another context upgrades the database', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const store = createDraftStore()
+    await store.saveDraft({
+      version: 1,
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'buffer',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 20,
+    })
+
+    const upgraded = await new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => {
+        const version = request.result.version
+        request.result.close()
+        resolve(version)
+      }
+      request.onerror = () => reject(request.error)
+      request.onblocked = () => reject(new Error('Cached connection blocked upgrade'))
+    })
+
+    return {
+      upgraded,
+      oldStoreFailsClosed: await store.listDrafts('vault-a'),
+    }
+  }, DATABASE_NAME)
+
+  expect(result).toEqual({
+    upgraded: 2,
+    oldStoreFailsClosed: [],
+  })
+})
+
+test('does not leak a late connection after a blocked open', async ({ page }) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const blocker = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 1)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+
+    let lateOpen: IDBOpenDBRequest | null = null
+    const upgradeFactory = {
+      open(name: string) {
+        lateOpen = indexedDB.open(name, 2)
+        return lateOpen
+      },
+    } as IDBFactory
+
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const store = createDraftStore({ indexedDB: upgradeFactory })
+    const listed = await store.listDrafts('vault-a')
+
+    const lateSettled = new Promise<void>((resolve) => {
+      lateOpen!.addEventListener('success', () => resolve(), { once: true })
+      lateOpen!.addEventListener('error', () => resolve(), { once: true })
+    })
+    blocker.close()
+    await lateSettled
+
+    const deletion = await new Promise<'deleted' | 'blocked'>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(databaseName)
+      request.onsuccess = () => resolve('deleted')
+      request.onerror = () => reject(request.error)
+      request.onblocked = () => resolve('blocked')
+    })
+
+    return { listed, deletion }
+  }, DATABASE_NAME)
+
+  expect(result).toEqual({
+    listed: [],
+    deletion: 'deleted',
+  })
 })
 
 test('fails safely when opening the production database fails', async ({

@@ -15,13 +15,14 @@ type SaveDecision =
   | { result: 'saved'; draft: UnsavedDraft }
   | { result: Exclude<SaveResult, 'saved'>; draft?: never }
 type MoveResult = 'moved' | 'missing' | 'conflict' | 'unsupported'
+type DeleteResult = 'deleted' | 'missing' | 'unsupported'
 type BackendOperation = 'save' | 'get' | 'list' | 'delete' | 'move' | 'clear'
 
 export interface DraftStorageBackend {
   save(draft: UnsavedDraft): Promise<SaveResult>
   get(key: DraftKey): Promise<unknown | null>
   list(vaultId: string): Promise<unknown[]>
-  delete(key: DraftKey): Promise<void>
+  delete(key: DraftKey): Promise<DeleteResult>
   move(
     vaultId: string,
     oldDocumentId: string,
@@ -38,6 +39,12 @@ export type DraftMoveOutcome =
   | { status: 'unsupported' }
   | { status: 'failed' }
 
+export type DraftDeleteOutcome =
+  | { status: 'deleted' }
+  | { status: 'missing' }
+  | { status: 'unsupported' }
+  | { status: 'failed' }
+
 export interface MemoryDraftStorageBackend extends DraftStorageBackend {
   failNext(operation: BackendOperation): void
   seedRaw(value: unknown): Promise<void>
@@ -47,7 +54,7 @@ export interface DraftStore {
   saveDraft(draft: UnsavedDraft): Promise<boolean>
   getDraft(vaultId: string, documentId: string): Promise<UnsavedDraft | null>
   listDrafts(vaultId: string): Promise<UnsavedDraft[]>
-  deleteDraft(vaultId: string, documentId: string): Promise<boolean>
+  deleteDraft(vaultId: string, documentId: string): Promise<DraftDeleteOutcome>
   moveDraft(
     vaultId: string,
     oldDocumentId: string,
@@ -101,12 +108,11 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
     },
 
     async deleteDraft(vaultId, documentId) {
-      if (!isDraftIdentity(vaultId, documentId)) return false
+      if (!isDraftIdentity(vaultId, documentId)) return { status: 'failed' }
       try {
-        await backend.delete(draftKey(vaultId, documentId))
-        return true
+        return { status: await backend.delete(draftKey(vaultId, documentId)) }
       } catch {
-        return false
+        return { status: 'failed' }
       }
     },
 
@@ -180,7 +186,12 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
 
     async delete([vaultId, documentId]) {
       consumeFailure('delete')
-      records.delete(serializedKey(vaultId, documentId))
+      const key = serializedKey(vaultId, documentId)
+      const value = records.get(key)
+      if (value === undefined || value === null) return 'missing'
+      if (!isUnsavedDraft(value)) return 'unsupported'
+      records.delete(key)
+      return 'deleted'
     },
 
     async move(vaultId, oldDocumentId, newDocumentId, newPath) {
@@ -200,7 +211,7 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
     async clear(vaultId) {
       consumeFailure('clear')
       for (const [key, value] of records) {
-        if (recordVaultId(value) === vaultId) records.delete(key)
+        if (isUnsavedDraft(value) && value.vaultId === vaultId) records.delete(key)
       }
     },
 
@@ -227,10 +238,23 @@ export function createIndexedDbDraftBackend(
   function database(): Promise<IDBDatabase> {
     if (!factory) return Promise.reject(new Error('IndexedDB is unavailable'))
     if (!databasePromise) {
-      databasePromise = openDatabase(factory).catch((error: unknown) => {
-        databasePromise = null
-        throw error
-      })
+      const cached = openDatabase(factory)
+        .then((db) => {
+          const release = () => {
+            if (databasePromise === cached) databasePromise = null
+          }
+          db.onversionchange = () => {
+            db.close()
+            release()
+          }
+          db.onclose = release
+          return db
+        })
+        .catch((error: unknown) => {
+          if (databasePromise === cached) databasePromise = null
+          throw error
+        })
+      databasePromise = cached
     }
     return databasePromise
   }
@@ -273,8 +297,19 @@ export function createIndexedDbDraftBackend(
     async delete(key) {
       const db = await database()
       const transaction = db.transaction(DRAFT_STORE_NAME, 'readwrite')
-      transaction.objectStore(DRAFT_STORE_NAME).delete(idbKey(...key))
+      const store = transaction.objectStore(DRAFT_STORE_NAME)
+      const value = await request(store.get(idbKey(...key)))
+      if (value === undefined || value === null) {
+        await transactionDone(transaction)
+        return 'missing'
+      }
+      if (!isUnsavedDraft(value)) {
+        await transactionDone(transaction)
+        return 'unsupported'
+      }
+      store.delete(idbKey(...key))
       await transactionDone(transaction)
+      return 'deleted'
     },
 
     async move(vaultId, oldDocumentId, newDocumentId, newPath) {
@@ -300,9 +335,11 @@ export function createIndexedDbDraftBackend(
       const db = await database()
       const transaction = db.transaction(DRAFT_STORE_NAME, 'readwrite')
       const store = transaction.objectStore(DRAFT_STORE_NAME)
-      const keys = await request(store.getAllKeys())
-      for (const key of keys) {
-        if (Array.isArray(key) && key[0] === vaultId) store.delete(key)
+      const values = await request(store.getAll())
+      for (const value of values) {
+        if (isUnsavedDraft(value) && value.vaultId === vaultId) {
+          store.delete(idbKey(value.vaultId, value.documentId))
+        }
       }
       await transactionDone(transaction)
     },
@@ -395,6 +432,7 @@ function cloneUnknown<T>(value: T): T {
 function openDatabase(factory: IDBFactory): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const open = factory.open(DATABASE_NAME, DATABASE_VERSION)
+    let rejected = false
     open.onupgradeneeded = () => {
       const db = open.result
       const store = db.objectStoreNames.contains(DRAFT_STORE_NAME)
@@ -406,9 +444,18 @@ function openDatabase(factory: IDBFactory): Promise<IDBDatabase> {
         store.createIndex(VAULT_UPDATED_INDEX, ['vaultId', 'updatedAt'])
       }
     }
-    open.onsuccess = () => resolve(open.result)
+    open.onsuccess = () => {
+      if (rejected) {
+        open.result.close()
+        return
+      }
+      resolve(open.result)
+    }
     open.onerror = () => reject(open.error ?? new Error('Failed to open draft database'))
-    open.onblocked = () => reject(new Error('Draft database upgrade is blocked'))
+    open.onblocked = () => {
+      rejected = true
+      reject(new Error('Draft database upgrade is blocked'))
+    }
   })
 }
 

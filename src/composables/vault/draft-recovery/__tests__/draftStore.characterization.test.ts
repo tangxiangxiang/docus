@@ -104,11 +104,43 @@ describe('draftStore characterization', () => {
     await store.saveDraft(draft('b', 21))
     await store.saveDraft(draft('a', 22, { vaultId: 'vault-b' }))
 
-    expect(await store.deleteDraft('vault-a', 'a')).toBe(true)
-    expect(await store.deleteDraft('vault-a', 'a')).toBe(true)
+    expect(await store.deleteDraft('vault-a', 'a')).toEqual({ status: 'deleted' })
+    expect(await store.deleteDraft('vault-a', 'a')).toEqual({ status: 'missing' })
     expect(await store.clearVaultDrafts('vault-a')).toBe(true)
     expect(await store.listDrafts('vault-a')).toEqual([])
     expect((await store.getDraft('vault-b', 'a'))?.content).toBe('content:a:22')
+  })
+
+  it('does not delete unsupported records during normal lifecycle cleanup', async () => {
+    const future = { ...draft('future', 30), version: 2 }
+    const corrupt = { ...draft('corrupt', 31), content: 42 }
+    await backend.seedRaw(future)
+    await backend.seedRaw(corrupt)
+    await store.saveDraft(draft('valid', 32))
+
+    expect(await store.deleteDraft('vault-a', 'future'))
+      .toEqual({ status: 'unsupported' })
+    expect(await store.clearVaultDrafts('vault-a')).toBe(true)
+    expect(await backend.get(['vault-a', 'future'])).toEqual(future)
+    expect(await backend.get(['vault-a', 'corrupt'])).toEqual(corrupt)
+    expect(await store.getDraft('vault-a', 'valid')).toBeNull()
+  })
+
+  it('lists the safe-integer timestamp boundary and rejects values beyond it', async () => {
+    const unsafe = Number.MAX_SAFE_INTEGER + 1
+
+    expect(await store.saveDraft(draft('boundary', Number.MAX_SAFE_INTEGER, {
+      baseModifiedAt: Number.MAX_SAFE_INTEGER,
+    }))).toBe(true)
+    expect(await store.saveDraft(draft('created', unsafe, {
+      createdAt: unsafe,
+    }))).toBe(false)
+    expect(await store.saveDraft(draft('updated', unsafe))).toBe(false)
+    expect(await store.saveDraft(draft('mtime', 30, {
+      baseModifiedAt: unsafe,
+    }))).toBe(false)
+    expect((await store.listDrafts('vault-a')).map((value) => value.documentId))
+      .toEqual(['boundary'])
   })
 
   it('moves a draft atomically while preserving its content and baseline', async () => {
@@ -222,7 +254,8 @@ describe('draftStore characterization', () => {
     await expect(store.listDrafts('vault-a')).resolves.toEqual([])
 
     backend.failNext('delete')
-    await expect(store.deleteDraft('vault-a', 'a')).resolves.toBe(false)
+    await expect(store.deleteDraft('vault-a', 'a'))
+      .resolves.toEqual({ status: 'failed' })
 
     backend.failNext('clear')
     await expect(store.clearVaultDrafts('vault-a')).resolves.toBe(false)
@@ -234,7 +267,8 @@ describe('draftStore characterization', () => {
     await expect(unavailable.saveDraft(draft('a', 20))).resolves.toBe(false)
     await expect(unavailable.getDraft('vault-a', 'a')).resolves.toBeNull()
     await expect(unavailable.listDrafts('vault-a')).resolves.toEqual([])
-    await expect(unavailable.deleteDraft('vault-a', 'a')).resolves.toBe(false)
+    await expect(unavailable.deleteDraft('vault-a', 'a'))
+      .resolves.toEqual({ status: 'failed' })
     await expect(
       unavailable.moveDraft('vault-a', 'a', 'x', 'notes/x'),
     ).resolves.toEqual({ status: 'failed' })

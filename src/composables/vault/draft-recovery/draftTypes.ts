@@ -24,9 +24,9 @@ export function isUnsavedDraft(value: unknown): value is UnsavedDraft {
     && (candidate.baseContentHash === null
       || typeof candidate.baseContentHash === 'string')
     && (candidate.baseModifiedAt === null
-      || isNonNegativeFiniteNumber(candidate.baseModifiedAt))
-    && isNonNegativeFiniteNumber(candidate.createdAt)
-    && isNonNegativeFiniteNumber(candidate.updatedAt)
+      || isNonNegativeSafeInteger(candidate.baseModifiedAt))
+    && isNonNegativeSafeInteger(candidate.createdAt)
+    && isNonNegativeSafeInteger(candidate.updatedAt)
     && candidate.createdAt <= candidate.updatedAt
 }
 
@@ -34,11 +34,12 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
-function isNonNegativeFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isSafeInteger(value)
+    && value >= 0
 }
 
 export function cloneDraft(draft: UnsavedDraft): UnsavedDraft {
   return { ...draft }
 }
-

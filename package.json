@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:draft-store": "playwright test --config=playwright.draft-store.config.ts",
     "lint:icons": "tsx scripts/icon-lint.ts --allow-file=src/components/MarkMap.vue --allow-file=src/components/Mermaid.vue",
     "lint:icons:strict": "tsx scripts/icon-lint.ts --strict --allow-file=src/components/MarkMap.vue --allow-file=src/components/Mermaid.vue"
   },

@@ -99,7 +99,13 @@ The Edit-09.2 API is:
 saveDraft(draft): Promise<boolean>
 getDraft(vaultId, documentId): Promise<UnsavedDraft | null>
 listDrafts(vaultId): Promise<UnsavedDraft[]>
-deleteDraft(vaultId, documentId): Promise<boolean>
+deleteDraft(vaultId, documentId):
+  Promise<
+    | { status: 'deleted' }
+    | { status: 'missing' }
+    | { status: 'unsupported' }
+    | { status: 'failed' }
+  >
 moveDraft(vaultId, oldDocumentId, newDocumentId, newPath):
   Promise<
     | { status: 'moved' }
@@ -123,7 +129,11 @@ Rules:
   a current-version save never overwrites it.
 - `listDrafts` returns only the requested vault, newest first, with deterministic
   document-ID tie breaking.
-- Delete and clear are idempotent.
+- Delete is fail-closed: it removes only a supported current-version record,
+  reports `missing` idempotently, and preserves an occupied future-version or
+  corrupt record as `unsupported`.
+- Vault clear removes only supported current-version records. It does not treat
+  skipped future-version or corrupt records as ordinary lifecycle data.
 - `moveDraft` is atomic: either the old key remains unchanged or the new key is
   committed and the old key is removed.
 - If the target identity already has a different draft, the move reports `conflict`
@@ -136,6 +146,11 @@ Rules:
   `failed`.
 - Unsupported or corrupt records are skipped on reads and are never rewritten
   automatically.
+- `createdAt`, `updatedAt`, and non-null `baseModifiedAt` are non-negative safe
+  integers, matching the IndexedDB range used by vault listing.
+- Cached IndexedDB connections close on `versionchange` and clear themselves on
+  `close`, so another application instance can upgrade the schema. A connection
+  that succeeds after an already-rejected blocked open is closed immediately.
 
 ## 6. Draft Creation and Removal
 
@@ -312,6 +327,7 @@ Edit-09.2 batch additionally runs:
 
 ```bash
 npm test
+npm run test:e2e:draft-store
 npm run typecheck
 npm run build
 npm run lint:icons
