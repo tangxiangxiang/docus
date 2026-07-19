@@ -6,6 +6,13 @@ import {
   isUnsavedDraft,
   type UnsavedDraft,
 } from './draftTypes'
+import type {
+  DraftDeleteRequest,
+  DraftDocumentIdentity,
+  DraftFileMutationBarrier,
+  DraftFileTransactionResult,
+  DraftPathMapping,
+} from './useDraftFileTransactions'
 
 export const DRAFT_PERSIST_DEBOUNCE_MS = 800
 
@@ -40,6 +47,9 @@ export interface UnsavedDraftPersistence {
     expected: UnsavedDraft,
     snapshot: DraftBufferSnapshot,
   ): Promise<DraftOwner | null>
+  prepareFileMutation(
+    identities: readonly DraftDocumentIdentity[],
+  ): Promise<DraftFileMutationBarrier>
   invalidateOwner(owner: DraftOwner): void
   invalidate(vaultId: string, documentId: string): void
   dispose(): Promise<void>
@@ -54,6 +64,7 @@ interface DraftEntry {
   previousUpdatedAt: number
   createdAt: number | null
   persistedDraft: UnsavedDraft | null
+  fileTransaction: symbol | null
 }
 
 interface CreateOptions {
@@ -96,6 +107,7 @@ export function createUnsavedDraftPersistence(
         previousUpdatedAt: -1,
         createdAt: null,
         persistedDraft: null,
+        fileTransaction: null,
       }
       entries.set(identity, entry)
     }
@@ -213,10 +225,12 @@ export function createUnsavedDraftPersistence(
       documentId: captured.documentId,
       generation: entry.generation,
     }
-    entry.timer = setTimeout(() => {
-      entry.timer = null
-      void queueWrite(owner, captured)
-    }, debounceMs)
+    if (!entry.fileTransaction) {
+      entry.timer = setTimeout(() => {
+        entry.timer = null
+        void queueWrite(owner, captured)
+      }, debounceMs)
+    }
     return owner
   }
 
@@ -422,6 +436,183 @@ export function createUnsavedDraftPersistence(
     }
   }
 
+  async function prepareFileMutation(
+    identities: readonly DraftDocumentIdentity[],
+  ): Promise<DraftFileMutationBarrier> {
+    const token = Symbol('draft-file-transaction')
+    const held = new Map<string, {
+      identity: DraftDocumentIdentity
+      entry: DraftEntry
+      confirmedDraft: UnsavedDraft | null
+    }>()
+
+    for (const identity of identities) {
+      if (!validIdentity(identity.vaultId, identity.documentId)) continue
+      const entry = entryFor(identity.vaultId, identity.documentId)
+      if (entry.fileTransaction) continue
+      clearTimer(entry)
+      entry.fileTransaction = token
+      held.set(key(identity.vaultId, identity.documentId), {
+        identity: { ...identity },
+        entry,
+        confirmedDraft: null,
+      })
+    }
+    await Promise.all([...held.values()].map(async ({ entry }) => {
+      if (entry.pendingWrite) await entry.pendingWrite.catch(() => false)
+    }))
+    for (const state of held.values()) {
+      if (state.entry.fileTransaction !== token) continue
+      state.confirmedDraft = state.entry.persistedDraft
+        ?? await store.getDraft(
+          state.identity.vaultId,
+          state.identity.documentId,
+        ).catch(() => null)
+    }
+
+    let settled = false
+
+    function releaseEntry(
+      state: typeof held extends Map<string, infer V> ? V : never,
+      path: string,
+      writeLatest: boolean,
+    ): void {
+      const { entry, identity } = state
+      if (entry.fileTransaction !== token) return
+      entry.fileTransaction = null
+      if (entry.latestSnapshot) {
+        entry.latestSnapshot = {
+          ...entry.latestSnapshot,
+          documentPath: path,
+        }
+      }
+      if (!writeLatest || !entry.latestSnapshot || !entry.latestSnapshotNeedsWrite) return
+      entry.generation += 1
+      const owner = {
+        vaultId: identity.vaultId,
+        documentId: identity.documentId,
+        generation: entry.generation,
+      }
+      const captured = cloneSnapshot(entry.latestSnapshot)
+      entry.timer = setTimeout(() => {
+        entry.timer = null
+        void queueWrite(owner, captured)
+      }, debounceMs)
+    }
+
+    async function commitMoves(
+      mappings: readonly DraftPathMapping[],
+    ): Promise<DraftFileTransactionResult[]> {
+      if (settled) return []
+      settled = true
+      const results: DraftFileTransactionResult[] = []
+      const mappedKeys = new Set<string>()
+      for (const mapping of mappings) {
+        const identityKey = key(mapping.vaultId, mapping.documentId)
+        const state = held.get(identityKey)
+        if (!state
+          || state.entry.fileTransaction !== token
+          || state.identity.documentPath !== mapping.fromPath) {
+          results.push({
+            documentId: mapping.documentId,
+            oldPath: mapping.fromPath,
+            newPath: mapping.toPath,
+            status: 'identity-mismatch',
+          })
+          continue
+        }
+        mappedKeys.add(identityKey)
+        const outcome = await store.moveDraft(
+          mapping.vaultId,
+          mapping.documentId,
+          mapping.documentId,
+          mapping.toPath,
+        )
+        const status = outcome.status
+        if (status === 'moved') {
+          state.entry.persistedDraft = await store.getDraft(
+            mapping.vaultId,
+            mapping.documentId,
+          )
+        }
+        releaseEntry(
+          state,
+          mapping.toPath,
+          status === 'moved' || status === 'missing',
+        )
+        results.push({
+          documentId: mapping.documentId,
+          oldPath: mapping.fromPath,
+          newPath: mapping.toPath,
+          status,
+        })
+      }
+      for (const [identityKey, state] of held) {
+        if (!mappedKeys.has(identityKey)) {
+          releaseEntry(state, state.identity.documentPath, true)
+        }
+      }
+      return results
+    }
+
+    async function commitDeletes(
+      deletions: readonly DraftDeleteRequest[],
+    ): Promise<DraftFileTransactionResult[]> {
+      if (settled) return []
+      settled = true
+      const results: DraftFileTransactionResult[] = []
+      const deletedKeys = new Set<string>()
+      for (const deletion of deletions) {
+        const identityKey = key(deletion.vaultId, deletion.documentId)
+        const state = held.get(identityKey)
+        if (!state || state.entry.fileTransaction !== token) {
+          results.push({
+            documentId: deletion.documentId,
+            oldPath: deletion.documentPath,
+            status: 'identity-mismatch',
+          })
+          continue
+        }
+        deletedKeys.add(identityKey)
+        if (deletion.policy === 'preserve') {
+          releaseEntry(state, deletion.documentPath, false)
+          results.push({
+            documentId: deletion.documentId,
+            oldPath: deletion.documentPath,
+            status: 'preserved',
+          })
+          continue
+        }
+        const expected = state.confirmedDraft
+        const outcome = expected
+          ? await store.deleteDraftIfUnchanged(expected)
+          : { status: 'missing' as const }
+        releaseEntry(state, deletion.documentPath, false)
+        results.push({
+          documentId: deletion.documentId,
+          oldPath: deletion.documentPath,
+          status: outcome.status,
+        })
+      }
+      for (const [identityKey, state] of held) {
+        if (!deletedKeys.has(identityKey)) {
+          releaseEntry(state, state.identity.documentPath, true)
+        }
+      }
+      return results
+    }
+
+    async function rollback(): Promise<void> {
+      if (settled) return
+      settled = true
+      for (const state of held.values()) {
+        releaseEntry(state, state.identity.documentPath, true)
+      }
+    }
+
+    return { commitMoves, commitDeletes, rollback }
+  }
+
   function onPageHide(): void {
     void flushAllInternal().catch(() => {})
   }
@@ -449,6 +640,7 @@ export function createUnsavedDraftPersistence(
     discardIdentity,
     discardIdentityIfUnchanged,
     adoptRecoveredDraft,
+    prepareFileMutation,
     invalidateOwner,
     invalidate,
     dispose,
