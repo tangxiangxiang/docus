@@ -125,10 +125,17 @@ export type DraftConflictSaveOutcome =
  *  surfaces as `{ status: 'failed' }` rather than masquerading as an
  *  empty list — an unread store may still hold survivors, and a full
  *  'deleted' reported on top of it would hide them behind the UI's
- *  removeIdentity() until the next refresh. Discovery (best-effort by
- *  nature) keeps the plain array API. */
+ *  removeIdentity() until the next refresh. A row that fails validation
+ *  (future-version / corrupt) surfaces as `{ status: 'unsupported' }`
+ *  instead of being silently filtered away — the same raw-row semantics
+ *  as the family move's pre-flight: the store cannot certify that
+ *  identity's conflict state, so the caller must keep the identity
+ *  visible and warn instead of certifying a clean delete on top of a
+ *  row it could not read. Discovery (best-effort by nature) keeps the
+ *  plain array API. */
 export type ConflictListOutcome =
   | { status: 'ok'; records: DraftConflictRecord[] }
+  | { status: 'unsupported' }
   | { status: 'failed' }
 
 export interface DraftStore {
@@ -159,7 +166,16 @@ export interface DraftStore {
   clearVaultDrafts(vaultId: string): Promise<boolean>
   saveConflictDraft(record: DraftConflictRecord): Promise<DraftConflictSaveOutcome>
   listConflictDrafts(vaultId: string): Promise<DraftConflictRecord[]>
-  listConflictDraftsStrict(vaultId: string): Promise<ConflictListOutcome>
+  /** Strict conflict read for file transactions. When `documentId` is
+   *  given, both the unsupported-row check and the returned records are
+   *  scoped to that identity — mirroring the family move's same-identity
+   *  pre-flight, so an unreadable row THIS delete is about to outlive
+   *  surfaces as `unsupported` while other identities' rows (valid or
+   *  not) do not shadow an otherwise clean delete. */
+  listConflictDraftsStrict(
+    vaultId: string,
+    documentId?: string,
+  ): Promise<ConflictListOutcome>
   deleteConflictDraft(
     vaultId: string,
     documentId: string,
@@ -315,12 +331,29 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       }
     },
 
-    async listConflictDraftsStrict(vaultId) {
+    async listConflictDraftsStrict(vaultId, documentId) {
       if (vaultId.trim().length === 0) return { status: 'ok' as const, records: [] }
       try {
+        const raw = await backend.listConflicts(vaultId)
+        // Validate the raw rows BEFORE filtering, mirroring the family
+        // move's pre-flight: a future-version or corrupt row for this
+        // identity must surface as 'unsupported' instead of being
+        // silently dropped. A 'deleted' certified on top of a row the
+        // store could not read would outlive it with no warning — the
+        // Recovery identity would be removed while the unreadable row
+        // persists behind it.
+        if (raw.some((value) => (
+          (documentId === undefined || recordField(value, 'documentId') === documentId)
+          && !isDraftConflictRecord(value)
+        ))) {
+          return { status: 'unsupported' as const }
+        }
+        const records = readConflicts(raw)
         return {
           status: 'ok' as const,
-          records: readConflicts(await backend.listConflicts(vaultId)),
+          records: documentId === undefined
+            ? records
+            : records.filter((record) => record.documentId === documentId),
         }
       } catch {
         // A read error is not an empty store. Report a structured

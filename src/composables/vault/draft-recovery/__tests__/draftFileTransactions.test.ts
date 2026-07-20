@@ -869,19 +869,25 @@ describe('draft file transactions — post-CAS race regression', () => {
 
 // --- conflict handoff atomicity & conflict channel -------------------------
 //
-// These cover the round-3/round-4 findings: the conflict handoff is
-// bounded — it persists the current snapshot once, and an edit typed
-// during the save is handed to the conflict debounce / flush / dispose
-// path instead of keeping the file transaction open on a moving target;
-// a failed handoff must report 'failed' and keep the bytes visible;
-// edits made after conflict mode is entered must stay on the conflict
+// These cover the round-3/round-4/round-5 findings: the conflict handoff
+// is bounded to TWO saves — it persists the current snapshot, and an
+// edit typed during that save is persisted as the latest snapshot by a
+// second immediate attempt, so the transaction never reports success
+// while the newest bytes are still only in-memory; yet a steady typer
+// cannot keep the file transaction open on a moving target — after two
+// attempts the handoff fails closed (tab kept open, conflict debounce
+// armed for a background retry). Immediate orphan writes on the delete
+// paths are observed: a rejected write maps to 'failed' (never
+// preserved / stale / conflict) so the lifecycle keeps the tab open.
+// Edits made after conflict mode is entered must stay on the conflict
 // channel (never overwrite the cross-context primary); conflict records
 // must follow renames as one pre-flight-validated family; a confirmed
 // delete must remove the conflict records frozen at confirmation time,
 // hold its transaction until that cleanup and the final re-verification
 // complete (an edit typed during the cleanup is persisted as a conflict
-// BEFORE anything reports deleted), and treat an unread conflict store
-// as failed rather than empty.
+// BEFORE anything reports deleted), treat an unread conflict store as
+// failed, and treat an unreadable same-identity survivor row as
+// unsupported rather than an empty list.
 
 describe('draft file transactions — conflict handoff & channel', () => {
   beforeEach(() => {
@@ -975,7 +981,7 @@ describe('draft file transactions — conflict handoff & channel', () => {
     return { deleting }
   }
 
-  it('hands an edit typed during the conflict save to the conflict channel', async () => {
+  it('persists an edit typed during the conflict save with a bounded second attempt', async () => {
     const gate = gatedStore()
     const { backend, store } = gate
     // Gate only the FIRST conflict save so we can land local-v4 mid-save.
@@ -999,25 +1005,123 @@ describe('draft file transactions — conflict handoff & channel', () => {
     expect(result.status).toBe('conflict')
     // Primary keeps the cross-context record.
     expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
-    // The handoff is BOUNDED: exactly one conflict save ran inside the
-    // file transaction (local-v3). A steady typer must not be able to
-    // keep the mutation lock / tab / tree waiting on a moving target —
-    // the mid-save edit was handed to the conflict channel instead of
-    // being chased by another in-transaction save.
-    expect(conflictCalls).toBe(1)
-    expect((await store.listConflictDrafts('vault')).map((c) => c.content))
-      .toEqual(['local-v3'])
-    // The conflict debounce then persists local-v4 as its own
-    // candidate — the edit is preserved, just outside the transaction.
-    await vi.advanceTimersByTimeAsync(800)
-    await vi.runAllTimersAsync()
-    await Promise.resolve()
-    await Promise.resolve()
+    // The handoff is BOUNDED but OBSERVABLE: exactly two conflict saves
+    // ran inside the file transaction — attempt 1 persisted local-v3,
+    // and the mid-save edit triggered attempt 2, which persisted the
+    // NEW latest snapshot (local-v4) BEFORE the transaction reported.
+    // The old single-save path reported 'conflict' here with local-v4
+    // still pending in an 800ms debounce: if that save later failed,
+    // the tab was already closed and the bytes were lost.
+    expect(conflictCalls).toBe(2)
     const contents = (await store.listConflictDrafts('vault'))
       .map((conflict) => conflict.content)
       .sort()
     expect(contents).toEqual(['local-v3', 'local-v4'])
+    // The latest snapshot was verified durable inside the transaction —
+    // nothing is left tracked in memory for the lifecycle to lose.
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([])
     // And the primary was never touched by either write.
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
+    await persistence.dispose()
+  })
+
+  it('reports failed when the latest conflict save fails on the second attempt', async () => {
+    const gate = gatedStore()
+    const { backend, store } = gate
+    // Attempt 1 succeeds (after the gate); attempt 2 — the save that
+    // covers the mid-save edit — is rejected by the store.
+    let conflictCalls = 0
+    let releaseConflict!: () => void
+    const conflictGate = new Promise<void>((resolve) => { releaseConflict = resolve })
+    const originalSaveConflict = store.saveConflictDraft.bind(store)
+    const saveConflict = vi.spyOn(store, 'saveConflictDraft')
+      .mockImplementation(async (record) => {
+        conflictCalls += 1
+        if (conflictCalls === 1) {
+          await conflictGate
+          return originalSaveConflict(record)
+        }
+        if (conflictCalls === 2) return { status: 'failed' }
+        return originalSaveConflict(record)
+      })
+    const persistence = makePersistence(store)
+    const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
+    await vi.waitFor(() => expect(conflictCalls).toBe(1))
+    persistence.schedule(snapshot('local-v4', 'notes/a', 4))
+    releaseConflict()
+    const [result] = await deleting
+
+    // Attempt 2 failed, so local-v4 is still only in-memory: the
+    // transaction must NOT report 'conflict' (the lifecycle would close
+    // the tab on it) — 'failed' keeps the tab open as the only visible
+    // surface holding local-v4.
+    expect(result.status).toBe('failed')
+    expect(conflictCalls).toBe(2)
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
+    expect((await store.listConflictDrafts('vault')).map((c) => c.content))
+      .toEqual(['local-v3'])
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([identity])
+    // The release armed the conflict debounce: once the store
+    // recovers, the background retry persists local-v4 without any
+    // further user action — the failed delete still converges.
+    saveConflict.mockRestore()
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.listConflictDrafts('vault')).map((c) => c.content).sort())
+      .toEqual(['local-v3', 'local-v4'])
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
+    await persistence.dispose()
+  })
+
+  it('reports failed when edits keep landing across both bounded attempts', async () => {
+    const gate = gatedStore()
+    const { backend, store } = gate
+    // Gate BOTH in-transaction saves so an edit lands during each —
+    // the handoff must terminate after two attempts instead of chasing
+    // a moving target indefinitely.
+    let conflictCalls = 0
+    const gates: Array<() => void> = []
+    const originalSaveConflict = store.saveConflictDraft.bind(store)
+    vi.spyOn(store, 'saveConflictDraft').mockImplementation(async (record) => {
+      const callIndex = conflictCalls
+      conflictCalls += 1
+      if (callIndex <= 1) {
+        await new Promise<void>((resolve) => { gates[callIndex] = resolve })
+      }
+      return originalSaveConflict(record)
+    })
+    const persistence = makePersistence(store)
+    const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
+    // local-v4 lands during attempt 1 → triggers attempt 2.
+    await vi.waitFor(() => expect(conflictCalls).toBe(1))
+    persistence.schedule(snapshot('local-v4', 'notes/a', 4))
+    gates[0]!()
+    // local-v5 lands during attempt 2 → the handoff must fail closed
+    // instead of starting an attempt 3.
+    await vi.waitFor(() => expect(conflictCalls).toBe(2))
+    persistence.schedule(snapshot('local-v5', 'notes/a', 5))
+    gates[1]!()
+    const [result] = await deleting
+
+    expect(result.status).toBe('failed')
+    // Bounded: exactly two saves inside the transaction, no matter how
+    // fast the user keeps typing — the mutation lock / tab / tree must
+    // not wait on a moving target.
+    expect(conflictCalls).toBe(2)
+    // Both saved candidates are durable; local-v5 is not (yet).
+    expect((await store.listConflictDrafts('vault')).map((c) => c.content).sort())
+      .toEqual(['local-v3', 'local-v4'])
+    // 'failed' keeps the tab open — the only surface holding local-v5 —
+    // while the armed conflict debounce retries it in the background.
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([identity])
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.listConflictDrafts('vault')).map((c) => c.content).sort())
+      .toEqual(['local-v3', 'local-v4', 'local-v5'])
     expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
     await persistence.dispose()
   })
@@ -1169,6 +1273,136 @@ describe('draft file transactions — conflict handoff & channel', () => {
     expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
     expect((await store.listConflictDrafts('vault')).map((c) => c.content))
       .toEqual(['local-v3'])
+  })
+
+  it('reports failed instead of preserved when the immediate orphan write fails', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    const barrier = await persistence.prepareFileMutation([identity])
+    persistence.schedule(snapshot('orphan', 'notes/a', 2))
+    // The server file is deleted, and the preserve path must write the
+    // pending snapshot as an orphan IMMEDIATELY — but IndexedDB
+    // rejects the write.
+    backend.failNext('save')
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'preserve',
+    }])
+
+    // The snapshot is still only in-memory: 'failed' (not 'preserved')
+    // keeps the tab open — it is the only surface holding these bytes.
+    expect(result.status).toBe('failed')
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([identity])
+    await persistence.dispose()
+  })
+
+  it('reports failed instead of conflict when the post-CAS orphan write fails', async () => {
+    const gate = gatedStore()
+    const { backend, store } = gate
+    const persistence = makePersistence(store)
+    persistence.schedule(snapshot('local-v2', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('local-v2')
+    const confirmation = persistence.captureDeleteConfirmation(identity, 2)
+    const barrier = await persistence.prepareFileMutation([identity])
+    // The immediate orphan write of the post-CAS edit will be rejected.
+    backend.failNext('save')
+    const deleting = barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+    await gate.waitDeleteStarted()
+    // CAS succeeds on the confirmed record, but this edit lands while
+    // the CAS is in flight — the post-CAS branch re-queues it as a new
+    // orphan immediately.
+    persistence.schedule(snapshot('local-v3', 'notes/a', 3))
+    gate.releaseDelete()
+    const [result] = await deleting
+
+    // The orphan write failed, so the new edit is still only in-memory:
+    // 'failed' (not 'conflict') keeps the tab open.
+    expect(result.status).toBe('failed')
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([identity])
+    await persistence.dispose()
+  })
+
+  it('reports failed instead of stale when the confirmation-mismatch orphan write fails', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    persistence.schedule(snapshot('confirmed', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    const confirmation = persistence.captureDeleteConfirmation(identity, 1)
+    const barrier = await persistence.prepareFileMutation([identity])
+    // A newer snapshot than the confirmation's — the stale branch
+    // re-queues it as an orphan immediately.
+    persistence.schedule(snapshot('after-confirmation', 'notes/a', 2))
+    backend.failNext('save')
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+
+    // The immediate write failed — the newer snapshot is still only
+    // in-memory: 'failed' (not 'stale') keeps the tab open.
+    expect(result.status).toBe('failed')
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([identity])
+    await persistence.dispose()
+  })
+
+  it('reports unsupported when an unreadable conflict row survives the confirmed delete', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const original = draft('confirmed')
+    await store.saveDraft(original)
+    // A future-version conflict row for the SAME identity, seeded
+    // behind the store's validation. The UI could never see it, so it
+    // was never frozen at confirmation — it always survives the
+    // frozen-cleanup deletes.
+    await backend.seedRawConflict({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'future data',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    const persistence = createUnsavedDraftPersistence({ store, targetWindow: undefined })
+    await persistence.adoptRecoveredDraft(original, snapshot('confirmed'))
+    const confirmation = persistence.captureDeleteConfirmation(identity, 1, null, [])
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+
+    // The strict survivor read sees the unreadable same-identity row
+    // and refuses to certify a clean delete: 'unsupported' keeps the
+    // Recovery identity visible (and warns) instead of removeIdentity()
+    // outliving a row the store could not read.
+    expect(result.status).toBe('unsupported')
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    expect(await backend.listConflicts('vault')).toHaveLength(1)
+    await persistence.dispose()
   })
 
   it('moves conflict record paths along with the primary draft on rename', async () => {

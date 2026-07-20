@@ -458,6 +458,78 @@ test('keeps the family intact when any row is unsupported in IndexedDB', async (
   expect(result.conflictPathsAfterPrimaryBlocked).toEqual(['notes/doc'])
 })
 
+test('reports unsupported from the strict conflict read on an unreadable identity row', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const store = createDraftStore()
+    const makeConflict = (conflictId: string, documentId: string, content: string) => ({
+      version: 1 as const,
+      conflictId,
+      vaultId: 'vault-a',
+      documentId,
+      documentPath: `notes/${documentId}`,
+      content,
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict' as const,
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    await store.saveConflictDraft(makeConflict('conflict-a', 'doc', 'local orphan'))
+    await store.saveConflictDraft(makeConflict('conflict-b', 'other', 'other orphan'))
+
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const putRaw = (storeName: string, value: unknown) => new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(storeName, 'readwrite')
+      transaction.objectStore(storeName).put(value)
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    // A future-version conflict row for the SAME identity, seeded
+    // behind the store's validation — exactly what a newer app version
+    // could leave behind.
+    await putRaw('draftConflicts', {
+      ...makeConflict('conflict-future', 'doc', 'future data'),
+      version: 2,
+    })
+
+    const scopedUnsupported = await store.listConflictDraftsStrict('vault-a', 'doc')
+    const scopedClean = await store.listConflictDraftsStrict('vault-a', 'other')
+    const lossy = await store.listConflictDrafts('vault-a')
+    database.close()
+
+    return {
+      scopedUnsupported,
+      scopedClean,
+      lossyContents: lossy.map((c) => c.content).sort(),
+    }
+  }, DATABASE_NAME)
+
+  // The same-identity unreadable row makes the strict read refuse to
+  // certify the conflict state — a confirmed delete on top of it must
+  // report 'unsupported' (identity kept visible) instead of silently
+  // filtering the row behind an empty list.
+  expect(result.scopedUnsupported).toEqual({ status: 'unsupported' })
+  // A clean identity in the same vault still reads ok, scoped.
+  expect(result.scopedClean).toEqual({
+    status: 'ok',
+    records: [expect.objectContaining({ conflictId: 'conflict-b', content: 'other orphan' })],
+  })
+  // Discovery keeps the lossy filtering (best-effort by nature).
+  expect(result.lossyContents).toEqual(['local orphan', 'other orphan'])
+})
+
 test('closes a cached connection when another context upgrades the database', async ({
   page,
 }) => {

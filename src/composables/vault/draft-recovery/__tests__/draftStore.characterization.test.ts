@@ -642,6 +642,85 @@ describe('draftStore characterization', () => {
       .resolves.toEqual({ status: 'ok', records: [conflict] })
   })
 
+  it('reports unsupported when a same-identity conflict row is future-version', async () => {
+    const valid: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveConflictDraft(valid)
+    // A future-version row the UI can never see — same identity —
+    // seeded behind the store's validation.
+    await backend.seedRawConflict({
+      ...valid,
+      conflictId: 'conflict-future',
+      version: 2,
+      content: 'future conflict data',
+    })
+    // A different identity's valid row in the same vault.
+    const other: DraftConflictRecord = {
+      ...valid,
+      conflictId: 'conflict-b',
+      documentId: 'b',
+      documentPath: 'notes/b',
+    }
+    await store.saveConflictDraft(other)
+
+    // Identity-scoped: the unreadable row for 'a' means the store
+    // cannot certify that identity's conflict state — 'unsupported'
+    // instead of silently filtering the row behind an empty list (a
+    // 'deleted' certified on top would outlive the row with no
+    // warning), mirroring the family move's raw-row pre-flight.
+    await expect(store.listConflictDraftsStrict('vault-a', 'a'))
+      .resolves.toEqual({ status: 'unsupported' })
+    // A clean identity in the same vault still reads ok, scoped to its
+    // own records.
+    await expect(store.listConflictDraftsStrict('vault-a', 'b'))
+      .resolves.toEqual({ status: 'ok', records: [other] })
+    // A vault-wide strict read fails closed on ANY unreadable row.
+    await expect(store.listConflictDraftsStrict('vault-a'))
+      .resolves.toEqual({ status: 'unsupported' })
+  })
+
+  it('reports unsupported when a same-identity conflict row is corrupt', async () => {
+    const valid: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveConflictDraft(valid)
+    await backend.seedRawConflict({
+      ...valid,
+      conflictId: 'conflict-corrupt',
+      content: 42,
+    })
+
+    await expect(store.listConflictDraftsStrict('vault-a', 'a'))
+      .resolves.toEqual({ status: 'unsupported' })
+    // The lossy discovery read still filters the corrupt row away.
+    expect(await store.listConflictDrafts('vault-a')).toEqual([valid])
+  })
+
   it('reports a conflict delete store error as failed, not missing', async () => {
     const conflict: DraftConflictRecord = {
       version: 1,
