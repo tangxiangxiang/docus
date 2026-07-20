@@ -168,7 +168,19 @@ function openSearch() { paletteRef.value?.show() }
 const fileChanges = createVaultFileChanges()
 const historyMutationLock = createPathMutationLock()
 const draftStore = createDraftStore()
-const draftPersistence = createUnsavedDraftPersistence({ store: draftStore })
+// Background quarantine healing settles outside any user-visible
+// transaction: a queued family move can complete (or record a
+// candidate) long after the rename UI finished, leaving Recovery
+// items and open tabs on the stale path. Refresh the identity when a
+// settlement lands. `draftRecovery` is created later in this setup
+// but the callback only fires from timers/flushes after setup
+// completes, so the closure is TDZ-safe.
+const draftPersistence = createUnsavedDraftPersistence({
+  store: draftStore,
+  onDraftFamilyMoveSettled: (settlement) => {
+    void draftRecovery.refreshIdentity(settlement.vaultId, settlement.documentId)
+  },
+})
 let lifecycleCreateFile: DocumentLifecycle['createFile'] | null = null
 const {
   tree, vaultId, posts, tabs, activePath, activeTab, activeSize,

@@ -750,4 +750,150 @@ describe('draftStore characterization', () => {
       .resolves.toBe('deleted')
     expect(await store.listConflictDrafts('vault-a')).toEqual([])
   })
+
+  // Store-level family-aware save backstop (the reload-proof invariant
+  // for blocker 2): cross-path primary writes must migrate every same-
+  // identity conflict row to the incoming path in a single decision step,
+  // mirroring moveFamily's pre-flight. An unreadable conflict row fails
+  // the WHOLE save with nothing written — the caller persists the
+  // content as a candidate instead of retrying plain overwrite. This
+  // is the store-level invariant that protects the family even when
+  // the in-memory quarantine has been lost (page reload, new tab, etc.).
+
+  it('migrates every same-identity conflict candidate to the new path on a cross-path primary save', async () => {
+    await store.saveDraft(draft('a', 10))
+    await store.saveConflictDraft({
+      ...(await store.listConflictDrafts('vault-a').then(() => ({} as never))),
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    } as DraftConflictRecord)
+
+    const updated = await store.saveDraft(draft('a', 20, { documentPath: 'archive/a' }))
+    expect(updated).toBe(true)
+
+    // Primary migrated to the new path …
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'content:a:20',
+    })
+    // … and the conflict candidate travelled with it.
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'local orphan',
+    })
+  })
+
+  it('refuses a cross-path primary save when a same-identity conflict row is unsupported, leaving everything intact', async () => {
+    await store.saveDraft(draft('a', 10))
+    await backend.seedRawConflict({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'future',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+
+    // The save returns false so the caller can promote the local
+    // snapshot to a conflict candidate instead of silently overwriting
+    // the cross-context record.
+    const updated = await store.saveDraft(draft('a', 20, { documentPath: 'archive/a' }))
+    expect(updated).toBe(false)
+
+    // Nothing changed: primary stays at the old path, the unreadable
+    // conflict row is preserved.
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'content:a:10',
+    })
+    const rawConflicts = await backend.listConflicts('vault-a')
+    expect(rawConflicts).toHaveLength(1)
+    expect((rawConflicts[0] as { conflictId?: string }).conflictId)
+      .toBe('conflict-future')
+  })
+
+  it('does not touch same-identity conflicts on a same-path primary save', async () => {
+    await store.saveDraft(draft('a', 10))
+    await store.saveConflictDraft({
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    } as DraftConflictRecord)
+
+    const updated = await store.saveDraft(draft('a', 20))
+    expect(updated).toBe(true)
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'content:a:20',
+    })
+    // The conflict is on the same path the primary was already on —
+    // backstop is a no-op.
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({ documentPath: 'notes/a' })
+  })
+
+  it('migrates existing same-identity conflicts to the new path on the very first primary save', async () => {
+    // Pre-existing conflict candidate (no primary yet) — the backstop
+    // must still unify the family on the very first primary write at a
+    // different path.
+    await backend.seedRawConflict({
+      version: 1,
+      conflictId: 'conflict-orphan',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'orphan before primary',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+
+    const updated = await store.saveDraft(draft('a', 20, { documentPath: 'archive/a' }))
+    expect(updated).toBe(true)
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'content:a:20',
+    })
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'orphan before primary',
+    })
+  })
 })

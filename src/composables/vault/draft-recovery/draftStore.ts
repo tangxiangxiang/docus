@@ -29,6 +29,21 @@ type BackendOperation =
   | 'saveConflict' | 'listConflicts' | 'deleteConflict' | 'clearConflicts'
 
 export interface DraftStorageBackend {
+  /** Persist a primary draft record under the (vaultId, documentId)
+   *  CAS rules (see decideSave). Family-aware across paths: when the
+   *  saved draft's `documentPath` differs from the family's current
+   *  path (or no primary record exists yet), every conflict candidate
+   *  for the same identity migrates to the incoming path AS PART OF
+   *  the same save — atomically, so the primary record can never
+   *  change path alone and strand its conflict candidates on the
+   *  pre-save path (DraftStore accepts a higher-`updatedAt` draft's
+   *  path wholesale, so without this a plain cross-context or
+   *  post-reload write would re-split the family). The family is
+   *  pre-flight validated first: an unsupported (future-version /
+   *  corrupt) conflict row for this identity fails the WHOLE save
+   *  with `unsupported` — nothing moves, the primary keeps its old
+   *  path, and the caller must persist the content as a separate
+   *  candidate instead of retrying a plain overwrite. */
   save(draft: UnsavedDraft): Promise<SaveResult>
   get(key: DraftKey): Promise<unknown | null>
   list(vaultId: string): Promise<unknown[]>
@@ -423,13 +438,36 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
   return {
     async save(draft) {
       consumeFailure('save')
-      const key = serializedKey(draft.vaultId, draft.documentId)
-      const current = records.get(key)
+      const familyKey = serializedKey(draft.vaultId, draft.documentId)
+      const current = records.get(familyKey)
       const decision = decideSave(current, draft)
-      if (decision.result === 'saved') {
-        records.set(key, cloneDraft(decision.draft))
+      if (decision.result !== 'saved') return decision.result
+      // Family-aware cross-path save (see DraftStorageBackend.save):
+      // when the primary record changes path (or is created while
+      // conflict candidates already exist for this identity), every
+      // same-identity conflict row migrates to the incoming path in
+      // the same step. Validate ALL rows before applying anything —
+      // an unsupported row fails the whole save so nothing is left
+      // stranded on the old path, mirroring moveFamily's pre-flight
+      // and the IndexedDB backend's single cross-store transaction.
+      const currentPath = isUnsavedDraft(current) ? current.documentPath : null
+      if (currentPath !== decision.draft.documentPath) {
+        const conflictUpdates: Array<{ key: string; record: DraftConflictRecord }> = []
+        for (const value of [...conflictRecords.values()]) {
+          if (recordField(value, 'vaultId') !== draft.vaultId
+            || recordField(value, 'documentId') !== draft.documentId) continue
+          if (!isDraftConflictRecord(value)) return 'unsupported'
+          conflictUpdates.push({
+            key: serializedConflictKey(draft.vaultId, draft.documentId, value.conflictId),
+            record: { ...value, documentPath: decision.draft.documentPath },
+          })
+        }
+        for (const { key, record } of conflictUpdates) {
+          conflictRecords.set(key, cloneConflictRecord(record))
+        }
       }
-      return decision.result
+      records.set(familyKey, cloneDraft(decision.draft))
+      return 'saved'
     },
 
     async get([vaultId, documentId]) {
@@ -657,13 +695,52 @@ export function createIndexedDbDraftBackend(
   return {
     async save(draft) {
       const db = await database()
-      const transaction = db.transaction(DRAFT_STORE_NAME, 'readwrite')
+      // ONE transaction across both stores: a path-changing save
+      // migrates the identity's conflict candidates atomically with
+      // the primary write, so the primary can never change path alone
+      // and strand its conflicts on the pre-save path (see
+      // DraftStorageBackend.save for the full rationale).
+      const transaction = db.transaction(
+        [DRAFT_STORE_NAME, CONFLICT_STORE_NAME],
+        'readwrite',
+      )
       const store = transaction.objectStore(DRAFT_STORE_NAME)
       const current = await request(store.get(
         idbKey(draft.vaultId, draft.documentId),
       ))
       const decision = decideSave(current, draft)
-      if (decision.result === 'saved') store.put(cloneDraft(decision.draft))
+      if (decision.result === 'saved') {
+        const currentPath = isUnsavedDraft(current) ? current.documentPath : null
+        if (currentPath !== decision.draft.documentPath) {
+          const conflictStore = transaction.objectStore(CONFLICT_STORE_NAME)
+          const values = await request(
+            conflictStore.index(CONFLICT_VAULT_INDEX).getAll(draft.vaultId),
+          )
+          // Pre-flight the whole family BEFORE writing anything: an
+          // unsupported row for THIS identity fails the whole save —
+          // migrating the valid rows would strand the unreadable one
+          // on the pre-save path, silently.
+          const familyConflicts: DraftConflictRecord[] = []
+          for (const value of values) {
+            if (recordField(value, 'documentId') !== draft.documentId) continue
+            if (!isDraftConflictRecord(value)) {
+              await transactionDone(transaction)
+              return 'unsupported'
+            }
+            familyConflicts.push(value)
+          }
+          for (const record of familyConflicts) {
+            // Same compound key (documentId unchanged) — put updates
+            // the path in place, preserving conflictId/body/baseline/
+            // timestamps and origin.
+            conflictStore.put(cloneConflictRecord({
+              ...record,
+              documentPath: decision.draft.documentPath,
+            }))
+          }
+        }
+        store.put(cloneDraft(decision.draft))
+      }
       await transactionDone(transaction)
       return decision.result
     },

@@ -203,7 +203,15 @@ describe('useDocumentLifecycle rename', () => {
     await h.lifecycle.renameFile('inbox/a', { name: 'b' })
 
     expect(prepareDraftFileMutation).toHaveBeenCalledWith([unresolved])
-    expect(commitMoves).toHaveBeenCalledWith([], [unresolved])
+    // The actual server target is the new third argument: identity
+    // mismatch passes the server target to the barrier so it can
+    // quarantine the entry instead of preserving it on the old path.
+    expect(commitMoves).toHaveBeenCalledWith([], [], [{
+      vaultId: 'vault',
+      documentId: 'draft-doc',
+      fromPath: 'inbox/a',
+      toPath: 'inbox/b',
+    }])
     expect(h.tabs.value[0].path).toBe('inbox/b')
     expect(finalizeAfterTabMigration).toHaveBeenCalledOnce()
     expect(warnings).toHaveBeenCalledWith([

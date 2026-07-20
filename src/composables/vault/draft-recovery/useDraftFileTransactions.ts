@@ -52,9 +52,24 @@ export interface DraftFileTransactionResult {
 }
 
 export interface DraftFileMutationBarrier {
+  /** Commit the draft side of a server rename. `mappings` attempt the
+   *  atomic family move per identity; any INCOMPLETE outcome (failed,
+   *  unsupported, conflict) quarantines the entry — the tab migrates
+   *  to the server's new path while the family stays whole at its
+   *  actual old path, and a later edit on the new path retries the
+   *  move before any primary write. A completed move (`moved` /
+   *  `missing`) clears any stale quarantine from an earlier failed
+   *  rename. `mismatched` carries identities the lifecycle's
+   *  post-rename identity resolution did NOT match (identity-
+   *  mismatch): no move is attempted and no result is produced (the
+   *  lifecycle reports the mismatch itself), but the actual server
+   *  target path still quarantines the entry so a later edit under
+   *  the stale identity cannot write the primary alone at the new
+   *  path and split the family. */
   commitMoves(
     mappings: readonly DraftPathMapping[],
     preserved?: readonly DraftDocumentIdentity[],
+    mismatched?: readonly DraftPathMapping[],
   ): Promise<DraftFileTransactionResult[]>
   commitDeletes(
     deletions: readonly DraftDeleteRequest[],

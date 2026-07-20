@@ -2526,4 +2526,481 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       .toEqual(['archive/a', 'archive/a'])
     await persistence.dispose()
   })
+
+  // Blockers 1 + 2 tests follow.
+
+  it('fails closed when another context replaces the primary between save and readback', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    // Race the write: saveDraft returns true, but the very next
+    // store.getDraft() must find a NEWER cross-context record (a higher
+    // `updatedAt`) — DraftStore accepts the higher-`updatedAt` draft's
+    // path wholesale, so a `saveDraft === true` that ignores the
+    // readback would certify content durable that is already gone from
+    // the store, and a close seal acting on that true would close the
+    // tab holding the only remaining copy.
+    const originalSaveDraft = store.saveDraft.bind(store)
+    vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+      if (value.content === 'local-v3') {
+        const result = await originalSaveDraft(value)
+        await backend.seedRaw({
+          ...remoteV3(),
+          content: 'remote-v4',
+          updatedAt: 110,
+        })
+        return result
+      }
+      return originalSaveDraft(value)
+    })
+    const barrier = await persistence.prepareFileMutation([identity])
+    persistence.schedule(snapshot('orphan', 'notes/a', 2))
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'preserve',
+    }])
+    expect(result.status).toBe('preserved')
+    persistence.schedule(snapshot('local-v3', 'notes/a', 3))
+    const finalizeResults = await barrier.finalizeBeforeDocumentClose()
+
+    // The close seal fails closed — the tab stays open …
+    expect(finalizeResults).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      status: 'failed',
+    }])
+    // … the cross-context record is byte-identical (no fresh-timestamp
+    // overwrite that would have buried it) …
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'remote-v4',
+      updatedAt: 110,
+    })
+    // … the local snapshot survives as an independent conflict
+    // candidate pinned to the cross-context marker.
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      content: 'local-v3',
+      documentPath: 'notes/a',
+      crossContextUpdatedAt: 110,
+      origin: 'delete-conflict',
+    })
+    expect(conflicts[0].recordedAt).toBeGreaterThan(110)
+    // The tab stays tracked on its old path.
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([identity])
+    // needsWrite was cleared by the handoff: no background retry may
+    // re-attempt the primary write behind a no-longer-existing
+    // cross-context record.
+    const saveDraftSpy = (store.saveDraft as unknown as ReturnType<typeof vi.fn>)
+    const beforeAdvance = saveDraftSpy.mock.calls.length
+    await vi.advanceTimersByTimeAsync(2400)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(saveDraftSpy.mock.calls.length).toBe(beforeAdvance)
+    await persistence.dispose()
+  })
+
+  it('preserves the local candidate without overwriting the newer remote draft', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    // Warm up the entry so it has a persisted primary + a known
+    // previousUpdatedAt baseline.
+    persistence.schedule(snapshot('primary', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('primary')
+    // Race the next write: saveDraft returns true, but a cross-context
+    // record with a higher updatedAt lands before the readback.
+    const originalSaveDraft = store.saveDraft.bind(store)
+    vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+      if (value.content === 'local-v3') {
+        const result = await originalSaveDraft(value)
+        await backend.seedRaw({
+          ...remoteV3(),
+          content: 'remote-v4',
+          updatedAt: 110,
+        })
+        return result
+      }
+      return originalSaveDraft(value)
+    })
+    persistence.schedule(snapshot('local-v3', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The primary is byte-identical to the cross-context record —
+    // never overwritten with a fresh timestamp.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'remote-v4',
+      updatedAt: 110,
+    })
+    // Exactly one candidate with the local content and the cross-
+    // context marker.
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      content: 'local-v3',
+      documentPath: 'notes/a',
+      crossContextUpdatedAt: 110,
+    })
+
+    // The entry is pinned to the conflict channel: a follow-up edit
+    // lands on a SECOND candidate rather than overwriting the primary
+    // behind the cross-context record's back.
+    persistence.schedule(snapshot('local-v5', 'notes/a', 3))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    const afterPin = await store.listConflictDrafts('vault')
+    expect(afterPin).toHaveLength(2)
+    expect(afterPin.map((c) => c.content).sort()).toEqual(['local-v3', 'local-v5'])
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'remote-v4',
+    })
+    await persistence.dispose()
+  })
+
+  it('keeps the tab open when conflict handoff after readback mismatch fails', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    // Race the write: saveDraft returns true but a newer cross-context
+    // record lands before the readback.
+    const originalSaveDraft = store.saveDraft.bind(store)
+    vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+      if (value.content === 'local-v3') {
+        const result = await originalSaveDraft(value)
+        await backend.seedRaw({
+          ...remoteV3(),
+          content: 'remote-v4',
+          updatedAt: 110,
+        })
+        return result
+      }
+      return originalSaveDraft(value)
+    })
+    // The conflict-channel handoff is the last line of defence — when
+    // IT fails, the bytes are still only in memory. The close seal
+    // must keep the tab open and the background retry must keep
+    // retrying the conflict channel instead of falling back to a
+    // primary write.
+    backend.failNext('saveConflict')
+    const barrier = await persistence.prepareFileMutation([identity])
+    persistence.schedule(snapshot('orphan', 'notes/a', 2))
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'preserve',
+    }])
+    expect(result.status).toBe('preserved')
+    persistence.schedule(snapshot('local-v3', 'notes/a', 3))
+    const finalizeResults = await barrier.finalizeBeforeDocumentClose()
+
+    // Tab stays open — the only surface still holding local-v3.
+    expect(finalizeResults).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      status: 'failed',
+    }])
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([identity])
+    // The primary is still the cross-context record.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'remote-v4',
+      updatedAt: 110,
+    })
+    // Re-armed conflict-channel retry persists the candidate once the
+    // store recovers — the write flag was NOT cleared by the rejected
+    // handoff.
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      content: 'local-v3',
+      crossContextUpdatedAt: 110,
+    })
+    // The retry stayed on the conflict channel — the primary is still
+    // the cross-context record.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'remote-v4',
+    })
+    await persistence.dispose()
+  })
+
+  // Quarantine completeness (blocker 2): every incomplete commitMoves
+  // outcome — including 'unsupported' (whole family blocked) and
+  // identity mismatch — must quarantine the entry so the store-level
+  // family-aware save can reunite the family on the next new-path edit.
+  // The store backstop is stateless across page reloads; the in-memory
+  // quarantine is the smart orchestrator on top.
+
+  it('unsupported family move followed by an edit on the renamed Tab', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    // An unreadable future-version conflict row blocks the whole
+    // family move at the store pre-flight — the entry must quarantine
+    // anyway so the tab's next edit cannot bypass the backstop and
+    // write the primary alone at the new path.
+    await backend.seedRawConflict({
+      ...conflictRecord('bad-row', 'doc-a', 'notes/a', 'unreadable'),
+      version: 2,
+    })
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('unsupported')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    // The retry fails again at the store pre-flight, so the primary
+    // is never moved alone and the unreadable row survives intact. The
+    // latest content lands as a separate move-quarantine candidate
+    // next to the old family.
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'primary',
+    })
+    const conflicts = await store.listConflictDrafts('vault')
+    const quarantineCandidate = conflicts.find((c) => c.conflictId !== 'conflict-a' && c.conflictId !== 'bad-row')
+    expect(quarantineCandidate).toMatchObject({
+      content: 'after-rename',
+      documentPath: 'archive/a',
+      origin: 'move-conflict',
+    })
+    // The original conflict candidate stays on the old path …
+    expect(conflicts.find((c) => c.conflictId === 'conflict-a')?.documentPath)
+      .toBe('notes/a')
+    // … and the unreadable row is still present (the backstop refuses
+    // to silently drop it).
+    const rawRows = await backend.listConflicts('vault')
+    expect(rawRows.some((row) => (
+      (row as { conflictId?: string }).conflictId === 'bad-row'
+    ))).toBe(true)
+    await persistence.dispose()
+  })
+
+  it('identity mismatch followed by a new-path edit', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    // Identity mismatch: the lifecycle reports it, but the barrier
+    // receives the actual server target so it can quarantine the
+    // entry. commitMoves produces no result for these identities.
+    const commitResults = await barrier.commitMoves([], [], [{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(commitResults).toEqual([])
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    // The next edit on the new path retries the atomic move FIRST
+    // (instead of writing the primary alone at archive/a — which would
+    // strand the family on notes/a). The retry succeeds and the whole
+    // family — primary and the existing conflict — moves to archive/a.
+    persistence.schedule(snapshot('after-mismatch', 'archive/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'after-mismatch',
+    })
+    expect((await store.listConflictDrafts('vault')).map((c) => c.documentPath))
+      .toEqual(['archive/a'])
+    await persistence.dispose()
+  })
+
+  it('failed move → reload persistence → edit renamed Tab', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamilyConflicts')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    // Simulate a page reload: dispose this persistence (no snapshot
+    // was scheduled, so nothing flushes) and create a fresh instance
+    // against the same store. The new instance has no quarantine
+    // state — but the store-level family-aware save backstop is
+    // stateless and rejects any cross-path plain write that would
+    // strand the conflict on the old path.
+    await persistence.dispose()
+    const reloaded = makePersistence(store)
+    reloaded.schedule(snapshot('after-reload', 'archive/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'after-reload',
+    })
+    expect((await store.listConflictDrafts('vault')).map((c) => c.documentPath))
+      .toEqual(['archive/a'])
+    await reloaded.dispose()
+  })
+
+  it('A→B fails → B→C succeeds → edit C', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+    }])
+    // First rename (A→B): the family move fails. Quarantine points at
+    // the actual server target.
+    backend.failNext('moveFamilyConflicts')
+    const [moveA] = await barrier.commitMoves([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      fromPath: 'notes/a',
+      toPath: 'archive/b',
+    }])
+    expect(moveA.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    // Second rename (B→C): the server rename succeeded. The barrier
+    // must CLEAR the stale quarantine on a successful move — keeping
+    // it would let the next edit at C retry the move against the
+    // OLD target B and drag the family back from the path it actually
+    // lives on now.
+    const identityC = {
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'archive/b',
+    }
+    const barrier2 = await persistence.prepareFileMutation([identityC])
+    const [moveBC] = await barrier2.commitMoves([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      fromPath: 'archive/b',
+      toPath: 'archive/c',
+    }])
+    expect(moveBC.status).toBe('moved')
+    expect(await barrier2.finalizeAfterTabMigration()).toEqual([])
+
+    // Edit at C: no quarantine (it was cleared by the successful
+    // move), ordinary write at archive/c — primary and the conflict
+    // candidate both end up at archive/c.
+    persistence.schedule(snapshot('edit-c', 'archive/c', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/c',
+      content: 'edit-c',
+    })
+    expect((await store.listConflictDrafts('vault')).map((c) => c.documentPath))
+      .toEqual(['archive/c'])
+    await persistence.dispose()
+  })
+
+  it('notifies the owner when a background family move settles', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const settlements: Array<{
+      vaultId: string
+      documentId: string
+      oldPath: string
+      newPath: string
+      status: 'moved' | 'conflict'
+    }> = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      onDraftFamilyMoveSettled: (settlement) => {
+        settlements.push(settlement)
+      },
+    })
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamilyConflicts')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    // First retry: still fails. The latest content lands as a
+    // quarantine candidate next to the old family — Recovery must
+    // learn about the new candidate.
+    backend.failNext('moveFamilyConflicts')
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(settlements).toEqual([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      newPath: 'archive/a',
+      status: 'conflict',
+    }])
+
+    // Second retry: succeeds. The family moved in the background, and
+    // Recovery must follow.
+    persistence.schedule(snapshot('healed', 'archive/a', 3))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(settlements).toEqual([
+      {
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        oldPath: 'notes/a',
+        newPath: 'archive/a',
+        status: 'conflict',
+      },
+      {
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        oldPath: 'notes/a',
+        newPath: 'archive/a',
+        status: 'moved',
+      },
+    ])
+    await persistence.dispose()
+  })
 })

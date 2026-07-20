@@ -278,7 +278,18 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
                 fromPath,
                 toPath: renamed.path,
               }])
-            : await draftBarrier.commitMoves([], [before])
+            // Identity mismatch: the lifecycle reports the mismatch
+            // itself, but the barrier still needs the ACTUAL server
+            // target path — it quarantines the entry (release at the
+            // family's real path, retry the move on the next new-path
+            // edit) so the stale identity can never write the primary
+            // alone at the renamed path and split the family.
+            : await draftBarrier.commitMoves([], [], [{
+                vaultId: before.vaultId,
+                documentId: before.documentId,
+                fromPath,
+                toPath: renamed.path,
+              }])
           if (!after || after.documentId !== before.documentId) {
             draftResults.push({
               documentId: before.documentId,
@@ -310,7 +321,19 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
           // path).
           await reportDraftResults([...draftResults, ...finalizeResults])
         } else if (draftBarrier) {
-          const draftResults = await draftBarrier.commitMoves([], unresolvedDrafts)
+          // Unresolved drafts are identity mismatches by definition:
+          // pass their actual server target so the barrier quarantines
+          // them (see the resolved-identity mismatch branch above).
+          const draftResults = await draftBarrier.commitMoves(
+            [],
+            [],
+            unresolvedDrafts.map((draft) => ({
+              vaultId: draft.vaultId,
+              documentId: draft.documentId,
+              fromPath: draft.documentPath,
+              toPath: renamed.path,
+            })),
+          )
           let finalizeResults: DraftFileTransactionResult[] = []
           try {
             options.renameOpenDocuments([mapping])
@@ -382,13 +405,32 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         const after = await identities(mappings.map(({ to }) => to))
         const afterByPath = new Map(after.map((identity) => [identity.documentPath, identity]))
         const draftMappings: DraftPathMapping[] = []
-        const preserved: DraftDocumentIdentity[] = [...unresolvedDrafts]
-        const mismatches: DraftFileTransactionResult[] = unresolvedDrafts.map((draft) => ({
-          documentId: draft.documentId,
-          oldPath: draft.documentPath,
-          newPath: folderMapping(fromFolder, result.path, draft.documentPath) ?? undefined,
-          status: 'identity-mismatch',
-        }))
+        const preserved: DraftDocumentIdentity[] = []
+        const mismatched: DraftPathMapping[] = []
+        const mismatches: DraftFileTransactionResult[] = unresolvedDrafts.map((draft) => {
+          const toPath = folderMapping(fromFolder, result.path, draft.documentPath)
+          if (toPath) {
+            // Identity mismatch with a known server target: quarantine
+            // via the barrier's mismatched channel (release at the
+            // family's real path, retry the move on the next new-path
+            // edit) instead of a plain release that would write the
+            // primary alone at the stale path.
+            mismatched.push({
+              vaultId: draft.vaultId,
+              documentId: draft.documentId,
+              fromPath: draft.documentPath,
+              toPath,
+            })
+          } else {
+            preserved.push(draft)
+          }
+          return {
+            documentId: draft.documentId,
+            oldPath: draft.documentPath,
+            newPath: toPath ?? undefined,
+            status: 'identity-mismatch' as const,
+          }
+        })
         for (const mapping of mappings) {
           const source = byOldPath.get(mapping.from)
           const target = afterByPath.get(mapping.to)
@@ -400,7 +442,15 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
               toPath: mapping.to,
             })
           } else if (source) {
-            preserved.push(source)
+            // Post-rename identity resolution mismatched: pass the
+            // actual server target path to the barrier (see the
+            // unresolved-draft branch above).
+            mismatched.push({
+              vaultId: source.vaultId,
+              documentId: source.documentId,
+              fromPath: mapping.from,
+              toPath: mapping.to,
+            })
             mismatches.push({
               documentId: source.documentId,
               oldPath: mapping.from,
@@ -409,7 +459,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
             })
           }
         }
-        const draftResults = await draftBarrier.commitMoves(draftMappings, preserved)
+        const draftResults = await draftBarrier.commitMoves(draftMappings, preserved, mismatched)
         // Server folder rename already succeeded. If Tab migration
         // throws, swallow the error so the rename event still
         // publishes and refresh runs below. The barrier still
