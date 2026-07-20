@@ -5,6 +5,7 @@ import {
   draftsEqual,
   isUnsavedDraft,
   type DraftConflictRecord,
+  type DraftConflictSource,
   type UnsavedDraft,
 } from './draftTypes'
 import type {
@@ -93,6 +94,22 @@ interface DraftEntry {
    *  conflict-channel writes so each candidate records the same
    *  cross-context source it diverged from. */
   conflictCrossContextUpdatedAt: number | null
+  /** Set when a family move FAILED during commitMoves while the server
+   *  rename itself succeeded. The draft family (primary record + every
+   *  conflict candidate) stays whole at `oldPath`; the lifecycle still
+   *  migrates the Document tab to `newPath` (the server truth). While
+   *  non-null, an edit arriving on any path other than `oldPath` must
+   *  never write the primary record directly — DraftStore accepts the
+   *  higher-`updatedAt` draft's path wholesale, so a plain write would
+   *  move the primary to the new path while the conflict candidates
+   *  stay on the old one, re-creating exactly the split the atomic
+   *  family move exists to prevent. The debounced write retries the
+   *  atomic move FIRST; on success the quarantine lifts and the latest
+   *  snapshot persists on the new path with the family whole. While
+   *  the retry keeps failing, the latest content persists as a
+   *  separate conflict candidate instead and the old family stays
+   *  whole at `oldPath`. Cleared only by a successful retry. */
+  pendingFamilyMove: { oldPath: string; newPath: string } | null
 }
 
 /** Result of promoting a superseded local snapshot into the conflict
@@ -164,13 +181,15 @@ export function createUnsavedDraftPersistence(
 
   /** Build a conflict record for a snapshot. Mints a timestamp strictly
    *  newer than the cross-context source so recovery can sort candidates.
-   *  Shared by the delete-time handoff and the conflict-channel write
-   *  path so both produce identical record shapes. */
+   *  Shared by the delete-time handoff, the conflict-channel write path
+   *  and the failed-family-move quarantine so all produce identical
+   *  record shapes. */
   function buildConflictRecord(
     snapshot: DraftBufferSnapshot,
     entry: DraftEntry,
     identity: DraftDocumentIdentity,
     crossContextUpdatedAt: number | null,
+    origin: DraftConflictSource = 'delete-conflict',
   ): DraftConflictRecord {
     const localConflictId = conflictId(identity.documentId, entry.generation)
     const recordedAt = Math.max(safeTimestamp(entry), (crossContextUpdatedAt ?? 0) + 1)
@@ -187,7 +206,7 @@ export function createUnsavedDraftPersistence(
       baseModifiedAt: snapshot.baseModifiedAt,
       createdAt: entry.createdAt,
       updatedAt: recordedAt,
-      origin: 'delete-conflict',
+      origin,
       crossContextUpdatedAt,
       recordedAt,
     }
@@ -209,6 +228,7 @@ export function createUnsavedDraftPersistence(
         fileTransaction: null,
         pendingConflictId: null,
         conflictCrossContextUpdatedAt: null,
+        pendingFamilyMove: null,
       }
       entries.set(identity, entry)
     }
@@ -295,6 +315,62 @@ export function createUnsavedDraftPersistence(
     return isUnsavedDraft(draft) ? draft : null
   }
 
+  /** Core primary-record write shared by the debounced, flushed and
+   *  finalized paths. Returns true ONLY when the snapshot just saved
+   *  is still the entry's latest at resolution: an edit landing during
+   *  the save advances the generation, replaces the snapshot and re-arms
+   *  the write flag, so a `true` that ignored the supersession would
+   *  tell callers (finalize gates, transaction releases, flush) that
+   *  the LATEST content is durable when only an outdated revision is —
+   *  the caller could then close the tab that is the only visible
+   *  surface holding the newer edit. */
+  async function writePrimary(
+    owner: DraftOwner,
+    snapshot: DraftBufferSnapshot,
+    allowDisposed: boolean,
+  ): Promise<boolean> {
+    const entry = entries.get(key(owner.vaultId, owner.documentId))
+    if (!entry || (!allowDisposed && disposed)) return false
+    if ((!allowDisposed && disposed) || !current(owner, entry)) return false
+    const draft = await buildDraft(snapshot, owner, entry)
+    if (!draft || (!allowDisposed && disposed) || !current(owner, entry)) return false
+    const capturedSnapshot = entry.latestSnapshot
+    const capturedRevision = snapshot.revision
+    if (!capturedSnapshot || capturedSnapshot.revision !== capturedRevision) return false
+    try {
+      const saved = await store.saveDraft(draft)
+      if (saved
+        && current(owner, entry)
+        && entry.latestSnapshot === capturedSnapshot
+        && entry.latestSnapshot.revision === capturedRevision) {
+        entry.latestSnapshotNeedsWrite = false
+        // DraftStore preserves an existing record's original createdAt.
+        // Read back the exact stored value before claiming delete ownership;
+        // a concurrent context with a different payload makes this fail
+        // closed instead of granting ownership over its record.
+        const stored = await store.getDraft(draft.vaultId, draft.documentId)
+        if (stored
+          && current(owner, entry)
+          && entry.latestSnapshot === capturedSnapshot
+          && entry.latestSnapshot.revision === capturedRevision
+          && draftsEqual(stored, { ...draft, createdAt: stored.createdAt })) {
+          entry.persistedDraft = stored
+        }
+      }
+      // True ONLY when the snapshot just saved is still the entry's
+      // exact latest — a superseding edit (new generation / replaced
+      // snapshot / a still-pending write flag) means the bytes the
+      // caller cares about never reached the store.
+      return saved
+        && current(owner, entry)
+        && entry.latestSnapshot === capturedSnapshot
+        && entry.latestSnapshot.revision === capturedRevision
+        && !entry.latestSnapshotNeedsWrite
+    } catch {
+      return false
+    }
+  }
+
   function queueWrite(
     owner: DraftOwner,
     snapshot: DraftBufferSnapshot,
@@ -305,36 +381,51 @@ export function createUnsavedDraftPersistence(
     const previous = entry.pendingWrite
     const task = (async () => {
       if (previous) await previous.catch(() => false)
-      if ((!allowDisposed && disposed) || !current(owner, entry)) return false
-      const draft = await buildDraft(snapshot, owner, entry)
-      if (!draft || (!allowDisposed && disposed) || !current(owner, entry)) return false
-      try {
-        const saved = await store.saveDraft(draft)
-        if (saved && current(owner, entry)
-          && entry.latestSnapshot?.revision === snapshot.revision) {
-          entry.latestSnapshotNeedsWrite = false
-          // DraftStore preserves an existing record's original createdAt.
-          // Read back the exact stored value before claiming delete ownership;
-          // a concurrent context with a different payload makes this fail
-          // closed instead of granting ownership over its record.
-          const stored = await store.getDraft(draft.vaultId, draft.documentId)
-          if (stored
-            && current(owner, entry)
-            && entry.latestSnapshot?.revision === snapshot.revision
-            && draftsEqual(stored, { ...draft, createdAt: stored.createdAt })) {
-            entry.persistedDraft = stored
-          }
-        }
-        return saved
-      } catch {
-        return false
-      }
+      return writePrimary(owner, snapshot, allowDisposed)
     })()
     entry.pendingWrite = task
     void task.finally(() => {
       if (entry.pendingWrite === task) entry.pendingWrite = null
     })
     return task
+  }
+
+  /** Core conflict-channel write (see queueConflictWrite). Persists the
+   *  latest snapshot as a conflict record — never the primary store. */
+  async function writeConflict(
+    owner: DraftOwner,
+    snapshot: DraftBufferSnapshot,
+    allowDisposed: boolean,
+  ): Promise<boolean> {
+    const entry = entries.get(key(owner.vaultId, owner.documentId))
+    if (!entry || (!allowDisposed && disposed)) return false
+    if ((!allowDisposed && disposed) || !current(owner, entry)) return false
+    if (entry.pendingConflictId === null) return false
+    if (entry.latestSnapshot?.revision !== snapshot.revision) return false
+    const record = buildConflictRecord(
+      snapshot,
+      entry,
+      {
+        vaultId: owner.vaultId,
+        documentId: owner.documentId,
+        documentPath: snapshot.documentPath,
+      },
+      entry.conflictCrossContextUpdatedAt,
+    )
+    try {
+      const result = await store.saveConflictDraft(record)
+      if (result.status === 'saved'
+        && current(owner, entry)
+        && entry.pendingConflictId !== null
+        && entry.latestSnapshot?.revision === snapshot.revision) {
+        entry.pendingConflictId = record.conflictId
+        entry.latestSnapshotNeedsWrite = false
+        return true
+      }
+      return false
+    } catch {
+      return false
+    }
   }
 
   /** Persist the latest snapshot as a conflict record — never the primary
@@ -352,33 +443,130 @@ export function createUnsavedDraftPersistence(
     const previous = entry.pendingWrite
     const task = (async () => {
       if (previous) await previous.catch(() => false)
+      return writeConflict(owner, snapshot, allowDisposed)
+    })()
+    entry.pendingWrite = task
+    void task.finally(() => {
+      if (entry.pendingWrite === task) entry.pendingWrite = null
+    })
+    return task
+  }
+
+  /** Persist the latest snapshot of an entry quarantined by a failed
+   *  family move (the server rename succeeded, the draft family is
+   *  still whole at `oldPath`, and the tab already shows `newPath`).
+   *  A plain primary write here would move ONLY the primary record to
+   *  the new path (DraftStore accepts the higher-`updatedAt` draft's
+   *  path wholesale), stranding the conflict candidates on the old
+   *  one — the exact split the atomic family move exists to prevent.
+   *  So the write retries the atomic move FIRST:
+   *  - move succeeds → the quarantine lifts and the latest snapshot
+   *    persists on the entry's active channel at the new path, family
+   *    whole (a candidate recorded by an earlier failed retry travels
+   *    with it);
+   *  - move fails → the primary record is never touched; the latest
+   *    content persists as a separate move-quarantine candidate
+   *    instead, the old family stays whole at `oldPath`, and the next
+   *    edit retries the move again. */
+  function queueFamilyMoveWrite(
+    owner: DraftOwner,
+    snapshot: DraftBufferSnapshot,
+    allowDisposed = false,
+  ): Promise<boolean> {
+    const entry = entries.get(key(owner.vaultId, owner.documentId))
+    if (!entry || (!allowDisposed && disposed)) return Promise.resolve(false)
+    const quarantine = entry.pendingFamilyMove
+    if (!quarantine) {
+      // Quarantine lifted concurrently — persist on the active channel.
+      return entry.pendingConflictId !== null
+        ? queueConflictWrite(owner, snapshot, allowDisposed)
+        : queueWrite(owner, snapshot, allowDisposed)
+    }
+    const previous = entry.pendingWrite
+    const task = (async () => {
+      if (previous) await previous.catch(() => false)
       if ((!allowDisposed && disposed) || !current(owner, entry)) return false
-      if (entry.pendingConflictId === null) return false
-      if (entry.latestSnapshot?.revision !== snapshot.revision) return false
+      if (entry.pendingFamilyMove !== quarantine) {
+        return entry.pendingConflictId !== null
+          ? writeConflict(owner, snapshot, allowDisposed)
+          : writePrimary(owner, snapshot, allowDisposed)
+      }
+      let moved = false
+      try {
+        const outcome = await store.moveDraftFamily(
+          owner.vaultId,
+          owner.documentId,
+          quarantine.newPath,
+        )
+        moved = outcome.status === 'moved' || outcome.status === 'missing'
+      } catch {
+        moved = false
+      }
+      if ((!allowDisposed && disposed) || !current(owner, entry)) return false
+      if (moved) {
+        // The store state changed — lift the quarantine FIRST so a
+        // superseding edit (its owner check fails below) persists
+        // normally on the new path instead of re-running the move.
+        entry.pendingFamilyMove = null
+        if ((!allowDisposed && disposed) || !current(owner, entry)) return false
+        if (entry.latestSnapshot) {
+          entry.latestSnapshot = {
+            ...entry.latestSnapshot,
+            documentPath: quarantine.newPath,
+          }
+        }
+        try {
+          entry.persistedDraft = await store.getDraft(owner.vaultId, owner.documentId)
+        } catch {
+          entry.persistedDraft = null
+        }
+        if ((!allowDisposed && disposed) || !current(owner, entry)) return false
+        const latest = entry.latestSnapshot
+        if (!latest || !entry.latestSnapshotNeedsWrite) return true
+        const target = cloneSnapshot(latest)
+        return entry.pendingConflictId !== null
+          ? writeConflict(owner, target, allowDisposed)
+          : writePrimary(owner, target, allowDisposed)
+      }
+      // The retry failed — the family stays whole at the OLD path.
+      // Never write the primary record: persist the latest content as
+      // a separate move-quarantine candidate so Recovery shows it next
+      // to the old family, and keep the quarantine so the next edit
+      // retries the move again.
+      if (entry.pendingConflictId !== null) {
+        // Conflict-pinned entries stay on their existing channel.
+        return writeConflict(owner, snapshot, allowDisposed)
+      }
+      const latest = entry.latestSnapshot
+      if (!latest) return false
+      const capturedRef = latest
+      const capturedRevision = latest.revision
       const record = buildConflictRecord(
-        snapshot,
+        latest,
         entry,
         {
           vaultId: owner.vaultId,
           documentId: owner.documentId,
-          documentPath: snapshot.documentPath,
+          documentPath: latest.documentPath,
         },
-        entry.conflictCrossContextUpdatedAt,
+        null,
+        'move-conflict',
       )
+      let saved = false
       try {
-        const result = await store.saveConflictDraft(record)
-        if (result.status === 'saved'
-          && current(owner, entry)
-          && entry.pendingConflictId !== null
-          && entry.latestSnapshot?.revision === snapshot.revision) {
-          entry.pendingConflictId = record.conflictId
-          entry.latestSnapshotNeedsWrite = false
-          return true
-        }
-        return false
+        saved = (await store.saveConflictDraft(record)).status === 'saved'
       } catch {
-        return false
+        saved = false
       }
+      if (saved
+        && current(owner, entry)
+        && entry.pendingFamilyMove === quarantine
+        && entry.latestSnapshot === capturedRef
+        && entry.latestSnapshot.revision === capturedRevision) {
+        entry.latestSnapshotNeedsWrite = false
+        return true
+      }
+      return false
     })()
     entry.pendingWrite = task
     void task.finally(() => {
@@ -416,8 +604,18 @@ export function createUnsavedDraftPersistence(
     if (!entry.fileTransaction) {
       entry.timer = setTimeout(() => {
         entry.timer = null
-        if (conflictChannel) void queueConflictWrite(owner, captured)
-        else void queueWrite(owner, captured)
+        const quarantine = entry.pendingFamilyMove
+        if (quarantine && captured.documentPath !== quarantine.oldPath) {
+          // A failed family move quarantines the entry: an edit made on
+          // the post-rename tab path must retry the atomic move before
+          // anything may write the primary record there — a plain write
+          // would move the primary alone and split the family.
+          void queueFamilyMoveWrite(owner, captured)
+        } else if (conflictChannel) {
+          void queueConflictWrite(owner, captured)
+        } else {
+          void queueWrite(owner, captured)
+        }
       }, debounceMs)
     }
     return owner
@@ -431,6 +629,19 @@ export function createUnsavedDraftPersistence(
     const entry = entries.get(key(vaultId, documentId))
     if (!entry || (!allowDisposed && disposed)) return false
     if (entry.fileTransaction) return false
+    // A quarantined entry (failed family move, tab already on the new
+    // path) must never flush a new-path snapshot to the primary record
+    // directly — route it through the move-retry flow instead so the
+    // family moves as a unit (or the content lands as a candidate).
+    const quarantine = entry.pendingFamilyMove
+    if (quarantine
+      && entry.latestSnapshot
+      && entry.latestSnapshot.documentPath !== quarantine.oldPath) {
+      clearTimer(entry)
+      if (!entry.latestSnapshotNeedsWrite) return true
+      const owner = { vaultId, documentId, generation: entry.generation }
+      return queueFamilyMoveWrite(owner, cloneSnapshot(entry.latestSnapshot), allowDisposed)
+    }
     // Conflict-pinned entries must never be flushed back to the primary
     // record. If a conflict-channel edit is still pending, persist it as
     // a conflict record so pagehide/dispose doesn't drop it; otherwise
@@ -696,6 +907,7 @@ export function createUnsavedDraftPersistence(
 
     let settled = false
     let finalized = false
+    let closeSealed = false
     // Identities whose commit already reported 'failed'. Their tabs stay
     // open regardless and their armed debounce retries in the background,
     // so the finalize gates never re-REPORT them — re-running the failure
@@ -907,7 +1119,21 @@ export function createUnsavedDraftPersistence(
           mapping.toPath,
         )
         const status = outcome.status
-        if (status === 'failed') alreadyFailedKeys.add(identityKey)
+        if (status === 'failed') {
+          alreadyFailedKeys.add(identityKey)
+          // The server rename already succeeded and the lifecycle WILL
+          // migrate the tab to the new path — but the draft family is
+          // still whole at the old one. Quarantine the entry: a later
+          // edit made on the new tab path must retry the atomic move
+          // before anything writes the primary record there (a plain
+          // write would move the primary alone, stranding the conflict
+          // candidates on the old path — re-creating exactly the split
+          // the family move failed to complete).
+          state.entry.pendingFamilyMove = {
+            oldPath: mapping.fromPath,
+            newPath: mapping.toPath,
+          }
+        }
         if (status === 'moved') {
           state.entry.persistedDraft = await store.getDraft(
             mapping.vaultId,
@@ -1265,74 +1491,168 @@ export function createUnsavedDraftPersistence(
     }
 
     /** Seal released entries just before the lifecycle closes document
-     *  tabs. commitDeletes releases every entry when it reports, but the
+     *  tabs — as ONE batch barrier over every identity about to close.
+     *  commitDeletes releases every entry when it reports, but the
      *  lifecycle still awaits Recovery synchronization before closing
      *  tabs — an edit typed during that async window arms a fresh
      *  debounce (the transaction lock is already gone) that the tab
      *  close could outrun: if that debounced write later failed, the
-     *  bytes would exist nowhere visible. This gate re-verifies each
-     *  released entry and persists anything still pending IMMEDIATELY on
-     *  the entry's active channel (a conflict-pinned entry keeps writing
-     *  conflict records, never the primary store). A rejected write
-     *  returns 'failed' for that identity so the lifecycle keeps its tab
-     *  open — the only surface still holding those bytes. Identities
-     *  that already reported 'failed' are skipped: their tabs stay open
-     *  regardless and their armed debounce retries in the background.
-     *  A successful write returns 'preserved' so the lifecycle's second
+     *  bytes would exist nowhere visible.
+     *  Phase 1 (synchronous, before ANY await): install a fresh close
+     *  seal on every identity being closed and clear its timer. The
+     *  seal reuses the fileTransaction mechanism — schedule() may
+     *  still update a snapshot but no longer arms a timer, and flush()
+     *  steps aside — so an edit typed while a SIBLING document's save
+     *  is in flight cannot arm a debounce the tab close would outrun.
+     *  Phase 2: persist anything still pending on the entry's active
+     *  channel (conflict-pinned entries keep writing conflict records;
+     *  quarantined entries route through the family-move retry), all
+     *  writes in flight together.
+     *  Phase 3: only AFTER every write settles, re-verify each entry
+     *  against its seal-time state. An identity whose latest content
+     *  was not verified durable — a rejected write, OR an edit that
+     *  landed during the phase (its generation advanced / snapshot
+     *  replaced / write flag still set) — returns 'failed' so the
+     *  lifecycle keeps THAT tab open (the only surface still holding
+     *  those bytes); releasing its seal re-arms the background retry.
+     *  A verified write returns 'preserved' so the lifecycle's second
      *  synchronization pass (after the tab decision) refreshes the
-     *  current Recovery identity — otherwise the panel keeps showing the
-     *  pre-window record, or never sees a fresh orphan recorded after a
-     *  confirmed delete. 'preserved' carries no warning.
+     *  current Recovery identity — otherwise the panel keeps showing
+     *  the pre-window record, or never sees a fresh orphan recorded
+     *  after a confirmed delete. 'preserved' never warns.
+     *  Identities that already reported 'failed' are never sealed:
+     *  their tabs stay open regardless and their armed debounce must
+     *  keep retrying in the background.
      *  The lifecycle must close tabs synchronously after this promise
-     *  resolves (no await in between) so no user input event can open a
-     *  new window. */
+     *  resolves (no await in between) so no user input event can open
+     *  a new window. */
     async function finalizeBeforeDocumentClose(): Promise<DraftFileTransactionResult[]> {
+      if (closeSealed) return []
+      closeSealed = true
       const results: DraftFileTransactionResult[] = []
+      const closeToken = Symbol('draft-close-seal')
+      // Phase 1 — seal every identity being closed BEFORE any await.
+      const sealed: Array<{
+        identityKey: string
+        state: {
+          identity: DraftDocumentIdentity
+          entry: DraftEntry
+          confirmedDraft: UnsavedDraft | null
+          preparedGeneration: number
+        }
+        sealedGeneration: number
+        sealedSnapshot: DraftBufferSnapshot | null
+        pending: boolean
+        save: Promise<boolean> | null
+      }> = []
       for (const [identityKey, state] of held) {
         if (alreadyFailedKeys.has(identityKey)) continue
-        const { entry, identity } = state
-        if (entry.fileTransaction
-          || !entry.latestSnapshot
-          || !entry.latestSnapshotNeedsWrite) {
-          continue
-        }
+        const { entry } = state
+        if (entry.fileTransaction) continue
         clearTimer(entry)
+        entry.fileTransaction = closeToken
+        sealed.push({
+          identityKey,
+          state,
+          sealedGeneration: entry.generation,
+          sealedSnapshot: entry.latestSnapshot,
+          pending: entry.latestSnapshot !== null && entry.latestSnapshotNeedsWrite,
+          save: null,
+        })
+      }
+      // Phase 2 — bounded saves, all in flight together (a slow
+      // document must not serialize its siblings behind it).
+      for (const attempt of sealed) {
+        if (!attempt.pending) continue
+        const { entry, identity } = attempt.state
+        const latest = entry.latestSnapshot
+        if (!latest) continue
+        const quarantine = entry.pendingFamilyMove
         const conflictChannel = entry.pendingConflictId !== null
         const owner = {
           vaultId: identity.vaultId,
           documentId: identity.documentId,
           generation: entry.generation,
         }
-        const captured = cloneSnapshot(entry.latestSnapshot)
-        const saved = conflictChannel
-          ? await queueConflictWrite(owner, captured)
-          : await queueWrite(owner, captured)
-        if (!saved) {
-          // Rejected (or superseded mid-write): the latest snapshot is
-          // still only in-memory. Fail closed so the lifecycle keeps
-          // the tab open instead of closing the only visible copy.
-          alreadyFailedKeys.add(identityKey)
-          results.push({
-            documentId: identity.documentId,
-            oldPath: identity.documentPath,
-            status: 'failed',
-          })
-        } else {
-          // The settlement-window edit is durable — report a non-warning
-          // status so the lifecycle runs its second Recovery sync after
-          // the tab decision: refreshIdentity re-reads the store, so the
-          // panel shows the window edit instead of the stale pre-window
-          // record (and, after a confirmed delete already removed the
-          // identity, re-adds the fresh orphan — otherwise invisible in
-          // the current session until the next full discovery).
-          // 'preserved' never warns.
-          results.push({
-            documentId: identity.documentId,
-            oldPath: identity.documentPath,
-            status: 'preserved',
-          })
-        }
+        const captured = cloneSnapshot(latest)
+        attempt.save = quarantine && captured.documentPath !== quarantine.oldPath
+          ? queueFamilyMoveWrite(owner, captured)
+          : conflictChannel
+            ? queueConflictWrite(owner, captured)
+            : queueWrite(owner, captured)
       }
+      const saveResults = await Promise.all(sealed.map(async (attempt) => {
+        if (!attempt.save) return true
+        try {
+          return await attempt.save
+        } catch {
+          return false
+        }
+      }))
+      // Phase 3 — uniform re-verification across the WHOLE phase: the
+      // latest content is certified durable only for an entry whose
+      // state is exactly what the seal captured. An edit that landed
+      // during a sibling's write fails closed whatever its own save
+      // returned. Release every seal on the way out — it must not
+      // outlive this gate.
+      sealed.forEach((attempt, index) => {
+        const { identityKey, state, sealedGeneration, sealedSnapshot, pending } = attempt
+        const { entry, identity } = state
+        const superseded = entry.generation !== sealedGeneration
+          || entry.latestSnapshot !== sealedSnapshot
+          || entry.latestSnapshotNeedsWrite
+        const failed = superseded || (pending && !saveResults[index])
+        if (entry.fileTransaction === closeToken) entry.fileTransaction = null
+        if (!failed) {
+          if (pending) {
+            // The settlement-window edit is durable — report a
+            // non-warning status so the lifecycle runs its second
+            // Recovery sync after the tab decision: refreshIdentity
+            // re-reads the store, so the panel shows the window edit
+            // instead of the stale pre-window record (and, after a
+            // confirmed delete already removed the identity, re-adds
+            // the fresh orphan — otherwise invisible in the current
+            // session until the next full discovery).
+            // 'preserved' never warns.
+            results.push({
+              documentId: identity.documentId,
+              oldPath: identity.documentPath,
+              status: 'preserved',
+            })
+          }
+          return
+        }
+        alreadyFailedKeys.add(identityKey)
+        // Re-arm the background retry: the tab stays open as the
+        // visible surface while the debounce persists the latest
+        // snapshot on the entry's active channel.
+        if (entry.latestSnapshot && entry.latestSnapshotNeedsWrite) {
+          const conflictChannel = entry.pendingConflictId !== null
+          const quarantine = entry.pendingFamilyMove
+          entry.generation += 1
+          const owner = {
+            vaultId: identity.vaultId,
+            documentId: identity.documentId,
+            generation: entry.generation,
+          }
+          const captured = cloneSnapshot(entry.latestSnapshot)
+          entry.timer = setTimeout(() => {
+            entry.timer = null
+            if (quarantine && captured.documentPath !== quarantine.oldPath) {
+              void queueFamilyMoveWrite(owner, captured)
+            } else if (conflictChannel) {
+              void queueConflictWrite(owner, captured)
+            } else {
+              void queueWrite(owner, captured)
+            }
+          }, debounceMs)
+        }
+        results.push({
+          documentId: identity.documentId,
+          oldPath: identity.documentPath,
+          status: 'failed',
+        })
+      })
       return results
     }
 

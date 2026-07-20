@@ -2215,4 +2215,315 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     })
     await persistence.dispose()
   })
+
+  // A write reports durability of the LATEST content, not of whatever
+  // revision it happened to save: an edit landing mid-save replaces the
+  // snapshot and advances the generation, and the in-flight write must
+  // fail closed instead of certifying the entry durable behind a
+  // revision that is no longer the latest.
+
+  it('fails closed when a primary finalize write is superseded', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    // Gate ONLY the settlement-window primary write so it stays in
+    // flight while a newer revision lands.
+    const originalSaveDraft = store.saveDraft.bind(store)
+    let finalizeSaveStarted = false
+    let releaseFinalizeSave!: () => void
+    const finalizeSaveGate = new Promise<void>((resolve) => { releaseFinalizeSave = resolve })
+    vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+      if (value.content === 'settlement-edit') {
+        finalizeSaveStarted = true
+        await finalizeSaveGate
+      }
+      return originalSaveDraft(value)
+    })
+    const barrier = await persistence.prepareFileMutation([identity])
+    persistence.schedule(snapshot('orphan', 'notes/a', 2))
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'preserve',
+    }])
+    expect(result.status).toBe('preserved')
+    persistence.schedule(snapshot('settlement-edit', 'notes/a', 3))
+    const finalizing = barrier.finalizeBeforeDocumentClose()
+    await vi.waitFor(() => expect(finalizeSaveStarted).toBe(true))
+    // The user keeps typing while the rev3 save is in flight. That
+    // save will succeed at the store level, but rev4 is not durable —
+    // a write that returned true here (the old lenient `return saved`)
+    // would certify the entry and let the lifecycle close the tab
+    // that is the only surface holding rev4.
+    persistence.schedule(snapshot('superseding', 'notes/a', 4))
+    releaseFinalizeSave()
+    const finalizeResults = await finalizing
+
+    // The superseded write fails closed: the tab stays open ...
+    expect(finalizeResults).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      status: 'failed',
+    }])
+    // ... the store holds the outdated revision (lost nowhere — just
+    // not the latest) ...
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('settlement-edit')
+    // ... and the released seal re-armed the background retry, which
+    // persists the latest revision without further user action.
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('superseding')
+    await persistence.dispose()
+  })
+
+  it('flush fails closed when its write is superseded by a newer edit', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    const originalSaveDraft = store.saveDraft.bind(store)
+    let saveStarted = false
+    let releaseSave!: () => void
+    const saveGate = new Promise<void>((resolve) => { releaseSave = resolve })
+    vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+      if (value.content === 'buffered') {
+        saveStarted = true
+        await saveGate
+      }
+      return originalSaveDraft(value)
+    })
+    persistence.schedule(snapshot('buffered', 'notes/a', 2))
+    const flushing = persistence.flush('vault', 'doc-a')
+    await vi.waitFor(() => expect(saveStarted).toBe(true))
+    // A newer edit lands while the flush's rev2 save is in flight.
+    persistence.schedule(snapshot('superseding', 'notes/a', 3))
+    releaseSave()
+
+    // The rev2 write reaches the store, but the flush must not report
+    // success: the latest revision is still only in memory.
+    expect(await flushing).toBe(false)
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('buffered')
+    // The debounce armed by the newer edit persists rev3.
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('superseding')
+    await persistence.dispose()
+  })
+
+  it('keeps a tab open when its edit lands during another document\'s finalize write', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    const identityB = { vaultId: 'vault', documentId: 'doc-b', documentPath: 'notes/b' }
+    // Gate ONLY doc-b's settlement write: doc-a's write settles while
+    // the window stays open — the old sequential per-identity finalize
+    // verified doc-a here and would close its tab before doc-b's write
+    // even started.
+    const originalSaveDraft = store.saveDraft.bind(store)
+    let bSaveStarted = false
+    let releaseBSave!: () => void
+    const bSaveGate = new Promise<void>((resolve) => { releaseBSave = resolve })
+    vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+      if (value.documentId === 'doc-b' && value.content === 'b-window') {
+        bSaveStarted = true
+        await bSaveGate
+      }
+      return originalSaveDraft(value)
+    })
+    const barrier = await persistence.prepareFileMutation([identity, identityB])
+    persistence.schedule(snapshot('a-orphan', 'notes/a', 2))
+    persistence.schedule({ ...snapshot('b-orphan', 'notes/b', 2), documentId: 'doc-b' })
+    const commitResults = await barrier.commitDeletes([
+      { ...identity, policy: 'preserve' },
+      { ...identityB, policy: 'preserve' },
+    ])
+    expect(commitResults.map((r) => r.status)).toEqual(['preserved', 'preserved'])
+    persistence.schedule(snapshot('a-window', 'notes/a', 3))
+    persistence.schedule({ ...snapshot('b-window', 'notes/b', 3), documentId: 'doc-b' })
+    const finalizing = barrier.finalizeBeforeDocumentClose()
+    await vi.waitFor(() => expect(bSaveStarted).toBe(true))
+    // The user keeps typing in doc-a while doc-b's write is in flight.
+    persistence.schedule(snapshot('a-late', 'notes/a', 4))
+    releaseBSave()
+    const finalizeResults = await finalizing
+
+    // doc-a fails closed — its latest revision was never verified
+    // durable — while doc-b's verified write reports preserved.
+    expect(finalizeResults).toEqual([
+      { documentId: 'doc-a', oldPath: 'notes/a', status: 'failed' },
+      { documentId: 'doc-b', oldPath: 'notes/b', status: 'preserved' },
+    ])
+    expect((await store.getDraft('vault', 'doc-b'))?.content).toBe('b-window')
+    // doc-a's latest revision lands via the re-armed background retry.
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('a-late')
+    await persistence.dispose()
+  })
+
+  it('seals all folder-delete identities across the complete finalize phase', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    const identityB = { vaultId: 'vault', documentId: 'doc-b', documentPath: 'notes/b' }
+    const originalSaveDraft = store.saveDraft.bind(store)
+    let bSaveStarted = false
+    let releaseBSave!: () => void
+    const bSaveGate = new Promise<void>((resolve) => { releaseBSave = resolve })
+    const saveDraft = vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+      if (value.documentId === 'doc-b' && value.content === 'b-window') {
+        bSaveStarted = true
+        await bSaveGate
+      }
+      return originalSaveDraft(value)
+    })
+    const barrier = await persistence.prepareFileMutation([identity, identityB])
+    persistence.schedule(snapshot('a-orphan', 'notes/a', 2))
+    persistence.schedule({ ...snapshot('b-orphan', 'notes/b', 2), documentId: 'doc-b' })
+    await barrier.commitDeletes([
+      { ...identity, policy: 'preserve' },
+      { ...identityB, policy: 'preserve' },
+    ])
+    persistence.schedule(snapshot('a-window', 'notes/a', 3))
+    persistence.schedule({ ...snapshot('b-window', 'notes/b', 3), documentId: 'doc-b' })
+    const finalizing = barrier.finalizeBeforeDocumentClose()
+    await vi.waitFor(() => expect(bSaveStarted).toBe(true))
+    // BOTH documents are edited while doc-b's write is in flight.
+    persistence.schedule(snapshot('a-late', 'notes/a', 4))
+    persistence.schedule({ ...snapshot('b-late', 'notes/b', 4), documentId: 'doc-b' })
+    const saveCallsBefore = saveDraft.mock.calls.length
+    // The seal spans the COMPLETE finalize phase: no debounce may arm
+    // and fire on any sealed identity until the barrier is done. A
+    // seal released per identity (or never installed) would let these
+    // edits write behind an in-progress close decision.
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(saveDraft.mock.calls.length).toBe(saveCallsBefore)
+    releaseBSave()
+    const finalizeResults = await finalizing
+
+    // Both identities were re-dirtied during the phase — both fail
+    // closed and keep their tabs open.
+    expect(finalizeResults).toEqual([
+      { documentId: 'doc-a', oldPath: 'notes/a', status: 'failed' },
+      { documentId: 'doc-b', oldPath: 'notes/b', status: 'failed' },
+    ])
+    // Both latest revisions persist via the re-armed retries.
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('a-late')
+    expect((await store.getDraft('vault', 'doc-b'))?.content).toBe('b-late')
+    await persistence.dispose()
+  })
+
+  // A failed family move quarantines the entry: the tab migrates to the
+  // server's new path while the draft family stays whole at the old one.
+  // An edit made on the new path must retry the atomic family move
+  // BEFORE any primary write — DraftStore accepts the higher-updatedAt
+  // draft's path wholesale, so a plain write would move the primary
+  // alone and re-split the family. While the retry keeps failing, the
+  // latest content lands as a separate move-quarantine candidate and the
+  // old family stays whole; a later successful retry unites everyone
+  // (candidates travel with the family).
+
+  it('retries the family move when an edit arrives on the post-rename path', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamilyConflicts')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    // The tab now shows the server's new path and the user edits it.
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The debounced write retried the atomic move first — and it
+    // succeeded: the family unites at the tab's actual path, primary
+    // and conflicts together.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'after-rename',
+    })
+    expect((await store.listConflictDrafts('vault')).map((c) => c.documentPath))
+      .toEqual(['archive/a'])
+    await persistence.dispose()
+  })
+
+  it('never writes the primary alone while the move retry keeps failing', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    // Two consecutive family-move failures: the commit consumes
+    // 'moveFamily', the first debounced retry consumes
+    // 'moveFamilyConflicts', the second retry succeeds.
+    backend.failNext('moveFamily')
+    backend.failNext('moveFamilyConflicts')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    // First post-rename edit: the retry fails again. The primary
+    // record must NOT move alone — the latest content persists as a
+    // separate move-quarantine candidate next to the intact old
+    // family.
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'primary',
+    })
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(2)
+    expect(conflicts.find((c) => c.conflictId === 'conflict-a')?.documentPath)
+      .toBe('notes/a')
+    expect(conflicts.find((c) => c.conflictId !== 'conflict-a')).toMatchObject({
+      content: 'after-rename',
+      documentPath: 'archive/a',
+      origin: 'move-conflict',
+    })
+
+    // The next edit retries once more — the move succeeds and the
+    // whole family (primary plus BOTH candidates) unites at the tab's
+    // path. The quarantine candidate recorded by the failed retry
+    // travels with the family instead of being stranded.
+    persistence.schedule(snapshot('healed', 'archive/a', 3))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'healed',
+    })
+    expect((await store.listConflictDrafts('vault')).map((c) => c.documentPath).sort())
+      .toEqual(['archive/a', 'archive/a'])
+    await persistence.dispose()
+  })
 })

@@ -59,21 +59,27 @@ export interface DraftFileMutationBarrier {
   commitDeletes(
     deletions: readonly DraftDeleteRequest[],
   ): Promise<DraftFileTransactionResult[]>
-  /** Final persistence gate before the lifecycle closes document tabs.
-   *  A delete transaction releases every entry when it reports, but the
-   *  lifecycle still awaits Recovery synchronization before closing tabs
-   *  — edits typed during that async window arm a fresh debounce that
-   *  the tab close could outrun. This gate re-verifies each released
-   *  entry and persists anything still pending IMMEDIATELY (on the
-   *  entry's active channel); a rejected write produces a `failed`
-   *  result so the lifecycle keeps that tab open — it is the only
-   *  surface still holding those bytes. A successful write produces a
-   *  `preserved` result so the lifecycle's post-close Recovery sync
-   *  refreshes the identity (showing the settlement-window edit, or
-   *  re-adding an orphan recorded after a confirmed delete) — it never
-   *  warns. The lifecycle must close tabs synchronously after this
-   *  promise resolves, before any further await, so no user input event
-   *  can open a new window. */
+  /** Final persistence gate before the lifecycle closes document tabs,
+   *  implemented as ONE batch barrier over every identity about to
+   *  close. A delete transaction releases every entry when it reports,
+   *  but the lifecycle still awaits Recovery synchronization before
+   *  closing tabs — edits typed during that async window arm a fresh
+   *  debounce that the tab close could outrun. The gate installs a
+   *  close seal on every identity BEFORE any await (schedule() may
+   *  still update snapshots but no longer arms timers), runs all
+   *  pending writes concurrently, and only after they settle
+   *  re-verifies each entry against its seal-time state: an identity
+   *  whose latest content was not verified durable — a rejected write,
+   *  or an edit that landed while a sibling document's write was in
+   *  flight — produces a `failed` result so the lifecycle keeps THAT
+   *  tab open (the only surface still holding those bytes) while the
+   *  seal release re-arms the background retry. A verified write
+   *  produces a `preserved` result so the lifecycle's post-close
+   *  Recovery sync refreshes the identity (showing the settlement-
+   *  window edit, or re-adding an orphan recorded after a confirmed
+   *  delete) — it never warns. The lifecycle must close tabs
+   *  synchronously after this promise resolves, before any further
+   *  await, so no user input event can open a new window. */
   finalizeBeforeDocumentClose(): Promise<DraftFileTransactionResult[]>
   /** Immediate post-tab-migration persistence results. Each pending
    *  release writes its latest snapshot to the actual post-rename path;
@@ -83,7 +89,12 @@ export interface DraftFileMutationBarrier {
    *  and the tab keeps its new path, but the user is warned that the
    *  local draft could not be persisted. Identities the commit already
    *  reported `failed` are released too — their transaction token must
-   *  not outlive the barrier — but not re-reported. */
+   *  not outlive the barrier — but not re-reported. A failed family
+   *  move additionally quarantines the entry: the tab migrates to the
+   *  server's new path while the draft family stays whole at the old
+   *  one, and a subsequent edit on the new path retries the atomic
+   *  family move before any primary write — so the next plain edit
+   *  cannot split primary and conflict records across paths. */
   finalizeAfterTabMigration(): Promise<DraftFileTransactionResult[]>
   rollback(): Promise<void>
 }

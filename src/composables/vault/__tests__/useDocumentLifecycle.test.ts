@@ -1145,4 +1145,105 @@ describe('useDocumentLifecycle draft settlement window', () => {
     })])
     warnSpy.mockRestore()
   })
+
+  it('never splits the draft family when the user edits the tab after a failed family move', async () => {
+    // server rename succeeds → draft family move fails → Tab becomes
+    // the actual new path → user edits the renamed Tab → primary and
+    // conflicts never split across paths. The failed move quarantines
+    // the entry: the post-rename edit retries the atomic family move
+    // BEFORE any primary write on the new path.
+    vi.useFakeTimers()
+    vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'archive/a-2', title: 'A', created: '', updated: '', tags: [], size: 1, mtime: 2,
+    })
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 10,
+      targetWindow: undefined,
+    })
+    await store.saveDraft({
+      version: 1,
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'inbox/a',
+      content: 'primary',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      // Below this describe's persistence clock (now: () => 10) so the
+      // post-rename edit's first buildDraft (updatedAt 10) wins the
+      // store's strictly-newer CAS.
+      updatedAt: 5,
+    })
+    await store.saveConflictDraft({
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'inbox/a',
+      content: 'local orphan',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    const warnings = vi.fn()
+    const h = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: (identities) => persistence.prepareFileMutation(identities),
+      warnDraftTransaction: warnings,
+    })
+
+    // The server rename succeeds; the draft family move fails as a
+    // unit and the user is warned once.
+    backend.failNext('moveFamilyConflicts')
+    await h.lifecycle.renameFile('inbox/a', { targetPath: 'archive/a' })
+    expect(warnings).toHaveBeenCalledOnce()
+    expect(warnings).toHaveBeenCalledWith([expect.objectContaining({
+      documentId: 'doc-a',
+      oldPath: 'inbox/a',
+      newPath: 'archive/a-2',
+      status: 'failed',
+    })])
+    // The lifecycle migrated the tab to the server's actual path while
+    // the draft family stayed whole at the OLD path.
+    expect(h.tabs.value[0].path).toBe('archive/a-2')
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'inbox/a',
+      content: 'primary',
+    })
+    expect((await store.listConflictDrafts('vault')).map((c) => c.documentPath))
+      .toEqual(['inbox/a'])
+
+    // The user edits the renamed tab. A plain primary write here would
+    // move the primary alone to archive/a-2 (DraftStore accepts the
+    // newer draft's path wholesale) and strand the conflict on inbox/a
+    // — the quarantine routes the debounced write through the atomic
+    // move retry instead, which now succeeds.
+    persistence.schedule(draftSnapshot('after-rename', 'archive/a-2', 'doc-a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Primary and conflicts never split across paths: the retry united
+    // the whole family at the tab's actual path.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a-2',
+      content: 'after-rename',
+    })
+    expect((await store.listConflictDrafts('vault')).map((c) => c.documentPath))
+      .toEqual(['archive/a-2'])
+    await persistence.dispose()
+  })
 })
