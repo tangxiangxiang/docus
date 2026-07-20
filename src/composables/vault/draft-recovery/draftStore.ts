@@ -24,7 +24,8 @@ type MoveResult = 'moved' | 'missing' | 'conflict' | 'unsupported'
 type DeleteResult = 'deleted' | 'missing' | 'unsupported'
 type ConditionalDeleteResult = DeleteResult | 'stale'
 type BackendOperation =
-  | 'save' | 'get' | 'list' | 'delete' | 'move' | 'moveConflicts' | 'clear'
+  | 'save' | 'get' | 'list' | 'delete' | 'move' | 'moveConflicts'
+  | 'moveFamily' | 'moveFamilyConflicts' | 'clear'
   | 'saveConflict' | 'listConflicts' | 'deleteConflict' | 'clearConflicts'
 
 export interface DraftStorageBackend {
@@ -45,6 +46,16 @@ export interface DraftStorageBackend {
     newDocumentId: string,
     newPath: string,
   ): Promise<number>
+  /** Move the primary record AND every conflict candidate for the
+   *  identity as one unit. Backed by a single IndexedDB transaction
+   *  across both stores so a failure anywhere rolls the whole family
+   *  move back — a conflict-phase error can never leave the primary
+   *  renamed with its conflicts stranded on the pre-rename path. */
+  moveFamily(
+    vaultId: string,
+    documentId: string,
+    newPath: string,
+  ): Promise<FamilyMoveBackendResult>
   clear(vaultId: string): Promise<void>
   saveConflict(record: DraftConflictRecord): Promise<void>
   listConflicts(vaultId: string): Promise<unknown[]>
@@ -62,6 +73,22 @@ export type DraftMoveOutcome =
   | { status: 'conflict' }
   | { status: 'unsupported' }
   | { status: 'failed' }
+
+type FamilyMoveBackendResult = {
+  status: MoveResult
+  movedConflicts: number
+}
+
+/** Outcome of an atomic primary+conflicts rename. `status` classifies
+ *  the primary record (a rename never changes documentId identity, so
+ *  the primary cannot conflict with a separate target); `movedConflicts`
+ *  counts the conflict candidates migrated in the same transaction.
+ *  `failed` means the family move was rolled back — neither store
+ *  changed. */
+export type DraftFamilyMoveOutcome = {
+  status: MoveResult | 'failed'
+  movedConflicts: number
+}
 
 export type DraftDeleteOutcome =
   | { status: 'deleted' }
@@ -106,6 +133,11 @@ export interface DraftStore {
     newDocumentId: string,
     newPath: string,
   ): Promise<number>
+  moveDraftFamily(
+    vaultId: string,
+    documentId: string,
+    newPath: string,
+  ): Promise<DraftFamilyMoveOutcome>
   clearVaultDrafts(vaultId: string): Promise<boolean>
   saveConflictDraft(record: DraftConflictRecord): Promise<DraftConflictSaveOutcome>
   listConflictDrafts(vaultId: string): Promise<DraftConflictRecord[]>
@@ -212,6 +244,21 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
         )
       } catch {
         return 0
+      }
+    },
+
+    async moveDraftFamily(vaultId, documentId, newPath) {
+      if (!isDraftIdentity(vaultId, documentId) || newPath.trim().length === 0) {
+        return { status: 'failed', movedConflicts: 0 }
+      }
+      try {
+        return await backend.moveFamily(vaultId, documentId, newPath)
+      } catch {
+        // Any error (including an aborted cross-store transaction) means
+        // the family move rolled back. Report a structured failure so the
+        // caller surfaces a warning instead of reporting a clean 'moved'
+        // with conflicts stranded on the old path.
+        return { status: 'failed', movedConflicts: 0 }
       }
     },
 
@@ -396,6 +443,38 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
         moved += 1
       }
       return moved
+    },
+
+    async moveFamily(vaultId, documentId, newPath) {
+      consumeFailure('moveFamily')
+      const familyKey = serializedKey(vaultId, documentId)
+      const source = records.get(familyKey)
+      // A rename never changes the documentId identity, so there is no
+      // target record to collide with — decideMove only classifies the
+      // source here.
+      const decision = decideMove(source, undefined, documentId, newPath)
+      // Plan every conflict update BEFORE writing anything, then apply
+      // the whole family in one step. An injected conflict-phase failure
+      // therefore leaves the primary untouched too, mirroring the
+      // IndexedDB cross-store transaction rollback.
+      const conflictUpdates: Array<{ key: string; record: DraftConflictRecord }> = []
+      for (const value of [...conflictRecords.values()]) {
+        if (!isDraftConflictRecord(value)
+          || value.vaultId !== vaultId
+          || value.documentId !== documentId) continue
+        conflictUpdates.push({
+          key: serializedConflictKey(vaultId, documentId, value.conflictId),
+          record: { ...value, documentPath: newPath },
+        })
+      }
+      consumeFailure('moveFamilyConflicts')
+      if (decision.result === 'moved') {
+        records.set(familyKey, cloneDraft(decision.draft))
+      }
+      for (const { key, record } of conflictUpdates) {
+        conflictRecords.set(key, cloneConflictRecord(record))
+      }
+      return { status: decision.result, movedConflicts: conflictUpdates.length }
     },
 
     async clear(vaultId) {
@@ -599,6 +678,49 @@ export function createIndexedDbDraftBackend(
       }
       await transactionDone(transaction)
       return moved
+    },
+
+    async moveFamily(vaultId, documentId, newPath) {
+      const db = await database()
+      // ONE transaction across both stores: if anything fails, the whole
+      // family move aborts and rolls back — the primary can never end up
+      // renamed while its conflict candidates are stranded on the
+      // pre-rename path (which recovery would misclassify).
+      const transaction = db.transaction(
+        [DRAFT_STORE_NAME, CONFLICT_STORE_NAME],
+        'readwrite',
+      )
+      const draftStore = transaction.objectStore(DRAFT_STORE_NAME)
+      const conflictStore = transaction.objectStore(CONFLICT_STORE_NAME)
+      const familyKey = idbKey(vaultId, documentId)
+      const source = await request(draftStore.get(familyKey))
+      // A rename never changes the documentId identity, so there is no
+      // target record — decideMove only classifies the source here.
+      const decision = decideMove(source, undefined, documentId, newPath)
+      let movedConflicts = 0
+      if (decision.result === 'moved') {
+        // Same keyPath value (documentId unchanged) — put updates the
+        // record's path in place, preserving body/baseline/timestamps.
+        draftStore.put(cloneDraft(decision.draft))
+      }
+      // Conflict candidates travel with the rename even when the primary
+      // record is missing (conflict-only documents), so their rows are
+      // not stranded on the old path.
+      const values = await request(
+        conflictStore.index(CONFLICT_VAULT_INDEX).getAll(vaultId),
+      )
+      for (const value of values) {
+        if (!isDraftConflictRecord(value) || value.documentId !== documentId) {
+          continue
+        }
+        // Same compound key (documentId unchanged) — put updates the
+        // path in place, preserving conflictId/body/baseline/timestamps
+        // and origin.
+        conflictStore.put(cloneConflictRecord({ ...value, documentPath: newPath }))
+        movedConflicts += 1
+      }
+      await transactionDone(transaction)
+      return { status: decision.result, movedConflicts }
     },
 
     async clear(vaultId) {

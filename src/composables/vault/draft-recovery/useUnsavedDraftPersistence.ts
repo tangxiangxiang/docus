@@ -432,12 +432,14 @@ export function createUnsavedDraftPersistence(
   async function flushAllInternal(allowDisposed = false): Promise<void> {
     await Promise.all([...entries.entries()].map(async ([serialized, entry]) => {
       if (!entry.latestSnapshot) return
-      // Entries promoted to a separate conflict record must NEVER
-      // be flushed back to the primary IndexedDB record. The
-      // conflict path has already persisted the snapshot under a
-      // fresh conflictId; re-flushing would mint a new safeTimestamp
-      // and overwrite the cross-context record.
-      if (entry.pendingConflictId !== null) return
+      // Delegate to `flush()`, which picks the right channel per entry:
+      // conflict-pinned entries persist a still-pending snapshot as a
+      // conflict record (never the primary record — a primary write
+      // would mint a fresh `safeTimestamp()` and overwrite the cross-
+      // context record), while normal entries write primary. Skipping
+      // conflict-pinned entries here would drop an in-debounce
+      // conflict-channel edit on pagehide/dispose — the bytes would
+      // exist neither in the primary store nor the conflict store.
       const [vaultId, documentId] = JSON.parse(serialized) as [string, string]
       await flush(vaultId, documentId, allowDisposed)
     }))
@@ -723,7 +725,8 @@ export function createUnsavedDraftPersistence(
      * This is the dual-source conflict storage the spec demands: the
      * IndexedDB primary keeps the cross-context draft, the conflict
      * record holds the local orphan, and the entry is marked
-     * `pendingConflictId` so `flushAll` / `dispose` skip it.
+     * `pendingConflictId` so `flush` / `flushAll` / `dispose` keep any
+     * later edits on the conflict channel instead of writing primary.
      */
     async function persistLocalAsConflict(
       state: typeof held extends Map<string, infer V> ? V : never,
@@ -828,26 +831,24 @@ export function createUnsavedDraftPersistence(
           continue
         }
         mappedKeys.add(identityKey)
-        const outcome = await store.moveDraft(
+        // Move the primary record and every conflict candidate for this
+        // identity in ONE IndexedDB transaction. Conflict records share
+        // the documentId identity but live in a separate store; moving
+        // them in an independent transaction could leave the primary
+        // renamed while conflicts are stranded on the pre-rename path
+        // (misclassified as missing-source / identity-mismatch), and a
+        // conflict-phase failure used to be silently swallowed while the
+        // result still reported 'moved'. The family move fails closed:
+        // any error rolls both stores back and surfaces as 'failed',
+        // which reportDraftResults turns into a user-visible warning.
+        // Conflict candidates travel even when the primary record is
+        // 'missing' (conflict-only documents).
+        const outcome = await store.moveDraftFamily(
           mapping.vaultId,
-          mapping.documentId,
           mapping.documentId,
           mapping.toPath,
         )
         const status = outcome.status
-        // Conflict records share the documentId identity but live in a
-        // separate store that moveDraft never touches. Migrate every
-        // conflict candidate's documentPath so recovery classification
-        // reads the post-rename path instead of the stale pre-rename one
-        // (which would misclassify as missing-source / identity-mismatch).
-        // Runs even when the primary record is 'missing' (conflict-only
-        // documents) so their candidates aren't stranded on the old path.
-        await store.moveConflicts(
-          mapping.vaultId,
-          mapping.documentId,
-          mapping.documentId,
-          mapping.toPath,
-        )
         if (status === 'moved') {
           state.entry.persistedDraft = await store.getDraft(
             mapping.vaultId,
@@ -981,16 +982,43 @@ export function createUnsavedDraftPersistence(
           // The confirmed discard also removes the conflict candidates
           // frozen at confirmation time. Without this the conflict-store
           // rows survive and resurface on the next discovery even though
-          // the user confirmed deleting this identity. Conflicts recorded
-          // after confirmation were never frozen and intentionally remain.
-          if (confirmation) {
-            for (const conflictId of confirmation.expectedConflictIds) {
-              await store.deleteConflictDraft(
-                deletion.vaultId,
-                deletion.documentId,
-                conflictId,
-              )
-            }
+          // the user confirmed deleting this identity. Track every
+          // delete result: a store error leaves the row alive, and
+          // reporting full success anyway would hide it behind the UI's
+          // removeIdentity() until the next refresh.
+          const failedConflictIds: string[] = []
+          for (const conflictId of confirmation.expectedConflictIds) {
+            const conflictOutcome = await store.deleteConflictDraft(
+              deletion.vaultId,
+              deletion.documentId,
+              conflictId,
+            )
+            if (conflictOutcome === 'failed') failedConflictIds.push(conflictId)
+          }
+          // Anything still on the conflict store for this identity — a
+          // frozen row whose delete failed, or a candidate recorded
+          // AFTER confirmation (never frozen, intentionally surviving)
+          // — must keep the identity visible. Report a non-success
+          // status so the UI refreshes this identity instead of
+          // removing it wholesale and closing its recovery tabs.
+          const survivingConflicts = (await store.listConflictDrafts(deletion.vaultId))
+            .filter((record) => record.documentId === deletion.documentId)
+          if (failedConflictIds.length > 0) {
+            console.warn(`[commitDeletes] Frozen conflict delete failed for ${deletion.documentPath}: ${failedConflictIds.join(', ')}`)
+            results.push({
+              documentId: deletion.documentId,
+              oldPath: deletion.documentPath,
+              status: 'failed',
+            })
+            continue
+          }
+          if (survivingConflicts.length > 0) {
+            results.push({
+              documentId: deletion.documentId,
+              oldPath: deletion.documentPath,
+              status: 'conflict',
+            })
+            continue
           }
           results.push({
             documentId: deletion.documentId,

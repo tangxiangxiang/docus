@@ -326,6 +326,8 @@ describe('draftStore characterization', () => {
     await expect(unavailable.clearVaultDrafts('vault-a')).resolves.toBe(false)
     await expect(unavailable.moveConflicts('vault-a', 'a', 'a', 'notes/x'))
       .resolves.toBe(0)
+    await expect(unavailable.moveDraftFamily('vault-a', 'a', 'notes/x'))
+      .resolves.toEqual({ status: 'failed', movedConflicts: 0 })
   })
 
   it('migrates every conflict record path on rename, preserving identity and body', async () => {
@@ -373,6 +375,142 @@ describe('draftStore characterization', () => {
     expect(movedA).toEqual({ ...conflictA, documentPath: 'archive/a' })
     expect(movedB).toEqual({ ...conflictB, documentPath: 'archive/a' })
     expect(untouched).toEqual(otherDoc)
+  })
+
+  it('moves the primary and conflict records as one family operation', async () => {
+    const original = draft('a', 20)
+    await store.saveDraft(original)
+    const conflictA: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan A',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    const conflictB: DraftConflictRecord = {
+      ...conflictA,
+      conflictId: 'conflict-b',
+      content: 'local orphan B',
+      updatedAt: 32,
+      recordedAt: 32,
+    }
+    const otherDoc: DraftConflictRecord = {
+      ...conflictA,
+      conflictId: 'conflict-other',
+      documentId: 'b',
+      documentPath: 'notes/b',
+    }
+    await store.saveConflictDraft(conflictA)
+    await store.saveConflictDraft(conflictB)
+    await store.saveConflictDraft(otherDoc)
+
+    await expect(store.moveDraftFamily('vault-a', 'a', 'archive/a'))
+      .resolves.toEqual({ status: 'moved', movedConflicts: 2 })
+
+    // Primary and conflicts follow the rename together; identity, body,
+    // baseline, timestamps, and origin are preserved. Other identities
+    // are untouched.
+    expect(await store.getDraft('vault-a', 'a')).toEqual({
+      ...original,
+      documentPath: 'archive/a',
+    })
+    const moved = await store.listConflictDrafts('vault-a')
+    expect(moved.find((value) => value.conflictId === 'conflict-a'))
+      .toEqual({ ...conflictA, documentPath: 'archive/a' })
+    expect(moved.find((value) => value.conflictId === 'conflict-b'))
+      .toEqual({ ...conflictB, documentPath: 'archive/a' })
+    expect(moved.find((value) => value.conflictId === 'conflict-other'))
+      .toEqual(otherDoc)
+  })
+
+  it('moves a conflict-only family and reports the missing primary', async () => {
+    const conflict: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveConflictDraft(conflict)
+
+    await expect(store.moveDraftFamily('vault-a', 'a', 'archive/a'))
+      .resolves.toEqual({ status: 'missing', movedConflicts: 1 })
+    expect(await store.listConflictDrafts('vault-a'))
+      .toEqual([{ ...conflict, documentPath: 'archive/a' }])
+  })
+
+  it('reports a failed family move without touching either store', async () => {
+    const original = draft('a', 20)
+    await store.saveDraft(original)
+    const conflict: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveConflictDraft(conflict)
+    backend.failNext('moveFamily')
+
+    await expect(store.moveDraftFamily('vault-a', 'a', 'archive/a'))
+      .resolves.toEqual({ status: 'failed', movedConflicts: 0 })
+    expect(await store.getDraft('vault-a', 'a')).toEqual(original)
+    expect(await store.listConflictDrafts('vault-a')).toEqual([conflict])
+  })
+
+  it('fails a family move atomically when the conflict phase fails', async () => {
+    const original = draft('a', 20)
+    await store.saveDraft(original)
+    const conflict: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveConflictDraft(conflict)
+    // The conflict phase fails AFTER the primary decision was computed:
+    // the primary must NOT be left renamed with conflicts stranded on
+    // the old path (the memory backend applies the family in one step,
+    // mirroring the IndexedDB cross-store transaction rollback).
+    backend.failNext('moveFamilyConflicts')
+
+    await expect(store.moveDraftFamily('vault-a', 'a', 'archive/a'))
+      .resolves.toEqual({ status: 'failed', movedConflicts: 0 })
+    expect(await store.getDraft('vault-a', 'a')).toEqual(original)
+    expect(await store.listConflictDrafts('vault-a')).toEqual([conflict])
   })
 
   it('reports a conflict delete store error as failed, not missing', async () => {

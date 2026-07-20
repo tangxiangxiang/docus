@@ -630,6 +630,63 @@ describe('useDocumentLifecycle folder and delete operations', () => {
     expect(h.fileChanges.events.value.map((event) => event.path)).toEqual(['folder/a', 'folder/sub/b'])
   })
 
+  it('keeps only failed-handoff tabs open after folder delete', async () => {
+    // One document's conflict handoff failed — its bytes live only in
+    // the in-memory persistence entry, so its tab must survive the
+    // folder delete. Its sibling deleted cleanly and closes; the
+    // failure must not hold every sibling tab open (and the old
+    // unconditional close would have lost the failed document's bytes).
+    vi.spyOn(api, 'deleteFolder').mockResolvedValue({ deleted: ['folder/a', 'folder/b'] })
+    const warnings = vi.fn()
+    const h = setup([tab('folder/a'), tab('folder/b')], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: path === 'folder/a' ? 'doc-a' : 'doc-b',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn(),
+        commitDeletes: vi.fn().mockResolvedValue([
+          { documentId: 'doc-a', oldPath: 'folder/a', status: 'failed' },
+          { documentId: 'doc-b', oldPath: 'folder/b', status: 'deleted' },
+        ]),
+        rollback: vi.fn(),
+      }),
+      warnDraftTransaction: warnings,
+    })
+
+    await h.lifecycle.deleteFolder('folder', ['folder/a', 'folder/b'])
+    expect(h.tabs.value.map((item) => item.path)).toEqual(['folder/a'])
+    expect(h.removed).toEqual(['folder/b'])
+    expect(warnings).toHaveBeenCalledOnce()
+  })
+
+  it('closes successfully preserved conflict tabs after folder delete', async () => {
+    // Contrast for the guard above: a 'conflict' result means the bytes
+    // WERE persisted as a conflict candidate (recoverable through the
+    // Recovery panel), so the tab no longer holds the only copy and
+    // closes with the folder delete.
+    vi.spyOn(api, 'deleteFolder').mockResolvedValue({ deleted: ['folder/a'] })
+    const h = setup([tab('folder/a')], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn(),
+        commitDeletes: vi.fn().mockResolvedValue([
+          { documentId: 'doc-a', oldPath: 'folder/a', status: 'conflict' },
+        ]),
+        rollback: vi.fn(),
+      }),
+      warnDraftTransaction: vi.fn(),
+    })
+
+    await h.lifecycle.deleteFolder('folder', ['folder/a'])
+    expect(h.tabs.value).toEqual([])
+  })
+
   it('rolls back delete failure and refresh failure does not roll back success', async () => {
     vi.useFakeTimers()
     const remove = vi.spyOn(api, 'deletePost').mockRejectedValueOnce(new Error('delete failed'))

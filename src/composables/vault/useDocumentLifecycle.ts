@@ -515,6 +515,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         await draftBarrier?.rollback()
         throw error
       }
+      let failedHandoffPaths: ReadonlySet<string> | null = null
       if (draftBarrier) {
         const deleted = new Set(result.deleted)
         const draftResults = await draftBarrier.commitDeletes(
@@ -532,6 +533,11 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
               .map((identity) => ({ ...identity, policy: 'preserve' as const })),
           ],
         )
+        failedHandoffPaths = new Set(
+          draftResults
+            .filter((transaction) => transaction.status === 'failed')
+            .map((transaction) => transaction.oldPath),
+        )
         await reportDraftResults([
           ...draftResults,
           ...unresolvedDrafts.map((draft) => ({
@@ -541,7 +547,16 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
           })),
         ])
       }
-      options.removeOpenDocuments(result.deleted)
+      // A path whose draft handoff failed keeps its Document tab open —
+      // the in-memory persistence entry is the only surface still
+      // holding those bytes, and closing the tab here would permanently
+      // lose them (same guard as deleteFileLifecycle, applied per path:
+      // one failed document must not hold its successfully deleted /
+      // preserved siblings' tabs open, and must not close its own).
+      const keepOpen = failedHandoffPaths
+      options.removeOpenDocuments(keepOpen
+        ? result.deleted.filter((deletedPath) => !keepOpen.has(deletedPath))
+        : result.deleted)
       for (const deletedPath of result.deleted) {
         options.fileChanges.publish({ path: deletedPath, kind: 'delete', source: 'editor-lifecycle' })
       }
