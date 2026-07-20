@@ -354,6 +354,110 @@ test('does not rewrite unsupported records in IndexedDB', async ({ page }) => {
   expect(result.rawSource).toBeUndefined()
 })
 
+test('keeps the family intact when any row is unsupported in IndexedDB', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const store = createDraftStore()
+    const makeConflict = (conflictId: string, content: string) => ({
+      version: 1 as const,
+      conflictId,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content,
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict' as const,
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    await store.saveDraft({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'primary buffer',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 20,
+    })
+    await store.saveConflictDraft(makeConflict('conflict-a', 'local orphan'))
+
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const putRaw = (storeName: string, value: unknown) => new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(storeName, 'readwrite')
+      transaction.objectStore(storeName).put(value)
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    const deleteRaw = (storeName: string, key: IDBValidKey) => new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(storeName, 'readwrite')
+      transaction.objectStore(storeName).delete(key)
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    // A future-version conflict row for the same identity, seeded
+    // behind the store's validation.
+    await putRaw('draftConflicts', {
+      ...makeConflict('conflict-future', 'future data'),
+      version: 2,
+    })
+
+    const futureConflictBlocks = await store.moveDraftFamily('vault-a', 'doc', 'archive/doc')
+    const primaryAfterBlockedMove = await store.getDraft('vault-a', 'doc')
+    const conflictsAfterBlockedMove = await store.listConflictDrafts('vault-a')
+
+    // Now corrupt the primary instead: an unsupported primary must
+    // leave the valid conflict on the old path with it.
+    await deleteRaw('draftConflicts', ['vault-a', 'doc', 'conflict-future'])
+    await putRaw('drafts', {
+      version: 2,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'future primary data',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 40,
+    })
+    const futurePrimaryBlocks = await store.moveDraftFamily('vault-a', 'doc', 'archive/doc')
+    const conflictsAfterPrimaryBlocked = await store.listConflictDrafts('vault-a')
+    database.close()
+
+    return {
+      futureConflictBlocks,
+      primaryPathAfterBlockedMove: primaryAfterBlockedMove?.documentPath ?? null,
+      conflictPathsAfterBlockedMove: conflictsAfterBlockedMove.map((c) => c.documentPath),
+      futurePrimaryBlocks,
+      conflictPathsAfterPrimaryBlocked: conflictsAfterPrimaryBlocked.map((c) => c.documentPath),
+    }
+  }, DATABASE_NAME)
+
+  // The future-version conflict blocks the WHOLE family move — the
+  // primary and the valid conflict both stay on the old path (a
+  // partial migration would strand the unreadable row behind).
+  expect(result.futureConflictBlocks).toEqual({ status: 'unsupported', movedConflicts: 0 })
+  expect(result.primaryPathAfterBlockedMove).toBe('notes/doc')
+  expect(result.conflictPathsAfterBlockedMove).toEqual(['notes/doc'])
+  // An unsupported primary likewise keeps its valid conflict with it.
+  expect(result.futurePrimaryBlocks).toEqual({ status: 'unsupported', movedConflicts: 0 })
+  expect(result.conflictPathsAfterPrimaryBlocked).toEqual(['notes/doc'])
+})
+
 test('closes a cached connection when another context upgrades the database', async ({
   page,
 }) => {

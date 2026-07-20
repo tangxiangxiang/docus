@@ -869,13 +869,19 @@ describe('draft file transactions — post-CAS race regression', () => {
 
 // --- conflict handoff atomicity & conflict channel -------------------------
 //
-// These cover the round-3 findings: the conflict handoff must re-verify
-// entry ownership across its async save (an edit typed during the save is
-// a new candidate, not dropped), a failed handoff must report 'failed'
-// and keep the bytes visible, edits made after conflict mode is entered
-// must stay on the conflict channel (never overwrite the cross-context
-// primary), conflict records must follow renames, and a confirmed delete
-// must remove the conflict records frozen at confirmation time.
+// These cover the round-3/round-4 findings: the conflict handoff is
+// bounded — it persists the current snapshot once, and an edit typed
+// during the save is handed to the conflict debounce / flush / dispose
+// path instead of keeping the file transaction open on a moving target;
+// a failed handoff must report 'failed' and keep the bytes visible;
+// edits made after conflict mode is entered must stay on the conflict
+// channel (never overwrite the cross-context primary); conflict records
+// must follow renames as one pre-flight-validated family; a confirmed
+// delete must remove the conflict records frozen at confirmation time,
+// hold its transaction until that cleanup and the final re-verification
+// complete (an edit typed during the cleanup is persisted as a conflict
+// BEFORE anything reports deleted), and treat an unread conflict store
+// as failed rather than empty.
 
 describe('draft file transactions — conflict handoff & channel', () => {
   beforeEach(() => {
@@ -969,7 +975,7 @@ describe('draft file transactions — conflict handoff & channel', () => {
     return { deleting }
   }
 
-  it('persists an edit typed during the conflict save instead of dropping it', async () => {
+  it('hands an edit typed during the conflict save to the conflict channel', async () => {
     const gate = gatedStore()
     const { backend, store } = gate
     // Gate only the FIRST conflict save so we can land local-v4 mid-save.
@@ -993,12 +999,26 @@ describe('draft file transactions — conflict handoff & channel', () => {
     expect(result.status).toBe('conflict')
     // Primary keeps the cross-context record.
     expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
-    // Both local edits survived as conflict candidates — the edit typed
-    // during the save was re-verified and persisted, not clobbered.
+    // The handoff is BOUNDED: exactly one conflict save ran inside the
+    // file transaction (local-v3). A steady typer must not be able to
+    // keep the mutation lock / tab / tree waiting on a moving target —
+    // the mid-save edit was handed to the conflict channel instead of
+    // being chased by another in-transaction save.
+    expect(conflictCalls).toBe(1)
+    expect((await store.listConflictDrafts('vault')).map((c) => c.content))
+      .toEqual(['local-v3'])
+    // The conflict debounce then persists local-v4 as its own
+    // candidate — the edit is preserved, just outside the transaction.
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
     const contents = (await store.listConflictDrafts('vault'))
       .map((conflict) => conflict.content)
       .sort()
     expect(contents).toEqual(['local-v3', 'local-v4'])
+    // And the primary was never touched by either write.
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
     await persistence.dispose()
   })
 
@@ -1303,6 +1323,121 @@ describe('draft file transactions — conflict handoff & channel', () => {
     expect(await store.getDraft('vault', 'doc-a')).toBeNull()
     expect((await store.listConflictDrafts('vault')).map((c) => c.conflictId))
       .toEqual(['conflict-a'])
+    await persistence.dispose()
+  })
+
+  it('persists a cleanup-window edit as a conflict before reporting the delete', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const original = draft('confirmed')
+    await store.saveDraft(original)
+    await store.saveConflictDraft({
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      targetWindow: undefined,
+    })
+    await persistence.adoptRecoveredDraft(original, snapshot('confirmed'))
+    const confirmation = persistence.captureDeleteConfirmation(identity, 1, null, ['conflict-a'])
+    const barrier = await persistence.prepareFileMutation([identity])
+    // Gate the frozen conflict delete to open the cleanup window AFTER
+    // the primary CAS has already succeeded — the deferred
+    // deleteConflictDraft() is the window an earlier revision missed
+    // (it released the file transaction before the cleanup ran).
+    let conflictDeleteStarted = false
+    let releaseConflictDelete!: () => void
+    const conflictDeleteGate = new Promise<void>((resolve) => { releaseConflictDelete = resolve })
+    const originalDeleteConflict = store.deleteConflictDraft.bind(store)
+    vi.spyOn(store, 'deleteConflictDraft')
+      .mockImplementation(async (vaultId, documentId, conflictId) => {
+        conflictDeleteStarted = true
+        await conflictDeleteGate
+        return originalDeleteConflict(vaultId, documentId, conflictId)
+      })
+    const deleting = barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+    await vi.waitFor(() => expect(conflictDeleteStarted).toBe(true))
+    // The user types while the frozen conflicts are being deleted.
+    persistence.schedule(snapshot('cleanup-edit', 'notes/a', 2))
+    // The file transaction must still be held: no primary debounce may
+    // fire during the cleanup window. The old code released the
+    // transaction up front, armed a primary write here, and could close
+    // the tab before it fired — losing bytes that existed only in
+    // coordinator memory while the identity was already reported
+    // deleted.
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    releaseConflictDelete()
+    const [result] = await deleting
+
+    // The cleanup-window edit was persisted as a conflict candidate
+    // BEFORE the transaction reported — never an unpersisted orphan
+    // behind a 'deleted' result. The frozen row was removed.
+    expect(result.status).toBe('conflict')
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    expect((await store.listConflictDrafts('vault')).map((c) => c.content))
+      .toEqual(['cleanup-edit'])
+    // The primary channel was never armed for the cleanup-window edit.
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([])
+    await persistence.dispose()
+  })
+
+  it('reports failed when the surviving conflict list cannot be read', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const original = draft('confirmed')
+    await store.saveDraft(original)
+    await store.saveConflictDraft({
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    const persistence = createUnsavedDraftPersistence({ store, targetWindow: undefined })
+    await persistence.adoptRecoveredDraft(original, snapshot('confirmed'))
+    const confirmation = persistence.captureDeleteConfirmation(identity, 1, null, ['conflict-a'])
+    const barrier = await persistence.prepareFileMutation([identity])
+    // The frozen delete succeeds, but the survivor read that follows
+    // hits a store error — commitDeletes must fail closed instead of
+    // falling back to "no survivors" and reporting a full delete.
+    backend.failNext('listConflicts')
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+
+    expect(result.status).toBe('failed')
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    expect((await store.listConflictDrafts('vault')).map((c) => c.conflictId))
+      .toEqual([])
     await persistence.dispose()
   })
 

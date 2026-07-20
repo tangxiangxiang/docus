@@ -513,6 +513,135 @@ describe('draftStore characterization', () => {
     expect(await store.listConflictDrafts('vault-a')).toEqual([conflict])
   })
 
+  it('keeps valid conflicts on the old path when the primary is unsupported', async () => {
+    // A future-version primary cannot migrate. Moving the conflicts
+    // anyway would split the family: persistence keeps the in-memory
+    // snapshot on the old path for an unsupported result, so the
+    // conflicts must stay with it.
+    const future = { ...draft('a', 40), version: 2, content: 'future data' }
+    await backend.seedRaw(future)
+    const conflict: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveConflictDraft(conflict)
+
+    await expect(store.moveDraftFamily('vault-a', 'a', 'archive/a'))
+      .resolves.toEqual({ status: 'unsupported', movedConflicts: 0 })
+    expect(await backend.get(['vault-a', 'a'])).toEqual(future)
+    expect(await store.listConflictDrafts('vault-a')).toEqual([conflict])
+  })
+
+  it('blocks the whole family move on a future-version conflict record', async () => {
+    const original = draft('a', 20)
+    await store.saveDraft(original)
+    const valid: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveConflictDraft(valid)
+    await backend.seedRawConflict({
+      ...valid,
+      conflictId: 'conflict-future',
+      version: 2,
+      content: 'future conflict data',
+    })
+
+    // One unreadable row for this identity blocks the entire move —
+    // migrating the valid row would strand the future-version one on
+    // the pre-rename path with no warning.
+    await expect(store.moveDraftFamily('vault-a', 'a', 'archive/a'))
+      .resolves.toEqual({ status: 'unsupported', movedConflicts: 0 })
+    expect(await store.getDraft('vault-a', 'a')).toEqual(original)
+    expect(await store.listConflictDrafts('vault-a')).toEqual([valid])
+    // The future-version row is still there, untouched.
+    expect(await backend.listConflicts('vault-a')).toHaveLength(2)
+  })
+
+  it('blocks the whole family move on a corrupt conflict record', async () => {
+    const original = draft('a', 20)
+    await store.saveDraft(original)
+    const valid: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveConflictDraft(valid)
+    await backend.seedRawConflict({
+      ...valid,
+      conflictId: 'conflict-corrupt',
+      content: 42,
+    })
+
+    await expect(store.moveDraftFamily('vault-a', 'a', 'archive/a'))
+      .resolves.toEqual({ status: 'unsupported', movedConflicts: 0 })
+    expect(await store.getDraft('vault-a', 'a')).toEqual(original)
+    expect(await store.listConflictDrafts('vault-a')).toEqual([valid])
+  })
+
+  it('reports a failed conflict list read instead of an empty list', async () => {
+    const conflict: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveConflictDraft(conflict)
+
+    // Discovery keeps the lossy [] fallback (best-effort by nature)...
+    backend.failNext('listConflicts')
+    await expect(store.listConflictDrafts('vault-a')).resolves.toEqual([])
+    // ...but file transactions get a structured failure so they never
+    // mistake an unread store for an empty one and report a full
+    // delete on top of unread survivors.
+    backend.failNext('listConflicts')
+    await expect(store.listConflictDraftsStrict('vault-a'))
+      .resolves.toEqual({ status: 'failed' })
+    await expect(store.listConflictDraftsStrict('vault-a'))
+      .resolves.toEqual({ status: 'ok', records: [conflict] })
+  })
+
   it('reports a conflict delete store error as failed, not missing', async () => {
     const conflict: DraftConflictRecord = {
       version: 1,

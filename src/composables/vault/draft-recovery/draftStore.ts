@@ -79,12 +79,18 @@ type FamilyMoveBackendResult = {
   movedConflicts: number
 }
 
-/** Outcome of an atomic primary+conflicts rename. `status` classifies
- *  the primary record (a rename never changes documentId identity, so
- *  the primary cannot conflict with a separate target); `movedConflicts`
- *  counts the conflict candidates migrated in the same transaction.
- *  `failed` means the family move was rolled back — neither store
- *  changed. */
+/** Outcome of an atomic primary+conflicts rename. The whole family is
+ *  pre-flight validated BEFORE anything is written: if the primary OR
+ *  any conflict row for the identity is unsupported (future-version /
+ *  corrupt), NOTHING moves and `status` is `unsupported` — a partial
+ *  migration would split the family across paths (persistence keeps
+ *  the in-memory snapshot on the old path for an unsupported result,
+ *  and an unreadable conflict left behind could never resurface under
+ *  the new path). Otherwise `status` classifies the primary record (a
+ *  rename never changes documentId identity, so the primary cannot
+ *  conflict with a separate target) and `movedConflicts` counts the
+ *  conflict candidates migrated in the same transaction. `failed`
+ *  means the family move was rolled back — neither store changed. */
 export type DraftFamilyMoveOutcome = {
   status: MoveResult | 'failed'
   movedConflicts: number
@@ -106,11 +112,23 @@ export type DraftConditionalDeleteOutcome =
 export interface MemoryDraftStorageBackend extends DraftStorageBackend {
   failNext(operation: BackendOperation): void
   seedRaw(value: unknown): Promise<void>
+  seedRawConflict(value: unknown): Promise<void>
 }
 
 export type DraftConflictSaveOutcome =
   | { status: 'saved' }
   | { status: 'unsupported' }
+  | { status: 'failed' }
+
+/** Strict result of a conflict-store read. File transactions must use
+ *  this instead of the lossy `listConflictDrafts()`: a store read error
+ *  surfaces as `{ status: 'failed' }` rather than masquerading as an
+ *  empty list — an unread store may still hold survivors, and a full
+ *  'deleted' reported on top of it would hide them behind the UI's
+ *  removeIdentity() until the next refresh. Discovery (best-effort by
+ *  nature) keeps the plain array API. */
+export type ConflictListOutcome =
+  | { status: 'ok'; records: DraftConflictRecord[] }
   | { status: 'failed' }
 
 export interface DraftStore {
@@ -141,6 +159,7 @@ export interface DraftStore {
   clearVaultDrafts(vaultId: string): Promise<boolean>
   saveConflictDraft(record: DraftConflictRecord): Promise<DraftConflictSaveOutcome>
   listConflictDrafts(vaultId: string): Promise<DraftConflictRecord[]>
+  listConflictDraftsStrict(vaultId: string): Promise<ConflictListOutcome>
   deleteConflictDraft(
     vaultId: string,
     documentId: string,
@@ -290,17 +309,25 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
     async listConflictDrafts(vaultId) {
       if (vaultId.trim().length === 0) return []
       try {
-        const raw = await backend.listConflicts(vaultId)
-        return raw
-          .filter(isDraftConflictRecord)
-          .map(cloneConflictRecord)
-          .sort((left, right) => (
-            right.updatedAt - left.updatedAt
-            || left.documentId.localeCompare(right.documentId)
-            || left.conflictId.localeCompare(right.conflictId)
-          ))
+        return readConflicts(await backend.listConflicts(vaultId))
       } catch {
         return []
+      }
+    },
+
+    async listConflictDraftsStrict(vaultId) {
+      if (vaultId.trim().length === 0) return { status: 'ok' as const, records: [] }
+      try {
+        return {
+          status: 'ok' as const,
+          records: readConflicts(await backend.listConflicts(vaultId)),
+        }
+      } catch {
+        // A read error is not an empty store. Report a structured
+        // failure so file transactions fail closed (keep the identity
+        // visible, warn the user) instead of mistaking unread
+        // survivors for absent ones.
+        return { status: 'failed' as const }
       }
     },
 
@@ -453,20 +480,35 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       // target record to collide with — decideMove only classifies the
       // source here.
       const decision = decideMove(source, undefined, documentId, newPath)
-      // Plan every conflict update BEFORE writing anything, then apply
-      // the whole family in one step. An injected conflict-phase failure
-      // therefore leaves the primary untouched too, mirroring the
-      // IndexedDB cross-store transaction rollback.
+      // Pre-flight the WHOLE family before writing anything (see the
+      // IndexedDB backend for the full rationale). An unsupported
+      // primary short-circuits: its conflicts must stay on the old
+      // path with it — persistence keeps the in-memory snapshot on
+      // the old path for an unsupported result, so moving the
+      // conflicts would orphan them on a path nothing points at.
+      if (decision.result === 'unsupported') {
+        return { status: 'unsupported', movedConflicts: 0 }
+      }
+      // Validate every conflict row for this identity BEFORE applying
+      // anything: a future-version or corrupt row blocks the whole
+      // family move — migrating the valid rows would strand the
+      // unreadable one on the pre-rename path, silently.
       const conflictUpdates: Array<{ key: string; record: DraftConflictRecord }> = []
       for (const value of [...conflictRecords.values()]) {
-        if (!isDraftConflictRecord(value)
-          || value.vaultId !== vaultId
-          || value.documentId !== documentId) continue
+        if (recordField(value, 'vaultId') !== vaultId
+          || recordField(value, 'documentId') !== documentId) continue
+        if (!isDraftConflictRecord(value)) {
+          return { status: 'unsupported', movedConflicts: 0 }
+        }
         conflictUpdates.push({
           key: serializedConflictKey(vaultId, documentId, value.conflictId),
           record: { ...value, documentPath: newPath },
         })
       }
+      // Plan every conflict update BEFORE writing anything, then apply
+      // the whole family in one step. An injected conflict-phase failure
+      // therefore leaves the primary untouched too, mirroring the
+      // IndexedDB cross-store transaction rollback.
       consumeFailure('moveFamilyConflicts')
       if (decision.result === 'moved') {
         records.set(familyKey, cloneDraft(decision.draft))
@@ -493,8 +535,12 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
 
     async listConflicts(vaultId) {
       consumeFailure('listConflicts')
+      // Return the vault's raw rows — future-version / corrupt records
+      // included — exactly like the IndexedDB backend's getAll. Store-
+      // level readers filter; family pre-flight must SEE the invalid
+      // rows to block on them.
       return [...conflictRecords.values()]
-        .filter((value) => isDraftConflictRecord(value) && value.vaultId === vaultId)
+        .filter((value) => recordField(value, 'vaultId') === vaultId)
         .map(cloneUnknown)
     },
 
@@ -527,6 +573,21 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
         throw new Error('Raw draft seed requires vaultId and documentId')
       }
       records.set(serializedKey(vaultId, documentId), cloneUnknown(value))
+    },
+
+    async seedRawConflict(value) {
+      const vaultId = recordField(value, 'vaultId')
+      const documentId = recordField(value, 'documentId')
+      const conflictId = recordField(value, 'conflictId')
+      if (typeof vaultId !== 'string'
+        || typeof documentId !== 'string'
+        || typeof conflictId !== 'string') {
+        throw new Error('Raw conflict seed requires vaultId, documentId and conflictId')
+      }
+      conflictRecords.set(
+        serializedConflictKey(vaultId, documentId, conflictId),
+        cloneUnknown(value),
+      )
     },
   }
 }
@@ -697,7 +758,35 @@ export function createIndexedDbDraftBackend(
       // A rename never changes the documentId identity, so there is no
       // target record — decideMove only classifies the source here.
       const decision = decideMove(source, undefined, documentId, newPath)
-      let movedConflicts = 0
+      // Pre-flight the whole family BEFORE writing anything. Database-
+      // level atomicity is not enough: an unsupported primary still
+      // splits the family in product semantics — persistence keeps the
+      // in-memory snapshot on the old path for an unsupported result,
+      // so migrating the conflicts would orphan them on a path neither
+      // the snapshot nor the primary record points at.
+      if (decision.result === 'unsupported') {
+        await transactionDone(transaction)
+        return { status: 'unsupported', movedConflicts: 0 }
+      }
+      const familyConflicts: DraftConflictRecord[] = []
+      const values = await request(
+        conflictStore.index(CONFLICT_VAULT_INDEX).getAll(vaultId),
+      )
+      for (const value of values) {
+        if (recordField(value, 'documentId') !== documentId) continue
+        // A future-version or corrupt row for THIS identity blocks the
+        // whole move: migrating the valid rows would strand the
+        // unreadable one on the pre-rename path — silently, with no
+        // warning, and recovery could never resurface it under the new
+        // path. Validate first, write nothing until every row checks
+        // out.
+        if (!isDraftConflictRecord(value)) {
+          await transactionDone(transaction)
+          return { status: 'unsupported', movedConflicts: 0 }
+        }
+        familyConflicts.push(value)
+      }
+      // All rows validated — apply the family as one unit.
       if (decision.result === 'moved') {
         // Same keyPath value (documentId unchanged) — put updates the
         // record's path in place, preserving body/baseline/timestamps.
@@ -706,21 +795,14 @@ export function createIndexedDbDraftBackend(
       // Conflict candidates travel with the rename even when the primary
       // record is missing (conflict-only documents), so their rows are
       // not stranded on the old path.
-      const values = await request(
-        conflictStore.index(CONFLICT_VAULT_INDEX).getAll(vaultId),
-      )
-      for (const value of values) {
-        if (!isDraftConflictRecord(value) || value.documentId !== documentId) {
-          continue
-        }
+      for (const record of familyConflicts) {
         // Same compound key (documentId unchanged) — put updates the
         // path in place, preserving conflictId/body/baseline/timestamps
         // and origin.
-        conflictStore.put(cloneConflictRecord({ ...value, documentPath: newPath }))
-        movedConflicts += 1
+        conflictStore.put(cloneConflictRecord({ ...record, documentPath: newPath }))
       }
       await transactionDone(transaction)
-      return { status: decision.result, movedConflicts }
+      return { status: decision.result, movedConflicts: familyConflicts.length }
     },
 
     async clear(vaultId) {
@@ -783,6 +865,17 @@ export function createIndexedDbDraftBackend(
       await transactionDone(transaction)
     },
   }
+}
+
+function readConflicts(raw: unknown[]): DraftConflictRecord[] {
+  return raw
+    .filter(isDraftConflictRecord)
+    .map(cloneConflictRecord)
+    .sort((left, right) => (
+      right.updatedAt - left.updatedAt
+      || left.documentId.localeCompare(right.documentId)
+      || left.conflictId.localeCompare(right.conflictId)
+    ))
 }
 
 function decideSave(current: unknown, incoming: UnsavedDraft): SaveDecision {

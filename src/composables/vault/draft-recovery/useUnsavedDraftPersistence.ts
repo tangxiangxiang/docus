@@ -97,10 +97,12 @@ interface DraftEntry {
 
 /** Result of promoting a superseded local snapshot into the conflict
  *  store during a delete transaction. `persisted` — the local content
- *  now lives in the conflict store; `superseded` — newer edits kept
- *  arriving and were persisted as later candidates; `failed` — the
- *  conflict store rejected the write, so the content is still only
- *  in-memory and the caller must keep it visible. */
+ *  now lives in the conflict store; `superseded` — a newer edit landed
+ *  during the (bounded) handoff save: the saved candidate preserves the
+ *  pre-edit content, the entry is conflict-pinned, and the newer
+ *  snapshot was handed to the conflict debounce / flush / dispose path;
+ *  `failed` — the conflict store rejected the write, so the content is
+ *  still only in-memory and the caller must keep it visible. */
 export type ConflictHandoffResult =
   | { status: 'persisted'; conflictId: string }
   | { status: 'superseded' }
@@ -735,75 +737,70 @@ export function createUnsavedDraftPersistence(
       crossContextUpdatedAt: number | null,
     ): Promise<ConflictHandoffResult> {
       const { identity } = state
-      let snapshot = entry.latestSnapshot
+      const snapshot = entry.latestSnapshot
       // No snapshot → nothing to preserve; the cross-context record
       // stands alone.
       if (!snapshot) {
         await releaseEntry(state, identity.documentPath, false, true)
         return { status: 'persisted', conflictId: '' }
       }
-      let lastConflictId: string | null = null
-      // Loop: persist the current snapshot as a conflict record, then
-      // re-verify entry ownership across the async save. If a newer
-      // local edit landed during the await (schedule advances the
-      // generation/revision), persist that newer snapshot as the next
-      // candidate instead of clobbering it — this closes the
-      // "edit made during the conflict save is silently dropped" race.
-      while (snapshot) {
-        const capturedGeneration = entry.generation
-        const capturedRevision = snapshot.revision
-        const capturedRef = snapshot
-        const record = buildConflictRecord(snapshot, entry, identity, crossContextUpdatedAt)
-        let saved = false
-        try {
-          saved = (await store.saveConflictDraft(record)).status === 'saved'
-        } catch (error) {
-          console.warn(`[commitDeletes] Conflict record save threw for ${identity.documentPath} (${outcome}):`, error)
-          saved = false
-        }
-        if (!saved) {
-          // Failure: keep the content in-memory and pin as failed so
-          // flush/flushAll/dispose never overwrite the primary record
-          // (and will retry the conflict write if the store recovers).
-          // Report 'failed' so the caller keeps the tab visible — it is
-          // the only surface still holding these bytes.
-          entry.pendingConflictId = `failed:${record.conflictId}`
-          entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
-          clearTimer(entry)
-          console.warn(`[commitDeletes] Conflict record save failed for ${identity.documentPath} (${outcome})`)
-          await releaseEntry(state, identity.documentPath, false, true)
-          return { status: 'failed' }
-        }
-        lastConflictId = record.conflictId
-        const advanced = entry.generation !== capturedGeneration
-          || entry.latestSnapshot?.revision !== capturedRevision
-          || entry.latestSnapshot !== capturedRef
-        if (!advanced) {
-          // Stable: the saved record holds the latest content. Pin the
-          // entry and drop the in-memory snapshot (it now lives in the
-          // conflict store).
-          entry.pendingConflictId = record.conflictId
-          entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
-          clearTimer(entry)
-          entry.latestSnapshot = null
-          entry.latestSnapshotNeedsWrite = false
-          await releaseEntry(state, identity.documentPath, false, true)
-          return { status: 'persisted', conflictId: record.conflictId }
-        }
-        // Superseded: a newer edit landed during the save. Persist it as
-        // the next conflict candidate, then re-check stability.
-        snapshot = entry.latestSnapshot
+      // Bounded handoff: persist the current snapshot exactly ONCE.
+      // The previous unbounded loop re-saved on every edit that landed
+      // during a save, so a user typing steadily through a slow
+      // IndexedDB write could keep this file transaction open
+      // indefinitely — the server file was already deleted, yet the
+      // mutation lock, the tab, and the file tree all waited on a
+      // moving target. One save per handoff; an edit that lands during
+      // it is handed to the conflict channel instead of being chased.
+      const capturedGeneration = entry.generation
+      const capturedRevision = snapshot.revision
+      const capturedRef = snapshot
+      const record = buildConflictRecord(snapshot, entry, identity, crossContextUpdatedAt)
+      let saved = false
+      try {
+        saved = (await store.saveConflictDraft(record)).status === 'saved'
+      } catch (error) {
+        console.warn(`[commitDeletes] Conflict record save threw for ${identity.documentPath} (${outcome}):`, error)
+        saved = false
       }
-      // Every save was superseded and the entry was then invalidated
-      // mid-handoff (its snapshot went null). The last persisted
-      // candidate stands; keep the entry conflict-pinned so flush never
-      // writes primary, and report superseded.
-      entry.pendingConflictId = lastConflictId ?? 'superseded'
+      if (!saved) {
+        // Failure: keep the content in-memory and pin as failed so
+        // flush/flushAll/dispose never overwrite the primary record
+        // (and will retry the conflict write if the store recovers).
+        // Report 'failed' so the caller keeps the tab visible — it is
+        // the only surface still holding these bytes.
+        entry.pendingConflictId = `failed:${record.conflictId}`
+        entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+        clearTimer(entry)
+        console.warn(`[commitDeletes] Conflict record save failed for ${identity.documentPath} (${outcome})`)
+        await releaseEntry(state, identity.documentPath, false, true)
+        return { status: 'failed' }
+      }
+      const advanced = entry.generation !== capturedGeneration
+        || entry.latestSnapshot?.revision !== capturedRevision
+        || entry.latestSnapshot !== capturedRef
+      if (!advanced) {
+        // Stable: the saved record holds the latest content. Pin the
+        // entry and drop the in-memory snapshot (it now lives in the
+        // conflict store).
+        entry.pendingConflictId = record.conflictId
+        entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+        clearTimer(entry)
+        entry.latestSnapshot = null
+        entry.latestSnapshotNeedsWrite = false
+        await releaseEntry(state, identity.documentPath, false, true)
+        return { status: 'persisted', conflictId: record.conflictId }
+      }
+      // Superseded: a newer edit landed during the save. The saved
+      // candidate preserves the pre-edit content; the newer snapshot is
+      // NOT chased here. Pin the conflict channel and end the file
+      // transaction now — the conflict debounce / flush / dispose path
+      // persists the latest content as its own candidate. The handoff
+      // always terminates after one save, no matter how fast the user
+      // keeps typing.
+      entry.pendingConflictId = record.conflictId
       entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
-      clearTimer(entry)
-      entry.latestSnapshot = null
-      entry.latestSnapshotNeedsWrite = false
-      await releaseEntry(state, identity.documentPath, false, true)
+      await releaseEntry(state, identity.documentPath, true)
       return { status: 'superseded' }
     }
 
@@ -970,7 +967,15 @@ export function createUnsavedDraftPersistence(
           || entry.latestSnapshot !== preCasSnapshotRef
         if ((refinedStatus === 'deleted' || refinedStatus === 'missing')
           && !entryAdvancedDuringAwait) {
-          // Truly confirmed: clear the entry's snapshot and ownership.
+          // Truly confirmed. Clear the entry's confirmed snapshot and
+          // ownership, but HOLD the file transaction until the frozen-
+          // conflict cleanup AND the final re-verification below
+          // complete. Releasing it here (as an earlier revision did)
+          // let an edit typed during the cleanup arm a normal primary
+          // debounce: the lifecycle could then close the tab before
+          // the debounce fired, losing bytes that lived only in
+          // coordinator memory while the identity was already reported
+          // deleted.
           clearTimer(entry)
           entry.generation += 1
           entry.latestSnapshot = null
@@ -978,7 +983,6 @@ export function createUnsavedDraftPersistence(
           entry.persistedDraft = null
           entry.pendingConflictId = null
           entry.conflictCrossContextUpdatedAt = null
-          entry.fileTransaction = null
           // The confirmed discard also removes the conflict candidates
           // frozen at confirmation time. Without this the conflict-store
           // rows survive and resurface on the next discovery even though
@@ -998,13 +1002,40 @@ export function createUnsavedDraftPersistence(
           // Anything still on the conflict store for this identity — a
           // frozen row whose delete failed, or a candidate recorded
           // AFTER confirmation (never frozen, intentionally surviving)
-          // — must keep the identity visible. Report a non-success
-          // status so the UI refreshes this identity instead of
-          // removing it wholesale and closing its recovery tabs.
-          const survivingConflicts = (await store.listConflictDrafts(deletion.vaultId))
-            .filter((record) => record.documentId === deletion.documentId)
+          // — must keep the identity visible. The strict read fails
+          // closed on a store error: the lossy listConflictDrafts()
+          // returns [] there, which would report a full delete while
+          // unread survivors hide behind it until the next refresh.
+          const conflictList = await store.listConflictDraftsStrict(deletion.vaultId)
+          // Final re-verification across the cleanup awaits. schedule()
+          // still advances the entry while the transaction is held (it
+          // just does not arm a timer), so a non-null snapshot here is
+          // an edit made during the cleanup window. It exists only in
+          // coordinator memory right now — persist it as a conflict
+          // candidate BEFORE reporting anything, so the lifecycle never
+          // closes the tab on unpersisted bytes.
+          if (entry.latestSnapshot !== null) {
+            const handoff = await persistLocalAsConflict(
+              state,
+              entry,
+              refinedStatus,
+              // The primary record was just removed by the confirmed
+              // CAS — there is no cross-context source left for the
+              // candidate to record a divergence from.
+              null,
+            )
+            results.push({
+              documentId: deletion.documentId,
+              oldPath: deletion.documentPath,
+              status: handoff.status === 'failed' || failedConflictIds.length > 0
+                ? 'failed'
+                : 'conflict',
+            })
+            continue
+          }
           if (failedConflictIds.length > 0) {
             console.warn(`[commitDeletes] Frozen conflict delete failed for ${deletion.documentPath}: ${failedConflictIds.join(', ')}`)
+            await releaseEntry(state, deletion.documentPath, false, true)
             results.push({
               documentId: deletion.documentId,
               oldPath: deletion.documentPath,
@@ -1012,7 +1043,20 @@ export function createUnsavedDraftPersistence(
             })
             continue
           }
-          if (survivingConflicts.length > 0) {
+          if (conflictList.status === 'failed') {
+            console.warn(`[commitDeletes] Conflict store read failed for ${deletion.documentPath}; reporting failed instead of full success`)
+            await releaseEntry(state, deletion.documentPath, false, true)
+            results.push({
+              documentId: deletion.documentId,
+              oldPath: deletion.documentPath,
+              status: 'failed',
+            })
+            continue
+          }
+          if (conflictList.records.some(
+            (record) => record.documentId === deletion.documentId,
+          )) {
+            await releaseEntry(state, deletion.documentPath, false, true)
             results.push({
               documentId: deletion.documentId,
               oldPath: deletion.documentPath,
@@ -1020,6 +1064,7 @@ export function createUnsavedDraftPersistence(
             })
             continue
           }
+          await releaseEntry(state, deletion.documentPath, false, true)
           results.push({
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,
