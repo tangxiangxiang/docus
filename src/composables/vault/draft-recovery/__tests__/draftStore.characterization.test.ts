@@ -1260,4 +1260,131 @@ describe('draftStore characterization', () => {
     const conflicts = await store.listConflictDrafts('vault-a')
     expect(conflicts[0]).toMatchObject({ documentPath: 'archive/a' })
   })
+
+  function candidate(
+    conflictId: string,
+    documentPath: string,
+    content = 'local edit',
+  ): DraftConflictRecord {
+    return {
+      version: 1,
+      conflictId,
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath,
+      content,
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+  }
+
+  it('saves a conflict candidate inside the family transaction when the path agrees', async () => {
+    await store.saveDraft(draft('a', 30, { documentPath: 'notes/a' }))
+
+    const outcome = await store.saveConflictCandidate(candidate('cand-1', 'notes/a'))
+
+    expect(outcome.status).toBe('saved')
+    if (outcome.status === 'saved') {
+      expect(outcome.stored).toMatchObject({
+        conflictId: 'cand-1',
+        documentPath: 'notes/a',
+      })
+    }
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({ conflictId: 'cand-1', documentPath: 'notes/a' })
+  })
+
+  it('refuses a conflict candidate at a stale path and reports the family path', async () => {
+    await store.saveDraft(draft('a', 30, { documentPath: 'notes/a' }))
+    await store.saveConflictDraft(candidate('cand-1', 'notes/a', 'older local'))
+    // Another context moves the whole family to archive/a.
+    expect(await store.moveDraftFamily('vault-a', 'a', 'archive/a'))
+      .toEqual({ status: 'moved', movedConflicts: 1 })
+
+    // A candidate still pinned at the pre-move path must NOT be
+    // written there — the outcome reports where the family lives now
+    // so the caller re-pins instead of stranding the candidate.
+    const outcome = await store.saveConflictCandidate(candidate('cand-2', 'notes/a'))
+    expect(outcome).toEqual({ status: 'path-mismatch', familyPath: 'archive/a' })
+
+    // Nothing was added at the stale path: the family stays whole at
+    // archive/a with exactly its original candidate.
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({ conflictId: 'cand-1', documentPath: 'archive/a' })
+  })
+
+  it('agrees a conflict-only family path when validating a candidate', async () => {
+    await store.saveConflictDraft(candidate('cand-1', 'archive/a', 'older local'))
+
+    const agreed = await store.saveConflictCandidate(candidate('cand-2', 'archive/a'))
+    expect(agreed.status).toBe('saved')
+
+    const diverging = await store.saveConflictCandidate(candidate('cand-3', 'notes/a'))
+    expect(diverging).toEqual({ status: 'path-mismatch', familyPath: 'archive/a' })
+
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(2)
+    expect(conflicts.every((record) => record.documentPath === 'archive/a')).toBe(true)
+  })
+
+  it('refuses a conflict candidate for a split family without writing either side', async () => {
+    // Same identity, two raw rows disagreeing on the path — one
+    // unreadable at archive/a, one valid at legacy/a.
+    await backend.seedRawConflict({
+      ...candidate('bad-row', 'archive/a', 'unreadable'),
+      version: 2,
+    })
+    await store.saveConflictDraft(candidate('valid-row', 'legacy/a', 'older local'))
+
+    const outcome = await store.saveConflictCandidate(candidate('cand-x', 'legacy/a'))
+    expect(outcome).toEqual({
+      status: 'unsupported',
+      familyPath: null,
+      reason: 'split-conflict-paths',
+    })
+
+    // No candidate written on either side — the caller fails closed.
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({ conflictId: 'valid-row', documentPath: 'legacy/a' })
+  })
+
+  it('allows a first conflict candidate to establish an empty family', async () => {
+    const outcome = await store.saveConflictCandidate(candidate('cand-1', 'notes/a'))
+    expect(outcome.status).toBe('saved')
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({ conflictId: 'cand-1', documentPath: 'notes/a' })
+  })
+
+  it('reports failed when the candidate family transaction aborts', async () => {
+    await store.saveDraft(draft('a', 30, { documentPath: 'notes/a' }))
+    backend.failNext('saveConflictCandidate')
+    const outcome = await store.saveConflictCandidate(candidate('cand-1', 'notes/a'))
+    expect(outcome).toEqual({ status: 'failed' })
+    expect(await store.listConflictDrafts('vault-a')).toHaveLength(0)
+  })
+
+  it('rejects a malformed conflict candidate as unsupported-conflict', async () => {
+    const outcome = await store.saveConflictCandidate({
+      version: 1,
+      conflictId: '',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'x',
+    } as unknown as DraftConflictRecord)
+    expect(outcome).toEqual({
+      status: 'unsupported',
+      familyPath: null,
+      reason: 'unsupported-conflict',
+    })
+  })
 })

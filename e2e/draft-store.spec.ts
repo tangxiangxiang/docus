@@ -853,6 +853,109 @@ test('persists the quarantine retry candidate at the family path in real Indexed
   })
 })
 
+test('re-pins a conflict candidate when the family moves in another IndexedDB context', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const { createUnsavedDraftPersistence } = await import(
+      '/src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts'
+    )
+    // Context A: a stale tab edits against a newer cross-context
+    // primary — the write pins the conflict channel at notes/doc.
+    const storeA = createDraftStore()
+    await storeA.saveDraft({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'remote',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 110,
+    })
+    const persistence = createUnsavedDraftPersistence({
+      store: storeA,
+      now: () => 100,
+    })
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'local-edit',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 1,
+    })
+    const firstFlush = await persistence.flush('vault-a', 'doc')
+
+    // Context B (a second store over the SAME IndexedDB) moves the
+    // whole family notes/doc → archive/doc in one atomic transaction.
+    const storeB = createDraftStore()
+    const moved = await storeB.moveDraftFamily('vault-a', 'doc', 'archive/doc')
+
+    // Context A's next edit still carries the stale snapshot path.
+    // The family-atomic candidate write must detect the moved family:
+    // re-pin without writing (flush #1), then persist at archive/doc
+    // (flush #2) — never strand a candidate at notes/doc.
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'local-edit-2',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 2,
+    })
+    const repinFlush = await persistence.flush('vault-a', 'doc')
+    const midConflicts = await storeA.listConflictDrafts('vault-a')
+    const persistFlush = await persistence.flush('vault-a', 'doc')
+    const primary = await storeA.getDraft('vault-a', 'doc')
+    const conflicts = await storeA.listConflictDrafts('vault-a')
+    await persistence.dispose()
+    return {
+      firstFlush,
+      moved,
+      repinFlush,
+      midConflicts,
+      persistFlush,
+      primary,
+      conflicts,
+    }
+  }, DATABASE_NAME)
+
+  // The stale handoff persists 'local-edit' as a candidate and pins
+  // the conflict channel — but reports false BY DESIGN: the bytes are
+  // durable as a candidate, not as the primary record, so a close seal
+  // keeps the tab open. The pin itself is proven by what follows.
+  expect(result.firstFlush).toBe(false)
+  expect(result.moved).toMatchObject({ status: 'moved', movedConflicts: 1 })
+  // The re-pin attempt persists nothing — the family still has exactly
+  // one candidate, at the moved path.
+  expect(result.repinFlush).toBe(false)
+  expect(result.midConflicts).toHaveLength(1)
+  expect(result.midConflicts[0]).toMatchObject({
+    content: 'local-edit',
+    documentPath: 'archive/doc',
+  })
+  // The re-pinned write then lands at the family's new path: every
+  // readable row of the identity shares archive/doc.
+  expect(result.persistFlush).toBe(true)
+  expect(result.primary).toMatchObject({
+    documentPath: 'archive/doc',
+    content: 'remote',
+  })
+  expect(result.conflicts).toHaveLength(2)
+  expect(result.conflicts.every((c) => c.documentPath === 'archive/doc')).toBe(true)
+  expect(result.conflicts.map((c) => c.content).sort())
+    .toEqual(['local-edit', 'local-edit-2'])
+})
+
 test('refuses a diverging first primary save for a conflict-only family in IndexedDB', async ({
   page,
 }) => {

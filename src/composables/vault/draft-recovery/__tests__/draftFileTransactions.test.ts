@@ -989,11 +989,11 @@ describe('draft file transactions — conflict handoff & channel', () => {
     let conflictCalls = 0
     let releaseConflict!: () => void
     const conflictGate = new Promise<void>((resolve) => { releaseConflict = resolve })
-    const originalSaveConflict = store.saveConflictDraft.bind(store)
-    vi.spyOn(store, 'saveConflictDraft').mockImplementation(async (record) => {
+    const originalSaveCandidate = store.saveConflictCandidate.bind(store)
+    vi.spyOn(store, 'saveConflictCandidate').mockImplementation(async (record) => {
       conflictCalls += 1
       if (conflictCalls === 1) await conflictGate
-      return originalSaveConflict(record)
+      return originalSaveCandidate(record)
     })
     const persistence = makePersistence(store)
     const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
@@ -1034,16 +1034,16 @@ describe('draft file transactions — conflict handoff & channel', () => {
     let conflictCalls = 0
     let releaseConflict!: () => void
     const conflictGate = new Promise<void>((resolve) => { releaseConflict = resolve })
-    const originalSaveConflict = store.saveConflictDraft.bind(store)
-    const saveConflict = vi.spyOn(store, 'saveConflictDraft')
+    const originalSaveCandidate = store.saveConflictCandidate.bind(store)
+    const saveConflict = vi.spyOn(store, 'saveConflictCandidate')
       .mockImplementation(async (record) => {
         conflictCalls += 1
         if (conflictCalls === 1) {
           await conflictGate
-          return originalSaveConflict(record)
+          return originalSaveCandidate(record)
         }
         if (conflictCalls === 2) return { status: 'failed' }
-        return originalSaveConflict(record)
+        return originalSaveCandidate(record)
       })
     const persistence = makePersistence(store)
     const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
@@ -1084,14 +1084,14 @@ describe('draft file transactions — conflict handoff & channel', () => {
     // a moving target indefinitely.
     let conflictCalls = 0
     const gates: Array<() => void> = []
-    const originalSaveConflict = store.saveConflictDraft.bind(store)
-    vi.spyOn(store, 'saveConflictDraft').mockImplementation(async (record) => {
+    const originalSaveCandidate = store.saveConflictCandidate.bind(store)
+    vi.spyOn(store, 'saveConflictCandidate').mockImplementation(async (record) => {
       const callIndex = conflictCalls
       conflictCalls += 1
       if (callIndex <= 1) {
         await new Promise<void>((resolve) => { gates[callIndex] = resolve })
       }
-      return originalSaveConflict(record)
+      return originalSaveCandidate(record)
     })
     const persistence = makePersistence(store)
     const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
@@ -1130,7 +1130,7 @@ describe('draft file transactions — conflict handoff & channel', () => {
   it('reports failed and keeps the content visible when the conflict save fails', async () => {
     const gate = gatedStore()
     const { backend, store } = gate
-    vi.spyOn(store, 'saveConflictDraft').mockResolvedValue({ status: 'failed' })
+    vi.spyOn(store, 'saveConflictCandidate').mockResolvedValue({ status: 'failed' })
     const persistence = makePersistence(store)
     const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
     const [result] = await deleting
@@ -1259,7 +1259,7 @@ describe('draft file transactions — conflict handoff & channel', () => {
     // Every conflict save fails during the delete transaction — the
     // handoff cannot persist the local bytes and reports 'failed' (a
     // folder delete keeps this path's tab open on that result).
-    const saveConflict = vi.spyOn(store, 'saveConflictDraft')
+    const saveConflict = vi.spyOn(store, 'saveConflictCandidate')
       .mockResolvedValue({ status: 'failed' })
     const persistence = makePersistence(store)
     const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
@@ -1934,7 +1934,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const { backend, store } = gate
     // Every conflict save fails during the delete transaction → the
     // handoff reports 'failed' and arms the background debounce.
-    const saveConflict = vi.spyOn(store, 'saveConflictDraft')
+    const saveConflict = vi.spyOn(store, 'saveConflictCandidate')
       .mockResolvedValue({ status: 'failed' })
     const persistence = makePersistence(store)
     const { deleting, barrier } = await enterConflictHandoff(persistence, store, backend, gate)
@@ -2025,7 +2025,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     }])
     expect(move.status).toBe('moved')
     // The conflict-channel write of the latest snapshot is rejected.
-    vi.spyOn(store, 'saveConflictDraft').mockResolvedValue({ status: 'failed' })
+    vi.spyOn(store, 'saveConflictCandidate').mockResolvedValue({ status: 'failed' })
     const finalizeResults = await renameBarrier.finalizeAfterTabMigration()
 
     expect(finalizeResults).toEqual([{
@@ -2076,6 +2076,56 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       recordedAt: 31,
     }
   }
+
+  it('clears the cached primary when a conflict-only move reports missing', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    // The local session persists its primary, then another context
+    // deletes the record leaving a conflict-only family behind.
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    persistence.schedule(snapshot('rev1', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({ content: 'rev1' })
+    await store.deleteDraft('vault', 'doc-a')
+    await store.saveConflictDraft(conflictRecord('conflict-x', 'doc-a', 'notes/a', 'cross-context orphan'))
+
+    // The server rename completes: no primary to move ('missing'), the
+    // conflict candidate travels. completeFamilyMove rewrites the cached
+    // persistedDraft's path — that phantom must NOT survive the missing
+    // move, or a later confirmed delete CASes against a record that no
+    // longer exists and reports 'stale' instead of cleaning the family.
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('missing')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    // A confirmed delete must see the store's truth — no primary — not
+    // the phantom record. Freeze the conflict id so the confirmed
+    // discard removes the conflict-only family's last row.
+    const migrated = { vaultId: 'vault', documentId: 'doc-a', documentPath: 'archive/a' }
+    const confirmation = persistence.captureDeleteConfirmation(migrated, 1, undefined, ['conflict-x'])
+    const deleteBarrier = await persistence.prepareFileMutation([migrated])
+    const [deleted] = await deleteBarrier.commitDeletes([{
+      ...migrated,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+
+    // 'missing' with no prepare-time confirmed draft: a clean discard
+    // accompanied by the frozen-conflict cleanup — not 'stale' (which
+    // would keep the phantom identity visible and leave the conflict
+    // row alive behind removeIdentity()).
+    expect(deleted.status).toBe('missing')
+    expect(await store.listConflictDrafts('vault')).toEqual([])
+    await persistence.dispose()
+  })
 
   it('releases the entry after a failed family move', async () => {
     const backend = createMemoryDraftBackend()
@@ -2991,6 +3041,46 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     await persistence.dispose()
   })
 
+  it('re-pins the conflict channel when the family moved in another context', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await pinConflictChannelAtNotesA(store, persistence)
+
+    // Another context moves the whole family notes/a → archive/a in
+    // one atomic family move.
+    expect(await store.moveDraftFamily('vault', 'doc-a', 'archive/a'))
+      .toMatchObject({ status: 'moved', movedConflicts: 1 })
+
+    // The pinned entry's next edit still carries the stale snapshot
+    // path. Its write must discover the moved family and re-pin —
+    // writing NOTHING at notes/a (a candidate stranded there would
+    // split the family the other context's move just united).
+    persistence.schedule(snapshot('local-edit-2', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    const midConflicts = await store.listConflictDrafts('vault')
+    expect(midConflicts).toHaveLength(1)
+    expect(midConflicts[0]).toMatchObject({
+      content: 'local-edit',
+      documentPath: 'archive/a',
+    })
+
+    // The flush's re-pinned write persists the new candidate at the
+    // family's new path — the family ends up whole at archive/a.
+    expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(2)
+    expect(conflicts.every((c) => c.documentPath === 'archive/a')).toBe(true)
+    expect(conflicts.map((c) => c.content).sort()).toEqual(['local-edit', 'local-edit-2'])
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'remote',
+    })
+    await persistence.dispose()
+  })
+
   it('pins an unsupported conflict-only family candidate at the family path, not the stale Tab path', async () => {
     const backend = createMemoryDraftBackend()
     const store = createDraftStore({ backend })
@@ -3257,7 +3347,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const store = createDraftStore({ backend })
     const settlements: Array<{
       status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
-      oldPath: string
+      oldPath: string | null
       newPath: string
     }> = []
     const persistence = createUnsavedDraftPersistence({
@@ -3441,6 +3531,154 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     }])
     expect(await store.getDraft('vault', 'doc-a')).toBeNull()
     expect(await store.listConflictDrafts('vault')).toHaveLength(1)
+    await persistence.dispose()
+  })
+
+  it('close seal fails closed for an indeterminate family whose rename could not move', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    // Split family: the stale tab's edit turns the entry indeterminate
+    // — the store cannot certify ANY family path.
+    await backend.seedRawConflict({
+      ...conflictRecord('bad-row', 'doc-a', 'archive/a', 'unreadable'),
+      version: 2,
+    })
+    await store.saveConflictDraft(conflictRecord('valid-row', 'doc-a', 'legacy/a', 'older local'))
+    persistence.schedule(snapshot('stale-edit', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+
+    // The server rename succeeds; the draft family move is blocked by
+    // the unreadable row. The entry must NOT receive a guessed family
+    // path from the rename's fromPath — there is no certified path.
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/b',
+    }])
+    expect(move.status).toBe('unsupported')
+    // The entry is move-indeterminate: the family has NO certified
+    // path, so the release's immediate move retry writes NOTHING and
+    // fails closed — finalize reports 'failed' (the transaction-time
+    // edit is still only in-memory; the lifecycle keeps the tab open
+    // and warns). The old code reported [] here because the release
+    // wrote the primary record at the rename's GUESSED fromPath.
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      newPath: 'archive/b',
+      status: 'failed',
+    }])
+
+    // The post-rename edit is the only copy of those bytes. The
+    // identity already carries a fail-closed 'failed' report (its tab
+    // stays open on it), so the close seal deliberately skips a
+    // duplicate report — while the write itself stays blocked: no
+    // candidate at any guessed path (neither the rename's fromPath nor
+    // the tab path), the write flag stays set and flush keeps failing
+    // closed until a safe probe succeeds.
+    persistence.schedule(snapshot('after-rename', 'archive/b', 2))
+    expect(await barrier.finalizeBeforeDocumentClose()).toEqual([])
+    expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+    // The bytes stay tracked (the tab the 'failed' report keeps open
+    // is still the only surface holding them).
+    expect(persistence.findTrackedIdentitiesByPaths(['archive/b'])).toEqual([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'archive/b',
+    }])
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      conflictId: 'valid-row',
+      documentPath: 'legacy/a',
+    })
+    await persistence.dispose()
+  })
+
+  it('heals an indeterminate family move once the unreadable row disappears', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const settlements: Array<{
+      oldPath: string | null
+      newPath: string
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+    }> = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      onDraftFamilyMoveSettled: (settlement) => {
+        settlements.push(settlement)
+      },
+    })
+    await backend.seedRawConflict({
+      ...conflictRecord('bad-row', 'doc-a', 'archive/a', 'unreadable'),
+      version: 2,
+    })
+    await store.saveConflictDraft(conflictRecord('valid-row', 'doc-a', 'legacy/a', 'older local'))
+    persistence.schedule(snapshot('stale-edit', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+
+    // Indeterminate family + successful server rename + blocked draft
+    // move: the entry keeps attempting the atomic family move toward
+    // the server path — with NO certified oldPath to fall back to.
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/b',
+    }])
+    expect(move.status).toBe('unsupported')
+    // move-indeterminate: the release's immediate move retry has no
+    // certified oldPath, writes nothing and fails closed — finalize
+    // reports 'failed', the write flag stays set for the next probe.
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      newPath: 'archive/b',
+      status: 'failed',
+    }])
+    persistence.schedule(snapshot('after-rename', 'archive/b', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    // The retry still fails — nothing is written, the write flag stays
+    // set, and flush fails closed.
+    expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+
+    // The unreadable row disappears server-side: the next probe heals
+    // the family — the move completes toward the server path and the
+    // latest bytes persist there.
+    await backend.deleteConflict('vault', 'doc-a', 'bad-row')
+    expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/b',
+      content: 'after-rename',
+    })
+    // The valid candidate travelled with the healed move; NO guessed
+    // candidate from the failed retries survives anywhere.
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      conflictId: 'valid-row',
+      documentPath: 'archive/b',
+    })
+    // The settlement reports the server path as the family's new home
+    // and — because the old path was never certified — oldPath: null.
+    expect(settlements.some(
+      (s) => s.status === 'moved-and-persisted'
+        && s.newPath === 'archive/b'
+        && s.oldPath === null,
+    )).toBe(true)
     await persistence.dispose()
   })
 
@@ -3692,6 +3930,63 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       await persistence.dispose()
     })
 
+    scenario('Invariant 6 — an incomplete rename of an indeterminate family writes no guessed-path candidate', async () => {
+      const backend = createMemoryDraftBackend()
+      const store = createDraftStore({ backend })
+      const persistence = makePersistence(store)
+      // Split family → the stale tab's edit turns the entry
+      // indeterminate: no certifiable family path exists.
+      await backend.seedRawConflict({
+        ...conflictRecord('bad-row', 'doc-a', 'archive/a', 'unreadable'),
+        version: 2,
+      })
+      await store.saveConflictDraft(conflictRecord('valid-row', 'doc-a', 'legacy/a', 'older local'))
+      persistence.schedule(snapshot('stale-edit', 'notes/a', 1))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+      expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+
+      // The server rename succeeds; the draft family move is blocked by
+      // the unreadable row. The entry must NOT receive a guessed
+      // familyPath from the rename's fromPath — a candidate later
+      // written there would anchor the family to a path the store
+      // never certified.
+      const barrier = await persistence.prepareFileMutation([identity])
+      const [move] = await barrier.commitMoves([{
+        ...identity,
+        fromPath: 'notes/a',
+        toPath: 'archive/b',
+      }])
+      expect(move.status).toBe('unsupported')
+      // move-indeterminate: no certified path → the release's
+      // immediate move retry writes nothing and fails closed.
+      expect(await barrier.finalizeAfterTabMigration()).toEqual([{
+        documentId: 'doc-a',
+        oldPath: 'notes/a',
+        newPath: 'archive/b',
+        status: 'failed',
+      }])
+
+      // The post-rename edit retries the atomic family move — blocked
+      // again — and writes NOTHING: no primary at the tab path, no
+      // candidate at the rename's fromPath. The write flag stays set
+      // and flush fails closed until a safe probe succeeds.
+      persistence.schedule(snapshot('after-rename', 'archive/b', 2))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+      const conflicts = await store.listConflictDrafts('vault')
+      expect(conflicts).toHaveLength(1)
+      expect(conflicts[0]).toMatchObject({
+        conflictId: 'valid-row',
+        documentPath: 'legacy/a',
+      })
+      await persistence.dispose()
+    })
+
     for (const { name, run } of scenarios) {
       it(name, run)
     }
@@ -3849,7 +4144,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const settlements: Array<{
       vaultId: string
       documentId: string
-      oldPath: string
+      oldPath: string | null
       newPath: string
       status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
     }> = []

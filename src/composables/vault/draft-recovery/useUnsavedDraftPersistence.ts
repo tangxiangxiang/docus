@@ -102,12 +102,13 @@ interface DraftEntry {
    *  `conflictCrossContextUpdatedAt` / `conflictDocumentPath` /
    *  `pendingFamilyMove` fields: every transition goes through
    *  `enterPrimaryMode` / `enterConflictMode` / `enterMoveQuarantine`
-   *  / `completeFamilyMove` / `markFamilyIndeterminate`, so the
-   *  family path, the conflict pin and the quarantine state update as
-   *  ONE change and can never drift apart (a conflict pin landing
-   *  mid-quarantine keeps the quarantine; a verified family move
-   *  switches the snapshot path, the persistedDraft path AND the
-   *  channel pin in a single transition). */
+   *  / `completeFamilyMove` / `markFamilyIndeterminate` /
+   *  `adoptCertifiedFamilyPath`, so the family path, the conflict pin
+   *  and the quarantine state update as ONE change and can never
+   *  drift apart (a conflict pin landing mid-quarantine keeps the
+   *  quarantine; a verified family move switches the snapshot path,
+   *  the persistedDraft path AND the channel pin in a single
+   *  transition). */
   mode: DraftPersistenceMode
 }
 
@@ -148,13 +149,26 @@ interface DraftEntry {
  *    invariant across page reloads (this mode is in-memory only).
  *  - `indeterminate` — an unsupported save with NO certifiable family
  *    path (the store's raw rows split, or no readable path): there is
- *    nowhere safe to write. ALL writes are blocked — fail closed,
- *    keep the write flag set, keep the tab open as the only surface
- *    holding the bytes — until the next user edit re-probes via
- *    schedule() (the family may have been healed server-side since).
- *    Never set on a quarantined entry: the quarantine's move retry
- *    already fails closed on a certified path and must not be
- *    clobbered by a store probe. */
+ *    nowhere safe to write. Writes are blocked — fail closed, keep
+ *    the write flag set, keep the tab open as the only surface
+ *    holding the bytes — until the next user edit re-probes:
+ *    schedule() sets `reprobePending` (NOT a primary-mode flip — the
+ *    family is still unverified, and treating the snapshot path as
+ *    the family path would guess), and the next debounce runs one
+ *    real store probe; a successful probe transitions out, a failed
+ *    one clears `reprobePending` and blocks again.
+ *  - `move-indeterminate` — the server rename succeeded but the
+ *    family was ALREADY uncertifiable when the move was attempted
+ *    (the entry was indeterminate, or turned indeterminate while
+ *    quarantined): the family has NO certified path — unlike
+ *    move-quarantine, which knows its familyPath. The entry keeps
+ *    retrying the atomic family move toward `serverPath` (the only
+ *    path the server certifies); while the retry keeps failing it
+ *    writes NOTHING — no candidate at the rename's fromPath (a
+ *    guess), none at the tab path. Fail closed: write flag stays
+ *    set, close seal returns 'failed', the tab stays open, and the
+ *    next user edit / flush retries the move — a healed family
+ *    completes the move to `serverPath` and persists there. */
 type DraftPersistenceMode =
   | { kind: 'primary' }
   | {
@@ -173,6 +187,27 @@ type DraftPersistenceMode =
       kind: 'indeterminate'
       familyPath: string | null
       reason: DraftIndeterminateReason
+      /** A user edit re-armed the probe (schedule): the next debounce
+       *  runs one real store probe instead of blocking. Deliberately
+       *  NOT a flip back to primary mode — the family is still
+       *  unverified, and only a successful probe may certify a path. */
+      reprobePending: boolean
+    }
+  | {
+      kind: 'move-indeterminate'
+      /** The server's certified target path — the ONLY path this mode
+       *  may write to, and only via a completed atomic family move.
+       *  There is deliberately NO familyPath field: the family's
+       *  current path is uncertified, and carrying one would invite
+       *  guessed-path candidates. */
+      serverPath: string
+      reason: DraftIndeterminateReason
+      /** A coexisting conflict pin (a delete handoff that landed while
+       *  the family was uncertifiable). The resolver ignores it while
+       *  the family stays uncertified (every write routes through the
+       *  move retry, which writes nothing on failure); a healed move
+       *  carries the pin to the new path via completeFamilyMove. */
+      conflict: { conflictId: string; crossContextUpdatedAt: number | null } | null
     }
 
 /** Why an entry entered indeterminate mode: the structured reason the
@@ -185,7 +220,10 @@ type DraftIndeterminateReason =
 /** The single routing decision every write path asks before touching
  *  the store (see resolveDraftWriteTarget): primary write at a path,
  *  conflict candidate at the pinned family path, an atomic family
- *  move retry oldPath→newPath, or blocked (indeterminate family). */
+ *  move retry oldPath→newPath (`oldPath` null when the family's
+ *  current path is uncertified — a move-indeterminate entry), a
+ *  re-probe of an indeterminate family at the snapshot's path, or
+ *  blocked (indeterminate family with no pending re-probe). */
 type DraftWriteTarget =
   | { kind: 'primary'; path: string }
   | {
@@ -194,7 +232,8 @@ type DraftWriteTarget =
       conflictId: string
       crossContextUpdatedAt: number | null
     }
-  | { kind: 'retry-family-move'; oldPath: string; newPath: string }
+  | { kind: 'retry-family-move'; oldPath: string | null; newPath: string }
+  | { kind: 're-probe'; path: string }
   | { kind: 'blocked'; reason: string }
 
 /** Result of promoting a superseded local snapshot into the conflict
@@ -246,6 +285,10 @@ type DraftReleaseResult =
  *  - `conflict` — the retry failed again but the latest content was
  *    persisted as a move-quarantine candidate next to the old
  *    family. Recovery must surface the new candidate.
+ *  `oldPath` is the family's certified pre-move path — or `null` when
+ *  the move settled from move-indeterminate (the family's pre-move
+ *  path was never certified, so no value may be reported; consumers
+ *  route on vaultId / documentId / status).
  *  The owner should refresh the Recovery identity (and any open
  *  Recovery tabs) so they follow the family instead of showing the
  *  stale pre-retry state. Never warns — the original failure
@@ -253,7 +296,7 @@ type DraftReleaseResult =
 export interface DraftFamilyMoveSettlement {
   vaultId: string
   documentId: string
-  oldPath: string
+  oldPath: string | null
   newPath: string
   status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
 }
@@ -402,6 +445,17 @@ export function createUnsavedDraftPersistence(
       }
       return
     }
+    if (entry.mode.kind === 'move-indeterminate') {
+      // The pin attaches to the pending move — the resolver keeps
+      // routing every write through the move retry until the family
+      // is certified again (the pin's path is NOT trusted while the
+      // family is uncertifiable).
+      entry.mode = {
+        ...entry.mode,
+        conflict: { conflictId, crossContextUpdatedAt },
+      }
+      return
+    }
     entry.mode = { kind: 'conflict', familyPath, conflictId, crossContextUpdatedAt }
   }
 
@@ -409,7 +463,12 @@ export function createUnsavedDraftPersistence(
    *  server rename succeeded. `familyPath` is the family's ACTUAL
    *  path: a chained rename (A→B failed leaving the family at A, now
    *  B→C fails) keeps the earlier oldPath — only the server/tab path
-   *  advances. A coexisting conflict pin travels into the quarantine. */
+   *  advances. A coexisting conflict pin travels into the quarantine.
+   *  An entry whose family path was NEVER certified (indeterminate,
+   *  or an already move-indeterminate chained rename) becomes
+   *  move-indeterminate instead: the rename's fromPath is NOT a
+   *  certified family path, and adopting it would let a later failed
+   *  retry persist a candidate at a guessed path. */
   function enterMoveQuarantine(
     entry: DraftEntry,
     fromPath: string,
@@ -418,6 +477,18 @@ export function createUnsavedDraftPersistence(
     const mode = entry.mode
     if (mode.kind === 'move-quarantine') {
       entry.mode = { ...mode, serverPath: toPath }
+      return
+    }
+    if (mode.kind === 'indeterminate' || mode.kind === 'move-indeterminate') {
+      entry.mode = {
+        kind: 'move-indeterminate',
+        serverPath: toPath,
+        reason: mode.reason,
+        // A conflict pin (delete handoff landing while the family was
+        // uncertifiable) travels into the new state — losing it would
+        // let a later flush fall back to a primary overwrite.
+        conflict: mode.kind === 'move-indeterminate' ? mode.conflict : null,
+      }
       return
     }
     entry.mode = {
@@ -443,7 +514,9 @@ export function createUnsavedDraftPersistence(
       ? { conflictId: mode.conflictId, crossContextUpdatedAt: mode.crossContextUpdatedAt }
       : mode.kind === 'move-quarantine'
         ? mode.conflict
-        : null
+        : mode.kind === 'move-indeterminate'
+          ? mode.conflict
+          : null
     entry.mode = conflict
       ? {
           kind: 'conflict',
@@ -461,17 +534,58 @@ export function createUnsavedDraftPersistence(
   }
 
   /** An unsupported save with no certifiable family path: block every
-   *  write (fail closed) until the next user edit re-probes via
-   *  schedule(). Never clobbers a quarantine — a quarantined entry
-   *  keeps retrying its family move and already fails closed on a
-   *  certified candidate path. */
+   *  write (fail closed) until the next user edit re-arms the probe
+   *  (schedule sets reprobePending). A pending family move is
+   *  preserved: a quarantined / move-indeterminate entry becomes
+   *  move-indeterminate — the move retry keeps running toward
+   *  serverPath, but the once-certified familyPath is no longer
+   *  trusted (the store rows now disagree or went unreadable), so no
+   *  candidate may be written until the move completes or a probe
+   *  re-certifies the family. */
   function markFamilyIndeterminate(
     entry: DraftEntry,
     familyPath: string | null,
     reason: DraftIndeterminateReason,
   ): void {
-    if (entry.mode.kind === 'move-quarantine') return
-    entry.mode = { kind: 'indeterminate', familyPath, reason }
+    const mode = entry.mode
+    if (mode.kind === 'move-quarantine') {
+      entry.mode = {
+        kind: 'move-indeterminate',
+        serverPath: mode.serverPath,
+        reason,
+        conflict: mode.conflict,
+      }
+      return
+    }
+    if (mode.kind === 'move-indeterminate') {
+      entry.mode = { ...mode, reason }
+      return
+    }
+    entry.mode = { kind: 'indeterminate', familyPath, reason, reprobePending: false }
+  }
+
+  /** The store certified the family's CURRENT path against a write
+   *  (a conflict candidate came back path-mismatch with the family's
+   *  new path — another context moved it): adopt the certified path
+   *  WITHOUT writing anything. The write that discovered the move
+   *  fails closed (needsWrite stays set); the next write goes at the
+   *  corrected path. Writing at the stale path instead would strand
+   *  the candidate and split the family the other context's move
+   *  just united. Conflict mode re-pins its channel; a quarantine
+   *  re-pins its actual family path (the conflict pin, if any, is
+   *  path-independent and travels unchanged). */
+  function adoptCertifiedFamilyPath(
+    entry: DraftEntry,
+    familyPath: string,
+  ): void {
+    const mode = entry.mode
+    if (mode.kind === 'conflict') {
+      entry.mode = { ...mode, familyPath }
+      return
+    }
+    if (mode.kind === 'move-quarantine') {
+      entry.mode = { ...mode, familyPath }
+    }
   }
 
   /** The ONLY channel decision in the persistence layer: map the
@@ -488,8 +602,16 @@ export function createUnsavedDraftPersistence(
    *  - move-quarantine → a snapshot still at the family's actual
    *    path writes there (conflict channel when pinned, primary
    *    otherwise); a snapshot on any other path (the renamed tab)
-   *    retries the atomic family move first;
-   *  - indeterminate → blocked: no safe path exists, nothing may be
+   *    retries the atomic family move toward serverPath first (the
+   *    server's certified target — never the snapshot's path, which
+   *    a stale pre-migration snapshot could still report wrong);
+   *  - move-indeterminate → always retry the atomic family move
+   *    toward serverPath, with oldPath null: the family's current
+   *    path is uncertified, so while the retry fails NOTHING may be
+   *    written (no guessed candidate);
+   *  - indeterminate → a pending re-probe runs one real store probe
+   *    at the snapshot's path (a successful probe transitions out);
+   *    without one, blocked: no safe path exists, nothing may be
    *    written until schedule() re-arms the probe. */
   function resolveDraftWriteTarget(
     entry: DraftEntry,
@@ -520,11 +642,19 @@ export function createUnsavedDraftPersistence(
         return {
           kind: 'retry-family-move',
           oldPath: mode.familyPath,
-          newPath: snapshot.documentPath,
+          newPath: mode.serverPath,
         }
       }
+      case 'move-indeterminate':
+        return {
+          kind: 'retry-family-move',
+          oldPath: null,
+          newPath: entry.mode.serverPath,
+        }
       case 'indeterminate':
-        return { kind: 'blocked', reason: entry.mode.reason }
+        return entry.mode.reprobePending
+          ? { kind: 're-probe', path: snapshot.documentPath }
+          : { kind: 'blocked', reason: entry.mode.reason }
     }
   }
 
@@ -553,6 +683,12 @@ export function createUnsavedDraftPersistence(
         )
       case 'retry-family-move':
         return executeFamilyMoveRetry(owner, snapshot, target, allowDisposed)
+      case 're-probe':
+        // One real store probe at the snapshot's path: writePrimary's
+        // save attempt IS the probe — a successful save transitions
+        // out of indeterminate, a rejected one re-marks it (clearing
+        // reprobePending) or hands off to the certified family path.
+        return writePrimary(owner, snapshot, target.path, allowDisposed)
       case 'blocked':
         return Promise.resolve(false)
     }
@@ -589,7 +725,7 @@ export function createUnsavedDraftPersistence(
   function notifyFamilyMoveSettled(
     vaultId: string,
     documentId: string,
-    quarantine: { oldPath: string; newPath: string },
+    quarantine: { oldPath: string | null; newPath: string },
     status: DraftFamilyMoveSettlement['status'],
   ): void {
     try {
@@ -664,6 +800,46 @@ export function createUnsavedDraftPersistence(
       updatedAt,
     }
     return isUnsavedDraft(draft) ? draft : null
+  }
+
+  /** The normalized result of one family-atomic candidate write.
+   *  Every route that records a local edit as a conflict candidate
+   *  goes through attemptCandidateWrite → DraftStore.saveConflictCandidate:
+   *  - `saved` — the candidate is durable at its record path;
+   *  - `path-mismatch` — the store certified the family now lives at
+   *    `familyPath` (another context moved it); nothing was written —
+   *    the caller re-pins at the certified path and fails this write
+   *    closed (the next write goes at the corrected path);
+   *  - `unsupported` — the family rows are split / unreadable; nothing
+   *    was written — the caller marks the entry indeterminate (fail
+   *    closed, no guessed side);
+   *  - `failed` — the transaction aborted; the caller keeps whatever
+   *    pin it had and fails closed (write flag stays set). */
+  type CandidateWriteResult =
+    | { kind: 'saved' }
+    | { kind: 'path-mismatch'; familyPath: string }
+    | { kind: 'unsupported'; reason: DraftIndeterminateReason }
+    | { kind: 'failed' }
+
+  async function attemptCandidateWrite(
+    record: DraftConflictRecord,
+  ): Promise<CandidateWriteResult> {
+    let outcome: import('./draftStore').DraftConflictCandidateOutcome
+    try {
+      outcome = await store.saveConflictCandidate(record)
+    } catch {
+      return { kind: 'failed' }
+    }
+    switch (outcome.status) {
+      case 'saved':
+        return { kind: 'saved' }
+      case 'path-mismatch':
+        return { kind: 'path-mismatch', familyPath: outcome.familyPath }
+      case 'unsupported':
+        return { kind: 'unsupported', reason: outcome.reason }
+      case 'failed':
+        return { kind: 'failed' }
+    }
   }
 
   /** Core primary-record write shared by the debounced, flushed and
@@ -775,20 +951,27 @@ export function createUnsavedDraftPersistence(
         null,
         'delete-conflict',
       )
-      let candidateSaved = false
-      try {
-        candidateSaved = (await store.saveConflictDraft(record)).status === 'saved'
-      } catch {
-        candidateSaved = false
+      // Family-atomic candidate write: if another context moved the
+      // family between the saveDraft probe and this write, the store
+      // reports the new path (path-mismatch) — pin failed there so
+      // the next write retries at the certified path instead of
+      // stranding this candidate on the stale one. If the family
+      // turned uncertifiable (unsupported), fail closed without
+      // guessing a side.
+      const attempt = await attemptCandidateWrite(record)
+      if (attempt.kind === 'unsupported') {
+        markFamilyIndeterminate(entry, null, attempt.reason)
+        return false
       }
+      const pinPath = attempt.kind === 'path-mismatch' ? attempt.familyPath : familyPath
       // Pin the conflict channel to the family path so every
       // subsequent conflict-channel write lands there too — the
       // snapshot path this Tab reports stays stale.
-      if (!candidateSaved) {
-        enterConflictMode(entry, familyPath, `failed:${record.conflictId}`, null)
+      if (attempt.kind !== 'saved') {
+        enterConflictMode(entry, pinPath, `failed:${record.conflictId}`, null)
         return false
       }
-      enterConflictMode(entry, familyPath, record.conflictId, null)
+      enterConflictMode(entry, pinPath, record.conflictId, null)
       if (current(owner, entry)
         && entry.latestSnapshot === capturedSnapshot
         && entry.latestSnapshot.revision === capturedRevision) {
@@ -829,20 +1012,25 @@ export function createUnsavedDraftPersistence(
         },
         crossContextUpdatedAt,
       )
-      let candidateSaved = false
-      try {
-        candidateSaved = (await store.saveConflictDraft(record)).status === 'saved'
-      } catch {
-        candidateSaved = false
+      // Family-atomic candidate write: path-mismatch means another
+      // context moved the family after this save's outcome was
+      // captured — pin failed at the certified new path (the next
+      // write retries there); unsupported means the family turned
+      // uncertifiable — fail closed without guessing a side.
+      const attempt = await attemptCandidateWrite(record)
+      if (attempt.kind === 'unsupported') {
+        markFamilyIndeterminate(entry, null, attempt.reason)
+        return false
       }
+      const pinPath = attempt.kind === 'path-mismatch' ? attempt.familyPath : familyPath
       // Pin the conflict channel to the family's authoritative path so
       // every subsequent conflict-channel write lands there too — a
       // stale Tab keeps reporting its old path on every edit.
-      if (!candidateSaved) {
-        enterConflictMode(entry, familyPath, `failed:${record.conflictId}`, crossContextUpdatedAt)
+      if (attempt.kind !== 'saved') {
+        enterConflictMode(entry, pinPath, `failed:${record.conflictId}`, crossContextUpdatedAt)
         return false
       }
-      enterConflictMode(entry, familyPath, record.conflictId, crossContextUpdatedAt)
+      enterConflictMode(entry, pinPath, record.conflictId, crossContextUpdatedAt)
       entry.persistedDraft = outcome.current
       if (current(owner, entry)
         && entry.latestSnapshot === capturedSnapshot
@@ -889,20 +1077,25 @@ export function createUnsavedDraftPersistence(
         },
         crossContextUpdatedAt,
       )
-      let candidateSaved = false
-      try {
-        candidateSaved = (await store.saveConflictDraft(record)).status === 'saved'
-      } catch {
-        candidateSaved = false
+      // Family-atomic candidate write: path-mismatch means the family
+      // moved AGAIN after this save's outcome was captured — pin
+      // failed at the certified new path (the next write retries
+      // there); unsupported means the family turned uncertifiable —
+      // fail closed without guessing a side.
+      const attempt = await attemptCandidateWrite(record)
+      if (attempt.kind === 'unsupported') {
+        markFamilyIndeterminate(entry, null, attempt.reason)
+        return false
       }
+      const pinPath = attempt.kind === 'path-mismatch' ? attempt.familyPath : familyPath
       // Pin the conflict channel to the family's authoritative path so
       // every subsequent conflict-channel write lands there too — a
       // stale Tab keeps reporting its old path on every edit.
-      if (!candidateSaved) {
-        enterConflictMode(entry, familyPath, `failed:${record.conflictId}`, crossContextUpdatedAt)
+      if (attempt.kind !== 'saved') {
+        enterConflictMode(entry, pinPath, `failed:${record.conflictId}`, crossContextUpdatedAt)
         return false
       }
-      enterConflictMode(entry, familyPath, record.conflictId, crossContextUpdatedAt)
+      enterConflictMode(entry, pinPath, record.conflictId, crossContextUpdatedAt)
       // A conflict-only family has no primary record to CAS against:
       // the anchor is then a conflict candidate, not a persistedDraft.
       entry.persistedDraft = isUnsavedDraft(outcome.current) ? outcome.current : null
@@ -980,8 +1173,13 @@ export function createUnsavedDraftPersistence(
       return false
     }
     const crossContextUpdatedAt = stored?.updatedAt ?? null
-    // Pin the channel at the family's authoritative path (whatever the
-    // store now holds), never the possibly-stale snapshot path.
+    // Attempt the candidate at the family's likely path (whatever the
+    // store now holds — falling back to the snapshot path when the
+    // readback returned nothing). The fallback IS a guess, but the
+    // family-atomic candidate write validates it inside the store
+    // transaction: if the family actually lives elsewhere the write
+    // returns path-mismatch with the certified path and nothing is
+    // stranded at the guess.
     const familyPath = stored?.documentPath ?? snapshot.documentPath
     const record = buildConflictRecord(
       snapshot,
@@ -999,20 +1197,23 @@ export function createUnsavedDraftPersistence(
       },
       crossContextUpdatedAt,
     )
-    let candidateSaved = false
-    try {
-      candidateSaved = (await store.saveConflictDraft(record)).status === 'saved'
-    } catch {
-      candidateSaved = false
-    }
-    if (!candidateSaved) {
-      // Pin as failed so flush / close-seal retries stay on the
-      // conflict channel instead of falling back to a primary write
-      // that would overwrite the cross-context record.
-      enterConflictMode(entry, familyPath, `failed:${record.conflictId}`, crossContextUpdatedAt)
+    const attempt = await attemptCandidateWrite(record)
+    if (attempt.kind === 'unsupported') {
+      // The family turned uncertifiable mid-handoff: fail closed
+      // without guessing a side.
+      markFamilyIndeterminate(entry, null, attempt.reason)
       return false
     }
-    enterConflictMode(entry, familyPath, record.conflictId, crossContextUpdatedAt)
+    const pinPath = attempt.kind === 'path-mismatch' ? attempt.familyPath : familyPath
+    if (attempt.kind !== 'saved') {
+      // Pin as failed (at the certified path when the family moved)
+      // so flush / close-seal retries stay on the conflict channel
+      // instead of falling back to a primary write that would
+      // overwrite the cross-context record.
+      enterConflictMode(entry, pinPath, `failed:${record.conflictId}`, crossContextUpdatedAt)
+      return false
+    }
+    enterConflictMode(entry, pinPath, record.conflictId, crossContextUpdatedAt)
     // The cross-context record owns the primary store from here on.
     entry.persistedDraft = stored
     if (current(owner, entry)
@@ -1069,12 +1270,16 @@ export function createUnsavedDraftPersistence(
       },
       crossContextUpdatedAt,
     )
-    try {
-      const result = await store.saveConflictDraft(record)
-      const stillPinned = entry.mode.kind === 'conflict'
-        || (entry.mode.kind === 'move-quarantine' && entry.mode.conflict !== null)
-      if (result.status === 'saved'
-        && stillPinned
+    // Family-atomic candidate write: the store validates the pinned
+    // path against the family's CURRENT rows inside one transaction,
+    // so a move committed by another context since the pin was set
+    // surfaces as path-mismatch here instead of stranding the
+    // candidate on the pre-move path.
+    const attempt = await attemptCandidateWrite(record)
+    const stillPinned = entry.mode.kind === 'conflict'
+      || (entry.mode.kind === 'move-quarantine' && entry.mode.conflict !== null)
+    if (attempt.kind === 'saved') {
+      if (stillPinned
         && current(owner, entry)
         && entry.latestSnapshot?.revision === snapshot.revision) {
         // The pin follows the newest candidate (a quarantine keeps
@@ -1092,35 +1297,62 @@ export function createUnsavedDraftPersistence(
         return true
       }
       return false
-    } catch {
+    }
+    if (attempt.kind === 'path-mismatch') {
+      // The family moved in another context after the pin was set:
+      // adopt the certified path WITHOUT writing — this write fails
+      // closed (the write flag stays set) and the next write retries
+      // at the corrected path. Writing at the stale pinned path is
+      // exactly the split the family-atomic store write prevents.
+      if (stillPinned && current(owner, entry)) {
+        adoptCertifiedFamilyPath(entry, attempt.familyPath)
+      }
       return false
     }
+    if (attempt.kind === 'unsupported') {
+      // The family turned uncertifiable (split / unreadable rows):
+      // fail closed until the next probe or move retry re-certifies
+      // a path. markFamilyIndeterminate converts a pinned quarantine
+      // into move-indeterminate (the move retry keeps running toward
+      // serverPath; no candidate may be written until it completes).
+      if (current(owner, entry)) {
+        markFamilyIndeterminate(entry, null, attempt.reason)
+      }
+      return false
+    }
+    // failed: the pin stays as-is; the write flag stays set and
+    // flush / close seal keep retrying the conflict channel.
+    return false
   }
 
-  /** Retry the atomic family move for a quarantined entry (the server
-   *  rename succeeded, the draft family is still whole at `oldPath`,
-   *  and the tab already shows `newPath`). A plain primary write at
-   *  newPath would move ONLY the primary record there (DraftStore
-   *  accepts the higher-`updatedAt` draft's path wholesale),
-   *  stranding the conflict candidates on the old one — the exact
-   *  split the atomic family move exists to prevent. So the write
-   *  retries the atomic move FIRST:
+  /** Retry the atomic family move for a quarantined / move-indeterminate
+   *  entry (the server rename succeeded, the tab already shows
+   *  `newPath`). A plain primary write at newPath would move ONLY the
+   *  primary record there (DraftStore accepts the higher-`updatedAt`
+   *  draft's path wholesale), stranding the conflict candidates on
+   *  the old one — the exact split the atomic family move exists to
+   *  prevent. So the write retries the atomic move FIRST:
    *  - move succeeds → the quarantine lifts via completeFamilyMove
    *    (mode, snapshot path, persistedDraft path and conflict pin
    *    switch to newPath as ONE change) and the latest snapshot
    *    persists on the entry's active channel at the new path, family
    *    whole (a candidate recorded by an earlier failed retry travels
    *    with it);
-   *  - move fails → the primary record is never touched; the latest
-   *    content persists as a separate move-quarantine candidate AT
-   *    `oldPath` instead (the family's actual path — persisting it at
-   *    the renamed tab path would split the family immediately), the
-   *    quarantine stays, and the next edit / flush / pagehide /
-   *    dispose retries the move again. */
+   *  - move fails + certified `oldPath` → the primary record is never
+   *    touched; the latest content persists as a separate
+   *    move-quarantine candidate AT `oldPath` (the family's actual
+   *    path — persisting it at the renamed tab path would split the
+   *    family immediately), the quarantine stays, and the next edit /
+   *    flush / pagehide / dispose retries the move again;
+   *  - move fails + `oldPath` null (move-indeterminate) → NOTHING is
+   *    written: there is no certified path a candidate could join.
+   *    The write fails closed — write flag stays set, close seal
+   *    keeps the tab open — and the next edit / flush retries the
+   *    move until a healed family completes it toward newPath. */
   async function executeFamilyMoveRetry(
     owner: DraftOwner,
     snapshot: DraftBufferSnapshot,
-    move: { oldPath: string; newPath: string },
+    move: { oldPath: string | null; newPath: string },
     allowDisposed: boolean,
   ): Promise<boolean> {
     const entry = entries.get(key(owner.vaultId, owner.documentId))
@@ -1212,11 +1444,20 @@ export function createUnsavedDraftPersistence(
       }
       return writeSucceeded
     }
-    // The retry failed — the family stays whole at the OLD path.
-    // Never write the primary record: persist the latest content as
-    // a separate move-quarantine candidate so Recovery shows it next
-    // to the old family, and keep the quarantine so the next edit
-    // retries the move again.
+    // The retry failed. Without a certified oldPath (move-indeterminate)
+    // there is no path a candidate could join — write NOTHING and fail
+    // closed: the write flag stays set, the close seal keeps the tab
+    // open (the only surface holding the bytes), and the next edit /
+    // flush retries the move until a healed family completes it. A
+    // guessed candidate (at the rename's fromPath or the tab path)
+    // would anchor the family to a path the store never certified.
+    if (move.oldPath === null) {
+      return false
+    }
+    // The family stays whole at the OLD path. Never write the primary
+    // record: persist the latest content as a separate move-quarantine
+    // candidate so Recovery shows it next to the old family, and keep
+    // the quarantine so the next edit retries the move again.
     if (entry.mode.kind === 'move-quarantine' && entry.mode.conflict !== null) {
       // Conflict-pinned entries stay on their existing channel — the
       // pinned familyPath IS oldPath.
@@ -1252,12 +1493,28 @@ export function createUnsavedDraftPersistence(
       null,
       'move-conflict',
     )
-    let saved = false
-    try {
-      saved = (await store.saveConflictDraft(record)).status === 'saved'
-    } catch {
-      saved = false
+    const attempt = await attemptCandidateWrite(record)
+    if (attempt.kind === 'path-mismatch') {
+      // Another context moved the family between the failed retry and
+      // this candidate write: adopt the certified path (the next
+      // retry's oldPath follows it) and fail this write closed —
+      // nothing may be persisted at the stale oldPath.
+      if (current(owner, entry)) {
+        adoptCertifiedFamilyPath(entry, attempt.familyPath)
+      }
+      return false
     }
+    if (attempt.kind === 'unsupported') {
+      // The family turned uncertifiable mid-quarantine: convert to
+      // move-indeterminate — the move retry keeps running toward
+      // newPath, but no candidate may be written until it completes
+      // or a probe re-certifies the family.
+      if (current(owner, entry)) {
+        markFamilyIndeterminate(entry, null, attempt.reason)
+      }
+      return false
+    }
+    const saved = attempt.kind === 'saved'
     if (saved) {
       // A new candidate now sits next to the old family — notify so
       // Recovery shows it even though the move is still failing.
@@ -1288,17 +1545,22 @@ export function createUnsavedDraftPersistence(
     entry.latestSnapshot = captured
     entry.latestSnapshotNeedsWrite = true
     // A user edit re-arms the probe: an indeterminate entry (an
-    // unsupported save with no certifiable family path) leaves the
-    // fail-closed block and re-runs the store save, whose structured
-    // outcome re-derives the family state — the family may have been
-    // healed server-side (a migration, a fresh cross-context write)
-    // since the block was set. Conflict pins, quarantines and clean
-    // primary channels are untouched: their own transitions own their
-    // lifecycle. This also resets a running settle-retry backoff —
-    // the armed timer is cleared above and the new edit's own write
-    // owns persistence from here.
+    // unsupported save with no certifiable family path) gets ONE real
+    // store probe on its next debounce — the save attempt itself IS
+    // the probe, and its structured outcome re-derives the family
+    // state (the family may have been healed server-side — a
+    // migration, a fresh cross-context write — since the block was
+    // set). Deliberately NOT a flip back to primary mode: the family
+    // is still unverified, and a failed probe must clear the pending
+    // flag and block again rather than keep hammering the store on
+    // every flush / pagehide. Conflict pins, quarantines,
+    // move-indeterminate retries and clean primary channels are
+    // untouched: their own transitions own their lifecycle. This also
+    // resets a running settle-retry backoff — the armed timer is
+    // cleared above and the new edit's own write owns persistence
+    // from here.
     if (entry.mode.kind === 'indeterminate') {
-      enterPrimaryMode(entry)
+      entry.mode = { ...entry.mode, reprobePending: true }
     }
     const owner: DraftOwner = {
       vaultId: captured.vaultId,
@@ -1336,12 +1598,14 @@ export function createUnsavedDraftPersistence(
     if (entry.fileTransaction) return false
     clearTimer(entry)
     const snapshot = entry.latestSnapshot
-    // No snapshot: a conflict-pinned entry (or a quarantine carrying a
-    // conflict pin) holds its bytes in the conflict store — clean.
-    // Anything else has nothing persisted — fail closed.
+    // No snapshot: a conflict-pinned entry (or a quarantine /
+    // move-indeterminate entry carrying a conflict pin) holds its
+    // bytes in the conflict store — clean. Anything else has nothing
+    // persisted — fail closed.
     if (!snapshot) {
       return entry.mode.kind === 'conflict'
         || (entry.mode.kind === 'move-quarantine' && entry.mode.conflict !== null)
+        || (entry.mode.kind === 'move-indeterminate' && entry.mode.conflict !== null)
     }
     if (!entry.latestSnapshotNeedsWrite) return true
     // The single router picks the channel: conflict-pinned entries
@@ -1403,7 +1667,7 @@ export function createUnsavedDraftPersistence(
     documentId: string,
     generation: number,
     attempt: number,
-    quarantine: { oldPath: string; newPath: string } | null,
+    quarantine: { oldPath: string | null; newPath: string } | null,
   ): void {
     if (disposed || attempt >= SETTLE_RETRY_DELAYS_MS.length) return
     const entry = entries.get(key(vaultId, documentId))
@@ -1787,14 +2051,40 @@ export function createUnsavedDraftPersistence(
         const capturedRef = snapshot
         const record = buildConflictRecord(snapshot, entry, identity, crossContextUpdatedAt)
         lastConflictId = record.conflictId
-        let saved = false
-        try {
-          saved = (await store.saveConflictDraft(record)).status === 'saved'
-        } catch (error) {
-          console.warn(`[commitDeletes] Conflict record save threw for ${identity.documentPath} (${outcome}):`, error)
-          saved = false
+        // Family-atomic candidate write: the store validates the
+        // identity path against the family's CURRENT rows, so a move
+        // committed by another context during the handoff surfaces as
+        // path-mismatch instead of stranding the candidate.
+        const attempt = await attemptCandidateWrite(record)
+        if (attempt.kind === 'path-mismatch') {
+          // The family moved during the handoff: pin failed at the
+          // certified new path (the background conflict debounce
+          // retries there) — writing at the stale identity path would
+          // split the family the other context's move just united.
+          enterConflictMode(
+            entry,
+            attempt.familyPath,
+            `failed:${record.conflictId}`,
+            crossContextUpdatedAt,
+          )
+          clearTimer(entry)
+          console.warn(`[commitDeletes] Conflict candidate path-mismatch for ${identity.documentPath} (family now at ${attempt.familyPath}; ${outcome})`)
+          await releaseEntry(state, identity.documentPath, true)
+          return { status: 'failed' }
         }
-        if (!saved) {
+        if (attempt.kind === 'unsupported') {
+          // The family turned uncertifiable mid-handoff: fail closed
+          // without guessing a side — no candidate, no pin at a
+          // guessed path. The release arms the debounce; the entry
+          // blocks (or retries its pending move) until a safe probe
+          // re-certifies the family.
+          markFamilyIndeterminate(entry, null, attempt.reason)
+          clearTimer(entry)
+          console.warn(`[commitDeletes] Conflict candidate unsupported for ${identity.documentPath} (${outcome})`)
+          await releaseEntry(state, identity.documentPath, true)
+          return { status: 'failed' }
+        }
+        if (attempt.kind === 'failed') {
           // Rejected: keep the content in-memory and pin as failed so
           // flush/flushAll/dispose never overwrite the primary record
           // (and retry the conflict write if the store recovers). The
@@ -1845,7 +2135,9 @@ export function createUnsavedDraftPersistence(
         ? entry.mode.conflictId
         : entry.mode.kind === 'move-quarantine' && entry.mode.conflict
           ? entry.mode.conflict.conflictId
-          : null
+          : entry.mode.kind === 'move-indeterminate' && entry.mode.conflict
+            ? entry.mode.conflict.conflictId
+            : null
       const pinId = lastConflictId || existingConflictId
       if (pinId) {
         enterConflictMode(entry, identity.documentPath, pinId, crossContextUpdatedAt)
@@ -1936,10 +2228,19 @@ export function createUnsavedDraftPersistence(
               mapping.vaultId,
               mapping.documentId,
             )
+          } else {
+            // 'missing' (conflict-only family): no primary record
+            // exists. completeFamilyMove rewrote the cached
+            // persistedDraft onto the new path — but that record is
+            // now a PHANTOM: it points at a row the store does not
+            // hold. Leaving it would make a confirmed delete CAS
+            // against a non-existent primary (reporting 'stale'
+            // instead of cleaning the conflict-only family) and lie
+            // to captureDeleteConfirmation's expectedDraft. Drop it:
+            // the family's candidates at the new path are tracked by
+            // the conflict store itself.
+            state.entry.persistedDraft = null
           }
-          // 'missing' (conflict-only family): no primary record
-          // exists — the completeFamilyMove-updated persistedDraft
-          // (if any) tracks the family's candidates at the new path.
         }
         pendingReleases.set(identityKey, {
           // An incomplete move releases on the family's actual path:

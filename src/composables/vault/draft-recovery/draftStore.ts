@@ -104,7 +104,8 @@ type ConditionalDeleteResult = DeleteResult | 'stale'
 type BackendOperation =
   | 'save' | 'get' | 'list' | 'delete' | 'move' | 'moveConflicts'
   | 'moveFamily' | 'moveFamilyConflicts' | 'clear'
-  | 'saveConflict' | 'listConflicts' | 'deleteConflict' | 'clearConflicts'
+  | 'saveConflict' | 'saveConflictCandidate'
+  | 'listConflicts' | 'deleteConflict' | 'clearConflicts'
 
 export interface DraftStorageBackend {
   /** Persist a primary draft record under the (vaultId, documentId)
@@ -157,6 +158,17 @@ export interface DraftStorageBackend {
   ): Promise<FamilyMoveBackendResult>
   clear(vaultId: string): Promise<void>
   saveConflict(record: DraftConflictRecord): Promise<void>
+  /** Persist a conflict candidate as part of ONE transaction that also
+   *  reads the family's current path (primary record + same-identity
+   *  conflict rows). The candidate is only written when the family
+   *  agrees on its path; a family move committed in another context
+   *  between the path read and the write is impossible — both happen
+   *  inside the same readwrite transaction, so the write either sees
+   *  the moved family (path-mismatch, nothing written) or joins it
+   *  atomically. A duplicate conflictId or a transaction abort throws. */
+  saveConflictCandidate(
+    record: DraftConflictRecord,
+  ): Promise<ConflictCandidateBackendResult>
   listConflicts(vaultId: string): Promise<unknown[]>
   deleteConflict(
     vaultId: string,
@@ -219,6 +231,37 @@ export type DraftConflictSaveOutcome =
   | { status: 'unsupported' }
   | { status: 'failed' }
 
+/** Outcome of a family-atomic conflict-candidate write. The candidate
+ *  is validated against the family's CURRENT path inside ONE
+ *  transaction across both stores, so a family move committed by
+ *  another context can never slip between the path read and the write:
+ *  - `saved` — the family agreed on the candidate's path (or was
+ *    empty: a first candidate establishes the path); the record is
+ *    durable and `stored` is the persisted row;
+ *  - `path-mismatch` — the family now lives at `familyPath` (a rename
+ *    landed elsewhere); NOTHING was written. The caller must re-pin at
+ *    the reported path and retry — writing at the stale path would
+ *    strand the candidate and split the family;
+ *  - `unsupported` — the family rows disagree on the path or carry no
+ *    readable path (`familyPath` is always `null`); NOTHING was
+ *    written. The caller fails closed exactly like an unsupported
+ *    primary save — no guessed side, no guessed path;
+ *  - `failed` — the transaction aborted (store error or duplicate
+ *    conflictId); the caller fails closed (write flag stays set). */
+export type DraftConflictCandidateOutcome =
+  | { status: 'saved'; stored: DraftConflictRecord }
+  | { status: 'path-mismatch'; familyPath: string }
+  | { status: 'unsupported'; familyPath: null; reason: UnsupportedFamilyReason }
+  | { status: 'failed' }
+
+/** Backend-level candidate result: the four outcomes minus `failed` —
+ *  a transaction abort (or a duplicate conflictId key) THROWS instead,
+ *  and the store layer converts the throw into `failed`. */
+type ConflictCandidateBackendResult =
+  | { status: 'saved'; stored: DraftConflictRecord }
+  | { status: 'path-mismatch'; familyPath: string }
+  | { status: 'unsupported'; familyPath: null; reason: UnsupportedFamilyReason }
+
 /** Strict result of a conflict-store read. File transactions must use
  *  this instead of the lossy `listConflictDrafts()`: a store read error
  *  surfaces as `{ status: 'failed' }` rather than masquerading as an
@@ -264,6 +307,19 @@ export interface DraftStore {
   ): Promise<DraftFamilyMoveOutcome>
   clearVaultDrafts(vaultId: string): Promise<boolean>
   saveConflictDraft(record: DraftConflictRecord): Promise<DraftConflictSaveOutcome>
+  /** Persist a conflict candidate FAMILY-ATOMICALLY: the candidate's
+   *  path is validated against the family's current path inside one
+   *  transaction across both stores (see DraftConflictCandidateOutcome).
+   *  Every route that records a local edit as a conflict candidate —
+   *  conflict-channel writes, quarantine retries, readback / delete
+   *  handoffs, pagehide / dispose flushes — must use this instead of
+   *  the plain `saveConflictDraft` (kept for fixture seeding only): a
+   *  bare add cannot see a family move committed by another context
+   *  between the caller's last probe and the write, and would strand
+   *  the candidate on the pre-move path, splitting the family. */
+  saveConflictCandidate(
+    record: DraftConflictRecord,
+  ): Promise<DraftConflictCandidateOutcome>
   listConflictDrafts(vaultId: string): Promise<DraftConflictRecord[]>
   /** Strict conflict read for file transactions. When `documentId` is
    *  given, both the unsupported-row check and the returned records are
@@ -605,6 +661,30 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       }
     },
 
+    async saveConflictCandidate(record) {
+      // A malformed candidate cannot join a family: report
+      // unsupported-conflict (not 'failed') so the caller's state
+      // machine treats it as a fail-closed family condition, mirroring
+      // saveConflictDraft's pre-validation.
+      if (!isDraftConflictRecord(record)) {
+        return { status: 'unsupported', familyPath: null, reason: 'unsupported-conflict' }
+      }
+      if (record.vaultId.trim().length === 0
+        || record.documentId.trim().length === 0
+        || record.conflictId.trim().length === 0) {
+        return { status: 'unsupported', familyPath: null, reason: 'unsupported-conflict' }
+      }
+      try {
+        return await backend.saveConflictCandidate(cloneConflictRecord(record))
+      } catch {
+        // A store error or aborted family transaction (including a
+        // duplicate conflictId key) is not an empty write: fail closed
+        // so the caller keeps the write flag set and the tab open —
+        // the bytes are still only in memory.
+        return { status: 'failed' }
+      }
+    },
+
     async listConflictDrafts(vaultId) {
       if (vaultId.trim().length === 0) return []
       try {
@@ -866,6 +946,32 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       const key = serializedConflictKey(record.vaultId, record.documentId, record.conflictId)
       if (conflictRecords.has(key)) throw new Error('Draft conflict record already exists')
       conflictRecords.set(key, cloneConflictRecord(record))
+    },
+
+    async saveConflictCandidate(record) {
+      consumeFailure('saveConflictCandidate')
+      // Derive the family path from the RAW rows BEFORE writing —
+      // mirroring the IndexedDB backend's both-store transaction,
+      // where the derivation and the add run inside one readwrite
+      // transaction. The memory backend is single-threaded, so the
+      // read-then-write here is atomic with respect to any other
+      // store operation.
+      const authority = conflictCandidateAuthority(
+        records.get(serializedKey(record.vaultId, record.documentId)),
+        conflictRecords.values(),
+        record.vaultId,
+        record.documentId,
+      )
+      if (authority.status === 'unsupported') {
+        return { status: 'unsupported', familyPath: null, reason: authority.reason }
+      }
+      if (authority.status === 'path' && authority.path !== record.documentPath) {
+        return { status: 'path-mismatch', familyPath: authority.path }
+      }
+      const key = serializedConflictKey(record.vaultId, record.documentId, record.conflictId)
+      if (conflictRecords.has(key)) throw new Error('Draft conflict record already exists')
+      conflictRecords.set(key, cloneConflictRecord(record))
+      return { status: 'saved', stored: cloneConflictRecord(record) }
     },
 
     async listConflicts(vaultId) {
@@ -1224,6 +1330,52 @@ export function createIndexedDbDraftBackend(
       await transactionDone(transaction)
     },
 
+    async saveConflictCandidate(record) {
+      const db = await database()
+      // ONE readwrite transaction across both stores: the family-path
+      // derivation reads the primary record AND the same-identity
+      // conflict rows, and the add runs ONLY after validation. A
+      // moveDraftFamily committed by another context serializes
+      // against this transaction — the candidate write either sees the
+      // moved family (path-mismatch, nothing written) or joins it
+      // atomically. A bare add on the conflict store alone would let
+      // the move slip between the caller's last probe and this write,
+      // stranding the candidate on the pre-move path.
+      const transaction = db.transaction(
+        [DRAFT_STORE_NAME, CONFLICT_STORE_NAME],
+        'readwrite',
+      )
+      const draftStore = transaction.objectStore(DRAFT_STORE_NAME)
+      const conflictStore = transaction.objectStore(CONFLICT_STORE_NAME)
+      const primaryValue = await request(
+        draftStore.get(idbKey(record.vaultId, record.documentId)),
+      )
+      const conflictValues = await request(
+        conflictStore.index(CONFLICT_VAULT_INDEX).getAll(record.vaultId),
+      )
+      const authority = conflictCandidateAuthority(
+        primaryValue,
+        conflictValues,
+        record.vaultId,
+        record.documentId,
+      )
+      if (authority.status === 'unsupported') {
+        await transactionDone(transaction)
+        return { status: 'unsupported', familyPath: null, reason: authority.reason }
+      }
+      if (authority.status === 'path' && authority.path !== record.documentPath) {
+        await transactionDone(transaction)
+        return { status: 'path-mismatch', familyPath: authority.path }
+      }
+      // Certified: the family agrees on the candidate's path (or no
+      // family row exists and this first candidate establishes it).
+      // Write only now — a duplicate conflictId aborts the transaction
+      // (the store layer reports 'failed').
+      conflictStore.add(cloneConflictRecord(record))
+      await transactionDone(transaction)
+      return { status: 'saved', stored: cloneConflictRecord(record) }
+    },
+
     async listConflicts(vaultId) {
       const db = await database()
       const transaction = db.transaction(CONFLICT_STORE_NAME, 'readonly')
@@ -1310,6 +1462,53 @@ function conflictFamilyPath(
   }
   if (paths.size === 0) return { status: 'none' }
   if (paths.size > 1) return { status: 'split' }
+  return { status: 'path', path: [...paths][0]! }
+}
+
+/** Derive the family path a conflict CANDIDATE write must join, from
+ *  the identity's raw family rows (primary + same-identity conflicts).
+ *  Rows are read WITHOUT validation — an unreadable row can still
+ *  certify its PATH when the path itself is readable: adding a
+ *  candidate at the agreed path never touches that row and cannot
+ *  split the family (unlike a primary overwrite, which is why
+ *  probeFamily fails closed on unreadable rows but this derivation
+ *  does not). Returns:
+ *  - `none` — no rows for the identity: a first candidate establishes
+ *    the family path;
+ *  - `path` — every locatable row shares one path: a candidate at that
+ *    path saves, a diverging one is refused ('path-mismatch');
+ *  - `unsupported` — a row carries no readable path, or the rows
+ *    disagree: the candidate write fails closed without guessing a
+ *    side. `reason` classifies the blocking row, mirroring probeReason
+ *    (unsupported-primary / unsupported-conflict / split-conflict-paths).
+ *  Shared by both backends so memory and IndexedDB enforce identical
+ *  family-path authority for candidate writes. */
+function conflictCandidateAuthority(
+  primaryValue: unknown,
+  conflictValues: Iterable<unknown>,
+  vaultId: string,
+  documentId: string,
+): { status: 'none' }
+  | { status: 'path'; path: string }
+  | { status: 'unsupported'; reason: UnsupportedFamilyReason } {
+  const paths = new Set<string>()
+  let rows = 0
+  if (primaryValue !== undefined && primaryValue !== null) {
+    rows += 1
+    const path = readRawDocumentPath(primaryValue)
+    if (path === null) return { status: 'unsupported', reason: 'unsupported-primary' }
+    paths.add(path)
+  }
+  for (const value of conflictValues) {
+    if (recordField(value, 'vaultId') !== vaultId
+      || recordField(value, 'documentId') !== documentId) continue
+    rows += 1
+    const path = readRawDocumentPath(value)
+    if (path === null) return { status: 'unsupported', reason: 'unsupported-conflict' }
+    paths.add(path)
+  }
+  if (rows === 0) return { status: 'none' }
+  if (paths.size > 1) return { status: 'unsupported', reason: 'split-conflict-paths' }
   return { status: 'path', path: [...paths][0]! }
 }
 
