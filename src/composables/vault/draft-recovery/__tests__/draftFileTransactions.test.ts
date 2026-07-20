@@ -3,7 +3,7 @@ import {
   createDraftStore,
   createMemoryDraftBackend,
 } from '../draftStore'
-import type { UnsavedDraft } from '../draftTypes'
+import type { DraftConflictRecord, UnsavedDraft } from '../draftTypes'
 import {
   createUnsavedDraftPersistence,
   type DraftBufferSnapshot,
@@ -863,6 +863,318 @@ describe('draft file transactions — post-CAS race regression', () => {
     // must be 'stale' (refresh Recovery) rather than 'missing'
     // (drop the identity silently).
     expect(result.status).toBe('stale')
+    await persistence.dispose()
+  })
+})
+
+// --- conflict handoff atomicity & conflict channel -------------------------
+//
+// These cover the round-3 findings: the conflict handoff must re-verify
+// entry ownership across its async save (an edit typed during the save is
+// a new candidate, not dropped), a failed handoff must report 'failed'
+// and keep the bytes visible, edits made after conflict mode is entered
+// must stay on the conflict channel (never overwrite the cross-context
+// primary), conflict records must follow renames, and a confirmed delete
+// must remove the conflict records frozen at confirmation time.
+
+describe('draft file transactions — conflict handoff & channel', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const identity = {
+    vaultId: 'vault',
+    documentId: 'doc-a',
+    documentPath: 'notes/a',
+  }
+
+  function remoteV3() {
+    return {
+      version: 1 as const,
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'remote-v3',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 110,
+    }
+  }
+
+  function gatedStore() {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    let releaseDelete!: () => void
+    const deleteGate = new Promise<void>((resolve) => { releaseDelete = resolve })
+    let deleteStarted = false
+    const originalDelete = backend.deleteIfUnchanged
+    backend.deleteIfUnchanged = vi.fn(async (expected) => {
+      deleteStarted = true
+      await deleteGate
+      return originalDelete.call(backend, expected)
+    })
+    return {
+      backend,
+      store,
+      releaseDelete: () => releaseDelete(),
+      waitDeleteStarted: () => vi.waitFor(() => expect(deleteStarted).toBe(true)),
+    }
+  }
+
+  function makePersistence(store: ReturnType<typeof createDraftStore>, targetWindow?: EventTarget) {
+    return createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      targetWindow: targetWindow as unknown as Pick<
+        Window,
+        'addEventListener' | 'removeEventListener'
+      > | undefined,
+    })
+  }
+
+  // Drive the entry to the stale + post-CAS-edit branch: persist local-v2,
+  // seed a newer cross-context remote-v3, confirm delete, then land local-v3
+  // while the CAS is in flight. Returns the in-flight commitDeletes promise
+  // wrapped in an object — returning the bare promise from an async helper
+  // would make `await enterConflictHandoff(...)` block until commitDeletes
+  // settles, deadlocking any test that gates the conflict save mid-flight.
+  async function enterConflictHandoff(
+    persistence: ReturnType<typeof makePersistence>,
+    store: ReturnType<typeof createDraftStore>,
+    backend: ReturnType<typeof createMemoryDraftBackend>,
+    gate: ReturnType<typeof gatedStore>,
+  ) {
+    persistence.schedule(snapshot('local-v2', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('local-v2')
+    await backend.seedRaw(remoteV3())
+    const confirmation = persistence.captureDeleteConfirmation(identity, 2)
+    const barrier = await persistence.prepareFileMutation([identity])
+    const deleting = barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+    await gate.waitDeleteStarted()
+    persistence.schedule(snapshot('local-v3', 'notes/a', 3))
+    gate.releaseDelete()
+    return { deleting }
+  }
+
+  it('persists an edit typed during the conflict save instead of dropping it', async () => {
+    const gate = gatedStore()
+    const { backend, store } = gate
+    // Gate only the FIRST conflict save so we can land local-v4 mid-save.
+    let conflictCalls = 0
+    let releaseConflict!: () => void
+    const conflictGate = new Promise<void>((resolve) => { releaseConflict = resolve })
+    const originalSaveConflict = store.saveConflictDraft.bind(store)
+    vi.spyOn(store, 'saveConflictDraft').mockImplementation(async (record) => {
+      conflictCalls += 1
+      if (conflictCalls === 1) await conflictGate
+      return originalSaveConflict(record)
+    })
+    const persistence = makePersistence(store)
+    const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
+    // First conflict save (local-v3) is now awaiting the gate.
+    await vi.waitFor(() => expect(conflictCalls).toBe(1))
+    persistence.schedule(snapshot('local-v4', 'notes/a', 4))
+    releaseConflict()
+    const [result] = await deleting
+
+    expect(result.status).toBe('conflict')
+    // Primary keeps the cross-context record.
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
+    // Both local edits survived as conflict candidates — the edit typed
+    // during the save was re-verified and persisted, not clobbered.
+    const contents = (await store.listConflictDrafts('vault'))
+      .map((conflict) => conflict.content)
+      .sort()
+    expect(contents).toEqual(['local-v3', 'local-v4'])
+    await persistence.dispose()
+  })
+
+  it('reports failed and keeps the content visible when the conflict save fails', async () => {
+    const gate = gatedStore()
+    const { backend, store } = gate
+    vi.spyOn(store, 'saveConflictDraft').mockResolvedValue({ status: 'failed' })
+    const persistence = makePersistence(store)
+    const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
+    const [result] = await deleting
+
+    // A failed handoff surfaces as 'failed' so the lifecycle keeps the
+    // tab open (the only surface still holding the bytes).
+    expect(result.status).toBe('failed')
+    // Primary untouched.
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
+    // No conflict record was written...
+    expect(await store.listConflictDrafts('vault')).toEqual([])
+    // ...but the local content is still held in memory, not dropped.
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([identity])
+    // Flushing must not overwrite the primary either (conflict channel).
+    await persistence.flush('vault', 'doc-a')
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([identity])
+    await persistence.dispose()
+  })
+
+  it('routes post-conflict edits to the conflict channel, never the primary', async () => {
+    const gate = gatedStore()
+    const { backend, store } = gate
+    const persistence = makePersistence(store)
+    const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
+    const [result] = await deleting
+    expect(result.status).toBe('conflict')
+
+    // The entry is now conflict-pinned. The user types again before the
+    // tab closes — this must NOT revert to a primary write.
+    persistence.schedule(snapshot('local-v4', 'notes/a', 4))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const stored = await store.getDraft('vault', 'doc-a')
+    expect(stored?.content).toBe('remote-v3')
+    expect(stored?.updatedAt).toBe(110)
+    const contents = (await store.listConflictDrafts('vault'))
+      .map((conflict) => conflict.content)
+      .sort()
+    expect(contents).toEqual(['local-v3', 'local-v4'])
+    await persistence.dispose()
+  })
+
+  it('keeps both candidates across pagehide and dispose', async () => {
+    const gate = gatedStore()
+    const { backend, store } = gate
+    const targetWindow = new EventTarget()
+    const persistence = makePersistence(store, targetWindow)
+    const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
+    await deleting
+
+    targetWindow.dispatchEvent(new Event('pagehide'))
+    await Promise.resolve()
+    await Promise.resolve()
+    await persistence.dispose()
+
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
+    expect((await store.listConflictDrafts('vault')).map((c) => c.content))
+      .toEqual(['local-v3'])
+  })
+
+  it('moves conflict record paths along with the primary draft on rename', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft({
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    const persistence = createUnsavedDraftPersistence({ store, targetWindow: undefined })
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [result] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+
+    expect(result.status).toBe('moved')
+    expect((await store.getDraft('vault', 'doc-a'))?.documentPath).toBe('archive/a')
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      conflictId: 'conflict-a',
+      documentPath: 'archive/a',
+      content: 'local orphan',
+      origin: 'delete-conflict',
+    })
+    await persistence.dispose()
+  })
+
+  it('removes the conflict records frozen at confirmation on a conflict-only delete', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    await store.saveConflictDraft({
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    const persistence = createUnsavedDraftPersistence({ store, targetWindow: undefined })
+    // No primary record, no in-memory snapshot: freeze the conflict id
+    // directly, as the UI does from its discovered recovery items.
+    const confirmation = persistence.captureDeleteConfirmation(identity, 0, null, ['conflict-a'])
+    expect(confirmation.expectedConflictIds).toEqual(['conflict-a'])
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+
+    expect(result.status).toBe('missing')
+    expect(await store.listConflictDrafts('vault')).toEqual([])
+    await persistence.dispose()
+  })
+
+  it('does not remove conflicts recorded after the confirmation was captured', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    const frozen: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-frozen',
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'frozen',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveConflictDraft(frozen)
+    const persistence = createUnsavedDraftPersistence({ store, targetWindow: undefined })
+    // Only 'conflict-frozen' is frozen. A later conflict appears in the
+    // store before the transaction commits but was never confirmed.
+    const confirmation = persistence.captureDeleteConfirmation(identity, 0, null, ['conflict-frozen'])
+    await store.saveConflictDraft({ ...frozen, conflictId: 'conflict-late', content: 'late', updatedAt: 32, recordedAt: 32 })
+    const barrier = await persistence.prepareFileMutation([identity])
+    await barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+
+    const remaining = (await store.listConflictDrafts('vault')).map((c) => c.conflictId)
+    expect(remaining).toEqual(['conflict-late'])
     await persistence.dispose()
   })
 })

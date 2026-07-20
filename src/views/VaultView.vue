@@ -285,26 +285,51 @@ const documentLifecycle = useDocumentLifecycle({
     ))
     const documentId = tab?.documentId ?? recovery?.draft.documentId
     if (!currentVaultId || !documentId) return null
+    // Freeze every conflict candidate currently discovered for this
+    // identity so a confirmed discard removes them from the conflict
+    // store too (otherwise they resurface on the next refresh).
+    const expectedConflictIds = draftRecovery.items.value
+      .filter((item) => (
+        item.source === 'conflict'
+        && item.conflict !== null
+        && item.draft.vaultId === currentVaultId
+        && item.draft.documentId === documentId
+      ))
+      .map((item) => item.conflict?.conflictId)
+      .filter((id): id is string => typeof id === 'string')
     return draftPersistence.captureDeleteConfirmation({
       vaultId: currentVaultId,
       documentId,
       documentPath: path,
-    }, tab?.revision ?? 0, recovery?.draft)
+    }, tab?.revision ?? 0, recovery?.draft, expectedConflictIds)
   },
   async findDraftsByPaths(paths) {
     const currentVaultId = vaultId.value
     if (!currentVaultId) return []
     const wanted = new Set(paths)
-    const drafts = await draftStore.listDrafts(currentVaultId)
+    const [drafts, conflicts] = await Promise.all([
+      draftStore.listDrafts(currentVaultId),
+      draftStore.listConflictDrafts(currentVaultId),
+    ])
     const identities = [
       ...draftPersistence.findTrackedIdentitiesByPaths(paths),
       ...drafts
-      .filter((draft) => wanted.has(draft.documentPath))
-      .map((draft) => ({
-        vaultId: draft.vaultId,
-        documentId: draft.documentId,
-        documentPath: draft.documentPath,
-      })),
+        .filter((draft) => wanted.has(draft.documentPath))
+        .map((draft) => ({
+          vaultId: draft.vaultId,
+          documentId: draft.documentId,
+          documentPath: draft.documentPath,
+        })),
+      // A document may have only conflict candidates (no primary record);
+      // scanning the conflict store lets rename/delete resolve its
+      // identity instead of silently ignoring it.
+      ...conflicts
+        .filter((conflict) => wanted.has(conflict.documentPath))
+        .map((conflict) => ({
+          vaultId: conflict.vaultId,
+          documentId: conflict.documentId,
+          documentPath: conflict.documentPath,
+        })),
     ]
     return [...new Map(identities.map((identity) => (
       [`${identity.vaultId}\0${identity.documentId}`, identity]
@@ -319,30 +344,37 @@ const documentLifecycle = useDocumentLifecycle({
     const currentVaultId = vaultId.value
     if (!currentVaultId) return
     for (const transaction of results) {
-      const existing = draftRecovery.items.value.find((candidate) => (
-        candidate.draft.vaultId === currentVaultId
-        && candidate.draft.documentId === transaction.documentId
-      ))
       if (transaction.status === 'deleted'
         || (transaction.status === 'missing' && transaction.newPath === undefined)) {
+        // The confirmed discard already removed the frozen conflict
+        // records from the store; drop every recovery item AND close
+        // every open tab for this identity. A document owns one primary
+        // item plus possibly several conflict items, each with its own
+        // tab — closing only the first item's tab would leave stale
+        // conflict tabs open.
         draftRecovery.removeIdentity(currentVaultId, transaction.documentId)
-        const recoveryId = existing?.recoveryId
-        if (!recoveryId) continue
         for (const tab of recoveryTabs.tabs.value.filter(
-          (candidate) => candidate.recoveryId === recoveryId,
+          (candidate) => candidate.documentId === transaction.documentId,
         )) recoveryTabs.close(tab.tabId)
         continue
       }
       await draftRecovery.refreshIdentity(currentVaultId, transaction.documentId)
-      const refreshed = draftRecovery.items.value.find((candidate) => (
-        candidate.draft.vaultId === currentVaultId
-        && candidate.draft.documentId === transaction.documentId
-      ))
-      const recoveryId = refreshed?.recoveryId ?? existing?.recoveryId
-      if (!recoveryId) continue
-      const open = recoveryTabs.tabs.value.find((tab) => tab.recoveryId === recoveryId)
-      if (refreshed?.status === 'ready' && open) recoveryTabs.open(refreshed, open.view)
-      if (!refreshed && open) recoveryTabs.close(open.tabId)
+      // Refresh every open tab for this identity, not just the first.
+      // After a move or re-classification a primary plus multiple
+      // conflict tabs may all show a stale path/body/classification.
+      for (const tab of recoveryTabs.tabs.value.filter(
+        (candidate) => candidate.documentId === transaction.documentId,
+      )) {
+        const view = tab.view
+        const refreshed = draftRecovery.items.value.find((candidate) => (
+          candidate.recoveryId === tab.recoveryId
+        ))
+        if (refreshed?.status === 'ready') {
+          recoveryTabs.open(refreshed, view)
+        } else if (!refreshed) {
+          recoveryTabs.close(tab.tabId)
+        }
+      }
     }
   },
 })

@@ -61,6 +61,7 @@ export interface UnsavedDraftPersistence {
     identity: DraftDocumentIdentity,
     revision: number,
     expectedDraft?: UnsavedDraft | null,
+    expectedConflictIds?: readonly string[],
   ): DraftDeleteConfirmation
   findTrackedIdentitiesByPaths(
     paths: readonly string[],
@@ -81,12 +82,29 @@ interface DraftEntry {
   persistedDraft: UnsavedDraft | null
   fileTransaction: symbol | null
   /** Set when the local snapshot has been promoted to a separate
-   *  conflict record (stale + post-CAS edit). `flushAll` and
-   *  `dispose` MUST skip this entry — otherwise `safeTimestamp()`
-   *  would mint a fresh `updatedAt` that overwrites the cross-
-   *  context record. */
+   *  conflict record (stale + post-CAS edit). While non-null the entry
+   *  is in "conflict channel" mode: new edits must persist as conflict
+   *  records, and `flush` / `flushAll` / `dispose` must never write the
+   *  primary record — otherwise `safeTimestamp()` would mint a fresh
+   *  `updatedAt` that overwrites the cross-context record. */
   pendingConflictId: string | null
+  /** The cross-context primary record's `updatedAt` captured when the
+   *  entry entered conflict channel mode. Reused by subsequent
+   *  conflict-channel writes so each candidate records the same
+   *  cross-context source it diverged from. */
+  conflictCrossContextUpdatedAt: number | null
 }
+
+/** Result of promoting a superseded local snapshot into the conflict
+ *  store during a delete transaction. `persisted` — the local content
+ *  now lives in the conflict store; `superseded` — newer edits kept
+ *  arriving and were persisted as later candidates; `failed` — the
+ *  conflict store rejected the write, so the content is still only
+ *  in-memory and the caller must keep it visible. */
+export type ConflictHandoffResult =
+  | { status: 'persisted'; conflictId: string }
+  | { status: 'superseded' }
+  | { status: 'failed' }
 
 interface CreateOptions {
   store?: DraftStore
@@ -123,6 +141,37 @@ export function createUnsavedDraftPersistence(
     return `delete-conflict:${documentId}:${generation}:${uuid}`
   }
 
+  /** Build a conflict record for a snapshot. Mints a timestamp strictly
+   *  newer than the cross-context source so recovery can sort candidates.
+   *  Shared by the delete-time handoff and the conflict-channel write
+   *  path so both produce identical record shapes. */
+  function buildConflictRecord(
+    snapshot: DraftBufferSnapshot,
+    entry: DraftEntry,
+    identity: DraftDocumentIdentity,
+    crossContextUpdatedAt: number | null,
+  ): DraftConflictRecord {
+    const localConflictId = conflictId(identity.documentId, entry.generation)
+    const recordedAt = Math.max(safeTimestamp(entry), (crossContextUpdatedAt ?? 0) + 1)
+    entry.previousUpdatedAt = recordedAt
+    if (entry.createdAt === null) entry.createdAt = recordedAt
+    return {
+      version: UNSAVED_DRAFT_VERSION,
+      conflictId: localConflictId,
+      vaultId: identity.vaultId,
+      documentId: identity.documentId,
+      documentPath: snapshot.documentPath,
+      content: snapshot.content,
+      baseContentHash: snapshot.baseContentHash,
+      baseModifiedAt: snapshot.baseModifiedAt,
+      createdAt: entry.createdAt,
+      updatedAt: recordedAt,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt,
+      recordedAt,
+    }
+  }
+
   function entryFor(vaultId: string, documentId: string): DraftEntry {
     const identity = key(vaultId, documentId)
     let entry = entries.get(identity)
@@ -138,6 +187,7 @@ export function createUnsavedDraftPersistence(
         persistedDraft: null,
         fileTransaction: null,
         pendingConflictId: null,
+        conflictCrossContextUpdatedAt: null,
       }
       entries.set(identity, entry)
     }
@@ -266,6 +316,56 @@ export function createUnsavedDraftPersistence(
     return task
   }
 
+  /** Persist the latest snapshot as a conflict record — never the primary
+   *  store. Used while an entry is in conflict channel mode: the primary
+   *  record is owned by a cross-context source and must not be touched,
+   *  but the user's continuing edits still need to be preserved. Each
+   *  quiet debounce period produces one new conflict candidate. */
+  function queueConflictWrite(
+    owner: DraftOwner,
+    snapshot: DraftBufferSnapshot,
+    allowDisposed = false,
+  ): Promise<boolean> {
+    const entry = entries.get(key(owner.vaultId, owner.documentId))
+    if (!entry || (!allowDisposed && disposed)) return Promise.resolve(false)
+    const previous = entry.pendingWrite
+    const task = (async () => {
+      if (previous) await previous.catch(() => false)
+      if ((!allowDisposed && disposed) || !current(owner, entry)) return false
+      if (entry.pendingConflictId === null) return false
+      if (entry.latestSnapshot?.revision !== snapshot.revision) return false
+      const record = buildConflictRecord(
+        snapshot,
+        entry,
+        {
+          vaultId: owner.vaultId,
+          documentId: owner.documentId,
+          documentPath: snapshot.documentPath,
+        },
+        entry.conflictCrossContextUpdatedAt,
+      )
+      try {
+        const result = await store.saveConflictDraft(record)
+        if (result.status === 'saved'
+          && current(owner, entry)
+          && entry.pendingConflictId !== null
+          && entry.latestSnapshot?.revision === snapshot.revision) {
+          entry.pendingConflictId = record.conflictId
+          entry.latestSnapshotNeedsWrite = false
+          return true
+        }
+        return false
+      } catch {
+        return false
+      }
+    })()
+    entry.pendingWrite = task
+    void task.finally(() => {
+      if (entry.pendingWrite === task) entry.pendingWrite = null
+    })
+    return task
+  }
+
   function schedule(snapshot: DraftBufferSnapshot): DraftOwner | null {
     if (disposed
       || snapshot.loaded === false
@@ -276,12 +376,14 @@ export function createUnsavedDraftPersistence(
     const captured = cloneSnapshot(snapshot)
     const entry = entryFor(captured.vaultId, captured.documentId)
     clearTimer(entry)
-    // A fresh schedule after a conflict-pinned entry means the user
-    // has typed new edits that supersede the orphaned conflict
-    // record. Clear `pendingConflictId` so `flushAll` / `dispose`
-    // start treating the entry as a normal draft again — the
-    // conflict record remains in IndexedDB as a parallel candidate.
-    entry.pendingConflictId = null
+    // While the entry is in conflict channel mode (a prior handoff
+    // promoted the local snapshot to a conflict record), a new edit must
+    // NOT revert to primary persistence: writing the primary store here
+    // would mint a fresh `safeTimestamp()` and overwrite the cross-
+    // context record that won the CAS. Keep the pin and route the
+    // debounced write to the conflict channel, preserving the new
+    // content as another conflict candidate.
+    const conflictChannel = entry.pendingConflictId !== null
     entry.generation += 1
     entry.latestSnapshot = captured
     entry.latestSnapshotNeedsWrite = true
@@ -293,7 +395,8 @@ export function createUnsavedDraftPersistence(
     if (!entry.fileTransaction) {
       entry.timer = setTimeout(() => {
         entry.timer = null
-        void queueWrite(owner, captured)
+        if (conflictChannel) void queueConflictWrite(owner, captured)
+        else void queueWrite(owner, captured)
       }, debounceMs)
     }
     return owner
@@ -307,10 +410,17 @@ export function createUnsavedDraftPersistence(
     const entry = entries.get(key(vaultId, documentId))
     if (!entry || (!allowDisposed && disposed)) return false
     if (entry.fileTransaction) return false
-    // Conflict-pinned entries must not be flushed back to the
-    // primary IndexedDB record. The conflict path already
-    // persisted the snapshot under a fresh conflictId.
-    if (entry.pendingConflictId !== null) return false
+    // Conflict-pinned entries must never be flushed back to the primary
+    // record. If a conflict-channel edit is still pending, persist it as
+    // a conflict record so pagehide/dispose doesn't drop it; otherwise
+    // (snapshot already promoted) there's nothing left to do.
+    if (entry.pendingConflictId !== null) {
+      clearTimer(entry)
+      const snapshot = entry.latestSnapshot
+      if (!snapshot || !entry.latestSnapshotNeedsWrite) return true
+      const owner = { vaultId, documentId, generation: entry.generation }
+      return queueConflictWrite(owner, cloneSnapshot(snapshot), allowDisposed)
+    }
     clearTimer(entry)
     const snapshot = entry.latestSnapshot
     if (!snapshot) return false
@@ -581,6 +691,10 @@ export function createUnsavedDraftPersistence(
         }
       }
       if (!writeLatest || !entry.latestSnapshot || !entry.latestSnapshotNeedsWrite) return
+      // A conflict-pinned entry must keep writing the conflict channel,
+      // never the primary record, even when released by a file
+      // transaction (e.g. a move finalized while in conflict mode).
+      const conflictChannel = entry.pendingConflictId !== null
       entry.generation += 1
       const owner = {
         vaultId: identity.vaultId,
@@ -589,11 +703,13 @@ export function createUnsavedDraftPersistence(
       }
       const captured = cloneSnapshot(entry.latestSnapshot)
       if (immediate) {
-        await queueWrite(owner, captured)
+        if (conflictChannel) await queueConflictWrite(owner, captured)
+        else await queueWrite(owner, captured)
       } else {
         entry.timer = setTimeout(() => {
           entry.timer = null
-          void queueWrite(owner, captured)
+          if (conflictChannel) void queueConflictWrite(owner, captured)
+          else void queueWrite(owner, captured)
         }, debounceMs)
       }
     }
@@ -614,74 +730,78 @@ export function createUnsavedDraftPersistence(
       entry: DraftEntry,
       outcome: string,
       crossContextUpdatedAt: number | null,
-    ): Promise<void> {
-      const snapshot = entry.latestSnapshot
+    ): Promise<ConflictHandoffResult> {
       const { identity } = state
-      // If the entry has no snapshot, there's nothing to preserve —
-      // release the file transaction lock and let the cross-context
-      // record stand alone.
+      let snapshot = entry.latestSnapshot
+      // No snapshot → nothing to preserve; the cross-context record
+      // stands alone.
       if (!snapshot) {
         await releaseEntry(state, identity.documentPath, false, true)
-        return
+        return { status: 'persisted', conflictId: '' }
       }
-      const localConflictId = conflictId(identity.documentId, entry.generation)
-      // safeTimestamp would have us mint a strictly-greater-than-
-      // previousUpdatedAt timestamp; conflict records live under a
-      // separate key, so the previousUpdatedAt constraint that
-      // protects the primary record doesn't apply. We just need a
-      // monotonically-increasing timestamp that's newer than the
-      // cross-context source so the recovery UI can sort candidates.
-      const recordedAt = Math.max(safeTimestamp(entry), (crossContextUpdatedAt ?? 0) + 1)
-      entry.previousUpdatedAt = recordedAt
-      if (entry.createdAt === null) entry.createdAt = recordedAt
-      const record: DraftConflictRecord = {
-        version: UNSAVED_DRAFT_VERSION,
-        conflictId: localConflictId,
-        vaultId: identity.vaultId,
-        documentId: identity.documentId,
-        documentPath: snapshot.documentPath,
-        content: snapshot.content,
-        baseContentHash: snapshot.baseContentHash,
-        baseModifiedAt: snapshot.baseModifiedAt,
-        createdAt: entry.createdAt,
-        updatedAt: recordedAt,
-        origin: 'delete-conflict',
-        crossContextUpdatedAt,
-        recordedAt,
-      }
-      try {
-        const result = await store.saveConflictDraft(record)
-        if (result.status !== 'saved') {
-          // Never let pagehide/dispose flush this local candidate
-          // over the cross-context primary record, even if the
-          // separate conflict store is unavailable.
-          entry.pendingConflictId = `failed:${localConflictId}`
-          clearTimer(entry)
-          console.warn(`[commitDeletes] Conflict record save failed for ${identity.documentPath} (${outcome}): ${result.status}`)
-          await releaseEntry(state, identity.documentPath, false, true)
-          return
+      let lastConflictId: string | null = null
+      // Loop: persist the current snapshot as a conflict record, then
+      // re-verify entry ownership across the async save. If a newer
+      // local edit landed during the await (schedule advances the
+      // generation/revision), persist that newer snapshot as the next
+      // candidate instead of clobbering it — this closes the
+      // "edit made during the conflict save is silently dropped" race.
+      while (snapshot) {
+        const capturedGeneration = entry.generation
+        const capturedRevision = snapshot.revision
+        const capturedRef = snapshot
+        const record = buildConflictRecord(snapshot, entry, identity, crossContextUpdatedAt)
+        let saved = false
+        try {
+          saved = (await store.saveConflictDraft(record)).status === 'saved'
+        } catch (error) {
+          console.warn(`[commitDeletes] Conflict record save threw for ${identity.documentPath} (${outcome}):`, error)
+          saved = false
         }
-      } catch (error) {
-        entry.pendingConflictId = `failed:${localConflictId}`
-        clearTimer(entry)
-        console.warn(`[commitDeletes] Conflict record save threw for ${identity.documentPath}:`, error)
-        await releaseEntry(state, identity.documentPath, false, true)
-        return
+        if (!saved) {
+          // Failure: keep the content in-memory and pin as failed so
+          // flush/flushAll/dispose never overwrite the primary record
+          // (and will retry the conflict write if the store recovers).
+          // Report 'failed' so the caller keeps the tab visible — it is
+          // the only surface still holding these bytes.
+          entry.pendingConflictId = `failed:${record.conflictId}`
+          entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+          clearTimer(entry)
+          console.warn(`[commitDeletes] Conflict record save failed for ${identity.documentPath} (${outcome})`)
+          await releaseEntry(state, identity.documentPath, false, true)
+          return { status: 'failed' }
+        }
+        lastConflictId = record.conflictId
+        const advanced = entry.generation !== capturedGeneration
+          || entry.latestSnapshot?.revision !== capturedRevision
+          || entry.latestSnapshot !== capturedRef
+        if (!advanced) {
+          // Stable: the saved record holds the latest content. Pin the
+          // entry and drop the in-memory snapshot (it now lives in the
+          // conflict store).
+          entry.pendingConflictId = record.conflictId
+          entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+          clearTimer(entry)
+          entry.latestSnapshot = null
+          entry.latestSnapshotNeedsWrite = false
+          await releaseEntry(state, identity.documentPath, false, true)
+          return { status: 'persisted', conflictId: record.conflictId }
+        }
+        // Superseded: a newer edit landed during the save. Persist it as
+        // the next conflict candidate, then re-check stability.
+        snapshot = entry.latestSnapshot
       }
-      // Mark the entry so flushAll/dispose skip it.
-      entry.pendingConflictId = localConflictId
+      // Every save was superseded and the entry was then invalidated
+      // mid-handoff (its snapshot went null). The last persisted
+      // candidate stands; keep the entry conflict-pinned so flush never
+      // writes primary, and report superseded.
+      entry.pendingConflictId = lastConflictId ?? 'superseded'
+      entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
       clearTimer(entry)
-      // Drop the in-memory snapshot — it now lives in IndexedDB under
-      // the conflictId. Holding it would risk another schedule()
-      // bumping the generation and re-running the CAS path against
-      // an already-conflicting state.
       entry.latestSnapshot = null
       entry.latestSnapshotNeedsWrite = false
-      // Release the file transaction. writeLatest=false because the
-      // snapshot has already been persisted as a conflict record;
-      // flushing it back to the primary would overwrite the cross-
-      // context source.
       await releaseEntry(state, identity.documentPath, false, true)
+      return { status: 'superseded' }
     }
 
     async function commitMoves(
@@ -715,6 +835,19 @@ export function createUnsavedDraftPersistence(
           mapping.toPath,
         )
         const status = outcome.status
+        // Conflict records share the documentId identity but live in a
+        // separate store that moveDraft never touches. Migrate every
+        // conflict candidate's documentPath so recovery classification
+        // reads the post-rename path instead of the stale pre-rename one
+        // (which would misclassify as missing-source / identity-mismatch).
+        // Runs even when the primary record is 'missing' (conflict-only
+        // documents) so their candidates aren't stranded on the old path.
+        await store.moveConflicts(
+          mapping.vaultId,
+          mapping.documentId,
+          mapping.documentId,
+          mapping.toPath,
+        )
         if (status === 'moved') {
           state.entry.persistedDraft = await store.getDraft(
             mapping.vaultId,
@@ -827,9 +960,12 @@ export function createUnsavedDraftPersistence(
         // Post-CAS ownership check: detect edits made during the
         // CAS await. `schedule()` advances `entry.generation` even
         // while a file transaction is held, so a strict generation
-        // check catches them.
+        // check catches them. Normalize the revision read to `null`
+        // (matching `preCasRevision`) so a snapshot-less entry — e.g.
+        // a conflict-only delete with no open editor — isn't falsely
+        // flagged as advanced (`undefined !== null`).
         const entryAdvancedDuringAwait = entry.generation !== preCasGeneration
-          || entry.latestSnapshot?.revision !== preCasRevision
+          || (entry.latestSnapshot?.revision ?? null) !== preCasRevision
           || entry.latestSnapshot !== preCasSnapshotRef
         if ((refinedStatus === 'deleted' || refinedStatus === 'missing')
           && !entryAdvancedDuringAwait) {
@@ -839,7 +975,23 @@ export function createUnsavedDraftPersistence(
           entry.latestSnapshot = null
           entry.latestSnapshotNeedsWrite = false
           entry.persistedDraft = null
+          entry.pendingConflictId = null
+          entry.conflictCrossContextUpdatedAt = null
           entry.fileTransaction = null
+          // The confirmed discard also removes the conflict candidates
+          // frozen at confirmation time. Without this the conflict-store
+          // rows survive and resurface on the next discovery even though
+          // the user confirmed deleting this identity. Conflicts recorded
+          // after confirmation were never frozen and intentionally remain.
+          if (confirmation) {
+            for (const conflictId of confirmation.expectedConflictIds) {
+              await store.deleteConflictDraft(
+                deletion.vaultId,
+                deletion.documentId,
+                conflictId,
+              )
+            }
+          }
           results.push({
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,
@@ -885,11 +1037,19 @@ export function createUnsavedDraftPersistence(
           } catch {
             crossContextUpdatedAt = null
           }
-          await persistLocalAsConflict(state, entry, refinedStatus, crossContextUpdatedAt)
+          const handoff = await persistLocalAsConflict(
+            state,
+            entry,
+            refinedStatus,
+            crossContextUpdatedAt,
+          )
           results.push({
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,
-            status: 'conflict',
+            // A failed handoff means the local content is still only
+            // in-memory; surface 'failed' so the lifecycle keeps the tab
+            // open instead of closing the only surface holding it.
+            status: handoff.status === 'failed' ? 'failed' : 'conflict',
           })
           continue
         }
@@ -941,6 +1101,7 @@ export function createUnsavedDraftPersistence(
     identity: DraftDocumentIdentity,
     revision: number,
     expectedDraft?: UnsavedDraft | null,
+    expectedConflictIds?: readonly string[],
   ): DraftDeleteConfirmation {
     const entry = entryFor(identity.vaultId, identity.documentId)
     const expected = entry.persistedDraft ?? (expectedDraft
@@ -958,6 +1119,10 @@ export function createUnsavedDraftPersistence(
       expectedSnapshot: entry.latestSnapshot
         ? cloneSnapshot(entry.latestSnapshot)
         : null,
+      // Freeze the conflict candidates present at confirmation time so a
+      // confirmed discard removes exactly these (and nothing recorded
+      // afterwards).
+      expectedConflictIds: [...(expectedConflictIds ?? [])],
     }
   }
 

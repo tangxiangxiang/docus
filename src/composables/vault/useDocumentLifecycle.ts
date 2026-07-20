@@ -451,6 +451,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         await draftBarrier?.rollback()
         throw error
       }
+      let draftHandoffFailed = false
       if (draftBarrier && before) {
         const confirmation = lifecycleOptions.draftConfirmations?.find(
           (candidate) => candidate.documentId === before.documentId
@@ -462,6 +463,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
           confirmation,
         }])
         await reportDraftResults(draftResults)
+        draftHandoffFailed = draftResults.some((result) => result.status === 'failed')
       } else if (draftBarrier) {
         const preserved = await draftBarrier.commitDeletes(unresolvedDrafts.map((draft) => ({
           ...draft,
@@ -475,8 +477,16 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
             status: 'identity-mismatch' as const,
           })),
         ])
+        draftHandoffFailed = preserved.some((result) => result.status === 'failed')
       }
-      options.removeOpenDocuments([path])
+      // If the draft handoff failed, the user's unsaved content lives
+      // only in the in-memory persistence entry. Keep the editor tab
+      // open — it is the only surface still holding those bytes, and
+      // closing it here would permanently lose content the conflict
+      // store was supposed to preserve.
+      if (!draftHandoffFailed) {
+        options.removeOpenDocuments([path])
+      }
       options.fileChanges.publish({ path, kind: 'delete', source: 'editor-lifecycle' })
       barrier.commit()
       await refreshBestEffort(`Delete ${path}`)

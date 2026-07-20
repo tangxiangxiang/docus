@@ -21,6 +21,11 @@ export interface DraftDeleteConfirmation extends DraftDocumentIdentity {
   ownerGeneration: number
   expectedDraft: UnsavedDraft | null
   expectedSnapshot: DraftBufferSnapshot | null
+  /** The conflict record ids present for this identity at the moment
+   *  the user confirmed the delete. A confirmed discard removes
+   *  exactly these — a conflict recorded after confirmation was never
+   *  part of the confirmed set and must survive. */
+  expectedConflictIds: string[]
 }
 
 export interface DraftDeleteRequest extends DraftDocumentIdentity {

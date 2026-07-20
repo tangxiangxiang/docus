@@ -24,7 +24,7 @@ type MoveResult = 'moved' | 'missing' | 'conflict' | 'unsupported'
 type DeleteResult = 'deleted' | 'missing' | 'unsupported'
 type ConditionalDeleteResult = DeleteResult | 'stale'
 type BackendOperation =
-  | 'save' | 'get' | 'list' | 'delete' | 'move' | 'clear'
+  | 'save' | 'get' | 'list' | 'delete' | 'move' | 'moveConflicts' | 'clear'
   | 'saveConflict' | 'listConflicts' | 'deleteConflict' | 'clearConflicts'
 
 export interface DraftStorageBackend {
@@ -39,6 +39,12 @@ export interface DraftStorageBackend {
     newDocumentId: string,
     newPath: string,
   ): Promise<MoveResult>
+  moveConflicts(
+    vaultId: string,
+    oldDocumentId: string,
+    newDocumentId: string,
+    newPath: string,
+  ): Promise<number>
   clear(vaultId: string): Promise<void>
   saveConflict(record: DraftConflictRecord): Promise<void>
   listConflicts(vaultId: string): Promise<unknown[]>
@@ -94,6 +100,12 @@ export interface DraftStore {
     newDocumentId: string,
     newPath: string,
   ): Promise<DraftMoveOutcome>
+  moveConflicts(
+    vaultId: string,
+    oldDocumentId: string,
+    newDocumentId: string,
+    newPath: string,
+  ): Promise<number>
   clearVaultDrafts(vaultId: string): Promise<boolean>
   saveConflictDraft(record: DraftConflictRecord): Promise<DraftConflictSaveOutcome>
   listConflictDrafts(vaultId: string): Promise<DraftConflictRecord[]>
@@ -101,7 +113,7 @@ export interface DraftStore {
     vaultId: string,
     documentId: string,
     conflictId: string,
-  ): Promise<'deleted' | 'missing'>
+  ): Promise<'deleted' | 'missing' | 'failed'>
   clearVaultConflictDrafts(vaultId: string): Promise<boolean>
 }
 
@@ -185,6 +197,24 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       }
     },
 
+    async moveConflicts(vaultId, oldDocumentId, newDocumentId, newPath) {
+      if (!isDraftIdentity(vaultId, oldDocumentId)
+        || !isDraftIdentity(vaultId, newDocumentId)
+        || newPath.trim().length === 0) {
+        return 0
+      }
+      try {
+        return await backend.moveConflicts(
+          vaultId,
+          oldDocumentId,
+          newDocumentId,
+          newPath,
+        )
+      } catch {
+        return 0
+      }
+    },
+
     async clearVaultDrafts(vaultId) {
       if (vaultId.trim().length === 0) return false
       try {
@@ -231,12 +261,16 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       if (vaultId.trim().length === 0
         || documentId.trim().length === 0
         || conflictId.trim().length === 0) {
-        return 'missing'
+        return 'failed'
       }
       try {
         return await backend.deleteConflict(vaultId, documentId, conflictId)
       } catch {
-        return 'missing'
+        // A store error is not the same as an absent record. Report
+        // 'failed' so callers only treat a genuine 'deleted'/'missing'
+        // as success — otherwise the record survives and silently
+        // resurfaces on the next discovery.
+        return 'failed'
       }
     },
 
@@ -336,6 +370,32 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       records.set(newKey, cloneDraft(decision.draft))
       if (oldKey !== newKey) records.delete(oldKey)
       return 'moved'
+    },
+
+    async moveConflicts(vaultId, oldDocumentId, newDocumentId, newPath) {
+      consumeFailure('moveConflicts')
+      let moved = 0
+      for (const value of [...conflictRecords.values()]) {
+        if (!isDraftConflictRecord(value)
+          || value.vaultId !== vaultId
+          || value.documentId !== oldDocumentId) continue
+        const updated: DraftConflictRecord = {
+          ...value,
+          documentId: newDocumentId,
+          documentPath: newPath,
+        }
+        if (oldDocumentId !== newDocumentId) {
+          conflictRecords.delete(
+            serializedConflictKey(vaultId, oldDocumentId, value.conflictId),
+          )
+        }
+        conflictRecords.set(
+          serializedConflictKey(vaultId, newDocumentId, value.conflictId),
+          cloneConflictRecord(updated),
+        )
+        moved += 1
+      }
+      return moved
     },
 
     async clear(vaultId) {
@@ -509,6 +569,36 @@ export function createIndexedDbDraftBackend(
       }
       await transactionDone(transaction)
       return decision.result
+    },
+
+    async moveConflicts(vaultId, oldDocumentId, newDocumentId, newPath) {
+      const db = await database()
+      const transaction = db.transaction(CONFLICT_STORE_NAME, 'readwrite')
+      const store = transaction.objectStore(CONFLICT_STORE_NAME)
+      const values = await request(
+        store.index(CONFLICT_VAULT_INDEX).getAll(vaultId),
+      )
+      let moved = 0
+      for (const value of values) {
+        if (!isDraftConflictRecord(value) || value.documentId !== oldDocumentId) {
+          continue
+        }
+        // Preserve conflictId, body, baseline, timestamps, and origin;
+        // only the identity/path follow the rename. Same-documentId
+        // renames keep the compound key and update in place.
+        const updated: DraftConflictRecord = {
+          ...value,
+          documentId: newDocumentId,
+          documentPath: newPath,
+        }
+        if (oldDocumentId !== newDocumentId) {
+          store.delete(idbConflictKey(vaultId, oldDocumentId, value.conflictId))
+        }
+        store.put(cloneConflictRecord(updated))
+        moved += 1
+      }
+      await transactionDone(transaction)
+      return moved
     },
 
     async clear(vaultId) {

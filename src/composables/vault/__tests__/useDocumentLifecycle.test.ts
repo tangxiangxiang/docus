@@ -565,6 +565,63 @@ describe('useDocumentLifecycle folder and delete operations', () => {
     })
   })
 
+  it('keeps the tab open when the draft handoff reports failed', async () => {
+    // A failed conflict handoff means the local bytes never reached the
+    // conflict store — the open editor tab is the only copy left. Closing
+    // it here would permanently lose content the recovery system was
+    // supposed to preserve, so the tab must survive the file delete.
+    vi.spyOn(api, 'deletePost').mockResolvedValue({ ok: true })
+    const warnings = vi.fn()
+    const h = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn(),
+        commitDeletes: vi.fn().mockResolvedValue([{
+          documentId: 'doc-a',
+          oldPath: 'inbox/a',
+          status: 'failed',
+        }]),
+        rollback: vi.fn(),
+      }),
+      warnDraftTransaction: warnings,
+    })
+
+    await h.lifecycle.deleteFile('inbox/a')
+    expect(h.tabs.value.map((item) => item.path)).toEqual(['inbox/a'])
+    expect(warnings).toHaveBeenCalledOnce()
+  })
+
+  it('still closes the tab when the draft handoff succeeds as a conflict', async () => {
+    // Contrast for the guard above: a 'conflict' result means the local
+    // bytes WERE preserved in the conflict store, so the tab no longer
+    // holds the only copy and should close with the deleted file.
+    vi.spyOn(api, 'deletePost').mockResolvedValue({ ok: true })
+    const h = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn(),
+        commitDeletes: vi.fn().mockResolvedValue([{
+          documentId: 'doc-a',
+          oldPath: 'inbox/a',
+          status: 'conflict',
+        }]),
+        rollback: vi.fn(),
+      }),
+      warnDraftTransaction: vi.fn(),
+    })
+
+    await h.lifecycle.deleteFile('inbox/a')
+    expect(h.tabs.value).toEqual([])
+  })
+
   it('closes only server-confirmed folder deletions', async () => {
     vi.spyOn(api, 'deleteFolder').mockResolvedValue({ deleted: ['folder/a', 'folder/sub/b'] })
     const h = setup([tab('folder/a'), tab('folder/sub/b'), tab('folderish/c')])

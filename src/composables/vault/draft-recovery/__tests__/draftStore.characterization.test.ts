@@ -324,5 +324,84 @@ describe('draftStore characterization', () => {
       unavailable.moveDraft('vault-a', 'a', 'x', 'notes/x'),
     ).resolves.toEqual({ status: 'failed' })
     await expect(unavailable.clearVaultDrafts('vault-a')).resolves.toBe(false)
+    await expect(unavailable.moveConflicts('vault-a', 'a', 'a', 'notes/x'))
+      .resolves.toBe(0)
+  })
+
+  it('migrates every conflict record path on rename, preserving identity and body', async () => {
+    const conflictA: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan A',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    const conflictB: DraftConflictRecord = {
+      ...conflictA,
+      conflictId: 'conflict-b',
+      content: 'local orphan B',
+      updatedAt: 32,
+      recordedAt: 32,
+    }
+    const otherDoc: DraftConflictRecord = {
+      ...conflictA,
+      conflictId: 'conflict-other',
+      documentId: 'b',
+      documentPath: 'notes/b',
+    }
+    await store.saveConflictDraft(conflictA)
+    await store.saveConflictDraft(conflictB)
+    await store.saveConflictDraft(otherDoc)
+
+    await expect(store.moveConflicts('vault-a', 'a', 'a', 'archive/a'))
+      .resolves.toBe(2)
+
+    const moved = await store.listConflictDrafts('vault-a')
+    const movedA = moved.find((value) => value.conflictId === 'conflict-a')
+    const movedB = moved.find((value) => value.conflictId === 'conflict-b')
+    const untouched = moved.find((value) => value.conflictId === 'conflict-other')
+    // Path follows the rename; conflictId, body, baseline, timestamps,
+    // and origin are all preserved.
+    expect(movedA).toEqual({ ...conflictA, documentPath: 'archive/a' })
+    expect(movedB).toEqual({ ...conflictB, documentPath: 'archive/a' })
+    expect(untouched).toEqual(otherDoc)
+  })
+
+  it('reports a conflict delete store error as failed, not missing', async () => {
+    const conflict: DraftConflictRecord = {
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await store.saveConflictDraft(conflict)
+
+    backend.failNext('deleteConflict')
+    // A store error must surface as 'failed' so callers don't treat it
+    // as a successful (missing) delete and drop the still-present record.
+    await expect(store.deleteConflictDraft('vault-a', 'a', 'conflict-a'))
+      .resolves.toBe('failed')
+    expect(await store.listConflictDrafts('vault-a')).toEqual([conflict])
+
+    await expect(store.deleteConflictDraft('vault-a', 'a', 'conflict-a'))
+      .resolves.toBe('deleted')
+    expect(await store.listConflictDrafts('vault-a')).toEqual([])
   })
 })
