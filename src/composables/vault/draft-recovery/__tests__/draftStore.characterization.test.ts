@@ -815,11 +815,12 @@ describe('draftStore characterization', () => {
   })
 
   it('returns path-mismatch on a first primary save when a same-identity conflict already exists at a different path', async () => {
-    // Pre-existing conflict candidate with no primary record — a plain
-    // first primary write at a different path is still not allowed to
-    // migrate the family. The caller would have to either persist the
-    // content as a candidate (matching the existing conflict's path)
-    // or obtain an explicit moveFamily() mapping.
+    // Pre-existing conflict candidate with no primary record — the
+    // same-identity candidates still form a family with an
+    // authoritative path, so a plain first primary write at a
+    // different path is refused exactly like a cross-path overwrite
+    // (a "fresh write" here would create the primary at the stale
+    // path while the candidates stay behind — splitting the family).
     await backend.seedRawConflict({
       version: 1,
       conflictId: 'conflict-orphan',
@@ -837,13 +838,118 @@ describe('draftStore characterization', () => {
     })
 
     const outcome = await store.saveDraft(draft('a', 20, { documentPath: 'archive/a' }))
-    // The memory backend's path-mismatch requires an existing primary
-    // record; with no primary, the save is treated as a fresh write
-    // and succeeds without migrating. Either behavior is acceptable
-    // here — the only invariant the test pins is that a subsequent
-    // moveDraftFamily() with explicit path authority is the only way
-    // to migrate an existing family.
-    expect(['saved', 'path-mismatch']).toContain(outcome.status)
+    expect(outcome.status).toBe('path-mismatch')
+    if (outcome.status === 'path-mismatch') {
+      // Conflict-only family: the anchor is the newest candidate
+      // (there is no primary record to re-read) — it carries the
+      // family path and the cross-context source's updatedAt.
+      expect(outcome.current).toMatchObject({
+        conflictId: 'conflict-orphan',
+        documentPath: 'notes/a',
+        content: 'orphan before primary',
+        updatedAt: 31,
+      })
+    }
+    // No primary was created at the diverging path; the candidate is
+    // untouched.
+    expect(await store.getDraft('vault-a', 'a')).toBeNull()
+    expect(await store.listConflictDrafts('vault-a')).toEqual([
+      expect.objectContaining({ conflictId: 'conflict-orphan', documentPath: 'notes/a' }),
+    ])
+  })
+
+  it('accepts a conflict-only family save at the candidates\' shared path', async () => {
+    await backend.seedRawConflict({
+      version: 1,
+      conflictId: 'conflict-orphan',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'orphan before primary',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+
+    // Same path as the family: the first write unites the family
+    // instead of splitting it.
+    const outcome = await store.saveDraft(draft('a', 20))
+    expect(outcome.status).toBe('saved')
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'content:a:20',
+    })
+    expect(await store.listConflictDrafts('vault-a')).toEqual([
+      expect.objectContaining({ conflictId: 'conflict-orphan' }),
+    ])
+  })
+
+  it('blocks a primary save when conflict-only candidates disagree on the path', async () => {
+    const seed = {
+      version: 1,
+      conflictId: 'conflict-one',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'orphan one',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict' as const,
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+    await backend.seedRawConflict(seed)
+    await backend.seedRawConflict({
+      ...seed,
+      conflictId: 'conflict-two',
+      documentPath: 'archive/a',
+      content: 'orphan two',
+    })
+
+    // Split candidate paths leave the family indeterminate — the save
+    // fails closed instead of guessing which side to create the
+    // primary on.
+    const notesSide = await store.saveDraft(draft('a', 20))
+    expect(notesSide.status).toBe('unsupported')
+    const archiveSide = await store.saveDraft(draft('a', 20, { documentPath: 'archive/a' }))
+    expect(archiveSide.status).toBe('unsupported')
+    expect(await store.getDraft('vault-a', 'a')).toBeNull()
+    expect(await store.listConflictDrafts('vault-a')).toHaveLength(2)
+  })
+
+  it('blocks a primary save when a same-identity conflict row is unsupported', async () => {
+    await store.saveDraft(draft('a', 10))
+    await backend.seedRawConflict({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'future row',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+
+    // The future-version row blocks the WHOLE primary save — a plain
+    // overwrite would update the primary while the unreadable row
+    // survives in the conflict store, invisible to Recovery.
+    const outcome = await store.saveDraft(draft('a', 20))
+    expect(outcome.status).toBe('unsupported')
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      content: 'content:a:10',
+      updatedAt: 10,
+    })
   })
 
   it('accepts a same-path primary save without touching same-identity conflicts', async () => {

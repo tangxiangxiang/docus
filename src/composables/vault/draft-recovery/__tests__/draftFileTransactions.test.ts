@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createDraftStore,
   createMemoryDraftBackend,
+  type DraftStore,
 } from '../draftStore'
 import type { DraftConflictRecord, UnsavedDraft } from '../draftTypes'
 import {
@@ -3255,6 +3256,207 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const staleEdit = conflicts.find((c) => c.content === 'stale-tab-edit')!
     expect(staleEdit.documentPath).toBe('archive/a')
     expect(staleEdit.origin).toBe('delete-conflict')
+    await persistence.dispose()
+  })
+
+  it('primary at B → stale tab at A edits twice → every candidate remains at B', async () => {
+    // The conflict channel must be pinned to the family's authoritative
+    // path: the FIRST stale edit lands at B via the path-mismatch
+    // handoff, and the SECOND — routed through the conflict channel by
+    // the timer — must follow it instead of falling back to the stale
+    // tab path the editor still reports (which would re-split the
+    // family the channel exists to keep whole).
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    // Primary updatedAt BELOW the persistence clock (now()=100) so the
+    // stale edits take the genuine path-mismatch route (a
+    // higher-updatedAt save refused on path), not the same-timestamp
+    // conflict route.
+    await store.saveDraft(draft('primary', 'archive/a', 50))
+    const persistence = makePersistence(store)
+    persistence.schedule(snapshot('stale-edit-1', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    persistence.schedule(snapshot('stale-edit-2', 'notes/a', 3))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The primary is untouched at the family's actual path.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'primary',
+    })
+    // BOTH stale edits persisted as candidates at the family path —
+    // never at the stale tab path.
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(2)
+    for (const candidate of conflicts) {
+      expect(candidate.documentPath).toBe('archive/a')
+    }
+    expect(conflicts.map((c) => c.content).sort())
+      .toEqual(['stale-edit-1', 'stale-edit-2'])
+    await persistence.dispose()
+  })
+
+  it('primary missing + conflicts at B → stale tab at A edit → candidate at B, no primary created', async () => {
+    // A conflict-only document is still a family: its candidates'
+    // shared path is authoritative, so a stale tab's edit must NOT
+    // create a primary at the stale path (splitting the family) — it
+    // becomes a candidate at the family path instead.
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    await store.saveConflictDraft(conflictRecord('orphan-1', 'doc-a', 'archive/a', 'orphan at B'))
+    const persistence = makePersistence(store)
+    persistence.schedule(snapshot('stale-edit', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // No primary was created at the stale path.
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(2)
+    const staleEdit = conflicts.find((c) => c.content === 'stale-edit')!
+    expect(staleEdit.documentPath).toBe('archive/a')
+    // The candidate records its divergence from the newest family
+    // member (the conflict-only anchor's updatedAt).
+    expect(staleEdit.crossContextUpdatedAt).toBe(31)
+    await persistence.dispose()
+  })
+
+  // Gates writePrimary's final readback: the first store.getDraft()
+  // call blocks until releaseReadback(), so a test can land a newer
+  // edit inside the readback window. readbackStarted resolves once the
+  // gate is engaged (pure microtask waiting — safe under fake timers).
+  function gatedReadback(store: DraftStore) {
+    const originalGetDraft = store.getDraft.bind(store)
+    let releaseReadback!: () => void
+    const readbackGate = new Promise<void>((resolve) => { releaseReadback = resolve })
+    let notifyStarted!: () => void
+    const readbackStarted = new Promise<void>((resolve) => { notifyStarted = resolve })
+    let gated = false
+    vi.spyOn(store, 'getDraft').mockImplementation(async (vaultId, documentId) => {
+      if (!gated) {
+        gated = true
+        notifyStarted()
+        await readbackGate
+      }
+      return originalGetDraft(vaultId, documentId)
+    })
+    return {
+      waitReadbackStarted: () => readbackStarted,
+      releaseReadback: () => releaseReadback(),
+    }
+  }
+
+  it('keeps latestSnapshotNeedsWrite set after readback supersession', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    const gate = gatedReadback(store)
+    persistence.schedule(snapshot('local-v2', 'notes/a', 2))
+    // Fire the debounce: writePrimary saves revision 2, then blocks on
+    // the gated final readback.
+    await vi.advanceTimersByTimeAsync(800)
+    await gate.waitReadbackStarted()
+    // A newer edit lands inside the readback window. The readback will
+    // still return the just-written revision 2 (equal to the attempted
+    // draft) — clearing the write flag on that stale match would leave
+    // revision 3 displayed in the editor while every flush path
+    // believes it is already persisted.
+    persistence.schedule(snapshot('local-v3', 'notes/a', 3))
+    gate.releaseReadback()
+    // Let revision 2's write settle completely BEFORE flushing: the
+    // bug is observable only once the stale readback match has
+    // (wrongly) cleared the superseding edit's write flag. Flushing
+    // earlier would chain a write behind the in-flight task and mask
+    // the flag. advanceTimersByTimeAsync(0) drains microtasks without
+    // firing revision 3's 800ms debounce.
+    await vi.advanceTimersByTimeAsync(0)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // flush must still see revision 3 as pending and persist it.
+    const flushed = await persistence.flush('vault', 'doc-a')
+    expect(flushed).toBe(true)
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('local-v3')
+    await persistence.dispose()
+  })
+
+  it('flushes the newer edit on pagehide after readback supersession', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const targetWindow = new EventTarget()
+    const persistence = makePersistence(store, targetWindow)
+    const gate = gatedReadback(store)
+    persistence.schedule(snapshot('local-v2', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await gate.waitReadbackStarted()
+    persistence.schedule(snapshot('local-v3', 'notes/a', 3))
+    gate.releaseReadback()
+    // Let revision 2's write settle completely first (see the flush
+    // variant for the rationale): the stale readback match must have
+    // done its (wrong) flag clear before pagehide observes the entry.
+    await vi.advanceTimersByTimeAsync(0)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // pagehide fires before the newer edit's debounce elapses. Its
+    // flush queues the write synchronously; the explicit flush chains
+    // on the same pending write and awaits it to completion (under
+    // the old bug both saw the cleared flag and queued nothing).
+    targetWindow.dispatchEvent(new Event('pagehide'))
+    await persistence.flush('vault', 'doc-a')
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('local-v3')
+    await persistence.dispose()
+  })
+
+  it('fails closed when an edit lands during the final readback of a close seal write', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    const barrier = await persistence.prepareFileMutation([identity])
+    // Install the gate AFTER prepareFileMutation (its confirmedDraft
+    // read would otherwise engage the gate first).
+    const gate = gatedReadback(store)
+    // Release the entry without writing anything (no snapshot yet) so
+    // the close seal can pick it up — the seal skips identities still
+    // holding the barrier token.
+    const [preserve] = await barrier.commitDeletes([{ ...identity, policy: 'preserve' }])
+    expect(preserve.status).toBe('preserved')
+    persistence.schedule(snapshot('local-v2', 'notes/a', 2))
+    // The seal's phase-2 write saves revision 2, then blocks on the
+    // gated final readback.
+    const sealing = barrier.finalizeBeforeDocumentClose()
+    await gate.waitReadbackStarted()
+    // An edit typed during the seal's readback window: schedule()
+    // advances the generation and snapshot but arms no timer (the
+    // close seal holds the fileTransaction token).
+    persistence.schedule(snapshot('local-v3', 'notes/a', 3))
+    gate.releaseReadback()
+    const results = await sealing
+
+    // The seal fails closed — the tab stays open …
+    expect(results).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      status: 'failed',
+    }])
+    // … and because the stale readback did NOT clear the superseding
+    // edit's write flag, the seal's re-arm persists revision 3 in the
+    // background (the old bug cleared it, so the re-arm never fired
+    // and revision 3 existed only in coordinator memory while every
+    // flush path believed it was durable).
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('local-v3')
     await persistence.dispose()
   })
 })

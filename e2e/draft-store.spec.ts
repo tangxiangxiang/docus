@@ -345,7 +345,7 @@ test('does not rewrite unsupported records in IndexedDB', async ({ page }) => {
     }
   }, DATABASE_NAME)
 
-  expect(result.saved).toBe(false)
+  expect(result.saved).toEqual({ status: 'unsupported' })
   expect(result.moved).toEqual({ status: 'unsupported' })
   expect(result.deleted).toEqual({ status: 'unsupported' })
   expect(result.cleared).toBe(true)
@@ -456,6 +456,165 @@ test('keeps the family intact when any row is unsupported in IndexedDB', async (
   // An unsupported primary likewise keeps its valid conflict with it.
   expect(result.futurePrimaryBlocks).toEqual({ status: 'unsupported', movedConflicts: 0 })
   expect(result.conflictPathsAfterPrimaryBlocked).toEqual(['notes/doc'])
+})
+
+test('blocks a primary save in IndexedDB when a same-identity conflict row is unsupported', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const store = createDraftStore()
+    const makeDraft = (content: string, updatedAt: number) => ({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content,
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt,
+    })
+    await store.saveDraft(makeDraft('primary v1', 20))
+
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    // Seed a future-version conflict row for the SAME identity behind
+    // the store's validation.
+    const seed = database.transaction('draftConflicts', 'readwrite')
+    seed.objectStore('draftConflicts').put({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'future data',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    await new Promise<void>((resolve, reject) => {
+      seed.oncomplete = () => resolve()
+      seed.onerror = () => reject(seed.error)
+      seed.onabort = () => reject(seed.error)
+    })
+
+    // The plain primary save must be blocked while the unreadable
+    // conflict row survives for the same identity — otherwise the
+    // primary would be updated while the row stays invisible to
+    // Recovery.
+    const blocked = await store.saveDraft(makeDraft('primary v2', 40))
+    const primaryAfterBlocked = await store.getDraft('vault-a', 'doc')
+
+    // Remove the invalid row; the identical save then succeeds.
+    const cleanup = database.transaction('draftConflicts', 'readwrite')
+    cleanup.objectStore('draftConflicts').delete(['vault-a', 'doc', 'conflict-future'])
+    await new Promise<void>((resolve, reject) => {
+      cleanup.oncomplete = () => resolve()
+      cleanup.onerror = () => reject(cleanup.error)
+      cleanup.onabort = () => reject(cleanup.error)
+    })
+    database.close()
+    const retry = await store.saveDraft(makeDraft('primary v2', 40))
+
+    return {
+      blocked,
+      primaryAfterBlocked,
+      retry,
+      primaryAfterRetry: await store.getDraft('vault-a', 'doc'),
+    }
+  }, DATABASE_NAME)
+
+  expect(result.blocked).toEqual({ status: 'unsupported' })
+  // The primary record is byte-identical — never overwritten.
+  expect(result.primaryAfterBlocked).toMatchObject({
+    content: 'primary v1',
+    updatedAt: 20,
+  })
+  expect(result.retry.status).toBe('saved')
+  expect(result.primaryAfterRetry).toMatchObject({ content: 'primary v2' })
+})
+
+test('refuses a diverging first primary save for a conflict-only family in IndexedDB', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const store = createDraftStore()
+    const makeDraft = (documentPath: string, updatedAt: number) => ({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath,
+      content: `primary at ${documentPath}`,
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt,
+    })
+    // Conflict-only family at archive/doc — no primary record.
+    await store.saveConflictDraft({
+      version: 1 as const,
+      conflictId: 'conflict-orphan',
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'orphan at archive',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict' as const,
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+
+    // A first write at a DIVERGING path must not create the primary
+    // there (that would split the family); the outcome anchors on the
+    // newest candidate so the caller can pin its content to the
+    // family path.
+    const mismatch = await store.saveDraft(makeDraft('notes/doc', 40))
+    const primaryAfterMismatch = await store.getDraft('vault-a', 'doc')
+
+    // A first write at the family's path unites the family.
+    const unite = await store.saveDraft(makeDraft('archive/doc', 40))
+    const primaryAfterUnite = await store.getDraft('vault-a', 'doc')
+    const conflicts = await store.listConflictDrafts('vault-a')
+
+    return {
+      mismatch,
+      primaryAfterMismatch,
+      uniteStatus: unite.status,
+      primaryAfterUnite,
+      conflictPaths: conflicts.map((c) => c.documentPath),
+    }
+  })
+
+  expect(result.mismatch.status).toBe('path-mismatch')
+  if (result.mismatch.status === 'path-mismatch') {
+    expect(result.mismatch.current).toMatchObject({
+      conflictId: 'conflict-orphan',
+      documentPath: 'archive/doc',
+    })
+  }
+  expect(result.primaryAfterMismatch).toBeNull()
+  expect(result.uniteStatus).toBe('saved')
+  expect(result.primaryAfterUnite).toMatchObject({
+    documentPath: 'archive/doc',
+    content: 'primary at archive/doc',
+  })
+  expect(result.conflictPaths).toEqual(['archive/doc'])
 })
 
 test('reports unsupported from the strict conflict read on an unreadable identity row', async ({
@@ -653,7 +812,7 @@ test('fails safely when opening the production database fails', async ({
   }, DATABASE_NAME)
 
   expect(result).toEqual({
-    saved: false,
+    saved: { status: 'failed' },
     listed: [],
     moved: { status: 'failed' },
   })

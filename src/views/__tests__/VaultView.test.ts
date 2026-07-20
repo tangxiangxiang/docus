@@ -206,4 +206,18 @@ describe('VaultView editor tab wiring', () => {
     expect(shortcut).toContain('const direction = event.shiftKey ? -1 : 1')
     expect(shortcut).toContain('void selectWorkspaceTab(nextTab.id)')
   })
+
+  it('warns when a family move settles without persisting the latest edit', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const handler = source.match(
+      /onDraftFamilyMoveSettled: \(settlement\) => \{[\s\S]*?\n  \},/,
+    )?.[0]
+
+    expect(handler).toBeDefined()
+    expect(handler).toContain("settlement.status === 'moved-write-failed'")
+    expect(handler).toContain("toast.info(t('draft_recovery.family_settle_persist_warning'), 6000)")
+    // The refresh still runs — the warning is additive, the tab
+    // and pending state stay intact for the retry.
+    expect(handler).toContain('void refreshRecoveryAfterFamilySettle(settlement)')
+  })
 })

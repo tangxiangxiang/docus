@@ -476,6 +476,7 @@ const STRINGS: Strings = {
   'file_tree.delete_folder_confirm_drafts': { zh: '删除文件夹“{name}”及其中 {count} 项？范围内文件的本地未保存恢复内容也会被丢弃。', en: 'Delete folder “{name}” and its {count} items? Local unsaved recovery content for files in this folder will also be discarded.' },
   'file_tree.delete_file_confirm_drafts': { zh: '删除“{name}”？如果存在本地未保存的恢复内容，也会被丢弃。', en: 'Delete “{name}”? Any local unsaved recovery content will also be discarded.' },
   'draft_recovery.file_transaction_warning': { zh: '文件操作已完成，但 {count} 份本地恢复草稿未能迁移。草稿仍保存在此浏览器中。', en: 'The file operation completed, but {count} local recovery drafts could not be migrated. They remain stored in this browser.' },
+  'draft_recovery.family_settle_persist_warning': { zh: '文件已移到新路径，但最新编辑尚未写入本地恢复草稿。请保持标签页打开，系统将自动重试保存。', en: 'The file moved to its new path, but the latest edit has not been persisted to the local recovery draft yet. Keep the tab open — the save will retry automatically.' },
   'file_tree.create_file_prompt': { zh: '在 {folder} 中新建文件', en: 'Create file in {folder}' },
   'file_tree.create_folder_prompt': { zh: '在 {folder} 中新建文件夹', en: 'Create folder in {folder}' },
   'file_tree.protected_rename': { zh: '{path} 是固定目录，不能重命名', en: '{path} is a fixed directory and cannot be renamed' },

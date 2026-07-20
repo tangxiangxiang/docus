@@ -208,6 +208,15 @@ async function refreshRecoveryAfterFamilySettle(settlement: {
 const draftPersistence = createUnsavedDraftPersistence({
   store: draftStore,
   onDraftFamilyMoveSettled: (settlement) => {
+    if (settlement.status === 'moved-write-failed') {
+      // The family is whole at the new path but the latest edit's
+      // primary write was rejected — the newest content is still only
+      // in memory. The tab stays open and the write keeps retrying;
+      // warn so the user knows a crash or refresh right now could
+      // lose the latest edit (the refresh below alone would only
+      // silently follow the family).
+      toast.info(t('draft_recovery.family_settle_persist_warning'), 6000)
+    }
     void refreshRecoveryAfterFamilySettle(settlement)
   },
 })

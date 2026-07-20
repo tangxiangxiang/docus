@@ -94,6 +94,20 @@ interface DraftEntry {
    *  conflict-channel writes so each candidate records the same
    *  cross-context source it diverged from. */
   conflictCrossContextUpdatedAt: number | null
+  /** The family's authoritative path captured when the entry entered
+   *  conflict channel mode (the cross-context source's path, or the
+   *  delete transaction's identity path). EVERY subsequent
+   *  conflict-channel write must persist its candidate at THIS path,
+   *  never the editor snapshot's path: a stale Tab keeps reporting the
+   *  old path on every keystroke, and candidates recorded there would
+   *  split the family the channel exists to keep whole (the first
+   *  handoff candidate lands on the family path, but without the pin
+   *  the second edit — routed through the conflict channel by the
+   *  timer — would fall back to the snapshot's stale path). `null`
+   *  only when the channel was pinned without family-path knowledge
+   *  (an `unsupported` handoff): writes fall back to the snapshot
+   *  path. Cleared when the channel is lifted by a confirmed delete. */
+  conflictDocumentPath: string | null
   /** Set whenever the draft family and the server/tab path diverge:
    *  a family move that came back INCOMPLETE during commitMoves while
    *  the server rename itself succeeded — `failed` (rolled back),
@@ -272,6 +286,7 @@ export function createUnsavedDraftPersistence(
         fileTransaction: null,
         pendingConflictId: null,
         conflictCrossContextUpdatedAt: null,
+        conflictDocumentPath: null,
         pendingFamilyMove: null,
       }
       entries.set(identity, entry)
@@ -515,6 +530,11 @@ export function createUnsavedDraftPersistence(
         candidateSaved = false
       }
       entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+      // Pin the conflict channel to the family's authoritative path so
+      // every subsequent conflict-channel write lands there too (see
+      // conflictDocumentPath) — a stale Tab keeps reporting its old
+      // path on every edit.
+      entry.conflictDocumentPath = outcome.current.documentPath
       if (!candidateSaved) {
         entry.pendingConflictId = `failed:${record.conflictId}`
         return false
@@ -571,12 +591,19 @@ export function createUnsavedDraftPersistence(
         candidateSaved = false
       }
       entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+      // Pin the conflict channel to the family's authoritative path so
+      // every subsequent conflict-channel write lands there too (see
+      // conflictDocumentPath) — a stale Tab keeps reporting its old
+      // path on every edit.
+      entry.conflictDocumentPath = outcome.current.documentPath
       if (!candidateSaved) {
         entry.pendingConflictId = `failed:${record.conflictId}`
         return false
       }
       entry.pendingConflictId = record.conflictId
-      entry.persistedDraft = outcome.current
+      // A conflict-only family has no primary record to CAS against:
+      // the anchor is then a conflict candidate, not a persistedDraft.
+      entry.persistedDraft = isUnsavedDraft(outcome.current) ? outcome.current : null
       if (current(owner, entry)
         && entry.latestSnapshot === capturedSnapshot
         && entry.latestSnapshot.revision === capturedRevision) {
@@ -611,6 +638,26 @@ export function createUnsavedDraftPersistence(
     }
     if (stored
       && draftsEqual(stored, { ...draft, createdAt: stored.createdAt })) {
+      // The attempted revision is durable. Re-verify ownership AFTER
+      // the readback resolves: an edit landing DURING the readback
+      // await supersedes this revision and owns its own persistence.
+      // Clearing the write flag here would leave the newer revision
+      // displayed in the editor while flush / pagehide / dispose AND
+      // the close seal's re-arm all believe it is already persisted —
+      // the exact bytes-only-in-memory state the seal exists to
+      // prevent. Fail closed instead: record the store truth (the
+      // attempted revision really is the primary record now, so a
+      // later confirmed-delete CAS targets the right row) and return
+      // false without touching the newer revision's flag. NEVER
+      // promote this revision to a conflict candidate here — it
+      // already lives in the primary store; a duplicate candidate
+      // would surface in Recovery as a false orphan.
+      if ((!allowDisposed && disposed) || !current(owner, entry)
+        || entry.latestSnapshot !== capturedSnapshot
+        || entry.latestSnapshot.revision !== capturedRevision) {
+        entry.persistedDraft = stored
+        return false
+      }
       entry.latestSnapshotNeedsWrite = false
       entry.persistedDraft = stored
       return true
@@ -652,6 +699,11 @@ export function createUnsavedDraftPersistence(
       candidateSaved = false
     }
     entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+    // Pin the conflict channel to the family's authoritative path
+    // (whatever the store now holds — mirrored above in the candidate
+    // record's `documentPath`) so every subsequent conflict-channel
+    // write lands on the same path.
+    entry.conflictDocumentPath = stored?.documentPath ?? snapshot.documentPath
     if (!candidateSaved) {
       // Pin as failed so flush / close-seal retries stay on the
       // conflict channel instead of falling back to a primary write
@@ -714,7 +766,13 @@ export function createUnsavedDraftPersistence(
       {
         vaultId: owner.vaultId,
         documentId: owner.documentId,
-        documentPath: snapshot.documentPath,
+        // The conflict channel is pinned to the family's authoritative
+        // path captured when the channel opened (see
+        // conflictDocumentPath): every candidate must land there,
+        // never on the stale path the editor snapshot still reports.
+        // The fallback covers channels pinned without path knowledge
+        // (an `unsupported` handoff).
+        documentPath: entry.conflictDocumentPath ?? snapshot.documentPath,
       },
       entry.conflictCrossContextUpdatedAt,
     )
@@ -1400,6 +1458,7 @@ export function createUnsavedDraftPersistence(
           // surface still holding these bytes.
           entry.pendingConflictId = `failed:${record.conflictId}`
           entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+          entry.conflictDocumentPath = identity.documentPath
           clearTimer(entry)
           console.warn(`[commitDeletes] Conflict record save failed for ${identity.documentPath} (${outcome})`)
           await releaseEntry(state, identity.documentPath, true)
@@ -1414,6 +1473,7 @@ export function createUnsavedDraftPersistence(
           // conflict store).
           entry.pendingConflictId = record.conflictId
           entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+          entry.conflictDocumentPath = identity.documentPath
           clearTimer(entry)
           entry.latestSnapshot = null
           entry.latestSnapshotNeedsWrite = false
@@ -1432,6 +1492,7 @@ export function createUnsavedDraftPersistence(
       // background while the tab stays open as the visible surface.
       entry.pendingConflictId = lastConflictId || entry.pendingConflictId
       entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+      entry.conflictDocumentPath = identity.documentPath
       clearTimer(entry)
       await releaseEntry(state, identity.documentPath, true)
       return { status: 'failed' }
@@ -1693,6 +1754,7 @@ export function createUnsavedDraftPersistence(
           entry.persistedDraft = null
           entry.pendingConflictId = null
           entry.conflictCrossContextUpdatedAt = null
+          entry.conflictDocumentPath = null
           // The confirmed discard also removes the conflict candidates
           // frozen at confirmation time. Without this the conflict-store
           // rows survive and resurface on the next discovery even though
