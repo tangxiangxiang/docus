@@ -952,6 +952,156 @@ describe('draftStore characterization', () => {
     })
   })
 
+  it('reports the readable path of a blocking future-version primary on an unsupported save', async () => {
+    const future = {
+      ...draft('a', 40, { documentPath: 'archive/a' }),
+      version: 2,
+      content: 'future data',
+    }
+    await backend.seedRaw(future)
+
+    // The save is blocked by the unreadable primary, but its
+    // documentPath is still readable — the outcome carries it so the
+    // caller pins its candidate ON the family instead of at its own
+    // stale snapshot path.
+    expect(await store.saveDraft(draft('a', 50)))
+      .toEqual({ status: 'unsupported', familyPath: 'archive/a' })
+  })
+
+  it('reports the agreed path for an unsupported conflict-only family', async () => {
+    await backend.seedRawConflict({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'archive/a',
+      content: 'future row',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    await store.saveConflictDraft({
+      version: 1,
+      conflictId: 'conflict-valid',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'archive/a',
+      content: 'valid row',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 32,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 32,
+    })
+
+    // Both raw rows — the unreadable one included — agree on
+    // archive/a: the outcome reports it even though the save is
+    // blocked, so the caller's candidate joins the family instead of
+    // splitting it at the save's own path.
+    expect(await store.saveDraft(draft('a', 20, { documentPath: 'notes/a' })))
+      .toEqual({ status: 'unsupported', familyPath: 'archive/a' })
+  })
+
+  it('reports a null family path when unsupported-family rows disagree on the path', async () => {
+    await backend.seedRawConflict({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'archive/a',
+      content: 'future row',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    await store.saveConflictDraft({
+      version: 1,
+      conflictId: 'conflict-valid',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'legacy/a',
+      content: 'valid row',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 32,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 32,
+    })
+
+    // The rows disagree — the family location is indeterminate, so the
+    // caller must fail closed (no candidate at its own stale path).
+    expect(await store.saveDraft(draft('a', 20)))
+      .toEqual({ status: 'unsupported', familyPath: null })
+  })
+
+  it('reports a null family path when primary and conflict rows disagree', async () => {
+    await store.saveDraft(draft('a', 10))
+    await backend.seedRawConflict({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'archive/a',
+      content: 'future row',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+
+    // Primary at notes/a, unreadable conflict at archive/a — split.
+    expect(await store.saveDraft(draft('a', 20)))
+      .toEqual({ status: 'unsupported', familyPath: null })
+  })
+
+  it('reports the agreed path when primary and unsupported conflict rows match', async () => {
+    await store.saveDraft(draft('a', 10))
+    await backend.seedRawConflict({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'future row',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+
+    // Both raw rows agree on notes/a — the outcome reports it.
+    expect(await store.saveDraft(draft('a', 20)))
+      .toEqual({ status: 'unsupported', familyPath: 'notes/a' })
+  })
+
+  it('reports a null family path for an unsupported save with no identity', async () => {
+    // A malformed incoming draft carries no reliable identity — there
+    // is no family to probe.
+    expect(await store.saveDraft({
+      ...draft('a', 20),
+      version: 2,
+    } as unknown as UnsavedDraft))
+      .toEqual({ status: 'unsupported', familyPath: null })
+  })
+
   it('accepts a same-path primary save without touching same-identity conflicts', async () => {
     await store.saveDraft(draft('a', 10))
     await store.saveConflictDraft({

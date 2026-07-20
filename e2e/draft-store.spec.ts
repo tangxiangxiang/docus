@@ -345,7 +345,7 @@ test('does not rewrite unsupported records in IndexedDB', async ({ page }) => {
     }
   }, DATABASE_NAME)
 
-  expect(result.saved).toEqual({ status: 'unsupported' })
+  expect(result.saved).toEqual({ status: 'unsupported', familyPath: 'notes/future' })
   expect(result.moved).toEqual({ status: 'unsupported' })
   expect(result.deleted).toEqual({ status: 'unsupported' })
   expect(result.cleared).toBe(true)
@@ -534,7 +534,7 @@ test('blocks a primary save in IndexedDB when a same-identity conflict row is un
     }
   }, DATABASE_NAME)
 
-  expect(result.blocked).toEqual({ status: 'unsupported' })
+  expect(result.blocked).toEqual({ status: 'unsupported', familyPath: 'notes/doc' })
   // The primary record is byte-identical — never overwritten.
   expect(result.primaryAfterBlocked).toMatchObject({
     content: 'primary v1',
@@ -542,6 +542,185 @@ test('blocks a primary save in IndexedDB when a same-identity conflict row is un
   })
   expect(result.retry.status).toBe('saved')
   expect(result.primaryAfterRetry).toMatchObject({ content: 'primary v2' })
+})
+
+test('reports the family path for an unsupported conflict-only family in IndexedDB', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const store = createDraftStore()
+    // Establish the schema before seeding raw rows behind the
+    // store's validation.
+    await store.saveDraft({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'seed',
+      documentPath: 'notes/seed',
+      content: 'seed',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 20,
+    })
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    // Conflict-only family for identity 'doc': one future-version row
+    // the store cannot validate, sitting at archive/doc. No primary
+    // record exists.
+    const seed = database.transaction('draftConflicts', 'readwrite')
+    seed.objectStore('draftConflicts').put({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'future data',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    await new Promise<void>((resolve, reject) => {
+      seed.oncomplete = () => resolve()
+      seed.onerror = () => reject(seed.error)
+      seed.onabort = () => reject(seed.error)
+    })
+    database.close()
+
+    // A stale Tab saves at notes/doc.
+    const saved = await store.saveDraft({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'stale tab buffer',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 40,
+    })
+    return {
+      saved,
+      primaryAfter: await store.getDraft('vault-a', 'doc'),
+      conflicts: await store.listConflictDrafts('vault-a'),
+    }
+  }, DATABASE_NAME)
+
+  // The save is blocked by the unreadable row, but the outcome
+  // reports the family's real path (the raw row's readable
+  // documentPath) so the caller pins its candidate ON the family
+  // instead of creating one at the stale snapshot path — a candidate
+  // at notes/doc would split the conflict-only family.
+  expect(result.saved).toEqual({ status: 'unsupported', familyPath: 'archive/doc' })
+  // No primary record created at the stale path, no candidate written
+  // by the store itself.
+  expect(result.primaryAfter).toBeNull()
+  expect(result.conflicts).toEqual([])
+})
+
+test('reports no family path for a split unsupported family in IndexedDB', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const store = createDraftStore()
+    await store.saveDraft({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'seed',
+      documentPath: 'notes/seed',
+      content: 'seed',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 20,
+    })
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    // Same identity, two raw rows DISAGREEING on the path — one
+    // unreadable at archive/doc, one valid at legacy/doc. The family
+    // location is indeterminate.
+    const seed = database.transaction('draftConflicts', 'readwrite')
+    seed.objectStore('draftConflicts').put({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'future data',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    seed.objectStore('draftConflicts').put({
+      version: 1,
+      conflictId: 'conflict-valid',
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'legacy/doc',
+      content: 'valid data',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 32,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 32,
+    })
+    await new Promise<void>((resolve, reject) => {
+      seed.oncomplete = () => resolve()
+      seed.onerror = () => reject(seed.error)
+      seed.onabort = () => reject(seed.error)
+    })
+    database.close()
+
+    const saved = await store.saveDraft({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'stale tab buffer',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 40,
+    })
+    return {
+      saved,
+      primaryAfter: await store.getDraft('vault-a', 'doc'),
+      conflicts: await store.listConflictDrafts('vault-a'),
+    }
+  }, DATABASE_NAME)
+
+  // The rows disagree — familyPath is null so the caller fails closed
+  // instead of creating a candidate at its stale snapshot path (or
+  // guessing a family side).
+  expect(result.saved).toEqual({ status: 'unsupported', familyPath: null })
+  expect(result.primaryAfter).toBeNull()
+  // Only the valid row is discoverable, untouched.
+  expect(result.conflicts).toHaveLength(1)
+  expect(result.conflicts[0]).toMatchObject({
+    conflictId: 'conflict-valid',
+    documentPath: 'legacy/doc',
+  })
 })
 
 test('refuses a diverging first primary save for a conflict-only family in IndexedDB', async ({

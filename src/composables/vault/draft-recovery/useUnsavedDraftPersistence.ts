@@ -19,6 +19,15 @@ import type {
 
 export const DRAFT_PERSIST_DEBOUNCE_MS = 800
 
+/** Backoff schedule for the automatic retry armed after a family move
+ *  settles without persisting the latest snapshot (a
+ *  'moved-write-failed' settlement). Bounded to three attempts
+ *  (~22s total): a persistently failing store must not keep a
+ *  high-frequency retry loop alive forever — once the budget is
+ *  spent, the write flag stays set and user input, manual flush and
+ *  pagehide each retry the channel from scratch. */
+const SETTLE_RETRY_DELAYS_MS = [2_000, 5_000, 15_000] as const
+
 export interface DraftBufferSnapshot {
   vaultId: string
   documentId: string
@@ -95,18 +104,27 @@ interface DraftEntry {
    *  cross-context source it diverged from. */
   conflictCrossContextUpdatedAt: number | null
   /** The family's authoritative path captured when the entry entered
-   *  conflict channel mode (the cross-context source's path, or the
-   *  delete transaction's identity path). EVERY subsequent
-   *  conflict-channel write must persist its candidate at THIS path,
-   *  never the editor snapshot's path: a stale Tab keeps reporting the
-   *  old path on every keystroke, and candidates recorded there would
-   *  split the family the channel exists to keep whole (the first
-   *  handoff candidate lands on the family path, but without the pin
-   *  the second edit — routed through the conflict channel by the
-   *  timer — would fall back to the snapshot's stale path). `null`
-   *  only when the channel was pinned without family-path knowledge
-   *  (an `unsupported` handoff): writes fall back to the snapshot
-   *  path. Cleared when the channel is lifted by a confirmed delete. */
+   *  conflict channel mode (the cross-context source's path, the
+   *  delete transaction's identity path, or an unsupported save's
+   *  `familyPath` — the path the store's raw family rows agree on).
+   *  EVERY subsequent conflict-channel write must persist its
+   *  candidate at THIS path, never the editor snapshot's path: a
+   *  stale Tab keeps reporting the old path on every keystroke, and
+   *  candidates recorded there would split the family the channel
+   *  exists to keep whole (the first handoff candidate lands on the
+   *  family path, but without the pin the second edit — routed
+   *  through the conflict channel by the timer — would fall back to
+   *  the snapshot's stale path). Updated as ONE atomic in-memory
+   *  change with the snapshot path whenever the family successfully
+   *  moves (commitMoves `moved`/`missing`, a healed quarantine) —
+   *  leaving it on the old path would route the next conflict-channel
+   *  write to the pre-move path and split the family the move just
+   *  united. An unsupported save with no agreed family path never
+   *  opens the channel at all (it fails closed instead of pinning a
+   *  path it cannot certify), so `null` only means "channel not
+   *  open"; the writeConflict fallback to the snapshot path is a
+   *  last-resort guard, not a mode. Cleared when the channel is
+   *  lifted by a confirmed delete. */
   conflictDocumentPath: string | null
   /** Set whenever the draft family and the server/tab path diverge:
    *  a family move that came back INCOMPLETE during commitMoves while
@@ -181,6 +199,9 @@ type DraftReleaseResult =
  *    but the latest snapshot's primary write was rejected. The
  *    family is whole on disk but the latest edit is still only in
  *    memory; Recovery must follow the family AND keep the tab open.
+ *    A bounded backoff retry is armed automatically (see
+ *    SETTLE_RETRY_DELAYS_MS) so the snapshot re-persists without
+ *    waiting for user input.
  *  - `conflict` — the retry failed again but the latest content was
  *    persisted as a move-quarantine candidate next to the old
  *    family. Recovery must surface the new candidate.
@@ -449,23 +470,43 @@ export function createUnsavedDraftPersistence(
     if (outcome.status === 'unsupported') {
       // A future-version / corrupt row (or a non-saveable shape) blocks
       // the WHOLE primary save. The caller must NEVER retry a plain
-      // overwrite — promote the snapshot to an independent conflict
-      // candidate so Recovery surfaces it next to whatever the store
-      // still holds (the unsupported row itself, or a previous
-      // cross-context record).
+      // overwrite.
+      // When the store re-read a family path every raw row agrees on
+      // (`familyPath`), promote the snapshot to an independent conflict
+      // candidate ON that path and pin the conflict channel there —
+      // Recovery surfaces the candidate next to the family it belongs
+      // to, and every subsequent conflict-channel write follows the
+      // same path instead of the snapshot's stale one (a stale Tab
+      // keeps reporting its old path on every keystroke; candidates
+      // recorded there would split the conflict-only family).
+      // When the family path is indeterminate (`null` — the rows
+      // disagree on the path, no row carries a readable path, or the
+      // store could not be re-read) there is nowhere safe to pin a
+      // candidate: creating one at THIS snapshot's path is exactly the
+      // split this branch must avoid. Fail closed instead — keep the
+      // write flag set so flush / close seal keep the tab open (the
+      // only surface still holding the bytes) and keep failing until
+      // the family state becomes certifiable (a migration, a fresh
+      // cross-context write).
+      if (outcome.familyPath === null) {
+        return false
+      }
       if ((!allowDisposed && disposed) || !current(owner, entry)
         || entry.latestSnapshot !== capturedSnapshot
         || entry.latestSnapshot.revision !== capturedRevision
         || entry.pendingConflictId !== null) {
         return false
       }
+      const familyPath = outcome.familyPath
       const record = buildConflictRecord(
         snapshot,
         entry,
         {
           vaultId: owner.vaultId,
           documentId: owner.documentId,
-          documentPath: snapshot.documentPath,
+          // The candidate joins the family at the path the store's raw
+          // rows agree on — never this snapshot's possibly-stale path.
+          documentPath: familyPath,
         },
         // No cross-context source — the local content is preserved
         // alongside whatever the store holds (the store couldn't tell
@@ -479,6 +520,11 @@ export function createUnsavedDraftPersistence(
       } catch {
         candidateSaved = false
       }
+      // Pin the conflict channel to the family path so every
+      // subsequent conflict-channel write lands there too (see
+      // conflictDocumentPath) — the snapshot path this Tab reports
+      // stays stale.
+      entry.conflictDocumentPath = familyPath
       if (!candidateSaved) {
         entry.pendingConflictId = `failed:${record.conflictId}`
         return false
@@ -890,6 +936,15 @@ export function createUnsavedDraftPersistence(
             documentPath: quarantine.newPath,
           }
         }
+        // The family's authoritative path moved — a conflict-pinned entry's
+        // channel must follow as ONE atomic in-memory update with the
+        // snapshot path. Leaving conflictDocumentPath on the old path
+        // would route the very next conflict-channel write (including
+        // the final write below, when conflict-pinned) back to the
+        // pre-move path and split the family the move just united.
+        if (entry.pendingConflictId !== null) {
+          entry.conflictDocumentPath = quarantine.newPath
+        }
         try {
           entry.persistedDraft = await store.getDraft(owner.vaultId, owner.documentId)
         } catch {
@@ -923,6 +978,16 @@ export function createUnsavedDraftPersistence(
           owner.vaultId, owner.documentId, quarantine,
           writeSucceeded ? 'moved-and-persisted' : 'moved-write-failed',
         )
+        if (!writeSucceeded) {
+          // The settlement toast promises the save retries
+          // automatically — make it true: arm a bounded backoff retry
+          // so the latest snapshot re-persists without waiting for
+          // user input, manual flush or pagehide. The timer re-reads
+          // the channel at fire time, and a superseding edit clears
+          // it (schedule() → clearTimer), so the new edit's own
+          // write owns persistence from there.
+          scheduleSettleRetry(owner.vaultId, owner.documentId, entry.generation, 0)
+        }
         return writeSucceeded
       }
       // The retry failed — the family stays whole at the OLD path.
@@ -944,7 +1009,14 @@ export function createUnsavedDraftPersistence(
         {
           vaultId: owner.vaultId,
           documentId: owner.documentId,
-          documentPath: latest.documentPath,
+          // The candidate must join the family where it actually is —
+          // `oldPath`, whole and unmoved. `latest.documentPath` is the
+          // renamed Tab's path (usually newPath): pinning the
+          // candidate there would split the family immediately — the
+          // primary record and any existing candidates stay at oldPath
+          // while the new candidate lands on newPath, exactly the
+          // split the quarantine exists to prevent.
+          documentPath: quarantine.oldPath,
         },
         null,
         'move-conflict',
@@ -1085,6 +1157,58 @@ export function createUnsavedDraftPersistence(
       const [vaultId, documentId] = JSON.parse(serialized) as [string, string]
       await flush(vaultId, documentId, allowDisposed)
     }))
+  }
+
+  /** Arm a bounded backoff retry after a 'moved-write-failed'
+   *  settlement: the family is whole at the new path on disk, but the
+   *  latest snapshot is still only in memory (the final write was
+   *  rejected). Without this the settlement toast's promise of an
+   *  automatic retry is hollow — the debounce timer was already
+   *  consumed by the write that failed, and nothing would re-persist
+   *  the snapshot until the user types again, flushes manually or
+   *  hides the page. Each attempt re-reads the entry's persistence
+   *  channel AT FIRE time (see schedule() for the full rationale): a
+   *  quarantine lift, a channel pin or a superseding edit landing
+   *  between schedule and fire routes the write through the current
+   *  channel, never a stale one. The budget is per settlement event
+   *  and deliberately NOT extended by failures: a persistently
+   *  failing store gets three tries over ~22s, then the write flag
+   *  stays set for flush / close seal / pagehide to pick up. A new
+   *  user edit clears the timer via schedule(); flush and dispose
+   *  clear it via clearTimer(). */
+  function scheduleSettleRetry(
+    vaultId: string,
+    documentId: string,
+    generation: number,
+    attempt: number,
+  ): void {
+    if (disposed || attempt >= SETTLE_RETRY_DELAYS_MS.length) return
+    const entry = entries.get(key(vaultId, documentId))
+    if (!entry || entry.generation !== generation) return
+    if (!entry.latestSnapshot || !entry.latestSnapshotNeedsWrite) return
+    if (entry.timer !== null) return
+    entry.timer = setTimeout(() => {
+      entry.timer = null
+      if (disposed) return
+      const target = entries.get(key(vaultId, documentId))
+      if (!target || target.generation !== generation) return
+      if (!target.latestSnapshot || !target.latestSnapshotNeedsWrite) return
+      const owner = { vaultId, documentId, generation: target.generation }
+      const captured = cloneSnapshot(target.latestSnapshot)
+      const quarantine = target.pendingFamilyMove
+      const task = quarantine && captured.documentPath !== quarantine.oldPath
+        ? queueFamilyMoveWrite(owner, captured)
+        : target.pendingConflictId !== null
+          ? queueConflictWrite(owner, captured)
+          : queueWrite(owner, captured)
+      void task.then((succeeded) => {
+        if (!succeeded) {
+          scheduleSettleRetry(vaultId, documentId, generation, attempt + 1)
+        }
+      }).catch(() => {
+        scheduleSettleRetry(vaultId, documentId, generation, attempt + 1)
+      })
+    }, SETTLE_RETRY_DELAYS_MS[attempt])
   }
 
   async function deleteOwned(
@@ -1570,6 +1694,16 @@ export function createUnsavedDraftPersistence(
           // edit retry the move against the OLD target and drag the
           // family back from the path it actually lives on now.
           state.entry.pendingFamilyMove = null
+          // The family's authoritative path moved with the rename — a
+          // conflict-pinned entry's channel must follow as ONE atomic
+          // in-memory update with the quarantine lift. Leaving
+          // conflictDocumentPath on the old path would route the next
+          // conflict-channel write (e.g. the release's immediate
+          // conflict write) back to the pre-rename path and split the
+          // family the move just united.
+          if (state.entry.pendingConflictId !== null) {
+            state.entry.conflictDocumentPath = mapping.toPath
+          }
           if (status === 'moved') {
             state.entry.persistedDraft = await store.getDraft(
               mapping.vaultId,

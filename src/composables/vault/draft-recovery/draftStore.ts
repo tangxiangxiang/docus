@@ -49,7 +49,17 @@ type SaveDecision =
  *  - `unsupported` — a future-version / corrupt row (primary OR
  *    same-identity conflict) blocked the whole save; the caller
  *    preserves the local content as an independent conflict candidate
- *    rather than retrying a plain overwrite;
+ *    rather than retrying a plain overwrite. `familyPath` is the path
+ *    every raw family row (the primary record, if any, plus every
+ *    same-identity conflict row — including rows the store could not
+ *    validate, whose `documentPath` is still readable) agrees on, so
+ *    the caller pins its candidate ON the family instead of at its own
+ *    possibly-stale snapshot path — a candidate created at the stale
+ *    path would split the very family the store could not certify.
+ *    `null` when the rows disagree on the path, no row carries a
+ *    readable path, or the family could not be re-read: the caller
+ *    must then fail closed — keep the write flag set, write no
+ *    candidate — rather than guess a path and split the family;
  *  - `failed` — the underlying store threw or returned a status the
  *    caller cannot route; the write must fail closed (write flag
  *    stays set, close seal keeps the tab open) so the latest bytes
@@ -66,7 +76,7 @@ export type DraftSaveOutcome =
   | { status: 'stale'; current: UnsavedDraft }
   | { status: 'conflict'; current: UnsavedDraft }
   | { status: 'path-mismatch'; current: DraftFamilyAnchor }
-  | { status: 'unsupported' }
+  | { status: 'unsupported'; familyPath: string | null }
   | { status: 'failed' }
 type MoveResult = 'moved' | 'missing' | 'conflict' | 'unsupported'
 type DeleteResult = 'deleted' | 'missing' | 'unsupported'
@@ -292,9 +302,46 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
     }
   }
 
+  /** Re-read the raw family rows after an unsupported save and derive
+   *  the path they agree on (if any). Mirrors the stale / conflict /
+   *  path-mismatch branches' current-record re-read: the classification
+   *  alone is not enough — the caller needs the family's real path to
+   *  pin its candidate onto it instead of its own possibly-stale
+   *  snapshot path. Invalid (future-version / corrupt) rows contribute
+   *  their readable `documentPath` too — a row can fail validation and
+   *  still say where the family lives; a row without a readable path
+   *  renders the whole probe indeterminate, as do disagreeing paths.
+   *  Any read error degrades to null — the caller then fails closed
+   *  (keeps the write flag set, writes no candidate) rather than
+   *  guesses. */
+  async function probeFamilyPath(
+    vaultId: string,
+    documentId: string,
+  ): Promise<string | null> {
+    try {
+      const parts: Array<string | null> = []
+      const primary = await backend.get(draftKey(vaultId, documentId))
+      if (primary !== null && primary !== undefined) {
+        parts.push(readRawDocumentPath(primary))
+      }
+      const conflicts = await backend.listConflicts(vaultId)
+      for (const value of conflicts) {
+        if (recordField(value, 'documentId') !== documentId) continue
+        parts.push(readRawDocumentPath(value))
+      }
+      return familyPathFromParts(parts)
+    } catch {
+      return null
+    }
+  }
+
   return {
     async saveDraft(draft) {
-      if (!isUnsavedDraft(draft)) return { status: 'unsupported' as const }
+      // A malformed draft carries no reliable identity — there is no
+      // family to probe a path for.
+      if (!isUnsavedDraft(draft)) {
+        return { status: 'unsupported' as const, familyPath: null }
+      }
       try {
         const result = await backend.save(cloneDraft(draft))
         if (result === 'saved') {
@@ -305,7 +352,10 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
           if (isUnsavedDraft(stored)) {
             return { status: 'saved' as const, stored: cloneDraft(stored) }
           }
-          return { status: 'unsupported' as const }
+          return {
+            status: 'unsupported' as const,
+            familyPath: await probeFamilyPath(draft.vaultId, draft.documentId),
+          }
         }
         if (result === 'stale' || result === 'conflict' || result === 'path-mismatch') {
           // Re-read the current record so the caller can pin the local
@@ -337,10 +387,24 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
             }
           }
           // A non-save result without a recoverable current record is
-          // unsupported — the caller cannot safely pin a candidate.
-          return { status: 'unsupported' as const }
+          // unsupported — the caller cannot pin a candidate on the
+          // primary record. The family's raw rows may still agree on a
+          // path the candidate can join (a conflict-only family whose
+          // rows all sit at one path); when they do not, `null` tells
+          // the caller to fail closed rather than split the family.
+          return {
+            status: 'unsupported' as const,
+            familyPath: await probeFamilyPath(draft.vaultId, draft.documentId),
+          }
         }
-        return { status: result }
+        // result === 'unsupported': a future-version / corrupt row
+        // blocked the save. Report the path the family's raw rows
+        // agree on (if any) so the caller pins its candidate ON the
+        // family instead of at its own possibly-stale snapshot path.
+        return {
+          status: result,
+          familyPath: await probeFamilyPath(draft.vaultId, draft.documentId),
+        }
       } catch {
         return { status: 'failed' as const }
       }
@@ -1172,6 +1236,28 @@ function conflictFamilyPath(
   if (paths.size === 0) return { status: 'none' }
   if (paths.size > 1) return { status: 'split' }
   return { status: 'path', path: [...paths][0]! }
+}
+
+/** Read a raw family row's `documentPath` WITHOUT validating the row:
+ *  a future-version / corrupt record can still carry a readable path,
+ *  and the unsupported-save probe needs those paths to pin a conflict
+ *  candidate onto the family's actual location. Validation decides
+ *  whether a row is USABLE; this only decides whether it is
+ *  LOCATABLE. */
+function readRawDocumentPath(value: unknown): string | null {
+  const path = recordField(value, 'documentPath')
+  return typeof path === 'string' && path.trim().length > 0 ? path : null
+}
+
+/** Agree a single family path from raw-row paths: non-empty, every
+ *  part readable, and all equal. Any unreadable path or disagreement
+ *  yields null — the family's location is indeterminate, and the
+ *  caller must fail closed rather than guess which side to join. */
+function familyPathFromParts(parts: Array<string | null>): string | null {
+  if (parts.length === 0) return null
+  const [first, ...rest] = parts
+  if (first === null) return null
+  return rest.every((part) => part === first) ? first : null
 }
 
 function decideSave(current: unknown, incoming: UnsavedDraft): SaveDecision {
