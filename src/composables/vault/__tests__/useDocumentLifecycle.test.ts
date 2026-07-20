@@ -848,13 +848,18 @@ describe('useDocumentLifecycle draft settlement window', () => {
       prepareDraftFileMutation: (identities) => persistence.prepareFileMutation(identities),
       onDraftTransactionSettled: vi.fn(async (results: readonly DraftFileTransactionResult[]) => {
         settled.push(results.map((result) => result.status))
-        // Settlement runs BEFORE any tab close — the window is open.
-        expect(h.removed).toEqual([])
         if (settled.length === 1) {
-          // The transaction has already released the entry — this edit
-          // arms a fresh 800ms debounce, exactly like a user typing
-          // while the Recovery panel refreshes.
+          // The first pass runs BEFORE any tab close — the window is
+          // open. The transaction has already released the entry, so
+          // this edit arms a fresh 800ms debounce, exactly like a user
+          // typing while the Recovery panel refreshes.
+          expect(h.removed).toEqual([])
           persistence.schedule(draftSnapshot('typed-during-settle', 'inbox/a', 'doc-a', 2))
+        } else {
+          // The second pass completes the Recovery sync AFTER the tab
+          // closed — the successful settlement write reports
+          // 'preserved' so the identity refreshes to the window edit.
+          expect(h.removed).toEqual(['inbox/a'])
         }
       }),
     })
@@ -863,9 +868,11 @@ describe('useDocumentLifecycle draft settlement window', () => {
 
     await h.lifecycle.deleteFile('inbox/a')
 
-    // First settlement reported the preserve; the empty finalize result
-    // must NOT trigger a second synchronization pass.
-    expect(settled).toEqual([['preserved']])
+    // First settlement reported the preserve; the successful finalize
+    // write reports 'preserved' (never warns) and triggers the second
+    // pass, which refreshes the Recovery identity to the window edit
+    // instead of keeping the stale pre-window record.
+    expect(settled).toEqual([['preserved'], ['preserved']])
     // The settlement-window edit was persisted BEFORE the tab closed —
     // the store holds it as the document's orphan recovery record.
     expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('typed-during-settle')
@@ -1084,5 +1091,58 @@ describe('useDocumentLifecycle draft settlement window', () => {
       newPath: 'renamed/b',
       status: 'failed',
     })])
+  })
+
+  it('still reports finalize failures when single-file tab migration throws', async () => {
+    vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'archive/a-2', title: 'A', created: '', updated: '', tags: [], size: 1, mtime: 2,
+    })
+    const warnings = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const h = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn().mockResolvedValue([{
+          documentId: 'doc-a',
+          oldPath: 'inbox/a',
+          newPath: 'archive/a-2',
+          status: 'moved',
+        }]),
+        commitDeletes: vi.fn(),
+        // The post-migration write failed — previously the Tab
+        // migration throw below escaped to the outer catch, skipped
+        // reportDraftResults, and this failure never reached the user.
+        finalizeAfterTabMigration: vi.fn().mockResolvedValue([{
+          documentId: 'doc-a',
+          oldPath: 'inbox/a',
+          newPath: 'archive/a-2',
+          status: 'failed',
+        }]),
+        rollback: vi.fn(),
+      }),
+      renameOpenDocuments: vi.fn(() => {
+        throw new Error('tab migration failed')
+      }),
+      warnDraftTransaction: warnings,
+    })
+
+    const result = await h.lifecycle.renameFile('inbox/a', { targetPath: 'archive/a' })
+
+    // The server rename stays successful despite the Tab migration
+    // throw — and the finalize failure is still reported and warned,
+    // matching the folder rename's internal-catch structure.
+    expect(result.path).toBe('archive/a-2')
+    expect(warnings).toHaveBeenCalledOnce()
+    expect(warnings).toHaveBeenCalledWith([expect.objectContaining({
+      documentId: 'doc-a',
+      oldPath: 'inbox/a',
+      newPath: 'archive/a-2',
+      status: 'failed',
+    })])
+    warnSpy.mockRestore()
   })
 })

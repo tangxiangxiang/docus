@@ -290,6 +290,15 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
           let finalizeResults: DraftFileTransactionResult[] = []
           try {
             options.renameOpenDocuments([mapping])
+          } catch (error) {
+            // Tab migration is best-effort UX — the server rename already
+            // succeeded. Swallow the throw HERE (not in the outer catch)
+            // so the report below still runs: a migration failure that
+            // escapes to the outer catch would skip the finalize results
+            // and a rejected post-migration write would never reach the
+            // user (folder rename already catches internally for the
+            // same reason).
+            console.warn(`[useDocumentLifecycle] Server rename ${fromPath} → ${renamed.path} succeeded, but Tab migration threw:`, error)
           } finally {
             finalizeResults = await draftBarrier.finalizeAfterTabMigration?.() ?? []
           }
@@ -305,6 +314,11 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
           let finalizeResults: DraftFileTransactionResult[] = []
           try {
             options.renameOpenDocuments([mapping])
+          } catch (error) {
+            // Same as the resolved-identity branch above: swallow the
+            // Tab migration throw here so the report below still merges
+            // the finalize results.
+            console.warn(`[useDocumentLifecycle] Server rename ${fromPath} → ${renamed.path} succeeded, but Tab migration threw:`, error)
           } finally {
             finalizeResults = await draftBarrier.finalizeAfterTabMigration?.() ?? []
           }
@@ -521,9 +535,12 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
       }
       // Complete the Recovery synchronization for the finalize results
       // AFTER the tab decision: a 'failed' finalize must refresh the
-      // identity (keeping it visible), and this await may no longer
-      // open an edit window — the tab is already closed (or kept open
-      // as the visible surface).
+      // identity (keeping it visible), and a 'preserved' finalize must
+      // re-read the store so the panel shows the settlement-window edit
+      // — or re-adds the fresh orphan recorded after a confirmed delete
+      // — instead of keeping the stale pre-window record. This await may
+      // no longer open an edit window: the tab is already closed (or
+      // kept open as the visible surface).
       if (finalizeResults.length > 0) {
         await reportDraftResults(finalizeResults)
       }

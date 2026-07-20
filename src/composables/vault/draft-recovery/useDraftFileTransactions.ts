@@ -67,9 +67,13 @@ export interface DraftFileMutationBarrier {
    *  entry and persists anything still pending IMMEDIATELY (on the
    *  entry's active channel); a rejected write produces a `failed`
    *  result so the lifecycle keeps that tab open — it is the only
-   *  surface still holding those bytes. The lifecycle must close tabs
-   *  synchronously after this promise resolves, before any further
-   *  await, so no user input event can open a new window. */
+   *  surface still holding those bytes. A successful write produces a
+   *  `preserved` result so the lifecycle's post-close Recovery sync
+   *  refreshes the identity (showing the settlement-window edit, or
+   *  re-adding an orphan recorded after a confirmed delete) — it never
+   *  warns. The lifecycle must close tabs synchronously after this
+   *  promise resolves, before any further await, so no user input event
+   *  can open a new window. */
   finalizeBeforeDocumentClose(): Promise<DraftFileTransactionResult[]>
   /** Immediate post-tab-migration persistence results. Each pending
    *  release writes its latest snapshot to the actual post-rename path;
@@ -77,7 +81,9 @@ export interface DraftFileMutationBarrier {
    *  server-suffixed `newPath`) that the lifecycle merges into its
    *  reported transaction results — the server rename stays successful
    *  and the tab keeps its new path, but the user is warned that the
-   *  local draft could not be persisted. */
+   *  local draft could not be persisted. Identities the commit already
+   *  reported `failed` are released too — their transaction token must
+   *  not outlive the barrier — but not re-reported. */
   finalizeAfterTabMigration(): Promise<DraftFileTransactionResult[]>
   rollback(): Promise<void>
 }

@@ -698,8 +698,13 @@ export function createUnsavedDraftPersistence(
     let finalized = false
     // Identities whose commit already reported 'failed'. Their tabs stay
     // open regardless and their armed debounce retries in the background,
-    // so the finalize gates skip them — re-running the immediate write
+    // so the finalize gates never re-REPORT them — re-running the failure
     // there could only duplicate the user-visible warning.
+    // finalizeBeforeDocumentClose skips them outright; finalizeAfterTab-
+    // Migration still RELEASES them (their fileTransaction token must not
+    // outlive the barrier — without the release, schedule() would never
+    // arm a timer again and flush()/pagehide could never persist the
+    // entry's subsequent edits), but suppresses the duplicate result.
     const alreadyFailedKeys = new Set<string>()
     const pendingReleases = new Map<string, {
       path: string
@@ -1273,6 +1278,11 @@ export function createUnsavedDraftPersistence(
      *  open — the only surface still holding those bytes. Identities
      *  that already reported 'failed' are skipped: their tabs stay open
      *  regardless and their armed debounce retries in the background.
+     *  A successful write returns 'preserved' so the lifecycle's second
+     *  synchronization pass (after the tab decision) refreshes the
+     *  current Recovery identity — otherwise the panel keeps showing the
+     *  pre-window record, or never sees a fresh orphan recorded after a
+     *  confirmed delete. 'preserved' carries no warning.
      *  The lifecycle must close tabs synchronously after this promise
      *  resolves (no await in between) so no user input event can open a
      *  new window. */
@@ -1307,6 +1317,20 @@ export function createUnsavedDraftPersistence(
             oldPath: identity.documentPath,
             status: 'failed',
           })
+        } else {
+          // The settlement-window edit is durable — report a non-warning
+          // status so the lifecycle runs its second Recovery sync after
+          // the tab decision: refreshIdentity re-reads the store, so the
+          // panel shows the window edit instead of the stale pre-window
+          // record (and, after a confirmed delete already removed the
+          // identity, re-adds the fresh orphan — otherwise invisible in
+          // the current session until the next full discovery).
+          // 'preserved' never warns.
+          results.push({
+            documentId: identity.documentId,
+            oldPath: identity.documentPath,
+            status: 'preserved',
+          })
         }
       }
       return results
@@ -1317,15 +1341,27 @@ export function createUnsavedDraftPersistence(
       finalized = true
       const results: DraftFileTransactionResult[] = []
       for (const [identityKey, release] of pendingReleases) {
-        if (alreadyFailedKeys.has(identityKey)) continue
         const state = held.get(identityKey)
         if (!state) continue
+        // Every pending entry MUST be released — including one the
+        // commit already reported 'failed' (e.g. a failed family move).
+        // Skipping the release would leave entry.fileTransaction pinned
+        // to this dead barrier forever: schedule() would stop arming
+        // timers, flush() would keep returning false, and pagehide /
+        // dispose could never persist the entry's subsequent edits — a
+        // permanent lock on exactly the tab the failure keeps open.
         const releaseResult = await releaseEntry(
           state,
           release.path,
           release.writeLatest,
           true,
         )
+        if (alreadyFailedKeys.has(identityKey)) {
+          // Already reported failed by the commit results — re-reporting
+          // would only duplicate the user-visible warning. The release
+          // above is what matters.
+          continue
+        }
         if (releaseResult.status === 'failed') {
           // The immediate write of the transaction-time snapshot to
           // the actual post-rename path was rejected: the latest edit

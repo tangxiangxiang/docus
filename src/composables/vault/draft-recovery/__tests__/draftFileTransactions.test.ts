@@ -1777,12 +1777,15 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     }
   }
 
-  function makePersistence(store: ReturnType<typeof createDraftStore>) {
+  function makePersistence(
+    store: ReturnType<typeof createDraftStore>,
+    targetWindow?: EventTarget,
+  ) {
     return createUnsavedDraftPersistence({
       store,
       debounceMs: 800,
       now: () => 100,
-      targetWindow: undefined,
+      targetWindow,
     })
   }
 
@@ -1840,7 +1843,14 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     // the debounce race the imminent tab close) and clear the armed
     // timer.
     const finalizeResults = await barrier.finalizeBeforeDocumentClose()
-    expect(finalizeResults).toEqual([])
+    // The successful settlement write is reported (non-warning) so the
+    // lifecycle's second sync refreshes the Recovery identity to the
+    // new content instead of keeping the pre-window record.
+    expect(finalizeResults).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      status: 'preserved',
+    }])
     expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('settlement-edit')
     expect(saveDraft).toHaveBeenCalledTimes(2)
     // After the tab closes, no draft timer may fire: advancing the
@@ -1895,7 +1905,13 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     persistence.schedule(snapshot('local-v4', 'notes/a', 4))
 
     const finalizeResults = await barrier.finalizeBeforeDocumentClose()
-    expect(finalizeResults).toEqual([])
+    // Successful conflict-channel write → non-warning 'preserved' for
+    // the post-close Recovery refresh.
+    expect(finalizeResults).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      status: 'preserved',
+    }])
     // Persisted as a conflict record IMMEDIATELY — never the primary
     // store (the cross-context record must not be overwritten).
     expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
@@ -2031,6 +2047,172 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       documentId: 'doc-a',
       documentPath: 'archive/a-2',
     }])
+    await persistence.dispose()
+  })
+
+  // A failed family move reports 'failed' from commitMoves AND puts the
+  // identity into pendingReleases. finalize must still RELEASE the
+  // entry — only suppressing the duplicate 'failed' result. Without the
+  // release the entry keeps the dead barrier's fileTransaction token
+  // forever: schedule() never arms a timer, flush() returns false, and
+  // pagehide/dispose cannot persist the tab's subsequent edits — the
+  // tab the failure deliberately kept open is permanently locked.
+
+  function conflictRecord(conflictId: string, documentId: string, path: string, content: string) {
+    return {
+      version: 1 as const,
+      conflictId,
+      vaultId: 'vault',
+      documentId,
+      documentPath: path,
+      content,
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 31,
+      origin: 'delete-conflict' as const,
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    }
+  }
+
+  it('releases the entry after a failed family move', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    // An edit typed during the rename request.
+    persistence.schedule(snapshot('during', 'notes/a', 2))
+    backend.failNext('moveFamilyConflicts')
+    const [move] = await barrier.commitMoves([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+
+    // finalize must NOT re-report the failure the commit already
+    // surfaced ...
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+    // ... but it MUST release the entry, persisting the transaction-
+    // time snapshot at the unchanged old path on the way out.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'during',
+    })
+    // The family stays intact on the old path.
+    expect((await store.listConflictDrafts('vault')).map((c) => c.documentPath))
+      .toEqual(['notes/a'])
+    // The entry is functional again — flush is no longer blocked by a
+    // transaction token that outlived its barrier.
+    expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+    await persistence.dispose()
+  })
+
+  it('allows scheduling and flushing after a failed family move', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamilyConflicts')
+    const [move] = await barrier.commitMoves([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    // A post-rename edit arms the debounce again — before the fix the
+    // pinned transaction token swallowed the timer and the edit never
+    // left memory.
+    persistence.schedule(snapshot('after', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('after')
+    // An explicit flush persists a further edit instead of returning
+    // false behind the dead token.
+    persistence.schedule(snapshot('flushed', 'notes/a', 3))
+    expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('flushed')
+    await persistence.dispose()
+  })
+
+  it('flushes on pagehide after a failed family move', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const targetWindow = new EventTarget()
+    const persistence = makePersistence(store, targetWindow)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamilyConflicts')
+    const [move] = await barrier.commitMoves([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    // The user keeps editing after the failed rename; the page hides
+    // BEFORE the fresh debounce fires — flushAll must reach the entry.
+    persistence.schedule(snapshot('pagehide-edit', 'notes/a', 2))
+    targetWindow.dispatchEvent(new Event('pagehide'))
+    await vi.waitFor(async () => {
+      expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('pagehide-edit')
+    })
+    await persistence.dispose()
+  })
+
+  it('releases every failed identity in a partial folder rename', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    const identityB = { vaultId: 'vault', documentId: 'doc-b', documentPath: 'notes/b' }
+    await store.saveDraft(draft('primary-a', 'notes/a', 10))
+    await store.saveDraft({ ...draft('primary-b', 'notes/b', 10), documentId: 'doc-b' })
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan a'))
+    await store.saveConflictDraft(conflictRecord('conflict-b', 'doc-b', 'notes/b', 'local orphan b'))
+    const barrier = await persistence.prepareFileMutation([identity, identityB])
+    // doc-a's family move fails (the injected failure is consumed by
+    // the first family move); doc-b's succeeds.
+    backend.failNext('moveFamilyConflicts')
+    const [moveA, moveB] = await barrier.commitMoves([
+      { vaultId: 'vault', documentId: 'doc-a', fromPath: 'notes/a', toPath: 'archive/a' },
+      { vaultId: 'vault', documentId: 'doc-b', fromPath: 'notes/b', toPath: 'archive/b' },
+    ])
+    expect(moveA.status).toBe('failed')
+    expect(moveB.status).toBe('moved')
+
+    // finalize must release BOTH entries — the failed one included —
+    // without re-reporting the failure commitMoves already surfaced.
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+    // Both accept new edits again: the failed identity at its unchanged
+    // old path, the moved one at the actual new path.
+    persistence.schedule(snapshot('after-a', 'notes/a', 2))
+    persistence.schedule({ ...snapshot('after-b', 'archive/b', 2), documentId: 'doc-b' })
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'after-a',
+    })
+    expect(await store.getDraft('vault', 'doc-b')).toMatchObject({
+      documentPath: 'archive/b',
+      content: 'after-b',
+    })
     await persistence.dispose()
   })
 })
