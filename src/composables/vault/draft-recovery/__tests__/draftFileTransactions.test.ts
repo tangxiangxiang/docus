@@ -2852,9 +2852,12 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     // Simulate a page reload: dispose this persistence (no snapshot
     // was scheduled, so nothing flushes) and create a fresh instance
     // against the same store. The new instance has no quarantine
-    // state — but the store-level family-aware save backstop is
-    // stateless and rejects any cross-path plain write that would
-    // strand the conflict on the old path.
+    // state. A plain cross-path primary write from the stale Tab must
+    // NOT silently drag the family to the new path — the family
+    // (primary record + every same-identity conflict candidate) is
+    // still whole on the OLD path. The stale Tab's edit becomes an
+    // independent conflict candidate next to the family, and the
+    // remote primary remains untouched.
     await persistence.dispose()
     const reloaded = makePersistence(store)
     reloaded.schedule(snapshot('after-reload', 'archive/a', 2))
@@ -2862,12 +2865,21 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     await vi.runAllTimersAsync()
     await Promise.resolve()
     await Promise.resolve()
+    // The remote primary stays at the family's actual path.
     expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
-      documentPath: 'archive/a',
-      content: 'after-reload',
+      documentPath: 'notes/a',
+      content: 'primary',
     })
-    expect((await store.listConflictDrafts('vault')).map((c) => c.documentPath))
-      .toEqual(['archive/a'])
+    // The stale Tab's edit lands as a separate candidate pinned to
+    // the family's actual path (so a later moveDraftFamily() can
+    // migrate it with the rest of the family).
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(2)
+    expect(conflicts.map((c) => c.documentPath).sort())
+      .toEqual(['notes/a', 'notes/a'])
+    const staleEdit = conflicts.find((c) => c.content === 'after-reload')!
+    expect(staleEdit.documentPath).toBe('notes/a')
+    expect(staleEdit.origin).toBe('delete-conflict')
     await reloaded.dispose()
   })
 
@@ -2939,7 +2951,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       documentId: string
       oldPath: string
       newPath: string
-      status: 'moved' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -2979,7 +2991,9 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     }])
 
     // Second retry: succeeds. The family moved in the background, and
-    // Recovery must follow.
+    // Recovery must follow — the settlement is fired AFTER the
+    // latest snapshot is persisted on the new path's primary record
+    // (moved-and-persisted), not when the move alone succeeds.
     persistence.schedule(snapshot('healed', 'archive/a', 3))
     await vi.advanceTimersByTimeAsync(800)
     await vi.runAllTimersAsync()
@@ -2998,9 +3012,249 @@ describe('draft file transactions — UI commit boundary sealing', () => {
         documentId: 'doc-a',
         oldPath: 'notes/a',
         newPath: 'archive/a',
-        status: 'moved',
+        status: 'moved-and-persisted',
       },
     ])
+    await persistence.dispose()
+  })
+
+  // Save-outcome and path-authority invariants added for the post-09.5
+  // blockers: saveDraft returns a structured outcome (no more boolean
+  // compression), the timer reads its channel at fire time (no more
+  // schedule-time capture), and a plain primary save refuses to migrate
+  // the family across paths without an authoritative mapping.
+  it('converts a pre-existing stale primary save into a conflict candidate', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    // Warm up the entry so it has a persisted primary at a known timestamp.
+    persistence.schedule(snapshot('local-v1', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    // A cross-context write lands with a strictly newer updatedAt
+    // BEFORE the next local save completes — the new saveDraft must
+    // surface 'stale' (not silently compress it to false), and the
+    // caller must route the local content to the conflict channel
+    // instead of dropping it.
+    const local = await store.getDraft('vault', 'doc-a')
+    await store.saveDraft({ ...local!, content: 'remote-v2', updatedAt: 200 })
+    persistence.schedule(snapshot('local-v3', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'remote-v2',
+      updatedAt: 200,
+    })
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      content: 'local-v3',
+      documentPath: 'notes/a',
+      crossContextUpdatedAt: 200,
+    })
+    await persistence.dispose()
+  })
+
+  it('preserves a new edit after reload when family save returns unsupported', async () => {
+    // A future-version / corrupt same-identity conflict row forces the
+    // family save to surface 'unsupported' — the caller must persist
+    // the local content as a separate conflict candidate, not drop it
+    // (a plain `saveDraft === false` would have silently thrown the
+    // bytes away).
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await backend.seedRawConflict({
+      version: 2,
+      conflictId: 'future-conflict',
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'future data',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    })
+    const persistence = makePersistence(store)
+    persistence.schedule(snapshot('new-edit', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The primary is left untouched.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'primary',
+      documentPath: 'notes/a',
+    })
+    // The new edit lands as a candidate — it must NEVER be silently
+    // dropped by a saveDraft==false compression.
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      content: 'new-edit',
+      documentPath: 'notes/a',
+    })
+    // The future-version row is still in the backend (preserved), but
+    // invisible to the lossy `listConflictDrafts` filter. The strict
+    // strict read surfaces it as `unsupported` so callers can warn.
+    await expect(store.listConflictDraftsStrict('vault', 'doc-a'))
+      .resolves.toMatchObject({ status: 'unsupported' })
+    const raw = await backend.listConflicts('vault')
+    expect(raw.map((value) => (value as { conflictId?: string }).conflictId))
+      .toContain('future-conflict')
+    await persistence.dispose()
+  })
+
+  it('does not silently drop a same-timestamp primary conflict', async () => {
+    // Two contexts save at the same `updatedAt` with different bodies
+    // — the second save returns 'conflict' (not false). The caller
+    // routes the local content to the conflict channel.
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    await store.saveDraft(draft('remote', 'notes/a', 100))
+    const persistence = makePersistence(store)
+    persistence.schedule(snapshot('local', 'notes/a', 100))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The primary is byte-identical to the cross-context record —
+    // never overwritten with a fresh timestamp.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'remote',
+      updatedAt: 100,
+    })
+    // The local edit survives as a conflict candidate.
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      content: 'local',
+      crossContextUpdatedAt: 100,
+    })
+    await persistence.dispose()
+  })
+
+  it('routes an edit made during readback-conflict handoff to the conflict channel', async () => {
+    // A local-v3 save is in flight (already returned 'saved' from
+    // saveDraft). Before the readback completes, an async candidate
+    // save starts. A new local-v5 edit arriving at this exact moment
+    // must be routed to the conflict channel when its debounce timer
+    // fires — not to the primary store, which would silently bury
+    // the cross-context record that won the readback.
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    persistence.schedule(snapshot('primary', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    // Plant a cross-context record with a higher updatedAt.
+    const local = await store.getDraft('vault', 'doc-a')
+    await store.saveDraft({ ...local!, content: 'remote-v2', updatedAt: 200 })
+
+    // Schedule the local edit; the timer captures NO channel state
+    // up front. During the debounce the readback-conflict handoff
+    // pins the entry to the conflict channel — when the timer fires
+    // it must read the CURRENT (conflict-channel) state and route
+    // there, not to the primary store.
+    persistence.schedule(snapshot('local-v3', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'remote-v2',
+    })
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({ content: 'local-v3' })
+    await persistence.dispose()
+  })
+
+  it('never writes primary from a timer created before the conflict pin', async () => {
+    // Variant: the timer is created BEFORE the conflict pin lands.
+    // A subsequent edit that schedules against the same entry must
+    // also see the pin at fire time. Specifically: schedule the edit,
+    // then during the debounce plant a conflict pin by triggering a
+    // handoff; when the timer fires it must read the pin and route
+    // to the conflict channel.
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    persistence.schedule(snapshot('primary', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    // First edit on the new path lands — its timer reads conflict
+    // channel = false (no prior handoff).
+    const local = await store.getDraft('vault', 'doc-a')
+    await store.saveDraft({ ...local!, content: 'remote-v2', updatedAt: 200 })
+    persistence.schedule(snapshot('local-v3', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    // A second edit arrives AFTER the first handoff pinned the entry.
+    persistence.schedule(snapshot('local-v5', 'notes/a', 3))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Primary is still the cross-context record — never overwritten.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      content: 'remote-v2',
+    })
+    // Both local edits are recorded as separate candidates.
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(2)
+    expect(conflicts.map((c) => c.content).sort()).toEqual(['local-v3', 'local-v5'])
+    await persistence.dispose()
+  })
+
+  it('remote rename moves family to B → stale tab at A edits → family remains at B', async () => {
+    // The path-authority invariant: a plain cross-path primary save
+    // MUST NOT silently migrate the family. The server file
+    // operation is the only authoritative path source.
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    await store.saveDraft(draft('primary', 'archive/a', 100))
+    await store.saveConflictDraft(conflictRecord('orphan', 'doc-a', 'archive/a', 'orphan at B'))
+    const persistence = makePersistence(store)
+    persistence.schedule(snapshot('stale-tab-edit', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The family is intact at the path the server actually lives on.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'primary',
+    })
+    // The stale-tab edit lands as a separate candidate pinned to the
+    // family's actual path — it would migrate with the rest of the
+    // family on a future moveDraftFamily(), not be stranded on the
+    // stale path forever.
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(2)
+    const staleEdit = conflicts.find((c) => c.content === 'stale-tab-edit')!
+    expect(staleEdit.documentPath).toBe('archive/a')
+    expect(staleEdit.origin).toBe('delete-conflict')
     await persistence.dispose()
   })
 })

@@ -82,10 +82,10 @@ describe('createUnsavedDraftPersistence', () => {
   })
 
   it('does not let an old pending write recreate a discarded draft', async () => {
-    const write = deferred<boolean>()
+    const write = deferred<import('../draftStore').DraftSaveOutcome>()
     const saveDraft = vi.fn()
       .mockImplementationOnce(() => write.promise)
-      .mockResolvedValue(true)
+      .mockResolvedValue({ status: 'saved', stored: { ...snapshot('a', 'old') } as UnsavedDraft })
     const persistence = createUnsavedDraftPersistence({
       store: { ...store, saveDraft },
     })
@@ -93,7 +93,7 @@ describe('createUnsavedDraftPersistence', () => {
     const owner = persistence.schedule(snapshot('a', 'old'))!
     await vi.advanceTimersByTimeAsync(800)
     const discarded = persistence.discard(owner)
-    write.resolve(true)
+    write.resolve({ status: 'saved', stored: { ...snapshot('a', 'old') } as UnsavedDraft })
     await discarded
 
     expect(await store.getDraft('vault-1', 'a')).toBeNull()
@@ -185,7 +185,7 @@ describe('createUnsavedDraftPersistence', () => {
   })
 
   it('does not let a clean deletion remove a newer scheduled generation', async () => {
-    const oldWrite = deferred<boolean>()
+    const oldWrite = deferred<import('../draftStore').DraftSaveOutcome>()
     const saveDraft = vi.fn()
       .mockImplementationOnce(() => oldWrite.promise)
       .mockImplementation((draft) => store.saveDraft(draft))
@@ -199,7 +199,7 @@ describe('createUnsavedDraftPersistence', () => {
     persistence.schedule(snapshot('a', 'new', 2))
     await vi.advanceTimersByTimeAsync(800)
 
-    oldWrite.resolve(true)
+    oldWrite.resolve({ status: 'saved', stored: { ...snapshot('a', 'old') } as UnsavedDraft })
     await clean
     await persistence.flush('vault-1', 'a')
 
@@ -538,7 +538,7 @@ describe('createUnsavedDraftPersistence', () => {
   it('contains save, delete, and rejected store failures and retries later input', async () => {
     const saveDraft = vi.fn()
       .mockRejectedValueOnce(new Error('write failed'))
-      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce({ status: 'saved', stored: { ...snapshot('a', 'v2', 2) } as UnsavedDraft })
     const deleteDraftIfUnchanged = vi.fn()
       .mockRejectedValue(new Error('delete failed'))
     const persistence = createUnsavedDraftPersistence({

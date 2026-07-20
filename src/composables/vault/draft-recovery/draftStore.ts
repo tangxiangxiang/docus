@@ -16,10 +16,46 @@ const CONFLICT_STORE_NAME = 'draftConflicts'
 const VAULT_UPDATED_INDEX = 'vaultUpdatedAt'
 const CONFLICT_VAULT_INDEX = 'vaultId'
 
-type SaveResult = 'saved' | 'stale' | 'conflict' | 'unsupported'
+type SaveResult = 'saved' | 'stale' | 'conflict' | 'unsupported' | 'path-mismatch'
 type SaveDecision =
   | { result: 'saved'; draft: UnsavedDraft }
   | { result: Exclude<SaveResult, 'saved'>; draft?: never }
+
+/** Outcome of a primary-record save. Mirrors the store-level
+ *  classification so the caller can route each non-success case to the
+ *  right recovery surface:
+ *  - `saved` — the save committed and the readback still matches the
+ *    draft we sent (DraftStore preserves an existing record's
+ *    `createdAt`; the returned `stored` reflects that);
+ *  - `stale` — the store already held a newer record; the caller
+ *    preserves the local content as a conflict candidate and pins the
+ *    entry to the conflict channel;
+ *  - `conflict` — same `updatedAt`, different body; the caller routes
+ *    the local content to the conflict store instead of dropping it;
+ *  - `path-mismatch` — the incoming draft's `documentPath` differs
+ *    from the family's current primary path. The store REFUSES to
+ *    implicitly migrate the family (path changes are only authoritative
+ *    when they come from an explicit `commitMoves()` mapping, a
+ *    persistent quarantine, or a freshly re-read server identity).
+ *    The caller must promote the local content to an independent
+ *    conflict candidate instead of retrying a plain overwrite — a
+ *    stale old-path Tab's edits must never drag the family back from
+ *    the path the server currently lives on.
+ *  - `unsupported` — a future-version / corrupt row (primary OR
+ *    same-identity conflict) blocked the whole save; the caller
+ *    preserves the local content as an independent conflict candidate
+ *    rather than retrying a plain overwrite;
+ *  - `failed` — the underlying store threw or returned a status the
+ *    caller cannot route; the write must fail closed (write flag
+ *    stays set, close seal keeps the tab open) so the latest bytes
+ *    stay visible until a retry succeeds. */
+export type DraftSaveOutcome =
+  | { status: 'saved'; stored: UnsavedDraft }
+  | { status: 'stale'; current: UnsavedDraft }
+  | { status: 'conflict'; current: UnsavedDraft }
+  | { status: 'path-mismatch'; current: UnsavedDraft }
+  | { status: 'unsupported' }
+  | { status: 'failed' }
 type MoveResult = 'moved' | 'missing' | 'conflict' | 'unsupported'
 type DeleteResult = 'deleted' | 'missing' | 'unsupported'
 type ConditionalDeleteResult = DeleteResult | 'stale'
@@ -30,20 +66,19 @@ type BackendOperation =
 
 export interface DraftStorageBackend {
   /** Persist a primary draft record under the (vaultId, documentId)
-   *  CAS rules (see decideSave). Family-aware across paths: when the
+   *  CAS rules (see decideSave). Path-authority: a plain primary save
+   *  MUST NOT silently migrate the family to a different path — path
+   *  changes are only authoritative when they come from an explicit
+   *  commitMoves() mapping (or a persistent quarantine). When the
    *  saved draft's `documentPath` differs from the family's current
-   *  path (or no primary record exists yet), every conflict candidate
-   *  for the same identity migrates to the incoming path AS PART OF
-   *  the same save — atomically, so the primary record can never
-   *  change path alone and strand its conflict candidates on the
-   *  pre-save path (DraftStore accepts a higher-`updatedAt` draft's
-   *  path wholesale, so without this a plain cross-context or
-   *  post-reload write would re-split the family). The family is
-   *  pre-flight validated first: an unsupported (future-version /
-   *  corrupt) conflict row for this identity fails the WHOLE save
-   *  with `unsupported` — nothing moves, the primary keeps its old
-   *  path, and the caller must persist the content as a separate
-   *  candidate instead of retrying a plain overwrite. */
+   *  primary path, the save returns 'path-mismatch' and the caller
+   *  must persist the local content as an independent conflict
+   *  candidate instead of retrying a plain overwrite. A first-write
+   *  to an empty identity (no prior primary record) always succeeds:
+   *  no family exists yet to migrate. An unsupported (future-version /
+   *  corrupt) primary record is left in place and the save returns
+   *  'unsupported' (the caller persists the local content as a
+   *  separate candidate instead of retrying a plain overwrite). */
   save(draft: UnsavedDraft): Promise<SaveResult>
   get(key: DraftKey): Promise<unknown | null>
   list(vaultId: string): Promise<unknown[]>
@@ -154,7 +189,7 @@ export type ConflictListOutcome =
   | { status: 'failed' }
 
 export interface DraftStore {
-  saveDraft(draft: UnsavedDraft): Promise<boolean>
+  saveDraft(draft: UnsavedDraft): Promise<DraftSaveOutcome>
   getDraft(vaultId: string, documentId: string): Promise<UnsavedDraft | null>
   listDrafts(vaultId: string): Promise<UnsavedDraft[]>
   deleteDraft(vaultId: string, documentId: string): Promise<DraftDeleteOutcome>
@@ -209,11 +244,37 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
 
   return {
     async saveDraft(draft) {
-      if (!isUnsavedDraft(draft)) return false
+      if (!isUnsavedDraft(draft)) return { status: 'unsupported' as const }
       try {
-        return await backend.save(cloneDraft(draft)) === 'saved'
+        const result = await backend.save(cloneDraft(draft))
+        if (result === 'saved') {
+          // Return the exact stored value (DraftStore may preserve an
+          // existing record's original createdAt; the caller compares
+          // against this to certify a successful overwrite).
+          const stored = await backend.get(draftKey(draft.vaultId, draft.documentId))
+          if (isUnsavedDraft(stored)) {
+            return { status: 'saved' as const, stored: cloneDraft(stored) }
+          }
+          return { status: 'unsupported' as const }
+        }
+        if (result === 'stale' || result === 'conflict' || result === 'path-mismatch') {
+          // Re-read the current record so the caller can pin the local
+          // content as a conflict candidate WITH the exact cross-context
+          // source captured (a 'stale' / 'conflict' / 'path-mismatch'
+          // classification alone is not enough — the candidate must
+          // record the source's updatedAt and the body the local edit
+          // diverged from).
+          const current = await backend.get(draftKey(draft.vaultId, draft.documentId))
+          if (isUnsavedDraft(current)) {
+            return { status: result, current: cloneDraft(current) }
+          }
+          // A non-save result without a recoverable current record is
+          // unsupported — the caller cannot safely pin a candidate.
+          return { status: 'unsupported' as const }
+        }
+        return { status: result }
       } catch {
-        return false
+        return { status: 'failed' as const }
       }
     },
 
@@ -442,29 +503,30 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
       const current = records.get(familyKey)
       const decision = decideSave(current, draft)
       if (decision.result !== 'saved') return decision.result
-      // Family-aware cross-path save (see DraftStorageBackend.save):
-      // when the primary record changes path (or is created while
-      // conflict candidates already exist for this identity), every
-      // same-identity conflict row migrates to the incoming path in
-      // the same step. Validate ALL rows before applying anything —
-      // an unsupported row fails the whole save so nothing is left
-      // stranded on the old path, mirroring moveFamily's pre-flight
-      // and the IndexedDB backend's single cross-store transaction.
+      // Path-authority check (see DraftStorageBackend.save): a plain
+      // primary save must NEVER silently migrate the family to a
+      // different path. The server file operation is the only
+      // authoritative path source — implicit migration would let a
+      // stale old-path Tab drag a family back from the path the
+      // server actually lives on. The caller must obtain an explicit
+      // commitMoves() mapping (or a persistent quarantine) before
+      // changing the family's path.
       const currentPath = isUnsavedDraft(current) ? current.documentPath : null
-      if (currentPath !== decision.draft.documentPath) {
-        const conflictUpdates: Array<{ key: string; record: DraftConflictRecord }> = []
-        for (const value of [...conflictRecords.values()]) {
-          if (recordField(value, 'vaultId') !== draft.vaultId
-            || recordField(value, 'documentId') !== draft.documentId) continue
-          if (!isDraftConflictRecord(value)) return 'unsupported'
-          conflictUpdates.push({
-            key: serializedConflictKey(draft.vaultId, draft.documentId, value.conflictId),
-            record: { ...value, documentPath: decision.draft.documentPath },
-          })
-        }
-        for (const { key, record } of conflictUpdates) {
-          conflictRecords.set(key, cloneConflictRecord(record))
-        }
+      if (currentPath !== null && currentPath !== decision.draft.documentPath) {
+        return 'path-mismatch'
+      }
+      // Family-state check: if any same-identity conflict row is
+      // unsupported (future-version / corrupt), the family is in an
+      // indeterminate state — the caller must persist the local
+      // content as a candidate rather than a plain overwrite.
+      // Without this check, a future-version conflict could survive
+      // a primary write, invisible to Recovery (the only discoverable
+      // surface is the conflict store; a silently overwriting primary
+      // hides the corruption behind a fresh record).
+      for (const value of conflictRecords.values()) {
+        if (recordField(value, 'vaultId') !== draft.vaultId
+          || recordField(value, 'documentId') !== draft.documentId) continue
+        if (!isDraftConflictRecord(value)) return 'unsupported'
       }
       records.set(familyKey, cloneDraft(decision.draft))
       return 'saved'
@@ -695,49 +757,26 @@ export function createIndexedDbDraftBackend(
   return {
     async save(draft) {
       const db = await database()
-      // ONE transaction across both stores: a path-changing save
-      // migrates the identity's conflict candidates atomically with
-      // the primary write, so the primary can never change path alone
-      // and strand its conflicts on the pre-save path (see
-      // DraftStorageBackend.save for the full rationale).
-      const transaction = db.transaction(
-        [DRAFT_STORE_NAME, CONFLICT_STORE_NAME],
-        'readwrite',
-      )
+      const transaction = db.transaction(DRAFT_STORE_NAME, 'readwrite')
       const store = transaction.objectStore(DRAFT_STORE_NAME)
       const current = await request(store.get(
         idbKey(draft.vaultId, draft.documentId),
       ))
       const decision = decideSave(current, draft)
       if (decision.result === 'saved') {
+        // Path-authority check (see DraftStorageBackend.save): a plain
+        // primary save must NEVER silently migrate the family to a
+        // different path. Path changes are only authoritative when
+        // they come from an explicit commitMoves() mapping (or a
+        // persistent quarantine); implicit migration would let a
+        // stale old-path Tab drag a family back from the path the
+        // server actually lives on. The conflict candidates stay on
+        // the family's real path and the caller persists the local
+        // content as a candidate instead.
         const currentPath = isUnsavedDraft(current) ? current.documentPath : null
-        if (currentPath !== decision.draft.documentPath) {
-          const conflictStore = transaction.objectStore(CONFLICT_STORE_NAME)
-          const values = await request(
-            conflictStore.index(CONFLICT_VAULT_INDEX).getAll(draft.vaultId),
-          )
-          // Pre-flight the whole family BEFORE writing anything: an
-          // unsupported row for THIS identity fails the whole save —
-          // migrating the valid rows would strand the unreadable one
-          // on the pre-save path, silently.
-          const familyConflicts: DraftConflictRecord[] = []
-          for (const value of values) {
-            if (recordField(value, 'documentId') !== draft.documentId) continue
-            if (!isDraftConflictRecord(value)) {
-              await transactionDone(transaction)
-              return 'unsupported'
-            }
-            familyConflicts.push(value)
-          }
-          for (const record of familyConflicts) {
-            // Same compound key (documentId unchanged) — put updates
-            // the path in place, preserving conflictId/body/baseline/
-            // timestamps and origin.
-            conflictStore.put(cloneConflictRecord({
-              ...record,
-              documentPath: decision.draft.documentPath,
-            }))
-          }
+        if (currentPath !== null && currentPath !== decision.draft.documentPath) {
+          await transactionDone(transaction)
+          return 'path-mismatch'
         }
         store.put(cloneDraft(decision.draft))
       }

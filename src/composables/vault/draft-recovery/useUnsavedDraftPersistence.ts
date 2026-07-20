@@ -159,18 +159,27 @@ type DraftReleaseResult =
 /** Fired when a background quarantine retry changes the draft family
  *  AFTER the rename transaction already reported (the lifecycle has
  *  long since refreshed Recovery against the failed/mismatched state).
- *  `moved` — the retry united the family at `newPath`; `conflict` —
- *  the retry failed again but the latest content was persisted as a
- *  move-quarantine candidate next to the old family. The owner should
- *  refresh the Recovery identity (and any open Recovery surfaces) so
- *  they follow the family instead of showing the stale pre-retry
- *  state. Never warns — the original failure already did. */
+ *  - `moved-and-persisted` — the retry united the family at `newPath`
+ *    AND the latest snapshot was successfully persisted on the new
+ *    path's primary record. The family is whole and durable; Recovery
+ *    must follow the family.
+ *  - `moved-write-failed` — the retry united the family at `newPath`
+ *    but the latest snapshot's primary write was rejected. The
+ *    family is whole on disk but the latest edit is still only in
+ *    memory; Recovery must follow the family AND keep the tab open.
+ *  - `conflict` — the retry failed again but the latest content was
+ *    persisted as a move-quarantine candidate next to the old
+ *    family. Recovery must surface the new candidate.
+ *  The owner should refresh the Recovery identity (and any open
+ *  Recovery tabs) so they follow the family instead of showing the
+ *  stale pre-retry state. Never warns — the original failure
+ *  already did. */
 export interface DraftFamilyMoveSettlement {
   vaultId: string
   documentId: string
   oldPath: string
   newPath: string
-  status: 'moved' | 'conflict'
+  status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
 }
 
 interface CreateOptions {
@@ -213,7 +222,12 @@ export function createUnsavedDraftPersistence(
    *  newer than the cross-context source so recovery can sort candidates.
    *  Shared by the delete-time handoff, the conflict-channel write path
    *  and the failed-family-move quarantine so all produce identical
-   *  record shapes. */
+   *  record shapes.
+   *  `documentPath` falls back to the `identity.documentPath` so callers
+   *  that explicitly know the family's actual path (e.g. a stale Tab
+   *  whose snapshot path differs from the family's real path) can pin
+   *  the candidate to the family's path; callers that want the
+   *  snapshot's path can pass it through `identity.documentPath`. */
   function buildConflictRecord(
     snapshot: DraftBufferSnapshot,
     entry: DraftEntry,
@@ -230,7 +244,7 @@ export function createUnsavedDraftPersistence(
       conflictId: localConflictId,
       vaultId: identity.vaultId,
       documentId: identity.documentId,
-      documentPath: snapshot.documentPath,
+      documentPath: identity.documentPath,
       content: snapshot.content,
       baseContentHash: snapshot.baseContentHash,
       baseModifiedAt: snapshot.baseModifiedAt,
@@ -403,13 +417,176 @@ export function createUnsavedDraftPersistence(
     const capturedSnapshot = entry.latestSnapshot
     const capturedRevision = snapshot.revision
     if (!capturedSnapshot || capturedSnapshot.revision !== capturedRevision) return false
-    let saved = false
+    let outcome: import('./draftStore').DraftSaveOutcome
     try {
-      saved = await store.saveDraft(draft)
+      outcome = await store.saveDraft(draft)
     } catch {
       return false
     }
-    if (!saved) return false
+    if (outcome.status === 'failed') {
+      // Store threw / returned a fatal error. The latest bytes are still
+      // in memory only — keep the write flag set and fail closed so
+      // flush / close seal retry until the store recovers. Without this
+      // a debounce `void queueWrite(...)` would silently drop the edit
+      // on a transient store outage.
+      return false
+    }
+    if (outcome.status === 'unsupported') {
+      // A future-version / corrupt row (or a non-saveable shape) blocks
+      // the WHOLE primary save. The caller must NEVER retry a plain
+      // overwrite — promote the snapshot to an independent conflict
+      // candidate so Recovery surfaces it next to whatever the store
+      // still holds (the unsupported row itself, or a previous
+      // cross-context record).
+      if ((!allowDisposed && disposed) || !current(owner, entry)
+        || entry.latestSnapshot !== capturedSnapshot
+        || entry.latestSnapshot.revision !== capturedRevision
+        || entry.pendingConflictId !== null) {
+        return false
+      }
+      const record = buildConflictRecord(
+        snapshot,
+        entry,
+        {
+          vaultId: owner.vaultId,
+          documentId: owner.documentId,
+          documentPath: snapshot.documentPath,
+        },
+        // No cross-context source — the local content is preserved
+        // alongside whatever the store holds (the store couldn't tell
+        // us what).
+        null,
+        'delete-conflict',
+      )
+      let candidateSaved = false
+      try {
+        candidateSaved = (await store.saveConflictDraft(record)).status === 'saved'
+      } catch {
+        candidateSaved = false
+      }
+      if (!candidateSaved) {
+        entry.pendingConflictId = `failed:${record.conflictId}`
+        return false
+      }
+      entry.pendingConflictId = record.conflictId
+      entry.conflictCrossContextUpdatedAt = null
+      if (current(owner, entry)
+        && entry.latestSnapshot === capturedSnapshot
+        && entry.latestSnapshot.revision === capturedRevision) {
+        entry.latestSnapshotNeedsWrite = false
+      }
+      return false
+    }
+    if (outcome.status === 'stale' || outcome.status === 'conflict') {
+      // The store already holds a record with higher (or equal) priority
+      // — either a newer cross-context draft, or a same-timestamp
+      // conflict. Persist the local content as a candidate and pin the
+      // entry to the conflict channel so every subsequent edit follows
+      // it. NEVER retry the primary: `safeTimestamp()` would mint a
+      // higher `updatedAt` and silently bury the other context.
+      if ((!allowDisposed && disposed) || !current(owner, entry)
+        || entry.latestSnapshot !== capturedSnapshot
+        || entry.latestSnapshot.revision === undefined
+        || entry.latestSnapshot.revision !== capturedRevision
+        || entry.pendingConflictId !== null) {
+        return false
+      }
+      const crossContextUpdatedAt = outcome.current.updatedAt
+      const record = buildConflictRecord(
+        snapshot,
+        entry,
+        {
+          vaultId: owner.vaultId,
+          documentId: owner.documentId,
+          // The candidate's `documentPath` MUST track the family's
+          // actual path (the cross-context source it diverged from),
+          // not the snapshot's possibly-stale path — otherwise a later
+          // move would never migrate the candidate with the rest of
+          // the family and it would be stranded on the wrong path
+          // forever, invisible to Recovery.
+          documentPath: outcome.current.documentPath,
+        },
+        crossContextUpdatedAt,
+      )
+      let candidateSaved = false
+      try {
+        candidateSaved = (await store.saveConflictDraft(record)).status === 'saved'
+      } catch {
+        candidateSaved = false
+      }
+      entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+      if (!candidateSaved) {
+        entry.pendingConflictId = `failed:${record.conflictId}`
+        return false
+      }
+      entry.pendingConflictId = record.conflictId
+      entry.persistedDraft = outcome.current
+      if (current(owner, entry)
+        && entry.latestSnapshot === capturedSnapshot
+        && entry.latestSnapshot.revision === capturedRevision) {
+        entry.latestSnapshotNeedsWrite = false
+      }
+      return false
+    }
+    if (outcome.status === 'path-mismatch') {
+      // The family's primary record lives at a different path than the
+      // incoming draft — the server already moved the file (or another
+      // context did), and this snapshot's path is stale. A plain
+      // primary write here would either silently drag the family back
+      // to the old path (the Stateless family-aware backstop used to do
+      // this — re-introducing the exact split the move is supposed to
+      // prevent) or overwrite the family's current record (if the
+      // family was empty). Promote the local content to an independent
+      // conflict candidate next to the family's actual path, pin the
+      // entry to the conflict channel so every subsequent edit follows
+      // it, and surface the cross-context source's updatedAt on the
+      // candidate so Recovery can sort it correctly.
+      if ((!allowDisposed && disposed) || !current(owner, entry)
+        || entry.latestSnapshot !== capturedSnapshot
+        || entry.latestSnapshot.revision !== capturedRevision
+        || entry.pendingConflictId !== null) {
+        return false
+      }
+      const crossContextUpdatedAt = outcome.current.updatedAt
+      const record = buildConflictRecord(
+        snapshot,
+        entry,
+        {
+          vaultId: owner.vaultId,
+          documentId: owner.documentId,
+          // The candidate's `documentPath` MUST track the family's
+          // actual path (the cross-context source it diverged from),
+          // not the stale snapshot path — otherwise a later move
+          // would never migrate the candidate with the rest of the
+          // family and it would be stranded on the wrong path
+          // forever, invisible to Recovery.
+          documentPath: outcome.current.documentPath,
+        },
+        crossContextUpdatedAt,
+      )
+      let candidateSaved = false
+      try {
+        candidateSaved = (await store.saveConflictDraft(record)).status === 'saved'
+      } catch {
+        candidateSaved = false
+      }
+      entry.conflictCrossContextUpdatedAt = crossContextUpdatedAt
+      if (!candidateSaved) {
+        entry.pendingConflictId = `failed:${record.conflictId}`
+        return false
+      }
+      entry.pendingConflictId = record.conflictId
+      entry.persistedDraft = outcome.current
+      if (current(owner, entry)
+        && entry.latestSnapshot === capturedSnapshot
+        && entry.latestSnapshot.revision === capturedRevision) {
+        entry.latestSnapshotNeedsWrite = false
+      }
+      return false
+    }
+    if (outcome.status !== 'saved') {
+      return false
+    }
     // A newer local edit landing during the save supersedes this
     // revision — its own write is responsible for persistence.
     if ((!allowDisposed && disposed) || !current(owner, entry)
@@ -417,25 +594,22 @@ export function createUnsavedDraftPersistence(
       || entry.latestSnapshot.revision !== capturedRevision) {
       return false
     }
-    // Exact readback: the store must still hold EXACTLY the draft we
-    // just saved. Another context may have replaced it between the
-    // save and this read — DraftStore accepts a higher `updatedAt`
-    // record wholesale (body AND path), so a `saveDraft === true` that
-    // skips the readback would certify content durable that is
-    // already gone from the store, and a close seal acting on that
-    // true would close the tab holding the only remaining copy. The
-    // write flag is cleared ONLY once the readback matches.
+    // Exact readback: re-read the store ourselves to detect a race
+    // that happened AFTER the save. The structured outcome's `stored`
+    // value was captured DURING the save; between then and now
+    // another context may have replaced the record (the store accepts
+    // a higher-`updatedAt` record wholesale, body AND path). A direct
+    // re-read here catches that race — the previous (now-stale) `saved`
+    // outcome must NOT certify the bytes durable if the store no
+    // longer holds them. DraftStore preserves an existing record's
+    // original `createdAt`; the equality check tolerates that.
     let stored: UnsavedDraft | null = null
     try {
       stored = await store.getDraft(draft.vaultId, draft.documentId)
     } catch {
-      return false
+      stored = null
     }
     if (stored
-      && (!allowDisposed && disposed) === false
-      && current(owner, entry)
-      && entry.latestSnapshot === capturedSnapshot
-      && entry.latestSnapshot.revision === capturedRevision
       && draftsEqual(stored, { ...draft, createdAt: stored.createdAt })) {
       entry.latestSnapshotNeedsWrite = false
       entry.persistedDraft = stored
@@ -461,7 +635,13 @@ export function createUnsavedDraftPersistence(
       {
         vaultId: owner.vaultId,
         documentId: owner.documentId,
-        documentPath: snapshot.documentPath,
+        // The candidate's `documentPath` MUST track the family's
+        // actual path (whatever the store now holds), not the
+        // possibly-stale snapshot path — otherwise a later move
+        // would never migrate the candidate with the rest of the
+        // family and it would be stranded on the wrong path
+        // forever, invisible to Recovery.
+        documentPath: stored?.documentPath ?? snapshot.documentPath,
       },
       crossContextUpdatedAt,
     )
@@ -634,11 +814,18 @@ export function createUnsavedDraftPersistence(
         // superseding edit (its owner check fails below) persists
         // normally on the new path instead of re-running the move.
         entry.pendingFamilyMove = null
-        // The family moved in the background, after the rename
-        // transaction already refreshed Recovery against the failed
-        // state — notify so items/tabs follow the family.
-        notifyFamilyMoveSettled(owner.vaultId, owner.documentId, quarantine, 'moved')
-        if ((!allowDisposed && disposed) || !current(owner, entry)) return false
+        if ((!allowDisposed && disposed) || !current(owner, entry)) {
+          // The family is whole on the new path even though we can't
+          // observe the latest snapshot — Recovery must still follow
+          // it. The 'moved-write-failed' settlement signals "family
+          // moved but persistence not verified" so the owner keeps
+          // the tab open (the only surface still possibly holding
+          // unpersisted bytes) while refreshing Recovery.
+          notifyFamilyMoveSettled(
+            owner.vaultId, owner.documentId, quarantine, 'moved-write-failed',
+          )
+          return false
+        }
         if (entry.latestSnapshot) {
           entry.latestSnapshot = {
             ...entry.latestSnapshot,
@@ -650,13 +837,35 @@ export function createUnsavedDraftPersistence(
         } catch {
           entry.persistedDraft = null
         }
-        if ((!allowDisposed && disposed) || !current(owner, entry)) return false
+        if ((!allowDisposed && disposed) || !current(owner, entry)) {
+          notifyFamilyMoveSettled(
+            owner.vaultId, owner.documentId, quarantine, 'moved-write-failed',
+          )
+          return false
+        }
         const latest = entry.latestSnapshot
-        if (!latest || !entry.latestSnapshotNeedsWrite) return true
+        if (!latest || !entry.latestSnapshotNeedsWrite) {
+          // No pending snapshot to write — the family moved and the
+          // move itself is the durable change. Recovery must follow.
+          notifyFamilyMoveSettled(
+            owner.vaultId, owner.documentId, quarantine, 'moved-and-persisted',
+          )
+          return true
+        }
         const target = cloneSnapshot(latest)
-        return entry.pendingConflictId !== null
-          ? writeConflict(owner, target, allowDisposed)
-          : writePrimary(owner, target, allowDisposed)
+        const writeSucceeded = entry.pendingConflictId !== null
+          ? await writeConflict(owner, target, allowDisposed)
+          : await writePrimary(owner, target, allowDisposed)
+        // The family moved in the background, after the rename
+        // transaction already refreshed Recovery against the failed
+        // state — notify AFTER the final write completes so the
+        // owner refreshes Recovery against the actual durable state
+        // (not a transient "moved but not yet persisted" snapshot).
+        notifyFamilyMoveSettled(
+          owner.vaultId, owner.documentId, quarantine,
+          writeSucceeded ? 'moved-and-persisted' : 'moved-write-failed',
+        )
+        return writeSucceeded
       }
       // The retry failed — the family stays whole at the OLD path.
       // Never write the primary record: persist the latest content as
@@ -720,14 +929,6 @@ export function createUnsavedDraftPersistence(
     const captured = cloneSnapshot(snapshot)
     const entry = entryFor(captured.vaultId, captured.documentId)
     clearTimer(entry)
-    // While the entry is in conflict channel mode (a prior handoff
-    // promoted the local snapshot to a conflict record), a new edit must
-    // NOT revert to primary persistence: writing the primary store here
-    // would mint a fresh `safeTimestamp()` and overwrite the cross-
-    // context record that won the CAS. Keep the pin and route the
-    // debounced write to the conflict channel, preserving the new
-    // content as another conflict candidate.
-    const conflictChannel = entry.pendingConflictId !== null
     entry.generation += 1
     entry.latestSnapshot = captured
     entry.latestSnapshotNeedsWrite = true
@@ -739,6 +940,18 @@ export function createUnsavedDraftPersistence(
     if (!entry.fileTransaction) {
       entry.timer = setTimeout(() => {
         entry.timer = null
+        // Read the entry's current persistence channel AT TIMER FIRE
+        // time, not at schedule time. A user edit can land while an
+        // earlier readback-conflict handoff is still mid-flight, and
+        // the conflict channel can be pinned to the entry between
+        // schedule() and the timer firing — capturing the channel
+        // up-front would let a primary write overwrite the cross-
+        // context record that won the CAS, exactly the race the
+        // conflict channel exists to prevent. The same rule applies
+        // to the quarantine: a previous (failed) family move can
+        // resolve before the timer fires, lifting the quarantine; an
+        // earlier channel decision captured at schedule time would
+        // route the write through the now-obsolete path.
         const quarantine = entry.pendingFamilyMove
         if (quarantine && captured.documentPath !== quarantine.oldPath) {
           // A failed family move quarantines the entry: an edit made on
@@ -746,7 +959,11 @@ export function createUnsavedDraftPersistence(
           // anything may write the primary record there — a plain write
           // would move the primary alone and split the family.
           void queueFamilyMoveWrite(owner, captured)
-        } else if (conflictChannel) {
+        } else if (entry.pendingConflictId !== null) {
+          // Conflict-pinned entries must keep writing the conflict
+          // channel, never the primary store — a primary write would
+          // mint a fresh `safeTimestamp()` and overwrite the cross-
+          // context record that won the CAS.
           void queueConflictWrite(owner, captured)
         } else {
           void queueWrite(owner, captured)
@@ -1104,8 +1321,16 @@ export function createUnsavedDraftPersistence(
       }
       entry.timer = setTimeout(() => {
         entry.timer = null
-        if (conflictChannel) void queueConflictWrite(owner, captured)
-        else void queueWrite(owner, captured)
+        // Read the channel AT TIMER FIRE time (see schedule() for the
+        // full rationale). A handoff can land between the release and
+        // the debounce firing — captured at release time, the wrong
+        // channel could overwrite the cross-context record a prior
+        // mid-flight handoff pinned.
+        if (entry.pendingConflictId !== null) {
+          void queueConflictWrite(owner, captured)
+        } else {
+          void queueWrite(owner, captured)
+        }
       }, debounceMs)
       return { status: 'released' }
     }
@@ -1807,8 +2032,6 @@ export function createUnsavedDraftPersistence(
         // visible surface while the debounce persists the latest
         // snapshot on the entry's active channel.
         if (entry.latestSnapshot && entry.latestSnapshotNeedsWrite) {
-          const conflictChannel = entry.pendingConflictId !== null
-          const quarantine = entry.pendingFamilyMove
           entry.generation += 1
           const owner = {
             vaultId: identity.vaultId,
@@ -1818,9 +2041,15 @@ export function createUnsavedDraftPersistence(
           const captured = cloneSnapshot(entry.latestSnapshot)
           entry.timer = setTimeout(() => {
             entry.timer = null
+            // Read the channel AT TIMER FIRE time (see schedule() for
+            // the full rationale). Capturing the channel here would
+            // miss a handoff that lands between this re-arm and the
+            // debounce firing — the next write could overwrite the
+            // cross-context record a prior mid-flight handoff pinned.
+            const quarantine = entry.pendingFamilyMove
             if (quarantine && captured.documentPath !== quarantine.oldPath) {
               void queueFamilyMoveWrite(owner, captured)
-            } else if (conflictChannel) {
+            } else if (entry.pendingConflictId !== null) {
               void queueConflictWrite(owner, captured)
             } else {
               void queueWrite(owner, captured)

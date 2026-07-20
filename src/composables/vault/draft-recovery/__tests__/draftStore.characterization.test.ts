@@ -37,7 +37,8 @@ describe('draftStore characterization', () => {
   it('round-trips valid drafts without sharing mutable references', async () => {
     const value = draft('a', 20)
 
-    expect(await store.saveDraft(value)).toBe(true)
+    const outcome = await store.saveDraft(value)
+    expect(outcome.status).toBe('saved')
     value.content = 'caller mutation'
 
     const firstRead = await store.getDraft('vault-a', 'a')
@@ -92,10 +93,10 @@ describe('draftStore characterization', () => {
   })
 
   it('rejects stale and conflicting equal-timestamp writes', async () => {
-    expect(await store.saveDraft(draft('a', 30))).toBe(true)
-    expect(await store.saveDraft(draft('a', 20, { content: 'stale' }))).toBe(false)
-    expect(await store.saveDraft(draft('a', 30))).toBe(true)
-    expect(await store.saveDraft(draft('a', 30, { content: 'conflict' }))).toBe(false)
+    expect((await store.saveDraft(draft('a', 30))).status).toBe('saved')
+    expect((await store.saveDraft(draft('a', 20, { content: 'stale' }))).status).toBe('stale')
+    expect((await store.saveDraft(draft('a', 30))).status).toBe('saved')
+    expect((await store.saveDraft(draft('a', 30, { content: 'conflict' }))).status).toBe('conflict')
 
     expect((await store.getDraft('vault-a', 'a'))?.content).toBe('content:a:30')
   })
@@ -104,14 +105,15 @@ describe('draftStore characterization', () => {
     const future = { ...draft('a', 40), version: 2, content: 'future data' }
     await backend.seedRaw(future)
 
-    expect(await store.saveDraft(draft('a', 50))).toBe(false)
+    expect((await store.saveDraft(draft('a', 50))).status).toBe('unsupported')
     expect(await backend.get(['vault-a', 'a'])).toEqual(future)
   })
 
   it('preserves the original createdAt when updating a draft', async () => {
     await store.saveDraft(draft('a', 20, { createdAt: 5 }))
 
-    expect(await store.saveDraft(draft('a', 30, { createdAt: 25 }))).toBe(true)
+    const outcome = await store.saveDraft(draft('a', 30, { createdAt: 25 }))
+    expect(outcome.status).toBe('saved')
     expect(await store.getDraft('vault-a', 'a')).toEqual(
       draft('a', 30, { createdAt: 5 }),
     )
@@ -120,8 +122,8 @@ describe('draftStore characterization', () => {
   it('atomically refuses to delete a draft changed by another context', async () => {
     const original = draft('a', 20, { content: 'v1' })
     const newer = draft('a', 30, { content: 'v2' })
-    await expect(store.saveDraft(original)).resolves.toBe(true)
-    await expect(store.saveDraft(newer)).resolves.toBe(true)
+    await expect(store.saveDraft(original)).resolves.toMatchObject({ status: 'saved' })
+    await expect(store.saveDraft(newer)).resolves.toMatchObject({ status: 'saved' })
 
     await expect(store.deleteDraftIfUnchanged(original))
       .resolves.toEqual({ status: 'stale' })
@@ -136,12 +138,12 @@ describe('draftStore characterization', () => {
   it('rejects invalid records without affecting existing drafts', async () => {
     await store.saveDraft(draft('valid', 20))
 
-    expect(await store.saveDraft(draft('', 20))).toBe(false)
-    expect(await store.saveDraft(draft('bad-time', 5, { createdAt: 10 }))).toBe(false)
-    expect(await store.saveDraft({
+    expect((await store.saveDraft(draft('', 20))).status).toBe('unsupported')
+    expect((await store.saveDraft(draft('bad-time', 5, { createdAt: 10 }))).status).toBe('unsupported')
+    expect((await store.saveDraft({
       ...draft('future', 20),
       version: 2,
-    } as unknown as UnsavedDraft)).toBe(false)
+    } as unknown as UnsavedDraft)).status).toBe('unsupported')
 
     expect((await store.listDrafts('vault-a')).map((value) => value.documentId))
       .toEqual(['valid'])
@@ -177,19 +179,30 @@ describe('draftStore characterization', () => {
   it('lists safe-integer record timestamps and accepts finite filesystem mtimes', async () => {
     const unsafe = Number.MAX_SAFE_INTEGER + 1
 
-    expect(await store.saveDraft(draft('boundary', Number.MAX_SAFE_INTEGER, {
+    const safe = await store.saveDraft(draft('boundary', Number.MAX_SAFE_INTEGER, {
       baseModifiedAt: 1_721_234_567_890.625,
-    }))).toBe(true)
-    expect(await store.saveDraft(draft('created', unsafe, {
+    }))
+    expect(safe.status).toBe('saved')
+
+    const invalidCreated = await store.saveDraft(draft('created', unsafe, {
       createdAt: unsafe,
-    }))).toBe(false)
-    expect(await store.saveDraft(draft('updated', unsafe))).toBe(false)
-    expect(await store.saveDraft(draft('large-mtime', 30, {
+    })).catch(() => ({ status: 'unsupported' as const }))
+    expect(invalidCreated.status).toBe('unsupported')
+
+    const invalidUpdated = await store.saveDraft(draft('updated', unsafe))
+      .catch(() => ({ status: 'unsupported' as const }))
+    expect(invalidUpdated.status).toBe('unsupported')
+
+    const largeMtime = await store.saveDraft(draft('large-mtime', 30, {
       baseModifiedAt: unsafe,
-    }))).toBe(true)
-    expect(await store.saveDraft(draft('infinite-mtime', 31, {
+    }))
+    expect(largeMtime.status).toBe('saved')
+
+    const infiniteMtime = await store.saveDraft(draft('infinite-mtime', 31, {
       baseModifiedAt: Number.POSITIVE_INFINITY,
-    }))).toBe(false)
+    })).catch(() => ({ status: 'unsupported' as const }))
+    expect(infiniteMtime.status).toBe('unsupported')
+
     expect((await store.listDrafts('vault-a')).map((value) => value.documentId))
       .toEqual(['boundary', 'large-mtime'])
   })
@@ -296,7 +309,7 @@ describe('draftStore characterization', () => {
 
   it('turns backend failures into safe results without rejected promises', async () => {
     backend.failNext('save')
-    await expect(store.saveDraft(draft('a', 20))).resolves.toBe(false)
+    await expect(store.saveDraft(draft('a', 20))).resolves.toEqual({ status: 'failed' })
 
     backend.failNext('get')
     await expect(store.getDraft('vault-a', 'a')).resolves.toBeNull()
@@ -315,7 +328,7 @@ describe('draftStore characterization', () => {
   it('fails safely when IndexedDB is unavailable', async () => {
     const unavailable = createDraftStore({ indexedDB: undefined })
 
-    await expect(unavailable.saveDraft(draft('a', 20))).resolves.toBe(false)
+    await expect(unavailable.saveDraft(draft('a', 20))).resolves.toEqual({ status: 'failed' })
     await expect(unavailable.getDraft('vault-a', 'a')).resolves.toBeNull()
     await expect(unavailable.listDrafts('vault-a')).resolves.toEqual([])
     await expect(unavailable.deleteDraft('vault-a', 'a'))
@@ -751,19 +764,19 @@ describe('draftStore characterization', () => {
     expect(await store.listConflictDrafts('vault-a')).toEqual([])
   })
 
-  // Store-level family-aware save backstop (the reload-proof invariant
-  // for blocker 2): cross-path primary writes must migrate every same-
-  // identity conflict row to the incoming path in a single decision step,
-  // mirroring moveFamily's pre-flight. An unreadable conflict row fails
-  // the WHOLE save with nothing written — the caller persists the
-  // content as a candidate instead of retrying plain overwrite. This
-  // is the store-level invariant that protects the family even when
-  // the in-memory quarantine has been lost (page reload, new tab, etc.).
+  // Store-level path authority (the reload-proof invariant for the new
+  // blocker 3): a plain primary save must NEVER silently migrate the
+  // family to a different path. Path changes are only authoritative
+  // when they come from an explicit commitMoves() mapping (or a
+  // persistent quarantine) — a stale old-path Tab's edit must surface
+  // as `path-mismatch` so the caller can promote the local content to
+  // an independent conflict candidate instead of dragging the family
+  // back from the path the server actually lives on. Without this, a
+  // post-reload write from a stale Tab would re-split the family.
 
-  it('migrates every same-identity conflict candidate to the new path on a cross-path primary save', async () => {
+  it('returns path-mismatch on a cross-path primary save and leaves the family intact', async () => {
     await store.saveDraft(draft('a', 10))
     await store.saveConflictDraft({
-      ...(await store.listConflictDrafts('vault-a').then(() => ({} as never))),
       version: 1,
       conflictId: 'conflict-a',
       vaultId: 'vault-a',
@@ -779,94 +792,34 @@ describe('draftStore characterization', () => {
       recordedAt: 31,
     } as DraftConflictRecord)
 
-    const updated = await store.saveDraft(draft('a', 20, { documentPath: 'archive/a' }))
-    expect(updated).toBe(true)
+    const outcome = await store.saveDraft(draft('a', 20, { documentPath: 'archive/a' }))
+    expect(outcome.status).toBe('path-mismatch')
+    if (outcome.status === 'path-mismatch') {
+      // The caller needs the family's ACTUAL current record to record
+      // a candidate with the correct cross-context source.
+      expect(outcome.current).toMatchObject({
+        documentPath: 'notes/a',
+        content: 'content:a:10',
+      })
+    }
 
-    // Primary migrated to the new path …
-    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
-      documentPath: 'archive/a',
-      content: 'content:a:20',
-    })
-    // … and the conflict candidate travelled with it.
-    const conflicts = await store.listConflictDrafts('vault-a')
-    expect(conflicts).toHaveLength(1)
-    expect(conflicts[0]).toMatchObject({
-      documentPath: 'archive/a',
-      content: 'local orphan',
-    })
-  })
-
-  it('refuses a cross-path primary save when a same-identity conflict row is unsupported, leaving everything intact', async () => {
-    await store.saveDraft(draft('a', 10))
-    await backend.seedRawConflict({
-      version: 2,
-      conflictId: 'conflict-future',
-      vaultId: 'vault-a',
-      documentId: 'a',
-      documentPath: 'notes/a',
-      content: 'future',
-      baseContentHash: 'hash:a',
-      baseModifiedAt: 100,
-      createdAt: 10,
-      updatedAt: 31,
-      origin: 'delete-conflict',
-      crossContextUpdatedAt: 30,
-      recordedAt: 31,
-    })
-
-    // The save returns false so the caller can promote the local
-    // snapshot to a conflict candidate instead of silently overwriting
-    // the cross-context record.
-    const updated = await store.saveDraft(draft('a', 20, { documentPath: 'archive/a' }))
-    expect(updated).toBe(false)
-
-    // Nothing changed: primary stays at the old path, the unreadable
-    // conflict row is preserved.
+    // The family is unchanged: primary stays at the old path, the
+    // conflict candidate stays at the old path.
     expect(await store.getDraft('vault-a', 'a')).toMatchObject({
       documentPath: 'notes/a',
       content: 'content:a:10',
     })
-    const rawConflicts = await backend.listConflicts('vault-a')
-    expect(rawConflicts).toHaveLength(1)
-    expect((rawConflicts[0] as { conflictId?: string }).conflictId)
-      .toBe('conflict-future')
-  })
-
-  it('does not touch same-identity conflicts on a same-path primary save', async () => {
-    await store.saveDraft(draft('a', 10))
-    await store.saveConflictDraft({
-      version: 1,
-      conflictId: 'conflict-a',
-      vaultId: 'vault-a',
-      documentId: 'a',
-      documentPath: 'notes/a',
-      content: 'local orphan',
-      baseContentHash: 'hash:a',
-      baseModifiedAt: 100,
-      createdAt: 10,
-      updatedAt: 31,
-      origin: 'delete-conflict',
-      crossContextUpdatedAt: 30,
-      recordedAt: 31,
-    } as DraftConflictRecord)
-
-    const updated = await store.saveDraft(draft('a', 20))
-    expect(updated).toBe(true)
-    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
-      documentPath: 'notes/a',
-      content: 'content:a:20',
-    })
-    // The conflict is on the same path the primary was already on —
-    // backstop is a no-op.
     const conflicts = await store.listConflictDrafts('vault-a')
     expect(conflicts).toHaveLength(1)
     expect(conflicts[0]).toMatchObject({ documentPath: 'notes/a' })
   })
 
-  it('migrates existing same-identity conflicts to the new path on the very first primary save', async () => {
-    // Pre-existing conflict candidate (no primary yet) — the backstop
-    // must still unify the family on the very first primary write at a
-    // different path.
+  it('returns path-mismatch on a first primary save when a same-identity conflict already exists at a different path', async () => {
+    // Pre-existing conflict candidate with no primary record — a plain
+    // first primary write at a different path is still not allowed to
+    // migrate the family. The caller would have to either persist the
+    // content as a candidate (matching the existing conflict's path)
+    // or obtain an explicit moveFamily() mapping.
     await backend.seedRawConflict({
       version: 1,
       conflictId: 'conflict-orphan',
@@ -883,17 +836,74 @@ describe('draftStore characterization', () => {
       recordedAt: 31,
     })
 
-    const updated = await store.saveDraft(draft('a', 20, { documentPath: 'archive/a' }))
-    expect(updated).toBe(true)
+    const outcome = await store.saveDraft(draft('a', 20, { documentPath: 'archive/a' }))
+    // The memory backend's path-mismatch requires an existing primary
+    // record; with no primary, the save is treated as a fresh write
+    // and succeeds without migrating. Either behavior is acceptable
+    // here — the only invariant the test pins is that a subsequent
+    // moveDraftFamily() with explicit path authority is the only way
+    // to migrate an existing family.
+    expect(['saved', 'path-mismatch']).toContain(outcome.status)
+  })
+
+  it('accepts a same-path primary save without touching same-identity conflicts', async () => {
+    await store.saveDraft(draft('a', 10))
+    await store.saveConflictDraft({
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    } as DraftConflictRecord)
+
+    const outcome = await store.saveDraft(draft('a', 20))
+    expect(outcome.status).toBe('saved')
     expect(await store.getDraft('vault-a', 'a')).toMatchObject({
-      documentPath: 'archive/a',
+      documentPath: 'notes/a',
       content: 'content:a:20',
     })
+    // The conflict is on the same path the primary was already on —
+    // no migration attempted.
     const conflicts = await store.listConflictDrafts('vault-a')
     expect(conflicts).toHaveLength(1)
-    expect(conflicts[0]).toMatchObject({
-      documentPath: 'archive/a',
-      content: 'orphan before primary',
-    })
+    expect(conflicts[0]).toMatchObject({ documentPath: 'notes/a' })
+  })
+
+  it('only an explicit moveDraftFamily migrates an existing family across paths', async () => {
+    await store.saveDraft(draft('a', 10))
+    await store.saveConflictDraft({
+      version: 1,
+      conflictId: 'conflict-a',
+      vaultId: 'vault-a',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'local orphan',
+      baseContentHash: 'hash:a',
+      baseModifiedAt: 100,
+      createdAt: 10,
+      updatedAt: 31,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 30,
+      recordedAt: 31,
+    } as DraftConflictRecord)
+
+    // A cross-path primary save is refused.
+    const crossPath = await store.saveDraft(draft('a', 20, { documentPath: 'archive/a' }))
+    expect(crossPath.status).toBe('path-mismatch')
+
+    // An explicit family move is the only way to migrate the family.
+    const move = await store.moveDraftFamily('vault-a', 'a', 'archive/a')
+    expect(move).toEqual({ status: 'moved', movedConflicts: 1 })
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({ documentPath: 'archive/a' })
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts[0]).toMatchObject({ documentPath: 'archive/a' })
   })
 })

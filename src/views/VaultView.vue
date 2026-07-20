@@ -175,10 +175,40 @@ const draftStore = createDraftStore()
 // settlement lands. `draftRecovery` is created later in this setup
 // but the callback only fires from timers/flushes after setup
 // completes, so the closure is TDZ-safe.
+// Background quarantine healing settles outside any user-visible
+// transaction: a queued family move can complete (or record a
+// candidate) long after the rename UI finished, leaving Recovery
+// items and open tabs on the stale path. Refresh the identity AND
+// every open Recovery tab so they follow the family — mirroring
+// onDraftTransactionSettled's identity + open-tabs sync, but for
+// the background-heal path. The closure is TDZ-safe: the callback
+// only fires from timers/flushes after setup completes.
+async function refreshRecoveryAfterFamilySettle(settlement: {
+  vaultId: string
+  documentId: string
+}): Promise<void> {
+  await draftRecovery.refreshIdentity(settlement.vaultId, settlement.documentId)
+  // Refresh every open tab for this identity, not just the first.
+  // After a move or re-classification a primary plus multiple
+  // conflict tabs may all show a stale path/body/classification.
+  for (const tab of recoveryTabs.tabs.value.filter(
+    (candidate) => candidate.documentId === settlement.documentId,
+  )) {
+    const view = tab.view
+    const refreshed = draftRecovery.items.value.find((candidate) => (
+      candidate.recoveryId === tab.recoveryId
+    ))
+    if (refreshed?.status === 'ready') {
+      recoveryTabs.open(refreshed, view)
+    } else if (!refreshed) {
+      recoveryTabs.close(tab.tabId)
+    }
+  }
+}
 const draftPersistence = createUnsavedDraftPersistence({
   store: draftStore,
   onDraftFamilyMoveSettled: (settlement) => {
-    void draftRecovery.refreshIdentity(settlement.vaultId, settlement.documentId)
+    void refreshRecoveryAfterFamilySettle(settlement)
   },
 })
 let lifecycleCreateFile: DocumentLifecycle['createFile'] | null = null
