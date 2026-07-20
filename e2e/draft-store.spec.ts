@@ -345,7 +345,11 @@ test('does not rewrite unsupported records in IndexedDB', async ({ page }) => {
     }
   }, DATABASE_NAME)
 
-  expect(result.saved).toEqual({ status: 'unsupported', familyPath: 'notes/future' })
+  expect(result.saved).toEqual({
+    status: 'unsupported',
+    familyPath: 'notes/future',
+    reason: 'unsupported-primary',
+  })
   expect(result.moved).toEqual({ status: 'unsupported' })
   expect(result.deleted).toEqual({ status: 'unsupported' })
   expect(result.cleared).toBe(true)
@@ -534,7 +538,11 @@ test('blocks a primary save in IndexedDB when a same-identity conflict row is un
     }
   }, DATABASE_NAME)
 
-  expect(result.blocked).toEqual({ status: 'unsupported', familyPath: 'notes/doc' })
+  expect(result.blocked).toEqual({
+    status: 'unsupported',
+    familyPath: 'notes/doc',
+    reason: 'unsupported-conflict',
+  })
   // The primary record is byte-identical — never overwritten.
   expect(result.primaryAfterBlocked).toMatchObject({
     content: 'primary v1',
@@ -620,7 +628,11 @@ test('reports the family path for an unsupported conflict-only family in Indexed
   // documentPath) so the caller pins its candidate ON the family
   // instead of creating one at the stale snapshot path — a candidate
   // at notes/doc would split the conflict-only family.
-  expect(result.saved).toEqual({ status: 'unsupported', familyPath: 'archive/doc' })
+  expect(result.saved).toEqual({
+    status: 'unsupported',
+    familyPath: 'archive/doc',
+    reason: 'unsupported-conflict',
+  })
   // No primary record created at the stale path, no candidate written
   // by the store itself.
   expect(result.primaryAfter).toBeNull()
@@ -713,13 +725,131 @@ test('reports no family path for a split unsupported family in IndexedDB', async
   // The rows disagree — familyPath is null so the caller fails closed
   // instead of creating a candidate at its stale snapshot path (or
   // guessing a family side).
-  expect(result.saved).toEqual({ status: 'unsupported', familyPath: null })
+  expect(result.saved).toEqual({
+    status: 'unsupported',
+    familyPath: null,
+    reason: 'split-conflict-paths',
+  })
   expect(result.primaryAfter).toBeNull()
   // Only the valid row is discoverable, untouched.
   expect(result.conflicts).toHaveLength(1)
   expect(result.conflicts[0]).toMatchObject({
     conflictId: 'conflict-valid',
     documentPath: 'legacy/doc',
+  })
+})
+
+test('persists the quarantine retry candidate at the family path in real IndexedDB', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const { createUnsavedDraftPersistence } = await import(
+      '/src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts'
+    )
+    const store = createDraftStore()
+    // A valid primary draft — the family lives at notes/doc.
+    await store.saveDraft({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 20,
+    })
+    // A future-version conflict row for the same identity: readable
+    // path notes/doc (the family still agrees), but the store cannot
+    // validate it — the family move's pre-flight blocks the WHOLE
+    // move instead of stranding this row on the pre-rename path.
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const seed = database.transaction('draftConflicts', 'readwrite')
+    seed.objectStore('draftConflicts').put({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'future data',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 25,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 20,
+      recordedAt: 25,
+    })
+    await new Promise<void>((resolve, reject) => {
+      seed.oncomplete = () => resolve()
+      seed.onerror = () => reject(seed.error)
+      seed.onabort = () => reject(seed.error)
+    })
+    database.close()
+
+    const persistence = createUnsavedDraftPersistence({ store })
+    const identity = {
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+    }
+    const barrier = await persistence.prepareFileMutation([identity])
+    // The server rename succeeded; the draft family move is blocked
+    // by the unreadable row — the entry quarantines on oldPath.
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/doc',
+      toPath: 'archive/doc',
+    }])
+    await barrier.finalizeAfterTabMigration()
+
+    // The post-rename edit arrives on the Tab's new path. flush routes
+    // it through the unified write target: quarantine retry first —
+    // blocked again — then the latest bytes persist as a candidate at
+    // the family's ACTUAL path notes/doc, never at the Tab path.
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'after-rename',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 2,
+    })
+    const flushed = await persistence.flush('vault-a', 'doc')
+    const primary = await store.getDraft('vault-a', 'doc')
+    const conflicts = await store.listConflictDrafts('vault-a')
+    await persistence.dispose()
+
+    return { moveStatus: move.status, flushed, primary, conflicts }
+  }, DATABASE_NAME)
+
+  expect(result.moveStatus).toBe('unsupported')
+  // The candidate persisted at the family path — the bytes are durable
+  // and flush reports clean (the quarantine stays armed for the next
+  // move attempt).
+  expect(result.flushed).toBe(true)
+  // The primary record never moved: the family is whole at notes/doc.
+  expect(result.primary).toMatchObject({
+    documentPath: 'notes/doc',
+    content: 'primary',
+  })
+  // Exactly one discoverable candidate (the future row stays invisible
+  // to the validated listing): the quarantine retry's record, pinned
+  // at the family path — not at the renamed Tab path.
+  expect(result.conflicts).toHaveLength(1)
+  expect(result.conflicts[0]).toMatchObject({
+    documentPath: 'notes/doc',
+    content: 'after-rename',
+    origin: 'move-conflict',
   })
 })
 

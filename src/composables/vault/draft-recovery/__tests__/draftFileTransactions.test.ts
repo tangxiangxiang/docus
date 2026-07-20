@@ -3112,8 +3112,14 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     await Promise.resolve()
     await Promise.resolve()
     await Promise.resolve()
-    expect(settlements.map((s) => s.status)).toEqual(['moved-write-failed'])
-    // The bounded auto-retry (2s backoff) fired with NO user input,
+    // The failed final write reports moved-write-failed; the bounded
+    // auto-retry's success reports moved-and-persisted, which is what
+    // refreshes the Recovery identity and open tabs against the
+    // durable state.
+    expect(settlements.map((s) => s.status))
+      .toEqual(['moved-write-failed', 'moved-and-persisted'])
+    // The bounded auto-retry (800ms first backoff step) fired with NO
+    // user input,
     // manual flush or pagehide, and persisted the latest snapshot on
     // the entry's active channel — the toast promise is real.
     expect(saveCalls).toBe(2)
@@ -3159,8 +3165,9 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       .mockRejectedValue(new Error('store down'))
     persistence.schedule(snapshot('after-rename', 'archive/a', 2))
     await vi.advanceTimersByTimeAsync(800)
-    // runAllTimersAsync drains the WHOLE retry budget (2s + 5s + 15s)
-    // and terminates — no infinite high-frequency retry loop.
+    // runAllTimersAsync drains the WHOLE retry budget
+    // (800ms + 2s + 5s) and terminates — no infinite high-frequency
+    // retry loop.
     await vi.runAllTimersAsync()
     await Promise.resolve()
     await Promise.resolve()
@@ -3184,6 +3191,510 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     expect(await persistence.flush('vault', 'doc-a')).toBe(false)
     expect(saveDraft).toHaveBeenCalledTimes(5)
     await persistence.dispose()
+  })
+
+  async function drainWriteQueue(times = 6): Promise<void> {
+    for (let i = 0; i < times; i += 1) await Promise.resolve()
+  }
+
+  it('arms the first moved-write-failed auto-retry at the 800ms backoff step', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const settlements: Array<{
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+    }> = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      onDraftFamilyMoveSettled: (settlement) => {
+        settlements.push(settlement)
+      },
+    })
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamily')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    const originalSaveDraft = store.saveDraft.bind(store)
+    let saveCalls = 0
+    vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+      saveCalls += 1
+      if (saveCalls === 1) return { status: 'failed' as const }
+      return originalSaveDraft(value)
+    })
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await drainWriteQueue()
+    expect(settlements.map((s) => s.status)).toEqual(['moved-write-failed'])
+    expect(saveCalls).toBe(1)
+
+    // Just before the first backoff step nothing has re-run …
+    await vi.advanceTimersByTimeAsync(799)
+    await drainWriteQueue()
+    expect(saveCalls).toBe(1)
+    // … and AT 800ms the retry fires with no user input, manual flush
+    // or pagehide — the first step of the bounded backoff schedule.
+    await vi.advanceTimersByTimeAsync(1)
+    await drainWriteQueue()
+    expect(saveCalls).toBe(2)
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'after-rename',
+    })
+    await persistence.dispose()
+  })
+
+  it('reports moved-and-persisted when the bounded auto-retry finally persists the snapshot', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const settlements: Array<{
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      oldPath: string
+      newPath: string
+    }> = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      onDraftFamilyMoveSettled: (settlement) => {
+        settlements.push(settlement)
+      },
+    })
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamily')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    const originalSaveDraft = store.saveDraft.bind(store)
+    let saveCalls = 0
+    vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+      saveCalls += 1
+      if (saveCalls === 1) return { status: 'failed' as const }
+      return originalSaveDraft(value)
+    })
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+
+    // The failed final write reports moved-write-failed; when the
+    // auto-retry persists the snapshot the persistence layer must
+    // report moved-and-persisted — that settlement is what refreshes
+    // the Recovery identity and every open Recovery tab against the
+    // durable state (VaultView's settlement handler), and it clears
+    // the retry state.
+    expect(settlements.map((s) => s.status))
+      .toEqual(['moved-write-failed', 'moved-and-persisted'])
+    expect(settlements[1]).toMatchObject({
+      oldPath: 'notes/a',
+      newPath: 'archive/a',
+    })
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'after-rename',
+    })
+    // Retry state cleared: nothing left to persist, flush reports
+    // clean instead of re-running the channel.
+    expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+    expect(saveCalls).toBe(2)
+    await persistence.dispose()
+  })
+
+  it('a new user edit resets the moved-write-failed backoff instead of stacking retries', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const settlements: Array<{
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+    }> = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      onDraftFamilyMoveSettled: (settlement) => {
+        settlements.push(settlement)
+      },
+    })
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamily')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    const saveDraft = vi.spyOn(store, 'saveDraft')
+      .mockRejectedValue(new Error('store down'))
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await drainWriteQueue()
+    expect(settlements.map((s) => s.status)).toEqual(['moved-write-failed'])
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+    // Halfway into the first backoff step …
+    await vi.advanceTimersByTimeAsync(400)
+    await drainWriteQueue()
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+    // … the user types again: schedule() clears the armed retry and
+    // the new debounce owns persistence — the old backoff chain must
+    // NOT fire on top of it.
+    persistence.schedule(snapshot('user-edit', 'archive/a', 3))
+    await vi.advanceTimersByTimeAsync(800)
+    await drainWriteQueue()
+    expect(saveDraft).toHaveBeenCalledTimes(2)
+    // No stray timer survives from the cleared chain.
+    await vi.advanceTimersByTimeAsync(600000)
+    expect(saveDraft).toHaveBeenCalledTimes(2)
+    // Pending stays set — a manual flush retries the channel.
+    expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+    expect(saveDraft).toHaveBeenCalledTimes(3)
+    await persistence.dispose()
+  })
+
+  it('an indeterminate family stops re-probing the store until the next user edit', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    // Split family: the rows disagree on the path (and one is
+    // unreadable) — the store reports familyPath: null, reason
+    // split-conflict-paths, and the entry turns indeterminate.
+    await backend.seedRawConflict({
+      ...conflictRecord('bad-row', 'doc-a', 'archive/a', 'unreadable'),
+      version: 2,
+    })
+    await store.saveConflictDraft(conflictRecord('valid-row', 'doc-a', 'legacy/a', 'older local'))
+    const saveDraft = vi.spyOn(store, 'saveDraft')
+
+    persistence.schedule(snapshot('stale-edit', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+
+    // Indeterminate entries fail closed WITHOUT hammering the store
+    // with speculative re-reads on every flush / pagehide …
+    expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+    expect(saveDraft).toHaveBeenCalledTimes(1)
+
+    // … until the user edits again: schedule() re-arms the probe (the
+    // family may have been healed server-side in the meantime).
+    persistence.schedule(snapshot('user-edit', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    expect(saveDraft).toHaveBeenCalledTimes(2)
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    expect(await store.listConflictDrafts('vault')).toHaveLength(1)
+    await persistence.dispose()
+  })
+
+  it('close seal fails closed while the family stays indeterminate', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await backend.seedRawConflict({
+      ...conflictRecord('bad-row', 'doc-a', 'archive/a', 'unreadable'),
+      version: 2,
+    })
+    await store.saveConflictDraft(conflictRecord('valid-row', 'doc-a', 'legacy/a', 'older local'))
+
+    // Delete transaction preserves the identity and releases the entry;
+    // the user edits during the settlement window.
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'preserve',
+    }])
+    expect(result.status).toBe('preserved')
+    persistence.schedule(snapshot('stale-edit', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    // Split family → no safe path → the debounce write fails closed.
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+
+    // The lifecycle tries to close the tab: the seal must fail closed
+    // too — the bytes are still only in memory, so the tab stays open
+    // and no candidate is written to any guessed path.
+    expect(await barrier.finalizeBeforeDocumentClose()).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      status: 'failed',
+    }])
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    expect(await store.listConflictDrafts('vault')).toHaveLength(1)
+    await persistence.dispose()
+  })
+
+  it('dispose after a failed quarantine retry persists the candidate at oldPath', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamily')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+    // The post-rename edit's debounce has not fired when the app shuts
+    // down: dispose's final flush must route the write through the
+    // quarantine retry and — when that fails — persist the latest
+    // bytes as a candidate at oldPath, never at the renamed Tab path.
+    backend.failNext('moveFamilyConflicts')
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    await persistence.dispose()
+
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'primary',
+    })
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(2)
+    expect(conflicts.map((c) => c.documentPath).sort())
+      .toEqual(['notes/a', 'notes/a'])
+    expect(conflicts.find((c) => c.conflictId !== 'conflict-a')).toMatchObject({
+      content: 'after-rename',
+      origin: 'move-conflict',
+    })
+  })
+
+  describe('draft family state machine invariants', () => {
+    type InvariantScenario = { name: string; run: () => Promise<void> }
+    const scenarios: InvariantScenario[] = []
+    function scenario(name: string, run: () => Promise<void>): void {
+      scenarios.push({ name, run })
+    }
+
+    scenario('Invariant 1 — every readable record of one identity shares a single path', async () => {
+      const backend = createMemoryDraftBackend()
+      const store = createDraftStore({ backend })
+      const persistence = makePersistence(store)
+      // Unsupported conflict-only family at archive/a; a stale Tab
+      // keeps editing at notes/a.
+      await backend.seedRawConflict({
+        ...conflictRecord('bad-row', 'doc-a', 'archive/a', 'unreadable'),
+        version: 2,
+      })
+      persistence.schedule(snapshot('stale-edit', 'notes/a', 1))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+      persistence.schedule(snapshot('stale-edit-2', 'notes/a', 2))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+
+      const primary = await store.getDraft('vault', 'doc-a')
+      const conflicts = await store.listConflictDrafts('vault')
+      const readablePaths = [
+        ...(primary ? [primary.documentPath] : []),
+        ...conflicts.map((c) => c.documentPath),
+      ]
+      // The only readable records all share the family path — the
+      // lone exception is the unreadable raw row, invisible here.
+      // Normal writes never widened the split.
+      expect(readablePaths.length).toBeGreaterThan(0)
+      expect(new Set(readablePaths).size).toBe(1)
+      expect(readablePaths[0]).toBe('archive/a')
+      await persistence.dispose()
+    })
+
+    scenario('Invariant 2 — conflict-mode candidates always land on the pinned family path', async () => {
+      const backend = createMemoryDraftBackend()
+      const store = createDraftStore({ backend })
+      const persistence = makePersistence(store)
+      await pinConflictChannelAtNotesA(store, persistence)
+      persistence.schedule(snapshot('edit-two', 'notes/a', 2))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+      persistence.schedule(snapshot('edit-three', 'notes/a', 3))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+
+      const conflicts = await store.listConflictDrafts('vault')
+      expect(conflicts.map((c) => c.content).sort())
+        .toEqual(['edit-three', 'edit-two', 'local-edit'])
+      // mode.kind === 'conflict' → every new candidate path === the
+      // pinned familyPath, even though the Tab's snapshot path could
+      // drift.
+      expect(conflicts.every((c) => c.documentPath === 'notes/a')).toBe(true)
+      await persistence.dispose()
+    })
+
+    scenario('Invariant 3 — a failed quarantine retry writes new candidates only at the family path', async () => {
+      const backend = createMemoryDraftBackend()
+      const store = createDraftStore({ backend })
+      const persistence = makePersistence(store)
+      await store.saveDraft(draft('primary', 'notes/a', 10))
+      await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+      const barrier = await persistence.prepareFileMutation([identity])
+      backend.failNext('moveFamily')
+      const [move] = await barrier.commitMoves([{
+        ...identity,
+        fromPath: 'notes/a',
+        toPath: 'archive/a',
+      }])
+      expect(move.status).toBe('failed')
+      expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+      backend.failNext('moveFamilyConflicts')
+      persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+
+      // mode.kind === 'move-quarantine' + failed retry → every new
+      // candidate path === mode.familyPath (oldPath); nothing at the
+      // server/Tab path.
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'notes/a',
+      })
+      const conflicts = await store.listConflictDrafts('vault')
+      expect(conflicts).toHaveLength(2)
+      expect(conflicts.every((c) => c.documentPath === 'notes/a')).toBe(true)
+      await persistence.dispose()
+    })
+
+    scenario('Invariant 4a — a conflict-only family follows a verified rename in one transition', async () => {
+      const backend = createMemoryDraftBackend()
+      const store = createDraftStore({ backend })
+      const persistence = makePersistence(store)
+      // Conflict-only family at notes/a (no primary record).
+      await store.saveConflictDraft(conflictRecord('orphan-a', 'doc-a', 'notes/a', 'older local'))
+      // A stale edit on a different path pins the conflict channel at
+      // the family path (path-mismatch handoff).
+      persistence.schedule(snapshot('stale-edit', 'archive/a', 1))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+      expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+      expect((await store.listConflictDrafts('vault'))
+        .every((c) => c.documentPath === 'notes/a')).toBe(true)
+
+      // Verified rename: the barrier reports 'missing' (no primary)
+      // while the conflicts travel; the pinned channel must switch to
+      // newPath in the same transition as the family move.
+      const barrier = await persistence.prepareFileMutation([identity])
+      const [move] = await barrier.commitMoves([{
+        ...identity,
+        fromPath: 'notes/a',
+        toPath: 'archive/a',
+      }])
+      expect(move.status).toBe('missing')
+      expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+      persistence.schedule(snapshot('after-move', 'archive/a', 2))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+
+      expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+      const conflicts = await store.listConflictDrafts('vault')
+      expect(conflicts).toHaveLength(3)
+      // mode.familyPath, snapshot path and persisted candidate paths
+      // all switched to newPath as one transition; nothing remains at
+      // notes/a.
+      expect(conflicts.every((c) => c.documentPath === 'archive/a')).toBe(true)
+      await persistence.dispose()
+    })
+
+    scenario('Invariant 4b — a folder rename moves every family atomically to the new path', async () => {
+      const backend = createMemoryDraftBackend()
+      const store = createDraftStore({ backend })
+      const persistence = makePersistence(store)
+      const identityB = { vaultId: 'vault', documentId: 'doc-b', documentPath: 'notes/b' }
+      await store.saveDraft(draft('primary-a', 'notes/a', 10))
+      await store.saveConflictDraft(conflictRecord('orphan-a', 'doc-a', 'notes/a', 'local a'))
+      await store.saveDraft({
+        ...draft('primary-b', 'notes/b', 10),
+        documentId: 'doc-b',
+      })
+      await store.saveConflictDraft(conflictRecord('orphan-b', 'doc-b', 'notes/b', 'local b'))
+
+      const barrier = await persistence.prepareFileMutation([identity, identityB])
+      const results = await barrier.commitMoves([
+        { ...identity, fromPath: 'notes/a', toPath: 'archive/a' },
+        { ...identityB, fromPath: 'notes/b', toPath: 'archive/b' },
+      ])
+      expect(results.map((r) => r.status)).toEqual(['moved', 'moved'])
+      expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+
+      // Every readable record of BOTH identities lives at its new
+      // path; nothing remains at either old path.
+      expect(await store.getDraft('vault', 'doc-a'))
+        .toMatchObject({ documentPath: 'archive/a', content: 'primary-a' })
+      expect(await store.getDraft('vault', 'doc-b'))
+        .toMatchObject({ documentPath: 'archive/b', content: 'primary-b' })
+      const conflicts = await store.listConflictDrafts('vault')
+      expect(conflicts).toHaveLength(2)
+      expect(conflicts.find((c) => c.documentId === 'doc-a'))
+        .toMatchObject({ documentPath: 'archive/a' })
+      expect(conflicts.find((c) => c.documentId === 'doc-b'))
+        .toMatchObject({ documentPath: 'archive/b' })
+      await persistence.dispose()
+    })
+
+    scenario('Invariant 5 — an indeterminate family accepts no write on either split side', async () => {
+      const backend = createMemoryDraftBackend()
+      const store = createDraftStore({ backend })
+      const persistence = makePersistence(store)
+      await backend.seedRawConflict({
+        ...conflictRecord('bad-row', 'doc-a', 'archive/a', 'unreadable'),
+        version: 2,
+      })
+      await store.saveConflictDraft(conflictRecord('valid-row', 'doc-a', 'legacy/a', 'older local'))
+
+      // An edit at split side A …
+      persistence.schedule(snapshot('edit-side-a', 'archive/a', 1))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+      expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+      expect(await store.listConflictDrafts('vault')).toHaveLength(1)
+
+      // … and at split side B: still no primary, no new candidate, no
+      // guessed path — the write flag stays set and flush fails closed.
+      persistence.schedule(snapshot('edit-side-b', 'legacy/a', 2))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+      expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+      const conflicts = await store.listConflictDrafts('vault')
+      expect(conflicts).toHaveLength(1)
+      expect(conflicts[0].conflictId).toBe('valid-row')
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      await persistence.dispose()
+    })
+
+    for (const { name, run } of scenarios) {
+      it(name, run)
+    }
   })
 
   it('identity mismatch followed by a new-path edit', async () => {

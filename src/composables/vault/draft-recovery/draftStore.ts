@@ -59,7 +59,19 @@ type SaveDecision =
  *    `null` when the rows disagree on the path, no row carries a
  *    readable path, or the family could not be re-read: the caller
  *    must then fail closed — keep the write flag set, write no
- *    candidate — rather than guess a path and split the family;
+ *    candidate — rather than guess a path and split the family.
+ *    `reason` names WHY the family is unsupported so the caller can
+ *    route its state machine without re-deriving it:
+ *    - `split-conflict-paths` — the raw rows disagree on the path (or
+ *      carry no readable path at all); `familyPath` is always `null`
+ *      and the caller must fail closed, never guess a side;
+ *    - `unsupported-conflict` — at least one same-identity conflict
+ *      row is unreadable (the primary may or may not exist / be
+ *      readable); when `familyPath` is non-null the caller's candidate
+ *      joins the family on that path;
+ *    - `unsupported-primary` — the blocking row is the primary record
+ *      itself (or the incoming draft is malformed, or the family could
+ *      not be probed); the conflict rows, if any, are all readable;
  *  - `failed` — the underlying store threw or returned a status the
  *    caller cannot route; the write must fail closed (write flag
  *    stays set, close seal keeps the tab open) so the latest bytes
@@ -71,12 +83,20 @@ type SaveDecision =
  *  candidate onto the family (path and cross-context marker). */
 export type DraftFamilyAnchor = UnsavedDraft | DraftConflictRecord
 
+/** Why an unsupported save could not persist — the structured
+ *  classification the persistence state machine routes on (see the
+ *  `unsupported` outcome and probeFamily). */
+export type UnsupportedFamilyReason =
+  | 'unsupported-primary'
+  | 'unsupported-conflict'
+  | 'split-conflict-paths'
+
 export type DraftSaveOutcome =
   | { status: 'saved'; stored: UnsavedDraft }
   | { status: 'stale'; current: UnsavedDraft }
   | { status: 'conflict'; current: UnsavedDraft }
   | { status: 'path-mismatch'; current: DraftFamilyAnchor }
-  | { status: 'unsupported'; familyPath: string | null }
+  | { status: 'unsupported'; familyPath: string | null; reason: UnsupportedFamilyReason }
   | { status: 'failed' }
 type MoveResult = 'moved' | 'missing' | 'conflict' | 'unsupported'
 type DeleteResult = 'deleted' | 'missing' | 'unsupported'
@@ -303,44 +323,92 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
   }
 
   /** Re-read the raw family rows after an unsupported save and derive
-   *  the path they agree on (if any). Mirrors the stale / conflict /
-   *  path-mismatch branches' current-record re-read: the classification
-   *  alone is not enough — the caller needs the family's real path to
-   *  pin its candidate onto it instead of its own possibly-stale
-   *  snapshot path. Invalid (future-version / corrupt) rows contribute
-   *  their readable `documentPath` too — a row can fail validation and
-   *  still say where the family lives; a row without a readable path
-   *  renders the whole probe indeterminate, as do disagreeing paths.
-   *  Any read error degrades to null — the caller then fails closed
-   *  (keeps the write flag set, writes no candidate) rather than
-   *  guesses. */
-  async function probeFamilyPath(
+   *  BOTH the path they agree on (if any) AND why the family is
+   *  unsupported. Mirrors the stale / conflict / path-mismatch
+   *  branches' current-record re-read: the classification alone is not
+   *  enough — the caller needs the family's real path to pin its
+   *  candidate onto it instead of its own possibly-stale snapshot
+   *  path, and the structured reason to route its state machine
+   *  (fail-closed indeterminate vs. candidate-joins-family) without
+   *  re-deriving either from the raw rows.
+   *  Invalid (future-version / corrupt) rows contribute their readable
+   *  `documentPath` too — a row can fail validation and still say
+   *  where the family lives; a row without a readable path renders the
+   *  whole probe indeterminate, as do disagreeing paths. `split`
+   *  dominates the reason: a caller told "unsupported-primary with a
+   *  path" would pin a candidate the readable rows disagree with —
+   *  exactly the split the probe exists to prevent.
+   *  Any read error degrades to null / unsupported-primary — the
+   *  caller then fails closed (keeps the write flag set, writes no
+   *  candidate) rather than guesses. */
+  async function probeFamily(
     vaultId: string,
     documentId: string,
-  ): Promise<string | null> {
+  ): Promise<{
+    familyPath: string | null
+    split: boolean
+    primaryUnreadable: boolean
+    conflictUnreadable: boolean
+  }> {
     try {
       const parts: Array<string | null> = []
+      let primaryUnreadable = false
+      let conflictUnreadable = false
       const primary = await backend.get(draftKey(vaultId, documentId))
       if (primary !== null && primary !== undefined) {
         parts.push(readRawDocumentPath(primary))
+        if (!isUnsavedDraft(primary)) primaryUnreadable = true
       }
       const conflicts = await backend.listConflicts(vaultId)
       for (const value of conflicts) {
         if (recordField(value, 'documentId') !== documentId) continue
         parts.push(readRawDocumentPath(value))
+        if (!isDraftConflictRecord(value)) conflictUnreadable = true
       }
-      return familyPathFromParts(parts)
+      const distinct = new Set(parts)
+      const split = parts.length === 0 || parts.some((part) => part === null)
+        || distinct.size > 1
+      return {
+        familyPath: split ? null : parts[0]!,
+        split,
+        primaryUnreadable,
+        conflictUnreadable,
+      }
     } catch {
-      return null
+      return {
+        familyPath: null,
+        split: false,
+        primaryUnreadable: false,
+        conflictUnreadable: false,
+      }
     }
+  }
+
+  /** Map a raw family probe onto the outcome's `reason`: split
+   *  dominates (never certify a path the readable rows disagree on),
+   *  then an unreadable conflict row, then everything else (an
+   *  unreadable primary, a malformed incoming draft, or a probe that
+   *  could not read the store at all). */
+  function probeReason(probe: {
+    split: boolean
+    conflictUnreadable: boolean
+  }): UnsupportedFamilyReason {
+    if (probe.split) return 'split-conflict-paths'
+    if (probe.conflictUnreadable) return 'unsupported-conflict'
+    return 'unsupported-primary'
   }
 
   return {
     async saveDraft(draft) {
       // A malformed draft carries no reliable identity — there is no
-      // family to probe a path for.
+      // family to probe a path for; the incoming primary itself is
+      // what cannot be persisted.
       if (!isUnsavedDraft(draft)) {
-        return { status: 'unsupported' as const, familyPath: null }
+        return {
+          status: 'unsupported' as const,
+          familyPath: null,
+          reason: 'unsupported-primary' as const,
+        }
       }
       try {
         const result = await backend.save(cloneDraft(draft))
@@ -352,9 +420,11 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
           if (isUnsavedDraft(stored)) {
             return { status: 'saved' as const, stored: cloneDraft(stored) }
           }
+          const probe = await probeFamily(draft.vaultId, draft.documentId)
           return {
             status: 'unsupported' as const,
-            familyPath: await probeFamilyPath(draft.vaultId, draft.documentId),
+            familyPath: probe.familyPath,
+            reason: probeReason(probe),
           }
         }
         if (result === 'stale' || result === 'conflict' || result === 'path-mismatch') {
@@ -392,18 +462,23 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
           // path the candidate can join (a conflict-only family whose
           // rows all sit at one path); when they do not, `null` tells
           // the caller to fail closed rather than split the family.
+          const probe = await probeFamily(draft.vaultId, draft.documentId)
           return {
             status: 'unsupported' as const,
-            familyPath: await probeFamilyPath(draft.vaultId, draft.documentId),
+            familyPath: probe.familyPath,
+            reason: probeReason(probe),
           }
         }
         // result === 'unsupported': a future-version / corrupt row
         // blocked the save. Report the path the family's raw rows
         // agree on (if any) so the caller pins its candidate ON the
-        // family instead of at its own possibly-stale snapshot path.
+        // family instead of at its own possibly-stale snapshot path,
+        // plus the structured reason the family is unsupported.
+        const probe = await probeFamily(draft.vaultId, draft.documentId)
         return {
           status: result,
-          familyPath: await probeFamilyPath(draft.vaultId, draft.documentId),
+          familyPath: probe.familyPath,
+          reason: probeReason(probe),
         }
       } catch {
         return { status: 'failed' as const }
@@ -1247,17 +1322,6 @@ function conflictFamilyPath(
 function readRawDocumentPath(value: unknown): string | null {
   const path = recordField(value, 'documentPath')
   return typeof path === 'string' && path.trim().length > 0 ? path : null
-}
-
-/** Agree a single family path from raw-row paths: non-empty, every
- *  part readable, and all equal. Any unreadable path or disagreement
- *  yields null — the family's location is indeterminate, and the
- *  caller must fail closed rather than guess which side to join. */
-function familyPathFromParts(parts: Array<string | null>): string | null {
-  if (parts.length === 0) return null
-  const [first, ...rest] = parts
-  if (first === null) return null
-  return rest.every((part) => part === first) ? first : null
 }
 
 function decideSave(current: unknown, incoming: UnsavedDraft): SaveDecision {
