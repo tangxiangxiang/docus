@@ -287,18 +287,26 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
               status: 'identity-mismatch',
             })
           }
+          let finalizeResults: DraftFileTransactionResult[] = []
           try {
             options.renameOpenDocuments([mapping])
           } finally {
-            await draftBarrier.finalizeAfterTabMigration?.()
+            finalizeResults = await draftBarrier.finalizeAfterTabMigration?.() ?? []
           }
-          await reportDraftResults(draftResults)
+          // The finalize results are part of the transaction outcome:
+          // a rejected post-migration write means the latest edit is
+          // still only in-memory even though the family move reported
+          // moved/missing — merged here so the user is warned (the
+          // server rename stays successful and the tab keeps its new
+          // path).
+          await reportDraftResults([...draftResults, ...finalizeResults])
         } else if (draftBarrier) {
           const draftResults = await draftBarrier.commitMoves([], unresolvedDrafts)
+          let finalizeResults: DraftFileTransactionResult[] = []
           try {
             options.renameOpenDocuments([mapping])
           } finally {
-            await draftBarrier.finalizeAfterTabMigration?.()
+            finalizeResults = await draftBarrier.finalizeAfterTabMigration?.() ?? []
           }
           await reportDraftResults([
             ...draftResults,
@@ -308,6 +316,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
               newPath: renamed.path,
               status: 'identity-mismatch' as const,
             })),
+            ...finalizeResults,
           ])
         } else {
           options.renameOpenDocuments([mapping])
@@ -392,6 +401,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         // publishes and refresh runs below. The barrier still
         // finalizes in the `finally` so draft persistence is
         // never permanently locked.
+        let finalizeResults: DraftFileTransactionResult[] = []
         try {
           options.renameOpenDocuments(mappings)
         } catch (error) {
@@ -400,9 +410,14 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
             error,
           )
         } finally {
-          await draftBarrier.finalizeAfterTabMigration?.()
+          finalizeResults = await draftBarrier.finalizeAfterTabMigration?.() ?? []
         }
-        await reportDraftResults([...draftResults, ...mismatches])
+        // Aggregate the finalize write failures into the reported
+        // results: a rejected post-migration write leaves the latest
+        // edit only in-memory even when its family move reported
+        // moved/missing — the rename stays successful (no reverse
+        // rename) but the user must be warned per failed document.
+        await reportDraftResults([...draftResults, ...mismatches, ...finalizeResults])
       } else {
         try {
           options.renameOpenDocuments(mappings)
@@ -452,6 +467,7 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         throw error
       }
       let draftHandoffFailed = false
+      let finalizeResults: DraftFileTransactionResult[] = []
       if (draftBarrier && before) {
         const confirmation = lifecycleOptions.draftConfirmations?.find(
           (candidate) => candidate.documentId === before.documentId
@@ -464,6 +480,16 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         }])
         await reportDraftResults(draftResults)
         draftHandoffFailed = draftResults.some((result) => result.status === 'failed')
+        // The Recovery synchronization above is async while the
+        // transaction has already released every entry — an edit typed
+        // during it arms a fresh debounce that closing the tab below
+        // could outrun. Seal it now: the barrier persists anything
+        // still pending immediately and returns 'failed' when the
+        // write is rejected. removeOpenDocuments() then runs in the
+        // same synchronous stretch as this call's resolution, so no
+        // user input event can open a new edit window before the tab
+        // closes.
+        finalizeResults = await draftBarrier.finalizeBeforeDocumentClose?.() ?? []
       } else if (draftBarrier) {
         const preserved = await draftBarrier.commitDeletes(unresolvedDrafts.map((draft) => ({
           ...draft,
@@ -478,14 +504,28 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
           })),
         ])
         draftHandoffFailed = preserved.some((result) => result.status === 'failed')
+        // Same settlement-window seal as the resolved-identity branch.
+        finalizeResults = await draftBarrier.finalizeBeforeDocumentClose?.() ?? []
       }
-      // If the draft handoff failed, the user's unsaved content lives
-      // only in the in-memory persistence entry. Keep the editor tab
-      // open — it is the only surface still holding those bytes, and
-      // closing it here would permanently lose content the conflict
-      // store was supposed to preserve.
+      if (finalizeResults.some((result) => result.status === 'failed')) {
+        draftHandoffFailed = true
+      }
+      // If the draft handoff failed — in commitDeletes OR in the
+      // pre-close finalize — the user's unsaved content lives only in
+      // the in-memory persistence entry. Keep the editor tab open — it
+      // is the only surface still holding those bytes, and closing it
+      // here would permanently lose content the conflict store was
+      // supposed to preserve.
       if (!draftHandoffFailed) {
         options.removeOpenDocuments([path])
+      }
+      // Complete the Recovery synchronization for the finalize results
+      // AFTER the tab decision: a 'failed' finalize must refresh the
+      // identity (keeping it visible), and this await may no longer
+      // open an edit window — the tab is already closed (or kept open
+      // as the visible surface).
+      if (finalizeResults.length > 0) {
+        await reportDraftResults(finalizeResults)
       }
       options.fileChanges.publish({ path, kind: 'delete', source: 'editor-lifecycle' })
       barrier.commit()
@@ -515,7 +555,8 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
         await draftBarrier?.rollback()
         throw error
       }
-      let failedHandoffPaths: ReadonlySet<string> | null = null
+      let failedHandoffPaths: Set<string> | null = null
+      let finalizeResults: DraftFileTransactionResult[] = []
       if (draftBarrier) {
         const deleted = new Set(result.deleted)
         const draftResults = await draftBarrier.commitDeletes(
@@ -546,17 +587,35 @@ export function useDocumentLifecycle(options: LifecycleOptions): DocumentLifecyc
             status: 'identity-mismatch' as const,
           })),
         ])
+        // Seal edits typed during the Recovery synchronization above:
+        // the transaction has already released every entry, so such an
+        // edit arms a fresh debounce that the tab close below could
+        // outrun. removeOpenDocuments() runs in the same synchronous
+        // stretch as this call's resolution — no input event can open
+        // a new window before the tabs close.
+        finalizeResults = await draftBarrier.finalizeBeforeDocumentClose?.() ?? []
+        for (const transaction of finalizeResults) {
+          if (transaction.status === 'failed') {
+            failedHandoffPaths.add(transaction.oldPath)
+          }
+        }
       }
-      // A path whose draft handoff failed keeps its Document tab open —
-      // the in-memory persistence entry is the only surface still
-      // holding those bytes, and closing the tab here would permanently
-      // lose them (same guard as deleteFileLifecycle, applied per path:
-      // one failed document must not hold its successfully deleted /
+      // A path whose draft handoff failed — in commitDeletes OR in the
+      // pre-close finalize — keeps its Document tab open: the in-memory
+      // persistence entry is the only surface still holding those
+      // bytes, and closing the tab here would permanently lose them
+      // (same guard as deleteFileLifecycle, applied per path: one
+      // failed document must not hold its successfully deleted /
       // preserved siblings' tabs open, and must not close its own).
       const keepOpen = failedHandoffPaths
       options.removeOpenDocuments(keepOpen
         ? result.deleted.filter((deletedPath) => !keepOpen.has(deletedPath))
         : result.deleted)
+      // Complete the Recovery synchronization for the finalize results
+      // after the tab decision (same rationale as deleteFileLifecycle).
+      if (finalizeResults.length > 0) {
+        await reportDraftResults(finalizeResults)
+      }
       for (const deletedPath of result.deleted) {
         options.fileChanges.publish({ path: deletedPath, kind: 'delete', source: 'editor-lifecycle' })
       }

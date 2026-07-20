@@ -4,6 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Tab } from '../../../components/vault/tabs'
 import * as api from '../../../lib/api'
 import { createVaultFileChanges } from '../context/fileChanges'
+import {
+  createDraftStore,
+  createMemoryDraftBackend,
+} from '../draft-recovery/draftStore'
+import type { DraftFileTransactionResult } from '../draft-recovery/useDraftFileTransactions'
+import type { DraftBufferSnapshot } from '../draft-recovery/useUnsavedDraftPersistence'
+import { createUnsavedDraftPersistence } from '../draft-recovery/useUnsavedDraftPersistence'
 import { useDocumentSave } from '../editor-tabs/useDocumentSave'
 import { createPathMutationLock } from '../pathMutationLock'
 import {
@@ -787,5 +794,295 @@ describe('useDocumentLifecycle folder and delete operations', () => {
 
     await expect(h.lifecycle.createFile({ path: 'inbox/new' })).resolves.toMatchObject({ path: 'inbox/new' })
     expect(h.fileChanges.events.value).toHaveLength(1)
+  })
+})
+
+// The delete transaction releases every persistence entry when it
+// reports, but the lifecycle still awaits Recovery synchronization
+// (onDraftTransactionSettled) before closing tabs. An edit typed during
+// that async window arms a fresh debounce that the tab close could
+// outrun — if the write later failed, the bytes would exist nowhere
+// visible. These tests drive the REAL persistence barrier through the
+// lifecycle and simulate the window edit inside onDraftTransactionSettled.
+
+describe('useDocumentLifecycle draft settlement window', () => {
+  function draftSnapshot(
+    content: string,
+    documentPath: string,
+    documentId: string,
+    revision: number,
+  ): DraftBufferSnapshot {
+    return {
+      vaultId: 'vault',
+      documentId,
+      documentPath,
+      content,
+      authoritativeContent: 'disk',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      revision,
+      loaded: true,
+    }
+  }
+
+  it('preserves an edit typed while recovery settlement is pending and arms no timer after close', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(api, 'deletePost').mockResolvedValue({ ok: true })
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 10,
+      targetWindow: undefined,
+    })
+    const saveDraft = vi.spyOn(store, 'saveDraft')
+    const settled: string[][] = []
+    let h!: ReturnType<typeof setup>
+    h = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: (identities) => persistence.prepareFileMutation(identities),
+      onDraftTransactionSettled: vi.fn(async (results: readonly DraftFileTransactionResult[]) => {
+        settled.push(results.map((result) => result.status))
+        // Settlement runs BEFORE any tab close — the window is open.
+        expect(h.removed).toEqual([])
+        if (settled.length === 1) {
+          // The transaction has already released the entry — this edit
+          // arms a fresh 800ms debounce, exactly like a user typing
+          // while the Recovery panel refreshes.
+          persistence.schedule(draftSnapshot('typed-during-settle', 'inbox/a', 'doc-a', 2))
+        }
+      }),
+    })
+    // A dirty editor buffer exists at delete time.
+    persistence.schedule(draftSnapshot('unsaved', 'inbox/a', 'doc-a', 1))
+
+    await h.lifecycle.deleteFile('inbox/a')
+
+    // First settlement reported the preserve; the empty finalize result
+    // must NOT trigger a second synchronization pass.
+    expect(settled).toEqual([['preserved']])
+    // The settlement-window edit was persisted BEFORE the tab closed —
+    // the store holds it as the document's orphan recovery record.
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('typed-during-settle')
+    expect(h.removed).toEqual(['inbox/a'])
+    expect(h.tabs.value).toEqual([])
+    // After the tab closes, no draft timer may fire: the finalize gate
+    // cleared the window timer. Advancing the clock produces no
+    // further write.
+    const writes = saveDraft.mock.calls.length
+    expect(writes).toBe(2) // the preserve write + the finalize write
+    await vi.advanceTimersByTimeAsync(2400)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(saveDraft.mock.calls.length).toBe(writes)
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('typed-during-settle')
+    await persistence.dispose()
+  })
+
+  it('keeps the tab open when the final pre-close persistence fails', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(api, 'deletePost').mockResolvedValue({ ok: true })
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 10,
+      targetWindow: undefined,
+    })
+    const warnings = vi.fn()
+    const settled: string[][] = []
+    let h!: ReturnType<typeof setup>
+    h = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: (identities) => persistence.prepareFileMutation(identities),
+      onDraftTransactionSettled: vi.fn(async (results: readonly DraftFileTransactionResult[]) => {
+        settled.push(results.map((result) => result.status))
+        if (settled.length === 1) {
+          // Edit typed during settlement — and IndexedDB rejects the
+          // pre-close write that must seal it.
+          persistence.schedule(draftSnapshot('typed-during-settle', 'inbox/a', 'doc-a', 2))
+          backend.failNext('save')
+        }
+      }),
+      warnDraftTransaction: warnings,
+    })
+
+    await h.lifecycle.deleteFile('inbox/a')
+
+    // The settlement-window write failed, so the edit is still only
+    // in-memory: the tab must survive the file delete — it is the only
+    // surface still holding those bytes.
+    expect(h.tabs.value.map((item) => item.path)).toEqual(['inbox/a'])
+    expect(h.removed).toEqual([])
+    expect(persistence.findTrackedIdentitiesByPaths(['inbox/a'])).toEqual([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'inbox/a',
+    }])
+    // Two settlement passes ran: the preserve report, then the failed
+    // finalize — and only the failure produced a user-visible warning.
+    expect(settled).toEqual([['preserved'], ['failed']])
+    expect(warnings).toHaveBeenCalledOnce()
+    expect(warnings).toHaveBeenCalledWith([expect.objectContaining({
+      documentId: 'doc-a',
+      oldPath: 'inbox/a',
+      status: 'failed',
+    })])
+    await persistence.dispose()
+  })
+
+  it('covers the settlement window for folder delete, per path', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(api, 'deleteFolder').mockResolvedValue({ deleted: ['folder/a', 'folder/b'] })
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 10,
+      targetWindow: undefined,
+    })
+    const warnings = vi.fn()
+    let settled = false
+    let h!: ReturnType<typeof setup>
+    h = setup([tab('folder/a'), tab('folder/b')], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: path === 'folder/b' ? 'doc-b' : 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: (identities) => persistence.prepareFileMutation(identities),
+      onDraftTransactionSettled: vi.fn(async () => {
+        if (!settled) {
+          settled = true
+          // An edit lands on folder/a during settlement, and its
+          // pre-close write fails — folder/b stays clean.
+          persistence.schedule(draftSnapshot('typed-during-settle', 'folder/a', 'doc-a', 2))
+          backend.failNext('save')
+        }
+      }),
+      warnDraftTransaction: warnings,
+    })
+
+    await h.lifecycle.deleteFolder('folder', ['folder/a', 'folder/b'])
+
+    // One failed document must not hold its successfully deleted
+    // sibling's tab open — and must not close its own.
+    expect(h.tabs.value.map((item) => item.path)).toEqual(['folder/a'])
+    expect(h.removed).toEqual(['folder/b'])
+    expect(warnings).toHaveBeenCalledOnce()
+    expect(warnings).toHaveBeenCalledWith([expect.objectContaining({
+      documentId: 'doc-a',
+      oldPath: 'folder/a',
+      status: 'failed',
+    })])
+    await persistence.dispose()
+  })
+
+  it('reports failed when the post-tab-migration primary write fails', async () => {
+    vi.spyOn(api, 'patchPost').mockResolvedValue({
+      path: 'archive/a-2', title: 'A', created: '', updated: '', tags: [], size: 1, mtime: 2,
+    })
+    const warnings = vi.fn()
+    const h = setup([tab()], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        documentId: 'doc-a',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn().mockResolvedValue([{
+          documentId: 'doc-a',
+          oldPath: 'inbox/a',
+          newPath: 'archive/a-2',
+          status: 'moved',
+        }]),
+        commitDeletes: vi.fn(),
+        // The immediate write of the transaction-time snapshot to the
+        // actual new path was rejected by IndexedDB.
+        finalizeAfterTabMigration: vi.fn().mockResolvedValue([{
+          documentId: 'doc-a',
+          oldPath: 'inbox/a',
+          newPath: 'archive/a-2',
+          status: 'failed',
+        }]),
+        rollback: vi.fn(),
+      }),
+      warnDraftTransaction: warnings,
+    })
+
+    const result = await h.lifecycle.renameFile('inbox/a', { targetPath: 'archive/a' })
+
+    // The server rename stays successful — a draft write failure never
+    // reverses it.
+    expect(result.path).toBe('archive/a-2')
+    // The tab keeps the actual server-suffixed path.
+    expect(h.tabs.value[0].path).toBe('archive/a-2')
+    // The finalize failure is merged into the reported transaction
+    // results: a user-visible warning instead of silent success.
+    expect(warnings).toHaveBeenCalledOnce()
+    expect(warnings).toHaveBeenCalledWith([expect.objectContaining({
+      documentId: 'doc-a',
+      oldPath: 'inbox/a',
+      newPath: 'archive/a-2',
+      status: 'failed',
+    })])
+  })
+
+  it('folder rename aggregates finalize write failures into the reported results', async () => {
+    vi.spyOn(api, 'renameFolder').mockResolvedValue({
+      path: 'renamed', moved: ['renamed/a', 'renamed/b'], updatedReferences: [],
+    })
+    const warnings = vi.fn()
+    const h = setup([tab('folder/a'), tab('folder/b')], undefined, {
+      resolveDocumentIdentity: vi.fn(async (path: string) => ({
+        vaultId: 'vault',
+        // Identity survives the rename: match by path suffix so both
+        // 'folder/a' and 'renamed/a' resolve to the same documentId.
+        documentId: path.endsWith('/a') ? 'doc-a' : 'doc-b',
+        documentPath: path,
+      })),
+      prepareDraftFileMutation: vi.fn().mockResolvedValue({
+        commitMoves: vi.fn().mockResolvedValue([
+          { documentId: 'doc-a', oldPath: 'folder/a', newPath: 'renamed/a', status: 'moved' },
+          { documentId: 'doc-b', oldPath: 'folder/b', newPath: 'renamed/b', status: 'moved' },
+        ]),
+        commitDeletes: vi.fn(),
+        // One document's post-migration write failed; the other is
+        // clean — the warning must name exactly the failed one.
+        finalizeAfterTabMigration: vi.fn().mockResolvedValue([{
+          documentId: 'doc-b',
+          oldPath: 'folder/b',
+          newPath: 'renamed/b',
+          status: 'failed',
+        }]),
+        rollback: vi.fn(),
+      }),
+      warnDraftTransaction: warnings,
+    })
+
+    const result = await h.lifecycle.renameFolder('folder', 'renamed', ['folder/a', 'folder/b'])
+
+    // The server folder rename stays successful and both tabs migrated.
+    expect(result.path).toBe('renamed')
+    expect(h.tabs.value.map((item) => item.path)).toEqual(['renamed/a', 'renamed/b'])
+    expect(warnings).toHaveBeenCalledOnce()
+    expect(warnings).toHaveBeenCalledWith([expect.objectContaining({
+      documentId: 'doc-b',
+      oldPath: 'folder/b',
+      newPath: 'renamed/b',
+      status: 'failed',
+    })])
   })
 })

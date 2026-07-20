@@ -59,6 +59,25 @@ export interface DraftFileMutationBarrier {
   commitDeletes(
     deletions: readonly DraftDeleteRequest[],
   ): Promise<DraftFileTransactionResult[]>
-  finalizeAfterTabMigration(): Promise<void>
+  /** Final persistence gate before the lifecycle closes document tabs.
+   *  A delete transaction releases every entry when it reports, but the
+   *  lifecycle still awaits Recovery synchronization before closing tabs
+   *  — edits typed during that async window arm a fresh debounce that
+   *  the tab close could outrun. This gate re-verifies each released
+   *  entry and persists anything still pending IMMEDIATELY (on the
+   *  entry's active channel); a rejected write produces a `failed`
+   *  result so the lifecycle keeps that tab open — it is the only
+   *  surface still holding those bytes. The lifecycle must close tabs
+   *  synchronously after this promise resolves, before any further
+   *  await, so no user input event can open a new window. */
+  finalizeBeforeDocumentClose(): Promise<DraftFileTransactionResult[]>
+  /** Immediate post-tab-migration persistence results. Each pending
+   *  release writes its latest snapshot to the actual post-rename path;
+   *  a rejected write produces a `failed` result (with the actual
+   *  server-suffixed `newPath`) that the lifecycle merges into its
+   *  reported transaction results — the server rename stays successful
+   *  and the tab keeps its new path, but the user is warned that the
+   *  local draft could not be persisted. */
+  finalizeAfterTabMigration(): Promise<DraftFileTransactionResult[]>
   rollback(): Promise<void>
 }

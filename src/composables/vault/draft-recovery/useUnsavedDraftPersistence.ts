@@ -696,7 +696,18 @@ export function createUnsavedDraftPersistence(
 
     let settled = false
     let finalized = false
-    const pendingReleases = new Map<string, { path: string; writeLatest: boolean }>()
+    // Identities whose commit already reported 'failed'. Their tabs stay
+    // open regardless and their armed debounce retries in the background,
+    // so the finalize gates skip them — re-running the immediate write
+    // there could only duplicate the user-visible warning.
+    const alreadyFailedKeys = new Set<string>()
+    const pendingReleases = new Map<string, {
+      path: string
+      writeLatest: boolean
+      documentId: string
+      fromPath: string
+      toPath?: string
+    }>()
 
     async function releaseEntry(
       state: typeof held extends Map<string, infer V> ? V : never,
@@ -891,6 +902,7 @@ export function createUnsavedDraftPersistence(
           mapping.toPath,
         )
         const status = outcome.status
+        if (status === 'failed') alreadyFailedKeys.add(identityKey)
         if (status === 'moved') {
           state.entry.persistedDraft = await store.getDraft(
             mapping.vaultId,
@@ -902,6 +914,9 @@ export function createUnsavedDraftPersistence(
             ? mapping.toPath
             : state.identity.documentPath,
           writeLatest: true,
+          documentId: mapping.documentId,
+          fromPath: mapping.fromPath,
+          toPath: mapping.toPath,
         })
         results.push({
           documentId: mapping.documentId,
@@ -917,6 +932,8 @@ export function createUnsavedDraftPersistence(
           // Identity mismatch preserves the record at its old identity, but
           // transaction-time edits must also be persisted as orphan recovery.
           writeLatest: true,
+          documentId: state.identity.documentId,
+          fromPath: state.identity.documentPath,
         })
       }
       return results
@@ -943,6 +960,8 @@ export function createUnsavedDraftPersistence(
         deletedKeys.add(identityKey)
         if (deletion.policy === 'preserve') {
           const release = await releaseEntry(state, deletion.documentPath, true, true)
+          const status = release.status === 'failed' ? 'failed' as const : 'preserved' as const
+          if (status === 'failed') alreadyFailedKeys.add(identityKey)
           results.push({
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,
@@ -950,7 +969,7 @@ export function createUnsavedDraftPersistence(
             // snapshot only in-memory — report 'failed' (not
             // 'preserved') so the lifecycle keeps the tab open: it is
             // the only surface still holding those bytes.
-            status: release.status === 'failed' ? 'failed' : 'preserved',
+            status,
           })
           continue
         }
@@ -968,6 +987,8 @@ export function createUnsavedDraftPersistence(
             confirmation.expectedSnapshot,
           )) {
           const release = await releaseEntry(state, deletion.documentPath, true, true)
+          const status = release.status === 'failed' ? 'failed' as const : 'stale' as const
+          if (status === 'failed') alreadyFailedKeys.add(identityKey)
           results.push({
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,
@@ -975,7 +996,7 @@ export function createUnsavedDraftPersistence(
             // immediately; if that write fails the snapshot is still
             // only in-memory — 'failed' keeps the tab open instead of
             // closing it behind a 'stale' result.
-            status: release.status === 'failed' ? 'failed' : 'stale',
+            status,
           })
           continue
         }
@@ -1085,17 +1106,20 @@ export function createUnsavedDraftPersistence(
               // candidate to record a divergence from.
               null,
             )
+            const status = handoff.status === 'failed' || failedConflictIds.length > 0
+              ? 'failed' as const
+              : 'conflict' as const
+            if (status === 'failed') alreadyFailedKeys.add(identityKey)
             results.push({
               documentId: deletion.documentId,
               oldPath: deletion.documentPath,
-              status: handoff.status === 'failed' || failedConflictIds.length > 0
-                ? 'failed'
-                : 'conflict',
+              status,
             })
             continue
           }
           if (failedConflictIds.length > 0) {
             console.warn(`[commitDeletes] Frozen conflict delete failed for ${deletion.documentPath}: ${failedConflictIds.join(', ')}`)
+            alreadyFailedKeys.add(identityKey)
             await releaseEntry(state, deletion.documentPath, false, true)
             results.push({
               documentId: deletion.documentId,
@@ -1106,6 +1130,7 @@ export function createUnsavedDraftPersistence(
           }
           if (conflictList.status === 'failed') {
             console.warn(`[commitDeletes] Conflict store read failed for ${deletion.documentPath}; reporting failed instead of full success`)
+            alreadyFailedKeys.add(identityKey)
             await releaseEntry(state, deletion.documentPath, false, true)
             results.push({
               documentId: deletion.documentId,
@@ -1161,6 +1186,8 @@ export function createUnsavedDraftPersistence(
           // preserved as a new orphan recovery entry" instead of
           // treating the operation as a clean delete.
           const release = await releaseEntry(state, deletion.documentPath, true, true)
+          const status = release.status === 'failed' ? 'failed' as const : 'conflict' as const
+          if (status === 'failed') alreadyFailedKeys.add(identityKey)
           results.push({
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,
@@ -1168,7 +1195,7 @@ export function createUnsavedDraftPersistence(
             // immediately; if that write fails the new edit is still
             // only in-memory — 'failed' (not 'conflict') keeps the tab
             // open as the only surface still holding it.
-            status: release.status === 'failed' ? 'failed' : 'conflict',
+            status,
           })
           continue
         }
@@ -1197,13 +1224,15 @@ export function createUnsavedDraftPersistence(
             refinedStatus,
             crossContextUpdatedAt,
           )
+          const status = handoff.status === 'failed' ? 'failed' as const : 'conflict' as const
+          if (status === 'failed') alreadyFailedKeys.add(identityKey)
           results.push({
             documentId: deletion.documentId,
             oldPath: deletion.documentPath,
             // A failed handoff means the local content is still only
             // in-memory; surface 'failed' so the lifecycle keeps the tab
             // open instead of closing the only surface holding it.
-            status: handoff.status === 'failed' ? 'failed' : 'conflict',
+            status,
           })
           continue
         }
@@ -1230,14 +1259,93 @@ export function createUnsavedDraftPersistence(
       return results
     }
 
-    async function finalizeAfterTabMigration(): Promise<void> {
-      if (finalized) return
+    /** Seal released entries just before the lifecycle closes document
+     *  tabs. commitDeletes releases every entry when it reports, but the
+     *  lifecycle still awaits Recovery synchronization before closing
+     *  tabs — an edit typed during that async window arms a fresh
+     *  debounce (the transaction lock is already gone) that the tab
+     *  close could outrun: if that debounced write later failed, the
+     *  bytes would exist nowhere visible. This gate re-verifies each
+     *  released entry and persists anything still pending IMMEDIATELY on
+     *  the entry's active channel (a conflict-pinned entry keeps writing
+     *  conflict records, never the primary store). A rejected write
+     *  returns 'failed' for that identity so the lifecycle keeps its tab
+     *  open — the only surface still holding those bytes. Identities
+     *  that already reported 'failed' are skipped: their tabs stay open
+     *  regardless and their armed debounce retries in the background.
+     *  The lifecycle must close tabs synchronously after this promise
+     *  resolves (no await in between) so no user input event can open a
+     *  new window. */
+    async function finalizeBeforeDocumentClose(): Promise<DraftFileTransactionResult[]> {
+      const results: DraftFileTransactionResult[] = []
+      for (const [identityKey, state] of held) {
+        if (alreadyFailedKeys.has(identityKey)) continue
+        const { entry, identity } = state
+        if (entry.fileTransaction
+          || !entry.latestSnapshot
+          || !entry.latestSnapshotNeedsWrite) {
+          continue
+        }
+        clearTimer(entry)
+        const conflictChannel = entry.pendingConflictId !== null
+        const owner = {
+          vaultId: identity.vaultId,
+          documentId: identity.documentId,
+          generation: entry.generation,
+        }
+        const captured = cloneSnapshot(entry.latestSnapshot)
+        const saved = conflictChannel
+          ? await queueConflictWrite(owner, captured)
+          : await queueWrite(owner, captured)
+        if (!saved) {
+          // Rejected (or superseded mid-write): the latest snapshot is
+          // still only in-memory. Fail closed so the lifecycle keeps
+          // the tab open instead of closing the only visible copy.
+          alreadyFailedKeys.add(identityKey)
+          results.push({
+            documentId: identity.documentId,
+            oldPath: identity.documentPath,
+            status: 'failed',
+          })
+        }
+      }
+      return results
+    }
+
+    async function finalizeAfterTabMigration(): Promise<DraftFileTransactionResult[]> {
+      if (finalized) return []
       finalized = true
+      const results: DraftFileTransactionResult[] = []
       for (const [identityKey, release] of pendingReleases) {
+        if (alreadyFailedKeys.has(identityKey)) continue
         const state = held.get(identityKey)
-        if (state) await releaseEntry(state, release.path, release.writeLatest, true)
+        if (!state) continue
+        const releaseResult = await releaseEntry(
+          state,
+          release.path,
+          release.writeLatest,
+          true,
+        )
+        if (releaseResult.status === 'failed') {
+          // The immediate write of the transaction-time snapshot to
+          // the actual post-rename path was rejected: the latest edit
+          // is still only in-memory. Report 'failed' so the lifecycle
+          // merges it into the transaction results — the server rename
+          // stays successful and the tab keeps its new path, but the
+          // user is warned that the local draft could not be persisted
+          // (a crash or refresh now could lose the transaction-time
+          // edit). Never reverse the rename over a draft write failure.
+          alreadyFailedKeys.add(identityKey)
+          results.push({
+            documentId: release.documentId,
+            oldPath: release.fromPath,
+            newPath: release.toPath,
+            status: 'failed',
+          })
+        }
       }
       pendingReleases.clear()
+      return results
     }
 
     async function rollback(): Promise<void> {
@@ -1248,7 +1356,13 @@ export function createUnsavedDraftPersistence(
       }
     }
 
-    return { commitMoves, commitDeletes, finalizeAfterTabMigration, rollback }
+    return {
+      commitMoves,
+      commitDeletes,
+      finalizeBeforeDocumentClose,
+      finalizeAfterTabMigration,
+      rollback,
+    }
   }
 
   function captureDeleteConfirmation(

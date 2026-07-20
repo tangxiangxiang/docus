@@ -1714,3 +1714,323 @@ describe('draft file transactions — conflict handoff & channel', () => {
     await persistence.dispose()
   })
 })
+
+// The delete transaction releases every entry when it reports, but the
+// lifecycle still awaits Recovery synchronization before closing tabs.
+// An edit typed during that settlement window arms a fresh debounce
+// (the file transaction is already gone) that the tab close could
+// outrun — if that write later failed, the bytes would exist nowhere
+// visible. finalizeBeforeDocumentClose() seals the window: it persists
+// anything still pending IMMEDIATELY (on the entry's active channel)
+// and reports 'failed' when the write is rejected, so the lifecycle
+// keeps that tab open. finalizeAfterTabMigration() must likewise
+// OBSERVE its immediate post-rename writes: a rejected write reports
+// 'failed' (with the actual server-suffixed newPath) so the lifecycle
+// can warn — the server rename stays successful, but a silent success
+// would hide a transaction-time edit that never reached the store.
+
+describe('draft file transactions — UI commit boundary sealing', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const identity = {
+    vaultId: 'vault',
+    documentId: 'doc-a',
+    documentPath: 'notes/a',
+  }
+
+  function remoteV3() {
+    return {
+      version: 1 as const,
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'notes/a',
+      content: 'remote-v3',
+      baseContentHash: 'base-hash',
+      baseModifiedAt: 10.5,
+      createdAt: 5,
+      updatedAt: 110,
+    }
+  }
+
+  function gatedStore() {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    let releaseDelete!: () => void
+    const deleteGate = new Promise<void>((resolve) => { releaseDelete = resolve })
+    let deleteStarted = false
+    const originalDelete = backend.deleteIfUnchanged
+    backend.deleteIfUnchanged = vi.fn(async (expected) => {
+      deleteStarted = true
+      await deleteGate
+      return originalDelete.call(backend, expected)
+    })
+    return {
+      backend,
+      store,
+      releaseDelete: () => releaseDelete(),
+      waitDeleteStarted: () => vi.waitFor(() => expect(deleteStarted).toBe(true)),
+    }
+  }
+
+  function makePersistence(store: ReturnType<typeof createDraftStore>) {
+    return createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      targetWindow: undefined,
+    })
+  }
+
+  // Drive the entry to the stale + post-CAS-edit branch and resolve the
+  // handoff: persist local-v2, seed newer remote-v3, confirm, land
+  // local-v3 while the CAS awaits, release. With conflict saves healthy
+  // this settles to a stable 'conflict' (entry pinned to the conflict
+  // channel, snapshot promoted); with conflict saves mocked to fail it
+  // settles to 'failed'. Returns the in-flight commitDeletes promise
+  // plus the barrier so tests can run the finalize gate afterwards.
+  async function enterConflictHandoff(
+    persistence: ReturnType<typeof makePersistence>,
+    store: ReturnType<typeof createDraftStore>,
+    backend: ReturnType<typeof createMemoryDraftBackend>,
+    gate: ReturnType<typeof gatedStore>,
+  ) {
+    persistence.schedule(snapshot('local-v2', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('local-v2')
+    await backend.seedRaw(remoteV3())
+    const confirmation = persistence.captureDeleteConfirmation(identity, 2)
+    const barrier = await persistence.prepareFileMutation([identity])
+    const deleting = barrier.commitDeletes([{
+      ...identity,
+      policy: 'discard-confirmed',
+      confirmation,
+    }])
+    await gate.waitDeleteStarted()
+    persistence.schedule(snapshot('local-v3', 'notes/a', 3))
+    gate.releaseDelete()
+    return { deleting, barrier }
+  }
+
+  it('preserves an edit typed while recovery settlement is pending', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    const saveDraft = vi.spyOn(store, 'saveDraft')
+    const barrier = await persistence.prepareFileMutation([identity])
+    persistence.schedule(snapshot('orphan', 'notes/a', 2))
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'preserve',
+    }])
+    expect(result.status).toBe('preserved')
+    // The transaction has released the entry; the lifecycle now awaits
+    // Recovery synchronization. An edit typed during that window arms a
+    // fresh 800ms debounce — the file transaction no longer holds it.
+    persistence.schedule(snapshot('settlement-edit', 'notes/a', 3))
+
+    // finalizeBeforeDocumentClose must persist it IMMEDIATELY (not let
+    // the debounce race the imminent tab close) and clear the armed
+    // timer.
+    const finalizeResults = await barrier.finalizeBeforeDocumentClose()
+    expect(finalizeResults).toEqual([])
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('settlement-edit')
+    expect(saveDraft).toHaveBeenCalledTimes(2)
+    // After the tab closes, no draft timer may fire: advancing the
+    // clock produces no further write — the window timer was cleared,
+    // not left armed behind a closed tab.
+    await vi.advanceTimersByTimeAsync(2400)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(saveDraft).toHaveBeenCalledTimes(2)
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('settlement-edit')
+    await persistence.dispose()
+  })
+
+  it('reports failed when the final pre-close persistence fails', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    const barrier = await persistence.prepareFileMutation([identity])
+    persistence.schedule(snapshot('orphan', 'notes/a', 2))
+    const [result] = await barrier.commitDeletes([{
+      ...identity,
+      policy: 'preserve',
+    }])
+    expect(result.status).toBe('preserved')
+    persistence.schedule(snapshot('settlement-edit', 'notes/a', 3))
+    // IndexedDB rejects the settlement-window write.
+    backend.failNext('save')
+    const finalizeResults = await barrier.finalizeBeforeDocumentClose()
+
+    // The settlement edit is still only in-memory: 'failed' keeps the
+    // tab open — it is the only surface still holding those bytes.
+    expect(finalizeResults).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      status: 'failed',
+    }])
+    expect(persistence.findTrackedIdentitiesByPaths(['notes/a'])).toEqual([identity])
+    await persistence.dispose()
+  })
+
+  it('persists a conflict-channel edit typed during settlement before closing', async () => {
+    const gate = gatedStore()
+    const { backend, store } = gate
+    const persistence = makePersistence(store)
+    const { deleting, barrier } = await enterConflictHandoff(persistence, store, backend, gate)
+    const [result] = await deleting
+    expect(result.status).toBe('conflict')
+    // The entry is pinned to the conflict channel (local-v3 promoted,
+    // snapshot dropped). The user types during Recovery synchronization
+    // — the edit arms a conflict-channel debounce.
+    persistence.schedule(snapshot('local-v4', 'notes/a', 4))
+
+    const finalizeResults = await barrier.finalizeBeforeDocumentClose()
+    expect(finalizeResults).toEqual([])
+    // Persisted as a conflict record IMMEDIATELY — never the primary
+    // store (the cross-context record must not be overwritten).
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
+    expect((await store.listConflictDrafts('vault')).map((c) => c.content).sort())
+      .toEqual(['local-v3', 'local-v4'])
+    // The window timer was cleared: no further conflict write fires
+    // after the tab closes.
+    await vi.advanceTimersByTimeAsync(2400)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.listConflictDrafts('vault')).map((c) => c.content).sort())
+      .toEqual(['local-v3', 'local-v4'])
+    await persistence.dispose()
+  })
+
+  it('skips identities the delete transaction already reported failed', async () => {
+    const gate = gatedStore()
+    const { backend, store } = gate
+    // Every conflict save fails during the delete transaction → the
+    // handoff reports 'failed' and arms the background debounce.
+    const saveConflict = vi.spyOn(store, 'saveConflictDraft')
+      .mockResolvedValue({ status: 'failed' })
+    const persistence = makePersistence(store)
+    const { deleting, barrier } = await enterConflictHandoff(persistence, store, backend, gate)
+    const [result] = await deleting
+    expect(result.status).toBe('failed')
+
+    // finalize must NOT re-report the identity — its tab stays open on
+    // the transaction's own 'failed' result, and re-running the write
+    // could only duplicate the user-visible warning.
+    expect(await barrier.finalizeBeforeDocumentClose()).toEqual([])
+    // The armed background retry is untouched: once the store
+    // recovers, the debounce persists local-v3 without any further
+    // user action.
+    saveConflict.mockRestore()
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((await store.listConflictDrafts('vault')).map((c) => c.content))
+      .toEqual(['local-v3'])
+    expect((await store.getDraft('vault', 'doc-a'))?.content).toBe('remote-v3')
+    await persistence.dispose()
+  })
+
+  it('reports failed when the post-tab-migration primary write fails', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    const barrier = await persistence.prepareFileMutation([identity])
+    // An edit typed during the rename request.
+    persistence.schedule(snapshot('during', 'notes/a', 2))
+    const [move] = await barrier.commitMoves([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      fromPath: 'notes/a',
+      toPath: 'archive/a-2',
+    }])
+    expect(move.status).toBe('moved')
+    // The immediate write of the transaction-time snapshot to the
+    // actual new path is rejected by IndexedDB.
+    backend.failNext('save')
+    const finalizeResults = await barrier.finalizeAfterTabMigration()
+
+    // The failure is OBSERVABLE: 'failed' with the actual server-
+    // suffixed path, so the lifecycle can merge it into the reported
+    // results and warn. The family move itself succeeded and is NOT
+    // reversed — no draft is recreated on the old path; the record
+    // holds the moved content at the new path.
+    expect(finalizeResults).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      newPath: 'archive/a-2',
+      status: 'failed',
+    }])
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a-2',
+      content: 'primary',
+    })
+    // The edit is still only in-memory — tracked under the actual new
+    // path so flush/dispose can still reach it.
+    expect(persistence.findTrackedIdentitiesByPaths(['archive/a-2'])).toEqual([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'archive/a-2',
+    }])
+    await persistence.dispose()
+  })
+
+  it('reports failed when the post-tab-migration conflict write fails', async () => {
+    const gate = gatedStore()
+    const { backend, store } = gate
+    const persistence = makePersistence(store)
+    const { deleting } = await enterConflictHandoff(persistence, store, backend, gate)
+    const [deleteResult] = await deleting
+    expect(deleteResult.status).toBe('conflict')
+    // The entry is pinned to the conflict channel; a later edit keeps
+    // it there, and then the file is renamed: the second transaction
+    // moves the family (primary + conflict candidates) to the actual
+    // new path.
+    persistence.schedule(snapshot('local-v4', 'notes/a', 4))
+    const renameBarrier = await persistence.prepareFileMutation([identity])
+    const [move] = await renameBarrier.commitMoves([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      fromPath: 'notes/a',
+      toPath: 'archive/a-2',
+    }])
+    expect(move.status).toBe('moved')
+    // The conflict-channel write of the latest snapshot is rejected.
+    vi.spyOn(store, 'saveConflictDraft').mockResolvedValue({ status: 'failed' })
+    const finalizeResults = await renameBarrier.finalizeAfterTabMigration()
+
+    expect(finalizeResults).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      newPath: 'archive/a-2',
+      status: 'failed',
+    }])
+    // The family already moved — the finalize failure must not reverse
+    // it: primary at the new path, the promoted candidate moved with it.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/a-2',
+      content: 'remote-v3',
+    })
+    expect((await store.listConflictDrafts('vault')).map((c) => c.content))
+      .toEqual(['local-v3'])
+    // local-v4 is still only in-memory, tracked under the new path.
+    expect(persistence.findTrackedIdentitiesByPaths(['archive/a-2'])).toEqual([{
+      vaultId: 'vault',
+      documentId: 'doc-a',
+      documentPath: 'archive/a-2',
+    }])
+    await persistence.dispose()
+  })
+})
