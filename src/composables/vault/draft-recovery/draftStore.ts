@@ -103,7 +103,7 @@ type DeleteResult = 'deleted' | 'missing' | 'unsupported'
 type ConditionalDeleteResult = DeleteResult | 'stale'
 type BackendOperation =
   | 'save' | 'get' | 'list' | 'delete' | 'move' | 'moveConflicts'
-  | 'moveFamily' | 'moveFamilyConflicts' | 'clear'
+  | 'moveFamily' | 'moveFamilyConflicts' | 'moveFamilyIfAtPath' | 'clear'
   | 'saveConflict' | 'saveConflictCandidate'
   | 'listConflicts' | 'deleteConflict' | 'clearConflicts'
 
@@ -156,6 +156,26 @@ export interface DraftStorageBackend {
     documentId: string,
     newPath: string,
   ): Promise<FamilyMoveBackendResult>
+  /** CAS (compare-and-swap) variant of moveFamily: move the family as
+   *  one unit, but ONLY while it still sits at `expectedFamilyPath` —
+   *  the only move API a quarantine / move-indeterminate retry may use.
+   *  Inside ONE transaction across both stores the family's current path
+   *  is derived from the raw rows (the primary record, if any, plus
+   *  every same-identity conflict row — each validated first, exactly
+   *  like moveFamily's pre-flight) and compared against the certified
+   *  expected path: `moved` / `missing` when the family still sits at
+   *  the expected path (a conflict-only family's rows are re-pinned at
+   *  `newPath` too, reported as `missing`), `path-mismatch` when another
+   *  context's verified rename moved the family (NOTHING moves;
+   *  `currentPath` certifies where it lives now), `unsupported` when
+   *  the pre-flight cannot certify the family (NOTHING moves). A
+   *  transaction abort THROWS; the store layer reports `failed`. */
+  moveFamilyIfAtPath(
+    vaultId: string,
+    documentId: string,
+    expectedFamilyPath: string,
+    newPath: string,
+  ): Promise<FamilyCasMoveBackendResult>
   clear(vaultId: string): Promise<void>
   saveConflict(record: DraftConflictRecord): Promise<void>
   /** Persist a conflict candidate as part of ONE transaction that also
@@ -190,6 +210,15 @@ type FamilyMoveBackendResult = {
   movedConflicts: number
 }
 
+/** Backend-level CAS move result: the four outcomes minus `failed` —
+ *  a transaction abort THROWS instead, and the store layer converts
+ *  the throw into `failed`. */
+type FamilyCasMoveBackendResult =
+  | { status: 'moved' }
+  | { status: 'missing' }
+  | { status: 'path-mismatch'; currentPath: string }
+  | { status: 'unsupported' }
+
 /** Outcome of an atomic primary+conflicts rename. The whole family is
  *  pre-flight validated BEFORE anything is written: if the primary OR
  *  any conflict row for the identity is unsupported (future-version /
@@ -206,6 +235,58 @@ export type DraftFamilyMoveOutcome = {
   status: MoveResult | 'failed'
   movedConflicts: number
 }
+
+/** Outcome of a CAS (expected-path) family move — the only move API a
+ *  quarantine / move-indeterminate retry may use against the store. The
+ *  family's current path is derived from the raw rows inside the SAME
+ *  transaction as the move, so a rename committed by another context can
+ *  never slip between the caller's last probe and the move:
+ *  - `moved` — the family still sat at the certified expected path and
+ *    now lives at `newPath` (a primary record existed);
+ *  - `missing` — the identity held no rows at all, or a conflict-only
+ *    family still sat at the expected path: there was no primary to
+ *    move; any same-identity conflict rows present at the expected path
+ *    were re-pinned at `newPath` in the same transaction;
+ *  - `path-mismatch` — the family no longer sits at the expected path
+ *    (another context's verified rename moved it): NOTHING moved.
+ *    `currentPath` certifies where the family lives now, so the caller
+ *    can adopt THAT path (pin its pending content as a candidate on the
+ *    family's real path) instead of retrying the stale target — the
+ *    server file operation is always authoritative, so a stale
+ *    quarantine retry must never drag the family back from the path the
+ *    server actually lives on;
+ *  - `unsupported` — pre-flight blocked the whole move (the primary OR
+ *    any same-identity conflict row is future-version / corrupt, or the
+ *    readable rows disagree on the path): NOTHING moved;
+ *  - `failed` — the transaction aborted (or the arguments were
+ *    invalid): neither store changed. */
+export type DraftFamilyCasMoveOutcome =
+  | { status: 'moved' }
+  | { status: 'missing' }
+  | { status: 'path-mismatch'; currentPath: string }
+  | { status: 'unsupported' }
+  | { status: 'failed' }
+
+/** Outcome of a strict, read-only family probe — the state
+ *  re-verification a move-indeterminate retry must run BEFORE acting:
+ *  it carries no trustworthy expected path, so it must never blind-move
+ *  "whatever is there" toward a stale serverPath:
+ *  - `none` — no rows for the identity: nothing to move or heal;
+ *  - `path` — every row of the identity is readable and agrees on
+ *    `familyPath`; `hasPrimary` says whether a primary record exists
+ *    (a conflict-only family still certifies its path);
+ *  - `unsupported` — the rows disagree on the path or at least one is
+ *    unreadable: no current path may be certified (`reason` classifies
+ *    the blocking row, mirroring probeReason's priority — split
+ *    dominates an unreadable conflict row, which dominates an
+ *    unreadable primary);
+ *  - `failed` — the store could not be read.
+ *  The probe is a strict read: it writes nothing. */
+export type DraftFamilyProbeOutcome =
+  | { status: 'none' }
+  | { status: 'path'; familyPath: string; hasPrimary: boolean }
+  | { status: 'unsupported'; reason: UnsupportedFamilyReason }
+  | { status: 'failed' }
 
 export type DraftDeleteOutcome =
   | { status: 'deleted' }
@@ -305,6 +386,26 @@ export interface DraftStore {
     documentId: string,
     newPath: string,
   ): Promise<DraftFamilyMoveOutcome>
+  /** CAS (expected-path) variant of moveDraftFamily — the only move API
+   *  a quarantine / move-indeterminate retry may use. Moves the whole
+   *  family ONLY while its current path (derived from the raw rows
+   *  inside the same transaction) still equals `expectedFamilyPath`; a
+   *  stale retry against a family another context already moved returns
+   *  `path-mismatch` and moves NOTHING. See DraftFamilyCasMoveOutcome. */
+  moveDraftFamilyIfAtPath(
+    vaultId: string,
+    documentId: string,
+    expectedFamilyPath: string,
+    newPath: string,
+  ): Promise<DraftFamilyCasMoveOutcome>
+  /** Strict read-only probe of the family's current state — the state
+   *  re-verification a move-indeterminate retry runs before acting (it
+   *  has no trustworthy expected path and must never blind-move). Writes
+   *  nothing; see DraftFamilyProbeOutcome. */
+  probeDraftFamily(
+    vaultId: string,
+    documentId: string,
+  ): Promise<DraftFamilyProbeOutcome>
   clearVaultDrafts(vaultId: string): Promise<boolean>
   saveConflictDraft(record: DraftConflictRecord): Promise<DraftConflictSaveOutcome>
   /** Persist a conflict candidate FAMILY-ATOMICALLY: the candidate's
@@ -636,6 +737,75 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       }
     },
 
+    async moveDraftFamilyIfAtPath(vaultId, documentId, expectedFamilyPath, newPath) {
+      if (!isDraftIdentity(vaultId, documentId)
+        || expectedFamilyPath.trim().length === 0
+        || newPath.trim().length === 0) {
+        return { status: 'failed' as const }
+      }
+      try {
+        return await backend.moveFamilyIfAtPath(
+          vaultId, documentId, expectedFamilyPath, newPath,
+        )
+      } catch {
+        // Any error (including an aborted cross-store transaction) means
+        // nothing moved. Report a structured failure so the caller fails
+        // closed (keeps the write flag set) instead of guessing.
+        return { status: 'failed' as const }
+      }
+    },
+
+    async probeDraftFamily(vaultId, documentId) {
+      if (!isDraftIdentity(vaultId, documentId)) return { status: 'failed' as const }
+      try {
+        const paths = new Set<string>()
+        let hasPrimary = false
+        let primaryUnreadable = false
+        let conflictUnreadable = false
+        const primary = await backend.get(draftKey(vaultId, documentId))
+        if (primary !== null && primary !== undefined) {
+          if (isUnsavedDraft(primary)) {
+            hasPrimary = true
+            paths.add(primary.documentPath)
+          } else {
+            primaryUnreadable = true
+          }
+        }
+        for (const value of await backend.listConflicts(vaultId)) {
+          if (recordField(value, 'documentId') !== documentId) continue
+          if (!isDraftConflictRecord(value)) {
+            conflictUnreadable = true
+            continue
+          }
+          paths.add(value.documentPath)
+        }
+        // Apply probeReason's priority — split dominates an unreadable
+        // conflict row, which dominates an unreadable primary: a caller
+        // told "path" while a same-identity row is unreadable would
+        // certify a family the store could not fully read.
+        if (paths.size > 1) {
+          return { status: 'unsupported' as const, reason: 'split-conflict-paths' as const }
+        }
+        if (conflictUnreadable) {
+          return { status: 'unsupported' as const, reason: 'unsupported-conflict' as const }
+        }
+        if (primaryUnreadable) {
+          return { status: 'unsupported' as const, reason: 'unsupported-primary' as const }
+        }
+        if (paths.size === 0) return { status: 'none' as const }
+        return {
+          status: 'path' as const,
+          familyPath: [...paths][0]!,
+          hasPrimary,
+        }
+      } catch {
+        // A read error is not an empty family: report a structured
+        // failure so the caller fails closed instead of certifying
+        // "none" on top of an unread store.
+        return { status: 'failed' as const }
+      }
+    },
+
     async clearVaultDrafts(vaultId) {
       if (vaultId.trim().length === 0) return false
       try {
@@ -932,6 +1102,69 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
         conflictRecords.set(key, cloneConflictRecord(record))
       }
       return { status: decision.result, movedConflicts: conflictUpdates.length }
+    },
+
+    async moveFamilyIfAtPath(vaultId, documentId, expectedFamilyPath, newPath) {
+      consumeFailure('moveFamilyIfAtPath')
+      const familyKey = serializedKey(vaultId, documentId)
+      const source = records.get(familyKey)
+      const decision = decideMove(source, undefined, documentId, newPath)
+      // Pre-flight the WHOLE family before writing anything, exactly
+      // like moveFamily: an unsupported primary blocks the move — its
+      // conflicts must stay on the current path with it.
+      if (decision.result === 'unsupported') {
+        return { status: 'unsupported' }
+      }
+      // Derive the family's CURRENT path from the raw rows: the primary
+      // record's path (when one exists) plus every same-identity conflict
+      // row's path. Validating every conflict row here doubles as
+      // moveFamily's pre-flight — an unreadable row blocks the move, and
+      // it would corrupt the derivation anyway.
+      const paths = new Set<string>()
+      if (isUnsavedDraft(source)) paths.add(source.documentPath)
+      const conflictUpdates: Array<{ key: string; record: DraftConflictRecord }> = []
+      for (const value of [...conflictRecords.values()]) {
+        if (recordField(value, 'vaultId') !== vaultId
+          || recordField(value, 'documentId') !== documentId) continue
+        if (!isDraftConflictRecord(value)) {
+          return { status: 'unsupported' }
+        }
+        paths.add(value.documentPath)
+        conflictUpdates.push({
+          key: serializedConflictKey(vaultId, documentId, value.conflictId),
+          record: { ...value, documentPath: newPath },
+        })
+      }
+      if (paths.size === 0) {
+        // No family rows at all: nothing to drag anywhere.
+        return { status: 'missing' }
+      }
+      if (paths.size > 1) {
+        // The readable rows disagree on the path: the family is
+        // indeterminate and the move fails closed — moving one side
+        // would strand the other.
+        return { status: 'unsupported' }
+      }
+      const currentPath = [...paths][0]!
+      if (currentPath !== expectedFamilyPath) {
+        // The CAS failed: another context's verified rename moved the
+        // family off the quarantine's certified path. Move NOTHING and
+        // certify where the family lives now — the caller adopts that
+        // path instead of retrying the stale target.
+        return { status: 'path-mismatch', currentPath }
+      }
+      // The family still sits at the certified expected path — apply the
+      // move as one unit. The injected conflict-phase failure leaves the
+      // primary untouched too, mirroring the IndexedDB cross-store
+      // transaction rollback, exactly like moveFamily.
+      consumeFailure('moveFamilyConflicts')
+      if (decision.result === 'moved') {
+        records.set(familyKey, cloneDraft(decision.draft))
+      }
+      for (const { key, record } of conflictUpdates) {
+        conflictRecords.set(key, cloneConflictRecord(record))
+      }
+      return { status: decision.result === 'moved' ? 'moved' : 'missing' }
     },
 
     async clear(vaultId) {
@@ -1307,6 +1540,82 @@ export function createIndexedDbDraftBackend(
       }
       await transactionDone(transaction)
       return { status: decision.result, movedConflicts: familyConflicts.length }
+    },
+
+    async moveFamilyIfAtPath(vaultId, documentId, expectedFamilyPath, newPath) {
+      const db = await database()
+      // ONE transaction across both stores: the current-path derivation
+      // and the move must be atomic — a moveDraftFamily committed by
+      // another context serializes against this transaction, so the CAS
+      // either sees the moved family (path-mismatch, nothing moved) or
+      // moves it atomically. A derivation-then-move across separate
+      // transactions would let a verified rename slip between the two
+      // and drag the family back from the path the server now lives on.
+      const transaction = db.transaction(
+        [DRAFT_STORE_NAME, CONFLICT_STORE_NAME],
+        'readwrite',
+      )
+      const draftStore = transaction.objectStore(DRAFT_STORE_NAME)
+      const conflictStore = transaction.objectStore(CONFLICT_STORE_NAME)
+      const familyKey = idbKey(vaultId, documentId)
+      const source = await request(draftStore.get(familyKey))
+      const decision = decideMove(source, undefined, documentId, newPath)
+      // Pre-flight the whole family BEFORE writing anything (same
+      // rationale as moveFamily).
+      if (decision.result === 'unsupported') {
+        await transactionDone(transaction)
+        return { status: 'unsupported' }
+      }
+      // Derive the family's CURRENT path inside the same transaction:
+      // the primary record's path (when one exists) plus every
+      // same-identity conflict row's path. An unreadable conflict row
+      // blocks the whole move, exactly like moveFamily's pre-flight —
+      // and it would corrupt the derivation anyway.
+      const paths = new Set<string>()
+      if (isUnsavedDraft(source)) paths.add(source.documentPath)
+      const familyConflicts: DraftConflictRecord[] = []
+      const values = await request(
+        conflictStore.index(CONFLICT_VAULT_INDEX).getAll(vaultId),
+      )
+      for (const value of values) {
+        if (recordField(value, 'documentId') !== documentId) continue
+        if (!isDraftConflictRecord(value)) {
+          await transactionDone(transaction)
+          return { status: 'unsupported' }
+        }
+        paths.add(value.documentPath)
+        familyConflicts.push(value)
+      }
+      if (paths.size === 0) {
+        // No family rows at all: nothing to drag anywhere.
+        await transactionDone(transaction)
+        return { status: 'missing' }
+      }
+      if (paths.size > 1) {
+        // Split family: the move fails closed — moving one side would
+        // strand the other.
+        await transactionDone(transaction)
+        return { status: 'unsupported' }
+      }
+      const currentPath = [...paths][0]!
+      if (currentPath !== expectedFamilyPath) {
+        // The CAS failed: another context's verified rename moved the
+        // family off the quarantine's certified path. Move NOTHING and
+        // certify where the family lives now — the caller adopts that
+        // path instead of retrying the stale target.
+        await transactionDone(transaction)
+        return { status: 'path-mismatch', currentPath }
+      }
+      // The family still sits at the certified expected path — apply the
+      // move as one unit.
+      if (decision.result === 'moved') {
+        draftStore.put(cloneDraft(decision.draft))
+      }
+      for (const record of familyConflicts) {
+        conflictStore.put(cloneConflictRecord({ ...record, documentPath: newPath }))
+      }
+      await transactionDone(transaction)
+      return { status: decision.result === 'moved' ? 'moved' : 'missing' }
     },
 
     async clear(vaultId) {

@@ -3601,7 +3601,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     await persistence.dispose()
   })
 
-  it('heals an indeterminate family move once the unreadable row disappears', async () => {
+  it('an indeterminate family move re-verifies the current path and adopts it instead of blind-moving', async () => {
     const backend = createMemoryDraftBackend()
     const store = createDraftStore({ backend })
     const settlements: Array<{
@@ -3655,30 +3655,34 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     expect(await persistence.flush('vault', 'doc-a')).toBe(false)
     expect(await store.getDraft('vault', 'doc-a')).toBeNull()
 
-    // The unreadable row disappears server-side: the next probe heals
-    // the family — the move completes toward the server path and the
-    // latest bytes persist there.
+    // The unreadable row disappears server-side — but the family does
+    // NOT sit at the stale serverPath: it lives at legacy/a (the valid
+    // candidate's certified path). The retry must re-verify the family
+    // FIRST and never blind-move "whatever is there" to the stale
+    // server target: it finds the certified current path legacy/a ≠
+    // serverPath archive/b, moves NOTHING, and persists the latest
+    // bytes as a candidate at the certified current path.
     await backend.deleteConflict('vault', 'doc-a', 'bad-row')
     expect(await persistence.flush('vault', 'doc-a')).toBe(true)
-    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
-      documentPath: 'archive/b',
-      content: 'after-rename',
-    })
-    // The valid candidate travelled with the healed move; NO guessed
-    // candidate from the failed retries survives anywhere.
+    // No primary was minted toward the stale server path — the blind
+    // move that used to drag the family to archive/b is gone.
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+    // The bytes are durable as a candidate at the certified current
+    // path, beside the family's existing candidate — the family itself
+    // never moved toward archive/b.
     const conflicts = await store.listConflictDrafts('vault')
-    expect(conflicts).toHaveLength(1)
-    expect(conflicts[0]).toMatchObject({
-      conflictId: 'valid-row',
-      documentPath: 'archive/b',
+    expect(conflicts).toHaveLength(2)
+    expect(conflicts.map((c) => c.documentPath).sort())
+      .toEqual(['legacy/a', 'legacy/a'])
+    expect(conflicts.find((c) => c.conflictId !== 'valid-row')).toMatchObject({
+      content: 'after-rename',
+      origin: 'move-conflict',
+      documentPath: 'legacy/a',
     })
-    // The settlement reports the server path as the family's new home
-    // and — because the old path was never certified — oldPath: null.
-    expect(settlements.some(
-      (s) => s.status === 'moved-and-persisted'
-        && s.newPath === 'archive/b'
-        && s.oldPath === null,
-    )).toBe(true)
+    // The adoption settles as a conflict — never a move completion
+    // toward the unverified server path.
+    expect(settlements.some((s) => s.status === 'conflict')).toBe(true)
+    expect(settlements.some((s) => s.status === 'moved-and-persisted')).toBe(false)
     await persistence.dispose()
   })
 
@@ -3718,6 +3722,449 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       content: 'after-rename',
       origin: 'move-conflict',
     })
+  })
+
+  // Dual-window chained rename: context A's rename A→B succeeds on the
+  // server but its draft family move fails (quarantine
+  // {familyPath: notes/a, serverPath: archive/a}). Context B then
+  // renames B→C and moves the family to final/a. A stale retry from
+  // context A must NOT drag the family back from final/a to its old
+  // server target archive/a — the store refuses the move (CAS against
+  // the expected path), and A adopts the certified current path: its
+  // bytes persist as a candidate at final/a, the family stays where
+  // the server put it.
+
+  it('a stale quarantine retry fired by manual flush adopts the certified current path', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    // Context B shares the same draft database.
+    const storeB = createDraftStore({ backend })
+    const settlements: Array<{
+      oldPath: string | null
+      newPath: string
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+    }> = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      onDraftFamilyMoveSettled: (settlement) => {
+        settlements.push(settlement)
+      },
+    })
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    // Context A's rename notes/a→archive/a: server succeeds, draft
+    // family move fails → quarantine at familyPath notes/a.
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamily')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+    // Context B's verified rename moves the whole family to final/a.
+    expect((await storeB.moveDraftFamily('vault', 'doc-a', 'final/a')).status)
+      .toBe('moved')
+
+    // Context A's stale quarantine retry fires via manual flush — the
+    // CAS move refuses (the family no longer sits at notes/a) and A
+    // adopts the certified current path: its bytes persist as a
+    // candidate at final/a, the family is never dragged to archive/a.
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'final/a',
+      content: 'primary',
+    })
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(2)
+    expect(conflicts.map((c) => c.documentPath).sort())
+      .toEqual(['final/a', 'final/a'])
+    expect(conflicts.find((c) => c.conflictId !== 'conflict-a')).toMatchObject({
+      content: 'after-rename',
+      origin: 'move-conflict',
+      documentPath: 'final/a',
+    })
+    expect(settlements.some((s) => s.status === 'conflict')).toBe(true)
+    expect(settlements.some((s) => s.status === 'moved-and-persisted')).toBe(false)
+
+    // The entry now writes on the conflict channel at the certified
+    // current path: the next edit lands as a candidate at final/a,
+    // never as a primary write at the stale server target.
+    persistence.schedule(snapshot('next-edit', 'archive/a', 3))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    expect((await store.listConflictDrafts('vault'))
+      .find((c) => c.content === 'next-edit')).toMatchObject({
+      documentPath: 'final/a',
+    })
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'final/a',
+      content: 'primary',
+    })
+    await persistence.dispose()
+  })
+
+  it('a stale quarantine retry fired by the debounce adopts the certified current path', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const storeB = createDraftStore({ backend })
+    const settlements: Array<{
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+    }> = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      onDraftFamilyMoveSettled: (settlement) => {
+        settlements.push(settlement)
+      },
+    })
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamily')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+    expect((await storeB.moveDraftFamily('vault', 'doc-a', 'final/a')).status)
+      .toBe('moved')
+
+    // Same stale retry, fired by the post-rename edit's debounce
+    // instead of a manual flush.
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'final/a',
+      content: 'primary',
+    })
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(2)
+    expect(conflicts.map((c) => c.documentPath).sort())
+      .toEqual(['final/a', 'final/a'])
+    expect(conflicts.find((c) => c.conflictId !== 'conflict-a')).toMatchObject({
+      content: 'after-rename',
+      origin: 'move-conflict',
+      documentPath: 'final/a',
+    })
+    expect(settlements.some((s) => s.status === 'conflict')).toBe(true)
+    expect(settlements.some((s) => s.status === 'moved-and-persisted')).toBe(false)
+    await persistence.dispose()
+  })
+
+  it('a stale quarantine retry fired by pagehide adopts the certified current path', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const storeB = createDraftStore({ backend })
+    const targetWindow = new EventTarget()
+    const persistence = makePersistence(store, targetWindow)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamily')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+    expect((await storeB.moveDraftFamily('vault', 'doc-a', 'final/a')).status)
+      .toBe('moved')
+
+    // Same stale retry, fired by pagehide before the debounce elapses.
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    targetWindow.dispatchEvent(new Event('pagehide'))
+    await vi.waitFor(async () => {
+      const conflicts = await store.listConflictDrafts('vault')
+      expect(conflicts.some(
+        (c) => c.content === 'after-rename' && c.documentPath === 'final/a',
+      )).toBe(true)
+    })
+    // The family stays at B's certified path — pagehide's flush must
+    // not drag it back to the quarantine's old server target.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'final/a',
+      content: 'primary',
+    })
+    await persistence.dispose()
+  })
+
+  it('a stale quarantine retry fired by dispose adopts the certified current path', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const storeB = createDraftStore({ backend })
+    const persistence = makePersistence(store)
+    await store.saveDraft(draft('primary', 'notes/a', 10))
+    await store.saveConflictDraft(conflictRecord('conflict-a', 'doc-a', 'notes/a', 'local orphan'))
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamily')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+    expect((await storeB.moveDraftFamily('vault', 'doc-a', 'final/a')).status)
+      .toBe('moved')
+
+    // Same stale retry, fired by dispose's final flush before the
+    // debounce elapses (app shutdown mid-quarantine).
+    persistence.schedule(snapshot('after-rename', 'archive/a', 2))
+    await persistence.dispose()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'final/a',
+      content: 'primary',
+    })
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(2)
+    expect(conflicts.map((c) => c.documentPath).sort())
+      .toEqual(['final/a', 'final/a'])
+    expect(conflicts.find((c) => c.conflictId !== 'conflict-a')).toMatchObject({
+      content: 'after-rename',
+      origin: 'move-conflict',
+      documentPath: 'final/a',
+    })
+  })
+
+  it('a move-indeterminate retry completes once the family is re-verified at the server path', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const storeB = createDraftStore({ backend })
+    const settlements: Array<{
+      oldPath: string | null
+      newPath: string
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+    }> = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      onDraftFamilyMoveSettled: (settlement) => {
+        settlements.push(settlement)
+      },
+    })
+    await backend.seedRawConflict({
+      ...conflictRecord('bad-row', 'doc-a', 'archive/a', 'unreadable'),
+      version: 2,
+    })
+    await store.saveConflictDraft(conflictRecord('valid-row', 'doc-a', 'legacy/a', 'older local'))
+    persistence.schedule(snapshot('stale-edit', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/b',
+    }])
+    expect(move.status).toBe('unsupported')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      newPath: 'archive/b',
+      status: 'failed',
+    }])
+    persistence.schedule(snapshot('after-rename', 'archive/b', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+
+    // The unreadable row disappears AND context B moves the family to
+    // the server path: the retry's probe re-verifies the family AT
+    // serverPath and completes the move in-memory (no blind move was
+    // needed — the probe certifies it). The pending snapshot then
+    // establishes the primary record at the server path.
+    await backend.deleteConflict('vault', 'doc-a', 'bad-row')
+    expect((await storeB.moveDraftFamily('vault', 'doc-a', 'archive/b')).status)
+      .toBe('missing')
+    expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/b',
+      content: 'after-rename',
+    })
+    const conflicts = await store.listConflictDrafts('vault')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      conflictId: 'valid-row',
+      documentPath: 'archive/b',
+    })
+    // The old path was never certified — the settlement reports null.
+    expect(settlements.some(
+      (s) => s.status === 'moved-and-persisted'
+        && s.newPath === 'archive/b'
+        && s.oldPath === null,
+    )).toBe(true)
+    await persistence.dispose()
+  })
+
+  it('a move-indeterminate retry completes for an emptied family and establishes the primary', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const settlements: Array<{
+      oldPath: string | null
+      newPath: string
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+    }> = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      onDraftFamilyMoveSettled: (settlement) => {
+        settlements.push(settlement)
+      },
+    })
+    await backend.seedRawConflict({
+      ...conflictRecord('bad-row', 'doc-a', 'archive/a', 'unreadable'),
+      version: 2,
+    })
+    await store.saveConflictDraft(conflictRecord('valid-row', 'doc-a', 'legacy/a', 'older local'))
+    persistence.schedule(snapshot('stale-edit', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/b',
+    }])
+    expect(move.status).toBe('unsupported')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([{
+      documentId: 'doc-a',
+      oldPath: 'notes/a',
+      newPath: 'archive/b',
+      status: 'failed',
+    }])
+    persistence.schedule(snapshot('after-rename', 'archive/b', 2))
+    expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+
+    // Every row of the identity disappears server-side: the probe
+    // reports an empty family ('none') — there is nothing left to
+    // drag anywhere, so the retry completes toward serverPath and the
+    // pending snapshot establishes the primary record there. Nothing
+    // is blind-moved.
+    await backend.deleteConflict('vault', 'doc-a', 'bad-row')
+    await store.deleteConflictDraft('vault', 'doc-a', 'valid-row')
+    expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'archive/b',
+      content: 'after-rename',
+    })
+    expect(await store.listConflictDrafts('vault')).toEqual([])
+    expect(settlements.some(
+      (s) => s.status === 'moved-and-persisted'
+        && s.newPath === 'archive/b'
+        && s.oldPath === null,
+    )).toBe(true)
+    await persistence.dispose()
+  })
+
+  it('a successful re-probe exits indeterminate so the next rename uses quarantine semantics', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    const storeB = createDraftStore({ backend })
+    const settlements: Array<{
+      oldPath: string | null
+      newPath: string
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+    }> = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 800,
+      now: () => 100,
+      onDraftFamilyMoveSettled: (settlement) => {
+        settlements.push(settlement)
+      },
+    })
+    // A split family (an unreadable row at archive/a beside a readable
+    // candidate at legacy/a) certifies NO path — the entry turns
+    // indeterminate.
+    await backend.seedRawConflict({
+      ...conflictRecord('bad-row', 'doc-a', 'archive/a', 'unreadable'),
+      version: 2,
+    })
+    await store.saveConflictDraft(conflictRecord('valid-row', 'doc-a', 'legacy/a', 'older local'))
+    persistence.schedule(snapshot('stale-edit', 'notes/a', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+
+    // The family is repaired server-side (both rows disappear, so the
+    // snapshot's own path is safe again); the user edit arms the
+    // re-probe and the primary save/readback succeeds.
+    await backend.deleteConflict('vault', 'doc-a', 'bad-row')
+    await store.deleteConflictDraft('vault', 'doc-a', 'valid-row')
+    persistence.schedule(snapshot('repaired-edit', 'notes/a', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'repaired-edit',
+    })
+
+    // The successful re-probe MUST have exited indeterminate: the next
+    // edit uses the normal primary channel …
+    persistence.schedule(snapshot('normal-edit', 'notes/a', 3))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'normal-edit',
+    })
+
+    // … and the following rename failure uses normal move-quarantine
+    // semantics: context B moves the family to final/a before A's
+    // stale retry fires. A quarantine retries the move with its
+    // CERTIFIED oldPath (notes/a) — the CAS refuses, A adopts final/a.
+    // An entry still stuck in indeterminate would become
+    // move-indeterminate instead and blind-move the family from
+    // final/a back to its stale server target archive/a.
+    expect((await storeB.moveDraftFamily('vault', 'doc-a', 'final/a')).status)
+      .toBe('moved')
+    const barrier = await persistence.prepareFileMutation([identity])
+    backend.failNext('moveFamily')
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/a',
+    }])
+    expect(move.status).toBe('failed')
+    expect(await barrier.finalizeAfterTabMigration()).toEqual([])
+    persistence.schedule(snapshot('after-rename', 'archive/a', 4))
+    await vi.advanceTimersByTimeAsync(800)
+    await vi.runAllTimersAsync()
+    await drainWriteQueue()
+    // The family stays at B's certified path — the stale retry adopted
+    // it instead of dragging the family back to archive/a.
+    expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+      documentPath: 'final/a',
+      content: 'normal-edit',
+    })
+    expect((await store.listConflictDrafts('vault'))
+      .find((c) => c.content === 'after-rename')).toMatchObject({
+      documentPath: 'final/a',
+      origin: 'move-conflict',
+    })
+    expect(settlements.some((s) => s.status === 'conflict')).toBe(true)
+    await persistence.dispose()
   })
 
   describe('draft family state machine invariants', () => {

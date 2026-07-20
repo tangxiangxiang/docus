@@ -1229,3 +1229,355 @@ test('fails safely when opening the production database fails', async ({
     moved: { status: 'failed' },
   })
 })
+
+test('a stale quarantine retry in a second IndexedDB context adopts the certified current path', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const { createUnsavedDraftPersistence } = await import(
+      '/src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts'
+    )
+    // Context A's family lives at notes/doc.
+    const storeA = createDraftStore()
+    await storeA.saveDraft({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 20,
+    })
+    // A future-version conflict row blocks context A's family move
+    // (the store fails the WHOLE move closed) — the server rename
+    // notes/doc→archive/doc succeeds, the entry quarantines on
+    // familyPath notes/doc.
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const seed = database.transaction('draftConflicts', 'readwrite')
+    seed.objectStore('draftConflicts').put({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'future data',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 25,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 20,
+      recordedAt: 25,
+    })
+    await new Promise<void>((resolve, reject) => {
+      seed.oncomplete = () => resolve()
+      seed.onerror = () => reject(seed.error)
+      seed.onabort = () => reject(seed.error)
+    })
+
+    const persistence = createUnsavedDraftPersistence({
+      store: storeA,
+      now: () => 100,
+    })
+    const identity = {
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+    }
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/doc',
+      toPath: 'archive/doc',
+    }])
+    await barrier.finalizeAfterTabMigration()
+
+    // The blocking row disappears; context B (a second store over the
+    // SAME IndexedDB) then renames archive/doc→final/doc and moves
+    // the family there in one transaction.
+    const unblock = database.transaction('draftConflicts', 'readwrite')
+    unblock.objectStore('draftConflicts')
+      .delete(['vault-a', 'doc', 'conflict-future'])
+    await new Promise<void>((resolve, reject) => {
+      unblock.oncomplete = () => resolve()
+      unblock.onerror = () => reject(unblock.error)
+      unblock.onabort = () => reject(unblock.error)
+    })
+    database.close()
+    const storeB = createDraftStore()
+    const movedByB = await storeB.moveDraftFamily('vault-a', 'doc', 'final/doc')
+
+    // Context A's stale quarantine retry fires via flush — it must
+    // NOT drag the family back from final/doc to its old server
+    // target archive/doc.
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'after-rename',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 2,
+    })
+    const flushed = await persistence.flush('vault-a', 'doc')
+    const primary = await storeA.getDraft('vault-a', 'doc')
+    const conflicts = await storeA.listConflictDrafts('vault-a')
+
+    // Every raw row of the identity — including rows invisible to the
+    // validated listing — must sit at the certified current path.
+    const rawDatabase = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const rawTransaction = rawDatabase.transaction(
+      ['drafts', 'draftConflicts'],
+      'readonly',
+    )
+    const rawDrafts = await new Promise<unknown[]>((resolve, reject) => {
+      const request = rawTransaction.objectStore('drafts').getAll()
+      request.onsuccess = () => resolve(request.result as unknown[])
+      request.onerror = () => reject(request.error)
+    })
+    const rawConflicts = await new Promise<unknown[]>((resolve, reject) => {
+      const request = rawTransaction.objectStore('draftConflicts')
+        .index('vaultId').getAll('vault-a')
+      request.onsuccess = () => resolve(request.result as unknown[])
+      request.onerror = () => reject(request.error)
+    })
+    rawDatabase.close()
+    await persistence.dispose()
+
+    return {
+      moveStatus: move.status,
+      movedByB,
+      flushed,
+      primary,
+      conflicts,
+      rawDraftPaths: rawDrafts.map((row) => (row as { documentPath: string }).documentPath),
+      rawConflictPaths: rawConflicts.map((row) => (row as { documentPath: string }).documentPath),
+    }
+  }, DATABASE_NAME)
+
+  expect(result.moveStatus).toBe('unsupported')
+  expect(result.movedByB).toMatchObject({ status: 'moved' })
+  // The stale retry persisted A's bytes (as a candidate) and reported
+  // clean — without moving the family.
+  expect(result.flushed).toBe(true)
+  // The primary record stays exactly where context B's verified
+  // rename put it — never dragged back to the quarantine's old
+  // server target archive/doc.
+  expect(result.primary).toMatchObject({
+    documentPath: 'final/doc',
+    content: 'primary',
+  })
+  // A's bytes are durable as a move-conflict candidate at the
+  // certified current path.
+  expect(result.conflicts).toHaveLength(1)
+  expect(result.conflicts[0]).toMatchObject({
+    documentPath: 'final/doc',
+    content: 'after-rename',
+    origin: 'move-conflict',
+  })
+  // The raw stores agree: the whole identity lives at final/doc.
+  expect(result.rawDraftPaths).toEqual(['final/doc'])
+  expect(result.rawConflictPaths).toEqual(['final/doc'])
+})
+
+test('a stale move-indeterminate retry in a second IndexedDB context adopts the certified current path', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const { createUnsavedDraftPersistence } = await import(
+      '/src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts'
+    )
+    const storeA = createDraftStore()
+    // Open the production database (creating both stores) before the
+    // raw seeding transaction below opens it directly.
+    await storeA.listDrafts('vault-a')
+    // A split, partly unreadable family: no certified path exists.
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const seed = database.transaction('draftConflicts', 'readwrite')
+    const conflictStore = seed.objectStore('draftConflicts')
+    conflictStore.put({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'future data',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 25,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 20,
+      recordedAt: 25,
+    })
+    conflictStore.put({
+      version: 1,
+      conflictId: 'conflict-valid',
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'legacy/doc',
+      content: 'older local',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 22,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 20,
+      recordedAt: 22,
+    })
+    await new Promise<void>((resolve, reject) => {
+      seed.oncomplete = () => resolve()
+      seed.onerror = () => reject(seed.error)
+      seed.onabort = () => reject(seed.error)
+    })
+
+    const persistence = createUnsavedDraftPersistence({
+      store: storeA,
+      now: () => 100,
+    })
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'stale-edit',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 1,
+    })
+    const staleFlush = await persistence.flush('vault-a', 'doc')
+
+    // Server rename succeeds, draft move is blocked → move-indeterminate
+    // (the family path was never certified).
+    const identity = {
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+    }
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/doc',
+      toPath: 'archive/doc',
+    }])
+    const finalized = await barrier.finalizeAfterTabMigration()
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'after-rename',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 2,
+    })
+    const blockedFlush = await persistence.flush('vault-a', 'doc')
+
+    // The unreadable row disappears and context B moves the family to
+    // final/doc — NOT the stale server target archive/doc.
+    const unblock = database.transaction('draftConflicts', 'readwrite')
+    unblock.objectStore('draftConflicts')
+      .delete(['vault-a', 'doc', 'conflict-future'])
+    await new Promise<void>((resolve, reject) => {
+      unblock.oncomplete = () => resolve()
+      unblock.onerror = () => reject(unblock.error)
+      unblock.onabort = () => reject(unblock.error)
+    })
+    database.close()
+    const storeB = createDraftStore()
+    const movedByB = await storeB.moveDraftFamily('vault-a', 'doc', 'final/doc')
+
+    // Context A's stale retry must re-verify the family FIRST: it
+    // finds the certified current path final/doc ≠ serverPath
+    // archive/doc, moves NOTHING, and persists A's bytes as a
+    // candidate at final/doc.
+    const flushed = await persistence.flush('vault-a', 'doc')
+    const primary = await storeA.getDraft('vault-a', 'doc')
+    const conflicts = await storeA.listConflictDrafts('vault-a')
+
+    const rawDatabase = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const rawTransaction = rawDatabase.transaction(
+      ['drafts', 'draftConflicts'],
+      'readonly',
+    )
+    const rawDrafts = await new Promise<unknown[]>((resolve, reject) => {
+      const request = rawTransaction.objectStore('drafts').getAll()
+      request.onsuccess = () => resolve(request.result as unknown[])
+      request.onerror = () => reject(request.error)
+    })
+    const rawConflicts = await new Promise<unknown[]>((resolve, reject) => {
+      const request = rawTransaction.objectStore('draftConflicts')
+        .index('vaultId').getAll('vault-a')
+      request.onsuccess = () => resolve(request.result as unknown[])
+      request.onerror = () => reject(request.error)
+    })
+    rawDatabase.close()
+    await persistence.dispose()
+
+    return {
+      staleFlush,
+      moveStatus: move.status,
+      finalized,
+      blockedFlush,
+      movedByB,
+      flushed,
+      primary,
+      conflicts,
+      rawDraftCount: rawDrafts.length,
+      rawConflictPaths: rawConflicts
+        .map((row) => (row as { documentPath: string }).documentPath)
+        .sort(),
+    }
+  }, DATABASE_NAME)
+
+  expect(result.staleFlush).toBe(false)
+  expect(result.moveStatus).toBe('unsupported')
+  expect(result.finalized).toEqual([{
+    documentId: 'doc',
+    oldPath: 'notes/doc',
+    newPath: 'archive/doc',
+    status: 'failed',
+  }])
+  expect(result.blockedFlush).toBe(false)
+  expect(result.movedByB).toMatchObject({ status: 'missing' })
+  // The stale retry persisted A's bytes and reported clean — without
+  // blind-moving the family toward the stale server target.
+  expect(result.flushed).toBe(true)
+  // No primary record was minted anywhere — the family is conflict-only
+  // and lives at B's certified path.
+  expect(result.primary).toBeNull()
+  expect(result.conflicts).toHaveLength(2)
+  expect(result.conflicts.every((c) => c.documentPath === 'final/doc')).toBe(true)
+  expect(result.conflicts.find((c) => c.content === 'after-rename')).toMatchObject({
+    documentPath: 'final/doc',
+    origin: 'move-conflict',
+  })
+  // The raw stores agree: no primary row, both candidates at final/doc.
+  expect(result.rawDraftCount).toBe(0)
+  expect(result.rawConflictPaths).toEqual(['final/doc', 'final/doc'])
+})

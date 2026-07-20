@@ -341,6 +341,11 @@ describe('draftStore characterization', () => {
       .resolves.toBe(0)
     await expect(unavailable.moveDraftFamily('vault-a', 'a', 'notes/x'))
       .resolves.toEqual({ status: 'failed', movedConflicts: 0 })
+    await expect(
+      unavailable.moveDraftFamilyIfAtPath('vault-a', 'a', 'notes/x', 'archive/x'),
+    ).resolves.toEqual({ status: 'failed' })
+    await expect(unavailable.probeDraftFamily('vault-a', 'a'))
+      .resolves.toEqual({ status: 'failed' })
   })
 
   it('migrates every conflict record path on rename, preserving identity and body', async () => {
@@ -1386,5 +1391,238 @@ describe('draftStore characterization', () => {
       familyPath: null,
       reason: 'unsupported-conflict',
     })
+  })
+
+  // CAS family move (this round's blocker): quarantine retries must
+  // carry the certified expected family path. The store derives the
+  // family's CURRENT path from its raw rows (primary + same-identity
+  // conflicts) inside one transaction and moves ONLY while it still
+  // matches — a stale retry from an old context must never drag the
+  // family back from the path another context's verified rename put
+  // it on (the server filesystem result is always authoritative).
+
+  it('moves the family when it still sits at the expected path', async () => {
+    await store.saveDraft(draft('a', 20))
+    await store.saveConflictDraft(candidate('cand-1', 'notes/a', 'local orphan'))
+
+    const outcome = await store.moveDraftFamilyIfAtPath(
+      'vault-a', 'a', 'notes/a', 'archive/a',
+    )
+    expect(outcome).toEqual({ status: 'moved' })
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      documentPath: 'archive/a',
+      content: 'content:a:20',
+    })
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      conflictId: 'cand-1',
+      documentPath: 'archive/a',
+    })
+  })
+
+  it('moves a conflict-only family at the expected path and reports the missing primary', async () => {
+    await store.saveConflictDraft(candidate('cand-1', 'notes/a', 'local orphan'))
+
+    const outcome = await store.moveDraftFamilyIfAtPath(
+      'vault-a', 'a', 'notes/a', 'archive/a',
+    )
+    expect(outcome).toEqual({ status: 'missing' })
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      conflictId: 'cand-1',
+      documentPath: 'archive/a',
+    })
+  })
+
+  it('reports a missing family for an empty identity without touching the stores', async () => {
+    const outcome = await store.moveDraftFamilyIfAtPath(
+      'vault-a', 'a', 'notes/a', 'archive/a',
+    )
+    expect(outcome).toEqual({ status: 'missing' })
+    expect(await store.getDraft('vault-a', 'a')).toBeNull()
+    expect(await store.listConflictDrafts('vault-a')).toEqual([])
+  })
+
+  it('refuses to drag a family back from another context\'s newer path', async () => {
+    // Context B's verified rename already moved the whole family to
+    // final/a. A stale quarantine still believes the family sits at
+    // notes/a and wants it at its old server target archive/a.
+    await store.saveDraft(draft('a', 20, { documentPath: 'final/a' }))
+    await store.saveConflictDraft(candidate('cand-1', 'final/a', 'local orphan'))
+
+    const outcome = await store.moveDraftFamilyIfAtPath(
+      'vault-a', 'a', 'notes/a', 'archive/a',
+    )
+    // path-mismatch certifies where the family lives now — and moves
+    // NOTHING toward the stale target.
+    expect(outcome).toEqual({ status: 'path-mismatch', currentPath: 'final/a' })
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      documentPath: 'final/a',
+      content: 'content:a:20',
+    })
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      conflictId: 'cand-1',
+      documentPath: 'final/a',
+    })
+  })
+
+  it('reports path-mismatch for a conflict-only family at a different path', async () => {
+    await store.saveConflictDraft(candidate('cand-1', 'final/a', 'local orphan'))
+
+    const outcome = await store.moveDraftFamilyIfAtPath(
+      'vault-a', 'a', 'notes/a', 'archive/a',
+    )
+    expect(outcome).toEqual({ status: 'path-mismatch', currentPath: 'final/a' })
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(1)
+    expect(conflicts[0]).toMatchObject({
+      conflictId: 'cand-1',
+      documentPath: 'final/a',
+    })
+  })
+
+  it('fails a CAS move closed on a split family without moving either side', async () => {
+    await store.saveConflictDraft(candidate('cand-a', 'notes/a', 'side a'))
+    await store.saveConflictDraft(candidate('cand-b', 'legacy/a', 'side b'))
+
+    const outcome = await store.moveDraftFamilyIfAtPath(
+      'vault-a', 'a', 'notes/a', 'archive/a',
+    )
+    expect(outcome).toEqual({ status: 'unsupported' })
+    const conflicts = await store.listConflictDrafts('vault-a')
+    expect(conflicts).toHaveLength(2)
+    expect(conflicts.find((c) => c.conflictId === 'cand-a'))
+      .toMatchObject({ documentPath: 'notes/a' })
+    expect(conflicts.find((c) => c.conflictId === 'cand-b'))
+      .toMatchObject({ documentPath: 'legacy/a' })
+  })
+
+  it('fails a CAS move closed on an unreadable conflict row', async () => {
+    await store.saveDraft(draft('a', 20))
+    await store.saveConflictDraft(candidate('cand-1', 'notes/a', 'local orphan'))
+    await backend.seedRawConflict({
+      ...candidate('cand-future', 'notes/a', 'future data'),
+      version: 2,
+    })
+
+    const outcome = await store.moveDraftFamilyIfAtPath(
+      'vault-a', 'a', 'notes/a', 'archive/a',
+    )
+    expect(outcome).toEqual({ status: 'unsupported' })
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      documentPath: 'notes/a',
+    })
+    expect(await store.listConflictDrafts('vault-a')).toEqual([
+      expect.objectContaining({ conflictId: 'cand-1', documentPath: 'notes/a' }),
+    ])
+    expect(await backend.listConflicts('vault-a')).toHaveLength(2)
+  })
+
+  it('fails a CAS move closed on an unreadable primary', async () => {
+    await backend.seedRaw({ ...draft('a', 40), version: 2, content: 'future data' })
+    await store.saveConflictDraft(candidate('cand-1', 'notes/a', 'local orphan'))
+
+    const outcome = await store.moveDraftFamilyIfAtPath(
+      'vault-a', 'a', 'notes/a', 'archive/a',
+    )
+    expect(outcome).toEqual({ status: 'unsupported' })
+    expect(await backend.get(['vault-a', 'a'])).toMatchObject({ version: 2 })
+    expect(await store.listConflictDrafts('vault-a')).toEqual([
+      expect.objectContaining({ conflictId: 'cand-1', documentPath: 'notes/a' }),
+    ])
+  })
+
+  it('reports a failed CAS move when the transaction aborts', async () => {
+    await store.saveDraft(draft('a', 20))
+    backend.failNext('moveFamilyIfAtPath')
+
+    const outcome = await store.moveDraftFamilyIfAtPath(
+      'vault-a', 'a', 'notes/a', 'archive/a',
+    )
+    expect(outcome).toEqual({ status: 'failed' })
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      documentPath: 'notes/a',
+    })
+  })
+
+  it('rejects a CAS move with blank paths as failed', async () => {
+    await store.saveDraft(draft('a', 20))
+    await expect(store.moveDraftFamilyIfAtPath('vault-a', 'a', '', 'archive/a'))
+      .resolves.toEqual({ status: 'failed' })
+    await expect(store.moveDraftFamilyIfAtPath('vault-a', 'a', 'notes/a', ' '))
+      .resolves.toEqual({ status: 'failed' })
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      documentPath: 'notes/a',
+    })
+  })
+
+  // Store-level family probe: a move-indeterminate retry must
+  // re-verify the family's CURRENT state before acting — never
+  // blind-move "whatever is there" toward a stale serverPath. The
+  // probe is a strict read: it certifies the agreed family path (or
+  // reports none / unsupported / failed) and writes nothing.
+
+  it('probes the agreed family path without writing anything', async () => {
+    await store.saveDraft(draft('a', 20))
+    await store.saveConflictDraft(candidate('cand-1', 'notes/a', 'local orphan'))
+
+    expect(await store.probeDraftFamily('vault-a', 'a')).toEqual({
+      status: 'path',
+      familyPath: 'notes/a',
+      hasPrimary: true,
+    })
+    // Read-only: the family is unchanged.
+    expect(await store.getDraft('vault-a', 'a')).toMatchObject({
+      documentPath: 'notes/a',
+      content: 'content:a:20',
+    })
+    expect(await store.listConflictDrafts('vault-a')).toHaveLength(1)
+  })
+
+  it('probes a conflict-only family path and reports the absent primary', async () => {
+    await store.saveConflictDraft(candidate('cand-1', 'legacy/a', 'local orphan'))
+
+    expect(await store.probeDraftFamily('vault-a', 'a')).toEqual({
+      status: 'path',
+      familyPath: 'legacy/a',
+      hasPrimary: false,
+    })
+  })
+
+  it('probes none for an empty identity', async () => {
+    expect(await store.probeDraftFamily('vault-a', 'a')).toEqual({ status: 'none' })
+  })
+
+  it('probes unsupported when the family paths are split', async () => {
+    await store.saveConflictDraft(candidate('cand-a', 'notes/a', 'side a'))
+    await store.saveConflictDraft(candidate('cand-b', 'legacy/a', 'side b'))
+
+    expect(await store.probeDraftFamily('vault-a', 'a')).toEqual({
+      status: 'unsupported',
+      reason: 'split-conflict-paths',
+    })
+  })
+
+  it('probes unsupported when a same-identity row is unreadable', async () => {
+    await store.saveDraft(draft('a', 20))
+    await backend.seedRawConflict({
+      ...candidate('cand-future', 'notes/a', 'future data'),
+      version: 2,
+    })
+
+    expect(await store.probeDraftFamily('vault-a', 'a')).toEqual({
+      status: 'unsupported',
+      reason: 'unsupported-conflict',
+    })
+  })
+
+  it('probes failed when the store read aborts', async () => {
+    backend.failNext('get')
+    expect(await store.probeDraftFamily('vault-a', 'a'))
+      .toEqual({ status: 'failed' })
   })
 })
