@@ -313,6 +313,49 @@ describe('createUnsavedDraftRecovery', () => {
     })
   })
 
+  it('clears an orphan decision and protects the item while retry classification is pending', async () => {
+    const store = await seededStore(draft('a'))
+    const pending = deferred<PostDetail>()
+    const loadPost = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('gone'), { status: 404 }))
+      .mockReturnValueOnce(pending.promise)
+    const recovery = createUnsavedDraftRecovery({ store, loadPost })
+    await recovery.discover('vault')
+    const id = recovery.items.value[0]!.recoveryId
+    expect(recovery.items.value[0]?.decision?.kind).toBe('missing-source')
+
+    const retrying = recovery.retry(id)
+    await vi.waitFor(() => expect(recovery.items.value[0]?.status).toBe('loading'))
+
+    expect(recovery.items.value[0]?.decision).toBeNull()
+    expect(recovery.classifyingRecoveryIds.value.has(id)).toBe(true)
+    expect(recovery.classifyingIdentityIds.value.has(JSON.stringify(['vault', 'a']))).toBe(true)
+
+    pending.resolve(post('a'))
+    await retrying
+    expect(recovery.items.value[0]?.decision?.kind).toBe('baseline-match')
+    expect(recovery.classifyingRecoveryIds.value.has(id)).toBe(false)
+  })
+
+  it('protects identity refresh from Store read through disk classification', async () => {
+    const store = await seededStore(draft('a'))
+    const pending = deferred<PostDetail>()
+    const loadPost = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('gone'), { status: 404 }))
+      .mockReturnValueOnce(pending.promise)
+    const recovery = createUnsavedDraftRecovery({ store, loadPost })
+    await recovery.discover('vault')
+
+    const refreshing = recovery.refreshIdentity('vault', 'a')
+    await vi.waitFor(() => expect(recovery.items.value[0]?.status).toBe('loading'))
+    expect(recovery.items.value[0]?.decision).toBeNull()
+    expect(recovery.classifyingIdentityIds.value.has(JSON.stringify(['vault', 'a']))).toBe(true)
+
+    pending.resolve(post('a'))
+    await refreshing
+    expect(recovery.items.value[0]?.decision?.kind).toBe('baseline-match')
+  })
+
   it('fails closed when the stored draft disappears before retry', async () => {
     const store = await seededStore(draft('a'))
     const recovery = createUnsavedDraftRecovery({

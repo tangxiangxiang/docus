@@ -40,9 +40,14 @@ export interface UnsavedDraftRecovery {
   items: DeepReadonly<Ref<DraftRecoveryItem[]>>
   pendingItem: ComputedRef<DeepReadonly<DraftRecoveryItem> | null>
   activeRecoveryId: DeepReadonly<Ref<string | null>>
+  classifyingRecoveryIds: DeepReadonly<Ref<Set<string>>>
+  classifyingIdentityIds: DeepReadonly<Ref<Set<string>>>
+  discoveringVaultId: DeepReadonly<Ref<string | null>>
+  waitForClassification(vaultId: string): Promise<void>
   discover(vaultId: string): Promise<void>
   retry(recoveryId: string): Promise<void>
   refreshIdentity(vaultId: string, documentId: string): Promise<void>
+  removeRecoveryIds(recoveryIds: readonly string[]): void
   removeIdentity(vaultId: string, documentId: string): void
   dismissForSession(recoveryId: string): void
   selectRecovery(recoveryId: string | null): void
@@ -131,11 +136,68 @@ export function createUnsavedDraftRecovery(
   const concurrency = Math.max(1, Math.min(8, Math.floor(options.concurrency ?? 4)))
   const mutableItems = ref<OwnedItem[]>([])
   const activeRecoveryId = ref<string | null>(null)
+  const classifyingRecoveryIds = ref(new Set<string>())
+  const classifyingIdentityIds = ref(new Set<string>())
+  const discoveringVaultId = ref<string | null>(null)
+  const classificationCounts = new Map<string, number>()
+  const recoveryClassificationCounts = new Map<string, number>()
+  const identityClassificationCounts = new Map<string, number>()
+  const classificationWaiters = new Map<string, Set<() => void>>()
   const identityRefreshGenerations = new Map<string, number>()
   let identityRefreshEpoch = 0
   let discoverGeneration = 0
   let disposed = false
   const dismissedRecoveryIds = new Set<string>()
+
+  function beginClassification(
+    vaultId: string,
+    ids: readonly string[] = [],
+    identityIds: readonly string[] = [],
+  ): () => void {
+    classificationCounts.set(vaultId, (classificationCounts.get(vaultId) ?? 0) + 1)
+    for (const id of ids) {
+      recoveryClassificationCounts.set(id, (recoveryClassificationCounts.get(id) ?? 0) + 1)
+    }
+    for (const id of identityIds) {
+      identityClassificationCounts.set(id, (identityClassificationCounts.get(id) ?? 0) + 1)
+    }
+    classifyingRecoveryIds.value = new Set(recoveryClassificationCounts.keys())
+    classifyingIdentityIds.value = new Set(identityClassificationCounts.keys())
+    let ended = false
+    return () => {
+      if (ended) return
+      ended = true
+      const remaining = (classificationCounts.get(vaultId) ?? 1) - 1
+      if (remaining <= 0) {
+        classificationCounts.delete(vaultId)
+        for (const resolve of classificationWaiters.get(vaultId) ?? []) resolve()
+        classificationWaiters.delete(vaultId)
+      } else {
+        classificationCounts.set(vaultId, remaining)
+      }
+      for (const id of ids) {
+        const count = (recoveryClassificationCounts.get(id) ?? 1) - 1
+        if (count <= 0) recoveryClassificationCounts.delete(id)
+        else recoveryClassificationCounts.set(id, count)
+      }
+      for (const id of identityIds) {
+        const count = (identityClassificationCounts.get(id) ?? 1) - 1
+        if (count <= 0) identityClassificationCounts.delete(id)
+        else identityClassificationCounts.set(id, count)
+      }
+      classifyingRecoveryIds.value = new Set(recoveryClassificationCounts.keys())
+      classifyingIdentityIds.value = new Set(identityClassificationCounts.keys())
+    }
+  }
+
+  function waitForClassification(vaultId: string): Promise<void> {
+    if (disposed || !classificationCounts.has(vaultId)) return Promise.resolve()
+    return new Promise((resolve) => {
+      const waiters = classificationWaiters.get(vaultId) ?? new Set()
+      waiters.add(resolve)
+      classificationWaiters.set(vaultId, waiters)
+    })
+  }
 
   const pendingItem = computed(() =>
     mutableItems.value.find((item) => (
@@ -179,13 +241,19 @@ export function createUnsavedDraftRecovery(
   }
 
   async function classify(item: OwnedItem): Promise<void> {
+    const endClassification = beginClassification(
+      item.draft.vaultId,
+      [item.recoveryId],
+      [recoveryIdentityId(item.draft.vaultId, item.draft.documentId)],
+    )
     const itemDiscoverGeneration = item.discoverGeneration
     const generation = ++item.classifyGeneration
     item.status = 'loading'
+    item.decision = null
     item.error = null
-    const disk = await readDisk(item.draft)
-    if (!currentItem(item.recoveryId, itemDiscoverGeneration, generation)) return
     try {
+      const disk = await readDisk(item.draft)
+      if (!currentItem(item.recoveryId, itemDiscoverGeneration, generation)) return
       const decision = await decideDraftRecovery(item.draft, disk)
       const current = currentItem(item.recoveryId, itemDiscoverGeneration, generation)
       if (!current) return
@@ -198,89 +266,108 @@ export function createUnsavedDraftRecovery(
       current.decision = null
       current.status = 'error'
       current.error = errorMessage(error)
+    } finally {
+      endClassification()
     }
   }
 
   async function discover(vaultId: string): Promise<void> {
+    const endDiscovery = beginClassification(vaultId)
     const generation = ++discoverGeneration
+    discoveringVaultId.value = vaultId
     identityRefreshEpoch += 1
     identityRefreshGenerations.clear()
     activeRecoveryId.value = null
-    if (disposed || vaultId.trim().length === 0) {
-      mutableItems.value = []
-      return
-    }
-    const [drafts, conflicts] = await Promise.all([
-      store.listDrafts(vaultId),
-      store.listConflictDrafts(vaultId),
-    ])
-    if (disposed || generation !== discoverGeneration) return
-    const discovered: OwnedItem[] = drafts.map((draft) => ({
-      recoveryId: recoveryId(draft),
-      draft,
-      source: 'primary' as const,
-      conflict: null,
-      decision: null,
-      status: 'unresolved' as const,
-      error: null,
-      discoverGeneration: generation,
-      classifyGeneration: 0,
-    }))
-    discovered.push(...conflicts.map((conflict): OwnedItem => ({
-      recoveryId: conflictRecoveryId(conflict),
-      draft: conflictDraft(conflict),
-      source: 'conflict',
-      conflict,
-      decision: null,
-      status: 'unresolved',
-      error: null,
-      discoverGeneration: generation,
-      classifyGeneration: 0,
-    })))
-    mutableItems.value = discovered
+    try {
+      if (disposed || vaultId.trim().length === 0) {
+        mutableItems.value = []
+        return
+      }
+      const [drafts, conflicts] = await Promise.all([
+        store.listDrafts(vaultId),
+        store.listConflictDrafts(vaultId),
+      ])
+      if (disposed || generation !== discoverGeneration) return
+      const discovered: OwnedItem[] = drafts.map((draft) => ({
+        recoveryId: recoveryId(draft),
+        draft,
+        source: 'primary' as const,
+        conflict: null,
+        decision: null,
+        status: 'unresolved' as const,
+        error: null,
+        discoverGeneration: generation,
+        classifyGeneration: 0,
+      }))
+      discovered.push(...conflicts.map((conflict): OwnedItem => ({
+        recoveryId: conflictRecoveryId(conflict),
+        draft: conflictDraft(conflict),
+        source: 'conflict',
+        conflict,
+        decision: null,
+        status: 'unresolved',
+        error: null,
+        discoverGeneration: generation,
+        classifyGeneration: 0,
+      })))
+      mutableItems.value = discovered
 
-    let cursor = 0
-    const workers = Array.from(
-      { length: Math.min(concurrency, mutableItems.value.length) },
-      async () => {
-        while (!disposed && generation === discoverGeneration) {
-          const index = cursor++
-          const item = mutableItems.value[index]
-          if (!item) return
-          await classify(item)
-        }
-      },
-    )
-    await Promise.all(workers)
+      let cursor = 0
+      const workers = Array.from(
+        { length: Math.min(concurrency, mutableItems.value.length) },
+        async () => {
+          while (!disposed && generation === discoverGeneration) {
+            const index = cursor++
+            const item = mutableItems.value[index]
+            if (!item) return
+            await classify(item)
+          }
+        },
+      )
+      await Promise.all(workers)
+    } finally {
+      if (generation === discoverGeneration) discoveringVaultId.value = null
+      endDiscovery()
+    }
   }
 
   async function retry(id: string): Promise<void> {
     if (disposed) return
     const item = mutableItems.value.find((candidate) => candidate.recoveryId === id)
     if (!item) return
-    const itemDiscoverGeneration = item.discoverGeneration
-    const refreshGeneration = ++item.classifyGeneration
-    item.status = 'loading'
-    item.error = null
-    const latest = item.source === 'conflict'
-      ? (await store.listConflictDrafts(item.draft.vaultId))
-          .find((candidate) => candidate.conflictId === item.conflict?.conflictId)
-      : await store.getDraft(item.draft.vaultId, item.draft.documentId)
-    const current = currentItem(id, itemDiscoverGeneration, refreshGeneration)
-    if (!current) return
-    if (!latest) {
-      current.decision = null
-      current.status = 'error'
-      current.error = 'draft-unavailable'
-      return
+    const endRetry = beginClassification(
+      item.draft.vaultId,
+      [id],
+      [recoveryIdentityId(item.draft.vaultId, item.draft.documentId)],
+    )
+    try {
+      const itemDiscoverGeneration = item.discoverGeneration
+      const refreshGeneration = ++item.classifyGeneration
+      item.status = 'loading'
+      item.decision = null
+      item.error = null
+      const latest = item.source === 'conflict'
+        ? (await store.listConflictDrafts(item.draft.vaultId))
+            .find((candidate) => candidate.conflictId === item.conflict?.conflictId)
+        : await store.getDraft(item.draft.vaultId, item.draft.documentId)
+      const current = currentItem(id, itemDiscoverGeneration, refreshGeneration)
+      if (!current) return
+      if (!latest) {
+        current.decision = null
+        current.status = 'error'
+        current.error = 'draft-unavailable'
+        return
+      }
+      if (item.source === 'conflict') {
+        current.conflict = latest as DraftConflictRecord
+        current.draft = conflictDraft(latest as DraftConflictRecord)
+      } else {
+        current.draft = latest as UnsavedDraft
+      }
+      await classify(item)
+    } finally {
+      endRetry()
     }
-    if (item.source === 'conflict') {
-      current.conflict = latest as DraftConflictRecord
-      current.draft = conflictDraft(latest as DraftConflictRecord)
-    } else {
-      current.draft = latest as UnsavedDraft
-    }
-    await classify(item)
   }
 
   async function refreshIdentity(vaultId: string, documentId: string): Promise<void> {
@@ -289,70 +376,85 @@ export function createUnsavedDraftRecovery(
     const epoch = identityRefreshEpoch
     const generation = (identityRefreshGenerations.get(id) ?? 0) + 1
     identityRefreshGenerations.set(id, generation)
-    const [latest, conflicts] = await Promise.all([
-      store.getDraft(vaultId, documentId),
-      store.listConflictDrafts(vaultId),
-    ])
-    if (disposed
-      || identityRefreshEpoch !== epoch
-      || identityRefreshGenerations.get(id) !== generation) return
-    const relevantConflicts = conflicts.filter((candidate) => (
-      candidate.documentId === documentId
-    ))
-    const wanted = new Map<string, {
-      draft: UnsavedDraft
-      source: 'primary' | 'conflict'
-      conflict: DraftConflictRecord | null
-    }>()
-    if (latest) {
-      wanted.set(id, { draft: latest, source: 'primary', conflict: null })
-    }
-    for (const conflict of relevantConflicts) {
-      wanted.set(conflictRecoveryId(conflict), {
-        draft: conflictDraft(conflict),
-        source: 'conflict',
-        conflict,
-      })
-    }
-    const existingForIdentity = mutableItems.value.filter((candidate) => (
-      candidate.draft.vaultId === vaultId
-      && candidate.draft.documentId === documentId
-    ))
-    const wantedIds = new Set(wanted.keys())
-    mutableItems.value = mutableItems.value.filter((candidate) => (
-      candidate.draft.vaultId !== vaultId
-      || candidate.draft.documentId !== documentId
-      || wantedIds.has(candidate.recoveryId)
-    ))
-    const toClassify: OwnedItem[] = []
-    for (const [recoveryId, candidate] of wanted) {
-      const existing = mutableItems.value.find((item) => item.recoveryId === recoveryId)
-      if (existing) {
-        existing.draft = candidate.draft
-        existing.source = candidate.source
-        existing.conflict = candidate.conflict
-        toClassify.push(existing)
-      } else {
-        const item: OwnedItem = {
-          recoveryId,
-          ...candidate,
-          decision: null,
-          status: 'unresolved',
-          error: null,
-          discoverGeneration,
-          classifyGeneration: 0,
-        }
-        mutableItems.value = [...mutableItems.value, item]
-        toClassify.push(item)
+    const existingIds = mutableItems.value.filter((item) => (
+      item.draft.vaultId === vaultId && item.draft.documentId === documentId
+    )).map((item) => item.recoveryId)
+    const endRefresh = beginClassification(vaultId, existingIds, [id])
+    for (const item of mutableItems.value) {
+      if (existingIds.includes(item.recoveryId)) {
+        item.status = 'loading'
+        item.decision = null
+        item.error = null
       }
     }
-    const removedIds = new Set(existingForIdentity
-      .filter((candidate) => !wantedIds.has(candidate.recoveryId))
-      .map((candidate) => candidate.recoveryId))
-    if (activeRecoveryId.value && removedIds.has(activeRecoveryId.value)) {
-      activeRecoveryId.value = null
+    try {
+      const [latest, conflicts] = await Promise.all([
+        store.getDraft(vaultId, documentId),
+        store.listConflictDrafts(vaultId),
+      ])
+      if (disposed
+        || identityRefreshEpoch !== epoch
+        || identityRefreshGenerations.get(id) !== generation) return
+      const relevantConflicts = conflicts.filter((candidate) => (
+        candidate.documentId === documentId
+      ))
+      const wanted = new Map<string, {
+        draft: UnsavedDraft
+        source: 'primary' | 'conflict'
+        conflict: DraftConflictRecord | null
+      }>()
+      if (latest) {
+        wanted.set(id, { draft: latest, source: 'primary', conflict: null })
+      }
+      for (const conflict of relevantConflicts) {
+        wanted.set(conflictRecoveryId(conflict), {
+          draft: conflictDraft(conflict),
+          source: 'conflict',
+          conflict,
+        })
+      }
+      const existingForIdentity = mutableItems.value.filter((candidate) => (
+        candidate.draft.vaultId === vaultId
+        && candidate.draft.documentId === documentId
+      ))
+      const wantedIds = new Set(wanted.keys())
+      mutableItems.value = mutableItems.value.filter((candidate) => (
+        candidate.draft.vaultId !== vaultId
+        || candidate.draft.documentId !== documentId
+        || wantedIds.has(candidate.recoveryId)
+      ))
+      const toClassify: OwnedItem[] = []
+      for (const [recoveryId, candidate] of wanted) {
+        const existing = mutableItems.value.find((item) => item.recoveryId === recoveryId)
+        if (existing) {
+          existing.draft = candidate.draft
+          existing.source = candidate.source
+          existing.conflict = candidate.conflict
+          toClassify.push(existing)
+        } else {
+          const item: OwnedItem = {
+            recoveryId,
+            ...candidate,
+            decision: null,
+            status: 'unresolved',
+            error: null,
+            discoverGeneration,
+            classifyGeneration: 0,
+          }
+          mutableItems.value = [...mutableItems.value, item]
+          toClassify.push(item)
+        }
+      }
+      const removedIds = new Set(existingForIdentity
+        .filter((candidate) => !wantedIds.has(candidate.recoveryId))
+        .map((candidate) => candidate.recoveryId))
+      if (activeRecoveryId.value && removedIds.has(activeRecoveryId.value)) {
+        activeRecoveryId.value = null
+      }
+      await Promise.all(toClassify.map(classify))
+    } finally {
+      endRefresh()
     }
-    await Promise.all(toClassify.map(classify))
   }
 
   function dismissForSession(id: string): void {
@@ -382,6 +484,15 @@ export function createUnsavedDraftRecovery(
     }
   }
 
+  function removeRecoveryIds(recoveryIds: readonly string[]): void {
+    if (disposed || recoveryIds.length === 0) return
+    const removedIds = new Set(recoveryIds)
+    mutableItems.value = mutableItems.value.filter((item) => !removedIds.has(item.recoveryId))
+    if (activeRecoveryId.value && removedIds.has(activeRecoveryId.value)) {
+      activeRecoveryId.value = null
+    }
+  }
+
   function selectRecovery(id: string | null): void {
     if (disposed) return
     activeRecoveryId.value = id !== null
@@ -396,6 +507,16 @@ export function createUnsavedDraftRecovery(
     discoverGeneration += 1
     identityRefreshEpoch += 1
     identityRefreshGenerations.clear()
+    discoveringVaultId.value = null
+    for (const waiters of classificationWaiters.values()) {
+      for (const resolve of waiters) resolve()
+    }
+    classificationWaiters.clear()
+    classificationCounts.clear()
+    recoveryClassificationCounts.clear()
+    identityClassificationCounts.clear()
+    classifyingRecoveryIds.value = new Set()
+    classifyingIdentityIds.value = new Set()
     for (const item of mutableItems.value) item.classifyGeneration += 1
     activeRecoveryId.value = null
   }
@@ -404,9 +525,14 @@ export function createUnsavedDraftRecovery(
     items: readonly(mutableItems),
     pendingItem,
     activeRecoveryId: readonly(activeRecoveryId),
+    classifyingRecoveryIds: readonly(classifyingRecoveryIds),
+    classifyingIdentityIds: readonly(classifyingIdentityIds),
+    discoveringVaultId: readonly(discoveringVaultId),
+    waitForClassification,
     discover,
     retry,
     refreshIdentity,
+    removeRecoveryIds,
     removeIdentity,
     dismissForSession,
     selectRecovery,

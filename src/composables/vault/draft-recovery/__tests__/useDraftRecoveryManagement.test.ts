@@ -115,6 +115,123 @@ describe('draft recovery management', () => {
     expect(report.after.recordCount).toBe(0)
   })
 
+  it('waits for reclassification and never retains an old orphan decision', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    await store.saveDraft(draft('a'))
+    const disk = deferred<ReturnType<typeof draft>>()
+    const loadPost = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('gone'), { status: 404 }))
+      .mockImplementationOnce(() => disk.promise.then((value) => ({
+        path: value.documentPath,
+        raw: value.content,
+        content: value.content,
+        frontmatter: {},
+        metadata: {
+          id: value.documentId, path: value.documentPath, title: 'a', summary: '', tags: [],
+          createdAt: 1, updatedAt: 1,
+        },
+        size: 1,
+        mtime: 1,
+      })))
+    const recovery = createUnsavedDraftRecovery({ store, loadPost })
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+      now: () => 31 * 24 * 60 * 60 * 1000,
+    })
+    await recovery.discover('vault')
+    await management.refresh('vault')
+    const refreshing = recovery.refreshIdentity('vault', 'a')
+    await vi.waitFor(() => expect(recovery.items.value[0]?.status).toBe('loading'))
+
+    let cleanupSettled = false
+    const cleanup = management.cleanupNow().finally(() => { cleanupSettled = true })
+    await Promise.resolve()
+    expect(cleanupSettled).toBe(false)
+    expect(await store.getDraft('vault', 'a')).not.toBeNull()
+
+    disk.resolve({ ...draft('a'), content: 'a' })
+    await refreshing
+    const report = await cleanup
+    expect(report.deleted).toEqual([])
+    expect(await store.getDraft('vault', 'a')).not.toBeNull()
+  })
+
+  it('defers cleanup until startup discovery classifies newly found records', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    await store.saveDraft(draft('a'))
+    const disk = deferred<{
+      path: string
+      raw: string
+      content: string
+      frontmatter: Record<string, never>
+      metadata: {
+        id: string; path: string; title: string; summary: string; tags: string[]
+        createdAt: number; updatedAt: number
+      }
+      size: number
+      mtime: number
+    }>()
+    const recovery = createUnsavedDraftRecovery({ store, loadPost: () => disk.promise })
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+      now: () => 31 * 24 * 60 * 60 * 1000,
+    })
+    await management.refresh('vault')
+    const discovering = recovery.discover('vault')
+    await vi.waitFor(() => expect(recovery.discoveringVaultId.value).toBe('vault'))
+    const cleanup = management.cleanupNow()
+    let settled = false
+    void cleanup.finally(() => { settled = true })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(await store.getDraft('vault', 'a')).not.toBeNull()
+
+    disk.resolve({
+      path: 'notes/a', raw: 'disk', content: 'disk', frontmatter: {},
+      metadata: {
+        id: 'a', path: 'notes/a', title: 'a', summary: '', tags: [],
+        createdAt: 1, updatedAt: 1,
+      },
+      size: 1, mtime: 1,
+    })
+    await discovering
+    const report = await cleanup
+    expect(report.deleted).toEqual([])
+    expect(report.status).toBe('completed')
+  })
+
+  it('reports protection that appears after cleanup planning', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    await store.saveDraft(draft('a'))
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: async () => { throw Object.assign(new Error('gone'), { status: 404 }) },
+    })
+    let protectionReads = 0
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      getPersistenceProtection: () => ({
+        identityIds: ++protectionReads === 1
+          ? new Set()
+          : new Set([JSON.stringify(['vault', 'a'])]),
+      }),
+      now: () => 31 * 24 * 60 * 60 * 1000,
+    })
+    await recovery.discover('vault')
+    await management.refresh('vault')
+
+    const report = await management.cleanupNow()
+
+    expect(report.deleted).toEqual([])
+    expect(report.skippedProtected).toHaveLength(1)
+    expect(await store.getDraft('vault', 'a')).not.toBeNull()
+  })
+
   it('plans from a fresh Store scan instead of cached Center records', async () => {
     const h = await setup()
     const recent = 31 * 24 * 60 * 60 * 1000 - 1_000
@@ -241,6 +358,43 @@ describe('draft recovery management', () => {
     expect(report.deleted).toHaveLength(1)
     expect(report.stillOverCapacity).toBe(true)
     expect(await baseStore.getDraft('vault', 'a')).toBeNull()
+  })
+
+  it('keeps untouched recovery items when the after-scan fails', async () => {
+    const baseStore = createDraftStore({ backend: createMemoryDraftBackend() })
+    await baseStore.saveDraft(draft('delete-me'))
+    await baseStore.saveDraft(draft('keep-me'))
+    const recovery = createUnsavedDraftRecovery({
+      store: baseStore,
+      loadPost: async () => { throw Object.assign(new Error('missing'), { status: 404 }) },
+    })
+    let inspections = 0
+    const openIds = ref<readonly string[]>([])
+    const management = createDraftRecoveryManagement({
+      store: {
+        ...baseStore,
+        inspectVaultRecovery: async (vaultId: string) => {
+          inspections += 1
+          return inspections === 3
+            ? { status: 'failed' as const }
+            : baseStore.inspectVaultRecovery(vaultId)
+        },
+      },
+      recovery,
+      openRecoveryIds: openIds,
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+      now: () => 31 * 24 * 60 * 60 * 1000,
+    })
+    await recovery.discover('vault')
+    await management.refresh('vault')
+    const kept = management.records.value.find((record) => record.record.documentId === 'keep-me')!
+    openIds.value = [recoveryRecordId(kept)]
+
+    const report = await management.cleanupNow()
+
+    expect(report.status).toBe('after-scan-failed')
+    expect(recovery.items.value.map((item) => item.draft.documentId)).toEqual(['keep-me'])
+    expect(await baseStore.getDraft('vault', 'keep-me')).not.toBeNull()
   })
 
   it('ignores stale refresh results after dispose', async () => {

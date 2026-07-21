@@ -99,8 +99,10 @@ export function createDraftRecoveryManagement(
   const protectedIds = computed(() => {
     const result = new Set(activeOperations.value)
     for (const id of options.openRecoveryIds?.value ?? []) result.add(id)
+    for (const id of options.recovery.classifyingRecoveryIds.value) result.add(id)
     if (vaultId) {
-      const identities = options.getPersistenceProtection(vaultId).identityIds
+      const identities = new Set(options.getPersistenceProtection(vaultId).identityIds)
+      for (const id of options.recovery.classifyingIdentityIds.value) identities.add(id)
       for (const record of records.value) {
         if (identities.has(recoveryIdentityId(record))) result.add(recoveryRecordId(record))
       }
@@ -144,8 +146,10 @@ export function createDraftRecoveryManagement(
     const id = recoveryRecordId(record)
     if (includeActive && activeOperations.value.has(id)) return true
     if ((options.openRecoveryIds?.value ?? []).includes(id)) return true
-    return options.getPersistenceProtection(record.record.vaultId).identityIds
-      .has(recoveryIdentityId(record))
+    if (options.recovery.classifyingRecoveryIds.value.has(id)) return true
+    const identityId = recoveryIdentityId(record)
+    return options.recovery.classifyingIdentityIds.value.has(identityId)
+      || options.getPersistenceProtection(record.record.vaultId).identityIds.has(identityId)
   }
 
   async function conditionalDelete(record: RecoveryRecordRef): Promise<RecoveryDeleteResult> {
@@ -217,11 +221,28 @@ export function createDraftRecoveryManagement(
   function decisions(): Map<string, DraftRecoveryDecisionKind | 'error' | null> {
     return new Map<string, DraftRecoveryDecisionKind | 'error' | null>(options.recovery.items.value.map((item) => [
       item.recoveryId,
-      item.status === 'error' ? 'error' : item.decision?.kind ?? null,
+      item.status === 'ready' && item.decision
+        ? item.decision.kind
+        : item.status === 'error'
+          ? 'error'
+          : null,
     ]))
   }
 
+  function uniqueRecords(records: readonly RecoveryRecordRef[]): RecoveryRecordRef[] {
+    return [...new Map(records.map((record) => [recoveryRecordId(record), record])).values()]
+  }
+
   async function runCleanup(targetVaultId: string): Promise<DraftCleanupReport> {
+    await options.recovery.waitForClassification(targetVaultId)
+    if (disposed) {
+      return {
+        status: 'before-scan-failed',
+        before: capacitySnapshot([]), after: capacitySnapshot([]),
+        deleted: [], stale: [], skippedProtected: [], failed: [],
+        unsupportedCount: 0, stillOverCapacity: true,
+      }
+    }
     const beforeOutcome = await options.store.inspectVaultRecovery(targetVaultId)
     if (beforeOutcome.status === 'failed') {
       const report: DraftCleanupReport = {
@@ -241,7 +262,9 @@ export function createDraftRecoveryManagement(
     const beforeInventory = beforeOutcome.inventory
     const beforeRecords = inventoryRecords(beforeInventory)
     const openIds = new Set(options.openRecoveryIds?.value ?? [])
-    const identityProtection = options.getPersistenceProtection(targetVaultId).identityIds
+    const identityProtection = new Set(options.getPersistenceProtection(targetVaultId).identityIds)
+    for (const id of options.recovery.classifyingIdentityIds.value) identityProtection.add(id)
+    for (const id of options.recovery.classifyingRecoveryIds.value) openIds.add(id)
     const plan = planDraftCleanup({
       records: beforeRecords,
       decisions: decisions(),
@@ -261,7 +284,7 @@ export function createDraftRecoveryManagement(
       after: capacitySnapshot(afterRecords),
       deleted: bulk.deleted,
       stale: bulk.stale,
-      skippedProtected: plan.skippedProtected,
+      skippedProtected: uniqueRecords([...plan.skippedProtected, ...bulk.protected]),
       unsupportedCount: afterInventory.unsupportedPrimaryCount
         + afterInventory.unsupportedConflictCount,
       failed: bulk.failed,
@@ -274,7 +297,8 @@ export function createDraftRecoveryManagement(
       else error.value = 'cleanup-after-scan-failed'
       cleanupReport.value = report
       if (removedIds.length > 0) {
-        await options.recovery.discover(targetVaultId)
+        if (afterOutcome.status === 'ok') await options.recovery.discover(targetVaultId)
+        else options.recovery.removeRecoveryIds(removedIds)
         options.onRecordsRemoved?.(removedIds)
       }
     }
