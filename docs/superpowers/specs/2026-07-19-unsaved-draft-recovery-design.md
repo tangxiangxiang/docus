@@ -371,6 +371,9 @@ cleanup remain deferred to Edit-09.5/09.6.
 
 - rename/move/delete migration and rollback behavior.
 
+**Stage status:** Closed — implemented and verified at
+`69aef7c2314d9e1d784bab1c44afce8756f1647e`.
+
 Implemented in:
 
 - `useDraftFileTransactions.ts`: explicit stable document identities, actual
@@ -440,7 +443,23 @@ Browser coverage uses an isolated temporary vault and exercises real
 `useDocumentLifecycle` rename/delete calls, the server-returned archive suffix,
 Document tab path migration, and IndexedDB conditional-delete behavior. A
 FileTree component test freezes confirmation-token capture before the lifecycle
-call.
+call. The final empty-family race coverage uses a second real IndexedDB context:
+when it wins the first primary mint and the first local candidate transaction
+fails, a later recovery keeps the remote primary as winner, persists the local
+bytes only as a conflict candidate, and converges both records to the server's
+stable path.
+
+Final Edit-09.5 seal verification (2026-07-21):
+
+- `draftFileTransactions.test.ts`: 145 tests passed;
+- draft-recovery suites: 8 files / 274 tests passed;
+- complete Vitest suite: 122 files / 1,573 tests passed;
+- draft-store/file-transaction Playwright suite: 28 tests passed;
+- application Playwright suite: 9 tests passed;
+- typecheck, production build, icon lint, and `git diff --check` passed.
+
+Edit-09 remains open: Recovery Center, retention, and capacity cleanup are still
+deferred to Edit-09.6.
 
 ### Edit-09.6 — Recovery center and cleanup
 
