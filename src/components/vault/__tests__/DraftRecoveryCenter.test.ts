@@ -53,7 +53,8 @@ describe('DraftRecoveryCenter', () => {
   it('shows device-local capacity metadata without exposing content', () => {
     const wrapper = setup()
     expect(wrapper.text()).toContain('notes/private.md')
-    expect(wrapper.text()).toContain('2')
+    expect(wrapper.text()).toContain('1 unsaved item')
+    expect(wrapper.text()).toContain('newer Docus version')
     expect(wrapper.text()).not.toContain('local bytes')
   })
 

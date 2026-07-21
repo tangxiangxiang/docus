@@ -581,6 +581,30 @@ describe('createUnsavedDraftPersistence', () => {
     expect(saveDraft).toHaveBeenCalledTimes(2)
   })
 
+  it('reports a write failure once per revision without blocking later input', async () => {
+    const issues: Array<{ kind: string; revision?: number }> = []
+    const saveDraft = vi.fn()
+      .mockResolvedValueOnce({ status: 'failed' })
+      .mockResolvedValueOnce({
+        status: 'saved',
+        stored: { ...snapshot('a', 'v2', 2), version: 1, createdAt: 1, updatedAt: 2 } as unknown as UnsavedDraft,
+      })
+    const persistence = createUnsavedDraftPersistence({
+      store: { ...store, saveDraft },
+      onIssue: (issue) => issues.push(issue),
+    })
+
+    persistence.schedule(snapshot('a', 'v1', 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await persistence.flush('vault-1', 'a')
+    expect(issues).toEqual([{ kind: 'storage-write-failed', revision: 1,
+      vaultId: 'vault-1', documentId: 'a' }])
+
+    persistence.schedule(snapshot('a', 'v2', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    expect(saveDraft).toHaveBeenCalledTimes(2)
+  })
+
   it('does not schedule snapshots with unavailable identity or unloaded documents', async () => {
     const saveDraft = vi.spyOn(store, 'saveDraft')
     const persistence = createUnsavedDraftPersistence({ store })

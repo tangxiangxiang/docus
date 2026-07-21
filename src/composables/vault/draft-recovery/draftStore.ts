@@ -1485,13 +1485,16 @@ export function createIndexedDbDraftBackend(
         [DRAFT_STORE_NAME, CONFLICT_STORE_NAME],
         'readonly',
       )
-      // Management inventory must see raw corrupt/future rows too. Such
-      // rows may not participate in an index when updatedAt or another
-      // indexed field is malformed, so scan both stores and filter only
-      // by a readable vaultId after the transaction completes.
+      // Scope the raw management scan by the compound primary-key prefix.
+      // Unlike the updatedAt index this still includes corrupt/future rows
+      // whose indexed metadata is malformed, without reading other vaults.
       const [allPrimary, allConflicts] = await Promise.all([
-        request(transaction.objectStore(DRAFT_STORE_NAME).getAll()),
-        request(transaction.objectStore(CONFLICT_STORE_NAME).getAll()),
+        request(transaction.objectStore(DRAFT_STORE_NAME).getAll(
+          IDBKeyRange.bound([vaultId, ''], [vaultId, '\uffff']),
+        )),
+        request(transaction.objectStore(CONFLICT_STORE_NAME).getAll(
+          IDBKeyRange.bound([vaultId, '', ''], [vaultId, '\uffff', '\uffff']),
+        )),
       ])
       const [primary, conflicts] = [
         allPrimary.filter((value) => recordField(value, 'vaultId') === vaultId),

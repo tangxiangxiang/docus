@@ -91,7 +91,7 @@ describe('DraftRecoveryPrompt', () => {
   })
 
   it('offers direct restore only for a baseline match', () => {
-    expect(labels('baseline-match')).toEqual(['Restore Draft', 'Use Disk Version', 'Later'])
+    expect(labels('baseline-match')).toEqual(['Restore Draft', 'Use Disk Version', 'Later', 'View All Unsaved Content'])
   })
 
   it('offers safe read-only views for divergent and unknown drafts', () => {
@@ -100,12 +100,14 @@ describe('DraftRecoveryPrompt', () => {
       'Open Recovered Content',
       'Use Disk Version',
       'Later',
+      'View All Unsaved Content',
     ])
     expect(labels('unknown')).toEqual([
       'View Diff',
       'Open Recovered Content',
       'Use Disk Version',
       'Later',
+      'View All Unsaved Content',
     ])
   })
 
@@ -128,12 +130,13 @@ describe('DraftRecoveryPrompt', () => {
       'Open Recovered Content',
       'Use Disk Version',
       'Later',
+      'View All Unsaved Content',
     ])
   })
 
   it('never offers restore-to-document for missing or mismatched identities', () => {
-    expect(labels('missing-source')).toEqual(['Open Recovered Content', 'Discard Draft', 'Later'])
-    expect(labels('identity-mismatch')).toEqual(['Open Recovered Content', 'Discard Draft', 'Later'])
+    expect(labels('missing-source')).toEqual(['Open Recovered Content', 'Discard Draft', 'Later', 'View All Unsaved Content'])
+    expect(labels('identity-mismatch')).toEqual(['Open Recovered Content', 'Discard Draft', 'Later', 'View All Unsaved Content'])
   })
 
   it('treats Escape as Later without exposing draft content', async () => {

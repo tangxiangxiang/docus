@@ -218,11 +218,14 @@ export function createDraftRecoveryManagement(
     return deleteMany(records.value.filter((record) => !currentProtected(record)))
   }
 
-  function decisions(): Map<string, DraftRecoveryDecisionKind | 'error' | null> {
-    return new Map<string, DraftRecoveryDecisionKind | 'error' | null>(options.recovery.items.value.map((item) => [
+  function decisions(): Map<string, DraftRecoveryDecisionKind | 'error' | 'safe-redundant' | null> {
+    return new Map(options.recovery.items.value.map((item) => [
       item.recoveryId,
       item.status === 'ready' && item.decision
-        ? item.decision.kind
+        ? item.decision.disk.status === 'ready'
+          && item.draft.content === item.decision.disk.raw
+          ? 'safe-redundant' as const
+          : item.decision.kind
         : item.status === 'error'
           ? 'error'
           : null,

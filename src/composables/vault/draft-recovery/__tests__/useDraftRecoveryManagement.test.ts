@@ -154,8 +154,8 @@ describe('draft recovery management', () => {
     disk.resolve({ ...draft('a'), content: 'a' })
     await refreshing
     const report = await cleanup
-    expect(report.deleted).toEqual([])
-    expect(await store.getDraft('vault', 'a')).not.toBeNull()
+    expect(report.deleted).toHaveLength(1)
+    expect(await store.getDraft('vault', 'a')).toBeNull()
   })
 
   it('defers cleanup until startup discovery classifies newly found records', async () => {
@@ -247,8 +247,9 @@ describe('draft recovery management', () => {
     const report = await h.management.cleanupNow()
 
     expect(report.before.recordCount).toBe(109)
-    expect(report.after.recordCount).toBe(100)
-    expect(report.deleted).toHaveLength(9)
+    expect(report.after.recordCount).toBe(109)
+    expect(report.deleted).toHaveLength(0)
+    expect(report.stillOverCapacity).toBe(true)
   })
 
   it('runs one trailing cleanup pass when requested during an active pass', async () => {
@@ -261,15 +262,15 @@ describe('draft recovery management', () => {
       loadPost: async () => { throw Object.assign(new Error('missing'), { status: 404 }) },
     })
     const gate = deferred<void>()
-    let blockDelete = true
+    let blockInspection = false
     const store = {
       ...baseStore,
-      async deleteDraftIfUnchanged(expected: UnsavedDraft) {
-        if (blockDelete) {
-          blockDelete = false
+      async inspectVaultRecovery(vaultId: string) {
+        if (blockInspection) {
+          blockInspection = false
           await gate.promise
         }
-        return baseStore.deleteDraftIfUnchanged(expected)
+        return baseStore.inspectVaultRecovery(vaultId)
       },
     }
     const management = createDraftRecoveryManagement({
@@ -280,16 +281,18 @@ describe('draft recovery management', () => {
     })
     await recovery.discover('vault')
     await management.refresh('vault')
+    blockInspection = true
     const first = management.cleanupNow()
-    await vi.waitFor(() => expect(blockDelete).toBe(false))
+    await vi.waitFor(() => expect(blockInspection).toBe(false))
     await baseStore.saveDraft(draft('arrived-during-cleanup', 10_000))
     const second = management.cleanupNow()
     expect(second).toBe(first)
     gate.resolve()
 
     const report = await first
-    expect(report.deleted).toHaveLength(2)
-    expect(report.after.recordCount).toBe(100)
+    expect(report.deleted).toHaveLength(0)
+    expect(report.after.recordCount).toBe(102)
+    expect(report.stillOverCapacity).toBe(true)
   })
 
   it('sorts the Center inventory newest first', async () => {

@@ -92,13 +92,20 @@ export interface DraftCleanupProtection {
   identityIds: ReadonlySet<string>
 }
 
-export type DraftPersistenceIssue = {
-  kind: 'draft-too-large'
-  vaultId: string
-  documentId: string
-  bytes: number
-  limit: number
-}
+export type DraftPersistenceIssue =
+  | {
+      kind: 'draft-too-large'
+      vaultId: string
+      documentId: string
+      bytes: number
+      limit: number
+    }
+  | {
+      kind: 'storage-write-failed'
+      vaultId: string
+      documentId: string
+      revision: number
+    }
 
 interface DraftEntry {
   vaultId: string
@@ -387,6 +394,7 @@ export function createUnsavedDraftPersistence(
     ?? (typeof window === 'undefined' ? undefined : window)
   const entries = new Map<string, DraftEntry>()
   const oversizedRevisionWarnings = new Set<string>()
+  const storageRevisionWarnings = new Set<string>()
   let disposed = false
   let disposePromise: Promise<void> | null = null
 
@@ -429,6 +437,21 @@ export function createUnsavedDraftPersistence(
       options.onRecordPersisted?.(vaultId)
     } catch {
       // Capacity maintenance never owns persistence success.
+    }
+  }
+
+  function notifyStorageWriteFailed(
+    vaultId: string,
+    documentId: string,
+    revision: number,
+  ): void {
+    const warningKey = JSON.stringify([vaultId, documentId, revision])
+    if (storageRevisionWarnings.has(warningKey)) return
+    storageRevisionWarnings.add(warningKey)
+    try {
+      options.onIssue?.({ kind: 'storage-write-failed', vaultId, documentId, revision })
+    } catch {
+      // A warning handler never owns persistence.
     }
   }
 
@@ -988,6 +1011,7 @@ export function createUnsavedDraftPersistence(
     try {
       outcome = await store.saveConflictCandidate(record)
     } catch {
+      notifyStorageWriteFailed(record.vaultId, record.documentId, revision)
       return { kind: 'failed' }
     }
     switch (outcome.status) {
@@ -999,6 +1023,7 @@ export function createUnsavedDraftPersistence(
       case 'unsupported':
         return { kind: 'unsupported', reason: outcome.reason }
       case 'failed':
+        notifyStorageWriteFailed(record.vaultId, record.documentId, revision)
         return { kind: 'failed' }
     }
   }
@@ -1054,9 +1079,11 @@ export function createUnsavedDraftPersistence(
     try {
       outcome = await store.saveDraft(draft)
     } catch {
+      notifyStorageWriteFailed(owner.vaultId, owner.documentId, snapshot.revision)
       return false
     }
     if (outcome.status === 'failed') {
+      notifyStorageWriteFailed(owner.vaultId, owner.documentId, snapshot.revision)
       // Store threw / returned a fatal error. The latest bytes are still
       // in memory only — keep the write flag set and fail closed so
       // flush / close seal retry until the store recovers. Without this

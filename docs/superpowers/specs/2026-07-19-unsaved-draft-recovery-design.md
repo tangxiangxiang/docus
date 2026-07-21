@@ -461,41 +461,51 @@ Final Edit-09.5 seal verification (2026-07-21):
 Edit-09 remains open: Recovery Center, retention, and capacity cleanup are still
 deferred to Edit-09.6.
 
-### Edit-09.6 — Recovery center and cleanup
+### Edit-09.6 — Background recovery management and bounded cleanup
 
-Implemented on 2026-07-21.
+Product position revised and implemented on 2026-07-21.
 
-- Added a vault-scoped Recovery Activity Bar entry and Recovery Center backed by
-  the existing recovery discovery/classification source. It reports primary and
-  conflict records, UTF-8 content bytes, orphan/unsupported counts, capacity,
-  protection, selection, exact deletion, retry, and the existing read-only
-  Recovery tab actions. Recovery data remains device/browser-local.
-- Added deterministic cleanup planning with a 2 MiB per-record write ceiling,
-  100-record and 20 MiB vault limits, and strict 30-day retention for ready
-  `missing-source`/`identity-mismatch` records. Exact 30-day records, unknown or
-  failed classifications, protected records, and unsupported raw rows are never
-  selected by retention.
-- Added management inventory across primary and conflict stores, including safe
-  counts for corrupt/future rows without returning their raw content. Conflict
-  deletion now has the same full-record compare-and-delete semantics as primary
-  deletion; cleanup and bulk deletion re-scan the real Store after partial
-  outcomes.
-- Cleanup protection combines persistence ownership (dirty/pending writes,
-  timers, file transactions, quarantine/indeterminate/authentication modes and
-  close work) with active Recovery actions and all open Recovery tabs. Planning
-  and the final Store mutation both re-check protection by stable identity or
-  recovery ID, never by path.
-- Cleanup is vault-scoped, serialized and coalesced. It runs after discovery,
-  successful draft writes, explicit cleanup, and management deletion. Actual
-  deletions produce one count-only notification; failures never include paths or
-  content and never block editor or disk saving.
-- The content-size gate sits at the shared primary/candidate write boundaries,
-  so pagehide, dispose, quarantine and empty-family recovery cannot bypass it.
-  Oversized revisions stay pending and fail close sealing; warnings are deduped
-  per revision, and a later revision below the limit persists normally.
+> Docus recovery is a browser-local safety mechanism for unsaved editor
+> buffers. It is normally invisible. A prompt or temporary “Unsaved Content”
+> list appears only when Docus cannot safely decide what to do. It is not a
+> recycle bin, file backup, version history, or a daily document-management
+> destination.
 
-Edit-09.6 intentionally leaves the sealed Edit-09.5 family-path state machine,
-server save protocol, Recovery viewer, and recovery decisions unchanged.
+- The permanent Activity Bar entry was removed. The existing Recovery workspace
+  and read-only tabs remain available from an exceptional recovery prompt; old
+  layouts that persisted the preview panel migrate to a closed panel.
+- A primary record whose authoritative baseline still matches disk is adopted
+  automatically into the dirty editor buffer. Adoption never invokes the
+  server autosave pipeline and shows one lightweight recovered-content notice.
+  Divergent, missing-source, identity-mismatch, unreadable and conflict records
+  remain explicit user decisions.
+- Automatic deletion is value-aware. It may conditionally delete an exact
+  record whose recovered body already equals disk, or a ready-classified
+  missing/identity-mismatch orphan strictly older than 30 days. Capacity is a
+  soft limit: divergent, conflict, unknown, classification-error, protected and
+  unsupported/future records are never evicted merely for being oldest.
+- Cleanup runs once after vault discovery (and on explicit management actions),
+  not after every debounced draft write. Requests remain vault-scoped,
+  serialized/coalesced, classification-aware, protected at plan and mutation
+  time, and use full-record conditional deletion.
+- Management inventory reads only the current vault’s compound-key ranges while
+  still counting corrupt/future rows whose secondary indexes are invalid. Raw
+  unsupported content is never returned to the UI or automatically deleted.
+- The temporary list uses user-facing decision language and emphasizes title,
+  path, last edit, view/retry/discard. Database versions, internal IDs and
+  routine capacity telemetry are not the primary interface.
+- The 2 MiB record gate remains shared by all primary/candidate persistence
+  channels. Oversized and failed browser writes remain pending/fail closed and
+  emit deduplicated, content-free warnings; ordinary Markdown disk saving is
+  unchanged.
+
+IndexedDB recovery data belongs only to the current browser profile. Clearing
+site data can remove it. A recovery record is not a Markdown file, and recovery
+defaults to filling the editor buffer rather than silently writing disk. Formal
+file-deletion recovery is outside the Edit series.
+
+Edit-09.6 leaves the sealed Edit-09.5 family-path state machine and all Edit-10
+AI context work unchanged.
 
 Final Edit-09.6 verification (2026-07-21):
 

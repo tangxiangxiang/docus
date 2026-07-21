@@ -105,7 +105,11 @@ export function useVaultLayout() {
           const ap = d.activePanel
           let active: ActivePanel = null
           if (ap === 'graph') active = 'files'
-          else if (ap === 'files' || ap === 'tags' || ap === 'history' || ap === 'recovery' || ap === null) active = ap as ActivePanel
+          // Recovery is no longer a persistent navigation destination.
+          // Migrate the old preview's saved panel to a hidden state; the
+          // temporary Unsaved Content surface is opened only from a prompt.
+          else if (ap === 'recovery') active = null
+          else if (ap === 'files' || ap === 'tags' || ap === 'history' || ap === null) active = ap as ActivePanel
           else if (typeof d.fileTreeOpen === 'boolean') active = d.fileTreeOpen ? 'files' : null
           const w = typeof d.sidePanelWidth === 'number'
             ? d.sidePanelWidth

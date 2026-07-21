@@ -48,7 +48,7 @@ describe('draft cleanup policy', () => {
     expect(plan.retentionCandidates.map(recoveryRecordId)).toEqual([recoveryRecordId(expired)])
   })
 
-  it('counts primary and conflicts and deletes deterministically oldest first', () => {
+  it('counts primary and conflicts but treats capacity as a soft limit', () => {
     const records = [
       primaryRecoveryRecord(draft('same', 1)),
       conflictRecoveryRecord(conflict('same', 1)),
@@ -58,7 +58,8 @@ describe('draft cleanup policy', () => {
     ]
     const plan = planDraftCleanup({ records, now: 0 })
     expect(plan.before.recordCount).toBe(102)
-    expect(plan.capacityCandidates.map((item) => item.source)).toEqual(['conflict', 'primary'])
+    expect(plan.capacityCandidates).toEqual([])
+    expect(plan.stillOverCapacity).toBe(true)
   })
 
   it('deduplicates retention and capacity candidates', () => {
@@ -79,5 +80,19 @@ describe('draft cleanup policy', () => {
     expect(plan.candidates).toEqual([])
     expect(plan.skippedProtected).toHaveLength(101)
     expect(plan.stillOverCapacity).toBe(true)
+  })
+
+  it('cleans only records independently classified as redundant', () => {
+    const redundant = primaryRecoveryRecord(draft('redundant', 1))
+    const divergent = primaryRecoveryRecord(draft('divergent', 0))
+    const plan = planDraftCleanup({
+      records: [divergent, redundant],
+      decisions: new Map([
+        [recoveryRecordId(redundant), 'safe-redundant'],
+        [recoveryRecordId(divergent), 'divergent'],
+      ]),
+      now: 2,
+    })
+    expect(plan.candidates.map(recoveryRecordId)).toEqual([recoveryRecordId(redundant)])
   })
 })

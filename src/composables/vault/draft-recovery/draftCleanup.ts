@@ -87,7 +87,7 @@ export function capacitySnapshot(records: readonly RecoveryRecordRef[]): DraftCa
 
 export interface PlanDraftCleanupInput {
   records: readonly RecoveryRecordRef[]
-  decisions?: ReadonlyMap<string, DraftRecoveryDecisionKind | 'error' | null>
+  decisions?: ReadonlyMap<string, DraftRecoveryDecisionKind | 'error' | 'safe-redundant' | null>
   protectedRecoveryIds?: ReadonlySet<string>
   protectedIdentityIds?: ReadonlySet<string>
   now: number
@@ -104,23 +104,19 @@ export function planDraftCleanup(input: PlanDraftCleanupInput): DraftCleanupPlan
   const retentionCandidates = records.filter((record) => {
     if (isProtected(record)) return false
     const decision = input.decisions?.get(recoveryRecordId(record))
-    return (decision === 'missing-source' || decision === 'identity-mismatch')
-      && input.now - record.record.updatedAt > ORPHAN_RETENTION_MS
+    return decision === 'safe-redundant'
+      || ((decision === 'missing-source' || decision === 'identity-mismatch')
+        && input.now - record.record.updatedAt > ORPHAN_RETENTION_MS)
   })
   const selected = new Set(retentionCandidates.map(recoveryRecordId))
   const remaining = records.filter((record) => !selected.has(recoveryRecordId(record)))
   let remainingCount = remaining.length
   let remainingBytes = remaining.reduce((sum, record) => sum + record.bytes, 0)
+  // Capacity is deliberately a soft limit. Records with unique or
+  // unclassified bytes (divergent/conflict/unknown/error) are never
+  // evicted merely because they are old. Only records independently
+  // proven redundant or expired-orphaned above are automatic candidates.
   const capacityCandidates: RecoveryRecordRef[] = []
-  for (const record of remaining) {
-    if (remainingCount <= MAX_VAULT_RECOVERY_RECORDS
-      && remainingBytes <= MAX_VAULT_RECOVERY_CONTENT_BYTES) break
-    if (isProtected(record)) continue
-    capacityCandidates.push(record)
-    selected.add(recoveryRecordId(record))
-    remainingCount -= 1
-    remainingBytes -= record.bytes
-  }
   return {
     before,
     candidates: [...retentionCandidates, ...capacityCandidates],

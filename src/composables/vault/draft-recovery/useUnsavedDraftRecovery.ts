@@ -201,7 +201,11 @@ export function createUnsavedDraftRecovery(
 
   const pendingItem = computed(() =>
     mutableItems.value.find((item) => (
-      item.status !== 'dismissed' && !dismissedRecoveryIds.has(item.recoveryId)
+      (item.status === 'error'
+        || (item.status === 'ready' && (
+          item.source === 'conflict' || item.decision?.kind !== 'baseline-match'
+        )))
+      && !dismissedRecoveryIds.has(item.recoveryId)
     )) ?? null,
   )
 

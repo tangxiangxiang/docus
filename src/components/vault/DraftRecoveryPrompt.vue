@@ -15,6 +15,7 @@ const emit = defineEmits<{
   discard: [recoveryId: string]
   later: [recoveryId: string]
   retry: [recoveryId: string]
+  manage: []
 }>()
 const { t } = useI18n()
 const heading = ref<HTMLElement | null>(null)
@@ -140,6 +141,9 @@ function onKeydown(event: KeyboardEvent): void {
           </template>
           <button type="button" :disabled="busy" @click="later">
             {{ t('draft_recovery.later') }}
+          </button>
+          <button type="button" :disabled="busy" @click="emit('manage')">
+            {{ t('draft_recovery.open_list') }}
           </button>
         </div>
       </section>

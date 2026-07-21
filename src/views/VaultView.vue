@@ -210,7 +210,6 @@ async function refreshRecoveryAfterFamilySettle(settlement: {
     }
   }
 }
-let requestDraftCleanup: ((vaultId: string) => void) | null = null
 const draftPersistence = createUnsavedDraftPersistence({
   store: draftStore,
   // Authoritative by-stable-identity server lookup for an emptied
@@ -221,9 +220,10 @@ const draftPersistence = createUnsavedDraftPersistence({
   onIssue: (issue) => {
     if (issue.kind === 'draft-too-large') {
       toast.info(t('draft_recovery.too_large'), 6000)
+    } else if (issue.kind === 'storage-write-failed') {
+      toast.info(t('draft_recovery.storage_write_failed'), 6000)
     }
   },
-  onRecordPersisted: (persistedVaultId) => requestDraftCleanup?.(persistedVaultId),
   onDraftFamilyMoveSettled: (settlement) => {
     if (settlement.status === 'moved-write-failed') {
       // The family is whole at the new path but the latest edit's
@@ -495,19 +495,6 @@ const recoveryManagement = createDraftRecoveryManagement({
     }
   },
 })
-requestDraftCleanup = (persistedVaultId) => {
-  if (persistedVaultId !== vaultId.value) return
-  void recoveryManagement.cleanupNow().then((report) => {
-    if (report.status !== 'completed') {
-      toast.info(t('draft_recovery.center.cleanup_failed'), 5000)
-      return
-    }
-    if (report.deleted.length > 0) {
-      toast.info(t('draft_recovery.center.cleaned', { count: report.deleted.length }), 4000)
-    }
-  })
-}
-
 function recoveryItem(recoveryId: string) {
   return draftRecovery.items.value.find((item) => item.recoveryId === recoveryId) ?? null
 }
@@ -620,6 +607,7 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
     })
     if (result.status === 'applied') {
       draftRecovery.dismissForSession(recoveryId)
+      toast.info(t('draft_recovery.auto_restored'), 4000)
       await nextTick()
       editorTabsRef.value?.focusTab(result.path)
       return
@@ -647,11 +635,33 @@ watch(vaultId, (id) => {
   if (!id) return
   void (async () => {
     await draftRecovery.discover(id)
+    // A primary draft whose baseline still matches the authoritative disk
+    // version is safe to adopt into the dirty editor buffer. Adoption never
+    // calls the server save pipeline; ambiguous/conflict records remain for
+    // the prompt and the temporary "Unsaved Content" list.
+    for (const item of [...draftRecovery.items.value]) {
+      if (item.source === 'primary'
+        && item.status === 'ready'
+        && item.decision?.kind === 'baseline-match'
+        && item.decision.disk.status === 'ready'
+        && item.draft.content !== item.decision.disk.raw) {
+        await restoreRecoveryDraft(item.recoveryId)
+      }
+    }
     if (await recoveryManagement.refresh(id)) {
+      if (recoveryManagement.unsupportedCount.value > 0) {
+        activePanel.value = 'recovery'
+        toast.info(t('draft_recovery.unsupported_notice'), 7000)
+      }
       const report = await recoveryManagement.cleanupNow()
-      if (report.deleted.length > 0) {
+      if (report.status !== 'completed') {
+        toast.info(t('draft_recovery.center.cleanup_failed'), 5000)
+      } else if (report.deleted.length > 0) {
         toast.info(t('draft_recovery.center.cleaned', { count: report.deleted.length }))
       }
+    } else {
+      activePanel.value = 'recovery'
+      toast.info(t('draft_recovery.storage_read_failed'), 7000)
     }
   })()
 }, { immediate: true })
@@ -686,17 +696,6 @@ async function withManagedRecoveryOperations<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
   return recoveryOperationProtection.run(recoveryIds, operation)
-}
-
-async function cleanupRecoveryCenter(): Promise<void> {
-  const report = await recoveryManagement.cleanupNow()
-  if (report.status !== 'completed') {
-    toast.info(t('draft_recovery.center.cleanup_failed'), 5000)
-    return
-  }
-  if (report.deleted.length > 0) {
-    toast.info(t('draft_recovery.center.cleaned', { count: report.deleted.length }))
-  }
 }
 
 async function deleteManagedRecovery(recoveryId: string): Promise<void> {
@@ -741,19 +740,6 @@ async function deleteSelectedRecovery(): Promise<void> {
   if (ok) showRecoveryDeleteReport(await recoveryManagement.deleteSelected())
 }
 
-async function deleteAllUnprotectedRecovery(): Promise<void> {
-  const deletable = recoveryManagement.records.value.filter((record) => (
-    !recoveryManagement.protectedIds.value.has(recoveryRecordId(record))
-  ))
-  const ok = await confirm(
-    t('draft_recovery.center.delete_all'),
-    t('draft_recovery.center.delete_confirm_summary', {
-      count: deletable.length,
-      bytes: deletable.reduce((sum, record) => sum + record.bytes, 0),
-    }),
-  )
-  if (ok) showRecoveryDeleteReport(await recoveryManagement.deleteAllUnprotected())
-}
 const history = useHistory(vaultContext)
 const historyCommit = useHistoryCommit({
   history,
@@ -1359,7 +1345,6 @@ watch(isReadMode, async (reading) => {
   >
     <ActivityBar
       :active-panel="activePanel"
-      :recovery-count="recoveryManagement.capacity.value.recordCount"
       @select-panel="selectPanel"
       @open-settings="settingsOpen = true"
     />
@@ -1379,6 +1364,7 @@ watch(isReadMode, async (reading) => {
       @discard="discardRecoveryDraft"
       @later="draftRecovery.dismissForSession"
       @retry="retryManagedRecovery"
+      @manage="selectPanel('recovery')"
     />
 
     <DocumentMetadataModal
@@ -1427,9 +1413,7 @@ watch(isReadMode, async (reading) => {
       :loading="recoveryManagement.loading.value"
       :error="recoveryManagement.error.value"
       @refresh="refreshRecoveryCenter"
-      @cleanup="cleanupRecoveryCenter"
       @delete-selected="deleteSelectedRecovery"
-      @delete-all="deleteAllUnprotectedRecovery"
       @toggle="recoveryManagement.toggleSelected"
       @open="(id) => openRecoveryView(id, 'content')"
       @retry="retryManagedRecovery"

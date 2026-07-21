@@ -21,9 +21,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   refresh: []
-  cleanup: []
   'delete-selected': []
-  'delete-all': []
   toggle: [recoveryId: string]
   open: [recoveryId: string]
   retry: [recoveryId: string]
@@ -32,16 +30,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const itemsById = computed(() => new Map(props.items.map((item) => [item.recoveryId, item])))
-const orphanCount = computed(() => props.items.filter((item) => (
-  item.decision?.kind === 'missing-source' || item.decision?.kind === 'identity-mismatch'
-)).length)
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
-}
-
 function decisionLabel(id: string): string {
   const item = itemsById.value.get(id)
   if (!item) return t('draft_recovery.center.unclassified')
@@ -57,20 +45,16 @@ function decisionLabel(id: string): string {
       <p>{{ t('draft_recovery.center.local_only') }}</p>
     </header>
 
-    <dl class="recovery-summary">
-      <div><dt>{{ t('draft_recovery.center.records') }}</dt><dd>{{ capacity.recordCount }} / {{ capacity.recordLimit }}</dd></div>
-      <div><dt>{{ t('draft_recovery.center.storage') }}</dt><dd>{{ formatBytes(capacity.contentBytes) }} / {{ formatBytes(capacity.contentByteLimit) }}</dd></div>
-      <div><dt>{{ t('draft_recovery.center.orphans') }}</dt><dd>{{ orphanCount }}</dd></div>
-      <div><dt>{{ t('draft_recovery.center.unsupported') }}</dt><dd>{{ unsupportedCount }}</dd></div>
-    </dl>
+    <p class="recovery-summary-line">{{ t('draft_recovery.center.summary', { count: capacity.recordCount }) }}</p>
     <p v-if="capacity.overCapacity" class="warning" role="alert">{{ t('draft_recovery.center.over_capacity') }}</p>
     <p v-if="error" class="warning" role="alert">{{ t('draft_recovery.center.load_failed') }}</p>
+    <p v-else-if="unsupportedCount > 0" class="warning" role="alert">
+      {{ t('draft_recovery.center.unsupported_notice') }}
+    </p>
 
     <div class="recovery-toolbar">
       <button type="button" @click="emit('refresh')">{{ t('draft_recovery.center.refresh') }}</button>
-      <button type="button" @click="emit('cleanup')">{{ t('draft_recovery.center.cleanup') }}</button>
       <button type="button" :disabled="selectedIds.size === 0" @click="emit('delete-selected')">{{ t('draft_recovery.center.delete_selected') }}</button>
-      <button type="button" :disabled="records.length === 0" @click="emit('delete-all')">{{ t('draft_recovery.center.delete_all') }}</button>
     </div>
 
     <p v-if="loading" role="status">{{ t('draft_recovery.center.loading') }}</p>
@@ -87,9 +71,7 @@ function decisionLabel(id: string): string {
         <div class="record-main">
           <strong>{{ entry.record.documentPath }}</strong>
           <span class="record-meta">
-            {{ entry.source === 'primary' ? t('draft_recovery.center.primary') : t('draft_recovery.center.conflict') }}
-            · {{ decisionLabel(recoveryRecordId(entry)) }}
-            · {{ formatBytes(entry.bytes) }}
+            {{ decisionLabel(recoveryRecordId(entry)) }}
             · {{ new Date(entry.record.updatedAt).toLocaleString() }}
           </span>
           <span v-if="protectedIds.has(recoveryRecordId(entry))" class="in-use">{{ t('draft_recovery.center.in_use') }}</span>

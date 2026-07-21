@@ -406,4 +406,14 @@ describe('createUnsavedDraftRecovery', () => {
     expect(recovery.items.value[0]?.status).toBe('ready')
     expect(recovery.pendingItem.value).toBeNull()
   })
+
+  it('keeps a safe baseline match out of the exceptional prompt queue', async () => {
+    const store = await seededStore(draft('a'))
+    const recovery = createUnsavedDraftRecovery({ store, loadPost: async () => post('a') })
+
+    await recovery.discover('vault')
+
+    expect(recovery.items.value[0]?.decision?.kind).toBe('baseline-match')
+    expect(recovery.pendingItem.value).toBeNull()
+  })
 })
