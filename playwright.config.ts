@@ -12,7 +12,13 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'pnpm exec vite --host 127.0.0.1 --port 4174',
+    // `npm exec` resolves vite from the local node_modules/.bin under BOTH
+    // npm- and pnpm-managed layouts; `pnpm exec` re-installs per
+    // pnpm-lock.yaml on an npm-managed tree, re-laying node_modules out
+    // mid-run so the Playwright CLI and the collected specs resolve two
+    // distinct physical @playwright/test instances ("did not expect test()
+    // to be called here"). Matches the draft-store config's npm exec.
+    command: 'npm exec vite -- --host 127.0.0.1 --port 4174',
     url: 'http://127.0.0.1:4174/__markdown-test?mode=reading',
     reuseExistingServer: true,
   },
