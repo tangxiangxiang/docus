@@ -77,6 +77,21 @@ export function getDocumentMetadata(db: DatabaseT, path: string): DocumentMetada
   return row ? hydrate(db, row) : null
 }
 
+/** Look a document up by its STABLE identity instead of its path —
+ *  the path is a moving attribute (another window may rename at any
+ *  time) while the id survives every rename. Draft recovery uses this
+ *  to re-validate a document's CURRENT server path when its draft
+ *  family has emptied out of IndexedDB: only a by-identity server
+ *  query is authoritative there, never a cached tree / tab / posts
+ *  path. `updatedAt` doubles as the version token a caller can carry
+ *  alongside the path. */
+export function getDocumentMetadataById(db: DatabaseT, id: string): DocumentMetadata | null {
+  const row = db.prepare(
+    'SELECT id, path, title, summary, created_at, updated_at FROM documents WHERE id = ?',
+  ).get(id) as DocumentRow | undefined
+  return row ? hydrate(db, row) : null
+}
+
 export function listDocumentMetadata(db: DatabaseT): DocumentMetadata[] {
   const rows = db.prepare(
     'SELECT id, path, title, summary, created_at, updated_at FROM documents ORDER BY path',

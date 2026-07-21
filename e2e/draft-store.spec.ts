@@ -2037,3 +2037,395 @@ test('a conflict-pinned quarantine discards the stale serverPath when its candid
   expect(result.rawConflictPaths)
     .toEqual(['final/doc', 'final/doc', 'final/doc', 'final/doc'])
 })
+
+// E5/E6: the emptied-family retry against the REAL server. The
+// resolver must query the document's current path by stable id (never
+// a local cache), and a rename racing the recovery must converge the
+// just-written family to the newest server path — or fail closed.
+// Both tests run the full stack: real Hono + SQLite + filesystem
+// vault, real IndexedDB, real HTTP from inside the page. (A leftover
+// document from a previous run is harmless: the POST 409s and the
+// rename's replacing-destination move clears the stale target.)
+test('an emptied-family retry authenticates against a real server rename that cleared the draft rows', async ({
+  page,
+}) => {
+  // Deterministic reruns: the persistent SQLite metadata database can
+  // outlive the /tmp vault files (and a previous run leaves the doc
+  // at notes/e5-final), so clear both generations before creating.
+  await page.request.delete('/api/posts/notes/e5-doc').catch(() => {})
+  await page.request.delete('/api/posts/notes/e5-final').catch(() => {})
+  await page.request.post('/api/posts', {
+    data: { path: 'notes/e5-doc', title: 'E5' },
+  })
+  const detail = await (await page.request.get('/api/posts/notes/e5-doc')).json()
+  const documentId = (detail as { metadata?: { id: string } }).metadata?.id
+  expect(typeof documentId).toBe('string')
+
+  const result = await page.evaluate(async ([databaseName, docId]) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const { createUnsavedDraftPersistence } = await import(
+      '/src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts'
+    )
+    const { getDocumentMetadataById } = await import('/src/lib/api.ts')
+
+    const resolverCalls: string[] = []
+    const store = createDraftStore()
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      now: () => 100,
+      // The production resolver shape: the server's current path for
+      // the stable identity, with a version token.
+      resolveCurrentDocumentPath: async (_vaultId, documentId) => {
+        resolverCalls.push(documentId)
+        const metadata = await getDocumentMetadataById(documentId)
+        return metadata
+          ? { path: metadata.path, version: metadata.updatedAt }
+          : null
+      },
+    })
+
+    // Drive the entry to an EMPTIED move-indeterminate family in real
+    // IndexedDB: an unreadable future-version row splits the family so
+    // the rename's draft move is 'unsupported', then every row of the
+    // identity disappears — the next probe reports 'none'.
+    const openRaw = () => new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const runTx = (
+      database: IDBDatabase,
+      mutate: (store: IDBObjectStore) => void,
+    ) => new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('draftConflicts', 'readwrite')
+      mutate(transaction.objectStore('draftConflicts'))
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    // The readable conflict row first: the store operation creates
+    // the production database schema, which openRaw below then opens
+    // at the same version to plant the unreadable row.
+    await store.saveConflictDraft({
+      version: 1 as const,
+      conflictId: 'valid-row',
+      vaultId: 'vault-e5',
+      documentId: docId,
+      documentPath: 'legacy/a',
+      content: 'older local',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 15,
+      origin: 'delete-conflict' as const,
+      crossContextUpdatedAt: null,
+      recordedAt: 15,
+    })
+    const database = await openRaw()
+    await runTx(database, (store) => store.put({
+      version: 2,
+      conflictId: 'bad-row',
+      vaultId: 'vault-e5',
+      documentId: docId,
+      documentPath: 'archive/a',
+      content: 'unreadable',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 25,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 20,
+      recordedAt: 25,
+    }))
+    database.close()
+    const identity = {
+      vaultId: 'vault-e5',
+      documentId: docId,
+      documentPath: 'notes/a',
+    }
+    persistence.schedule({
+      vaultId: 'vault-e5',
+      documentId: docId,
+      documentPath: 'notes/a',
+      content: 'stale-edit',
+      authoritativeContent: '',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 1,
+    })
+    await persistence.flush('vault-e5', docId)
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/b',
+    }])
+    await barrier.finalizeAfterTabMigration()
+    persistence.schedule({
+      vaultId: 'vault-e5',
+      documentId: docId,
+      documentPath: 'archive/b',
+      content: 'after-rename',
+      authoritativeContent: '',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 2,
+    })
+    const flushed1 = await persistence.flush('vault-e5', docId)
+
+    // The whole identity disappears, then ANOTHER WINDOW renames the
+    // real server document (notes/e5-doc → notes/e5-final). Its draft
+    // move sees no rows at all — exactly the race under test.
+    const database2 = await openRaw()
+    await runTx(database2, (store) => store
+      .delete(['vault-e5', docId, 'bad-row']))
+    database2.close()
+    await store.deleteConflictDraft('vault-e5', docId, 'valid-row')
+    const renamed = await fetch('/api/posts/notes/e5-doc', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ targetPath: 'notes/e5-final' }),
+    })
+
+    // The retry must re-validate the CURRENT server path by stable id
+    // and establish the primary there — never at the stale serverPath.
+    const flushed2 = await persistence.flush('vault-e5', docId)
+    const primary = await store.getDraft('vault-e5', docId)
+    const conflicts = await store.listConflictDrafts('vault-e5')
+
+    const rawDatabase = await openRaw()
+    const rawTransaction = rawDatabase.transaction(
+      ['drafts', 'draftConflicts'],
+      'readonly',
+    )
+    const rawDrafts = await new Promise<unknown[]>((resolve, reject) => {
+      const request = rawTransaction.objectStore('drafts').getAll()
+      request.onsuccess = () => resolve(request.result as unknown[])
+      request.onerror = () => reject(request.error)
+    })
+    const rawConflicts = await new Promise<unknown[]>((resolve, reject) => {
+      const request = rawTransaction.objectStore('draftConflicts')
+        .index('vaultId').getAll('vault-e5')
+      request.onsuccess = () => resolve(request.result as unknown[])
+      request.onerror = () => reject(request.error)
+    })
+    rawDatabase.close()
+    await persistence.dispose()
+
+    return {
+      moveStatus: move.status,
+      flushed1,
+      renameStatus: renamed.status,
+      flushed2,
+      primary,
+      conflictCount: conflicts.length,
+      resolverCallCount: resolverCalls.length,
+      resolverIdentities: [...new Set(resolverCalls)],
+      rawDraftPaths: rawDrafts.map((row) => (row as { documentPath: string }).documentPath),
+      rawConflictPaths: rawConflicts.map((row) => (row as { documentPath: string }).documentPath),
+    }
+  }, [DATABASE_NAME, documentId] as [string, string])
+
+  expect(result.moveStatus).toBe('unsupported')
+  expect(result.flushed1).toBe(false)
+  expect(result.renameStatus).toBe(200)
+  expect(result.flushed2).toBe(true)
+  expect(result.primary).toMatchObject({
+    documentPath: 'notes/e5-final',
+    content: 'after-rename',
+  })
+  expect(result.conflictCount).toBe(0)
+  // The resolver ran at least twice: the pre-write resolve AND the
+  // post-write server revalidation.
+  expect(result.resolverCallCount).toBeGreaterThanOrEqual(2)
+  expect(result.resolverIdentities).toEqual([documentId])
+  expect(result.rawDraftPaths).toEqual(['notes/e5-final'])
+  expect(result.rawConflictPaths).toEqual([])
+})
+
+test('an emptied-family retry converges when another window renames between the resolve and the revalidation', async ({
+  page,
+}) => {
+  await page.request.delete('/api/posts/notes/e6-doc').catch(() => {})
+  await page.request.delete('/api/posts/notes/e6-final').catch(() => {})
+  await page.request.post('/api/posts', {
+    data: { path: 'notes/e6-doc', title: 'E6' },
+  })
+  const detail = await (await page.request.get('/api/posts/notes/e6-doc')).json()
+  const documentId = (detail as { metadata?: { id: string } }).metadata?.id
+  expect(typeof documentId).toBe('string')
+
+  const result = await page.evaluate(async ([databaseName, docId]) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const { createUnsavedDraftPersistence } = await import(
+      '/src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts'
+    )
+    const { getDocumentMetadataById } = await import('/src/lib/api.ts')
+
+    let resolverCallCount = 0
+    const store = createDraftStore()
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      now: () => 100,
+      resolveCurrentDocumentPath: async (_vaultId, documentId) => {
+        resolverCallCount += 1
+        if (resolverCallCount === 2) {
+          // The revalidation query ITSELF races another window's real
+          // server rename: the primary was just minted at
+          // notes/e6-doc, the server moves to notes/e6-final before this
+          // query answers. A rejected rename must fail the resolver
+          // loudly — silently skipping it would converge at the old
+          // path and mask the harness problem.
+          const renamed = await fetch('/api/posts/notes/e6-doc', {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ targetPath: 'notes/e6-final' }),
+          })
+          if (!renamed.ok) {
+            throw new Error(`racing rename failed: ${renamed.status}`)
+          }
+        }
+        const metadata = await getDocumentMetadataById(documentId)
+        return metadata
+          ? { path: metadata.path, version: metadata.updatedAt }
+          : null
+      },
+    })
+
+    const openRaw = () => new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const runTx = (
+      database: IDBDatabase,
+      mutate: (store: IDBObjectStore) => void,
+    ) => new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('draftConflicts', 'readwrite')
+      mutate(transaction.objectStore('draftConflicts'))
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    // The readable conflict row first: the store operation creates
+    // the production database schema, which openRaw below then opens
+    // at the same version to plant the unreadable row.
+    await store.saveConflictDraft({
+      version: 1 as const,
+      conflictId: 'valid-row',
+      vaultId: 'vault-e6',
+      documentId: docId,
+      documentPath: 'legacy/a',
+      content: 'older local',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 15,
+      origin: 'delete-conflict' as const,
+      crossContextUpdatedAt: null,
+      recordedAt: 15,
+    })
+    const database = await openRaw()
+    await runTx(database, (store) => store.put({
+      version: 2,
+      conflictId: 'bad-row',
+      vaultId: 'vault-e6',
+      documentId: docId,
+      documentPath: 'archive/a',
+      content: 'unreadable',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 25,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 20,
+      recordedAt: 25,
+    }))
+    database.close()
+    const identity = {
+      vaultId: 'vault-e6',
+      documentId: docId,
+      documentPath: 'notes/a',
+    }
+    persistence.schedule({
+      vaultId: 'vault-e6',
+      documentId: docId,
+      documentPath: 'notes/a',
+      content: 'stale-edit',
+      authoritativeContent: '',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 1,
+    })
+    await persistence.flush('vault-e6', docId)
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/a',
+      toPath: 'archive/b',
+    }])
+    await barrier.finalizeAfterTabMigration()
+    persistence.schedule({
+      vaultId: 'vault-e6',
+      documentId: docId,
+      documentPath: 'archive/b',
+      content: 'after-rename',
+      authoritativeContent: '',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 2,
+    })
+    await persistence.flush('vault-e6', docId)
+    const database2 = await openRaw()
+    await runTx(database2, (store) => store
+      .delete(['vault-e6', docId, 'bad-row']))
+    database2.close()
+    await store.deleteConflictDraft('vault-e6', docId, 'valid-row')
+
+    // The flush's resolver mints at notes/e6-doc, then its OWN second
+    // query (the revalidation) performs the real rename and sees
+    // notes/e6-final: the expected-path CAS must move the just-written
+    // primary to notes/e6-final and the final revalidation must
+    // authenticate it there.
+    const flushed = await persistence.flush('vault-e6', docId)
+    const primary = await store.getDraft('vault-e6', docId)
+
+    const rawDatabase = await openRaw()
+    const rawTransaction = rawDatabase.transaction(['drafts'], 'readonly')
+    const rawDrafts = await new Promise<unknown[]>((resolve, reject) => {
+      const request = rawTransaction.objectStore('drafts').getAll()
+      request.onsuccess = () => resolve(request.result as unknown[])
+      request.onerror = () => reject(request.error)
+    })
+    rawDatabase.close()
+    await persistence.dispose()
+
+    return {
+      moveStatus: move.status,
+      flushed,
+      resolverCallCount,
+      primary,
+      rawDraftPaths: rawDrafts.map((row) => (row as { documentPath: string }).documentPath),
+    }
+  }, [DATABASE_NAME, documentId] as [string, string])
+
+  expect(result.moveStatus).toBe('unsupported')
+  expect(result.flushed).toBe(true)
+  // resolve (notes/e6-doc) + racing revalidation (notes/e6-final) +
+  // final revalidation.
+  expect(result.resolverCallCount).toBe(3)
+  // No primary remains at notes/e6-doc; the family converged to the
+  // server's newest path and the latest bytes are recoverable there.
+  expect(result.primary).toMatchObject({
+    documentPath: 'notes/e6-final',
+    content: 'after-rename',
+  })
+  expect(result.rawDraftPaths).toEqual(['notes/e6-final'])
+  // The real server file follows the same identity.
+  const serverFinal = await page.request.get('/api/posts/notes/e6-final')
+  expect(serverFinal.ok()).toBe(true)
+})

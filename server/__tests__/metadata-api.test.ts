@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import app, { __setMetadataDbForTesting } from '../index'
 import { applyMigrations } from '../db'
-import { getDocumentMetadata } from '../documentMetadata'
+import { getDocumentMetadata, moveDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
 import { migrateVaultMetadata } from '../metadataMigration'
 
 let root: string
@@ -89,5 +89,39 @@ describe('PATCH /api/metadata/documents/*', () => {
     })
     expect(restored.status).toBe(200)
     expect(await fs.readFile(path.join(root, 'inbox', 'note.md'), 'utf8')).toBe(raw)
+  })
+})
+
+describe('GET /api/metadata/documents/:id', () => {
+  async function getById(id: string) {
+    return app.fetch(new Request(`http://localhost/api/metadata/documents/${id}`))
+  }
+
+  it('returns the current metadata by stable id, with a version token', async () => {
+    const saved = saveDocumentMetadata(db, { path: 'inbox/note', title: 'Note', summary: 'S' })
+    const response = await getById(saved.id)
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toMatchObject({
+      id: saved.id, path: 'inbox/note', title: 'Note', summary: 'S', tags: [],
+    })
+    // updatedAt is the version token a draft-recovery path resolver
+    // carries back — it must survive the round-trip.
+    expect(typeof body.updatedAt).toBe('number')
+    expect(body.updatedAt).toBe(saved.updatedAt)
+  })
+
+  it('reports the CURRENT path after a rename (stable identity, moving path)', async () => {
+    const saved = saveDocumentMetadata(db, { path: 'inbox/note', title: 'Note' })
+    expect(moveDocumentMetadata(db, 'inbox/note', 'archive/note')).toBe(true)
+    const response = await getById(saved.id)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      id: saved.id, path: 'archive/note',
+    })
+  })
+
+  it('returns 404 for an unknown id', async () => {
+    expect((await getById('no-such-id')).status).toBe(404)
   })
 })

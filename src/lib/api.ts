@@ -179,6 +179,18 @@ export async function recoverPost(path: string, raw: string): Promise<RecoverPos
   }))
 }
 
+/** Current metadata by STABLE document id — the path-based lookups
+ *  (posts list, tab state, tree) can all be stale under a concurrent
+ *  rename, but the server's by-identity row always reports the
+ *  document's CURRENT path. Returns null when the document no longer
+ *  exists server-side (404); any other failure throws so callers can
+ *  fail closed instead of trusting a stale path. */
+export async function getDocumentMetadataById(id: string): Promise<DocumentMetadata | null> {
+  const response = await fetch(`/api/metadata/documents/${encodeURIComponent(id)}`)
+  if (response.status === 404) return null
+  return jsonOrThrow<DocumentMetadata>(response)
+}
+
 export async function updateDocumentMetadata(
   path: string,
   input: UpdateDocumentMetadata,

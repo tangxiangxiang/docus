@@ -1784,7 +1784,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     resolveCurrentDocumentPath?: (
       vaultId: string,
       documentId: string,
-    ) => Promise<string | null>,
+    ) => Promise<{ path: string; version: string | number } | null>,
   ) {
     return createUnsavedDraftPersistence({
       store,
@@ -4034,8 +4034,8 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       },
       // An emptied family is re-verified against the server before the
       // retry mints a primary: the resolver certifies the rename's
-      // target (this test's server truth).
-      resolveCurrentDocumentPath: async () => 'archive/b',
+      // target (this test's server truth) with a version token.
+      resolveCurrentDocumentPath: async () => ({ path: 'archive/b', version: 1 }),
     })
     await backend.seedRawConflict({
       ...conflictRecord('bad-row', 'doc-a', 'archive/a', 'unreadable'),
@@ -4563,7 +4563,8 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     resolveCurrentDocumentPath?: (
       vaultId: string,
       documentId: string,
-    ) => Promise<string | null>
+    ) => Promise<{ path: string; version: string | number } | null>
+    targetWindow?: EventTarget
   } = {}) {
     const backend = createMemoryDraftBackend()
     const store = createDraftStore({ backend })
@@ -4576,6 +4577,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       store,
       debounceMs: 800,
       now: () => 100,
+      targetWindow: options.targetWindow,
       onDraftFamilyMoveSettled: (settlement) => {
         settlements.push(settlement)
       },
@@ -4624,11 +4626,16 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const { store, persistence, settlements } = await setupEmptiedFamilyRetry({
       resolveCurrentDocumentPath: async (vaultId, documentId) => {
         resolverCalls.push({ vaultId, documentId })
-        return 'final/b'
+        return { path: 'final/b', version: 7 }
       },
     })
     expect(await persistence.flush('vault', 'doc-a')).toBe(true)
-    expect(resolverCalls).toEqual([{ vaultId: 'vault', documentId: 'doc-a' }])
+    // Two queries: the pre-write resolve AND the post-write server
+    // revalidation that authenticates the mint.
+    expect(resolverCalls).toEqual([
+      { vaultId: 'vault', documentId: 'doc-a' },
+      { vaultId: 'vault', documentId: 'doc-a' },
+    ])
     expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
       documentPath: 'final/b',
       content: 'after-rename',
@@ -4676,6 +4683,276 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     expect(await store.getDraft('vault', 'doc-a')).toBeNull()
     expect(await store.listDrafts('vault')).toEqual([])
     await persistence.dispose()
+  })
+
+  // Bounded TOCTOU recovery: between the server path query and the
+  // primary write (or between the write and the final revalidation)
+  // another window may rename the document again. The retry must
+  // re-query after writing, converge the just-written family to the
+  // newest server path via an expected-path CAS, revalidate once more,
+  // and fail closed when the path keeps changing beyond the bound —
+  // never leaving a primary minted at a path the server has abandoned.
+  describe('emptied-family retry under a racing server rename', () => {
+    // The scripted "server": a mutable {path, version} the resolver
+    // closure reads, renamed at deterministic resolver call counts.
+    type ServerState = { path: string; version: number }
+
+    it('R1: converges via CAS when the rename lands between the primary write and the revalidation (manual flush)', async () => {
+      const serverState: ServerState = { path: 'path/b', version: 1 }
+      let calls = 0
+      const { store, persistence, settlements } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          // Context B renames B→C in the window between the primary
+          // write and this revalidation query.
+          if (calls === 2) {
+            serverState.path = 'path/c'
+            serverState.version = 2
+          }
+          return { ...serverState }
+        },
+      })
+      expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+      // No primary remains at path/b: the CAS moved the just-written
+      // family to path/c and the final revalidation authenticated it.
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/c',
+        content: 'after-rename',
+      })
+      expect(calls).toBe(3) // resolve + recheck + final revalidation
+      expect(settlements.some(
+        (s) => s.status === 'moved-and-persisted' && s.newPath === 'path/c' && s.oldPath === null,
+      )).toBe(true)
+      await persistence.dispose()
+    })
+
+    it('R2: converges when the rename lands after the resolve returns but before the primary write', async () => {
+      const serverState: ServerState = { path: 'path/b', version: 1 }
+      let calls = 0
+      const { store, persistence } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          const response = { ...serverState }
+          // The rename lands AFTER this response is computed: the
+          // resolver returned path/b, the write still goes to path/b,
+          // but the server is already at path/c.
+          if (calls === 1) {
+            serverState.path = 'path/c'
+            serverState.version = 2
+          }
+          return response
+        },
+      })
+      expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+      // The post-write revalidation must catch the drift: the family
+      // converges to path/c, nothing stays at the abandoned path/b.
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/c',
+        content: 'after-rename',
+      })
+      expect(await store.getDraft('vault', 'doc-a')).not.toMatchObject({ documentPath: 'path/b' })
+      await persistence.dispose()
+    })
+
+    it('R3: a second rename during the convergence window is caught by the bounded second attempt', async () => {
+      const serverState: ServerState = { path: 'path/b', version: 1 }
+      let calls = 0
+      const { store, persistence } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          // Rename at the revalidation (B→C) AND again at the final
+          // revalidation (C→D): the first attempt cannot authenticate,
+          // the bounded second attempt re-resolves and converges at D.
+          if (calls === 2) {
+            serverState.path = 'path/c'
+            serverState.version = 2
+          } else if (calls === 3) {
+            serverState.path = 'path/d'
+            serverState.version = 3
+          }
+          return { ...serverState }
+        },
+      })
+      expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/d',
+        content: 'after-rename',
+      })
+      expect(calls).toBe(5) // b, c, d | d (CAS), d (final)
+      await persistence.dispose()
+    })
+
+    it('R4: fails closed when the server keeps changing beyond the bounded attempts', async () => {
+      let calls = 0
+      const { store, persistence, settlements } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          // Every query sees a different path — the document is being
+          // renamed continuously by another window.
+          return { path: `path/p${calls}`, version: calls }
+        },
+      })
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      // The latest bytes are still recoverable: persisted at the last
+      // server-authoritative path the bounded flow reached (the second
+      // attempt's convergence target), not abandoned in memory only.
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/p5',
+        content: 'after-rename',
+      })
+      expect(settlements.some(
+        (s) => s.status === 'moved-write-failed' && s.newPath === 'path/p5',
+      )).toBe(true)
+      await persistence.dispose()
+    })
+
+    it('R5: the same convergence happens on the debounce flush', async () => {
+      const serverState: ServerState = { path: 'path/b', version: 1 }
+      let calls = 0
+      const { store, persistence, settlements } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          if (calls === 2) {
+            serverState.path = 'path/c'
+            serverState.version = 2
+          }
+          return { ...serverState }
+        },
+      })
+      // The pending edit persists through the debounce timer instead
+      // of a manual flush.
+      persistence.schedule(snapshot('debounced-edit', 'archive/b', 3))
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+      await vi.waitFor(async () => {
+        expect(settlements.some(
+          (s) => s.status === 'moved-and-persisted' && s.newPath === 'path/c',
+        )).toBe(true)
+      })
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/c',
+        content: 'debounced-edit',
+      })
+      await persistence.dispose()
+    })
+
+    it('R6: the same convergence happens on pagehide', async () => {
+      const targetWindow = new EventTarget()
+      const serverState: ServerState = { path: 'path/b', version: 1 }
+      let calls = 0
+      const { store, persistence } = await setupEmptiedFamilyRetry({
+        targetWindow,
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          if (calls === 2) {
+            serverState.path = 'path/c'
+            serverState.version = 2
+          }
+          return { ...serverState }
+        },
+      })
+      targetWindow.dispatchEvent(new Event('pagehide'))
+      await vi.waitFor(async () => {
+        expect((await store.getDraft('vault', 'doc-a'))?.documentPath).toBe('path/c')
+      })
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        content: 'after-rename',
+      })
+      await persistence.dispose()
+    })
+
+    it('R7: the same convergence happens on dispose', async () => {
+      const serverState: ServerState = { path: 'path/b', version: 1 }
+      let calls = 0
+      const { store, persistence } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          if (calls === 2) {
+            serverState.path = 'path/c'
+            serverState.version = 2
+          }
+          return { ...serverState }
+        },
+      })
+      await persistence.dispose()
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/c',
+        content: 'after-rename',
+      })
+    })
+
+    it('R8a: a transient revalidation failure is retried by the bounded second attempt', async () => {
+      let calls = 0
+      const { store, persistence } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          if (calls === 2) throw new Error('transient network failure')
+          return { path: 'path/b', version: 1 }
+        },
+      })
+      expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/b',
+        content: 'after-rename',
+      })
+      // attempt 1: resolve + throwing recheck; attempt 2: resolve + recheck
+      expect(calls).toBe(4)
+      await persistence.dispose()
+    })
+
+    it('R8b: persistent revalidation failures fail closed with the bytes persisted', async () => {
+      let calls = 0
+      const { store, persistence, settlements } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          if (calls >= 2) throw new Error('server keeps failing')
+          return { path: 'path/b', version: 1 }
+        },
+      })
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      // The primary WAS minted at the server-authoritative path before
+      // revalidation started failing — the bytes remain recoverable.
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/b',
+        content: 'after-rename',
+      })
+      expect(settlements.some(
+        (s) => s.status === 'moved-write-failed' && s.newPath === 'path/b',
+      )).toBe(true)
+      await persistence.dispose()
+    })
+
+    it('R9: converges when the family already sits at the revalidated path (CAS path-mismatch)', async () => {
+      const serverState: ServerState = { path: 'path/b', version: 1 }
+      let calls = 0
+      let storeRef: ReturnType<typeof createDraftStore> | null = null
+      const setup = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          if (calls === 2) {
+            // Context B renames B→C AND moves the draft family itself
+            // (its rename found rows this time): by the time the CAS
+            // runs, the family already sits at path/c.
+            serverState.path = 'path/c'
+            serverState.version = 2
+            await storeRef!.moveDraftFamily('vault', 'doc-a', 'path/c')
+          }
+          return { ...serverState }
+        },
+      })
+      storeRef = setup.store
+      const { store, persistence } = setup
+      expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+      // The CAS expected path/b but certified path/c as the family's
+      // current location — the retry adopts it and revalidates, never
+      // dragging the family back to path/b.
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/c',
+        content: 'after-rename',
+      })
+      await persistence.dispose()
+    })
   })
 
   describe('draft family state machine invariants', () => {

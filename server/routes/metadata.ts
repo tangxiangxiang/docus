@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import { Hono } from 'hono'
-import { saveDocumentMetadata } from '../documentMetadata.js'
+import { getDocumentMetadataById, saveDocumentMetadata } from '../documentMetadata.js'
 import {
   cleanDocumentFrontmatter,
   exportDocumentFrontmatter,
@@ -87,6 +87,17 @@ function stringList(value: unknown, field: string): string[] {
   }
   return value as string[]
 }
+
+// Current metadata by STABLE document id (single-segment UUID) —
+// method-disambiguated from the path-splat PATCH below. Draft
+// recovery's path resolver queries this: after an emptied-family
+// probe, only a by-identity server lookup can certify where the
+// document lives now. `updatedAt` travels as the version token.
+metadataRoutes.get('/api/metadata/documents/:id', (c) => {
+  const metadata = getDocumentMetadataById(metadataDb(), c.req.param('id'))
+  if (!metadata) return bad(c, 'not found', 404)
+  return c.json(metadata)
+})
 
 metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
   const documentPath = c.req.path.replace(/^\/api\/metadata\/documents\//, '')

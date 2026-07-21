@@ -301,6 +301,23 @@ export interface DraftFamilyMoveSettlement {
   status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
 }
 
+/** The server's authoritative answer to "where does this document
+ *  live right now": the CURRENT path (a moving attribute — another
+ *  window may rename at any time) plus a version token the caller can
+ *  carry. Authentication compares PATHS: `version` (the server's
+ *  updatedAt) also advances on metadata-only edits (title / tags)
+ *  that do NOT rename, so treating version drift as a conflict would
+ *  burn the bounded attempts on an active document and fail closed
+ *  spuriously. The version is carried for the contract (and any
+ *  future server-side CAS), never as the authentication criterion.
+ *  Only a by-stable-identity server query may produce this value —
+ *  never a cached tree / Tab / posts path, which a concurrent rename
+ *  can stale at any moment. */
+export interface CurrentDocumentLocation {
+  path: string
+  version: string | number
+}
+
 interface CreateOptions {
   store?: DraftStore
   debounceMs?: number
@@ -313,14 +330,17 @@ interface CreateOptions {
    *  is not a server-path verdict — another window may have renamed
    *  the document again (serverPath→C) and cleared its draft rows,
    *  and the stale serverPath may even have been reused by another
-   *  document. The retry mints the new primary at the re-validated
-   *  path; an absent resolver, a null / blank result or a thrown
-   *  error fail closed — no primary is ever minted at the stale
-   *  serverPath without re-validation. */
+   *  document. The retry runs a bounded TOCTOU flow around it
+   *  (resolve → write → revalidate → expected-path CAS on drift →
+   *  final revalidation; at most two attempts): a query alone cannot
+   *  certify the path, because another window may rename AGAIN
+   *  between the query and the primary write. An absent resolver, a
+   *  null / blank result or a thrown error fail closed — no primary
+   *  is ever minted at the stale serverPath without re-validation. */
   resolveCurrentDocumentPath?: (
     vaultId: string,
     documentId: string,
-  ) => Promise<string | null>
+  ) => Promise<CurrentDocumentLocation | null>
 }
 
 export function createUnsavedDraftPersistence(
@@ -1507,6 +1527,220 @@ export function createUnsavedDraftPersistence(
     return false
   }
 
+  /** A move-indeterminate retry whose probe reports an EMPTIED draft
+   *  family. The absence of every draft row certifies neither a
+   *  server path nor a family path — another window may have renamed
+   *  the document again (serverPath→C) and cleared its rows, and the
+   *  stale serverPath may even have been reused by another document.
+   *  So the pending snapshot's primary is minted at a server-
+   *  RE-VALIDATED path (resolveCurrentDocumentPath, by stable
+   *  identity) and the mint is then AUTHENTICATED against a second
+   *  server query: the path can race between the query and the write
+   *  (window B renames B→C after the resolver returned B; its own
+   *  draft move sees no rows; a write at B would leave the server
+   *  file at C and the draft primary at B — the stale-quarantine
+   *  split relocated onto the resolver seam). Bounded flow, at most
+   *  two attempts:
+   *    (1) query the server's current path + version;
+   *    (2) establish the family there — the first mint writes the
+   *        primary (nothing to split: the store holds no row for this
+   *        identity); a later attempt converges the already-written
+   *        family via an expected-path CAS, never a blind save;
+   *    (3) query again — an unchanged path authenticates;
+   *    (4) changed → the expected-path CAS moves the just-written
+   *        family to the newest path (a path-mismatch adopts the
+   *        CAS-certified current path instead), then ONE final
+   *        revalidation authenticates;
+   *    (5) still changing past the bound → fail closed: with a mint
+   *        landed, the latest bytes persist at the last server-
+   *        authoritative path the flow reached (recoverable), the
+   *        'moved-write-failed' settlement keeps the only-content tab
+   *        open, and the next user edit / flush restarts the flow
+   *        from the primary channel; without a mint, nothing was
+   *        written anywhere and the tab stays the sole holder of the
+   *        in-memory bytes.
+   *  Absent / null / blank / throwing resolution fails closed BEFORE
+   *  anything is minted. Authentication compares PATHS, never the
+   *  version token: a metadata-only edit (title / tags) bumps the
+   *  server's updatedAt WITHOUT renaming, and treating that drift as
+   *  a conflict would burn the bounded attempts on an active
+   *  document. Self-contained — the probe-'none' branch returns its
+   *  verdict directly; the movedStatus success path below serves only
+   *  certified-family outcomes. */
+  async function recoverEmptiedFamily(
+    owner: DraftOwner,
+    entry: DraftEntry,
+    move: { oldPath: string | null; newPath: string },
+    allowDisposed: boolean,
+  ): Promise<boolean> {
+    const resolver = options.resolveCurrentDocumentPath
+    if (!resolver) return false
+    // The path the family's rows currently sit at (null until the
+    // first mint): every later convergence is an expected-path CAS
+    // FROM this anchor, never a blind move.
+    let anchor: string | null = null
+
+    // Every failure exit routes through here: once a mint has landed,
+    // the latest bytes persist at the anchor (recoverable) and the
+    // 'moved-write-failed' settlement tells the owner to keep the
+    // only-content tab open AND refresh Recovery against the durable
+    // state — mirroring the movedStatus branch's post-move guard
+    // failures. Before any mint it is a silent no-op: nothing was
+    // written anywhere, the flush's false return alone keeps the tab.
+    const failClosed = (): false => {
+      if (anchor !== null) {
+        notifyFamilyMoveSettled(
+          owner.vaultId, owner.documentId,
+          { oldPath: move.oldPath, newPath: anchor },
+          'moved-write-failed',
+        )
+      }
+      return false
+    }
+
+    const revalidate = async (): Promise<CurrentDocumentLocation | null> => {
+      try {
+        const location = await resolver(owner.vaultId, owner.documentId)
+        if (!location || typeof location.path !== 'string'
+          || location.path.trim().length === 0) return null
+        return location
+      } catch {
+        return null
+      }
+    }
+    // Converge the family onto `path` via an expected-path CAS from
+    // the anchor. The store derives the family's current path from
+    // the raw rows inside the same transaction as the move, so the
+    // certified answer is always fresh: 'moved' (or a path-mismatch
+    // whose certified current path IS the target) adopts `path`; a
+    // path-mismatch certifying a DIFFERENT path adopts that one
+    // instead; 'missing' (another context cleared the rows) drops the
+    // anchor so the next attempt re-mints; anything uncertifiable
+    // reports null and the caller consumes the attempt.
+    const converge = async (path: string): Promise<string | null> => {
+      if (anchor === null) return null
+      if (anchor === path) return anchor
+      const outcome = await store.moveDraftFamilyIfAtPath(
+        owner.vaultId, owner.documentId, anchor, path,
+      )
+      if ((!allowDisposed && disposed) || !current(owner, entry)) return null
+      if (outcome.status === 'moved') {
+        completeFamilyMove(entry, path)
+        anchor = path
+        return path
+      }
+      if (outcome.status === 'path-mismatch') {
+        completeFamilyMove(entry, outcome.currentPath)
+        anchor = outcome.currentPath
+        return outcome.currentPath
+      }
+      if (outcome.status === 'missing') {
+        anchor = null
+      }
+      return null
+    }
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if ((!allowDisposed && disposed) || !current(owner, entry)) return failClosed()
+
+      // (1) Query the server's current path by stable identity —
+      // never a cached tree / Tab / posts path. A failure here fails
+      // closed: nothing is ever minted at the stale serverPath.
+      const resolved = await revalidate()
+      if ((!allowDisposed && disposed) || !current(owner, entry)) return failClosed()
+      if (!resolved) return failClosed()
+
+      if (anchor === null) {
+        // (2a) First mint: the store holds no row for this identity,
+        // so a write at the re-validated path cannot split anything.
+        completeFamilyMove(entry, resolved.path)
+        entry.persistedDraft = null
+        // Capture AFTER the lift: completeFamilyMove replaces the
+        // snapshot with one carrying the re-validated path, and the
+        // channel decision reads the snapshot's own path.
+        const latest = entry.latestSnapshot
+        if (!latest || !entry.latestSnapshotNeedsWrite) {
+          // No pending snapshot — the re-validated relocation itself
+          // is the durable change; nothing is left unpersisted.
+          notifyFamilyMoveSettled(
+            owner.vaultId, owner.documentId,
+            { oldPath: move.oldPath, newPath: resolved.path },
+            'moved-and-persisted',
+          )
+          return true
+        }
+        const writeSucceeded = await runResolvedTarget(
+          owner, entry, cloneSnapshot(latest), allowDisposed,
+        )
+        if (!writeSucceeded) {
+          // The entry is on its active channel at the re-validated
+          // path with the write flag still set — arm the bounded
+          // settle retry (it re-writes on the current channel) and
+          // report the settlement so the owner keeps the tab open.
+          notifyFamilyMoveSettled(
+            owner.vaultId, owner.documentId,
+            { oldPath: move.oldPath, newPath: resolved.path },
+            'moved-write-failed',
+          )
+          scheduleSettleRetry(
+            owner.vaultId, owner.documentId, entry.generation, 0,
+            { oldPath: move.oldPath, newPath: resolved.path },
+          )
+          return false
+        }
+        anchor = resolved.path
+      } else {
+        // (2b) The family already sits at the anchor (written by an
+        // earlier attempt): converge it onto the fresh server path
+        // via the expected-path CAS — never a blind save.
+        if (await converge(resolved.path) === null) {
+          if ((!allowDisposed && disposed) || !current(owner, entry)) return failClosed()
+          continue
+        }
+      }
+
+      // (3) Revalidate: the server query AFTER the write / convergence
+      // is what authenticates the path the family now sits at.
+      const recheck = await revalidate()
+      if ((!allowDisposed && disposed) || !current(owner, entry)) return failClosed()
+      if (!recheck) continue
+      if (recheck.path === anchor) {
+        notifyFamilyMoveSettled(
+          owner.vaultId, owner.documentId,
+          { oldPath: move.oldPath, newPath: anchor },
+          'moved-and-persisted',
+        )
+        return true
+      }
+
+      // (4) The path changed between the write and the revalidation —
+      // converge the just-written family onto the newest server path
+      // and authenticate ONCE more.
+      const converged = await converge(recheck.path)
+      if (converged === null) {
+        if ((!allowDisposed && disposed) || !current(owner, entry)) return failClosed()
+        continue
+      }
+      const finalCheck = await revalidate()
+      if ((!allowDisposed && disposed) || !current(owner, entry)) return failClosed()
+      if (finalCheck && finalCheck.path === converged) {
+        notifyFamilyMoveSettled(
+          owner.vaultId, owner.documentId,
+          { oldPath: move.oldPath, newPath: converged },
+          'moved-and-persisted',
+        )
+        return true
+      }
+      // Still changing — the bounded second attempt re-resolves fresh.
+    }
+
+    // (5) Bound exhausted under continuous change: fail closed. With
+    // a mint landed, the bytes persist at the last server-
+    // authoritative path reached and the settlement keeps the tab
+    // open; without one, nothing was written anywhere.
+    return failClosed()
+  }
+
   /** Retry the atomic family move for a quarantined / move-indeterminate
    *  entry (the server rename succeeded, the tab already shows
    *  `newPath`). A plain primary write at newPath would move ONLY the
@@ -1530,14 +1764,15 @@ export function createUnsavedDraftPersistence(
    *    re-verifies the family's current state with a strict read-only
    *    probe first. Only a certified result acts — the family already
    *    at newPath heals in memory, a family certified at a different
-   *    path is adopted there, and an EMPTIED family is re-validated
-   *    against the server by stable identity
-   *    (resolveCurrentDocumentPath) before the pending snapshot
-   *    establishes the primary at the re-validated path — absent /
-   *    throwing / empty re-validation fails closed (the absence of
-   *    draft rows certifies no server path); an uncertifiable /
-   *    unread family fails closed (write NOTHING) until the next
-   *    probe;
+   *    path is adopted there, and an EMPTIED family is handed to
+   *    recoverEmptiedFamily (a bounded resolve → write → revalidate
+   *    → expected-path CAS flow keyed on a by-stable-identity server
+   *    query, authenticating the mint AFTER the write because another
+   *    window may rename AGAIN between the query and the write);
+   *    absent / throwing / empty resolution and continuous change
+   *    past the bound fail closed (the absence of draft rows
+   *    certifies no server path); an uncertifiable / unread family
+   *    fails closed (write NOTHING) until the next probe;
    *  - move succeeds → the quarantine lifts via completeFamilyMove
    *    (mode, snapshot path, persistedDraft path and conflict pin
    *    switch to newPath as ONE change) and the latest snapshot
@@ -1559,12 +1794,6 @@ export function createUnsavedDraftPersistence(
     const entry = entries.get(key(owner.vaultId, owner.documentId))
     if (!entry || (!allowDisposed && disposed) || !current(owner, entry)) return false
     let movedStatus: 'moved' | 'missing' | null = null
-    // The path the retry completes at: the retry's serverPath normally
-    // (CAS-verified by a successful / missing move). An emptied-family
-    // probe cannot certify a server path — the absence of every draft
-    // row is not a verdict — so that branch re-validates it by stable
-    // identity before anything is established there.
-    let settledNewPath = move.newPath
     if (move.oldPath !== null) {
       // Certified expected path: the CAS move. The store derives the
       // family's current path from the raw rows inside the same
@@ -1615,31 +1844,20 @@ export function createUnsavedDraftPersistence(
       }
       if (probe.status === 'none') {
         // The family is gone entirely from the store — there is
-        // nothing to move and nothing to adopt. But the absence of
+        // nothing to move and nothing to adopt, and the absence of
         // every draft row is NOT a server-path verdict: another
         // window may have renamed the document again (serverPath→C)
         // and cleared its draft rows, and this retry's stale
         // serverPath may even have been reused by another document.
-        // Re-validate the document's current server path by stable
-        // identity before the pending snapshot mints a new primary
-        // there; fail closed when the re-validation is not wired or
-        // yields no path — nothing is ever minted at the stale
-        // serverPath. The store being empty for this identity, a
-        // write at the re-validated path cannot split anything.
-        const resolver = options.resolveCurrentDocumentPath
-        if (!resolver) return false
-        let revalidated: string | null = null
-        try {
-          revalidated = await resolver(owner.vaultId, owner.documentId)
-        } catch {
-          revalidated = null
-        }
-        if ((!allowDisposed && disposed) || !current(owner, entry)) return false
-        if (typeof revalidated !== 'string' || revalidated.trim().length === 0) {
-          return false
-        }
-        settledNewPath = revalidated
-        movedStatus = 'missing'
+        // recoverEmptiedFamily re-validates the document's current
+        // server path by stable identity, mints the pending snapshot
+        // there, and AUTHENTICATES the mint against a second server
+        // query (the path can race between the query and the write),
+        // converging the just-written family via an expected-path
+        // CAS when it drifts. Absent / throwing / empty resolution
+        // and continuous change past the bound fail closed — nothing
+        // is ever minted at the stale serverPath.
+        return recoverEmptiedFamily(owner, entry, move, allowDisposed)
       } else if (probe.familyPath === move.newPath) {
         // The family is already verified AT the rename's server target
         // (healed by a later move that caught it up) — no store move
@@ -1657,19 +1875,17 @@ export function createUnsavedDraftPersistence(
       }
     }
     if (movedStatus !== null) {
-      // The move that actually completed: the retry's move normally;
-      // an emptied-family retry completes at the RE-VALIDATED server
-      // path (which may differ from the stale serverPath).
-      const settledMove = settledNewPath === move.newPath
-        ? move
-        : { oldPath: move.oldPath, newPath: settledNewPath }
+      // The move that actually completed at the retry's certified
+      // target (the emptied-family case is self-contained in
+      // recoverEmptiedFamily and never reaches here).
+      const settledMove = move
       // The store state changed — lift the quarantine FIRST so a
       // superseding edit (its owner check fails below) persists
       // normally on the new path instead of re-running the move.
       // completeFamilyMove switches the mode, the snapshot path, the
       // persistedDraft path and the conflict pin to the settled path
       // as ONE atomic transition.
-      completeFamilyMove(entry, settledNewPath)
+      completeFamilyMove(entry, move.newPath)
       if (movedStatus === 'missing') {
         // Conflict-only family: no primary record exists to certify a
         // persisted draft against.

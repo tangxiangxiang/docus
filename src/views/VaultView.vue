@@ -10,6 +10,7 @@ import { useI18n } from '../composables/useI18n'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { createDraftStore } from '../composables/vault/draft-recovery/draftStore'
 import { createUnsavedDraftPersistence } from '../composables/vault/draft-recovery/useUnsavedDraftPersistence'
+import { createServerDocumentPathResolver } from '../composables/vault/draft-recovery/serverDocumentResolver'
 import {
   createUnsavedDraftRecovery,
   hasUnsafeOpenDraftDocument,
@@ -207,6 +208,11 @@ async function refreshRecoveryAfterFamilySettle(settlement: {
 }
 const draftPersistence = createUnsavedDraftPersistence({
   store: draftStore,
+  // Authoritative by-stable-identity server lookup for an emptied
+  // draft family: the retry must re-validate the document's CURRENT
+  // path against the server (never a cached tree / Tab / posts path)
+  // before minting a primary, and authenticate the mint afterwards.
+  resolveCurrentDocumentPath: createServerDocumentPathResolver(),
   onDraftFamilyMoveSettled: (settlement) => {
     if (settlement.status === 'moved-write-failed') {
       // The family is whole at the new path but the latest edit's

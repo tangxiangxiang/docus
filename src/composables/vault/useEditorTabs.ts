@@ -28,6 +28,7 @@ import {
   createUnsavedDraftPersistence,
   type UnsavedDraftPersistence,
 } from './draft-recovery/useUnsavedDraftPersistence'
+import { createServerDocumentPathResolver } from './draft-recovery/serverDocumentResolver'
 export { __setVaultIdForTesting } from './editor-tabs/useTabPersistence'
 
 export function useEditorTabs(opts: {
@@ -90,6 +91,12 @@ export function useEditorTabs(opts: {
 
   const draftPersistence = opts.draftPersistence ?? createUnsavedDraftPersistence({
     store: opts.draftStore ?? createDraftStore(),
+    // Defense in depth: if a caller ever omits the production
+    // persistence (VaultView always supplies it), the fallback must
+    // still carry the authoritative by-stable-identity server
+    // resolver — an emptied-family retry without it fails closed
+    // forever instead of recovering.
+    resolveCurrentDocumentPath: createServerDocumentPathResolver(),
   })
 
   const {
