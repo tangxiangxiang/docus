@@ -32,6 +32,7 @@ export interface BulkRecoveryDeleteReport {
 }
 
 export interface DraftCleanupReport {
+  status: 'completed' | 'before-scan-failed' | 'after-scan-failed'
   before: DraftCapacitySnapshot
   after: DraftCapacitySnapshot
   deleted: RecoveryRecordRef[]
@@ -222,9 +223,22 @@ export function createDraftRecoveryManagement(
 
   async function runCleanup(targetVaultId: string): Promise<DraftCleanupReport> {
     const beforeOutcome = await options.store.inspectVaultRecovery(targetVaultId)
-    const beforeInventory = beforeOutcome.status === 'ok'
-      ? beforeOutcome.inventory
-      : { primary: [], conflicts: [], unsupportedPrimaryCount: 0, unsupportedConflictCount: 0 }
+    if (beforeOutcome.status === 'failed') {
+      const report: DraftCleanupReport = {
+        status: 'before-scan-failed',
+        before: targetVaultId === vaultId ? capacity.value : capacitySnapshot([]),
+        after: targetVaultId === vaultId ? capacity.value : capacitySnapshot([]),
+        deleted: [], stale: [], skippedProtected: [], failed: [],
+        unsupportedCount: targetVaultId === vaultId ? unsupportedCount.value : 0,
+        stillOverCapacity: true,
+      }
+      if (!disposed && targetVaultId === vaultId) {
+        error.value = 'cleanup-before-scan-failed'
+        cleanupReport.value = report
+      }
+      return report
+    }
+    const beforeInventory = beforeOutcome.inventory
     const beforeRecords = inventoryRecords(beforeInventory)
     const openIds = new Set(options.openRecoveryIds?.value ?? [])
     const identityProtection = options.getPersistenceProtection(targetVaultId).identityIds
@@ -239,11 +253,10 @@ export function createDraftRecoveryManagement(
     for (const record of plan.candidates) addResult(bulk, await conditionalDelete(record))
     const removedIds = [...bulk.deleted, ...bulk.missing].map(recoveryRecordId)
     const afterOutcome = await options.store.inspectVaultRecovery(targetVaultId)
-    const afterInventory = afterOutcome.status === 'ok'
-      ? afterOutcome.inventory
-      : beforeInventory
+    const afterInventory = afterOutcome.status === 'ok' ? afterOutcome.inventory : beforeInventory
     const afterRecords = inventoryRecords(afterInventory)
     const report: DraftCleanupReport = {
+      status: afterOutcome.status === 'ok' ? 'completed' : 'after-scan-failed',
       before: plan.before,
       after: capacitySnapshot(afterRecords),
       deleted: bulk.deleted,
@@ -252,10 +265,13 @@ export function createDraftRecoveryManagement(
       unsupportedCount: afterInventory.unsupportedPrimaryCount
         + afterInventory.unsupportedConflictCount,
       failed: bulk.failed,
-      stillOverCapacity: capacitySnapshot(afterRecords).overCapacity,
+      stillOverCapacity: afterOutcome.status === 'ok'
+        ? capacitySnapshot(afterRecords).overCapacity
+        : true,
     }
     if (!disposed && targetVaultId === vaultId) {
       if (afterOutcome.status === 'ok') applyInventory(afterInventory)
+      else error.value = 'cleanup-after-scan-failed'
       cleanupReport.value = report
       if (removedIds.length > 0) {
         await options.recovery.discover(targetVaultId)

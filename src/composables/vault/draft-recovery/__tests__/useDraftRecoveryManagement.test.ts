@@ -1,10 +1,11 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import { createDraftStore, createMemoryDraftBackend } from '../draftStore'
 import type { UnsavedDraft } from '../draftTypes'
 import { createUnsavedDraftRecovery } from '../useUnsavedDraftRecovery'
 import { createDraftRecoveryManagement } from '../useDraftRecoveryManagement'
 import { recoveryRecordId } from '../draftCleanup'
+import { createDraftRecoveryOperationProtection } from '../useDraftRecoveryOperationProtection'
 
 function draft(id: string, updatedAt = 1): UnsavedDraft {
   return {
@@ -65,6 +66,40 @@ describe('draft recovery management', () => {
     h.openIds.value = [recoveryRecordId(record)]
     expect((await h.management.deleteRecord(record)).status).toBe('protected')
     expect(await h.store.getDraft('vault', 'a')).not.toBeNull()
+  })
+
+  it('keeps cleanup blocked between two concurrent operations for one recovery ID', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    await store.saveDraft(draft('a'))
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: async () => { throw Object.assign(new Error('missing'), { status: 404 }) },
+    })
+    const operations = createDraftRecoveryOperationProtection()
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      openRecoveryIds: computed(() => [...operations.protectedIds.value]),
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+      now: () => 31 * 24 * 60 * 60 * 1000,
+    })
+    await recovery.discover('vault')
+    await management.refresh('vault')
+    const id = recoveryRecordId(management.records.value[0]!)
+    const first = deferred<void>()
+    const second = deferred<void>()
+    const a = operations.run([id], () => first.promise)
+    const b = operations.run([id], () => second.promise)
+    first.resolve()
+    await a
+
+    const protectedCleanup = await management.cleanupNow()
+    expect(protectedCleanup.skippedProtected).toHaveLength(1)
+    expect(await store.getDraft('vault', 'a')).not.toBeNull()
+
+    second.resolve()
+    await b
+    expect((await management.cleanupNow()).deleted).toHaveLength(1)
   })
 
   it('coalesces cleanup and re-reads real store state', async () => {
@@ -147,6 +182,65 @@ describe('draft recovery management', () => {
     await h.management.refresh('vault')
     expect(h.management.records.value.map((record) => record.record.documentId))
       .toEqual(['new', 'old'])
+  })
+
+  it('fails closed when the cleanup before-scan cannot read inventory', async () => {
+    const baseStore = createDraftStore({ backend: createMemoryDraftBackend() })
+    await baseStore.saveDraft(draft('a'))
+    const recovery = createUnsavedDraftRecovery({ store: baseStore })
+    let failInspection = false
+    const management = createDraftRecoveryManagement({
+      store: {
+        ...baseStore,
+        inspectVaultRecovery: async (vaultId: string) => failInspection
+          ? { status: 'failed' as const }
+          : baseStore.inspectVaultRecovery(vaultId),
+      },
+      recovery,
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+    })
+    await management.refresh('vault')
+    failInspection = true
+
+    const report = await management.cleanupNow()
+
+    expect(report.status).toBe('before-scan-failed')
+    expect(report.deleted).toEqual([])
+    expect(report.stillOverCapacity).toBe(true)
+    expect(await baseStore.getDraft('vault', 'a')).not.toBeNull()
+  })
+
+  it('reports an unverified after-scan without hiding completed deletes', async () => {
+    const baseStore = createDraftStore({ backend: createMemoryDraftBackend() })
+    await baseStore.saveDraft(draft('a'))
+    const recovery = createUnsavedDraftRecovery({
+      store: baseStore,
+      loadPost: async () => { throw Object.assign(new Error('missing'), { status: 404 }) },
+    })
+    let inspections = 0
+    const management = createDraftRecoveryManagement({
+      store: {
+        ...baseStore,
+        inspectVaultRecovery: async (vaultId: string) => {
+          inspections += 1
+          return inspections === 3
+            ? { status: 'failed' as const }
+            : baseStore.inspectVaultRecovery(vaultId)
+        },
+      },
+      recovery,
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+      now: () => 31 * 24 * 60 * 60 * 1000,
+    })
+    await recovery.discover('vault')
+    await management.refresh('vault')
+
+    const report = await management.cleanupNow()
+
+    expect(report.status).toBe('after-scan-failed')
+    expect(report.deleted).toHaveLength(1)
+    expect(report.stillOverCapacity).toBe(true)
+    expect(await baseStore.getDraft('vault', 'a')).toBeNull()
   })
 
   it('ignores stale refresh results after dispose', async () => {

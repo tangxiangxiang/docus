@@ -2886,6 +2886,9 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     expect(rawRows.some((row) => (
       (row as { conflictId?: string }).conflictId === 'bad-row'
     ))).toBe(true)
+    persistence.invalidate('vault', 'doc-a')
+    expect(persistence.getDraftCleanupProtection('vault').identityIds)
+      .not.toContain(JSON.stringify(['vault', 'doc-a']))
     await persistence.dispose()
   })
 
@@ -3195,6 +3198,9 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     expect(await persistence.flush('vault', 'doc-a')).toBe(false)
     expect(await store.getDraft('vault', 'doc-a')).toBeNull()
     expect(await store.listConflictDrafts('vault')).toHaveLength(1)
+    persistence.invalidate('vault', 'doc-a')
+    expect(persistence.getDraftCleanupProtection('vault').identityIds)
+      .not.toContain(JSON.stringify(['vault', 'doc-a']))
     await persistence.dispose()
   })
 

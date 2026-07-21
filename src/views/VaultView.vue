@@ -17,6 +17,7 @@ import {
 } from '../composables/vault/draft-recovery/useUnsavedDraftRecovery'
 import { useDraftRecoveryTabs } from '../composables/vault/draft-recovery/useDraftRecoveryTabs'
 import { createDraftRecoveryManagement } from '../composables/vault/draft-recovery/useDraftRecoveryManagement'
+import { createDraftRecoveryOperationProtection } from '../composables/vault/draft-recovery/useDraftRecoveryOperationProtection'
 import { recoveryRecordId } from '../composables/vault/draft-recovery/draftCleanup'
 import { deriveDocumentSavePresentation } from '../composables/vault/editor-tabs/savePresentation'
 import { useHistory } from '../composables/vault/useHistory'
@@ -472,14 +473,14 @@ const draftRecovery = createUnsavedDraftRecovery({ store: draftStore })
 const recoveryTabs = useDraftRecoveryTabs()
 const activeDraftRecovery = recoveryTabs.activeTab
 const recoveryBusy = ref(false)
-const managedRecoveryOperations = ref(new Set<string>())
+const recoveryOperationProtection = createDraftRecoveryOperationProtection()
 const recoveryManagement = createDraftRecoveryManagement({
   store: draftStore,
   recovery: draftRecovery,
   getPersistenceProtection: (id) => draftPersistence.getDraftCleanupProtection(id),
   openRecoveryIds: computed(() => {
     const ids = new Set(recoveryTabs.tabs.value.map((tab) => tab.recoveryId))
-    for (const id of managedRecoveryOperations.value) ids.add(id)
+    for (const id of recoveryOperationProtection.protectedIds.value) ids.add(id)
     if (recoveryBusy.value) {
       const active = draftRecovery.activeRecoveryId.value
         ?? draftRecovery.pendingItem.value?.recoveryId
@@ -497,6 +498,10 @@ const recoveryManagement = createDraftRecoveryManagement({
 requestDraftCleanup = (persistedVaultId) => {
   if (persistedVaultId !== vaultId.value) return
   void recoveryManagement.cleanupNow().then((report) => {
+    if (report.status !== 'completed') {
+      toast.info(t('draft_recovery.center.cleanup_failed'), 5000)
+      return
+    }
     if (report.deleted.length > 0) {
       toast.info(t('draft_recovery.center.cleaned', { count: report.deleted.length }), 4000)
     }
@@ -526,33 +531,35 @@ async function discardRecoveryDraft(recoveryId: string): Promise<void> {
   if (recoveryBusy.value) return
   recoveryBusy.value = true
   try {
-    await draftRecovery.retry(recoveryId)
-    const item = recoveryItem(recoveryId)
-    if (!item || item.status !== 'ready') return
-    if (hasUnsafeOpenDraftDocument(tabs.value, item.draft.documentId)) {
-      toast.error(t('draft_recovery.delete_failed'))
-      return
-    }
-    const deleted = item.source === 'conflict' && item.conflict
-      ? await draftPersistence.discardConflict(
-          item.conflict.vaultId,
-          item.conflict.documentId,
-          item.conflict.conflictId,
-        )
-      : await draftPersistence.discardIdentityIfUnchanged(item.draft)
-    if (!deleted) {
-      toast.error(t('draft_recovery.delete_failed'))
-      return
-    }
-    const openTabIds = recoveryTabs.tabs.value
-      .filter((tab) => tab.recoveryId === recoveryId)
-      .map((tab) => tab.tabId)
-    if (item.source === 'conflict') {
-      await draftRecovery.refreshIdentity(item.draft.vaultId, item.draft.documentId)
-    } else {
-      draftRecovery.dismissForSession(recoveryId)
-    }
-    for (const tabId of openTabIds) await closeWorkspaceTab(tabId)
+    await withManagedRecoveryOperation(recoveryId, async () => {
+      await draftRecovery.retry(recoveryId)
+      const item = recoveryItem(recoveryId)
+      if (!item || item.status !== 'ready') return
+      if (hasUnsafeOpenDraftDocument(tabs.value, item.draft.documentId)) {
+        toast.error(t('draft_recovery.delete_failed'))
+        return
+      }
+      const deleted = item.source === 'conflict' && item.conflict
+        ? await draftPersistence.discardConflict(
+            item.conflict.vaultId,
+            item.conflict.documentId,
+            item.conflict.conflictId,
+          )
+        : await draftPersistence.discardIdentityIfUnchanged(item.draft)
+      if (!deleted) {
+        toast.error(t('draft_recovery.delete_failed'))
+        return
+      }
+      const openTabIds = recoveryTabs.tabs.value
+        .filter((tab) => tab.recoveryId === recoveryId)
+        .map((tab) => tab.tabId)
+      if (item.source === 'conflict') {
+        await draftRecovery.refreshIdentity(item.draft.vaultId, item.draft.documentId)
+      } else {
+        draftRecovery.dismissForSession(recoveryId)
+      }
+      for (const tabId of openTabIds) await closeWorkspaceTab(tabId)
+    })
   } finally {
     recoveryBusy.value = false
   }
@@ -562,6 +569,7 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
   if (recoveryBusy.value) return
   recoveryBusy.value = true
   try {
+    await withManagedRecoveryOperation(recoveryId, async () => {
     await draftRecovery.retry(recoveryId)
     const item = recoveryItem(recoveryId)
     const decision = item?.decision
@@ -625,6 +633,7 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
       recoveryTabs.open(latest, 'content')
       draftRecovery.dismissForSession(recoveryId)
     }
+    })
   } finally {
     recoveryBusy.value = false
   }
@@ -652,9 +661,13 @@ onBeforeUnmount(() => {
 })
 
 async function refreshRecoveryCenter(): Promise<void> {
-  if (!vaultId.value) return
-  await draftRecovery.discover(vaultId.value)
-  await recoveryManagement.refresh(vaultId.value)
+  const currentVaultId = vaultId.value
+  if (!currentVaultId) return
+  const ids = recoveryManagement.records.value.map(recoveryRecordId)
+  await withManagedRecoveryOperations(ids, async () => {
+    await draftRecovery.discover(currentVaultId)
+    await recoveryManagement.refresh(currentVaultId)
+  })
 }
 
 async function retryManagedRecovery(recoveryId: string): Promise<void> {
@@ -665,21 +678,22 @@ async function withManagedRecoveryOperation<T>(
   recoveryId: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const alreadyProtected = managedRecoveryOperations.value.has(recoveryId)
-  managedRecoveryOperations.value = new Set(managedRecoveryOperations.value).add(recoveryId)
-  try {
-    return await operation()
-  } finally {
-    if (!alreadyProtected) {
-      const next = new Set(managedRecoveryOperations.value)
-      next.delete(recoveryId)
-      managedRecoveryOperations.value = next
-    }
-  }
+  return withManagedRecoveryOperations([recoveryId], operation)
+}
+
+async function withManagedRecoveryOperations<T>(
+  recoveryIds: readonly string[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  return recoveryOperationProtection.run(recoveryIds, operation)
 }
 
 async function cleanupRecoveryCenter(): Promise<void> {
   const report = await recoveryManagement.cleanupNow()
+  if (report.status !== 'completed') {
+    toast.info(t('draft_recovery.center.cleanup_failed'), 5000)
+    return
+  }
   if (report.deleted.length > 0) {
     toast.info(t('draft_recovery.center.cleaned', { count: report.deleted.length }))
   }

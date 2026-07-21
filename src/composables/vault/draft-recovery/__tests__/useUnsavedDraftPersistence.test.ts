@@ -382,6 +382,32 @@ describe('createUnsavedDraftPersistence', () => {
     expect((await store.getDraft('vault-1', 'a'))?.content).toBe('new')
   })
 
+  it('releases conflict-channel protection after the owner is invalidated', async () => {
+    await store.saveDraft({
+      version: 1,
+      vaultId: 'vault-1',
+      documentId: 'a',
+      documentPath: 'notes/a',
+      content: 'other context',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 100,
+      updatedAt: 100,
+    })
+    const persistence = createUnsavedDraftPersistence({ store, now: () => 10 })
+    persistence.schedule(snapshot('a', 'local candidate', 1))
+    await persistence.flush('vault-1', 'a')
+    expect(await store.listConflictDrafts('vault-1')).toHaveLength(1)
+    expect(persistence.getDraftCleanupProtection('vault-1').identityIds)
+      .toContain(JSON.stringify(['vault-1', 'a']))
+
+    persistence.invalidate('vault-1', 'a')
+
+    expect(persistence.getDraftCleanupProtection('vault-1').identityIds)
+      .not.toContain(JSON.stringify(['vault-1', 'a']))
+    expect(await store.listConflictDrafts('vault-1')).toHaveLength(1)
+  })
+
   it('does not let a stale asynchronous baseline hash write for a new owner', async () => {
     const firstHash = deferred<ArrayBuffer>()
     const digest = vi.fn()

@@ -499,8 +499,8 @@ server save protocol, Recovery viewer, and recovery decisions unchanged.
 
 Final Edit-09.6 verification (2026-07-21):
 
-- draft-recovery plus Recovery Center/layout focused suites: 13 files / 305 tests passed;
-- complete Vitest suite: 126 files / 1,595 tests passed;
+- draft-recovery plus Recovery Center/layout focused suites: 14 files / 310 tests passed;
+- complete Vitest suite: 127 files / 1,600 tests passed;
 - draft-store/file-transaction Playwright suite: 31 tests passed;
 - application Playwright suite: 9 tests passed;
 - typecheck, production build, icon lint, and `git diff --check` passed.

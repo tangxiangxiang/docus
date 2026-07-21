@@ -103,6 +103,7 @@ export type DraftPersistenceIssue = {
 interface DraftEntry {
   vaultId: string
   documentId: string
+  releaseWhenInactive: boolean
   generation: number
   timer: ReturnType<typeof setTimeout> | null
   latestSnapshot: DraftBufferSnapshot | null
@@ -484,6 +485,7 @@ export function createUnsavedDraftPersistence(
       entry = {
         vaultId,
         documentId,
+        releaseWhenInactive: false,
         generation: 0,
         timer: null,
         latestSnapshot: null,
@@ -500,6 +502,24 @@ export function createUnsavedDraftPersistence(
       entries.set(identity, entry)
     }
     return entry
+  }
+
+  function releaseInactiveEntry(entry: DraftEntry): void {
+    if (!entry.releaseWhenInactive
+      || entry.latestSnapshot !== null
+      || entry.latestSnapshotNeedsWrite
+      || entry.timer !== null
+      || entry.pendingWrite !== null
+      || entry.fileTransaction !== null
+      || entry.emptyFamilyRecovery !== null
+      || entry.settleRetryAttempt !== null) return
+    enterPrimaryMode(entry)
+    entries.delete(key(entry.vaultId, entry.documentId))
+  }
+
+  function requestInactiveEntryRelease(entry: DraftEntry): void {
+    entry.releaseWhenInactive = true
+    releaseInactiveEntry(entry)
   }
 
   function clearTimer(entry: DraftEntry): void {
@@ -846,7 +866,10 @@ export function createUnsavedDraftPersistence(
     })()
     entry.pendingWrite = task
     void task.finally(() => {
-      if (entry.pendingWrite === task) entry.pendingWrite = null
+      if (entry.pendingWrite === task) {
+        entry.pendingWrite = null
+        releaseInactiveEntry(entry)
+      }
     })
     return task
   }
@@ -2499,7 +2522,11 @@ export function createUnsavedDraftPersistence(
     // A clean/discarded buffer must still relinquish its in-memory snapshot
     // when no record was persisted. It simply has no cross-context authority
     // to delete anything from the store.
-    if (!expected) return false
+    if (!expected) {
+      requestInactiveEntryRelease(entry)
+      return false
+    }
+    entry.releaseWhenInactive = true
     const task = (async () => {
       if (entry.generation !== deleteGeneration || entry.latestSnapshot !== null) {
         return false
@@ -2524,7 +2551,10 @@ export function createUnsavedDraftPersistence(
     })()
     entry.pendingWrite = task
     void task.finally(() => {
-      if (entry.pendingWrite === task) entry.pendingWrite = null
+      if (entry.pendingWrite === task) {
+        entry.pendingWrite = null
+        releaseInactiveEntry(entry)
+      }
     })
     return task
   }
@@ -2555,6 +2585,7 @@ export function createUnsavedDraftPersistence(
     entry.generation += 1
     entry.latestSnapshot = null
     entry.latestSnapshotNeedsWrite = false
+    requestInactiveEntryRelease(entry)
   }
 
   function invalidateOwner(owner: DraftOwner): void {
@@ -2564,6 +2595,7 @@ export function createUnsavedDraftPersistence(
     entry.generation += 1
     entry.latestSnapshot = null
     entry.latestSnapshotNeedsWrite = false
+    requestInactiveEntryRelease(entry)
   }
 
   async function discard(owner: DraftOwner): Promise<boolean> {
@@ -2745,6 +2777,7 @@ export function createUnsavedDraftPersistence(
       if (!writeLatest
         || !entry.latestSnapshot
         || (!entry.latestSnapshotNeedsWrite && entry.emptyFamilyRecovery === null)) {
+        releaseInactiveEntry(entry)
         return { status: 'released' }
       }
       // The single router picks the channel at fire time: a
