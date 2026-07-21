@@ -22,23 +22,22 @@
 // the result text. read_file / list_files cards are collapsed by
 // default to keep the panel compact; the user can expand them.
 //
-// Live context (Edit-10.2): onSend captures the active workspace tab
-// synchronously BEFORE any async work, so tab switches, renames or
-// continued typing after the click can never splice this turn's
-// identity and content. The route is no longer the AI authority —
-// useAiLiveContext reads the workspace. This stage still talks to the
-// path-only server: only a live Document context claims a legacy path
-// (legacyTransportPathForCapture); History/Diff/Recovery fail closed
-// with no path. Full snapshot transport is Edit-10.3.
+// Live context (Edit-10.2 capture, Edit-10.3 transport): onSend
+// captures the active workspace tab synchronously BEFORE any async
+// work, so tab switches, renames or continued typing after the click
+// can never splice this turn's identity and content. The route is
+// not the AI authority — useAiLiveContext reads the workspace. Every
+// ready kind (Document/History/Diff/Recovery) ships the FULL
+// send-time snapshot as the request's liveContext field; none /
+// unavailable fail closed with no liveContext at all (no route, no
+// getPost, no path fallback). The server validates the snapshot
+// strictly and uses it for this run's system prompt only.
 import { onMounted, ref, computed, nextTick } from 'vue'
 import { ICON_HISTORY, ICON_NEW_CHAT } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useAiLiveContext } from '../../composables/vault/useAiLiveContext'
 import { useI18n } from '../../composables/useI18n'
-import {
-  displayPathForCapture,
-  legacyTransportPathForCapture,
-} from './aiContextPaths'
+import { displayPathForCapture } from './aiContextPaths'
 import AiSessionPicker from './AiSessionPicker.vue'
 import AiChatMessages from './AiChatMessages.vue'
 import AiComposer from './AiComposer.vue'
@@ -70,9 +69,11 @@ async function onSend() {
 
   draft.value = '' // clear immediately for snappy UX
 
-  await history.sendAndStream(text, {
-    path: legacyTransportPathForCapture(capture),
-  })
+  // Edit-10.3: ready → the FULL snapshot travels as liveContext;
+  // none / unavailable → no liveContext at all (fail closed).
+  const snapshot = capture.status === 'ready' ? capture.context : undefined
+
+  await history.sendAndStream(text, { liveContext: snapshot })
 }
 
 function togglePicker() {

@@ -500,4 +500,106 @@ describe('POST /api/ai/chat', () => {
     expect(last.event).toBe('error')
     expect(JSON.parse(last.data)).toEqual({ reason: 'not-found' })
   })
+
+  // ── Edit-10.3: the route normalizes the raw request into the ONE
+  // ChatContext authority (live > legacy-path > none) BEFORE any SSE
+  // starts, and never falls back to the legacy path when a live
+  // context is present but invalid.
+  describe('ChatContext normalization', () => {
+    function liveDocument(overrides: Record<string, unknown> = {}) {
+      return {
+        v: 1,
+        kind: 'document',
+        capturedAt: 1_750_000_000_000,
+        vaultId: 'vault-a',
+        workspaceTabId: 'notes/a',
+        identity: { documentId: 'doc-a', path: 'notes/a' },
+        title: 'A',
+        raw: 'ROUTE_LIVE_BODY',
+        revision: 3,
+        savedRevision: 2,
+        dirty: true,
+        saveStatus: 'dirty',
+        ...overrides,
+      }
+    }
+
+    beforeEach(() => {
+      vi.mocked(chatModule.runChat).mockClear()
+    })
+
+    it('normalizes a valid liveContext into { kind: live } for runChat', async () => {
+      const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+      const liveContext = liveDocument()
+      const r = await call('POST', '/chat', { sessionId: created.id, content: 'hi', liveContext })
+      expect(r.status).toBe(200)
+      const opts = vi.mocked(chatModule.runChat).mock.calls[0][0]
+      expect(opts.ctx).toEqual({ kind: 'live', liveContext })
+    })
+
+    it('keeps legacy currentNotePath as { kind: legacy-path } for old clients', async () => {
+      const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+      await call('POST', '/chat', { sessionId: created.id, content: 'hi', currentNotePath: 'archive/old.md' })
+      const opts = vi.mocked(chatModule.runChat).mock.calls[0][0]
+      expect(opts.ctx).toEqual({ kind: 'legacy-path', currentNotePath: 'archive/old.md' })
+    })
+
+    it('lets liveContext win when both fields are present (legacy fully ignored)', async () => {
+      const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+      const liveContext = liveDocument()
+      await call('POST', '/chat', {
+        sessionId: created.id,
+        content: 'hi',
+        liveContext,
+        currentNotePath: 'archive/ignored.md',
+      })
+      const opts = vi.mocked(chatModule.runChat).mock.calls[0][0]
+      expect(opts.ctx).toEqual({ kind: 'live', liveContext })
+      expect(JSON.stringify(opts.ctx)).not.toContain('archive/ignored.md')
+    })
+
+    it('returns 400 invalid-live-context for a malformed liveContext and NEVER falls back to the legacy path', async () => {
+      const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+      const r = await call('POST', '/chat', {
+        sessionId: created.id,
+        content: 'hi',
+        liveContext: liveDocument({ v: 2 }),
+        currentNotePath: 'archive/valid-legacy.md',
+      })
+      expect(r.status).toBe(400)
+      expect(await r.json()).toEqual({ ok: false, reason: 'invalid-live-context' })
+      expect(chatModule.runChat).not.toHaveBeenCalled()
+    })
+
+    it('returns 413 context-too-large for an oversized liveContext without calling runChat', async () => {
+      const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+      const r = await call('POST', '/chat', {
+        sessionId: created.id,
+        content: 'hi',
+        liveContext: liveDocument({ raw: 'x'.repeat(512 * 1024 + 1) }),
+      })
+      expect(r.status).toBe(413)
+      expect(await r.json()).toEqual({ ok: false, reason: 'context-too-large' })
+      expect(chatModule.runChat).not.toHaveBeenCalled()
+    })
+
+    it('normalizes the absence of both fields to { kind: none }', async () => {
+      const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+      await call('POST', '/chat', { sessionId: created.id, content: 'hi' })
+      const opts = vi.mocked(chatModule.runChat).mock.calls[0][0]
+      expect(opts.ctx).toEqual({ kind: 'none' })
+    })
+
+    it('never echoes the live context back over SSE', async () => {
+      const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+      const r = await call('POST', '/chat', {
+        sessionId: created.id,
+        content: 'hi',
+        liveContext: liveDocument({ raw: 'SSE_MUST_NOT_CARRY_THIS_BODY' }),
+      })
+      const text = await r.text()
+      expect(text).not.toContain('SSE_MUST_NOT_CARRY_THIS_BODY')
+      expect(text).not.toContain('liveContext')
+    })
+  })
 })

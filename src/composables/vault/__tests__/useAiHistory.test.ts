@@ -320,3 +320,134 @@ describe('sendAndStream', () => {
     expect(h.busy.value).toBe(false)
   })
 })
+
+// Edit-10.3: sendAndStream forwards the caller's send-time snapshot
+// (options.liveContext) to streamChat untouched — it never re-reads
+// workspace state, never adds a legacy path, and never persists the
+// snapshot into message state.
+describe('sendAndStream liveContext transport (Edit-10.3)', () => {
+  function documentSnapshot(raw = 'SNAPSHOT_BODY') {
+    return {
+      v: 1 as const,
+      kind: 'document' as const,
+      capturedAt: 1,
+      vaultId: 'vault-a',
+      workspaceTabId: 'notes/a',
+      identity: { documentId: 'doc-a', path: 'notes/a' },
+      title: 'A',
+      raw,
+      revision: 2,
+      savedRevision: 1,
+      dirty: true,
+      saveStatus: 'dirty' as const,
+    }
+  }
+
+  async function resetHappyStream() {
+    const { streamChat } = await import('../../../lib/ai-api')
+    vi.mocked(streamChat).mockReset()
+    vi.mocked(streamChat).mockImplementation(async function* () {
+      yield { type: 'user', id: 7 }
+      yield { type: 'done', userId: 7, assistantId: 8 }
+    })
+    return vi.mocked(streamChat)
+  }
+
+  it('forwards options.liveContext to streamChat verbatim, with no currentNotePath', async () => {
+    const streamChatMock = await resetHappyStream()
+    queue.push({ status: 200, body: { activeId: 1, configured: true } })
+    queue.push({ status: 200, body: [] })
+    queue.push({ status: 200, body: [] }) // refreshSessions
+
+    const h = setup()
+    await h.api.loadActive()
+    const liveContext = documentSnapshot()
+    await h.api.sendAndStream('hi', { liveContext })
+
+    const req = streamChatMock.mock.calls[0][0] as unknown as Record<string, unknown>
+    expect(req).toEqual({ sessionId: 1, content: 'hi', liveContext })
+    expect(req.liveContext).toBe(liveContext) // same object, not a re-read
+    expect('currentNotePath' in req).toBe(false)
+  })
+
+  it('omits the liveContext key entirely when the option is not provided', async () => {
+    const streamChatMock = await resetHappyStream()
+    queue.push({ status: 200, body: { activeId: 1, configured: true } })
+    queue.push({ status: 200, body: [] })
+    queue.push({ status: 200, body: [] })
+
+    const h = setup()
+    await h.api.loadActive()
+    await h.api.sendAndStream('hi')
+
+    const req = streamChatMock.mock.calls[0][0] as unknown as Record<string, unknown>
+    expect(req).toEqual({ sessionId: 1, content: 'hi' })
+    expect('liveContext' in req).toBe(false)
+    expect('currentNotePath' in req).toBe(false)
+  })
+
+  it('keeps the send-time snapshot when the session must be created asynchronously first', async () => {
+    const streamChatMock = await resetHappyStream()
+    // No active session: sendAndStream awaits createSession() +
+    // setActiveSessionId BEFORE streaming. The snapshot handed in at
+    // call time must be exactly what reaches the wire afterwards.
+    queue.push({ status: 200, body: { activeId: null, configured: true } }) // loadActive
+    queue.push({ status: 201, body: { id: 5, title: '', createdAt: 1, updatedAt: 1 } }) // createSession
+    queue.push({ status: 200, body: { sessionId: 5 } }) // setActiveSessionId
+    queue.push({ status: 200, body: [] }) // refreshSessions
+
+    const h = setup()
+    await h.api.loadActive()
+    const liveContext = documentSnapshot('CAPTURED_BEFORE_SESSION_CREATE')
+    await h.api.sendAndStream('hi', { liveContext })
+
+    const req = streamChatMock.mock.calls[0][0] as unknown as Record<string, unknown>
+    expect(req.sessionId).toBe(5)
+    expect(req.liveContext).toBe(liveContext)
+    expect((req.liveContext as { raw: string }).raw).toBe('CAPTURED_BEFORE_SESSION_CREATE')
+  })
+
+  it('does not add the live context to message state or user content', async () => {
+    await resetHappyStream()
+    queue.push({ status: 200, body: { activeId: 1, configured: true } })
+    queue.push({ status: 200, body: [] })
+    queue.push({ status: 200, body: [] })
+
+    const h = setup()
+    await h.api.loadActive()
+    await h.api.sendAndStream('plain text', {
+      liveContext: documentSnapshot('MSG_STATE_SENTINEL_XYZ'),
+    })
+
+    expect(h.messages.value[0]).toMatchObject({ role: 'user', content: 'plain text' })
+    expect(JSON.stringify(h.messages.value)).not.toContain('MSG_STATE_SENTINEL_XYZ')
+  })
+
+  it('abort/stop behavior is unchanged with a liveContext in flight', async () => {
+    const { streamChat } = await import('../../../lib/ai-api')
+    vi.mocked(streamChat).mockReset()
+    vi.mocked(streamChat).mockImplementation(async function* (_req, signal) {
+      yield { type: 'user', id: 7 }
+      await new Promise<void>((_resolve, reject) => {
+        // Mirror production: fetch raises AbortError whether the
+        // signal is already aborted or aborts mid-flight.
+        if (signal?.aborted) {
+          reject(new DOMException('aborted', 'AbortError'))
+          return
+        }
+        signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+      })
+    })
+    queue.push({ status: 200, body: { activeId: 1, configured: true } })
+    queue.push({ status: 200, body: [] })
+
+    const h = setup()
+    await h.api.loadActive()
+    const p = h.api.sendAndStream('hi', { liveContext: documentSnapshot() })
+    await Promise.resolve()
+    h.api.stop()
+    await p
+    expect(h.busy.value).toBe(false)
+    expect(h.messages.value[1].content).toContain('[aborted]')
+  })
+})

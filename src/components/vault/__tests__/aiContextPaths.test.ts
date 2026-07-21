@@ -7,10 +7,10 @@ import type {
   AiLiveContextUnavailableReason,
   AiRecoveryContext,
 } from '../../../composables/vault/aiLiveContext'
-import {
-  displayPathForCapture,
-  legacyTransportPathForCapture,
-} from '../aiContextPaths'
+// Edit-10.3: the legacy path-only transport helper is gone — the
+// panel now ships the full send-time snapshot. Only the UI display
+// path helper remains.
+import { displayPathForCapture } from '../aiContextPaths'
 
 function documentCapture(path = 'notes/a.md'): AiLiveContextCapture {
   const context: AiDocumentContext = {
@@ -81,34 +81,6 @@ function recoveryCapture(path = 'notes/a.md'): AiLiveContextCapture {
 function unavailable(reason: AiLiveContextUnavailableReason): AiLiveContextCapture {
   return { status: 'unavailable', reason }
 }
-
-describe('legacyTransportPathForCapture (Edit-10.2)', () => {
-  it('claims the current file path only for a live Document context', () => {
-    expect(legacyTransportPathForCapture(documentCapture('notes/a.md'))).toBe('notes/a.md')
-  })
-
-  it('sends no path for a History snapshot (the path points at current disk, not the historical body)', () => {
-    expect(legacyTransportPathForCapture(historyCapture('notes/a.md'))).toBeUndefined()
-  })
-
-  it('sends no path for a Diff (before/after cannot be expressed as one current file)', () => {
-    expect(legacyTransportPathForCapture(diffCapture('notes/a.md'))).toBeUndefined()
-  })
-
-  it('sends no path for Recovery (the local draft cannot be expressed as a server path)', () => {
-    expect(legacyTransportPathForCapture(recoveryCapture('notes/a.md'))).toBeUndefined()
-  })
-
-  it('fails closed for every unavailable reason', () => {
-    for (const reason of ['loading', 'load-error', 'missing-identity', 'stale-workspace'] as const) {
-      expect(legacyTransportPathForCapture(unavailable(reason))).toBeUndefined()
-    }
-  })
-
-  it('sends no path when there is no context at all', () => {
-    expect(legacyTransportPathForCapture({ status: 'none' })).toBeUndefined()
-  })
-})
 
 describe('displayPathForCapture (Edit-10.2)', () => {
   it('shows the identity path of any ready context kind', () => {

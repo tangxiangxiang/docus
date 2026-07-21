@@ -165,4 +165,69 @@ describe('streamChat', () => {
     }
     expect(collected).toEqual([{ type: 'error', reason: 'no-api-key' }])
   })
+
+  // ── Edit-10.3: the request body carries the ONE live-context
+  // authority verbatim; the legacy currentNotePath field is gone from
+  // the new client wire contract.
+  const liveContext = {
+    v: 1 as const,
+    kind: 'document' as const,
+    capturedAt: 1,
+    vaultId: 'vault-a',
+    workspaceTabId: 'notes/a',
+    identity: { documentId: 'doc-a', path: 'notes/a' },
+    title: 'A',
+    raw: 'WIRE_BODY_SENTINEL',
+    revision: 2,
+    savedRevision: 1,
+    dirty: true,
+    saveStatus: 'dirty' as const,
+  }
+
+  async function collectRequestBody(req: Parameters<typeof streamChat>[0]): Promise<Record<string, unknown>> {
+    globalThis.fetch = vi.fn(async () =>
+      sseResponse([{ event: 'done', data: { userId: 1, assistantId: 2 } }]),
+    ) as unknown as typeof fetch
+    for await (const _ev of streamChat(req)) { /* drain */ }
+    const init = (globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0][1]
+    expect(String((globalThis.fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0][0])).toBe('/api/ai/chat')
+    return JSON.parse(init.body as string) as Record<string, unknown>
+  }
+
+  it('serializes liveContext verbatim and never sends currentNotePath', async () => {
+    const body = await collectRequestBody({ sessionId: 3, content: 'hello', liveContext })
+    expect(body).toEqual({ sessionId: 3, content: 'hello', liveContext })
+    expect('currentNotePath' in body).toBe(false)
+    // No truncation, no rewriting of the Markdown body.
+    expect((body.liveContext as { raw: string }).raw).toBe('WIRE_BODY_SENTINEL')
+  })
+
+  it('omits the liveContext key entirely when no context is given (not null)', async () => {
+    const body = await collectRequestBody({ sessionId: 1, content: 'x' })
+    expect(body).toEqual({ sessionId: 1, content: 'x' })
+    expect('liveContext' in body).toBe(false)
+    expect('currentNotePath' in body).toBe(false)
+  })
+
+  it('yields the server reason on HTTP 400 invalid-live-context', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: false, reason: 'invalid-live-context' }), { status: 400, headers: { 'content-type': 'application/json' } })
+    ) as unknown as typeof fetch
+    const collected: unknown[] = []
+    for await (const ev of streamChat({ sessionId: 1, content: 'x', liveContext })) {
+      collected.push(ev)
+    }
+    expect(collected).toEqual([{ type: 'error', reason: 'invalid-live-context' }])
+  })
+
+  it('yields the server reason on HTTP 413 context-too-large', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: false, reason: 'context-too-large' }), { status: 413, headers: { 'content-type': 'application/json' } })
+    ) as unknown as typeof fetch
+    const collected: unknown[] = []
+    for await (const ev of streamChat({ sessionId: 1, content: 'x', liveContext })) {
+      collected.push(ev)
+    }
+    expect(collected).toEqual([{ type: 'error', reason: 'context-too-large' }])
+  })
 })

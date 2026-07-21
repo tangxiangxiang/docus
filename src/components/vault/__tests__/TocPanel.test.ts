@@ -82,13 +82,17 @@ describe('unified document sidebar', () => {
     expect(wrapper.get('.toc-panel').attributes('style')).toContain('display: none')
   })
 
-  it('disables and unmounts AI editing for a read-only history snapshot', () => {
+  it('keeps the AI tab enabled and mounted for a read-only history snapshot (Edit-10.3 gate lift)', () => {
+    // Read-only views (History/Diff/Recovery) transport their own
+    // read-only live context since Edit-10.3, so the old "no AI in
+    // read-only views" gate is gone: the tab stays clickable and the
+    // panel stays mounted.
     const wrapper = mountPanel('toc', true)
     const aiTab = wrapper.findAll('[role="tab"]')[0]!
 
-    expect(aiTab.attributes('disabled')).toBeDefined()
-    expect(aiTab.attributes('aria-disabled')).toBe('true')
-    expect(wrapper.find('.stub-ai').exists()).toBe(false)
+    expect(aiTab.attributes('disabled')).toBeUndefined()
+    expect(aiTab.attributes('aria-disabled')).toBeUndefined()
+    expect(wrapper.find('.stub-ai').exists()).toBe(true)
   })
 
   it('navigates headings and forwards link navigation', async () => {

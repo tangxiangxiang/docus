@@ -18,7 +18,8 @@ import { getDb } from '../db.js'
 import { filePathFor } from '../paths.js'
 import * as sessions from './sessions.js'
 import * as messages from './messages.js'
-import { runChat, type ChatEvent } from './chat.js'
+import { runChat, type ChatContext, type ChatEvent } from './chat.js'
+import { parseAiLiveContext } from './live-context.js'
 import { generateSlug } from './slug.js'
 import { generateCommitMessage } from './commitMessage.js'
 import { ChatError } from './errors.js'
@@ -58,6 +59,20 @@ const MAX_COMMIT_DIFF_CHARS = 8_000
 
 function contentPathForHistoryPath(p: string): string {
   return p.endsWith('.md') ? p.slice(0, -3) : p
+}
+
+// Edit-10.3: old clients still send the path-only hint. Its
+// validation stays deliberately lenient (a bad hint degrades to
+// { kind: 'none' }, never to a 4xx — old clients must keep working);
+// the strict door is parseAiLiveContext for the live snapshot.
+function isValidLegacyNotePath(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 1024 &&
+    !value.includes(String.fromCharCode(0)) &&
+    !/[\r\n]/.test(value)
+  )
 }
 
 // Tool-using assistant turns persist as a JSON envelope in the
@@ -274,6 +289,7 @@ ai.post('/chat', async (c) => {
     | {
         sessionId?: unknown
         content?: unknown
+        liveContext?: unknown
         currentNotePath?: unknown
       }
     | null
@@ -288,14 +304,33 @@ ai.post('/chat', async (c) => {
   const sessionId = body.sessionId
   const userContent = body.content
 
+  // Edit-10.3: normalize the ONE ChatContext authority BEFORE the
+  // SSE stream starts, so validation failures land as plain JSON
+  // responses the client maps to stable reasons:
+  //   liveContext field present → strict parse; malformed → 400
+  //     invalid-live-context, oversized → 413 context-too-large.
+  //     A malformed snapshot NEVER falls back to the legacy path.
+  //   absent + valid currentNotePath → legacy-path (old clients).
+  //   neither → none.
+  let ctx: ChatContext
+  if (body.liveContext !== undefined) {
+    const parsed = parseAiLiveContext(body.liveContext)
+    if (!parsed.ok) {
+      const status = parsed.reason === 'context-too-large' ? 413 : 400
+      return c.json({ ok: false, reason: parsed.reason }, status)
+    }
+    ctx = { kind: 'live', liveContext: parsed.value }
+  } else if (isValidLegacyNotePath(body.currentNotePath)) {
+    ctx = { kind: 'legacy-path', currentNotePath: body.currentNotePath }
+  } else {
+    ctx = { kind: 'none' }
+  }
+
   // We don't pre-validate the session here — runChat throws
   // ChatError('not-found') and the route maps it to an SSE error
   // event so the client can show a chip rather than a generic 404.
   return streamSSE(c, async (stream) => {
     try {
-      const ctx = {
-        currentNotePath: typeof body.currentNotePath === 'string' ? body.currentNotePath : undefined,
-      }
       const writeEvent = async (e: ChatEvent) => {
         switch (e.type) {
           case 'user':

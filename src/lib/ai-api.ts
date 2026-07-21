@@ -2,6 +2,7 @@
 // (Session, Message) are the single source of truth — the server
 // imports them via `from '../../src/lib/ai-api.js'` and the
 // components import them from this file.
+import type { AiLiveContextSnapshot } from '../composables/vault/aiLiveContext'
 
 export interface Session {
   id: number
@@ -59,9 +60,15 @@ export interface AiSettings {
 export interface ChatRequest {
   sessionId: number
   content: string
-  // For the system prompt line "The user is currently reading: …".
-  // The model can call read_file if it wants to see the body.
-  currentNotePath?: string
+  // Edit-10.3: the ONE live-context authority on the new wire. When
+  // present, it is the complete send-time snapshot captured by the
+  // client at click time (src/composables/vault/aiLiveContext.ts).
+  // The server validates it strictly and injects it into THIS run's
+  // system prompt only — never persisted, never echoed over SSE.
+  // When absent, the key is omitted from the JSON body entirely
+  // (never null). Type-only import: the wire types stay free of any
+  // runtime dependency on the capture module.
+  liveContext?: AiLiveContextSnapshot
 }
 
 export type FileChangeKind = 'write' | 'delete' | 'rename'

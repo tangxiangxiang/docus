@@ -3,7 +3,7 @@
 **Date:** 2026-07-21
 **Baseline:** `284d69f` (`test: complete Edit-09 final closure matrix`)
 **Supersedes:** [2026-06-07-ai-live-note-context.md](./2026-06-07-ai-live-note-context.md)
-**Status:** Edit-10.1 complete / Edit-10.2 complete / 10.3–10.5 pending.
+**Status:** Edit-10.1 complete / Edit-10.2 complete / Edit-10.3 complete / 10.4–10.5 pending.
 
 ## 1. Why the old spec is dead
 
@@ -634,3 +634,161 @@ baseline run at `e206cd4` — each showed exactly one non-deterministic
 (VaultView) between draft-store E2E-8 and E2E-9, identical at the
 baseline and with no failing test. The recorded run above showed 0
 occurrences; the warning is flaky and predates Edit-10.
+
+## 15. Edit-10.3 record (2026-07-22)
+
+Implemented in `feat(ai): transport live workspace context`:
+
+Client transport:
+
+- `src/lib/ai-api.ts`: `ChatRequest` gains the optional
+  `liveContext?: AiLiveContextSnapshot` (type-only import from the
+  sealed 10.1 module). `streamChat` serializes the snapshot verbatim
+  and OMITS the key when absent — no transformation, no path
+  fallback.
+- `src/composables/vault/useAiHistory.ts`: `SendAndStreamOptions
+  { liveContext? }`; `sendAndStream(text, { liveContext })`
+  conditionally spreads `liveContext` into the request so the wire
+  body omits the key when no snapshot exists. The snapshot passes by
+  reference straight through — never modified, never persisted,
+  never added to message state.
+- `src/components/vault/aiContextPaths.ts`:
+  `legacyTransportPathForCapture` deleted with its tests (no
+  transport caller remains); `displayPathForCapture` stays — the
+  composer / chat-header chip is UI-only.
+- `src/components/vault/AiPanel.vue`: `onSend` sends the snapshot,
+  not a path — `const snapshot = capture.status === 'ready'
+  ? capture.context : undefined`, then clear the composer, then
+  `sendAndStream(text, { liveContext: snapshot })`. Capture happens
+  before the first `await`; none / unavailable send no liveContext
+  (fail closed).
+- `src/components/vault/TocPanel.vue`: the "no AI in read-only
+  views" gate is LIFTED — read-only views transport their own
+  read-only context since 10.3, so disabling the AI tab there would
+  hide exactly the contexts 10.3 exists to carry. The tab stays
+  clickable and `AiPanel` stays mounted in every view. (Flagged
+  once as an intentional user-visible behavior change; the
+  `historyReadOnly` prop is kept for caller compatibility.)
+
+Server:
+
+- `server/ai/live-context.ts` (new): `parseAiLiveContext` and
+  `MAX_AI_LIVE_CONTEXT_BYTES = 512 * 1024`. Serialized size is
+  checked BEFORE structure (oversized payloads are rejected without
+  parsing); every kind is validated against an exact-key allowlist
+  (`hasExactShape` — unknown keys fail closed; forward compatibility
+  goes through `v`, not extra keys), with per-kind parsers behind an
+  exhaustive table. Malformed → `{ ok: false, reason:
+  'invalid-live-context' }`; oversized → `{ ok: false, reason:
+  'context-too-large' }`. The NUL sentinel used in raw-body fixtures
+  is built with `String.fromCharCode(0)` — never a literal control
+  character in source.
+- `server/ai/routes.ts`: the request is normalized into ONE
+  `ChatContext` authority BEFORE `streamSSE` starts, so 400 / 413
+  are plain JSON, never mid-stream errors: liveContext present →
+  strict parse (failure = 400 / 413, and the legacy `currentNotePath`
+  is FULLY IGNORED — a malformed liveContext NEVER falls back to the
+  legacy path); absent + valid `currentNotePath` (lenient legacy
+  validator, old-client compat) → `legacy-path`; neither → `none`.
+- `server/ai/chat.ts`: `ChatContext = { kind: 'live'; liveContext }
+  | { kind: 'legacy-path'; currentNotePath } | { kind: 'none' }`;
+  `runChat` / `buildSystemPrompt` take ONLY the normalized context —
+  the raw request never reaches prompt construction. The live branch
+  appends one "## Live workspace context" section: the send-time
+  capture declaration, a user-authored-data injection boundary, the
+  verbatim snapshot in
+  `<live-workspace-context-json>{JSON.stringify(liveContext, null,
+  2)}</live-workspace-context-json>`, and per-kind semantics; the
+  live branch carries NO `read_file` hint (the content is already
+  present). `legacy-path` keeps the old read_file hint for old
+  clients; `none` gets bare base + tools.
+
+Decisions:
+
+1. Size-before-structure: the byte check runs on the serialized
+   value before any shape parsing — cheap rejection, and oversized
+   garbage never enters the validators.
+2. Exact-key strictness per kind: the sealed 10.1 union is the whole
+   contract; unknown keys are a 400, not a silent drop.
+3. Malformed-never-falls-back: a present-but-invalid liveContext is
+   a hard failure even when a valid `currentNotePath` sits next to
+   it — falling back would silently answer with stale disk content
+   under a payload the client believed delivered.
+4. Normalize in the route, not the stream: `runChat` cannot receive
+   anything but a valid `ChatContext`, which is what makes "not
+   persisted / not echoed / not logged" enforceable at one place.
+5. TocPanel gate lift: flagged once, accepted as the intended 10.3
+   behavior (read-only contexts are first-class transport now).
+6. E2E hermeticity: Playwright intercepts `**/api/ai/**` (minimal
+   three-event SSE: user / token / done — no real Anthropic) and
+   `**/api/history/**` (envelopes matching `history-api.ts`
+   unwrapping — `{ transactions: [] }` for `/repair-status`,
+   `{ hashes: {} }` for `/content-hashes`) at the browser layer; the
+   embedded real server still handles posts / files / health, so
+   dirty buffers, autosave 409s, and recovery IDB seeding are all
+   real.
+
+E2E traps found and recorded (for 10.4 / 10.5 reuse):
+
+- The file tree is fetched at mount; REST-created files are
+  invisible until the next load → the suite reloads the app after
+  API document creation.
+- `.tree-row` + `hasText` matches the FOLDER row ancestor (children
+  are DOM descendants) whose bounding box spans all children —
+  clicking it opens a wrong sibling → always click the exact
+  `[data-tree-key="file:<path>"]`.
+- `useDiskFileChanges` silently auto-adopts disk changes into CLEAN
+  buffers (`overwriteLocal = !dirty`); the `'external'` save status
+  only surfaces for dirty buffers → E2E-10 keeps the buffer dirty at
+  disk-change time (post-save append) so the autosave baseRaw
+  mismatch yields a 409 that flips the tab to `'external'`.
+
+Tests (strict TDD — unit / integration):
+
+- Eight 10.3-touched suites, **223 tests, all green**:
+  `server/__tests__/live-context.test.ts` (new, 96 — parser matrix:
+  all four kinds, exact-key violations, oversize, NUL bytes, v /
+  kind / identity rules), `server/__tests__/ai-routes.test.ts` (41 —
+  normalization: live wins, malformed never falls back, 400 / 413
+  JSON before SSE, legacy-path compat, none), `server/__tests__/chat.test.ts`
+  (20 — prompt sections per ChatContext kind, injection boundary,
+  no read_file hint in the live branch, snapshot still never
+  persisted), `src/composables/vault/__tests__/useAiHistory.test.ts`
+  (19 — conditional spread: key omitted when absent, verbatim when
+  present, snapshot never enters message state), `src/lib/__tests__/ai-api.test.ts`
+  (18 — wire serialization), `src/components/vault/__tests__/AiPanel.test.ts`
+  (18 — rewritten for snapshot transport: per-kind full snapshot,
+  none / unavailable fail closed, capture-before-send ordering,
+  mid-stream tab switch keeps the send-time snapshot),
+  `src/components/vault/__tests__/TocPanel.test.ts` (8 — the stale
+  pre-10.3 gate test rewritten to assert the LIFTED gate: tab
+  enabled and panel mounted for a read-only view),
+  `src/components/vault/__tests__/aiContextPaths.test.ts`
+  (3 — display path only).
+- New Playwright suite `e2e/ai-live-context.spec.ts`: E2E-1..10,
+  **10/10 passing (17.0 s)** — dirty buffer verbatim; two open
+  documents (only the active tab); history snapshot (revision raw,
+  not disk); history diff (before = revision, after = live buffer);
+  recovery content (draft only, no disk block); recovery diff
+  (draft + disk); recovery beats the deep-linked route;
+  capture-then-switch (send-time snapshot survives a tab switch);
+  rename (stable documentId follows the new path); external
+  conflict (buffer + disk version travel together). Each asserts
+  liveContext present, NO `currentNotePath` / `currentNoteContent`
+  on the wire, correct kind, byte-exact bodies, and identity +
+  bodies from one snapshot.
+
+Compatibility audit (all clean):
+
+- `currentNotePath` in `src/` survives only in tests asserting its
+  ABSENCE (plus one historical comment); the server keeps it solely
+  for old-client compatibility in the `legacy-path` branch.
+- `legacyTransportPathForCapture`: zero hits in code (one mention
+  in this doc's 10.2 history).
+- `JSON.stringify(liveContext, ...)`: exactly one production site —
+  the system prompt in `server/ai/chat.ts`; the size check in
+  `server/ai/live-context.ts` serializes the candidate value
+  internally.
+- The snapshot is never written to the message DB, never echoed
+  over SSE, and never enters logs / URLs / Toast / telemetry.
+- `only` / `skip` audits: zero hits.

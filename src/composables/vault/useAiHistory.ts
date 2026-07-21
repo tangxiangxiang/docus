@@ -22,9 +22,19 @@ import * as api from '../../lib/ai-api.js'
 import type { Session, Message, ChatEvent, ToolCallRecord } from '../../lib/ai-api.js'
 import { streamChat } from '../../lib/ai-api.js'
 import type { FileChangeEvent } from '../../lib/ai-api.js'
+import type { AiLiveContextSnapshot } from './aiLiveContext.js'
 import { getFallbackVaultFileChanges } from './context/fileChanges.js'
 import { useOptionalVaultContext } from './context/useVaultContext.js'
 import type { VaultContext } from './context/types.js'
+
+// Edit-10.3: options for sendAndStream. `liveContext` is the
+// caller's send-time snapshot (captured BEFORE any await at the call
+// site, e.g. AiPanel.onSend). It is forwarded verbatim as the
+// request's liveContext field — never re-read, mutated, persisted,
+// or added to message state here.
+export interface SendAndStreamOptions {
+  liveContext?: AiLiveContextSnapshot
+}
 
 export interface AiHistory {
   // state
@@ -44,7 +54,7 @@ export interface AiHistory {
   renameSession(id: number, title: string): Promise<void>
   deleteSession(id: number): Promise<void>
   sendMessage(content: string): Promise<void>
-  sendAndStream(text: string, opts?: { path?: string }): Promise<void>
+  sendAndStream(text: string, options?: SendAndStreamOptions): Promise<void>
   // Cancel the in-flight stream. No-op when nothing is running.
   // The AbortController lives in sendAndStream's closure so the
   // composable's public interface doesn't have to expose the
@@ -137,7 +147,7 @@ function createAiHistory(publishChange: (event: FileChangeEvent) => void): AiHis
 
   async function sendAndStream(
     text: string,
-    opts?: { path?: string },
+    options?: SendAndStreamOptions,
   ): Promise<void> {
     const trimmed = text.trim()
     if (!trimmed) return
@@ -181,10 +191,12 @@ function createAiHistory(publishChange: (event: FileChangeEvent) => void): AiHis
         {
           sessionId,
           content: trimmed,
-          // currentNotePath is what populates the system-prompt
-          // line "The user is currently reading: …" so the model
-          // knows it can use read_file if it wants the body.
-          currentNotePath: opts?.path,
+          // Edit-10.3: the send-time snapshot is the ONE live-context
+          // authority. Present → it becomes the request's liveContext
+          // field (server injects it into this run's system prompt
+          // only). Absent → the key is omitted from the JSON body
+          // entirely: never null, never a legacy path fallback.
+          ...(options?.liveContext ? { liveContext: options.liveContext } : {}),
         },
         ac.signal,
       )) {

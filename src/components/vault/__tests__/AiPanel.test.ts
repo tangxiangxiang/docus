@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
-// Edit-10.2 AiPanel integration: onSend captures the live workspace
-// context synchronously BEFORE any async work, feeds the legacy
-// path-only transport only for a live Document, and drives the
-// composer/messages path chip + quick prompts from the same capture.
+// AiPanel integration: onSend captures the live workspace context
+// synchronously BEFORE any async work and transports the full
+// send-time snapshot for every ready kind (Edit-10.3). none /
+// unavailable captures send no liveContext at all. The same capture
+// also drives the composer/messages path chip + quick prompts.
 import { computed, defineComponent, h, nextTick, ref } from 'vue'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -13,6 +14,7 @@ import type {
   AiDocumentContext,
   AiHistoryContext,
   AiLiveContextCapture,
+  AiLiveContextSnapshot,
   AiRecoveryContext,
 } from '../../../composables/vault/aiLiveContext'
 import { createVaultContext } from '../../../composables/vault/context/createVaultContext'
@@ -44,7 +46,7 @@ vi.mock('../../../composables/vault/useAiHistory', async () => {
     renameSession: async () => {},
     deleteSession: async () => {},
     sendMessage: async () => {},
-    sendAndStream: async (_text: string, _opts?: { path?: string }) => {},
+    sendAndStream: async (_text: string, _opts?: { liveContext?: AiLiveContextSnapshot }) => {},
     stop: () => {},
   }
   return { useAiHistory: () => history }
@@ -116,6 +118,11 @@ function recoveryCapture(path = 'notes/r.md'): AiLiveContextCapture {
   return { status: 'ready', context }
 }
 
+function readyContext(capture: AiLiveContextCapture): AiLiveContextSnapshot {
+  if (capture.status !== 'ready') throw new Error('expected a ready capture')
+  return capture.context
+}
+
 function mountPanel(captureAiContext: () => AiLiveContextCapture): VueWrapper {
   const context = createVaultContext({
     vaultId: ref('vault-a'),
@@ -142,7 +149,7 @@ async function typeAndSend(wrapper: VueWrapper, text: string): Promise<void> {
 
 const history = useAiHistory()
 
-describe('AiPanel live context capture (Edit-10.2)', () => {
+describe('AiPanel live context capture and transport (Edit-10.3)', () => {
   beforeEach(() => {
     useI18n().setLocale('en')
     history.configured.value = true
@@ -155,9 +162,10 @@ describe('AiPanel live context capture (Edit-10.2)', () => {
 
   it('captures synchronously before any send work and clears the composer', async () => {
     const events: string[] = []
+    const capture = documentCapture('notes/a.md')
     const captureSpy = vi.fn(() => {
       events.push('capture')
-      return documentCapture('notes/a.md')
+      return capture
     })
     const sendSpy = vi.spyOn(history, 'sendAndStream').mockImplementation(async () => {
       events.push('send')
@@ -173,32 +181,40 @@ describe('AiPanel live context capture (Edit-10.2)', () => {
 
     expect(events).toEqual(['capture', 'send'])
     expect(captureSpy).toHaveBeenCalledOnce()
-    expect(sendSpy).toHaveBeenCalledWith('hello', { path: 'notes/a.md' })
+    // The exact send-time snapshot object — not a re-read, not a path.
+    expect(sendSpy).toHaveBeenCalledWith('hello', { liveContext: readyContext(capture) })
     expect(wrapper.findComponent(AiComposer).props('modelValue')).toBe('')
   })
 
-  it('sends the legacy path only for a live Document context', async () => {
-    const sendSpy = vi.spyOn(history, 'sendAndStream').mockImplementation(async () => {})
-    const wrapper = mountPanel(() => documentCapture('notes/a.md'))
-    await typeAndSend(wrapper, 'hello')
-    expect(sendSpy.mock.calls[0][1]).toEqual({ path: 'notes/a.md' })
-  })
-
   it.each([
+    ['document', () => documentCapture('notes/a.md')],
     ['history', () => historyCapture('notes/h.md')],
     ['diff', () => diffCapture('notes/d.md')],
     ['recovery', () => recoveryCapture('notes/r.md')],
+  ])('sends the full send-time snapshot for a ready %s context (no path degradation)', async (_label, makeCapture) => {
+    const sendSpy = vi.spyOn(history, 'sendAndStream').mockImplementation(async () => {})
+    const capture = makeCapture()
+    const wrapper = mountPanel(() => capture)
+    await typeAndSend(wrapper, 'hello')
+    // The FULL snapshot — kind, identity, and Markdown bodies — goes to
+    // the transport. History/Diff/Recovery are never degraded to a
+    // path-only hint.
+    expect(sendSpy.mock.calls[0][1]).toEqual({ liveContext: readyContext(capture) })
+  })
+
+  it.each([
     ['unavailable', () => ({ status: 'unavailable', reason: 'loading' }) as AiLiveContextCapture],
     ['none', () => ({ status: 'none' }) as AiLiveContextCapture],
-  ])('claims no current file for %s context (fail closed)', async (_label, makeCapture) => {
+  ])('sends no liveContext for %s context (fail closed)', async (_label, makeCapture) => {
     const sendSpy = vi.spyOn(history, 'sendAndStream').mockImplementation(async () => {})
     const wrapper = mountPanel(makeCapture)
     await typeAndSend(wrapper, 'hello')
-    expect(sendSpy.mock.calls[0][1]).toEqual({ path: undefined })
+    expect(sendSpy.mock.calls[0][1]).toEqual({ liveContext: undefined })
   })
 
   it('keeps the send-time capture when the user switches tabs before the stream settles', async () => {
-    let current: AiLiveContextCapture = documentCapture('notes/a.md')
+    const captureA = documentCapture('notes/a.md')
+    let current: AiLiveContextCapture = captureA
     const captureSpy = vi.fn(() => current)
     let settle!: () => void
     const sendSpy = vi.spyOn(history, 'sendAndStream').mockImplementation(
@@ -209,7 +225,7 @@ describe('AiPanel live context capture (Edit-10.2)', () => {
     captureSpy.mockClear() // drop the render-time display-path read
 
     await typeAndSend(wrapper, 'hello')
-    expect(sendSpy.mock.calls[0][1]).toEqual({ path: 'notes/a.md' })
+    expect(sendSpy.mock.calls[0][1]).toEqual({ liveContext: readyContext(captureA) })
 
     // The user switches to tab B while this turn is still streaming.
     current = documentCapture('notes/b.md')
@@ -217,11 +233,11 @@ describe('AiPanel live context capture (Edit-10.2)', () => {
     settle()
     await nextTick()
 
-    // This turn stays complete A: no send-time re-capture, no path
+    // This turn stays complete A: no send-time re-capture, no snapshot
     // splicing.
     expect(captureSpy).toHaveBeenCalledOnce()
     expect(sendSpy).toHaveBeenCalledOnce()
-    expect(sendSpy.mock.calls[0][1]).toEqual({ path: 'notes/a.md' })
+    expect(sendSpy.mock.calls[0][1]).toEqual({ liveContext: readyContext(captureA) })
   })
 
   it('skips the send-time capture when the guard rails reject the send', async () => {

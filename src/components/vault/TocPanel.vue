@@ -28,6 +28,11 @@ const props = defineProps<{
   /** All posts (title resolution for link rows). Forwarded to <LinksPanel>. */
   posts: PostSummary[]
   activeTab: RightRailTab
+  /**
+   * Kept for VaultView compatibility, no longer gating anything:
+   * Edit-10.3 lifted the read-only AI gate so History/Diff/Recovery
+   * views can send their own live context.
+   */
   historyReadOnly?: boolean
 }>()
 
@@ -51,13 +56,13 @@ function onLinkNavigate(p: string) {
 <template>
   <div class="right-rail">
     <nav class="sidebar-tabs" role="tablist" :aria-label="t('rail.navigation')">
+      <!-- Edit-10.3: the old "no AI in read-only views" gate is lifted —
+           History/Diff/Recovery views now transport their own live
+           context (readOnly snapshots) instead of being cut off. -->
       <button
         role="tab"
         :aria-selected="activeTab === 'ai'"
-        :aria-disabled="historyReadOnly ? 'true' : 'false'"
         :class="{ active: activeTab === 'ai' }"
-        :disabled="historyReadOnly"
-        :title="historyReadOnly ? t('history.ai_disabled') : undefined"
         @click="emit('update:activeTab', 'ai')"
       >{{ t('rail.ai') }}</button>
       <button role="tab" :aria-selected="activeTab === 'toc'" :class="{ active: activeTab === 'toc' }" @click="emit('update:activeTab', 'toc')">{{ t('rail.toc') }}</button>
@@ -95,7 +100,7 @@ function onLinkNavigate(p: string) {
       />
     </section>
     <section v-show="activeTab === 'ai'" class="ai-slot" role="tabpanel" :aria-label="t('rail.ai')">
-      <AiPanel v-if="!historyReadOnly" />
+      <AiPanel />
     </section>
   </div>
 </template>
