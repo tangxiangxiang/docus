@@ -599,3 +599,38 @@ then minimal implementation to green):
   path, no re-capture), guard rails skip the send-time capture,
   display path per kind (incl. null cases) in composer + chat header,
   quick-prompt scope, and live display-path tracking.
+
+### 14.1 Final gate evidence (recorded 2026-07-21, sealed tree)
+
+Full §12 closure gates re-run from scratch on the sealed tree
+`e95e358` (`feat(ai): capture active workspace context`), working tree
+clean before and after. Local only — no CI exists.
+
+| Gate | Result | Detail |
+| --- | --- | --- |
+| `npm run typecheck` | exit 0 | ~4 s |
+| `npm run lint:icons` | exit 0 | 2 files scanned, 81 `<svg>` elements, no violations |
+| `npm test` | exit 0 | Vitest: **133 test files passed (133)**, **1 712 tests passed (1 712)**, duration 27.63 s |
+| `npm run build` | exit 0 | built in 1.12 s (pre-existing rolldown chunk-size notice unchanged) |
+| `npm run test:e2e:draft-store` | exit 0 | **38 passed** (27.6 s) |
+| `npm run test:e2e` | exit 0 | **9 passed** (6.6 s; pre-existing Monaco dispose console noise unchanged) |
+| `git diff --check` | exit 0 | no whitespace errors |
+| `git status --short` | empty | tree clean after the full run |
+
+Audits (both zero hits, grep exit 1):
+
+- `git grep -nE '(\.only\(|describe\.only|it\.only|test\.only)'` over
+  `src/**/*.ts` / `src/**/*.vue` — 0 matches.
+- `git grep -nE '(\.skip\(|describe\.skip|it\.skip|test\.skip)'` over
+  `src/**/*.ts` / `src/**/*.vue` — 0 matches.
+
+Delta vs the Edit-09 freeze baseline (128 files / 1 623 tests, e2e
+38 / 9): +5 test files / +89 tests; both E2E counts unchanged.
+
+Known pre-existing observation (NOT a 10.2 regression): earlier gate
+runs on this branch — the pre-commit run and the `git stash -u`
+baseline run at `e206cd4` — each showed exactly one non-deterministic
+`[Vue warn]: Unhandled error during execution of mounted hook`
+(VaultView) between draft-store E2E-8 and E2E-9, identical at the
+baseline and with no failing test. The recorded run above showed 0
+occurrences; the warning is flaky and predates Edit-10.
