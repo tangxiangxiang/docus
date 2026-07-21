@@ -4754,6 +4754,117 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       await persistence.dispose()
     })
 
+    it.each(['manual flush', 'pagehide', 'dispose'] as const)(
+      'adopts a cross-context primary family as the recovery anchor on %s',
+      async (trigger) => {
+        const targetWindow = trigger === 'pagehide' ? new EventTarget() : undefined
+        const setup = await setupEmptiedFamilyRetry({
+          targetWindow,
+          resolveCurrentDocumentPath: async () => ({ path: 'path/b', version: 1 }),
+        })
+        const { store, persistence, settlements } = setup
+        const saveDraft = store.saveDraft.bind(store)
+        let raced = false
+        vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+          if (!raced) {
+            raced = true
+            // Another context establishes the family at C after our
+            // initial empty probe but before the first mint at B. The
+            // local write is preserved as a candidate next to C.
+            await saveDraft(draft('remote-family', 'path/c', 1_000))
+          }
+          return saveDraft(value)
+        })
+
+        if (trigger === 'manual flush') {
+          expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+        } else if (trigger === 'pagehide') {
+          targetWindow!.dispatchEvent(new Event('pagehide'))
+          await vi.waitFor(async () => {
+            expect((await store.getDraft('vault', 'doc-a'))?.documentPath).toBe('path/b')
+          })
+        } else {
+          await persistence.dispose()
+        }
+
+        expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+          documentPath: 'path/b',
+          content: 'remote-family',
+        })
+        expect(await store.listConflictDrafts('vault')).toEqual([
+          expect.objectContaining({
+            documentPath: 'path/b',
+            content: 'after-rename',
+          }),
+        ])
+        expect(settlements.filter(
+          (item) => item.status === 'moved-and-persisted',
+        )).toHaveLength(1)
+        if (trigger !== 'dispose') await persistence.dispose()
+      },
+    )
+
+    it('adopts a conflict-only family that wins the first-mint race', async () => {
+      const setup = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => ({ path: 'path/b', version: 1 }),
+      })
+      const { store, persistence } = setup
+      const saveDraft = store.saveDraft.bind(store)
+      let raced = false
+      vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+        if (!raced) {
+          raced = true
+          await store.saveConflictDraft(
+            conflictRecord('remote-only', 'doc-a', 'path/c', 'remote candidate'),
+          )
+        }
+        return saveDraft(value)
+      })
+
+      expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+      expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+      expect(await store.listConflictDrafts('vault')).toEqual(expect.arrayContaining([
+        expect.objectContaining({ documentPath: 'path/b', content: 'remote candidate' }),
+        expect.objectContaining({ documentPath: 'path/b', content: 'after-rename' }),
+      ]))
+      await persistence.dispose()
+    })
+
+    it('adopts the candidate family path after a first-mint readback mismatch', async () => {
+      const setup = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => ({ path: 'path/b', version: 1 }),
+      })
+      const { backend, store, persistence, settlements } = setup
+      const getDraft = store.getDraft.bind(store)
+      let raced = false
+      vi.spyOn(store, 'getDraft').mockImplementation(async (vaultId, documentId) => {
+        if (!raced) {
+          raced = true
+          // The first mint at B succeeded, but another context replaced
+          // the primary at C before writePrimary's exact readback. The
+          // attempted bytes are handed off as a candidate at C.
+          await backend.seedRaw(draft('remote-readback', 'path/c', 1_000))
+        }
+        return getDraft(vaultId, documentId)
+      })
+
+      expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/b',
+        content: 'remote-readback',
+      })
+      expect(await store.listConflictDrafts('vault')).toEqual([
+        expect.objectContaining({
+          documentPath: 'path/b',
+          content: 'after-rename',
+        }),
+      ])
+      expect(settlements.filter(
+        (item) => item.status === 'moved-and-persisted',
+      )).toHaveLength(1)
+      await persistence.dispose()
+    })
+
     it('R3: a second rename during the convergence window is caught by the bounded second attempt', async () => {
       const serverState: ServerState = { path: 'path/b', version: 1 }
       let calls = 0
@@ -4982,7 +5093,9 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       expect(calls).toBe(4)
       expect(saveDraft).toHaveBeenCalledTimes(4)
       expect(vi.getTimerCount()).toBe(0)
-      expect(settlements.filter((item) => item.status === 'moved-write-failed')).toHaveLength(4)
+      // Notify once for the initial failure and once when the bounded
+      // retry budget is exhausted; intermediate attempts stay quiet.
+      expect(settlements.filter((item) => item.status === 'moved-write-failed')).toHaveLength(2)
       saveDraft.mockRestore()
       await persistence.dispose()
     })

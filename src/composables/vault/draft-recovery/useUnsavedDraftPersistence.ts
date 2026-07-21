@@ -27,8 +27,9 @@ export const DRAFT_PERSIST_DEBOUNCE_MS = 800
  *  budget is spent, the write flag stays set and user input, manual
  *  flush and pagehide each retry the channel from scratch (each such
  *  retry re-resolves the target through the mode state machine and
- *  re-arms this budget if it fails with a fresh 'moved-write-failed'
- *  settlement). A new user edit resets the backoff: schedule() clears
+ *  can re-arm this budget if it still fails. The initial failure and
+ *  final exhausted attempt publish warnings; intermediate automatic
+ *  attempts stay quiet. A new user edit resets the backoff: schedule() clears
  *  the armed retry timer and the edit's own write owns persistence. */
 const SETTLE_RETRY_DELAYS_MS = [800, 2_000, 5_000] as const
 
@@ -1646,7 +1647,9 @@ export function createUnsavedDraftPersistence(
     // Before any mint it is a silent no-op: nothing was written
     // anywhere, the flush's false return alone keeps the tab.
     const failClosed = (): false => {
-      if (anchor !== null) {
+      const shouldNotify = entry.settleRetryAttempt === null
+        || entry.settleRetryAttempt === SETTLE_RETRY_DELAYS_MS.length - 1
+      if (anchor !== null && shouldNotify) {
         notifyFamilyMoveSettled(
           owner.vaultId, owner.documentId,
           { oldPath: move.oldPath, newPath: anchor },
@@ -1708,6 +1711,27 @@ export function createUnsavedDraftPersistence(
       return null
     }
 
+    // A primary write can fail closed after preserving the bytes as a
+    // conflict candidate. Its boolean result deliberately does not
+    // certify a primary write, so empty-family authentication must ask
+    // the store where the resulting family actually lives. This also
+    // covers a family minted by another context between our initial
+    // `none` probe and first write. The probe's familyPath is the only
+    // safe recovery anchor; the resolver path is merely the server
+    // target we still need to converge toward.
+    const adoptStoredFamilyAnchor = async (): Promise<boolean> => {
+      let probe: Awaited<ReturnType<DraftStore['probeDraftFamily']>>
+      try {
+        probe = await store.probeDraftFamily(owner.vaultId, owner.documentId)
+      } catch {
+        return false
+      }
+      if ((!allowDisposed && disposed) || !current(owner, entry)) return false
+      if (probe.status !== 'path') return false
+      setAnchor(probe.familyPath)
+      return true
+    }
+
     for (let attempt = 0; attempt < 2; attempt++) {
       if ((!allowDisposed && disposed) || !current(owner, entry)) return failClosed()
 
@@ -1724,47 +1748,48 @@ export function createUnsavedDraftPersistence(
         entry.persistedDraft = null
         const latest = entry.latestSnapshot
         if (!latest || !entry.latestSnapshotNeedsWrite) {
-          // No pending snapshot — the re-validated relocation itself
-          // is the durable change; nothing is left unpersisted.
-          notifyFamilyMoveSettled(
-            owner.vaultId, owner.documentId,
-            { oldPath: move.oldPath, newPath: resolved.path },
-            'moved-and-persisted',
+          // `needsWrite=false` may mean writePrimary preserved the
+          // latest bytes as a candidate before returning false. Never
+          // infer an empty family from the in-memory flag: re-probe and
+          // adopt the store-certified family path before authenticating.
+          if (!await adoptStoredFamilyAnchor()) return failClosed()
+          if (await converge(resolved.path) === null) return failClosed()
+          // Continue to the post-write server authentication below.
+        } else {
+          // Mint directly at the resolver path while retaining the
+          // move-indeterminate/authentication state. Routing through
+          // runResolvedTarget here would recurse into this recovery;
+          // switching to primary before the write would let a failed
+          // mint's retry bypass server authentication.
+          latest.documentPath = resolved.path
+          const writeSucceeded = await writePrimary(
+            owner,
+            cloneSnapshot(latest),
+            resolved.path,
+            allowDisposed,
           )
-          completeFamilyMove(entry, resolved.path)
-          return true
-        }
-        // Mint directly at the resolver path while retaining the
-        // move-indeterminate/authentication state. Routing through
-        // runResolvedTarget here would recurse into this recovery;
-        // switching to primary before the write would let a failed
-        // mint's retry bypass server authentication.
-        latest.documentPath = resolved.path
-        const writeSucceeded = await writePrimary(
-          owner,
-          cloneSnapshot(latest),
-          resolved.path,
-          allowDisposed,
-        )
-        if (!writeSucceeded) {
-          // The entry is on its active channel at the re-validated
-          // path with the write flag still set — arm the bounded
-          // settle retry (it re-writes on the current channel) and
-          // report the settlement so the owner keeps the tab open.
-          notifyFamilyMoveSettled(
-            owner.vaultId, owner.documentId,
-            { oldPath: move.oldPath, newPath: resolved.path },
-            'moved-write-failed',
-          )
-          if (entry.settleRetryAttempt === null) {
-            scheduleSettleRetry(
-              owner.vaultId, owner.documentId, entry.generation, 0,
-              { oldPath: move.oldPath, newPath: resolved.path },
-            )
+          if (!writeSucceeded) {
+            // A false primary result can still mean the bytes became a
+            // durable candidate at a family path established by another
+            // context. Adopt that certified path and keep authenticating;
+            // only a genuinely unwritten snapshot fails here.
+            const adopted = await adoptStoredFamilyAnchor()
+            if (!adopted || entry.latestSnapshotNeedsWrite) {
+              const shouldNotify = entry.settleRetryAttempt === null
+                || entry.settleRetryAttempt === SETTLE_RETRY_DELAYS_MS.length - 1
+              if (anchor === null && shouldNotify) {
+                notifyFamilyMoveSettled(
+                  owner.vaultId, owner.documentId,
+                  { oldPath: move.oldPath, newPath: resolved.path },
+                  'moved-write-failed',
+                )
+              }
+              return failClosed()
+            }
+          } else {
+            setAnchor(resolved.path)
           }
-          return false
         }
-        setAnchor(resolved.path)
       } else {
         // (2b) The family already sits at the anchor (written by an
         // earlier attempt): converge it onto the fresh server path
@@ -2267,16 +2292,16 @@ export function createUnsavedDraftPersistence(
    *  see resolveDraftWriteTarget): a quarantine re-entry, a channel
    *  pin or a superseding edit landing between schedule and fire
    *  routes the write through the current mode, never a stale one.
-   *  A retry that SUCCEEDS reports 'moved-and-persisted' with the
-   *  settlement's old/new paths so the owner refreshes the Recovery
-   *  identity and every open Recovery tab against the durable state
-   *  (the retry state is observably cleared — the write flag is off
-   *  and no timer remains). The budget is per settlement event
+   *  A retry that SUCCEEDS is reported exactly once: ordinary move
+   *  quarantine retries are published by this scheduler, while an
+   *  empty-family authentication publishes only after its own final
+   *  server revalidation. The retry state is observably cleared — the
+   *  write flag is off and no timer remains. The budget is per event
    *  (800ms, 2s, 5s — ~7.8s total) and deliberately NOT extended by
-   *  failures: a persistently failing store gets three tries, then
-   *  the write flag stays set for flush / close seal / pagehide to
-   *  pick up — each of those re-arms a fresh budget through its own
-   *  'moved-write-failed' settlement if it fails the same way. A new
+   *  failures: a persistently failing store gets three tries, with no
+   *  warning on intermediate attempts and one final warning when the
+   *  budget is exhausted. The write flag then stays set for flush /
+   *  close seal / pagehide to pick up. A new
    *  user edit clears the timer via schedule() and resets the
    *  backoff; flush and dispose clear it via clearTimer(). */
   function scheduleSettleRetry(
@@ -2317,10 +2342,15 @@ export function createUnsavedDraftPersistence(
       }
       const owner = { vaultId, documentId, generation: target.generation }
       const captured = cloneSnapshot(target.latestSnapshot)
+      const wasAuthenticatingEmptyFamily = target.emptyFamilyRecovery !== null
       void queueTargetWrite(owner, captured).then((succeeded) => {
         if (succeeded) {
           target.settleRetryAttempt = null
-          if (quarantine) {
+          // Empty-family recovery publishes success only after its own
+          // final server revalidation. Other quarantine retries do not
+          // have that inner authentication layer, so the scheduler owns
+          // their success settlement.
+          if (quarantine && !wasAuthenticatingEmptyFamily) {
             notifyFamilyMoveSettled(
               vaultId,
               documentId,
