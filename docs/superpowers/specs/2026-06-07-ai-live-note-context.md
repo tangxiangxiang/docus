@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-07-21).** The pipeline below (module-level `_liveTabs` → `useCurrentNote.content` → `currentNoteContent` in the POST body) was never implemented and no longer matches the codebase: `VaultContext` replaced the singleton, `AiPanel` only ever sent `currentNote.path`, and the workspace now hosts document/history/diff/recovery tabs. The live workspace context contract is defined in [2026-07-21-ai-live-workspace-context.md](./2026-07-21-ai-live-workspace-context.md) (Edit-10). Retained for historical reference only.
+
 # AI Live Note Context
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
