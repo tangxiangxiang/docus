@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue'
 import type { Tab } from '../../../components/vault/tabs'
+import type { AiLiveContextCapture } from '../aiLiveContext'
 import type { VaultContext } from './types'
 import type { VaultFileChanges } from './fileChanges'
 import { createVaultTocState } from '../useTocState'
@@ -12,6 +13,12 @@ export function createVaultContext(options: {
   activePath: Ref<string | null>
   activeTab: ComputedRef<Tab | null>
   openPost: (path: string) => Promise<void>
+  /**
+   * Synchronous capture of the active workspace tab's AI context
+   * (Edit-10.2). Delegated to without caching: every `ai.capture()`
+   * call invokes this callback and reads call-instant workspace state.
+   */
+  captureAiContext: () => AiLiveContextCapture
   lifecycle?: DocumentLifecycle
 }): VaultContext {
   const cleanups = new Set<() => void>()
@@ -30,6 +37,9 @@ export function createVaultContext(options: {
         const tab = options.tabs.value.find((candidate) => candidate.path === path)
         return tab && !tab.loading ? tab.raw : null
       },
+    },
+    ai: {
+      capture: options.captureAiContext,
     },
     onDispose(cleanup) {
       if (disposed) {

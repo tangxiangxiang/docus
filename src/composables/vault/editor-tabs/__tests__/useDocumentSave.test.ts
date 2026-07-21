@@ -3066,6 +3066,7 @@ describe('Edit save to History integration', () => {
       activePath: h.activePath,
       activeTab: computed(() => h.tabs.value[0] ?? null),
       openPost: async () => {},
+      captureAiContext: () => ({ status: 'none' }),
     })
     vi.spyOn(historyApi, 'getCapability').mockResolvedValue({ gitAvailable: true, repoInitialized: true })
     const status = vi.spyOn(historyApi, 'getStatus')

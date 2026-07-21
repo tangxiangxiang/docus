@@ -16,6 +16,9 @@ const vaultContext = createVaultContext({
   activePath,
   activeTab: computed(() => null),
   openPost: async () => {},
+  // Visual specimen only — no real workspace, so the AI context is
+  // explicitly none (Edit-10.2 fail-closed option).
+  captureAiContext: () => ({ status: 'none' }),
 })
 provideVaultContext(vaultContext)
 onBeforeUnmount(() => vaultContext.dispose())

@@ -78,6 +78,7 @@ async function mountAtRoute(initialPath: string) {
         activePath,
         activeTab: computed(() => testTabs.value.find((tab) => tab.path === activePath.value) ?? null),
         openPost: async () => {},
+        captureAiContext: () => ({ status: 'none' }),
       }))
       return () => h(Child)
     },
@@ -213,6 +214,7 @@ describe('useCurrentNote — live tab integration', () => {
           activePath: editorApi.activePath,
           activeTab: editorApi.activeTab,
           openPost: editorApi.openPost,
+          captureAiContext: () => ({ status: 'none' }),
         }))
         return () => h(Child)
       },
@@ -355,6 +357,7 @@ describe('useCurrentNote — production router config', () => {
           activePath,
           activeTab: computed(() => testTabs.value.find((tab) => tab.path === activePath.value) ?? null),
           openPost: async () => {},
+          captureAiContext: () => ({ status: 'none' }),
         }))
         return () => h(Child)
       },

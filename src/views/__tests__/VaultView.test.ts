@@ -287,3 +287,43 @@ describe('VaultView editor tab wiring', () => {
     expect(handler).toContain('void refreshRecoveryAfterFamilySettle(settlement)')
   })
 })
+
+describe('VaultView AI live context capture wiring', () => {
+  it('late-binds one synchronous capture delegate over the real workspace state', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    // The sealed resolver is the only classifier; VaultView must not
+    // duplicate its logic, so exactly one call site exists.
+    expect(source).toContain("from '../composables/vault/aiLiveContext'")
+    expect(source.match(/captureAiLiveContext\(/g) ?? []).toHaveLength(1)
+
+    // Late-bound delegate: fail-closed none before the viewers exist,
+    // declared BEFORE the context is created and provided.
+    expect(source).toContain(
+      "let captureWorkspaceAiContext: () => AiLiveContextCapture = () => ({ status: 'none' })",
+    )
+    expect(source.indexOf('let captureWorkspaceAiContext')).toBeLessThan(
+      source.indexOf('const vaultContext = createVaultContext('),
+    )
+    expect(source).toContain('captureAiContext: () => captureWorkspaceAiContext()')
+
+    // The rebind happens only after every workspace authority exists,
+    // in particular after activeWorkspaceTabId itself.
+    expect(source.indexOf('const activeWorkspaceTabId = computed(() => (')).toBeLessThan(
+      source.indexOf('captureWorkspaceAiContext = () => captureAiLiveContext('),
+    )
+
+    // One capture over the real state — active workspace tab id as the
+    // sole authority, never the route alone.
+    expect(source).toContain('captureWorkspaceAiContext = () => captureAiLiveContext({')
+    expect(source).toContain('vaultId: vaultId.value,')
+    expect(source).toContain('activeWorkspaceTabId: activeWorkspaceTabId.value,')
+    expect(source).toContain('documentTabs: tabs.value,')
+    expect(source).toContain('historySnapshots: historySnapshots.snapshots.value,')
+    expect(source).toContain('historyComparisons: historyComparisons.comparisons.value,')
+    expect(source).toContain('recoveryTabs: recoveryTabs.tabs.value,')
+    // Diff after-sides are re-read from the live editor buffer at the
+    // capture instant.
+    expect(source).toContain('liveDocument: (path) => liveEditorForPath(tabs.value, path)')
+  })
+})

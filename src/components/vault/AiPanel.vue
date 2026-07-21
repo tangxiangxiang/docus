@@ -21,11 +21,24 @@
 // tool name, an icon, a status pill (ok / error / pending), and
 // the result text. read_file / list_files cards are collapsed by
 // default to keep the panel compact; the user can expand them.
+//
+// Live context (Edit-10.2): onSend captures the active workspace tab
+// synchronously BEFORE any async work, so tab switches, renames or
+// continued typing after the click can never splice this turn's
+// identity and content. The route is no longer the AI authority —
+// useAiLiveContext reads the workspace. This stage still talks to the
+// path-only server: only a live Document context claims a legacy path
+// (legacyTransportPathForCapture); History/Diff/Recovery fail closed
+// with no path. Full snapshot transport is Edit-10.3.
 import { onMounted, ref, computed, nextTick } from 'vue'
 import { ICON_HISTORY, ICON_NEW_CHAT } from './icons'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
-import { useCurrentNote } from '../../composables/vault/useCurrentNote'
+import { useAiLiveContext } from '../../composables/vault/useAiLiveContext'
 import { useI18n } from '../../composables/useI18n'
+import {
+  displayPathForCapture,
+  legacyTransportPathForCapture,
+} from './aiContextPaths'
 import AiSessionPicker from './AiSessionPicker.vue'
 import AiChatMessages from './AiChatMessages.vue'
 import AiComposer from './AiComposer.vue'
@@ -33,9 +46,14 @@ import AiComposer from './AiComposer.vue'
 const draft = ref('')
 const pickerOpen = ref(false)
 const history = useAiHistory()
-const currentNote = useCurrentNote()
+const liveContext = useAiLiveContext()
 const { t } = useI18n()
 const composer = ref<InstanceType<typeof AiComposer> | null>(null)
+
+// The path chip + quick-prompt scope follow the same capture the send
+// uses. The computed re-runs capture() on every workspace change —
+// there is no cache, and the send path never reads this value.
+const displayPath = computed(() => displayPathForCapture(liveContext.capture()))
 
 onMounted(async () => {
   await history.loadActive()
@@ -46,9 +64,14 @@ async function onSend() {
   if (!text) return
   if (history.busy.value) return
   if (!history.configured.value) return
+
+  // Capture BEFORE any await: one immutable send-time snapshot.
+  const capture = liveContext.capture()
+
   draft.value = '' // clear immediately for snappy UX
+
   await history.sendAndStream(text, {
-    path: currentNote.path.value ?? '',
+    path: legacyTransportPathForCapture(capture),
   })
 }
 
@@ -63,7 +86,7 @@ async function onNewSession() {
 }
 
 const quickPrompts = computed(() => {
-  const hasNote = Boolean(currentNote.path.value)
+  const hasNote = displayPath.value !== null
   return hasNote
     ? [
         { label: t('quick_prompts.with_note.summarize.label'), text: t('quick_prompts.with_note.summarize.text') },
@@ -120,7 +143,7 @@ async function useQuickPrompt(text: string) {
 
     <AiChatMessages
       :messages="history.messages.value"
-      :current-path="currentNote.path.value"
+      :current-path="displayPath"
       :quick-prompts="quickPrompts"
       @prompt="useQuickPrompt"
     />
@@ -130,7 +153,7 @@ async function useQuickPrompt(text: string) {
       v-model="draft"
       :busy="history.busy.value"
       :configured="history.configured.value"
-      :current-path="currentNote.path.value"
+      :current-path="displayPath"
       @send="onSend"
       @stop="history.stop"
     />

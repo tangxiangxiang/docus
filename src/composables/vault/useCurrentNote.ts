@@ -1,18 +1,21 @@
-// Active-note tracking. The AI panel reads the current note's path
-// + content from this composable when sending a chat message so the
-// model has the right context. Singleton (like useAiHistory) because
-// the vault view and the AI panel need to agree on what "current"
-// means.
+// Legacy route-note state. Tracks the note named by the ROUTE and
+// mirrors a best-effort content string for it. Per-VaultContext
+// singleton (like useAiHistory) so components in the same vault agree
+// on what the route currently names.
 //
-// Known limitation (see spec §3.7): the content is the SERVER-SAVED
-// version, not the editor's live unsaved buffer. Auto-save debounces
-// 800ms, so this is usually fine, but a freshly typed sentence can
-// be missing for that window. The live-tab mirror in useEditorTabs
-// closes most of that window; the file-change bus subscription
-// here additionally keeps `content` in sync with the AI's own
-// writes (e.g. write_file / patch_file / rename_file) so the next
-// AI turn in the same conversation sees the AI's edits without the
-// model having to re-read.
+// Since Edit-10.2 this composable is NO LONGER the AI context
+// authority: the AI panel captures the active WORKSPACE tab through
+// `useAiLiveContext` (Document / History / Diff / Recovery), and the
+// route is at most one input to the workspace's own active tab id.
+// Do not add new AI-send consumers here — a route path can lag the
+// workspace (history/recovery active, rename in flight) and must
+// never be spliced with live content.
+//
+// Known limitation: `content` is a convenience mirror, not a certified
+// snapshot — it prefers the live editor buffer when a tab is open and
+// falls back to the server-saved version otherwise, with the
+// file-change bus subscription keeping it in sync with writes made by
+// the AI's own tools (write_file / patch_file / rename_file).
 import { ref, watch, type Ref } from 'vue'
 import { useRoute, type RouteLocationNormalizedLoaded } from 'vue-router'
 import { getPost } from '../../lib/api'
@@ -99,11 +102,12 @@ export function useCurrentNote(): CurrentNote {
     { immediate: true, deep: true },
   )
 
-  // Mirror AI file-writes into `content` so the next turn in the
-  // same conversation sees the AI's edits without the model having
-  // to re-read. Only the active note is mirrored — the AI panel
-  // already passes currentNote.content to the server, so keeping
-  // this ref accurate is enough to make the model see itself.
+  // Mirror AI file-writes into `content` so any consumer reading the
+  // route note sees the AI's own edits (write_file / patch_file /
+  // rename_file) without a manual refresh. Only the route note is
+  // mirrored. This mirror predates Edit-10 and is NOT the AI send
+  // path — the AI panel captures the active workspace tab through
+  // useAiLiveContext instead.
   let lastSeenSeq = 0
   watch(
     () => fileBus.value,

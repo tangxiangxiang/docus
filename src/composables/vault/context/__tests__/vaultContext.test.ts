@@ -4,6 +4,7 @@ import { computed, defineComponent, h, ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import type { Tab } from '../../../../components/vault/tabs'
+import type { AiDocumentContext, AiLiveContextCapture } from '../../aiLiveContext'
 import { createVaultContext } from '../createVaultContext'
 import { provideVaultContext, useVaultContext } from '../useVaultContext'
 import { createVaultFileChanges } from '../fileChanges'
@@ -42,6 +43,7 @@ describe('Vault context', () => {
       activePath: activeA,
       activeTab: computed(() => tabsA.value.find((item) => item.path === activeA.value) ?? null),
       openPost: async (path) => { openedA.push(path) },
+      captureAiContext: () => ({ status: 'none' }),
     })
     const contextB = createVaultContext({
       vaultId: ref('vault-b'),
@@ -50,6 +52,7 @@ describe('Vault context', () => {
       activePath: activeB,
       activeTab: computed(() => tabsB.value.find((item) => item.path === activeB.value) ?? null),
       openPost: async (path) => { openedB.push(path) },
+      captureAiContext: () => ({ status: 'none' }),
     })
 
     tabsA.value[0].raw = 'A edited'
@@ -79,6 +82,7 @@ describe('Vault context', () => {
       activePath: ref(null),
       activeTab: computed(() => null),
       openPost: async () => {},
+      captureAiContext: () => ({ status: 'none' }),
     })
     const contextA = makeContext('vault-a')
     const contextB = makeContext('vault-b')
@@ -104,6 +108,7 @@ describe('Vault context', () => {
       activePath: ref(null),
       activeTab: computed(() => null),
       openPost: async () => {},
+      captureAiContext: () => ({ status: 'none' }),
     })
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     const calls: string[] = []
@@ -128,6 +133,7 @@ describe('Vault context', () => {
       activePath: ref('a'),
       activeTab: computed(() => tabs.value[0]),
       openPost: async () => {},
+      captureAiContext: () => ({ status: 'none' }),
     })
     let injected: ReturnType<typeof useVaultContext> | null = null
     const Child = defineComponent({
@@ -157,6 +163,7 @@ describe('Vault context', () => {
         activePath: ref(null),
         activeTab: computed(() => null),
         openPost: async () => {},
+        captureAiContext: () => ({ status: 'none' }),
       })
     }
     const contextA = makeContext('vault-a')
@@ -200,5 +207,89 @@ describe('Vault context', () => {
       },
     })
     expect(() => mount(Child)).toThrow('Vault context is not available')
+  })
+})
+
+describe('Vault context AI capture (Edit-10.2)', () => {
+  function documentCapture(): AiLiveContextCapture {
+    const context: AiDocumentContext = {
+      v: 1,
+      kind: 'document',
+      capturedAt: 1000,
+      vaultId: 'vault-a',
+      workspaceTabId: 'notes/a.md',
+      identity: { documentId: 'doc-a', path: 'notes/a.md' },
+      title: 'a',
+      raw: 'body a',
+      revision: 2,
+      savedRevision: 1,
+      dirty: true,
+      saveStatus: 'dirty',
+    }
+    return { status: 'ready', context }
+  }
+
+  function baseOptions(captureAiContext: () => AiLiveContextCapture) {
+    return {
+      vaultId: ref('vault-a'),
+      fileChanges: createVaultFileChanges(),
+      tabs: ref<Tab[]>([]),
+      activePath: ref<string | null>(null),
+      activeTab: computed(() => null),
+      openPost: async () => {},
+      captureAiContext,
+    }
+  }
+
+  it('exposes ai.capture() delegating straight to the provided callback', () => {
+    const ready = documentCapture()
+    const unavailable: AiLiveContextCapture = { status: 'unavailable', reason: 'loading' }
+    const none: AiLiveContextCapture = { status: 'none' }
+    let current = ready
+    const context = createVaultContext(baseOptions(() => current))
+
+    expect(context.ai.capture()).toBe(ready)
+    current = unavailable
+    expect(context.ai.capture()).toBe(unavailable)
+    current = none
+    expect(context.ai.capture()).toBe(none)
+  })
+
+  it('delegates to the latest late-bound workspace callback', () => {
+    // The VaultView wiring pattern: a mutable delegate handed to the
+    // context as a stable arrow closure, rebound once all workspace
+    // state exists.
+    let delegate: () => AiLiveContextCapture = () => ({ status: 'none' })
+    const context = createVaultContext(baseOptions(() => delegate()))
+
+    expect(context.ai.capture()).toEqual({ status: 'none' })
+
+    delegate = () => documentCapture()
+    expect(context.ai.capture()).toEqual(documentCapture())
+  })
+
+  it('re-reads workspace state on every call with no caching', () => {
+    let calls = 0
+    const context = createVaultContext(baseOptions(() => {
+      calls += 1
+      return calls === 1 ? { status: 'none' } : documentCapture()
+    }))
+
+    expect(context.ai.capture()).toEqual({ status: 'none' })
+    expect(context.ai.capture()).toEqual(documentCapture())
+    expect(calls).toBe(2)
+  })
+
+  it('keeps dispose semantics independent of ai.capture', () => {
+    const context = createVaultContext(baseOptions(() => ({ status: 'none' })))
+    let disposed = 0
+    context.onDispose(() => { disposed += 1 })
+
+    context.dispose()
+
+    expect(disposed).toBe(1)
+    // capture() stays a pure pass-through; dispose neither caches nor
+    // disables it.
+    expect(context.ai.capture()).toEqual({ status: 'none' })
   })
 })

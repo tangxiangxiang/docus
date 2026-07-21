@@ -42,6 +42,11 @@ import { formatHistoryDate } from '../lib/history-date'
 import { isSlugSegment } from '../lib/slug'
 import { resolveWikiTarget } from '../lib/linkResolve'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
+import {
+  captureAiLiveContext,
+  liveEditorForPath,
+  type AiLiveContextCapture,
+} from '../composables/vault/aiLiveContext'
 import { createVaultContext } from '../composables/vault/context/createVaultContext'
 import { provideVaultContext } from '../composables/vault/context/useVaultContext'
 import { createVaultFileChanges } from '../composables/vault/context/fileChanges'
@@ -447,6 +452,14 @@ const documentLifecycle = useDocumentLifecycle({
   },
 })
 lifecycleCreateFile = documentLifecycle.createFile
+// AI live workspace context (Edit-10.2): the context is created before the
+// history / diff / recovery viewers exist, so the capture delegate starts
+// fail-closed (none) and is rebound to the real workspace state right after
+// `activeWorkspaceTabId` is defined below. The context holds a stable arrow
+// closure over this binding, and children only mount once setup completes,
+// so capture() always sees the rebound delegate — while any early call
+// still answers `none` safely.
+let captureWorkspaceAiContext: () => AiLiveContextCapture = () => ({ status: 'none' })
 const vaultContext = createVaultContext({
   vaultId,
   fileChanges,
@@ -454,6 +467,7 @@ const vaultContext = createVaultContext({
   activePath,
   activeTab,
   openPost,
+  captureAiContext: () => captureWorkspaceAiContext(),
   lifecycle: documentLifecycle,
 })
 provideVaultContext(vaultContext)
@@ -972,6 +986,20 @@ const activeWorkspaceTabId = computed(() => (
   ?? activeHistorySnapshot.value?.tabId
   ?? activePath.value
 ))
+// Bind the AI capture delegate now that every workspace authority exists.
+// This one call is the AI context's sole send-time authority — the active
+// workspace tab id, never the route alone. The sealed resolver does the
+// classification; VaultView never re-implements that logic.
+captureWorkspaceAiContext = () => captureAiLiveContext({
+  vaultId: vaultId.value,
+  activeWorkspaceTabId: activeWorkspaceTabId.value,
+  documentTabs: tabs.value,
+  historySnapshots: historySnapshots.snapshots.value,
+  historyComparisons: historyComparisons.comparisons.value,
+  recoveryTabs: recoveryTabs.tabs.value,
+}, {
+  liveDocument: (path) => liveEditorForPath(tabs.value, path),
+})
 
 async function reorderWorkspaceTabs(request: WorkspaceTabReorderRequest): Promise<void> {
   const availableIds = workspaceTabs.value.map((tab) => tab.id)

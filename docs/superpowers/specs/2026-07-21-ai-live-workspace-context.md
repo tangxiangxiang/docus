@@ -3,7 +3,7 @@
 **Date:** 2026-07-21
 **Baseline:** `284d69f` (`test: complete Edit-09 final closure matrix`)
 **Supersedes:** [2026-06-07-ai-live-note-context.md](./2026-06-07-ai-live-note-context.md)
-**Status:** Edit-10.1 complete (contract + resolver + tests). 10.2–10.5 pending.
+**Status:** Edit-10.1 complete / Edit-10.2 complete / 10.3–10.5 pending.
 
 ## 1. Why the old spec is dead
 
@@ -504,3 +504,98 @@ the recovery content view no longer carries the disk block (disk travels
 only with an effective diff view), and a diff whose same-path live editor
 lacks a `documentId` now fails closed with `missing-identity` instead of
 sending an uncertifiable after side or falling back to stale `newRaw`.
+
+## 14. Edit-10.2 record (2026-07-21)
+
+Implemented in `feat(ai): capture active workspace context`:
+
+- `VaultContext.ai` (`src/composables/vault/context/types.ts`):
+  `VaultAiContext { capture(): AiLiveContextCapture }` — the AI context
+  belongs to the whole workspace, not the editor context. The JSDoc
+  pins the contract: synchronous, plain data, fresh on every call
+  (no caching), no HTTP / `nextTick` / route / `getPost` / async
+  re-read. `createVaultContext` takes a required
+  `captureAiContext: () => AiLiveContextCapture` option and delegates
+  straight through (`ai: { capture: options.captureAiContext }`).
+- `src/composables/vault/useAiLiveContext.ts` (new): stateless reader
+  over `VaultContext.ai` via `useOptionalVaultContext()`; outside a
+  vault it answers the fail-closed `{ status: 'none' }`. No module
+  state, no `useCurrentNote` fallback, no route, no `getPost`.
+- `src/views/VaultView.vue`: one late-bound delegate —
+  `let captureWorkspaceAiContext: () => AiLiveContextCapture =
+  () => ({ status: 'none' })` passed as
+  `captureAiContext: () => captureWorkspaceAiContext()`, rebound after
+  `activeWorkspaceTabId` exists to a single
+  `captureAiLiveContext({ vaultId, activeWorkspaceTabId, tabs,
+  historySnapshots.snapshots, historyComparisons.comparisons,
+  recoveryTabs.tabs }, { liveDocument: (path) =>
+  liveEditorForPath(tabs.value, path) })` call. The sealed resolver is
+  the only classifier; VaultView never re-implements its logic.
+  `activeWorkspaceTabId` is the SOLE send-time authority — the route
+  is at most its document fallback. Children mount after setup
+  completes, so capture() always sees the rebound delegate; any early
+  call safely answers none. `MarkdownTestView` (visual specimen, no
+  workspace) passes an explicit none capture.
+- `src/components/vault/AiPanel.vue`: removed `useCurrentNote` (its
+  last production consumer); `onSend()` now captures BEFORE the first
+  `await` — order: guards → `liveContext.capture()` → clear composer →
+  `sendAndStream`. Two separate helpers
+  (`src/components/vault/aiContextPaths.ts`):
+  - `legacyTransportPathForCapture`: ready + document → `identity.path`;
+    ALL other cases → `undefined` (fail closed — a History path points
+    at current disk not the historical body; a Diff cannot express
+    before/after as one current file; a Recovery draft has no server
+    path).
+  - `displayPathForCapture`: any ready kind → `identity.path`;
+    none / unavailable → `null`. Feeds the composer + chat-header chip
+    and the quick-prompt scope (note-scoped whenever a ready context
+    exists). The display path is a computed over a fresh `capture()` —
+    no cache; the send path never reads it.
+- `src/composables/vault/useCurrentNote.ts`: file and tests kept;
+  header and mirror comment rewritten — it is now documented as legacy
+  route-note state, explicitly NOT the AI authority.
+
+Scope guard honored — unchanged in 10.2:
+
+- `src/lib/ai-api.ts` `ChatRequest` — no `liveContext` field; the POST
+  body still carries only `currentNotePath`, and History/Diff/Recovery
+  send NO path rather than claim a wrong current file to the old
+  path-only server.
+- `useAiHistory.sendAndStream` network payload, server routes /
+  `chat.ts` / `tools.ts`, system prompt, message DB, DB migrations —
+  none touched (full live-context transport is Edit-10.3; tool
+  write-protection is 10.4).
+- Edit-09 freeze (Draft Store, Recovery cleanup, file transactions,
+  autosave) — no production changes there; the full draft-store E2E
+  matrix passes.
+
+Tests (strict TDD: red confirmed first — 23 failing / 35 passing —
+then minimal implementation to green):
+
+- `vaultContext.test.ts`: `ai.capture()` delegation (ready / none /
+  unavailable pass-through), late-bound swap, no caching, dispose
+  independence; all existing stubs gained the required option.
+- `useAiLiveContext.test.ts` (new): none outside an instance / without
+  a provider, delegation, fresh per call, late-bound rebind, works
+  without vue-router.
+- `src/views/__tests__/aiWorkspaceCapture.test.ts` (new): capture over
+  REAL workspace composables — dirty Document (same-tab identity+raw),
+  none, loading → unavailable, History wins over route + live buffer,
+  Diff wins re-reading the freshest live after-side, Recovery content
+  (draft only, disk absent) and diff (draft+disk), Recovery priority
+  with clean release, tab switching A→B→History without residue,
+  rename atomicity (documentId unchanged, path+raw follow the same
+  tab).
+- `VaultView.test.ts`: source-inspection pinning the exact wiring
+  (single resolver call, late-bound delegate declared before context
+  creation, rebound after `activeWorkspaceTabId`, real state inputs,
+  live after-side lookup).
+- `aiContextPaths.test.ts` (new): both helpers across all four ready
+  kinds, every unavailable reason, and none.
+- `AiPanel.test.ts` (new): capture-before-send event ordering,
+  composer cleared, per-kind legacy path mapping (document → path;
+  history / diff / recovery / unavailable / none → undefined),
+  capture-by-value race (tab switch mid-stream keeps the original
+  path, no re-capture), guard rails skip the send-time capture,
+  display path per kind (incl. null cases) in composer + chat header,
+  quick-prompt scope, and live display-path tracking.
