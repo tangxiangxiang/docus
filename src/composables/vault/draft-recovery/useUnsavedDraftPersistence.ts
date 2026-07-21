@@ -307,6 +307,20 @@ interface CreateOptions {
   now?: () => number
   targetWindow?: Pick<Window, 'addEventListener' | 'removeEventListener'>
   onDraftFamilyMoveSettled?: (settlement: DraftFamilyMoveSettlement) => void
+  /** Re-validates the document's CURRENT server path by stable
+   *  identity. Consulted by a move-indeterminate retry whose probe
+   *  reports an EMPTIED draft family: the absence of every draft row
+   *  is not a server-path verdict — another window may have renamed
+   *  the document again (serverPath→C) and cleared its draft rows,
+   *  and the stale serverPath may even have been reused by another
+   *  document. The retry mints the new primary at the re-validated
+   *  path; an absent resolver, a null / blank result or a thrown
+   *  error fail closed — no primary is ever minted at the stale
+   *  serverPath without re-validation. */
+  resolveCurrentDocumentPath?: (
+    vaultId: string,
+    documentId: string,
+  ) => Promise<string | null>
 }
 
 export function createUnsavedDraftPersistence(
@@ -898,6 +912,21 @@ export function createUnsavedDraftPersistence(
       // flush / close seal retry until the store recovers. Without this
       // a debounce `void queueTargetWrite(...)` would silently drop the
       // edit on a transient store outage.
+      if (entry.mode.kind === 'indeterminate' && entry.mode.reprobePending) {
+        // This save attempt WAS the armed re-probe — and it failed at
+        // the store. A storage failure is not a family verdict: re-close
+        // the entry (clear reprobePending, reason storage-failure) so a
+        // manual flush / pagehide / dispose does not re-fire the probe
+        // against the broken store on every invocation — the "one probe
+        // per user edit" contract. The next user edit (schedule) re-arms
+        // exactly one probe.
+        entry.mode = {
+          kind: 'indeterminate',
+          familyPath: null,
+          reason: 'storage-failure',
+          reprobePending: false,
+        }
+      }
       return false
     }
     if (outcome.status === 'unsupported') {
@@ -1311,12 +1340,37 @@ export function createUnsavedDraftPersistence(
       return false
     }
     if (attempt.kind === 'path-mismatch') {
-      // The family moved in another context after the pin was set:
-      // adopt the certified path WITHOUT writing — this write fails
-      // closed (the write flag stays set) and the next write retries
-      // at the corrected path. Writing at the stale pinned path is
-      // exactly the split the family-atomic store write prevents.
+      // The family moved in another context after the pin was set —
+      // the certified current path supersedes everything this channel
+      // was chasing.
+      // A move-quarantine is DISCARDED: any candidate write meeting
+      // path-mismatch proves the quarantine's serverPath stale, and
+      // keeping it alive would let a later flush retry the stale move
+      // — a CAS re-derived against the family's real path would then
+      // drag the family back toward the old server target.
+      // adoptCertifiedFamilyAtCurrentPath persists the pending content
+      // as a move-conflict candidate AT the certified path and pins
+      // the plain conflict channel there (or failed:@path when even
+      // that write cannot complete) — the old serverPath is never
+      // retried again.
+      // A plain conflict channel has no stale serverPath to discard:
+      // it adopts the path WITHOUT writing — this write fails closed
+      // (the write flag stays set) and the next write retries at the
+      // corrected path. Writing at the stale pinned path is exactly
+      // the split the family-atomic store write prevents.
       if (stillPinned && current(owner, entry)) {
+        if (entry.mode.kind === 'move-quarantine') {
+          return adoptCertifiedFamilyAtCurrentPath(
+            owner,
+            entry,
+            {
+              oldPath: entry.mode.familyPath,
+              newPath: entry.mode.serverPath,
+            },
+            attempt.familyPath,
+            allowDisposed,
+          )
+        }
         adoptCertifiedFamilyPath(entry, attempt.familyPath)
       }
       return false
@@ -1354,8 +1408,10 @@ export function createUnsavedDraftPersistence(
    *  newer certified path — pin there as `failed:` (no quarantine to
    *  keep: its serverPath is stale) and fail closed; if the family
    *  turns uncertifiable, mark it indeterminate (fail closed); if the
-   *  transaction aborts, keep the existing mode and fail closed — the
-   *  next flush re-runs the CAS / probe and re-derives the path. */
+   *  transaction aborts, pin `failed:` at the certified path anyway
+   *  and fail closed — that path came from the store's own verdict
+   *  and supersedes the stale serverPath, which may never be retried
+   *  again. */
   async function adoptCertifiedFamilyAtCurrentPath(
     owner: DraftOwner,
     entry: DraftEntry,
@@ -1407,10 +1463,22 @@ export function createUnsavedDraftPersistence(
       return false
     }
     if (attempt.kind !== 'saved') {
-      // Transaction aborted: keep the existing mode (the quarantine's
-      // certified oldPath is still the freshest trustworthy fact this
-      // entry holds) and fail closed — the next flush re-runs the CAS
-      // and re-derives the current path from the store.
+      // Transaction aborted. The certified path (the store's own
+      // path-mismatch / probe verdict that led here) is STILL the
+      // freshest trustworthy fact this entry holds — fresher than the
+      // quarantine's oldPath or the move-indeterminate serverPath the
+      // retry was chasing. Pin the conflict channel there as failed
+      // and discard the stale quarantine / move-indeterminate state:
+      // the old serverPath may never be retried again (a later CAS
+      // re-derived against the family's real path would drag it back).
+      // The pending content stays in memory — the write flag is set,
+      // and the next write persists it on the pinned channel.
+      entry.mode = {
+        kind: 'conflict',
+        familyPath: certifiedPath,
+        conflictId: `failed:${record.conflictId}`,
+        crossContextUpdatedAt: null,
+      }
       return false
     }
     // The candidate now sits on the family's certified current path.
@@ -1461,10 +1529,15 @@ export function createUnsavedDraftPersistence(
    *    expected path, so the retry must NEVER move anything: it
    *    re-verifies the family's current state with a strict read-only
    *    probe first. Only a certified result acts — the family already
-   *    at newPath heals in memory, an emptied family lets the pending
-   *    snapshot establish the primary there, a family certified at a
-   *    different path is adopted there, and an uncertifiable / unread
-   *    family fails closed (write NOTHING) until the next probe;
+   *    at newPath heals in memory, a family certified at a different
+   *    path is adopted there, and an EMPTIED family is re-validated
+   *    against the server by stable identity
+   *    (resolveCurrentDocumentPath) before the pending snapshot
+   *    establishes the primary at the re-validated path — absent /
+   *    throwing / empty re-validation fails closed (the absence of
+   *    draft rows certifies no server path); an uncertifiable /
+   *    unread family fails closed (write NOTHING) until the next
+   *    probe;
    *  - move succeeds → the quarantine lifts via completeFamilyMove
    *    (mode, snapshot path, persistedDraft path and conflict pin
    *    switch to newPath as ONE change) and the latest snapshot
@@ -1486,6 +1559,12 @@ export function createUnsavedDraftPersistence(
     const entry = entries.get(key(owner.vaultId, owner.documentId))
     if (!entry || (!allowDisposed && disposed) || !current(owner, entry)) return false
     let movedStatus: 'moved' | 'missing' | null = null
+    // The path the retry completes at: the retry's serverPath normally
+    // (CAS-verified by a successful / missing move). An emptied-family
+    // probe cannot certify a server path — the absence of every draft
+    // row is not a verdict — so that branch re-validates it by stable
+    // identity before anything is established there.
+    let settledNewPath = move.newPath
     if (move.oldPath !== null) {
       // Certified expected path: the CAS move. The store derives the
       // family's current path from the raw rows inside the same
@@ -1535,10 +1614,31 @@ export function createUnsavedDraftPersistence(
         return false
       }
       if (probe.status === 'none') {
-        // The family is gone entirely: there is nothing to move and
-        // nothing to adopt — heal in memory and let the pending
-        // snapshot establish the primary at newPath (the store is
-        // empty for this identity, so the write cannot split anything).
+        // The family is gone entirely from the store — there is
+        // nothing to move and nothing to adopt. But the absence of
+        // every draft row is NOT a server-path verdict: another
+        // window may have renamed the document again (serverPath→C)
+        // and cleared its draft rows, and this retry's stale
+        // serverPath may even have been reused by another document.
+        // Re-validate the document's current server path by stable
+        // identity before the pending snapshot mints a new primary
+        // there; fail closed when the re-validation is not wired or
+        // yields no path — nothing is ever minted at the stale
+        // serverPath. The store being empty for this identity, a
+        // write at the re-validated path cannot split anything.
+        const resolver = options.resolveCurrentDocumentPath
+        if (!resolver) return false
+        let revalidated: string | null = null
+        try {
+          revalidated = await resolver(owner.vaultId, owner.documentId)
+        } catch {
+          revalidated = null
+        }
+        if ((!allowDisposed && disposed) || !current(owner, entry)) return false
+        if (typeof revalidated !== 'string' || revalidated.trim().length === 0) {
+          return false
+        }
+        settledNewPath = revalidated
         movedStatus = 'missing'
       } else if (probe.familyPath === move.newPath) {
         // The family is already verified AT the rename's server target
@@ -1557,13 +1657,19 @@ export function createUnsavedDraftPersistence(
       }
     }
     if (movedStatus !== null) {
+      // The move that actually completed: the retry's move normally;
+      // an emptied-family retry completes at the RE-VALIDATED server
+      // path (which may differ from the stale serverPath).
+      const settledMove = settledNewPath === move.newPath
+        ? move
+        : { oldPath: move.oldPath, newPath: settledNewPath }
       // The store state changed — lift the quarantine FIRST so a
       // superseding edit (its owner check fails below) persists
       // normally on the new path instead of re-running the move.
       // completeFamilyMove switches the mode, the snapshot path, the
-      // persistedDraft path and the conflict pin to newPath as ONE
-      // atomic transition.
-      completeFamilyMove(entry, move.newPath)
+      // persistedDraft path and the conflict pin to the settled path
+      // as ONE atomic transition.
+      completeFamilyMove(entry, settledNewPath)
       if (movedStatus === 'missing') {
         // Conflict-only family: no primary record exists to certify a
         // persisted draft against.
@@ -1589,7 +1695,7 @@ export function createUnsavedDraftPersistence(
         // the tab open (the only surface still possibly holding
         // unpersisted bytes) while refreshing Recovery.
         notifyFamilyMoveSettled(
-          owner.vaultId, owner.documentId, move, 'moved-write-failed',
+          owner.vaultId, owner.documentId, settledMove, 'moved-write-failed',
         )
         return false
       }
@@ -1598,7 +1704,7 @@ export function createUnsavedDraftPersistence(
         // No pending snapshot to write — the family moved and the
         // move itself is the durable change. Recovery must follow.
         notifyFamilyMoveSettled(
-          owner.vaultId, owner.documentId, move, 'moved-and-persisted',
+          owner.vaultId, owner.documentId, settledMove, 'moved-and-persisted',
         )
         return true
       }
@@ -1612,7 +1718,7 @@ export function createUnsavedDraftPersistence(
       // owner refreshes Recovery against the actual durable state
       // (not a transient "moved but not yet persisted" snapshot).
       notifyFamilyMoveSettled(
-        owner.vaultId, owner.documentId, move,
+        owner.vaultId, owner.documentId, settledMove,
         writeSucceeded ? 'moved-and-persisted' : 'moved-write-failed',
       )
       if (!writeSucceeded) {
@@ -1626,7 +1732,7 @@ export function createUnsavedDraftPersistence(
         // write owns persistence from there. A retry that succeeds
         // reports 'moved-and-persisted' so the owner refreshes
         // Recovery against the durable state.
-        scheduleSettleRetry(owner.vaultId, owner.documentId, entry.generation, 0, move)
+        scheduleSettleRetry(owner.vaultId, owner.documentId, entry.generation, 0, settledMove)
       }
       return writeSucceeded
     }
@@ -1680,11 +1786,19 @@ export function createUnsavedDraftPersistence(
     const attempt = await attemptCandidateWrite(record)
     if (attempt.kind === 'path-mismatch') {
       // Another context moved the family between the failed retry and
-      // this candidate write: adopt the certified path (the next
-      // retry's oldPath follows it) and fail this write closed —
-      // nothing may be persisted at the stale oldPath.
+      // this candidate write. The certified current path supersedes
+      // the quarantine's stale serverPath — the quarantine is
+      // DISCARDED: the pending content persists as a move-conflict
+      // candidate AT the certified path and the entry pins to the
+      // plain conflict channel there (or failed:@path if even that
+      // write cannot complete). Adopting the path alone and keeping
+      // the quarantine alive would let a later flush retry the stale
+      // move — a CAS re-derived against the family's real path would
+      // then drag the family back to the old server target.
       if (current(owner, entry)) {
-        adoptCertifiedFamilyPath(entry, attempt.familyPath)
+        return adoptCertifiedFamilyAtCurrentPath(
+          owner, entry, move, attempt.familyPath, allowDisposed,
+        )
       }
       return false
     }

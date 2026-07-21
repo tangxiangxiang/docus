@@ -1581,3 +1581,459 @@ test('a stale move-indeterminate retry in a second IndexedDB context adopts the 
   expect(result.rawDraftCount).toBe(0)
   expect(result.rawConflictPaths).toEqual(['final/doc', 'final/doc'])
 })
+
+test('a quarantine retry whose CAS fails discards the stale serverPath when the fallback candidate meets path-mismatch', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const { createUnsavedDraftPersistence } = await import(
+      '/src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts'
+    )
+    // Context A's family lives at notes/doc.
+    const storeA = createDraftStore()
+    await storeA.saveDraft({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 20,
+    })
+    // A future-version conflict row at the family path makes every
+    // CAS move 'unsupported' (the transaction validates the whole
+    // family) while the raw-path candidate authority can still LOCATE
+    // the path — the exact split that forces the retry down the
+    // fallback-candidate branch in real IndexedDB.
+    const openRaw = () => new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const runTx = (
+      database: IDBDatabase,
+      mutate: (store: IDBObjectStore) => void,
+    ) => new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('draftConflicts', 'readwrite')
+      mutate(transaction.objectStore('draftConflicts'))
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    const database = await openRaw()
+    await runTx(database, (store) => store.put({
+      version: 2,
+      conflictId: 'conflict-future',
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'future data',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 25,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 20,
+      recordedAt: 25,
+    }))
+
+    const persistence = createUnsavedDraftPersistence({
+      store: storeA,
+      now: () => 100,
+    })
+    const identity = {
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+    }
+    // Server rename notes/doc→archive/doc succeeds, draft family move
+    // is unsupported → quarantine{familyPath notes/doc, serverPath
+    // archive/doc}.
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/doc',
+      toPath: 'archive/doc',
+    }])
+    await barrier.finalizeAfterTabMigration()
+
+    // The first stale retry: the CAS comes back 'unsupported' (the
+    // future row) and the fallback candidate JOINS the family at
+    // notes/doc — the retry reports clean, quarantine intact.
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'after-rename',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 2,
+    })
+    const flushed1 = await persistence.flush('vault-a', 'doc')
+
+    // The blocker disappears; context B completes archive/doc→final/doc
+    // and moves the whole family (primary + A's candidate) there.
+    await runTx(database, (store) => store
+      .delete(['vault-a', 'doc', 'conflict-future']))
+    database.close()
+    const storeB = createDraftStore()
+    const movedByB = await storeB.moveDraftFamily('vault-a', 'doc', 'final/doc')
+    // A fresh unreadable row at final/doc keeps the NEXT CAS
+    // 'unsupported' while the candidate authority still certifies
+    // final/doc — so the retry's fallback candidate write at the
+    // stale oldPath notes/doc meets path-mismatch with the family's
+    // certified CURRENT path.
+    const database2 = await openRaw()
+    await runTx(database2, (store) => store.put({
+      version: 2,
+      conflictId: 'conflict-blocker',
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'final/doc',
+      content: 'future data',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 25,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 20,
+      recordedAt: 25,
+    }))
+    database2.close()
+
+    // The second stale retry: CAS 'unsupported' AGAIN, fallback
+    // candidate at notes/doc → path-mismatch(final/doc). The stale
+    // serverPath archive/doc must now be DISCARDED: A's bytes persist
+    // as a candidate at final/doc and the entry pins to the conflict
+    // channel there — never a surviving quarantine that would retry
+    // archive/doc later.
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'second-edit',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 3,
+    })
+    const flushed2 = await persistence.flush('vault-a', 'doc')
+    const primary = await storeA.getDraft('vault-a', 'doc')
+    const conflicts = await storeA.listConflictDrafts('vault-a')
+
+    // The blocker disappears; a final edit must write on the conflict
+    // channel at final/doc. A surviving quarantine would instead
+    // re-run the CAS — whose expected path now matches the family's
+    // real path — and DRAG the family back to archive/doc.
+    const database3 = await openRaw()
+    await runTx(database3, (store) => store
+      .delete(['vault-a', 'doc', 'conflict-blocker']))
+    database3.close()
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'third-edit',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 4,
+    })
+    const flushed3 = await persistence.flush('vault-a', 'doc')
+
+    const rawDatabase = await openRaw()
+    const rawTransaction = rawDatabase.transaction(
+      ['drafts', 'draftConflicts'],
+      'readonly',
+    )
+    const rawDrafts = await new Promise<unknown[]>((resolve, reject) => {
+      const request = rawTransaction.objectStore('drafts').getAll()
+      request.onsuccess = () => resolve(request.result as unknown[])
+      request.onerror = () => reject(request.error)
+    })
+    const rawConflicts = await new Promise<unknown[]>((resolve, reject) => {
+      const request = rawTransaction.objectStore('draftConflicts')
+        .index('vaultId').getAll('vault-a')
+      request.onsuccess = () => resolve(request.result as unknown[])
+      request.onerror = () => reject(request.error)
+    })
+    rawDatabase.close()
+    await persistence.dispose()
+
+    return {
+      moveStatus: move.status,
+      flushed1,
+      movedByB,
+      flushed2,
+      primary,
+      conflicts,
+      flushed3,
+      rawDraftPaths: rawDrafts.map((row) => (row as { documentPath: string }).documentPath),
+      rawConflictPaths: rawConflicts.map((row) => (row as { documentPath: string }).documentPath),
+    }
+  }, DATABASE_NAME)
+
+  expect(result.moveStatus).toBe('unsupported')
+  // First retry: the fallback candidate joined the family at its then
+  // current path — reported clean.
+  expect(result.flushed1).toBe(true)
+  expect(result.movedByB).toMatchObject({ status: 'moved' })
+  // Second retry: the candidate met path-mismatch — the stale
+  // quarantine was discarded and A's bytes persisted at the certified
+  // current path.
+  expect(result.flushed2).toBe(true)
+  expect(result.primary).toMatchObject({
+    documentPath: 'final/doc',
+    content: 'primary',
+  })
+  expect(result.conflicts).toHaveLength(2)
+  expect(result.conflicts.every((c) => c.documentPath === 'final/doc')).toBe(true)
+  expect(result.conflicts.find((c) => c.content === 'after-rename')).toMatchObject({
+    documentPath: 'final/doc',
+    origin: 'move-conflict',
+  })
+  expect(result.conflicts.find((c) => c.content === 'second-edit')).toMatchObject({
+    documentPath: 'final/doc',
+    origin: 'move-conflict',
+  })
+  // The final edit wrote on the conflict channel — no stale move
+  // retry dragged the family to archive/doc.
+  expect(result.flushed3).toBe(true)
+  expect(result.rawDraftPaths).toEqual(['final/doc'])
+  expect(result.rawConflictPaths).toEqual(['final/doc', 'final/doc', 'final/doc'])
+})
+
+test('a conflict-pinned quarantine discards the stale serverPath when its candidate meets path-mismatch', async ({
+  page,
+}) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const { createUnsavedDraftPersistence } = await import(
+      '/src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts'
+    )
+    const storeA = createDraftStore()
+    await storeA.saveDraft({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 20,
+    })
+    // A cross-context record newer than any timestamp context A can
+    // mint (now: () => 100): A's first edit saves stale and pins the
+    // entry to the conflict channel.
+    const storeB = createDraftStore()
+    await storeB.saveDraft({
+      version: 1 as const,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'cross',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 500,
+    })
+    const openRaw = () => new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const runTx = (
+      database: IDBDatabase,
+      mutate: (store: IDBObjectStore) => void,
+    ) => new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('draftConflicts', 'readwrite')
+      mutate(transaction.objectStore('draftConflicts'))
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    const makeFutureRow = (conflictId: string, documentPath: string) => ({
+      version: 2,
+      conflictId,
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath,
+      content: 'future data',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 25,
+      origin: 'delete-conflict',
+      crossContextUpdatedAt: 20,
+      recordedAt: 25,
+    })
+
+    const persistence = createUnsavedDraftPersistence({
+      store: storeA,
+      now: () => 100,
+    })
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'edit-1',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 1,
+    })
+    await persistence.flush('vault-a', 'doc')
+
+    // A future-version row at the family path makes the draft move
+    // unsupported → quarantine{familyPath notes/doc, serverPath
+    // archive/doc, conflict PIN kept}.
+    const database = await openRaw()
+    await runTx(database, (store) => store
+      .put(makeFutureRow('conflict-blocker', 'notes/doc')))
+    const identity = {
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+    }
+    const barrier = await persistence.prepareFileMutation([identity])
+    const [move] = await barrier.commitMoves([{
+      ...identity,
+      fromPath: 'notes/doc',
+      toPath: 'archive/doc',
+    }])
+    const finalized = await barrier.finalizeAfterTabMigration()
+
+    // The first stale retry: the CAS comes back 'unsupported' and the
+    // PINNED conflict channel writes its candidate at notes/doc —
+    // reported clean, quarantine intact.
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'after-rename',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 2,
+    })
+    const flushed1 = await persistence.flush('vault-a', 'doc')
+
+    // The blocker disappears; context B completes archive/doc→final/doc
+    // whole, then a fresh unreadable row at final/doc keeps the next
+    // CAS 'unsupported' while the candidate authority still certifies
+    // final/doc.
+    await runTx(database, (store) => store
+      .delete(['vault-a', 'doc', 'conflict-blocker']))
+    database.close()
+    const movedByB = await storeB.moveDraftFamily('vault-a', 'doc', 'final/doc')
+    const database2 = await openRaw()
+    await runTx(database2, (store) => store
+      .put(makeFutureRow('conflict-blocker-2', 'final/doc')))
+    database2.close()
+
+    // The second stale retry: CAS 'unsupported' again, the pinned
+    // candidate at the stale oldPath notes/doc meets
+    // path-mismatch(final/doc). The pinned quarantine takes the SAME
+    // transition as the plain one: stale serverPath discarded,
+    // candidate persisted at final/doc, entry pinned to the plain
+    // conflict channel there.
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'second-edit',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 3,
+    })
+    const flushed2 = await persistence.flush('vault-a', 'doc')
+    const primary = await storeA.getDraft('vault-a', 'doc')
+    const conflicts = await storeA.listConflictDrafts('vault-a')
+
+    // The blocker disappears; the next edit must write on the plain
+    // conflict channel at final/doc — a surviving quarantine would
+    // re-run the CAS and drag the family to archive/doc.
+    const database3 = await openRaw()
+    await runTx(database3, (store) => store
+      .delete(['vault-a', 'doc', 'conflict-blocker-2']))
+    database3.close()
+    persistence.schedule({
+      vaultId: 'vault-a',
+      documentId: 'doc',
+      documentPath: 'archive/doc',
+      content: 'third-edit',
+      authoritativeContent: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      revision: 4,
+    })
+    const flushed3 = await persistence.flush('vault-a', 'doc')
+
+    const rawDatabase = await openRaw()
+    const rawTransaction = rawDatabase.transaction(
+      ['drafts', 'draftConflicts'],
+      'readonly',
+    )
+    const rawDrafts = await new Promise<unknown[]>((resolve, reject) => {
+      const request = rawTransaction.objectStore('drafts').getAll()
+      request.onsuccess = () => resolve(request.result as unknown[])
+      request.onerror = () => reject(request.error)
+    })
+    const rawConflicts = await new Promise<unknown[]>((resolve, reject) => {
+      const request = rawTransaction.objectStore('draftConflicts')
+        .index('vaultId').getAll('vault-a')
+      request.onsuccess = () => resolve(request.result as unknown[])
+      request.onerror = () => reject(request.error)
+    })
+    rawDatabase.close()
+    await persistence.dispose()
+
+    return {
+      moveStatus: move.status,
+      finalized,
+      flushed1,
+      movedByB,
+      flushed2,
+      primary,
+      conflicts,
+      flushed3,
+      rawDraftPaths: rawDrafts.map((row) => (row as { documentPath: string }).documentPath),
+      rawConflictPaths: rawConflicts.map((row) => (row as { documentPath: string }).documentPath),
+    }
+  }, DATABASE_NAME)
+
+  expect(result.moveStatus).toBe('unsupported')
+  // The pinned entry's release write lands its candidate at the
+  // family's current path — finalize reports nothing (unlike a
+  // move-indeterminate entry, whose blocked write reports failed).
+  expect(result.finalized).toEqual([])
+  expect(result.flushed1).toBe(true)
+  expect(result.movedByB).toMatchObject({ status: 'moved' })
+  expect(result.flushed2).toBe(true)
+  expect(result.primary).toMatchObject({
+    documentPath: 'final/doc',
+    content: 'cross',
+  })
+  expect(result.conflicts).toHaveLength(3)
+  expect(result.conflicts.every((c) => c.documentPath === 'final/doc')).toBe(true)
+  expect(result.conflicts.some((c) => c.content === 'edit-1')).toBe(true)
+  expect(result.conflicts.some((c) => c.content === 'after-rename')).toBe(true)
+  expect(result.conflicts.find((c) => c.content === 'second-edit')).toMatchObject({
+    documentPath: 'final/doc',
+    origin: 'move-conflict',
+  })
+  expect(result.flushed3).toBe(true)
+  expect(result.rawDraftPaths).toEqual(['final/doc'])
+  expect(result.rawConflictPaths)
+    .toEqual(['final/doc', 'final/doc', 'final/doc', 'final/doc'])
+})
