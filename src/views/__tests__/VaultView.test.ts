@@ -109,10 +109,39 @@ describe('VaultView editor tab wiring', () => {
 
     expect(handler).toBeDefined()
     expect(handler?.match(/await draftRecovery\.retry\(recoveryId\)/g)).toHaveLength(3)
+    // Adoption opens WITHOUT a workspace refresh: the tree/posts refresh
+    // runs outside openPost's load try/catch, so a routine refresh
+    // failure would otherwise reject the adoption (and abort the startup
+    // loop). Recovery already certified the record through its stable
+    // identity, and the retry right below re-verifies it after the open.
+    expect(handler).toContain(
+      'await openEditorPost(item.draft.documentPath, { refresh: false })',
+    )
     expect(handler).toContain("if (latest?.status === 'ready' && latest.decision)")
     expect(handler).toContain("recoveryTabs.open(latest, 'content')")
     expect(handler).not.toContain("recoveryTabs.open(item, 'content')")
     expect(handler).not.toContain("recoveryTabs.open(refreshed, 'content')")
+  })
+
+  it('isolates a failed startup adoption without aborting the recovery loop', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const loop = source.match(
+      /for \(const item of \[\.\.\.draftRecovery\.items\.value\]\)[\s\S]*?\n    \}/,
+    )?.[0]
+
+    expect(loop).toBeDefined()
+    // Each startup adoption is wrapped individually: one failure must
+    // keep the record and surface it through the Unsaved Content panel
+    // instead of aborting Recovery for the remaining items —
+    // baseline-match items never reach the Prompt, so a silent exception
+    // would leave the stored bytes with no entry point at all.
+    expect(loop).toContain('try {')
+    expect(loop).toContain('await restoreRecoveryDraft(item.recoveryId)')
+    expect(loop).toContain('} catch {')
+    expect(loop).toContain('const failed = recoveryItem(item.recoveryId)')
+    expect(loop).toContain("recoveryTabs.open(failed, 'content')")
+    // The failed record must NOT be dismissed — it stays discoverable.
+    expect(loop).not.toContain('dismissForSession')
   })
 
   it('opens one dedicated diff workspace tab from a ready snapshot', () => {

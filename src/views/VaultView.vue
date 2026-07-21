@@ -581,7 +581,14 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
     recoveryTabs.deactivate()
     historyComparisons.deactivate()
     historySnapshots.viewCurrent()
-    await openEditorPost(item.draft.documentPath)
+    // Open WITHOUT a workspace refresh: Recovery has already certified
+    // this record through its stable identity and the current-document
+    // interface, and the reclassification right below re-verifies it
+    // after the open. A tree/posts refresh failure (a routine network
+    // hiccup) must not reject the adoption — without `{ refresh: false }`
+    // the refresh runs outside openPost's load try/catch and would
+    // throw, aborting the whole startup Recovery loop.
+    await openEditorPost(item.draft.documentPath, { refresh: false })
     // Opening the document crosses a network boundary. Refresh both the
     // stored draft and disk classification again before adopting any bytes.
     await draftRecovery.retry(recoveryId)
@@ -645,7 +652,22 @@ watch(vaultId, (id) => {
         && item.decision?.kind === 'baseline-match'
         && item.decision.disk.status === 'ready'
         && item.draft.content !== item.decision.disk.raw) {
-        await restoreRecoveryDraft(item.recoveryId)
+        try {
+          await restoreRecoveryDraft(item.recoveryId)
+        } catch {
+          // One failed adoption must not abort startup Recovery for the
+          // remaining items — and must not silently hide this one:
+          // baseline-match items are excluded from the Prompt (it trusts
+          // this adoption path), so an exception here would leave the
+          // stored bytes with no visible entry point at all. The record
+          // is NOT dismissed; surface it through the temporary Unsaved
+          // Content panel instead. (Items whose failure reclassified
+          // them to error resurface through the Prompt on their own.)
+          const failed = recoveryItem(item.recoveryId)
+          if (failed?.status === 'ready' && failed.decision) {
+            recoveryTabs.open(failed, 'content')
+          }
+        }
       }
     }
     if (await recoveryManagement.refresh(id)) {

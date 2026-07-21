@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import { createDraftStore, createMemoryDraftBackend } from '../draftStore'
-import type { UnsavedDraft } from '../draftTypes'
+import type { DraftConflictRecord, UnsavedDraft } from '../draftTypes'
 import { createUnsavedDraftRecovery } from '../useUnsavedDraftRecovery'
 import { createDraftRecoveryManagement } from '../useDraftRecoveryManagement'
 import { recoveryRecordId } from '../draftCleanup'
@@ -12,6 +12,28 @@ function draft(id: string, updatedAt = 1): UnsavedDraft {
     version: 1, vaultId: 'vault', documentId: id, documentPath: `notes/${id}`,
     content: id, baseContentHash: null, baseModifiedAt: null,
     createdAt: updatedAt, updatedAt,
+  }
+}
+
+function conflictRecord(
+  id: string, conflictId: string, updatedAt: number, content = id,
+): DraftConflictRecord {
+  return {
+    version: 1, vaultId: 'vault', documentId: id, documentPath: `notes/${id}`,
+    conflictId, content, baseContentHash: null, baseModifiedAt: null,
+    createdAt: updatedAt, updatedAt, origin: 'delete-conflict',
+    crossContextUpdatedAt: null, recordedAt: updatedAt,
+  }
+}
+
+function post(id: string, raw: string, mtime = 1) {
+  return {
+    path: `notes/${id}`, raw, content: raw, frontmatter: {},
+    metadata: {
+      id, path: `notes/${id}`, title: id, summary: '', tags: [],
+      createdAt: 1, updatedAt: 1,
+    },
+    size: 1, mtime,
   }
 }
 
@@ -202,6 +224,126 @@ describe('draft recovery management', () => {
     const report = await cleanup
     expect(report.deleted).toEqual([])
     expect(report.status).toBe('completed')
+  })
+
+  it('keeps a record another context replaced after safe-redundant classification', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    await store.saveDraft(draft('a'))
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: async () => post('a', 'a'),
+    })
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+      now: () => 31 * 24 * 60 * 60 * 1000,
+    })
+    await recovery.discover('vault')
+    // R1 is byte-identical to disk under the same stable identity, so
+    // cleanup classifies it as safe-redundant.
+    expect(recovery.items.value[0]?.status).toBe('ready')
+
+    // Another context replaces the family's record under the SAME
+    // recoveryId (newer updatedAt, new body) after classification.
+    const replaced = await store.saveDraft({
+      ...draft('a', 2), content: 'new unsaved content',
+    })
+    expect(replaced.status).toBe('saved')
+
+    const report = await management.cleanupNow()
+
+    // The certified verdict belonged to R1: the record the cleanup scan
+    // actually inspected was never the one classification certified, so
+    // it must stay until a fresh classification certifies it.
+    expect(report.status).toBe('completed')
+    expect(report.deleted).toEqual([])
+    expect((await store.getDraft('vault', 'a'))?.content).toBe('new unsaved content')
+  })
+
+  it('keeps a replaced record under a stale missing-source decision', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    await store.saveDraft(draft('a'))
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: async () => { throw Object.assign(new Error('gone'), { status: 404 }) },
+    })
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+      now: () => 31 * 24 * 60 * 60 * 1000,
+    })
+    await recovery.discover('vault')
+    expect(recovery.items.value[0]?.decision?.kind).toBe('missing-source')
+
+    // Another context writes a new record under the same identity: the
+    // source exists again and the certified record is gone. The
+    // replacement is old enough to expire on its own merits, so ONLY
+    // the record binding protects it here.
+    await store.saveDraft(draft('a', 2))
+
+    const report = await management.cleanupNow()
+
+    expect(report.deleted).toEqual([])
+    expect(await store.getDraft('vault', 'a')).not.toBeNull()
+  })
+
+  it('keeps a conflict candidate another context replaced after classification', async () => {
+    const backend = createMemoryDraftBackend()
+    const store = createDraftStore({ backend })
+    await backend.seedRawConflict(conflictRecord('doc', 'c-1', 1, 'candidate body'))
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: async () => post('doc', 'candidate body'),
+    })
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+      now: () => 31 * 24 * 60 * 60 * 1000,
+    })
+    await recovery.discover('vault')
+    expect(recovery.items.value[0]?.source).toBe('conflict')
+    expect(recovery.items.value[0]?.status).toBe('ready')
+
+    // Another context replaces the candidate row under the SAME
+    // conflictId (new body, new timestamps) after classification.
+    await backend.seedRawConflict(conflictRecord('doc', 'c-1', 2, 'fresh candidate'))
+
+    const report = await management.cleanupNow()
+
+    expect(report.deleted).toEqual([])
+    const survivors = await store.listConflictDrafts('vault')
+    expect(survivors).toHaveLength(1)
+    expect(survivors[0]?.content).toBe('fresh candidate')
+  })
+
+  it('does not treat an identity-mismatch record as safe-redundant even with identical bodies', async () => {
+    const DAY = 24 * 60 * 60 * 1000
+    const now = 31 * DAY
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    // Young enough that orphan expiry cannot be the reason it survives.
+    await store.saveDraft(draft('a', now - DAY))
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      // Same path, byte-identical body — but another document's identity
+      // now occupies it.
+      loadPost: async () => post('another-doc', 'a'),
+    })
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+      now: () => now,
+    })
+    await recovery.discover('vault')
+    expect(recovery.items.value[0]?.decision?.kind).toBe('identity-mismatch')
+
+    const report = await management.cleanupNow()
+
+    expect(report.deleted).toEqual([])
+    expect(await store.getDraft('vault', 'a')).not.toBeNull()
   })
 
   it('reports protection that appears after cleanup planning', async () => {

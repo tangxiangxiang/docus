@@ -7,13 +7,14 @@ import {
   primaryRecoveryRecord,
   recoveryIdentityId,
   recoveryRecordId,
+  type ClassifiedCleanupDecision,
+  type CleanupDecision,
   type DraftCapacitySnapshot,
   type RecoveryRecordRef,
 } from './draftCleanup'
 import type { DraftConditionalDeleteOutcome, DraftRecoveryInventory, DraftStore } from './draftStore'
 import type { DraftCleanupProtection } from './useUnsavedDraftPersistence'
 import type { UnsavedDraftRecovery } from './useUnsavedDraftRecovery'
-import type { DraftRecoveryDecisionKind } from './draftRecoveryDecision'
 
 export type RecoveryDeleteStatus = DraftConditionalDeleteOutcome['status'] | 'protected'
 
@@ -218,18 +219,38 @@ export function createDraftRecoveryManagement(
     return deleteMany(records.value.filter((record) => !currentProtected(record)))
   }
 
-  function decisions(): Map<string, DraftRecoveryDecisionKind | 'error' | 'safe-redundant' | null> {
-    return new Map(options.recovery.items.value.map((item) => [
-      item.recoveryId,
-      item.status === 'ready' && item.decision
+  function decisions(): Map<string, ClassifiedCleanupDecision> {
+    const result = new Map<string, ClassifiedCleanupDecision>()
+    for (const item of options.recovery.items.value) {
+      const decision: CleanupDecision = item.status === 'ready' && item.decision
+        // safe-redundant requires the SAME stable identity: a path
+        // reused by another document with an accidentally identical
+        // body is an identity-mismatch, never redundant. Mirrors the
+        // recovery decision's own identity-mismatch classification.
         ? item.decision.disk.status === 'ready'
+          && item.decision.disk.documentId === item.draft.documentId
           && item.draft.content === item.decision.disk.raw
-          ? 'safe-redundant' as const
+          ? 'safe-redundant'
           : item.decision.kind
         : item.status === 'error'
           ? 'error'
-          : null,
-    ]))
+          : null
+      // Bind the verdict to the exact classified record: cleanup must
+      // never apply it to a different record another context may have
+      // written under the same recoveryId (see ClassifiedCleanupDecision).
+      if (item.source === 'conflict') {
+        const conflict = item.conflict
+        if (!conflict) continue
+        result.set(item.recoveryId, {
+          source: 'conflict', recoveryId: item.recoveryId, expected: conflict, decision,
+        })
+      } else {
+        result.set(item.recoveryId, {
+          source: 'primary', recoveryId: item.recoveryId, expected: item.draft, decision,
+        })
+      }
+    }
+    return result
   }
 
   function uniqueRecords(records: readonly RecoveryRecordRef[]): RecoveryRecordRef[] {

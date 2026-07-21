@@ -1,4 +1,9 @@
-import type { DraftConflictRecord, UnsavedDraft } from './draftTypes'
+import {
+  conflictDraftsEqual,
+  draftsEqual,
+  type DraftConflictRecord,
+  type UnsavedDraft,
+} from './draftTypes'
 import type { DraftRecoveryDecisionKind } from './draftRecoveryDecision'
 
 export const MAX_DRAFT_CONTENT_BYTES = 2 * 1024 * 1024
@@ -85,12 +90,77 @@ export function capacitySnapshot(records: readonly RecoveryRecordRef[]): DraftCa
   }
 }
 
+/** The cleanup verdict the planner routes on: a recovery classification
+ *  kind, plus the cleanup-only verdicts — `safe-redundant` (the record's
+ *  body is already byte-identical to disk under the SAME stable
+ *  identity), `error` (classification failed) and `null` (still
+ *  unresolved). None of `error` / `null` / the non-redundant kinds ever
+ *  selects a record for automatic deletion on its own. */
+export type CleanupDecision =
+  | DraftRecoveryDecisionKind
+  | 'error'
+  | 'safe-redundant'
+  | null
+
+/** A cleanup decision bound to the EXACT recovery record the
+ *  classification certified. Cleanup plans from a fresh Store inventory
+ *  and must never apply a decision to a record the classification never
+ *  saw: a recoveryId carries only vaultId + documentId (plus conflictId
+ *  for candidates) — no version, body or timestamp marker — so another
+ *  context can replace the family's record under the SAME recoveryId
+ *  between classification and cleanup. The conditional Store delete
+ *  cannot catch that: it would match the replacement exactly and delete
+ *  it. The planner therefore acts on the decision ONLY while the fresh
+ *  inventory record still equals `expected` (full `draftsEqual` for
+ *  primary records, full `conflictDraftsEqual` for conflict candidates);
+ *  a replaced record degrades to "no decision" and stays until a fresh
+ *  classification certifies it. */
+export type ClassifiedCleanupDecision =
+  | {
+      source: 'primary'
+      recoveryId: string
+      expected: UnsavedDraft
+      decision: CleanupDecision
+    }
+  | {
+      source: 'conflict'
+      recoveryId: string
+      expected: DraftConflictRecord
+      decision: CleanupDecision
+    }
+
 export interface PlanDraftCleanupInput {
   records: readonly RecoveryRecordRef[]
-  decisions?: ReadonlyMap<string, DraftRecoveryDecisionKind | 'error' | 'safe-redundant' | null>
+  decisions?: ReadonlyMap<string, ClassifiedCleanupDecision>
   protectedRecoveryIds?: ReadonlySet<string>
   protectedIdentityIds?: ReadonlySet<string>
   now: number
+}
+
+/** The verdict a cleanup plan may act on for one fresh inventory
+ *  record: the classified decision, but ONLY while the record still
+ *  equals the exact record the classification certified (see
+ *  ClassifiedCleanupDecision). A record another context replaced under
+ *  the same recoveryId since classification has no certified verdict —
+ *  `undefined`, never an inherited stale one — and the planner keeps
+ *  it. */
+function certifiedDecision(
+  record: RecoveryRecordRef,
+  decisions: ReadonlyMap<string, ClassifiedCleanupDecision> | undefined,
+): CleanupDecision | undefined {
+  const classified = decisions?.get(recoveryRecordId(record))
+  if (!classified) return undefined
+  if (record.source === 'primary' && classified.source === 'primary') {
+    return draftsEqual(record.record, classified.expected)
+      ? classified.decision
+      : undefined
+  }
+  if (record.source === 'conflict' && classified.source === 'conflict') {
+    return conflictDraftsEqual(record.record, classified.expected)
+      ? classified.decision
+      : undefined
+  }
+  return undefined
 }
 
 export function planDraftCleanup(input: PlanDraftCleanupInput): DraftCleanupPlan {
@@ -103,7 +173,7 @@ export function planDraftCleanup(input: PlanDraftCleanupInput): DraftCleanupPlan
   const skippedProtected = records.filter(isProtected)
   const retentionCandidates = records.filter((record) => {
     if (isProtected(record)) return false
-    const decision = input.decisions?.get(recoveryRecordId(record))
+    const decision = certifiedDecision(record, input.decisions)
     return decision === 'safe-redundant'
       || ((decision === 'missing-source' || decision === 'identity-mismatch')
         && input.now - record.record.updatedAt > ORPHAN_RETENTION_MS)
