@@ -3169,7 +3169,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const backend = createMemoryDraftBackend()
     const store = createDraftStore({ backend })
     const settlements: Array<{
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -3232,7 +3232,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const backend = createMemoryDraftBackend()
     const store = createDraftStore({ backend })
     const settlements: Array<{
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -3296,7 +3296,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const backend = createMemoryDraftBackend()
     const store = createDraftStore({ backend })
     const settlements: Array<{
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -3351,7 +3351,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const backend = createMemoryDraftBackend()
     const store = createDraftStore({ backend })
     const settlements: Array<{
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
       oldPath: string | null
       newPath: string
     }> = []
@@ -3414,7 +3414,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const backend = createMemoryDraftBackend()
     const store = createDraftStore({ backend })
     const settlements: Array<{
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -3612,7 +3612,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const settlements: Array<{
       oldPath: string | null
       newPath: string
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -3747,7 +3747,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const settlements: Array<{
       oldPath: string | null
       newPath: string
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -3819,7 +3819,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const store = createDraftStore({ backend })
     const storeB = createDraftStore({ backend })
     const settlements: Array<{
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -3950,7 +3950,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const settlements: Array<{
       oldPath: string | null
       newPath: string
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -4023,7 +4023,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const settlements: Array<{
       oldPath: string | null
       newPath: string
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -4093,7 +4093,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const settlements: Array<{
       oldPath: string | null
       newPath: string
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -4186,7 +4186,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const settlements: Array<{
       oldPath: string | null
       newPath: string
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -4276,7 +4276,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const settlements: Array<{
       oldPath: string | null
       newPath: string
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -4364,7 +4364,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const store = createDraftStore({ backend })
     const storeB = createDraftStore({ backend })
     const settlements: Array<{
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -4571,7 +4571,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
     const settlements: Array<{
       oldPath: string | null
       newPath: string
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,
@@ -4801,8 +4801,9 @@ describe('draft file transactions — UI commit boundary sealing', () => {
         content: 'after-rename',
       })
       expect(settlements.some(
-        (s) => s.status === 'moved-write-failed' && s.newPath === 'path/p5',
+        (s) => s.status === 'path-authentication-pending' && s.newPath === 'path/p5',
       )).toBe(true)
+      expect(settlements.some((s) => s.status === 'moved-write-failed')).toBe(false)
       await persistence.dispose()
     })
 
@@ -4863,6 +4864,126 @@ describe('draft file transactions — UI commit boundary sealing', () => {
         documentPath: 'path/stable',
         content: 'after-rename',
       })
+      await persistence.dispose()
+    })
+
+    it('persists a newer revision before authenticating an existing anchor on manual flush', async () => {
+      let calls = 0
+      let serverAvailable = false
+      const { store, persistence } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          return calls === 1 || serverAvailable
+            ? { path: 'path/b', version: calls }
+            : null
+        },
+      })
+
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/b',
+        content: 'after-rename',
+      })
+
+      persistence.schedule(snapshot('revision-2', 'path/b', 3))
+      serverAvailable = true
+      expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/b',
+        content: 'revision-2',
+      })
+      await persistence.dispose()
+    })
+
+    it('persists a newer revision during pending authentication on pagehide', async () => {
+      const targetWindow = new EventTarget()
+      let calls = 0
+      let serverAvailable = false
+      const { store, persistence } = await setupEmptiedFamilyRetry({
+        targetWindow,
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          return calls === 1 || serverAvailable
+            ? { path: 'path/b', version: calls }
+            : null
+        },
+      })
+
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      persistence.schedule(snapshot('pagehide-revision', 'path/b', 3))
+      serverAvailable = true
+      targetWindow.dispatchEvent(new Event('pagehide'))
+
+      await vi.waitFor(async () => {
+        expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+          documentPath: 'path/b',
+          content: 'pagehide-revision',
+        })
+      })
+      await persistence.dispose()
+    })
+
+    it('persists a newer revision during pending authentication on dispose', async () => {
+      let calls = 0
+      let serverAvailable = false
+      const { store, persistence } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          return calls === 1 || serverAvailable
+            ? { path: 'path/b', version: calls }
+            : null
+        },
+      })
+
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      persistence.schedule(snapshot('dispose-revision', 'path/b', 3))
+      serverAvailable = true
+      await persistence.dispose()
+
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/b',
+        content: 'dispose-revision',
+      })
+    })
+
+    it('bounds automatic retries when the server resolver stays unavailable', async () => {
+      let calls = 0
+      const { persistence } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          return null
+        },
+      })
+
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+
+      expect(calls).toBe(4)
+      expect(vi.getTimerCount()).toBe(0)
+      await persistence.dispose()
+    })
+
+    it('bounds automatic retries when the first primary mint keeps failing', async () => {
+      let calls = 0
+      const setup = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          return { path: 'path/b', version: calls }
+        },
+      })
+      const { store, persistence, settlements } = setup
+      const saveDraft = vi.spyOn(store, 'saveDraft').mockResolvedValue({ status: 'failed' })
+
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+
+      expect(calls).toBe(4)
+      expect(saveDraft).toHaveBeenCalledTimes(4)
+      expect(vi.getTimerCount()).toBe(0)
+      expect(settlements.filter((item) => item.status === 'moved-write-failed')).toHaveLength(4)
+      saveDraft.mockRestore()
       await persistence.dispose()
     })
 
@@ -4978,7 +5099,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
         content: 'after-rename',
       })
       expect(settlements.some(
-        (s) => s.status === 'moved-write-failed' && s.newPath === 'path/b',
+        (s) => s.status === 'path-authentication-pending' && s.newPath === 'path/b',
       )).toBe(true)
       await persistence.dispose()
     })
@@ -5441,7 +5562,7 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       documentId: string
       oldPath: string | null
       newPath: string
-      status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+      status: 'moved-and-persisted' | 'moved-write-failed' | 'path-authentication-pending' | 'conflict'
     }> = []
     const persistence = createUnsavedDraftPersistence({
       store,

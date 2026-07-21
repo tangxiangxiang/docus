@@ -116,6 +116,9 @@ interface DraftEntry {
     move: { oldPath: string | null; newPath: string }
     anchorPath: string | null
   } | null
+  /** Current automatic settlement retry attempt. Null means no
+   *  scheduler-owned budget is active. */
+  settleRetryAttempt: number | null
 }
 
 /** The persistence channel state machine (DraftEntry.mode).
@@ -305,7 +308,11 @@ export interface DraftFamilyMoveSettlement {
   documentId: string
   oldPath: string | null
   newPath: string
-  status: 'moved-and-persisted' | 'moved-write-failed' | 'conflict'
+  status:
+    | 'moved-and-persisted'
+    | 'moved-write-failed'
+    | 'path-authentication-pending'
+    | 'conflict'
 }
 
 /** The server's authoritative answer to "where does this document
@@ -432,6 +439,7 @@ export function createUnsavedDraftPersistence(
         fileTransaction: null,
         mode: { kind: 'primary' },
         emptyFamilyRecovery: null,
+        settleRetryAttempt: null,
       }
       entries.set(identity, entry)
     }
@@ -442,6 +450,7 @@ export function createUnsavedDraftPersistence(
     if (entry.timer === null) return
     clearTimeout(entry.timer)
     entry.timer = null
+    entry.settleRetryAttempt = null
   }
 
   function safeTimestamp(entry: DraftEntry): number {
@@ -1587,11 +1596,11 @@ export function createUnsavedDraftPersistence(
    *    (5) still changing past the bound → fail closed: with a mint
    *        landed, the latest bytes persist at the last server-
    *        authoritative path the flow reached (recoverable), the
-   *        'moved-write-failed' settlement keeps the only-content tab
-   *        open, and the next user edit / flush restarts the flow
-   *        from the primary channel; without a mint, nothing was
-   *        written anywhere and the tab stays the sole holder of the
-   *        in-memory bytes.
+   *        path-authentication-pending settlement records that the
+   *        bytes are durable but the path is not yet certified; the
+   *        next retry / flush resumes authentication. Without a mint,
+   *        nothing was written anywhere and the tab stays the sole
+   *        holder of the in-memory bytes.
    *  Absent / null / blank / throwing resolution fails closed BEFORE
    *  anything is minted. Authentication compares PATHS, never the
    *  version token: a metadata-only edit (title / tags) bumps the
@@ -1632,20 +1641,21 @@ export function createUnsavedDraftPersistence(
 
     // Every failure exit routes through here: once a mint has landed,
     // the latest bytes persist at the anchor (recoverable) and the
-    // 'moved-write-failed' settlement tells the owner to keep the
-    // only-content tab open AND refresh Recovery against the durable
-    // state — mirroring the movedStatus branch's post-move guard
-    // failures. Before any mint it is a silent no-op: nothing was
-    // written anywhere, the flush's false return alone keeps the tab.
+    // settlement distinguishes bytes still only in memory from bytes
+    // already durable at an anchor whose path is not authenticated.
+    // Before any mint it is a silent no-op: nothing was written
+    // anywhere, the flush's false return alone keeps the tab.
     const failClosed = (): false => {
       if (anchor !== null) {
         notifyFamilyMoveSettled(
           owner.vaultId, owner.documentId,
           { oldPath: move.oldPath, newPath: anchor },
-          'moved-write-failed',
+          entry.latestSnapshotNeedsWrite
+            ? 'moved-write-failed'
+            : 'path-authentication-pending',
         )
       }
-      if (entry.latestSnapshot) {
+      if (entry.latestSnapshot && entry.settleRetryAttempt === null) {
         scheduleSettleRetry(
           owner.vaultId,
           owner.documentId,
@@ -1746,10 +1756,12 @@ export function createUnsavedDraftPersistence(
             { oldPath: move.oldPath, newPath: resolved.path },
             'moved-write-failed',
           )
-          scheduleSettleRetry(
-            owner.vaultId, owner.documentId, entry.generation, 0,
-            { oldPath: move.oldPath, newPath: resolved.path },
-          )
+          if (entry.settleRetryAttempt === null) {
+            scheduleSettleRetry(
+              owner.vaultId, owner.documentId, entry.generation, 0,
+              { oldPath: move.oldPath, newPath: resolved.path },
+            )
+          }
           return false
         }
         setAnchor(resolved.path)
@@ -1763,12 +1775,31 @@ export function createUnsavedDraftPersistence(
         }
       }
 
+      // Authentication never substitutes for content persistence. A
+      // newer editor revision may arrive after the anchor was minted
+      // (or while its CAS convergence awaited IndexedDB). Persist that
+      // exact latest snapshot at the current anchor before asking the
+      // server to authenticate the path.
+      if (anchor !== null && entry.latestSnapshotNeedsWrite) {
+        const latest = entry.latestSnapshot
+        if (!latest) return failClosed()
+        latest.documentPath = anchor
+        const writeSucceeded = await writePrimary(
+          owner,
+          cloneSnapshot(latest),
+          anchor,
+          allowDisposed,
+        )
+        if (!writeSucceeded) return failClosed()
+        setAnchor(anchor)
+      }
+
       // (3) Revalidate: the server query AFTER the write / convergence
       // is what authenticates the path the family now sits at.
       const recheck = await revalidate()
       if ((!allowDisposed && disposed) || !current(owner, entry)) return failClosed()
       if (!recheck) continue
-      if (recheck.path === anchor) {
+      if (recheck.path === anchor && !entry.latestSnapshotNeedsWrite) {
         notifyFamilyMoveSettled(
           owner.vaultId, owner.documentId,
           { oldPath: move.oldPath, newPath: anchor },
@@ -1788,7 +1819,9 @@ export function createUnsavedDraftPersistence(
       }
       const finalCheck = await revalidate()
       if ((!allowDisposed && disposed) || !current(owner, entry)) return failClosed()
-      if (finalCheck && finalCheck.path === converged) {
+      if (finalCheck
+        && finalCheck.path === converged
+        && !entry.latestSnapshotNeedsWrite) {
         notifyFamilyMoveSettled(
           owner.vaultId, owner.documentId,
           { oldPath: move.oldPath, newPath: converged },
@@ -2121,6 +2154,7 @@ export function createUnsavedDraftPersistence(
     const captured = cloneSnapshot(snapshot)
     const entry = entryFor(captured.vaultId, captured.documentId)
     clearTimer(entry)
+    entry.settleRetryAttempt = null
     entry.generation += 1
     entry.latestSnapshot = captured
     entry.latestSnapshotNeedsWrite = true
@@ -2223,14 +2257,12 @@ export function createUnsavedDraftPersistence(
     }))
   }
 
-  /** Arm a bounded backoff retry after a 'moved-write-failed'
-   *  settlement: the family is whole at the new path on disk, but the
-   *  latest snapshot is still only in memory (the final write was
-   *  rejected). Without this the settlement toast's promise of an
-   *  automatic retry is hollow — the debounce timer was already
-   *  consumed by the write that failed, and nothing would re-persist
-   *  the snapshot until the user types again, flushes manually or
-   *  hides the page. Each attempt re-resolves the write target AT
+  /** Arm a bounded backoff retry after a failed settlement. This owns
+   *  the sole retry budget for both content-write failures and durable
+   *  families whose path authentication is still pending. Without it
+   *  the debounce timer is already consumed and no automatic work
+   *  would resume until the user types, flushes or hides the page.
+   *  Each attempt re-resolves the write target AT
    *  FIRE time through the mode state machine (queueTargetWrite —
    *  see resolveDraftWriteTarget): a quarantine re-entry, a channel
    *  pin or a superseding edit landing between schedule and fire
@@ -2254,23 +2286,40 @@ export function createUnsavedDraftPersistence(
     attempt: number,
     quarantine: { oldPath: string | null; newPath: string } | null,
   ): void {
-    if (disposed || attempt >= SETTLE_RETRY_DELAYS_MS.length) return
     const entry = entries.get(key(vaultId, documentId))
     if (!entry || entry.generation !== generation) return
+    if (disposed || attempt >= SETTLE_RETRY_DELAYS_MS.length) {
+      entry.settleRetryAttempt = null
+      return
+    }
     if (!entry.latestSnapshot
-      || (!entry.latestSnapshotNeedsWrite && entry.emptyFamilyRecovery === null)) return
+      || (!entry.latestSnapshotNeedsWrite && entry.emptyFamilyRecovery === null)) {
+      entry.settleRetryAttempt = null
+      return
+    }
     if (entry.timer !== null) return
+    entry.settleRetryAttempt = attempt
     entry.timer = setTimeout(() => {
       entry.timer = null
-      if (disposed) return
+      if (disposed) {
+        entry.settleRetryAttempt = null
+        return
+      }
       const target = entries.get(key(vaultId, documentId))
-      if (!target || target.generation !== generation) return
+      if (!target || target.generation !== generation) {
+        entry.settleRetryAttempt = null
+        return
+      }
       if (!target.latestSnapshot
-        || (!target.latestSnapshotNeedsWrite && target.emptyFamilyRecovery === null)) return
+        || (!target.latestSnapshotNeedsWrite && target.emptyFamilyRecovery === null)) {
+        target.settleRetryAttempt = null
+        return
+      }
       const owner = { vaultId, documentId, generation: target.generation }
       const captured = cloneSnapshot(target.latestSnapshot)
       void queueTargetWrite(owner, captured).then((succeeded) => {
         if (succeeded) {
+          target.settleRetryAttempt = null
           if (quarantine) {
             notifyFamilyMoveSettled(
               vaultId,
