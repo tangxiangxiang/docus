@@ -507,6 +507,9 @@ file-deletion recovery is outside the Edit series.
 Edit-09.6 leaves the sealed Edit-09.5 family-path state machine and all Edit-10
 AI context work unchanged.
 
+**Stage status:** Closed — implemented and verified at
+`9a0837b243b159e8bbfdecae7b275ca47134b118`.
+
 Final Edit-09.6 verification (2026-07-21):
 
 - draft-recovery plus Recovery Center/layout focused suites: 14 files / 310 tests passed;
@@ -514,6 +517,58 @@ Final Edit-09.6 verification (2026-07-21):
 - draft-store/file-transaction Playwright suite: 31 tests passed;
 - application Playwright suite: 9 tests passed;
 - typecheck, production build, icon lint, and `git diff --check` passed.
+
+The seal review approved the exception-driven downgrade and found two blocking
+holes plus one tightening, fixed at `9a0837b` (`fix: bind cleanup decisions to
+exact recovery records`):
+
+- Cleanup decisions are now bound to the EXACT classified record
+  (`ClassifiedCleanupDecision`): the planner applies a verdict only while the
+  fresh Store inventory still equals it (full `draftsEqual` /
+  `conflictDraftsEqual`). A record another context wrote under the same
+  recoveryId after classification has no certified verdict and stays until a
+  fresh classification certifies it — the conditional CAS delete alone cannot
+  protect it, since it matches the replacement exactly.
+- `safe-redundant` additionally requires the same stable identity: disk ready,
+  `disk.documentId === draft.documentId`, identical body. A path reused by
+  another document is an identity-mismatch, never redundant.
+- Startup auto-adoption opens with `{ refresh: false }` and each adoption is
+  individually isolated: a routine tree/posts refresh failure (which runs
+  outside openPost's load try/catch) no longer rejects the adoption or aborts
+  the startup loop. A failed adoption keeps its record and surfaces it through
+  the temporary Unsaved Content panel — baseline-match items never reach the
+  prompt, so a silent exception would leave the stored bytes with no entry
+  point at all.
+
+Regression coverage: cross-context replacement of a safe-redundant primary, a
+stale missing-source verdict, and a same-conflictId candidate all preserve the
+replacement; an identity-mismatch record with an identical body is not treated
+as redundant; `openPost` refresh-failure isolation is tested behaviorally
+(default propagates the rejection, `refresh: false` skips the refresh and
+resolves).
+
+Accepted residual risk: classification certifies the disk snapshot at
+classification time; cleanup does not re-read disk. A record once proven
+byte-identical to disk that disk later outgrows is not expected to recover the
+newer disk version — recovery is a local unsaved-buffer safety net, not version
+history. Cleanup runs only once after startup discovery (plus explicit
+management actions), so the window is narrow. If scheduled background cleanup
+is ever reintroduced, bind the disk snapshot to a version marker or re-verify
+disk before deleting.
+
+Final Edit-09.6 seal verification (2026-07-21, post-review hardening at
+`9a0837b`):
+
+- draft-recovery plus Recovery Center/layout focused suites: 15 files / 323 tests passed;
+- complete Vitest suite: 128 files / 1,617 tests passed;
+- draft-store/file-transaction Playwright suite: 31 tests passed;
+- application Playwright suite: 9 tests passed;
+- typecheck, production build, icon lint, and `git diff --check` passed.
+
+Edit-09 is closed: stages 09.1–09.6 (design and behavior freeze, pure storage
+model, dirty-buffer persistence, recovery decisions, file transactions, and
+exception-driven recovery management) are all implemented, reviewed, and
+verified.
 
 ## 12. Edit-09.2 Acceptance Tests
 
