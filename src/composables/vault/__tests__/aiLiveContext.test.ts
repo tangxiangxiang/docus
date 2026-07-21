@@ -402,6 +402,23 @@ describe('captureAiLiveContext', () => {
       expect(context.identity.currentDocumentId).toBeNull()
     })
 
+    it('reports missing-identity when the live editor lacks a documentId', () => {
+      // A loaded buffer with no stable identity (metadata missing, stale
+      // tab restore, path reuse in flight) must NOT be sent as the
+      // after side — and must NOT silently fall back to the comparison's
+      // stale newRaw either.
+      const capture = captureAiLiveContext(input({
+        activeWorkspaceTabId: 'diff:inbox/redis',
+        historyComparisons: [historyComparison({ newRaw: '# Redis\n\nstale snapshot body' })],
+      }), {
+        liveDocument: () => ({ raw: '# Redis\n\nidentity-less buffer', dirty: true, documentId: null }),
+      })
+
+      expect(capture).toEqual({ status: 'unavailable', reason: 'missing-identity' })
+      expect(JSON.stringify(capture)).not.toContain('identity-less buffer')
+      expect(JSON.stringify(capture)).not.toContain('stale snapshot body')
+    })
+
     it('reports loading and load-error for a non-ready comparison', () => {
       const loading = captureAiLiveContext(input({
         activeWorkspaceTabId: 'diff:inbox/redis',
@@ -418,7 +435,9 @@ describe('captureAiLiveContext', () => {
   })
 
   describe('recovery context', () => {
-    it('sends the draft body in content view', () => {
+    it('sends only the draft in content view, never the hidden disk body', () => {
+      // The tab's disk side IS readable here — content view must still
+      // not carry it, because the user is only looking at the draft.
       const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'recovery:vault:doc-a',
         recoveryTabs: [recoveryTab({ view: 'content' })],
@@ -443,9 +462,12 @@ describe('captureAiLiveContext', () => {
           decisionKind: 'divergent',
           view: 'content',
           draft: { raw: '# Ideas\n\ndraft body' },
-          disk: { documentId: 'doc-a', raw: '# Ideas\n\ndisk body' },
         },
       })
+      if (capture.status !== 'ready') return
+      const context = readyRecovery(capture)
+      expect(context.disk).toBeUndefined()
+      expect(JSON.stringify(context)).not.toContain('disk body')
     })
 
     it('sends both sides in diff view', () => {
@@ -460,19 +482,37 @@ describe('captureAiLiveContext', () => {
       expect(context.disk).toEqual({ documentId: 'doc-a', raw: '# Ideas\n\ndisk body' })
     })
 
-    it('preserves both documentIds on identity mismatch', () => {
+    it('preserves both documentIds on identity mismatch in diff view', () => {
       const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'recovery:vault:doc-a',
         recoveryTabs: [recoveryTab({
           decisionKind: 'identity-mismatch',
           documentId: 'doc-a',
           diskDocumentId: 'doc-b',
+          view: 'diff',
         })],
       }))
 
       const context = readyRecovery(capture)
       expect(context.identity.documentId).toBe('doc-a')
       expect(context.disk?.documentId).toBe('doc-b')
+    })
+
+    it('downgrades diff view to content when the disk is readable but its raw is null', () => {
+      const capture = captureAiLiveContext(input({
+        activeWorkspaceTabId: 'recovery:vault:doc-a',
+        recoveryTabs: [recoveryTab({
+          view: 'diff',
+          diskStatus: 'ready',
+          diskRaw: null,
+          diskDocumentId: null,
+        })],
+      }))
+
+      const context = readyRecovery(capture)
+      expect(context.view).toBe('content')
+      expect(context.draft.raw).toBe('# Ideas\n\ndraft body')
+      expect(context.disk).toBeUndefined()
     })
 
     it('carries a conflict source through the identity', () => {

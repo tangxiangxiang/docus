@@ -155,6 +155,14 @@ for the same path is currently loaded, `after.raw` MUST be re-read from
 `liveEditorForPath`); `comparison.newRaw` is used only when no live editor
 exists. A diff opened earlier must never send an expired `newRaw`.
 
+Identity requirement: if a live editor for the path exists but lacks a
+stable `documentId` (metadata missing, stale tab restore, path reuse in
+flight), the capture fails closed with `missing-identity`. It must NOT
+send the uncertifiable buffer, and it must NOT silently fall back to the
+comparison's `newRaw` — that would re-introduce exactly the expired body
+this contract forbids. This mirrors the Document branch, where a missing
+`documentId` is already `missing-identity`.
+
 ### 3.4 Recovery
 
 ```ts
@@ -182,12 +190,19 @@ interface AiRecoveryContext {
 }
 ```
 
-Rules: content view sends the draft as the current body; diff view sends
-both sides; on identity-mismatch BOTH the draft and disk documentIds are
-preserved (`identity.documentId` + `disk.documentId`); recovery bodies
-enter an AI request only when the user activates that tab and actively
-sends; never logged, never in URLs, never in toasts. A `diff` view whose
-disk side is not readable is downgraded to `content`.
+Rules — send exactly what the tab shows:
+
+- Content view sends ONLY the draft. The disk body is not part of what
+  the user is looking at, so no `disk` block travels with a content view,
+  even when the disk side is readable.
+- Diff view sends both sides: `draft` plus the `disk` block.
+- The `disk` block is present only under an effective diff view with a
+  readable disk body; a diff view whose disk side is missing/unreadable
+  (or whose raw is null) downgrades to `content` and drops the block.
+- On identity-mismatch BOTH the draft and disk documentIds are preserved
+  (`identity.documentId` + `disk.documentId`, the latter in diff view).
+- Recovery bodies enter an AI request only when the user activates that
+  tab and actively sends; never logged, never in URLs, never in toasts.
 
 ### 3.5 Capture result
 
@@ -483,3 +498,9 @@ Implemented:
 
 Scope guard honored: no network, no component, no composable-integration,
 no Draft Store / Recovery / autosave / file-transaction changes.
+
+Corrected in `fix(ai): keep live context visibility and identity exact`:
+the recovery content view no longer carries the disk block (disk travels
+only with an effective diff view), and a diff whose same-path live editor
+lacks a `documentId` now fails closed with `missing-identity` instead of
+sending an uncertifiable after side or falling back to stale `newRaw`.

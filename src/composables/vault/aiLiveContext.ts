@@ -123,7 +123,11 @@ export interface AiRecoveryContext {
     raw: string
   }
 
-  /** Present only when the disk side was readable at tab-open time. */
+  /**
+   * Present only when the effective view is 'diff'. Content view shows
+   * the draft alone, so no disk body travels with it; a diff view whose
+   * disk side is not readable downgrades to content and drops this block.
+   */
   disk?: {
     documentId: string | null
     raw: string
@@ -277,11 +281,13 @@ export function captureAiLiveContext(
     if (recovery.status !== 'ready') {
       return { status: 'unavailable', reason: 'load-error' }
     }
-    // Defense in depth: useDraftRecoveryTabs normalizes view on open, but
-    // a diff view without a readable disk side cannot send two sides.
-    const view = recovery.view === 'diff' && recovery.diskStatus !== 'ready'
-      ? 'content'
-      : recovery.view
+    // Send exactly what the tab shows. The disk side is visible only in
+    // diff view, so the disk block travels only with an effective diff
+    // view; a diff view without a readable disk body downgrades to
+    // content (defense in depth — useDraftRecoveryTabs already
+    // normalizes view on open).
+    const readableDisk = recovery.diskStatus === 'ready' && recovery.diskRaw !== null
+    const view = recovery.view === 'diff' && readableDisk ? 'diff' : 'content'
     const context: AiRecoveryContext = {
       v: 1,
       kind: 'recovery',
@@ -299,7 +305,7 @@ export function captureAiLiveContext(
       decisionKind: recovery.decisionKind,
       view,
       draft: { raw: recovery.draftRaw },
-      ...(recovery.diskStatus === 'ready' && recovery.diskRaw !== null
+      ...(view === 'diff' && recovery.diskRaw !== null
         ? { disk: { documentId: recovery.diskDocumentId, raw: recovery.diskRaw } }
         : {}),
     }
@@ -316,6 +322,14 @@ export function captureAiLiveContext(
       return { status: 'unavailable', reason: 'load-error' }
     }
     const live = options.liveDocument?.(comparison.documentPath) ?? null
+    // A live buffer without a stable documentId cannot be certified as
+    // belonging to this path's document (metadata missing, stale tab
+    // restore, path reuse in flight). Fail closed — never fall back to
+    // the comparison's possibly stale newRaw, which would re-introduce
+    // exactly the expired body this contract forbids.
+    if (live && !live.documentId) {
+      return { status: 'unavailable', reason: 'missing-identity' }
+    }
     const after = live
       ? { raw: live.raw, source: 'live-editor' as const, dirty: live.dirty }
       : {
