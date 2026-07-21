@@ -792,3 +792,32 @@ Compatibility audit (all clean):
 - The snapshot is never written to the message DB, never echoed
   over SSE, and never enters logs / URLs / Toast / telemetry.
 - `only` / `skip` audits: zero hits.
+
+### 15.1 Final gate evidence (recorded 2026-07-22, sealed tree)
+
+Full §12 closure gates re-run from scratch on the sealed tree
+`4dd5fff` (`feat(ai): transport live workspace context`), working
+tree clean before and after. Local only — no CI exists.
+
+| Gate | Result | Detail |
+| --- | --- | --- |
+| `npm run typecheck` | exit 0 | clean |
+| `npm run lint:icons` | exit 0 | 2 files scanned, 81 `<svg>` elements, no violations |
+| `npm test` | exit 0 | Vitest: **134 test files passed (134)**, **1 825 tests passed (1 825)**, duration 26.59 s |
+| `npm run build` | exit 0 | built in 1.01 s (pre-existing rolldown chunk-size notice unchanged) |
+| `npm run test:e2e:draft-store` | exit 0 | **38 passed** (27.0 s) |
+| `npm run test:e2e` | exit 0 | **19 passed** (19.2 s — 9 pre-existing + 10 new `ai-live-context`) |
+| `git diff --check` | exit 0 | no whitespace errors |
+| `git status --short` | empty | tree clean after the full run |
+
+One fix was needed between the first and the final gate run:
+`TocPanel.test.ts` still asserted the pre-10.3 read-only gate
+(disabled tab, unmounted panel) and failed accordingly; the test was
+rewritten to assert the lifted gate (recorded above). All eight
+gates were then re-run from scratch on the final tree — the table
+above is that final run, not the first.
+
+Delta vs the Edit-10.2 seal (133 files / 1 712 tests, e2e 9):
++1 test file / +113 tests; e2e 9 → 19 (+10).
+
+Known issues: None.
