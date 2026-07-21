@@ -2,6 +2,7 @@ import { draftKey, isDraftIdentity, type DraftKey } from './draftKey'
 import {
   cloneDraft,
   cloneConflictRecord,
+  conflictDraftsEqual,
   draftsEqual,
   isDraftConflictRecord,
   isUnsavedDraft,
@@ -105,7 +106,8 @@ type BackendOperation =
   | 'save' | 'get' | 'list' | 'delete' | 'move' | 'moveConflicts'
   | 'moveFamily' | 'moveFamilyConflicts' | 'moveFamilyIfAtPath' | 'clear'
   | 'saveConflict' | 'saveConflictCandidate'
-  | 'listConflicts' | 'deleteConflict' | 'clearConflicts'
+  | 'listConflicts' | 'deleteConflict' | 'deleteConflictIfUnchanged' | 'clearConflicts'
+  | 'inspect'
 
 export interface DraftStorageBackend {
   /** Persist a primary draft record under the (vaultId, documentId)
@@ -190,11 +192,15 @@ export interface DraftStorageBackend {
     record: DraftConflictRecord,
   ): Promise<ConflictCandidateBackendResult>
   listConflicts(vaultId: string): Promise<unknown[]>
+  inspect(vaultId: string): Promise<{ primary: unknown[]; conflicts: unknown[] }>
   deleteConflict(
     vaultId: string,
     documentId: string,
     conflictId: string,
   ): Promise<'deleted' | 'missing'>
+  deleteConflictIfUnchanged(
+    expected: DraftConflictRecord,
+  ): Promise<ConditionalDeleteResult>
   clearConflicts(vaultId: string): Promise<void>
 }
 
@@ -301,6 +307,17 @@ export type DraftConditionalDeleteOutcome =
   | { status: 'unsupported' }
   | { status: 'failed' }
 
+export interface DraftRecoveryInventory {
+  primary: UnsavedDraft[]
+  conflicts: DraftConflictRecord[]
+  unsupportedPrimaryCount: number
+  unsupportedConflictCount: number
+}
+
+export type DraftRecoveryInventoryOutcome =
+  | { status: 'ok'; inventory: DraftRecoveryInventory }
+  | { status: 'failed' }
+
 export interface MemoryDraftStorageBackend extends DraftStorageBackend {
   failNext(operation: BackendOperation): void
   seedRaw(value: unknown): Promise<void>
@@ -365,6 +382,7 @@ export interface DraftStore {
   saveDraft(draft: UnsavedDraft): Promise<DraftSaveOutcome>
   getDraft(vaultId: string, documentId: string): Promise<UnsavedDraft | null>
   listDrafts(vaultId: string): Promise<UnsavedDraft[]>
+  inspectVaultRecovery(vaultId: string): Promise<DraftRecoveryInventoryOutcome>
   deleteDraft(vaultId: string, documentId: string): Promise<DraftDeleteOutcome>
   deleteDraftIfUnchanged(
     expected: UnsavedDraft,
@@ -437,6 +455,9 @@ export interface DraftStore {
     documentId: string,
     conflictId: string,
   ): Promise<'deleted' | 'missing' | 'failed'>
+  deleteConflictDraftIfUnchanged(
+    expected: DraftConflictRecord,
+  ): Promise<DraftConditionalDeleteOutcome>
   clearVaultConflictDrafts(vaultId: string): Promise<boolean>
 }
 
@@ -667,6 +688,37 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
       }
     },
 
+    async inspectVaultRecovery(vaultId) {
+      if (vaultId.trim().length === 0) {
+        return {
+          status: 'ok' as const,
+          inventory: {
+            primary: [], conflicts: [],
+            unsupportedPrimaryCount: 0,
+            unsupportedConflictCount: 0,
+          },
+        }
+      }
+      try {
+        const raw = await backend.inspect(vaultId)
+        const primary = raw.primary.filter(isUnsavedDraft).map(cloneDraft)
+        const conflicts = raw.conflicts
+          .filter(isDraftConflictRecord)
+          .map(cloneConflictRecord)
+        return {
+          status: 'ok' as const,
+          inventory: {
+            primary,
+            conflicts,
+            unsupportedPrimaryCount: raw.primary.length - primary.length,
+            unsupportedConflictCount: raw.conflicts.length - conflicts.length,
+          },
+        }
+      } catch {
+        return { status: 'failed' as const }
+      }
+    },
+
     async deleteDraft(vaultId, documentId) {
       if (!isDraftIdentity(vaultId, documentId)) return { status: 'failed' }
       try {
@@ -891,6 +943,15 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
         // as success — otherwise the record survives and silently
         // resurfaces on the next discovery.
         return 'failed'
+      }
+    },
+
+    async deleteConflictDraftIfUnchanged(expected) {
+      if (!isDraftConflictRecord(expected)) return { status: 'failed' }
+      try {
+        return { status: await backend.deleteConflictIfUnchanged(cloneConflictRecord(expected)) }
+      } catch {
+        return { status: 'failed' }
       }
     },
 
@@ -1218,11 +1279,36 @@ export function createMemoryDraftBackend(): MemoryDraftStorageBackend {
         .map(cloneUnknown)
     },
 
+    async inspect(vaultId) {
+      consumeFailure('inspect')
+      return {
+        primary: [...records.values()]
+          .filter((value) => recordField(value, 'vaultId') === vaultId)
+          .map(cloneUnknown),
+        conflicts: [...conflictRecords.values()]
+          .filter((value) => recordField(value, 'vaultId') === vaultId)
+          .map(cloneUnknown),
+      }
+    },
+
     async deleteConflict(vaultId, documentId, conflictId) {
       consumeFailure('deleteConflict')
       const key = serializedConflictKey(vaultId, documentId, conflictId)
       const value = conflictRecords.get(key)
       if (value === undefined || value === null) return 'missing'
+      conflictRecords.delete(key)
+      return 'deleted'
+    },
+
+    async deleteConflictIfUnchanged(expected) {
+      consumeFailure('deleteConflictIfUnchanged')
+      const key = serializedConflictKey(
+        expected.vaultId, expected.documentId, expected.conflictId,
+      )
+      const value = conflictRecords.get(key)
+      if (value === undefined || value === null) return 'missing'
+      if (!isDraftConflictRecord(value)) return 'unsupported'
+      if (!conflictDraftsEqual(value, expected)) return 'stale'
       conflictRecords.delete(key)
       return 'deleted'
     },
@@ -1391,6 +1477,28 @@ export function createIndexedDbDraftBackend(
       )
       await transactionDone(transaction)
       return values
+    },
+
+    async inspect(vaultId) {
+      const db = await database()
+      const transaction = db.transaction(
+        [DRAFT_STORE_NAME, CONFLICT_STORE_NAME],
+        'readonly',
+      )
+      const primaryRequest = transaction.objectStore(DRAFT_STORE_NAME)
+        .index(VAULT_UPDATED_INDEX)
+        .getAll(IDBKeyRange.bound(
+          [vaultId, 0],
+          [vaultId, Number.MAX_SAFE_INTEGER],
+        ))
+      const conflictRequest = transaction.objectStore(CONFLICT_STORE_NAME)
+        .index(CONFLICT_VAULT_INDEX).getAll(vaultId)
+      const [primary, conflicts] = await Promise.all([
+        request(primaryRequest),
+        request(conflictRequest),
+      ])
+      await transactionDone(transaction)
+      return { primary, conflicts }
     },
 
     async delete(key) {
@@ -1705,6 +1813,31 @@ export function createIndexedDbDraftBackend(
       if (value === undefined || value === null) {
         await transactionDone(transaction)
         return 'missing'
+      }
+      store.delete(key)
+      await transactionDone(transaction)
+      return 'deleted'
+    },
+
+    async deleteConflictIfUnchanged(expected) {
+      const db = await database()
+      const transaction = db.transaction(CONFLICT_STORE_NAME, 'readwrite')
+      const store = transaction.objectStore(CONFLICT_STORE_NAME)
+      const key = idbConflictKey(
+        expected.vaultId, expected.documentId, expected.conflictId,
+      )
+      const value = await request(store.get(key))
+      if (value === undefined || value === null) {
+        await transactionDone(transaction)
+        return 'missing'
+      }
+      if (!isDraftConflictRecord(value)) {
+        await transactionDone(transaction)
+        return 'unsupported'
+      }
+      if (!conflictDraftsEqual(value, expected)) {
+        await transactionDone(transaction)
+        return 'stale'
       }
       store.delete(key)
       await transactionDone(transaction)

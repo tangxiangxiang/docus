@@ -16,6 +16,8 @@ import {
   hasUnsafeOpenDraftDocument,
 } from '../composables/vault/draft-recovery/useUnsavedDraftRecovery'
 import { useDraftRecoveryTabs } from '../composables/vault/draft-recovery/useDraftRecoveryTabs'
+import { createDraftRecoveryManagement } from '../composables/vault/draft-recovery/useDraftRecoveryManagement'
+import { recoveryRecordId } from '../composables/vault/draft-recovery/draftCleanup'
 import { deriveDocumentSavePresentation } from '../composables/vault/editor-tabs/savePresentation'
 import { useHistory } from '../composables/vault/useHistory'
 import { useHistoryCommit } from '../composables/vault/useHistoryCommit'
@@ -57,6 +59,7 @@ import HistorySnapshotPane from '../components/vault/HistorySnapshotPane.vue'
 import HistoryComparisonPane from '../components/vault/HistoryComparisonPane.vue'
 import DraftRecoveryPrompt from '../components/vault/DraftRecoveryPrompt.vue'
 import DraftRecoveryPane from '../components/vault/DraftRecoveryPane.vue'
+import DraftRecoveryCenter from '../components/vault/DraftRecoveryCenter.vue'
 import EditorTabs, {
   type WorkspaceTabReorderRequest,
 } from '../components/vault/EditorTabs.vue'
@@ -206,6 +209,7 @@ async function refreshRecoveryAfterFamilySettle(settlement: {
     }
   }
 }
+let requestDraftCleanup: ((vaultId: string) => void) | null = null
 const draftPersistence = createUnsavedDraftPersistence({
   store: draftStore,
   // Authoritative by-stable-identity server lookup for an emptied
@@ -213,6 +217,12 @@ const draftPersistence = createUnsavedDraftPersistence({
   // path against the server (never a cached tree / Tab / posts path)
   // before minting a primary, and authenticate the mint afterwards.
   resolveCurrentDocumentPath: createServerDocumentPathResolver(),
+  onIssue: (issue) => {
+    if (issue.kind === 'draft-too-large') {
+      toast.info(t('draft_recovery.too_large'), 6000)
+    }
+  },
+  onRecordPersisted: (persistedVaultId) => requestDraftCleanup?.(persistedVaultId),
   onDraftFamilyMoveSettled: (settlement) => {
     if (settlement.status === 'moved-write-failed') {
       // The family is whole at the new path but the latest edit's
@@ -462,6 +472,39 @@ const draftRecovery = createUnsavedDraftRecovery({ store: draftStore })
 const recoveryTabs = useDraftRecoveryTabs()
 const activeDraftRecovery = recoveryTabs.activeTab
 const recoveryBusy = ref(false)
+const managedRecoveryOperations = ref(new Set<string>())
+const recoveryManagement = createDraftRecoveryManagement({
+  store: draftStore,
+  recovery: draftRecovery,
+  getPersistenceProtection: (id) => draftPersistence.getDraftCleanupProtection(id),
+  openRecoveryIds: computed(() => {
+    const ids = new Set(recoveryTabs.tabs.value.map((tab) => tab.recoveryId))
+    for (const id of managedRecoveryOperations.value) ids.add(id)
+    if (recoveryBusy.value) {
+      const active = draftRecovery.activeRecoveryId.value
+        ?? draftRecovery.pendingItem.value?.recoveryId
+      if (active) ids.add(active)
+    }
+    return [...ids]
+  }),
+  onRecordsRemoved(ids) {
+    const removed = new Set(ids)
+    for (const tab of recoveryTabs.tabs.value) {
+      if (removed.has(tab.recoveryId)) recoveryTabs.close(tab.tabId)
+    }
+  },
+})
+requestDraftCleanup = (persistedVaultId) => {
+  if (persistedVaultId !== vaultId.value) return
+  void recoveryManagement.refresh(persistedVaultId).then(async (refreshed) => {
+    if (!refreshed) return
+    await draftRecovery.discover(persistedVaultId)
+    const report = await recoveryManagement.cleanupNow()
+    if (report.deleted.length > 0) {
+      toast.info(t('draft_recovery.center.cleaned', { count: report.deleted.length }), 4000)
+    }
+  })
+}
 
 function recoveryItem(recoveryId: string) {
   return draftRecovery.items.value.find((item) => item.recoveryId === recoveryId) ?? null
@@ -593,9 +636,73 @@ function updateRecoveryView(view: 'content' | 'diff'): void {
 }
 
 watch(vaultId, (id) => {
-  if (id) void draftRecovery.discover(id)
+  if (!id) return
+  void (async () => {
+    await draftRecovery.discover(id)
+    if (await recoveryManagement.refresh(id)) {
+      const report = await recoveryManagement.cleanupNow()
+      if (report.deleted.length > 0) {
+        toast.info(t('draft_recovery.center.cleaned', { count: report.deleted.length }))
+      }
+    }
+  })()
 }, { immediate: true })
-onBeforeUnmount(() => { draftRecovery.dispose() })
+onBeforeUnmount(() => {
+  recoveryManagement.dispose()
+  draftRecovery.dispose()
+})
+
+async function refreshRecoveryCenter(): Promise<void> {
+  if (!vaultId.value) return
+  await draftRecovery.discover(vaultId.value)
+  await recoveryManagement.refresh(vaultId.value)
+}
+
+async function retryManagedRecovery(recoveryId: string): Promise<void> {
+  managedRecoveryOperations.value = new Set(managedRecoveryOperations.value).add(recoveryId)
+  try {
+    await draftRecovery.retry(recoveryId)
+  } finally {
+    const next = new Set(managedRecoveryOperations.value)
+    next.delete(recoveryId)
+    managedRecoveryOperations.value = next
+  }
+}
+
+async function cleanupRecoveryCenter(): Promise<void> {
+  const report = await recoveryManagement.cleanupNow()
+  if (report.deleted.length > 0) {
+    toast.info(t('draft_recovery.center.cleaned', { count: report.deleted.length }))
+  }
+}
+
+async function deleteManagedRecovery(recoveryId: string): Promise<void> {
+  const record = recoveryManagement.records.value.find(
+    (candidate) => recoveryRecordId(candidate) === recoveryId,
+  )
+  if (!record) return
+  const ok = await confirm(
+    t('draft_recovery.center.delete'),
+    `${record.record.documentPath}\n${record.source} · ${record.bytes} B`,
+  )
+  if (ok) await recoveryManagement.deleteRecord(record)
+}
+
+async function deleteSelectedRecovery(): Promise<void> {
+  const ok = await confirm(
+    t('draft_recovery.center.delete_selected'),
+    t('draft_recovery.center.local_only'),
+  )
+  if (ok) await recoveryManagement.deleteSelected()
+}
+
+async function deleteAllUnprotectedRecovery(): Promise<void> {
+  const ok = await confirm(
+    t('draft_recovery.center.delete_all'),
+    t('draft_recovery.center.local_only'),
+  )
+  if (ok) await recoveryManagement.deleteAllUnprotected()
+}
 const history = useHistory(vaultContext)
 const historyCommit = useHistoryCommit({
   history,
@@ -1201,6 +1308,7 @@ watch(isReadMode, async (reading) => {
   >
     <ActivityBar
       :active-panel="activePanel"
+      :recovery-count="recoveryManagement.capacity.value.recordCount"
       @select-panel="selectPanel"
       @open-settings="settingsOpen = true"
     />
@@ -1219,7 +1327,7 @@ watch(isReadMode, async (reading) => {
       @disk="discardRecoveryDraft"
       @discard="discardRecoveryDraft"
       @later="draftRecovery.dismissForSession"
-      @retry="draftRecovery.retry"
+      @retry="retryManagedRecovery"
     />
 
     <DocumentMetadataModal
@@ -1256,6 +1364,25 @@ watch(isReadMode, async (reading) => {
       :withdraw="historyWithdraw"
       :posts="posts"
       @open-revision="openHistoryRevision"
+    />
+    <DraftRecoveryCenter
+      v-else-if="activePanel === 'recovery'"
+      :records="recoveryManagement.records.value"
+      :items="draftRecovery.items.value"
+      :capacity="recoveryManagement.capacity.value"
+      :unsupported-count="recoveryManagement.unsupportedCount.value"
+      :selected-ids="recoveryManagement.selectedIds.value"
+      :protected-ids="recoveryManagement.protectedIds.value"
+      :loading="recoveryManagement.loading.value"
+      :error="recoveryManagement.error.value"
+      @refresh="refreshRecoveryCenter"
+      @cleanup="cleanupRecoveryCenter"
+      @delete-selected="deleteSelectedRecovery"
+      @delete-all="deleteAllUnprotectedRecovery"
+      @toggle="recoveryManagement.toggleSelected"
+      @open="(id) => openRecoveryView(id, 'content')"
+      @retry="draftRecovery.retry"
+      @delete="deleteManagedRecovery"
     />
 
     <div

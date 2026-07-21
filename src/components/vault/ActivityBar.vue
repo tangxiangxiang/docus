@@ -13,11 +13,14 @@ import {
   ICON_AB_GIT_HISTORY,
   ICON_AB_SETTINGS,
   ICON_FOLDER,
+  ICON_HISTORY,
   ICON_TAG,
 } from './icons'
-export type SidePanel = 'files' | 'tags' | 'history'
+export type SidePanel = 'files' | 'tags' | 'history' | 'recovery'
 
-defineProps<{ activePanel: SidePanel | null }>()
+withDefaults(defineProps<{ activePanel: SidePanel | null; recoveryCount?: number }>(), {
+  recoveryCount: 0,
+})
 const emit = defineEmits<{
   'select-panel': [panel: SidePanel]
   'open-settings': []
@@ -63,6 +66,21 @@ const { t } = useI18n()
         class="ab-badge"
         :aria-label="t('history.changed_files', { count: h.dirtyCount.value })"
       >{{ h.dirtyCount.value }}</span>
+    </button>
+    <button
+      class="ab-btn"
+      :class="{ active: activePanel === 'recovery' }"
+      :title="t('draft_recovery.center.title')"
+      :aria-label="t('draft_recovery.center.title')"
+      :aria-pressed="activePanel === 'recovery'"
+      @click="emit('select-panel', 'recovery')"
+    >
+      <span class="ab-btn-icon" v-html="ICON_HISTORY" aria-hidden="true" />
+      <span
+        v-if="recoveryCount > 0"
+        class="ab-badge"
+        :aria-label="t('draft_recovery.center.records')"
+      >{{ recoveryCount }}</span>
     </button>
     <div class="ab-spacer" aria-hidden="true" />
     <button

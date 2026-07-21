@@ -66,6 +66,150 @@ test('creates the production schema and persists compound-key records', async ({
   expect(result.vaultB?.content).toBe('vault-b:same')
 })
 
+test('inspects primary and conflict inventory and conditionally preserves a newer conflict', async ({ page }) => {
+  const result = await page.evaluate(async (databaseName) => {
+    const { createDraftStore } = await import('/src/composables/vault/draft-recovery/draftStore.ts')
+    const first = createDraftStore()
+    const primary = {
+      version: 1 as const,
+      vaultId: 'managed-vault',
+      documentId: 'doc',
+      documentPath: 'notes/doc',
+      content: 'primary',
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const conflict = {
+      ...primary,
+      conflictId: 'candidate',
+      content: 'candidate-v1',
+      origin: 'delete-conflict' as const,
+      crossContextUpdatedAt: null,
+      recordedAt: 2,
+      updatedAt: 2,
+    }
+    await first.saveDraft(primary)
+    await first.saveConflictDraft(conflict)
+    const inventory = await first.inspectVaultRecovery('managed-vault')
+    const newer = {
+      ...conflict,
+      content: 'candidate-v2',
+      updatedAt: 3,
+      recordedAt: 3,
+    }
+    // A second browser context can replace the raw row after cleanup
+    // has captured its expected record. Seed that exact IndexedDB race.
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('draftConflicts', 'readwrite')
+      transaction.objectStore('draftConflicts').put(newer)
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    database.close()
+    const deletion = await first.deleteConflictDraftIfUnchanged(conflict)
+    const remaining = await first.listConflictDrafts('managed-vault')
+    return { inventory, deletion, remaining }
+  }, DATABASE_NAME)
+
+  expect(result.inventory).toMatchObject({
+    status: 'ok',
+    inventory: {
+      primary: [{ content: 'primary' }],
+      conflicts: [{ content: 'candidate-v1' }],
+      unsupportedPrimaryCount: 0,
+      unsupportedConflictCount: 0,
+    },
+  })
+  expect(result.deletion).toEqual({ status: 'stale' })
+  expect(result.remaining).toMatchObject([{ content: 'candidate-v2' }])
+})
+
+test('cleans expired recovery records while preserving a protected identity in real IndexedDB', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const { createDraftStore } = await import('/src/composables/vault/draft-recovery/draftStore.ts')
+    const { createUnsavedDraftRecovery } = await import('/src/composables/vault/draft-recovery/useUnsavedDraftRecovery.ts')
+    const { createDraftRecoveryManagement } = await import('/src/composables/vault/draft-recovery/useDraftRecoveryManagement.ts')
+    const store = createDraftStore()
+    for (let index = 0; index < 101; index += 1) {
+      await store.saveDraft({
+        version: 1 as const,
+        vaultId: 'cleanup-vault',
+        documentId: `doc-${index}`,
+        documentPath: `missing/doc-${index}`,
+        content: `content-${index}`,
+        baseContentHash: null,
+        baseModifiedAt: null,
+        createdAt: index + 1,
+        updatedAt: index + 1,
+      })
+    }
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: async () => { throw Object.assign(new Error('missing'), { status: 404 }) },
+    })
+    const protectedIdentity = JSON.stringify(['cleanup-vault', 'doc-0'])
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      getPersistenceProtection: () => ({ identityIds: new Set([protectedIdentity]) }),
+      now: () => 31 * 24 * 60 * 60 * 1000,
+    })
+    await recovery.discover('cleanup-vault')
+    await management.refresh('cleanup-vault')
+    const report = await management.cleanupNow()
+    const inventory = await store.inspectVaultRecovery('cleanup-vault')
+    return { report, inventory }
+  })
+
+  expect(result.report.deleted).toHaveLength(100)
+  expect(result.report.skippedProtected).toHaveLength(1)
+  expect(result.report.after).toMatchObject({ recordCount: 1, overCapacity: false })
+  expect(result.inventory).toMatchObject({
+    status: 'ok',
+    inventory: { primary: [{ documentId: 'doc-0' }] },
+  })
+})
+
+test('rejects an oversized dirty buffer without truncation and later persists a smaller revision', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const { createDraftStore } = await import('/src/composables/vault/draft-recovery/draftStore.ts')
+    const { createUnsavedDraftPersistence } = await import('/src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts')
+    const { MAX_DRAFT_CONTENT_BYTES } = await import('/src/composables/vault/draft-recovery/draftCleanup.ts')
+    const store = createDraftStore()
+    const issues: Array<{ kind: string; bytes: number }> = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      debounceMs: 1,
+      onIssue: (issue) => issues.push({ kind: issue.kind, bytes: issue.bytes }),
+    })
+    const base = {
+      vaultId: 'size-vault', documentId: 'doc', documentPath: 'notes/doc',
+      authoritativeContent: 'disk', baseContentHash: null, baseModifiedAt: null,
+    }
+    persistence.schedule({ ...base, content: 'x'.repeat(MAX_DRAFT_CONTENT_BYTES + 1), revision: 1 })
+    const oversizedFlush = await persistence.flush('size-vault', 'doc')
+    const oversizedStored = await store.getDraft('size-vault', 'doc')
+    persistence.schedule({ ...base, content: 'small', revision: 2 })
+    const smallerFlush = await persistence.flush('size-vault', 'doc')
+    const stored = await store.getDraft('size-vault', 'doc')
+    return { oversizedFlush, oversizedStored, smallerFlush, stored, issues }
+  })
+
+  expect(result.oversizedFlush).toBe(false)
+  expect(result.oversizedStored).toBeNull()
+  expect(result.issues).toHaveLength(1)
+  expect(result.smallerFlush).toBe(true)
+  expect(result.stored?.content).toBe('small')
+})
+
 test('keeps both IndexedDB records when an atomic move conflicts', async ({
   page,
 }) => {

@@ -9,6 +9,7 @@ import {
   type DraftBufferSnapshot,
 } from '../useUnsavedDraftPersistence'
 import type { UnsavedDraft } from '../draftTypes'
+import { MAX_DRAFT_CONTENT_BYTES } from '../draftCleanup'
 
 function snapshot(
   documentId: string,
@@ -564,6 +565,29 @@ describe('createUnsavedDraftPersistence', () => {
 
     await vi.advanceTimersByTimeAsync(800)
     expect(saveDraft).not.toHaveBeenCalled()
+  })
+
+  it('fails closed for an oversized revision and retries once content fits', async () => {
+    const issues: unknown[] = []
+    const persistence = createUnsavedDraftPersistence({
+      store,
+      onIssue: (issue) => issues.push(issue),
+    })
+    const oversized = 'x'.repeat(MAX_DRAFT_CONTENT_BYTES + 1)
+
+    persistence.schedule(snapshot('a', oversized, 1))
+    await vi.advanceTimersByTimeAsync(800)
+    await persistence.flush('vault-1', 'a')
+    expect(await store.getDraft('vault-1', 'a')).toBeNull()
+    expect(issues).toHaveLength(1)
+
+    // Repeating the same revision does not produce warning spam.
+    await persistence.flush('vault-1', 'a')
+    expect(issues).toHaveLength(1)
+
+    persistence.schedule(snapshot('a', 'fits again', 2))
+    await vi.advanceTimersByTimeAsync(800)
+    expect((await store.getDraft('vault-1', 'a'))?.content).toBe('fits again')
   })
 
   it('fails closed when a document timestamp reaches MAX_SAFE_INTEGER', async () => {

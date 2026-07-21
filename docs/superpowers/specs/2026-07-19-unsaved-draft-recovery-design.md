@@ -463,7 +463,47 @@ deferred to Edit-09.6.
 
 ### Edit-09.6 — Recovery center and cleanup
 
-- management UI, retention, protected-record cleanup, capacity reporting.
+Implemented on 2026-07-21.
+
+- Added a vault-scoped Recovery Activity Bar entry and Recovery Center backed by
+  the existing recovery discovery/classification source. It reports primary and
+  conflict records, UTF-8 content bytes, orphan/unsupported counts, capacity,
+  protection, selection, exact deletion, retry, and the existing read-only
+  Recovery tab actions. Recovery data remains device/browser-local.
+- Added deterministic cleanup planning with a 2 MiB per-record write ceiling,
+  100-record and 20 MiB vault limits, and strict 30-day retention for ready
+  `missing-source`/`identity-mismatch` records. Exact 30-day records, unknown or
+  failed classifications, protected records, and unsupported raw rows are never
+  selected by retention.
+- Added management inventory across primary and conflict stores, including safe
+  counts for corrupt/future rows without returning their raw content. Conflict
+  deletion now has the same full-record compare-and-delete semantics as primary
+  deletion; cleanup and bulk deletion re-scan the real Store after partial
+  outcomes.
+- Cleanup protection combines persistence ownership (dirty/pending writes,
+  timers, file transactions, quarantine/indeterminate/authentication modes and
+  close work) with active Recovery actions and all open Recovery tabs. Planning
+  and the final Store mutation both re-check protection by stable identity or
+  recovery ID, never by path.
+- Cleanup is vault-scoped, serialized and coalesced. It runs after discovery,
+  successful draft writes, explicit cleanup, and management deletion. Actual
+  deletions produce one count-only notification; failures never include paths or
+  content and never block editor or disk saving.
+- The content-size gate sits at the shared primary/candidate write boundaries,
+  so pagehide, dispose, quarantine and empty-family recovery cannot bypass it.
+  Oversized revisions stay pending and fail close sealing; warnings are deduped
+  per revision, and a later revision below the limit persists normally.
+
+Edit-09.6 intentionally leaves the sealed Edit-09.5 family-path state machine,
+server save protocol, Recovery viewer, and recovery decisions unchanged.
+
+Final Edit-09.6 verification (2026-07-21):
+
+- draft-recovery plus Recovery Center/layout focused suites: 13 files / 300 tests passed;
+- complete Vitest suite: 126 files / 1,590 tests passed;
+- draft-store/file-transaction Playwright suite: 31 tests passed;
+- application Playwright suite: 9 tests passed;
+- typecheck, production build, icon lint, and `git diff --check` passed.
 
 ## 12. Edit-09.2 Acceptance Tests
 

@@ -123,3 +123,22 @@ export function draftsEqual(left: UnsavedDraft, right: UnsavedDraft): boolean {
     && left.createdAt === right.createdAt
     && left.updatedAt === right.updatedAt
 }
+
+export function conflictDraftsEqual(
+  left: DraftConflictRecord,
+  right: DraftConflictRecord,
+): boolean {
+  return left.version === right.version
+    && left.conflictId === right.conflictId
+    && left.vaultId === right.vaultId
+    && left.documentId === right.documentId
+    && left.documentPath === right.documentPath
+    && left.content === right.content
+    && left.baseContentHash === right.baseContentHash
+    && left.baseModifiedAt === right.baseModifiedAt
+    && left.createdAt === right.createdAt
+    && left.updatedAt === right.updatedAt
+    && left.origin === right.origin
+    && left.crossContextUpdatedAt === right.crossContextUpdatedAt
+    && left.recordedAt === right.recordedAt
+}

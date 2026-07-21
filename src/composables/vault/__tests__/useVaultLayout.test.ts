@@ -99,6 +99,15 @@ describe('useVaultLayout', () => {
     expect(stored).not.toHaveProperty('tocPanelWidth')
   })
 
+  it('loads and persists the recovery side panel while retaining old layouts', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ activePanel: 'recovery' }))
+    const { layout } = setup()
+    expect(layout.activePanel.value).toBe('recovery')
+    expect(layout.sidePanelOpen.value).toBe(true)
+
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!).activePanel).toBe('recovery')
+  })
+
   it('shares the selected tab across consumers', () => {
     const first = setup().layout
     const second = setup().layout

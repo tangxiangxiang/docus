@@ -105,7 +105,7 @@ export function useVaultLayout() {
           const ap = d.activePanel
           let active: ActivePanel = null
           if (ap === 'graph') active = 'files'
-          else if (ap === 'files' || ap === 'tags' || ap === 'history' || ap === null) active = ap as ActivePanel
+          else if (ap === 'files' || ap === 'tags' || ap === 'history' || ap === 'recovery' || ap === null) active = ap as ActivePanel
           else if (typeof d.fileTreeOpen === 'boolean') active = d.fileTreeOpen ? 'files' : null
           const w = typeof d.sidePanelWidth === 'number'
             ? d.sidePanelWidth
@@ -166,7 +166,8 @@ export function useVaultLayout() {
   const sidePanelOpen = computed(() =>
     _activePanel.value === 'files' ||
     _activePanel.value === 'tags' ||
-    _activePanel.value === 'history',
+    _activePanel.value === 'history' ||
+    _activePanel.value === 'recovery',
   )
   const activePanel: Ref<ActivePanel> = _activePanel
   const sidePanelWidth: Ref<number> = _sidePanelWidth

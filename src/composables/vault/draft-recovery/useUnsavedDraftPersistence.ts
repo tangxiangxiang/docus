@@ -16,6 +16,7 @@ import type {
   DraftFileTransactionResult,
   DraftPathMapping,
 } from './useDraftFileTransactions'
+import { MAX_DRAFT_CONTENT_BYTES, draftContentBytes } from './draftCleanup'
 
 export const DRAFT_PERSIST_DEBOUNCE_MS = 800
 
@@ -81,9 +82,22 @@ export interface UnsavedDraftPersistence {
   findTrackedIdentitiesByPaths(
     paths: readonly string[],
   ): DraftDocumentIdentity[]
+  getDraftCleanupProtection(vaultId: string): DraftCleanupProtection
   invalidateOwner(owner: DraftOwner): void
   invalidate(vaultId: string, documentId: string): void
   dispose(): Promise<void>
+}
+
+export interface DraftCleanupProtection {
+  identityIds: ReadonlySet<string>
+}
+
+export type DraftPersistenceIssue = {
+  kind: 'draft-too-large'
+  vaultId: string
+  documentId: string
+  bytes: number
+  limit: number
 }
 
 interface DraftEntry {
@@ -339,6 +353,8 @@ interface CreateOptions {
   now?: () => number
   targetWindow?: Pick<Window, 'addEventListener' | 'removeEventListener'>
   onDraftFamilyMoveSettled?: (settlement: DraftFamilyMoveSettlement) => void
+  onIssue?: (issue: DraftPersistenceIssue) => void
+  onRecordPersisted?: (vaultId: string) => void
   /** Re-validates the document's CURRENT server path by stable
    *  identity. Consulted by a move-indeterminate retry whose probe
    *  reports an EMPTIED draft family: the absence of every draft row
@@ -367,6 +383,7 @@ export function createUnsavedDraftPersistence(
   const targetWindow = options.targetWindow
     ?? (typeof window === 'undefined' ? undefined : window)
   const entries = new Map<string, DraftEntry>()
+  const oversizedRevisionWarnings = new Set<string>()
   let disposed = false
   let disposePromise: Promise<void> | null = null
 
@@ -376,6 +393,40 @@ export function createUnsavedDraftPersistence(
 
   function validIdentity(vaultId: string, documentId: string): boolean {
     return vaultId.trim().length > 0 && documentId.trim().length > 0
+  }
+
+  function allowRecordContent(
+    vaultId: string,
+    documentId: string,
+    revision: number,
+    content: string,
+  ): boolean {
+    const bytes = draftContentBytes(content)
+    if (bytes <= MAX_DRAFT_CONTENT_BYTES) return true
+    const warningKey = JSON.stringify([vaultId, documentId, revision])
+    if (!oversizedRevisionWarnings.has(warningKey)) {
+      oversizedRevisionWarnings.add(warningKey)
+      try {
+        options.onIssue?.({
+          kind: 'draft-too-large',
+          vaultId,
+          documentId,
+          bytes,
+          limit: MAX_DRAFT_CONTENT_BYTES,
+        })
+      } catch {
+        // A warning handler never owns persistence.
+      }
+    }
+    return false
+  }
+
+  function notifyRecordPersisted(vaultId: string): void {
+    try {
+      options.onRecordPersisted?.(vaultId)
+    } catch {
+      // Capacity maintenance never owns persistence success.
+    }
   }
 
   function conflictId(documentId: string, generation: number): string {
@@ -901,6 +952,11 @@ export function createUnsavedDraftPersistence(
   async function attemptCandidateWrite(
     record: DraftConflictRecord,
   ): Promise<CandidateWriteResult> {
+    const entry = entries.get(key(record.vaultId, record.documentId))
+    const revision = entry?.latestSnapshot?.revision ?? -1
+    if (!allowRecordContent(record.vaultId, record.documentId, revision, record.content)) {
+      return { kind: 'failed' }
+    }
     let outcome: import('./draftStore').DraftConflictCandidateOutcome
     try {
       outcome = await store.saveConflictCandidate(record)
@@ -909,6 +965,7 @@ export function createUnsavedDraftPersistence(
     }
     switch (outcome.status) {
       case 'saved':
+        notifyRecordPersisted(record.vaultId)
         return { kind: 'saved' }
       case 'path-mismatch':
         return { kind: 'path-mismatch', familyPath: outcome.familyPath }
@@ -963,6 +1020,9 @@ export function createUnsavedDraftPersistence(
     const draft: UnsavedDraft = built.documentPath === path
       ? built
       : { ...built, documentPath: path }
+    if (!allowRecordContent(
+      draft.vaultId, draft.documentId, snapshot.revision, draft.content,
+    )) return false
     let outcome: import('./draftStore').DraftSaveOutcome
     try {
       outcome = await store.saveDraft(draft)
@@ -1259,6 +1319,7 @@ export function createUnsavedDraftPersistence(
       }
       entry.latestSnapshotNeedsWrite = false
       entry.persistedDraft = stored
+      notifyRecordPersisted(stored.vaultId)
       return true
     }
     // Readback mismatch: the record the store now holds is a newer
@@ -3606,6 +3667,26 @@ export function createUnsavedDraftPersistence(
     return [...found.values()]
   }
 
+  function getDraftCleanupProtection(vaultId: string): DraftCleanupProtection {
+    const identityIds = new Set<string>()
+    for (const entry of entries.values()) {
+      const snapshot = entry.latestSnapshot
+      if (!snapshot || snapshot.vaultId !== vaultId) continue
+      const protectedEntry = snapshot.content !== snapshot.authoritativeContent
+        || entry.latestSnapshotNeedsWrite
+        || entry.timer !== null
+        || entry.pendingWrite !== null
+        || entry.fileTransaction !== null
+        || entry.mode.kind !== 'primary'
+        || entry.emptyFamilyRecovery !== null
+        || entry.settleRetryAttempt !== null
+      if (protectedEntry) {
+        identityIds.add(JSON.stringify([snapshot.vaultId, snapshot.documentId]))
+      }
+    }
+    return { identityIds }
+  }
+
   function onPageHide(): void {
     void flushAllInternal().catch(() => {})
   }
@@ -3637,6 +3718,7 @@ export function createUnsavedDraftPersistence(
     prepareFileMutation,
     captureDeleteConfirmation,
     findTrackedIdentitiesByPaths,
+    getDraftCleanupProtection,
     invalidateOwner,
     invalidate,
     dispose,
