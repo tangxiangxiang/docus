@@ -85,7 +85,7 @@ describe('createUnsavedDraftPersistence', () => {
     const write = deferred<import('../draftStore').DraftSaveOutcome>()
     const saveDraft = vi.fn()
       .mockImplementationOnce(() => write.promise)
-      .mockResolvedValue({ status: 'saved', stored: { ...snapshot('a', 'old') } as UnsavedDraft })
+      .mockResolvedValue({ status: 'saved', stored: { ...snapshot('a', 'old') } as unknown as UnsavedDraft })
     const persistence = createUnsavedDraftPersistence({
       store: { ...store, saveDraft },
     })
@@ -93,7 +93,7 @@ describe('createUnsavedDraftPersistence', () => {
     const owner = persistence.schedule(snapshot('a', 'old'))!
     await vi.advanceTimersByTimeAsync(800)
     const discarded = persistence.discard(owner)
-    write.resolve({ status: 'saved', stored: { ...snapshot('a', 'old') } as UnsavedDraft })
+    write.resolve({ status: 'saved', stored: { ...snapshot('a', 'old') } as unknown as UnsavedDraft })
     await discarded
 
     expect(await store.getDraft('vault-1', 'a')).toBeNull()
@@ -199,7 +199,7 @@ describe('createUnsavedDraftPersistence', () => {
     persistence.schedule(snapshot('a', 'new', 2))
     await vi.advanceTimersByTimeAsync(800)
 
-    oldWrite.resolve({ status: 'saved', stored: { ...snapshot('a', 'old') } as UnsavedDraft })
+    oldWrite.resolve({ status: 'saved', stored: { ...snapshot('a', 'old') } as unknown as UnsavedDraft })
     await clean
     await persistence.flush('vault-1', 'a')
 
@@ -538,7 +538,7 @@ describe('createUnsavedDraftPersistence', () => {
   it('contains save, delete, and rejected store failures and retries later input', async () => {
     const saveDraft = vi.fn()
       .mockRejectedValueOnce(new Error('write failed'))
-      .mockResolvedValueOnce({ status: 'saved', stored: { ...snapshot('a', 'v2', 2) } as UnsavedDraft })
+      .mockResolvedValueOnce({ status: 'saved', stored: { ...snapshot('a', 'v2', 2) } as unknown as UnsavedDraft })
     const deleteDraftIfUnchanged = vi.fn()
       .mockRejectedValue(new Error('delete failed'))
     const persistence = createUnsavedDraftPersistence({

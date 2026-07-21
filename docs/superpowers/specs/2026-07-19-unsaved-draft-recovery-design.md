@@ -391,7 +391,12 @@ Implemented in:
   deletion also relinquishes the matching in-memory snapshot and persisted
   ownership. Move commit and entry release are separate phases: Document tab
   paths migrate before the barrier unlocks, and transaction-time snapshots are
-  then flushed immediately at the actual server path before Recovery retry;
+  then flushed immediately at the actual server path before Recovery retry.
+  Empty-family recovery tracks content durability separately from server-path
+  authentication: a failed mint, transient resolver failure, or bounded
+  continuous-rename attempt remains pending across debounce, flush, pagehide,
+  dispose, and close sealing. Only a post-write stable-identity revalidation
+  clears that state and returns the entry to its ordinary channel;
 - `draftStore.ts`: schema version 2 adds an immutable `draftConflicts` store.
   If confirmed deletion finds both a newer cross-context primary draft and a
   post-CAS local edit, the primary record remains untouched while the local

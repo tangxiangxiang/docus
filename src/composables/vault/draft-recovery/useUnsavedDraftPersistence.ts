@@ -110,6 +110,12 @@ interface DraftEntry {
    *  the persistedDraft path AND the channel pin in a single
    *  transition). */
   mode: DraftPersistenceMode
+  /** Bytes may already be durable while their path is still awaiting
+   *  post-write authentication against the server's stable identity. */
+  emptyFamilyRecovery: {
+    move: { oldPath: string | null; newPath: string }
+    anchorPath: string | null
+  } | null
 }
 
 /** The persistence channel state machine (DraftEntry.mode).
@@ -233,6 +239,7 @@ type DraftWriteTarget =
       crossContextUpdatedAt: number | null
     }
   | { kind: 'retry-family-move'; oldPath: string | null; newPath: string }
+  | { kind: 'authenticate-empty-family' }
   | { kind: 're-probe'; path: string }
   | { kind: 'blocked'; reason: string }
 
@@ -424,6 +431,7 @@ export function createUnsavedDraftPersistence(
         persistedDraft: null,
         fileTransaction: null,
         mode: { kind: 'primary' },
+        emptyFamilyRecovery: null,
       }
       entries.set(identity, entry)
     }
@@ -459,6 +467,7 @@ export function createUnsavedDraftPersistence(
 
   function enterPrimaryMode(entry: DraftEntry): void {
     entry.mode = { kind: 'primary' }
+    entry.emptyFamilyRecovery = null
   }
 
   /** Open (or re-pin) the conflict channel at the family's
@@ -509,6 +518,18 @@ export function createUnsavedDraftPersistence(
     toPath: string,
   ): void {
     const mode = entry.mode
+    if (entry.emptyFamilyRecovery !== null) {
+      entry.emptyFamilyRecovery.move = { oldPath: null, newPath: toPath }
+      entry.mode = {
+        kind: 'move-indeterminate',
+        serverPath: toPath,
+        reason: mode.kind === 'move-indeterminate'
+          ? mode.reason
+          : 'storage-failure',
+        conflict: mode.kind === 'move-indeterminate' ? mode.conflict : null,
+      }
+      return
+    }
     if (mode.kind === 'move-quarantine') {
       entry.mode = { ...mode, serverPath: toPath }
       return
@@ -544,6 +565,7 @@ export function createUnsavedDraftPersistence(
    *  and split the family the move just united. */
   function completeFamilyMove(entry: DraftEntry, newPath: string): void {
     const mode = entry.mode
+    const authenticatingEmptyFamily = entry.emptyFamilyRecovery !== null
     const conflict = mode.kind === 'conflict'
       ? { conflictId: mode.conflictId, crossContextUpdatedAt: mode.crossContextUpdatedAt }
       : mode.kind === 'move-quarantine'
@@ -560,11 +582,13 @@ export function createUnsavedDraftPersistence(
         }
       : { kind: 'primary' }
     if (entry.latestSnapshot) {
-      entry.latestSnapshot = { ...entry.latestSnapshot, documentPath: newPath }
+      if (authenticatingEmptyFamily) entry.latestSnapshot.documentPath = newPath
+      else entry.latestSnapshot = { ...entry.latestSnapshot, documentPath: newPath }
     }
     if (entry.persistedDraft) {
       entry.persistedDraft = { ...entry.persistedDraft, documentPath: newPath }
     }
+    entry.emptyFamilyRecovery = null
   }
 
   /** An unsupported save with no certifiable family path: block every
@@ -651,6 +675,9 @@ export function createUnsavedDraftPersistence(
     entry: DraftEntry,
     snapshot: DraftBufferSnapshot,
   ): DraftWriteTarget {
+    if (entry.emptyFamilyRecovery !== null) {
+      return { kind: 'authenticate-empty-family' }
+    }
     switch (entry.mode.kind) {
       case 'primary':
         return { kind: 'primary', path: snapshot.documentPath }
@@ -717,6 +744,12 @@ export function createUnsavedDraftPersistence(
         )
       case 'retry-family-move':
         return executeFamilyMoveRetry(owner, snapshot, target, allowDisposed)
+      case 'authenticate-empty-family': {
+        const recovery = entry.emptyFamilyRecovery
+        return recovery
+          ? recoverEmptiedFamily(owner, entry, recovery.move, allowDisposed)
+          : Promise.resolve(false)
+      }
       case 're-probe':
         // One real store probe at the snapshot's path: writePrimary's
         // save attempt IS the probe — a successful save transitions
@@ -1575,10 +1608,27 @@ export function createUnsavedDraftPersistence(
   ): Promise<boolean> {
     const resolver = options.resolveCurrentDocumentPath
     if (!resolver) return false
-    // The path the family's rows currently sit at (null until the
-    // first mint): every later convergence is an expected-path CAS
-    // FROM this anchor, never a blind move.
-    let anchor: string | null = null
+    // Keep authentication state on the entry across flush / pagehide /
+    // automatic-retry calls. Durable bytes and an authenticated path
+    // are separate facts: a successful write may still need another
+    // server query before this entry can return to a normal channel.
+    const recovery = entry.emptyFamilyRecovery ?? {
+      move: { ...move },
+      anchorPath: null,
+    }
+    entry.emptyFamilyRecovery = recovery
+    let anchor = recovery.anchorPath
+
+    const setAnchor = (path: string): void => {
+      anchor = path
+      recovery.anchorPath = path
+      if (entry.latestSnapshot) {
+        entry.latestSnapshot.documentPath = path
+      }
+      if (entry.persistedDraft) {
+        entry.persistedDraft = { ...entry.persistedDraft, documentPath: path }
+      }
+    }
 
     // Every failure exit routes through here: once a mint has landed,
     // the latest bytes persist at the anchor (recoverable) and the
@@ -1593,6 +1643,15 @@ export function createUnsavedDraftPersistence(
           owner.vaultId, owner.documentId,
           { oldPath: move.oldPath, newPath: anchor },
           'moved-write-failed',
+        )
+      }
+      if (entry.latestSnapshot) {
+        scheduleSettleRetry(
+          owner.vaultId,
+          owner.documentId,
+          entry.generation,
+          0,
+          { oldPath: move.oldPath, newPath: anchor ?? move.newPath },
         )
       }
       return false
@@ -1625,17 +1684,16 @@ export function createUnsavedDraftPersistence(
       )
       if ((!allowDisposed && disposed) || !current(owner, entry)) return null
       if (outcome.status === 'moved') {
-        completeFamilyMove(entry, path)
-        anchor = path
+        setAnchor(path)
         return path
       }
       if (outcome.status === 'path-mismatch') {
-        completeFamilyMove(entry, outcome.currentPath)
-        anchor = outcome.currentPath
+        setAnchor(outcome.currentPath)
         return outcome.currentPath
       }
       if (outcome.status === 'missing') {
         anchor = null
+        recovery.anchorPath = null
       }
       return null
     }
@@ -1653,11 +1711,7 @@ export function createUnsavedDraftPersistence(
       if (anchor === null) {
         // (2a) First mint: the store holds no row for this identity,
         // so a write at the re-validated path cannot split anything.
-        completeFamilyMove(entry, resolved.path)
         entry.persistedDraft = null
-        // Capture AFTER the lift: completeFamilyMove replaces the
-        // snapshot with one carrying the re-validated path, and the
-        // channel decision reads the snapshot's own path.
         const latest = entry.latestSnapshot
         if (!latest || !entry.latestSnapshotNeedsWrite) {
           // No pending snapshot — the re-validated relocation itself
@@ -1667,10 +1721,20 @@ export function createUnsavedDraftPersistence(
             { oldPath: move.oldPath, newPath: resolved.path },
             'moved-and-persisted',
           )
+          completeFamilyMove(entry, resolved.path)
           return true
         }
-        const writeSucceeded = await runResolvedTarget(
-          owner, entry, cloneSnapshot(latest), allowDisposed,
+        // Mint directly at the resolver path while retaining the
+        // move-indeterminate/authentication state. Routing through
+        // runResolvedTarget here would recurse into this recovery;
+        // switching to primary before the write would let a failed
+        // mint's retry bypass server authentication.
+        latest.documentPath = resolved.path
+        const writeSucceeded = await writePrimary(
+          owner,
+          cloneSnapshot(latest),
+          resolved.path,
+          allowDisposed,
         )
         if (!writeSucceeded) {
           // The entry is on its active channel at the re-validated
@@ -1688,7 +1752,7 @@ export function createUnsavedDraftPersistence(
           )
           return false
         }
-        anchor = resolved.path
+        setAnchor(resolved.path)
       } else {
         // (2b) The family already sits at the anchor (written by an
         // earlier attempt): converge it onto the fresh server path
@@ -1710,6 +1774,7 @@ export function createUnsavedDraftPersistence(
           { oldPath: move.oldPath, newPath: anchor },
           'moved-and-persisted',
         )
+        completeFamilyMove(entry, anchor)
         return true
       }
 
@@ -1729,6 +1794,7 @@ export function createUnsavedDraftPersistence(
           { oldPath: move.oldPath, newPath: converged },
           'moved-and-persisted',
         )
+        completeFamilyMove(entry, converged)
         return true
       }
       // Still changing — the bounded second attempt re-resolves fresh.
@@ -2121,7 +2187,12 @@ export function createUnsavedDraftPersistence(
         || (entry.mode.kind === 'move-quarantine' && entry.mode.conflict !== null)
         || (entry.mode.kind === 'move-indeterminate' && entry.mode.conflict !== null)
     }
-    if (!entry.latestSnapshotNeedsWrite) return true
+    // A successful mint can make the bytes durable while the path is
+    // still unauthenticated. Never let that state masquerade as clean:
+    // every flush must re-enter the resolver/CAS authentication loop.
+    if (!entry.latestSnapshotNeedsWrite && entry.emptyFamilyRecovery === null) {
+      return true
+    }
     // The single router picks the channel: conflict-pinned entries
     // persist a still-pending snapshot as a conflict record (never the
     // primary record — a primary write would mint a fresh
@@ -2186,14 +2257,16 @@ export function createUnsavedDraftPersistence(
     if (disposed || attempt >= SETTLE_RETRY_DELAYS_MS.length) return
     const entry = entries.get(key(vaultId, documentId))
     if (!entry || entry.generation !== generation) return
-    if (!entry.latestSnapshot || !entry.latestSnapshotNeedsWrite) return
+    if (!entry.latestSnapshot
+      || (!entry.latestSnapshotNeedsWrite && entry.emptyFamilyRecovery === null)) return
     if (entry.timer !== null) return
     entry.timer = setTimeout(() => {
       entry.timer = null
       if (disposed) return
       const target = entries.get(key(vaultId, documentId))
       if (!target || target.generation !== generation) return
-      if (!target.latestSnapshot || !target.latestSnapshotNeedsWrite) return
+      if (!target.latestSnapshot
+        || (!target.latestSnapshotNeedsWrite && target.emptyFamilyRecovery === null)) return
       const owner = { vaultId, documentId, generation: target.generation }
       const captured = cloneSnapshot(target.latestSnapshot)
       void queueTargetWrite(owner, captured).then((succeeded) => {
@@ -2479,7 +2552,9 @@ export function createUnsavedDraftPersistence(
           documentPath: path,
         }
       }
-      if (!writeLatest || !entry.latestSnapshot || !entry.latestSnapshotNeedsWrite) {
+      if (!writeLatest
+        || !entry.latestSnapshot
+        || (!entry.latestSnapshotNeedsWrite && entry.emptyFamilyRecovery === null)) {
         return { status: 'released' }
       }
       // The single router picks the channel at fire time: a
@@ -3201,7 +3276,8 @@ export function createUnsavedDraftPersistence(
           state,
           sealedGeneration: entry.generation,
           sealedSnapshot: entry.latestSnapshot,
-          pending: entry.latestSnapshot !== null && entry.latestSnapshotNeedsWrite,
+          pending: entry.latestSnapshot !== null
+            && (entry.latestSnapshotNeedsWrite || entry.emptyFamilyRecovery !== null),
           save: null,
         })
       }
@@ -3239,6 +3315,7 @@ export function createUnsavedDraftPersistence(
         const superseded = entry.generation !== sealedGeneration
           || entry.latestSnapshot !== sealedSnapshot
           || entry.latestSnapshotNeedsWrite
+          || entry.emptyFamilyRecovery !== null
         const failed = superseded || (pending && !saveResults[index])
         if (entry.fileTransaction === closeToken) entry.fileTransaction = null
         if (!failed) {
@@ -3264,7 +3341,8 @@ export function createUnsavedDraftPersistence(
         // Re-arm the background retry: the tab stays open as the
         // visible surface while the debounce persists the latest
         // snapshot on the entry's active channel.
-        if (entry.latestSnapshot && entry.latestSnapshotNeedsWrite) {
+        if (entry.latestSnapshot
+          && (entry.latestSnapshotNeedsWrite || entry.emptyFamilyRecovery !== null)) {
           entry.generation += 1
           const owner = {
             vaultId: identity.vaultId,

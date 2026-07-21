@@ -4806,6 +4806,66 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       await persistence.dispose()
     })
 
+    it('R4a: a failed first mint retries through server authentication instead of the stale resolved path', async () => {
+      let serverPath = 'path/b'
+      let calls = 0
+      const setup = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          return { path: serverPath, version: calls }
+        },
+      })
+      const { backend, store, persistence } = setup
+      backend.failNext('save')
+
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+
+      // The server moves after the resolver returned B but before the
+      // automatic retry. That retry must resolve again and mint at C;
+      // a normal primary retry would incorrectly write B directly.
+      serverPath = 'path/c'
+      await vi.advanceTimersByTimeAsync(800)
+      await vi.runAllTimersAsync()
+      await drainWriteQueue()
+
+      expect(calls).toBeGreaterThanOrEqual(3)
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/c',
+        content: 'after-rename',
+      })
+      await persistence.dispose()
+    })
+
+    it('R4b: bounded exhaustion remains pending until a later flush authenticates a stable path', async () => {
+      let calls = 0
+      let stablePath: string | null = null
+      const { store, persistence } = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => {
+          calls += 1
+          return {
+            path: stablePath ?? `path/p${calls}`,
+            version: calls,
+          }
+        },
+      })
+
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      const callsAfterFailure = calls
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        content: 'after-rename',
+      })
+
+      stablePath = 'path/stable'
+      expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+      expect(calls).toBeGreaterThan(callsAfterFailure)
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/stable',
+        content: 'after-rename',
+      })
+      await persistence.dispose()
+    })
+
     it('R5: the same convergence happens on the debounce flush', async () => {
       const serverState: ServerState = { path: 'path/b', version: 1 }
       let calls = 0
