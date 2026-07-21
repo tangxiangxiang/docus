@@ -662,31 +662,33 @@ Frozen at `13a43ab` and asserted by the regression matrix below:
 | Editing / autosave | `useDocumentSave.ts` (onEditorChange, scheduleDraft, scheduleSave, saveLatest→markClean) → E2E-1 draft creation under a held Save API; E2E-9 dirty buffer; vitest `useDocumentSave` suites | Pass |
 | Crash recovery | `VaultView.vue` startup discovery/adoption loop; `useUnsavedDraftRecovery.ts` pendingItem; `applyRecoveredDraft` → E2E-1 (hard restart adopts baseline-match, dialog absent, disk untouched); E2E-2 (external disk change → divergent prompt → View Diff shows both sides) | Pass |
 | Rename / move / delete | `draftStore.ts` move/CAS/quarantine transactions → `draft-file-transactions.spec.ts` (5 tests: move to server path byte/time preserving, newer cross-context record kept after delete, conflict paths moved on rename, conflict-only delete clears frozen conflicts, mid-CAS edit persists as conflict candidate); `draft-store.spec.ts` move/CAS/retry suites (lines 234–2449) | Pass |
-| Multi-tab concurrency | `createIndexedDbDraftBackend` connection cache + `openDatabase` blocked/versionchange handling → cross-context suites (inventory keeps newer conflict 73; never adopts newer cross-context draft 372; conflict re-pinned on family move in another context 1021; cached connection closed on upgrade 1269; no late-connection leak after blocked open 1312); E2E-7 cross-context replacement survives cleanup; E2E-10 blocked upgrade | Pass |
+| Multi-tab concurrency | `createIndexedDbDraftBackend` connection cache + `openDatabase` blocked/versionchange handling → cross-context suites (inventory keeps newer conflict 73; never adopts newer cross-context draft 372; conflict re-pinned on family move in another context 1021; cached connection closed on upgrade 1269; no late-connection leak after blocked open 1312); E2E-5 two live contexts editing the same identity — stale write promoted to a candidate with `crossContextUpdatedAt`, primary never re-minted; E2E-7 cross-context replacement survives cleanup; E2E-10 blocked upgrade with a seeded v1 record | Pass |
 | External conflicts | `draftRecoveryDecision.ts`; `SavePostConflictError` path in `saveLatest` → mid-CAS conflict candidate (file-transactions 409); same-identity conflict save blocks (draft-store 630/1124); E2E-2 divergent classification; E2E-9 coexistence | Pass |
 | History / Diff / Recovery workspace | `DraftRecoveryPrompt.vue`, `DraftRecoveryPane.vue`, `useDraftRecoveryTabs`, `VaultView.vue` workspace wiring → E2E-2 View Diff pane renders both sides; E2E-9 read-only viewer + document coexist, Ctrl+S isolated, closing recovery leaves document intact; E2E-10 workspace stays normal under a blocked upgrade | Pass |
 
 ### 14.3 Final Closure E2E coverage (E2E-1 .. E2E-10)
 
-Five tests were added (`e2e/draft-store.spec.ts`, all against real IndexedDB on
-a dedicated Vite origin with a fresh vault per suite run); the remaining
-scenarios reuse existing real-IndexedDB/real-server tests:
+Seven tests were created in Final Closure (`e2e/draft-store.spec.ts`, all
+against real IndexedDB on a dedicated Vite origin with a fresh vault per
+suite run); the remaining scenarios reuse existing real-IndexedDB/real-server
+tests:
 
 | Req. | Covered by | Status |
 | --- | --- | --- |
 | E2E-1 | NEW `E2E-1: a hard restart adopts a baseline-matching autosaved draft without saving the server file` | Added, Pass |
 | E2E-2 | NEW `E2E-2: an external disk change makes the draft divergent and offers a diff instead of auto-adoption` | Added, Pass |
-| E2E-3 rename/move | `draft-file-transactions.spec.ts:17` moves a persisted draft to the actual server path; `:221` moves conflict records along on rename | Reused, Pass |
+| E2E-3 rename/move under failure | `draft-store.spec.ts:1398` a stale quarantine retry in a second IndexedDB context adopts the certified current path; `:1562` the move-indeterminate counterpart; `draft-file-transactions.spec.ts:17` atomic move to the actual server path; `:221` conflict records moved along on rename | Reused, Pass |
 | E2E-4 delete | `draft-file-transactions.spec.ts:123` keeps a newer cross-context record after confirmed delete; `:324` removes frozen conflicts on conflict-only delete | Reused, Pass |
-| E2E-5 mid-CAS conflict | `draft-file-transactions.spec.ts:409` persists a mid-CAS edit as a conflict candidate across dispose | Reused, Pass |
-| E2E-6 cross-context survival | `draft-store.spec.ts:372` does not adopt a newer cross-context draft; `draft-file-transactions.spec.ts:123` | Reused, Pass |
+| E2E-5 | NEW `E2E-5: two concurrent contexts route a stale write to the candidate channel without overwriting the primary` — two live persistence channels (two IndexedDB contexts) edit the same identity from the same baseline; the lagging context's primary write comes back stale and the production state machine promotes it to a conflict candidate whose `crossContextUpdatedAt` points at the certified primary; a further edit stays on the candidate channel and the primary's body AND `updatedAt` are never re-minted. Additionally `draft-file-transactions.spec.ts:409` persists a mid-CAS edit as a conflict candidate across dispose | Added, Pass |
+| E2E-6 chained rename across contexts | `draft-store.spec.ts:1398` Context A renames into quarantine, Context B moves the family onward, A's stale retry adopts B's certified path — the family is never dragged back, and A's body lands as a candidate at the certified path; `:2449` an emptied-family retry converges when another window renames between the resolve and the revalidation; `:1021` a conflict candidate is re-pinned when the family moves in another context | Reused, Pass |
 | E2E-7 | NEW `E2E-7: a record another context replaces after safe-redundant classification survives cleanup` (real IndexedDB, two live store contexts) | Added, Pass |
-| E2E-8 connection lifecycle | `draft-store.spec.ts:1269` closes a cached connection when another context upgrades; `:1312` does not leak a late connection after a blocked open | Reused, Pass |
+| E2E-8 | NEW `E2E-8: external delete and path reuse remain identity-mismatched` — draft recorded under document A; A is deleted externally; document B takes over the same path with a different `documentId` and a body BYTE-IDENTICAL to A's draft; restart → identity-mismatch prompt ("The original path now belongs to another document."), no auto-adoption, the draft survives startup cleanup despite byte equality (identity-mismatch is never safe-redundant), B's markdown stays byte-exact | Added, Pass |
 | E2E-9 | NEW `E2E-9: document and recovery viewers coexist without cross-saving` (real Monaco, real tab strip; Ctrl+S on the read-only viewer must not save the dirty document — checked in the 400ms window between an immediate wrongful save and the 800ms autosave debounce) | Added, Pass |
-| E2E-10 | NEW `E2E-10: a blocked upgrade never hijacks the workspace and recovers after the blocker closes` (real cross-page version hold; asserts the frozen no-toast/no-panel startup contract, then clean recovery after the blocker closes) | Added, Pass |
+| E2E-10 | `E2E-10: a blocked upgrade preserves seeded records and recovers into adoption after the blocker closes` — the blocker mints a v1 database whose `drafts` store holds a valid baseline-match draft for a real document; under the blocked upgrade the workspace stays normal (no toast, no panel, no backdrop); after the blocker closes, the silently queued v2 upgrade completes with the seeded record still intact (raw IndexedDB proof at version 2); a reload then recovers the surviving record all the way into adoption (editor shows the draft, disk never written directly, startup warning-free) | Strengthened, Pass |
+| Connection lifecycle | `draft-store.spec.ts:1269` closes a cached connection when another context upgrades; `:1312` does not leak a late connection after a blocked open | Reused, Pass |
 
-Draft-store E2E suite total: 36 tests (31 pre-existing + 5 new), all passing.
-Application E2E suite: 9 tests, all passing.
+Draft-store E2E suite total: 38 tests (31 pre-existing + 7 created in Final
+Closure), all passing. Application E2E suite: 9 tests, all passing.
 
 ### 14.4 Final gate results (run locally, 2026-07-21; no CI)
 
@@ -695,10 +697,10 @@ Application E2E suite: 9 tests, all passing.
 | `npm ci` | 0 | 408 packages, clean install |
 | `npm run typecheck` | 0 | clean (re-run after the final spec/config edits) |
 | `npm run lint:icons` | 0 | no violations |
-| `npm test` (vitest) | 0 | 128 files / 1,623 tests, 26.38s |
-| `npm run build` | 0 | built in ~1.4s |
-| `npm run test:e2e:draft-store` | 0 | 36 passed, 17.4s |
-| `npm run test:e2e` | 0 | 9 passed, 9.6s |
+| `npm test` (vitest) | 0 | 128 files / 1,623 tests, 27.88s |
+| `npm run build` | 0 | built in 1.47s |
+| `npm run test:e2e:draft-store` | 0 | 38 passed, 26.2s |
+| `npm run test:e2e` | 0 | 9 passed, 7.1s |
 | `git diff --check` | 0 | no whitespace errors |
 | `.only` / `.skip` audit | 0 hits | no focused or skipped tests |
 
@@ -762,10 +764,15 @@ commit per the minimal-fix policy.
 
 ### 14.8 Closure
 
-Final Closure adds: five real-IndexedDB E2E tests (E2E-1, E2E-2, E2E-7,
-E2E-9, E2E-10), draft-store suite hygiene (fresh vault per webServer start,
-exact-aria-label tree targeting), the manager-agnostic application-E2E
-webServer fix, and this section. Stage records and SHAs from Section 11
-(`9a0837b` seal) and the round-3 seal (`13a43ab`) are preserved above.
-Edit-09 is closed end-to-end at the commit titled
-`chore: close Edit-09 end-to-end`.
+Final Closure adds: seven real-IndexedDB E2E tests (E2E-1, E2E-2, E2E-5,
+E2E-7, E2E-8, E2E-9, E2E-10 — E2E-5 dual-context stale-write routing, E2E-8
+external-delete/path-reuse identity-mismatch, and a strengthened E2E-10
+seeded-v1-record survival were completed in the final closure matrix pass),
+draft-store suite hygiene (fresh vault per webServer start, exact-aria-label
+tree targeting), the manager-agnostic application-E2E webServer fix, and this
+section. Stage records and SHAs from Section 11 (`9a0837b` seal) and the
+round-3 seal (`13a43ab`) are preserved above. The closure commit
+(`chore: close Edit-09 end-to-end`) sealed production at zero regressions;
+the final closure matrix commit (`test: complete Edit-09 final closure
+matrix`) completes the E2E-1..E2E-10 evidence matrix with no production
+changes.

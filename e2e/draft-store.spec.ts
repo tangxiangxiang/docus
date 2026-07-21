@@ -2769,6 +2769,86 @@ test('E2E-2: an external disk change makes the draft divergent and offers a diff
   await expect(pane).toContainText(externalLine)
 })
 
+test('E2E-5: two concurrent contexts route a stale write to the candidate channel without overwriting the primary', async ({
+  page,
+}) => {
+  // Two independent persistence channels (two live IndexedDB contexts)
+  // edit the SAME identity from the SAME baseline. Context A's clock
+  // leads, so its write is the certified primary; context B's lagging
+  // write comes back stale at the store and the production state machine
+  // must promote it to a conflict candidate — never re-mint a fresher
+  // timestamp and bury A's record — and every later B edit must stay on
+  // the candidate channel.
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const result = await page.evaluate(async (suffix) => {
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const { createUnsavedDraftPersistence } = await import(
+      '/src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts'
+    )
+    const vaultId = 'vault'
+    const documentId = `e5-${suffix}`
+    const path = `inbox/e2e-concurrent-${suffix}`
+    const snapshot = (content: string, revision: number) => ({
+      vaultId,
+      documentId,
+      documentPath: path,
+      content,
+      authoritativeContent: 'shared disk baseline',
+      baseContentHash: 'baseline-hash',
+      baseModifiedAt: 10,
+      revision,
+    })
+
+    const contextA = createUnsavedDraftPersistence({ now: () => 1000 })
+    contextA.schedule(snapshot(`body A ${suffix}`, 1))
+    const aPersisted = await contextA.flush(vaultId, documentId)
+
+    const contextB = createUnsavedDraftPersistence({ now: () => 900 })
+    contextB.schedule(snapshot(`body B ${suffix}`, 1))
+    const bPersisted = await contextB.flush(vaultId, documentId)
+
+    const observer = createDraftStore()
+    const afterFirstWrites = await observer.inspectVaultRecovery(vaultId)
+
+    // A further edit in context B must stay on the candidate channel.
+    contextB.schedule(snapshot(`body B2 ${suffix}`, 2))
+    const b2Persisted = await contextB.flush(vaultId, documentId)
+    const afterSecondEdit = await observer.inspectVaultRecovery(vaultId)
+
+    return {
+      aPersisted,
+      bPersisted,
+      b2Persisted,
+      firstPrimaryContent: afterFirstWrites.inventory.primary[0]?.content ?? null,
+      firstPrimaryUpdatedAt: afterFirstWrites.inventory.primary[0]?.updatedAt ?? null,
+      firstConflicts: afterFirstWrites.inventory.conflicts.map((record) => ({
+        content: record.content,
+        crossContextUpdatedAt: record.crossContextUpdatedAt,
+      })),
+      primaryContent: afterSecondEdit.inventory.primary[0]?.content ?? null,
+      primaryUpdatedAt: afterSecondEdit.inventory.primary[0]?.updatedAt ?? null,
+      conflictContents: afterSecondEdit.inventory.conflicts.map((record) => record.content),
+    }
+  }, suffix)
+
+  expect(result.aPersisted).toBe(true)
+  // B's stale write survives, but NOT as the primary record.
+  expect(result.bPersisted).toBe(false)
+  expect(result.firstPrimaryContent).toContain(`body A ${suffix}`)
+  expect(result.firstConflicts).toHaveLength(1)
+  expect(result.firstConflicts[0]?.content).toContain(`body B ${suffix}`)
+  // The candidate records the exact primary it diverged from.
+  expect(result.firstConflicts[0]?.crossContextUpdatedAt).toBe(result.firstPrimaryUpdatedAt)
+  // B's next edit stays on the candidate channel; the certified primary
+  // is untouched — same body AND same updatedAt, never re-minted.
+  expect(result.b2Persisted).toBe(true)
+  expect(result.primaryContent).toContain(`body A ${suffix}`)
+  expect(result.primaryUpdatedAt).toBe(result.firstPrimaryUpdatedAt)
+  expect(result.conflictContents.some((content) => content.includes(`body B2 ${suffix}`))).toBe(true)
+})
+
 test('E2E-7: a record another context replaces after safe-redundant classification survives cleanup', async ({
   page,
 }) => {
@@ -2843,6 +2923,88 @@ test('E2E-7: a record another context replaces after safe-redundant classificati
   expect(result.survivor).toContain(`newer unsaved body ${suffix}`)
 })
 
+test('E2E-8: external delete and path reuse remain identity-mismatched', async ({
+  page,
+}) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const path = `inbox/e2e-reuse-${suffix}`
+  const draftLine = `Unsaved line ${suffix}`
+  // Document A: type a draft and hold the server Save API so the draft
+  // stays in IndexedDB (normal autosave would markClean it in ~1s).
+  await typeAndAwaitDraft(page, path, `Reuse Closure A ${suffix}`, draftLine)
+  const file = `${VAULT_DIR}/${path}.md`
+  const aDraftBody = `# Reuse Closure A ${suffix}\n\n${draftLine}`
+
+  // External delete of A (no API call — the file vanishes behind the
+  // app's back), then a NEW document B takes over the same path. The
+  // create route drops the stale metadata row first and mints a fresh
+  // randomUUID identity, so B's documentId differs from the identity
+  // the draft was recorded under.
+  await fs.unlink(file)
+  await page.waitForTimeout(1200) // let any pending (aborted) autosave fire
+  await page.unroute('**/api/posts/**')
+  await page.request.post('/api/posts', { data: { path, title: `Reuse Closure B ${suffix}` } })
+  // Make B's disk body BYTE-IDENTICAL to A's draft body: a naive
+  // byte-equality cleanup would call this redundant — the differing
+  // stable identity must keep it identity-mismatched instead.
+  await fs.writeFile(file, aDraftBody, 'utf8')
+
+  await page.goto('/vault')
+
+  // No auto-adoption: the draft never flows into B. The prompt shows
+  // the identity-mismatch verdict for A's orphaned draft.
+  const dialog = page.locator('.draft-recovery-dialog')
+  await expect(dialog).toBeVisible({ timeout: 15_000 })
+  await expect(dialog.locator('.draft-recovery-path')).toHaveText(path)
+  await expect(dialog).toContainText('The original path now belongs to another document.')
+  // (A persisted tab for the path may legitimately open B's CURRENT disk
+  // bytes here — that is the normal load of the reused path, not an
+  // adoption of A's draft. "No auto-adoption" is proven below by the
+  // prompt above plus the byte-exact, unwritten disk file.)
+
+  // The draft row survives startup cleanup even though its body equals
+  // B's disk bytes — identity-mismatch is never safe-redundant.
+  const stored = await page.evaluate((target) => new Promise<{
+    draftId: string | null
+    diskId: string | null
+    draftSurvives: boolean
+  }>((resolve) => {
+    const fail = () => resolve({ draftId: null, diskId: null, draftSurvives: false })
+    const request = indexedDB.open(target.databaseName)
+    request.onsuccess = async () => {
+      const db = request.result
+      try {
+        const all = db.transaction('drafts', 'readonly').objectStore('drafts').getAll()
+        all.onsuccess = async () => {
+          const row = (all.result as Array<{ documentId?: string; content?: string }>)
+            .find((candidate) => candidate.content?.includes(target.line) ?? false)
+          const diskId = await fetch(`/api/posts/${target.path}`)
+            .then((response) => response.json())
+            .then((post: { metadata?: { id?: string } }) => post.metadata?.id ?? null)
+            .catch(() => null)
+          resolve({
+            draftId: row?.documentId ?? null,
+            diskId,
+            draftSurvives: row !== undefined,
+          })
+          db.close()
+        }
+        all.onerror = () => { db.close(); fail() }
+      } catch { db.close(); fail() }
+    }
+    request.onerror = fail
+    request.onblocked = fail
+  }), { databaseName: DATABASE_NAME, line: draftLine, path })
+
+  expect(stored.draftSurvives).toBe(true)
+  expect(stored.draftId).not.toBeNull()
+  // B owns the path under a DIFFERENT stable identity.
+  expect(stored.diskId).not.toBeNull()
+  expect(stored.diskId).not.toBe(stored.draftId)
+  // B's formal markdown is byte-exact: nothing adopted, nothing cleaned.
+  expect(await fs.readFile(file, 'utf8')).toBe(aDraftBody)
+})
+
 test('E2E-9: document and recovery viewers coexist without cross-saving', async ({
   page,
 }) => {
@@ -2902,10 +3064,17 @@ test('E2E-9: document and recovery viewers coexist without cross-saving', async 
   await expect(page.locator('.editor-pane .monaco-editor .view-lines')).toContainText(documentEdit)
 })
 
-test('E2E-10: a blocked upgrade never hijacks the workspace and recovers after the blocker closes', async ({
+test('E2E-10: a blocked upgrade preserves seeded records and recovers into adoption after the blocker closes', async ({
   page,
   context,
 }) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const path = `inbox/e2e-blocked-${suffix}`
+  const seededLine = `Unsaved line from the old version ${suffix}`
+  await page.request.post('/api/posts', {
+    data: { path, title: `Blocked Closure ${suffix}` },
+  })
+
   // Leave the SPA immediately so the beforeEach '/' boot can never open
   // the database under the upcoming hold: IndexedDB delivers 'blocked'
   // only to the FIRST upgrade attempt, and this page must be that first
@@ -2913,27 +3082,57 @@ test('E2E-10: a blocked upgrade never hijacks the workspace and recovers after t
   // while an old one still holds the old-version connection).
   await page.goto('/src/main.ts')
   // Another Docus page holds an OLD-VERSION connection: it mints the
-  // database at v1 and keeps it open, so the app's v2 upgrade blocks.
-  // '/src/main.ts' serves the module source as text on the same origin:
-  // the blocker has working IndexedDB but never boots the SPA.
+  // database at v1 WITH a drafts store holding one valid old-version
+  // draft for the real document above (the unsaved bytes a tab on the
+  // previous schema would still hold open), and keeps the connection
+  // open, so the app's v2 upgrade blocks. '/src/main.ts' serves the
+  // module source as text on the same origin: the blocker has working
+  // IndexedDB but never boots the SPA.
   const blocker = await context.newPage()
   await blocker.goto('/src/main.ts')
-  await blocker.evaluate(async (databaseName) => {
+  await blocker.evaluate(async (target) => {
+    const { hashDraftBaseline } = await import(
+      '/src/composables/vault/draft-recovery/draftHash.ts'
+    )
+    const health = await (await fetch('/api/health')).json() as { vaultId: string }
+    const post = await (await fetch(`/api/posts/${target.path}`)).json() as {
+      raw: string
+      mtime: number
+      metadata: { id: string }
+    }
+    // A baseline-match draft: its baseline hash certifies against the
+    // disk bytes, so after the upgrade it must flow into adoption.
+    const oldDraft = {
+      version: 1,
+      vaultId: health.vaultId,
+      documentId: post.metadata.id,
+      documentPath: target.path,
+      content: `${post.raw}\n${target.seededLine}`,
+      baseContentHash: await hashDraftBaseline(post.raw),
+      baseModifiedAt: post.mtime,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
     await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.deleteDatabase(databaseName)
+      const request = indexedDB.deleteDatabase(target.databaseName)
       request.onsuccess = () => resolve()
       request.onerror = () => reject(request.error)
       request.onblocked = () => reject(new Error('blocker delete blocked'))
     })
     await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.open(databaseName, 1)
+      const request = indexedDB.open(target.databaseName, 1)
+      request.onupgradeneeded = () => {
+        request.result
+          .createObjectStore('drafts', { keyPath: ['vaultId', 'documentId'] })
+          .put(oldDraft)
+      }
       request.onsuccess = () => {
         ;(window as unknown as { heldV1: IDBDatabase }).heldV1 = request.result
         resolve()
       }
       request.onerror = () => reject(request.error)
     })
-  }, DATABASE_NAME)
+  }, { databaseName: DATABASE_NAME, path, seededLine })
 
   // Boot the app under the blocked upgrade — the first upgrade attempt.
   await page.goto('/vault')
@@ -2954,10 +3153,60 @@ test('E2E-10: a blocked upgrade never hijacks the workspace and recovers after t
   await expect(page.locator('.activity-bar .ab-btn[aria-pressed="true"]'))
     .toHaveAttribute('aria-label', /Explorer/)
 
-  // Closing the old page releases the v1 connection; the user's retry
-  // (reload) then starts up cleanly with no storage warning.
+  // Closing the old page releases the v1 connection: the app's silently
+  // queued v2 open now runs the upgrade. Hold the Save API before any
+  // adoption can autosave, so the negative disk assertion below proves
+  // adoption flows through the editor, never a direct disk write.
   await blocker.close()
+  await page.route('**/api/posts/**', (route) =>
+    route.request().method() === 'PUT' ? route.abort() : route.continue())
+
+  // The seeded old-version record survives BOTH the blocked upgrade and
+  // the upgrade that then completes (raw IndexedDB proof, read through
+  // a connection that queues behind the pending versionchange).
+  await expect.poll(() => page.evaluate((target) => new Promise<{
+    version: number
+    seeded: boolean
+  }>((resolve) => {
+    const request = indexedDB.open(target.databaseName)
+    const timer = setTimeout(
+      () => resolve({ version: -1, seeded: false }),
+      2500,
+    )
+    request.onsuccess = () => {
+      clearTimeout(timer)
+      const db = request.result
+      const version = db.version
+      try {
+        const all = db.transaction('drafts', 'readonly').objectStore('drafts').getAll()
+        all.onsuccess = () => {
+          resolve({
+            version,
+            seeded: (all.result as Array<{ content?: string }>).some(
+              (row) => row.content?.includes(target.seededLine) ?? false,
+            ),
+          })
+          db.close()
+        }
+        all.onerror = () => { resolve({ version, seeded: false }); db.close() }
+      } catch {
+        resolve({ version, seeded: false })
+        db.close()
+      }
+    }
+    request.onerror = () => { clearTimeout(timer); resolve({ version: -1, seeded: false }) }
+    request.onblocked = () => { clearTimeout(timer); resolve({ version: -1, seeded: false }) }
+  }), { databaseName: DATABASE_NAME, seededLine }), { timeout: 15_000 })
+    .toEqual({ version: 2, seeded: true })
+
+  // The user's retry (reload) then recovers the surviving record all the
+  // way into adoption: the draft opens in the editor, the disk is never
+  // written directly, and startup stays warning-free.
   await page.reload()
-  await expect(page.locator('.tree-row').first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.editor-pane .monaco-editor .view-lines'))
+    .toContainText(seededLine, { timeout: 15_000 })
+  await expect(page.locator('.draft-recovery-backdrop')).toHaveCount(0)
   await expect(page.locator('.toast-host .toast')).toHaveCount(0)
+  const disk = await fs.readFile(`${VAULT_DIR}/${path}.md`, 'utf8')
+  expect(disk).not.toContain(seededLine)
 })
