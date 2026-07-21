@@ -350,4 +350,17 @@ describe('createUnsavedDraftRecovery', () => {
     await discovering
     expect(recovery.items.value[0]?.status).toBe('dismissed')
   })
+
+  it('keeps Later dismissed across a full discovery in the same session', async () => {
+    const store = await seededStore(draft('a'))
+    const recovery = createUnsavedDraftRecovery({ store, loadPost: async () => post('a') })
+    await recovery.discover('vault')
+    const id = recovery.items.value[0]!.recoveryId
+    recovery.dismissForSession(id)
+
+    await recovery.discover('vault')
+
+    expect(recovery.items.value[0]?.status).toBe('ready')
+    expect(recovery.pendingItem.value).toBeNull()
+  })
 })

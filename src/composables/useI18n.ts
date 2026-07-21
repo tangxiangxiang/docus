@@ -467,6 +467,8 @@ const STRINGS: Strings = {
   'draft_recovery.center.decision.identity-mismatch': { zh: '路径身份不一致', en: 'Identity mismatch' },
   'draft_recovery.center.decision.unknown': { zh: '状态未知', en: 'Unknown' },
   'draft_recovery.center.cleaned': { zh: '已清理 {count} 条旧的本地恢复记录', en: 'Cleaned up {count} old local recovery records' },
+  'draft_recovery.center.delete_confirm_summary': { zh: '将删除此浏览器中的 {count} 条恢复记录（共 {bytes} 字节），不会删除磁盘文件。', en: 'Delete {count} recovery records ({bytes} bytes) from this browser? Disk files will not be deleted.' },
+  'draft_recovery.center.delete_summary': { zh: '已删除 {deleted} 条；{stale} 条已更新未删除；{protected} 条正在使用；{failed} 条删除失败。', en: 'Deleted {deleted}; {stale} changed and were kept; {protected} in use; {failed} failed.' },
   'draft_recovery.too_large': { zh: '此文档的本地恢复内容超过 2 MiB，未写入浏览器存储。磁盘保存仍可正常使用。', en: 'This document’s local recovery content exceeds 2 MiB and was not stored in the browser. Disk saving remains available.' },
   'file_tree.label': { zh: '文件资源管理器', en: 'File explorer' },
   'file_tree.search': { zh: '筛选文件…', en: 'Filter files...' },

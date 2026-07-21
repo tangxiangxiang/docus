@@ -1,6 +1,7 @@
 import { computed, readonly, ref, type ComputedRef, type DeepReadonly, type Ref } from 'vue'
 import {
   capacitySnapshot,
+  compareRecoveryNewestFirst,
   conflictRecoveryRecord,
   planDraftCleanup,
   primaryRecoveryRecord,
@@ -91,6 +92,8 @@ export function createDraftRecoveryManagement(
   let generation = 0
   let disposed = false
   let cleanupPromise: Promise<DraftCleanupReport> | null = null
+  let cleanupRequested = false
+  let cleanupTargetVault = ''
 
   const protectedIds = computed(() => {
     const result = new Set(activeOperations.value)
@@ -108,7 +111,16 @@ export function createDraftRecoveryManagement(
     return [
       ...inventory.primary.map(primaryRecoveryRecord),
       ...inventory.conflicts.map(conflictRecoveryRecord),
-    ]
+    ].sort(compareRecoveryNewestFirst)
+  }
+
+  function applyInventory(inventory: DraftRecoveryInventory): void {
+    records.value = inventoryRecords(inventory)
+    capacity.value = capacitySnapshot(records.value)
+    unsupportedCount.value = inventory.unsupportedPrimaryCount
+      + inventory.unsupportedConflictCount
+    const existing = new Set(records.value.map(recoveryRecordId))
+    selectedIds.value = new Set([...selectedIds.value].filter((id) => existing.has(id)))
   }
 
   async function refresh(nextVaultId: string): Promise<boolean> {
@@ -123,12 +135,7 @@ export function createDraftRecoveryManagement(
       error.value = 'inspect-failed'
       return false
     }
-    records.value = inventoryRecords(outcome.inventory)
-    capacity.value = capacitySnapshot(records.value)
-    unsupportedCount.value = outcome.inventory.unsupportedPrimaryCount
-      + outcome.inventory.unsupportedConflictCount
-    const existing = new Set(records.value.map(recoveryRecordId))
-    selectedIds.value = new Set([...selectedIds.value].filter((id) => existing.has(id)))
+    applyInventory(outcome.inventory)
     return true
   }
 
@@ -213,34 +220,75 @@ export function createDraftRecoveryManagement(
     ]))
   }
 
-  async function runCleanup(): Promise<DraftCleanupReport> {
-    const beforeRecords = [...records.value]
+  async function runCleanup(targetVaultId: string): Promise<DraftCleanupReport> {
+    const beforeOutcome = await options.store.inspectVaultRecovery(targetVaultId)
+    const beforeInventory = beforeOutcome.status === 'ok'
+      ? beforeOutcome.inventory
+      : { primary: [], conflicts: [], unsupportedPrimaryCount: 0, unsupportedConflictCount: 0 }
+    const beforeRecords = inventoryRecords(beforeInventory)
+    const openIds = new Set(options.openRecoveryIds?.value ?? [])
+    const identityProtection = options.getPersistenceProtection(targetVaultId).identityIds
     const plan = planDraftCleanup({
       records: beforeRecords,
       decisions: decisions(),
-      protectedRecoveryIds: protectedIds.value,
-      protectedIdentityIds: options.getPersistenceProtection(vaultId).identityIds,
+      protectedRecoveryIds: openIds,
+      protectedIdentityIds: identityProtection,
       now: now(),
     })
-    const bulk = await deleteMany(plan.candidates)
+    const bulk = emptyBulkReport()
+    for (const record of plan.candidates) addResult(bulk, await conditionalDelete(record))
+    const removedIds = [...bulk.deleted, ...bulk.missing].map(recoveryRecordId)
+    const afterOutcome = await options.store.inspectVaultRecovery(targetVaultId)
+    const afterInventory = afterOutcome.status === 'ok'
+      ? afterOutcome.inventory
+      : beforeInventory
+    const afterRecords = inventoryRecords(afterInventory)
     const report: DraftCleanupReport = {
       before: plan.before,
-      after: capacity.value,
+      after: capacitySnapshot(afterRecords),
       deleted: bulk.deleted,
       stale: bulk.stale,
       skippedProtected: plan.skippedProtected,
-      unsupportedCount: unsupportedCount.value,
+      unsupportedCount: afterInventory.unsupportedPrimaryCount
+        + afterInventory.unsupportedConflictCount,
       failed: bulk.failed,
-      stillOverCapacity: capacity.value.overCapacity,
+      stillOverCapacity: capacitySnapshot(afterRecords).overCapacity,
     }
-    cleanupReport.value = report
+    if (!disposed && targetVaultId === vaultId) {
+      if (afterOutcome.status === 'ok') applyInventory(afterInventory)
+      cleanupReport.value = report
+      if (removedIds.length > 0) {
+        await options.recovery.discover(targetVaultId)
+        options.onRecordsRemoved?.(removedIds)
+      }
+    }
     return report
   }
 
   function cleanupNow(): Promise<DraftCleanupReport> {
-    if (cleanupPromise) return cleanupPromise
+    cleanupTargetVault = vaultId
+    if (cleanupPromise) {
+      cleanupRequested = true
+      return cleanupPromise
+    }
     cleanupPromise = (async () => {
-      return runCleanup()
+      let aggregate: DraftCleanupReport | null = null
+      let aggregateVault = ''
+      do {
+        cleanupRequested = false
+        const passVault = cleanupTargetVault
+        const pass = await runCleanup(passVault)
+        aggregate = aggregate === null || aggregateVault !== passVault ? pass : {
+          ...pass,
+          before: aggregate.before,
+          deleted: [...aggregate.deleted, ...pass.deleted],
+          stale: [...aggregate.stale, ...pass.stale],
+          skippedProtected: [...aggregate.skippedProtected, ...pass.skippedProtected],
+          failed: [...aggregate.failed, ...pass.failed],
+        }
+        aggregateVault = passVault
+      } while (cleanupRequested && !disposed)
+      return aggregate!
     })().finally(() => {
       cleanupPromise = null
     })

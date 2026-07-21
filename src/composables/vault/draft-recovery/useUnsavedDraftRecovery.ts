@@ -135,9 +135,12 @@ export function createUnsavedDraftRecovery(
   let identityRefreshEpoch = 0
   let discoverGeneration = 0
   let disposed = false
+  const dismissedRecoveryIds = new Set<string>()
 
   const pendingItem = computed(() =>
-    mutableItems.value.find((item) => item.status !== 'dismissed') ?? null,
+    mutableItems.value.find((item) => (
+      item.status !== 'dismissed' && !dismissedRecoveryIds.has(item.recoveryId)
+    )) ?? null,
   )
 
   function currentItem(
@@ -357,6 +360,7 @@ export function createUnsavedDraftRecovery(
     const item = mutableItems.value.find((candidate) => candidate.recoveryId === id)
     if (!item) return
     item.status = 'dismissed'
+    dismissedRecoveryIds.add(id)
     if (activeRecoveryId.value === id) activeRecoveryId.value = null
   }
 

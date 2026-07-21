@@ -496,10 +496,7 @@ const recoveryManagement = createDraftRecoveryManagement({
 })
 requestDraftCleanup = (persistedVaultId) => {
   if (persistedVaultId !== vaultId.value) return
-  void recoveryManagement.refresh(persistedVaultId).then(async (refreshed) => {
-    if (!refreshed) return
-    await draftRecovery.discover(persistedVaultId)
-    const report = await recoveryManagement.cleanupNow()
+  void recoveryManagement.cleanupNow().then((report) => {
     if (report.deleted.length > 0) {
       toast.info(t('draft_recovery.center.cleaned', { count: report.deleted.length }), 4000)
     }
@@ -514,13 +511,15 @@ async function openRecoveryView(
   recoveryId: string,
   view: 'content' | 'diff',
 ): Promise<void> {
-  await draftRecovery.retry(recoveryId)
-  const item = recoveryItem(recoveryId)
-  if (!item || item.status !== 'ready') return
-  historyComparisons.deactivate()
-  historySnapshots.viewCurrent()
-  recoveryTabs.open(item, view)
-  draftRecovery.dismissForSession(recoveryId)
+  await withManagedRecoveryOperation(recoveryId, async () => {
+    await draftRecovery.retry(recoveryId)
+    const item = recoveryItem(recoveryId)
+    if (!item || item.status !== 'ready') return
+    historyComparisons.deactivate()
+    historySnapshots.viewCurrent()
+    recoveryTabs.open(item, view)
+    draftRecovery.dismissForSession(recoveryId)
+  })
 }
 
 async function discardRecoveryDraft(recoveryId: string): Promise<void> {
@@ -659,13 +658,23 @@ async function refreshRecoveryCenter(): Promise<void> {
 }
 
 async function retryManagedRecovery(recoveryId: string): Promise<void> {
+  await withManagedRecoveryOperation(recoveryId, () => draftRecovery.retry(recoveryId))
+}
+
+async function withManagedRecoveryOperation<T>(
+  recoveryId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const alreadyProtected = managedRecoveryOperations.value.has(recoveryId)
   managedRecoveryOperations.value = new Set(managedRecoveryOperations.value).add(recoveryId)
   try {
-    await draftRecovery.retry(recoveryId)
+    return await operation()
   } finally {
-    const next = new Set(managedRecoveryOperations.value)
-    next.delete(recoveryId)
-    managedRecoveryOperations.value = next
+    if (!alreadyProtected) {
+      const next = new Set(managedRecoveryOperations.value)
+      next.delete(recoveryId)
+      managedRecoveryOperations.value = next
+    }
   }
 }
 
@@ -685,23 +694,51 @@ async function deleteManagedRecovery(recoveryId: string): Promise<void> {
     t('draft_recovery.center.delete'),
     `${record.record.documentPath}\n${record.source} · ${record.bytes} B`,
   )
-  if (ok) await recoveryManagement.deleteRecord(record)
+  if (ok) showRecoveryDeleteReport(await recoveryManagement.deleteRecord(record))
+}
+
+function showRecoveryDeleteReport(
+  report: { status: string } | import('../composables/vault/draft-recovery/useDraftRecoveryManagement').BulkRecoveryDeleteReport,
+): void {
+  const counts = 'status' in report
+    ? { deleted: report.status === 'deleted' || report.status === 'missing' ? 1 : 0,
+        stale: report.status === 'stale' ? 1 : 0,
+        protected: report.status === 'protected' ? 1 : 0,
+        failed: report.status === 'failed' || report.status === 'unsupported' ? 1 : 0 }
+    : { deleted: report.deleted.length + report.missing.length,
+        stale: report.stale.length,
+        protected: report.protected.length,
+        failed: report.failed.length + report.unsupported.length }
+  toast.info(t('draft_recovery.center.delete_summary', counts), 5000)
 }
 
 async function deleteSelectedRecovery(): Promise<void> {
+  const selected = recoveryManagement.records.value.filter((record) => (
+    recoveryManagement.selectedIds.value.has(recoveryRecordId(record))
+    && !recoveryManagement.protectedIds.value.has(recoveryRecordId(record))
+  ))
   const ok = await confirm(
     t('draft_recovery.center.delete_selected'),
-    t('draft_recovery.center.local_only'),
+    t('draft_recovery.center.delete_confirm_summary', {
+      count: selected.length,
+      bytes: selected.reduce((sum, record) => sum + record.bytes, 0),
+    }),
   )
-  if (ok) await recoveryManagement.deleteSelected()
+  if (ok) showRecoveryDeleteReport(await recoveryManagement.deleteSelected())
 }
 
 async function deleteAllUnprotectedRecovery(): Promise<void> {
+  const deletable = recoveryManagement.records.value.filter((record) => (
+    !recoveryManagement.protectedIds.value.has(recoveryRecordId(record))
+  ))
   const ok = await confirm(
     t('draft_recovery.center.delete_all'),
-    t('draft_recovery.center.local_only'),
+    t('draft_recovery.center.delete_confirm_summary', {
+      count: deletable.length,
+      bytes: deletable.reduce((sum, record) => sum + record.bytes, 0),
+    }),
   )
-  if (ok) await recoveryManagement.deleteAllUnprotected()
+  if (ok) showRecoveryDeleteReport(await recoveryManagement.deleteAllUnprotected())
 }
 const history = useHistory(vaultContext)
 const historyCommit = useHistoryCommit({
@@ -1381,7 +1418,7 @@ watch(isReadMode, async (reading) => {
       @delete-all="deleteAllUnprotectedRecovery"
       @toggle="recoveryManagement.toggleSelected"
       @open="(id) => openRecoveryView(id, 'content')"
-      @retry="draftRecovery.retry"
+      @retry="retryManagedRecovery"
       @delete="deleteManagedRecovery"
     />
 

@@ -101,6 +101,8 @@ export type DraftPersistenceIssue = {
 }
 
 interface DraftEntry {
+  vaultId: string
+  documentId: string
   generation: number
   timer: ReturnType<typeof setTimeout> | null
   latestSnapshot: DraftBufferSnapshot | null
@@ -480,6 +482,8 @@ export function createUnsavedDraftPersistence(
     let entry = entries.get(identity)
     if (!entry) {
       entry = {
+        vaultId,
+        documentId,
         generation: 0,
         timer: null,
         latestSnapshot: null,
@@ -3671,8 +3675,9 @@ export function createUnsavedDraftPersistence(
     const identityIds = new Set<string>()
     for (const entry of entries.values()) {
       const snapshot = entry.latestSnapshot
-      if (!snapshot || snapshot.vaultId !== vaultId) continue
-      const protectedEntry = snapshot.content !== snapshot.authoritativeContent
+      if (entry.vaultId !== vaultId) continue
+      const protectedEntry = (snapshot !== null
+          && snapshot.content !== snapshot.authoritativeContent)
         || entry.latestSnapshotNeedsWrite
         || entry.timer !== null
         || entry.pendingWrite !== null
@@ -3681,7 +3686,7 @@ export function createUnsavedDraftPersistence(
         || entry.emptyFamilyRecovery !== null
         || entry.settleRetryAttempt !== null
       if (protectedEntry) {
-        identityIds.add(JSON.stringify([snapshot.vaultId, snapshot.documentId]))
+        identityIds.add(JSON.stringify([entry.vaultId, entry.documentId]))
       }
     }
     return { identityIds }

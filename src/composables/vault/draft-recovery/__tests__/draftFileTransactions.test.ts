@@ -9,6 +9,8 @@ import {
   createUnsavedDraftPersistence,
   type DraftBufferSnapshot,
 } from '../useUnsavedDraftPersistence'
+import { createUnsavedDraftRecovery } from '../useUnsavedDraftRecovery'
+import { createDraftRecoveryManagement } from '../useDraftRecoveryManagement'
 
 function snapshot(
   content: string,
@@ -47,6 +49,37 @@ function draft(
 }
 
 describe('draft file transaction integration', () => {
+  it('protects a Store-only closed document while its file barrier is active', async () => {
+    const store = createDraftStore({ backend: createMemoryDraftBackend() })
+    await store.saveDraft(draft('stored-only'))
+    const persistence = createUnsavedDraftPersistence({ store, targetWindow: undefined })
+    const identity = { vaultId: 'vault', documentId: 'doc-a', documentPath: 'notes/a' }
+
+    const barrier = await persistence.prepareFileMutation([identity])
+
+    expect(persistence.getDraftCleanupProtection('vault').identityIds)
+      .toContain(JSON.stringify(['vault', 'doc-a']))
+    const recovery = createUnsavedDraftRecovery({
+      store,
+      loadPost: async () => { throw Object.assign(new Error('missing'), { status: 404 }) },
+    })
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      getPersistenceProtection: (vaultId) => persistence.getDraftCleanupProtection(vaultId),
+      now: () => 31 * 24 * 60 * 60 * 1000,
+    })
+    await recovery.discover('vault')
+    await management.refresh('vault')
+    const cleanup = await management.cleanupNow()
+    expect(cleanup.skippedProtected).toHaveLength(1)
+    expect(await store.getDraft('vault', 'doc-a')).not.toBeNull()
+
+    await barrier.rollback()
+    expect(persistence.getDraftCleanupProtection('vault').identityIds)
+      .not.toContain(JSON.stringify(['vault', 'doc-a']))
+  })
+
   it('discards an unpersisted debounce snapshot captured at confirmation', async () => {
     vi.useFakeTimers()
     const store = createDraftStore({ backend: createMemoryDraftBackend() })

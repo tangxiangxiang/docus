@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createDraftStore, createMemoryDraftBackend } from '../draftStore'
 import type { UnsavedDraft } from '../draftTypes'
 import { createUnsavedDraftRecovery } from '../useUnsavedDraftRecovery'
@@ -12,6 +12,12 @@ function draft(id: string, updatedAt = 1): UnsavedDraft {
     content: id, baseContentHash: null, baseModifiedAt: null,
     createdAt: updatedAt, updatedAt,
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((yes) => { resolve = yes })
+  return { promise, resolve }
 }
 
 async function setup() {
@@ -72,6 +78,75 @@ describe('draft recovery management', () => {
     const report = await first
     expect(report.deleted).toHaveLength(1)
     expect(report.after.recordCount).toBe(0)
+  })
+
+  it('plans from a fresh Store scan instead of cached Center records', async () => {
+    const h = await setup()
+    const recent = 31 * 24 * 60 * 60 * 1000 - 1_000
+    for (let index = 0; index < 99; index += 1) {
+      await h.store.saveDraft(draft(`old-${index}`, recent + index))
+    }
+    await h.recovery.discover('vault')
+    await h.management.refresh('vault')
+    for (let index = 0; index < 10; index += 1) {
+      await h.store.saveDraft(draft(`cross-${index}`, recent + 100 + index))
+    }
+
+    const report = await h.management.cleanupNow()
+
+    expect(report.before.recordCount).toBe(109)
+    expect(report.after.recordCount).toBe(100)
+    expect(report.deleted).toHaveLength(9)
+  })
+
+  it('runs one trailing cleanup pass when requested during an active pass', async () => {
+    const baseStore = createDraftStore({ backend: createMemoryDraftBackend() })
+    for (let index = 0; index < 101; index += 1) {
+      await baseStore.saveDraft(draft(`doc-${index}`, 1_000 + index))
+    }
+    const recovery = createUnsavedDraftRecovery({
+      store: baseStore,
+      loadPost: async () => { throw Object.assign(new Error('missing'), { status: 404 }) },
+    })
+    const gate = deferred<void>()
+    let blockDelete = true
+    const store = {
+      ...baseStore,
+      async deleteDraftIfUnchanged(expected: UnsavedDraft) {
+        if (blockDelete) {
+          blockDelete = false
+          await gate.promise
+        }
+        return baseStore.deleteDraftIfUnchanged(expected)
+      },
+    }
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+      now: () => 0,
+    })
+    await recovery.discover('vault')
+    await management.refresh('vault')
+    const first = management.cleanupNow()
+    await vi.waitFor(() => expect(blockDelete).toBe(false))
+    await baseStore.saveDraft(draft('arrived-during-cleanup', 10_000))
+    const second = management.cleanupNow()
+    expect(second).toBe(first)
+    gate.resolve()
+
+    const report = await first
+    expect(report.deleted).toHaveLength(2)
+    expect(report.after.recordCount).toBe(100)
+  })
+
+  it('sorts the Center inventory newest first', async () => {
+    const h = await setup()
+    await h.store.saveDraft(draft('old', 1))
+    await h.store.saveDraft(draft('new', 2))
+    await h.management.refresh('vault')
+    expect(h.management.records.value.map((record) => record.record.documentId))
+      .toEqual(['new', 'old'])
   })
 
   it('ignores stale refresh results after dispose', async () => {

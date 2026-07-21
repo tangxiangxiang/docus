@@ -92,6 +92,22 @@ test('inspects primary and conflict inventory and conditionally preserves a newe
     }
     await first.saveDraft(primary)
     await first.saveConflictDraft(conflict)
+    const seedDatabase = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 2)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    await new Promise<void>((resolve, reject) => {
+      const transaction = seedDatabase.transaction('drafts', 'readwrite')
+      const drafts = transaction.objectStore('drafts')
+      drafts.put({ ...primary, documentId: 'missing-updated', content: 'secret-a', updatedAt: undefined })
+      drafts.put({ ...primary, documentId: 'bad-updated', content: 'secret-b', updatedAt: 'bad' })
+      drafts.put({ ...primary, documentId: 'future', content: 'secret-c', version: 2 })
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+    seedDatabase.close()
     const inventory = await first.inspectVaultRecovery('managed-vault')
     const newer = {
       ...conflict,
@@ -124,10 +140,11 @@ test('inspects primary and conflict inventory and conditionally preserves a newe
     inventory: {
       primary: [{ content: 'primary' }],
       conflicts: [{ content: 'candidate-v1' }],
-      unsupportedPrimaryCount: 0,
+      unsupportedPrimaryCount: 3,
       unsupportedConflictCount: 0,
     },
   })
+  expect(JSON.stringify(result.inventory)).not.toContain('secret-')
   expect(result.deletion).toEqual({ status: 'stale' })
   expect(result.remaining).toMatchObject([{ content: 'candidate-v2' }])
 })
