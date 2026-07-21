@@ -1340,7 +1340,10 @@ export function createUnsavedDraftPersistence(
    *  path — never the primary store, never the snapshot's
    *  possibly-stale path. The candidate path, the pinned conflictId
    *  and the cross-context marker all arrive pre-resolved from the
-   *  entry's mode. */
+   *  entry's mode. Empty-family authentication may also call it while
+   *  move-indeterminate carries a conflict pin: the Store probe has
+   *  certified the anchor, but the server path is not authenticated
+   *  yet, so the pin stays attached until completeFamilyMove. */
   async function writeConflict(
     owner: DraftOwner,
     snapshot: DraftBufferSnapshot,
@@ -1358,6 +1361,7 @@ export function createUnsavedDraftPersistence(
     // mode — fail closed and let the next route re-resolve.
     const pinned = entry.mode.kind === 'conflict'
       || (entry.mode.kind === 'move-quarantine' && entry.mode.conflict !== null)
+      || (entry.mode.kind === 'move-indeterminate' && entry.mode.conflict !== null)
     if (!pinned) return false
     if (entry.latestSnapshot?.revision !== snapshot.revision) return false
     const record = buildConflictRecord(
@@ -1382,6 +1386,7 @@ export function createUnsavedDraftPersistence(
     const attempt = await attemptCandidateWrite(record)
     const stillPinned = entry.mode.kind === 'conflict'
       || (entry.mode.kind === 'move-quarantine' && entry.mode.conflict !== null)
+      || (entry.mode.kind === 'move-indeterminate' && entry.mode.conflict !== null)
     if (attempt.kind === 'saved') {
       if (stillPinned
         && current(owner, entry)
@@ -1390,6 +1395,11 @@ export function createUnsavedDraftPersistence(
         // its move retry; a plain conflict channel stays pinned with
         // the fresh id).
         if (entry.mode.kind === 'move-quarantine') {
+          entry.mode = {
+            ...entry.mode,
+            conflict: { conflictId: record.conflictId, crossContextUpdatedAt },
+          }
+        } else if (entry.mode.kind === 'move-indeterminate') {
           entry.mode = {
             ...entry.mode,
             conflict: { conflictId: record.conflictId, crossContextUpdatedAt },
@@ -1433,6 +1443,15 @@ export function createUnsavedDraftPersistence(
             attempt.familyPath,
             allowDisposed,
           )
+        }
+        if (entry.mode.kind === 'move-indeterminate') {
+          entry.mode = {
+            ...entry.mode,
+            conflict: entry.mode.conflict
+              ? { ...entry.mode.conflict, conflictId: `failed:${record.conflictId}` }
+              : null,
+          }
+          return false
         }
         adoptCertifiedFamilyPath(entry, attempt.familyPath)
       }
@@ -1732,6 +1751,37 @@ export function createUnsavedDraftPersistence(
       return true
     }
 
+    /** Persist recovery bytes at the store-certified anchor without
+     *  changing their ownership channel. A failed first-mint candidate
+     *  pins move-indeterminate.conflict; every later authentication
+     *  attempt must keep writing candidates and may never promote those
+     *  bytes to a primary record merely because the family path has now
+     *  been authenticated. */
+    const persistRecoveryContentAtAnchor = async (
+      snapshot: DraftBufferSnapshot,
+      path: string,
+    ): Promise<boolean> => {
+      const mode = entry.mode
+      const conflict = mode.kind === 'conflict'
+        ? {
+            conflictId: mode.conflictId,
+            crossContextUpdatedAt: mode.crossContextUpdatedAt,
+          }
+        : mode.kind === 'move-quarantine' || mode.kind === 'move-indeterminate'
+          ? mode.conflict
+          : null
+      return conflict
+        ? writeConflict(
+            owner,
+            snapshot,
+            path,
+            conflict.conflictId,
+            conflict.crossContextUpdatedAt,
+            allowDisposed,
+          )
+        : writePrimary(owner, snapshot, path, allowDisposed)
+    }
+
     for (let attempt = 0; attempt < 2; attempt++) {
       if ((!allowDisposed && disposed) || !current(owner, entry)) return failClosed()
 
@@ -1762,11 +1812,9 @@ export function createUnsavedDraftPersistence(
           // switching to primary before the write would let a failed
           // mint's retry bypass server authentication.
           latest.documentPath = resolved.path
-          const writeSucceeded = await writePrimary(
-            owner,
+          const writeSucceeded = await persistRecoveryContentAtAnchor(
             cloneSnapshot(latest),
             resolved.path,
-            allowDisposed,
           )
           if (!writeSucceeded) {
             // A false primary result can still mean the bytes became a
@@ -1809,11 +1857,9 @@ export function createUnsavedDraftPersistence(
         const latest = entry.latestSnapshot
         if (!latest) return failClosed()
         latest.documentPath = anchor
-        const writeSucceeded = await writePrimary(
-          owner,
+        const writeSucceeded = await persistRecoveryContentAtAnchor(
           cloneSnapshot(latest),
           anchor,
-          allowDisposed,
         )
         if (!writeSucceeded) return failClosed()
         setAnchor(anchor)

@@ -4865,6 +4865,120 @@ describe('draft file transactions — UI commit boundary sealing', () => {
       await persistence.dispose()
     })
 
+    it.each(['manual flush', 'pagehide', 'dispose'] as const)(
+      'keeps the conflict channel after a failed first candidate on %s',
+      async (trigger) => {
+        const targetWindow = trigger === 'pagehide' ? new EventTarget() : undefined
+        const setup = await setupEmptiedFamilyRetry({
+          targetWindow,
+          resolveCurrentDocumentPath: async () => ({ path: 'path/b', version: 1 }),
+        })
+        const { store, persistence } = setup
+        const saveDraft = store.saveDraft.bind(store)
+        let raced = false
+        vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+          if (!raced) {
+            raced = true
+            await saveDraft(draft('remote-primary', 'path/c', 1_000))
+          }
+          return saveDraft(value)
+        })
+        vi.spyOn(store, 'saveConflictCandidate')
+          .mockResolvedValueOnce({ status: 'failed' })
+
+        // First authentication adopts C but the local candidate is not
+        // durable yet. It must fail closed with the conflict pin intact.
+        expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+        expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+          documentPath: 'path/c',
+          content: 'remote-primary',
+        })
+
+        if (trigger === 'manual flush') {
+          expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+        } else if (trigger === 'pagehide') {
+          targetWindow!.dispatchEvent(new Event('pagehide'))
+          await vi.waitFor(async () => {
+            expect(await store.listConflictDrafts('vault')).toEqual([
+              expect.objectContaining({ documentPath: 'path/b', content: 'after-rename' }),
+            ])
+          })
+        } else {
+          await persistence.dispose()
+        }
+
+        // Authentication moved the remote primary and saved the local
+        // bytes as a candidate. It never promoted local content to the
+        // primary winner after the first candidate transaction failed.
+        expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+          documentPath: 'path/b',
+          content: 'remote-primary',
+        })
+        expect(await store.listConflictDrafts('vault')).toEqual([
+          expect.objectContaining({ documentPath: 'path/b', content: 'after-rename' }),
+        ])
+        if (trigger !== 'dispose') await persistence.dispose()
+      },
+    )
+
+    it('keeps a conflict-only family primary-free after a failed first candidate', async () => {
+      const setup = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => ({ path: 'path/b', version: 1 }),
+      })
+      const { store, persistence } = setup
+      const saveDraft = store.saveDraft.bind(store)
+      let raced = false
+      vi.spyOn(store, 'saveDraft').mockImplementation(async (value) => {
+        if (!raced) {
+          raced = true
+          await store.saveConflictDraft(
+            conflictRecord('remote-only-failed', 'doc-a', 'path/c', 'remote candidate'),
+          )
+        }
+        return saveDraft(value)
+      })
+      vi.spyOn(store, 'saveConflictCandidate')
+        .mockResolvedValueOnce({ status: 'failed' })
+
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+      expect(await store.getDraft('vault', 'doc-a')).toBeNull()
+      expect(await store.listConflictDrafts('vault')).toEqual(expect.arrayContaining([
+        expect.objectContaining({ documentPath: 'path/b', content: 'remote candidate' }),
+        expect.objectContaining({ documentPath: 'path/b', content: 'after-rename' }),
+      ]))
+      await persistence.dispose()
+    })
+
+    it('keeps the conflict channel after a readback handoff candidate fails', async () => {
+      const setup = await setupEmptiedFamilyRetry({
+        resolveCurrentDocumentPath: async () => ({ path: 'path/b', version: 1 }),
+      })
+      const { backend, store, persistence } = setup
+      const getDraft = store.getDraft.bind(store)
+      let raced = false
+      vi.spyOn(store, 'getDraft').mockImplementation(async (vaultId, documentId) => {
+        if (!raced) {
+          raced = true
+          await backend.seedRaw(draft('remote-readback-failed', 'path/c', 1_000))
+        }
+        return getDraft(vaultId, documentId)
+      })
+      vi.spyOn(store, 'saveConflictCandidate')
+        .mockResolvedValueOnce({ status: 'failed' })
+
+      expect(await persistence.flush('vault', 'doc-a')).toBe(false)
+      expect(await persistence.flush('vault', 'doc-a')).toBe(true)
+      expect(await store.getDraft('vault', 'doc-a')).toMatchObject({
+        documentPath: 'path/b',
+        content: 'remote-readback-failed',
+      })
+      expect(await store.listConflictDrafts('vault')).toEqual([
+        expect.objectContaining({ documentPath: 'path/b', content: 'after-rename' }),
+      ])
+      await persistence.dispose()
+    })
+
     it('R3: a second rename during the convergence window is caught by the bounded second attempt', async () => {
       const serverState: ServerState = { path: 'path/b', version: 1 }
       let calls = 0

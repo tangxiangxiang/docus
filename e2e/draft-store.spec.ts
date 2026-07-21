@@ -2189,9 +2189,38 @@ test('an emptied-family retry authenticates against a real server rename that cl
       body: JSON.stringify({ targetPath: 'notes/e5-final' }),
     })
 
-    // The retry must re-validate the CURRENT server path by stable id
-    // and establish the primary there — never at the stale serverPath.
+    // A second IndexedDB context wins the first-mint race at another
+    // path, and the local candidate transaction fails once. Recovery
+    // must retain its conflict channel: the next flush moves the whole
+    // family to the real server path and retries the local bytes as a
+    // candidate, never as a primary overwrite.
+    const remoteStore = createDraftStore()
+    const originalSaveDraft = store.saveDraft.bind(store)
+    const originalSaveCandidate = store.saveConflictCandidate.bind(store)
+    let racedPrimary = false
+    let failedCandidate = false
+    store.saveDraft = async (value) => {
+      if (!racedPrimary) {
+        racedPrimary = true
+        await remoteStore.saveDraft({
+          ...value,
+          documentPath: 'notes/e5-race',
+          content: 'remote-primary',
+          updatedAt: 1_000,
+        })
+      }
+      return originalSaveDraft(value)
+    }
+    store.saveConflictCandidate = async (value) => {
+      if (!failedCandidate) {
+        failedCandidate = true
+        return { status: 'failed' as const }
+      }
+      return originalSaveCandidate(value)
+    }
+
     const flushed2 = await persistence.flush('vault-e5', docId)
+    const flushed3 = await persistence.flush('vault-e5', docId)
     const primary = await store.getDraft('vault-e5', docId)
     const conflicts = await store.listConflictDrafts('vault-e5')
 
@@ -2219,8 +2248,9 @@ test('an emptied-family retry authenticates against a real server rename that cl
       flushed1,
       renameStatus: renamed.status,
       flushed2,
+      flushed3,
       primary,
-      conflictCount: conflicts.length,
+      conflicts,
       resolverCallCount: resolverCalls.length,
       resolverIdentities: [...new Set(resolverCalls)],
       rawDraftPaths: rawDrafts.map((row) => (row as { documentPath: string }).documentPath),
@@ -2231,18 +2261,24 @@ test('an emptied-family retry authenticates against a real server rename that cl
   expect(result.moveStatus).toBe('unsupported')
   expect(result.flushed1).toBe(false)
   expect(result.renameStatus).toBe(200)
-  expect(result.flushed2).toBe(true)
+  expect(result.flushed2).toBe(false)
+  expect(result.flushed3).toBe(true)
   expect(result.primary).toMatchObject({
     documentPath: 'notes/e5-final',
-    content: 'after-rename',
+    content: 'remote-primary',
   })
-  expect(result.conflictCount).toBe(0)
+  expect(result.conflicts).toEqual([
+    expect.objectContaining({
+      documentPath: 'notes/e5-final',
+      content: 'after-rename',
+    }),
+  ])
   // The resolver ran at least twice: the pre-write resolve AND the
   // post-write server revalidation.
   expect(result.resolverCallCount).toBeGreaterThanOrEqual(2)
   expect(result.resolverIdentities).toEqual([documentId])
   expect(result.rawDraftPaths).toEqual(['notes/e5-final'])
-  expect(result.rawConflictPaths).toEqual([])
+  expect(result.rawConflictPaths).toEqual(['notes/e5-final'])
 })
 
 test('an emptied-family retry converges when another window renames between the resolve and the revalidation', async ({
