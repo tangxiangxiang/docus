@@ -638,6 +638,20 @@ function updateRecoveryView(view: 'content' | 'diff'): void {
   if (activeDraftRecovery.value) activeDraftRecovery.value.view = view
 }
 
+// An ordinary recovery-storage read failure warns at most once per
+// vault until the next successful read: the startup watcher can re-fire
+// (vault switches, reconnect retries), and stacking identical notices
+// would only train users to ignore them. The Center stays reachable
+// from the recovery prompt's manage entry and renders its own error
+// state with a retry button, so the toast is a hint, not the only
+// entry point. A manual retry re-arms the notice for its own failure.
+const warnedRecoveryReadVaults = new Set<string>()
+function warnRecoveryReadFailure(vaultId: string): void {
+  if (warnedRecoveryReadVaults.has(vaultId)) return
+  warnedRecoveryReadVaults.add(vaultId)
+  toast.info(t('draft_recovery.storage_read_failed'), 7000)
+}
+
 watch(vaultId, (id) => {
   if (!id) return
   void (async () => {
@@ -671,6 +685,7 @@ watch(vaultId, (id) => {
       }
     }
     if (await recoveryManagement.refresh(id)) {
+      warnedRecoveryReadVaults.delete(id)
       if (recoveryManagement.unsupportedCount.value > 0) {
         activePanel.value = 'recovery'
         toast.info(t('draft_recovery.unsupported_notice'), 7000)
@@ -682,8 +697,14 @@ watch(vaultId, (id) => {
         toast.info(t('draft_recovery.center.cleaned', { count: report.deleted.length }))
       }
     } else {
-      activePanel.value = 'recovery'
-      toast.info(t('draft_recovery.storage_read_failed'), 7000)
+      // A storage read failure must NOT hijack the workspace: the
+      // management records are just the default empty array, so opening
+      // the Center would show "0 unsaved items" next to "could not read
+      // recovery storage". Keep the user's current panel (Files, Tags,
+      // History); the Center opens only from the prompt's manage entry,
+      // real unsupported records, or a failed auto-adoption, and renders
+      // its own error state with a retry button.
+      warnRecoveryReadFailure(id)
     }
   })()
 }, { immediate: true })
@@ -695,10 +716,15 @@ onBeforeUnmount(() => {
 async function refreshRecoveryCenter(): Promise<void> {
   const currentVaultId = vaultId.value
   if (!currentVaultId) return
+  // A manual retry re-arms the startup notice: the user asked for this
+  // read, so if it fails again they should hear about it once more.
+  warnedRecoveryReadVaults.delete(currentVaultId)
   const ids = recoveryManagement.records.value.map(recoveryRecordId)
   await withManagedRecoveryOperations(ids, async () => {
     await draftRecovery.discover(currentVaultId)
-    await recoveryManagement.refresh(currentVaultId)
+    if (!await recoveryManagement.refresh(currentVaultId)) {
+      warnRecoveryReadFailure(currentVaultId)
+    }
   })
 }
 

@@ -447,6 +447,7 @@ const STRINGS: Strings = {
   'draft_recovery.center.unsupported': { zh: '无法读取', en: 'Unsupported' },
   'draft_recovery.center.over_capacity': { zh: '恢复记录已超过容量限制；受保护的记录不会被清理。', en: 'Recovery records exceed capacity limits. Protected records will not be removed.' },
   'draft_recovery.center.load_failed': { zh: '无法读取本地恢复记录。', en: 'Could not inspect local recovery records.' },
+  'draft_recovery.center.read_blocked': { zh: '浏览器中的本地恢复存储正在被另一个 Docus 页面占用。请关闭其他 Docus 标签页后重试。', en: 'The local recovery store is held open by another Docus page. Close the other Docus tabs and retry.' },
   'draft_recovery.center.unsupported_notice': { zh: '部分未保存内容由更高版本的 Docus 创建或已损坏。为安全起见，Docus 不会读取或自动删除这些记录。', en: 'Some unsaved content was created by a newer Docus version or is damaged. Docus will not read or automatically delete it.' },
   'draft_recovery.center.refresh': { zh: '刷新', en: 'Refresh' },
   'draft_recovery.center.cleanup': { zh: '立即清理', en: 'Clean up now' },

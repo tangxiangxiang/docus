@@ -29,6 +29,16 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+// The error state and the empty state are mutually exclusive: when the
+// storage read fails, `records` is just the default empty array — NOT a
+// certified "no unsaved content" result. Rendering the summary/empty
+// states on top of the error would tell the user both "0 items to
+// review" and "could not read recovery storage" at once.
+const errorMessage = computed(() => (
+  props.error === 'upgrade-blocked'
+    ? t('draft_recovery.center.read_blocked')
+    : t('draft_recovery.center.load_failed')
+))
 const itemsById = computed(() => new Map(props.items.map((item) => [item.recoveryId, item])))
 function decisionLabel(id: string): string {
   const item = itemsById.value.get(id)
@@ -45,21 +55,27 @@ function decisionLabel(id: string): string {
       <p>{{ t('draft_recovery.center.local_only') }}</p>
     </header>
 
-    <p class="recovery-summary-line">{{ t('draft_recovery.center.summary', { count: capacity.recordCount }) }}</p>
-    <p v-if="capacity.overCapacity" class="warning" role="alert">{{ t('draft_recovery.center.over_capacity') }}</p>
-    <p v-if="error" class="warning" role="alert">{{ t('draft_recovery.center.load_failed') }}</p>
-    <p v-else-if="unsupportedCount > 0" class="warning" role="alert">
-      {{ t('draft_recovery.center.unsupported_notice') }}
-    </p>
+    <div v-if="loading" class="recovery-state" role="status">{{ t('draft_recovery.center.loading') }}</div>
 
-    <div class="recovery-toolbar">
+    <div v-else-if="error" class="recovery-state" role="alert">
+      <p class="warning">{{ errorMessage }}</p>
       <button type="button" @click="emit('refresh')">{{ t('draft_recovery.center.refresh') }}</button>
-      <button type="button" :disabled="selectedIds.size === 0" @click="emit('delete-selected')">{{ t('draft_recovery.center.delete_selected') }}</button>
     </div>
 
-    <p v-if="loading" role="status">{{ t('draft_recovery.center.loading') }}</p>
-    <p v-else-if="records.length === 0" class="empty">{{ t('draft_recovery.center.empty') }}</p>
-    <ul v-else class="recovery-list">
+    <template v-else>
+      <p class="recovery-summary-line">{{ t('draft_recovery.center.summary', { count: capacity.recordCount }) }}</p>
+      <p v-if="capacity.overCapacity" class="warning" role="alert">{{ t('draft_recovery.center.over_capacity') }}</p>
+      <p v-if="unsupportedCount > 0" class="warning" role="alert">
+        {{ t('draft_recovery.center.unsupported_notice') }}
+      </p>
+
+      <div class="recovery-toolbar">
+        <button type="button" @click="emit('refresh')">{{ t('draft_recovery.center.refresh') }}</button>
+        <button type="button" :disabled="selectedIds.size === 0" @click="emit('delete-selected')">{{ t('draft_recovery.center.delete_selected') }}</button>
+      </div>
+
+      <p v-if="records.length === 0" class="empty">{{ t('draft_recovery.center.empty') }}</p>
+      <ul v-else class="recovery-list">
       <li v-for="entry in records" :key="recoveryRecordId(entry)">
         <input
           type="checkbox"
@@ -83,6 +99,7 @@ function decisionLabel(id: string): string {
         </div>
       </li>
     </ul>
+    </template>
   </section>
 </template>
 
@@ -103,5 +120,6 @@ button { font: inherit; }
 .record-meta, .in-use { color: var(--text-secondary); font-size: 11px; }
 .record-actions { display: flex; flex-direction: column; gap: 4px; }
 .warning { color: var(--warning, #b7791f) !important; }
+.recovery-state { padding: 16px 0; font-size: 12px; color: var(--text-secondary); }
 .empty { text-align: center; padding: 24px 0; }
 </style>

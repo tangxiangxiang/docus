@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createDraftStore, createMemoryDraftBackend } from '../draftStore'
+import { createDraftStore, createIndexedDbDraftBackend, createMemoryDraftBackend } from '../draftStore'
 import type { DraftConflictRecord, UnsavedDraft } from '../draftTypes'
 
 function primary(content = 'primary'): UnsavedDraft {
@@ -62,8 +62,20 @@ describe('draft recovery management store', () => {
     const store = createDraftStore({ backend })
     await store.saveConflictDraft(conflict())
     backend.failNext('inspect')
-    expect(await store.inspectVaultRecovery('vault')).toEqual({ status: 'failed' })
+    // A transaction abort inside inspect maps to the generic failure
+    // reason — the Store must classify, not re-throw.
+    expect(await store.inspectVaultRecovery('vault'))
+      .toEqual({ status: 'failed', reason: 'transaction-failed' })
     backend.failNext('deleteConflictIfUnchanged')
     expect(await store.deleteConflictDraftIfUnchanged(conflict())).toEqual({ status: 'failed' })
+  })
+
+  it('classifies a browser without IndexedDB as indexeddb-unavailable', async () => {
+    // jsdom exposes no globalThis.indexedDB, so an explicit `undefined`
+    // factory reproduces the production environment (private mode /
+    // unsupported engine) the failure toast has to distinguish.
+    const store = createDraftStore({ backend: createIndexedDbDraftBackend(undefined) })
+    expect(await store.inspectVaultRecovery('vault'))
+      .toEqual({ status: 'failed', reason: 'indexeddb-unavailable' })
   })
 })

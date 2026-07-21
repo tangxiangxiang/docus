@@ -136,10 +136,17 @@ export function createDraftRecoveryManagement(
     if (disposed || currentGeneration !== generation || vaultId !== nextVaultId) return false
     loading.value = false
     if (outcome.status === 'failed') {
-      error.value = 'inspect-failed'
+      // Surface the storage classification itself (upgrade-blocked /
+      // indexeddb-unavailable / open-failed / transaction-failed) so the
+      // Center can explain the actionable blocked-upgrade case.
+      error.value = outcome.reason
       return false
     }
     applyInventory(outcome.inventory)
+    // A successful read must clear any earlier failure explicitly: a
+    // retry that recovers has to leave the Center in a clean state
+    // (also clears stale cleanup-scan errors from a previous pass).
+    error.value = null
     return true
   }
 

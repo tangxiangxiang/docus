@@ -314,9 +314,35 @@ export interface DraftRecoveryInventory {
   unsupportedConflictCount: number
 }
 
+/** Why a recovery-inventory read failed. The IndexedDB backend
+ *  classifies open/upgrade failures so the UI can tell a version
+ *  upgrade blocked by another open Docus page (an old page still
+ *  holds the version 1 connection) apart from other read failures —
+ *  the actionable fix ("close the other tabs and retry") exists only
+ *  for the blocked case. Every backend maps store errors it cannot
+ *  classify to `transaction-failed`. The reason is a storage
+ *  classification; it never carries draft content. */
+export type DraftStorageFailureReason =
+  | 'indexeddb-unavailable'
+  | 'upgrade-blocked'
+  | 'open-failed'
+  | 'transaction-failed'
+
+/** Structured storage error the IndexedDB backend throws for
+ *  classifiable open/upgrade failures; the store level maps it onto
+ *  the inventory outcome's `reason` (see storageFailureReason). */
+export class DraftStorageError extends Error {
+  readonly reason: DraftStorageFailureReason
+  constructor(reason: DraftStorageFailureReason, message?: string) {
+    super(message ?? reason)
+    this.name = 'DraftStorageError'
+    this.reason = reason
+  }
+}
+
 export type DraftRecoveryInventoryOutcome =
   | { status: 'ok'; inventory: DraftRecoveryInventory }
-  | { status: 'failed' }
+  | { status: 'failed'; reason: DraftStorageFailureReason }
 
 export interface MemoryDraftStorageBackend extends DraftStorageBackend {
   failNext(operation: BackendOperation): void
@@ -714,8 +740,8 @@ export function createDraftStore(options: CreateDraftStoreOptions = {}): DraftSt
             unsupportedConflictCount: raw.conflicts.length - conflicts.length,
           },
         }
-      } catch {
-        return { status: 'failed' as const }
+      } catch (error) {
+        return { status: 'failed' as const, reason: storageFailureReason(error) }
       }
     },
 
@@ -1358,7 +1384,11 @@ export function createIndexedDbDraftBackend(
   let databasePromise: Promise<IDBDatabase> | null = null
 
   function database(): Promise<IDBDatabase> {
-    if (!factory) return Promise.reject(new Error('IndexedDB is unavailable'))
+    if (!factory) {
+      return Promise.reject(new DraftStorageError(
+        'indexeddb-unavailable', 'IndexedDB is unavailable',
+      ))
+    }
     if (!databasePromise) {
       const cached = openDatabase(factory)
         .then((db) => {
@@ -2041,6 +2071,15 @@ function recordField(value: unknown, field: string): unknown {
   return (value as Record<string, unknown>)[field]
 }
 
+/** Map a backend throw onto the inventory outcome's reason: the
+ *  IndexedDB backend's structured open/upgrade failures keep their
+ *  classification; every other throw (transaction aborts, request
+ *  errors, memory-backend injected failures) is an unclassifiable
+ *  store error. */
+function storageFailureReason(error: unknown): DraftStorageFailureReason {
+  return error instanceof DraftStorageError ? error.reason : 'transaction-failed'
+}
+
 function cloneUnknown<T>(value: T): T {
   if (typeof structuredClone === 'function') return structuredClone(value)
   if (value === undefined) return value
@@ -2077,10 +2116,17 @@ function openDatabase(factory: IDBFactory): Promise<IDBDatabase> {
       }
       resolve(open.result)
     }
-    open.onerror = () => reject(open.error ?? new Error('Failed to open draft database'))
+    open.onerror = () => reject(new DraftStorageError(
+      'open-failed',
+      open.error instanceof Error ? open.error.message : 'Failed to open draft database',
+    ))
     open.onblocked = () => {
       rejected = true
-      reject(new Error('Draft database upgrade is blocked'))
+      // Another open Docus page still holds an older database-version
+      // connection, so the upgrade cannot run. The UI can act on this
+      // reason ("close the other tabs and retry") — a plain failure
+      // cannot be told apart from a broken store.
+      reject(new DraftStorageError('upgrade-blocked', 'Draft database upgrade is blocked'))
     }
   })
 }

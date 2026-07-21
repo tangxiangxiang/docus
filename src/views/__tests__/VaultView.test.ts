@@ -144,6 +144,43 @@ describe('VaultView editor tab wiring', () => {
     expect(loop).not.toContain('dismissForSession')
   })
 
+  it('keeps recovery storage read failures out of the workspace panel', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const startup = source.match(
+      /watch\(vaultId, \(id\) => \{[\s\S]*?\n\}, \{ immediate: true \}\)/,
+    )?.[0]
+
+    expect(startup).toBeDefined()
+    // The ONLY panel switch inside startup recovery is the branch for
+    // real unsupported records: a storage read failure must leave the
+    // user's current panel (Files, Tags, History) alone instead of
+    // auto-opening the Center on top of its default empty inventory.
+    expect(startup?.match(/activePanel\.value = 'recovery'/g)).toHaveLength(1)
+    expect(startup).toContain('warnRecoveryReadFailure(id)')
+    // A successful read re-arms the notice for the next failure window.
+    expect(startup).toContain('warnedRecoveryReadVaults.delete(id)')
+    // The raw toast lives in the once-per-vault helper, not the watch.
+    expect(startup).not.toContain("toast.info(t('draft_recovery.storage_read_failed')")
+  })
+
+  it('warns at most once per vault and re-arms on manual Center retry', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    // The startup watcher can re-fire (vault switches, reconnects); the
+    // identical notice warns once per vault until the next successful
+    // read clears the vault from the warned set.
+    expect(source).toContain('const warnedRecoveryReadVaults = new Set<string>()')
+    expect(source).toContain('if (warnedRecoveryReadVaults.has(vaultId)) return')
+    expect(source).toContain('warnedRecoveryReadVaults.add(vaultId)')
+
+    // A manual Center retry is user-initiated, so it re-arms the notice
+    // and reports its own failure through the same deduplicated path.
+    const manualRetry = source.match(/async function refreshRecoveryCenter[\s\S]*?\n}/)?.[0]
+    expect(manualRetry).toBeDefined()
+    expect(manualRetry).toContain('warnedRecoveryReadVaults.delete(currentVaultId)')
+    expect(manualRetry).toContain('warnRecoveryReadFailure(currentVaultId)')
+  })
+
   it('opens one dedicated diff workspace tab from a ready snapshot', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
 

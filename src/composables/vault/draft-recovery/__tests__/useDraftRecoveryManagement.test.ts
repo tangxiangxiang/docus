@@ -44,7 +44,8 @@ function deferred<T>() {
 }
 
 async function setup() {
-  const store = createDraftStore({ backend: createMemoryDraftBackend() })
+  const backend = createMemoryDraftBackend()
+  const store = createDraftStore({ backend })
   const recovery = createUnsavedDraftRecovery({
     store,
     loadPost: async () => { throw Object.assign(new Error('missing'), { status: 404 }) },
@@ -60,7 +61,7 @@ async function setup() {
     onRecordsRemoved: (ids) => removed.push([...ids]),
     now: () => 31 * 24 * 60 * 60 * 1000,
   })
-  return { store, recovery, management, protectedIdentities, openIds, removed }
+  return { store, backend, recovery, management, protectedIdentities, openIds, removed }
 }
 
 describe('draft recovery management', () => {
@@ -455,7 +456,7 @@ describe('draft recovery management', () => {
       store: {
         ...baseStore,
         inspectVaultRecovery: async (vaultId: string) => failInspection
-          ? { status: 'failed' as const }
+          ? { status: 'failed', reason: 'transaction-failed' } as const
           : baseStore.inspectVaultRecovery(vaultId),
       },
       recovery,
@@ -486,7 +487,7 @@ describe('draft recovery management', () => {
         inspectVaultRecovery: async (vaultId: string) => {
           inspections += 1
           return inspections === 3
-            ? { status: 'failed' as const }
+            ? { status: 'failed', reason: 'transaction-failed' } as const
             : baseStore.inspectVaultRecovery(vaultId)
         },
       },
@@ -521,7 +522,7 @@ describe('draft recovery management', () => {
         inspectVaultRecovery: async (vaultId: string) => {
           inspections += 1
           return inspections === 3
-            ? { status: 'failed' as const }
+            ? { status: 'failed', reason: 'transaction-failed' } as const
             : baseStore.inspectVaultRecovery(vaultId)
         },
       },
@@ -540,6 +541,25 @@ describe('draft recovery management', () => {
     expect(report.status).toBe('after-scan-failed')
     expect(recovery.items.value.map((item) => item.draft.documentId)).toEqual(['keep-me'])
     expect(await baseStore.getDraft('vault', 'keep-me')).not.toBeNull()
+  })
+
+  it('surfaces the storage failure reason and clears it on a recovered read', async () => {
+    const h = await setup()
+    await h.store.saveDraft(draft('a'))
+    h.backend.failNext('inspect')
+
+    // A failed read must classify itself instead of leaving a silent
+    // empty Center: the error carries the storage reason.
+    expect(await h.management.refresh('vault')).toBe(false)
+    expect(h.management.error.value).toBe('transaction-failed')
+    expect(h.management.records.value).toEqual([])
+
+    // The very next successful read must clear the failure explicitly —
+    // a retry that recovers leaves the Center in a clean state showing
+    // the real inventory (or the empty state, never the error).
+    expect(await h.management.refresh('vault')).toBe(true)
+    expect(h.management.error.value).toBeNull()
+    expect(h.management.records.value.map((record) => record.record.documentId)).toEqual(['a'])
   })
 
   it('ignores stale refresh results after dispose', async () => {
