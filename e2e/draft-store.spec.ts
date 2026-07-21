@@ -1,6 +1,10 @@
+import { promises as fs } from 'node:fs'
 import { expect, test } from '@playwright/test'
 
 const DATABASE_NAME = 'docus-draft-recovery'
+// The draft-store Playwright config serves this vault directory, so tests
+// can modify authoritative disk content directly (external-edit scenarios).
+const VAULT_DIR = '/tmp/docus-draft-e2e-vault'
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
@@ -2625,4 +2629,335 @@ test('an emptied-family retry converges when another window renames between the 
   // The real server file follows the same identity.
   const serverFinal = await page.request.get('/api/posts/notes/e6-final')
   expect(serverFinal.ok()).toBe(true)
+})
+
+/* ---------- Edit-09 Final Closure end-to-end scenarios ----------
+ * These run the REAL application UI on the draft-store origin: real
+ * server, real vault directory on disk, real IndexedDB. They close the
+ * UI-level gaps the composable/store suites cannot reach: editor buffer
+ * adoption after a hard restart, divergent prompt + diff, workspace
+ * coexistence, and the blocked-upgrade startup UX.
+ */
+
+async function openTreeDocument(
+  page: import('@playwright/test').Page,
+  title: string,
+  path: string,
+) {
+  // Click the filename button itself, matched by its EXACT aria-label
+  // ("Title, path"): an ancestor `.tree-row.folder` contains every child
+  // row's markup, so any row-level filter + .first() resolves to the
+  // FOLDER row and the click opens whichever document its center lands
+  // on. The button's aria-label is unique per document.
+  const button = page.locator(`button[aria-label="${title}, ${path}"]`)
+  if (await button.count() === 0) {
+    await page.locator('.tree-row.folder').filter({ hasText: 'inbox' }).first()
+      .locator('.chevron').click()
+  }
+  await button.waitFor({ state: 'visible', timeout: 10_000 })
+  await button.click()
+}
+
+async function focusMonacoEditor(page: import('@playwright/test').Page) {
+  // Scoped to the document editor surface: read-only recovery/history
+  // viewers can host Monaco instances too, but only the document pane
+  // (`.editor-pane`) accepts typed edits.
+  const editor = page.locator('.editor-pane .monaco-editor')
+  await editor.waitFor({ state: 'visible', timeout: 10_000 })
+  // Same pointer-surface focus pattern as the view-mode suite: focusing
+  // the ARIA mirror textbox alone does not activate Monaco's keybindings.
+  await editor.locator('.view-lines').click({ position: { x: 40, y: 12 } })
+  await expect(editor).toHaveClass(/focused/)
+  return editor
+}
+
+// Drives the genuine edit → draft persistence chain: Monaco keystrokes →
+// per-document debounce → a real IndexedDB draft row under the document's
+// STABLE identity (not its path). The server autosave (an independent
+// 800ms debounce) is held at the network layer to model the only
+// situation in which a browser draft can outlive the editing session:
+// a crash or offline window before autosave completes. Without the hold
+// the two debounces finish within ~1s of each other and markClean()
+// removes the draft again, leaving nothing to recover.
+async function typeAndAwaitDraft(
+  page: import('@playwright/test').Page,
+  path: string,
+  title: string,
+  line: string,
+) {
+  await page.route('**/api/posts/**', (route) =>
+    route.request().method() === 'PUT' ? route.abort() : route.continue())
+  await page.request.post('/api/posts', { data: { path, title } })
+  await page.goto('/vault')
+  await openTreeDocument(page, title, path)
+  const editor = await focusMonacoEditor(page)
+  await page.keyboard.press('Control+End')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type(line)
+  await expect(editor.locator('.view-lines')).toContainText(line)
+  // Poll the store with a raw IndexedDB read (no shared-module import):
+  // the row only exists while the server save stays held.
+  await expect.poll(() => page.evaluate((target) => new Promise<boolean>((resolve) => {
+    const request = indexedDB.open(target.databaseName)
+    const fail = () => resolve(false)
+    request.onsuccess = () => {
+      const db = request.result
+      try {
+        const all = db.transaction('drafts', 'readonly').objectStore('drafts').getAll()
+        all.onsuccess = () => {
+          resolve((all.result as Array<{ content?: string }>).some(
+            (row) => row.content?.includes(target.line) ?? false,
+          ))
+          db.close()
+        }
+        all.onerror = () => { db.close(); fail() }
+      } catch {
+        db.close()
+        fail()
+      }
+    }
+    request.onerror = fail
+    request.onblocked = fail
+  }), { databaseName: DATABASE_NAME, line }), { timeout: 10_000 }).toBe(true)
+}
+
+test('E2E-1: a hard restart adopts a baseline-matching autosaved draft without saving the server file', async ({
+  page,
+}) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const path = `inbox/e2e-adopt-${suffix}`
+  const line = `Unsaved closure line ${suffix}`
+  await typeAndAwaitDraft(page, path, `Adopt Closure ${suffix}`, line)
+
+  // A fresh app boot (the product equivalent of crash → reopen): startup
+  // discovery must classify the draft as baseline-match and adopt it into
+  // the dirty editor buffer — WITHOUT calling the server Save API and
+  // WITHOUT raising the prompt (baseline-match never reaches the prompt).
+  await page.goto('/vault')
+  await expect(page.locator('.editor-pane .monaco-editor .view-lines'))
+    .toContainText(line, { timeout: 15_000 })
+  await expect(page.locator('.draft-recovery-backdrop')).toHaveCount(0)
+  const disk = await fs.readFile(`${VAULT_DIR}/${path}.md`, 'utf8')
+  expect(disk).not.toContain(line)
+})
+
+test('E2E-2: an external disk change makes the draft divergent and offers a diff instead of auto-adoption', async ({
+  page,
+}) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const path = `inbox/e2e-divergent-${suffix}`
+  const draftLine = `Draft line ${suffix}`
+  const externalLine = `External edit line ${suffix}`
+  await typeAndAwaitDraft(page, path, `Divergent Closure ${suffix}`, draftLine)
+
+  // The authoritative Markdown file changes OUTSIDE Docus after the
+  // baseline was captured (another editor, git pull, …).
+  await fs.appendFile(`${VAULT_DIR}/${path}.md`, `\n${externalLine}\n`)
+
+  // Fresh boot: divergent records are never auto-adopted — the prompt
+  // surfaces them for an explicit decision, with a diff of both sides.
+  await page.goto('/vault')
+  const dialog = page.locator('.draft-recovery-dialog')
+  await expect(dialog).toBeVisible({ timeout: 15_000 })
+  await expect(dialog).toContainText(path)
+  await expect(dialog).toContainText('The draft and disk version may both have changed.')
+  await dialog.getByRole('button', { name: 'View Diff' }).click()
+
+  const pane = page.locator('.draft-recovery-pane')
+  await expect(pane).toBeVisible()
+  await expect(pane).toContainText(draftLine)
+  await expect(pane).toContainText(externalLine)
+})
+
+test('E2E-7: a record another context replaces after safe-redundant classification survives cleanup', async ({
+  page,
+}) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const result = await page.evaluate(async (suffix) => {
+    const api = await import('/src/lib/api.ts')
+    const { createDraftStore } = await import(
+      '/src/composables/vault/draft-recovery/draftStore.ts'
+    )
+    const { createUnsavedDraftRecovery } = await import(
+      '/src/composables/vault/draft-recovery/useUnsavedDraftRecovery.ts'
+    )
+    const { createDraftRecoveryManagement } = await import(
+      '/src/composables/vault/draft-recovery/useDraftRecoveryManagement.ts'
+    )
+
+    const path = `inbox/e2e-r2-${suffix}`
+    await api.createPost({ path, title: 'R2 Closure' })
+    const post = await api.getPost(path)
+    const documentId = post.metadata.id
+    const store = createDraftStore()
+    // R1 is byte-identical to disk under the SAME stable identity, so
+    // classification certifies it safe-redundant for cleanup.
+    const r1 = {
+      version: 1 as const,
+      vaultId: 'vault',
+      documentId,
+      documentPath: path,
+      content: post.raw,
+      baseContentHash: null,
+      baseModifiedAt: null,
+      createdAt: 10,
+      updatedAt: 10,
+    }
+    await store.saveDraft(r1)
+    const recovery = createUnsavedDraftRecovery({ store })
+    const management = createDraftRecoveryManagement({
+      store,
+      recovery,
+      getPersistenceProtection: () => ({ identityIds: new Set() }),
+      now: () => Date.now() + 31 * 24 * 60 * 60 * 1000,
+    })
+    await recovery.discover('vault')
+    await management.refresh('vault')
+    const certifiedStatus = recovery.items.value[0]?.status ?? null
+
+    // Another context replaces the family record under the same identity
+    // (newer updatedAt, new body) AFTER the verdict was certified.
+    const otherContext = createDraftStore()
+    await otherContext.saveDraft({
+      ...r1,
+      content: `${post.raw}\nnewer unsaved body ${suffix}`,
+      updatedAt: 20,
+    })
+
+    const report = await management.cleanupNow()
+    const survivor = await store.getDraft('vault', documentId)
+    return {
+      certifiedStatus,
+      status: report.status,
+      deleted: report.deleted.length,
+      survivor: survivor?.content ?? null,
+    }
+  }, suffix)
+
+  expect(result.certifiedStatus).toBe('ready')
+  expect(result.status).toBe('completed')
+  // The certified verdict belonged to R1: the cleanup's fresh Store scan
+  // inspected R2, which no verdict covers — it must survive until a new
+  // classification certifies it.
+  expect(result.deleted).toBe(0)
+  expect(result.survivor).toContain(`newer unsaved body ${suffix}`)
+})
+
+test('E2E-9: document and recovery viewers coexist without cross-saving', async ({
+  page,
+}) => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const path = `inbox/e2e-coexist-${suffix}`
+  const draftLine = `Draft line ${suffix}`
+  const externalLine = `External edit line ${suffix}`
+  const documentEdit = `Document edit ${suffix}`
+  await typeAndAwaitDraft(page, path, `Coexist Closure ${suffix}`, draftLine)
+  const file = `${VAULT_DIR}/${path}.md`
+  await fs.appendFile(file, `\n${externalLine}\n`)
+
+  // Open the divergent recovery viewer (diff) …
+  await page.goto('/vault')
+  const dialog = page.locator('.draft-recovery-dialog')
+  await expect(dialog).toBeVisible({ timeout: 15_000 })
+  await dialog.getByRole('button', { name: 'View Diff' }).click()
+  await expect(page.locator('.draft-recovery-pane')).toBeVisible()
+  // Re-enable the server Save API: the negative disk assertion below must
+  // prove the Ctrl+S shortcut was isolated, not merely that the network
+  // hold from the setup phase is still swallowing saves.
+  await page.unroute('**/api/posts/**')
+
+  // … then the formal document ALONGSIDE it: two workspace tab kinds
+  // coexist in one stable tab strip.
+  await openTreeDocument(page, `Coexist Closure ${suffix}`, path)
+  await expect(page.locator('.editor-pane .monaco-editor')).toBeVisible()
+  const tabs = page.locator('.tabs .tab')
+  await expect(tabs).toHaveCount(2)
+  await expect(tabs.filter({ hasText: 'Recovered:' })).toHaveCount(1)
+
+  // Make the document buffer dirty, then press Ctrl+S while the READ-ONLY
+  // recovery viewer has focus: the document Save pipeline must not fire.
+  await focusMonacoEditor(page)
+  await page.keyboard.press('Control+End')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type(documentEdit)
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText(documentEdit)
+  // Activate the recovery tab (document tab is active after openTreeDocument):
+  // the pane is v-show-hidden until its workspace tab is selected.
+  await tabs.filter({ hasText: 'Recovered:' }).click()
+  await expect(page.locator('.draft-recovery-pane .history-viewer-heading')).toBeVisible()
+  await page.locator('.draft-recovery-pane .history-viewer-heading').click()
+  await page.keyboard.press('Control+s')
+  // A wrongful Ctrl+S saves immediately; the legitimate autosave debounce
+  // is 800ms from the last keystroke. 400ms sits safely between the two:
+  // long enough for a leaked save to have landed, before autosave fires.
+  await page.waitForTimeout(400)
+  const disk = await fs.readFile(file, 'utf8')
+  expect(disk).not.toContain(documentEdit)
+  expect(disk).toContain(externalLine)
+
+  // Closing the recovery viewer leaves the document tab fully intact.
+  await tabs.filter({ hasText: 'Recovered:' }).locator('.tab-close').click()
+  await expect(tabs).toHaveCount(1)
+  await expect(page.locator('.editor-pane .monaco-editor')).toBeVisible()
+  await expect(page.locator('.editor-pane .monaco-editor .view-lines')).toContainText(documentEdit)
+})
+
+test('E2E-10: a blocked upgrade never hijacks the workspace and recovers after the blocker closes', async ({
+  page,
+  context,
+}) => {
+  // Leave the SPA immediately so the beforeEach '/' boot can never open
+  // the database under the upcoming hold: IndexedDB delivers 'blocked'
+  // only to the FIRST upgrade attempt, and this page must be that first
+  // attempt (exactly the production shape of opening a new Docus tab
+  // while an old one still holds the old-version connection).
+  await page.goto('/src/main.ts')
+  // Another Docus page holds an OLD-VERSION connection: it mints the
+  // database at v1 and keeps it open, so the app's v2 upgrade blocks.
+  // '/src/main.ts' serves the module source as text on the same origin:
+  // the blocker has working IndexedDB but never boots the SPA.
+  const blocker = await context.newPage()
+  await blocker.goto('/src/main.ts')
+  await blocker.evaluate(async (databaseName) => {
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.deleteDatabase(databaseName)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+      request.onblocked = () => reject(new Error('blocker delete blocked'))
+    })
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(databaseName, 1)
+      request.onsuccess = () => {
+        ;(window as unknown as { heldV1: IDBDatabase }).heldV1 = request.result
+        resolve()
+      }
+      request.onerror = () => reject(request.error)
+    })
+  }, DATABASE_NAME)
+
+  // Boot the app under the blocked upgrade — the first upgrade attempt.
+  await page.goto('/vault')
+
+  // Frozen 13a43ab contract for startup under a blocked upgrade: the
+  // workspace stays entirely normal. The first open rejects with
+  // 'upgrade-blocked' (verified in draftStore's openDatabase + the
+  // Center/management unit tests), while the startup refresh awaits a
+  // fresh connection that queues silently behind the blocker until it
+  // closes — so startup shows NO toast and switches NO panel. Recovery
+  // stays invisible; the user keeps editing. (The once-per-session
+  // startup warning for this case is the deferred sessionStorage
+  // proposal recorded in the Final Closure residual list.)
+  await expect(page.locator('.tree-row').first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.toast-host .toast')).toHaveCount(0)
+  await expect(page.locator('.recovery-center')).toHaveCount(0)
+  await expect(page.locator('.draft-recovery-backdrop')).toHaveCount(0)
+  await expect(page.locator('.activity-bar .ab-btn[aria-pressed="true"]'))
+    .toHaveAttribute('aria-label', /Explorer/)
+
+  // Closing the old page releases the v1 connection; the user's retry
+  // (reload) then starts up cleanly with no storage warning.
+  await blocker.close()
+  await page.reload()
+  await expect(page.locator('.tree-row').first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.toast-host .toast')).toHaveCount(0)
 })

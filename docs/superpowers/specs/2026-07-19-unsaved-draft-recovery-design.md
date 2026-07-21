@@ -600,3 +600,172 @@ npm run typecheck
 npm run build
 npm run lint:icons
 ```
+
+## 14. Edit-09 Final Closure
+
+Final sealing round (2026-07-21). Closure baseline: `13a43ab`
+(`fix: keep recovery storage failures out of the normal workspace` — round 3:
+storage-failure typing, management, Recovery Center, and toast-dedup tests). The earlier `9a0837b` seal verification in
+Section 11 remains preserved as the Edit-09.6 stage record, but it is NOT the
+basis for this final closure: the full diff range `EDIT09_BASE` (`f094456`,
+Edit-08 seal) .. HEAD was frozen, regressed end-to-end, and closed below.
+Nature of this round: final sealing regression only — only regressing, only
+filling missing tests, only fixing real blockers, only updating final docs.
+No production behavior changed since `13a43ab`.
+
+### 14.1 Behavior freeze (13 points)
+
+Frozen at `13a43ab` and asserted by the regression matrix below:
+
+1. Normal typing persists the dirty buffer on an 800ms draft debounce while an
+   independent 800ms server autosave runs in parallel; a successful server save
+   removes the draft via `markClean` — drafts are normally unobservable
+   (~50ms window).
+2. Startup discovery silently adopts baseline-matching drafts: no dialog, no
+   toast, no direct disk write — adoption flows through the editor's normal
+   save pipeline, each adoption isolated with `{ refresh: false }`.
+3. Divergent, missing-source, and identity-mismatch drafts never auto-adopt;
+   they surface through the recovery prompt (`.draft-recovery-dialog`) with
+   per-kind actions.
+4. The recovery viewer is a read-only workspace tab (`.draft-recovery-pane`);
+   Ctrl+S while it has focus never fires the document Save pipeline.
+5. Document tabs and recovery tabs coexist in one stable tab strip; closing
+   one never disturbs the other.
+6. Startup shows no Recovery Center and emits no toast on a clean boot;
+   `warnRecoveryReadFailure` toasts once per vault per page lifecycle.
+7. Every IndexedDB failure resolves as a typed `DraftStorageError` with reason
+   `indexeddb-unavailable | upgrade-blocked | open-failed | transaction-failed`;
+   no unhandled rejections anywhere in the recovery path.
+8. Under a blocked upgrade (an old tab holding an old-version connection): the
+   first open rejects `upgrade-blocked`, the startup refresh awaits a silently
+   queued connection, and the workspace stays entirely normal — no toast, no
+   panel switch. IndexedDB delivers `blocked` only to the FIRST upgrade
+   attempt; later opens queue silently. After the blocker closes, the next
+   reload recovers normally.
+9. Cleanup is bound to the exact classified record: a record another context
+   replaced after classification has no certified verdict and survives until a
+   fresh classification certifies it.
+10. `safe-redundant` requires the same stable identity: disk ready, identical
+    `documentId`, byte-identical body. A path reused by another document is an
+    identity-mismatch, never redundant.
+11. Drafts are vault-scoped by `sha256(CONTENT_DIR).slice(0,12)`; tab
+    persistence is pure `localStorage` (`docus:tabs:v1:<vaultId>`) with no
+    server sync.
+12. Draft bodies are never logged by application code or by tests.
+13. No production code changed in Final Closure; the round adds tests, test-
+    harness hygiene, and documentation only.
+
+### 14.2 Six-chain regression matrix
+
+| Chain | Evidence (files → tests) | Result |
+| --- | --- | --- |
+| Editing / autosave | `useDocumentSave.ts` (onEditorChange, scheduleDraft, scheduleSave, saveLatest→markClean) → E2E-1 draft creation under a held Save API; E2E-9 dirty buffer; vitest `useDocumentSave` suites | Pass |
+| Crash recovery | `VaultView.vue` startup discovery/adoption loop; `useUnsavedDraftRecovery.ts` pendingItem; `applyRecoveredDraft` → E2E-1 (hard restart adopts baseline-match, dialog absent, disk untouched); E2E-2 (external disk change → divergent prompt → View Diff shows both sides) | Pass |
+| Rename / move / delete | `draftStore.ts` move/CAS/quarantine transactions → `draft-file-transactions.spec.ts` (5 tests: move to server path byte/time preserving, newer cross-context record kept after delete, conflict paths moved on rename, conflict-only delete clears frozen conflicts, mid-CAS edit persists as conflict candidate); `draft-store.spec.ts` move/CAS/retry suites (lines 234–2449) | Pass |
+| Multi-tab concurrency | `createIndexedDbDraftBackend` connection cache + `openDatabase` blocked/versionchange handling → cross-context suites (inventory keeps newer conflict 73; never adopts newer cross-context draft 372; conflict re-pinned on family move in another context 1021; cached connection closed on upgrade 1269; no late-connection leak after blocked open 1312); E2E-7 cross-context replacement survives cleanup; E2E-10 blocked upgrade | Pass |
+| External conflicts | `draftRecoveryDecision.ts`; `SavePostConflictError` path in `saveLatest` → mid-CAS conflict candidate (file-transactions 409); same-identity conflict save blocks (draft-store 630/1124); E2E-2 divergent classification; E2E-9 coexistence | Pass |
+| History / Diff / Recovery workspace | `DraftRecoveryPrompt.vue`, `DraftRecoveryPane.vue`, `useDraftRecoveryTabs`, `VaultView.vue` workspace wiring → E2E-2 View Diff pane renders both sides; E2E-9 read-only viewer + document coexist, Ctrl+S isolated, closing recovery leaves document intact; E2E-10 workspace stays normal under a blocked upgrade | Pass |
+
+### 14.3 Final Closure E2E coverage (E2E-1 .. E2E-10)
+
+Five tests were added (`e2e/draft-store.spec.ts`, all against real IndexedDB on
+a dedicated Vite origin with a fresh vault per suite run); the remaining
+scenarios reuse existing real-IndexedDB/real-server tests:
+
+| Req. | Covered by | Status |
+| --- | --- | --- |
+| E2E-1 | NEW `E2E-1: a hard restart adopts a baseline-matching autosaved draft without saving the server file` | Added, Pass |
+| E2E-2 | NEW `E2E-2: an external disk change makes the draft divergent and offers a diff instead of auto-adoption` | Added, Pass |
+| E2E-3 rename/move | `draft-file-transactions.spec.ts:17` moves a persisted draft to the actual server path; `:221` moves conflict records along on rename | Reused, Pass |
+| E2E-4 delete | `draft-file-transactions.spec.ts:123` keeps a newer cross-context record after confirmed delete; `:324` removes frozen conflicts on conflict-only delete | Reused, Pass |
+| E2E-5 mid-CAS conflict | `draft-file-transactions.spec.ts:409` persists a mid-CAS edit as a conflict candidate across dispose | Reused, Pass |
+| E2E-6 cross-context survival | `draft-store.spec.ts:372` does not adopt a newer cross-context draft; `draft-file-transactions.spec.ts:123` | Reused, Pass |
+| E2E-7 | NEW `E2E-7: a record another context replaces after safe-redundant classification survives cleanup` (real IndexedDB, two live store contexts) | Added, Pass |
+| E2E-8 connection lifecycle | `draft-store.spec.ts:1269` closes a cached connection when another context upgrades; `:1312` does not leak a late connection after a blocked open | Reused, Pass |
+| E2E-9 | NEW `E2E-9: document and recovery viewers coexist without cross-saving` (real Monaco, real tab strip; Ctrl+S on the read-only viewer must not save the dirty document — checked in the 400ms window between an immediate wrongful save and the 800ms autosave debounce) | Added, Pass |
+| E2E-10 | NEW `E2E-10: a blocked upgrade never hijacks the workspace and recovers after the blocker closes` (real cross-page version hold; asserts the frozen no-toast/no-panel startup contract, then clean recovery after the blocker closes) | Added, Pass |
+
+Draft-store E2E suite total: 36 tests (31 pre-existing + 5 new), all passing.
+Application E2E suite: 9 tests, all passing.
+
+### 14.4 Final gate results (run locally, 2026-07-21; no CI)
+
+| Gate | Exit | Result |
+| --- | --- | --- |
+| `npm ci` | 0 | 408 packages, clean install |
+| `npm run typecheck` | 0 | clean (re-run after the final spec/config edits) |
+| `npm run lint:icons` | 0 | no violations |
+| `npm test` (vitest) | 0 | 128 files / 1,623 tests, 26.38s |
+| `npm run build` | 0 | built in ~1.4s |
+| `npm run test:e2e:draft-store` | 0 | 36 passed, 17.4s |
+| `npm run test:e2e` | 0 | 9 passed, 9.6s |
+| `git diff --check` | 0 | no whitespace errors |
+| `.only` / `.skip` audit | 0 hits | no focused or skipped tests |
+
+All verification was executed locally on the development machine; there is no
+CI pipeline for this repository.
+
+### 14.5 Edit-10 audit over `f094456..HEAD`
+
+Scope check: the full Edit-09 diff must contain no Edit-10 surface (AI
+SDKs/clients, Chat UI, prompt builder, context pack, embedding/vector/RAG,
+model settings, token budget, AI persistence, AI routes, feature flags,
+telemetry).
+
+| Surface | Result | Evidence |
+| --- | --- | --- |
+| AI SDKs / clients in dependencies | Pass | `package.json` diff vs `f094456` touches scripts only; `package-lock.json` and `pnpm-lock.yaml` unchanged since `56a5f4e` (pre-Edit-09) |
+| Chat UI / prompt builder / context pack | Pass | keyword grep over the diff range finds no chat/prompt/context-pack additions |
+| Embedding / vector / RAG | Pass | no matches in the diff range |
+| Model settings / token budget / AI persistence / AI routes | Pass | no matches; the only `recovery`/`draft` keyword hits are the Edit-09 `DraftRecoveryPrompt` component itself |
+| Feature flags / telemetry | Pass | no flag or telemetry additions in the diff range |
+
+Conclusion: **No Edit-10 implementation was introduced.** (The pre-existing AI
+panel predates `f094456` and is outside the Edit-09 diff.)
+
+### 14.6 Harness blocker found and fixed during gating
+
+`playwright.config.ts` (application E2E) launched its webServer with
+`pnpm exec vite`. Under the npm-managed `node_modules` produced by the
+mandated `npm ci` gate, `pnpm exec` re-installs per `pnpm-lock.yaml` mid-run,
+re-laying `node_modules` out with symlinks while the Playwright CLI is already
+loaded — so the CLI and the collected specs resolve two distinct physical
+`@playwright/test@1.61.1` instances and every spec fails collection
+("Playwright Test did not expect test() to be called here"; 2 failed,
+7 did not run). The specs were proven healthy under a pnpm-consistent layout
+(9 passed) and the webServer command was changed to the manager-agnostic
+`npm exec vite -- …`, which resolves from `node_modules/.bin` under BOTH
+layouts (matching the draft-store config). This is a pre-existing baseline
+harness inconsistency, not an Edit-09 regression; fixed in a separate `fix:`
+commit per the minimal-fix policy.
+
+### 14.7 Accepted residual risks
+
+1. Deferred proposal (user decision, NOT implemented; production frozen at
+   `13a43ab`): silence routine startup recovery failures — startup would drop
+   the toast for `transaction-failed` / `open-failed` / `indexeddb-unavailable`
+   and warn once per tab session for `upgrade-blocked` via `sessionStorage`
+   (`RECOVERY_BLOCKED_WARNING_PREFIX = 'docus.recovery-blocked-warning:'`);
+   manual Recovery Center retries would still toast per reason, and a
+   successful recovery would clear the marker. Would have been
+   `fix: silence routine recovery failures during startup`. Rationale:
+   Recovery is a low-frequency exception backstop; normal startups should not
+   announce it.
+2. Under a blocked upgrade the startup refresh awaits silently with no visible
+   signal until the blocker closes (frozen `13a43ab` contract, verified by
+   E2E-10). Follows directly from IndexedDB delivering `blocked` only to the
+   first upgrade attempt.
+3. Toast deduplication is effective only within the current page lifecycle —
+   accepted per user observation.
+4. Classification certifies the disk snapshot at classification time; cleanup
+   does not re-read disk (pre-existing, Section 11 Edit-09.6 seal note).
+
+### 14.8 Closure
+
+Final Closure adds: five real-IndexedDB E2E tests (E2E-1, E2E-2, E2E-7,
+E2E-9, E2E-10), draft-store suite hygiene (fresh vault per webServer start,
+exact-aria-label tree targeting), the manager-agnostic application-E2E
+webServer fix, and this section. Stage records and SHAs from Section 11
+(`9a0837b` seal) and the round-3 seal (`13a43ab`) are preserved above.
+Edit-09 is closed end-to-end at the commit titled
+`chore: close Edit-09 end-to-end`.
