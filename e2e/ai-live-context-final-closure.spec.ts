@@ -78,196 +78,40 @@
 // buffer were ever overwritten, the Monaco/raw assertions fail; if
 // the autosave did not really 409, its captured status fails; if the
 // confirm never fired, its visibility assertion fails.
-import { promises as fs } from 'node:fs'
-import path from 'node:path'
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
+import {
+  type AnyRecord,
+  appendEditorText,
+  cleanupCreatedPaths,
+  clearDraftDatabase,
+  createDoc,
+  interceptAiChatGated,
+  interceptAutosaveHeld,
+  openAiRail,
+  openDoc,
+  raceSse,
+  reloadApp,
+  sendAi,
+} from './helpers/edit-program'
 
-const DATABASE_NAME = 'docus-draft-recovery'
 const RUN_ID = String(Date.now())
 const createdPaths: string[] = []
 
-type AnyRecord = Record<string, any>
-
-function jsonResponse(body: unknown, status = 200) {
-  return { status, contentType: 'application/json', body: JSON.stringify(body) }
-}
-
-function sse(event: string, data: unknown): string {
-  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
-}
-
-const MINIMAL_SSE = [
-  sse('user', { id: 1 }),
-  sse('token', { text: 'ok' }),
-  sse('done', { userId: 1, assistantId: 2 }),
-].join('')
-
-// The AI turn's SSE stream: one same-path write_file round, then the
-// STANDARD file_changed descriptor (the exact shape evidence A proves
-// server/ai/routes.ts emits) with the REAL newRaw/newMtime of the
-// REST write, then close-out.
-function raceSse(slug: string, aiBody: string, newMtime: number): string {
-  return [
-    sse('user', { id: 1 }),
-    sse('tool_use', { id: 'toolu_e2e_fc', name: 'write_file', input: { path: slug, content: aiBody } }),
-    sse('tool_result', { tool_use_id: 'toolu_e2e_fc', content: `Wrote ${slug}`, is_error: false }),
-    sse('file_changed', { path: slug, kind: 'write', newMtime, newRaw: aiBody }),
-    sse('token', { text: 'Done.' }),
-    sse('done', { userId: 1, assistantId: 2 }),
-  ].join('')
-}
-
-// Browser-level /api/ai/** intercept (the sealed E2E-1..10 harness
-// pattern): the FIRST chat stream is held open on `gate` — the AI
-// is "thinking" until the test releases the mutation — then answered
-// with raceSse(); later chats answer immediately with MINIMAL_SSE.
-// Every request body is captured for send-time snapshot assertions.
-async function interceptAiChatGated(
-  page: Page,
-  chatBodies: AnyRecord[],
-  gate: Promise<void>,
-  raceBody: () => string,
-) {
-  await page.route('**/api/ai/**', async (route) => {
-    const url = new URL(route.request().url())
-    const method = route.request().method()
-    if (url.pathname === '/api/ai/active') {
-      if (method === 'PUT') return route.fulfill(jsonResponse({ sessionId: 1 }))
-      return route.fulfill(jsonResponse({ activeId: null, configured: true }))
-    }
-    if (url.pathname === '/api/ai/sessions') {
-      if (method === 'POST') {
-        return route.fulfill(jsonResponse({ id: 1, title: '', createdAt: 1, updatedAt: 1 }, 201))
-      }
-      return route.fulfill(jsonResponse([]))
-    }
-    if (url.pathname === '/api/ai/settings') {
-      return route.fulfill(jsonResponse({ hasKey: true, baseURL: '', model: '' }))
-    }
-    if (url.pathname === '/api/ai/chat') {
-      chatBodies.push(JSON.parse(route.request().postData() ?? '{}'))
-      if (chatBodies.length === 1) {
-        await gate // deterministic hold: released by the test
-        return route.fulfill({ status: 200, contentType: 'text/event-stream', body: raceBody() })
-      }
-      return route.fulfill({ status: 200, contentType: 'text/event-stream', body: MINIMAL_SSE })
-    }
-    return route.fulfill(jsonResponse({}))
-  })
-}
-
-// Holds the browser's debounced autosave PUT at the network boundary:
-// the request is recorded (autosaveSeen) and parked until the test
-// releases it, then REALLY sent to the server (route.fetch) so the
-// browser receives the genuine server response — the 409 conflict —
-// and its real status is captured for assertion. APIRequestContext
-// writes from the test bypass page.route entirely, so the real server
-// mutation never touches this gate.
-async function interceptAutosaveHeld(
-  page: Page,
-  slug: string,
-  state: { seen: boolean; statuses: number[] },
-  gate: Promise<void>,
-) {
-  await page.route(`**/api/posts/${slug}`, async (route) => {
-    if (route.request().method() !== 'PUT') return route.continue()
-    state.seen = true
-    await gate
-    const response = await route.fetch()
-    state.statuses.push(response.status())
-    await route.fulfill({ response })
-  })
-}
-
-async function createDoc(
-  request: APIRequestContext,
-  slug: string,
-  body: string,
-): Promise<{ raw: string; documentId: string }> {
-  const name = slug.split('/').pop()!
-  const create = await request.post('/api/posts', { data: { path: slug, title: name } })
-  expect([200, 201, 409]).toContain(create.status())
-  createdPaths.push(slug)
-  const initial = await (await request.get(`/api/posts/${slug}`)).json()
-  const put = await request.put(`/api/posts/${slug}`, {
-    data: { raw: body, baseRaw: initial.raw },
-  })
-  expect(put.status()).toBeLessThan(300)
-  const detail = await (await request.get(`/api/posts/${slug}`)).json()
-  return { raw: detail.raw as string, documentId: detail.metadata.id as string }
-}
-
-async function reloadApp(page: Page) {
-  await page.goto('/')
-  await expect(page.locator('button.ab-btn').first()).toBeVisible()
-}
-
-async function openDoc(page: Page, slug: string) {
-  // data-tree-key is exact (kind:path) — a hasText match on .tree-row
-  // would also match the folder row, whose descendants include the
-  // file rows.
-  const row = page.locator(`[data-tree-key="file:${slug}"]`)
-  if (!(await row.isVisible().catch(() => false))) {
-    const folder = slug.split('/')[0]
-    await page.locator(`[data-tree-key="folder:${folder}"]`).click()
-    await expect(row).toBeVisible({ timeout: 5000 })
-  }
-  await row.click()
-  await page.locator(`[data-tab-id="${slug}"]`).waitFor({ state: 'visible' })
-  await page.locator('.editor-pane .monaco-editor .view-lines').first().waitFor({ state: 'visible' })
-}
-
-async function appendEditorText(page: Page, text: string) {
-  const editor = page.locator('.editor-pane .monaco-editor').first()
-  await editor.locator('.view-lines').click({ position: { x: 40, y: 12 } })
-  await page.keyboard.press('Control+End')
-  await page.keyboard.press('Enter')
-  await page.keyboard.insertText(text)
-}
-
-async function openAiRail(page: Page) {
-  const toggle = page.locator('button.ai-toggle')
-  await expect(toggle).toBeVisible()
-  if ((await toggle.getAttribute('aria-pressed')) !== 'true') {
-    await toggle.click()
-  }
-  const aiTab = page.locator('.sidebar-tabs button[role="tab"]', { hasText: 'AI' })
-  await expect(aiTab).toBeVisible()
-  await aiTab.click()
-  await expect(page.locator('textarea.ai-input')).toBeVisible()
-}
-
-async function sendAi(page: Page, message: string) {
-  const input = page.locator('textarea.ai-input')
-  await input.fill(message)
-  await input.press('Enter')
-}
-
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
-  await page.evaluate(async (databaseName) => {
-    await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.deleteDatabase(databaseName)
-      request.onsuccess = () => resolve()
-      request.onerror = () => reject(request.error)
-      request.onblocked = () => reject(new Error('Draft database deletion blocked'))
-    })
-  }, DATABASE_NAME)
+  await clearDraftDatabase(page)
   await expect(page.locator('button.ab-btn').first()).toBeVisible()
 })
 
 test.afterAll(async ({ request }) => {
-  for (const slug of createdPaths) {
-    await request.delete(`/api/posts/${slug}`).catch(() => {})
-    await fs.rm(path.join('src', 'content', `${slug}.md`), { force: true }).catch(() => {})
-  }
+  await cleanupCreatedPaths(request, createdPaths)
 })
 
 test('residual race: send clean → type while the AI turn is open → same-path server mutation while dirty → the dirty buffer survives as an external conflict', async ({ page, request }) => {
   const slug = `inbox/e2e-ai-fc-${RUN_ID}`
   const name = slug.split('/').pop()!
   const cleanRaw = `${name} clean send-time body`
-  const doc = await createDoc(request, slug, `${cleanRaw}\n`)
+  const doc = await createDoc(request, slug, `${cleanRaw}\n`, createdPaths)
   // GET returns the on-disk bytes verbatim — the createDoc PUT seeded
   // `${cleanRaw}\n`, so the clean snapshot raw is exactly that.
   expect(doc.raw).toBe(`${cleanRaw}\n`)
