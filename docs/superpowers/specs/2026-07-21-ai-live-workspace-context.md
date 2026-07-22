@@ -3,7 +3,7 @@
 **Date:** 2026-07-21
 **Baseline:** `284d69f` (`test: complete Edit-09 final closure matrix`)
 **Supersedes:** [2026-06-07-ai-live-note-context.md](./2026-06-07-ai-live-note-context.md)
-**Status:** Edit-10.1 complete / Edit-10.2 complete / Edit-10.3 complete / Edit-10.4 complete / 10.5 pending.
+**Status:** Edit-10.1 complete / Edit-10.2 complete / Edit-10.3 complete / Edit-10.4 complete (review fix `ee2a2a3`, see §16.7) / 10.5 pending re-review.
 
 ## 1. Why the old spec is dead
 
@@ -878,6 +878,10 @@ that changed after the snapshot was captured.
   `tool-safety.test.ts` asserts set equality with
   `TOOL_DEFINITIONS`, so an unclassified new tool fails both
   typecheck and tests.
+  Corrected in `fix(ai): close indirect mutation and verification
+  side effects` (`ee2a2a3`): the `rename` target now also carries
+  `referencePaths` — empty at static classification, filled by the
+  dispatcher from the link index before locking (§16.7).
 - `deriveToolSafetyPolicy(ctx: ChatContext)` is a pure function of
   the normalized context: `none` / `legacy-path` → `unrestricted`
   (old clients keep their exact current behavior — they send no
@@ -916,11 +920,29 @@ that changed after the snapshot was captured.
   `active-context-stale` (disk changed after the snapshot).
   Verification failure never falls back to the old path-only
   behavior.
+  Corrected in `fix(ai): close indirect mutation and verification
+  side effects` (`ee2a2a3`): rename is guarded on its WHOLE
+  mutation footprint — source, destination, AND every backlink
+  reference file the rename's reference rewrite will modify — so
+  an unrelated rename that would indirectly rewrite a link inside
+  the protected document is blocked / re-verified like a direct
+  write (§16.7).
 - `readCurrentServerDocument(db, logicalPath)` is the authoritative
-  server read: raw bytes + database-owned identity via
-  `ensureDocumentMetadata` — the SAME authority the editor sees
-  through `GET /api/posts/:path` (no regex frontmatter parsing, no
-  duplicated getPost, no metadata-only/mtime-only comparison).
+  server read: raw bytes + database-owned identity — the SAME DATA
+  the editor sees through `GET /api/posts/:path` (no regex
+  frontmatter parsing, no duplicated getPost, no
+  metadata-only/mtime-only comparison).
+  Corrected in `fix(ai): close indirect mutation and verification
+  side effects` (`ee2a2a3`): the first seal read identity via
+  `ensureDocumentMetadata`, which WRITES (tag delete/reinsert,
+  updatedAt advance, row creation) — so a BLOCKED mutation still
+  touched the database, and a file on disk with NO documents row
+  got a freshly minted identity and misclassified as
+  identity-mismatch. Verification is now a PURE READ over
+  `getDocumentMetadata`: missing identity → null (unverifiable),
+  no row ever created, and a blocked call leaves the database
+  byte-identical. Verification must never repair or complete
+  server state (§16.7).
 - Error texts carry the error code and the LOGICAL path only. They
   never contain the snapshot raw, the disk raw, documentIds, or
   filesystem paths, and suggest the user save / resolve / switch.
@@ -1108,3 +1130,125 @@ already unit-tested.
 
 Known issues: None. Edit-10.5 (Final Closure — real-browser
 regression incl. the §16.5 scenario) remains pending.
+
+Superseded: the review of this seal found two server-side blockers
+(rename backlink indirect mutation; verification DB side effects).
+Fixed and re-gated in §16.7 — the evidence below is historical for
+tree `112da69`.
+
+### 16.7 Review blockers and fixes (recorded 2026-07-22)
+
+The review of the 16.6 seal (production tree `112da69`, closure
+evidence `9704926`) judged direct-mutation safety PASS and the
+runChat / prompt-boundary layers PASS, but found **two server-side
+blockers** — verdict: 10.4 could not be sealed as recorded. Both
+fixed in `fix(ai): close indirect mutation and verification side
+effects` (`ee2a2a3`, baseline `9704926`), strictly scoped to
+`server/ai/tool-safety.ts`, `server/ai/tools.ts`, their tests, and
+this doc — client, transport, Recovery, and Edit-09 untouched
+(`git diff 9704926..ee2a2a3 -- src e2e` empty).
+
+**Blocker 1 — rename indirect mutation.** The safety target,
+locks, and guard modeled a rename as touching only
+`sourcePath` + `destinationPath`, but `executeRenameFile` also
+rewrites every file linking to the source (`update_references`
+defaults to true) and writes each rewritten backlink to disk.
+Repro: active dirty `notes/a` contains `[[notes/b]]`; the AI calls
+`rename_file notes/b → notes/c`; the guard saw only unrelated
+paths and passed; the executor then rewrote `notes/a.md` on disk —
+bypassing active-context-unsaved/read-only/external-conflict, with
+the protected path never even locked. The seal's "unrelated
+rename" tests had no backlink in the protected file, so they never
+triggered it.
+
+Fix — the rename mutation footprint is now source + destination +
+every backlink source file the rewrite WILL modify:
+
+- `ToolMutationTarget`'s rename variant gained
+  `referencePaths: string[]`. Static classification returns `[]`;
+  the dispatcher fills the real set via `planRenameReferences`,
+  which mirrors the executor's loop EXACTLY — same link index
+  snapshot, same `rewriteDocumentReferences` call, same
+  `updated !== refRaw` predicate — so locked/guarded paths are
+  precisely the paths that will be written (no false blocks on
+  backlinks the rewrite wouldn't change). Self-references are
+  skipped (written to the destination, already in the footprint).
+  Plan failures propagate as the same `rename_file` tool error the
+  executor would have produced before any side effect.
+- Every footprint path enters the globally sorted
+  `withDocumentWriteLock`; `guardToolMutation` checks them all
+  (deny and verify-clean alike).
+- Inside the lock the footprint is RE-DERIVED and, on drift,
+  re-guarded: a newly-protected reference path fails closed;
+  unrelated drift keeps the unrelated paths' original behavior.
+- `update_references: false` → no reference rewrite → footprint
+  stays source + destination (unrelated renames unaffected).
+
+**Blocker 2 — verification DB side effects.**
+`readCurrentServerDocument` read identity via
+`ensureDocumentMetadata`, which is NOT read-only: existing row →
+`saveDocumentMetadata` (documents UPDATE, `document_tags` DELETE +
+reinsert, `updated_at` advance); missing row → creates a NEW
+documentId + row. Consequence 1: a mutation blocked as stale still
+modified the database during verification — "blocked = zero DB
+touch" was false. Consequence 2: file on disk with the metadata
+row completely missing should be unverifiable with NO metadata
+created; instead a fresh id was minted and compared, producing the
+wrong code (`identity-mismatch`) inside a blocked call. The seal's
+tests only covered an existing row with its id blanked, never a
+fully missing row.
+
+Fix — verification is a pure read (reviewer-prescribed):
+normalize → `readFileSync` (try/catch) → `getDocumentMetadata` →
+`!metadata?.id` → null → return `{documentId, path, raw}`. Never
+`ensureDocumentMetadata` / `saveDocumentMetadata` / migration
+import — verification must never repair or complete server state.
+
+**New tests (strict TDD red-first, 12 total):** 6 tool-safety
+unit — rename classification carries `referencePaths: []`; deny
+when a backlink reference path is protected (incl. `.md` spelling);
+deny not over-blocking on unrelated reference paths; verify-clean
+re-verifies a protected backlink (resolver called on the canonical
+path), stale protected backlink → stale, foreign-identity protected
+backlink → identity-mismatch. 6 tools integration — dirty backlink
+rename blocked byte-exact (notes/a AND notes/b unchanged, no
+change descriptors, metadata untouched); same rename with
+`update_references: false` executes and leaves notes/a untouched;
+verify-clean backlink allowed on identity+raw match (rewrite +
+write descriptor); verify-clean backlink blocked stale with all
+three files byte-exact; file exists but NO documents row →
+unverifiable and the table STILL has no row for that path; a
+blocked stale mutation leaves the full metadata row, tags, and
+updatedAt byte-identical.
+
+**Re-gate evidence (recorded 2026-07-22, sealed tree `ee2a2a3`).**
+Full §12 closure gates re-run from scratch, `npm ci` first. Local
+only — no CI exists.
+
+| Gate | Result | Detail |
+| --- | --- | --- |
+| `npm ci` | exit 0 | clean install |
+| `npm run typecheck` | exit 0 | clean |
+| `npm run lint:icons` | exit 0 | 2 files scanned, 81 `<svg>` elements, no violations |
+| `npm test` | exit 0 | Vitest: **135 test files passed (135)**, **1 959 tests passed (1 959)** |
+| `npm run build` | exit 0 | built in 1.39 s |
+| `npm run test:e2e:draft-store` | exit 0 | **38 passed** (27.7 s) |
+| `npm run test:e2e` | exit 0 | **19 passed** (19.2 s) |
+| `git diff --check` | exit 0 | no whitespace errors |
+| `git status --short` | only this docs file | before the closure re-record commit |
+
+Audits re-run: no `.only` / `.skip`; `active-context-` absent from
+`src/` and `e2e/`; `expectedRaw` only in `tool-safety.ts` policy
+construction/comparison, its tests, and the pre-existing unrelated
+`atomicTextWrite` CAS parameter; zero `console.*raw` /
+`console.*liveContext` hits in `server/ai/`.
+
+Delta vs the 16.6 seal (1 947 tests): +12 tests (6 tool-safety
+unit + 6 tools integration); no new test files.
+
+**Judgment after fix:** direct mutation safety PASS (unchanged);
+rename indirect mutation safety PASS (footprint plan + locks +
+in-lock re-guard); documentId/raw re-verification PASS; verification
+no-side-effects PASS (pure read; blocked calls leave the database
+byte-identical). Edit-10.5 (Final Closure) remains pending — it
+does NOT start before this fix is re-reviewed.
