@@ -1389,10 +1389,14 @@ server, AI orchestration, tool safety). Evidence:
 `git diff 6ae3b77 --name-only -- src server e2e` excluding
 `__tests__/` and `*.spec.ts` is EMPTY at the closure HEAD — the
 only changes since `6ae3b77` are the docs closure commit `41e9455`
-and the 10.5 test-only commit (this chapter + two new test files).
-10.5 found NO regressions, so there were zero `fix(ai):` commits;
-had any been needed, all gates would have re-run from scratch
-before this chapter could be written.
+and the 10.5 test-only commits (the closure matrix `b772be7`, the
+residual-race order fix `test(ai): reproduce the post-send dirty
+mutation order`, and the docs re-close).
+10.5 found NO production regressions, so there were zero
+`fix(ai):` commits — the one review blocker (the first residual
+race E2E ran the mutation before the post-send typing; see §17.3)
+was an E2E ordering fidelity issue, fixed E2E-only, with all
+gates re-run from `npm ci` before the re-close.
 
 Area freeze SHAs (each byte-identical to its sealed stage):
 
@@ -1417,7 +1421,7 @@ closure HEAD (gate evidence: §17.9).
 | Prompt boundary (delimiter forgery, escaping, injection inertness) | `chat.test.ts` ▸ `buildSystemPrompt` — `does not allow live Markdown to close the prompt boundary`, `treats injected "ignore previous instructions" as inert JSON data`, FORGED_DELIMITER `it.each` ×7 string positions (document raw/title, history raw, diff before/after raw, recovery draft/disk raw), `escapes angle brackets in ordinary bodies as JSON-legal unicode escapes`; closure test — `prompt boundary with the §9 verbatim payload: exactly one delimiter pair, exact JSON round-trip` | Pass |
 | Persistence (snapshot lives ONLY in the current turn's prompt) | `chat.test.ts` ▸ `runChat` — `injects the live context into the system prompt of THIS run only, never into persisted messages`, `never leaks one turn's live context into the next turn's prompt (no module cache)`; closure tests — `full chain, clean Document: … the sentinel lives only in this turn's prompt`, `full chain, dirty Document: … the sentinel never persists` (sentinel `EDIT_10_FINAL_CONTEXT_MUST_NOT_PERSIST_20260722` asserted absent from user/assistant message rows, SSE events, session title, next-turn system prompt, and all server console output) | Pass |
 | Tool safety (identity / dirty / read-only / external / stale / verify-clean / rename plan atomicity) | `tool-safety.test.ts` (70) + `tools.test.ts` ▸ `Edit-10.4 tool safety: executeToolCall with safety policy` (44, incl. the race describe `rename plan atomicity: the locked plan is the guarded plan is the executed plan`) + `chat.test.ts` ▸ `Edit-10.4 tool safety` (5) — see §17.7 | Pass |
-| Real-browser residual race (send clean → type while AI turn open → same-path server write → dirty buffer survives as external conflict) | `e2e/ai-live-context-final-closure.spec.ts` — `residual race: send clean → type while the AI turn is open → same-path server write → the dirty buffer survives as an external conflict`, interlocked with closure tests 2–3 — see §17.3 | Pass |
+| Real-browser residual race (send clean → type while AI turn open → same-path server mutation WHILE dirty → dirty buffer survives as external conflict) | `e2e/ai-live-context-final-closure.spec.ts` — `residual race: send clean → type while the AI turn is open → same-path server mutation while dirty → the dirty buffer survives as an external conflict` (order corrected per §17.3 marker), interlocked with closure tests 2–3 — see §17.3 | Pass |
 | Supplementary browser scenarios (§7) | dirty request: E2E-1 `dirty buffer: the full send-time snapshot travels verbatim` + closure test 3 (dirty full chain); multi-tab: E2E-2 `two open documents: only the active tab is captured` + E2E-8 `capture-then-switch: the send-time snapshot survives a tab switch`; history: E2E-3 `history snapshot: read-only revision raw, not the disk version`; diff: E2E-4 `history diff: before is the revision, after is the live buffer`; recovery content: E2E-5 `recovery content view: browser-local draft with no disk block`; recovery diff: E2E-6 `recovery diff view: draft and disk sides from one snapshot`; route-behind-recovery: E2E-7 `recovery beats the route: deep-linked document does not win`; rename identity: E2E-9 `rename: the stable documentId survives a path change` + `tools.test.ts` ▸ `rename_file` / `rename_file guards both source and destination`; external conflict capture: E2E-10 `external conflict: buffer and disk version travel together` | Pass |
 | Legacy compatibility (old clients keep working; nothing deleted) | `chat.test.ts` — `legacy-path: keeps the old current-note hint for old clients only`; `tool-safety.test.ts` — `none and legacy-path stay unrestricted (old clients keep current behavior)`; `chat.test.ts` ▸ `Edit-10.4 tool safety` — `legacy-path context keeps original unrestricted tool behavior`; `live-context.test.ts` — `accepts a path WITH a single trailing .md (history-style paths)`; `useCurrentNote.test.ts` (legacy route-note state retained) | Pass |
 | Edit-09 regression (Draft Store / Recovery untouched) | `npm run test:e2e:draft-store` 38 passed; `useDraftRecoveryManagement.test.ts`, `draftCleanup.test.ts`, `draftFileTransactions.test.ts`, `draftStore.test.ts` all green inside `npm test`; Edit-09 frozen at `13a43ab`, closure evidence `284d69f` — no Edit-09 file changed in any 10.x commit | Pass |
@@ -1426,8 +1430,22 @@ closure HEAD (gate evidence: §17.9).
 
 Test: `e2e/ai-live-context-final-closure.spec.ts` ▸ `residual
 race: send clean → type while the AI turn is open → same-path
-server write → the dirty buffer survives as an external conflict`
-(4/4 consecutive green runs, ~4.8 s each, 0 retries).
+server mutation while dirty → the dirty buffer survives as an
+external conflict` (4/4 consecutive green runs, ~5.0 s each,
+0 retries).
+
+**Corrected in `test(ai): reproduce the post-send dirty mutation
+order`.** The first closure E2E (`b772be7`) ran the same-path
+mutation BEFORE the post-send typing — a valid external-change
+regression, but not the accepted residual race, whose required
+causal order is Send clean → local dirty → AI mutation. The
+reviewer-flagged order error was fixed E2E-only (no production
+change, no production defect); this section records the corrected
+test. The required order is enforced deterministically: the
+browser's debounced autosave PUT is held at the network boundary
+on a test-owned gate, so the mutation happens WHILE the buffer is
+dirty AND the server provably still holds the send-time clean
+bytes — the exact verify-clean precondition of the real race.
 
 **Interlocking evidence split (used because full single-process
 chain injection is impossible in this environment, not for
@@ -1454,11 +1472,14 @@ proven as two interlocking halves:
   with ZERO side effects (disk byte-identical, zero `file_changed`
   events) and the chat still completes and persists.
 - **B — real browser** (the E2E above): real VaultView / Monaco /
-  send-time `captureAiLiveContext` / `sendAndStream` SSE parsing /
-  file-change bus / `useExternalFileChanges` / in-app confirm
-  dialog / debounced autosave CAS against the REAL server. The
-  same-path mutation is REAL — a production REST `PUT` through the
-  server's compare-and-swap write path — and the `file_changed`
+  send-time `captureAiLiveContext` / real debounced autosave (held
+  at the network boundary, then really 409'd by the server) /
+  `sendAndStream` SSE parsing / file-change bus /
+  `useExternalFileChanges` / in-app confirm dialog. The same-path
+  mutation is REAL — a production REST `PUT` through the server's
+  compare-and-swap write path, issued via `APIRequestContext`,
+  which does NOT pass through `page.route` and therefore never
+  touches the held browser autosave — and the `file_changed`
   descriptor carries the REAL `newRaw`/`newMtime` read back from
   that write. Only the LLM orchestration layer (Anthropic
   round-trip + runChat loop) is substituted, at the browser layer,
@@ -1469,9 +1490,33 @@ proven as two interlocking halves:
   state is mutated through the real server and verified via GET
   before the descriptor is built.
 
-Sequence control is deterministic (no arbitrary sleeps): the
-intercepted chat stream is held open on a test-owned gate while
-the real disk mutation and the local typing happen, then released.
+**Sequence control is deterministic (no arbitrary sleeps) and
+enforces the required causal order.** Two test-owned gates:
+(1) the intercepted chat stream is held open — the AI is
+"thinking" — until the mutation has landed; (2) the browser's
+debounced autosave PUT is held at the network boundary
+(`page.route` → `route.fetch`/`route.fulfill({response})` after
+release, so the browser receives the GENUINE server response and
+its real status is captured). The order executed: Send (clean
+snapshot asserted) → user types → tab `dirty` → autosave arrives
+and is HELD (buffer dirty, nothing on the server yet) → GET
+proves the server STILL holds the send-time clean bytes → the
+real CAS mutation lands (2xx BECAUSE disk == snapshot) → the
+held autosave is released and the REAL server answers 409 → tab
+flips `external` → the AI SSE `file_changed` is released.
+
+**Why the autosave is released before the SSE event:** production
+`useDocumentSave` sets `tab.savingRevision` BEFORE the PUT is in
+flight, and `useExternalFileChanges` drops any `file_changed`
+that arrives while `savingRevision !== null`. Releasing the SSE
+while the autosave is still held would make the real client
+silently discard the event — the sealed contract is that the 409
+establishes the external state and the following `file_changed`
+confirms it through the still-dirty buffer (`raw ≠ originalRaw`)
+via the confirm path. The closure spec §6 accepts either sub-order
+of (autosave 409, `file_changed`) as long as the final state
+holds; it does, and both the 409 path and the confirm path are
+exercised.
 
 **Race assertions (all pass):**
 - Send-time request: `liveContext.v=1`, `kind='document'`,
@@ -1479,27 +1524,36 @@ the real disk mutation and the local typing happen, then released.
   `identity={documentId, path}` correct, no legacy key on the
   wire (`currentNotePath` / `currentNoteContent` / `attachments`
   / `filesystemPath` / `absolutePath` all absent).
-- Post-send local text differs (appended sentinel tail; tab
-  `data-save-status="dirty"`).
-- AI/server writes a different body (REST CAS 2xx; GET shows the
-  AI body; the editor still shows the clean send-time bytes).
-- Final Monaco shows the LOCAL text (view-lines contains the
-  local tail — buffer not overwritten, no lost input).
-- Tab ends `data-save-status="external"` via the real 409 CAS
-  path; still external at test end (nothing auto-resolved it).
-- `externalRaw` = the AI-written server body; the next send-time
-  snapshot carries `raw` = the byte-exact local buffer (no
-  auto-merge), `dirty=true`, `saveStatus='external'`, `external
-  = {kind:'modified', raw: <AI body>}`, identity unchanged.
-- Server never received the local buffer (GET raw ≠ local text —
-  no auto-save).
-- The overwrite confirm (in-app `ConfirmHost` dialog, message
-  carries the path) appears exactly once — disk-poll events
+- Post-send, BEFORE the mutation: local text differs (appended
+  sentinel tail; tab `data-save-status="dirty"`), the autosave
+  PUT has left the app and is held at the network boundary, and
+  the server STILL returns the send-time clean bytes — the
+  mutation happens against a dirty buffer and a clean server,
+  the exact race window.
+- The mutation succeeds (REST CAS 2xx — allowed precisely
+  because disk == send-time snapshot); GET shows the AI body;
+  the editor still shows the local buffer.
+- The held autosave, released after the mutation, gets a REAL
+  409 from the real server (captured status === 409, exactly one
+  autosave PUT in the whole test — never silently re-sent); tab
+  flips `data-save-status="external"` with `externalRaw` = the
+  AI-written body.
+- The then-released SSE `file_changed` (real client chain)
+  triggers the overwrite confirm (in-app `ConfirmHost` dialog,
+  message carries the path) exactly once — disk-poll events
   carry `source:'editor-lifecycle'` and are dropped before the
   conflict logic (`useExternalFileChanges.ts:44`); Cancel keeps
   the local bytes.
-- No wrong path/documentId opened (single tab, identity stable),
-  no Recovery dialog/pane created.
+- Final Monaco shows the LOCAL text (view-lines contains the
+  local tail — buffer not overwritten, no lost input).
+- Server never received the local buffer (GET raw = the AI body,
+  ≠ local text — no auto-save, no auto-merge).
+- The next send-time snapshot carries `raw` = the byte-exact
+  local buffer, `dirty=true`, `saveStatus='external'`, `external
+  = {kind:'modified', raw: <AI body>}`, identity unchanged.
+- Still `external` at test end (nothing auto-resolved it); no
+  duplicate confirm; no wrong path/documentId opened (single
+  tab, identity stable); no Recovery dialog/pane created.
 - Sentinels used: `EDIT10_FC_AI_WRITTEN_<run>` (AI body),
   `EDIT10_FC_LOCAL_TAIL_<run>` (local tail) — never real user
   bodies.
@@ -1693,13 +1747,23 @@ verification passed. GitHub CI unavailable / not configured.
 | `npm run test:e2e` | exit 0 | **20 passed** (19.5 s) — the sealed 19 + the final closure residual race |
 | `git diff --check` | exit 0 | no whitespace errors |
 | only / skip audit | clean | no `.only` / `.skip` / `fit` / `fdescribe` test markers (all grep hits are domain names: `skippedProtected`, `skipDirtyCheck`, markmap `fit()`, migration `report.skipped`) |
-| `git status --short` | clean | after the two closure commits |
+| `git status --short` | clean | after the closure commits |
 
 Delta vs the §16.8 gate (1 968 tests / 19 E2E): +1 test file and
 +4 tests (`server/__tests__/edit10-final-closure.test.ts`) and +1
 Playwright spec (the residual race). No timeout increase, no
 retry-masking, no snapshot update anywhere in 10.5 (retries: 0
 in both Playwright configs).
+
+**Re-gate after the residual-race order fix** (recorded
+2026-07-22, tree with `test(ai): reproduce the post-send dirty
+mutation order`): the FULL gate set re-ran from scratch starting
+at `npm ci` — `npm ci` / typecheck / lint:icons (2 files, 81 svg)
+/ `npm test` (136 files, 1 972 tests, 27.6 s) / build (1.41 s) /
+draft-store (38 passed, 26.8 s) / main E2E (20 passed, 19.5 s) /
+`git diff --check` — all exit 0; the corrected race spec is 4/4
+stable (~5.0 s, 0 retries). Numbers unchanged (E2E-only fix).
+Local verification passed. GitHub CI unavailable / not configured.
 
 ### 17.10 Accepted residual risks
 
@@ -1724,19 +1788,22 @@ Genuine and uneliminable inside this stage's boundary:
 
 ### 17.11 Known issues
 
-Two pre-existing console artifacts observed in the recorded
-runs; both predate Edit-10, neither fails any test, zero retries:
+Two pre-existing console artifacts observed across the two
+recorded gate runs (intermittent, run-dependent); both predate
+Edit-10, neither fails any test, zero retries:
 
 1. Draft-store E2E: one `[Vue warn]: Unhandled error during
-   execution of mounted hook` at `<VaultView>` unmount —
-   identical at the pre-Edit-10 baseline `e206cd4` (recorded in
-   the 10.2 closure, §14.1); 38/38 draft-store tests passed.
+   execution of mounted hook` at `<VaultView>` unmount (first
+   closure run; absent in the re-gate run) — identical at the
+   pre-Edit-10 baseline `e206cd4` (recorded in the 10.2 closure,
+   §14.1); 38/38 draft-store tests passed both runs.
    Edit-09-frozen code — out of Edit-10's change scope.
 2. Main E2E: one Monaco-internal `[Unhandled rejection]
    Canceled: Canceled` from `Delayer.cancel`
    (`monaco-editor/esm/vs/base/common/async.js`) during editor
-   teardown between tests — third-party editor internals on
-   page disposal; 20/20 tests passed.
+   teardown between tests (observed in both recorded runs) —
+   third-party editor internals on page disposal; 20/20 tests
+   passed both runs.
 
 No failing gate, no flaky retry, no unrun gate. Nothing
 attributable to Edit-10 code.
