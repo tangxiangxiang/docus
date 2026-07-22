@@ -5,7 +5,9 @@ import { Hono } from 'hono'
 import { canModify } from '../../src/composables/archiveProtocol.js'
 import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged, removeDurableJournal, syncParentDirectoryBestEffort, writeDurableJournal } from '../atomicTextWrite.js'
 import {
+  deleteDocumentMetadata,
   deleteDocumentMetadataPrefix,
+  getDocumentMetadata,
   moveDocumentMetadataPrefix,
   restoreDocumentMetadataMutation,
   snapshotDocumentMetadataPrefixMutation,
@@ -172,7 +174,15 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     // (server/crashRecovery.ts) reads it and completes the metadata
     // move before the HTTP server accepts requests. Removed LAST.
     journalPath = path.join(path.dirname(src), `.${path.basename(src)}.docus-journal-${randomUUID()}`)
-    await writeDurableJournal(journalPath, { version: 1, op: 'folder-rename', srcRel: srcPath, destRel: newPath })
+    const sourceDirectoryStat = await fs.stat(src)
+    await writeDurableJournal(journalPath, {
+      version: 1,
+      op: 'folder-rename',
+      srcRel: srcPath,
+      destRel: newPath,
+      sourceDev: sourceDirectoryStat.dev,
+      sourceIno: sourceDirectoryStat.ino,
+    })
     deleteDocumentMetadataPrefix(metadataDb(), newPath)
     // Create-only: mkdir is the gate — an external writer claiming the
     // destination after the earlier exists() check fails the move
@@ -319,6 +329,28 @@ folderRoutes.delete('/api/folders/*', async (c) => {
   const staged = `${abs}.docus-delete-inflight-${randomUUID()}`
   const quarantine = `${abs}.docus-quarantine-reuse-${randomUUID()}`
   const databaseSnapshot = snapshotDocumentMetadataPrefixMutation(metadataDb(), [folderP], all)
+  const reuseManifest = path.join(path.dirname(abs), `.${path.basename(abs)}.docus-delete-manifest-${randomUUID()}`)
+  const persistReuseQuarantine = async (): Promise<void> => {
+    await writeDurableJournal(reuseManifest, {
+      version: 1,
+      op: 'delete-path-reuse',
+      kind: 'folder',
+      path: folderP,
+      inflight: path.basename(staged),
+      quarantine: path.basename(quarantine),
+      identities: databaseSnapshot.documents.map((row) => ({ path: String(row.path), id: String(row.id) })),
+    })
+    await fs.rename(staged, quarantine)
+    await syncParentDirectoryBestEffort(quarantine)
+  }
+  const detachOldIdentities = (): void => {
+    for (const row of databaseSnapshot.documents) {
+      const oldPath = String(row.path)
+      if (getDocumentMetadata(metadataDb(), oldPath)?.id === String(row.id)) {
+        deleteDocumentMetadata(metadataDb(), oldPath)
+      }
+    }
+  }
   await fs.rename(abs, staged)
   await syncParentDirectoryBestEffort(staged)
   try {
@@ -359,14 +391,15 @@ folderRoutes.delete('/api/folders/*', async (c) => {
           // subtree.
           let quarantined = false
           try {
-            await fs.rename(staged, quarantine)
-            await syncParentDirectoryBestEffort(quarantine)
+            await persistReuseQuarantine()
             quarantined = true
           } catch (rollbackError) { rollbackErrors.push(rollbackError) }
           if (quarantined) {
-            try { deleteDocumentMetadataPrefix(metadataDb(), folderP) }
+            try { detachOldIdentities() }
             catch (rollbackError) { rollbackErrors.push(rollbackError) }
             try { await reindexReusedSubtree() } catch { /* next rebuild repairs */ }
+            try { await removeDurableJournal(reuseManifest) }
+            catch (rollbackError) { rollbackErrors.push(rollbackError) }
           }
         }
       } else {
@@ -377,14 +410,15 @@ folderRoutes.delete('/api/folders/*', async (c) => {
         // and leave the old tree quarantined under its staging name.
         let quarantined = false
         try {
-          await fs.rename(staged, quarantine)
-          await syncParentDirectoryBestEffort(quarantine)
+          await persistReuseQuarantine()
           quarantined = true
         } catch (rollbackError) { rollbackErrors.push(rollbackError) }
         if (quarantined) {
-          try { deleteDocumentMetadataPrefix(metadataDb(), folderP) }
+          try { detachOldIdentities() }
           catch (rollbackError) { rollbackErrors.push(rollbackError) }
           try { await reindexReusedSubtree() } catch { /* next rebuild repairs */ }
+          try { await removeDurableJournal(reuseManifest) }
+          catch (rollbackError) { rollbackErrors.push(rollbackError) }
         }
       }
     } else {

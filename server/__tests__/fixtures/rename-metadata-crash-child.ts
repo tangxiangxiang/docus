@@ -15,7 +15,12 @@ const database = new Database(dbPath)
 applyMigrations(database)
 saveDocumentMetadata(database, { id: 'post-staging-crash-id', path: 'old', title: 'Old', updatedAt: 1 })
 __setCreateOnlyMoveHooksForTesting({
-  afterFileMoveFinalized: () => process.kill(process.pid, 'SIGKILL'),
+  afterRenameTakenOver: process.env.DOCUS_RENAME_CRASH_POINT === 'takeover'
+    ? () => process.kill(process.pid, 'SIGKILL')
+    : undefined,
+  afterFileMoveFinalized: process.env.DOCUS_RENAME_CRASH_POINT !== 'takeover'
+    ? () => process.kill(process.pid, 'SIGKILL')
+    : undefined,
 })
 await renameDocumentWithMetadata({
   db: database,

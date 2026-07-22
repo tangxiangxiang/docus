@@ -58,6 +58,7 @@ import {
   prepareAtomicTextCreate,
   removeDurableJournal,
   syncParentDirectoryBestEffort,
+  writeDurableJournal,
   type PreparedAtomicTextWrite,
 } from '../atomicTextWrite.js'
 
@@ -632,6 +633,20 @@ async function executeDeleteFile(input: { path?: string }, db: DatabaseT): Promi
   const staged = `${abs}.docus-delete-inflight-${randomUUID()}`
   const quarantine = `${abs}.docus-quarantine-reuse-${randomUUID()}`
   const databaseSnapshot = snapshotDocumentMetadataMutation(db, [input.path])
+  const reuseManifest = path.join(path.dirname(abs), `.${path.basename(abs)}.docus-delete-manifest-${randomUUID()}`)
+  const persistReuseQuarantine = async (): Promise<void> => {
+    await writeDurableJournal(reuseManifest, {
+      version: 1,
+      op: 'delete-path-reuse',
+      kind: 'file',
+      path: input.path,
+      inflight: path.basename(staged),
+      quarantine: path.basename(quarantine),
+      identities: databaseSnapshot.documents.map((row) => ({ path: String(row.path), id: String(row.id) })),
+    })
+    fs.renameSync(staged, quarantine)
+    await syncParentDirectoryBestEffort(quarantine)
+  }
   try {
     fs.renameSync(abs, staged)
     await syncParentDirectoryBestEffort(staged)
@@ -658,9 +673,9 @@ async function executeDeleteFile(input: { path?: string }, db: DatabaseT): Promi
           catch (rollbackError) { rollbackFailures.push(rollbackError) }
         } else if (rollbackFailures.length === 0) {
           try {
-            fs.renameSync(staged, quarantine)
-            await syncParentDirectoryBestEffort(quarantine)
+            await persistReuseQuarantine()
             const reusedRaw = reidentifyReusedPath(db, input.path, abs)
+            await removeDurableJournal(reuseManifest)
             // The failed delete never ran applyDelete; re-apply the
             // index entry against the NEW generation at this path.
             try { (await getLinkIndex()).applyWrite(input.path, reusedRaw) } catch { /* next rebuild repairs */ }
@@ -673,9 +688,9 @@ async function executeDeleteFile(input: { path?: string }, db: DatabaseT): Promi
         // give the new file a fresh one, and leave the old generation
         // quarantined under its staging name.
         try {
-          fs.renameSync(staged, quarantine)
-          await syncParentDirectoryBestEffort(quarantine)
+          await persistReuseQuarantine()
           const reusedRaw = reidentifyReusedPath(db, input.path, abs)
+          await removeDurableJournal(reuseManifest)
           try { (await getLinkIndex()).applyWrite(input.path, reusedRaw) } catch { /* next rebuild repairs */ }
         } catch (reuseError) { rollbackFailures.push(reuseError) }
       }

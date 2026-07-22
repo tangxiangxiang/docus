@@ -42,6 +42,22 @@ export async function removeDurableJournal(journalPath: string): Promise<void> {
   await syncParentDirectoryBestEffort(journalPath)
 }
 
+/** Atomically replace an owned journal with a new durable recovery
+ * phase. The temporary entry and the final rename are both directory
+ * synced, so repeated startup recovery observes either complete state. */
+export async function rewriteDurableJournal(journalPath: string, entry: unknown): Promise<void> {
+  const temporaryPath = `${journalPath}.rewrite-${randomUUID()}`
+  await writeDurableJournal(temporaryPath, entry)
+  try {
+    await fs.rename(temporaryPath, journalPath)
+    await syncParentDirectoryBestEffort(journalPath)
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => {})
+    await syncParentDirectoryBestEffort(temporaryPath)
+    throw error
+  }
+}
+
 /** Test-only hooks for real crash tests: a child process installs a
  * hook that kills the process hard at the exact protocol point under
  * test. Null in production; tests reset in afterEach/finally. */

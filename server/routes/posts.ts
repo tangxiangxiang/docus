@@ -26,6 +26,7 @@ import {
   prepareAtomicTextCreate,
   removeDurableJournal,
   syncParentDirectoryBestEffort,
+  writeDurableJournal,
   prepareAtomicTextWrite,
   readStableTextSnapshot,
   UnstableTextSnapshotError,
@@ -674,6 +675,20 @@ postRoutes.delete('/api/posts/*', async (c) => {
   const staged = `${abs}.docus-delete-inflight-${randomUUID()}`
   const quarantine = `${abs}.docus-quarantine-reuse-${randomUUID()}`
   const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [splat])
+  const reuseManifest = path.join(path.dirname(abs), `.${path.basename(abs)}.docus-delete-manifest-${randomUUID()}`)
+  const persistReuseQuarantine = async (): Promise<void> => {
+    await writeDurableJournal(reuseManifest, {
+      version: 1,
+      op: 'delete-path-reuse',
+      kind: 'file',
+      path: splat,
+      inflight: path.basename(staged),
+      quarantine: path.basename(quarantine),
+      identities: databaseSnapshot.documents.map((row) => ({ path: String(row.path), id: String(row.id) })),
+    })
+    await fs.rename(staged, quarantine)
+    await syncParentDirectoryBestEffort(quarantine)
+  }
   await fs.rename(abs, staged)
   await syncParentDirectoryBestEffort(staged)
   try {
@@ -699,9 +714,9 @@ postRoutes.delete('/api/posts/*', async (c) => {
             await fs.unlink(staged)
             restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)
           } else {
-            await fs.rename(staged, quarantine)
-            await syncParentDirectoryBestEffort(quarantine)
+            await persistReuseQuarantine()
             const reusedRaw = await reidentifyReusedPath(splat, abs)
+            await removeDurableJournal(reuseManifest)
             // The failed delete never ran applyDelete; the index still
             // carries the old file's outbound links/title for this
             // path. Re-apply against the NEW generation.
@@ -713,9 +728,9 @@ postRoutes.delete('/api/posts/*', async (c) => {
           // must never bind to foreign bytes — drop the stale identity,
           // give the new file a fresh one, and leave the old generation
           // quarantined under its staging name.
-          await fs.rename(staged, quarantine)
-          await syncParentDirectoryBestEffort(quarantine)
+          await persistReuseQuarantine()
           const reusedRaw = await reidentifyReusedPath(splat, abs)
+          await removeDurableJournal(reuseManifest)
           try { (await getLinkIndex()).applyWrite(splat, reusedRaw) } catch { /* next rebuild repairs */ }
         }
       } else {

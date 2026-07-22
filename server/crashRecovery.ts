@@ -65,12 +65,13 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
 import type { Database as DatabaseT } from 'better-sqlite3'
-import { removeDurableJournal, sha256Hex, syncParentDirectoryBestEffort } from './atomicTextWrite.js'
+import { removeDurableJournal, rewriteDurableJournal, sha256Hex, syncParentDirectoryBestEffort, writeDurableJournal } from './atomicTextWrite.js'
 import { isValidPathSyntax } from './paths.js'
 import {
   deleteDocumentMetadata,
   deleteDocumentMetadataPrefix,
   getDocumentMetadata,
+  listDocumentMetadata,
   moveDocumentMetadataPrefix,
   moveDocumentMetadataReplacingDestination,
 } from './documentMetadata.js'
@@ -94,6 +95,7 @@ interface ReplaceJournal {
   replacement: string
   expectedHash: string
   replacementHash: string
+  phase?: 'manual-recovery-required'
 }
 
 interface FolderRenameJournal {
@@ -102,6 +104,8 @@ interface FolderRenameJournal {
   /** Vault-relative folder paths (no leading/trailing slash). */
   srcRel: string
   destRel: string
+  sourceDev: number
+  sourceIno: number
 }
 
 interface FileRenameJournal {
@@ -109,8 +113,19 @@ interface FileRenameJournal {
   op: 'file-rename'
   srcRel: string
   destRel: string
+  staging?: string
   documentId?: string
   sourceHash: string
+}
+
+interface DeleteReuseManifest {
+  version: 1
+  op: 'delete-path-reuse'
+  kind: 'file' | 'folder'
+  path: string
+  inflight: string
+  quarantine: string
+  identities: Array<{ path: string; id: string }>
 }
 
 // Reserved artifact name patterns (see file header for why they are
@@ -123,6 +138,7 @@ const RENAME_RE = /^\.(.+)\.docus-rename-[0-9a-f-]+$/
 const DELETE_RE = /^(.+)\.docus-delete-\d+$/
 const DELETE_INFLIGHT_RE = /^(.+)\.docus-delete-inflight-[0-9a-f-]+$/
 const DELETE_QUARANTINE_RE = /^(.+)\.docus-quarantine-reuse-[0-9a-f-]+$/
+const DELETE_MANIFEST_RE = /^\.(.+)\.docus-delete-manifest-[0-9a-f-]+$/
 
 interface ArtifactGroup {
   base: string
@@ -132,6 +148,7 @@ interface ArtifactGroup {
   remove: string[]
   rename: string[]
   quarantines: string[]
+  deleteManifests: string[]
 }
 
 async function exists(absPath: string): Promise<boolean> {
@@ -178,6 +195,7 @@ function parseReplaceJournal(raw: string): ReplaceJournal | null {
       && typeof entry.replacement === 'string'
       && typeof entry.expectedHash === 'string'
       && typeof entry.replacementHash === 'string'
+      && (entry.phase === undefined || entry.phase === 'manual-recovery-required')
     ) {
       return entry as ReplaceJournal
     }
@@ -197,7 +215,10 @@ function validReplaceJournalPaths(dir: string, contentDir: string, targetAbs: st
   const targetBase = path.basename(targetAbs)
   if (path.basename(journal.staged) !== journal.staged || path.basename(journal.replacement) !== journal.replacement) return false
   if (!journal.staged.startsWith(`.${targetBase}.docus-staged-`)) return false
-  if (!journal.replacement.startsWith(`.${targetBase}.docus-save-`)) return false
+  const validReplacementName = journal.phase === 'manual-recovery-required'
+    ? journal.replacement.startsWith(`.${targetBase}.docus-quarantine-save-`)
+    : journal.replacement.startsWith(`.${targetBase}.docus-save-`)
+  if (!validReplacementName) return false
   return isContained(contentDir, path.resolve(dir, journal.staged))
     && isContained(contentDir, path.resolve(dir, journal.replacement))
     && isContained(contentDir, targetAbs)
@@ -229,6 +250,8 @@ function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
       && entry.op === 'folder-rename'
       && typeof entry.srcRel === 'string'
       && typeof entry.destRel === 'string'
+      && typeof entry.sourceDev === 'number'
+      && typeof entry.sourceIno === 'number'
     ) {
       return entry as FolderRenameJournal
     }
@@ -243,9 +266,21 @@ function parseFileRenameJournal(raw: string): FileRenameJournal | null {
     const entry = JSON.parse(raw) as Partial<FileRenameJournal>
     if (entry.version === 1 && entry.op === 'file-rename'
       && typeof entry.srcRel === 'string' && typeof entry.destRel === 'string'
+      && (entry.staging === undefined || typeof entry.staging === 'string')
       && typeof entry.sourceHash === 'string'
       && (entry.documentId === undefined || typeof entry.documentId === 'string')) return entry as FileRenameJournal
     return null
+  } catch { return null }
+}
+
+function parseDeleteReuseManifest(raw: string): DeleteReuseManifest | null {
+  try {
+    const entry = JSON.parse(raw) as Partial<DeleteReuseManifest>
+    if (entry.version !== 1 || entry.op !== 'delete-path-reuse') return null
+    if (entry.kind !== 'file' && entry.kind !== 'folder') return null
+    if (typeof entry.path !== 'string' || typeof entry.inflight !== 'string' || typeof entry.quarantine !== 'string') return null
+    if (!Array.isArray(entry.identities) || !entry.identities.every((item) => item && typeof item.path === 'string' && typeof item.id === 'string')) return null
+    return entry as DeleteReuseManifest
   } catch { return null }
 }
 
@@ -261,17 +296,6 @@ function metadataPathFor(vaultRel: string): string {
 async function isDirectory(absPath: string): Promise<boolean> {
   try {
     return (await fs.stat(absPath)).isDirectory()
-  } catch {
-    return false
-  }
-}
-
-/** true only for a readable EMPTY directory; anything else (external
- * content, unreadable, missing, a file) is conservatively "not ours". */
-async function isEmptyDirectory(absPath: string): Promise<boolean> {
-  try {
-    const entries = await fs.readdir(absPath)
-    return entries.length === 0
   } catch {
     return false
   }
@@ -307,8 +331,20 @@ async function recoverReplaceJournal(
     note(journalAbs, 'quarantined', 'invalid replace journal paths; no referenced path was touched')
     return
   }
+  if (journal.phase === 'manual-recovery-required') {
+    note(journalAbs, 'quarantined', 'manual recovery set retained; no generation was touched')
+    return
+  }
   const stagedAbs = path.join(dir, journal.staged)
   const saveAbs = path.join(dir, journal.replacement)
+  const quarantineReplacement = async (): Promise<string> => {
+    if (!await exists(saveAbs) || journal.replacement.includes('.docus-quarantine-save-')) return journal.replacement
+    const quarantinedName = `.${path.basename(targetAbs)}.docus-quarantine-save-${randomUUID()}`
+    const quarantinedAbs = path.join(dir, quarantinedName)
+    await fs.rename(saveAbs, quarantinedAbs)
+    await syncParentDirectoryBestEffort(quarantinedAbs)
+    return quarantinedName
+  }
   const stagedExists = await exists(stagedAbs)
   const targetExists = await exists(targetAbs)
 
@@ -346,6 +382,8 @@ async function recoverReplaceJournal(
       note(journalAbs, 'quarantined', targetIsExpected
         ? 'old generation occupies target; replacement retained for inspection'
         : 'external generation occupies target; old and replacement generations retained')
+      const replacement = await quarantineReplacement().catch(() => journal.replacement)
+      await rewriteDurableJournal(journalAbs, { ...journal, replacement, phase: 'manual-recovery-required' }).catch(() => {})
     }
     return
   }
@@ -386,11 +424,19 @@ async function recoverReplaceJournal(
   }
   // A failed verification means neither replacement nor its intent is
   // proven stale. Keep it and the journal as a recovery set.
-  if (!await exists(saveAbs)) await removeDurableJournal(journalAbs).catch(() => {})
+  if (await exists(saveAbs)) {
+    const replacement = await quarantineReplacement()
+    await rewriteDurableJournal(journalAbs, { ...journal, replacement, phase: 'manual-recovery-required' }).catch((error) => {
+      note(journalAbs, 'failed', `could not persist manual-recovery phase: ${(error as Error).message}`)
+    })
+  } else {
+    await removeDurableJournal(journalAbs).catch(() => {})
+  }
 }
 
 async function recoverFileRenameJournal(
   contentDir: string, db: DatabaseT, journalAbs: string, journal: FileRenameJournal,
+  legacyStagingNames: readonly string[],
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
   if (
@@ -398,22 +444,54 @@ async function recoverFileRenameJournal(
     || !validRenameRel(contentDir, journal.srcRel)
     || !validRenameRel(contentDir, journal.destRel)
     || !journalBelongsToSource(contentDir, journalAbs, journal.srcRel, 'file')
+    || (journal.staging !== undefined && path.basename(journal.staging) !== journal.staging)
   ) {
     note(journalAbs, 'quarantined', 'invalid file-rename journal paths; no referenced path was touched')
     return
   }
   const srcAbs = path.join(contentDir, `${journal.srcRel}.md`)
   const destAbs = path.join(contentDir, `${journal.destRel}.md`)
+  const stagingName = journal.staging ?? (legacyStagingNames.length === 1 ? legacyStagingNames[0] : undefined)
+  const stagingAbs = stagingName ? path.join(path.dirname(srcAbs), stagingName) : null
+  if (
+    stagingName !== undefined
+    && (!stagingName.startsWith(`.${path.basename(srcAbs)}.docus-rename-`)
+      || !stagingAbs
+      || !isContained(contentDir, stagingAbs))
+  ) {
+    note(journalAbs, 'quarantined', 'invalid file-rename staging path; no referenced path was touched')
+    return
+  }
   const srcExists = await exists(srcAbs)
   const destExists = await exists(destAbs)
+  const stagingExists = stagingAbs ? await exists(stagingAbs) : false
   const sourceMetadata = getDocumentMetadata(db, journal.srcRel)
   const destinationMetadata = getDocumentMetadata(db, journal.destRel)
   if (journal.documentId && destinationMetadata?.id === journal.documentId) {
+    if (stagingExists) {
+      if (!destExists) {
+        note(journalAbs, 'quarantined', 'metadata committed but destination is missing; staging retained')
+        return
+      }
+      const [stagedStat, destStat] = await Promise.all([fs.stat(stagingAbs!), fs.stat(destAbs)])
+      if (stagedStat.dev !== destStat.dev || stagedStat.ino !== destStat.ino) {
+        note(journalAbs, 'quarantined', 'metadata committed but staging belongs to another generation')
+        return
+      }
+      await rm(stagingAbs!)
+    }
     await removeDurableJournal(journalAbs).catch(() => {})
     note(destAbs, 'cleaned', 'file-rename metadata already committed')
     return
   }
   if (!srcExists && destExists && await hashMatches(destAbs, journal.sourceHash)) {
+    if (stagingExists) {
+      const [stagedStat, destStat] = await Promise.all([fs.stat(stagingAbs!), fs.stat(destAbs)])
+      if (stagedStat.dev !== destStat.dev || stagedStat.ino !== destStat.ino) {
+        note(journalAbs, 'quarantined', 'rename staging does not match destination generation')
+        return
+      }
+    }
     if (!journal.documentId || sourceMetadata?.id !== journal.documentId) {
       note(journalAbs, 'quarantined', 'file-rename source identity no longer matches journal')
       return
@@ -424,11 +502,26 @@ async function recoverFileRenameJournal(
         note(journalAbs, 'quarantined', 'file-rename source metadata missing; journal retained')
         return
       }
+      if (stagingExists) await rm(stagingAbs!)
       await removeDurableJournal(journalAbs)
       note(destAbs, 'completed-rename', 'interrupted file rename metadata move completed from journal')
     } catch (error) {
       note(journalAbs, 'failed', `could not complete file-rename metadata move: ${(error as Error).message}`)
     }
+    return
+  }
+  if (!srcExists && !destExists && stagingExists) {
+    if (!stagingAbs || !await hashMatches(stagingAbs, journal.sourceHash)) {
+      note(journalAbs, 'quarantined', 'rename staging hash does not match journal')
+      return
+    }
+    const { restored } = await restoreCreateOnly(stagingAbs, srcAbs)
+    if (!restored) {
+      note(stagingAbs, 'quarantined', 'rename staging retained; source claimed during recovery')
+      return
+    }
+    await removeDurableJournal(journalAbs)
+    note(srcAbs, 'restored', 'interrupted file rename rolled back before destination link')
     return
   }
   if (srcExists && !destExists && await hashMatches(srcAbs, journal.sourceHash)) {
@@ -463,8 +556,18 @@ async function recoverFolderRenameJournal(
   // the two paths, never split.
   const srcIsDir = await isDirectory(srcAbs)
   const destIsDir = await isDirectory(destAbs)
+  const matchesSourceGeneration = async (abs: string): Promise<boolean> => {
+    try {
+      const stat = await fs.stat(abs)
+      return stat.dev === journal.sourceDev && stat.ino === journal.sourceIno
+    } catch { return false }
+  }
 
   if (srcIsDir) {
+    if (!await matchesSourceGeneration(srcAbs)) {
+      note(journalAbs, 'quarantined', 'folder-rename source generation does not match journal')
+      return
+    }
     if (!destIsDir) {
       // Crash before the move (or after an externally re-used
       // destination failed it — the route removes the journal in that
@@ -474,22 +577,17 @@ async function recoverFolderRenameJournal(
       note(journalAbs, 'cleaned', 'stale folder-rename journal (move never started)')
       return
     }
-    // Both directories exist: the move never landed (rename would have
-    // emptied src). dest is either OUR empty gate directory (crash
-    // between mkdir and rename — proven ours by being empty) or
-    // external content. Remove it only in the proven-ours case.
-    if (await isEmptyDirectory(destAbs)) {
-      await fs.rmdir(destAbs).catch(() => {})
-      await removeDurableJournal(journalAbs).catch(() => {})
-      note(destAbs, 'cleaned', 'empty gate directory from an interrupted folder rename')
-      return
-    }
-    await removeDurableJournal(journalAbs).catch(() => {})
-    note(journalAbs, 'cleaned', 'folder-rename destination claimed externally; rename never landed')
+    // Empty is not ownership proof. Without a journaled gate token we
+    // never remove a destination directory, even when it is empty.
+    note(journalAbs, 'quarantined', 'source remains but destination also exists; destination ownership is unproven')
     return
   }
 
   if (destIsDir) {
+    if (!await matchesSourceGeneration(destAbs)) {
+      note(journalAbs, 'quarantined', 'folder-rename destination generation does not match journal')
+      return
+    }
     // The move landed; finish the metadata prefix move (idempotent: it
     // is a no-op if the crash hit after the move, during journal
     // removal) and clear the journal.
@@ -603,7 +701,7 @@ async function recoverDirectory(
   const groupFor = (base: string): ArtifactGroup => {
     let group = groups.get(base)
     if (!group) {
-      group = { base, journals: [], staged: [], save: [], remove: [], rename: [], quarantines: [] }
+      group = { base, journals: [], staged: [], save: [], remove: [], rename: [], quarantines: [], deleteManifests: [] }
       groups.set(base, group)
     }
     return group
@@ -637,10 +735,61 @@ async function recoverDirectory(
     if (match) { groupFor(match[1]).quarantines.push(name); continue }
     match = DELETE_QUARANTINE_RE.exec(name)
     if (match) { groupFor(match[1]).quarantines.push(name); continue }
+    match = DELETE_MANIFEST_RE.exec(name)
+    if (match) { groupFor(match[1]).deleteManifests.push(name); continue }
   }
 
   for (const group of groups.values()) {
     const targetAbs = path.join(dir, group.base)
+    for (const manifestName of group.deleteManifests.sort()) {
+      const manifestAbs = path.join(dir, manifestName)
+      try {
+        const manifest = parseDeleteReuseManifest(await fs.readFile(manifestAbs, 'utf8'))
+        if (!manifest || !isValidPathSyntax(manifest.path)) {
+          note(manifestAbs, 'quarantined', 'invalid delete path-reuse manifest')
+          continue
+        }
+        const expectedTarget = manifest.kind === 'file'
+          ? path.join(contentDir, `${manifest.path}.md`)
+          : path.join(contentDir, manifest.path)
+        if (expectedTarget !== targetAbs
+          || path.basename(manifest.inflight) !== manifest.inflight
+          || path.basename(manifest.quarantine) !== manifest.quarantine
+          || !manifest.inflight.startsWith(`${group.base}.docus-delete-inflight-`)
+          || !manifest.quarantine.startsWith(`${group.base}.docus-quarantine-reuse-`)) {
+          note(manifestAbs, 'quarantined', 'delete path-reuse manifest is not bound to its public path')
+          continue
+        }
+        const identitiesAreScoped = manifest.identities.every((identity) =>
+          isValidPathSyntax(identity.path)
+          && (manifest.kind === 'file'
+            ? identity.path === manifest.path
+            : identity.path === manifest.path || identity.path.startsWith(`${manifest.path}/`)))
+        if (!identitiesAreScoped) {
+          note(manifestAbs, 'quarantined', 'delete path-reuse manifest contains out-of-scope identities')
+          continue
+        }
+        const inflightAbs = path.join(dir, manifest.inflight)
+        const quarantineAbs = path.join(dir, manifest.quarantine)
+        if (await exists(inflightAbs) && !await exists(quarantineAbs)) {
+          await fs.rename(inflightAbs, quarantineAbs)
+          await syncParentDirectoryBestEffort(quarantineAbs)
+        }
+        if (!await exists(quarantineAbs)) {
+          note(manifestAbs, 'failed', 'delete path-reuse manifest has no surviving quarantine generation')
+          continue
+        }
+        for (const identity of manifest.identities) {
+          if (getDocumentMetadata(db, identity.path)?.id === identity.id) {
+            deleteDocumentMetadata(db, identity.path)
+          }
+        }
+        await removeDurableJournal(manifestAbs)
+        note(quarantineAbs, 'quarantined', 'delete path-reuse identity detachment replayed')
+      } catch (error) {
+        note(manifestAbs, 'failed', (error as Error).message)
+      }
+    }
     // Journals are authoritative and go first.
     for (const journalName of group.journals.sort()) {
       const journalAbs = path.join(dir, journalName)
@@ -653,7 +802,7 @@ async function recoverDirectory(
         }
         const fileJournal = parseFileRenameJournal(journalRaw)
         if (fileJournal) {
-          await recoverFileRenameJournal(contentDir, db, journalAbs, fileJournal, note)
+          await recoverFileRenameJournal(contentDir, db, journalAbs, fileJournal, group.rename, note)
           continue
         }
         const folderJournal = parseFolderRenameJournal(journalRaw)
@@ -743,12 +892,32 @@ async function recoverDirectory(
           // conservatively promoted even when the target is currently
           // absent; they are never auto-deleted.
           const permanentAbs = path.join(dir, `${group.base}.docus-quarantine-reuse-${randomUUID()}`)
+          const metaPath = metadataPathFor(vaultRelative(contentDir, targetAbs))
+          const stagedStatBefore = await fs.stat(quarantineAbs)
+          const legacyIdentities = isLegacyAmbiguous
+            ? (stagedStatBefore.isDirectory()
+                ? listDocumentMetadata(db).filter((item) => item.path === metaPath || item.path.startsWith(`${metaPath}/`))
+                : [getDocumentMetadata(db, metaPath)].filter((item): item is NonNullable<typeof item> => item !== null))
+                .map((item) => ({ path: item.path, id: item.id }))
+            : []
+          if (isLegacyAmbiguous) {
+            const legacyManifestAbs = path.join(dir, `.${group.base}.docus-quarantine-manifest-${randomUUID()}`)
+            await writeDurableJournal(legacyManifestAbs, {
+              version: 1,
+              op: 'legacy-delete-quarantine',
+              path: metaPath,
+              quarantine: path.basename(permanentAbs),
+              identities: legacyIdentities,
+            })
+          }
           await fs.rename(quarantineAbs, permanentAbs)
           await syncParentDirectoryBestEffort(permanentAbs)
-          if (targetExists) {
-            const stagedStat = await fs.stat(permanentAbs)
-            const metaPath = metadataPathFor(vaultRelative(contentDir, targetAbs))
-            if (stagedStat.isDirectory()) deleteDocumentMetadataPrefix(db, metaPath)
+          if (isLegacyAmbiguous) {
+            for (const identity of legacyIdentities) {
+              if (getDocumentMetadata(db, identity.path)?.id === identity.id) deleteDocumentMetadata(db, identity.path)
+            }
+          } else if (targetExists) {
+            if (stagedStatBefore.isDirectory()) deleteDocumentMetadataPrefix(db, metaPath)
             else deleteDocumentMetadata(db, metaPath)
           }
           note(permanentAbs, 'quarantined', targetExists

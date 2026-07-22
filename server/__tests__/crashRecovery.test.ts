@@ -102,11 +102,15 @@ describe('recoverInterruptedOperations (journaled replace)', () => {
 
     expect(await fs.readFile(path.join(vault, 'note.md'), 'utf8')).toBe('# tampered staged\n')
     expect(report.actions.some((a) => a.action === 'restored')).toBe(true)
-    expect(await namesIn()).toEqual([
-      '.note.md.docus-journal-cccc',
-      '.note.md.docus-save-bbbb',
-      'note.md',
-    ])
+    const quarantineSave = (await namesIn()).find((name) => name.startsWith('.note.md.docus-quarantine-save-'))!
+    expect(quarantineSave).toBeTruthy()
+    expect(await namesIn()).toContain('.note.md.docus-journal-cccc')
+    expect(await namesIn()).toContain('note.md')
+    await runRecovery()
+    await runRecovery()
+    expect(await fs.readFile(path.join(vault, quarantineSave), 'utf8')).toBe('# replacement\n')
+    expect(await fs.readFile(path.join(vault, '.note.md.docus-journal-cccc'), 'utf8'))
+      .toContain('manual-recovery-required')
   })
 
   it('restores the old generation when the save temp is missing', async () => {
@@ -143,12 +147,10 @@ describe('recoverInterruptedOperations (journaled replace)', () => {
 
     expect(await fs.readFile(path.join(vault, 'note.md'), 'utf8')).toBe('# landed\n')
     expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
-    expect(await namesIn()).toEqual([
-      '.note.md.docus-journal-cccc',
-      '.note.md.docus-save-bbbb',
-      '.note.md.docus-staged-aaaa',
-      'note.md',
-    ])
+    expect((await namesIn()).some((name) => name.startsWith('.note.md.docus-quarantine-save-'))).toBe(true)
+    expect(await namesIn()).toContain('.note.md.docus-journal-cccc')
+    expect(await namesIn()).toContain('.note.md.docus-staged-aaaa')
+    expect(await namesIn()).toContain('note.md')
   })
 
   it('removes a stale journal whose takeover never happened', async () => {
@@ -291,6 +293,50 @@ describe('recoverInterruptedOperations (journal-less orphans)', () => {
 })
 
 describe('recoverInterruptedOperations (delete quarantine)', () => {
+  it('replays identity detachment after a crash between quarantine fsync and metadata update', async () => {
+    await seed({
+      'gone.md': '# external\n',
+      'gone.md.docus-quarantine-reuse-aaaa': '# old\n',
+      '.gone.md.docus-delete-manifest-bbbb': JSON.stringify({
+        version: 1,
+        op: 'delete-path-reuse',
+        kind: 'file',
+        path: 'gone',
+        inflight: 'gone.md.docus-delete-inflight-aaaa',
+        quarantine: 'gone.md.docus-quarantine-reuse-aaaa',
+        identities: [{ path: 'gone', id: 'old-id' }],
+      }),
+    })
+    saveDocumentMetadata(db, { id: 'old-id', path: 'gone', title: 'Old', updatedAt: 1 })
+
+    await runRecovery()
+
+    expect(getDocumentMetadata(db, 'gone')).toBeNull()
+    expect(await namesIn()).not.toContain('.gone.md.docus-delete-manifest-bbbb')
+    expect(await namesIn()).toContain('gone.md.docus-quarantine-reuse-aaaa')
+  })
+
+  it('does not detach a fresh identity when replaying a stale delete manifest', async () => {
+    await seed({
+      'gone.md': '# external\n',
+      'gone.md.docus-quarantine-reuse-aaaa': '# old\n',
+      '.gone.md.docus-delete-manifest-bbbb': JSON.stringify({
+        version: 1,
+        op: 'delete-path-reuse',
+        kind: 'file',
+        path: 'gone',
+        inflight: 'gone.md.docus-delete-inflight-aaaa',
+        quarantine: 'gone.md.docus-quarantine-reuse-aaaa',
+        identities: [{ path: 'gone', id: 'old-id' }],
+      }),
+    })
+    saveDocumentMetadata(db, { id: 'fresh-id', path: 'gone', title: 'Fresh', updatedAt: 2 })
+
+    await runRecovery()
+
+    expect(getDocumentMetadata(db, 'gone')?.id).toBe('fresh-id')
+  })
+
   it('never auto-deletes an explicit path-reuse quarantine after the public path disappears', async () => {
     await seed({ 'gone.md.docus-quarantine-reuse-aaaa': '# recoverable old generation\n' })
     saveDocumentMetadata(db, { id: 'new-id', path: 'gone', title: 'New', updatedAt: 1 })
@@ -310,7 +356,8 @@ describe('recoverInterruptedOperations (delete quarantine)', () => {
     const report = await runRecovery()
 
     expect((await namesIn()).some((name) => name.startsWith('gone.md.docus-quarantine-reuse-'))).toBe(true)
-    expect(getDocumentMetadata(db, 'gone')?.id).toBe('gone-id')
+    expect(getDocumentMetadata(db, 'gone')).toBeNull()
+    expect((await namesIn()).some((name) => name.startsWith('.gone.md.docus-quarantine-manifest-'))).toBe(true)
     expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
   })
 
@@ -321,7 +368,8 @@ describe('recoverInterruptedOperations (delete quarantine)', () => {
     const report = await runRecovery()
 
     expect((await namesIn()).some((name) => name.startsWith('gone.docus-quarantine-reuse-'))).toBe(true)
-    expect(getDocumentMetadata(db, 'gone/a')?.id).toBe('gone-a-id')
+    expect(getDocumentMetadata(db, 'gone/a')).toBeNull()
+    expect((await namesIn()).some((name) => name.startsWith('.gone.docus-quarantine-manifest-'))).toBe(true)
     expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
   })
 
@@ -573,6 +621,33 @@ describe('real subprocess crash + startup recovery', () => {
       expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
     } finally { persistedDb.close() }
   })
+
+  it('restores the source after kill -9 between rename takeover and destination link', async () => {
+    const from = path.join(vault, 'old.md')
+    const to = path.join(vault, 'new.md')
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seed({ 'old.md': '# original\n' })
+
+    const child = spawnChild({
+      DOCUS_RENAME_FROM: from,
+      DOCUS_RENAME_TO: to,
+      DOCUS_RENAME_DB: dbPath,
+      DOCUS_RENAME_CRASH_POINT: 'takeover',
+    }, RENAME_METADATA_CRASH_CHILD)
+    expectHardKill(await waitExit(child))
+    expect(await fs.stat(from).then(() => true, () => false)).toBe(false)
+    expect(await fs.stat(to).then(() => true, () => false)).toBe(false)
+
+    const persistedDb = new Database(dbPath)
+    try {
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(await fs.readFile(from, 'utf8')).toBe('# original\n')
+      expect(getDocumentMetadata(persistedDb, 'old')?.id).toBe('post-staging-crash-id')
+      expect(getDocumentMetadata(persistedDb, 'new')).toBeNull()
+      expect(report.actions.some((a) => a.action === 'restored')).toBe(true)
+      expect((await namesIn()).some((name) => name.includes('.docus-rename-') || name.includes('.docus-journal-'))).toBe(false)
+    } finally { persistedDb.close() }
+  })
 })
 
 describe('recoverInterruptedOperations (rename staging, journal-less)', () => {
@@ -627,6 +702,7 @@ describe('recoverInterruptedOperations (file-rename journal)', () => {
         op: 'file-rename',
         srcRel: 'missing-old',
         destRel: 'important-note',
+        staging: '.missing-old.md.docus-rename-aaaa',
         documentId: 'missing-id',
         sourceHash: sha256Hex('# important\n'),
       }),
@@ -648,6 +724,7 @@ describe('recoverInterruptedOperations (file-rename journal)', () => {
         op: 'file-rename',
         srcRel: 'old',
         destRel: 'new',
+        staging: '.old.md.docus-rename-aaaa',
         documentId: 'old-generation-id',
         sourceHash: sha256Hex('# moved\n'),
       }),
@@ -671,6 +748,7 @@ describe('recoverInterruptedOperations (file-rename journal)', () => {
         op: 'file-rename',
         srcRel: 'old',
         destRel: 'new',
+        staging: '.old.md.docus-rename-aaaa',
         documentId: 'old-generation-id',
         sourceHash: sha256Hex('# moved\n'),
       }),
@@ -693,6 +771,7 @@ describe('recoverInterruptedOperations (file-rename journal)', () => {
         op: 'file-rename',
         srcRel: 'old',
         destRel: 'new',
+        staging: '.old.md.docus-rename-aaaa',
         documentId: 'stable-id',
         sourceHash: sha256Hex('# moved\n'),
       }),
@@ -717,6 +796,8 @@ describe('recoverInterruptedOperations (file-rename journal)', () => {
           op: 'folder-rename',
           srcRel: `../${path.basename(sentinel)}`,
           destRel: 'safe',
+          sourceDev: 0,
+          sourceIno: 0,
         }),
       })
       const report = await runRecovery()
@@ -727,13 +808,14 @@ describe('recoverInterruptedOperations (file-rename journal)', () => {
 })
 
 describe('recoverInterruptedOperations (folder-rename journal)', () => {
-  function folderJournal(srcRel: string, destRel: string): string {
-    return JSON.stringify({ version: 1, op: 'folder-rename', srcRel, destRel })
+  async function folderJournal(srcRel: string, destRel: string, evidenceRel = srcRel): Promise<string> {
+    const stat = await fs.stat(path.join(vault, evidenceRel)).catch(() => ({ dev: 0, ino: 0 }))
+    return JSON.stringify({ version: 1, op: 'folder-rename', srcRel, destRel, sourceDev: stat.dev, sourceIno: stat.ino })
   }
 
   it('never removes a real empty directory from a forged no-op journal', async () => {
     await fs.mkdir(path.join(vault, 'notes'))
-    await seed({ '.notes.docus-journal-aaaa': folderJournal('notes', 'notes') })
+    await seed({ '.notes.docus-journal-aaaa': await folderJournal('notes', 'notes') })
 
     const report = await runRecovery()
 
@@ -744,7 +826,7 @@ describe('recoverInterruptedOperations (folder-rename journal)', () => {
 
   it('completes the metadata prefix move when the directory move landed', async () => {
     await seed({ 'ren/a.md': '# a\n' })
-    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await folderJournal('proj', 'ren', 'ren'), 'utf8')
     saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
 
     const report = await runRecovery()
@@ -757,7 +839,7 @@ describe('recoverInterruptedOperations (folder-rename journal)', () => {
 
   it('is idempotent when the metadata move already landed before the crash', async () => {
     await seed({ 'ren/a.md': '# a\n' })
-    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await folderJournal('proj', 'ren', 'ren'), 'utf8')
     saveDocumentMetadata(db, { id: 'ren-a-id', path: 'ren/a', title: 'A', updatedAt: 1 })
 
     const report = await runRecovery()
@@ -769,7 +851,7 @@ describe('recoverInterruptedOperations (folder-rename journal)', () => {
 
   it('removes a stale journal when the source tree is still in place', async () => {
     await seed({ 'proj/a.md': '# a\n' })
-    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await folderJournal('proj', 'ren'), 'utf8')
     saveDocumentMetadata(db, { id: 'proj-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
 
     const report = await runRecovery()
@@ -779,34 +861,33 @@ describe('recoverInterruptedOperations (folder-rename journal)', () => {
     expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
   })
 
-  it('removes our own empty gate directory and the stale journal', async () => {
-    // Crash between the mkdir gate and the rename: src tree intact,
-    // dest is our own EMPTY directory — proven ours by being empty.
+  it('never treats an empty destination as proof that the gate is ours', async () => {
     await seed({ 'proj/a.md': '# a\n' })
     await fs.mkdir(path.join(vault, 'ren'))
-    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await folderJournal('proj', 'ren'), 'utf8')
 
     await runRecovery()
 
-    expect(await namesIn()).toEqual(['proj'])
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expect(await namesIn()).toContain('proj')
+    expect(await namesIn()).toContain('ren')
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 
-  it('leaves an externally claimed destination untouched and cleans the journal', async () => {
+  it('leaves an externally claimed destination untouched and quarantines the journal', async () => {
     // Both directories exist with the source tree intact: the move
     // never landed; the non-empty destination is external content.
     await seed({ 'proj/a.md': '# a\n', 'ren/external.md': '# external\n' })
-    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await folderJournal('proj', 'ren'), 'utf8')
 
     await runRecovery()
 
     expect(await fs.readFile(path.join(vault, 'ren/external.md'), 'utf8')).toBe('# external\n')
     expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 
   it('reports and keeps the journal when neither path exists', async () => {
-    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await folderJournal('proj', 'ren'), 'utf8')
 
     const report = await runRecovery()
 

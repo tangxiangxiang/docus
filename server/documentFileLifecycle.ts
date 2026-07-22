@@ -20,6 +20,7 @@ import {
  * (the window a kill -9 leaves two names on one inode). */
 export type CreateOnlyMoveHooks = {
   afterMkdirGate?: (toDirAbs: string) => void | Promise<void>
+  afterRenameTakenOver?: (stagingPath: string) => void | Promise<void>
   afterRenameLinked?: () => void | Promise<void>
   /** Fires after the staging name is gone but before metadata moves. */
   afterFileMoveFinalized?: () => void | Promise<void>
@@ -85,12 +86,13 @@ export class RenameSourceReusedError extends Error {
  * degrades to a re-checked plain rename — a small check-to-rename
  * window exists only there.
  */
-export async function createOnlyMoveFile(fromAbs: string, toAbs: string): Promise<void> {
-  const stagedPath = path.join(
+export async function createOnlyMoveFile(fromAbs: string, toAbs: string, preparedStagingPath?: string): Promise<void> {
+  const stagedPath = preparedStagingPath ?? path.join(
     path.dirname(fromAbs),
     `.${path.basename(fromAbs)}.docus-rename-${randomUUID()}`,
   )
   await renameWithTransientWindowsRetry(fromAbs, stagedPath)
+  if (__createOnlyMoveHooks?.afterRenameTakenOver) await __createOnlyMoveHooks.afterRenameTakenOver(stagedPath)
   try {
     await fs.link(stagedPath, toAbs)
   } catch (error) {
@@ -199,20 +201,24 @@ export async function renameDocumentWithMetadata(input: {
   // operate on real paths. The production create-only mover always gets
   // a durable journal spanning file move through metadata commit.
   let journalPath: string | null = null
+  let journalStagingPath: string | null = null
   if (input.renameFile === undefined) {
     const sourceRaw = await fs.readFile(fromAbs, 'utf8')
     journalPath = path.join(path.dirname(fromAbs), `.${path.basename(fromAbs)}.docus-journal-${randomUUID()}`)
+    journalStagingPath = path.join(path.dirname(fromAbs), `.${path.basename(fromAbs)}.docus-rename-${randomUUID()}`)
     await writeDurableJournal(journalPath, {
       version: 1,
       op: 'file-rename',
       srcRel: fromPath,
       destRel: toPath,
+      staging: path.basename(journalStagingPath),
       documentId: getDocumentMetadata(db, fromPath)?.id,
       sourceHash: sha256Hex(sourceRaw),
     })
   }
+  const forwardRename = input.renameFile ?? ((from: string, to: string) => createOnlyMoveFile(from, to, journalStagingPath ?? undefined))
   try {
-    await renameFile(fromAbs, toAbs)
+    await forwardRename(fromAbs, toAbs)
   } catch (error) {
     // A double reuse leaves the owned generation in staging. Preserve
     // the journal so startup/manual recovery can associate its identity;
