@@ -23,6 +23,11 @@ import { applyMigrations } from '../db'
 import { getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataDatabase } from '../documentMetadata'
 import { __resetLinkIndexForTesting, getIndex as getLinkIndex } from '../linkIndex'
 import {
+  documentWriteLockWaitersForTesting,
+  pendingDocumentWriteLocksForTesting,
+  VAULT_STRUCTURE_LOCK,
+} from '../documentWriteLock'
+import {
   deriveToolSafetyPolicy,
   type ToolSafetyPolicy,
 } from '../ai/tool-safety'
@@ -516,6 +521,41 @@ describe('executeToolCall dispatcher', () => {
     expect(r.isError).toBe(true)
     expect(r.content).toMatch(/aborted/)
   })
+})
+
+describe('AI mutations with the reserved structure-lock spelling as a path', () => {
+  let contentDir: string
+  beforeEach(() => { contentDir = makeTempContentDir(); setContentDir(contentDir); __resetLinkIndexForTesting() })
+  afterEach(() => { setContentDir(ORIGINAL_CONTENT_DIR); __resetLinkIndexForTesting(); fs.rmSync(path.dirname(contentDir), { recursive: true, force: true }) })
+
+  it('rejects every mutation tool with an invalid-path error instead of self-deadlocking', async () => {
+    // Regression: an unnormalizable tool path falls back to its raw
+    // spelling as the document lock key. When that raw spelling WAS the
+    // structure lock key, structural tools self-deadlocked — the outer
+    // structure lock waited for an inner document lock on the same key,
+    // which waited for the outer lock to release — and every later
+    // membership operation queued behind the stuck structure lock. Lock
+    // keys now live in separate namespaces (structure vs `document:*`),
+    // so each call must return an immediate invalid-path error, never
+    // hang, and leave no queued locks behind. The 2s timeout IS the
+    // assertion against the deadlock.
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ['create_file', { path: VAULT_STRUCTURE_LOCK, content: 'x' }],
+      ['write_file', { path: VAULT_STRUCTURE_LOCK, content: 'x' }],
+      ['delete_file', { path: VAULT_STRUCTURE_LOCK }],
+      ['rename_file', { path: VAULT_STRUCTURE_LOCK, new_path: 'a/renamed' }],
+      ['rename_file', { path: 'a/source', new_path: VAULT_STRUCTURE_LOCK }],
+    ]
+    for (const [name, input] of calls) {
+      const result = await executeToolCall(name, input, ctx)
+      expect(result.isError).toBe(true)
+      expect(result.content).toMatch(/invalid path/)
+      expect(result.changed).toBeUndefined()
+    }
+    expect(fs.existsSync(path.join(CONTENT_DIR, `${VAULT_STRUCTURE_LOCK}.md`))).toBe(false)
+    expect(documentWriteLockWaitersForTesting(VAULT_STRUCTURE_LOCK)).toBe(0)
+    expect(pendingDocumentWriteLocksForTesting()).toBe(0)
+  }, 2000)
 })
 
 describe('TOOL_DEFINITIONS', () => {

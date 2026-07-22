@@ -20,6 +20,7 @@ import {
   withDocumentWriteLock,
 } from '../documentWriteLock.js'
 import { __setFolderRaceHooksForTesting } from '../routes/folders.js'
+import { __setPostRenameRaceHooksForTesting } from '../routes/posts.js'
 
 let sandbox: string
 let originalContentDir: string
@@ -485,6 +486,61 @@ describe('folder lifecycle vs concurrent membership changes (structure lock)', (
       expect(getDocumentMetadata(db, 'gone/created-during')?.title).toBe('X')
     } finally {
       __setFolderRaceHooksForTesting(null)
+    }
+  })
+})
+
+describe('REST rename vs a concurrent backlink added after the footprint check', () => {
+  // P1 regression: the rename verified its in-lock candidate backlink
+  // set, then RE-ENUMERATED the link index for the actual reference
+  // writes. A body PUT (document lock only, never the structure lock)
+  // could land a new link to the rename source in that window, and the
+  // rename rewrote that file without ever holding its lock — locked
+  // set ≠ written set. The rename now builds ONE plan from ONE in-lock
+  // enumeration: the verified candidate set and the executed write set
+  // are the same snapshot, so a link added after the check is simply
+  // left untouched, never written without its lock.
+
+  it('never rewrites a document whose new backlink lands after the footprint check', async () => {
+    await fs.writeFile(path.join(sandbox, 'src.md'), '# src', 'utf8')
+    await fs.writeFile(path.join(sandbox, 'ref-a.md'), '# a\nsee [[src]]', 'utf8')
+    await fs.writeFile(path.join(sandbox, 'late-b.md'), '# b\nno links', 'utf8')
+    __resetLinkIndexForTesting()
+    await get('/api/links/index')
+
+    let putResponse: Response | null = null
+    __setPostRenameRaceHooksForTesting({
+      afterPlanVerified: async () => {
+        // late-b is NOT in the rename's lock set (src, renamed, ref-a):
+        // its save holds only its own document lock and proceeds while
+        // the rename holds all of its locks. It adds a link to the
+        // rename source AFTER the footprint check has passed.
+        putResponse = await app.fetch(new Request('http://localhost/api/posts/late-b', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ raw: '# b\nnow links [[src]]', baseRaw: '# b\nno links' }),
+        }))
+        expect(putResponse.status).toBe(200)
+      },
+    })
+    try {
+      const rename = await app.fetch(new Request('http://localhost/api/posts/src', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'renamed', updateReferences: true }),
+      }))
+      expect(rename.status).toBe(200)
+      const body = await rename.json() as { updatedReferences: Array<{ path: string }> }
+      // Exactly the locked backlink was rewritten — nothing more.
+      expect(body.updatedReferences.map((item) => item.path)).toEqual(['ref-a'])
+      expect(await fs.readFile(path.join(sandbox, 'ref-a.md'), 'utf8')).toBe('# a\nsee [[renamed]]')
+      expect(await fs.readFile(path.join(sandbox, 'renamed.md'), 'utf8')).toBe('# src')
+      // late-b kept exactly the body its own save wrote: the rename
+      // never touched a document whose lock it did not hold.
+      expect(putResponse).not.toBeNull()
+      expect(await fs.readFile(path.join(sandbox, 'late-b.md'), 'utf8')).toBe('# b\nnow links [[src]]')
+    } finally {
+      __setPostRenameRaceHooksForTesting(null)
     }
   })
 })

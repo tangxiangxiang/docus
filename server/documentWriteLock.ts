@@ -1,54 +1,74 @@
-const documentWriteTails = new Map<string, Promise<void>>()
-const documentWriteWaiters = new Map<string, number>()
+const internalWriteTails = new Map<string, Promise<void>>()
+const internalWriteWaiters = new Map<string, number>()
 
 /**
- * Reserved lock key that serializes every operation that changes vault
- * tree membership (file/folder create, delete, rename/move, recovery
- * create). Membership-changing operations acquire this FIRST, then the
- * sorted document path locks — one global acquisition order, so a
- * folder lifecycle transaction can never interleave with a child being
- * created or removed underneath it. Content-only writes (body PUT, AI
- * write/patch, metadata/frontmatter) take document path locks only, so
- * they never contend with structural operations except on the exact
- * documents they touch. The `@@` spelling is not a valid vault segment
- * (SEGMENT_RE is `[a-z0-9-]`), so no real path can collide with it.
+ * Reserved sentinel that identifies the vault structure lock in the
+ * testing probes. Every operation that changes vault tree membership
+ * (file/folder create, delete, rename/move, recovery create) acquires
+ * this lock FIRST, then the sorted document path locks — one global
+ * acquisition order, so a folder lifecycle transaction can never
+ * interleave with a child being created or removed underneath it.
+ * Content-only writes (body PUT, AI write/patch, metadata/frontmatter)
+ * take document path locks only, so they never contend with structural
+ * operations except on the exact documents they touch.
+ *
+ * The lock table itself keys the two lock classes in SEPARATE
+ * namespaces: the structure lock under STRUCTURE_LOCK_KEY, every
+ * document under `document:<path>`. No user-supplied path — valid or
+ * not — can ever collide with the structure lock. In particular an AI
+ * tool call whose unnormalizable path (e.g. this very spelling, which
+ * is not a valid vault segment: SEGMENT_RE is `[a-z0-9-]`) falls back
+ * to its raw string as the DOCUMENT lock key still cannot self-deadlock
+ * against the structure lock it holds, nor jam every later membership
+ * operation behind a stuck lock — the executor's assertSafePath rejects
+ * the path before any side effect.
  */
 export const VAULT_STRUCTURE_LOCK = '@@vault-structure'
 
+const STRUCTURE_LOCK_KEY = 'structure'
+const documentLockKey = (path: string): string => `document:${path}`
+
 export function withVaultStructureLock<T>(operation: () => Promise<T>): Promise<T> {
-  return withDocumentWriteLock(VAULT_STRUCTURE_LOCK, operation)
+  return withInternalWriteLock(STRUCTURE_LOCK_KEY, operation)
 }
 
 /**
  * Serialize document write transactions by Vault-relative path while allowing
  * unrelated documents to proceed independently.
  */
-export async function withDocumentWriteLock<T>(
+export function withDocumentWriteLock<T>(
   path: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const previous = documentWriteTails.get(path) ?? Promise.resolve()
-  const queued = documentWriteTails.has(path)
-  if (queued) documentWriteWaiters.set(path, (documentWriteWaiters.get(path) ?? 0) + 1)
+  return withInternalWriteLock(documentLockKey(path), operation)
+}
+
+async function withInternalWriteLock<T>(
+  key: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = internalWriteTails.get(key) ?? Promise.resolve()
+  const queued = internalWriteTails.has(key)
+  if (queued) internalWriteWaiters.set(key, (internalWriteWaiters.get(key) ?? 0) + 1)
   let release!: () => void
   const current = new Promise<void>((resolve) => {
     release = resolve
   })
   const tail = previous.catch(() => {}).then(() => current)
-  documentWriteTails.set(path, tail)
+  internalWriteTails.set(key, tail)
 
   await previous.catch(() => {})
   if (queued) {
-    const remaining = (documentWriteWaiters.get(path) ?? 1) - 1
-    if (remaining > 0) documentWriteWaiters.set(path, remaining)
-    else documentWriteWaiters.delete(path)
+    const remaining = (internalWriteWaiters.get(key) ?? 1) - 1
+    if (remaining > 0) internalWriteWaiters.set(key, remaining)
+    else internalWriteWaiters.delete(key)
   }
   try {
     return await operation()
   } finally {
     release()
-    if (documentWriteTails.get(path) === tail) {
-      documentWriteTails.delete(path)
+    if (internalWriteTails.get(key) === tail) {
+      internalWriteTails.delete(key)
     }
   }
 }
@@ -67,10 +87,14 @@ export function withDocumentWriteLocks<T>(
 }
 
 export function pendingDocumentWriteLocksForTesting(): number {
-  return documentWriteTails.size
+  return internalWriteTails.size
 }
 
-/** How many operations are currently queued behind the lock for `path`. */
+/**
+ * How many operations are currently queued behind the lock for `path`.
+ * Pass VAULT_STRUCTURE_LOCK to inspect the structure lock itself.
+ */
 export function documentWriteLockWaitersForTesting(path: string): number {
-  return documentWriteWaiters.get(path) ?? 0
+  const key = path === VAULT_STRUCTURE_LOCK ? STRUCTURE_LOCK_KEY : documentLockKey(path)
+  return internalWriteWaiters.get(key) ?? 0
 }

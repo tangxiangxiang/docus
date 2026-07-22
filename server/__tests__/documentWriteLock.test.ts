@@ -92,6 +92,33 @@ describe('withVaultStructureLock', () => {
     expect(pendingDocumentWriteLocksForTesting()).toBe(0)
   })
 
+  it('never shares a key with a document lock, even for the reserved spelling', async () => {
+    // Regression: an AI tool call whose unnormalizable path falls back
+    // to its raw spelling used to key its document lock with the SAME
+    // string as the structure lock it already held — a self-deadlock
+    // that also jammed every later membership operation behind the
+    // stuck structure lock. The two lock classes now key in separate
+    // namespaces, so a document lock on the literal reserved string
+    // must run immediately even while the structure lock is held.
+    const holderStarted = deferred()
+    const releaseHolder = deferred()
+    const holder = withVaultStructureLock(async () => {
+      holderStarted.resolve()
+      await releaseHolder.promise
+    })
+    await holderStarted.promise
+
+    let innerRan = false
+    await withDocumentWriteLock(VAULT_STRUCTURE_LOCK, async () => {
+      innerRan = true
+    })
+    expect(innerRan).toBe(true)
+
+    releaseHolder.resolve()
+    await holder
+    expect(pendingDocumentWriteLocksForTesting()).toBe(0)
+  })
+
   it('reports queued waiters for deterministic race tests', async () => {
     const holderStarted = deferred()
     const releaseHolder = deferred()

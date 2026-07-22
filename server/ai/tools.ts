@@ -995,7 +995,11 @@ async function withMutationLocks(
     : [target.sourcePath, target.destinationPath, ...target.referencePaths]
   // Unnormalizable paths keep their raw spelling as the lock key so
   // the call still serializes; the executor's own assertSafePath
-  // rejects them before any side effect.
+  // rejects them before any side effect. Document lock keys live in
+  // their own namespace ('document:<path>'), so even a raw spelling
+  // equal to the reserved structure-lock string can never collide
+  // with the structure lock this call also holds (a shared key would
+  // self-deadlock the call and jam every later membership operation).
   const lockPaths = [...new Set(rawPaths.map((p) => normalizeLogicalContentPath(p) ?? p))].sort()
   const locked = lockPaths.reduceRight(
     (next, lockPath) => () => withDocumentWriteLock(lockPath, next),

@@ -32,6 +32,21 @@ import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
 
 const postRoutes = new Hono()
 
+/**
+ * Test-only seam for the REST rename race regression: fires inside the
+ * rename's complete lock set right after the in-lock backlink plan has
+ * been verified against the planned footprint, immediately before the
+ * reference rewrites execute. Null in production (never set outside
+ * tests).
+ */
+export type PostRenameRaceHooks = {
+  afterPlanVerified?: () => void | Promise<void>
+}
+let __postRenameRaceHooks: PostRenameRaceHooks | null = null
+export function __setPostRenameRaceHooksForTesting(hooks: PostRenameRaceHooks | null): void {
+  __postRenameRaceHooks = hooks
+}
+
 async function uniqueMoveTarget(absPath: string, relPath: string): Promise<{ abs: string; rel: string }> {
   if (!await exists(absPath)) return { abs: absPath, rel: relPath }
   const ext = path.extname(absPath)
@@ -406,14 +421,6 @@ postRoutes.patch('/api/posts/*', async (c) => {
   return withDocumentWriteLocks([srcPath, destPath, ...plannedReferencePaths], async () => {
   if (!await exists(src)) return bad(c, 'not found', 404)
   if (await exists(dest)) return bad(c, 'destination exists', 409)
-  if (body.updateReferences) {
-    const candidatePaths = (await getLinkIndex()).getBacklinks(srcPath).map((backlink) => backlink.source)
-    const planned = [...new Set(plannedReferencePaths)].sort()
-    const candidate = [...new Set(candidatePaths)].sort()
-    if (planned.length !== candidate.length || planned.some((item, index) => item !== candidate[index])) {
-      return bad(c, 'backlinks changed while rename was being prepared; retry', 409)
-    }
-  }
   const sourceRaw = await fs.readFile(src, 'utf8')
   const sourceStat = await fs.stat(src)
   const referenceSnapshots: Array<{
@@ -425,9 +432,25 @@ postRoutes.patch('/api/posts/*', async (c) => {
     mtime: number
   }> = []
   if (body.updateReferences) {
+    // ONE authoritative in-lock backlink enumeration: the verified
+    // candidate set AND the executed reference plan below are both
+    // built from this single snapshot — the index is never re-queried
+    // for the write set. A file that gains a link to the source AFTER
+    // the footprint check (its own body PUT holds only its own
+    // document lock, never this rename's lock set) is simply left
+    // untouched: the rename can never write a document whose lock it
+    // does not hold. Drift seen BY the check fails closed with a
+    // retry, exactly as before.
     const idx = await getLinkIndex()
     const allPaths = idx.snapshot().paths
-    for (const backlink of idx.getBacklinks(srcPath)) {
+    const backlinks = idx.getBacklinks(srcPath)
+    const planned = [...new Set(plannedReferencePaths)].sort()
+    const candidate = [...new Set(backlinks.map((backlink) => backlink.source))].sort()
+    if (planned.length !== candidate.length || planned.some((item, index) => item !== candidate[index])) {
+      return bad(c, 'backlinks changed while rename was being prepared; retry', 409)
+    }
+    if (__postRenameRaceHooks?.afterPlanVerified) await __postRenameRaceHooks.afterPlanVerified()
+    for (const backlink of backlinks) {
       const raw = backlink.source === srcPath ? sourceRaw : await fs.readFile(filePathFor(backlink.source), 'utf8')
       const updated = rewriteDocumentReferences(raw, backlink.source, srcPath, destPath, allPaths)
       if (updated === raw) continue
