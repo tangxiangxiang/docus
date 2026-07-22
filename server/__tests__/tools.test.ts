@@ -16,11 +16,12 @@ import {
   TOOL_DEFINITIONS,
   executeToolCall,
   readPostIfExists,
+  __setRenameRaceHooksForTesting,
   type ToolContext,
 } from '../ai/tools'
 import { applyMigrations } from '../db'
 import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
-import { __resetLinkIndexForTesting } from '../linkIndex'
+import { __resetLinkIndexForTesting, getIndex as getLinkIndex } from '../linkIndex'
 import {
   deriveToolSafetyPolicy,
   type ToolSafetyPolicy,
@@ -890,6 +891,79 @@ describe('Edit-10.4 tool safety: executeToolCall with safety policy', () => {
       expect(readDisk('notes/a')).toBe('see [[notes/b]] + appended later')
       expect(readDisk('notes/b')).toBe('B_BODY')
       expect(fs.existsSync(path.join(contentDir, 'notes/c.md'))).toBe(false)
+    })
+  })
+
+  describe('rename plan atomicity: the locked plan is the guarded plan is the executed plan', () => {
+    // The rename runs ONE authoritative plan: computed, locked over its
+    // full footprint, re-computed inside the lock (candidate), guarded,
+    // and then executed VERBATIM — the executor performs no independent
+    // backlink discovery of its own. These tests simulate a concurrent
+    // editor save of the protected notes/a (adds [[notes/b]] to body
+    // AND link index, like a real PUT /api/posts/notes/a) landing in
+    // each race window.
+
+    async function concurrentSaveAddsLink(): Promise<void> {
+      writeFile('notes/a.md', 'see [[notes/b]]')
+      const idx = await getLinkIndex()
+      idx.applyWrite('notes/a', 'see [[notes/b]]')
+    }
+
+    afterEach(() => __setRenameRaceHooksForTesting(null))
+
+    const policies: Array<[string, ToolSafetyPolicy]> = [
+      ['unsaved', { kind: 'deny-protected-path', protectedPath: 'notes/a', reason: 'unsaved-context' }],
+      ['read-only', { kind: 'deny-protected-path', protectedPath: 'notes/a', reason: 'read-only-context' }],
+      ['external', { kind: 'deny-protected-path', protectedPath: 'notes/a', reason: 'external-conflict' }],
+      ['verify-clean', { kind: 'verify-clean-document', protectedPath: 'notes/a', expectedDocumentId: 'doc-a', expectedRaw: 'A_BODY_NO_LINK' }],
+    ]
+
+    it.each(policies)('%s: a backlink added AFTER the guarded plan is not rewritten by the executor', async (_label, policy) => {
+      // notes/a has no link to notes/b while the plan is computed and
+      // guarded; the concurrent save lands between the guard and the
+      // executor. The stable (unrelated) plan may execute, but the
+      // executor must consume that plan — never re-discover backlinks
+      // and rewrite the just-added link.
+      seed('notes/a', 'A_BODY_NO_LINK', 'doc-a', 'Protected')
+      seed('notes/b', 'B_BODY', 'doc-b', 'B')
+      __setRenameRaceHooksForTesting({ beforeExecute: concurrentSaveAddsLink })
+      const r = await executeToolCall('rename_file', { path: 'notes/b', new_path: 'notes/c' }, ctxWith(policy))
+      expect(r.isError).toBe(false)
+      expect(r.changed).toMatchObject({ kind: 'rename', path: 'notes/c', oldPath: 'notes/b' })
+      expect(readDisk('notes/c')).toBe('B_BODY')
+      // notes/a holds EXACTLY the body the concurrent save wrote — the
+      // tool never touched it (no [[notes/c]] rewrite, no file_changed).
+      expect(readDisk('notes/a')).toBe('see [[notes/b]]')
+      expect(r.changes).toEqual([])
+    })
+
+    const driftPolicies: Array<[string, ToolSafetyPolicy]> = [
+      ...policies,
+      ['unrestricted', { kind: 'unrestricted' }],
+    ]
+
+    it.each(driftPolicies)('%s: footprint drift inside the lock fails closed with a retryable error', async (_label, policy) => {
+      // The concurrent save lands between the pre-lock plan and the
+      // in-lock candidate plan: the candidate footprint now contains a
+      // path the current lock set does NOT cover. The rename must fail
+      // closed (never execute under an incomplete lock set) with a
+      // retryable error — a retry replans from scratch and sees the new
+      // reference, which then goes through the normal guard.
+      seed('notes/a', 'A_BODY_NO_LINK', 'doc-a', 'Protected')
+      seed('notes/b', 'B_BODY', 'doc-b', 'B')
+      __setRenameRaceHooksForTesting({ beforeReplan: concurrentSaveAddsLink })
+      const r = await executeToolCall('rename_file', { path: 'notes/b', new_path: 'notes/c' }, ctxWith(policy))
+      expect(r.isError).toBe(true)
+      expect(r.content).toMatch(/retry/i)
+      // A drift failure is a concurrency hazard, not a safety block:
+      // no active-context- code under ANY policy (incl. unrestricted).
+      expect(r.content).not.toContain('active-context-')
+      expect(readDisk('notes/b')).toBe('B_BODY')
+      expect(fs.existsSync(path.join(contentDir, 'notes/c.md'))).toBe(false)
+      // notes/a holds only the concurrent save's body — never a tool write.
+      expect(readDisk('notes/a')).toBe('see [[notes/b]]')
+      expect(r.changed).toBeUndefined()
+      expect(r.changes).toBeUndefined()
     })
   })
 

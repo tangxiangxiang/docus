@@ -567,7 +567,7 @@ function executeDeleteFile(input: { path?: string }, db: DatabaseT): ToolResult 
   })
 }
 
-async function executeRenameFile(input: { path?: string; new_path?: string; update_references?: boolean }, db: DatabaseT): Promise<ToolResult> {
+async function executeRenameFile(input: { path?: string; new_path?: string; update_references?: boolean }, db: DatabaseT, plan: RenamePlan): Promise<ToolResult> {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('rename_file: `path` is required')
   }
@@ -594,35 +594,32 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
         `Use delete_file + create_file (or write_file) to overwrite.`,
     )
   }
+  // The reference writes come VERBATIM from the plan that
+  // executeGuardedRename built, locked, and guarded. This executor
+  // performs NO independent backlink discovery (no getLinkIndex for
+  // footprint purposes, no rewriteDocumentReferences): the guarded
+  // plan and the executed plan are the same object, so a concurrent
+  // link-index change between the guard and the writes cannot add an
+  // unguarded reference write. update_references is likewise decided
+  // at plan time (an empty plan.references), never re-checked here.
   let raw: string
-  const references: Array<{
-    sourcePath: string; path: string; abs: string; raw: string; updated: string
-    metadata: ReturnType<typeof getDocumentMetadata>
-  }> = []
+  const references = plan.references.map((r) => ({
+    sourcePath: r.sourcePath,
+    path: r.outputPath,
+    abs: filePathFor(r.outputPath),
+    raw: r.originalRaw,
+    updated: r.updatedRaw,
+    metadata: null as ReturnType<typeof getDocumentMetadata>,
+  }))
   try {
     raw = fs.readFileSync(srcAbs, 'utf8')
     const sourceStat = fs.statSync(srcAbs)
     ensureDocumentMetadata(db, input.path, raw, sourceStat.mtimeMs)
     fs.mkdirSync(path.dirname(dstAbs), { recursive: true })
-    if (input.update_references !== false) {
-      const idx = await getLinkIndex()
-      const allPaths = idx.snapshot().paths
-      for (const backlink of idx.getBacklinks(input.path)) {
-        const refRaw = backlink.source === input.path ? raw : fs.readFileSync(filePathFor(backlink.source), 'utf8')
-        if (backlink.source !== input.path) {
-          const refStat = fs.statSync(filePathFor(backlink.source))
-          ensureDocumentMetadata(db, backlink.source, refRaw, refStat.mtimeMs)
-        }
-        const updated = rewriteDocumentReferences(refRaw, backlink.source, input.path, input.new_path, allPaths)
-        if (updated !== refRaw) references.push({
-          sourcePath: backlink.source,
-          path: backlink.source === input.path ? input.new_path : backlink.source,
-          abs: backlink.source === input.path ? dstAbs : filePathFor(backlink.source),
-          raw: refRaw,
-          updated,
-          metadata: getDocumentMetadata(db, backlink.source),
-        })
-      }
+    // Metadata rollback snapshots BEFORE the move — a self-reference
+    // row still lives at the source path at this point.
+    for (const reference of references) {
+      reference.metadata = getDocumentMetadata(db, reference.sourcePath)
     }
     await renameDocumentWithMetadata({
       db, fromPath: input.path, toPath: input.new_path, fromAbs: srcAbs, toAbs: dstAbs,
@@ -681,46 +678,98 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     .map((reference) => ({ path: reference.path, kind: 'write', newRaw: reference.updated })) }
 }
 
-// ---- safety footprint planning (Edit-10.4) ----
+// ---- rename plan (Edit-10.4) ----
 
 /**
- * Compute the backlink footprint of a rename: every file whose
- * reference rewrite WILL be modified by executeRenameFile's
- * update_references pass (defaults to on). Mirrors the executor's
- * loop exactly — same link index snapshot, same
+ * ONE authoritative plan for a rename_file execution. The plan that
+ * determines the LOCK SET, the plan that is GUARDED, and the plan
+ * the executor WRITES are the same object — the executor performs
+ * no independent backlink discovery, so there is no window in which
+ * a concurrent link-index change can slip an unguarded reference
+ * write past the safety check.
+ */
+export interface RenamePlanReference {
+  /** The backlink source file (the rename source itself for a self-reference). */
+  sourcePath: string
+  /** The file the rewritten body is written to (the destination for a self-reference). */
+  outputPath: string
+  /** Body before the rewrite (rollback). */
+  originalRaw: string
+  /** Body that will be written. */
+  updatedRaw: string
+}
+
+export interface RenamePlan {
+  sourcePath: string
+  destinationPath: string
+  references: RenamePlanReference[]
+}
+
+/**
+ * Compute the full plan for one rename: the source→destination move
+ * plus every reference file whose rewrite WILL be modified
+ * (update_references defaults to on), including self-references
+ * (written to the destination). Mirrors the executor's historical
+ * rewrite pass exactly — same link index snapshot, same
  * rewriteDocumentReferences call, same `updated !== refRaw`
- * predicate — so the paths locked and guarded are precisely the
- * paths that will be written (no false blocks on backlinks whose
- * text the rewrite wouldn't change). Self-references are skipped:
- * the executor writes those into the destination file itself, which
- * is already in the footprint. Metadata is NOT touched here — the
+ * predicate — so no false blocks on backlinks whose text the
+ * rewrite wouldn't change. Metadata is NOT touched here — the
  * executor's ensureDocumentMetadata calls run only once the guard
  * has allowed the rename.
  *
- * Throws propagate: a failure here is the SAME failure the executor
- * would hit before any side effect (index build or a reference
- * read), and executeToolCall converts it into the identical
- * rename_file tool error — same behavior as before the guard
- * existed, no crash into the chat loop.
+ * Throws propagate: a failure here is the SAME failure the old
+ * executor would have hit before any side effect (index build or a
+ * reference read); executeGuardedRename converts it into the
+ * identical rename_file tool error — no crash into the chat loop.
  */
-async function planRenameReferences(input: {
+async function buildRenamePlan(input: {
   path?: string
   new_path?: string
   update_references?: boolean
-}): Promise<string[]> {
-  if (input.update_references === false) return []
-  if (typeof input.path !== 'string' || !input.path) return []
-  if (typeof input.new_path !== 'string' || !input.new_path) return []
-  const idx = await getLinkIndex()
-  const allPaths = idx.snapshot().paths
-  const out: string[] = []
-  for (const backlink of idx.getBacklinks(input.path)) {
-    if (backlink.source === input.path) continue
-    const refRaw = fs.readFileSync(filePathFor(backlink.source), 'utf8')
-    const updated = rewriteDocumentReferences(refRaw, backlink.source, input.path, input.new_path, allPaths)
-    if (updated !== refRaw) out.push(backlink.source)
+}): Promise<RenamePlan> {
+  const sourcePath = input.path as string
+  const destinationPath = input.new_path as string
+  const references: RenamePlanReference[] = []
+  if (
+    input.update_references !== false
+    && typeof sourcePath === 'string' && sourcePath.length > 0
+    && typeof destinationPath === 'string' && destinationPath.length > 0
+  ) {
+    const idx = await getLinkIndex()
+    const allPaths = idx.snapshot().paths
+    let selfRaw: string | null = null
+    for (const backlink of idx.getBacklinks(sourcePath)) {
+      const isSelf = backlink.source === sourcePath
+      let refRaw: string
+      if (isSelf) {
+        if (selfRaw === null) selfRaw = fs.readFileSync(filePathFor(sourcePath), 'utf8')
+        refRaw = selfRaw
+      } else {
+        refRaw = fs.readFileSync(filePathFor(backlink.source), 'utf8')
+      }
+      const updatedRaw = rewriteDocumentReferences(refRaw, backlink.source, sourcePath, destinationPath, allPaths)
+      if (updatedRaw === refRaw) continue
+      references.push({
+        sourcePath: backlink.source,
+        outputPath: isSelf ? destinationPath : backlink.source,
+        originalRaw: refRaw,
+        updatedRaw,
+      })
+    }
   }
-  return out
+  return { sourcePath, destinationPath, references }
+}
+
+/**
+ * The plan's lock/guard footprint beyond source and destination:
+ * every file the plan writes OTHER than the destination itself
+ * (self-reference rewrites land in the destination, already in the
+ * footprint).
+ */
+function planFootprint(plan: RenamePlan): string[] {
+  return plan.references
+    .filter((r) => r.outputPath !== plan.destinationPath)
+    .map((r) => r.outputPath)
 }
 
 /** Set equality over canonical logical paths (notes/a ≡ notes/a.md). */
@@ -731,6 +780,24 @@ function sameNormalizedPathSet(a: string[], b: string[]): boolean {
   if (setA.size !== setB.size) return false
   for (const p of setA) if (!setB.has(p)) return false
   return true
+}
+
+/**
+ * Test-only seam for the rename concurrency tests: deterministic
+ * injection points that simulate a concurrent editor save landing
+ * in the two race windows — `beforeReplan` fires inside the lock
+ * just before the in-lock candidate plan is computed; `beforeExecute`
+ * fires after the guard has allowed the candidate plan, immediately
+ * before the executor runs. Null in production (never set outside
+ * tests).
+ */
+export type RenameRaceHooks = {
+  beforeReplan?: () => void | Promise<void>
+  beforeExecute?: () => void | Promise<void>
+}
+let __renameRaceHooks: RenameRaceHooks | null = null
+export function __setRenameRaceHooksForTesting(hooks: RenameRaceHooks | null): void {
+  __renameRaceHooks = hooks
 }
 
 // ---- dispatcher ----
@@ -754,26 +821,26 @@ export async function executeToolCall(
   // mutation share one critical section, so an autosave landing
   // mid-turn is seen by the clean-document re-verification (as
   // active-context-stale) instead of being silently raced.
-  const baseTarget = getToolMutationTarget(name, input)
-  if (baseTarget.kind === 'none' || baseTarget.kind === 'unknown') {
+  // rename_file goes further: executeGuardedRename computes ONE plan,
+  // locks its full footprint, re-computes the plan inside the lock
+  // (fail closed on drift), guards it, and hands THAT SAME plan to
+  // the executor — locked = guarded = executed.
+  const policy = ctx.safety ?? { kind: 'unrestricted' }
+  const target = getToolMutationTarget(name, input)
+  if (target.kind === 'none' || target.kind === 'unknown') {
     return dispatchToolCall(name, input, db)
   }
-  let target: Extract<ToolMutationTarget, { kind: 'single-path' } | { kind: 'rename' }> = baseTarget
   if (target.kind === 'rename') {
-    // Resolve the rename's FULL mutation footprint before locking:
-    // every backlink file its reference rewrite will modify. A rename
-    // whose source and destination are both unrelated to the active
-    // document can still indirectly rewrite a link INSIDE it.
-    try {
-      target = { ...target, referencePaths: await planRenameReferences(input as { path?: string; new_path?: string; update_references?: boolean }) }
-    } catch (e) {
-      return err(`rename_file: ${(e as Error).message}`)
-    }
+    // rename_file runs the atomic plan flow: the locked plan is the
+    // guarded plan is the executed plan (see executeGuardedRename).
+    return executeGuardedRename(target, input, db, policy)
   }
   return withMutationLocks(target, async () => {
-    const policy = ctx.safety ?? { kind: 'unrestricted' }
-    const readCurrentDocument = (logicalPath: string) => readCurrentServerDocument(db, logicalPath)
-    let decision = await guardToolMutation({ policy, target, readCurrentDocument })
+    const decision = await guardToolMutation({
+      policy,
+      target,
+      readCurrentDocument: (logicalPath) => readCurrentServerDocument(db, logicalPath),
+    })
     if (!decision.allowed) {
       // Ordinary tool_result: is_error text, no changed descriptor,
       // no throw, no file_changed, no disk or DB touch. The model can
@@ -781,29 +848,71 @@ export async function executeToolCall(
       // asking the user to save / resolve the workspace.
       return err(decision.message)
     }
-    if (target.kind === 'rename') {
-      // Re-derive the backlink footprint INSIDE the lock: the link
-      // index can drift between planning and lock acquisition
-      // (concurrent editor saves). If the actual reference set now
-      // disagrees with the locked one, re-guard the recomputed
-      // footprint — a newly-protected path fails closed, unrelated
-      // drift keeps the unrelated paths' original behavior.
-      let recomputed: string[]
-      try {
-        recomputed = await planRenameReferences(input as { path?: string; new_path?: string; update_references?: boolean })
-      } catch (e) {
-        return err(`rename_file: ${(e as Error).message}`)
-      }
-      if (!sameNormalizedPathSet(target.referencePaths, recomputed)) {
-        decision = await guardToolMutation({
-          policy,
-          target: { ...target, referencePaths: recomputed },
-          readCurrentDocument,
-        })
-        if (!decision.allowed) return err(decision.message)
-      }
-    }
     return dispatchToolCall(name, input, db)
+  })
+}
+
+/**
+ * rename_file under Edit-10.4 safety, executed atomically:
+ *
+ *   plan (pre-lock)  →  lock the plan's FULL footprint  →  candidate
+ *   plan (in-lock)   →  drift? fail closed (retryable)  →  guard the
+ *   candidate        →  executor writes the candidate VERBATIM.
+ *
+ * The candidate plan is the single authority: it is computed under
+ * the complete lock set, verified by the guard, and handed to the
+ * executor, which performs NO independent backlink discovery. If the
+ * candidate footprint disagrees with the locked footprint, the
+ * rename fails closed with a retryable error instead of executing
+ * under an incomplete lock set (extending the lock set while holding
+ * locks would break the globally-sorted acquisition order). A retry
+ * replans from scratch against the updated link set and goes through
+ * the normal guard.
+ */
+async function executeGuardedRename(
+  base: Extract<ToolMutationTarget, { kind: 'rename' }>,
+  input: Record<string, unknown>,
+  db: DatabaseT,
+  policy: ToolSafetyPolicy,
+): Promise<ToolResult> {
+  const renameInput = input as { path?: string; new_path?: string; update_references?: boolean }
+  let plan: RenamePlan
+  try {
+    plan = await buildRenamePlan(renameInput)
+  } catch (e) {
+    return err(`rename_file: ${(e as Error).message}`)
+  }
+  const locked: Extract<ToolMutationTarget, { kind: 'rename' }> = {
+    ...base,
+    referencePaths: planFootprint(plan),
+  }
+  return withMutationLocks(locked, async () => {
+    if (__renameRaceHooks?.beforeReplan) await __renameRaceHooks.beforeReplan()
+    let candidate: RenamePlan
+    try {
+      candidate = await buildRenamePlan(renameInput)
+    } catch (e) {
+      return err(`rename_file: ${(e as Error).message}`)
+    }
+    if (!sameNormalizedPathSet(planFootprint(plan), planFootprint(candidate))) {
+      return err(
+        `rename_file: the set of files linking to ${renameInput.path} changed while this rename was being prepared ` +
+          `(a concurrent edit added or removed a link). Retry the rename; the retry will plan against the updated link set.`,
+      )
+    }
+    const decision = await guardToolMutation({
+      policy,
+      target: { ...base, referencePaths: planFootprint(candidate) },
+      readCurrentDocument: (logicalPath) => readCurrentServerDocument(db, logicalPath),
+    })
+    if (!decision.allowed) {
+      // Ordinary tool_result: is_error text, no changed descriptor,
+      // no throw, no file_changed, no disk or DB touch.
+      return err(decision.message)
+    }
+    if (__renameRaceHooks?.beforeExecute) await __renameRaceHooks.beforeExecute()
+    // The candidate plan is the executed plan — verbatim.
+    return dispatchToolCall('rename_file', renameInput, db, candidate)
   })
 }
 
@@ -841,6 +950,7 @@ async function dispatchToolCall(
   name: string,
   input: Record<string, unknown>,
   db: DatabaseT,
+  renamePlan?: RenamePlan,
 ): Promise<ToolResult> {
   switch (name) {
     case 'read_file':
@@ -865,7 +975,10 @@ async function dispatchToolCall(
     case 'delete_file':
       return executeDeleteFile(input as { path?: string }, db)
     case 'rename_file':
-      return executeRenameFile(input as { path?: string; new_path?: string; update_references?: boolean }, db)
+      // A rename may only run with a plan that executeGuardedRename
+      // has locked and guarded — never with executor-side discovery.
+      if (!renamePlan) return err('rename_file: internal error: rename plan missing')
+      return executeRenameFile(input as { path?: string; new_path?: string; update_references?: boolean }, db, renamePlan)
     default:
       return err(`unknown tool: ${name}`)
   }
