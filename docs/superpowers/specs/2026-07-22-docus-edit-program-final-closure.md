@@ -2,7 +2,11 @@
 
 **Date:** 2026-07-22
 **Stage:** Docus Edit Program — Final Closure (NOT an Edit; no Edit-11)
-**Program closure baseline:** `350b17713b6df53b97787416c3f3979c33a04955` (`docs(ai): re-close Edit-10 after residual race verification`)
+**Status:** Reopened on 2026-07-22 after cross-Edit production review.
+
+**Former program closure baseline:** `350b17713b6df53b97787416c3f3979c33a04955` (`docs(ai): re-close Edit-10 after residual race verification`)
+
+The closure assertions below are retained as the historical record of the attempted seal. They are not a current release declaration. Production fixes after that baseline require a fresh closure run and new evidence.
 **Final program production/test tree:** `08756eb173538196d7ebe2426de32dfc6238127a` (`test(closure): add Edit program cross-feature regression matrix`)
 **Final docs closure commit:** this commit (`docs(closure): close Docus Edit program`) — HEAD is docs-only over `08756eb`.
 
@@ -37,7 +41,7 @@
 | Edit-07 | Workspace tab UX (tooltip + save presentation unification) | `ba52905..9afb4e1` | `9f8c0ae` | Closed |
 | Edit-08 | Workspace tab architecture | `33bd621` | `f094456` | Closed |
 | Edit-09 | Unsaved Draft Recovery (Draft Store, Recovery, management) | freeze `13a43ab` | `284d69f` | Closed |
-| Edit-10 | AI live workspace context + tool safety | freeze `6ae3b77` | `350b177` | Closed |
+| Edit-10 | AI live workspace context + tool safety | freeze `6ae3b77` | `350b177` | Reopened |
 
 All SHAs verified to exist in the tree with the expected commit messages. Edit-02..06 carry no separate closure commits — their contracts were sealed by the Edit-07/08 baseline `9afb4e1` and re-asserted by this program's cross-Edit matrix. Every cited spec's status agrees: `2026-07-19-workspace-tab-architecture-design.md` (Closed), `2026-07-19-unsaved-draft-recovery-design.md` (§13/§14 Closed at `13a43ab`/`284d69f`), `2026-07-21-ai-live-workspace-context.md` (§17 Edit-10 Closed at `350b177`). The pre-program `2026-06-07-ai-live-note-context.md` is marked SUPERSEDED (2026-07-21) and retained for historical record only; no two specs claim authority over the same feature.
 
@@ -47,7 +51,7 @@ All SHAs verified to exist in the tree with the expected commit messages. Edit-0
 - Edit-07 closed: `9f8c0ae`; Edit-08 closed: `f094456`
 - Edit-09 production freeze: `13a43ab` — closure matrix: `284d69f`
 - Edit-10 production freeze: `6ae3b77` — closure: first `b772be7` + `a84d4fa`, E2E-order fix `82912f6`, re-close `350b177`
-- Program production/test tree (this round): `08756eb` — tests/E2E/helpers ONLY; `git diff 350b177..08756eb -- src server` is empty (no production change).
+- Program production/test tree (this round): `08756eb` — tests/E2E/helpers only. The former command included test files and therefore did not prove an empty production diff; future closure evidence must explicitly exclude `src/**/__tests__/**` and `server/__tests__/**`.
 - Final docs closure SHA: the commit containing this file.
 
 No production code changed in this round; no `fix(...)` commit was required.
@@ -148,11 +152,11 @@ Real risks that cannot be fully eliminated at this architecture's boundaries (no
 2. **A crash can land inside a multi-file compensating transaction** (rename reference-rewrite rollback; staged `.docus-delete-*` files). The staged-file scheme and identity-based draft retention make the outcome recoverable, not silently lossy.
 3. **Browser/OS force-quit can land outside an IndexedDB transaction boundary.** The Draft Store's generation/CAS design plus quarantine-retry certification converges on next boot (`draft-store.spec.ts` E2E-5/7/10).
 4. **The Edit-10.4 accepted residual race** — send-time clean → same-path mutation while the buffer is dirty post-send — is allowed by the verify-clean policy by design; its terminal state is proven safe (local preserved, server = AI write, explicit external state, user decides, no lost input) in the real browser by `ai-live-context-final-closure.spec.ts` and Long Flow B.
-5. **Old clients without live identity** receive path-only read hints; their mutation requests cannot reach verified-identity policies and are refused as unverified — degraded but fail-closed.
+5. **Old clients without live identity** currently derive the `unrestricted` policy for compatibility. They do not receive dirty-document, read-only-view, `documentId`, `expectedRaw`, or external-conflict protection. This is an explicitly accepted compatibility boundary, not fail-closed behavior.
 
 ## 11. Known issues
 
-- **Known production blockers: None.**
+- **Known production blockers:** closure is reopened while Archive × AI policy, rename rollback, and AI atomic-write/metadata compensation fixes are verified.
 - Non-blocking artifacts:
   - Monaco dev-server "Canceled" unhandled-rejection teardown noise during navigation (third-party teardown noise; present in every sealed round; no user-visible effect).
   - Documentation drift (historical examples, not contracts): `README.md:241` / `README.zh-CN.md:219` and the `2026-06-07-llm-integration.md` plan example still mention the legacy `currentNoteContent` request field, which the server ignores (liveContext is the only content door — enforced by `live-context.test.ts`). Per-round test counts inside the sealed Edit-09/10 specs are snapshots of their closure rounds; current totals live in this document.
@@ -161,14 +165,14 @@ Real risks that cannot be fully eliminated at this architecture's boundaries (no
 ## 12. Program verdict
 
 ```text
-Docus Edit Program: Closed
-Known production blockers: None
+Docus Edit Program: Reopened
+Known production blockers: under remediation and re-verification
 ```
 
 ## 13. Release readiness
 
 ```text
-Edit Program closure: Passed
+Edit Program closure: Reopened; fresh seal pending
 Release readiness: Not evaluated
 ```
 
@@ -176,8 +180,8 @@ Program closure is NOT a release audit. No packaging, distribution, or third-par
 
 ---
 
-### Seal checklist (all satisfied)
+### Former seal checklist (invalidated by reopening)
 
 Complete Edit Inventory ✔ · real production SHAs for every Edit ✔ · real closure SHAs ✔ · all current specs consistent ✔ · superseded specs marked ✔ · no post-closure production fix without reseal (no fix needed) ✔ · all global invariants pass ✔ · all cross-Edit journeys pass ✔ · two real-browser long flows pass ✔ · key long flow ×4 consecutive, 0 retries ✔ · no silent dirty-buffer loss ✔ · no early Draft/Recovery cleanup ✔ · History/Diff read-only with correct identity ✔ · rename/move/delete never misplace identity ✔ · backlinks correct or fail-closed ✔ · path reuse never inherits documentId ✔ · stale async never lands on a new identity ✔ · AI live context + tool safety full chain ✔ · sensitive raw never persisted or leaked ✔ · blocked operations leave no partial side effects ✔ · Edit-09 Draft Store E2E all pass (38/38) ✔ · Edit-10 Final Closure all pass ✔ · full application E2E all pass (22/22) ✔ · no only/skip/retry/timeout masking ✔ · full quality gates pass ✔ · final docs complete ✔ · final workspace clean ✔ · known production blockers: None ✔
 
-**After this closure, all Edit Program production modifications stop. Further product work must start a new independent plan under a new number or project name.**
+**This stop-work declaration is suspended until a fresh closure record verifies the remediation.**
