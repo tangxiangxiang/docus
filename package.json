@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json",
+    "typecheck:client": "vue-tsc --noEmit -p tsconfig.app.json",
+    "typecheck:server": "tsc --noEmit -p tsconfig.server.json",
+    "typecheck": "npm run typecheck:client && npm run typecheck:server",
     "start": "tsx server/prod.ts",
     "preview": "vite preview",
     "test": "vitest run",
