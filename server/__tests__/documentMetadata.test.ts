@@ -49,6 +49,22 @@ describe('document metadata repository', () => {
     ])
   })
 
+  it('removes an untracked tombstone created from a migration-only path', () => {
+    db.prepare(`INSERT INTO metadata_migrations
+      (path, document_id, status, source_hash, error, updated_at)
+      VALUES ('notes/migration-only', NULL, 'legacy', 'old', '', 1)`).run()
+    const snapshot = snapshotDocumentMetadataMutation(db, ['notes/migration-only'])
+
+    deleteDocumentMetadata(db, 'notes/migration-only')
+    expect(db.prepare("SELECT path FROM metadata_migrations WHERE path LIKE '@deleted/%'").get()).toBeTruthy()
+
+    restoreDocumentMetadataMutation(db, snapshot)
+
+    expect(db.prepare('SELECT path, document_id, status, source_hash FROM metadata_migrations').all()).toEqual([
+      { path: 'notes/migration-only', document_id: null, status: 'legacy', source_hash: 'old' },
+    ])
+  })
+
   it('creates and reads normalized metadata', () => {
     const saved = saveDocumentMetadata(db, {
       id: 'doc-1', path: 'archive/example', title: ' Example ', summary: ' Summary ',

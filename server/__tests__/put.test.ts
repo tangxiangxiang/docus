@@ -5,7 +5,12 @@ import path from 'node:path'
 import app, { __setMetadataDbForTesting } from '../index'
 import { CONTENT_DIR } from '../paths'
 import { applyMigrations } from '../db'
-import { deleteDocumentMetadata, getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
+import {
+  deleteDocumentMetadata,
+  getDocumentMetadata,
+  saveDocumentMetadata,
+  snapshotDocumentMetadataDatabase,
+} from '../documentMetadata'
 import type { SavePostResult } from '../../src/lib/api'
 
 const TEST_PATH = 'put-smoke.md'
@@ -149,6 +154,44 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
       expect(getDocumentMetadata(db, documentPath)).toBeNull()
     } finally {
       db.exec('DROP TRIGGER IF EXISTS fail_recover_metadata_insert')
+      await fs.rm(abs, { force: true })
+      deleteDocumentMetadata(db, documentPath)
+    }
+  })
+
+  it('restores the file and complete metadata graph when cleaned-write tracking fails', async () => {
+    const documentPath = 'put-track-failure'
+    const abs = path.join(CONTENT_DIR, `${documentPath}.md`)
+    const original = '# Original\n'
+    const requested = '# Requested\n'
+    await fs.writeFile(abs, original, 'utf8')
+    const metadata = saveDocumentMetadata(db, {
+      id: 'put-track-stable-id', path: documentPath, title: 'Stable', tags: ['stable'], updatedAt: 10,
+    })
+    db.prepare(`INSERT INTO metadata_migrations
+      (path, document_id, status, source_hash, cleaned_hash, error, updated_at)
+      VALUES (?, ?, 'cleaned', 'source', 'old-cleaned-hash', '', 10)`)
+      .run(documentPath, metadata.id)
+    const before = snapshotDocumentMetadataDatabase(db)
+    db.exec(`
+      CREATE TRIGGER fail_put_cleaned_tracking
+      BEFORE UPDATE OF cleaned_hash ON metadata_migrations
+      WHEN OLD.path = '${documentPath}'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced cleaned tracking failure');
+      END;
+    `)
+    try {
+      const response = await call('PUT', `/api/posts/${documentPath}`, {
+        raw: requested,
+        baseRaw: original,
+      })
+
+      expect(response.status).toBe(500)
+      expect(await fs.readFile(abs, 'utf8')).toBe(original)
+      expect(snapshotDocumentMetadataDatabase(db)).toEqual(before)
+    } finally {
+      db.exec('DROP TRIGGER IF EXISTS fail_put_cleaned_tracking')
       await fs.rm(abs, { force: true })
       deleteDocumentMetadata(db, documentPath)
     }

@@ -180,6 +180,7 @@ postRoutes.put('/api/posts/*', async (c) => {
       return conflict(current)
     }
 
+    const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [splat])
     const prepared = await prepareAtomicTextWrite(abs, requestedRaw, { mode: currentStat.mode })
     try {
       // Re-check after preparing the complete temporary file so a change
@@ -195,6 +196,7 @@ postRoutes.put('/api/posts/*', async (c) => {
       await prepared.commit()
     } catch (error) {
       await prepared.rollback()
+      restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)
       if (error instanceof UnstableTextSnapshotError) {
         return conflict(error.latest)
       }
@@ -208,6 +210,7 @@ postRoutes.put('/api/posts/*', async (c) => {
       metadata = ensureMetadata(splat, requestedRaw, stat.mtimeMs, Date.now())
       trackCleanedDocumentWrite(metadataDb(), splat, requestedRaw)
     } catch (error) {
+      const failures: unknown[] = [error]
       try {
         await atomicReplaceTextIfUnchanged(
           abs,
@@ -216,11 +219,11 @@ postRoutes.put('/api/posts/*', async (c) => {
           { mode: currentStat.mode },
         )
       } catch (rollbackError) {
-        throw new AggregateError(
-          [error, rollbackError],
-          'metadata update failed and document rollback was incomplete',
-        )
+        failures.push(rollbackError)
       }
+      try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
+      catch (rollbackError) { failures.push(rollbackError) }
+      if (failures.length > 1) throw new AggregateError(failures, 'metadata update failed and document rollback was incomplete')
       throw error
     }
     try {
@@ -240,6 +243,7 @@ postRoutes.put('/api/recover/*', async (c) => {
   return withDocumentWriteLock(documentPath, async () => {
     const abs = filePathFor(documentPath)
     if (await exists(abs)) return bad(c, 'file already exists', 409)
+    const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [documentPath])
     const previousMetadata = getDocumentMetadata(metadataDb(), documentPath)
     await fs.mkdir(path.dirname(abs), { recursive: true })
     await fs.writeFile(abs, requestedRaw, { encoding: 'utf8', flag: 'wx' })
@@ -260,8 +264,7 @@ postRoutes.put('/api/recover/*', async (c) => {
         failures.push(rollbackError)
       }
       try {
-        if (previousMetadata) saveDocumentMetadata(metadataDb(), previousMetadata)
-        else deleteDocumentMetadata(metadataDb(), documentPath)
+        restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)
       } catch (metadataRollbackError) {
         failures.push(metadataRollbackError)
       }

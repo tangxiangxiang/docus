@@ -10,6 +10,7 @@ import {
   getMetadataMigrationSummary,
   migrateVaultMetadata,
 } from '../metadataMigration'
+import { withDocumentWriteLock } from '../documentWriteLock'
 
 let db: Database.Database
 let root: string
@@ -88,6 +89,23 @@ describe('vault metadata migration', () => {
     expect(report).toMatchObject({ scanned: 1, verified: 1, skipped: 0, pruned: 1 })
     expect(getMetadataMigrationRecord(db, 'b')).toBeNull()
     expect(getMetadataMigrationSummary(db)).toMatchObject({ total: 2, verified: 1, orphaned: 1, failed: 0 })
+  })
+
+  it('does not prune a migration row when the file becomes live while waiting for its lock', async () => {
+    db.prepare(`INSERT INTO metadata_migrations
+      (path, status, source_hash, error, updated_at)
+      VALUES ('recovered', 'legacy', 'old', '', 1)`).run()
+
+    let migration!: Promise<Awaited<ReturnType<typeof migrateVaultMetadata>>>
+    await withDocumentWriteLock('recovered', async () => {
+      migration = migrateVaultMetadata(db, root)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      await write('recovered.md', '# Recovered\n')
+    })
+
+    const report = await migration
+    expect(report.pruned).toBe(0)
+    expect(getMetadataMigrationRecord(db, 'recovered')?.status).toBe('legacy')
   })
 
   it('walks into dot-prefixed directories other than .git, matching tree.ts', async () => {

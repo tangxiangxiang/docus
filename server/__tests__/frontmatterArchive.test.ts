@@ -14,6 +14,7 @@ import {
 } from '../frontmatterArchive'
 import { getMetadataMigrationRecord, migrateVaultMetadata, trackCleanedDocumentWrite } from '../metadataMigration'
 import { CONTENT_DIR, setContentDir } from '../paths'
+import { withDocumentWriteLock } from '../documentWriteLock'
 
 let db: Database.Database
 let root: string
@@ -72,6 +73,25 @@ describe('Frontmatter archive and cleanup preview', () => {
     const preview = await previewFrontmatterCleanup(db)
     expect(preview.candidates).toEqual([])
     expect(preview.blocked).toEqual([{ path: 'note', reason: 'source changed after verification' }])
+  })
+
+  it('waits for the document lock and revalidates bytes before cleanup', async () => {
+    const original = '---\ntitle: Note\n---\n\nbody\n'
+    const editorBody = '---\ntitle: Note\n---\n\neditor saved\n'
+    await write('note.md', original)
+    await migrateVaultMetadata(db, root)
+
+    let cleanup!: Promise<Awaited<ReturnType<typeof cleanDocumentFrontmatter>>>
+    await withDocumentWriteLock('note', async () => {
+      cleanup = cleanDocumentFrontmatter(db, ['note'])
+      await Promise.resolve()
+      await fs.writeFile(path.join(root, 'note.md'), editorBody, 'utf8')
+    })
+
+    const result = await cleanup
+    expect(result.changed).toEqual([])
+    expect(result.failed[0]).toMatchObject({ path: 'note', reason: expect.stringMatching(/safe|changed/) })
+    expect(await fs.readFile(path.join(root, 'note.md'), 'utf8')).toBe(editorBody)
   })
 
   it('cleans verified Frontmatter and restores the exact original bytes', async () => {

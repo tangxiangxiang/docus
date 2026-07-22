@@ -1,7 +1,14 @@
 import { promises as fs } from 'node:fs'
 import type { Database as DatabaseT } from 'better-sqlite3'
 import YAML from 'yaml'
-import { getDocumentMetadata, type DocumentMetadata } from './documentMetadata.js'
+import { atomicReplaceTextIfUnchanged, readStableTextSnapshot } from './atomicTextWrite.js'
+import {
+  getDocumentMetadata,
+  restoreDocumentMetadataMutation,
+  snapshotDocumentMetadataMutation,
+  type DocumentMetadata,
+} from './documentMetadata.js'
+import { withDocumentWriteLock } from './documentWriteLock.js'
 import {
   extractFrontmatterBackup,
   getMetadataMigrationRecord,
@@ -118,16 +125,27 @@ export function exportDocumentFrontmatter(
 }
 
 async function writeWithMetadataCompensation(
+  db: DatabaseT,
+  path: string,
   abs: string,
   previousRaw: string,
   nextRaw: string,
+  mode: number,
   updateMetadata: () => void,
 ): Promise<number> {
-  await fs.writeFile(abs, nextRaw, 'utf8')
+  const databaseSnapshot = snapshotDocumentMetadataMutation(db, [path])
+  await atomicReplaceTextIfUnchanged(abs, previousRaw, nextRaw, { mode })
   try {
     updateMetadata()
   } catch (error) {
-    await fs.writeFile(abs, previousRaw, 'utf8')
+    const failures: unknown[] = [error]
+    try { await atomicReplaceTextIfUnchanged(abs, nextRaw, previousRaw, { mode }) }
+    catch (rollbackError) { failures.push(rollbackError) }
+    try { restoreDocumentMetadataMutation(db, databaseSnapshot) }
+    catch (rollbackError) { failures.push(rollbackError) }
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'Frontmatter mutation failed and rollback was incomplete')
+    }
     throw error
   }
   return (await fs.stat(abs)).mtimeMs
@@ -145,8 +163,10 @@ export async function cleanDocumentFrontmatter(
       continue
     }
     try {
+      await withDocumentWriteLock(path, async () => {
       const abs = filePathFor(path)
-      const raw = await fs.readFile(abs, 'utf8')
+      const snapshot = await readStableTextSnapshot(abs)
+      const raw = snapshot.raw
       const record = getMetadataMigrationRecord(db, path)
       const metadata = getDocumentMetadata(db, path)
       const backup = extractFrontmatterBackup(raw)
@@ -157,7 +177,7 @@ export async function cleanDocumentFrontmatter(
       }
       const cleaned = raw.slice(backup.length)
       const cleanedHash = metadataSourceHash(cleaned)
-      const newMtime = await writeWithMetadataCompensation(abs, raw, cleaned, () => {
+      const newMtime = await writeWithMetadataCompensation(db, path, abs, raw, cleaned, snapshot.stat.mode, () => {
         const updated = db.prepare(`
           UPDATE metadata_migrations
           SET status = 'cleaned', cleaned_hash = ?, error = '', updated_at = ?
@@ -166,6 +186,7 @@ export async function cleanDocumentFrontmatter(
         if (updated.changes !== 1) throw new Error('migration state changed during cleanup')
       })
       result.changed.push({ path, newRaw: cleaned, newMtime })
+      })
     } catch (error) {
       result.failed.push({ path, reason: error instanceof Error ? error.message : String(error) })
     }
@@ -181,6 +202,7 @@ export async function restoreDocumentFrontmatter(
   const result: FrontmatterMutationResult = { changed: [], failed: [] }
   for (const path of [...new Set(paths)]) {
     try {
+      await withDocumentWriteLock(path, async () => {
       const record = getMetadataMigrationRecord(db, path)
       const metadata = getDocumentMetadata(db, path)
       if (!record || record.status !== 'cleaned' || !record.cleanedHash
@@ -188,7 +210,8 @@ export async function restoreDocumentFrontmatter(
         throw new Error('document is not in cleaned state')
       }
       const abs = filePathFor(path)
-      const raw = await fs.readFile(abs, 'utf8')
+      const snapshot = await readStableTextSnapshot(abs)
+      const raw = snapshot.raw
       if (metadataSourceHash(raw) !== record.cleanedHash) {
         throw new Error('body changed after cleanup; run migration before restoring')
       }
@@ -196,7 +219,7 @@ export async function restoreDocumentFrontmatter(
       if (!frontmatter) throw new Error(`${mode} Frontmatter export is unavailable`)
       const restored = frontmatter + raw
       const restoredHash = metadataSourceHash(restored)
-      const newMtime = await writeWithMetadataCompensation(abs, raw, restored, () => {
+      const newMtime = await writeWithMetadataCompensation(db, path, abs, raw, restored, snapshot.stat.mode, () => {
         const updated = db.prepare(`
           UPDATE metadata_migrations
           SET status = 'verified', source_hash = ?, cleaned_hash = '', error = '', updated_at = ?
@@ -205,6 +228,7 @@ export async function restoreDocumentFrontmatter(
         if (updated.changes !== 1) throw new Error('migration state changed during restore')
       })
       result.changed.push({ path, newRaw: restored, newMtime })
+      })
     } catch (error) {
       result.failed.push({ path, reason: error instanceof Error ? error.message : String(error) })
     }

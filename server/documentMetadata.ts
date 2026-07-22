@@ -80,8 +80,8 @@ export function snapshotDocumentMetadataMutation(
   const embeddings = documentIds.length
     ? db.prepare(`SELECT * FROM document_embeddings WHERE document_id IN (${placeholders(documentIds)}) ORDER BY document_id`).all(...documentIds) as Record<string, unknown>[]
     : []
-  const migrationClauses = paths.map(() => 'path = ?').concat(documentIds.map(() => 'path = ?'), documentIds.map(() => 'document_id = ?'))
-  const migrationArgs = [...paths, ...documentIds.map((id) => `@deleted/${id}`), ...documentIds]
+  const migrationClauses = paths.map(() => 'path = ?').concat(paths.map(() => 'original_path = ?'), documentIds.map(() => 'path = ?'), documentIds.map(() => 'document_id = ?'))
+  const migrationArgs = [...paths, ...paths, ...documentIds.map((id) => `@deleted/${id}`), ...documentIds]
   const migrations = migrationClauses.length
     ? db.prepare(`SELECT * FROM metadata_migrations WHERE ${migrationClauses.join(' OR ')} ORDER BY path`).all(...migrationArgs) as Record<string, unknown>[]
     : []
@@ -132,9 +132,9 @@ export function restoreDocumentMetadataMutation(
       db.prepare(`DELETE FROM documents WHERE id IN (${placeholders(affectedIds)})`).run(...affectedIds)
     }
     if (snapshot.paths.length || affectedIds.length) {
-      const clauses = snapshot.paths.map(() => 'path = ?').concat(affectedIds.map(() => 'path = ?'), affectedIds.map(() => 'document_id = ?'))
+      const clauses = snapshot.paths.map(() => 'path = ?').concat(snapshot.paths.map(() => 'original_path = ?'), affectedIds.map(() => 'path = ?'), affectedIds.map(() => 'document_id = ?'))
       db.prepare(`DELETE FROM metadata_migrations WHERE ${clauses.join(' OR ')}`)
-        .run(...snapshot.paths, ...affectedIds.map((id) => `@deleted/${id}`), ...affectedIds)
+        .run(...snapshot.paths, ...snapshot.paths, ...affectedIds.map((id) => `@deleted/${id}`), ...affectedIds)
     }
     insertRows(db, 'documents', snapshot.documents)
     for (const tag of snapshot.tags) {

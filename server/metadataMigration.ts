@@ -245,7 +245,8 @@ export async function migrateVaultMetadata(
     if (livePaths.has(row.path)) continue
     await withDocumentWriteLock(row.path, async () => {
     // It may have become live or changed status while this migration waited.
-    if (livePaths.has(row.path)) return
+    const liveAbs = path.join(rootDir, `${row.path}.md`)
+    if (await fs.stat(liveAbs).then((stat) => stat.isFile(), () => false)) return
     const current = getMetadataMigrationRecord(db, row.path)
     if (!current || current.status === 'orphaned') return
     const tombstone = `@deleted/${Date.now()}-${createHash('sha256').update(row.path).digest('hex').slice(0, 12)}`
