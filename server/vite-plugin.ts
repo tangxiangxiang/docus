@@ -8,6 +8,7 @@ import app from './index.ts'
 import { CONTENT_DIR } from './paths.ts'
 import { getDb } from './db.ts'
 import { migrateVaultMetadata } from './metadataMigration.ts'
+import { recoverInterruptedOperations } from './crashRecovery.ts'
 
 export function serverPlugin(): Plugin {
   return {
@@ -15,6 +16,15 @@ export function serverPlugin(): Plugin {
     async configureServer(server) {
       const report = await migrateVaultMetadata(getDb(), CONTENT_DIR)
       console.log(`[docus] metadata migration: ${JSON.stringify(report)}`)
+      // Reconcile operations interrupted by a previous crash BEFORE any
+      // /api request is served (see server/crashRecovery.ts). Never throws.
+      const recovery = await recoverInterruptedOperations(CONTENT_DIR, getDb())
+      if (recovery.actions.length > 0) {
+        console.log(`[docus] crash recovery: resolved ${recovery.actions.length} interrupted operation(s)`)
+        for (const action of recovery.actions) {
+          console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
+        }
+      }
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith('/api/')) return next()
         const url = `http://localhost${req.url}`

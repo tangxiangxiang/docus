@@ -15,6 +15,7 @@ import { CONTENT_DIR } from './paths.ts'
 import { ensureInitialFolders } from './seed.ts'
 import { getDb } from './db.ts'
 import { migrateVaultMetadata } from './metadataMigration.ts'
+import { recoverInterruptedOperations } from './crashRecovery.ts'
 
 const PORT = Number(process.env.PORT ?? 3000)
 const HOST = process.env.HOST ?? '0.0.0.0'
@@ -53,6 +54,18 @@ await ensureInitialFolders(CONTENT_DIR)
 const metadataReport = await migrateVaultMetadata(getDb(), CONTENT_DIR)
 console.log(`[docus] content dir: ${CONTENT_DIR}`)
 console.log(`[docus] metadata migration: ${JSON.stringify(metadataReport)}`)
+
+// Reconcile operations interrupted by a previous crash (kill -9, power
+// loss, container stop) BEFORE the server accepts a single request —
+// a note left missing between the takeover and the commit of an atomic
+// save must reappear before any client can observe it. Never throws.
+const recovery = await recoverInterruptedOperations(CONTENT_DIR, getDb())
+if (recovery.actions.length > 0) {
+  console.log(`[docus] crash recovery: resolved ${recovery.actions.length} interrupted operation(s)`)
+  for (const action of recovery.actions) {
+    console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
+  }
+}
 
 serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
   console.log(`[docus] listening on http://${info.address}:${info.port}`)

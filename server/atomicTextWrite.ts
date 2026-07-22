@@ -1,6 +1,46 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { constants, promises as fs } from 'node:fs'
 import path from 'node:path'
+
+export function sha256Hex(raw: string): string {
+  return createHash('sha256').update(raw, 'utf8').digest('hex')
+}
+
+/**
+ * Write a small JSON journal durably (O_EXCL create + write + fsync) so
+ * it is on disk BEFORE the operation it describes begins. Startup crash
+ * recovery (server/crashRecovery.ts) uses it to tell an interrupted
+ * commit from an orphaned temp and to verify both generations by hash.
+ */
+export async function writeDurableJournal(journalPath: string, entry: unknown): Promise<void> {
+  let handle: Awaited<ReturnType<typeof fs.open>> | null = null
+  try {
+    handle = await fs.open(
+      journalPath,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+    )
+    await handle.writeFile(JSON.stringify(entry), { encoding: 'utf8' })
+    await handle.sync()
+    await handle.close()
+    handle = null
+  } catch (error) {
+    await handle?.close().catch(() => {})
+    await fs.rm(journalPath, { force: true }).catch(() => {})
+    throw error
+  }
+}
+
+/** Test-only hooks for real crash tests: a child process installs a
+ * hook that kills the process hard at the exact protocol point under
+ * test. Null in production; tests reset in afterEach/finally. */
+export type AtomicWriteCrashHooks = {
+  afterJournalWrite?: () => void | Promise<void>
+  afterTakeover?: () => void | Promise<void>
+}
+let __atomicWriteCrashHooks: AtomicWriteCrashHooks | null = null
+export function __setAtomicWriteCrashHooksForTesting(hooks: AtomicWriteCrashHooks | null): void {
+  __atomicWriteCrashHooks = hooks
+}
 
 export interface PreparedAtomicTextWrite {
   readonly temporaryPath: string
@@ -108,7 +148,7 @@ export class UnstableTextSnapshotError extends Error {
   }
 }
 
-async function syncParentDirectoryBestEffort(targetPath: string): Promise<void> {
+export async function syncParentDirectoryBestEffort(targetPath: string): Promise<void> {
   let directory: Awaited<ReturnType<typeof fs.open>> | null = null
   try {
     directory = await fs.open(path.dirname(targetPath), constants.O_RDONLY)
@@ -120,7 +160,7 @@ async function syncParentDirectoryBestEffort(targetPath: string): Promise<void> 
   }
 }
 
-async function renameWithTransientWindowsRetry(from: string, to: string): Promise<void> {
+export async function renameWithTransientWindowsRetry(from: string, to: string): Promise<void> {
   const delays = process.platform === 'win32' ? [0, 5, 20, 50] : [0]
   let lastError: unknown
   for (const delay of delays) {
@@ -142,23 +182,34 @@ async function renameWithTransientWindowsRetry(from: string, to: string): Promis
  * replacing a newer one: link(2) is create-only, so a path an external
  * writer recreated wins — the staged bytes then stay quarantined on
  * disk under their staging name rather than clobbering the new
- * generation.
+ * generation. `quarantined: true` reports that the staged bytes could
+ * not be restored and remain on disk under their staging name.
  */
-async function restoreStagedGeneration(stagedPath: string, targetPath: string): Promise<void> {
+export async function restoreStagedGeneration(
+  stagedPath: string,
+  targetPath: string,
+): Promise<{ quarantined: boolean }> {
   try {
     await fs.link(stagedPath, targetPath)
     await fs.rm(stagedPath, { force: true }).catch(() => {})
+    return { quarantined: false }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
       // A newer external generation owns the path: never clobber it.
-      return
+      return { quarantined: true }
     }
     // link failed for some other reason; put the bytes back only if
     // the path is still unclaimed.
     const targetExists = await fs.stat(targetPath).then(() => true, () => false)
     if (!targetExists) {
-      await renameWithTransientWindowsRetry(stagedPath, targetPath).catch(() => {})
+      try {
+        await renameWithTransientWindowsRetry(stagedPath, targetPath)
+        return { quarantined: false }
+      } catch {
+        return { quarantined: true }
+      }
     }
+    return { quarantined: true }
   }
 }
 
@@ -200,6 +251,7 @@ export async function prepareAtomicTextWrite(
   options: { mode?: number } = {},
 ): Promise<PreparedAtomicTextReplace> {
   const temporaryPath = await writeTemporaryTextFile(targetPath, raw, options)
+  const replacementHash = sha256Hex(raw)
   let settled = false
 
   return {
@@ -210,11 +262,40 @@ export async function prepareAtomicTextWrite(
         path.dirname(targetPath),
         `.${path.basename(targetPath)}.docus-staged-${randomUUID()}`,
       )
+      const journalPath = path.join(
+        path.dirname(targetPath),
+        `.${path.basename(targetPath)}.docus-journal-${randomUUID()}`,
+      )
       const fail = async (error: unknown): Promise<never> => {
         settled = true
         await fs.rm(temporaryPath, { force: true }).catch(() => {})
+        await fs.rm(journalPath, { force: true }).catch(() => {})
         throw error
       }
+      // 0. JOURNAL: a durable record of this commit's intent and both
+      //    generations' hashes, fsync'd BEFORE the takeover. If this
+      //    process dies at any point after the takeover rename below
+      //    (kill -9, power loss, container stop), the formal path would
+      //    otherwise be left missing with only hidden staging files —
+      //    the note would appear to vanish. Startup crash recovery
+      //    (server/crashRecovery.ts) reads this journal, verifies the
+      //    staged/replacement bytes against the hashes, and either
+      //    completes the commit or restores the old generation before
+      //    the HTTP server accepts a single request. The journal is
+      //    removed LAST; a failed commit removes it in fail().
+      try {
+        await writeDurableJournal(journalPath, {
+          version: 1,
+          op: 'replace',
+          staged: path.basename(stagedPath),
+          replacement: path.basename(temporaryPath),
+          expectedHash: sha256Hex(expectedRaw),
+          replacementHash,
+        })
+      } catch (error) {
+        return fail(error)
+      }
+      if (__atomicWriteCrashHooks?.afterJournalWrite) await __atomicWriteCrashHooks.afterJournalWrite()
       // 1. OWNERSHIP: atomically take the current generation aside. An
       //    external save that landed before this rename travels with
       //    the bytes to staging and is detected at verification; one
@@ -228,6 +309,10 @@ export async function prepareAtomicTextWrite(
         }
         return fail(error)
       }
+      // Publish the takeover durably before continuing: a crash after
+      // this point must see the staged bytes on the next startup.
+      await syncParentDirectoryBestEffort(targetPath)
+      if (__atomicWriteCrashHooks?.afterTakeover) await __atomicWriteCrashHooks.afterTakeover()
       // 2. VERIFY the owned generation.
       let stagedSnapshot: StableTextSnapshot
       try {
@@ -264,6 +349,9 @@ export async function prepareAtomicTextWrite(
       settled = true
       await fs.rm(temporaryPath, { force: true }).catch(() => {})
       await fs.rm(stagedPath, { force: true }).catch(() => {})
+      // The journal goes LAST: while it exists, recovery still knows
+      // this commit was in flight and can finish or undo it.
+      await fs.rm(journalPath, { force: true }).catch(() => {})
       await syncParentDirectoryBestEffort(targetPath)
     },
     async rollback() {
