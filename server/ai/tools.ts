@@ -35,7 +35,9 @@ import {
   deleteDocumentMetadata,
   ensureDocumentMetadata,
   getDocumentMetadata,
+  restoreDocumentMetadataDatabase,
   saveDocumentMetadata,
+  snapshotDocumentMetadataDatabase,
 } from '../documentMetadata.js'
 import { trackCleanedDocumentWrite } from '../metadataMigration.js'
 import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
@@ -348,12 +350,6 @@ function executeListFiles(input: { scope?: string }): ToolResult {
   return ok(JSON.stringify(out, null, 2))
 }
 
-type MigrationSnapshot = {
-  path: string; document_id: string | null; original_path: string; status: string
-  source_hash: string; error: string; updated_at: number
-  frontmatter_backup: string; cleaned_hash: string
-}
-
 async function commitDocumentBody(
   db: DatabaseT,
   documentPath: string,
@@ -361,9 +357,7 @@ async function commitDocumentBody(
   raw: string,
   previous: { raw: string; mode: number } | null,
 ): Promise<fs.Stats> {
-  const previousMetadata = getDocumentMetadata(db, documentPath)
-  const previousMigration = db.prepare('SELECT * FROM metadata_migrations WHERE path = ?')
-    .get(documentPath) as MigrationSnapshot | undefined
+  const databaseSnapshot = snapshotDocumentMetadataDatabase(db)
   let committed = false
   try {
     fs.mkdirSync(path.dirname(abs), { recursive: true })
@@ -389,15 +383,7 @@ async function commitDocumentBody(
       } catch (rollbackError) { failures.push(rollbackError) }
     }
     try {
-      if (previousMetadata) saveDocumentMetadata(db, previousMetadata)
-      else deleteDocumentMetadata(db, documentPath)
-      db.prepare('DELETE FROM metadata_migrations WHERE path = ?').run(documentPath)
-      if (previousMigration) {
-        db.prepare(`INSERT INTO metadata_migrations
-          (path, document_id, original_path, status, source_hash, error, updated_at, frontmatter_backup, cleaned_hash)
-          VALUES (@path, @document_id, @original_path, @status, @source_hash, @error, @updated_at, @frontmatter_backup, @cleaned_hash)`)
-          .run(previousMigration)
-      }
+      restoreDocumentMetadataDatabase(db, databaseSnapshot)
     } catch (rollbackError) { failures.push(rollbackError) }
     if (failures.length > 1) throw new AggregateError(failures, 'AI body write failed and rollback was incomplete')
     throw error
@@ -592,20 +578,22 @@ function executeDeleteFile(input: { path?: string }, db: DatabaseT): ToolResult 
     return err(`delete_file: ${(e as Error).message}`)
   }
   const staged = `${abs}.docus-delete-${Date.now()}`
-  const previousMetadata = getDocumentMetadata(db, input.path)
+  const databaseSnapshot = snapshotDocumentMetadataDatabase(db)
   try {
     fs.renameSync(abs, staged)
     deleteDocumentMetadata(db, input.path)
     fs.unlinkSync(staged)
   } catch (e) {
+    const rollbackFailures: unknown[] = []
     if (fs.existsSync(staged) && !fs.existsSync(abs)) {
-      try { fs.renameSync(staged, abs) } catch { /* best-effort compensation */ }
+      try { fs.renameSync(staged, abs) } catch (rollbackError) { rollbackFailures.push(rollbackError) }
     }
-    if (previousMetadata && !getDocumentMetadata(db, input.path)) {
-      try { saveDocumentMetadata(db, previousMetadata) } catch { /* best-effort compensation */ }
-    }
+    try { restoreDocumentMetadataDatabase(db, databaseSnapshot) } catch (rollbackError) { rollbackFailures.push(rollbackError) }
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
       return err(`delete_file: file does not exist: ${input.path}`)
+    }
+    if (rollbackFailures.length) {
+      return err(`delete_file: ${(e as Error).message}; rollback was incomplete: ${rollbackFailures.map((failure) => (failure as Error).message).join('; ')}`)
     }
     return err(`delete_file: ${(e as Error).message}`)
   }
@@ -662,18 +650,13 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     abs: filePathFor(r.outputPath),
     raw: r.originalRaw,
     updated: r.updatedRaw,
-    metadata: null as ReturnType<typeof getDocumentMetadata>,
   }))
+  const databaseSnapshot = snapshotDocumentMetadataDatabase(db)
   try {
     raw = fs.readFileSync(srcAbs, 'utf8')
     const sourceStat = fs.statSync(srcAbs)
     ensureDocumentMetadata(db, input.path, raw, sourceStat.mtimeMs)
     fs.mkdirSync(path.dirname(dstAbs), { recursive: true })
-    // Metadata rollback snapshots BEFORE the move — a self-reference
-    // row still lives at the source path at this point.
-    for (const reference of references) {
-      reference.metadata = getDocumentMetadata(db, reference.sourcePath)
-    }
     await renameDocumentWithMetadata({
       db, fromPath: input.path, toPath: input.new_path, fromAbs: srcAbs, toAbs: dstAbs,
     })
@@ -693,17 +676,16 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
       }
       try { await renameDocumentWithMetadata({ db, fromPath: input.new_path, toPath: input.path, fromAbs: dstAbs, toAbs: srcAbs }) }
       catch (rollbackError) { rollbackErrors.push(rollbackError) }
-      for (const reference of references) {
-        try {
-          if (reference.metadata) saveDocumentMetadata(db, reference.metadata)
-          else deleteDocumentMetadata(db, reference.sourcePath === input.path ? input.path : reference.path)
-        }
-        catch (rollbackError) { rollbackErrors.push(rollbackError) }
-      }
+      try { restoreDocumentMetadataDatabase(db, databaseSnapshot) }
+      catch (rollbackError) { rollbackErrors.push(rollbackError) }
       if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'AI rename failed and rollback was incomplete')
       throw error
     }
   } catch (e) {
+    try { restoreDocumentMetadataDatabase(db, databaseSnapshot) }
+    catch (rollbackError) {
+      return err(`rename_file: ${(e as Error).message}; metadata rollback failed: ${(rollbackError as Error).message}`)
+    }
     return err(`rename_file: ${(e as Error).message}`)
   }
   // After ALL disk writes complete (rename + every rewritten reference),

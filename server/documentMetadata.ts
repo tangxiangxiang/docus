@@ -22,6 +22,60 @@ export interface SaveDocumentMetadata {
   updatedAt?: number
 }
 
+/**
+ * Exact rollback image for the SQLite-owned document metadata graph.
+ *
+ * This intentionally snapshots rows instead of hydrated business objects:
+ * rollback must preserve stable document/tag identities and migration
+ * tombstones exactly, including the meaningful state "metadata exists while
+ * the Markdown file does not".
+ */
+export type DocumentMetadataDatabaseSnapshot = {
+  documents: Record<string, unknown>[]
+  tags: Record<string, unknown>[]
+  documentTags: Record<string, unknown>[]
+  embeddings: Record<string, unknown>[]
+  migrations: Record<string, unknown>[]
+}
+
+export function snapshotDocumentMetadataDatabase(db: DatabaseT): DocumentMetadataDatabaseSnapshot {
+  return {
+    documents: db.prepare('SELECT * FROM documents ORDER BY id').all() as Record<string, unknown>[],
+    tags: db.prepare('SELECT * FROM tags ORDER BY id').all() as Record<string, unknown>[],
+    documentTags: db.prepare('SELECT * FROM document_tags ORDER BY document_id, tag_id').all() as Record<string, unknown>[],
+    embeddings: db.prepare('SELECT * FROM document_embeddings ORDER BY document_id').all() as Record<string, unknown>[],
+    migrations: db.prepare('SELECT * FROM metadata_migrations ORDER BY path').all() as Record<string, unknown>[],
+  }
+}
+
+function insertRows(db: DatabaseT, table: string, rows: Record<string, unknown>[]): void {
+  if (!rows.length) return
+  const columns = Object.keys(rows[0])
+  const sql = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map((column) => `@${column}`).join(', ')})`
+  const insert = db.prepare(sql)
+  for (const row of rows) insert.run(row)
+}
+
+export function restoreDocumentMetadataDatabase(
+  db: DatabaseT,
+  snapshot: DocumentMetadataDatabaseSnapshot,
+): void {
+  db.transaction(() => {
+    db.exec(`
+      DELETE FROM metadata_migrations;
+      DELETE FROM document_tags;
+      DELETE FROM document_embeddings;
+      DELETE FROM documents;
+      DELETE FROM tags;
+    `)
+    insertRows(db, 'documents', snapshot.documents)
+    insertRows(db, 'tags', snapshot.tags)
+    insertRows(db, 'document_tags', snapshot.documentTags)
+    insertRows(db, 'document_embeddings', snapshot.embeddings)
+    insertRows(db, 'metadata_migrations', snapshot.migrations)
+  })()
+}
+
 function dateMs(value: unknown, fallback: number): number {
   if (value instanceof Date && Number.isFinite(value.getTime())) return value.getTime()
   if (typeof value === 'string') {

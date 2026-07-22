@@ -8,6 +8,8 @@ import {
   deleteDocumentMetadata,
   getDocumentMetadata,
   saveDocumentMetadata,
+  restoreDocumentMetadataDatabase,
+  snapshotDocumentMetadataDatabase,
 } from '../documentMetadata.js'
 import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
 import {
@@ -70,12 +72,16 @@ postRoutes.post('/api/posts', async (c) => {
   const now = Date.now()
   const today = new Date(now).toISOString().slice(0, 10)
   const body_text = `# ${title}\n`
-  deleteDocumentMetadata(metadataDb(), body.path)
-  await fs.writeFile(abs, body_text, 'utf8')
+  const databaseSnapshot = snapshotDocumentMetadataDatabase(metadataDb())
   try {
+    deleteDocumentMetadata(metadataDb(), body.path)
+    await fs.writeFile(abs, body_text, 'utf8')
     saveDocumentMetadata(metadataDb(), { path: body.path, title, createdAt: now, updatedAt: now })
   } catch (error) {
-    await fs.rm(abs, { force: true })
+    const failures: unknown[] = [error]
+    try { await fs.rm(abs, { force: true }) } catch (rollbackError) { failures.push(rollbackError) }
+    try { restoreDocumentMetadataDatabase(metadataDb(), databaseSnapshot) } catch (rollbackError) { failures.push(rollbackError) }
+    if (failures.length > 1) throw new AggregateError(failures, 'post creation failed and rollback was incomplete')
     throw error
   }
   // Update the link index AFTER the disk write succeeds. Best-effort:
@@ -353,7 +359,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
   }
   const sourceRaw = await fs.readFile(src, 'utf8')
   const sourceStat = await fs.stat(src)
-  ensureMetadata(srcPath, sourceRaw, sourceStat.mtimeMs)
+  const databaseSnapshot = snapshotDocumentMetadataDatabase(metadataDb())
   const referenceSnapshots: Array<{
     sourcePath: string
     writePath: string
@@ -361,34 +367,35 @@ postRoutes.patch('/api/posts/*', async (c) => {
     raw: string
     updated: string
     mtime: number
-    metadata: ReturnType<typeof getDocumentMetadata>
   }> = []
-  if (body.updateReferences) {
-    const idx = await getLinkIndex()
-    const allPaths = idx.snapshot().paths
-    for (const backlink of idx.getBacklinks(srcPath)) {
-      const raw = backlink.source === srcPath ? sourceRaw : await fs.readFile(filePathFor(backlink.source), 'utf8')
-      if (backlink.source !== srcPath) {
-        const stat = await fs.stat(filePathFor(backlink.source))
-        ensureMetadata(backlink.source, raw, stat.mtimeMs)
-      }
-      const updated = rewriteDocumentReferences(raw, backlink.source, srcPath, destPath, allPaths)
-      if (updated === raw) continue
-      const writePath = backlink.source === srcPath ? destPath : backlink.source
-      referenceSnapshots.push({
-        sourcePath: backlink.source,
-        writePath,
-        abs: backlink.source === srcPath ? dest : filePathFor(backlink.source),
-        raw,
-        updated,
-        mtime: 0,
-        metadata: getDocumentMetadata(metadataDb(), backlink.source),
-      })
-    }
-  }
-  await renameDocumentWithMetadata({ db: metadataDb(), fromPath: srcPath, toPath: destPath, fromAbs: src, toAbs: dest })
   const written: typeof referenceSnapshots = []
+  let renamed = false
   try {
+    ensureMetadata(srcPath, sourceRaw, sourceStat.mtimeMs)
+    if (body.updateReferences) {
+      const idx = await getLinkIndex()
+      const allPaths = idx.snapshot().paths
+      for (const backlink of idx.getBacklinks(srcPath)) {
+        const raw = backlink.source === srcPath ? sourceRaw : await fs.readFile(filePathFor(backlink.source), 'utf8')
+        if (backlink.source !== srcPath) {
+          const stat = await fs.stat(filePathFor(backlink.source))
+          ensureMetadata(backlink.source, raw, stat.mtimeMs)
+        }
+        const updated = rewriteDocumentReferences(raw, backlink.source, srcPath, destPath, allPaths)
+        if (updated === raw) continue
+        const writePath = backlink.source === srcPath ? destPath : backlink.source
+        referenceSnapshots.push({
+          sourcePath: backlink.source,
+          writePath,
+          abs: backlink.source === srcPath ? dest : filePathFor(backlink.source),
+          raw,
+          updated,
+          mtime: 0,
+        })
+      }
+    }
+    await renameDocumentWithMetadata({ db: metadataDb(), fromPath: srcPath, toPath: destPath, fromAbs: src, toAbs: dest })
+    renamed = true
     for (const snapshot of referenceSnapshots) {
       written.push(snapshot)
       await fs.writeFile(snapshot.abs, snapshot.updated, 'utf8')
@@ -401,20 +408,15 @@ postRoutes.patch('/api/posts/*', async (c) => {
     for (const snapshot of written.reverse()) {
       try {
         await fs.writeFile(snapshot.abs, snapshot.raw, 'utf8')
-        if (snapshot.sourcePath !== srcPath) {
-          if (snapshot.metadata) saveDocumentMetadata(metadataDb(), snapshot.metadata)
-          else deleteDocumentMetadata(metadataDb(), snapshot.sourcePath)
-        }
       } catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
-    try {
-      await renameDocumentWithMetadata({ db: metadataDb(), fromPath: destPath, toPath: srcPath, fromAbs: dest, toAbs: src })
-    } catch (rollbackError) { rollbackErrors.push(rollbackError) }
-    const selfSnapshot = referenceSnapshots.find((snapshot) => snapshot.sourcePath === srcPath)
-    if (selfSnapshot?.metadata) {
-      try { saveDocumentMetadata(metadataDb(), selfSnapshot.metadata) }
-      catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    if (renamed) {
+      try {
+        await renameDocumentWithMetadata({ db: metadataDb(), fromPath: destPath, toPath: srcPath, fromAbs: dest, toAbs: src })
+      } catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
+    try { restoreDocumentMetadataDatabase(metadataDb(), databaseSnapshot) }
+    catch (rollbackError) { rollbackErrors.push(rollbackError) }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'reference update failed and rollback was incomplete')
     throw error
   }
@@ -466,16 +468,19 @@ postRoutes.delete('/api/posts/*', async (c) => {
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const staged = `${abs}.docus-delete-${Date.now()}`
-  const previousMetadata = getDocumentMetadata(metadataDb(), splat)
+  const databaseSnapshot = snapshotDocumentMetadataDatabase(metadataDb())
   await fs.rename(abs, staged)
   try {
     deleteDocumentMetadata(metadataDb(), splat)
     await fs.unlink(staged)
   } catch (error) {
-    if (await exists(staged) && !await exists(abs)) await fs.rename(staged, abs)
-    if (previousMetadata && !getDocumentMetadata(metadataDb(), splat)) {
-      saveDocumentMetadata(metadataDb(), previousMetadata)
-    }
+    const failures: unknown[] = [error]
+    try {
+      if (await exists(staged) && !await exists(abs)) await fs.rename(staged, abs)
+    } catch (rollbackError) { failures.push(rollbackError) }
+    try { restoreDocumentMetadataDatabase(metadataDb(), databaseSnapshot) }
+    catch (rollbackError) { failures.push(rollbackError) }
+    if (failures.length > 1) throw new AggregateError(failures, 'post deletion failed and rollback was incomplete')
     throw error
   }
   try {

@@ -1,14 +1,14 @@
 // Smoke test for POST /api/posts. Verifies body-only Markdown creation,
 // database-owned metadata, and the compatible wire response.
 
-import { describe, it, expect, afterAll, beforeAll } from 'vitest'
+import { describe, it, expect, afterAll, beforeAll, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import app, { __setMetadataDbForTesting } from '../index'
 import { CONTENT_DIR } from '../paths'
 import { applyMigrations } from '../db'
-import { deleteDocumentMetadata, getDocumentMetadata } from '../documentMetadata'
+import { deleteDocumentMetadata, getDocumentMetadata, snapshotDocumentMetadataDatabase } from '../documentMetadata'
 
 const TEST_PATH = 'post-smoke'
 const TEST_ABS = path.join(CONTENT_DIR, 'post-smoke.md')
@@ -74,6 +74,24 @@ describe('POST /api/posts', () => {
     // yet, so the file should still be on disk.
     const r = await call('POST', '/api/posts', { path: TEST_PATH, title: 'Smoke' })
     expect(r.status).toBe(409)
+  })
+
+  it('restores file bytes and every metadata table when staged delete unlink fails', async () => {
+    const metadata = getDocumentMetadata(db, TEST_PATH)!
+    db.prepare(`INSERT OR REPLACE INTO metadata_migrations
+      (path, document_id, original_path, status, source_hash, error, updated_at, frontmatter_backup, cleaned_hash)
+      VALUES (?, ?, '', 'cleaned', '', '', 17, '', 'hash')`)
+      .run(TEST_PATH, metadata.id)
+    const before = snapshotDocumentMetadataDatabase(db)
+    const unlink = vi.spyOn(fs, 'unlink').mockRejectedValueOnce(new Error('injected staged unlink failure'))
+    try {
+      const response = await call('DELETE', `/api/posts/${TEST_PATH}`)
+      expect(response.status).toBe(500)
+      expect(await fs.readFile(TEST_ABS, 'utf8')).toBe('# Smoke\n')
+      expect(snapshotDocumentMetadataDatabase(db)).toEqual(before)
+    } finally {
+      unlink.mockRestore()
+    }
   })
 
   it('rejects a request body without a path', async () => {

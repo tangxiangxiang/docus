@@ -6,7 +6,7 @@
 // This mirrors the `fs.mkdtemp` pattern used by `tree.test.ts` and
 // keeps the test files completely out of the real `src/content/`.
 
-import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -20,7 +20,7 @@ import {
   type ToolContext,
 } from '../ai/tools'
 import { applyMigrations } from '../db'
-import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
+import { getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataDatabase } from '../documentMetadata'
 import { __resetLinkIndexForTesting, getIndex as getLinkIndex } from '../linkIndex'
 import {
   deriveToolSafetyPolicy,
@@ -50,7 +50,7 @@ applyMigrations(db)
 const ctx: ToolContext = { signal: new AbortController().signal, db }
 
 beforeEach(() => {
-  db.exec('DELETE FROM documents; DELETE FROM tags;')
+  db.exec('DELETE FROM metadata_migrations; DELETE FROM documents; DELETE FROM tags;')
 })
 
 afterAll(() => db.close())
@@ -192,6 +192,28 @@ describe('create_file', () => {
     expect(r.content).toMatch(/archive flow/)
     expect(fs.existsSync(path.join(contentDir, 'archive/new.md'))).toBe(false)
   })
+
+  it('restores an absent file, its old documentId, and migrations exactly when metadata commit fails', async () => {
+    saveDocumentMetadata(db, { id: 'old-document-id', path: 'a/ghost', title: 'Old', tags: ['keep'] })
+    db.prepare(`INSERT INTO metadata_migrations
+      (path, document_id, original_path, status, source_hash, error, updated_at, frontmatter_backup, cleaned_hash)
+      VALUES (?, ?, '', 'cleaned', 'source', '', 11, 'backup', 'cleaned')`)
+      .run('a/ghost', 'old-document-id')
+    const before = snapshotDocumentMetadataDatabase(db)
+    db.exec(`CREATE TRIGGER fail_new_ghost_metadata BEFORE INSERT ON documents
+      WHEN NEW.path = 'a/ghost' AND NEW.title != 'Old'
+      BEGIN SELECT RAISE(ABORT, 'injected metadata failure'); END`)
+    try {
+      const result = await executeToolCall('create_file', { path: 'a/ghost', content: 'new body' }, ctx)
+      expect(result.isError).toBe(true)
+      expect(result.content).toMatch(/injected metadata failure/)
+      expect(fs.existsSync(path.join(contentDir, 'a/ghost.md'))).toBe(false)
+      expect(snapshotDocumentMetadataDatabase(db)).toEqual(before)
+      expect(getDocumentMetadata(db, 'a/ghost')?.id).toBe('old-document-id')
+    } finally {
+      db.exec('DROP TRIGGER IF EXISTS fail_new_ghost_metadata')
+    }
+  })
 })
 
 // --- write_file -------------------------------------------------------------
@@ -307,6 +329,27 @@ describe('delete_file', () => {
     expect(r.isError).toBe(true)
     expect(r.content).toMatch(/does not exist/)
   })
+
+  it('restores all metadata tables and the file when staged unlink fails', async () => {
+    const abs = writeFile('a/fail-delete.md', 'keep me')
+    saveDocumentMetadata(db, { id: 'delete-id', path: 'a/fail-delete', title: 'Keep', tags: ['tag'] })
+    db.prepare(`INSERT INTO metadata_migrations
+      (path, document_id, original_path, status, source_hash, error, updated_at, frontmatter_backup, cleaned_hash)
+      VALUES (?, ?, '', 'cleaned', '', '', 12, '', 'hash')`)
+      .run('a/fail-delete', 'delete-id')
+    const before = snapshotDocumentMetadataDatabase(db)
+    const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('injected unlink failure'), { code: 'EIO' })
+    })
+    try {
+      const result = await executeToolCall('delete_file', { path: 'a/fail-delete' }, ctx)
+      expect(result.isError).toBe(true)
+      expect(fs.readFileSync(abs, 'utf8')).toBe('keep me')
+      expect(snapshotDocumentMetadataDatabase(db)).toEqual(before)
+    } finally {
+      unlink.mockRestore()
+    }
+  })
 })
 
 // --- rename_file ------------------------------------------------------------
@@ -411,6 +454,26 @@ describe('rename_file', () => {
     const finalBody = fs.readFileSync(path.join(contentDir, 'a/new.md'), 'utf8')
     expect(finalBody).toBe('hello world')
     expect(r.changed?.newRaw).toBe(finalBody)
+  })
+
+  it('removes metadata minted for a metadata-less source and backlink when reference writing fails', async () => {
+    const oldAbs = writeFile('a/old.md', 'target')
+    const backlinkAbs = writeFile('a/source.md', 'see [[a/old]]')
+    await getLinkIndex()
+    const before = snapshotDocumentMetadataDatabase(db)
+    const write = vi.spyOn(fs, 'writeFileSync').mockImplementationOnce(() => {
+      throw new Error('injected backlink write failure')
+    })
+    try {
+      const result = await executeToolCall('rename_file', { path: 'a/old', new_path: 'a/new' }, ctx)
+      expect(result.isError).toBe(true)
+      expect(fs.readFileSync(oldAbs, 'utf8')).toBe('target')
+      expect(fs.readFileSync(backlinkAbs, 'utf8')).toBe('see [[a/old]]')
+      expect(fs.existsSync(path.join(contentDir, 'a/new.md'))).toBe(false)
+      expect(snapshotDocumentMetadataDatabase(db)).toEqual(before)
+    } finally {
+      write.mockRestore()
+    }
   })
 })
 
