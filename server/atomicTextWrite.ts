@@ -8,6 +8,40 @@ export interface PreparedAtomicTextWrite {
   rollback(): Promise<void>
 }
 
+/** Prepare a durable temporary file whose commit atomically creates, but can
+ * never replace, the target path. */
+export async function prepareAtomicTextCreate(
+  targetPath: string,
+  raw: string,
+  options: { mode?: number } = {},
+): Promise<PreparedAtomicTextWrite> {
+  const prepared = await prepareAtomicTextWrite(targetPath, raw, options)
+  let settled = false
+  return {
+    temporaryPath: prepared.temporaryPath,
+    async commit() {
+      if (settled) return
+      try {
+        // link(2) is the create-only counterpart to rename: it atomically
+        // fails with EEXIST and never replaces a newer generation.
+        await fs.link(prepared.temporaryPath, targetPath)
+        settled = true
+        await fs.rm(prepared.temporaryPath, { force: true }).catch(() => {})
+        await syncParentDirectoryBestEffort(targetPath)
+      } catch (error) {
+        settled = true
+        await fs.rm(prepared.temporaryPath, { force: true }).catch(() => {})
+        throw error
+      }
+    },
+    async rollback() {
+      if (settled) return
+      settled = true
+      await fs.rm(prepared.temporaryPath, { force: true }).catch(() => {})
+    },
+  }
+}
+
 export interface StableTextSnapshot {
   raw: string
   stat: {

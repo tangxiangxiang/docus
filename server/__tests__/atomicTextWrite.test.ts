@@ -7,6 +7,7 @@ import {
   UnstableTextSnapshotError,
   atomicReplaceText,
   atomicReplaceTextIfUnchanged,
+  prepareAtomicTextCreate,
   prepareAtomicTextWrite,
   readStableTextSnapshot,
 } from '../atomicTextWrite'
@@ -58,6 +59,19 @@ describe('atomic text writes', () => {
 
     await prepared.rollback()
     expect(await fs.readFile(target, 'utf8')).toBe('original')
+    expect(await temporaryFiles()).toEqual([])
+  })
+
+  it('atomically creates without replacing an existing target', async () => {
+    const prepared = await prepareAtomicTextCreate(target, 'replacement')
+    await expect(prepared.commit()).rejects.toMatchObject({ code: 'EEXIST' })
+    expect(await fs.readFile(target, 'utf8')).toBe('original')
+    expect(await temporaryFiles()).toEqual([])
+
+    const missing = path.join(directory, 'created.md')
+    const create = await prepareAtomicTextCreate(missing, 'created')
+    await create.commit()
+    expect(await fs.readFile(missing, 'utf8')).toBe('created')
     expect(await temporaryFiles()).toEqual([])
   })
 

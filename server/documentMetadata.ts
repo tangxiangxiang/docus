@@ -88,6 +88,29 @@ export function snapshotDocumentMetadataMutation(
   return { paths, documentIds, tagIds, preexistingTagIds, documents, tags, documentTags, embeddings, migrations }
 }
 
+/** Expand folder prefixes to the exact rows they currently own, including
+ * recovery-only migration rows for files that do not exist on disk. */
+export function snapshotDocumentMetadataPrefixMutation(
+  db: DatabaseT,
+  prefixes: readonly string[],
+  extraPaths: readonly string[] = [],
+): DocumentMetadataMutationSnapshot {
+  const normalized = [...new Set(prefixes)]
+  const matched = new Set(extraPaths)
+  for (const prefix of normalized) {
+    const like = `${prefix}/%`
+    for (const row of db.prepare('SELECT path FROM documents WHERE path = ? OR path LIKE ?').all(prefix, like) as Array<{ path: string }>) {
+      matched.add(row.path)
+    }
+    for (const row of db.prepare(`SELECT path, original_path FROM metadata_migrations
+      WHERE path = ? OR path LIKE ? OR original_path = ? OR original_path LIKE ?`).all(prefix, like, prefix, like) as Array<{ path: string; original_path: string }>) {
+      if (!row.path.startsWith('@deleted/')) matched.add(row.path)
+      if (row.original_path) matched.add(row.original_path)
+    }
+  }
+  return snapshotDocumentMetadataMutation(db, [...matched])
+}
+
 function insertRows(db: DatabaseT, table: string, rows: Record<string, unknown>[]): void {
   if (!rows.length) return
   const columns = Object.keys(rows[0])

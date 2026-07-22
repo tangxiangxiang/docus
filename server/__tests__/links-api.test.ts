@@ -13,7 +13,8 @@ import app, { __setMetadataDbForTesting } from '../index'
 import { setContentDir } from '../paths.js'
 import { __resetLinkIndexForTesting } from '../linkIndex.js'
 import { applyMigrations } from '../db.js'
-import { getDocumentMetadata } from '../documentMetadata.js'
+import { getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataDatabase } from '../documentMetadata.js'
+import { withDocumentWriteLock } from '../documentWriteLock.js'
 
 let sandbox: string
 let originalContentDir: string
@@ -219,7 +220,7 @@ describe('write routes update the index', () => {
     const r = await app.fetch(new Request('http://localhost/api/folders/notes', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ newPath: 'archive' }),
+      body: JSON.stringify({ newPath: 'renamed' }),
     }))
     expect(r.status).toBe(200)
 
@@ -228,11 +229,38 @@ describe('write routes update the index', () => {
     const snap = await idx.json() as { paths: string[]; outgoing: Record<string, Array<{ target: string }>> }
     expect(snap.paths).not.toContain('notes/a')
     expect(snap.paths).not.toContain('notes/b')
-    expect(snap.paths).toContain('archive/a')
-    expect(snap.paths).toContain('archive/b')
+    expect(snap.paths).toContain('renamed/a')
+    expect(snap.paths).toContain('renamed/b')
 
-    // 'archive/a' resolves [[b]] against its new same-dir → 'archive/b'.
-    expect(snap.outgoing['archive/a']?.[0]?.target).toBe('archive/b')
+    // 'renamed/a' resolves [[b]] against its new same-dir → 'renamed/b'.
+    expect(snap.outgoing['renamed/a']?.[0]?.target).toBe('renamed/b')
+  })
+
+  it('waits for a child document transaction before renaming its folder', async () => {
+    await fs.mkdir(path.join(sandbox, 'notes'))
+    await fs.writeFile(path.join(sandbox, 'notes', 'a.md'), '# a', 'utf8')
+    let release!: () => void
+    let locked!: () => void
+    const lockStarted = new Promise<void>((resolve) => { locked = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const holder = withDocumentWriteLock('notes/a', async () => {
+      locked()
+      await gate
+    })
+    await lockStarted
+
+    const request = app.fetch(new Request('http://localhost/api/folders/notes', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ newPath: 'renamed' }),
+    }))
+    const state = await Promise.race([
+      request.then(() => 'completed'),
+      new Promise<'waiting'>((resolve) => setTimeout(() => resolve('waiting'), 20)),
+    ])
+    expect(state).toBe('waiting')
+    release()
+    await holder
+    expect((await request).status).toBe(200)
   })
 
   it('returns the rewritten reference mtime after a folder rename', async () => {
@@ -243,14 +271,14 @@ describe('write routes update the index', () => {
 
     const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
       method: 'PATCH', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ newPath: 'archive', updateReferences: true }),
+      body: JSON.stringify({ newPath: 'renamed', updateReferences: true }),
     }))
     expect(response.status).toBe(200)
     const body = await response.json() as {
       updatedReferences: Array<{ path: string; raw: string; mtime: number }>
     }
     expect(body.updatedReferences).toEqual([
-      expect.objectContaining({ path: 'source', raw: 'see [[archive/target]]', mtime: expect.any(Number) }),
+      expect.objectContaining({ path: 'source', raw: 'see [[renamed/target]]', mtime: expect.any(Number) }),
     ])
     expect(body.updatedReferences[0]!.mtime).toBeGreaterThan(0)
   })
@@ -262,10 +290,16 @@ describe('write routes update the index', () => {
     await fs.writeFile(path.join(sandbox, 'd.md'), '[[notes/target]]', 'utf8')
     __resetLinkIndexForTesting()
     await get('/api/links/index')
-    const originalCmtime = (await fs.stat(path.join(sandbox, 'c.md'))).mtimeMs
+    const cMetadata = saveDocumentMetadata(db, { id: 'folder-c', path: 'c', title: 'C', tags: ['stable'], updatedAt: 11 })
+    db.prepare(`INSERT INTO document_embeddings (document_id, content_hash, embedding, model, indexed_at)
+      VALUES (?, 'hash', X'0102', 'test', 11)`).run(cMetadata.id)
+    db.prepare(`INSERT INTO metadata_migrations
+      (path, document_id, status, source_hash, cleaned_hash, error, updated_at)
+      VALUES ('c', ?, 'cleaned', 'source', 'cleaned', '', 11)`).run(cMetadata.id)
+    const before = snapshotDocumentMetadataDatabase(db)
     const originalWrite = fs.writeFile.bind(fs)
     const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, options) => {
-      if (String(file).endsWith(`${path.sep}d.md`) && String(data).includes('archive/target')) {
+      if (String(file).endsWith(`${path.sep}d.md`) && String(data).includes('renamed/target')) {
         throw new Error('simulated second reference failure')
       }
       return originalWrite(file, data, options as any)
@@ -273,15 +307,32 @@ describe('write routes update the index', () => {
     try {
       const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ newPath: 'archive', updateReferences: true }),
+        body: JSON.stringify({ newPath: 'renamed', updateReferences: true }),
       }))
       expect(response.status).toBe(500)
       expect(await fs.readFile(path.join(sandbox, 'c.md'), 'utf8')).toBe('[[notes/target]]')
       expect(await fs.readFile(path.join(sandbox, 'd.md'), 'utf8')).toBe('[[notes/target]]')
-      expect(getDocumentMetadata(db, 'c')?.updatedAt).toBe(originalCmtime)
+      expect(snapshotDocumentMetadataDatabase(db)).toEqual(before)
       await expect(fs.stat(path.join(sandbox, 'notes', 'target.md'))).resolves.toBeTruthy()
-      await expect(fs.stat(path.join(sandbox, 'archive'))).rejects.toThrow()
+      await expect(fs.stat(path.join(sandbox, 'renamed'))).rejects.toThrow()
     } finally { spy.mockRestore() }
+  })
+
+  it('does not delete destination recovery metadata when the filesystem rename fails', async () => {
+    await fs.mkdir(path.join(sandbox, 'notes'))
+    await fs.writeFile(path.join(sandbox, 'notes', 'a.md'), '# a', 'utf8')
+    saveDocumentMetadata(db, { id: 'destination-recovery', path: 'renamed/recovered', title: 'Recovery' })
+    const before = snapshotDocumentMetadataDatabase(db)
+    const rename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('injected folder rename failure'))
+    try {
+      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ newPath: 'renamed' }),
+      }))
+      expect(response.status).toBe(500)
+      expect(snapshotDocumentMetadataDatabase(db)).toEqual(before)
+      await expect(fs.stat(path.join(sandbox, 'notes', 'a.md'))).resolves.toBeTruthy()
+    } finally { rename.mockRestore() }
   })
 
   it('DELETE /api/folders cascades the index (recursive)', async () => {
@@ -299,5 +350,46 @@ describe('write routes update the index', () => {
     const snap = await idx.json() as { paths: string[] }
     expect(snap.paths).not.toContain('notes/a')
     expect(snap.paths).not.toContain('notes/b')
+  })
+
+  it('restores the complete metadata graph when recursive folder removal fails', async () => {
+    await fs.mkdir(path.join(sandbox, 'notes'))
+    await fs.writeFile(path.join(sandbox, 'notes', 'a.md'), '# a', 'utf8')
+    const metadata = saveDocumentMetadata(db, { id: 'folder-delete-a', path: 'notes/a', title: 'A', tags: ['stable'] })
+    db.prepare(`INSERT INTO document_embeddings (document_id, content_hash, embedding, model, indexed_at)
+      VALUES (?, 'hash', X'0102', 'test', 11)`).run(metadata.id)
+    db.prepare(`INSERT INTO metadata_migrations
+      (path, document_id, status, source_hash, cleaned_hash, error, updated_at)
+      VALUES ('notes/a', ?, 'cleaned', 'source', 'cleaned', '', 11)`).run(metadata.id)
+    const before = snapshotDocumentMetadataDatabase(db)
+    const originalRm = fs.rm.bind(fs)
+    const remove = vi.spyOn(fs, 'rm').mockImplementation(async (target, options) => {
+      if (String(target).includes('.docus-delete-')) throw new Error('injected recursive removal failure')
+      return originalRm(target, options)
+    })
+    try {
+      const response = await app.fetch(new Request('http://localhost/api/folders/notes?recursive=true', { method: 'DELETE' }))
+      expect(response.status).toBe(500)
+      expect(await fs.readFile(path.join(sandbox, 'notes', 'a.md'), 'utf8')).toBe('# a')
+      expect(snapshotDocumentMetadataDatabase(db)).toEqual(before)
+    } finally { remove.mockRestore() }
+  })
+
+  it('rejects rename and delete for protected roots and archive descendants', async () => {
+    await fs.mkdir(path.join(sandbox, 'inbox'), { recursive: true })
+    await fs.mkdir(path.join(sandbox, 'literature'), { recursive: true })
+    await fs.mkdir(path.join(sandbox, 'archive', 'organized'), { recursive: true })
+
+    for (const folder of ['inbox', 'literature', 'archive', 'archive/organized']) {
+      const rename = await app.fetch(new Request(`http://localhost/api/folders/${folder}`, {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ newPath: `${path.posix.dirname(folder)}/renamed`.replace(/^\.\//, '') }),
+      }))
+      expect(rename.status, folder).toBe(422)
+      const remove = await app.fetch(new Request(`http://localhost/api/folders/${folder}?recursive=true`, {
+        method: 'DELETE',
+      }))
+      expect(remove.status, folder).toBe(422)
+    }
   })
 })

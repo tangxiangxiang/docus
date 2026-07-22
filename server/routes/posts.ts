@@ -15,6 +15,7 @@ import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
 import {
   atomicReplaceTextIfUnchanged,
   atomicRemoveTextIfUnchanged,
+  prepareAtomicTextCreate,
   prepareAtomicTextWrite,
   readStableTextSnapshot,
   UnstableTextSnapshotError,
@@ -246,10 +247,11 @@ postRoutes.put('/api/recover/*', async (c) => {
     const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [documentPath])
     const previousMetadata = getDocumentMetadata(metadataDb(), documentPath)
     await fs.mkdir(path.dirname(abs), { recursive: true })
-    await fs.writeFile(abs, requestedRaw, { encoding: 'utf8', flag: 'wx' })
+    const prepared = await prepareAtomicTextCreate(abs, requestedRaw)
     let stat: Awaited<ReturnType<typeof fs.stat>>
     let metadata: ReturnType<typeof ensureMetadata>
     try {
+      await prepared.commit()
       stat = await fs.stat(abs)
       metadata = previousMetadata
         ? { ...previousMetadata, updatedAt: Date.now() }
@@ -259,7 +261,8 @@ postRoutes.put('/api/recover/*', async (c) => {
     } catch (error) {
       const failures: unknown[] = [error]
       try {
-        await atomicRemoveTextIfUnchanged(abs, requestedRaw)
+        if (await exists(abs)) await atomicRemoveTextIfUnchanged(abs, requestedRaw)
+        else await prepared.rollback()
       } catch (rollbackError) {
         failures.push(rollbackError)
       }

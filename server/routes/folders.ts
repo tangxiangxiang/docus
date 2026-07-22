@@ -1,13 +1,14 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { Hono } from 'hono'
+import { canModify } from '../../src/composables/archiveProtocol.js'
 import {
   deleteDocumentMetadataPrefix,
-  getDocumentMetadata,
-  listDocumentMetadata,
   moveDocumentMetadataPrefix,
-  saveDocumentMetadata,
+  restoreDocumentMetadataMutation,
+  snapshotDocumentMetadataPrefixMutation,
 } from '../documentMetadata.js'
+import { withDocumentWriteLock, withDocumentWriteLocks } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { CONTENT_DIR, filePathFor, folderPathFor, isValidPathSyntax } from '../paths.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
@@ -25,15 +26,18 @@ folderRoutes.post('/api/folders', async (c) => {
   }
   let abs: string
   try { abs = folderPathFor(body.path) } catch (e: any) { return bad(c, e.message) }
-  if (await exists(abs)) return bad(c, 'folder exists', 409)
-  await fs.mkdir(abs, { recursive: true })
-  return c.json({ path: body.path }, 201)
+  return withDocumentWriteLock(body.path, async () => {
+    if (await exists(abs)) return bad(c, 'folder exists', 409)
+    await fs.mkdir(abs, { recursive: true })
+    return c.json({ path: body.path }, 201)
+  })
 })
 
 // Rename a folder (single-segment rename, cascades on disk).
 folderRoutes.patch('/api/folders/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/folders\//, '')
   const srcPath = splat
+  if (!canModify(srcPath)) return bad(c, 'protected folders cannot be renamed', 422)
   let src: string
   try { src = folderPathFor(srcPath) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(src)) return bad(c, 'not found', 404)
@@ -45,19 +49,37 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   const srcParent = path.dirname(srcPath)
   const newParent = path.dirname(body.newPath)
   if (srcParent !== newParent) return bad(c, 'only single-segment rename allowed', 422)
+  if (!canModify(newPath)) return bad(c, 'cannot rename a folder to a protected path', 422)
   let dest: string
   try { dest = folderPathFor(body.newPath) } catch (e: any) { return bad(c, e.message) }
+  const plannedOldPaths = await listSubtreePaths(CONTENT_DIR, srcPath)
+  const plannedReferencePaths = body.updateReferences
+    ? Object.entries((await getLinkIndex()).snapshot().outgoing)
+      .filter(([, links]) => links.some((link) => plannedOldPaths.includes(link.target)))
+      .map(([source]) => source)
+    : []
+  const plannedNewPaths = plannedOldPaths.map((oldPath) => newPath + oldPath.slice(srcPath.length))
+  const plannedReferenceWritePaths = plannedReferencePaths.map((source) =>
+    source === srcPath || source.startsWith(`${srcPath}/`) ? newPath + source.slice(srcPath.length) : source,
+  )
+  const plannedDatabasePaths = snapshotDocumentMetadataPrefixMutation(
+    metadataDb(), [srcPath, newPath], [
+      ...plannedOldPaths, ...plannedNewPaths, ...plannedReferencePaths, ...plannedReferenceWritePaths,
+    ],
+  ).paths
+  return withDocumentWriteLocks([
+    srcPath, newPath, ...plannedOldPaths, ...plannedNewPaths,
+    ...plannedReferencePaths, ...plannedDatabasePaths,
+  ], async () => {
+  if (!await exists(src)) return bad(c, 'not found', 404)
   if (await exists(dest)) return bad(c, 'destination exists', 409)
   const oldPaths = await listSubtreePaths(CONTENT_DIR, srcPath)
-  for (const oldPath of oldPaths) {
-    const oldAbs = filePathFor(oldPath)
-    const [raw, stat] = await Promise.all([fs.readFile(oldAbs, 'utf8'), fs.stat(oldAbs)])
-    ensureMetadata(oldPath, raw, stat.mtimeMs)
+  if (oldPaths.join('\0') !== plannedOldPaths.join('\0')) {
+    return bad(c, 'folder contents changed while rename was being prepared; retry', 409)
   }
   const folderReferenceSnapshots: Array<{
     sourcePath: string; writePath: string; raw: string; updated: string
     mtime: number
-    metadata: ReturnType<typeof getDocumentMetadata>
   }> = []
   if (body.updateReferences) {
     const idx = await getLinkIndex()
@@ -66,8 +88,6 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     for (const [source, links] of Object.entries(indexSnapshot.outgoing)) {
       if (!links.some((link) => oldPaths.includes(link.target))) continue
       const raw = await fs.readFile(filePathFor(source), 'utf8')
-      const sourceStat = await fs.stat(filePathFor(source))
-      ensureMetadata(source, raw, sourceStat.mtimeMs)
       const updated = moves.reduce(
         (text, move) => rewriteDocumentReferences(text, source, move.oldPath, move.newPath, indexSnapshot.paths), raw,
       )
@@ -77,16 +97,47 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         raw,
         updated,
         mtime: 0,
-        metadata: getDocumentMetadata(metadataDb(), source),
       })
     }
+    const actualReferences = folderReferenceSnapshots.map((item) => item.sourcePath).sort()
+    const plannedReferences = [...new Set(plannedReferencePaths)].sort()
+    if (actualReferences.join('\0') !== plannedReferences.join('\0')) {
+      return bad(c, 'backlinks changed while rename was being prepared; retry', 409)
+    }
   }
-  deleteDocumentMetadataPrefix(metadataDb(), newPath)
-  await fs.rename(src, dest)
+  const databaseSnapshot = snapshotDocumentMetadataPrefixMutation(
+    metadataDb(), [srcPath, newPath], [
+      ...oldPaths,
+      ...oldPaths.map((oldPath) => newPath + oldPath.slice(srcPath.length)),
+      ...folderReferenceSnapshots.flatMap((item) => [item.sourcePath, item.writePath]),
+    ],
+  )
+  const currentDatabasePaths = [...databaseSnapshot.paths].sort()
+  const lockedDatabasePaths = [...new Set(plannedDatabasePaths)].sort()
+  if (currentDatabasePaths.join('\0') !== lockedDatabasePaths.join('\0')) {
+    return bad(c, 'folder metadata changed while rename was being prepared; retry', 409)
+  }
+  const written: typeof folderReferenceSnapshots = []
+  let renamed = false
   try {
+    for (const oldPath of oldPaths) {
+      const oldAbs = filePathFor(oldPath)
+      const [raw, stat] = await Promise.all([fs.readFile(oldAbs, 'utf8'), fs.stat(oldAbs)])
+      ensureMetadata(oldPath, raw, stat.mtimeMs)
+    }
+    for (const snapshot of folderReferenceSnapshots) {
+      if (!oldPaths.includes(snapshot.sourcePath)) {
+        const sourceStat = await fs.stat(filePathFor(snapshot.sourcePath))
+        ensureMetadata(snapshot.sourcePath, snapshot.raw, sourceStat.mtimeMs)
+      }
+    }
+    deleteDocumentMetadataPrefix(metadataDb(), newPath)
+    await fs.rename(src, dest)
+    renamed = true
     moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
     for (const snapshot of folderReferenceSnapshots) {
       const target = filePathFor(snapshot.writePath)
+      written.push(snapshot)
       await fs.writeFile(target, snapshot.updated, 'utf8')
       const stat = await fs.stat(target)
       snapshot.mtime = stat.mtimeMs
@@ -94,20 +145,16 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     }
   } catch (error) {
     const rollbackErrors: unknown[] = []
-    for (const snapshot of folderReferenceSnapshots) {
+    for (const snapshot of written.reverse()) {
       const target = filePathFor(snapshot.writePath)
       if (await exists(target)) {
         try { await fs.writeFile(target, snapshot.raw, 'utf8') }
         catch (rollbackError) { rollbackErrors.push(rollbackError) }
       }
     }
-    try { await fs.rename(dest, src) } catch (rollbackError) { rollbackErrors.push(rollbackError) }
-    try { moveDocumentMetadataPrefix(metadataDb(), newPath, srcPath) } catch (rollbackError) { rollbackErrors.push(rollbackError) }
-    for (const snapshot of folderReferenceSnapshots) {
-      if (!snapshot.metadata) continue
-      try { saveDocumentMetadata(metadataDb(), snapshot.metadata) }
-      catch (rollbackError) { rollbackErrors.push(rollbackError) }
-    }
+    if (renamed) try { await fs.rename(dest, src) } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
+    catch (rollbackError) { rollbackErrors.push(rollbackError) }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'folder rename failed and rollback was incomplete')
     throw error
   }
@@ -139,33 +186,41 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       mtime: snapshot.mtime,
     })),
   })
+  })
 })
 
 // Delete a folder recursively. Requires ?recursive=true if non-empty.
 folderRoutes.delete('/api/folders/*', async (c) => {
   const splat = c.req.path.replace(/^\/api\/folders\//, '')
   const folderP = splat
+  if (!canModify(folderP)) return bad(c, 'protected folders cannot be deleted', 422)
   let abs: string
   try { abs = folderPathFor(folderP) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const recursive = c.req.query('recursive') === 'true'
+  const planned = await listSubtreePaths(CONTENT_DIR, folderP)
+  const plannedDatabasePaths = snapshotDocumentMetadataPrefixMutation(metadataDb(), [folderP], planned).paths
+  return withDocumentWriteLocks([folderP, ...planned, ...plannedDatabasePaths], async () => {
+  if (!await exists(abs)) return bad(c, 'not found', 404)
   const all = await listSubtreePaths(CONTENT_DIR, folderP)
+  if (all.join('\0') !== planned.join('\0')) return bad(c, 'folder contents changed while delete was being prepared; retry', 409)
   if (all.length > 0 && !recursive) {
     return bad(c, 'folder is not empty; pass ?recursive=true to delete', 400)
   }
   const staged = `${abs}.docus-delete-${Date.now()}`
-  const previousMetadata = listDocumentMetadata(metadataDb()).filter(
-    (metadata) => metadata.path === folderP || metadata.path.startsWith(`${folderP}/`),
-  )
+  const databaseSnapshot = snapshotDocumentMetadataPrefixMutation(metadataDb(), [folderP], all)
   await fs.rename(abs, staged)
   try {
     deleteDocumentMetadataPrefix(metadataDb(), folderP)
     await fs.rm(staged, { recursive: true, force: true })
   } catch (error) {
-    if (await exists(staged) && !await exists(abs)) await fs.rename(staged, abs)
-    for (const metadata of previousMetadata) {
-      if (!getDocumentMetadata(metadataDb(), metadata.path)) saveDocumentMetadata(metadataDb(), metadata)
+    const rollbackErrors: unknown[] = []
+    if (await exists(staged) && !await exists(abs)) {
+      try { await fs.rename(staged, abs) } catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
+    try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
+    catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'folder delete failed and rollback was incomplete')
     throw error
   }
   try {
@@ -173,6 +228,7 @@ folderRoutes.delete('/api/folders/*', async (c) => {
     idx.applyFolderDelete(all)
   } catch { /* ignore */ }
   return c.json({ deleted: all })
+  })
 })
 
 export default folderRoutes
