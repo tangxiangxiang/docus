@@ -14,8 +14,6 @@ export function serverPlugin(): Plugin {
   return {
     name: 'docus-server',
     async configureServer(server) {
-      const report = await migrateVaultMetadata(getDb(), CONTENT_DIR)
-      console.log(`[docus] metadata migration: ${JSON.stringify(report)}`)
       // Reconcile operations interrupted by a previous crash BEFORE any
       // /api request is served (see server/crashRecovery.ts). Never throws.
       const recovery = await recoverInterruptedOperations(CONTENT_DIR, getDb())
@@ -25,6 +23,8 @@ export function serverPlugin(): Plugin {
           console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
         }
       }
+      const report = await migrateVaultMetadata(getDb(), CONTENT_DIR)
+      console.log(`[docus] metadata migration: ${JSON.stringify(report)}`)
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith('/api/')) return next()
         const url = `http://localhost${req.url}`

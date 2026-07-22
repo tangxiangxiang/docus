@@ -260,13 +260,13 @@ describe('DELETE /api/posts path-reuse identity', () => {
       expect(metadata!.id).not.toBe(oldId)
       // The old generation survives quarantined under its staging name.
       const quarantined = (await fs.readdir(CONTENT_DIR))
-        .filter((name) => name.startsWith(`${documentPath}.md.docus-delete-`))
+        .filter((name) => name.startsWith(`${documentPath}.md.docus-quarantine-reuse-`))
       expect(quarantined).toHaveLength(1)
       expect(await fs.readFile(path.join(CONTENT_DIR, quarantined[0]!), 'utf8')).toBe('# Old\n')
     } finally {
       unlink.mockRestore()
       for (const name of await fs.readdir(CONTENT_DIR)) {
-        if (name.startsWith(`${documentPath}.md.docus-delete-`)) {
+        if (name.startsWith(`${documentPath}.md.docus-quarantine-reuse-`)) {
           await fs.rm(path.join(CONTENT_DIR, name), { force: true })
         }
       }

@@ -493,7 +493,7 @@ describe('write routes update the index', () => {
       expect(await fs.readFile(path.join(sandbox, 'gone', 'a.md'), 'utf8')).toBe('# new generation')
       expect(getDocumentMetadata(db, 'gone/a')).toBeNull()
       // The old tree survives quarantined under its staging name.
-      const quarantined = (await fs.readdir(sandbox)).filter((name) => name.startsWith('gone.docus-delete-'))
+      const quarantined = (await fs.readdir(sandbox)).filter((name) => name.startsWith('gone.docus-quarantine-reuse-'))
       expect(quarantined).toHaveLength(1)
       expect(await fs.readFile(path.join(sandbox, quarantined[0]!, 'a.md'), 'utf8')).toBe('# a')
     } finally { remove.mockRestore() }
@@ -833,7 +833,7 @@ describe('round 5: folder delete rollback gates metadata on a create-only restor
     })
     const originalRename = fs.rename.bind(fs)
     const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
-      if (String(from).includes('.docus-delete-')) {
+      if (String(from).includes('.docus-delete-inflight-') && String(to) === path.join(sandbox, 'gone')) {
         // External content lands inside the just-created mkdir gate
         // directory: the restore rename then fails (ENOTEMPTY) and the
         // gate is no longer ours.
@@ -851,7 +851,7 @@ describe('round 5: folder delete rollback gates metadata on a create-only restor
       expect(getDocumentMetadata(db, 'gone/a')).toBeNull()
       // External content untouched; old tree quarantined.
       expect(await fs.readFile(path.join(sandbox, 'gone', 'external.md'), 'utf8')).toBe('# external\n')
-      const quarantined = (await fs.readdir(sandbox)).filter((name) => name.startsWith('gone.docus-delete-'))
+      const quarantined = (await fs.readdir(sandbox)).filter((name) => name.startsWith('gone.docus-quarantine-reuse-'))
       expect(quarantined).toHaveLength(1)
       expect(await fs.readFile(path.join(sandbox, quarantined[0]!, 'a.md'), 'utf8')).toBe('# a')
       // The stale link-index entries for the old subtree were replaced

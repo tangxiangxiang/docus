@@ -316,7 +316,7 @@ folderRoutes.delete('/api/folders/*', async (c) => {
   if (all.length > 0 && !recursive) {
     return bad(c, 'folder is not empty; pass ?recursive=true to delete', 400)
   }
-  const staged = `${abs}.docus-delete-${Date.now()}`
+  const staged = `${abs}.docus-delete-inflight-${randomUUID()}`
   const databaseSnapshot = snapshotDocumentMetadataPrefixMutation(metadataDb(), [folderP], all)
   await fs.rename(abs, staged)
   try {
@@ -358,6 +358,8 @@ folderRoutes.delete('/api/folders/*', async (c) => {
           try { deleteDocumentMetadataPrefix(metadataDb(), folderP) }
           catch (rollbackError) { rollbackErrors.push(rollbackError) }
           try { await reindexReusedSubtree() } catch { /* next rebuild repairs */ }
+          try { await fs.rename(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`) }
+          catch (rollbackError) { rollbackErrors.push(rollbackError) }
         }
       } else {
         // Path reuse: an external writer recreated the folder while the
@@ -368,6 +370,8 @@ folderRoutes.delete('/api/folders/*', async (c) => {
         try { deleteDocumentMetadataPrefix(metadataDb(), folderP) }
         catch (rollbackError) { rollbackErrors.push(rollbackError) }
         try { await reindexReusedSubtree() } catch { /* next rebuild repairs */ }
+        try { await fs.rename(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`) }
+        catch (rollbackError) { rollbackErrors.push(rollbackError) }
       }
     } else {
       try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }

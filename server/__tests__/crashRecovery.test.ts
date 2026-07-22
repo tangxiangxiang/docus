@@ -13,6 +13,7 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 const TSX_CLI = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs')
 const CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'commit-crash-child.ts')
 const RENAME_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'rename-crash-child.ts')
+const RENAME_METADATA_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'rename-metadata-crash-child.ts')
 
 let vault: string
 let db: InstanceType<typeof Database>
@@ -101,7 +102,11 @@ describe('recoverInterruptedOperations (journaled replace)', () => {
 
     expect(await fs.readFile(path.join(vault, 'note.md'), 'utf8')).toBe('# tampered staged\n')
     expect(report.actions.some((a) => a.action === 'restored')).toBe(true)
-    expect(await namesIn()).toEqual(['note.md'])
+    expect(await namesIn()).toEqual([
+      '.note.md.docus-journal-cccc',
+      '.note.md.docus-save-bbbb',
+      'note.md',
+    ])
   })
 
   it('restores the old generation when the save temp is missing', async () => {
@@ -121,7 +126,7 @@ describe('recoverInterruptedOperations (journaled replace)', () => {
     expect(await namesIn()).toEqual(['note.md'])
   })
 
-  it('cleans staging when the target already exists (commit landed or external won)', async () => {
+  it('retains both recoverable generations when an external version owns the target', async () => {
     await seed({
       'note.md': '# landed\n',
       '.note.md.docus-staged-aaaa': '# base\n',
@@ -137,8 +142,13 @@ describe('recoverInterruptedOperations (journaled replace)', () => {
     const report = await runRecovery()
 
     expect(await fs.readFile(path.join(vault, 'note.md'), 'utf8')).toBe('# landed\n')
-    expect(report.actions.some((a) => a.action === 'cleaned')).toBe(true)
-    expect(await namesIn()).toEqual(['note.md'])
+    expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
+    expect(await namesIn()).toEqual([
+      '.note.md.docus-journal-cccc',
+      '.note.md.docus-save-bbbb',
+      '.note.md.docus-staged-aaaa',
+      'note.md',
+    ])
   })
 
   it('removes a stale journal whose takeover never happened', async () => {
@@ -184,6 +194,34 @@ describe('recoverInterruptedOperations (journaled replace)', () => {
 
     expect(await namesIn()).toEqual(['.note.md.docus-journal-cccc'])
     expect(report.actions.some((a) => a.action === 'quarantined' && /unrecognized/.test(a.detail ?? ''))).toBe(true)
+  })
+
+  it('never follows malicious replace journal paths outside the vault', async () => {
+    const sentinel = path.join(path.dirname(vault), `${path.basename(vault)}-sentinel.txt`)
+    const replacement = path.join(path.dirname(vault), `${path.basename(vault)}-replacement.txt`)
+    await fs.writeFile(sentinel, 'keep old', 'utf8')
+    await fs.writeFile(replacement, 'keep new', 'utf8')
+    try {
+      await seed({
+        'note.md': '# live\n',
+        '.note.md.docus-journal-aaaa': JSON.stringify({
+          version: 1,
+          op: 'replace',
+          staged: `../${path.basename(sentinel)}`,
+          replacement: `../${path.basename(replacement)}`,
+          expectedHash: 'x',
+          replacementHash: 'y',
+        }),
+      })
+      const report = await runRecovery()
+      expect(await fs.readFile(sentinel, 'utf8')).toBe('keep old')
+      expect(await fs.readFile(replacement, 'utf8')).toBe('keep new')
+      expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
+      expect(await namesIn()).toContain('.note.md.docus-journal-aaaa')
+    } finally {
+      await fs.rm(sentinel, { force: true })
+      await fs.rm(replacement, { force: true })
+    }
   })
 })
 
@@ -253,6 +291,18 @@ describe('recoverInterruptedOperations (journal-less orphans)', () => {
 })
 
 describe('recoverInterruptedOperations (delete quarantine)', () => {
+  it('never auto-deletes an explicit path-reuse quarantine after the public path disappears', async () => {
+    await seed({ 'gone.md.docus-quarantine-reuse-aaaa': '# recoverable old generation\n' })
+    saveDocumentMetadata(db, { id: 'new-id', path: 'gone', title: 'New', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(await fs.readFile(path.join(vault, 'gone.md.docus-quarantine-reuse-aaaa'), 'utf8'))
+      .toBe('# recoverable old generation\n')
+    expect(getDocumentMetadata(db, 'gone')?.id).toBe('new-id')
+    expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
+  })
+
   it('completes an interrupted file delete and reconciles metadata', async () => {
     await seed({ 'gone.md.docus-delete-123': '# old\n' })
     saveDocumentMetadata(db, { id: 'gone-id', path: 'gone', title: 'Gone', updatedAt: 1 })
@@ -470,6 +520,33 @@ describe('real subprocess crash + startup recovery', () => {
     expect((await namesIn()).some((n) => n.includes('.docus-rename-'))).toBe(false)
     expect(await namesIn()).toEqual(['new.md'])
   })
+
+  it('recovers documentId after kill -9 when staging is gone but metadata has not moved', async () => {
+    const from = path.join(vault, 'old.md')
+    const to = path.join(vault, 'new.md')
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seed({ 'old.md': '# original\n' })
+
+    const child = spawnChild({
+      DOCUS_RENAME_FROM: from,
+      DOCUS_RENAME_TO: to,
+      DOCUS_RENAME_DB: dbPath,
+    }, RENAME_METADATA_CRASH_CHILD)
+    expectHardKill(await waitExit(child))
+
+    expect(await fs.stat(from).then(() => true, () => false)).toBe(false)
+    expect(await fs.readFile(to, 'utf8')).toBe('# original\n')
+    expect((await namesIn()).some((name) => name.includes('.docus-rename-'))).toBe(false)
+    expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(true)
+
+    const persistedDb = new Database(dbPath)
+    try {
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(getDocumentMetadata(persistedDb, 'old')).toBeNull()
+      expect(getDocumentMetadata(persistedDb, 'new')?.id).toBe('post-staging-crash-id')
+      expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    } finally { persistedDb.close() }
+  })
 })
 
 describe('recoverInterruptedOperations (rename staging, journal-less)', () => {
@@ -512,6 +589,48 @@ describe('recoverInterruptedOperations (rename staging, journal-less)', () => {
     expect(getDocumentMetadata(db, 'moved')?.id).toBe('rename-id')
     expect(getDocumentMetadata(db, 'old')).toBeNull()
     expect((await namesIn()).some((n) => n.includes('.docus-rename-'))).toBe(false)
+  })
+})
+
+describe('recoverInterruptedOperations (file-rename journal)', () => {
+  it('moves document identity after a crash with destination landed and staging already removed', async () => {
+    await seed({
+      'new.md': '# moved\n',
+      '.old.md.docus-journal-aaaa': JSON.stringify({
+        version: 1,
+        op: 'file-rename',
+        srcRel: 'old',
+        destRel: 'new',
+        documentId: 'stable-id',
+        sourceHash: sha256Hex('# moved\n'),
+      }),
+    })
+    saveDocumentMetadata(db, { id: 'stable-id', path: 'old', title: 'Moved', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(getDocumentMetadata(db, 'old')).toBeNull()
+    expect(getDocumentMetadata(db, 'new')?.id).toBe('stable-id')
+    expect(await namesIn()).toEqual(['new.md'])
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+  })
+
+  it('quarantines a folder journal with traversal paths without touching the sentinel', async () => {
+    const sentinel = path.join(path.dirname(vault), `${path.basename(vault)}-folder-sentinel`)
+    await fs.mkdir(sentinel)
+    try {
+      await seed({
+        '.notes.docus-journal-aaaa': JSON.stringify({
+          version: 1,
+          op: 'folder-rename',
+          srcRel: `../${path.basename(sentinel)}`,
+          destRel: 'safe',
+        }),
+      })
+      const report = await runRecovery()
+      expect((await fs.stat(sentinel)).isDirectory()).toBe(true)
+      expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
+    } finally { await fs.rm(sentinel, { recursive: true, force: true }) }
   })
 })
 

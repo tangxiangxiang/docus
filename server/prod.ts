@@ -51,9 +51,7 @@ app.get('*', async (c) => {
 // folders and files are left alone; only missing roots are created.
 // See server/seed.ts for the rationale.
 await ensureInitialFolders(CONTENT_DIR)
-const metadataReport = await migrateVaultMetadata(getDb(), CONTENT_DIR)
 console.log(`[docus] content dir: ${CONTENT_DIR}`)
-console.log(`[docus] metadata migration: ${JSON.stringify(metadataReport)}`)
 
 // Reconcile operations interrupted by a previous crash (kill -9, power
 // loss, container stop) BEFORE the server accepts a single request —
@@ -66,6 +64,11 @@ if (recovery.actions.length > 0) {
     console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
   }
 }
+// Only scan live vault metadata after crash recovery has restored every
+// formal path. Otherwise an interrupted takeover can be misclassified
+// as an orphan during this very startup.
+const metadataReport = await migrateVaultMetadata(getDb(), CONTENT_DIR)
+console.log(`[docus] metadata migration: ${JSON.stringify(metadataReport)}`)
 
 serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
   console.log(`[docus] listening on http://${info.address}:${info.port}`)

@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import matter from 'gray-matter'
 import { Hono } from 'hono'
 import { isInArchive } from '../../src/composables/archiveProtocol.js'
@@ -70,7 +71,7 @@ export function __setPostRenameRaceHooksForTesting(hooks: PostRenameRaceHooks | 
  * A re-used path must never inherit the old documentId: drop any stale
  * identity row for the path and give the NEW generation now occupying
  * it a fresh identity. The old generation stays quarantined under its
- * `.docus-delete-*` staging name (not listed — the name does not end
+ * `.docus-delete-inflight-*` staging name (not listed — the name does not end
  * in .md — and never scanned by the link index). Returns the new
  * generation's raw so callers can refresh the process-level link index
  * (which never saw an applyDelete for the failed delete and would
@@ -570,6 +571,19 @@ postRoutes.patch('/api/posts/*', async (c) => {
     }
     try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
     catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    if (error instanceof RenameSourceReusedError && error.survivingPath === 'staging') {
+      // Forward move lost both public paths: the owned old generation is
+      // quarantined in staging while source/destination are external.
+      // Never restore its identity onto the new source generation.
+      try {
+        deleteDocumentMetadata(metadataDb(), srcPath)
+        if (await exists(src)) {
+          const [externalRaw, externalStat] = await Promise.all([fs.readFile(src, 'utf8'), fs.stat(src)])
+          ensureMetadata(srcPath, externalRaw, externalStat.mtimeMs, Date.now())
+          try { (await getLinkIndex()).applyWrite(srcPath, externalRaw) } catch { /* next rebuild repairs */ }
+        }
+      } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    }
     if (rollbackSourceReused) {
       // Identity follows the bytes, not the path: the document now
       // lives at destPath. If the destination somehow vanished too
@@ -649,7 +663,7 @@ postRoutes.delete('/api/posts/*', async (c) => {
   // Deleting a file changes tree membership: structure lock first.
   return withVaultStructureLock(() => withDocumentWriteLock(splat, async () => {
   if (!await exists(abs)) return bad(c, 'not found', 404)
-  const staged = `${abs}.docus-delete-${Date.now()}`
+  const staged = `${abs}.docus-delete-inflight-${randomUUID()}`
   const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [splat])
   await fs.rename(abs, staged)
   try {
@@ -676,6 +690,7 @@ postRoutes.delete('/api/posts/*', async (c) => {
             restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)
           } else {
             const reusedRaw = await reidentifyReusedPath(splat, abs)
+            await fs.rename(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`)
             // The failed delete never ran applyDelete; the index still
             // carries the old file's outbound links/title for this
             // path. Re-apply against the NEW generation.
@@ -688,6 +703,7 @@ postRoutes.delete('/api/posts/*', async (c) => {
           // give the new file a fresh one, and leave the old generation
           // quarantined under its staging name.
           const reusedRaw = await reidentifyReusedPath(splat, abs)
+          await fs.rename(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`)
           try { (await getLinkIndex()).applyWrite(splat, reusedRaw) } catch { /* next rebuild repairs */ }
         }
       } else {

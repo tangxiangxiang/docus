@@ -394,7 +394,7 @@ describe('delete_file', () => {
       expect(metadata).not.toBeNull()
       expect(metadata!.id).not.toBe('victim-old-id')
       const quarantined = fs.readdirSync(path.dirname(abs))
-        .filter((name) => name.startsWith('victim.md.docus-delete-'))
+        .filter((name) => name.startsWith('victim.md.docus-quarantine-reuse-'))
       expect(quarantined).toHaveLength(1)
       expect(fs.readFileSync(path.join(path.dirname(abs), quarantined[0]!), 'utf8')).toBe('# Old\n')
     } finally {

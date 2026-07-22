@@ -2,11 +2,13 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Database as DatabaseT } from 'better-sqlite3'
-import { moveDocumentMetadataReplacingDestination } from './documentMetadata.js'
+import { getDocumentMetadata, moveDocumentMetadataReplacingDestination } from './documentMetadata.js'
 import {
   renameWithTransientWindowsRetry,
   restoreStagedGeneration,
   syncParentDirectoryBestEffort,
+  sha256Hex,
+  writeDurableJournal,
 } from './atomicTextWrite.js'
 
 /** Test-only hooks for the create-only move race/crash windows. Null
@@ -18,6 +20,8 @@ import {
 export type CreateOnlyMoveHooks = {
   afterMkdirGate?: (toDirAbs: string) => void | Promise<void>
   afterRenameLinked?: () => void | Promise<void>
+  /** Fires after the staging name is gone but before metadata moves. */
+  afterFileMoveFinalized?: () => void | Promise<void>
 }
 let __createOnlyMoveHooks: CreateOnlyMoveHooks | null = null
 export function __setCreateOnlyMoveHooksForTesting(hooks: CreateOnlyMoveHooks | null): void {
@@ -40,9 +44,20 @@ export class RenameDestinationOccupiedError extends Error {
  * under a staging name). Callers must keep the identity with the bytes
  * instead of restoring it onto the external file. */
 export class RenameSourceReusedError extends Error {
-  constructor(sourcePath: string) {
+  readonly stagingPath?: string
+  readonly survivingPath: 'staging' | 'destination'
+  readonly sourceReused = true
+  readonly destinationOccupied: boolean
+  constructor(sourcePath: string, disposition: {
+    stagingPath?: string
+    survivingPath?: 'staging' | 'destination'
+    destinationOccupied?: boolean
+  } = {}) {
     super(`rename rollback: source path re-used externally: ${sourcePath}`)
     this.name = 'RenameSourceReusedError'
+    this.stagingPath = disposition.stagingPath
+    this.survivingPath = disposition.survivingPath ?? 'destination'
+    this.destinationOccupied = disposition.destinationOccupied ?? false
   }
 }
 
@@ -91,7 +106,7 @@ export async function createOnlyMoveFile(fromAbs: string, toAbs: string): Promis
         }
       }
       const { quarantined } = await restoreStagedGeneration(stagedPath, fromAbs)
-      throw quarantined ? new RenameSourceReusedError(fromAbs) : new RenameDestinationOccupiedError(toAbs)
+      throw quarantined ? new RenameSourceReusedError(fromAbs, { stagingPath: stagedPath, survivingPath: 'staging', destinationOccupied: true }) : new RenameDestinationOccupiedError(toAbs)
     }
     if (code === 'EEXIST') {
       // An external writer won the destination: restore the source
@@ -99,7 +114,7 @@ export async function createOnlyMoveFile(fromAbs: string, toAbs: string): Promis
       // the bytes stay quarantined rather than overwriting either
       // external file.
       const { quarantined } = await restoreStagedGeneration(stagedPath, fromAbs)
-      throw quarantined ? new RenameSourceReusedError(fromAbs) : new RenameDestinationOccupiedError(toAbs)
+      throw quarantined ? new RenameSourceReusedError(fromAbs, { stagingPath: stagedPath, survivingPath: 'staging', destinationOccupied: true }) : new RenameDestinationOccupiedError(toAbs)
     }
     await restoreStagedGeneration(stagedPath, fromAbs)
     throw error
@@ -162,11 +177,37 @@ export async function renameDocumentWithMetadata(input: {
   // atomically overwrite it).
   const renameFile = input.renameFile ?? createOnlyMoveFile
   const moveMetadata = input.moveMetadata ?? moveDocumentMetadataReplacingDestination
-  await renameFile(fromAbs, toAbs)
+  // Custom rename functions are test/fault-injection seams and may not
+  // operate on real paths. The production create-only mover always gets
+  // a durable journal spanning file move through metadata commit.
+  let journalPath: string | null = null
+  if (input.renameFile === undefined) {
+    const sourceRaw = await fs.readFile(fromAbs, 'utf8')
+    journalPath = path.join(path.dirname(fromAbs), `.${path.basename(fromAbs)}.docus-journal-${randomUUID()}`)
+    await writeDurableJournal(journalPath, {
+      version: 1,
+      op: 'file-rename',
+      srcRel: fromPath,
+      destRel: toPath,
+      documentId: getDocumentMetadata(db, fromPath)?.id,
+      sourceHash: sha256Hex(sourceRaw),
+    })
+  }
+  try {
+    await renameFile(fromAbs, toAbs)
+  } catch (error) {
+    // A double reuse leaves the owned generation in staging. Preserve
+    // the journal so startup/manual recovery can associate its identity;
+    // ordinary destination contention restored the source completely.
+    if (journalPath && !(error instanceof RenameSourceReusedError)) await fs.rm(journalPath, { force: true }).catch(() => {})
+    throw error
+  }
+  if (__createOnlyMoveHooks?.afterFileMoveFinalized) await __createOnlyMoveHooks.afterFileMoveFinalized()
   try {
     if (!moveMetadata(db, fromPath, toPath)) {
       throw new Error(`source metadata missing: ${fromPath}`)
     }
+    if (journalPath) await fs.rm(journalPath, { force: true }).catch(() => {})
   } catch (metadataError) {
     try {
       await renameFile(toAbs, fromAbs)
@@ -176,7 +217,7 @@ export async function renameDocumentWithMetadata(input: {
         // rollback left the bytes at the destination rather than
         // overwriting the external file. The caller must keep the
         // identity with the bytes.
-        throw new RenameSourceReusedError(fromPath)
+        throw new RenameSourceReusedError(fromPath, { survivingPath: 'destination' })
       }
       if (rollbackError instanceof RenameSourceReusedError) throw rollbackError
       throw new AggregateError(
@@ -184,6 +225,7 @@ export async function renameDocumentWithMetadata(input: {
         'metadata move failed and filesystem rollback also failed',
       )
     }
+    if (journalPath) await fs.rm(journalPath, { force: true }).catch(() => {})
     throw metadataError
   }
 }

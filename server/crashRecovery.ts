@@ -8,7 +8,7 @@
 // vault is left with the formal path MISSING and only hidden staging
 // files — the note appears to vanish, because vault traversal only
 // sees *.md names. The delete protocols stage generations under
-// `.docus-delete-*` names with the same exposure.
+// `.docus-delete-inflight-*` names with the same exposure.
 //
 // recoverInterruptedOperations() runs at startup BEFORE the HTTP
 // server accepts requests (server/prod.ts, server/vite-plugin.ts) and
@@ -31,11 +31,12 @@
 //   * journal-less save temp: remove it when the target exists (it
 //     never committed); keep + report it when the target is gone
 //     (intent cannot be guessed);
-//   * `.docus-delete-*` quarantine with the target still empty:
+//   * `.docus-delete-inflight-*` with the target still empty:
 //     COMPLETE the interrupted delete (the deletion was initiated and
 //     validated; leaving the metadata row would bind an identity to a
 //     missing file); target re-occupied: leave the quarantine as the
-//     path-reuse branch intended;
+//     path-reuse branch intended; explicit `.docus-quarantine-reuse-*`
+//     artifacts are never auto-deleted, even if the path later empties;
 //   * journaled folder rename (op 'folder-rename'): the directory move
 //     is a single rename(2) over our own mkdir-gated empty directory,
 //     so after a crash the whole tree sits at exactly one of the two
@@ -64,6 +65,7 @@ import path from 'node:path'
 import type { Dirent } from 'node:fs'
 import type { Database as DatabaseT } from 'better-sqlite3'
 import { sha256Hex } from './atomicTextWrite.js'
+import { isValidPathSyntax } from './paths.js'
 import {
   deleteDocumentMetadata,
   deleteDocumentMetadataPrefix,
@@ -100,6 +102,15 @@ interface FolderRenameJournal {
   destRel: string
 }
 
+interface FileRenameJournal {
+  version: 1
+  op: 'file-rename'
+  srcRel: string
+  destRel: string
+  documentId?: string
+  sourceHash: string
+}
+
 // Reserved artifact name patterns (see file header for why they are
 // unambiguous). The capture is the target's basename.
 const JOURNAL_RE = /^\.(.+)\.docus-journal-[0-9a-f-]+$/
@@ -108,6 +119,8 @@ const SAVE_RE = /^\.(.+)\.docus-save-[0-9a-f-]+$/
 const REMOVE_RE = /^\.(.+)\.docus-remove-[0-9a-f-]+$/
 const RENAME_RE = /^\.(.+)\.docus-rename-[0-9a-f-]+$/
 const DELETE_RE = /^(.+)\.docus-delete-\d+$/
+const DELETE_INFLIGHT_RE = /^(.+)\.docus-delete-inflight-[0-9a-f-]+$/
+const DELETE_QUARANTINE_RE = /^(.+)\.docus-quarantine-reuse-[0-9a-f-]+$/
 
 interface ArtifactGroup {
   base: string
@@ -172,6 +185,27 @@ function parseReplaceJournal(raw: string): ReplaceJournal | null {
   }
 }
 
+function isContained(contentDir: string, candidate: string): boolean {
+  const root = path.resolve(contentDir)
+  const resolved = path.resolve(candidate)
+  return resolved === root || resolved.startsWith(`${root}${path.sep}`)
+}
+
+function validReplaceJournalPaths(dir: string, contentDir: string, targetAbs: string, journal: ReplaceJournal): boolean {
+  const targetBase = path.basename(targetAbs)
+  if (path.basename(journal.staged) !== journal.staged || path.basename(journal.replacement) !== journal.replacement) return false
+  if (!journal.staged.startsWith(`.${targetBase}.docus-staged-`)) return false
+  if (!journal.replacement.startsWith(`.${targetBase}.docus-save-`)) return false
+  return isContained(contentDir, path.resolve(dir, journal.staged))
+    && isContained(contentDir, path.resolve(dir, journal.replacement))
+    && isContained(contentDir, targetAbs)
+}
+
+function validRenameRel(contentDir: string, rel: string): boolean {
+  if (!isValidPathSyntax(rel)) return false
+  return isContained(contentDir, path.resolve(contentDir, rel))
+}
+
 function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
   try {
     const entry = JSON.parse(raw) as Partial<FolderRenameJournal>
@@ -187,6 +221,17 @@ function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
   } catch {
     return null
   }
+}
+
+function parseFileRenameJournal(raw: string): FileRenameJournal | null {
+  try {
+    const entry = JSON.parse(raw) as Partial<FileRenameJournal>
+    if (entry.version === 1 && entry.op === 'file-rename'
+      && typeof entry.srcRel === 'string' && typeof entry.destRel === 'string'
+      && typeof entry.sourceHash === 'string'
+      && (entry.documentId === undefined || typeof entry.documentId === 'string')) return entry as FileRenameJournal
+    return null
+  } catch { return null }
 }
 
 function vaultRelative(contentDir: string, absPath: string): string {
@@ -236,12 +281,17 @@ async function walkDirectories(
 }
 
 async function recoverReplaceJournal(
+  contentDir: string,
   dir: string,
   targetAbs: string,
   journalAbs: string,
   journal: ReplaceJournal,
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
+  if (!validReplaceJournalPaths(dir, contentDir, targetAbs, journal)) {
+    note(journalAbs, 'quarantined', 'invalid replace journal paths; no referenced path was touched')
+    return
+  }
   const stagedAbs = path.join(dir, journal.staged)
   const saveAbs = path.join(dir, journal.replacement)
   const stagedExists = await exists(stagedAbs)
@@ -267,14 +317,21 @@ async function recoverReplaceJournal(
   }
 
   if (targetExists) {
-    // The commit landed (crash during cleanup) or an external writer
-    // claimed the path while we held the old generation. staged == the
-    // caller's verified base, which the caller held in memory, so
-    // cleaning both temps loses nothing uniquely ours.
-    await rm(stagedAbs)
-    await rm(saveAbs)
-    await rm(journalAbs)
-    note(targetAbs, 'cleaned', 'staging from a completed or externally superseded save')
+    const targetIsReplacement = await hashMatches(targetAbs, journal.replacementHash)
+    const targetIsExpected = await hashMatches(targetAbs, journal.expectedHash)
+    if (targetIsReplacement) {
+      await rm(stagedAbs)
+      await rm(saveAbs)
+      await rm(journalAbs)
+      note(targetAbs, 'cleaned', 'staging from a completed save')
+    } else {
+      // The formal path is the old generation or a third-party version.
+      // Neither hidden generation is provably stale; retain both and the
+      // journal as an explicit recovery set for manual inspection.
+      note(journalAbs, 'quarantined', targetIsExpected
+        ? 'old generation occupies target; replacement retained for inspection'
+        : 'external generation occupies target; old and replacement generations retained')
+    }
     return
   }
 
@@ -312,8 +369,39 @@ async function recoverReplaceJournal(
   } else if (await exists(stagedAbs)) {
     note(stagedAbs, 'quarantined', 'previous generation kept; target claimed externally during recovery')
   }
-  await rm(saveAbs)
-  await rm(journalAbs)
+  // A failed verification means neither replacement nor its intent is
+  // proven stale. Keep it and the journal as a recovery set.
+  if (!await exists(saveAbs)) await rm(journalAbs)
+}
+
+async function recoverFileRenameJournal(
+  contentDir: string, db: DatabaseT, journalAbs: string, journal: FileRenameJournal,
+  note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
+): Promise<void> {
+  if (!validRenameRel(contentDir, journal.srcRel) || !validRenameRel(contentDir, journal.destRel)) {
+    note(journalAbs, 'quarantined', 'invalid file-rename journal paths; no referenced path was touched')
+    return
+  }
+  const srcAbs = path.join(contentDir, `${journal.srcRel}.md`)
+  const destAbs = path.join(contentDir, `${journal.destRel}.md`)
+  const srcExists = await exists(srcAbs)
+  const destExists = await exists(destAbs)
+  if (!srcExists && destExists && await hashMatches(destAbs, journal.sourceHash)) {
+    try {
+      moveDocumentMetadataReplacingDestination(db, journal.srcRel, journal.destRel)
+      await rm(journalAbs)
+      note(destAbs, 'completed-rename', 'interrupted file rename metadata move completed from journal')
+    } catch (error) {
+      note(journalAbs, 'failed', `could not complete file-rename metadata move: ${(error as Error).message}`)
+    }
+    return
+  }
+  if (srcExists && !destExists && await hashMatches(srcAbs, journal.sourceHash)) {
+    await rm(journalAbs)
+    note(journalAbs, 'cleaned', 'stale file-rename journal (move never landed)')
+    return
+  }
+  note(journalAbs, 'quarantined', 'ambiguous file-rename state retained for inspection')
 }
 
 async function recoverFolderRenameJournal(
@@ -323,6 +411,10 @@ async function recoverFolderRenameJournal(
   journal: FolderRenameJournal,
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
+  if (!validRenameRel(contentDir, journal.srcRel) || !validRenameRel(contentDir, journal.destRel)) {
+    note(journalAbs, 'quarantined', 'invalid folder-rename journal paths; no referenced path was touched')
+    return
+  }
   const srcAbs = path.join(contentDir, journal.srcRel)
   const destAbs = path.join(contentDir, journal.destRel)
   // The directory move is a single rename(2) over our own mkdir-gated
@@ -481,6 +573,10 @@ async function recoverDirectory(
       // the reserved `.docus-delete-*` name.
       const dirMatch = DELETE_RE.exec(entry.name)
       if (dirMatch) groupFor(dirMatch[1]).quarantines.push(entry.name)
+      const inflightMatch = DELETE_INFLIGHT_RE.exec(entry.name)
+      if (inflightMatch) groupFor(inflightMatch[1]).quarantines.push(entry.name)
+      const quarantineMatch = DELETE_QUARANTINE_RE.exec(entry.name)
+      if (quarantineMatch) groupFor(quarantineMatch[1]).quarantines.push(entry.name)
       continue
     }
     const name = entry.name
@@ -496,6 +592,10 @@ async function recoverDirectory(
     if (match) { groupFor(match[1]).rename.push(name); continue }
     match = DELETE_RE.exec(name)
     if (match) { groupFor(match[1]).quarantines.push(name); continue }
+    match = DELETE_INFLIGHT_RE.exec(name)
+    if (match) { groupFor(match[1]).quarantines.push(name); continue }
+    match = DELETE_QUARANTINE_RE.exec(name)
+    if (match) { groupFor(match[1]).quarantines.push(name); continue }
   }
 
   for (const group of groups.values()) {
@@ -507,7 +607,12 @@ async function recoverDirectory(
         const journalRaw = await fs.readFile(journalAbs, 'utf8')
         const replaceJournal = parseReplaceJournal(journalRaw)
         if (replaceJournal) {
-          await recoverReplaceJournal(dir, targetAbs, journalAbs, replaceJournal, note)
+          await recoverReplaceJournal(contentDir, dir, targetAbs, journalAbs, replaceJournal, note)
+          continue
+        }
+        const fileJournal = parseFileRenameJournal(journalRaw)
+        if (fileJournal) {
+          await recoverFileRenameJournal(contentDir, db, journalAbs, fileJournal, note)
           continue
         }
         const folderJournal = parseFolderRenameJournal(journalRaw)
@@ -519,6 +624,13 @@ async function recoverDirectory(
       } catch (error) {
         note(journalAbs, 'failed', (error as Error).message)
       }
+    }
+    // A retained journal means recovery deliberately quarantined an
+    // operation as ambiguous/invalid. Its companion artifacts form one
+    // recovery set and must not then be consumed by the generic orphan
+    // rules below.
+    if (await Promise.all(group.journals.map((name) => exists(path.join(dir, name)))).then((states) => states.some(Boolean))) {
+      continue
     }
     // Whatever survived journal processing (or never had a journal) is
     // handled by the orphan rules. Existence is re-checked on disk:
@@ -576,6 +688,10 @@ async function recoverDirectory(
       const quarantineAbs = path.join(dir, quarantineName)
       if (!await exists(quarantineAbs)) continue
       try {
+        if (DELETE_QUARANTINE_RE.test(quarantineName)) {
+          note(quarantineAbs, 'quarantined', 'path-reuse quarantine is never auto-deleted')
+          continue
+        }
         if (await exists(targetAbs)) {
           note(quarantineAbs, 'quarantined', 'delete staging outlived a path reuse; kept for inspection')
         } else {

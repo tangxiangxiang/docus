@@ -14,6 +14,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { Database as DatabaseT } from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import matter from 'gray-matter'
 import {
   CONTENT_DIR,
@@ -602,7 +603,7 @@ async function executePatchFile(input: {
  * A re-used path must never inherit the old documentId: drop any stale
  * identity row for the path and give the NEW generation now occupying
  * it a fresh identity. The old generation stays quarantined under its
- * `.docus-delete-*` staging name. Returns the new generation's raw so
+ * `.docus-delete-inflight-*` staging name. Returns the new generation's raw so
  * callers can refresh the process-level link index (which never saw an
  * applyDelete for the failed delete and would otherwise keep the old
  * file's outbound links and title until a restart).
@@ -626,7 +627,7 @@ async function executeDeleteFile(input: { path?: string }, db: DatabaseT): Promi
   } catch (e) {
     return err(`delete_file: ${(e as Error).message}`)
   }
-  const staged = `${abs}.docus-delete-${Date.now()}`
+  const staged = `${abs}.docus-delete-inflight-${randomUUID()}`
   const databaseSnapshot = snapshotDocumentMetadataMutation(db, [input.path])
   try {
     fs.renameSync(abs, staged)
@@ -654,6 +655,7 @@ async function executeDeleteFile(input: { path?: string }, db: DatabaseT): Promi
         } else if (rollbackFailures.length === 0) {
           try {
             const reusedRaw = reidentifyReusedPath(db, input.path, abs)
+            fs.renameSync(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`)
             // The failed delete never ran applyDelete; re-apply the
             // index entry against the NEW generation at this path.
             try { (await getLinkIndex()).applyWrite(input.path, reusedRaw) } catch { /* next rebuild repairs */ }
@@ -667,6 +669,7 @@ async function executeDeleteFile(input: { path?: string }, db: DatabaseT): Promi
         // quarantined under its staging name.
         try {
           const reusedRaw = reidentifyReusedPath(db, input.path, abs)
+          fs.renameSync(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`)
           try { (await getLinkIndex()).applyWrite(input.path, reusedRaw) } catch { /* next rebuild repairs */ }
         } catch (reuseError) { rollbackFailures.push(reuseError) }
       }
@@ -798,6 +801,19 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     try { restoreDocumentMetadataMutation(db, databaseSnapshot) }
     catch (rollbackError) {
       return err(`rename_file: ${(e as Error).message}; metadata rollback failed: ${(rollbackError as Error).message}`)
+    }
+    if (e instanceof RenameSourceReusedError && e.survivingPath === 'staging') {
+      try {
+        deleteDocumentMetadata(db, input.path)
+        if (fs.existsSync(srcAbs)) {
+          const externalRaw = fs.readFileSync(srcAbs, 'utf8')
+          const externalStat = fs.statSync(srcAbs)
+          ensureDocumentMetadata(db, input.path, externalRaw, externalStat.mtimeMs, Date.now())
+          try { (await getLinkIndex()).applyWrite(input.path, externalRaw) } catch { /* next rebuild repairs */ }
+        }
+      } catch (reidentifyError) {
+        return err(`rename_file: both paths were re-used; failed to reidentify external source: ${(reidentifyError as Error).message}`)
+      }
     }
     if (rollbackSourceReused) {
       // Identity follows the bytes, not the path: the document now
