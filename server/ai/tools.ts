@@ -19,9 +19,18 @@ import {
   CONTENT_DIR,
   filePathFor,
   folderPathFor,
+  normalizeLogicalContentPath,
 } from '../paths.js'
 import { naturalPathCompare } from '../tree.js'
 import { getDb } from '../db.js'
+import { withDocumentWriteLock } from '../documentWriteLock.js'
+import {
+  getToolMutationTarget,
+  guardToolMutation,
+  readCurrentServerDocument,
+  type ToolMutationTarget,
+  type ToolSafetyPolicy,
+} from './tool-safety.js'
 import {
   deleteDocumentMetadata,
   ensureDocumentMetadata,
@@ -33,7 +42,19 @@ import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
 
-export type ToolContext = { signal: AbortSignal; db?: DatabaseT }
+export type ToolContext = {
+  signal: AbortSignal
+  db?: DatabaseT
+  /**
+   * Edit-10.4: the safety policy derived ONCE per runChat from the
+   * normalized ChatContext. Absent (or unrestricted) keeps the
+   * original tool behavior — legacy clients and the `none` context
+   * never receive a blocking policy. The policy lives only in the
+   * current runChat's memory; it is never persisted, sent over SSE,
+   * or exposed to the model beyond a short is_error text.
+   */
+  safety?: ToolSafetyPolicy
+}
 
 export type FileChangeKind = 'write' | 'delete' | 'rename'
 
@@ -671,6 +692,68 @@ export async function executeToolCall(
     return err('aborted')
   }
   const db = ctx.db ?? getDb()
+  // Edit-10.4: classify first. Read-only tools (`none`) need no
+  // protection; unknown tools and malformed mutating input (`unknown`)
+  // go straight to the dispatcher, which rejects them without side
+  // effects — the guard never certifies them as safe, it simply has
+  // nothing to protect against. Every real mutation runs its guard
+  // INSIDE the same per-path write lock the editor's save route uses,
+  // immediately before the executor's side effect: verification and
+  // mutation share one critical section, so an autosave landing
+  // mid-turn is seen by the clean-document re-verification (as
+  // active-context-stale) instead of being silently raced.
+  const target = getToolMutationTarget(name, input)
+  if (target.kind === 'none' || target.kind === 'unknown') {
+    return dispatchToolCall(name, input, db)
+  }
+  return withMutationLocks(target, async () => {
+    const decision = await guardToolMutation({
+      policy: ctx.safety ?? { kind: 'unrestricted' },
+      target,
+      readCurrentDocument: (logicalPath) => readCurrentServerDocument(db, logicalPath),
+    })
+    if (!decision.allowed) {
+      // Ordinary tool_result: is_error text, no changed descriptor,
+      // no throw, no file_changed, no disk or DB touch. The model can
+      // read the message and continue — on an unrelated path, or by
+      // asking the user to save / resolve the workspace.
+      return err(decision.message)
+    }
+    return dispatchToolCall(name, input, db)
+  })
+}
+
+/**
+ * Acquire the per-path write lock(s) for one mutation target, in a
+ * globally sorted order so concurrent two-path operations (renames)
+ * cannot deadlock. The lock key is the CANONICAL logical path — the
+ * same key `routes/posts.ts` locks when the editor saves — so the
+ * guard's server re-verification and the tool's own write are atomic
+ * with respect to editor saves on the same document.
+ */
+async function withMutationLocks(
+  target: Extract<ToolMutationTarget, { kind: 'single-path' } | { kind: 'rename' }>,
+  operation: () => Promise<ToolResult>,
+): Promise<ToolResult> {
+  const rawPaths = target.kind === 'single-path'
+    ? [target.path]
+    : [target.sourcePath, target.destinationPath]
+  // Unnormalizable paths keep their raw spelling as the lock key so
+  // the call still serializes; the executor's own assertSafePath
+  // rejects them before any side effect.
+  const lockPaths = [...new Set(rawPaths.map((p) => normalizeLogicalContentPath(p) ?? p))].sort()
+  const locked = lockPaths.reduceRight(
+    (next, lockPath) => () => withDocumentWriteLock(lockPath, next),
+    operation,
+  )
+  return locked()
+}
+
+async function dispatchToolCall(
+  name: string,
+  input: Record<string, unknown>,
+  db: DatabaseT,
+): Promise<ToolResult> {
   switch (name) {
     case 'read_file':
       return executeReadFile(input as { path?: string }, db)

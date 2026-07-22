@@ -1,9 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { applyMigrations } from '../db'
 import { buildSystemPrompt, runChat, type ChatContext, type ChatEvent } from '../ai/chat'
 import { ChatError } from '../ai/errors'
 import { streamClaude, type StreamResult } from '../ai/llm'
+import { setContentDir, CONTENT_DIR } from '../paths'
 
 // ─── Live-context fixtures (shaped exactly like the client's sealed
 // AiLiveContextSnapshot union — plain data, v: 1) ────────────────────
@@ -238,6 +242,24 @@ describe('buildSystemPrompt', () => {
     expect(out).not.toContain('</xss-probe-42>')
     // …yet the parsed block returns the exact original string.
     expect(parsedLiveBlock(out).raw).toBe(raw)
+  })
+
+  // Edit-10.4 §17: a very short note that mutation tools are
+  // server-guarded — no policy JSON, no guard internals.
+  it('live context: carries the short server-guarded tool note, no policy internals', () => {
+    const out = buildSystemPrompt(liveDocument())
+    expect(out).toContain('server-guarded')
+    // The note must NOT expose policy kinds or guard fields.
+    expect(out).not.toContain('verify-clean-document')
+    expect(out).not.toContain('deny-protected-path')
+    expect(out).not.toContain('expectedRaw')
+    expect(out).not.toContain('expectedDocumentId')
+    expect(out).not.toContain('active-context-unsaved')
+  })
+
+  it('none and legacy prompts carry no tool-safety note', () => {
+    expect(buildSystemPrompt({ kind: 'none' })).not.toContain('server-guarded')
+    expect(buildSystemPrompt({ kind: 'legacy-path', currentNotePath: 'x.md' })).not.toContain('server-guarded')
   })
 })
 
@@ -628,5 +650,218 @@ describe('runChat', () => {
     expect(toolResults).toHaveLength(1)
     expect(toolResults[0].type).toBe('tool_result')
     expect(toolResults[0].tool_use_id).toBe('toolu_99')
+  })
+
+  // Edit-10.4: the runChat layer derives ONE policy per run and
+  // applies it to every tool call. Blocked calls are ordinary
+  // is_error tool_results — the chat continues, no file_changed, no
+  // throw — and the editor's dirty raw never leaves the system
+  // prompt. A temp vault keeps the red/green phases (where the tool
+  // actually runs) out of the real src/content.
+  describe('Edit-10.4 tool safety', () => {
+    const ORIGINAL_CONTENT_DIR = CONTENT_DIR
+    let contentDir: string
+    beforeEach(() => {
+      contentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docus-chat-safety-test-'))
+      const content = path.join(contentDir, 'content')
+      fs.mkdirSync(content, { recursive: true })
+      setContentDir(content)
+    })
+    afterEach(() => {
+      setContentDir(ORIGINAL_CONTENT_DIR)
+      fs.rmSync(contentDir, { recursive: true, force: true })
+    })
+
+    const DIRTY_SECRET = 'DIRTY_SECRET_MUST_NOT_LEAK_456'
+
+    it('blocks a dirty-context write_file as an is_error tool_result, completes the chat, and never leaks the editor raw', async () => {
+      const db = freshDb()
+      const id = makeSession(db)
+      const events: ChatEvent[] = []
+      // liveDocument() is dirty (revision 3 ≠ savedRevision 2) on
+      // notes/a; its raw is the sentinel that must not leak.
+      const ctx = liveDocument({ raw: DIRTY_SECRET })
+
+      vi.mocked(streamClaude)
+        // Round 1: the model tries to overwrite the dirty document.
+        .mockImplementationOnce(async ({ onToken }: { onToken: (t: string) => void }) => {
+          onToken('saving ')
+          return {
+            text: 'saving ',
+            finalMessage: {
+              content: [
+                { type: 'text', text: 'saving ' },
+                { type: 'tool_use', id: 'toolu_block', name: 'write_file', input: { path: 'notes/a', content: 'MODEL_OVERWRITE' } },
+              ],
+              stop_reason: 'tool_use',
+            } as unknown as StreamResult['finalMessage'],
+          }
+        })
+        // Round 2: the model reads the refusal and answers in text.
+        .mockImplementationOnce(async ({ onToken }: { onToken: (t: string) => void }) => {
+          onToken('please save first')
+          return {
+            text: 'please save first',
+            finalMessage: { content: [{ type: 'text', text: 'please save first' }], stop_reason: 'end_turn' } as unknown as StreamResult['finalMessage'],
+          }
+        })
+
+      await runChat({
+        db, sessionId: id, userContent: 'update notes/a', ctx, model: 'm',
+        signal: undefined, onEvent: (e) => { events.push(e) },
+      })
+
+      // The chat completed normally — no top-level throw, done emitted.
+      expect(events.map((e) => e.type)).toEqual(['user', 'token', 'tool_use', 'tool_result', 'token', 'done'])
+      // No file_changed for the blocked mutation.
+      expect(events.filter((e) => e.type === 'file_changed')).toHaveLength(0)
+      const toolResultEvent = events.find((e) => e.type === 'tool_result')!
+      expect(toolResultEvent).toMatchObject({ is_error: true })
+      expect((toolResultEvent as { content: string }).content).toContain('active-context-unsaved')
+
+      // Round 2's conversation carries the is_error tool_result.
+      const secondCall = vi.mocked(streamClaude).mock.calls[1][0]
+      const toolTurn = secondCall.messages.find(
+        (m) => m.role === 'user' && Array.isArray(m.content)
+          && (m.content as { type: string }[]).some((b) => b.type === 'tool_result'),
+      )
+      expect(toolTurn).toBeDefined()
+      const blocks = toolTurn!.content as { type: string; is_error: boolean; content: string }[]
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0].is_error).toBe(true)
+      expect(blocks[0].content).toContain('active-context-unsaved')
+
+      // The envelope persists the blocked call (persistable — it is
+      // the model-visible error text) — without the editor raw.
+      const rows = db.prepare('SELECT role, content FROM messages WHERE session_id = ? ORDER BY id').all(id) as { role: string; content: string }[]
+      const assistantRow = rows.find((r) => r.role === 'assistant')!
+      const envelope = JSON.parse(assistantRow.content)
+      expect(envelope.toolCalls).toHaveLength(1)
+      expect(envelope.toolCalls[0].result.is_error).toBe(true)
+      expect(envelope.toolCalls[0].result.content).toContain('active-context-unsaved')
+
+      // The dirty editor raw appears NOWHERE outside this run's
+      // system prompt: not in messages, not in events, not in the
+      // session title, not in the error text.
+      const allMessageContent = rows.map((r) => r.content).join('\n')
+      expect(allMessageContent).not.toContain(DIRTY_SECRET)
+      expect(JSON.stringify(events)).not.toContain(DIRTY_SECRET)
+      expect((toolResultEvent as { content: string }).content).not.toContain(DIRTY_SECRET)
+      const title = db.prepare('SELECT title FROM sessions WHERE id = ?').get(id) as { title: string }
+      expect(title.title).not.toContain(DIRTY_SECRET)
+
+      // Disk untouched: notes/a was never created or modified.
+      expect(fs.existsSync(path.join(contentDir, 'content/notes/a.md'))).toBe(false)
+    })
+
+    it('applies the policy per call: blocks the protected path and allows an unrelated mutation in the same turn', async () => {
+      const db = freshDb()
+      const id = makeSession(db)
+      const events: ChatEvent[] = []
+      const ctx = liveDocument({ raw: DIRTY_SECRET })
+
+      vi.mocked(streamClaude)
+        .mockImplementationOnce(async ({ onToken }: { onToken: (t: string) => void }) => {
+          onToken('working ')
+          return {
+            text: 'working ',
+            finalMessage: {
+              content: [
+                { type: 'text', text: 'working ' },
+                { type: 'tool_use', id: 'toolu_blocked', name: 'write_file', input: { path: 'notes/a', content: 'X' } },
+                { type: 'tool_use', id: 'toolu_ok', name: 'write_file', input: { path: 'notes/b', content: 'fresh body' } },
+              ],
+              stop_reason: 'tool_use',
+            } as unknown as StreamResult['finalMessage'],
+          }
+        })
+        .mockImplementationOnce(async ({ onToken }: { onToken: (t: string) => void }) => {
+          onToken('done')
+          return {
+            text: 'done',
+            finalMessage: { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' } as unknown as StreamResult['finalMessage'],
+          }
+        })
+
+      await runChat({
+        db, sessionId: id, userContent: 'update both', ctx, model: 'm',
+        signal: undefined, onEvent: (e) => { events.push(e) },
+      })
+
+      // Exactly ONE file_changed — the unrelated write, in the
+      // existing flat event shape.
+      const fileChanged = events.filter((e) => e.type === 'file_changed')
+      expect(fileChanged).toHaveLength(1)
+      expect(fileChanged[0]).toMatchObject({ kind: 'write', path: 'notes/b' })
+
+      // Disk: notes/b written, notes/a never created.
+      expect(fs.readFileSync(path.join(contentDir, 'content/notes/b.md'), 'utf8')).toBe('fresh body')
+      expect(fs.existsSync(path.join(contentDir, 'content/notes/a.md'))).toBe(false)
+
+      // Both tool_results in round 2's convo, in call order:
+      // first blocked (is_error), second allowed.
+      const secondCall = vi.mocked(streamClaude).mock.calls[1][0]
+      const toolTurn = secondCall.messages.find(
+        (m) => m.role === 'user' && Array.isArray(m.content)
+          && (m.content as { type: string }[]).some((b) => b.type === 'tool_result'),
+      )
+      const blocks = toolTurn!.content as { type: string; tool_use_id: string; is_error: boolean; content: string }[]
+      expect(blocks).toHaveLength(2)
+      expect(blocks[0]).toMatchObject({ tool_use_id: 'toolu_blocked', is_error: true })
+      expect(blocks[0].content).toContain('active-context-unsaved')
+      expect(blocks[1]).toMatchObject({ tool_use_id: 'toolu_ok', is_error: false })
+
+      // The assistant turn still completed normally.
+      const rows = db.prepare('SELECT role, content FROM messages WHERE session_id = ? ORDER BY id').all(id) as { role: string; content: string }[]
+      const envelope = JSON.parse(rows.find((r) => r.role === 'assistant')!.content)
+      expect(envelope.toolCalls).toHaveLength(2)
+      expect(envelope.toolCalls[0].result.is_error).toBe(true)
+      expect(envelope.toolCalls[1].result.is_error).toBe(false)
+    })
+
+    it('legacy-path context keeps original unrestricted tool behavior', async () => {
+      const db = freshDb()
+      const id = makeSession(db)
+      const events: ChatEvent[] = []
+
+      vi.mocked(streamClaude)
+        .mockImplementationOnce(async ({ onToken }: { onToken: (t: string) => void }) => {
+          onToken('writing ')
+          return {
+            text: 'writing ',
+            finalMessage: {
+              content: [
+                { type: 'text', text: 'writing ' },
+                { type: 'tool_use', id: 'toolu_legacy', name: 'write_file', input: { path: 'notes/a', content: 'legacy write' } },
+              ],
+              stop_reason: 'tool_use',
+            } as unknown as StreamResult['finalMessage'],
+          }
+        })
+        .mockImplementationOnce(async ({ onToken }: { onToken: (t: string) => void }) => {
+          onToken('done')
+          return {
+            text: 'done',
+            finalMessage: { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' } as unknown as StreamResult['finalMessage'],
+          }
+        })
+
+      await runChat({
+        db, sessionId: id, userContent: 'update notes/a',
+        ctx: { kind: 'legacy-path', currentNotePath: 'notes/a.md' }, model: 'm',
+        signal: undefined, onEvent: (e) => { events.push(e) },
+      })
+
+      // No block: the legacy client keeps its existing behavior.
+      expect(events.filter((e) => e.type === 'file_changed')).toHaveLength(1)
+      expect(fs.readFileSync(path.join(contentDir, 'content/notes/a.md'), 'utf8')).toBe('legacy write')
+      const secondCall = vi.mocked(streamClaude).mock.calls[1][0]
+      const toolTurn = secondCall.messages.find(
+        (m) => m.role === 'user' && Array.isArray(m.content)
+          && (m.content as { type: string }[]).some((b) => b.type === 'tool_result'),
+      )
+      const blocks = toolTurn!.content as { type: string; is_error: boolean }[]
+      expect(blocks[0].is_error).toBe(false)
+    })
   })
 })

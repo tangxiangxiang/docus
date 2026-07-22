@@ -32,7 +32,7 @@
 import type { AiLiveContextSnapshot } from '../../src/composables/vault/aiLiveContext.js'
 import type { ExternalChangeKind, SaveStatus } from '../../src/components/vault/tabs.js'
 import type { DraftRecoveryDecisionKind } from '../../src/composables/vault/draft-recovery/draftRecoveryDecision.js'
-import { isValidPathSyntax } from '../paths.js'
+import { normalizeLogicalContentPath } from '../paths.js'
 
 /** Hard cap on the serialized snapshot: UTF-8 bytes of JSON.stringify. */
 export const MAX_AI_LIVE_CONTEXT_BYTES = 512 * 1024
@@ -127,8 +127,10 @@ function isSafeNonNegativeInteger(value: unknown): value is number {
 // bypasses, NUL, and mid-path ".md" segments.
 function isValidSnapshotPath(value: unknown): value is string {
   if (!isNonEmptyCleanString(value, MAX_PATH_CHARS)) return false
-  const bare = value.endsWith('.md') ? value.slice(0, -'.md'.length) : value
-  return isValidPathSyntax(bare)
+  // One shared canonicalizer (Edit-10.4): strips one trailing ".md",
+  // then applies the strict syntax validator. Behavior is identical
+  // to the inline version this replaced.
+  return normalizeLogicalContentPath(value) !== null
 }
 
 function ok(obj: Record<string, unknown>): ParseAiLiveContextResult {

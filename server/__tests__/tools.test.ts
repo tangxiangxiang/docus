@@ -21,6 +21,11 @@ import {
 import { applyMigrations } from '../db'
 import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
 import { __resetLinkIndexForTesting } from '../linkIndex'
+import {
+  deriveToolSafetyPolicy,
+  type ToolSafetyPolicy,
+} from '../ai/tool-safety'
+import type { AiLiveContextSnapshot } from '../../src/composables/vault/aiLiveContext'
 
 const ORIGINAL_CONTENT_DIR = CONTENT_DIR
 
@@ -422,5 +427,395 @@ describe('TOOL_DEFINITIONS', () => {
       expect(t.input_schema.type).toBe('object')
       expect(typeof t.description).toBe('string')
     }
+  })
+})
+
+// --- Edit-10.4 tool safety --------------------------------------------------
+// Integration layer: real temp vault + real DB + real executeToolCall with a
+// ToolSafetyPolicy in the tool context. Pure decision logic (policy
+// derivation, guard table, canonicalization) is unit-tested in
+// tool-safety.test.ts; the runChat loop layer lives in chat.test.ts.
+
+function historySnapshot(path = 'notes/a'): AiLiveContextSnapshot {
+  return {
+    v: 1,
+    kind: 'history',
+    capturedAt: 1,
+    vaultId: 'vault-a',
+    workspaceTabId: `history:${path}`,
+    readOnly: true,
+    identity: { path, revisionId: 'rev-1', revisionTime: 1 },
+    title: 'A',
+    raw: 'HISTORICAL_BODY',
+  } as never
+}
+
+function diffSnapshot(path = 'notes/a'): AiLiveContextSnapshot {
+  return {
+    v: 1,
+    kind: 'diff',
+    capturedAt: 1,
+    vaultId: 'vault-a',
+    workspaceTabId: `diff:${path}`,
+    readOnly: true,
+    identity: { path, revisionId: 'rev-1', revisionTime: 1, currentDocumentId: 'doc-a' },
+    title: 'A',
+    before: { raw: 'OLD', source: 'history' },
+    after: { raw: 'NEW', source: 'live-editor', dirty: false },
+  } as never
+}
+
+function recoverySnapshot(view: 'content' | 'diff' = 'content', path = 'notes/a'): AiLiveContextSnapshot {
+  return {
+    v: 1,
+    kind: 'recovery',
+    capturedAt: 1,
+    vaultId: 'vault-a',
+    workspaceTabId: 'recovery:vault-a:doc-a',
+    readOnly: true,
+    identity: { recoveryId: 'r-1', documentId: 'doc-a', path, source: 'primary' },
+    title: 'A',
+    decisionKind: 'divergent',
+    view,
+    draft: { raw: 'DRAFT' },
+    ...(view === 'diff' ? { disk: { documentId: 'doc-a', raw: 'DISK' } } : {}),
+  } as never
+}
+
+describe('Edit-10.4 tool safety: executeToolCall with safety policy', () => {
+  let contentDir: string
+  beforeEach(() => { contentDir = makeTempContentDir(); setContentDir(contentDir); __resetLinkIndexForTesting() })
+  afterEach(() => { setContentDir(ORIGINAL_CONTENT_DIR); __resetLinkIndexForTesting(); fs.rmSync(path.dirname(contentDir), { recursive: true, force: true }) })
+
+  const DISK_RAW = 'ON_DISK_ORIGINAL_BODY_123'
+
+  function ctxWith(policy: ToolSafetyPolicy): ToolContext {
+    return { signal: new AbortController().signal, db, safety: policy }
+  }
+
+  function seed(relPath: string, raw: string, id: string, title: string): void {
+    writeFile(`${relPath}.md`, raw)
+    saveDocumentMetadata(db, { id, path: relPath, title })
+  }
+
+  function readDisk(relPath: string): string {
+    return fs.readFileSync(path.join(contentDir, `${relPath}.md`), 'utf8')
+  }
+
+  const dirtyPolicy: ToolSafetyPolicy = { kind: 'deny-protected-path', protectedPath: 'notes/a', reason: 'unsaved-context' }
+
+  describe('dirty Document: same-path mutations are blocked', () => {
+    beforeEach(() => seed('notes/a', DISK_RAW, 'doc-a', 'Original Title'))
+
+    const cases: Array<[string, string, Record<string, unknown>]> = [
+      ['create_file', 'create_file', { path: 'notes/a', content: 'ATTACKER' }],
+      ['write_file', 'write_file', { path: 'notes/a', content: 'ATTACKER' }],
+      ['patch_file', 'patch_file', { path: 'notes/a', old_string: 'ON_DISK', new_string: 'ATTACKER' }],
+      ['delete_file', 'delete_file', { path: 'notes/a' }],
+      ['update_metadata', 'update_metadata', { path: 'notes/a', title: 'ATTACKER' }],
+      ['rename_file (protected source)', 'rename_file', { path: 'notes/a', new_path: 'notes/b' }],
+      ['rename_file (protected destination)', 'rename_file', { path: 'notes/z', new_path: 'notes/a' }],
+    ]
+
+    it.each(cases)('blocks %s with active-context-unsaved, byte-exact disk, no change descriptors', async (_label, tool, input) => {
+      writeFile('notes/z.md', 'Z_BODY')
+      const r = await executeToolCall(tool, input, ctxWith(dirtyPolicy))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-unsaved')
+      expect(r.content).toContain('notes/a')
+      // No file_changed material reaches the chat loop.
+      expect(r.changed).toBeUndefined()
+      expect(r.changes).toBeUndefined()
+      // Disk and metadata untouched, byte for byte.
+      expect(readDisk('notes/a')).toBe(DISK_RAW)
+      expect(readDisk('notes/z')).toBe('Z_BODY')
+      expect(fs.existsSync(path.join(contentDir, 'notes/b.md'))).toBe(false)
+      expect(getDocumentMetadata(db, 'notes/a')?.title).toBe('Original Title')
+      // No raw body in the error text.
+      expect(r.content).not.toContain(DISK_RAW)
+      expect(r.content).not.toContain('Z_BODY')
+    })
+  })
+
+  describe('read-only contexts: History / Diff / Recovery content / Recovery diff', () => {
+    beforeEach(() => seed('notes/a', DISK_RAW, 'doc-a', 'Original Title'))
+
+    const contexts: Array<[string, AiLiveContextSnapshot]> = [
+      ['History', historySnapshot()],
+      ['Diff', diffSnapshot()],
+      ['Recovery content', recoverySnapshot('content')],
+      ['Recovery diff', recoverySnapshot('diff')],
+    ]
+
+    it.each(contexts)('%s: write_file on the protected path is blocked read-only', async (_label, snapshot) => {
+      const policy = deriveToolSafetyPolicy({ kind: 'live', liveContext: snapshot })
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'ATTACKER' }, ctxWith(policy))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-read-only')
+      expect(r.changed).toBeUndefined()
+      expect(readDisk('notes/a')).toBe(DISK_RAW)
+    })
+
+    it.each(contexts)('%s: read_file and list_files stay allowed', async (_label, snapshot) => {
+      const policy = deriveToolSafetyPolicy({ kind: 'live', liveContext: snapshot })
+      const read = await executeToolCall('read_file', { path: 'notes/a' }, ctxWith(policy))
+      expect(read.isError).toBe(false)
+      const list = await executeToolCall('list_files', {}, ctxWith(policy))
+      expect(list.isError).toBe(false)
+    })
+
+    it.each(contexts)('%s: unrelated write_file keeps original behavior', async (_label, snapshot) => {
+      const policy = deriveToolSafetyPolicy({ kind: 'live', liveContext: snapshot })
+      const r = await executeToolCall('write_file', { path: 'notes/other', content: 'fresh' }, ctxWith(policy))
+      expect(r.isError).toBe(false)
+      expect(r.changed?.kind).toBe('write')
+      expect(readDisk('notes/other')).toBe('fresh')
+    })
+  })
+
+  describe('external conflict: blocked with no raw leakage', () => {
+    const EXTERNAL_RAW = 'EXTERNAL_RAW_SECRET_999'
+    const policy: ToolSafetyPolicy = { kind: 'deny-protected-path', protectedPath: 'notes/a', reason: 'external-conflict' }
+
+    it('blocks write_file and leaks neither the local nor the external raw', async () => {
+      seed('notes/a', DISK_RAW, 'doc-a', 'Original Title')
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'ATTACKER' }, ctxWith(policy))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-external-conflict')
+      expect(r.content).not.toContain(DISK_RAW)
+      expect(r.content).not.toContain(EXTERNAL_RAW)
+      expect(r.changed).toBeUndefined()
+      expect(readDisk('notes/a')).toBe(DISK_RAW)
+    })
+  })
+
+  describe('unstable transient save state', () => {
+    const policy: ToolSafetyPolicy = { kind: 'deny-protected-path', protectedPath: 'notes/a', reason: 'unstable-context' }
+
+    it('blocks patch_file with active-context-unstable', async () => {
+      seed('notes/a', DISK_RAW, 'doc-a', 'Original Title')
+      const r = await executeToolCall('patch_file', { path: 'notes/a', old_string: 'ON_DISK', new_string: 'X' }, ctxWith(policy))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-unstable')
+      expect(readDisk('notes/a')).toBe(DISK_RAW)
+    })
+  })
+
+  describe('verify-clean-document: server identity and raw are re-verified at call time', () => {
+    const CLEAN_RAW = 'CLEAN_DISK_RAW_555'
+    const cleanPolicy = (overrides: Partial<Extract<ToolSafetyPolicy, { kind: 'verify-clean-document' }>> = {}): ToolSafetyPolicy => ({
+      kind: 'verify-clean-document',
+      protectedPath: 'notes/a',
+      expectedDocumentId: 'doc-clean',
+      expectedRaw: CLEAN_RAW,
+      ...overrides,
+    })
+
+    it('allows write_file when identity and raw match', async () => {
+      seed('notes/a', CLEAN_RAW, 'doc-clean', 'A')
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'updated body' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(false)
+      expect(r.changed?.kind).toBe('write')
+      expect(r.changed?.path).toBe('notes/a')
+      expect(readDisk('notes/a')).toBe('updated body')
+    })
+
+    it('allows patch_file when identity and raw match', async () => {
+      seed('notes/a', CLEAN_RAW, 'doc-clean', 'A')
+      const r = await executeToolCall('patch_file', { path: 'notes/a', old_string: 'CLEAN_DISK_RAW', new_string: 'PATCHED_RAW' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(false)
+      expect(r.changed?.kind).toBe('write')
+      expect(readDisk('notes/a')).toBe('PATCHED_RAW_555')
+    })
+
+    it('allows update_metadata when identity and raw match', async () => {
+      seed('notes/a', CLEAN_RAW, 'doc-clean', 'A')
+      const r = await executeToolCall('update_metadata', { path: 'notes/a', title: 'New Title' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(false)
+      expect(getDocumentMetadata(db, 'notes/a')?.title).toBe('New Title')
+      expect(readDisk('notes/a')).toBe(CLEAN_RAW)
+    })
+
+    it('allows rename_file when identity and raw match', async () => {
+      seed('notes/a', CLEAN_RAW, 'doc-clean', 'A')
+      const r = await executeToolCall('rename_file', { path: 'notes/a', new_path: 'notes/c' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(false)
+      expect(r.changed?.kind).toBe('rename')
+      expect(fs.existsSync(path.join(contentDir, 'notes/a.md'))).toBe(false)
+      expect(readDisk('notes/c')).toBe(CLEAN_RAW)
+    })
+
+    it('allows delete_file when identity and raw match', async () => {
+      seed('notes/a', CLEAN_RAW, 'doc-clean', 'A')
+      const r = await executeToolCall('delete_file', { path: 'notes/a' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(false)
+      expect(r.changed?.kind).toBe('delete')
+      expect(fs.existsSync(path.join(contentDir, 'notes/a.md'))).toBe(false)
+    })
+
+    it('blocks with identity-mismatch when the path belongs to a different document, even with identical raw', async () => {
+      // Path reuse: same body on disk, DIFFERENT document identity than
+      // the snapshot. Identical raw must NOT rescue the mutation.
+      seed('notes/a', CLEAN_RAW, 'doc-SOMEONE-ELSE', 'A')
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'ATTACKER' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-identity-mismatch')
+      expect(readDisk('notes/a')).toBe(CLEAN_RAW)
+      // Neither the expected nor the current document id leaks.
+      expect(r.content).not.toContain('doc-clean')
+      expect(r.content).not.toContain('doc-SOMEONE-ELSE')
+    })
+
+    it('blocks with stale when the on-disk raw changed after the snapshot', async () => {
+      seed('notes/a', 'CHANGED_ON_DISK_777', 'doc-clean', 'A')
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'ATTACKER' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-stale')
+      expect(readDisk('notes/a')).toBe('CHANGED_ON_DISK_777')
+      expect(r.content).not.toContain('CHANGED_ON_DISK_777')
+      expect(r.content).not.toContain(CLEAN_RAW)
+    })
+
+    it('blocks with unverifiable when the file is missing — write_file must NOT recreate it', async () => {
+      // No file on disk; the snapshot still claims notes/a.
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'ATTACKER' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-unverifiable')
+      expect(fs.existsSync(path.join(contentDir, 'notes/a.md'))).toBe(false)
+    })
+
+    it('blocks with unverifiable when the document row has no identity', async () => {
+      seed('notes/a', CLEAN_RAW, 'doc-clean', 'A')
+      db.prepare("UPDATE documents SET id = '' WHERE path = 'notes/a'").run()
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'ATTACKER' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-unverifiable')
+      expect(readDisk('notes/a')).toBe(CLEAN_RAW)
+    })
+
+    it('blocks with unverifiable when the file is unreadable (path is a directory)', async () => {
+      fs.mkdirSync(path.join(contentDir, 'notes/a.md'), { recursive: true })
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'ATTACKER' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-unverifiable')
+    })
+  })
+
+  describe('unrelated paths keep original behavior under every deny reason', () => {
+    const reasons: Array<[string, ToolSafetyPolicy]> = [
+      ['unsaved-context', { kind: 'deny-protected-path', protectedPath: 'notes/a', reason: 'unsaved-context' }],
+      ['read-only-context', { kind: 'deny-protected-path', protectedPath: 'notes/a', reason: 'read-only-context' }],
+      ['external-conflict', { kind: 'deny-protected-path', protectedPath: 'notes/a', reason: 'external-conflict' }],
+      ['unstable-context', { kind: 'deny-protected-path', protectedPath: 'notes/a', reason: 'unstable-context' }],
+    ]
+
+    it.each(reasons)('%s: write/create/update_metadata/rename on notes/b all succeed', async (_reason, policy) => {
+      seed('notes/a', DISK_RAW, 'doc-a', 'Protected')
+      seed('notes/b', 'B_BODY', 'doc-b', 'B Title')
+      const c = ctxWith(policy)
+
+      const write = await executeToolCall('write_file', { path: 'notes/b', content: 'B_NEW' }, c)
+      expect(write.isError).toBe(false)
+      expect(write.changed?.kind).toBe('write')
+
+      const create = await executeToolCall('create_file', { path: 'notes/b2', content: 'B2' }, c)
+      expect(create.isError).toBe(false)
+
+      const meta = await executeToolCall('update_metadata', { path: 'notes/b', title: 'B Renamed' }, c)
+      expect(meta.isError).toBe(false)
+      expect(getDocumentMetadata(db, 'notes/b')?.title).toBe('B Renamed')
+
+      const rename = await executeToolCall('rename_file', { path: 'notes/b', new_path: 'notes/c' }, c)
+      expect(rename.isError).toBe(false)
+      expect(rename.changed?.kind).toBe('rename')
+      expect(readDisk('notes/c')).toBe('B_NEW')
+
+      // The protected path is untouched throughout.
+      expect(readDisk('notes/a')).toBe(DISK_RAW)
+    })
+  })
+
+  describe('rename_file guards both source and destination', () => {
+    beforeEach(() => {
+      seed('notes/a', DISK_RAW, 'doc-a', 'Protected')
+      seed('notes/z', 'Z_BODY', 'doc-z', 'Z Title')
+    })
+
+    it('blocks protected source → unrelated destination', async () => {
+      const r = await executeToolCall('rename_file', { path: 'notes/a', new_path: 'notes/b' }, ctxWith(dirtyPolicy))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-unsaved')
+      expect(readDisk('notes/a')).toBe(DISK_RAW)
+      expect(fs.existsSync(path.join(contentDir, 'notes/b.md'))).toBe(false)
+    })
+
+    it('blocks unrelated source → protected destination', async () => {
+      const r = await executeToolCall('rename_file', { path: 'notes/z', new_path: 'notes/a' }, ctxWith(dirtyPolicy))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-unsaved')
+      expect(readDisk('notes/z')).toBe('Z_BODY')
+      expect(readDisk('notes/a')).toBe(DISK_RAW)
+    })
+
+    it('blocks when the protected path is spelled with a trailing .md', async () => {
+      const asDest = await executeToolCall('rename_file', { path: 'notes/z', new_path: 'notes/a.md' }, ctxWith(dirtyPolicy))
+      expect(asDest.isError).toBe(true)
+      expect(asDest.content).toContain('active-context-unsaved')
+      const asSource = await executeToolCall('rename_file', { path: 'notes/a.md', new_path: 'notes/b' }, ctxWith(dirtyPolicy))
+      expect(asSource.isError).toBe(true)
+      expect(asSource.content).toContain('active-context-unsaved')
+      expect(readDisk('notes/a')).toBe(DISK_RAW)
+      expect(readDisk('notes/z')).toBe('Z_BODY')
+    })
+
+    it('allows unrelated source → unrelated destination', async () => {
+      seed('notes/q', 'Q_BODY', 'doc-q', 'Q Title')
+      const r = await executeToolCall('rename_file', { path: 'notes/q', new_path: 'notes/y' }, ctxWith(dirtyPolicy))
+      expect(r.isError).toBe(false)
+      expect(r.changed?.kind).toBe('rename')
+      expect(readDisk('notes/y')).toBe('Q_BODY')
+    })
+  })
+
+  describe('change descriptors: blocked mutations report nothing, allowed mutations report exactly one', () => {
+    it('blocked write reports no change descriptor (0 file_changed events)', async () => {
+      seed('notes/a', DISK_RAW, 'doc-a', 'Protected')
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'X' }, ctxWith(dirtyPolicy))
+      expect(r.isError).toBe(true)
+      expect(r.changed).toBeUndefined()
+      expect(r.changes).toBeUndefined()
+    })
+
+    it('allowed unrelated write reports exactly one write descriptor', async () => {
+      seed('notes/a', DISK_RAW, 'doc-a', 'Protected')
+      const r = await executeToolCall('write_file', { path: 'notes/b', content: 'B' }, ctxWith(dirtyPolicy))
+      expect(r.isError).toBe(false)
+      expect(r.changed).toMatchObject({ kind: 'write', path: 'notes/b' })
+      expect(r.changes).toBeUndefined()
+    })
+
+    it('allowed verified-clean same-path write reports exactly one write descriptor', async () => {
+      seed('notes/a', 'CLEAN_RAW_1', 'doc-clean', 'A')
+      const policy: ToolSafetyPolicy = { kind: 'verify-clean-document', protectedPath: 'notes/a', expectedDocumentId: 'doc-clean', expectedRaw: 'CLEAN_RAW_1' }
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'next' }, ctxWith(policy))
+      expect(r.isError).toBe(false)
+      expect(r.changed).toMatchObject({ kind: 'write', path: 'notes/a' })
+      expect(r.changes).toBeUndefined()
+    })
+  })
+
+  describe('malformed and unknown calls under a deny policy', () => {
+    it('malformed input fails with the tool\'s own error, not a safety code', async () => {
+      seed('notes/a', DISK_RAW, 'doc-a', 'Protected')
+      const r = await executeToolCall('write_file', {}, ctxWith(dirtyPolicy))
+      expect(r.isError).toBe(true)
+      expect(r.content).not.toContain('active-context-')
+    })
+
+    it('unknown tool fails closed with the dispatcher error', async () => {
+      const r = await executeToolCall('nope_tool', { path: 'notes/a' }, ctxWith(dirtyPolicy))
+      expect(r.isError).toBe(true)
+      expect(r.content).toMatch(/unknown tool/)
+    })
   })
 })

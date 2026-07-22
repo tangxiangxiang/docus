@@ -58,6 +58,28 @@ export function isValidPathSyntax(p: string): boolean {
   return p.split('/').every(isValidSegment)
 }
 
+/**
+ * Canonicalize a vault-relative logical content path for equivalence
+ * comparison (Edit-10.4). Two legal spellings exist: the canonical
+ * extensionless form ("notes/a") used by the editor and tool API, and
+ * the history system's single-trailing-.md form ("notes/a.md"). Both
+ * canonicalize to "notes/a" so a protected path and a tool path are
+ * compared on equal footing.
+ *
+ * Strips exactly ONE trailing ".md", then delegates to the single
+ * strict syntax validator (rejects absolute paths, "..", backslashes,
+ * NUL, uppercase, mid-path ".md" segments, leading/trailing dashes).
+ * Returns `null` for anything invalid — callers treat an unnormalizable
+ * tool path as never equivalent to a protected path (the tool's own
+ * `assertSafePath` still rejects it before any side effect). Never
+ * resolves to a filesystem path; this is logical-path equivalence only.
+ */
+export function normalizeLogicalContentPath(p: string): string | null {
+  if (typeof p !== 'string') return null
+  const bare = p.endsWith('.md') ? p.slice(0, -'.md'.length) : p
+  return isValidPathSyntax(bare) ? bare : null
+}
+
 export function assertSafePath(p: string): string {
   if (!isValidPathSyntax(p)) {
     throw new Error(`invalid path: ${p}`)
