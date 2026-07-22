@@ -185,6 +185,13 @@ describe('create_file', () => {
     expect(r.content).toMatch(/update_metadata/)
     expect(fs.existsSync(path.join(contentDir, 'a/yaml.md'))).toBe(false)
   })
+
+  it('cannot create a note directly in archive', async () => {
+    const r = await executeToolCall('create_file', { path: 'archive/new', content: 'blocked' }, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.content).toMatch(/archive flow/)
+    expect(fs.existsSync(path.join(contentDir, 'archive/new.md'))).toBe(false)
+  })
 })
 
 // --- write_file -------------------------------------------------------------
@@ -212,6 +219,16 @@ describe('write_file', () => {
   it('returns is_error for an unsafe path', async () => {
     const r = await executeToolCall('write_file', { path: '../escape', content: 'x' }, ctx)
     expect(r.isError).toBe(true)
+  })
+
+  it('may update an archived note but cannot create one', async () => {
+    writeFile('archive/existing.md', 'old')
+    const update = await executeToolCall('write_file', { path: 'archive/existing', content: 'new' }, ctx)
+    const create = await executeToolCall('write_file', { path: 'archive/new', content: 'new' }, ctx)
+    expect(update.isError).toBe(false)
+    expect(create.isError).toBe(true)
+    expect(fs.readFileSync(path.join(contentDir, 'archive/existing.md'), 'utf8')).toBe('new')
+    expect(fs.existsSync(path.join(contentDir, 'archive/new.md'))).toBe(false)
   })
 })
 

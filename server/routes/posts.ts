@@ -23,6 +23,7 @@ import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { trackCleanedDocumentWrite } from '../metadataMigration.js'
 import { CONTENT_DIR, filePathFor, isValidPathSyntax, isValidSegment } from '../paths.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
+import { validateDocumentMutation } from '../documentMutationPolicy.js'
 import { listPostsFlat, readFrontmatter } from '../tree.js'
 import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
 
@@ -53,9 +54,8 @@ postRoutes.post('/api/posts', async (c) => {
   if (!isValidPathSyntax(body.path)) {
     return bad(c, 'invalid path syntax')
   }
-  if (isInArchive(body.path)) {
-    return bad(c, 'archive notes must be created through archive flow', 422)
-  }
+  try { validateDocumentMutation({ operation: 'create', destinationPath: body.path }) }
+  catch (error) { return bad(c, (error as Error).message, 422) }
   if (body.title !== undefined && typeof body.title !== 'string') {
     return bad(c, 'title must be a string', 400)
   }
@@ -337,6 +337,11 @@ postRoutes.patch('/api/posts/*', async (c) => {
       }
     }
   }
+  try {
+    validateDocumentMutation({ operation: 'rename', sourcePath: srcPath, destinationPath: destPath })
+  } catch (error) {
+    return bad(c, (error as Error).message, 422)
+  }
   if (await exists(dest)) {
     if (body.targetPath !== undefined && isInArchive(destPath)) {
       const unique = await uniqueMoveTarget(dest, destPath)
@@ -385,18 +390,21 @@ postRoutes.patch('/api/posts/*', async (c) => {
   const written: typeof referenceSnapshots = []
   try {
     for (const snapshot of referenceSnapshots) {
+      written.push(snapshot)
       await fs.writeFile(snapshot.abs, snapshot.updated, 'utf8')
       const stat = await fs.stat(snapshot.abs)
       snapshot.mtime = stat.mtimeMs
       ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
-      written.push(snapshot)
     }
   } catch (error) {
     const rollbackErrors: unknown[] = []
     for (const snapshot of written.reverse()) {
       try {
         await fs.writeFile(snapshot.abs, snapshot.raw, 'utf8')
-        if (snapshot.metadata && snapshot.sourcePath !== srcPath) saveDocumentMetadata(metadataDb(), snapshot.metadata)
+        if (snapshot.sourcePath !== srcPath) {
+          if (snapshot.metadata) saveDocumentMetadata(metadataDb(), snapshot.metadata)
+          else deleteDocumentMetadata(metadataDb(), snapshot.sourcePath)
+        }
       } catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
     try {

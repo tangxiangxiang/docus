@@ -41,6 +41,12 @@ import { trackCleanedDocumentWrite } from '../metadataMigration.js'
 import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
+import { validateDocumentMutation } from '../documentMutationPolicy.js'
+import {
+  atomicRemoveTextIfUnchanged,
+  atomicReplaceText,
+  atomicReplaceTextIfUnchanged,
+} from '../atomicTextWrite.js'
 
 export type ToolContext = {
   signal: AbortSignal
@@ -342,7 +348,63 @@ function executeListFiles(input: { scope?: string }): ToolResult {
   return ok(JSON.stringify(out, null, 2))
 }
 
-function executeCreateFile(input: { path?: string; content?: string }, db: DatabaseT): ToolResult {
+type MigrationSnapshot = {
+  path: string; document_id: string | null; original_path: string; status: string
+  source_hash: string; error: string; updated_at: number
+  frontmatter_backup: string; cleaned_hash: string
+}
+
+async function commitDocumentBody(
+  db: DatabaseT,
+  documentPath: string,
+  abs: string,
+  raw: string,
+  previous: { raw: string; mode: number } | null,
+): Promise<fs.Stats> {
+  const previousMetadata = getDocumentMetadata(db, documentPath)
+  const previousMigration = db.prepare('SELECT * FROM metadata_migrations WHERE path = ?')
+    .get(documentPath) as MigrationSnapshot | undefined
+  let committed = false
+  try {
+    fs.mkdirSync(path.dirname(abs), { recursive: true })
+    if (previous) {
+      const stat = fs.statSync(abs)
+      ensureDocumentMetadata(db, documentPath, previous.raw, stat.mtimeMs)
+      await atomicReplaceTextIfUnchanged(abs, previous.raw, raw, { mode: previous.mode })
+    } else {
+      deleteDocumentMetadata(db, documentPath)
+      await atomicReplaceText(abs, raw)
+    }
+    committed = true
+    const stat = fs.statSync(abs)
+    ensureDocumentMetadata(db, documentPath, raw, stat.mtimeMs, Date.now())
+    trackCleanedDocumentWrite(db, documentPath, raw)
+    return stat
+  } catch (error) {
+    const failures: unknown[] = [error]
+    if (committed) {
+      try {
+        if (previous) await atomicReplaceTextIfUnchanged(abs, raw, previous.raw, { mode: previous.mode })
+        else await atomicRemoveTextIfUnchanged(abs, raw)
+      } catch (rollbackError) { failures.push(rollbackError) }
+    }
+    try {
+      if (previousMetadata) saveDocumentMetadata(db, previousMetadata)
+      else deleteDocumentMetadata(db, documentPath)
+      db.prepare('DELETE FROM metadata_migrations WHERE path = ?').run(documentPath)
+      if (previousMigration) {
+        db.prepare(`INSERT INTO metadata_migrations
+          (path, document_id, original_path, status, source_hash, error, updated_at, frontmatter_backup, cleaned_hash)
+          VALUES (@path, @document_id, @original_path, @status, @source_hash, @error, @updated_at, @frontmatter_backup, @cleaned_hash)`)
+          .run(previousMigration)
+      }
+    } catch (rollbackError) { failures.push(rollbackError) }
+    if (failures.length > 1) throw new AggregateError(failures, 'AI body write failed and rollback was incomplete')
+    throw error
+  }
+}
+
+async function executeCreateFile(input: { path?: string; content?: string }, db: DatabaseT): Promise<ToolResult> {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('create_file: `path` is required')
   }
@@ -360,14 +422,9 @@ function executeCreateFile(input: { path?: string; content?: string }, db: Datab
     return err(`create_file: file already exists: ${input.path}. Use write_file to overwrite.`)
   }
   try {
-    deleteDocumentMetadata(db, input.path)
-    fs.mkdirSync(path.dirname(abs), { recursive: true })
-    fs.writeFileSync(abs, input.content, 'utf8')
-    const stat = fs.statSync(abs)
-    ensureDocumentMetadata(db, input.path, input.content, stat.mtimeMs, Date.now())
-    trackCleanedDocumentWrite(db, input.path, input.content)
+    validateDocumentMutation({ operation: 'create', destinationPath: input.path })
+    await commitDocumentBody(db, input.path, abs, input.content, null)
   } catch (e) {
-    try { fs.rmSync(abs, { force: true }) } catch { /* best-effort compensation */ }
     return err(`create_file: ${(e as Error).message}`)
   }
   const stat = fs.statSync(abs)
@@ -379,7 +436,7 @@ function executeCreateFile(input: { path?: string; content?: string }, db: Datab
   })
 }
 
-function executeWriteFile(input: { path?: string; content?: string }, db: DatabaseT): ToolResult {
+async function executeWriteFile(input: { path?: string; content?: string }, db: DatabaseT): Promise<ToolResult> {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('write_file: `path` is required')
   }
@@ -394,25 +451,20 @@ function executeWriteFile(input: { path?: string; content?: string }, db: Databa
     return err(`write_file: ${(e as Error).message}`)
   }
   const existed = fs.existsSync(abs)
-  let previousRaw = ''
   try {
-    if (existed) {
-      previousRaw = fs.readFileSync(abs, 'utf8')
-      const previousStat = fs.statSync(abs)
-      ensureDocumentMetadata(db, input.path, previousRaw, previousStat.mtimeMs)
-    } else {
-      deleteDocumentMetadata(db, input.path)
-    }
-    fs.mkdirSync(path.dirname(abs), { recursive: true })
-    fs.writeFileSync(abs, input.content, 'utf8')
-    const stat = fs.statSync(abs)
-    ensureDocumentMetadata(db, input.path, input.content, stat.mtimeMs, Date.now())
-    trackCleanedDocumentWrite(db, input.path, input.content)
+    validateDocumentMutation({ operation: 'write', destinationPath: input.path, destinationExists: existed })
   } catch (e) {
-    try {
-      if (existed) fs.writeFileSync(abs, previousRaw, 'utf8')
-      else fs.rmSync(abs, { force: true })
-    } catch { /* best-effort compensation */ }
+    return err(`write_file: ${(e as Error).message}`)
+  }
+  try {
+    let previous: { raw: string; mode: number } | null = null
+    if (existed) {
+      const previousRaw = fs.readFileSync(abs, 'utf8')
+      const previousStat = fs.statSync(abs)
+      previous = { raw: previousRaw, mode: previousStat.mode }
+    }
+    await commitDocumentBody(db, input.path, abs, input.content, previous)
+  } catch (e) {
     return err(`write_file: ${(e as Error).message}`)
   }
   const stat = fs.statSync(abs)
@@ -424,12 +476,12 @@ function executeWriteFile(input: { path?: string; content?: string }, db: Databa
   })
 }
 
-function executePatchFile(input: {
+async function executePatchFile(input: {
   path?: string
   old_string?: string
   new_string?: string
   replace_all?: boolean
-}, db: DatabaseT): ToolResult {
+}, db: DatabaseT): Promise<ToolResult> {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('patch_file: `path` is required')
   }
@@ -512,13 +564,8 @@ function executePatchFile(input: {
     ? bundle.raw.split(input.old_string).join(input.new_string)
     : bundle.raw.replace(input.old_string, input.new_string)
   try {
-    ensureDocumentMetadata(db, input.path, bundle.raw, bundle.stat.mtimeMs)
-    fs.writeFileSync(bundle.abs, updated, 'utf8')
-    const stat = fs.statSync(bundle.abs)
-    ensureDocumentMetadata(db, input.path, updated, stat.mtimeMs, Date.now())
-    trackCleanedDocumentWrite(db, input.path, updated)
+    await commitDocumentBody(db, input.path, bundle.abs, updated, { raw: bundle.raw, mode: bundle.stat.mode })
   } catch (e) {
-    try { fs.writeFileSync(bundle.abs, bundle.raw, 'utf8') } catch { /* best-effort compensation */ }
     return err(`patch_file: ${(e as Error).message}`)
   }
   const stat = fs.statSync(bundle.abs)
@@ -540,6 +587,7 @@ function executeDeleteFile(input: { path?: string }, db: DatabaseT): ToolResult 
   let abs: string
   try {
     abs = filePathFor(input.path)
+    validateDocumentMutation({ operation: 'delete', sourcePath: input.path })
   } catch (e) {
     return err(`delete_file: ${(e as Error).message}`)
   }
@@ -594,6 +642,11 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
         `Use delete_file + create_file (or write_file) to overwrite.`,
     )
   }
+  try {
+    validateDocumentMutation({ operation: 'rename', sourcePath: input.path, destinationPath: input.new_path })
+  } catch (e) {
+    return err(`rename_file: ${(e as Error).message}`)
+  }
   // The reference writes come VERBATIM from the plan that
   // executeGuardedRename built, locked, and guarded. This executor
   // performs NO independent backlink discovery (no getLinkIndex for
@@ -627,10 +680,10 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     const written: typeof references = []
     try {
       for (const reference of references) {
+        written.push(reference)
         fs.writeFileSync(reference.abs, reference.updated, 'utf8')
         const stat = fs.statSync(reference.abs)
         ensureDocumentMetadata(db, reference.path, reference.updated, stat.mtimeMs, Date.now())
-        written.push(reference)
       }
     } catch (error) {
       const rollbackErrors: unknown[] = []
@@ -641,8 +694,10 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
       try { await renameDocumentWithMetadata({ db, fromPath: input.new_path, toPath: input.path, fromAbs: dstAbs, toAbs: srcAbs }) }
       catch (rollbackError) { rollbackErrors.push(rollbackError) }
       for (const reference of references) {
-        if (!reference.metadata) continue
-        try { saveDocumentMetadata(db, reference.metadata) }
+        try {
+          if (reference.metadata) saveDocumentMetadata(db, reference.metadata)
+          else deleteDocumentMetadata(db, reference.sourcePath === input.path ? input.path : reference.path)
+        }
         catch (rollbackError) { rollbackErrors.push(rollbackError) }
       }
       if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'AI rename failed and rollback was incomplete')
