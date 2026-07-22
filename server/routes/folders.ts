@@ -8,7 +8,7 @@ import {
   restoreDocumentMetadataMutation,
   snapshotDocumentMetadataPrefixMutation,
 } from '../documentMetadata.js'
-import { withDocumentWriteLock, withDocumentWriteLocks } from '../documentWriteLock.js'
+import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { CONTENT_DIR, filePathFor, folderPathFor, isValidPathSyntax } from '../paths.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
@@ -16,6 +16,22 @@ import { listSubtreePaths } from '../tree.js'
 import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
 
 const folderRoutes = new Hono()
+
+/**
+ * Test-only seam for the folder lifecycle race regressions: fires
+ * inside the structure + document locks, immediately after the
+ * in-lock subtree re-validation and before any side effect — the
+ * exact window in which a concurrent membership operation would have
+ * to be absorbed. Null in production (never set outside tests).
+ */
+export type FolderRaceHooks = {
+  afterRenameRecheck?: () => void | Promise<void>
+  afterDeleteRecheck?: () => void | Promise<void>
+}
+let __folderRaceHooks: FolderRaceHooks | null = null
+export function __setFolderRaceHooksForTesting(hooks: FolderRaceHooks | null): void {
+  __folderRaceHooks = hooks
+}
 
 // Create an empty folder. Body: { path: string }
 folderRoutes.post('/api/folders', async (c) => {
@@ -26,11 +42,13 @@ folderRoutes.post('/api/folders', async (c) => {
   }
   let abs: string
   try { abs = folderPathFor(body.path) } catch (e: any) { return bad(c, e.message) }
-  return withDocumentWriteLock(body.path, async () => {
+  // Creating a folder changes tree membership: structure lock first.
+  const createdPath = body.path
+  return withVaultStructureLock(() => withDocumentWriteLock(createdPath, async () => {
     if (await exists(abs)) return bad(c, 'folder exists', 409)
     await fs.mkdir(abs, { recursive: true })
-    return c.json({ path: body.path }, 201)
-  })
+    return c.json({ path: createdPath }, 201)
+  }))
 })
 
 // Rename a folder (single-segment rename, cascades on disk).
@@ -52,6 +70,13 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   if (!canModify(newPath)) return bad(c, 'cannot rename a folder to a protected path', 422)
   let dest: string
   try { dest = folderPathFor(body.newPath) } catch (e: any) { return bad(c, e.message) }
+  // Tree membership changes serialize behind the vault structure lock.
+  // The subtree/backlink/database planning happens UNDER it, so the
+  // document lock footprint is acquired against a membership-stable
+  // world — a concurrent create/delete/rename on any path waits for
+  // the whole transaction instead of slipping a new child in between
+  // the enumeration and the lock acquisition.
+  return withVaultStructureLock(async () => {
   const plannedOldPaths = await listSubtreePaths(CONTENT_DIR, srcPath)
   const plannedReferencePaths = body.updateReferences
     ? Object.entries((await getLinkIndex()).snapshot().outgoing)
@@ -77,6 +102,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   if (oldPaths.join('\0') !== plannedOldPaths.join('\0')) {
     return bad(c, 'folder contents changed while rename was being prepared; retry', 409)
   }
+  if (__folderRaceHooks?.afterRenameRecheck) await __folderRaceHooks.afterRenameRecheck()
   const folderReferenceSnapshots: Array<{
     sourcePath: string; writePath: string; raw: string; updated: string
     mtime: number
@@ -187,6 +213,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     })),
   })
   })
+  })
 })
 
 // Delete a folder recursively. Requires ?recursive=true if non-empty.
@@ -198,12 +225,17 @@ folderRoutes.delete('/api/folders/*', async (c) => {
   try { abs = folderPathFor(folderP) } catch (e: any) { return bad(c, e.message) }
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const recursive = c.req.query('recursive') === 'true'
+  // Tree membership changes serialize behind the vault structure lock;
+  // the subtree is planned under it so the lock footprint covers a
+  // membership-stable world (see the rename route for the full note).
+  return withVaultStructureLock(async () => {
   const planned = await listSubtreePaths(CONTENT_DIR, folderP)
   const plannedDatabasePaths = snapshotDocumentMetadataPrefixMutation(metadataDb(), [folderP], planned).paths
   return withDocumentWriteLocks([folderP, ...planned, ...plannedDatabasePaths], async () => {
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const all = await listSubtreePaths(CONTENT_DIR, folderP)
   if (all.join('\0') !== planned.join('\0')) return bad(c, 'folder contents changed while delete was being prepared; retry', 409)
+  if (__folderRaceHooks?.afterDeleteRecheck) await __folderRaceHooks.afterDeleteRecheck()
   if (all.length > 0 && !recursive) {
     return bad(c, 'folder is not empty; pass ?recursive=true to delete', 400)
   }
@@ -228,6 +260,7 @@ folderRoutes.delete('/api/folders/*', async (c) => {
     idx.applyFolderDelete(all)
   } catch { /* ignore */ }
   return c.json({ deleted: all })
+  })
   })
 })
 

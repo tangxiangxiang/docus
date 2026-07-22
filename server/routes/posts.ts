@@ -21,7 +21,7 @@ import {
   UnstableTextSnapshotError,
   type StableTextSnapshot,
 } from '../atomicTextWrite.js'
-import { withDocumentWriteLock, withDocumentWriteLocks } from '../documentWriteLock.js'
+import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { trackCleanedDocumentWrite } from '../metadataMigration.js'
 import { CONTENT_DIR, filePathFor, isValidPathSyntax, isValidSegment } from '../paths.js'
@@ -69,22 +69,37 @@ postRoutes.post('/api/posts', async (c) => {
   if (title.length > 200) return bad(c, 'title must be at most 200 characters', 400)
   let abs: string
   try { abs = filePathFor(body.path) } catch (e: any) { return bad(c, e.message) }
-  return withDocumentWriteLock(documentPath, async () => {
+  // Creating a file changes tree membership: structure lock first, so
+  // a concurrent folder rename/delete can never swallow the new file.
+  return withVaultStructureLock(() => withDocumentWriteLock(documentPath, async () => {
   if (await exists(abs)) return bad(c, 'file exists', 409)
   await fs.mkdir(path.dirname(abs), { recursive: true })
   const now = Date.now()
   const today = new Date(now).toISOString().slice(0, 10)
   const body_text = `# ${title}\n`
   const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [documentPath])
+  // Create-only: link(2) atomically fails with EEXIST, so a file an
+  // external writer lands between the check and the commit is reported
+  // as a conflict, never overwritten.
+  const prepared = await prepareAtomicTextCreate(abs, body_text)
+  let committed = false
   try {
     deleteDocumentMetadata(metadataDb(), documentPath)
-    await fs.writeFile(abs, body_text, 'utf8')
+    await prepared.commit()
+    committed = true
     saveDocumentMetadata(metadataDb(), { path: documentPath, title, createdAt: now, updatedAt: now })
   } catch (error) {
     const failures: unknown[] = [error]
-    try { await fs.rm(abs, { force: true }) } catch (rollbackError) { failures.push(rollbackError) }
+    try {
+      if (committed) {
+        if (await exists(abs)) await atomicRemoveTextIfUnchanged(abs, body_text)
+      } else {
+        await prepared.rollback()
+      }
+    } catch (rollbackError) { failures.push(rollbackError) }
     try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) } catch (rollbackError) { failures.push(rollbackError) }
     if (failures.length > 1) throw new AggregateError(failures, 'post creation failed and rollback was incomplete')
+    if (!committed && (error as NodeJS.ErrnoException).code === 'EEXIST') return bad(c, 'file exists', 409)
     throw error
   }
   // Update the link index AFTER the disk write succeeds. Best-effort:
@@ -106,7 +121,7 @@ postRoutes.post('/api/posts', async (c) => {
     size: st.size,
     mtime: st.mtimeMs,
   } satisfies PostSummary, 201)
-  })
+  }))
 })
 
 // PUT saves body bytes verbatim. Metadata timestamps live in SQLite;
@@ -241,17 +256,20 @@ postRoutes.put('/api/recover/*', async (c) => {
   const body = await c.req.json().catch(() => null) as { raw?: unknown } | null
   if (!body || typeof body.raw !== 'string') return bad(c, 'raw required')
   const requestedRaw = body.raw
-  return withDocumentWriteLock(documentPath, async () => {
+  // Recovery creates the file: membership change, structure lock first.
+  return withVaultStructureLock(() => withDocumentWriteLock(documentPath, async () => {
     const abs = filePathFor(documentPath)
     if (await exists(abs)) return bad(c, 'file already exists', 409)
     const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [documentPath])
     const previousMetadata = getDocumentMetadata(metadataDb(), documentPath)
     await fs.mkdir(path.dirname(abs), { recursive: true })
     const prepared = await prepareAtomicTextCreate(abs, requestedRaw)
+    let committed = false
     let stat: Awaited<ReturnType<typeof fs.stat>>
     let metadata: ReturnType<typeof ensureMetadata>
     try {
       await prepared.commit()
+      committed = true
       stat = await fs.stat(abs)
       metadata = previousMetadata
         ? { ...previousMetadata, updatedAt: Date.now() }
@@ -261,8 +279,18 @@ postRoutes.put('/api/recover/*', async (c) => {
     } catch (error) {
       const failures: unknown[] = [error]
       try {
-        if (await exists(abs)) await atomicRemoveTextIfUnchanged(abs, requestedRaw)
-        else await prepared.rollback()
+        if (committed) {
+          // Our commit landed but the metadata step failed: remove our
+          // own write, and ONLY our write — the raw match is proof of
+          // ownership because we hold the create-only commit.
+          if (await exists(abs)) await atomicRemoveTextIfUnchanged(abs, requestedRaw)
+        } else {
+          // The commit itself failed (e.g. EEXIST: an external writer
+          // landed the same path after our exists-check). We never
+          // created the target, so it must not be touched — even when
+          // its bytes happen to equal requestedRaw.
+          await prepared.rollback()
+        }
       } catch (rollbackError) {
         failures.push(rollbackError)
       }
@@ -276,6 +304,9 @@ postRoutes.put('/api/recover/*', async (c) => {
           failures,
           'metadata recovery failed and document rollback was incomplete',
         )
+      }
+      if (!committed && (error as NodeJS.ErrnoException).code === 'EEXIST') {
+        return bad(c, 'file already exists', 409)
       }
       throw error
     }
@@ -291,7 +322,7 @@ postRoutes.put('/api/recover/*', async (c) => {
       mtime: stat.mtimeMs,
     }
     return c.json({ ok: true, raw: requestedRaw, mtime: stat.mtimeMs, post })
-  })
+  }))
 })
 
 // PATCH a file: rename within folder (name) or move (targetPath). Exactly one.
@@ -366,6 +397,9 @@ postRoutes.patch('/api/posts/*', async (c) => {
       return bad(c, 'destination exists', 409)
     }
   }
+  // Rename/move changes tree membership: structure lock first, with
+  // the backlink plan computed under it (see folders PATCH note).
+  return withVaultStructureLock(async () => {
   const plannedReferencePaths = body.updateReferences
     ? (await getLinkIndex()).getBacklinks(srcPath).map((backlink) => backlink.source)
     : []
@@ -481,6 +515,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
     })),
   } satisfies PostSummary)
   })
+  })
 })
 
 // Delete a file. Archive items cannot be deleted per protocol; the client
@@ -492,7 +527,8 @@ postRoutes.delete('/api/posts/*', async (c) => {
   }
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
-  return withDocumentWriteLock(splat, async () => {
+  // Deleting a file changes tree membership: structure lock first.
+  return withVaultStructureLock(() => withDocumentWriteLock(splat, async () => {
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const staged = `${abs}.docus-delete-${Date.now()}`
   const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [splat])
@@ -515,7 +551,7 @@ postRoutes.delete('/api/posts/*', async (c) => {
     idx.applyDelete(splat)
   } catch { /* ignore */ }
   return c.json({ ok: true })
-  })
+  }))
 })
 
 // Read a single post (raw + frontmatter)

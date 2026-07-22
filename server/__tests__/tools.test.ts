@@ -214,6 +214,25 @@ describe('create_file', () => {
       db.exec('DROP TRIGGER IF EXISTS fail_new_ghost_metadata')
     }
   })
+
+  it('never replaces a file an external writer lands between the check and the create', async () => {
+    // create_file commits through link(2) (create-only): if an
+    // external writer lands the target after the exists-check, the
+    // commit fails with EEXIST and the external bytes must survive.
+    const link = vi.spyOn(fs.promises, 'link').mockImplementationOnce(async (_existing, newPath) => {
+      await fs.promises.writeFile(String(newPath), 'external writer', 'utf8')
+      throw Object.assign(new Error('link EEXIST'), { code: 'EEXIST' })
+    })
+    try {
+      const result = await executeToolCall('create_file', { path: 'a/race', content: 'ai body' }, ctx)
+      expect(result.isError).toBe(true)
+      expect(result.content).toMatch(/EEXIST/)
+      expect(fs.readFileSync(path.join(contentDir, 'a/race.md'), 'utf8')).toBe('external writer')
+      expect(getDocumentMetadata(db, 'a/race')).toBeFalsy()
+    } finally {
+      link.mockRestore()
+    }
+  })
 })
 
 // --- write_file -------------------------------------------------------------

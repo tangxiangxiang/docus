@@ -23,7 +23,7 @@ import {
 } from '../paths.js'
 import { naturalPathCompare } from '../tree.js'
 import { getDb } from '../db.js'
-import { withDocumentWriteLock } from '../documentWriteLock.js'
+import { withDocumentWriteLock, withVaultStructureLock } from '../documentWriteLock.js'
 import {
   getToolMutationTarget,
   guardToolMutation,
@@ -46,8 +46,9 @@ import { rewriteDocumentReferences } from '../renameReferences.js'
 import { validateDocumentMutation } from '../documentMutationPolicy.js'
 import {
   atomicRemoveTextIfUnchanged,
-  atomicReplaceText,
   atomicReplaceTextIfUnchanged,
+  prepareAtomicTextCreate,
+  type PreparedAtomicTextWrite,
 } from '../atomicTextWrite.js'
 
 export type ToolContext = {
@@ -359,6 +360,7 @@ async function commitDocumentBody(
 ): Promise<fs.Stats> {
   const databaseSnapshot = snapshotDocumentMetadataMutation(db, [documentPath])
   let committed = false
+  let prepared: PreparedAtomicTextWrite | null = null
   try {
     fs.mkdirSync(path.dirname(abs), { recursive: true })
     if (previous) {
@@ -367,7 +369,11 @@ async function commitDocumentBody(
       await atomicReplaceTextIfUnchanged(abs, previous.raw, raw, { mode: previous.mode })
     } else {
       deleteDocumentMetadata(db, documentPath)
-      await atomicReplaceText(abs, raw)
+      // Create-only: link(2) atomically fails with EEXIST, so a file
+      // an external writer lands between the executor's exists-check
+      // and this commit is reported as an error, never overwritten.
+      prepared = await prepareAtomicTextCreate(abs, raw)
+      await prepared.commit()
     }
     committed = true
     const stat = fs.statSync(abs)
@@ -381,6 +387,8 @@ async function commitDocumentBody(
         if (previous) await atomicReplaceTextIfUnchanged(abs, raw, previous.raw, { mode: previous.mode })
         else await atomicRemoveTextIfUnchanged(abs, raw)
       } catch (rollbackError) { failures.push(rollbackError) }
+    } else if (prepared) {
+      try { await prepared.rollback() } catch (rollbackError) { failures.push(rollbackError) }
     }
     try {
       restoreDocumentMetadataMutation(db, databaseSnapshot)
@@ -872,6 +880,12 @@ export async function executeToolCall(
     // guarded plan is the executed plan (see executeGuardedRename).
     return executeGuardedRename(target, input, db, policy)
   }
+  // create/delete always change tree membership; write_file may create
+  // the file — all three take the vault structure lock in addition to
+  // the per-path document lock(s) so they linearize against folder
+  // lifecycle transactions. patch_file edits an existing file in
+  // place and stays on the document lock only.
+  const structural = name === 'create_file' || name === 'write_file' || name === 'delete_file'
   return withMutationLocks(target, async () => {
     const decision = await guardToolMutation({
       policy,
@@ -886,7 +900,7 @@ export async function executeToolCall(
       return err(decision.message)
     }
     return dispatchToolCall(name, input, db)
-  })
+  }, { structural })
 }
 
 /**
@@ -950,7 +964,7 @@ async function executeGuardedRename(
     if (__renameRaceHooks?.beforeExecute) await __renameRaceHooks.beforeExecute()
     // The candidate plan is the executed plan — verbatim.
     return dispatchToolCall('rename_file', renameInput, db, candidate)
-  })
+  }, { structural: true })
 }
 
 /**
@@ -964,10 +978,17 @@ async function executeGuardedRename(
  * locks when the editor saves — so the guard's server re-verification
  * and the tool's own write are atomic with respect to editor saves
  * on the same document.
+ *
+ * `structural` additionally takes the vault structure lock FIRST
+ * (fixed global order: structure → sorted document paths) for tools
+ * that change tree membership, so they linearize against folder
+ * lifecycle transactions and can never have a file created or
+ * removed underneath them mid-flight.
  */
 async function withMutationLocks(
   target: Extract<ToolMutationTarget, { kind: 'single-path' } | { kind: 'rename' }>,
   operation: () => Promise<ToolResult>,
+  options: { structural?: boolean } = {},
 ): Promise<ToolResult> {
   const rawPaths = target.kind === 'single-path'
     ? [target.path]
@@ -980,7 +1001,7 @@ async function withMutationLocks(
     (next, lockPath) => () => withDocumentWriteLock(lockPath, next),
     operation,
   )
-  return locked()
+  return options.structural ? withVaultStructureLock(locked) : locked()
 }
 
 async function dispatchToolCall(

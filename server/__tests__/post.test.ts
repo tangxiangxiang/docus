@@ -94,6 +94,28 @@ describe('POST /api/posts', () => {
     }
   })
 
+  it('never overwrites a file an external writer lands between the check and the create', async () => {
+    const externalAbs = path.join(CONTENT_DIR, 'ext-race.md')
+    // link(2) is the create-only commit: simulate an external writer
+    // landing the target in the window between the exists-check and
+    // the commit. The route must report a conflict and leave the
+    // external bytes untouched — never writeFile over them.
+    const link = vi.spyOn(fs, 'link').mockImplementationOnce(async (_existing, newPath) => {
+      await fs.writeFile(String(newPath), 'external body', 'utf8')
+      throw Object.assign(new Error('link EEXIST'), { code: 'EEXIST' })
+    })
+    try {
+      const r = await call('POST', '/api/posts', { path: 'ext-race', title: 'Race' })
+      expect(r.status).toBe(409)
+      expect(await fs.readFile(externalAbs, 'utf8')).toBe('external body')
+      expect(getDocumentMetadata(db, 'ext-race')).toBeFalsy()
+    } finally {
+      link.mockRestore()
+      await fs.rm(externalAbs, { force: true })
+      deleteDocumentMetadata(db, 'ext-race')
+    }
+  })
+
   it('rejects a request body without a path', async () => {
     const r = await call('POST', '/api/posts', { title: 'no path' })
     expect(r.status).toBe(400)
@@ -177,6 +199,32 @@ describe('POST /api/posts', () => {
       await expect(fs.stat(parent)).rejects.toThrow()
     } finally {
       await fs.rm(path.join(CONTENT_DIR, 'post-invalid-parent'), { recursive: true, force: true })
+    }
+  })
+})
+
+describe('PUT /api/recover', () => {
+  it('never removes a file an external writer lands between the check and the create', async () => {
+    // The dangerous EEXIST case: the commit fails because an external
+    // writer landed the SAME path with bytes identical to requestedRaw.
+    // Recovery never created the target, so its catch must NOT run the
+    // "remove our own write" compensation — doing so would delete the
+    // external file.
+    const abs = path.join(CONTENT_DIR, 'recover-race.md')
+    const requestedRaw = '# recovered\n'
+    const link = vi.spyOn(fs, 'link').mockImplementationOnce(async (_existing, newPath) => {
+      await fs.writeFile(String(newPath), requestedRaw, 'utf8')
+      throw Object.assign(new Error('link EEXIST'), { code: 'EEXIST' })
+    })
+    try {
+      const r = await call('PUT', '/api/recover/recover-race', { raw: requestedRaw })
+      expect(r.status).toBe(409)
+      expect(await fs.readFile(abs, 'utf8')).toBe(requestedRaw)
+      expect(getDocumentMetadata(db, 'recover-race')).toBeFalsy()
+    } finally {
+      link.mockRestore()
+      await fs.rm(abs, { force: true })
+      deleteDocumentMetadata(db, 'recover-race')
     }
   })
 })

@@ -14,7 +14,12 @@ import { setContentDir } from '../paths.js'
 import { __resetLinkIndexForTesting } from '../linkIndex.js'
 import { applyMigrations } from '../db.js'
 import { getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataDatabase } from '../documentMetadata.js'
-import { withDocumentWriteLock } from '../documentWriteLock.js'
+import {
+  documentWriteLockWaitersForTesting,
+  VAULT_STRUCTURE_LOCK,
+  withDocumentWriteLock,
+} from '../documentWriteLock.js'
+import { __setFolderRaceHooksForTesting } from '../routes/folders.js'
 
 let sandbox: string
 let originalContentDir: string
@@ -390,6 +395,96 @@ describe('write routes update the index', () => {
         method: 'DELETE',
       }))
       expect(remove.status, folder).toBe(422)
+    }
+  })
+})
+
+describe('folder lifecycle vs concurrent membership changes (structure lock)', () => {
+  // P0 regression: path-string document locks alone cannot isolate a
+  // folder transaction from a child that is CREATED while the
+  // transaction runs — `notes` and `notes/new` are distinct lock keys.
+  // Every membership-changing operation now serializes behind the
+  // vault structure lock, so these races linearize: the create always
+  // lands either fully before or fully after the structural op, never
+  // half-swallowed by it. The race hook pauses the folder transaction
+  // inside its locks right after the in-lock re-validation, and the
+  // waiter probe proves the concurrent create is actually queued
+  // behind the structure lock before the transaction resumes — a
+  // deterministic interleaving, no sleeps.
+
+  it('linearizes a child create issued while a folder rename holds its locks', async () => {
+    await fs.mkdir(path.join(sandbox, 'notes'))
+    await fs.writeFile(path.join(sandbox, 'notes', 'a.md'), '# a', 'utf8')
+    __resetLinkIndexForTesting()
+    let createResponse: Promise<Response> | null = null
+    __setFolderRaceHooksForTesting({
+      afterRenameRecheck: async () => {
+        createResponse = app.fetch(new Request('http://localhost/api/posts', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ path: 'notes/created-during', title: 'X' }),
+        }))
+        while (documentWriteLockWaitersForTesting(VAULT_STRUCTURE_LOCK) === 0) {
+          await new Promise((resolve) => setImmediate(resolve))
+        }
+      },
+    })
+    try {
+      const rename = await app.fetch(new Request('http://localhost/api/folders/notes', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ newPath: 'renamed' }),
+      }))
+      expect(rename.status).toBe(200)
+      // The rename moved exactly the children it enumerated under lock.
+      expect(((await rename.json()) as { moved: string[] }).moved).toEqual(['renamed/a'])
+      expect(createResponse).not.toBeNull()
+      const created = await createResponse!
+      expect(created.status).toBe(201)
+      // The create landed AFTER the rename: the file lives at the
+      // requested path with the requested body, the moved subtree was
+      // not polluted, and the success response was not a lie.
+      expect(await fs.readFile(path.join(sandbox, 'notes', 'created-during.md'), 'utf8')).toBe('# X\n')
+      await expect(fs.stat(path.join(sandbox, 'renamed', 'created-during.md'))).rejects.toThrow()
+      expect(await fs.readFile(path.join(sandbox, 'renamed', 'a.md'), 'utf8')).toBe('# a')
+    } finally {
+      __setFolderRaceHooksForTesting(null)
+    }
+  })
+
+  it('linearizes a child create issued while a folder delete holds its locks', async () => {
+    await fs.mkdir(path.join(sandbox, 'gone'))
+    await fs.writeFile(path.join(sandbox, 'gone', 'a.md'), '# a', 'utf8')
+    __resetLinkIndexForTesting()
+    let createResponse: Promise<Response> | null = null
+    __setFolderRaceHooksForTesting({
+      afterDeleteRecheck: async () => {
+        createResponse = app.fetch(new Request('http://localhost/api/posts', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ path: 'gone/created-during', title: 'X' }),
+        }))
+        while (documentWriteLockWaitersForTesting(VAULT_STRUCTURE_LOCK) === 0) {
+          await new Promise((resolve) => setImmediate(resolve))
+        }
+      },
+    })
+    try {
+      const del = await app.fetch(new Request('http://localhost/api/folders/gone?recursive=true', {
+        method: 'DELETE',
+      }))
+      expect(del.status).toBe(200)
+      // The delete removed exactly the children it enumerated under lock.
+      expect(((await del.json()) as { deleted: string[] }).deleted).toEqual(['gone/a'])
+      expect(createResponse).not.toBeNull()
+      const created = await createResponse!
+      expect(created.status).toBe(201)
+      // The create landed AFTER the delete: the create interface's
+      // success must never be swallowed by the structural operation.
+      expect(await fs.readFile(path.join(sandbox, 'gone', 'created-during.md'), 'utf8')).toBe('# X\n')
+      expect(getDocumentMetadata(db, 'gone/created-during')?.title).toBe('X')
+    } finally {
+      __setFolderRaceHooksForTesting(null)
     }
   })
 })

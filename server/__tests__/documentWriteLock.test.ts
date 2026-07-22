@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  documentWriteLockWaitersForTesting,
   pendingDocumentWriteLocksForTesting,
+  VAULT_STRUCTURE_LOCK,
   withDocumentWriteLock,
+  withVaultStructureLock,
 } from '../documentWriteLock'
 
 function deferred() {
@@ -61,6 +64,51 @@ describe('withDocumentWriteLock', () => {
     })).rejects.toThrow('failed')
 
     await expect(withDocumentWriteLock('a', async () => 'ok')).resolves.toBe('ok')
+    expect(pendingDocumentWriteLocksForTesting()).toBe(0)
+  })
+})
+
+describe('withVaultStructureLock', () => {
+  it('serializes membership operations on the reserved structure key', async () => {
+    const firstStarted = deferred()
+    const releaseFirst = deferred()
+    const order: string[] = []
+    const first = withVaultStructureLock(async () => {
+      order.push('first-start')
+      firstStarted.resolve()
+      await releaseFirst.promise
+      order.push('first-end')
+    })
+    await firstStarted.promise
+    const second = withVaultStructureLock(async () => {
+      order.push('second')
+    })
+
+    await Promise.resolve()
+    expect(order).toEqual(['first-start'])
+    releaseFirst.resolve()
+    await Promise.all([first, second])
+    expect(order).toEqual(['first-start', 'first-end', 'second'])
+    expect(pendingDocumentWriteLocksForTesting()).toBe(0)
+  })
+
+  it('reports queued waiters for deterministic race tests', async () => {
+    const holderStarted = deferred()
+    const releaseHolder = deferred()
+    const holder = withVaultStructureLock(async () => {
+      holderStarted.resolve()
+      await releaseHolder.promise
+    })
+    await holderStarted.promise
+    expect(documentWriteLockWaitersForTesting(VAULT_STRUCTURE_LOCK)).toBe(0)
+
+    const waiter = withVaultStructureLock(async () => {})
+    await Promise.resolve()
+    expect(documentWriteLockWaitersForTesting(VAULT_STRUCTURE_LOCK)).toBe(1)
+
+    releaseHolder.resolve()
+    await Promise.all([holder, waiter])
+    expect(documentWriteLockWaitersForTesting(VAULT_STRUCTURE_LOCK)).toBe(0)
     expect(pendingDocumentWriteLocksForTesting()).toBe(0)
   })
 })
