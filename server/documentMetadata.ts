@@ -38,6 +38,13 @@ export type DocumentMetadataDatabaseSnapshot = {
   migrations: Record<string, unknown>[]
 }
 
+export type DocumentMetadataMutationSnapshot = DocumentMetadataDatabaseSnapshot & {
+  paths: string[]
+  documentIds: string[]
+  tagIds: number[]
+  preexistingTagIds: number[]
+}
+
 export function snapshotDocumentMetadataDatabase(db: DatabaseT): DocumentMetadataDatabaseSnapshot {
   return {
     documents: db.prepare('SELECT * FROM documents ORDER BY id').all() as Record<string, unknown>[],
@@ -46,6 +53,39 @@ export function snapshotDocumentMetadataDatabase(db: DatabaseT): DocumentMetadat
     embeddings: db.prepare('SELECT * FROM document_embeddings ORDER BY document_id').all() as Record<string, unknown>[],
     migrations: db.prepare('SELECT * FROM metadata_migrations ORDER BY path').all() as Record<string, unknown>[],
   }
+}
+
+function placeholders(values: readonly unknown[]): string {
+  return values.map(() => '?').join(', ')
+}
+
+/** Capture only the metadata graph owned by the paths in one file mutation. */
+export function snapshotDocumentMetadataMutation(
+  db: DatabaseT,
+  inputPaths: readonly string[],
+): DocumentMetadataMutationSnapshot {
+  const paths = [...new Set(inputPaths)]
+  const preexistingTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>).map((row) => row.id)
+  if (!paths.length) return { paths, documentIds: [], tagIds: [], preexistingTagIds, documents: [], tags: [], documentTags: [], embeddings: [], migrations: [] }
+  const documents = db.prepare(`SELECT * FROM documents WHERE path IN (${placeholders(paths)}) ORDER BY id`)
+    .all(...paths) as Record<string, unknown>[]
+  const documentIds = documents.map((row) => String(row.id))
+  const documentTags = documentIds.length
+    ? db.prepare(`SELECT * FROM document_tags WHERE document_id IN (${placeholders(documentIds)}) ORDER BY document_id, tag_id`).all(...documentIds) as Record<string, unknown>[]
+    : []
+  const tagIds = [...new Set(documentTags.map((row) => Number(row.tag_id)))]
+  const tags = tagIds.length
+    ? db.prepare(`SELECT * FROM tags WHERE id IN (${placeholders(tagIds)}) ORDER BY id`).all(...tagIds) as Record<string, unknown>[]
+    : []
+  const embeddings = documentIds.length
+    ? db.prepare(`SELECT * FROM document_embeddings WHERE document_id IN (${placeholders(documentIds)}) ORDER BY document_id`).all(...documentIds) as Record<string, unknown>[]
+    : []
+  const migrationClauses = paths.map(() => 'path = ?').concat(documentIds.map(() => 'path = ?'), documentIds.map(() => 'document_id = ?'))
+  const migrationArgs = [...paths, ...documentIds.map((id) => `@deleted/${id}`), ...documentIds]
+  const migrations = migrationClauses.length
+    ? db.prepare(`SELECT * FROM metadata_migrations WHERE ${migrationClauses.join(' OR ')} ORDER BY path`).all(...migrationArgs) as Record<string, unknown>[]
+    : []
+  return { paths, documentIds, tagIds, preexistingTagIds, documents, tags, documentTags, embeddings, migrations }
 }
 
 function insertRows(db: DatabaseT, table: string, rows: Record<string, unknown>[]): void {
@@ -73,6 +113,47 @@ export function restoreDocumentMetadataDatabase(
     insertRows(db, 'document_tags', snapshot.documentTags)
     insertRows(db, 'document_embeddings', snapshot.embeddings)
     insertRows(db, 'metadata_migrations', snapshot.migrations)
+  })()
+}
+
+/** Restore one locked mutation footprint without touching unrelated commits. */
+export function restoreDocumentMetadataMutation(
+  db: DatabaseT,
+  snapshot: DocumentMetadataMutationSnapshot,
+): void {
+  db.transaction(() => {
+    const currentDocuments = snapshot.paths.length
+      ? db.prepare(`SELECT id FROM documents WHERE path IN (${placeholders(snapshot.paths)})`).all(...snapshot.paths) as Array<{ id: string }>
+      : []
+    const affectedIds = [...new Set([...snapshot.documentIds, ...currentDocuments.map((row) => row.id)])]
+    if (affectedIds.length) {
+      db.prepare(`DELETE FROM document_tags WHERE document_id IN (${placeholders(affectedIds)})`).run(...affectedIds)
+      db.prepare(`DELETE FROM document_embeddings WHERE document_id IN (${placeholders(affectedIds)})`).run(...affectedIds)
+      db.prepare(`DELETE FROM documents WHERE id IN (${placeholders(affectedIds)})`).run(...affectedIds)
+    }
+    if (snapshot.paths.length || affectedIds.length) {
+      const clauses = snapshot.paths.map(() => 'path = ?').concat(affectedIds.map(() => 'path = ?'), affectedIds.map(() => 'document_id = ?'))
+      db.prepare(`DELETE FROM metadata_migrations WHERE ${clauses.join(' OR ')}`)
+        .run(...snapshot.paths, ...affectedIds.map((id) => `@deleted/${id}`), ...affectedIds)
+    }
+    insertRows(db, 'documents', snapshot.documents)
+    for (const tag of snapshot.tags) {
+      const columns = Object.keys(tag)
+      db.prepare(`INSERT OR IGNORE INTO tags (${columns.join(', ')}) VALUES (${columns.map((key) => `@${key}`).join(', ')})`).run(tag)
+    }
+    insertRows(db, 'document_tags', snapshot.documentTags)
+    insertRows(db, 'document_embeddings', snapshot.embeddings)
+    insertRows(db, 'metadata_migrations', snapshot.migrations)
+
+    // Tags created solely by the failed mutation are safe to remove only
+    // when no successful document currently references them.
+    const createdTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>)
+      .map((row) => row.id)
+      .filter((id) => !snapshot.preexistingTagIds.includes(id))
+    if (createdTagIds.length) {
+      db.prepare(`DELETE FROM tags WHERE id IN (${placeholders(createdTagIds)}) AND id NOT IN (SELECT DISTINCT tag_id FROM document_tags)`)
+        .run(...createdTagIds)
+    }
   })()
 }
 

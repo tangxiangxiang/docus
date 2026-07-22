@@ -8,8 +8,8 @@ import {
   deleteDocumentMetadata,
   getDocumentMetadata,
   saveDocumentMetadata,
-  restoreDocumentMetadataDatabase,
-  snapshotDocumentMetadataDatabase,
+  restoreDocumentMetadataMutation,
+  snapshotDocumentMetadataMutation,
 } from '../documentMetadata.js'
 import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
 import {
@@ -20,7 +20,7 @@ import {
   UnstableTextSnapshotError,
   type StableTextSnapshot,
 } from '../atomicTextWrite.js'
-import { withDocumentWriteLock } from '../documentWriteLock.js'
+import { withDocumentWriteLock, withDocumentWriteLocks } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { trackCleanedDocumentWrite } from '../metadataMigration.js'
 import { CONTENT_DIR, filePathFor, isValidPathSyntax, isValidSegment } from '../paths.js'
@@ -53,6 +53,7 @@ postRoutes.get('/api/posts', async (c) => {
 postRoutes.post('/api/posts', async (c) => {
   const body = await c.req.json().catch(() => null) as { path?: unknown; title?: unknown } | null
   if (!body || typeof body.path !== 'string') return bad(c, 'path required')
+  const documentPath = body.path
   if (!isValidPathSyntax(body.path)) {
     return bad(c, 'invalid path syntax')
   }
@@ -67,20 +68,21 @@ postRoutes.post('/api/posts', async (c) => {
   if (title.length > 200) return bad(c, 'title must be at most 200 characters', 400)
   let abs: string
   try { abs = filePathFor(body.path) } catch (e: any) { return bad(c, e.message) }
+  return withDocumentWriteLock(documentPath, async () => {
   if (await exists(abs)) return bad(c, 'file exists', 409)
   await fs.mkdir(path.dirname(abs), { recursive: true })
   const now = Date.now()
   const today = new Date(now).toISOString().slice(0, 10)
   const body_text = `# ${title}\n`
-  const databaseSnapshot = snapshotDocumentMetadataDatabase(metadataDb())
+  const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [documentPath])
   try {
-    deleteDocumentMetadata(metadataDb(), body.path)
+    deleteDocumentMetadata(metadataDb(), documentPath)
     await fs.writeFile(abs, body_text, 'utf8')
-    saveDocumentMetadata(metadataDb(), { path: body.path, title, createdAt: now, updatedAt: now })
+    saveDocumentMetadata(metadataDb(), { path: documentPath, title, createdAt: now, updatedAt: now })
   } catch (error) {
     const failures: unknown[] = [error]
     try { await fs.rm(abs, { force: true }) } catch (rollbackError) { failures.push(rollbackError) }
-    try { restoreDocumentMetadataDatabase(metadataDb(), databaseSnapshot) } catch (rollbackError) { failures.push(rollbackError) }
+    try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) } catch (rollbackError) { failures.push(rollbackError) }
     if (failures.length > 1) throw new AggregateError(failures, 'post creation failed and rollback was incomplete')
     throw error
   }
@@ -88,12 +90,12 @@ postRoutes.post('/api/posts', async (c) => {
   // a failure here just leaves a stale entry; the next rebuild fixes it.
   try {
     const idx = await getLinkIndex()
-    idx.applyWrite(body.path, body_text)
-    idx.setTitle(body.path, title)
+    idx.applyWrite(documentPath, body_text)
+    idx.setTitle(documentPath, title)
   } catch { /* ignore */ }
   const st = await fs.stat(abs)
   return c.json({
-    path: body.path,
+    path: documentPath,
     title,
     created: today,
     updated: today,
@@ -103,6 +105,7 @@ postRoutes.post('/api/posts', async (c) => {
     size: st.size,
     mtime: st.mtimeMs,
   } satisfies PostSummary, 201)
+  })
 })
 
 // PUT saves body bytes verbatim. Metadata timestamps live in SQLite;
@@ -357,9 +360,22 @@ postRoutes.patch('/api/posts/*', async (c) => {
       return bad(c, 'destination exists', 409)
     }
   }
+  const plannedReferencePaths = body.updateReferences
+    ? (await getLinkIndex()).getBacklinks(srcPath).map((backlink) => backlink.source)
+    : []
+  return withDocumentWriteLocks([srcPath, destPath, ...plannedReferencePaths], async () => {
+  if (!await exists(src)) return bad(c, 'not found', 404)
+  if (await exists(dest)) return bad(c, 'destination exists', 409)
+  if (body.updateReferences) {
+    const candidatePaths = (await getLinkIndex()).getBacklinks(srcPath).map((backlink) => backlink.source)
+    const planned = [...new Set(plannedReferencePaths)].sort()
+    const candidate = [...new Set(candidatePaths)].sort()
+    if (planned.length !== candidate.length || planned.some((item, index) => item !== candidate[index])) {
+      return bad(c, 'backlinks changed while rename was being prepared; retry', 409)
+    }
+  }
   const sourceRaw = await fs.readFile(src, 'utf8')
   const sourceStat = await fs.stat(src)
-  const databaseSnapshot = snapshotDocumentMetadataDatabase(metadataDb())
   const referenceSnapshots: Array<{
     sourcePath: string
     writePath: string
@@ -368,30 +384,33 @@ postRoutes.patch('/api/posts/*', async (c) => {
     updated: string
     mtime: number
   }> = []
+  if (body.updateReferences) {
+    const idx = await getLinkIndex()
+    const allPaths = idx.snapshot().paths
+    for (const backlink of idx.getBacklinks(srcPath)) {
+      const raw = backlink.source === srcPath ? sourceRaw : await fs.readFile(filePathFor(backlink.source), 'utf8')
+      const updated = rewriteDocumentReferences(raw, backlink.source, srcPath, destPath, allPaths)
+      if (updated === raw) continue
+      const writePath = backlink.source === srcPath ? destPath : backlink.source
+      referenceSnapshots.push({
+        sourcePath: backlink.source,
+        writePath,
+        abs: backlink.source === srcPath ? dest : filePathFor(backlink.source),
+        raw,
+        updated,
+        mtime: 0,
+      })
+    }
+  }
+  const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [srcPath, destPath, ...referenceSnapshots.map((item) => item.writePath)])
   const written: typeof referenceSnapshots = []
   let renamed = false
   try {
     ensureMetadata(srcPath, sourceRaw, sourceStat.mtimeMs)
-    if (body.updateReferences) {
-      const idx = await getLinkIndex()
-      const allPaths = idx.snapshot().paths
-      for (const backlink of idx.getBacklinks(srcPath)) {
-        const raw = backlink.source === srcPath ? sourceRaw : await fs.readFile(filePathFor(backlink.source), 'utf8')
-        if (backlink.source !== srcPath) {
-          const stat = await fs.stat(filePathFor(backlink.source))
-          ensureMetadata(backlink.source, raw, stat.mtimeMs)
-        }
-        const updated = rewriteDocumentReferences(raw, backlink.source, srcPath, destPath, allPaths)
-        if (updated === raw) continue
-        const writePath = backlink.source === srcPath ? destPath : backlink.source
-        referenceSnapshots.push({
-          sourcePath: backlink.source,
-          writePath,
-          abs: backlink.source === srcPath ? dest : filePathFor(backlink.source),
-          raw,
-          updated,
-          mtime: 0,
-        })
+    for (const reference of referenceSnapshots) {
+      if (reference.sourcePath !== srcPath) {
+        const stat = await fs.stat(filePathFor(reference.sourcePath))
+        ensureMetadata(reference.sourcePath, reference.raw, stat.mtimeMs)
       }
     }
     await renameDocumentWithMetadata({ db: metadataDb(), fromPath: srcPath, toPath: destPath, fromAbs: src, toAbs: dest })
@@ -415,7 +434,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
         await renameDocumentWithMetadata({ db: metadataDb(), fromPath: destPath, toPath: srcPath, fromAbs: dest, toAbs: src })
       } catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
-    try { restoreDocumentMetadataDatabase(metadataDb(), databaseSnapshot) }
+    try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
     catch (rollbackError) { rollbackErrors.push(rollbackError) }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'reference update failed and rollback was incomplete')
     throw error
@@ -455,6 +474,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
       mtime: snapshot.mtime,
     })),
   } satisfies PostSummary)
+  })
 })
 
 // Delete a file. Archive items cannot be deleted per protocol; the client
@@ -466,9 +486,10 @@ postRoutes.delete('/api/posts/*', async (c) => {
   }
   let abs: string
   try { abs = filePathFor(splat) } catch (e: any) { return bad(c, e.message) }
+  return withDocumentWriteLock(splat, async () => {
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const staged = `${abs}.docus-delete-${Date.now()}`
-  const databaseSnapshot = snapshotDocumentMetadataDatabase(metadataDb())
+  const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [splat])
   await fs.rename(abs, staged)
   try {
     deleteDocumentMetadata(metadataDb(), splat)
@@ -478,7 +499,7 @@ postRoutes.delete('/api/posts/*', async (c) => {
     try {
       if (await exists(staged) && !await exists(abs)) await fs.rename(staged, abs)
     } catch (rollbackError) { failures.push(rollbackError) }
-    try { restoreDocumentMetadataDatabase(metadataDb(), databaseSnapshot) }
+    try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
     catch (rollbackError) { failures.push(rollbackError) }
     if (failures.length > 1) throw new AggregateError(failures, 'post deletion failed and rollback was incomplete')
     throw error
@@ -488,6 +509,7 @@ postRoutes.delete('/api/posts/*', async (c) => {
     idx.applyDelete(splat)
   } catch { /* ignore */ }
   return c.json({ ok: true })
+  })
 })
 
 // Read a single post (raw + frontmatter)

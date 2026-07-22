@@ -27,6 +27,19 @@ export async function withDocumentWriteLock<T>(
   }
 }
 
+/** Acquire a mutation footprint in one global order to avoid deadlocks. */
+export function withDocumentWriteLocks<T>(
+  paths: readonly string[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  const lockPaths = [...new Set(paths)].sort()
+  const locked = lockPaths.reduceRight(
+    (next, lockPath) => () => withDocumentWriteLock(lockPath, next),
+    operation,
+  )
+  return locked()
+}
+
 export function pendingDocumentWriteLocksForTesting(): number {
   return documentWriteTails.size
 }

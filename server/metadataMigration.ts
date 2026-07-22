@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { Database as DatabaseT } from 'better-sqlite3'
+import { withDocumentWriteLock } from './documentWriteLock.js'
 import {
   ensureDocumentMetadata,
   getDocumentMetadata,
@@ -194,6 +195,7 @@ export async function migrateVaultMetadata(
   for (const file of files) {
     report.scanned++
     let sourceHash = ''
+    await withDocumentWriteLock(file.path, async () => {
     try {
       const [raw, stat] = await Promise.all([fs.readFile(file.abs, 'utf8'), fs.stat(file.abs)])
       sourceHash = metadataSourceHash(raw)
@@ -208,13 +210,13 @@ export async function migrateVaultMetadata(
           `).run(sourceHash, Date.now(), file.path)
         }
         report.skipped++
-        continue
+        return
       }
       const backupComplete = !frontmatterBackup || record?.frontmatterBackup === frontmatterBackup
       if (record?.status === 'verified' && record.sourceHash === sourceHash
           && backupComplete && sameDocument) {
         report.skipped++
-        continue
+        return
       }
 
       saveRecord(db, file.path, 'legacy', sourceHash, '', frontmatterBackup)
@@ -235,11 +237,17 @@ export async function migrateVaultMetadata(
       saveRecord(db, file.path, 'failed', sourceHash, message)
       report.failed++
     }
+    })
   }
 
   const stale = db.prepare("SELECT path FROM metadata_migrations WHERE status != 'orphaned'").all() as Array<{ path: string }>
   for (const row of stale) {
     if (livePaths.has(row.path)) continue
+    await withDocumentWriteLock(row.path, async () => {
+    // It may have become live or changed status while this migration waited.
+    if (livePaths.has(row.path)) return
+    const current = getMetadataMigrationRecord(db, row.path)
+    if (!current || current.status === 'orphaned') return
     const tombstone = `@deleted/${Date.now()}-${createHash('sha256').update(row.path).digest('hex').slice(0, 12)}`
     db.prepare(`
       UPDATE metadata_migrations
@@ -247,6 +255,7 @@ export async function migrateVaultMetadata(
       WHERE path = ?
     `).run(tombstone, Date.now(), row.path)
     report.pruned++
+    })
   }
   return report
 }

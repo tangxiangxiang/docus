@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { Hono } from 'hono'
 import { getDocumentMetadataById, saveDocumentMetadata } from '../documentMetadata.js'
+import { withDocumentWriteLock } from '../documentWriteLock.js'
 import {
   cleanDocumentFrontmatter,
   exportDocumentFrontmatter,
@@ -103,6 +104,7 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
   const documentPath = c.req.path.replace(/^\/api\/metadata\/documents\//, '')
   let abs: string
   try { abs = filePathFor(documentPath) } catch (error: any) { return bad(c, error.message) }
+  return withDocumentWriteLock(documentPath, async () => {
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null
   if (!body || Array.isArray(body)) return bad(c, 'body required')
@@ -136,6 +138,7 @@ metadataRoutes.patch('/api/metadata/documents/*', async (c) => {
     idx.setTitle(documentPath, saved.title)
   } catch { /* next rebuild repairs a stale display title */ }
   return c.json(saved)
+  })
 })
 
 export default metadataRoutes

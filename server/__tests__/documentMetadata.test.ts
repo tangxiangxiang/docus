@@ -10,6 +10,8 @@ import {
   moveDocumentMetadataPrefix,
   deleteDocumentMetadataPrefix,
   saveDocumentMetadata,
+  restoreDocumentMetadataMutation,
+  snapshotDocumentMetadataMutation,
 } from '../documentMetadata'
 
 let db: Database.Database
@@ -21,6 +23,32 @@ beforeEach(() => {
 })
 
 describe('document metadata repository', () => {
+  it('scoped rollback preserves an unrelated successful commit and migration progress', () => {
+    saveDocumentMetadata(db, { id: 'a-old', path: 'notes/a', title: 'A old', tags: ['shared'] })
+    db.prepare(`INSERT INTO metadata_migrations
+      (path, document_id, status, source_hash, error, updated_at)
+      VALUES ('notes/a', 'a-old', 'verified', 'a-old', '', 1)`).run()
+    const snapshot = snapshotDocumentMetadataMutation(db, ['notes/a'])
+
+    deleteDocumentMetadata(db, 'notes/a')
+    saveDocumentMetadata(db, { id: 'a-failed', path: 'notes/a', title: 'A failed', tags: ['temporary'] })
+
+    // This models B committing while A is paused in an async file operation.
+    saveDocumentMetadata(db, { id: 'b-success', path: 'notes/b', title: 'B success', tags: ['kept'] })
+    db.prepare(`INSERT INTO metadata_migrations
+      (path, document_id, status, source_hash, error, updated_at)
+      VALUES ('notes/b', 'b-success', 'cleaned', 'b-success', '', 99)`).run()
+
+    restoreDocumentMetadataMutation(db, snapshot)
+
+    expect(getDocumentMetadata(db, 'notes/a')).toMatchObject({ id: 'a-old', title: 'A old', tags: ['shared'] })
+    expect(getDocumentMetadata(db, 'notes/b')).toMatchObject({ id: 'b-success', title: 'B success', tags: ['kept'] })
+    expect(db.prepare('SELECT path, status, source_hash FROM metadata_migrations ORDER BY path').all()).toEqual([
+      { path: 'notes/a', status: 'verified', source_hash: 'a-old' },
+      { path: 'notes/b', status: 'cleaned', source_hash: 'b-success' },
+    ])
+  })
+
   it('creates and reads normalized metadata', () => {
     const saved = saveDocumentMetadata(db, {
       id: 'doc-1', path: 'archive/example', title: ' Example ', summary: ' Summary ',
