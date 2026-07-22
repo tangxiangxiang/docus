@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { Hono } from 'hono'
 import { canModify } from '../../src/composables/archiveProtocol.js'
+import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged } from '../atomicTextWrite.js'
 import {
   deleteDocumentMetadataPrefix,
   moveDocumentMetadataPrefix,
@@ -22,10 +23,16 @@ const folderRoutes = new Hono()
  * inside the structure + document locks, immediately after the
  * in-lock subtree re-validation and before any side effect — the
  * exact window in which a concurrent membership operation would have
- * to be absorbed. Null in production (never set outside tests).
+ * to be absorbed. `afterRenamePlanBuilt` fires after the reference
+ * snapshots and every footprint check are complete, immediately
+ * before the reference write loop — the exact window in which an
+ * EXTERNAL editor's save to a reference file must be detected by the
+ * ownership-verified reference writes. Null in production (never set
+ * outside tests).
  */
 export type FolderRaceHooks = {
   afterRenameRecheck?: () => void | Promise<void>
+  afterRenamePlanBuilt?: () => void | Promise<void>
   afterDeleteRecheck?: () => void | Promise<void>
 }
 let __folderRaceHooks: FolderRaceHooks | null = null
@@ -161,10 +168,16 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     await fs.rename(src, dest)
     renamed = true
     moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
+    if (__folderRaceHooks?.afterRenamePlanBuilt) await __folderRaceHooks.afterRenamePlanBuilt()
     for (const snapshot of folderReferenceSnapshots) {
       const target = filePathFor(snapshot.writePath)
+      // External-writer-safe: the bytes on disk must still be exactly
+      // what the in-lock plan read. In-process locks do not stop
+      // Obsidian/vim/sync software; the ownership-verified commit
+      // detects their saves and fails the rename closed instead of
+      // silently overwriting them.
+      await atomicReplaceTextIfUnchanged(target, snapshot.raw, snapshot.updated)
       written.push(snapshot)
-      await fs.writeFile(target, snapshot.updated, 'utf8')
       const stat = await fs.stat(target)
       snapshot.mtime = stat.mtimeMs
       ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
@@ -174,14 +187,22 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     for (const snapshot of written.reverse()) {
       const target = filePathFor(snapshot.writePath)
       if (await exists(target)) {
-        try { await fs.writeFile(target, snapshot.raw, 'utf8') }
-        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        try {
+          // Undo ONLY our rewrite: an external save on top of it wins
+          // and the undo leaves those bytes untouched.
+          await atomicReplaceTextIfUnchanged(target, snapshot.updated, snapshot.raw)
+        } catch (rollbackError) {
+          if (!(rollbackError instanceof AtomicTextWriteConflictError)) rollbackErrors.push(rollbackError)
+        }
       }
     }
     if (renamed) try { await fs.rename(dest, src) } catch (rollbackError) { rollbackErrors.push(rollbackError) }
     try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
     catch (rollbackError) { rollbackErrors.push(rollbackError) }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'folder rename failed and rollback was incomplete')
+    if (error instanceof AtomicTextWriteConflictError) {
+      return bad(c, 'a referenced document changed on disk during rename; retry', 409)
+    }
     throw error
   }
   // Collect affected file paths for client cache refresh.
@@ -247,11 +268,26 @@ folderRoutes.delete('/api/folders/*', async (c) => {
     await fs.rm(staged, { recursive: true, force: true })
   } catch (error) {
     const rollbackErrors: unknown[] = []
-    if (await exists(staged) && !await exists(abs)) {
-      try { await fs.rename(staged, abs) } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    if (await exists(staged)) {
+      if (!await exists(abs)) {
+        // The path is still empty: put the old tree back WITH its
+        // identity — the path again holds exactly the staged generation.
+        try { await fs.rename(staged, abs) } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
+        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      } else {
+        // Path reuse: an external writer recreated the folder while the
+        // delete was failing. The old identities must never bind to the
+        // new generation's files — drop every stale row under the path
+        // (the new files get fresh identities on their next API touch)
+        // and leave the old tree quarantined under its staging name.
+        try { deleteDocumentMetadataPrefix(metadataDb(), folderP) }
+        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      }
+    } else {
+      try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
+      catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
-    try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
-    catch (rollbackError) { rollbackErrors.push(rollbackError) }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'folder delete failed and rollback was incomplete')
     throw error
   }

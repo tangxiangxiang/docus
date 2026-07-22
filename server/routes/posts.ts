@@ -13,6 +13,8 @@ import {
 } from '../documentMetadata.js'
 import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
 import {
+  AtomicTextWriteConflictError,
+  AtomicTextWriteTargetMissingError,
   atomicReplaceTextIfUnchanged,
   atomicRemoveTextIfUnchanged,
   prepareAtomicTextCreate,
@@ -33,18 +35,38 @@ import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
 const postRoutes = new Hono()
 
 /**
- * Test-only seam for the REST rename race regression: fires inside the
- * rename's complete lock set right after the in-lock backlink plan has
- * been verified against the planned footprint, immediately before the
- * reference rewrites execute. Null in production (never set outside
- * tests).
+ * Test-only seam for the REST rename race regressions. Both hooks fire
+ * inside the rename's complete lock set; null in production (never set
+ * outside tests):
+ * - `afterPlanVerified` — right after the in-lock backlink plan has
+ *   been verified against the planned footprint, before the reference
+ *   snapshots are read (the late-backlink window).
+ * - `afterRenamePlanBuilt` — after every reference snapshot (raw +
+ *   rewrite) is built, immediately before the reference write loop —
+ *   the exact window in which an EXTERNAL editor's save to a reference
+ *   file must be detected by the ownership-verified reference writes.
  */
 export type PostRenameRaceHooks = {
   afterPlanVerified?: () => void | Promise<void>
+  afterRenamePlanBuilt?: () => void | Promise<void>
 }
 let __postRenameRaceHooks: PostRenameRaceHooks | null = null
 export function __setPostRenameRaceHooksForTesting(hooks: PostRenameRaceHooks | null): void {
   __postRenameRaceHooks = hooks
+}
+
+/**
+ * A re-used path must never inherit the old documentId: drop any stale
+ * identity row for the path and give the NEW generation now occupying
+ * it a fresh identity. The old generation stays quarantined under its
+ * `.docus-delete-*` staging name (not listed — the name does not end
+ * in .md — and never scanned by the link index).
+ */
+async function reidentifyReusedPath(documentPath: string, abs: string): Promise<void> {
+  deleteDocumentMetadata(metadataDb(), documentPath)
+  const reusedRaw = await fs.readFile(abs, 'utf8')
+  const reusedStat = await fs.stat(abs)
+  ensureMetadata(documentPath, reusedRaw, reusedStat.mtimeMs, Date.now())
 }
 
 async function uniqueMoveTarget(absPath: string, relPath: string): Promise<{ abs: string; rel: string }> {
@@ -214,22 +236,25 @@ postRoutes.put('/api/posts/*', async (c) => {
     const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [splat])
     const prepared = await prepareAtomicTextWrite(abs, requestedRaw, { mode: currentStat.mode })
     try {
-      // Re-check after preparing the complete temporary file so a change
-      // observed in that window is never knowingly overwritten.
-      const verified = await readStableTextSnapshot(abs)
-      if (verified.raw !== currentRaw) {
-        await prepared.rollback()
-        return conflict(verified)
-      }
-
       // Import legacy metadata before the editor can remove its Frontmatter.
       ensureMetadata(splat, currentRaw, currentStat.mtimeMs)
-      await prepared.commit()
+      // Ownership-verified commit: the current generation is atomically
+      // renamed aside, verified byte-for-byte against currentRaw, and the
+      // new bytes are linked in create-only. There is NO check-to-rename
+      // window — an external writer winning any race keeps its bytes and
+      // this save fails closed with a conflict, never a silent overwrite.
+      await prepared.commit(currentRaw)
     } catch (error) {
       await prepared.rollback()
       restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)
       if (error instanceof UnstableTextSnapshotError) {
         return conflict(error.latest)
+      }
+      if (error instanceof AtomicTextWriteConflictError) {
+        return conflict(error.current)
+      }
+      if (error instanceof AtomicTextWriteTargetMissingError) {
+        return bad(c, 'not found', 404)
       }
       throw error
     }
@@ -250,7 +275,10 @@ postRoutes.put('/api/posts/*', async (c) => {
           { mode: currentStat.mode },
         )
       } catch (rollbackError) {
-        failures.push(rollbackError)
+        // An external writer overwriting our commit makes the external
+        // bytes authoritative — leaving them in place IS the correct
+        // undo, not a rollback failure.
+        if (!(rollbackError instanceof AtomicTextWriteConflictError)) failures.push(rollbackError)
       }
       try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
       catch (rollbackError) { failures.push(rollbackError) }
@@ -464,6 +492,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
         mtime: 0,
       })
     }
+    if (__postRenameRaceHooks?.afterRenamePlanBuilt) await __postRenameRaceHooks.afterRenamePlanBuilt()
   }
   const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [srcPath, destPath, ...referenceSnapshots.map((item) => item.writePath)])
   const written: typeof referenceSnapshots = []
@@ -479,8 +508,13 @@ postRoutes.patch('/api/posts/*', async (c) => {
     await renameDocumentWithMetadata({ db: metadataDb(), fromPath: srcPath, toPath: destPath, fromAbs: src, toAbs: dest })
     renamed = true
     for (const snapshot of referenceSnapshots) {
+      // External-writer-safe: the bytes on disk must still be exactly
+      // what the in-lock plan read. In-process locks do not stop
+      // Obsidian/vim/sync software; the ownership-verified commit
+      // detects their saves and fails the rename closed instead of
+      // silently overwriting them.
+      await atomicReplaceTextIfUnchanged(snapshot.abs, snapshot.raw, snapshot.updated)
       written.push(snapshot)
-      await fs.writeFile(snapshot.abs, snapshot.updated, 'utf8')
       const stat = await fs.stat(snapshot.abs)
       snapshot.mtime = stat.mtimeMs
       ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
@@ -489,8 +523,13 @@ postRoutes.patch('/api/posts/*', async (c) => {
     const rollbackErrors: unknown[] = []
     for (const snapshot of written.reverse()) {
       try {
-        await fs.writeFile(snapshot.abs, snapshot.raw, 'utf8')
-      } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        // Undo ONLY our rewrite: if the bytes on disk are no longer
+        // exactly what we wrote (an external editor saved on top),
+        // the external content wins and the undo leaves it untouched.
+        await atomicReplaceTextIfUnchanged(snapshot.abs, snapshot.updated, snapshot.raw)
+      } catch (rollbackError) {
+        if (!(rollbackError instanceof AtomicTextWriteConflictError)) rollbackErrors.push(rollbackError)
+      }
     }
     if (renamed) {
       try {
@@ -500,6 +539,9 @@ postRoutes.patch('/api/posts/*', async (c) => {
     try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
     catch (rollbackError) { rollbackErrors.push(rollbackError) }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'reference update failed and rollback was incomplete')
+    if (error instanceof AtomicTextWriteConflictError) {
+      return bad(c, 'a referenced document changed on disk during rename; retry', 409)
+    }
     throw error
   }
   // Update the link index AFTER the rename succeeds. Read the new
@@ -562,10 +604,37 @@ postRoutes.delete('/api/posts/*', async (c) => {
   } catch (error) {
     const failures: unknown[] = [error]
     try {
-      if (await exists(staged) && !await exists(abs)) await fs.rename(staged, abs)
+      if (await exists(staged)) {
+        if (!await exists(abs)) {
+          // The path is still empty: put our generation back. link(2)
+          // is create-only, so an external file landing exactly here
+          // between the check and the restore is detected as EEXIST
+          // (path reuse, handled below) instead of being clobbered.
+          let restored = false
+          try {
+            await fs.link(staged, abs)
+            restored = true
+          } catch (linkError) {
+            if ((linkError as NodeJS.ErrnoException).code !== 'EEXIST') throw linkError
+          }
+          if (restored) {
+            await fs.unlink(staged)
+            restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)
+          } else {
+            await reidentifyReusedPath(splat, abs)
+          }
+        } else {
+          // Path reuse: an external writer created a NEW generation at
+          // this path while the delete was failing. The old documentId
+          // must never bind to foreign bytes — drop the stale identity,
+          // give the new file a fresh one, and leave the old generation
+          // quarantined under its staging name.
+          await reidentifyReusedPath(splat, abs)
+        }
+      } else {
+        restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)
+      }
     } catch (rollbackError) { failures.push(rollbackError) }
-    try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
-    catch (rollbackError) { failures.push(rollbackError) }
     if (failures.length > 1) throw new AggregateError(failures, 'post deletion failed and rollback was incomplete')
     throw error
   }

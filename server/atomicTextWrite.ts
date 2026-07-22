@@ -8,6 +8,34 @@ export interface PreparedAtomicTextWrite {
   rollback(): Promise<void>
 }
 
+/**
+ * A prepared replacement whose commit is ownership-verified: it never
+ * overwrites a generation it did not verify. See commit() below.
+ */
+export interface PreparedAtomicTextReplace {
+  readonly temporaryPath: string
+  /**
+   * Commit the replacement with an external-writer-safe protocol:
+   *
+   *   1. OWNERSHIP — atomically rename the current target aside to a
+   *      private staging path. Whoever wins this rename owns the old
+   *      generation; there is no check-to-rename window afterwards.
+   *   2. VERIFY — the staged bytes must still equal `expectedRaw`.
+   *      An external save that landed before the takeover is detected
+   *      here: the staged bytes are restored create-only and the
+   *      commit fails closed.
+   *   3. COMMIT — link(2) the new generation into the target path.
+   *      link is create-only: if an external writer recreated the
+   *      path while we held the staged generation, EEXIST fails the
+   *      commit and the external file is preserved untouched.
+   *
+   * Any external generation wins. The caller's bytes are never written
+   * over a generation the caller did not prove it still owned.
+   */
+  commit(expectedRaw: string): Promise<void>
+  rollback(): Promise<void>
+}
+
 /** Prepare a durable temporary file whose commit atomically creates, but can
  * never replace, the target path. */
 export async function prepareAtomicTextCreate(
@@ -61,6 +89,15 @@ export class AtomicTextWriteConflictError extends Error {
   }
 }
 
+/** The target disappeared (an external delete) before the commit could
+ * take ownership of its generation. */
+export class AtomicTextWriteTargetMissingError extends Error {
+  constructor(targetPath: string) {
+    super(`atomic replacement target disappeared: ${targetPath}`)
+    this.name = 'AtomicTextWriteTargetMissingError'
+  }
+}
+
 export class UnstableTextSnapshotError extends Error {
   readonly latest: StableTextSnapshot
 
@@ -100,19 +137,42 @@ async function renameWithTransientWindowsRetry(from: string, to: string): Promis
   throw lastError
 }
 
-export async function prepareAtomicTextWrite(
+/**
+ * Restore a staged generation to the target path WITHOUT ever
+ * replacing a newer one: link(2) is create-only, so a path an external
+ * writer recreated wins — the staged bytes then stay quarantined on
+ * disk under their staging name rather than clobbering the new
+ * generation.
+ */
+async function restoreStagedGeneration(stagedPath: string, targetPath: string): Promise<void> {
+  try {
+    await fs.link(stagedPath, targetPath)
+    await fs.rm(stagedPath, { force: true }).catch(() => {})
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      // A newer external generation owns the path: never clobber it.
+      return
+    }
+    // link failed for some other reason; put the bytes back only if
+    // the path is still unclaimed.
+    const targetExists = await fs.stat(targetPath).then(() => true, () => false)
+    if (!targetExists) {
+      await renameWithTransientWindowsRetry(stagedPath, targetPath).catch(() => {})
+    }
+  }
+}
+
+async function writeTemporaryTextFile(
   targetPath: string,
   raw: string,
-  options: { mode?: number } = {},
-): Promise<PreparedAtomicTextWrite> {
+  options: { mode?: number },
+): Promise<string> {
   const directory = path.dirname(targetPath)
   const temporaryPath = path.join(
     directory,
     `.${path.basename(targetPath)}.docus-save-${randomUUID()}`,
   )
   let handle: Awaited<ReturnType<typeof fs.open>> | null = null
-  let settled = false
-
   try {
     handle = await fs.open(
       temporaryPath,
@@ -131,20 +191,80 @@ export async function prepareAtomicTextWrite(
     await fs.rm(temporaryPath, { force: true }).catch(() => {})
     throw error
   }
+  return temporaryPath
+}
+
+export async function prepareAtomicTextWrite(
+  targetPath: string,
+  raw: string,
+  options: { mode?: number } = {},
+): Promise<PreparedAtomicTextReplace> {
+  const temporaryPath = await writeTemporaryTextFile(targetPath, raw, options)
+  let settled = false
 
   return {
     temporaryPath,
-    async commit() {
+    async commit(expectedRaw: string) {
       if (settled) return
-      try {
-        await renameWithTransientWindowsRetry(temporaryPath, targetPath)
+      const stagedPath = path.join(
+        path.dirname(targetPath),
+        `.${path.basename(targetPath)}.docus-staged-${randomUUID()}`,
+      )
+      const fail = async (error: unknown): Promise<never> => {
         settled = true
-        await syncParentDirectoryBestEffort(targetPath)
-      } catch (error) {
         await fs.rm(temporaryPath, { force: true }).catch(() => {})
-        settled = true
         throw error
       }
+      // 1. OWNERSHIP: atomically take the current generation aside. An
+      //    external save that landed before this rename travels with
+      //    the bytes to staging and is detected at verification; one
+      //    that recreates the path afterwards loses to the create-only
+      //    link below. Either way it is never silently overwritten.
+      try {
+        await renameWithTransientWindowsRetry(targetPath, stagedPath)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return fail(new AtomicTextWriteTargetMissingError(targetPath))
+        }
+        return fail(error)
+      }
+      // 2. VERIFY the owned generation.
+      let stagedSnapshot: StableTextSnapshot
+      try {
+        stagedSnapshot = await readStableTextSnapshot(stagedPath)
+      } catch (error) {
+        await restoreStagedGeneration(stagedPath, targetPath)
+        return fail(error)
+      }
+      if (stagedSnapshot.raw !== expectedRaw) {
+        await restoreStagedGeneration(stagedPath, targetPath)
+        return fail(new AtomicTextWriteConflictError(stagedSnapshot))
+      }
+      // 3. COMMIT create-only: link(2) never replaces. EEXIST means a
+      //    new external generation landed while we held the staged
+      //    bytes — preserve it. The staged generation equals
+      //    expectedRaw, which the caller already holds, so both of our
+      //    files are removed and the conflict reports the winner.
+      try {
+        await fs.link(temporaryPath, targetPath)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+          await fs.rm(stagedPath, { force: true }).catch(() => {})
+          let current: StableTextSnapshot
+          try {
+            current = await readStableTextSnapshot(targetPath)
+          } catch {
+            return fail(error)
+          }
+          return fail(new AtomicTextWriteConflictError(current))
+        }
+        await restoreStagedGeneration(stagedPath, targetPath)
+        return fail(error)
+      }
+      settled = true
+      await fs.rm(temporaryPath, { force: true }).catch(() => {})
+      await fs.rm(stagedPath, { force: true }).catch(() => {})
+      await syncParentDirectoryBestEffort(targetPath)
     },
     async rollback() {
       if (settled) return
@@ -184,19 +304,29 @@ export async function readStableTextSnapshot(
   throw new UnstableTextSnapshotError(latest!)
 }
 
+/**
+ * Replace a text file only while its current bytes still match the
+ * caller's expectation, with no check-to-rename window: the commit
+ * takes ownership of the current generation first (atomic rename
+ * aside), verifies it, and links the replacement in create-only. An
+ * external writer winning any race keeps its bytes and the call fails
+ * closed with AtomicTextWriteConflictError (or
+ * AtomicTextWriteTargetMissingError if the target was deleted). The
+ * file's mode is preserved.
+ */
 export async function atomicReplaceTextIfUnchanged(
   targetPath: string,
   expectedRaw: string,
   replacementRaw: string,
   options: { mode?: number } = {},
 ): Promise<void> {
-  const prepared = await prepareAtomicTextWrite(targetPath, replacementRaw, options)
+  let mode = options.mode
+  if (mode === undefined) {
+    mode = await fs.stat(targetPath).then((stat) => Number(stat.mode), () => undefined)
+  }
+  const prepared = await prepareAtomicTextWrite(targetPath, replacementRaw, { mode })
   try {
-    const current = await readStableTextSnapshot(targetPath)
-    if (current.raw !== expectedRaw) {
-      throw new AtomicTextWriteConflictError(current)
-    }
-    await prepared.commit()
+    await prepared.commit(expectedRaw)
   } catch (error) {
     await prepared.rollback()
     throw error
@@ -206,8 +336,11 @@ export async function atomicReplaceTextIfUnchanged(
 /**
  * Remove a text file only while the bytes being removed still match the
  * caller's write. Renaming first means a writer that changes the same inode
- * before cleanup is detected on the staged file and restored, rather than
- * being silently deleted.
+ * before cleanup is detected on the staged file and restored create-only
+ * (a recreated path wins), rather than being silently deleted. If the
+ * bytes changed, the removal is a no-op: the caller's write is already
+ * gone and the external bytes stay. A missing target is likewise a
+ * no-op — there is nothing left to remove.
  */
 export async function atomicRemoveTextIfUnchanged(
   targetPath: string,
@@ -217,44 +350,43 @@ export async function atomicRemoveTextIfUnchanged(
     path.dirname(targetPath),
     `.${path.basename(targetPath)}.docus-remove-${randomUUID()}`,
   )
-  await renameWithTransientWindowsRetry(targetPath, stagedPath)
   try {
-    const staged = await readStableTextSnapshot(stagedPath)
-    if (staged.raw !== expectedRaw) {
-      if (!await fs.stat(targetPath).then(() => true, () => false)) {
-        await renameWithTransientWindowsRetry(stagedPath, targetPath)
-      }
-      throw new AtomicTextWriteConflictError(staged)
-    }
-    await fs.rm(stagedPath)
-    await syncParentDirectoryBestEffort(targetPath)
+    await renameWithTransientWindowsRetry(targetPath, stagedPath)
   } catch (error) {
-    const targetExists = await fs.stat(targetPath).then(() => true, () => false)
-    const stagedExists = await fs.stat(stagedPath).then(() => true, () => false)
-    if (!targetExists && stagedExists) {
-      try {
-        await renameWithTransientWindowsRetry(stagedPath, targetPath)
-      } catch (restoreError) {
-        throw new AggregateError(
-          [error, restoreError],
-          'conditional text removal failed and staged content could not be restored',
-        )
-      }
-    }
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
     throw error
   }
+  let staged: StableTextSnapshot
+  try {
+    staged = await readStableTextSnapshot(stagedPath)
+  } catch (error) {
+    await restoreStagedGeneration(stagedPath, targetPath)
+    throw error
+  }
+  if (staged.raw !== expectedRaw) {
+    await restoreStagedGeneration(stagedPath, targetPath)
+    return
+  }
+  await fs.rm(stagedPath)
+  await syncParentDirectoryBestEffort(targetPath)
 }
 
+/**
+ * Unconditional replacement: prepare + rename. Callers that need
+ * external-writer safety must use atomicReplaceTextIfUnchanged (or
+ * prepareAtomicTextWrite's ownership-verified commit) instead.
+ */
 export async function atomicReplaceText(
   targetPath: string,
   raw: string,
   options: { mode?: number } = {},
 ): Promise<void> {
-  const prepared = await prepareAtomicTextWrite(targetPath, raw, options)
+  const temporaryPath = await writeTemporaryTextFile(targetPath, raw, options)
   try {
-    await prepared.commit()
+    await renameWithTransientWindowsRetry(temporaryPath, targetPath)
+    await syncParentDirectoryBestEffort(targetPath)
   } catch (error) {
-    await prepared.rollback()
+    await fs.rm(temporaryPath, { force: true }).catch(() => {})
     throw error
   }
 }

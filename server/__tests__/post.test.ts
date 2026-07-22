@@ -228,3 +228,75 @@ describe('PUT /api/recover', () => {
     }
   })
 })
+
+describe('DELETE /api/posts path-reuse identity', () => {
+  // Path-reuse identity contract: a re-used path must NEVER inherit the
+  // old documentId. When a failed delete's rollback finds the path
+  // occupied by a new external generation, the old identity is dropped
+  // (the new file gets a fresh one) and the old generation stays
+  // quarantined under its staging name. When the path is still empty,
+  // the old file AND its identity are restored.
+  it('gives a re-used path a fresh documentId and quarantines the old generation', async () => {
+    const documentPath = 'delete-reuse'
+    const abs = path.join(CONTENT_DIR, `${documentPath}.md`)
+    await fs.rm(abs, { force: true })
+    const created = await call('POST', '/api/posts', { path: documentPath, title: 'Old' })
+    expect(created.status).toBe(201)
+    const oldId = getDocumentMetadata(db, documentPath)!.id
+
+    // The staged unlink fails AND an external writer recreates the path
+    // with a new generation inside the failure window.
+    const unlink = vi.spyOn(fs, 'unlink').mockImplementationOnce(async () => {
+      await fs.writeFile(abs, '# new generation\n', 'utf8')
+      throw Object.assign(new Error('injected staged unlink failure'), { code: 'EIO' })
+    })
+    try {
+      const response = await call('DELETE', `/api/posts/${documentPath}`)
+      expect(response.status).toBe(500)
+      // The new generation keeps its bytes and must NOT inherit oldId.
+      expect(await fs.readFile(abs, 'utf8')).toBe('# new generation\n')
+      const metadata = getDocumentMetadata(db, documentPath)
+      expect(metadata).not.toBeNull()
+      expect(metadata!.id).not.toBe(oldId)
+      // The old generation survives quarantined under its staging name.
+      const quarantined = (await fs.readdir(CONTENT_DIR))
+        .filter((name) => name.startsWith(`${documentPath}.md.docus-delete-`))
+      expect(quarantined).toHaveLength(1)
+      expect(await fs.readFile(path.join(CONTENT_DIR, quarantined[0]!), 'utf8')).toBe('# Old\n')
+    } finally {
+      unlink.mockRestore()
+      for (const name of await fs.readdir(CONTENT_DIR)) {
+        if (name.startsWith(`${documentPath}.md.docus-delete-`)) {
+          await fs.rm(path.join(CONTENT_DIR, name), { force: true })
+        }
+      }
+      await fs.rm(abs, { force: true })
+      deleteDocumentMetadata(db, documentPath)
+    }
+  })
+
+  it('restores the old file and its identity when the path stays empty', async () => {
+    const documentPath = 'delete-empty-path'
+    const abs = path.join(CONTENT_DIR, `${documentPath}.md`)
+    await fs.rm(abs, { force: true })
+    const created = await call('POST', '/api/posts', { path: documentPath, title: 'Keep' })
+    expect(created.status).toBe(201)
+    const oldId = getDocumentMetadata(db, documentPath)!.id
+    const unlink = vi.spyOn(fs, 'unlink').mockRejectedValueOnce(
+      Object.assign(new Error('injected staged unlink failure'), { code: 'EIO' }),
+    )
+    try {
+      const response = await call('DELETE', `/api/posts/${documentPath}`)
+      expect(response.status).toBe(500)
+      // Create-only restore succeeded: same bytes, same identity.
+      expect(await fs.readFile(abs, 'utf8')).toBe('# Keep\n')
+      expect(getDocumentMetadata(db, documentPath)!.id).toBe(oldId)
+      expect((await fs.readdir(CONTENT_DIR))
+        .some((name) => name.startsWith(`${documentPath}.md.docus-delete-`))).toBe(false)
+    } finally {
+      unlink.mockRestore()
+      await fs.rm(abs, { force: true })
+      deleteDocumentMetadata(db, documentPath)
+    }
+  })
+})

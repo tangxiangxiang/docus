@@ -374,6 +374,33 @@ describe('delete_file', () => {
       unlink.mockRestore()
     }
   })
+
+  it('gives a re-used path a fresh documentId and quarantines the old generation', async () => {
+    // Path-reuse identity contract: when an external writer recreates
+    // the path while the staged unlink is failing, the old documentId
+    // must NOT be restored onto the foreign bytes — the new file gets
+    // a fresh identity and the old generation stays quarantined.
+    const abs = writeFile('reuse/victim.md', '# Old\n')
+    saveDocumentMetadata(db, { id: 'victim-old-id', path: 'reuse/victim', title: 'Old' })
+    const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementationOnce(() => {
+      fs.writeFileSync(abs, '# new generation\n', 'utf8')
+      throw Object.assign(new Error('injected unlink failure'), { code: 'EIO' })
+    })
+    try {
+      const result = await executeToolCall('delete_file', { path: 'reuse/victim' }, ctx)
+      expect(result.isError).toBe(true)
+      expect(fs.readFileSync(abs, 'utf8')).toBe('# new generation\n')
+      const metadata = getDocumentMetadata(db, 'reuse/victim')
+      expect(metadata).not.toBeNull()
+      expect(metadata!.id).not.toBe('victim-old-id')
+      const quarantined = fs.readdirSync(path.dirname(abs))
+        .filter((name) => name.startsWith('victim.md.docus-delete-'))
+      expect(quarantined).toHaveLength(1)
+      expect(fs.readFileSync(path.join(path.dirname(abs), quarantined[0]!), 'utf8')).toBe('# Old\n')
+    } finally {
+      unlink.mockRestore()
+    }
+  })
 })
 
 // --- rename_file ------------------------------------------------------------
@@ -485,9 +512,18 @@ describe('rename_file', () => {
     const backlinkAbs = writeFile('a/source.md', 'see [[a/old]]')
     await getLinkIndex()
     const before = snapshotDocumentMetadataDatabase(db)
-    const write = vi.spyOn(fs, 'writeFileSync').mockImplementationOnce(() => {
-      throw new Error('injected backlink write failure')
-    })
+    // Reference writes are ownership-verified: the first step is the
+    // takeover rename of the current generation to a private staged
+    // path. Failing THAT rename injects the failure into the backlink
+    // write without touching the document move (whose rename target is
+    // the destination, not a staged path).
+    const originalRename = fs.promises.rename.bind(fs.promises)
+    const write = vi.spyOn(fs.promises, 'rename').mockImplementation(((from: unknown, to: unknown) => {
+      if (String(to).includes('.docus-staged-')) {
+        return Promise.reject(new Error('injected backlink write failure'))
+      }
+      return originalRename(from as any, to as any)
+    }) as typeof fs.promises.rename)
     try {
       const result = await executeToolCall('rename_file', { path: 'a/old', new_path: 'a/new' }, ctx)
       expect(result.isError).toBe(true)

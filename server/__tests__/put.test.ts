@@ -224,7 +224,10 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
     })
     expect(await fs.readFile(TEST_ABS, 'utf8')).toBe(UPDATED_BODY)
     expect(getDocumentMetadata(db, 'put-smoke')).toEqual(metadataBefore)
-    expect((await fs.readdir(CONTENT_DIR)).some((name) => name.includes('.docus-save-'))).toBe(false)
+    // Scoped to this file's own temp prefix: other suites share the
+    // real CONTENT_DIR under parallel workers, and their in-flight
+    // temps are not this route's leak.
+    expect((await fs.readdir(CONTENT_DIR)).some((name) => name.startsWith('.put-smoke.md.docus-save-'))).toBe(false)
   })
 
   it('treats an already-present requested body as an idempotent success', async () => {
@@ -299,6 +302,49 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
     expect(await fs.readFile(TEST_ABS, 'utf8')).toBe(UPDATED_BODY)
   })
 
+  it('preserves an external save that lands in the final commit window (409, no overwrite)', async () => {
+    // The reviewer scenario for the PUT save path: the file holds base,
+    // the server verified base and prepared the new body, and an
+    // external writer saves in the final window before the commit
+    // touches the path. The ownership-verified commit must detect the
+    // external generation and fail closed with a typed conflict — the
+    // external bytes are never overwritten and no intermediate files
+    // are left behind.
+    const abs = path.join(CONTENT_DIR, 'put-final-window.md')
+    const base = '# base\n'
+    const docus = '# docus save\n'
+    const external = '# external\n'
+    await fs.writeFile(abs, base, 'utf8')
+    const originalRename = fs.rename.bind(fs)
+    // The commit's FIRST step is the takeover rename of the current
+    // generation; an external save landing right before it must travel
+    // with the generation into staging and be detected there.
+    const rename = vi.spyOn(fs, 'rename').mockImplementationOnce(async (from, to) => {
+      writeFileSync(abs, external, 'utf8')
+      return originalRename(from, to)
+    })
+    try {
+      const r = await call('PUT', '/api/posts/put-final-window', {
+        raw: docus,
+        baseRaw: base,
+      })
+
+      expect(r.status).toBe(409)
+      expect(await r.json()).toMatchObject({
+        code: 'EDIT_CONFLICT',
+        current: { raw: external },
+      })
+      expect(await fs.readFile(abs, 'utf8')).toBe(external)
+      const names = await fs.readdir(CONTENT_DIR)
+      expect(names.some((name) => name.startsWith('.put-final-window.md.docus-save-'))).toBe(false)
+      expect(names.some((name) => name.startsWith('.put-final-window.md.docus-staged-'))).toBe(false)
+    } finally {
+      rename.mockRestore()
+      await fs.rm(abs, { force: true })
+      deleteDocumentMetadata(db, 'put-final-window')
+    }
+  })
+
   it('serializes concurrent writes to the same document baseline', async () => {
     const abs = path.join(CONTENT_DIR, 'put-concurrent.md')
     const initial = 'A'
@@ -312,7 +358,7 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
       expect(statuses).toEqual([200, 409])
       const successfulIndex = responses.findIndex((response) => response.status === 200)
       expect(await fs.readFile(abs, 'utf8')).toBe(successfulIndex === 0 ? 'B' : 'C')
-      expect((await fs.readdir(CONTENT_DIR)).some((name) => name.includes('.docus-save-'))).toBe(false)
+      expect((await fs.readdir(CONTENT_DIR)).some((name) => name.startsWith('.put-concurrent.md.docus-save-'))).toBe(false)
     } finally {
       await fs.rm(abs, { force: true })
       deleteDocumentMetadata(db, 'put-concurrent')
@@ -350,7 +396,7 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
 
       expect(r.status).toBe(500)
       expect(await fs.readFile(abs, 'utf8')).toBe(original)
-      expect((await fs.readdir(CONTENT_DIR)).some((name) => name.includes('.docus-save-'))).toBe(false)
+      expect((await fs.readdir(CONTENT_DIR)).some((name) => name.startsWith('.put-metadata-rollback.md.docus-save-'))).toBe(false)
     } finally {
       db.exec(`
         DROP TRIGGER IF EXISTS fail_second_put_metadata_update;
@@ -402,7 +448,7 @@ describe('PUT /api/posts/* (Task 7 smoke)', () => {
 
       expect(r.status).toBe(500)
       expect(await fs.readFile(abs, 'utf8')).toBe(external)
-      expect((await fs.readdir(CONTENT_DIR)).some((name) => name.includes('.docus-save-'))).toBe(false)
+      expect((await fs.readdir(CONTENT_DIR)).some((name) => name.startsWith('.put-metadata-external.md.docus-save-'))).toBe(false)
     } finally {
       db.exec(`
         DROP TRIGGER IF EXISTS fail_second_put_external_update;

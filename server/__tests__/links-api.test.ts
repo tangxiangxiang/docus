@@ -112,12 +112,16 @@ describe('rename reference updates', () => {
 
   it('rolls the rename back when an inbound link write fails', async () => {
     await get('/api/links/index')
-    const originalWrite = fs.writeFile.bind(fs)
-    const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, options) => {
-      if (String(file).endsWith(`${path.sep}a.md`) && String(data).includes('renamed-b')) {
+    // Reference writes are ownership-verified: the first step is the
+    // takeover rename of the current generation to a private staged
+    // path. Failing THAT rename for a.md fails the reference write
+    // before any byte of it is touched.
+    const originalRename = fs.rename.bind(fs)
+    const spy = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(to).includes('.docus-staged-') && String(from).endsWith(`${path.sep}a.md`)) {
         throw new Error('simulated reference write failure')
       }
-      return originalWrite(file, data, options as any)
+      return originalRename(from, to)
     })
     try {
       const renamed = await app.fetch(new Request('http://localhost/api/posts/b', {
@@ -131,6 +135,46 @@ describe('rename reference updates', () => {
       await expect(fs.stat(path.join(sandbox, 'renamed-b.md'))).rejects.toThrow()
     } finally {
       spy.mockRestore()
+    }
+  })
+
+  it('preserves an external save to a referenced file that lands after the plan is built (409, no overwrite)', async () => {
+    // Snapshot-semantics contract, external-safety side: in-process
+    // locks do not stop Obsidian/vim/sync software. When an external
+    // editor saves a referenced file AFTER the rename's in-lock plan
+    // snapshotted it (between the raw read and the write loop), the
+    // ownership-verified reference write must detect the foreign bytes
+    // and fail the whole rename closed — never overwrite the external
+    // save.
+    await fs.writeFile(path.join(sandbox, 'ref-a.md'), '# a\nsee [[b]]\n', 'utf8')
+    __resetLinkIndexForTesting()
+    await get('/api/links/index')
+    const external = '# a\nexternal save\nsee [[b]]\n'
+    __setPostRenameRaceHooksForTesting({
+      afterRenamePlanBuilt: async () => {
+        await fs.writeFile(path.join(sandbox, 'ref-a.md'), external, 'utf8')
+      },
+    })
+    try {
+      const renamed = await app.fetch(new Request('http://localhost/api/posts/b', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'renamed-b', updateReferences: true }),
+      }))
+      expect(renamed.status).toBe(409)
+      expect(await renamed.json()).toMatchObject({
+        error: expect.stringMatching(/changed on disk/),
+      })
+      // The external bytes win and the rename is fully undone.
+      expect(await fs.readFile(path.join(sandbox, 'ref-a.md'), 'utf8')).toBe(external)
+      expect(await fs.readFile(path.join(sandbox, 'b.md'), 'utf8')).toBe('# b\nsee [a](a.md)')
+      expect(await fs.readFile(path.join(sandbox, 'a.md'), 'utf8')).toBe('# a\nsee [[b]]')
+      await expect(fs.stat(path.join(sandbox, 'renamed-b.md'))).rejects.toThrow()
+      const names = await fs.readdir(sandbox)
+      expect(names.some((name) => name.includes('.docus-save-'))).toBe(false)
+      expect(names.some((name) => name.includes('.docus-staged-'))).toBe(false)
+    } finally {
+      __setPostRenameRaceHooksForTesting(null)
     }
   })
 })
@@ -303,12 +347,16 @@ describe('write routes update the index', () => {
       (path, document_id, status, source_hash, cleaned_hash, error, updated_at)
       VALUES ('c', ?, 'cleaned', 'source', 'cleaned', '', 11)`).run(cMetadata.id)
     const before = snapshotDocumentMetadataDatabase(db)
-    const originalWrite = fs.writeFile.bind(fs)
-    const spy = vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, options) => {
-      if (String(file).endsWith(`${path.sep}d.md`) && String(data).includes('renamed/target')) {
+    // Reference writes are ownership-verified: fail the takeover rename
+    // of d.md's current generation so the SECOND reference write fails
+    // after c.md has already been rewritten, exercising the undo of a
+    // completed reference write.
+    const originalRename = fs.rename.bind(fs)
+    const spy = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(to).includes('.docus-staged-') && String(from).endsWith(`${path.sep}d.md`)) {
         throw new Error('simulated second reference failure')
       }
-      return originalWrite(file, data, options as any)
+      return originalRename(from, to)
     })
     try {
       const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
@@ -322,6 +370,41 @@ describe('write routes update the index', () => {
       await expect(fs.stat(path.join(sandbox, 'notes', 'target.md'))).resolves.toBeTruthy()
       await expect(fs.stat(path.join(sandbox, 'renamed'))).rejects.toThrow()
     } finally { spy.mockRestore() }
+  })
+
+  it('preserves an external save to a folder-rename reference that lands after the plan is built (409, no overwrite)', async () => {
+    // Same external-safety contract as the document rename, for folder
+    // renames: an external save to a reference file between the plan
+    // snapshot and the reference write loop fails the rename closed and
+    // keeps the external bytes.
+    await fs.mkdir(path.join(sandbox, 'notes'))
+    await fs.writeFile(path.join(sandbox, 'notes', 'target.md'), '# target', 'utf8')
+    await fs.writeFile(path.join(sandbox, 'c.md'), '[[notes/target]]', 'utf8')
+    __resetLinkIndexForTesting()
+    await get('/api/links/index')
+    const external = 'external save [[notes/target]]'
+    __setFolderRaceHooksForTesting({
+      afterRenamePlanBuilt: async () => {
+        await fs.writeFile(path.join(sandbox, 'c.md'), external, 'utf8')
+      },
+    })
+    try {
+      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ newPath: 'renamed', updateReferences: true }),
+      }))
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({
+        error: expect.stringMatching(/changed on disk/),
+      })
+      expect(await fs.readFile(path.join(sandbox, 'c.md'), 'utf8')).toBe(external)
+      // The folder move was undone.
+      await expect(fs.stat(path.join(sandbox, 'notes', 'target.md'))).resolves.toBeTruthy()
+      await expect(fs.stat(path.join(sandbox, 'renamed'))).rejects.toThrow()
+      const names = await fs.readdir(sandbox)
+      expect(names.some((name) => name.includes('.docus-save-'))).toBe(false)
+      expect(names.some((name) => name.includes('.docus-staged-'))).toBe(false)
+    } finally { __setFolderRaceHooksForTesting(null) }
   })
 
   it('does not delete destination recovery metadata when the filesystem rename fails', async () => {
@@ -378,6 +461,41 @@ describe('write routes update the index', () => {
       expect(response.status).toBe(500)
       expect(await fs.readFile(path.join(sandbox, 'notes', 'a.md'), 'utf8')).toBe('# a')
       expect(snapshotDocumentMetadataDatabase(db)).toEqual(before)
+    } finally { remove.mockRestore() }
+  })
+
+  it('never rebinds old identities when the folder path is re-used during a failed delete', async () => {
+    // Path-reuse identity contract: when an external writer recreates
+    // the folder tree while the staged removal is failing, the old
+    // documentIds must NOT be restored onto the new generation's files.
+    // The new files get fresh identities on their next API touch; the
+    // old tree stays quarantined under its staging name.
+    await fs.mkdir(path.join(sandbox, 'gone'))
+    await fs.writeFile(path.join(sandbox, 'gone', 'a.md'), '# a', 'utf8')
+    saveDocumentMetadata(db, { id: 'gone-old-id', path: 'gone/a', title: 'Old A' })
+    __resetLinkIndexForTesting()
+    const originalRm = fs.rm.bind(fs)
+    const remove = vi.spyOn(fs, 'rm').mockImplementation(async (target, options) => {
+      if (String(target).includes('.docus-delete-')) {
+        // An external writer re-creates the folder tree with a NEW
+        // generation while the staged removal is failing.
+        await fs.mkdir(path.join(sandbox, 'gone'), { recursive: true })
+        await fs.writeFile(path.join(sandbox, 'gone', 'a.md'), '# new generation', 'utf8')
+        throw new Error('injected recursive removal failure')
+      }
+      return originalRm(target, options)
+    })
+    try {
+      const response = await app.fetch(new Request('http://localhost/api/folders/gone?recursive=true', { method: 'DELETE' }))
+      expect(response.status).toBe(500)
+      // The new generation keeps its bytes; the old identity must NOT
+      // be bound to it.
+      expect(await fs.readFile(path.join(sandbox, 'gone', 'a.md'), 'utf8')).toBe('# new generation')
+      expect(getDocumentMetadata(db, 'gone/a')).toBeNull()
+      // The old tree survives quarantined under its staging name.
+      const quarantined = (await fs.readdir(sandbox)).filter((name) => name.startsWith('gone.docus-delete-'))
+      expect(quarantined).toHaveLength(1)
+      expect(await fs.readFile(path.join(sandbox, quarantined[0]!, 'a.md'), 'utf8')).toBe('# a')
     } finally { remove.mockRestore() }
   })
 
@@ -500,6 +618,13 @@ describe('REST rename vs a concurrent backlink added after the footprint check',
   // enumeration: the verified candidate set and the executed write set
   // are the same snapshot, so a link added after the check is simply
   // left untouched, never written without its lock.
+  //
+  // CONTRACT (snapshot semantics, chosen over a link-graph mutation
+  // lock): links added AFTER the footprint check are not part of this
+  // rename — the rename never writes a document whose lock it does not
+  // hold, the late link stays untouched, and its author sees the
+  // post-rename world on the next load. The rejected alternative would
+  // serialize all document saves against renames.
 
   it('never rewrites a document whose new backlink lands after the footprint check', async () => {
     await fs.writeFile(path.join(sandbox, 'src.md'), '# src', 'utf8')

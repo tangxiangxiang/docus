@@ -45,6 +45,8 @@ import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
 import { validateDocumentMutation } from '../documentMutationPolicy.js'
 import {
+  AtomicTextWriteConflictError,
+  AtomicTextWriteTargetMissingError,
   atomicRemoveTextIfUnchanged,
   atomicReplaceTextIfUnchanged,
   prepareAtomicTextCreate,
@@ -351,6 +353,18 @@ function executeListFiles(input: { scope?: string }): ToolResult {
   return ok(JSON.stringify(out, null, 2))
 }
 
+/** Retryable, model-actionable message when the ownership-verified commit
+ * lost a race to an external writer; null for any other error. */
+function atomicWriteRaceMessage(tool: string, documentPath: string, error: unknown): string | null {
+  if (error instanceof AtomicTextWriteConflictError) {
+    return `${tool}: ${documentPath} changed on disk while this ${tool} was committing; the external save was preserved. Re-read the file and retry.`
+  }
+  if (error instanceof AtomicTextWriteTargetMissingError) {
+    return `${tool}: ${documentPath} was deleted on disk while this ${tool} was committing; nothing was overwritten. Retry if the file should exist.`
+  }
+  return null
+}
+
 async function commitDocumentBody(
   db: DatabaseT,
   documentPath: string,
@@ -386,7 +400,12 @@ async function commitDocumentBody(
       try {
         if (previous) await atomicReplaceTextIfUnchanged(abs, raw, previous.raw, { mode: previous.mode })
         else await atomicRemoveTextIfUnchanged(abs, raw)
-      } catch (rollbackError) { failures.push(rollbackError) }
+      } catch (rollbackError) {
+        // An external writer overwriting our commit makes the external
+        // bytes authoritative — leaving them in place IS the correct
+        // undo, not a rollback failure.
+        if (!(rollbackError instanceof AtomicTextWriteConflictError)) failures.push(rollbackError)
+      }
     } else if (prepared) {
       try { await prepared.rollback() } catch (rollbackError) { failures.push(rollbackError) }
     }
@@ -459,7 +478,7 @@ async function executeWriteFile(input: { path?: string; content?: string }, db: 
     }
     await commitDocumentBody(db, input.path, abs, input.content, previous)
   } catch (e) {
-    return err(`write_file: ${(e as Error).message}`)
+    return err(atomicWriteRaceMessage('write_file', input.path, e) ?? `write_file: ${(e as Error).message}`)
   }
   const stat = fs.statSync(abs)
   return ok(`wrote ${input.path} (${stat.size} bytes)`, {
@@ -560,7 +579,7 @@ async function executePatchFile(input: {
   try {
     await commitDocumentBody(db, input.path, bundle.abs, updated, { raw: bundle.raw, mode: bundle.stat.mode })
   } catch (e) {
-    return err(`patch_file: ${(e as Error).message}`)
+    return err(atomicWriteRaceMessage('patch_file', input.path, e) ?? `patch_file: ${(e as Error).message}`)
   }
   const stat = fs.statSync(bundle.abs)
   return ok(
@@ -572,6 +591,19 @@ async function executePatchFile(input: {
       newRaw: updated,
     },
   )
+}
+
+/**
+ * A re-used path must never inherit the old documentId: drop any stale
+ * identity row for the path and give the NEW generation now occupying
+ * it a fresh identity. The old generation stays quarantined under its
+ * `.docus-delete-*` staging name.
+ */
+function reidentifyReusedPath(db: DatabaseT, documentPath: string, abs: string): void {
+  deleteDocumentMetadata(db, documentPath)
+  const reusedRaw = fs.readFileSync(abs, 'utf8')
+  const reusedStat = fs.statSync(abs)
+  ensureDocumentMetadata(db, documentPath, reusedRaw, reusedStat.mtimeMs, Date.now())
 }
 
 function executeDeleteFile(input: { path?: string }, db: DatabaseT): ToolResult {
@@ -593,10 +625,40 @@ function executeDeleteFile(input: { path?: string }, db: DatabaseT): ToolResult 
     fs.unlinkSync(staged)
   } catch (e) {
     const rollbackFailures: unknown[] = []
-    if (fs.existsSync(staged) && !fs.existsSync(abs)) {
-      try { fs.renameSync(staged, abs) } catch (rollbackError) { rollbackFailures.push(rollbackError) }
+    if (fs.existsSync(staged)) {
+      if (!fs.existsSync(abs)) {
+        // The path is still empty: put our generation back. linkSync is
+        // create-only, so an external file landing exactly here between
+        // the check and the restore is detected as EEXIST (path reuse,
+        // handled below) instead of being clobbered.
+        let restored = false
+        try {
+          fs.linkSync(staged, abs)
+          restored = true
+        } catch (linkError) {
+          if ((linkError as NodeJS.ErrnoException).code !== 'EEXIST') rollbackFailures.push(linkError)
+        }
+        if (restored) {
+          try { fs.unlinkSync(staged) } catch (rollbackError) { rollbackFailures.push(rollbackError) }
+          try { restoreDocumentMetadataMutation(db, databaseSnapshot) }
+          catch (rollbackError) { rollbackFailures.push(rollbackError) }
+        } else if (rollbackFailures.length === 0) {
+          try { reidentifyReusedPath(db, input.path, abs) }
+          catch (reuseError) { rollbackFailures.push(reuseError) }
+        }
+      } else {
+        // Path reuse: an external writer created a NEW generation at
+        // this path while the delete was failing. The old documentId
+        // must never bind to foreign bytes — drop the stale identity,
+        // give the new file a fresh one, and leave the old generation
+        // quarantined under its staging name.
+        try { reidentifyReusedPath(db, input.path, abs) }
+        catch (reuseError) { rollbackFailures.push(reuseError) }
+      }
+    } else {
+      try { restoreDocumentMetadataMutation(db, databaseSnapshot) }
+      catch (rollbackError) { rollbackFailures.push(rollbackError) }
     }
-    try { restoreDocumentMetadataMutation(db, databaseSnapshot) } catch (rollbackError) { rollbackFailures.push(rollbackError) }
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
       return err(`delete_file: file does not exist: ${input.path}`)
     }
@@ -651,6 +713,9 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
   // link-index change between the guard and the writes cannot add an
   // unguarded reference write. update_references is likewise decided
   // at plan time (an empty plan.references), never re-checked here.
+  // Snapshot semantics (the chosen backlink contract): links added
+  // AFTER the in-lock footprint check are not part of this rename —
+  // it never writes a document whose lock it does not hold.
   let raw: string
   const references = plan.references.map((r) => ({
     sourcePath: r.sourcePath,
@@ -671,16 +736,26 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     const written: typeof references = []
     try {
       for (const reference of references) {
+        // External-writer-safe: the bytes on disk must still be exactly
+        // what the guarded plan read. In-process locks do not stop
+        // Obsidian/vim/sync software; the ownership-verified commit
+        // detects their saves and fails the rename closed instead of
+        // silently overwriting them.
+        await atomicReplaceTextIfUnchanged(reference.abs, reference.raw, reference.updated)
         written.push(reference)
-        fs.writeFileSync(reference.abs, reference.updated, 'utf8')
         const stat = fs.statSync(reference.abs)
         ensureDocumentMetadata(db, reference.path, reference.updated, stat.mtimeMs, Date.now())
       }
     } catch (error) {
       const rollbackErrors: unknown[] = []
       for (const reference of written.reverse()) {
-        try { fs.writeFileSync(reference.abs, reference.raw, 'utf8') }
-        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        try {
+          // Undo ONLY our rewrite: an external save on top of it wins
+          // and the undo leaves those bytes untouched.
+          await atomicReplaceTextIfUnchanged(reference.abs, reference.updated, reference.raw)
+        } catch (rollbackError) {
+          if (!(rollbackError instanceof AtomicTextWriteConflictError)) rollbackErrors.push(rollbackError)
+        }
       }
       try { await renameDocumentWithMetadata({ db, fromPath: input.new_path, toPath: input.path, fromAbs: dstAbs, toAbs: srcAbs }) }
       catch (rollbackError) { rollbackErrors.push(rollbackError) }
@@ -693,6 +768,12 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     try { restoreDocumentMetadataMutation(db, databaseSnapshot) }
     catch (rollbackError) {
       return err(`rename_file: ${(e as Error).message}; metadata rollback failed: ${(rollbackError as Error).message}`)
+    }
+    if (e instanceof AtomicTextWriteConflictError) {
+      return err(
+        `rename_file: a referenced document changed on disk during the rename; ` +
+          `the rename was undone without overwriting the external save. Retry the rename.`,
+      )
     }
     return err(`rename_file: ${(e as Error).message}`)
   }
