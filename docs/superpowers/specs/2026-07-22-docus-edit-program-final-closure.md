@@ -6,9 +6,11 @@
 
 **Former program closure baseline:** `350b17713b6df53b97787416c3f3979c33a04955` (`docs(ai): re-close Edit-10 after residual race verification`)
 
-The closure assertions below are retained as the historical record of the attempted seal. They are not a current release declaration. Production fixes after that baseline require a fresh closure run and new evidence.
-**Final program production/test tree:** `08756eb173538196d7ebe2426de32dfc6238127a` (`test(closure): add Edit program cross-feature regression matrix`)
-**Final docs closure commit:** this commit (`docs(closure): close Docus Edit program`) — HEAD is docs-only over `08756eb`.
+The closure assertions below are retained as the historical record of the attempted seal. They are not a current release declaration. Production fixes after that baseline, including `c13d086` and the transaction-compensation work that follows it, require a fresh closure run and new evidence.
+
+**Former attempted production/test baseline:** `08756eb173538196d7ebe2426de32dfc6238127a` (`test(closure): add Edit program cross-feature regression matrix`)
+
+**Current closure commit:** not assigned while status is Reopened.
 
 ---
 
@@ -43,7 +45,7 @@ The closure assertions below are retained as the historical record of the attemp
 | Edit-09 | Unsaved Draft Recovery (Draft Store, Recovery, management) | freeze `13a43ab` | `284d69f` | Closed |
 | Edit-10 | AI live workspace context + tool safety | freeze `6ae3b77` | `350b177` | Reopened |
 
-All SHAs verified to exist in the tree with the expected commit messages. Edit-02..06 carry no separate closure commits — their contracts were sealed by the Edit-07/08 baseline `9afb4e1` and re-asserted by this program's cross-Edit matrix. Every cited spec's status agrees: `2026-07-19-workspace-tab-architecture-design.md` (Closed), `2026-07-19-unsaved-draft-recovery-design.md` (§13/§14 Closed at `13a43ab`/`284d69f`), `2026-07-21-ai-live-workspace-context.md` (§17 Edit-10 Closed at `350b177`). The pre-program `2026-06-07-ai-live-note-context.md` is marked SUPERSEDED (2026-07-21) and retained for historical record only; no two specs claim authority over the same feature.
+The SHAs above are historical closure evidence. Edit-02..06 carry no separate closure commits — their contracts were sealed by the Edit-07/08 baseline `9afb4e1` and re-asserted by the former cross-Edit matrix. The Edit-10 design spec still records its historical §17 closure at `350b177`; this program-level review supersedes that status for current release decisions until both documents receive fresh, consistent closure evidence.
 
 ## 3. Frozen production tree
 
@@ -51,10 +53,10 @@ All SHAs verified to exist in the tree with the expected commit messages. Edit-0
 - Edit-07 closed: `9f8c0ae`; Edit-08 closed: `f094456`
 - Edit-09 production freeze: `13a43ab` — closure matrix: `284d69f`
 - Edit-10 production freeze: `6ae3b77` — closure: first `b772be7` + `a84d4fa`, E2E-order fix `82912f6`, re-close `350b177`
-- Program production/test tree (this round): `08756eb` — tests/E2E/helpers only. The former command included test files and therefore did not prove an empty production diff; future closure evidence must explicitly exclude `src/**/__tests__/**` and `server/__tests__/**`.
-- Final docs closure SHA: the commit containing this file.
+- Former program production/test tree: `08756eb` — historical tests/E2E/helpers baseline only. It predates subsequent production fixes and is not the current tree. The former command included test files and therefore did not prove an empty production diff; future closure evidence must explicitly exclude `src/**/__tests__/**` and `server/__tests__/**`.
+- Current docs closure SHA: not assigned while status is Reopened.
 
-No production code changed in this round; no `fix(...)` commit was required.
+Production code has changed since the attempted seal. A new production baseline and fresh verification run are required before reclosure.
 
 ## 4. Global invariants
 
@@ -156,7 +158,7 @@ Real risks that cannot be fully eliminated at this architecture's boundaries (no
 
 ## 11. Known issues
 
-- **Known production blockers:** closure is reopened while Archive × AI policy, rename rollback, and AI atomic-write/metadata compensation fixes are verified.
+- **Known production blockers:** the identified Archive, rename-registration, and metadata-compensation defects now have production fixes and unit/integration regression coverage. Closure remains reopened until the fresh closure/E2E evidence is run and both closure documents are reconciled; this paragraph is not a new seal.
 - Non-blocking artifacts:
   - Monaco dev-server "Canceled" unhandled-rejection teardown noise during navigation (third-party teardown noise; present in every sealed round; no user-visible effect).
   - Documentation drift (historical examples, not contracts): `README.md:241` / `README.zh-CN.md:219` and the `2026-06-07-llm-integration.md` plan example still mention the legacy `currentNoteContent` request field, which the server ignores (liveContext is the only content door — enforced by `live-context.test.ts`). Per-round test counts inside the sealed Edit-09/10 specs are snapshots of their closure rounds; current totals live in this document.
@@ -166,7 +168,7 @@ Real risks that cannot be fully eliminated at this architecture's boundaries (no
 
 ```text
 Docus Edit Program: Reopened
-Known production blockers: under remediation and re-verification
+Known production blockers: fixes implemented; fresh closure verification pending
 ```
 
 ## 13. Release readiness
