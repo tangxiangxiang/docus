@@ -3,7 +3,7 @@
 **Date:** 2026-07-21
 **Baseline:** `284d69f` (`test: complete Edit-09 final closure matrix`)
 **Supersedes:** [2026-06-07-ai-live-note-context.md](./2026-06-07-ai-live-note-context.md)
-**Status:** Edit-10.1 complete / Edit-10.2 complete / Edit-10.3 complete / Edit-10.4 complete (review fix `ee2a2a3`, see §16.7) / 10.5 pending re-review.
+**Status:** Edit-10.1 complete / Edit-10.2 complete / Edit-10.3 complete / Edit-10.4 complete (review fixes `ee2a2a3` + `6ae3b77`, see §16.7/§16.8) / 10.5 pending re-review.
 
 ## 1. Why the old spec is dead
 
@@ -1181,6 +1181,14 @@ every backlink source file the rewrite WILL modify:
 - Inside the lock the footprint is RE-DERIVED and, on drift,
   re-guarded: a newly-protected reference path fails closed;
   unrelated drift keeps the unrelated paths' original behavior.
+  Corrected in `fix(ai): execute the guarded rename plan atomically`
+  (`6ae3b77`, §16.8): re-guarding a drifted footprint under the OLD
+  lock set still left a window — the executor performed its OWN
+  third backlink discovery at write time, and a concurrent save
+  adding a link between the guard and that discovery was rewritten
+  unguarded. The rename now runs ONE plan: locked = guarded =
+  executed verbatim; footprint drift inside the lock fails closed
+  with a retryable error instead of proceeding.
 - `update_references: false` → no reference rewrite → footprint
   stays source + destination (unrelated renames unaffected).
 
@@ -1252,3 +1260,112 @@ in-lock re-guard); documentId/raw re-verification PASS; verification
 no-side-effects PASS (pure read; blocked calls leave the database
 byte-identical). Edit-10.5 (Final Closure) remains pending — it
 does NOT start before this fix is re-reviewed.
+
+Superseded in part: the re-review of `ee2a2a3` judged verification
+purity, the static backlink footprint, and the existing-backlink
+indirect-write protection PASS, but found plan/lock/guard/execution
+consistency FAIL — fixed in `6ae3b77`, recorded in §16.8.
+
+### 16.8 Rename plan atomicity (recorded 2026-07-22)
+
+The re-review of `ee2a2a3` confirmed the two §16.7 fixes (pure
+verification read PASS; existing-backlink indirect-write protection
+PASS) but found **one concurrency blocker**: the guarded rename
+plan and the executed rename plan were not the same plan.
+
+**The three-plan problem.** A rename computed its reference set
+THREE times: (1) `planRenameReferences` before locking — determined
+the lock set; (2) the in-lock replan — the guard target, but
+newly-appeared paths were only re-guarded, never added to the lock
+set; (3) the executor's OWN discovery — `executeRenameFile` called
+`getLinkIndex()` / `getBacklinks()` again at write time and wrote
+whatever it found. Race (in-process, NOT the documented OS-level
+residual): protected `notes/a`; rename `notes/b → notes/c`; plans 1
+and 2 see no link → guard passes; a concurrent editor save of
+`notes/a` (body gains `[[notes/b]]`, link index updated, `notes/a`
+never locked by the rename) lands before discovery 3; the executor
+rewrites `notes/a.md` — unguarded, unlocked — bypassing every deny
+reason and verify-clean. The §16.7 tests all pre-established the
+backlink before the call, so they never hit this window.
+
+**Fix — locked plan = guarded plan = executed plan**
+(`fix(ai): execute the guarded rename plan atomically`, `6ae3b77`,
+baseline `169430c`; scoped to `server/ai/tools.ts` + its tests +
+this doc — `git diff 169430c..6ae3b77 -- src e2e` empty;
+`tool-safety.ts` unchanged):
+
+- `RenamePlan` (immutable): `sourcePath`, `destinationPath`, and
+  every reference rewrite as `{sourcePath, outputPath, originalRaw,
+  updatedRaw}` — self-references included (their output is the
+  destination). `buildRenamePlan` mirrors the historical executor
+  pass EXACTLY (same link index snapshot, same
+  `rewriteDocumentReferences`, same `updated !== refRaw` — no false
+  blocks) and is read-only (no metadata touch).
+- `executeGuardedRename`: plan 1 → lock its full footprint →
+  plan 2 (candidate) inside the lock → **footprint drift fails
+  closed** with a retryable tool error (acquiring additional locks
+  while holding the current set would break the globally-sorted
+  acquisition order — deadlock risk; a retry replans from scratch
+  against the updated link set and goes through the normal guard)
+  → guard the candidate → execute the candidate. Drift fails closed
+  under EVERY policy including unrestricted (it is a concurrency
+  hazard, not a safety block: no `active-context-` code).
+- `executeRenameFile(input, db, plan)` consumes the plan VERBATIM:
+  no `getLinkIndex` for footprint purposes, no
+  `rewriteDocumentReferences`, no `update_references` re-check —
+  the guarded plan and the executed plan are the same object, so a
+  concurrent index change after the guard cannot add an unguarded
+  write. A newly-appeared link simply stays unrewritten (dangling
+  until the next save/index repair) — the reviewer-accepted
+  alternative to failing the whole rename. Validation, metadata
+  rollback snapshots (captured before the move), the write loop,
+  rollback, `applyRename` / `applyWrite` index maintenance, and the
+  `changed` / `changes` descriptor shapes are unchanged.
+  `dispatchToolCall` fails closed if a rename ever arrives without
+  a plan.
+
+**Tests (strict TDD red-first; the seam reproduces the reviewer's
+race deterministically).** Test-only seam
+`__setRenameRaceHooksForTesting({beforeReplan, beforeExecute})` —
+deterministic injection of a simulated concurrent
+`PUT /api/posts/notes/a` (body + `idx.applyWrite`) into each race
+window; null in production. 9 new integration tests: (a) a backlink
+added to the protected document AFTER the guarded plan is NEVER
+rewritten — ×4 policies (unsaved / read-only / external /
+verify-clean): the stable plan executes, `notes/a` keeps exactly
+the concurrent save's body (`[[notes/b]]`, not `[[notes/c]]`),
+zero reference change descriptors; (b) footprint drift inside the
+lock fails closed retryable — ×5 policies (the four + unrestricted):
+retryable error text, no `active-context-` code, source intact,
+destination absent, no descriptors. Red phase reproduced the race
+byte-for-byte (`notes/a` received `see [[notes/c]]` via the
+executor's independent discovery) before the fix.
+
+**Re-gate evidence (recorded 2026-07-22, sealed tree `6ae3b77`).**
+Full §12 closure gates re-run from scratch, `npm ci` first. Local
+only — no CI exists.
+
+| Gate | Result | Detail |
+| --- | --- | --- |
+| `npm ci` | exit 0 | clean install |
+| `npm run typecheck` | exit 0 | clean |
+| `npm run lint:icons` | exit 0 | 2 files scanned, 81 `<svg>` elements, no violations |
+| `npm test` | exit 0 | Vitest: **135 test files passed (135)**, **1 968 tests passed (1 968)** |
+| `npm run build` | exit 0 | built in 1.43 s |
+| `npm run test:e2e:draft-store` | exit 0 | **38 passed** (28.5 s) |
+| `npm run test:e2e` | exit 0 | **19 passed** (19.9 s) |
+| `git diff --check` | exit 0 | no whitespace errors |
+| `git status --short` | only this docs file | before the closure re-record commit |
+
+Audits re-run: `active-context-` absent from `src/` / `e2e/`; no
+`console.*raw` / `liveContext` / `plan` hits in `server/ai/`.
+Delta vs the §16.7 re-gate (1 959 tests): +9 integration tests.
+
+**Judgment after fix:** verification purity PASS (unchanged);
+static backlink footprint PASS (unchanged); existing-backlink
+indirect-write protection PASS (unchanged); plan/lock/guard/
+execution consistency PASS (one plan: locked = guarded = executed);
+concurrent-new-backlink protection PASS (post-guard index changes
+cannot affect the executed writes; in-lock drift fails closed).
+Edit-10.5 (Final Closure) remains pending — it does NOT start
+before this fix is re-reviewed.
