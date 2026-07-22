@@ -745,15 +745,19 @@ E2E traps found and recorded (for 10.4 / 10.5 reuse):
 
 Tests (strict TDD — unit / integration):
 
-- Eight 10.3-touched suites, **223 tests, all green**:
+- Eight 10.3-touched suites, **232 tests, all green**:
   `server/__tests__/live-context.test.ts` (new, 96 — parser matrix:
   all four kinds, exact-key violations, oversize, NUL bytes, v /
   kind / identity rules), `server/__tests__/ai-routes.test.ts` (41 —
   normalization: live wins, malformed never falls back, 400 / 413
   JSON before SSE, legacy-path compat, none), `server/__tests__/chat.test.ts`
-  (20 — prompt sections per ChatContext kind, injection boundary,
-  no read_file hint in the live branch, snapshot still never
-  persisted), `src/composables/vault/__tests__/useAiHistory.test.ts`
+  (29 — prompt sections per ChatContext kind, injection boundary,
+  delimiter unforgeability (forged `</live-workspace-context-json>`
+  bodies in every string position — raw of all four kinds, diff
+  before/after, recovery draft/disk, title — keep exactly one
+  boundary pair and round-trip byte-exact), no read_file hint in the
+  live branch, snapshot still never persisted),
+  `src/composables/vault/__tests__/useAiHistory.test.ts`
   (19 — conditional spread: key omitted when absent, verbatim when
   present, snapshot never enters message state), `src/lib/__tests__/ai-api.test.ts`
   (18 — wire serialization), `src/components/vault/__tests__/AiPanel.test.ts`
@@ -786,38 +790,60 @@ Compatibility audit (all clean):
 - `legacyTransportPathForCapture`: zero hits in code (one mention
   in this doc's 10.2 history).
 - `JSON.stringify(liveContext, ...)`: exactly one production site —
-  the system prompt in `server/ai/chat.ts`; the size check in
-  `server/ai/live-context.ts` serializes the candidate value
-  internally.
+  the prompt serializer `serializeLiveContextForPrompt` in
+  `server/ai/chat.ts`, which additionally escapes `&` `<` `>` as
+  JSON-legal `\uXXXX` so no body can forge the delimiter tags; the
+  size check in `server/ai/live-context.ts` serializes the candidate
+  value internally.
 - The snapshot is never written to the message DB, never echoed
   over SSE, and never enters logs / URLs / Toast / telemetry.
 - `only` / `skip` audits: zero hits.
 
+Corrected in `fix(ai): harden live context prompt boundary`
+(`23d3a1a`): the first 10.3 tree (`4dd5fff`) inlined the snapshot
+with a bare `JSON.stringify`, which escapes quotes and control
+characters but NOT `&` `<` `>`. A Markdown body could therefore
+literally spell `</live-workspace-context-json>` and — to a model
+reading the prompt — close the data block early, weakening the
+declared injection boundary while write tools are still only
+prompt-guarded (server-side enforcement is 10.4). The serializer
+now escapes exactly those three characters as JSON-legal unicode
+escapes over the whole document: the delimiter is unforgeable, the
+escapes decode back on any JSON parse (semantic content unchanged),
+and every string position is protected uniformly. Regression tests
+were red first (forged delimiters counted as real boundaries — 9
+failing) and green after. Scoped to prompt serialization + tests;
+client transport, route, parser, DB, SSE, and tools untouched.
+
 ### 15.1 Final gate evidence (recorded 2026-07-22, sealed tree)
 
 Full §12 closure gates re-run from scratch on the sealed tree
-`4dd5fff` (`feat(ai): transport live workspace context`), working
-tree clean before and after. Local only — no CI exists.
+`23d3a1a` (`fix(ai): harden live context prompt boundary` — the
+final Edit-10.3 production tree, on top of the transport commit
+`4dd5fff`), working tree clean before and after. Local only — no CI
+exists.
 
 | Gate | Result | Detail |
 | --- | --- | --- |
 | `npm run typecheck` | exit 0 | clean |
 | `npm run lint:icons` | exit 0 | 2 files scanned, 81 `<svg>` elements, no violations |
-| `npm test` | exit 0 | Vitest: **134 test files passed (134)**, **1 825 tests passed (1 825)**, duration 26.59 s |
-| `npm run build` | exit 0 | built in 1.01 s (pre-existing rolldown chunk-size notice unchanged) |
-| `npm run test:e2e:draft-store` | exit 0 | **38 passed** (27.0 s) |
-| `npm run test:e2e` | exit 0 | **19 passed** (19.2 s — 9 pre-existing + 10 new `ai-live-context`) |
+| `npm test` | exit 0 | Vitest: **134 test files passed (134)**, **1 834 tests passed (1 834)**, duration 28.84 s |
+| `npm run build` | exit 0 | built in 1.15 s (pre-existing rolldown chunk-size notice unchanged) |
+| `npm run test:e2e:draft-store` | exit 0 | **38 passed** (26.6 s) |
+| `npm run test:e2e` | exit 0 | **19 passed** (18.7 s — 9 pre-existing + 10 new `ai-live-context`) |
 | `git diff --check` | exit 0 | no whitespace errors |
 | `git status --short` | empty | tree clean after the full run |
 
-One fix was needed between the first and the final gate run:
+Two fixes were needed on the way to the final run:
 `TocPanel.test.ts` still asserted the pre-10.3 read-only gate
-(disabled tab, unmounted panel) and failed accordingly; the test was
-rewritten to assert the lifted gate (recorded above). All eight
-gates were then re-run from scratch on the final tree — the table
-above is that final run, not the first.
+(disabled tab, unmounted panel) and failed accordingly — rewritten
+to assert the lifted gate; and review found the delimiter-forgery
+hole in the prompt serializer, closed by `23d3a1a` with 9 new
+regression tests (red first). All eight gates were re-run from
+scratch on the final tree — the table above is that final run, not
+the first.
 
 Delta vs the Edit-10.2 seal (133 files / 1 712 tests, e2e 9):
-+1 test file / +113 tests; e2e 9 → 19 (+10).
++1 test file / +122 tests; e2e 9 → 19 (+10).
 
 Known issues: None.
