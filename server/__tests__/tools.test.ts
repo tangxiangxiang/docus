@@ -676,6 +676,22 @@ describe('Edit-10.4 tool safety: executeToolCall with safety policy', () => {
       expect(r.content).not.toContain(CLEAN_RAW)
     })
 
+    it('a blocked stale mutation leaves the metadata row, tags, and updatedAt untouched', async () => {
+      // Verification is a PURE READ: a mutation blocked as stale must
+      // not advance updatedAt, re-touch tags, or otherwise modify the
+      // documents row while deciding. Snapshot the full hydrated row
+      // (id, path, title, summary, tags, createdAt, updatedAt) before
+      // the blocked call and require byte-identical equality after.
+      saveDocumentMetadata(db, { id: 'doc-clean', path: 'notes/a', title: 'A', summary: 'S', tags: ['alpha', 'beta'] })
+      writeFile('notes/a.md', CLEAN_RAW)
+      const before = getDocumentMetadata(db, 'notes/a')
+      writeFile('notes/a.md', 'CHANGED_ON_DISK_777')
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'ATTACKER' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-stale')
+      expect(getDocumentMetadata(db, 'notes/a')).toEqual(before)
+    })
+
     it('blocks with unverifiable when the file is missing — write_file must NOT recreate it', async () => {
       // No file on disk; the snapshot still claims notes/a.
       const r = await executeToolCall('write_file', { path: 'notes/a', content: 'ATTACKER' }, ctxWith(cleanPolicy()))
@@ -691,6 +707,20 @@ describe('Edit-10.4 tool safety: executeToolCall with safety policy', () => {
       expect(r.isError).toBe(true)
       expect(r.content).toContain('active-context-unverifiable')
       expect(readDisk('notes/a')).toBe(CLEAN_RAW)
+    })
+
+    it('blocks with unverifiable when the file exists but has NO documents row — and creates none', async () => {
+      // File on disk, metadata row completely missing. Verification
+      // must fail closed as unverifiable and must NOT repair server
+      // state: a blocked call may not create a documents row (that
+      // would mint a fresh identity inside a mutation it refused).
+      writeFile('notes/a.md', CLEAN_RAW)
+      const r = await executeToolCall('write_file', { path: 'notes/a', content: 'ATTACKER' }, ctxWith(cleanPolicy()))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-unverifiable')
+      expect(readDisk('notes/a')).toBe(CLEAN_RAW)
+      const rows = db.prepare("SELECT COUNT(*) AS c FROM documents WHERE path = 'notes/a'").get() as { c: number }
+      expect(rows.c).toBe(0)
     })
 
     it('blocks with unverifiable when the file is unreadable (path is a directory)', async () => {
@@ -774,6 +804,92 @@ describe('Edit-10.4 tool safety: executeToolCall with safety policy', () => {
       expect(r.isError).toBe(false)
       expect(r.changed?.kind).toBe('rename')
       expect(readDisk('notes/y')).toBe('Q_BODY')
+    })
+  })
+
+  describe('rename_file backlink footprint: indirect writes to the protected document are guarded', () => {
+    // rename_file does not only move source → destination: with
+    // update_references (default true) it also rewrites EVERY file
+    // that links to the source. The safety footprint must cover those
+    // backlink files too — an "unrelated" rename whose reference
+    // rewrite would modify the protected document is NOT unrelated.
+
+    it('blocks an unrelated rename whose reference rewrite would modify the dirty protected document', async () => {
+      // notes/a is protected (dirty) and contains [[notes/b]]. Renaming
+      // notes/b → notes/c looks unrelated by source/destination alone,
+      // but the backlink rewrite would overwrite notes/a.md on disk.
+      seed('notes/a', 'see [[notes/b]]', 'doc-a', 'Protected')
+      seed('notes/b', 'B_BODY', 'doc-b', 'B')
+      const r = await executeToolCall('rename_file', { path: 'notes/b', new_path: 'notes/c' }, ctxWith(dirtyPolicy))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-unsaved')
+      // No file_changed material reaches the chat loop.
+      expect(r.changed).toBeUndefined()
+      expect(r.changes).toBeUndefined()
+      // Both the protected backlink file AND the rename source are
+      // byte-exact; the destination was never created.
+      expect(readDisk('notes/a')).toBe('see [[notes/b]]')
+      expect(readDisk('notes/b')).toBe('B_BODY')
+      expect(fs.existsSync(path.join(contentDir, 'notes/c.md'))).toBe(false)
+      expect(getDocumentMetadata(db, 'notes/a')?.title).toBe('Protected')
+    })
+
+    it('allows the same rename with update_references=false and leaves the protected document untouched', async () => {
+      // No reference rewrite → the footprint is only source and
+      // destination, both unrelated → the rename executes and notes/a
+      // keeps its (now dangling) link.
+      seed('notes/a', 'see [[notes/b]]', 'doc-a', 'Protected')
+      seed('notes/b', 'B_BODY', 'doc-b', 'B')
+      const r = await executeToolCall(
+        'rename_file',
+        { path: 'notes/b', new_path: 'notes/c', update_references: false },
+        ctxWith(dirtyPolicy),
+      )
+      expect(r.isError).toBe(false)
+      expect(r.changed?.kind).toBe('rename')
+      expect(readDisk('notes/a')).toBe('see [[notes/b]]')
+      expect(readDisk('notes/c')).toBe('B_BODY')
+      expect(r.changes).toEqual([])
+    })
+
+    it('verify-clean: re-verifies the protected document when it would be rewritten as a backlink (allowed on match)', async () => {
+      // Clean protected document whose server identity and raw still
+      // match the snapshot: the backlink rewrite may proceed, but ONLY
+      // after documentId + raw re-verification on notes/a itself.
+      seed('notes/a', 'see [[notes/b]]', 'doc-a', 'Protected')
+      seed('notes/b', 'B_BODY', 'doc-b', 'B')
+      const policy: ToolSafetyPolicy = {
+        kind: 'verify-clean-document',
+        protectedPath: 'notes/a',
+        expectedDocumentId: 'doc-a',
+        expectedRaw: 'see [[notes/b]]',
+      }
+      const r = await executeToolCall('rename_file', { path: 'notes/b', new_path: 'notes/c' }, ctxWith(policy))
+      expect(r.isError).toBe(false)
+      expect(r.changed?.kind).toBe('rename')
+      expect(readDisk('notes/a')).toBe('see [[notes/c]]')
+      expect(r.changes).toEqual([expect.objectContaining({ path: 'notes/a', kind: 'write' })])
+    })
+
+    it('verify-clean: blocks with stale when the protected backlink document changed after the snapshot', async () => {
+      seed('notes/a', 'see [[notes/b]]', 'doc-a', 'Protected')
+      seed('notes/b', 'B_BODY', 'doc-b', 'B')
+      // External edit lands on the protected document after the
+      // snapshot: the backlink rewrite must be refused as stale and
+      // leave all three files byte-exact.
+      writeFile('notes/a.md', 'see [[notes/b]] + appended later')
+      const policy: ToolSafetyPolicy = {
+        kind: 'verify-clean-document',
+        protectedPath: 'notes/a',
+        expectedDocumentId: 'doc-a',
+        expectedRaw: 'see [[notes/b]]',
+      }
+      const r = await executeToolCall('rename_file', { path: 'notes/b', new_path: 'notes/c' }, ctxWith(policy))
+      expect(r.isError).toBe(true)
+      expect(r.content).toContain('active-context-stale')
+      expect(readDisk('notes/a')).toBe('see [[notes/b]] + appended later')
+      expect(readDisk('notes/b')).toBe('B_BODY')
+      expect(fs.existsSync(path.join(contentDir, 'notes/c.md'))).toBe(false)
     })
   })
 

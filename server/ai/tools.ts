@@ -681,6 +681,58 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     .map((reference) => ({ path: reference.path, kind: 'write', newRaw: reference.updated })) }
 }
 
+// ---- safety footprint planning (Edit-10.4) ----
+
+/**
+ * Compute the backlink footprint of a rename: every file whose
+ * reference rewrite WILL be modified by executeRenameFile's
+ * update_references pass (defaults to on). Mirrors the executor's
+ * loop exactly — same link index snapshot, same
+ * rewriteDocumentReferences call, same `updated !== refRaw`
+ * predicate — so the paths locked and guarded are precisely the
+ * paths that will be written (no false blocks on backlinks whose
+ * text the rewrite wouldn't change). Self-references are skipped:
+ * the executor writes those into the destination file itself, which
+ * is already in the footprint. Metadata is NOT touched here — the
+ * executor's ensureDocumentMetadata calls run only once the guard
+ * has allowed the rename.
+ *
+ * Throws propagate: a failure here is the SAME failure the executor
+ * would hit before any side effect (index build or a reference
+ * read), and executeToolCall converts it into the identical
+ * rename_file tool error — same behavior as before the guard
+ * existed, no crash into the chat loop.
+ */
+async function planRenameReferences(input: {
+  path?: string
+  new_path?: string
+  update_references?: boolean
+}): Promise<string[]> {
+  if (input.update_references === false) return []
+  if (typeof input.path !== 'string' || !input.path) return []
+  if (typeof input.new_path !== 'string' || !input.new_path) return []
+  const idx = await getLinkIndex()
+  const allPaths = idx.snapshot().paths
+  const out: string[] = []
+  for (const backlink of idx.getBacklinks(input.path)) {
+    if (backlink.source === input.path) continue
+    const refRaw = fs.readFileSync(filePathFor(backlink.source), 'utf8')
+    const updated = rewriteDocumentReferences(refRaw, backlink.source, input.path, input.new_path, allPaths)
+    if (updated !== refRaw) out.push(backlink.source)
+  }
+  return out
+}
+
+/** Set equality over canonical logical paths (notes/a ≡ notes/a.md). */
+function sameNormalizedPathSet(a: string[], b: string[]): boolean {
+  const normalize = (list: string[]) => new Set(list.map((p) => normalizeLogicalContentPath(p) ?? p))
+  const setA = normalize(a)
+  const setB = normalize(b)
+  if (setA.size !== setB.size) return false
+  for (const p of setA) if (!setB.has(p)) return false
+  return true
+}
+
 // ---- dispatcher ----
 
 export async function executeToolCall(
@@ -702,16 +754,26 @@ export async function executeToolCall(
   // mutation share one critical section, so an autosave landing
   // mid-turn is seen by the clean-document re-verification (as
   // active-context-stale) instead of being silently raced.
-  const target = getToolMutationTarget(name, input)
-  if (target.kind === 'none' || target.kind === 'unknown') {
+  const baseTarget = getToolMutationTarget(name, input)
+  if (baseTarget.kind === 'none' || baseTarget.kind === 'unknown') {
     return dispatchToolCall(name, input, db)
   }
+  let target: Extract<ToolMutationTarget, { kind: 'single-path' } | { kind: 'rename' }> = baseTarget
+  if (target.kind === 'rename') {
+    // Resolve the rename's FULL mutation footprint before locking:
+    // every backlink file its reference rewrite will modify. A rename
+    // whose source and destination are both unrelated to the active
+    // document can still indirectly rewrite a link INSIDE it.
+    try {
+      target = { ...target, referencePaths: await planRenameReferences(input as { path?: string; new_path?: string; update_references?: boolean }) }
+    } catch (e) {
+      return err(`rename_file: ${(e as Error).message}`)
+    }
+  }
   return withMutationLocks(target, async () => {
-    const decision = await guardToolMutation({
-      policy: ctx.safety ?? { kind: 'unrestricted' },
-      target,
-      readCurrentDocument: (logicalPath) => readCurrentServerDocument(db, logicalPath),
-    })
+    const policy = ctx.safety ?? { kind: 'unrestricted' }
+    const readCurrentDocument = (logicalPath: string) => readCurrentServerDocument(db, logicalPath)
+    let decision = await guardToolMutation({ policy, target, readCurrentDocument })
     if (!decision.allowed) {
       // Ordinary tool_result: is_error text, no changed descriptor,
       // no throw, no file_changed, no disk or DB touch. The model can
@@ -719,17 +781,43 @@ export async function executeToolCall(
       // asking the user to save / resolve the workspace.
       return err(decision.message)
     }
+    if (target.kind === 'rename') {
+      // Re-derive the backlink footprint INSIDE the lock: the link
+      // index can drift between planning and lock acquisition
+      // (concurrent editor saves). If the actual reference set now
+      // disagrees with the locked one, re-guard the recomputed
+      // footprint — a newly-protected path fails closed, unrelated
+      // drift keeps the unrelated paths' original behavior.
+      let recomputed: string[]
+      try {
+        recomputed = await planRenameReferences(input as { path?: string; new_path?: string; update_references?: boolean })
+      } catch (e) {
+        return err(`rename_file: ${(e as Error).message}`)
+      }
+      if (!sameNormalizedPathSet(target.referencePaths, recomputed)) {
+        decision = await guardToolMutation({
+          policy,
+          target: { ...target, referencePaths: recomputed },
+          readCurrentDocument,
+        })
+        if (!decision.allowed) return err(decision.message)
+      }
+    }
     return dispatchToolCall(name, input, db)
   })
 }
 
 /**
  * Acquire the per-path write lock(s) for one mutation target, in a
- * globally sorted order so concurrent two-path operations (renames)
- * cannot deadlock. The lock key is the CANONICAL logical path — the
- * same key `routes/posts.ts` locks when the editor saves — so the
- * guard's server re-verification and the tool's own write are atomic
- * with respect to editor saves on the same document.
+ * globally sorted order so concurrent multi-path operations (renames)
+ * cannot deadlock. A rename locks its ENTIRE footprint — source,
+ * destination, and every backlink reference file it will rewrite —
+ * so the guard's decision and the executor's writes are all atomic
+ * with respect to editor saves on any touched document. The lock key
+ * is the CANONICAL logical path — the same key `routes/posts.ts`
+ * locks when the editor saves — so the guard's server re-verification
+ * and the tool's own write are atomic with respect to editor saves
+ * on the same document.
  */
 async function withMutationLocks(
   target: Extract<ToolMutationTarget, { kind: 'single-path' } | { kind: 'rename' }>,
@@ -737,7 +825,7 @@ async function withMutationLocks(
 ): Promise<ToolResult> {
   const rawPaths = target.kind === 'single-path'
     ? [target.path]
-    : [target.sourcePath, target.destinationPath]
+    : [target.sourcePath, target.destinationPath, ...target.referencePaths]
   // Unnormalizable paths keep their raw spelling as the lock key so
   // the call still serializes; the executor's own assertSafePath
   // rejects them before any side effect.

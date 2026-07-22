@@ -145,8 +145,11 @@ describe('getToolMutationTarget', () => {
   )
 
   it('classifies rename_file with both paths', () => {
+    // Static classification: the backlink reference footprint is
+    // resolved later by the dispatcher (it needs the link index), so
+    // the classifier emits an empty referencePaths to be filled in.
     expect(getToolMutationTarget('rename_file', { path: 'notes/a', new_path: 'notes/b' }))
-      .toEqual({ kind: 'rename', sourcePath: 'notes/a', destinationPath: 'notes/b' })
+      .toEqual({ kind: 'rename', sourcePath: 'notes/a', destinationPath: 'notes/b', referencePaths: [] })
   })
 
   it('fails closed on unknown tools — never defaults to read-only', () => {
@@ -271,8 +274,11 @@ describe('deriveToolSafetyPolicy', () => {
 // ─── §11: guard decisions ────────────────────────────────────────────
 
 const single = (path: string): ToolMutationTarget => ({ kind: 'single-path', path })
-const rename = (sourcePath: string, destinationPath: string): ToolMutationTarget =>
-  ({ kind: 'rename', sourcePath, destinationPath })
+const rename = (
+  sourcePath: string,
+  destinationPath: string,
+  referencePaths: string[] = [],
+): ToolMutationTarget => ({ kind: 'rename', sourcePath, destinationPath, referencePaths })
 const unknownTarget: ToolMutationTarget = { kind: 'unknown' }
 
 const denyUnsaved: ToolSafetyPolicy = {
@@ -355,6 +361,37 @@ describe('guardToolMutation', () => {
   it('deny: fully unrelated rename is allowed', async () => {
     const decision = await guardToolMutation({
       policy: denyReadOnly, target: rename('notes/b', 'notes/c'), readCurrentDocument: () => null,
+    })
+    expect(decision).toEqual({ allowed: true })
+  })
+
+  // The rename footprint includes every file the backlink rewrite
+  // will touch — an "unrelated" rename of notes/b can still WRITE the
+  // protected document when it references notes/b ([[notes/b]] →
+  // [[notes/c]]), so reference paths are guarded like source/dest.
+  it('deny: rename is blocked when a BACKLINK reference path is protected', async () => {
+    const decision = await guardToolMutation({
+      policy: denyUnsaved,
+      target: rename('notes/b', 'notes/c', ['notes/a']),
+      readCurrentDocument: () => null,
+    })
+    expect(decision).toMatchObject({ allowed: false, code: 'active-context-unsaved' })
+  })
+
+  it('deny: rename is blocked when a .md-spelled reference path is protected', async () => {
+    const decision = await guardToolMutation({
+      policy: denyReadOnly,
+      target: rename('notes/b', 'notes/c', ['notes/x', 'notes/a.md']),
+      readCurrentDocument: () => null,
+    })
+    expect(decision).toMatchObject({ allowed: false, code: 'active-context-read-only' })
+  })
+
+  it('deny: rename with only unrelated reference paths is allowed', async () => {
+    const decision = await guardToolMutation({
+      policy: denyReadOnly,
+      target: rename('notes/b', 'notes/c', ['notes/x', 'notes/y']),
+      readCurrentDocument: () => null,
     })
     expect(decision).toEqual({ allowed: true })
   })
@@ -450,6 +487,38 @@ describe('guardToolMutation', () => {
     })
     expect(allowed).toEqual({ allowed: true })
     expect(reads).toBe(0)
+  })
+
+  it('verify-clean: a protected BACKLINK reference path is re-verified before the rewrite', async () => {
+    const readPaths: string[] = []
+    const allowed = await guardToolMutation({
+      policy: verifyClean,
+      target: rename('notes/b', 'notes/c', ['notes/a']),
+      readCurrentDocument: (p) => {
+        readPaths.push(p)
+        return { documentId: 'doc-a', path: p, raw: RAW_SENTINEL }
+      },
+    })
+    expect(allowed).toEqual({ allowed: true })
+    expect(readPaths).toEqual(['notes/a'])
+  })
+
+  it('verify-clean: stale protected backlink blocks the whole rename', async () => {
+    const decision = await guardToolMutation({
+      policy: verifyClean,
+      target: rename('notes/b', 'notes/c', ['notes/a.md']),
+      readCurrentDocument: (p) => ({ documentId: 'doc-a', path: p, raw: 'DISK_CHANGED_AFTER_SNAPSHOT' }),
+    })
+    expect(decision).toMatchObject({ allowed: false, code: 'active-context-stale' })
+  })
+
+  it('verify-clean: protected backlink now owned by another identity blocks the whole rename', async () => {
+    const decision = await guardToolMutation({
+      policy: verifyClean,
+      target: rename('notes/b', 'notes/c', ['notes/a']),
+      readCurrentDocument: (p) => ({ documentId: 'doc-SOMEONE-ELSE', path: p, raw: RAW_SENTINEL }),
+    })
+    expect(decision).toMatchObject({ allowed: false, code: 'active-context-identity-mismatch' })
   })
 
   it('verify-clean: works with an async resolver', async () => {
