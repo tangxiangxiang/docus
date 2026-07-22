@@ -3,7 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import { canModify } from '../../src/composables/archiveProtocol.js'
-import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged, writeDurableJournal } from '../atomicTextWrite.js'
+import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged, removeDurableJournal, syncParentDirectoryBestEffort, writeDurableJournal } from '../atomicTextWrite.js'
 import {
   deleteDocumentMetadataPrefix,
   moveDocumentMetadataPrefix,
@@ -179,12 +179,12 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     // closed (restored: false) instead of being replaced by rename(2).
     const moved = await createOnlyMoveDirectory(src, dest)
     if (!moved.restored) {
-      await fs.rm(journalPath, { force: true }).catch(() => {})
+      await removeDurableJournal(journalPath).catch(() => {})
       return bad(c, 'destination was claimed by an external writer during the move; retry', 409)
     }
     renamed = true
     moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
-    await fs.rm(journalPath, { force: true }).catch(() => {})
+    await removeDurableJournal(journalPath).catch(() => {})
     if (__folderRaceHooks?.afterRenamePlanBuilt) await __folderRaceHooks.afterRenamePlanBuilt()
     for (const snapshot of folderReferenceSnapshots) {
       const target = filePathFor(snapshot.writePath)
@@ -234,7 +234,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     // source was re-used), KEEP it: should a crash interrupt this
     // rollback, startup recovery reads it and completes the metadata
     // move to dest instead of binding identities to a missing tree.
-    if (rolledTreeBack && journalPath) await fs.rm(journalPath, { force: true }).catch(() => {})
+    if (rolledTreeBack && journalPath) await removeDurableJournal(journalPath).catch(() => {})
     if (rollbackSourceReused) {
       // Identity follows the bytes: the tree is at newPath. Move every
       // restored row under srcPath back under newPath (or drop them if
@@ -317,8 +317,10 @@ folderRoutes.delete('/api/folders/*', async (c) => {
     return bad(c, 'folder is not empty; pass ?recursive=true to delete', 400)
   }
   const staged = `${abs}.docus-delete-inflight-${randomUUID()}`
+  const quarantine = `${abs}.docus-quarantine-reuse-${randomUUID()}`
   const databaseSnapshot = snapshotDocumentMetadataPrefixMutation(metadataDb(), [folderP], all)
   await fs.rename(abs, staged)
+  await syncParentDirectoryBestEffort(staged)
   try {
     deleteDocumentMetadataPrefix(metadataDb(), folderP)
     await fs.rm(staged, { recursive: true, force: true })
@@ -355,11 +357,17 @@ folderRoutes.delete('/api/folders/*', async (c) => {
           // stale row, leave the old tree quarantined under its
           // staging name, and refresh the link index against the new
           // subtree.
-          try { deleteDocumentMetadataPrefix(metadataDb(), folderP) }
-          catch (rollbackError) { rollbackErrors.push(rollbackError) }
-          try { await reindexReusedSubtree() } catch { /* next rebuild repairs */ }
-          try { await fs.rename(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`) }
-          catch (rollbackError) { rollbackErrors.push(rollbackError) }
+          let quarantined = false
+          try {
+            await fs.rename(staged, quarantine)
+            await syncParentDirectoryBestEffort(quarantine)
+            quarantined = true
+          } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+          if (quarantined) {
+            try { deleteDocumentMetadataPrefix(metadataDb(), folderP) }
+            catch (rollbackError) { rollbackErrors.push(rollbackError) }
+            try { await reindexReusedSubtree() } catch { /* next rebuild repairs */ }
+          }
         }
       } else {
         // Path reuse: an external writer recreated the folder while the
@@ -367,11 +375,17 @@ folderRoutes.delete('/api/folders/*', async (c) => {
         // new generation's files — drop every stale row under the path
         // (the new files get fresh identities on their next API touch)
         // and leave the old tree quarantined under its staging name.
-        try { deleteDocumentMetadataPrefix(metadataDb(), folderP) }
-        catch (rollbackError) { rollbackErrors.push(rollbackError) }
-        try { await reindexReusedSubtree() } catch { /* next rebuild repairs */ }
-        try { await fs.rename(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`) }
-        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        let quarantined = false
+        try {
+          await fs.rename(staged, quarantine)
+          await syncParentDirectoryBestEffort(quarantine)
+          quarantined = true
+        } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        if (quarantined) {
+          try { deleteDocumentMetadataPrefix(metadataDb(), folderP) }
+          catch (rollbackError) { rollbackErrors.push(rollbackError) }
+          try { await reindexReusedSubtree() } catch { /* next rebuild repairs */ }
+        }
       }
     } else {
       try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }

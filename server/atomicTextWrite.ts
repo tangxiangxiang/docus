@@ -23,11 +23,23 @@ export async function writeDurableJournal(journalPath: string, entry: unknown): 
     await handle.sync()
     await handle.close()
     handle = null
+    // fsync(file) persists bytes, but a newly-created directory entry is
+    // not power-loss durable until its parent directory is synced too.
+    await syncParentDirectoryBestEffort(journalPath)
   } catch (error) {
     await handle?.close().catch(() => {})
     await fs.rm(journalPath, { force: true }).catch(() => {})
+    await syncParentDirectoryBestEffort(journalPath)
     throw error
   }
+}
+
+/** Remove a journal and durably persist disappearance of its directory
+ * entry. This prevents a completed operation's journal from reappearing
+ * after power loss and being replayed on the next startup. */
+export async function removeDurableJournal(journalPath: string): Promise<void> {
+  await fs.rm(journalPath, { force: true })
+  await syncParentDirectoryBestEffort(journalPath)
 }
 
 /** Test-only hooks for real crash tests: a child process installs a
@@ -269,7 +281,7 @@ export async function prepareAtomicTextWrite(
       const fail = async (error: unknown): Promise<never> => {
         settled = true
         await fs.rm(temporaryPath, { force: true }).catch(() => {})
-        await fs.rm(journalPath, { force: true }).catch(() => {})
+        await removeDurableJournal(journalPath).catch(() => {})
         throw error
       }
       // 0. JOURNAL: a durable record of this commit's intent and both
@@ -351,7 +363,7 @@ export async function prepareAtomicTextWrite(
       await fs.rm(stagedPath, { force: true }).catch(() => {})
       // The journal goes LAST: while it exists, recovery still knows
       // this commit was in flight and can finish or undo it.
-      await fs.rm(journalPath, { force: true }).catch(() => {})
+      await removeDurableJournal(journalPath).catch(() => {})
       await syncParentDirectoryBestEffort(targetPath)
     },
     async rollback() {

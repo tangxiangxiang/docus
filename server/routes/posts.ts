@@ -24,6 +24,8 @@ import {
   atomicReplaceTextIfUnchanged,
   atomicRemoveTextIfUnchanged,
   prepareAtomicTextCreate,
+  removeDurableJournal,
+  syncParentDirectoryBestEffort,
   prepareAtomicTextWrite,
   readStableTextSnapshot,
   UnstableTextSnapshotError,
@@ -584,6 +586,9 @@ postRoutes.patch('/api/posts/*', async (c) => {
         }
       } catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
+    if (error instanceof RenameSourceReusedError && error.survivingPath === 'destination') {
+      rollbackSourceReused = true
+    }
     if (rollbackSourceReused) {
       // Identity follows the bytes, not the path: the document now
       // lives at destPath. If the destination somehow vanished too
@@ -595,6 +600,9 @@ postRoutes.patch('/api/posts/*', async (c) => {
         else deleteDocumentMetadata(metadataDb(), srcPath)
         const idx = await getLinkIndex()
         idx.applyRename(srcPath, destPath, sourceRaw)
+        if (error instanceof RenameSourceReusedError && error.journalPath) {
+          await removeDurableJournal(error.journalPath)
+        }
       } catch { /* best effort: the next index rebuild re-derives paths */ }
     }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'reference update failed and rollback was incomplete')
@@ -664,8 +672,10 @@ postRoutes.delete('/api/posts/*', async (c) => {
   return withVaultStructureLock(() => withDocumentWriteLock(splat, async () => {
   if (!await exists(abs)) return bad(c, 'not found', 404)
   const staged = `${abs}.docus-delete-inflight-${randomUUID()}`
+  const quarantine = `${abs}.docus-quarantine-reuse-${randomUUID()}`
   const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [splat])
   await fs.rename(abs, staged)
+  await syncParentDirectoryBestEffort(staged)
   try {
     deleteDocumentMetadata(metadataDb(), splat)
     await fs.unlink(staged)
@@ -689,8 +699,9 @@ postRoutes.delete('/api/posts/*', async (c) => {
             await fs.unlink(staged)
             restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)
           } else {
+            await fs.rename(staged, quarantine)
+            await syncParentDirectoryBestEffort(quarantine)
             const reusedRaw = await reidentifyReusedPath(splat, abs)
-            await fs.rename(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`)
             // The failed delete never ran applyDelete; the index still
             // carries the old file's outbound links/title for this
             // path. Re-apply against the NEW generation.
@@ -702,8 +713,9 @@ postRoutes.delete('/api/posts/*', async (c) => {
           // must never bind to foreign bytes — drop the stale identity,
           // give the new file a fresh one, and leave the old generation
           // quarantined under its staging name.
+          await fs.rename(staged, quarantine)
+          await syncParentDirectoryBestEffort(quarantine)
           const reusedRaw = await reidentifyReusedPath(splat, abs)
-          await fs.rename(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`)
           try { (await getLinkIndex()).applyWrite(splat, reusedRaw) } catch { /* next rebuild repairs */ }
         }
       } else {

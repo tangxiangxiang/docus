@@ -62,13 +62,15 @@
 
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
 import type { Database as DatabaseT } from 'better-sqlite3'
-import { sha256Hex } from './atomicTextWrite.js'
+import { removeDurableJournal, sha256Hex, syncParentDirectoryBestEffort } from './atomicTextWrite.js'
 import { isValidPathSyntax } from './paths.js'
 import {
   deleteDocumentMetadata,
   deleteDocumentMetadataPrefix,
+  getDocumentMetadata,
   moveDocumentMetadataPrefix,
   moveDocumentMetadataReplacingDestination,
 } from './documentMetadata.js'
@@ -206,6 +208,19 @@ function validRenameRel(contentDir: string, rel: string): boolean {
   return isContained(contentDir, path.resolve(contentDir, rel))
 }
 
+function journalBelongsToSource(
+  contentDir: string,
+  journalAbs: string,
+  srcRel: string,
+  kind: 'file' | 'folder',
+): boolean {
+  const sourceAbs = kind === 'file'
+    ? path.join(contentDir, `${srcRel}.md`)
+    : path.join(contentDir, srcRel)
+  return path.dirname(journalAbs) === path.dirname(sourceAbs)
+    && path.basename(journalAbs).startsWith(`.${path.basename(sourceAbs)}.docus-journal-`)
+}
+
 function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
   try {
     const entry = JSON.parse(raw) as Partial<FolderRenameJournal>
@@ -311,7 +326,7 @@ async function recoverReplaceJournal(
         note(saveAbs, 'quarantined', 'save temp without a target; kept for inspection')
       }
     }
-    await rm(journalAbs)
+    await removeDurableJournal(journalAbs).catch(() => {})
     note(journalAbs, 'cleaned', 'stale journal (takeover never happened)')
     return
   }
@@ -322,7 +337,7 @@ async function recoverReplaceJournal(
     if (targetIsReplacement) {
       await rm(stagedAbs)
       await rm(saveAbs)
-      await rm(journalAbs)
+      await removeDurableJournal(journalAbs).catch(() => {})
       note(targetAbs, 'cleaned', 'staging from a completed save')
     } else {
       // The formal path is the old generation or a third-party version.
@@ -348,7 +363,7 @@ async function recoverReplaceJournal(
       await fs.link(saveAbs, targetAbs)
       await rm(saveAbs)
       await rm(stagedAbs)
-      await rm(journalAbs)
+      await removeDurableJournal(journalAbs).catch(() => {})
       note(targetAbs, 'completed-save', 'interrupted save completed from journal')
       return
     } catch (error) {
@@ -371,14 +386,19 @@ async function recoverReplaceJournal(
   }
   // A failed verification means neither replacement nor its intent is
   // proven stale. Keep it and the journal as a recovery set.
-  if (!await exists(saveAbs)) await rm(journalAbs)
+  if (!await exists(saveAbs)) await removeDurableJournal(journalAbs).catch(() => {})
 }
 
 async function recoverFileRenameJournal(
   contentDir: string, db: DatabaseT, journalAbs: string, journal: FileRenameJournal,
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
-  if (!validRenameRel(contentDir, journal.srcRel) || !validRenameRel(contentDir, journal.destRel)) {
+  if (
+    journal.srcRel === journal.destRel
+    || !validRenameRel(contentDir, journal.srcRel)
+    || !validRenameRel(contentDir, journal.destRel)
+    || !journalBelongsToSource(contentDir, journalAbs, journal.srcRel, 'file')
+  ) {
     note(journalAbs, 'quarantined', 'invalid file-rename journal paths; no referenced path was touched')
     return
   }
@@ -386,10 +406,25 @@ async function recoverFileRenameJournal(
   const destAbs = path.join(contentDir, `${journal.destRel}.md`)
   const srcExists = await exists(srcAbs)
   const destExists = await exists(destAbs)
+  const sourceMetadata = getDocumentMetadata(db, journal.srcRel)
+  const destinationMetadata = getDocumentMetadata(db, journal.destRel)
+  if (journal.documentId && destinationMetadata?.id === journal.documentId) {
+    await removeDurableJournal(journalAbs).catch(() => {})
+    note(destAbs, 'cleaned', 'file-rename metadata already committed')
+    return
+  }
   if (!srcExists && destExists && await hashMatches(destAbs, journal.sourceHash)) {
+    if (!journal.documentId || sourceMetadata?.id !== journal.documentId) {
+      note(journalAbs, 'quarantined', 'file-rename source identity no longer matches journal')
+      return
+    }
     try {
-      moveDocumentMetadataReplacingDestination(db, journal.srcRel, journal.destRel)
-      await rm(journalAbs)
+      const moved = moveDocumentMetadataReplacingDestination(db, journal.srcRel, journal.destRel)
+      if (!moved) {
+        note(journalAbs, 'quarantined', 'file-rename source metadata missing; journal retained')
+        return
+      }
+      await removeDurableJournal(journalAbs)
       note(destAbs, 'completed-rename', 'interrupted file rename metadata move completed from journal')
     } catch (error) {
       note(journalAbs, 'failed', `could not complete file-rename metadata move: ${(error as Error).message}`)
@@ -397,7 +432,7 @@ async function recoverFileRenameJournal(
     return
   }
   if (srcExists && !destExists && await hashMatches(srcAbs, journal.sourceHash)) {
-    await rm(journalAbs)
+    await removeDurableJournal(journalAbs)
     note(journalAbs, 'cleaned', 'stale file-rename journal (move never landed)')
     return
   }
@@ -411,7 +446,13 @@ async function recoverFolderRenameJournal(
   journal: FolderRenameJournal,
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
-  if (!validRenameRel(contentDir, journal.srcRel) || !validRenameRel(contentDir, journal.destRel)) {
+  if (
+    journal.srcRel === journal.destRel
+    || path.dirname(journal.srcRel) !== path.dirname(journal.destRel)
+    || !validRenameRel(contentDir, journal.srcRel)
+    || !validRenameRel(contentDir, journal.destRel)
+    || !journalBelongsToSource(contentDir, journalAbs, journal.srcRel, 'folder')
+  ) {
     note(journalAbs, 'quarantined', 'invalid folder-rename journal paths; no referenced path was touched')
     return
   }
@@ -429,7 +470,7 @@ async function recoverFolderRenameJournal(
       // destination failed it — the route removes the journal in that
       // case, so this is the pre-move crash): state is consistent,
       // the journal is stale.
-      await rm(journalAbs)
+      await removeDurableJournal(journalAbs).catch(() => {})
       note(journalAbs, 'cleaned', 'stale folder-rename journal (move never started)')
       return
     }
@@ -439,11 +480,11 @@ async function recoverFolderRenameJournal(
     // external content. Remove it only in the proven-ours case.
     if (await isEmptyDirectory(destAbs)) {
       await fs.rmdir(destAbs).catch(() => {})
-      await rm(journalAbs)
+      await removeDurableJournal(journalAbs).catch(() => {})
       note(destAbs, 'cleaned', 'empty gate directory from an interrupted folder rename')
       return
     }
-    await rm(journalAbs)
+    await removeDurableJournal(journalAbs).catch(() => {})
     note(journalAbs, 'cleaned', 'folder-rename destination claimed externally; rename never landed')
     return
   }
@@ -458,7 +499,7 @@ async function recoverFolderRenameJournal(
       note(journalAbs, 'failed', `could not complete folder-rename metadata move: ${(error as Error).message}`)
       return
     }
-    await rm(journalAbs)
+    await removeDurableJournal(journalAbs).catch(() => {})
     note(destAbs, 'completed-rename', 'interrupted folder rename completed from journal')
     return
   }
@@ -692,11 +733,30 @@ async function recoverDirectory(
           note(quarantineAbs, 'quarantined', 'path-reuse quarantine is never auto-deleted')
           continue
         }
-        if (await exists(targetAbs)) {
-          note(quarantineAbs, 'quarantined', 'delete staging outlived a path reuse; kept for inspection')
-        } else {
-          await completeInterruptedDelete(contentDir, db, quarantineAbs, targetAbs, note)
+        const isLegacyAmbiguous = DELETE_RE.test(quarantineName)
+        const targetExists = await exists(targetAbs)
+        if (targetExists || isLegacyAmbiguous) {
+          // A public target alongside delete staging proves path reuse.
+          // Persist that disposition BEFORE touching identity rows, so a
+          // crash can never leave a reusable in-flight name behind. Old
+          // timestamp-only names are ambiguous after upgrade and are
+          // conservatively promoted even when the target is currently
+          // absent; they are never auto-deleted.
+          const permanentAbs = path.join(dir, `${group.base}.docus-quarantine-reuse-${randomUUID()}`)
+          await fs.rename(quarantineAbs, permanentAbs)
+          await syncParentDirectoryBestEffort(permanentAbs)
+          if (targetExists) {
+            const stagedStat = await fs.stat(permanentAbs)
+            const metaPath = metadataPathFor(vaultRelative(contentDir, targetAbs))
+            if (stagedStat.isDirectory()) deleteDocumentMetadataPrefix(db, metaPath)
+            else deleteDocumentMetadata(db, metaPath)
+          }
+          note(permanentAbs, 'quarantined', targetExists
+            ? 'delete staging promoted after path reuse; stale identity removed'
+            : 'legacy delete staging conservatively promoted')
+          continue
         }
+        await completeInterruptedDelete(contentDir, db, quarantineAbs, targetAbs, note)
       } catch (error) {
         note(quarantineAbs, 'failed', (error as Error).message)
       }

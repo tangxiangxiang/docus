@@ -56,6 +56,8 @@ import {
   atomicRemoveTextIfUnchanged,
   atomicReplaceTextIfUnchanged,
   prepareAtomicTextCreate,
+  removeDurableJournal,
+  syncParentDirectoryBestEffort,
   type PreparedAtomicTextWrite,
 } from '../atomicTextWrite.js'
 
@@ -628,9 +630,11 @@ async function executeDeleteFile(input: { path?: string }, db: DatabaseT): Promi
     return err(`delete_file: ${(e as Error).message}`)
   }
   const staged = `${abs}.docus-delete-inflight-${randomUUID()}`
+  const quarantine = `${abs}.docus-quarantine-reuse-${randomUUID()}`
   const databaseSnapshot = snapshotDocumentMetadataMutation(db, [input.path])
   try {
     fs.renameSync(abs, staged)
+    await syncParentDirectoryBestEffort(staged)
     deleteDocumentMetadata(db, input.path)
     fs.unlinkSync(staged)
   } catch (e) {
@@ -654,8 +658,9 @@ async function executeDeleteFile(input: { path?: string }, db: DatabaseT): Promi
           catch (rollbackError) { rollbackFailures.push(rollbackError) }
         } else if (rollbackFailures.length === 0) {
           try {
+            fs.renameSync(staged, quarantine)
+            await syncParentDirectoryBestEffort(quarantine)
             const reusedRaw = reidentifyReusedPath(db, input.path, abs)
-            fs.renameSync(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`)
             // The failed delete never ran applyDelete; re-apply the
             // index entry against the NEW generation at this path.
             try { (await getLinkIndex()).applyWrite(input.path, reusedRaw) } catch { /* next rebuild repairs */ }
@@ -668,8 +673,9 @@ async function executeDeleteFile(input: { path?: string }, db: DatabaseT): Promi
         // give the new file a fresh one, and leave the old generation
         // quarantined under its staging name.
         try {
+          fs.renameSync(staged, quarantine)
+          await syncParentDirectoryBestEffort(quarantine)
           const reusedRaw = reidentifyReusedPath(db, input.path, abs)
-          fs.renameSync(staged, `${abs}.docus-quarantine-reuse-${randomUUID()}`)
           try { (await getLinkIndex()).applyWrite(input.path, reusedRaw) } catch { /* next rebuild repairs */ }
         } catch (reuseError) { rollbackFailures.push(reuseError) }
       }
@@ -815,6 +821,9 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
         return err(`rename_file: both paths were re-used; failed to reidentify external source: ${(reidentifyError as Error).message}`)
       }
     }
+    if (e instanceof RenameSourceReusedError && e.survivingPath === 'destination') {
+      rollbackSourceReused = true
+    }
     if (rollbackSourceReused) {
       // Identity follows the bytes, not the path: the document now
       // lives at new_path. If the destination somehow vanished too
@@ -825,6 +834,9 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
         else deleteDocumentMetadata(db, input.path)
         const idx = await getLinkIndex()
         idx.applyRename(input.path, input.new_path, raw)
+        if (e instanceof RenameSourceReusedError && e.journalPath) {
+          await removeDurableJournal(e.journalPath)
+        }
       } catch { /* best effort: the next index rebuild re-derives paths */ }
       return err(
         `rename_file: the original path was re-used externally during rollback; ` +

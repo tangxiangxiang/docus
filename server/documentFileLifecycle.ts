@@ -8,6 +8,7 @@ import {
   restoreStagedGeneration,
   syncParentDirectoryBestEffort,
   sha256Hex,
+  removeDurableJournal,
   writeDurableJournal,
 } from './atomicTextWrite.js'
 
@@ -48,16 +49,19 @@ export class RenameSourceReusedError extends Error {
   readonly survivingPath: 'staging' | 'destination'
   readonly sourceReused = true
   readonly destinationOccupied: boolean
+  readonly journalPath?: string
   constructor(sourcePath: string, disposition: {
     stagingPath?: string
     survivingPath?: 'staging' | 'destination'
     destinationOccupied?: boolean
+    journalPath?: string
   } = {}) {
     super(`rename rollback: source path re-used externally: ${sourcePath}`)
     this.name = 'RenameSourceReusedError'
     this.stagingPath = disposition.stagingPath
     this.survivingPath = disposition.survivingPath ?? 'destination'
     this.destinationOccupied = disposition.destinationOccupied ?? false
+    this.journalPath = disposition.journalPath
   }
 }
 
@@ -101,7 +105,14 @@ export async function createOnlyMoveFile(fromAbs: string, toAbs: string): Promis
           await syncParentDirectoryBestEffort(toAbs)
           return
         } catch (fallbackError) {
-          await restoreStagedGeneration(stagedPath, fromAbs)
+          const { quarantined } = await restoreStagedGeneration(stagedPath, fromAbs)
+          if (quarantined) {
+            throw new RenameSourceReusedError(fromAbs, {
+              stagingPath: stagedPath,
+              survivingPath: 'staging',
+              destinationOccupied: false,
+            })
+          }
           throw fallbackError
         }
       }
@@ -116,7 +127,14 @@ export async function createOnlyMoveFile(fromAbs: string, toAbs: string): Promis
       const { quarantined } = await restoreStagedGeneration(stagedPath, fromAbs)
       throw quarantined ? new RenameSourceReusedError(fromAbs, { stagingPath: stagedPath, survivingPath: 'staging', destinationOccupied: true }) : new RenameDestinationOccupiedError(toAbs)
     }
-    await restoreStagedGeneration(stagedPath, fromAbs)
+    const { quarantined } = await restoreStagedGeneration(stagedPath, fromAbs)
+    if (quarantined) {
+      throw new RenameSourceReusedError(fromAbs, {
+        stagingPath: stagedPath,
+        survivingPath: 'staging',
+        destinationOccupied: false,
+      })
+    }
     throw error
   }
   if (__createOnlyMoveHooks?.afterRenameLinked) await __createOnlyMoveHooks.afterRenameLinked()
@@ -199,7 +217,15 @@ export async function renameDocumentWithMetadata(input: {
     // A double reuse leaves the owned generation in staging. Preserve
     // the journal so startup/manual recovery can associate its identity;
     // ordinary destination contention restored the source completely.
-    if (journalPath && !(error instanceof RenameSourceReusedError)) await fs.rm(journalPath, { force: true }).catch(() => {})
+    if (journalPath && !(error instanceof RenameSourceReusedError)) await removeDurableJournal(journalPath).catch(() => {})
+    if (journalPath && error instanceof RenameSourceReusedError) {
+      throw new RenameSourceReusedError(fromPath, {
+        stagingPath: error.stagingPath,
+        survivingPath: error.survivingPath,
+        destinationOccupied: error.destinationOccupied,
+        journalPath,
+      })
+    }
     throw error
   }
   if (__createOnlyMoveHooks?.afterFileMoveFinalized) await __createOnlyMoveHooks.afterFileMoveFinalized()
@@ -207,7 +233,7 @@ export async function renameDocumentWithMetadata(input: {
     if (!moveMetadata(db, fromPath, toPath)) {
       throw new Error(`source metadata missing: ${fromPath}`)
     }
-    if (journalPath) await fs.rm(journalPath, { force: true }).catch(() => {})
+    if (journalPath) await removeDurableJournal(journalPath).catch(() => {})
   } catch (metadataError) {
     try {
       await renameFile(toAbs, fromAbs)
@@ -217,15 +243,22 @@ export async function renameDocumentWithMetadata(input: {
         // rollback left the bytes at the destination rather than
         // overwriting the external file. The caller must keep the
         // identity with the bytes.
-        throw new RenameSourceReusedError(fromPath, { survivingPath: 'destination' })
+        throw new RenameSourceReusedError(fromPath, { survivingPath: 'destination', journalPath: journalPath ?? undefined })
       }
-      if (rollbackError instanceof RenameSourceReusedError) throw rollbackError
+      if (rollbackError instanceof RenameSourceReusedError) {
+        throw new RenameSourceReusedError(fromPath, {
+          stagingPath: rollbackError.stagingPath,
+          survivingPath: rollbackError.survivingPath,
+          destinationOccupied: rollbackError.destinationOccupied,
+          journalPath: journalPath ?? undefined,
+        })
+      }
       throw new AggregateError(
         [metadataError, rollbackError],
         'metadata move failed and filesystem rollback also failed',
       )
     }
-    if (journalPath) await fs.rm(journalPath, { force: true }).catch(() => {})
+    if (journalPath) await removeDurableJournal(journalPath).catch(() => {})
     throw metadataError
   }
 }

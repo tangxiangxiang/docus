@@ -12,6 +12,8 @@ import {
   prepareAtomicTextCreate,
   prepareAtomicTextWrite,
   readStableTextSnapshot,
+  removeDurableJournal,
+  writeDurableJournal,
 } from '../atomicTextWrite'
 
 let directory = ''
@@ -34,6 +36,23 @@ afterEach(async () => {
 })
 
 describe('atomic text writes', () => {
+  it('fsyncs the parent directory after journal creation and removal', async () => {
+    const journal = path.join(directory, '.note.md.docus-journal-aaaa')
+    const opened: string[] = []
+    const originalOpen = fs.open.bind(fs)
+    const open = vi.spyOn(fs, 'open').mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      opened.push(String(args[0]))
+      return originalOpen(...args)
+    })
+    try {
+      await writeDurableJournal(journal, { version: 1, op: 'test' })
+      expect(opened).toContain(directory)
+      opened.length = 0
+      await removeDurableJournal(journal)
+      expect(opened).toContain(directory)
+    } finally { open.mockRestore() }
+  })
+
   it('replaces complete content, preserves mode, and removes its temporary file', async () => {
     const before = await fs.stat(target)
     await atomicReplaceText(target, 'complete replacement', { mode: before.mode })

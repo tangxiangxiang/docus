@@ -3,7 +3,7 @@
 // POSIX rename(2) atomically REPLACES targets, so every move that can
 // race an external editor (Obsidian/vim/sync ignore in-process locks)
 // must be create-only — link(2) for files, an mkdir gate for folders.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { promises as fs, writeFileSync } from 'node:fs'
 import os from 'node:os'
@@ -40,6 +40,24 @@ async function names(): Promise<string[]> {
 }
 
 describe('createOnlyMoveFile', () => {
+  it('reports source reuse when a non-EEXIST link failure leaves the old generation staged', async () => {
+    const from = path.join(dir, 'old.md')
+    const to = path.join(dir, 'new.md')
+    await fs.writeFile(from, '# ours\n', 'utf8')
+    const link = vi.spyOn(fs, 'link').mockImplementationOnce(async () => {
+      await fs.writeFile(from, '# external\n', 'utf8')
+      throw Object.assign(new Error('injected I/O failure'), { code: 'EIO' })
+    })
+    try {
+      const error = await createOnlyMoveFile(from, to).catch((caught) => caught)
+      expect(error).toBeInstanceOf(RenameSourceReusedError)
+      expect(error.destinationOccupied).toBe(false)
+      expect(error.survivingPath).toBe('staging')
+      expect(await fs.readFile(from, 'utf8')).toBe('# external\n')
+      expect((await names()).some((name) => name.includes('.docus-rename-'))).toBe(true)
+    } finally { link.mockRestore() }
+  })
+
   it('moves a file and leaves no staging residue', async () => {
     await fs.writeFile(path.join(dir, 'old.md'), '# doc\n', 'utf8')
 
