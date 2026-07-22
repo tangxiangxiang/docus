@@ -669,3 +669,148 @@ describe('REST rename vs a concurrent backlink added after the footprint check',
     }
   })
 })
+
+describe('round 5: rename destinations are create-only (external writer wins)', () => {
+  it('REST rename returns 409 and preserves an external file created after the destination check', async () => {
+    // POSIX rename(2) atomically REPLACES the target: the exists()
+    // check at the route top cannot protect an external editor that
+    // claims the destination before the move runs. The create-only
+    // move (link(2)) must fail closed with the external bytes intact.
+    await get('/api/links/index')
+    const external = '# external writer\n'
+    __setPostRenameRaceHooksForTesting({
+      afterRenamePlanBuilt: async () => {
+        await fs.writeFile(path.join(sandbox, 'renamed-b.md'), external, 'utf8')
+      },
+    })
+    try {
+      const renamed = await app.fetch(new Request('http://localhost/api/posts/b', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'renamed-b', updateReferences: true }),
+      }))
+      expect(renamed.status).toBe(409)
+      expect(await renamed.json()).toMatchObject({
+        error: expect.stringMatching(/claimed by an external writer/),
+      })
+      // The external file wins; the source is restored untouched.
+      expect(await fs.readFile(path.join(sandbox, 'renamed-b.md'), 'utf8')).toBe(external)
+      expect(await fs.readFile(path.join(sandbox, 'b.md'), 'utf8')).toBe('# b\nsee [a](a.md)')
+      const names = await fs.readdir(sandbox)
+      expect(names.some((name) => name.includes('.docus-rename-'))).toBe(false)
+      expect(names.some((name) => name.includes('.docus-staged-'))).toBe(false)
+    } finally {
+      __setPostRenameRaceHooksForTesting(null)
+    }
+  })
+
+  it('folder rename returns 409 and preserves an external folder created after the destination check', async () => {
+    await fs.mkdir(path.join(sandbox, 'notes'))
+    await fs.writeFile(path.join(sandbox, 'notes', 'a.md'), '# a', 'utf8')
+    __setFolderRaceHooksForTesting({
+      afterRenameRecheck: async () => {
+        await fs.mkdir(path.join(sandbox, 'renamed'))
+        await fs.writeFile(path.join(sandbox, 'renamed', 'external.md'), '# external', 'utf8')
+      },
+    })
+    try {
+      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ newPath: 'renamed' }),
+      }))
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({
+        error: expect.stringMatching(/claimed by an external writer/),
+      })
+      // External folder untouched; source tree intact; no journal leak.
+      expect(await fs.readFile(path.join(sandbox, 'renamed', 'external.md'), 'utf8')).toBe('# external')
+      expect(await fs.readFile(path.join(sandbox, 'notes', 'a.md'), 'utf8')).toBe('# a')
+      expect((await fs.readdir(sandbox)).some((name) => name.includes('.docus-journal-'))).toBe(false)
+    } finally {
+      __setFolderRaceHooksForTesting(null)
+    }
+  })
+})
+
+describe('round 5: rename rollback never overwrites a re-used source path', () => {
+  it('REST rename keeps the document at the new path when the source was re-used externally during rollback', async () => {
+    // Reviewer scenario: the move lands, a reference write then fails,
+    // and an external writer re-creates the SOURCE path during the
+    // rollback window. A plain rename-back would overwrite the
+    // external file; the create-only rollback fails closed instead,
+    // keeps the bytes at the destination, and the documentId follows.
+    saveDocumentMetadata(db, { id: 'b-original-id', path: 'b', title: 'B' })
+    await get('/api/links/index')
+    const externalSource = '# external source reuse\n'
+    const externalRef = '# a\nexternal save\nsee [[b]]\n'
+    __setPostRenameRaceHooksForTesting({
+      afterRenameMoved: async () => {
+        // Re-use the now-empty source path AND dirty a reference file
+        // so the reference write loop fails into the rollback.
+        await fs.writeFile(path.join(sandbox, 'b.md'), externalSource, 'utf8')
+        await fs.writeFile(path.join(sandbox, 'a.md'), externalRef, 'utf8')
+      },
+    })
+    try {
+      const renamed = await app.fetch(new Request('http://localhost/api/posts/b', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'renamed-b', updateReferences: true }),
+      }))
+      expect(renamed.status).toBe(409)
+      expect(await renamed.json()).toMatchObject({
+        error: expect.stringMatching(/re-used externally during rollback/),
+      })
+      // External source file untouched; our bytes kept at the destination.
+      expect(await fs.readFile(path.join(sandbox, 'b.md'), 'utf8')).toBe(externalSource)
+      expect(await fs.readFile(path.join(sandbox, 'renamed-b.md'), 'utf8')).toBe('# b\nsee [a](a.md)')
+      // The external reference save wins over our undone rewrite.
+      expect(await fs.readFile(path.join(sandbox, 'a.md'), 'utf8')).toBe(externalRef)
+      // Identity follows the bytes: the documentId lives at the new path.
+      expect(getDocumentMetadata(db, 'renamed-b')?.id).toBe('b-original-id')
+      expect(getDocumentMetadata(db, 'b')).toBeNull()
+      expect((await fs.readdir(sandbox)).some((name) => name.includes('.docus-rename-'))).toBe(false)
+    } finally {
+      __setPostRenameRaceHooksForTesting(null)
+    }
+  })
+
+  it('folder rename keeps the tree at the new path when the source folder was re-used externally during rollback', async () => {
+    await fs.mkdir(path.join(sandbox, 'notes'))
+    await fs.writeFile(path.join(sandbox, 'notes', 'a.md'), '# a', 'utf8')
+    await fs.writeFile(path.join(sandbox, 'ext.md'), 'see [[notes/a]]', 'utf8')
+    saveDocumentMetadata(db, { id: 'notes-a-id', path: 'notes/a', title: 'A' })
+    await get('/api/links/index')
+    const externalRef = 'see [[notes/a]] external save'
+    __setFolderRaceHooksForTesting({
+      afterRenamePlanBuilt: async () => {
+        // Re-create the source folder externally AND dirty the
+        // reference file so the reference writes fail into rollback.
+        await fs.mkdir(path.join(sandbox, 'notes'))
+        await fs.writeFile(path.join(sandbox, 'notes', 'external.md'), '# external', 'utf8')
+        await fs.writeFile(path.join(sandbox, 'ext.md'), externalRef, 'utf8')
+      },
+    })
+    try {
+      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ newPath: 'renamed', updateReferences: true }),
+      }))
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({
+        error: expect.stringMatching(/re-used externally during rollback/),
+      })
+      // External folder untouched; our tree kept at the destination.
+      expect(await fs.readFile(path.join(sandbox, 'notes', 'external.md'), 'utf8')).toBe('# external')
+      expect(await fs.readFile(path.join(sandbox, 'renamed', 'a.md'), 'utf8')).toBe('# a')
+      expect(await fs.readFile(path.join(sandbox, 'ext.md'), 'utf8')).toBe(externalRef)
+      // Identity follows the bytes: the whole prefix moved to the new path.
+      expect(getDocumentMetadata(db, 'renamed/a')?.id).toBe('notes-a-id')
+      expect(getDocumentMetadata(db, 'notes/a')).toBeNull()
+    } finally {
+      __setFolderRaceHooksForTesting(null)
+    }
+  })
+})

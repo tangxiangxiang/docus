@@ -35,12 +35,17 @@ import {
   deleteDocumentMetadata,
   ensureDocumentMetadata,
   getDocumentMetadata,
+  moveDocumentMetadataReplacingDestination,
   restoreDocumentMetadataMutation,
   saveDocumentMetadata,
   snapshotDocumentMetadataMutation,
 } from '../documentMetadata.js'
 import { trackCleanedDocumentWrite } from '../metadataMigration.js'
-import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
+import {
+  RenameDestinationOccupiedError,
+  RenameSourceReusedError,
+  renameDocumentWithMetadata,
+} from '../documentFileLifecycle.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
 import { validateDocumentMutation } from '../documentMutationPolicy.js'
@@ -716,7 +721,7 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
   // Snapshot semantics (the chosen backlink contract): links added
   // AFTER the in-lock footprint check are not part of this rename —
   // it never writes a document whose lock it does not hold.
-  let raw: string
+  let raw = ''
   const references = plan.references.map((r) => ({
     sourcePath: r.sourcePath,
     path: r.outputPath,
@@ -725,6 +730,7 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     updated: r.updatedRaw,
   }))
   const databaseSnapshot = snapshotDocumentMetadataMutation(db, [input.path, input.new_path, ...references.map((reference) => reference.path)])
+  let rollbackSourceReused = false
   try {
     raw = fs.readFileSync(srcAbs, 'utf8')
     const sourceStat = fs.statSync(srcAbs)
@@ -757,8 +763,22 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
           if (!(rollbackError instanceof AtomicTextWriteConflictError)) rollbackErrors.push(rollbackError)
         }
       }
-      try { await renameDocumentWithMetadata({ db, fromPath: input.new_path, toPath: input.path, fromAbs: dstAbs, toAbs: srcAbs }) }
-      catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      try {
+        // Create-only: if an external writer re-used the original path
+        // while the reference writes were failing, the rollback fails
+        // closed and the bytes stay at the destination.
+        await renameDocumentWithMetadata({ db, fromPath: input.new_path, toPath: input.path, fromAbs: dstAbs, toAbs: srcAbs })
+      } catch (rollbackError) {
+        if (rollbackError instanceof RenameDestinationOccupiedError) {
+          // The bytes are at new_path; the original path belongs to an
+          // external writer. The outer metadata restore below puts the
+          // identity back on input.path — we then move it to new_path
+          // so the identity follows the bytes.
+          rollbackSourceReused = true
+        } else {
+          rollbackErrors.push(rollbackError)
+        }
+      }
       try { restoreDocumentMetadataMutation(db, databaseSnapshot) }
       catch (rollbackError) { rollbackErrors.push(rollbackError) }
       if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'AI rename failed and rollback was incomplete')
@@ -768,6 +788,35 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     try { restoreDocumentMetadataMutation(db, databaseSnapshot) }
     catch (rollbackError) {
       return err(`rename_file: ${(e as Error).message}; metadata rollback failed: ${(rollbackError as Error).message}`)
+    }
+    if (rollbackSourceReused) {
+      // Identity follows the bytes, not the path: the document now
+      // lives at new_path. If the destination somehow vanished too
+      // (pathological double reuse), drop the row rather than bind it
+      // to foreign bytes.
+      try {
+        if (fs.existsSync(dstAbs)) moveDocumentMetadataReplacingDestination(db, input.path, input.new_path)
+        else deleteDocumentMetadata(db, input.path)
+        const idx = await getLinkIndex()
+        idx.applyRename(input.path, input.new_path, raw)
+      } catch { /* best effort: the next index rebuild re-derives paths */ }
+      return err(
+        `rename_file: the original path was re-used externally during rollback; ` +
+          `the document was kept at ${input.new_path} without overwriting the external file; ` +
+          `reference updates were not applied`,
+      )
+    }
+    if (e instanceof RenameDestinationOccupiedError) {
+      return err(
+        `rename_file: target was claimed by an external writer during the move; ` +
+          `${input.path} was restored untouched; retry the rename`,
+      )
+    }
+    if (e instanceof RenameSourceReusedError) {
+      return err(
+        `rename_file: both paths were re-used externally; ` +
+          `the document was preserved under a staging name and nothing was overwritten`,
+      )
     }
     if (e instanceof AtomicTextWriteConflictError) {
       return err(

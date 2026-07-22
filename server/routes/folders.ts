@@ -1,14 +1,16 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import { canModify } from '../../src/composables/archiveProtocol.js'
-import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged } from '../atomicTextWrite.js'
+import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged, writeDurableJournal } from '../atomicTextWrite.js'
 import {
   deleteDocumentMetadataPrefix,
   moveDocumentMetadataPrefix,
   restoreDocumentMetadataMutation,
   snapshotDocumentMetadataPrefixMutation,
 } from '../documentMetadata.js'
+import { createOnlyMoveDirectory } from '../documentFileLifecycle.js'
 import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { CONTENT_DIR, filePathFor, folderPathFor, isValidPathSyntax } from '../paths.js'
@@ -152,6 +154,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   }
   const written: typeof folderReferenceSnapshots = []
   let renamed = false
+  let journalPath: string | null = null
   try {
     for (const oldPath of oldPaths) {
       const oldAbs = filePathFor(oldPath)
@@ -164,10 +167,24 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         ensureMetadata(snapshot.sourcePath, snapshot.raw, sourceStat.mtimeMs)
       }
     }
+    // DURABLE JOURNAL before the move: if the process dies between the
+    // directory move and the metadata move, startup crash recovery
+    // (server/crashRecovery.ts) reads it and completes the metadata
+    // move before the HTTP server accepts requests. Removed LAST.
+    journalPath = path.join(path.dirname(src), `.${path.basename(src)}.docus-journal-${randomUUID()}`)
+    await writeDurableJournal(journalPath, { version: 1, op: 'folder-rename', srcRel: srcPath, destRel: newPath })
     deleteDocumentMetadataPrefix(metadataDb(), newPath)
-    await fs.rename(src, dest)
+    // Create-only: mkdir is the gate — an external writer claiming the
+    // destination after the earlier exists() check fails the move
+    // closed (restored: false) instead of being replaced by rename(2).
+    const moved = await createOnlyMoveDirectory(src, dest)
+    if (!moved.restored) {
+      await fs.rm(journalPath, { force: true }).catch(() => {})
+      return bad(c, 'destination was claimed by an external writer during the move; retry', 409)
+    }
     renamed = true
     moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
+    await fs.rm(journalPath, { force: true }).catch(() => {})
     if (__folderRaceHooks?.afterRenamePlanBuilt) await __folderRaceHooks.afterRenamePlanBuilt()
     for (const snapshot of folderReferenceSnapshots) {
       const target = filePathFor(snapshot.writePath)
@@ -184,6 +201,8 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     }
   } catch (error) {
     const rollbackErrors: unknown[] = []
+    let rollbackSourceReused = false
+    let rolledTreeBack = !renamed
     for (const snapshot of written.reverse()) {
       const target = filePathFor(snapshot.writePath)
       if (await exists(target)) {
@@ -196,10 +215,47 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         }
       }
     }
-    if (renamed) try { await fs.rename(dest, src) } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    if (renamed) {
+      try {
+        // Create-only: if an external writer re-used the source folder
+        // while the reference writes were failing, the rollback fails
+        // closed (restored: false) and the tree stays at the
+        // destination — never replacing the external folder.
+        const rolledBack = await createOnlyMoveDirectory(dest, src)
+        if (rolledBack.restored) rolledTreeBack = true
+        else rollbackSourceReused = true
+      } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    }
     try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
     catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    // Journal cleanup: removable once the tree is known to be back at
+    // src (or was never moved) — the journal is then unambiguously
+    // stale. If the tree stayed at dest (rollback failed, or the
+    // source was re-used), KEEP it: should a crash interrupt this
+    // rollback, startup recovery reads it and completes the metadata
+    // move to dest instead of binding identities to a missing tree.
+    if (rolledTreeBack && journalPath) await fs.rm(journalPath, { force: true }).catch(() => {})
+    if (rollbackSourceReused) {
+      // Identity follows the bytes: the tree is at newPath. Move every
+      // restored row under srcPath back under newPath (or drop them if
+      // the destination vanished too, so no identity ever binds to a
+      // missing tree).
+      try {
+        if (await exists(dest)) moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
+        else deleteDocumentMetadataPrefix(metadataDb(), srcPath)
+        const idx = await getLinkIndex()
+        const pairs = await Promise.all(oldPaths.map(async (oldPath) => {
+          const movedPath = newPath + oldPath.slice(srcPath.length)
+          const newRaw = await fs.readFile(filePathFor(movedPath), 'utf8')
+          return { oldPath, newPath: movedPath, newRaw }
+        }))
+        idx.applyFolderRename(pairs)
+      } catch { /* best effort: the next index rebuild re-derives paths */ }
+    }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'folder rename failed and rollback was incomplete')
+    if (rollbackSourceReused) {
+      return bad(c, 'the source folder was re-used externally during rollback; the folder was kept at the new path without overwriting the external folder; reference updates were not applied', 409)
+    }
     if (error instanceof AtomicTextWriteConflictError) {
       return bad(c, 'a referenced document changed on disk during rename; retry', 409)
     }

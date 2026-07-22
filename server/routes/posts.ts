@@ -7,11 +7,16 @@ import type { PostDetail, PostSummary, SavePostResult } from '../../src/lib/api.
 import {
   deleteDocumentMetadata,
   getDocumentMetadata,
+  moveDocumentMetadataReplacingDestination,
   saveDocumentMetadata,
   restoreDocumentMetadataMutation,
   snapshotDocumentMetadataMutation,
 } from '../documentMetadata.js'
-import { renameDocumentWithMetadata } from '../documentFileLifecycle.js'
+import {
+  RenameDestinationOccupiedError,
+  RenameSourceReusedError,
+  renameDocumentWithMetadata,
+} from '../documentFileLifecycle.js'
 import {
   AtomicTextWriteConflictError,
   AtomicTextWriteTargetMissingError,
@@ -45,10 +50,16 @@ const postRoutes = new Hono()
  *   rewrite) is built, immediately before the reference write loop —
  *   the exact window in which an EXTERNAL editor's save to a reference
  *   file must be detected by the ownership-verified reference writes.
+ * - `afterRenameMoved` — after the file + metadata have moved to the
+ *   destination, before the first reference write — the exact window
+ *   in which an external writer re-using the now-empty SOURCE path
+ *   must make the rollback fail closed (create-only) instead of
+ *   overwriting the external file.
  */
 export type PostRenameRaceHooks = {
   afterPlanVerified?: () => void | Promise<void>
   afterRenamePlanBuilt?: () => void | Promise<void>
+  afterRenameMoved?: () => void | Promise<void>
 }
 let __postRenameRaceHooks: PostRenameRaceHooks | null = null
 export function __setPostRenameRaceHooksForTesting(hooks: PostRenameRaceHooks | null): void {
@@ -507,6 +518,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
     }
     await renameDocumentWithMetadata({ db: metadataDb(), fromPath: srcPath, toPath: destPath, fromAbs: src, toAbs: dest })
     renamed = true
+    if (__postRenameRaceHooks?.afterRenameMoved) await __postRenameRaceHooks.afterRenameMoved()
     for (const snapshot of referenceSnapshots) {
       // External-writer-safe: the bytes on disk must still be exactly
       // what the in-lock plan read. In-process locks do not stop
@@ -521,6 +533,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
     }
   } catch (error) {
     const rollbackErrors: unknown[] = []
+    let rollbackSourceReused = false
     for (const snapshot of written.reverse()) {
       try {
         // Undo ONLY our rewrite: if the bytes on disk are no longer
@@ -533,12 +546,48 @@ postRoutes.patch('/api/posts/*', async (c) => {
     }
     if (renamed) {
       try {
+        // Create-only: if an external writer re-used the source path
+        // while the reference writes were failing, the rollback fails
+        // closed with RenameDestinationOccupiedError and the bytes stay
+        // at the destination — never overwriting the external file.
         await renameDocumentWithMetadata({ db: metadataDb(), fromPath: destPath, toPath: srcPath, fromAbs: dest, toAbs: src })
-      } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      } catch (rollbackError) {
+        if (rollbackError instanceof RenameDestinationOccupiedError) {
+          // The bytes are at destPath; the source path belongs to an
+          // external writer. The metadata restore below puts the
+          // identity back on srcPath — we then move it to destPath so
+          // the identity follows the bytes.
+          rollbackSourceReused = true
+        } else {
+          rollbackErrors.push(rollbackError)
+        }
+      }
     }
     try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
     catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    if (rollbackSourceReused) {
+      // Identity follows the bytes, not the path: the document now
+      // lives at destPath. If the destination somehow vanished too
+      // (pathological double reuse; the bytes are quarantined under a
+      // staging name), drop the row rather than bind it to foreign
+      // bytes at either path.
+      try {
+        if (await exists(dest)) moveDocumentMetadataReplacingDestination(metadataDb(), srcPath, destPath)
+        else deleteDocumentMetadata(metadataDb(), srcPath)
+        const idx = await getLinkIndex()
+        idx.applyRename(srcPath, destPath, sourceRaw)
+      } catch { /* best effort: the next index rebuild re-derives paths */ }
+    }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'reference update failed and rollback was incomplete')
+    if (rollbackSourceReused) {
+      return bad(c, 'the source path was re-used externally during rollback; the document was kept at the new path without overwriting the external file; reference updates were not applied', 409)
+    }
+    if (error instanceof RenameDestinationOccupiedError) {
+      return bad(c, 'destination was claimed by an external writer during the move; retry', 409)
+    }
+    if (error instanceof RenameSourceReusedError) {
+      return bad(c, 'rename failed: both paths were re-used externally; the document was preserved under a staging name', 409)
+    }
     if (error instanceof AtomicTextWriteConflictError) {
       return bad(c, 'a referenced document changed on disk during rename; retry', 409)
     }

@@ -535,6 +535,34 @@ describe('rename_file', () => {
       write.mockRestore()
     }
   })
+
+  it('never replaces an external file that claims the target mid-move (create-only link)', async () => {
+    // Round 5: POSIX rename(2) atomically REPLACES the target, so the
+    // existsSync(dstAbs) pre-check cannot protect an external editor
+    // that claims the destination before the move runs. The move must
+    // be create-only: link(2) fails EEXIST, the source is restored
+    // untouched, and the external file wins.
+    const oldAbs = writeFile('a/old.md', 'hello')
+    const newAbs = path.join(contentDir, 'a/new.md')
+    const link = vi.spyOn(fs.promises, 'link').mockImplementationOnce(async () => {
+      fs.writeFileSync(newAbs, '# external\n', 'utf8')
+      throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' })
+    })
+    try {
+      const r = await executeToolCall('rename_file', {
+        path: 'a/old', new_path: 'a/new', update_references: false,
+      }, ctx)
+      expect(r.isError).toBe(true)
+      expect(r.content).toMatch(/claimed by an external writer/)
+      expect(fs.readFileSync(oldAbs, 'utf8')).toBe('hello')
+      expect(fs.readFileSync(newAbs, 'utf8')).toBe('# external\n')
+      expect(fs.readdirSync(path.dirname(oldAbs)).some((n) => n.includes('.docus-rename-'))).toBe(false)
+      // Identity never moved: metadata still bound to the source path.
+      expect(getDocumentMetadata(db, 'a/new')).toBeNull()
+    } finally {
+      link.mockRestore()
+    }
+  })
 })
 
 // --- dispatcher / shape -----------------------------------------------------

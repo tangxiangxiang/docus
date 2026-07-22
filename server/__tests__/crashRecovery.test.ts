@@ -12,6 +12,7 @@ import { recoverInterruptedOperations } from '../crashRecovery'
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 const TSX_CLI = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs')
 const CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'commit-crash-child.ts')
+const RENAME_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'rename-crash-child.ts')
 
 let vault: string
 let db: InstanceType<typeof Database>
@@ -292,8 +293,8 @@ describe('recoverInterruptedOperations (delete quarantine)', () => {
 })
 
 describe('real subprocess crash + startup recovery', () => {
-  function spawnChild(env: Record<string, string>) {
-    return spawn(process.execPath, [TSX_CLI, CRASH_CHILD], {
+  function spawnChild(env: Record<string, string>, fixture: string = CRASH_CHILD) {
+    return spawn(process.execPath, [TSX_CLI, fixture], {
       env: { ...process.env, ...env },
       stdio: 'pipe',
     })
@@ -433,4 +434,161 @@ describe('real subprocess crash + startup recovery', () => {
     }
   })
 
+  it('completes an interrupted rename after a kill -9 inside the link window, without losing the documentId', async () => {
+    // The reviewer scenario applied to rename: the child runs the REAL
+    // create-only move and dies (SIGKILL) right after the destination
+    // link lands, before the staging name is removed. The vault is
+    // left with the source MISSING and two names on one inode;
+    // recovery must complete the rename and keep the documentId.
+    const fromAbs = path.join(vault, 'old.md')
+    const toAbs = path.join(vault, 'new.md')
+    await seed({ 'old.md': '# doc\n' })
+    saveDocumentMetadata(db, { id: 'pre-rename-id', path: 'old', title: 'Doc', updatedAt: 1 })
+
+    const child = spawnChild({ DOCUS_CRASH_FROM: fromAbs, DOCUS_CRASH_TO: toAbs }, RENAME_CRASH_CHILD)
+    expectHardKill(await waitExit(child))
+
+    // Crash state: source gone, staging + destination both name the
+    // same inode.
+    const namesBefore = await namesIn()
+    expect(namesBefore).not.toContain('old.md')
+    expect(namesBefore).toContain('new.md')
+    const stagingName = namesBefore.find((n) => n.startsWith('.old.md.docus-rename-'))
+    expect(stagingName).toBeDefined()
+    const stagingStat = await fs.stat(path.join(vault, stagingName!))
+    const destStat = await fs.stat(toAbs)
+    expect(stagingStat.ino).toBe(destStat.ino)
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(report.actions.some((a) => a.action === 'failed')).toBe(false)
+    expect(await fs.readFile(toAbs, 'utf8')).toBe('# doc\n')
+    // The identity followed the bytes — no documentId lost.
+    expect(getDocumentMetadata(db, 'new')?.id).toBe('pre-rename-id')
+    expect(getDocumentMetadata(db, 'old')).toBeNull()
+    expect((await namesIn()).some((n) => n.includes('.docus-rename-'))).toBe(false)
+    expect(await namesIn()).toEqual(['new.md'])
+  })
+})
+
+describe('recoverInterruptedOperations (rename staging, journal-less)', () => {
+  it('restores an orphaned rename staging when the source path is empty', async () => {
+    await seed({ '.note.md.docus-rename-aaaa': '# ours\n' })
+
+    const report = await runRecovery()
+
+    expect(await fs.readFile(path.join(vault, 'note.md'), 'utf8')).toBe('# ours\n')
+    expect(report.actions.some((a) => a.action === 'restored')).toBe(true)
+    expect(await namesIn()).toEqual(['note.md'])
+  })
+
+  it('quarantines rename staging when the source path was re-used externally', async () => {
+    await seed({
+      'note.md': '# external\n',
+      '.note.md.docus-rename-aaaa': '# ours\n',
+    })
+
+    const report = await runRecovery()
+
+    expect(await fs.readFile(path.join(vault, 'note.md'), 'utf8')).toBe('# external\n')
+    expect(await namesIn()).toContain('.note.md.docus-rename-aaaa')
+    expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
+  })
+
+  it('completes the metadata move when an inode partner proves the link landed', async () => {
+    // Crash between link(2) and the staging unlink: staging and the
+    // destination name the same inode. Recovery identifies the
+    // partner by inode, removes the staging name, and completes the
+    // metadata move the process died before running.
+    await seed({ '.old.md.docus-rename-aaaa': '# doc\n' })
+    await fs.link(path.join(vault, '.old.md.docus-rename-aaaa'), path.join(vault, 'moved.md'))
+    saveDocumentMetadata(db, { id: 'rename-id', path: 'old', title: 'Doc', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(await fs.readFile(path.join(vault, 'moved.md'), 'utf8')).toBe('# doc\n')
+    expect(getDocumentMetadata(db, 'moved')?.id).toBe('rename-id')
+    expect(getDocumentMetadata(db, 'old')).toBeNull()
+    expect((await namesIn()).some((n) => n.includes('.docus-rename-'))).toBe(false)
+  })
+})
+
+describe('recoverInterruptedOperations (folder-rename journal)', () => {
+  function folderJournal(srcRel: string, destRel: string): string {
+    return JSON.stringify({ version: 1, op: 'folder-rename', srcRel, destRel })
+  }
+
+  it('completes the metadata prefix move when the directory move landed', async () => {
+    await seed({ 'ren/a.md': '# a\n' })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+    saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
+    expect(getDocumentMetadata(db, 'proj/a')).toBeNull()
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+  })
+
+  it('is idempotent when the metadata move already landed before the crash', async () => {
+    await seed({ 'ren/a.md': '# a\n' })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+    saveDocumentMetadata(db, { id: 'ren-a-id', path: 'ren/a', title: 'A', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+  })
+
+  it('removes a stale journal when the source tree is still in place', async () => {
+    await seed({ 'proj/a.md': '# a\n' })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+    saveDocumentMetadata(db, { id: 'proj-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'cleaned')).toBe(true)
+    expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('proj-a-id')
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+  })
+
+  it('removes our own empty gate directory and the stale journal', async () => {
+    // Crash between the mkdir gate and the rename: src tree intact,
+    // dest is our own EMPTY directory — proven ours by being empty.
+    await seed({ 'proj/a.md': '# a\n' })
+    await fs.mkdir(path.join(vault, 'ren'))
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+
+    await runRecovery()
+
+    expect(await namesIn()).toEqual(['proj'])
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+  })
+
+  it('leaves an externally claimed destination untouched and cleans the journal', async () => {
+    // Both directories exist with the source tree intact: the move
+    // never landed; the non-empty destination is external content.
+    await seed({ 'proj/a.md': '# a\n', 'ren/external.md': '# external\n' })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+
+    await runRecovery()
+
+    expect(await fs.readFile(path.join(vault, 'ren/external.md'), 'utf8')).toBe('# external\n')
+    expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+  })
+
+  it('reports and keeps the journal when neither path exists', async () => {
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), folderJournal('proj', 'ren'), 'utf8')
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'failed')).toBe(true)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
+  })
 })
