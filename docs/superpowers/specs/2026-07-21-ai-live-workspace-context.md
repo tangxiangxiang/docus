@@ -3,7 +3,7 @@
 **Date:** 2026-07-21
 **Baseline:** `284d69f` (`test: complete Edit-09 final closure matrix`)
 **Supersedes:** [2026-06-07-ai-live-note-context.md](./2026-06-07-ai-live-note-context.md)
-**Status:** Edit-10.1 complete / Edit-10.2 complete / Edit-10.3 complete / 10.4–10.5 pending.
+**Status:** Edit-10.1 complete / Edit-10.2 complete / Edit-10.3 complete / Edit-10.4 complete / 10.5 pending.
 
 ## 1. Why the old spec is dead
 
@@ -847,3 +847,264 @@ Delta vs the Edit-10.2 seal (133 files / 1 712 tests, e2e 9):
 +1 test file / +122 tests; e2e 9 → 19 (+10).
 
 Known issues: None.
+
+## 16. Edit-10.4 record (2026-07-22) — Identity and Tool Safety
+
+Production commit: `112da69` (`fix(ai): guard live context file
+mutations`), baseline `72c6263` (Edit-10.3 closure evidence; its
+production tree `23d3a1a` was verified byte-identical before start:
+`git diff 23d3a1a..72c6263 -- src server e2e` empty).
+
+Edit-10.3 made the send-time snapshot the turn's context authority,
+but write tools were still only prompt-guarded. Edit-10.4 adds
+SERVER-ENFORCED safety: the AI's file mutation tools can no longer
+use stale server disk content to clobber a dirty editor buffer, an
+unresolved external conflict, a read-only History/Diff/Recovery
+view, a path that a different document identity has reused, or disk
+that changed after the snapshot was captured.
+
+### 16.1 Implementation
+
+**Safety model** (`server/ai/tool-safety.ts`, new, 340 lines):
+
+- `getToolMutationTarget(toolName, input)` classifies every call:
+  `read_file` / `list_files` → `none`; `create_file` / `write_file`
+  / `patch_file` / `delete_file` / `update_metadata` →
+  `single-path`; `rename_file` → `rename` (both paths). Unknown
+  tools and malformed mutating input (missing/empty/non-string
+  path, rename missing `new_path`) fall into `unknown` — a
+  fail-closed bucket that is NEVER treated as read-only. The switch
+  is exhaustive over an explicit `ClassifiedToolName` union, and
+  `tool-safety.test.ts` asserts set equality with
+  `TOOL_DEFINITIONS`, so an unclassified new tool fails both
+  typecheck and tests.
+- `deriveToolSafetyPolicy(ctx: ChatContext)` is a pure function of
+  the normalized context: `none` / `legacy-path` → `unrestricted`
+  (old clients keep their exact current behavior — they send no
+  reliable dirty/read-only state); live History / Diff / Recovery
+  (both views) → `deny-protected-path(read-only-context)` — a Diff
+  whose after-side is the live editor is still protected, because
+  the user's active workspace is the read-only comparison; live
+  Document: external block present OR `saveStatus==='external'` →
+  `deny-protected-path(external-conflict)` (highest precedence),
+  then `dirty===true` → `unsaved-context`, then `saveStatus` ∉
+  {idle, saved} → `unstable-context`, else clean + stable →
+  `verify-clean-document` carrying `protectedPath`,
+  `expectedDocumentId`, `expectedRaw` (empty raw preserved). The
+  snapshot-kind switch is exhaustive with a `never` default, so a
+  future snapshot kind is a typecheck error until it gets an
+  explicit policy. The returned policy copies primitives only —
+  by-value, no live snapshot reference.
+- `guardToolMutation({policy, target, readCurrentDocument})`:
+  equivalence is on CANONICAL logical paths — `notes/a` ≡
+  `notes/a.md` (one shared canonicalizer, below). `rename_file` is
+  guarded on BOTH source and destination, so renaming an unrelated
+  file ONTO the protected active path is blocked explicitly, not
+  left to the accidental "target already exists" failure;
+  `create_file` on the protected path is not exempt. Deny policies
+  map to error codes `active-context-read-only` /
+  `-unsaved` / `-external-conflict` / `-unstable`.
+  `verify-clean-document` re-reads the server's CURRENT state at
+  call time and requires all three: file exists and is readable,
+  current `documentId === expectedDocumentId`, current
+  `raw === expectedRaw`. Failures: missing/unreadable file or
+  missing identity → `active-context-unverifiable` (write_file
+  NEVER recreates a missing protected file); different documentId
+  even with BYTE-IDENTICAL raw → `active-context-identity-mismatch`
+  (same path ≠ same document — path reuse after delete/rename must
+  never be mistaken for the same document); different raw →
+  `active-context-stale` (disk changed after the snapshot).
+  Verification failure never falls back to the old path-only
+  behavior.
+- `readCurrentServerDocument(db, logicalPath)` is the authoritative
+  server read: raw bytes + database-owned identity via
+  `ensureDocumentMetadata` — the SAME authority the editor sees
+  through `GET /api/posts/:path` (no regex frontmatter parsing, no
+  duplicated getPost, no metadata-only/mtime-only comparison).
+- Error texts carry the error code and the LOGICAL path only. They
+  never contain the snapshot raw, the disk raw, documentIds, or
+  filesystem paths, and suggest the user save / resolve / switch.
+  `expectedRaw` exists only as an in-memory policy field — it is
+  compared in the guard and nowhere else (audited: zero console
+  hits, zero occurrences in messages/SSE/URLs).
+
+**Path equivalence** (`server/paths.ts`): new
+`normalizeLogicalContentPath(p)` strips exactly ONE trailing `.md`
+(mid-path `.md` segments stay illegal), then delegates to the
+existing strict `isValidPathSyntax` (rejects absolute paths, `..`,
+backslashes, NUL, uppercase, leading/trailing dashes). Returns
+`null` for anything invalid; callers treat an unnormalizable tool
+path as never equivalent to a protected path (the tool's own
+`assertSafePath` still rejects it before any side effect). Never
+resolves to a filesystem path. ONE shared helper — the
+`server/ai/live-context.ts` snapshot parser now delegates its
+`isValidSnapshotPath` to it (behavior identical; all 96 parser
+tests green).
+
+**TOCTOU** (§9): verification and mutation share ONE critical
+section. `executeToolCall` classifies the call, then runs the guard
+INSIDE the same per-path `withDocumentWriteLock` the editor save
+route (`routes/posts.ts`) uses, immediately before the executor's
+side effect — so an autosave landing mid-turn completes first and
+the guard's re-verification sees the new disk state (as
+`active-context-stale`) instead of the tool silently racing it.
+Rename acquires both path locks in globally sorted order (deadlock
+free). Residual risk: an OS-LEVEL race (a different process writing
+the file between the guard's read and the tool's write) is not
+eliminated — this is documented honestly rather than papered over
+with a large transaction system coupled to Edit-09.
+
+**Execution context** (`server/ai/chat.ts`, `server/ai/tools.ts`):
+`runChat` derives ONE policy (`deriveToolSafetyPolicy(opts.ctx)`)
+and passes it as `safety` in the tool context of EVERY
+`executeToolCall`. The policy is this run's memory only: not
+persisted, not in SSE, not in the tool input, not sent to the
+model, liveContext unmodified. A blocked call returns an ordinary
+`is_error` ToolResult with no `changed`/`changes` descriptor — no
+throw to the route, no `file_changed` event, no disk/DB touch, no
+partial files/rename; the model reads the error and continues (on
+an unrelated path, or by asking the user), and the assistant
+message completes normally. Allowed mutations keep the existing
+behavior exactly (result formats, file_changed SSE, editor
+file-change bus, History/Recovery/Edit-09 machinery, abort,
+multi-round loop, envelope persistence) — the dispatch switch was
+extracted unchanged into `dispatchToolCall`; executors untouched.
+
+**Prompt note** (§17): one short paragraph added to the live
+workspace section — file mutation tools are server-guarded against
+the active live workspace identity; a tool may be rejected when the
+active content is unsaved, read-only, externally conflicted, stale,
+or belongs to a different document identity; do not retry blindly,
+ask the user to save or resolve. No policy JSON or guard internals
+in the prompt (tested: `verify-clean-document`,
+`deny-protected-path`, `expectedRaw`, `expectedDocumentId`,
+`active-context-*` never appear in any rendered prompt); enforcement
+is server-side, and `none` / legacy prompts carry no note.
+
+**Client**: zero changes. Blocked results are plain `is_error`
+tool_results — the existing failure path: the SSE contract already
+carries `is_error` (`src/lib/ai-api.ts`), `useAiHistory.ts` records
+it, and `AiToolCallCard.vue` renders the error state (its unit test
+already asserts an `is_error: true` card).
+
+### 16.2 Compatibility
+
+New client liveContext → full policy. Legacy `currentNotePath`
+clients → `unrestricted`, exact current behavior (tested end to end
+through `runChat`). `none` context → `unrestricted`. Malformed
+liveContext is still hard-rejected by the Edit-10.3 route before
+`runChat`.
+
+### 16.3 Tests (strict TDD: red → focused red → minimal → focused green → full gates)
+
+- `server/__tests__/tool-safety.test.ts` (NEW, 64 tests):
+  canonicalizer table (equivalence + 12 reject cases incl. NUL,
+  backslash, mid-path `.md`); mutation classification for all 8
+  tools + malformed inputs + unknown fail-closed +
+  `TOOL_DEFINITIONS` set equality; 14-row policy derivation table
+  (incl. external precedence over dirty+unstable, dirty precedence
+  over transient saveStatus, empty expectedRaw preserved, by-value
+  policy); guard table (all 4 deny codes, `.md` spellings, rename
+  double-path, create_file not exempt, unknown targets,
+  verify-clean allow / unverifiable / identity-mismatch with
+  identical raw / stale, canonical path handed to the resolver,
+  unrelated skips the read, async resolver); message-hygiene loop
+  over all 7 blocked decisions (code + logical path present; raw
+  sentinels, documentIds, `/content`, `.md` absent).
+- `server/__tests__/tools.test.ts` (+44 tests): real temp vault +
+  real DB + real `executeToolCall` with a policy — dirty Document
+  block matrix × 7 mutation shapes (is_error, code, byte-exact
+  disk, metadata untouched, no change descriptors, no raw in
+  error); read-only matrix × History/Diff/Recovery content/Recovery
+  diff derived from real snapshots (blocked; read_file/list_files
+  allowed; unrelated allowed); external-conflict no-leak; unstable;
+  verify-clean allow paths with SEPARATE fixtures for
+  write/patch/update_metadata/rename/delete; identity-mismatch with
+  identical raw; stale; missing file (write_file does NOT recreate
+  it); missing identity; unreadable (path is a directory);
+  unrelated-path behavior preserved under all 4 deny reasons;
+  rename double-path matrix incl. `.md` spellings; change-descriptor
+  counts (blocked → 0, allowed → exactly 1, existing event format);
+  malformed/unknown calls fail with their own errors, never a
+  safety code.
+- `server/__tests__/chat.test.ts` (+5 tests → 34): runChat loop
+  with mocked `streamClaude` — round 1 blocked `write_file` →
+  `is_error` tool_result in round 2's conversation, ZERO
+  file_changed events, round 2 text completes, `done` emitted,
+  dirty-raw sentinel `DIRTY_SECRET_MUST_NOT_LEAK_456` absent from
+  the messages table, session title, events, and error text;
+  per-call independence (blocked protected write + allowed
+  unrelated write in the SAME turn → exactly 1 file_changed);
+  legacy-path context keeps unrestricted behavior; the §17 prompt
+  note is present in live prompts and absent from none/legacy
+  prompts, with no policy internals.
+
+Red-first verified at every layer: tool-safety unit suite red on
+"Cannot find module"; integration suite red with 22 failures (guard
+ignored — e.g. delete actually deleted); chat suite red on 3
+failures (writes executed, note missing). The red phases ran
+against temp vaults, never the real `src/content`.
+
+### 16.4 Phase boundaries honored
+
+Edit-10.3 transport untouched (capture, wire format, ChatRequest,
+workspace resolver, strict route validation, delimiter-hardened
+serializer — all sealed). DB schema unchanged (identity reuses the
+existing `documents` table via `ensureDocumentMetadata`). Client
+capture unchanged (`git diff 23d3a1a..112da69 -- src e2e` empty).
+Edit-09 untouched: Draft Store, Recovery cleanup, file
+transactions, autosave, `atomicTextWrite` — zero changes. No
+confirmation/approval UI, no AI-direct Monaco writes, no liveContext
+persistence, no RAG/embeddings/multi-doc context, no new provider,
+no timeout increases.
+
+### 16.5 Accepted residual risk (post-send typing race, §16 of the plan)
+
+The server's authority is the send-time snapshot. If the user
+dirty-edits the buffer while the model is thinking, the server
+cannot see the new Monaco revision; a clean-context mutation is
+verified against the snapshot's raw and, if the disk still matches
+it, allowed. The in-memory buffer is NOT silently clobbered: the
+tool write advances the file, the editor's existing external-change
+detection sees the mtime/content change on the dirty buffer and
+surfaces it (autosave against the new disk state gets a 409 and
+flips the tab to `external`, per the sealed Edit-10.3 E2E-10
+behavior), so the user resolves it explicitly. No client polling or
+approval websocket was added. Edit-10.5 must regress this exact
+scenario in a real browser.
+
+### 16.6 Final gate evidence (recorded 2026-07-22, sealed tree)
+
+Full §12 closure gates re-run from scratch on the production tree
+`112da69` (contents identical to the gated working tree; only this
+docs record was added afterwards). `npm ci` first. Local only — no
+CI exists.
+
+| Gate | Result | Detail |
+| --- | --- | --- |
+| `npm ci` | exit 0 | clean install |
+| `npm run typecheck` | exit 0 | clean |
+| `npm run lint:icons` | exit 0 | 2 files scanned, 81 `<svg>` elements, no violations |
+| `npm test` | exit 0 | Vitest: **135 test files passed (135)**, **1 947 tests passed (1 947)**, duration 29.41 s |
+| `npm run build` | exit 0 | built in 1.50 s (pre-existing rolldown chunk-size notice unchanged) |
+| `npm run test:e2e:draft-store` | exit 0 | **38 passed** (27.6 s) |
+| `npm run test:e2e` | exit 0 | **19 passed** (19.8 s) |
+| `git diff --check` | exit 0 | no whitespace errors |
+| `git status --short` | only this docs file | before the closure commit |
+
+Audits: no new `.only` / `.skip`; `git grep "active-context-"` hits
+only the error-code definitions in `tool-safety.ts` and test
+assertions; `git grep "expectedRaw"` hits only the in-memory policy
+field in `tool-safety.ts`, its construction from `snapshot.raw`,
+the guard comparison, and tests (plus the pre-existing unrelated
+`atomicTextWrite` CAS parameter); `git grep "console.*raw"` and
+`git grep "console.*liveContext"` both zero hits.
+
+Delta vs the Edit-10.3 seal (134 files / 1 834 tests): +1 test
+file / +113 tests (64 tool-safety unit + 44 tools integration + 5
+chat). E2E unchanged (19) — Playwright smoke was unnecessary:
+blocked results ride the existing `is_error` Tool Card path,
+already unit-tested.
+
+Known issues: None. Edit-10.5 (Final Closure — real-browser
+regression incl. the §16.5 scenario) remains pending.
