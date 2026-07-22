@@ -324,13 +324,41 @@ folderRoutes.delete('/api/folders/*', async (c) => {
     await fs.rm(staged, { recursive: true, force: true })
   } catch (error) {
     const rollbackErrors: unknown[] = []
+    // The failed delete never ran applyDelete; on path reuse the index
+    // still carries the old subtree's links/titles. Drop the old paths
+    // and re-derive the new subtree's entries from disk.
+    const reindexReusedSubtree = async (): Promise<void> => {
+      const idx = await getLinkIndex()
+      idx.applyFolderDelete(all)
+      for (const p of await listSubtreePaths(CONTENT_DIR, folderP)) {
+        idx.applyWrite(p, await fs.readFile(filePathFor(p), 'utf8'))
+      }
+    }
     if (await exists(staged)) {
       if (!await exists(abs)) {
         // The path is still empty: put the old tree back WITH its
-        // identity — the path again holds exactly the staged generation.
-        try { await fs.rename(staged, abs) } catch (rollbackError) { rollbackErrors.push(rollbackError) }
-        try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
+        // identity — the path again holds exactly the staged
+        // generation. createOnlyMoveDirectory's mkdir gate + rmdir
+        // ownership check make the restore create-only: if an external
+        // writer claimed the path between the exists() check above and
+        // the restore, restored: false reports it and the metadata is
+        // NEVER restored onto foreign bytes.
+        let restored = false
+        try { restored = (await createOnlyMoveDirectory(staged, abs)).restored }
         catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        if (restored) {
+          try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
+          catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        } else {
+          // Path reuse (or restore failure): the old identities must
+          // never bind to whatever now occupies the path. Drop every
+          // stale row, leave the old tree quarantined under its
+          // staging name, and refresh the link index against the new
+          // subtree.
+          try { deleteDocumentMetadataPrefix(metadataDb(), folderP) }
+          catch (rollbackError) { rollbackErrors.push(rollbackError) }
+          try { await reindexReusedSubtree() } catch { /* next rebuild repairs */ }
+        }
       } else {
         // Path reuse: an external writer recreated the folder while the
         // delete was failing. The old identities must never bind to the
@@ -339,6 +367,7 @@ folderRoutes.delete('/api/folders/*', async (c) => {
         // and leave the old tree quarantined under its staging name.
         try { deleteDocumentMetadataPrefix(metadataDb(), folderP) }
         catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        try { await reindexReusedSubtree() } catch { /* next rebuild repairs */ }
       }
     } else {
       try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }

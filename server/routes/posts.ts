@@ -71,13 +71,18 @@ export function __setPostRenameRaceHooksForTesting(hooks: PostRenameRaceHooks | 
  * identity row for the path and give the NEW generation now occupying
  * it a fresh identity. The old generation stays quarantined under its
  * `.docus-delete-*` staging name (not listed — the name does not end
- * in .md — and never scanned by the link index).
+ * in .md — and never scanned by the link index). Returns the new
+ * generation's raw so callers can refresh the process-level link index
+ * (which never saw an applyDelete for the failed delete and would
+ * otherwise keep the old file's outbound links and title until a
+ * restart).
  */
-async function reidentifyReusedPath(documentPath: string, abs: string): Promise<void> {
+async function reidentifyReusedPath(documentPath: string, abs: string): Promise<string> {
   deleteDocumentMetadata(metadataDb(), documentPath)
   const reusedRaw = await fs.readFile(abs, 'utf8')
   const reusedStat = await fs.stat(abs)
   ensureMetadata(documentPath, reusedRaw, reusedStat.mtimeMs, Date.now())
+  return reusedRaw
 }
 
 async function uniqueMoveTarget(absPath: string, relPath: string): Promise<{ abs: string; rel: string }> {
@@ -670,7 +675,11 @@ postRoutes.delete('/api/posts/*', async (c) => {
             await fs.unlink(staged)
             restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)
           } else {
-            await reidentifyReusedPath(splat, abs)
+            const reusedRaw = await reidentifyReusedPath(splat, abs)
+            // The failed delete never ran applyDelete; the index still
+            // carries the old file's outbound links/title for this
+            // path. Re-apply against the NEW generation.
+            try { (await getLinkIndex()).applyWrite(splat, reusedRaw) } catch { /* next rebuild repairs */ }
           }
         } else {
           // Path reuse: an external writer created a NEW generation at
@@ -678,7 +687,8 @@ postRoutes.delete('/api/posts/*', async (c) => {
           // must never bind to foreign bytes — drop the stale identity,
           // give the new file a fresh one, and leave the old generation
           // quarantined under its staging name.
-          await reidentifyReusedPath(splat, abs)
+          const reusedRaw = await reidentifyReusedPath(splat, abs)
+          try { (await getLinkIndex()).applyWrite(splat, reusedRaw) } catch { /* next rebuild repairs */ }
         }
       } else {
         restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)

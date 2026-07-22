@@ -602,16 +602,20 @@ async function executePatchFile(input: {
  * A re-used path must never inherit the old documentId: drop any stale
  * identity row for the path and give the NEW generation now occupying
  * it a fresh identity. The old generation stays quarantined under its
- * `.docus-delete-*` staging name.
+ * `.docus-delete-*` staging name. Returns the new generation's raw so
+ * callers can refresh the process-level link index (which never saw an
+ * applyDelete for the failed delete and would otherwise keep the old
+ * file's outbound links and title until a restart).
  */
-function reidentifyReusedPath(db: DatabaseT, documentPath: string, abs: string): void {
+function reidentifyReusedPath(db: DatabaseT, documentPath: string, abs: string): string {
   deleteDocumentMetadata(db, documentPath)
   const reusedRaw = fs.readFileSync(abs, 'utf8')
   const reusedStat = fs.statSync(abs)
   ensureDocumentMetadata(db, documentPath, reusedRaw, reusedStat.mtimeMs, Date.now())
+  return reusedRaw
 }
 
-function executeDeleteFile(input: { path?: string }, db: DatabaseT): ToolResult {
+async function executeDeleteFile(input: { path?: string }, db: DatabaseT): Promise<ToolResult> {
   if (typeof input.path !== 'string' || input.path.length === 0) {
     return err('delete_file: `path` is required')
   }
@@ -648,8 +652,12 @@ function executeDeleteFile(input: { path?: string }, db: DatabaseT): ToolResult 
           try { restoreDocumentMetadataMutation(db, databaseSnapshot) }
           catch (rollbackError) { rollbackFailures.push(rollbackError) }
         } else if (rollbackFailures.length === 0) {
-          try { reidentifyReusedPath(db, input.path, abs) }
-          catch (reuseError) { rollbackFailures.push(reuseError) }
+          try {
+            const reusedRaw = reidentifyReusedPath(db, input.path, abs)
+            // The failed delete never ran applyDelete; re-apply the
+            // index entry against the NEW generation at this path.
+            try { (await getLinkIndex()).applyWrite(input.path, reusedRaw) } catch { /* next rebuild repairs */ }
+          } catch (reuseError) { rollbackFailures.push(reuseError) }
         }
       } else {
         // Path reuse: an external writer created a NEW generation at
@@ -657,8 +665,10 @@ function executeDeleteFile(input: { path?: string }, db: DatabaseT): ToolResult 
         // must never bind to foreign bytes — drop the stale identity,
         // give the new file a fresh one, and leave the old generation
         // quarantined under its staging name.
-        try { reidentifyReusedPath(db, input.path, abs) }
-        catch (reuseError) { rollbackFailures.push(reuseError) }
+        try {
+          const reusedRaw = reidentifyReusedPath(db, input.path, abs)
+          try { (await getLinkIndex()).applyWrite(input.path, reusedRaw) } catch { /* next rebuild repairs */ }
+        } catch (reuseError) { rollbackFailures.push(reuseError) }
       }
     } else {
       try { restoreDocumentMetadataMutation(db, databaseSnapshot) }

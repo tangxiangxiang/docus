@@ -814,3 +814,91 @@ describe('round 5: rename rollback never overwrites a re-used source path', () =
     }
   })
 })
+
+describe('round 5: folder delete rollback gates metadata on a create-only restore', () => {
+  it('never restores old identities when the directory restore fails against external content', async () => {
+    // The reviewer's P1: if the staged tree cannot be renamed back
+    // (external content claimed the path), the old documentIds must
+    // NOT be restored onto the foreign files — the metadata restore is
+    // strictly gated on a successful create-only directory restore.
+    await fs.mkdir(path.join(sandbox, 'gone'))
+    await fs.writeFile(path.join(sandbox, 'gone', 'a.md'), '# a', 'utf8')
+    saveDocumentMetadata(db, { id: 'gate-old-id', path: 'gone/a', title: 'Old A' })
+    await get('/api/links/index')
+
+    const originalRm = fs.rm.bind(fs)
+    const remove = vi.spyOn(fs, 'rm').mockImplementation(async (target, options) => {
+      if (String(target).includes('.docus-delete-')) throw new Error('injected recursive removal failure')
+      return originalRm(target, options)
+    })
+    const originalRename = fs.rename.bind(fs)
+    const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(from).includes('.docus-delete-')) {
+        // External content lands inside the just-created mkdir gate
+        // directory: the restore rename then fails (ENOTEMPTY) and the
+        // gate is no longer ours.
+        await fs.writeFile(path.join(String(to), 'external.md'), '# external\n', 'utf8')
+        throw Object.assign(new Error('ENOTEMPTY'), { code: 'ENOTEMPTY' })
+      }
+      return originalRename(from, to)
+    })
+    try {
+      const response = await app.fetch(new Request('http://localhost/api/folders/gone?recursive=true', {
+        method: 'DELETE',
+      }))
+      expect(response.status).toBe(500)
+      // THE gate: old identity NOT restored onto the external files.
+      expect(getDocumentMetadata(db, 'gone/a')).toBeNull()
+      // External content untouched; old tree quarantined.
+      expect(await fs.readFile(path.join(sandbox, 'gone', 'external.md'), 'utf8')).toBe('# external\n')
+      const quarantined = (await fs.readdir(sandbox)).filter((name) => name.startsWith('gone.docus-delete-'))
+      expect(quarantined).toHaveLength(1)
+      expect(await fs.readFile(path.join(sandbox, quarantined[0]!, 'a.md'), 'utf8')).toBe('# a')
+      // The stale link-index entries for the old subtree were replaced
+      // by a re-enumeration of the re-used folder.
+      const idx = await get('/api/links/index')
+      const snap = await idx.json() as { paths: string[] }
+      expect(snap.paths).toContain('gone/external')
+      expect(snap.paths).not.toContain('gone/a')
+    } finally {
+      remove.mockRestore()
+      rename.mockRestore()
+    }
+  })
+})
+
+describe('round 5: a failed-delete path reuse refreshes the link index', () => {
+  it('replaces the old file outbound links and title with the new generation on path reuse', async () => {
+    // The process-level link index singleton never saw an applyDelete
+    // for the failed delete — without an applyWrite against the new
+    // generation it would keep the old file's outbound links and
+    // title until a restart.
+    await fs.writeFile(path.join(sandbox, 'target-a.md'), '# ta', 'utf8')
+    await fs.writeFile(path.join(sandbox, 'target-b.md'), '# tb', 'utf8')
+    const abs = path.join(sandbox, 'reuse-note.md')
+    await fs.writeFile(abs, '# old\nsee [[target-a]]\n', 'utf8')
+    saveDocumentMetadata(db, { id: 'reuse-old-id', path: 'reuse-note', title: 'Old Note' })
+    const before = await get('/api/links/index')
+    const beforeSnap = await before.json() as { outgoing: Record<string, Array<{ target: string }>> }
+    expect(beforeSnap.outgoing['reuse-note']?.map((l) => l.target)).toEqual(['target-a'])
+
+    const unlink = vi.spyOn(fs, 'unlink').mockImplementationOnce(async () => {
+      await fs.writeFile(abs, '# new\nsee [[target-b]]\n', 'utf8')
+      throw Object.assign(new Error('injected staged unlink failure'), { code: 'EIO' })
+    })
+    try {
+      const response = await app.fetch(new Request('http://localhost/api/posts/reuse-note', { method: 'DELETE' }))
+      expect(response.status).toBe(500)
+      // Fresh identity for the re-used path (round-4 contract)...
+      const metadata = getDocumentMetadata(db, 'reuse-note')
+      expect(metadata).not.toBeNull()
+      expect(metadata!.id).not.toBe('reuse-old-id')
+      // ...AND the index now reflects the new generation, not the old.
+      const after = await get('/api/links/index')
+      const afterSnap = await after.json() as { outgoing: Record<string, Array<{ target: string }>>; titles?: Record<string, string> }
+      expect(afterSnap.outgoing['reuse-note']?.map((l) => l.target)).toEqual(['target-b'])
+    } finally {
+      unlink.mockRestore()
+    }
+  })
+})

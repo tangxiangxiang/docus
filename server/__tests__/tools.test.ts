@@ -401,6 +401,32 @@ describe('delete_file', () => {
       unlink.mockRestore()
     }
   })
+
+  it('refreshes the link index against the new generation when a failed-delete path is re-used', async () => {
+    // Round 5: the failed delete never ran applyDelete — without an
+    // applyWrite against the re-used file the process-level index would
+    // keep the old generation's outbound links until a restart.
+    __resetLinkIndexForTesting()
+    const abs = writeFile('reuse/victim.md', '# Old\nsee [[ta]]\n')
+    writeFile('ta.md', '# ta\n')
+    writeFile('tb.md', '# tb\n')
+    saveDocumentMetadata(db, { id: 'victim-old-id', path: 'reuse/victim', title: 'Old' })
+    const before = (await getLinkIndex()).snapshot()
+    expect(before.outgoing['reuse/victim']?.map((l) => l.target)).toEqual(['ta'])
+    const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementationOnce(() => {
+      fs.writeFileSync(abs, '# new\nsee [[tb]]\n', 'utf8')
+      throw Object.assign(new Error('injected unlink failure'), { code: 'EIO' })
+    })
+    try {
+      const result = await executeToolCall('delete_file', { path: 'reuse/victim' }, ctx)
+      expect(result.isError).toBe(true)
+      const after = (await getLinkIndex()).snapshot()
+      expect(after.outgoing['reuse/victim']?.map((l) => l.target)).toEqual(['tb'])
+    } finally {
+      unlink.mockRestore()
+      __resetLinkIndexForTesting()
+    }
+  })
 })
 
 // --- rename_file ------------------------------------------------------------
