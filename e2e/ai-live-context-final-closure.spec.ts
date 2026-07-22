@@ -1,19 +1,39 @@
 // Edit-10.5 Final Closure — real-browser residual race regression.
 //
-// The accepted residual race from the Edit-10.4 design doc, proven in a
-// REAL browser instead of only documented:
+// The accepted residual race from the Edit-10.4 design doc, proven in
+// a REAL browser in the REQUIRED causal order:
 //
 //   Document clean at Send → clean liveContext captured and sent
-//   → the server-side mutation for the same path lands on disk while
-//     the user keeps typing (buffer dirty, unsaved)
-//   → the AI turn's SSE file_changed reaches the browser through the
-//     REAL client chain: sendAndStream SSE parser → useAiHistory →
-//     file-change bus → useExternalFileChanges.applyExternalChange
-//   → the dirty buffer triggers the in-app overwrite confirm
-//   → cancel keeps the local bytes; the debounced autosave's baseRaw
-//     now mismatches the AI-written disk → 409 → tab flips 'external'
-//   → no silent overwrite, no auto-merge, no auto-save, no lost
-//     input, no duplicate conflict, no Recovery record.
+//   → user keeps typing while the AI turn is open (buffer dirty,
+//     unsaved; its debounced autosave is in flight, held at the
+//     network boundary by the test)
+//   → WHILE the buffer is dirty and the server still holds the
+//     send-time clean bytes, the same-path server mutation lands
+//     through the real CAS write path (exactly what the send-time
+//     clean verify-clean policy allows)
+//   → the held autosave is released and gets a REAL 409 (its baseRaw
+//     no longer matches the AI-written disk) → tab flips 'external'
+//     with the AI body as externalRaw
+//   → the AI turn's SSE file_changed then reaches the browser through
+//     the REAL client chain (sendAndStream → useAiHistory → file
+//     change bus → useExternalFileChanges) — the save is no longer
+//     in flight, the buffer is still dirty, so the in-app overwrite
+//     confirm appears exactly once
+//   → cancel keeps the local bytes: no silent overwrite, no
+//     auto-merge, no auto-save of the local buffer, no lost input,
+//     no duplicate conflict, no Recovery record.
+//
+// Why the autosave is released BEFORE the SSE event: production
+// useDocumentSave sets tab.savingRevision BEFORE the PUT is in
+// flight, and useExternalFileChanges drops any file_changed that
+// arrives while savingRevision !== null. Releasing the SSE while the
+// autosave is still held would make the real client discard the
+// event — the sealed production contract is: the 409 establishes the
+// external state, the following file_changed confirms it through the
+// dirty-buffer path. §6 of the closure spec accepts either sub-order
+// of (autosave 409, file_changed) as long as the final state is:
+// local body preserved, server body = the AI write, tab external,
+// unsaved input not lost — all asserted below.
 //
 // Interlocking evidence (§6.3 split, used because the sealed vite
 // plugin runs `dotenv.config({ override: true })`, so a host .env
@@ -35,25 +55,29 @@
 //
 //   B. THIS SPEC — the browser half of the chain, end to end: real
 //      VaultView/Monaco, real send-time captureAiLiveContext, real
-//      sendAndStream SSE parsing, real file-change bus, real
-//      confirm dialog, real debounced autosave CAS against the real
-//      server. The mutation is REAL: a production REST PUT through
-//      the server's compare-and-swap write path (the editor save
-//      route), and the file_changed descriptor carries the REAL
-//      newRaw/newMtime from that write — never a static fulfilled
-//      response standing in for a server mutation. Only the LLM
+//      debounced autosave (held at the network boundary, then really
+//      409'd by the server), real sendAndStream SSE parsing, real
+//      file-change bus, real confirm dialog. The mutation is REAL: a
+//      production REST PUT through the server's compare-and-swap
+//      write path — issued via APIRequestContext, which does NOT pass
+//      through page.route, so it never interferes with the held
+//      browser autosave — and the file_changed descriptor carries
+//      the REAL newRaw/newMtime of that write. Only the LLM
 //      orchestration layer (Anthropic round-trip + runChat loop) is
 //      substituted, at the browser layer exactly like the sealed
 //      E2E-1..10 harness; that layer is what evidence A covers with
 //      the real server code. The two pieces interlock on the
 //      descriptor shape A emits and B consumes.
 //
-// Sequence control (§6.4): no arbitrary sleeps. The intercepted chat
-// stream is held open on a test-owned gate while the disk mutation
-// and the local typing happen, then released; every assertion is a
-// network/DOM condition. Ordering violations cannot pass silently:
-// if the local buffer were ever overwritten, the Monaco assertion
-// fails; if the confirm never fired, its visibility assertion fails.
+// Sequence control (§6.4): no arbitrary sleeps — every wait is a
+// network or DOM condition. The chat stream is held on a test gate;
+// the autosave PUT is held on a second test gate; the mutation and
+// the SSE release happen only after the deterministic preconditions
+// (buffer dirty + server still clean + autosave in flight) are all
+// observed. Ordering violations cannot pass silently: if the local
+// buffer were ever overwritten, the Monaco/raw assertions fail; if
+// the autosave did not really 409, its captured status fails; if the
+// confirm never fired, its visibility assertion fails.
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
@@ -129,6 +153,29 @@ async function interceptAiChatGated(
       return route.fulfill({ status: 200, contentType: 'text/event-stream', body: MINIMAL_SSE })
     }
     return route.fulfill(jsonResponse({}))
+  })
+}
+
+// Holds the browser's debounced autosave PUT at the network boundary:
+// the request is recorded (autosaveSeen) and parked until the test
+// releases it, then REALLY sent to the server (route.fetch) so the
+// browser receives the genuine server response — the 409 conflict —
+// and its real status is captured for assertion. APIRequestContext
+// writes from the test bypass page.route entirely, so the real server
+// mutation never touches this gate.
+async function interceptAutosaveHeld(
+  page: Page,
+  slug: string,
+  state: { seen: boolean; statuses: number[] },
+  gate: Promise<void>,
+) {
+  await page.route(`**/api/posts/${slug}`, async (route) => {
+    if (route.request().method() !== 'PUT') return route.continue()
+    state.seen = true
+    await gate
+    const response = await route.fetch()
+    state.statuses.push(response.status())
+    await route.fulfill({ response })
   })
 }
 
@@ -216,7 +263,7 @@ test.afterAll(async ({ request }) => {
   }
 })
 
-test('residual race: send clean → type while the AI turn is open → same-path server write → the dirty buffer survives as an external conflict', async ({ page, request }) => {
+test('residual race: send clean → type while the AI turn is open → same-path server mutation while dirty → the dirty buffer survives as an external conflict', async ({ page, request }) => {
   const slug = `inbox/e2e-ai-fc-${RUN_ID}`
   const name = slug.split('/').pop()!
   const cleanRaw = `${name} clean send-time body`
@@ -226,7 +273,7 @@ test('residual race: send clean → type while the AI turn is open → same-path
   expect(doc.raw).toBe(`${cleanRaw}\n`)
   const aiBody = `EDIT10_FC_AI_WRITTEN_${RUN_ID}\n`
 
-  // The held chat stream + its gated answer.
+  // Gate 1: the held AI chat stream. Gate 2: the held autosave PUT.
   const chatBodies: AnyRecord[] = []
   let releaseRace = () => {}
   const raceGate = new Promise<void>((resolve) => { releaseRace = resolve })
@@ -237,6 +284,10 @@ test('residual race: send clean → type while the AI turn is open → same-path
     raceGate,
     () => raceSse(slug, aiBody, descriptor?.mtime ?? 0),
   )
+  const autosave = { seen: false, statuses: [] as number[] }
+  let releaseAutosave = () => {}
+  const autosaveGate = new Promise<void>((resolve) => { releaseAutosave = resolve })
+  await interceptAutosaveHeld(page, slug, autosave, autosaveGate)
 
   await reloadApp(page)
   await openDoc(page, slug)
@@ -260,36 +311,52 @@ test('residual race: send clean → type while the AI turn is open → same-path
   expect(ctx.identity).toEqual({ documentId: doc.documentId, path: slug })
   expect(ctx.workspaceTabId).toBe(slug)
 
-  // ── 2. The same-path mutation lands on disk through the REAL
-  //    server write path (production REST compare-and-swap) while the
-  //    AI turn's stream is still held open. The descriptor carries
-  //    the REAL mtime of this write ──────────────────────────────────
+  // ── 2. The user keeps typing WHILE THE AI TURN IS OPEN: the buffer
+  //    is dirty and its debounced autosave leaves the app ────────────
+  const localTail = `EDIT10_FC_LOCAL_TAIL_${RUN_ID}`
+  await appendEditorText(page, localTail)
+  await expect(page.locator(`[data-tab-id="${slug}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 5000 })
+  // The autosave PUT arrives at the network boundary and is HELD:
+  // the buffer is dirty and unsaved, and — decisively — NOTHING has
+  // reached the server yet.
+  await expect.poll(() => autosave.seen, { timeout: 15000 }).toBe(true)
+
+  // ── 3. At mutation time the server STILL holds the send-time clean
+  //    bytes — the exact precondition the verify-clean policy checks
+  //    in the real race ──────────────────────────────────────────────
+  const serverBeforeMutation = await (await request.get(`/api/posts/${slug}`)).json()
+  expect(serverBeforeMutation.raw).toBe(`${cleanRaw}\n`)
+
+  // ── 4. The same-path mutation lands through the REAL server CAS
+  //    write path (APIRequestContext bypasses page.route — the held
+  //    autosave is untouched). It succeeds BECAUSE the disk still
+  //    equals the send-time snapshot ─────────────────────────────────
   const mutation = await request.put(`/api/posts/${slug}`, {
     data: { raw: aiBody, baseRaw: doc.raw },
   })
   expect(mutation.status()).toBeLessThan(300)
-  // The server now holds the AI-written body; the editor still shows
-  // the clean send-time bytes. The descriptor's newMtime is the REAL
-  // mtime of this write (GET detail exposes stat.mtimeMs).
-  const serverMid = await (await request.get(`/api/posts/${slug}`)).json()
-  expect(serverMid.raw).toBe(aiBody)
-  expect(serverMid.metadata.id).toBe(doc.documentId)
-  descriptor = { mtime: serverMid.mtime as number }
+  const serverAfterMutation = await (await request.get(`/api/posts/${slug}`)).json()
+  expect(serverAfterMutation.raw).toBe(aiBody)
+  expect(serverAfterMutation.metadata.id).toBe(doc.documentId)
+  descriptor = { mtime: serverAfterMutation.mtime as number }
   expect(typeof descriptor.mtime).toBe('number')
 
-  // ── 3. The user keeps typing: buffer dirty, unsaved ────────────────
-  const localTail = `EDIT10_FC_LOCAL_TAIL_${RUN_ID}`
-  await appendEditorText(page, localTail)
-  await expect(page.locator(`[data-tab-id="${slug}"][data-save-status="dirty"]`)).toBeVisible({ timeout: 5000 })
+  // ── 5. Release the held autosave: its baseRaw (the clean send-time
+  //    bytes) no longer matches the AI-written disk, so the REAL
+  //    server answers 409 and the tab flips to external with the AI
+  //    body as externalRaw ───────────────────────────────────────────
+  releaseAutosave()
+  await expect.poll(() => autosave.statuses.length, { timeout: 15000 }).toBe(1)
+  expect(autosave.statuses[0]).toBe(409)
+  await expect(page.locator(`[data-tab-id="${slug}"][data-save-status="external"]`)).toBeVisible({ timeout: 15000 })
 
-  // ── 4. Release the AI turn: the SSE stream delivers the standard
-  //    file_changed descriptor into the REAL client chain ────────────
+  // ── 6. Release the AI turn: the SSE stream delivers the standard
+  //    file_changed descriptor into the REAL client chain. The save
+  //    is no longer in flight and the buffer is still dirty (raw ≠
+  //    originalRaw), so the overwrite confirm appears — exactly once
+  //    (disk-poll events carry source 'editor-lifecycle' and are
+  //    dropped before the conflict logic) ────────────────────────────
   releaseRace()
-
-  // ── 5. The dirty buffer triggers the overwrite confirm — exactly
-  //    once (disk-poll events carry source 'editor-lifecycle' and are
-  //    dropped before the conflict logic; the bus delivers this one
-  //    SSE event once) ────────────────────────────────────────────────
   const confirmDialog = page.locator('.confirm-dialog')
   await expect(confirmDialog).toBeVisible({ timeout: 15000 })
   const confirmMessage = (await confirmDialog.locator('.confirm-message').textContent()) ?? ''
@@ -297,10 +364,6 @@ test('residual race: send clean → type while the AI turn is open → same-path
   // Cancel is the focused safe action: keep the local changes.
   await confirmDialog.locator('.confirm-actions .btn').first().click()
   await expect(confirmDialog).toBeHidden()
-
-  // ── 6. The debounced autosave's baseRaw now mismatches the
-  //    AI-written disk → real-server 409 → the tab flips to external ─
-  await expect(page.locator(`[data-tab-id="${slug}"][data-save-status="external"]`)).toBeVisible({ timeout: 20000 })
 
   // ── 7. Monaco still shows the user's post-Send typing — the buffer
   //    was NOT overwritten; the server still holds the AI write — the
@@ -330,7 +393,9 @@ test('residual race: send clean → type while the AI turn is open → same-path
   expect(ctx2.identity).toEqual({ documentId: doc.documentId, path: slug })
 
   // ── 9. The conflict stays user-owned: no duplicate confirm ever
-  //    re-appeared, nothing silently resolved the external state ────
+  //    re-appeared, the autosave was never silently re-sent, nothing
+  //    resolved the external state silently ──────────────────────────
   await expect(page.locator('.confirm-dialog')).toBeHidden()
+  expect(autosave.statuses).toEqual([409]) // exactly one autosave, the real 409
   await expect(page.locator(`[data-tab-id="${slug}"][data-save-status="external"]`)).toBeVisible()
 })
