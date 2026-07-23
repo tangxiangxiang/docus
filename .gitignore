@@ -40,3 +40,4 @@ src/content/
 .env
 .env.local
 .env.*.local
+*.tsbuildinfo
