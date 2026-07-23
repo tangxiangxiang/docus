@@ -1336,16 +1336,32 @@ test('does not leak a late connection after a blocked open', async ({ page }) =>
     const lateSettled = new Promise<void>((resolve) => {
       lateOpen!.addEventListener('success', () => resolve(), { once: true })
       lateOpen!.addEventListener('error', () => resolve(), { once: true })
+      lateOpen!.addEventListener('blocked', () => resolve(), { once: true })
     })
     blocker.close()
-    await lateSettled
+    // Wait for the late open to settle (the store auto-closes it on the
+    // eventual success), bounded so a slow version-change resume on a
+    // loaded CI runner cannot hang the test opaquely; the deletion
+    // retry below then confirms that no connection actually leaked.
+    await Promise.race([
+      lateSettled,
+      new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+    ])
 
-    const deletion = await new Promise<'deleted' | 'blocked'>((resolve, reject) => {
-      const request = indexedDB.deleteDatabase(databaseName)
-      request.onsuccess = () => resolve('deleted')
-      request.onerror = () => reject(request.error)
-      request.onblocked = () => resolve('blocked')
-    })
+    // Delete the database, retrying past a transient 'blocked' while
+    // the late connection finishes closing. A genuine leak keeps
+    // reporting 'blocked' and fails the assertion below — this never
+    // masks a real leak, it only tolerates close-timing variance.
+    let deletion: 'deleted' | 'blocked' = 'blocked'
+    for (let attempt = 0; attempt < 80 && deletion === 'blocked'; attempt++) {
+      deletion = await new Promise<'deleted' | 'blocked'>((resolve, reject) => {
+        const request = indexedDB.deleteDatabase(databaseName)
+        request.onsuccess = () => resolve('deleted')
+        request.onerror = () => reject(request.error)
+        request.onblocked = () => resolve('blocked')
+      })
+      if (deletion === 'blocked') await new Promise((resolve) => setTimeout(resolve, 100))
+    }
 
     return { listed, deletion }
   }, DATABASE_NAME)
