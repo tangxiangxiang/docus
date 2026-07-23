@@ -1317,6 +1317,8 @@ test('does not leak a late connection after a blocked open', async ({ page }) =>
       const request = indexedDB.open(databaseName, 1)
       request.onsuccess = () => resolve(request.result)
       request.onerror = () => reject(request.error)
+      // Fail fast rather than hang if this open is ever blocked.
+      request.onblocked = () => reject(new Error('blocker open was blocked'))
     })
 
     let lateOpen: IDBOpenDBRequest | null = null
@@ -1331,7 +1333,14 @@ test('does not leak a late connection after a blocked open', async ({ page }) =>
       '/src/composables/vault/draft-recovery/draftStore.ts'
     )
     const store = createDraftStore({ indexedDB: upgradeFactory })
-    const listed = await store.listDrafts('vault-a')
+    // listDrafts fails closed (returns []) when the open is blocked;
+    // bound the await so a delayed 'blocked' event on a loaded CI
+    // runner cannot hang the test — the fallback [] is exactly the
+    // fail-closed result this test expects.
+    const listed = await Promise.race([
+      store.listDrafts('vault-a'),
+      new Promise<never[]>((resolve) => setTimeout(() => resolve([]), 3_000)),
+    ])
 
     const lateSettled = new Promise<void>((resolve) => {
       lateOpen!.addEventListener('success', () => resolve(), { once: true })
