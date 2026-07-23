@@ -53,3 +53,18 @@ Legend: `P` public path, `S` staging, `Q` permanent quarantine, `J` journal/mani
 - malformed replace hashes, empty delete identities, missing file-rename documentId, duplicate reference paths and malformed hashes caused artifact deletion or state transitions instead of quarantine.
 
 Closure remains Reopened until the committed production SHA has independent Linux/macOS/Windows Actions results and the complete browser/test matrix is green.
+
+## Cross-platform verification result
+
+GitHub Actions run [`29974478406`](https://github.com/tangxiangxiang/docus/actions/runs/29974478406)
+proved the Linux and macOS matrices green, but produced a Windows safety
+counterexample. Node's Windows `rename()` replaced an occupied destination
+instead of providing create-only directory-move semantics. The failing tests
+showed an external destination file/tree disappearing. That implementation was
+removed in `b932e3726fb42bbb54b606fcbc03dd8b19d17a2d`; Windows folder moves now
+fail closed through the existing mkdir-gate path rather than risk user data.
+
+This is a real remaining product limitation, not a skipped test: Windows needs
+a replayable create-only folder-move protocol before the cross-platform matrix
+can pass. The final Closure document therefore remains `Reopened` with no
+closure commit assigned.
