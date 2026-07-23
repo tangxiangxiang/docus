@@ -51,10 +51,18 @@ jobs:
         run: npx playwright install chromium
 
       - name: Run cross-platform browser E2E
-        run: node node_modules/@playwright/test/cli.js test --config=playwright.cross-platform.config.ts
+        run: node node_modules/@playwright/test/cli.js test --config=playwright.cross-platform.config.ts --reporter=line,github
 
       - name: Run Draft Store browser E2E
         run: npm run test:e2e:draft-store
+
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-evidence-${{ matrix.os }}
+          path: test-results
+          if-no-files-found: ignore
 
   visual:
     runs-on: macos-latest
@@ -68,4 +76,11 @@ jobs:
       - run: npm ci
       - run: npx playwright install chromium
       - name: Run macOS visual baselines
-        run: node node_modules/@playwright/test/cli.js test e2e/markdown-visual.spec.ts
+        run: node node_modules/@playwright/test/cli.js test e2e/markdown-visual.spec.ts --reporter=line,github
+      - name: Upload visual failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-evidence-macos
+          path: test-results
+          if-no-files-found: ignore

@@ -722,7 +722,16 @@ async function recoverRenameReferencesJournal(
     if (journal.sourceDev === undefined || journal.sourceIno === undefined) return false
     try {
       const stat = await fs.stat(absPath)
-      return stat.isDirectory() && stat.dev === journal.sourceDev && stat.ino === journal.sourceIno
+      if (!stat.isDirectory() || stat.dev !== journal.sourceDev || stat.ino !== journal.sourceIno) return false
+      // Directory inode numbers can be recycled after an external
+      // delete/recreate (and are weak evidence on some Windows file
+      // systems). Every journaled document identity must still have a
+      // file in this generation before references or metadata move.
+      return (await Promise.all(journal.identities!.map((identity) => {
+        const relative = identity.path.slice(journal.srcRel.length)
+        return fs.stat(path.join(absPath, `${relative}.md`))
+          .then((item) => item.isFile(), () => false)
+      }))).every(Boolean)
     } catch { return false }
   }
   const generationMatches = kind === 'file' ? fileGenerationMatches : folderGenerationMatches
