@@ -68,3 +68,55 @@ This is a real remaining product limitation, not a skipped test: Windows needs
 a replayable create-only folder-move protocol before the cross-platform matrix
 can pass. The final Closure document therefore remains `Reopened` with no
 closure commit assigned.
+
+## Round-6 remediation and full-matrix verification
+
+Production commits: `3f50343` (replayable move + handshake + containment +
+content proof), `fe01c60` (deterministic models + CI bundle),
+`3eff1d5` (Windows large-file-ID parser fix + platform-correct delete-rollback
+injections).
+
+The Windows blocker above is resolved by a replayable create-only directory
+move: the durable folder-rename journal (with every entry's content hash) is
+written first, files then move one at a time via create-only `link(2)` under
+relative paths behind a `mkdir` gate, an end-to-end parity check runs before
+source pruning, and any crash leaves a SPLIT tree that startup recovery always
+completes forward. Any symlink/junction/special entry fails closed with a typed
+501; any external writer winning a destination path rolls the whole move back.
+The crash tests now prove the kill itself: children announce `READY:<point>` at
+their hook, the parent force-kills only after that line, and the exact
+crash-state on disk is asserted BEFORE recovery runs — the old harness accepted
+any non-zero exit, which on Windows would have let a normally-completing child
+pass as "crashed". Also fixed: legacy metadata-less delete artifacts no longer
+write unparseable `{identities:[]}` manifests; journal provenance is physically
+contained (lstat ancestor walk + leaf, so vault-relative symlinks/junctions
+cannot route a reference path outside); folder reference journals carry
+per-identity content hashes verified at recovery; three new deterministic
+models (1100 seeds, in the three-platform CI crash bundle) randomize
+replayable folder-move splits, folder-reference content proof, and legacy
+delete promotion — the folder-move model caught and fixed a real gap
+(all-entries-at-source recovery skipped the destination→source metadata
+rollback). Fixes carry mutation checks M11–M17, each verified RED then
+restored.
+
+The CI run bound to `3f50343`/`fe01c60` (run `29979470511`) failed ONLY on
+Windows and exposed a Windows-native production bug invisible to the local
+POSIX matrix: the folder journal parsers required `Number.isSafeInteger`
+dev/ino, but Windows volumes with large file records (NTFS extended IDs,
+ReFS/Dev Drive) report file IDs beyond 2**53, orphaning every production folder
+journal on such volumes; the parsers now accept any finite number, with
+platform-independent regression tests forging beyond-2**53 IDs. Two
+Windows-only test-harness gaps were fixed with it (basename-scoped removal
+injection; mkdir-gate contention injection shared by both platforms).
+
+GitHub Actions run [`29980532044`](https://github.com/tangxiangxiang/docus/actions/runs/29980532044)
+on `3eff1d5dad87105dd627131b76e034d970f7e9c8` is the first fully green
+three-platform run since the reopening: `verify (ubuntu-latest)` success,
+`verify (macos-latest)` success, `verify (windows-latest)` success, `visual`
+success. Local gates at the same tree: typecheck clean; vitest 141 files /
+2141 tests; crash bundle ×2 at 132 tests each; cross-platform browser E2E 20;
+Draft Store E2E 38; app E2E 22; vault debris scan clean; zero mutation markers.
+
+This is verification evidence, NOT a new seal: the program verdict stays
+`Reopened / fixes implemented; fresh closure verification pending` until the
+reviewer confirms the closure round.
