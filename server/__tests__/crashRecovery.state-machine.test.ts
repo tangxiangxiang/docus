@@ -161,9 +161,14 @@ describe('deterministic replayable folder-move recovery model', () => {
       const destRel = `${prefix}/ren`
       const aRaw = `# a ${seed}\n`
       const bRaw = `# b ${seed}\n`
-      const entries = [
-        { rel: 'a', id: `a-id-${seed}`, sourceHash: sha256Hex(aRaw), raw: aRaw },
-        { rel: 'nested/b', id: `b-id-${seed}`, sourceHash: sha256Hex(bRaw), raw: bRaw },
+      const imgRaw = `attachment ${seed}\n`
+      // Physical entries — the journal covers EVERY file the mover
+      // touches, so the model carries a non-markdown attachment with
+      // no identity alongside the two documents.
+      const entries: Array<{ rel: string; id: string | null; docRel: string | null; sourceHash: string; raw: string }> = [
+        { rel: 'a.md', id: `a-id-${seed}`, docRel: 'a', sourceHash: sha256Hex(aRaw), raw: aRaw },
+        { rel: 'img.bin', id: null, docRel: null, sourceHash: sha256Hex(imgRaw), raw: imgRaw },
+        { rel: 'nested/b.md', id: `b-id-${seed}`, docRel: 'nested/b', sourceHash: sha256Hex(bRaw), raw: bRaw },
       ]
       const journalName = `.proj.docus-journal-${seed.toString(16)}`
       let model: Record<string, unknown> | null = null
@@ -183,33 +188,38 @@ describe('deterministic replayable folder-move recovery model', () => {
           const entry = entries[index]
           const placement = placements[index]
           const writeOurs = async (base: string): Promise<void> => {
-            const abs = path.join(base, `${entry.rel}.md`)
+            const abs = path.join(base, entry.rel)
             await fs.mkdir(path.dirname(abs), { recursive: true })
             await fs.writeFile(abs, entry.raw, 'utf8')
           }
           if (placement === 'src' || placement === 'both') await writeOurs(srcAbs)
           if (placement === 'dest' || placement === 'both') await writeOurs(destAbs)
-          if (placement === 'external') await writeExternal(`ren/${entry.rel}.md`, `# external ${seed}/${index}\n`)
+          if (placement === 'external') await writeExternal(`ren/${entry.rel}`, `# external ${seed}/${index}\n`)
         }
         const gateExists = placements.some((p) => p === 'dest' || p === 'both' || p === 'external') || random() < 0.6
         if (gateExists) await fs.mkdir(destAbs, { recursive: true })
         if (gateExists && random() < 0.3) await fs.mkdir(path.join(destAbs, 'nested'), { recursive: true })
         const externalInGate = gateExists && random() < 0.25
         if (externalInGate) await writeExternal(`ren/external-gate-${seed}.md`, `# external gate ${seed}\n`)
-        const metadataSides = entries.map(() => (['src', 'dest', 'none'] as const)[Math.floor(random() * 3)])
+        const metadataSides = entries.map((entry) => (entry.id ? (['src', 'dest', 'none'] as const)[Math.floor(random() * 3)] : 'none'))
         for (let index = 0; index < entries.length; index += 1) {
           const entry = entries[index]
           const side = metadataSides[index]
-          if (side === 'src') saveDocumentMetadata(db, { id: entry.id, path: `${srcRel}/${entry.rel}`, title: `Seed ${seed}`, updatedAt: seed })
-          if (side === 'dest') saveDocumentMetadata(db, { id: entry.id, path: `${destRel}/${entry.rel}`, title: `Seed ${seed}`, updatedAt: seed })
+          if (side === 'src') saveDocumentMetadata(db, { id: entry.id!, path: `${srcRel}/${entry.docRel}`, title: `Seed ${seed}`, updatedAt: seed })
+          if (side === 'dest') saveDocumentMetadata(db, { id: entry.id!, path: `${destRel}/${entry.docRel}`, title: `Seed ${seed}`, updatedAt: seed })
         }
         const sourceHasMetadata = metadataSides.includes('src')
         const destinationHasMetadata = metadataSides.includes('dest')
         const allAtSource = placements.every((p) => p === 'src')
         await fs.writeFile(path.join(caseDir, journalName), JSON.stringify({
-          version: 1, op: 'folder-rename', srcRel, destRel, strategy: 'replayable',
+          version: 2, op: 'folder-rename', srcRel, destRel, strategy: 'replayable-move',
           sourceDev: 0, sourceIno: 0,
-          entries: entries.map(({ rel, id, sourceHash }) => ({ rel, id, sourceHash })),
+          entries: entries.map(({ rel, id, docRel, sourceHash }) => ({
+            relativeFilePath: rel,
+            sourceHash,
+            ...(id ? { documentId: id, documentPath: `${srcRel}/${docRel}` } : {}),
+          })),
+          metadataDisposition: { kind: 'prefix-move' },
         }))
         model = { placements, externalInGate, sourceHasMetadata, destinationHasMetadata, allAtSource }
 
@@ -244,11 +254,11 @@ describe('deterministic replayable folder-move recovery model', () => {
           // metadata follows the bytes to the destination prefix.
           expect(journalKept, `journal kept; ${detail}`).toBe(false)
           for (const entry of entries) {
-            expect(finalTree.get(`ren/${entry.rel}.md`), `entry not at dest; ${detail}`).toBe(entry.raw)
+            expect(finalTree.get(`ren/${entry.rel}`), `entry not at dest; ${detail}`).toBe(entry.raw)
           }
           for (let index = 0; index < entries.length; index += 1) {
             if (metadataSides[index] === 'none') continue
-            expect(getDocumentMetadata(db, `${destRel}/${entries[index].rel}`)?.id, `metadata; ${detail}`).toBe(entries[index].id)
+            expect(getDocumentMetadata(db, `${destRel}/${entries[index].docRel}`)?.id, `metadata; ${detail}`).toBe(entries[index].id)
           }
         } else if (allAtSource && !externalInGate && !(sourceHasMetadata && destinationHasMetadata)) {
           // The move never started and the gate (if any) is provably
@@ -257,11 +267,11 @@ describe('deterministic replayable folder-move recovery model', () => {
           // source prefix alongside the bytes.
           expect(journalKept, `stale journal kept; ${detail}`).toBe(false)
           for (const entry of entries) {
-            expect(finalTree.get(`proj/${entry.rel}.md`), `source lost; ${detail}`).toBe(entry.raw)
+            expect(finalTree.get(`proj/${entry.rel}`), `source lost; ${detail}`).toBe(entry.raw)
           }
           for (let index = 0; index < entries.length; index += 1) {
             if (metadataSides[index] === 'none') continue
-            expect(getDocumentMetadata(db, `${srcRel}/${entries[index].rel}`)?.id, `metadata rollback; ${detail}`).toBe(entries[index].id)
+            expect(getDocumentMetadata(db, `${srcRel}/${entries[index].docRel}`)?.id, `metadata rollback; ${detail}`).toBe(entries[index].id)
           }
         } else {
           // Foreign content, a missing generation, or a metadata split
@@ -272,7 +282,9 @@ describe('deterministic replayable folder-move recovery model', () => {
         throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\nmodel=${JSON.stringify(model)}\n${(error as Error).stack}`)
       } finally {
         await fs.rm(caseDir, { recursive: true, force: true })
-        for (const entry of entries) db.prepare('DELETE FROM documents WHERE id = ?').run(entry.id)
+        for (const entry of entries) {
+          if (entry.id) db.prepare('DELETE FROM documents WHERE id = ?').run(entry.id)
+        }
       }
     }
   }, 120_000)

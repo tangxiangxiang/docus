@@ -5,10 +5,12 @@ import { spawn } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { applyMigrations } from '../db'
-import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
-import { sha256Hex } from '../atomicTextWrite'
+import { deleteDocumentMetadataPrefix, getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataPrefixMutation } from '../documentMetadata'
+import { sha256Hex, sha256HexBuffer } from '../atomicTextWrite'
 import { recoverInterruptedOperations } from '../crashRecovery'
 import { prepareRenameReferenceJournal } from '../renameReferenceJournal'
+import { serializeMetadataSnapshot } from '../folderMoveTransaction'
+import { FOLDER_MOVE_STRATEGIES, platformDirectoryMoveStrategy } from '../documentFileLifecycle'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 const TSX_CLI = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs')
@@ -17,6 +19,9 @@ const RENAME_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'rename-cr
 const RENAME_METADATA_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'rename-metadata-crash-child.ts')
 const REFERENCE_JOURNAL_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'reference-journal-crash-child.ts')
 const FOLDER_MOVE_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'folder-move-crash-child.ts')
+const FOLDER_ROLLBACK_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'folder-rollback-crash-child.ts')
+const FOLDER_DELETE_ROLLBACK_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'folder-delete-rollback-crash-child.ts')
+const FOLDER_RECOVERY_REPLAY_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'folder-recovery-replay-crash-child.ts')
 
 let vault: string
 let db: InstanceType<typeof Database>
@@ -536,24 +541,23 @@ describe('recoverInterruptedOperations (delete quarantine)', () => {
   })
 })
 
-describe('real subprocess crash + startup recovery', () => {
-  type CrashChildResult = {
-    code: number | null
-    signal: NodeJS.Signals | null
-    readyPoints: string[]
-    stderr: string
-  }
+type CrashChildResult = {
+  code: number | null
+  signal: NodeJS.Signals | null
+  readyPoints: string[]
+  stderr: string
+}
 
-  /** Spawn a crash child under the READY handshake: the child runs the
-   * real protocol and, at its exact crash seam, prints `READY:<point>`
-   * and hangs; the parent force-kills it only AFTER receiving that
-   * line. READY receipt is the proof the hook was reached and the disk
-   * holds exactly that point's state. A child that exits on its own —
-   * hook never fired, missing env, a fixture bug — never prints READY,
-   * and waitReady rejects with its exit code and stderr. This replaces
-   * the old self-SIGKILL children, whose "any non-zero exit counts as
-   * a hard kill" judgment produced false positives on Windows. */
-  function spawnCrashChild(env: Record<string, string>, fixture: string) {
+/** Spawn a crash child under the READY handshake: the child runs the
+ * real protocol and, at its exact crash seam, prints `READY:<point>`
+ * and hangs; the parent force-kills it only AFTER receiving that
+ * line. READY receipt is the proof the hook was reached and the disk
+ * holds exactly that point's state. A child that exits on its own —
+ * hook never fired, missing env, a fixture bug — never prints READY,
+ * and waitReady rejects with its exit code and stderr. This replaces
+ * the old self-SIGKILL children, whose "any non-zero exit counts as
+ * a hard kill" judgment produced false positives on Windows. */
+function spawnCrashChild(env: Record<string, string>, fixture: string) {
     const child = spawn(process.execPath, [TSX_CLI, fixture], {
       env: { ...process.env, ...env },
       stdio: 'pipe',
@@ -618,15 +622,16 @@ describe('real subprocess crash + startup recovery', () => {
    * surfaces as signal SIGKILL or code 137 (128 + 9); on Windows
    * kill() maps to TerminateProcess, so READY receipt plus a
    * parent-initiated termination is the evidence there. */
-  function expectParentKilled(result: CrashChildResult, expectedPoint: string): void {
-    expect(result.readyPoints).toContain(expectedPoint)
-    if (process.platform === 'win32') {
-      expect(result.code !== null || result.signal !== null).toBe(true)
-    } else {
-      expect(result.signal === 'SIGKILL' || result.code === 137).toBe(true)
-    }
+function expectParentKilled(result: CrashChildResult, expectedPoint: string): void {
+  expect(result.readyPoints).toContain(expectedPoint)
+  if (process.platform === 'win32') {
+    expect(result.code !== null || result.signal !== null).toBe(true)
+  } else {
+    expect(result.signal === 'SIGKILL' || result.code === 137).toBe(true)
   }
+}
 
+describe('real subprocess crash + startup recovery', () => {
   // Exact on-disk state of the reference transaction at each crash
   // point — asserted BEFORE recovery runs, so the recovery tests prove
   // they handle the real crash state, not whatever the child happened
@@ -939,22 +944,57 @@ describe('real subprocess crash + startup recovery', () => {
     } finally { persistedDb.close() }
   })
 
+  // Binary attachment bytes: the journal must cover EVERY physical
+  // file the mover touches, not just markdown.
+  const IMAGE_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0xff])
+  const seedFolderMoveVault = async (): Promise<void> => {
+    await seed({ 'proj/a.md': '# a\n', 'proj/nested/b.md': '# b\n' })
+    await fs.writeFile(path.join(vault, 'proj', 'image.bin'), IMAGE_BYTES)
+  }
+  const readFolderMoveJournal = async (): Promise<Record<string, any>> => {
+    const journalName = (await namesIn()).find((name) => name.startsWith('.proj.docus-journal-'))
+    expect(journalName, 'the route must leave its durable journal behind on crash').toBeDefined()
+    return JSON.parse(await fs.readFile(path.join(vault, journalName!), 'utf8'))
+  }
+
   it('cleans the stale journal when the replayable folder move was killed right after its mkdir gate', async () => {
-    // The real Windows protocol killed at its first seam: the child
-    // wrote the durable journal, created the destination gate, and
+    // The real HTTP route killed at its first seam: the child drove
+    // PATCH /api/folders/proj, the route wrote the REAL durable
+    // journal (schema v2 — every physical entry with its content
+    // hash, the runtime strategy), created the destination gate, and
     // died before the first file moved. The gate is provably ours
     // (file-free) — recovery prunes it and removes the stale journal.
     const dbPath = path.join(vault, 'metadata.sqlite')
-    await seed({ 'proj/a.md': '# a\n', 'proj/nested/b.md': '# b\n' })
+    await seedFolderMoveVault()
 
     const child = spawnCrashChild({
       DOCUS_FOLDER_VAULT: vault,
-      DOCUS_FOLDER_SRC: 'proj',
-      DOCUS_FOLDER_DEST: 'ren',
       DOCUS_FOLDER_DB: dbPath,
       DOCUS_FOLDER_CRASH_POINT: 'gate',
     }, FOLDER_MOVE_CRASH_CHILD)
     expectParentKilled(await child.killAfterReady('gate'), 'gate')
+
+    // The REAL journal JSON: the persisted strategy IS the runtime
+    // strategy, entries cover the attachment too, identities ride only
+    // on the markdown documents.
+    const journal = await readFolderMoveJournal()
+    expect(journal.version).toBe(2)
+    expect(journal.op).toBe('folder-rename')
+    expect(journal.strategy).toBe('replayable-move')
+    expect(journal.srcRel).toBe('proj')
+    expect(journal.destRel).toBe('ren')
+    expect(journal.entries.map((entry: any) => entry.relativeFilePath).sort()).toEqual(['a.md', 'image.bin', 'nested/b.md'])
+    for (const entry of journal.entries) {
+      expect(entry.sourceHash).toMatch(/^[0-9a-f]{64}$/)
+      if (entry.relativeFilePath.endsWith('.md')) {
+        expect(typeof entry.documentId).toBe('string')
+        expect(entry.documentId.length).toBeGreaterThan(0)
+        expect(entry.documentPath).toBe(`proj/${entry.relativeFilePath.slice(0, -'.md'.length)}`)
+      } else {
+        expect(entry.documentId).toBeUndefined()
+        expect(entry.documentPath).toBeUndefined()
+      }
+    }
 
     // Pre-recovery proof of the exact crash state: empty gate, every
     // file still at the source, durable journal.
@@ -964,43 +1004,47 @@ describe('real subprocess crash + startup recovery', () => {
     expect(await fs.readdir(path.join(vault, 'ren'))).toEqual([])
     expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
     expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe('# b\n')
-    expect(crashState.some((name) => name.includes('.docus-journal-'))).toBe(true)
 
     const persistedDb = new Database(dbPath)
     try {
       const report = await recoverInterruptedOperations(vault, persistedDb)
       expect(report.actions.some((a) => a.action === 'cleaned')).toBe(true)
+      expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('unrecognized'))).toBe(false)
       expect(await namesIn()).not.toContain('ren')
       expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
-      expect(getDocumentMetadata(persistedDb, 'proj/a')?.id).toBe('folder-a-id')
+      expect(await fs.readFile(path.join(vault, 'proj/image.bin'))).toEqual(IMAGE_BYTES)
+      expect(getDocumentMetadata(persistedDb, 'proj/a')).not.toBeNull()
       expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
     } finally { persistedDb.close() }
   })
 
-  it('replays a replayable folder move killed between per-file entries, split tree to destination', async () => {
-    // The defining replayable crash: a.md already landed at the
-    // destination, nested/b.md still at the source — the tree is SPLIT
-    // and only the journaled entry hashes can decide it. Recovery
-    // completes the move FORWARD and moves the metadata prefix.
+  it('replays the route journal of a folder move killed between per-file entries, attachment included', async () => {
+    // The defining replayable crash through the REAL route: a.md
+    // already landed at the destination, image.bin and nested/b.md
+    // still at the source — the tree is SPLIT and only the journaled
+    // entry hashes can decide it. Recovery parses the route's own
+    // journal (the round-7 P0 proof: the persisted strategy value is
+    // exactly what the parser accepts) and completes the move FORWARD,
+    // attachment bytes included, then moves the metadata prefix.
     const dbPath = path.join(vault, 'metadata.sqlite')
-    await seed({ 'proj/a.md': '# a\n', 'proj/nested/b.md': '# b\n' })
+    await seedFolderMoveVault()
 
     const child = spawnCrashChild({
       DOCUS_FOLDER_VAULT: vault,
-      DOCUS_FOLDER_SRC: 'proj',
-      DOCUS_FOLDER_DEST: 'ren',
       DOCUS_FOLDER_DB: dbPath,
-      DOCUS_FOLDER_CRASH_POINT: 'entry-a',
+      DOCUS_FOLDER_CRASH_POINT: 'entry:a.md',
     }, FOLDER_MOVE_CRASH_CHILD)
-    expectParentKilled(await child.killAfterReady('entry-a'), 'entry-a')
+    expectParentKilled(await child.killAfterReady('entry:a.md'), 'entry:a.md')
 
-    // Pre-recovery proof of the exact split state.
-    const crashState = await namesIn()
+    // Pre-recovery proof of the exact split state + the real journal.
+    const journal = await readFolderMoveJournal()
+    expect(journal.strategy).toBe('replayable-move')
+    expect(journal.entries.map((entry: any) => entry.relativeFilePath).sort()).toEqual(['a.md', 'image.bin', 'nested/b.md'])
     expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
     expect(await fs.stat(path.join(vault, 'proj/a.md')).then(() => true, () => false)).toBe(false)
+    expect(await fs.readFile(path.join(vault, 'proj/image.bin'))).toEqual(IMAGE_BYTES)
     expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe('# b\n')
-    expect(crashState.some((name) => name.includes('.docus-journal-'))).toBe(true)
-    expect(crashState.some((name) => name.includes('.docus-rename-'))).toBe(false)
+    expect((await namesIn()).some((name) => name.includes('.docus-rename-'))).toBe(false)
 
     const persistedDb = new Database(dbPath)
     try {
@@ -1008,15 +1052,198 @@ describe('real subprocess crash + startup recovery', () => {
       expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
       expect(report.actions.some((a) => a.action === 'failed')).toBe(false)
       expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
+      expect(await fs.readFile(path.join(vault, 'ren/image.bin'))).toEqual(IMAGE_BYTES)
       expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe('# b\n')
       expect(await namesIn()).not.toContain('proj')
-      expect(getDocumentMetadata(persistedDb, 'ren/a')?.id).toBe('folder-a-id')
-      expect(getDocumentMetadata(persistedDb, 'ren/nested/b')?.id).toBe('folder-b-id')
+      const aId = getDocumentMetadata(persistedDb, 'ren/a')?.id
+      const bId = getDocumentMetadata(persistedDb, 'ren/nested/b')?.id
+      expect(aId).toBeTruthy()
+      expect(bId).toBeTruthy()
       expect(getDocumentMetadata(persistedDb, 'proj/a')).toBeNull()
+      // The attachment moved without ever carrying an identity.
+      expect(getDocumentMetadata(persistedDb, 'ren/image')).toBeNull()
       expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
       // Idempotent across repeated startups.
       await recoverInterruptedOperations(vault, persistedDb)
       expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
+      expect(getDocumentMetadata(persistedDb, 'ren/a')?.id).toBe(aId)
+    } finally { persistedDb.close() }
+  })
+})
+
+describe('real subprocess crash + startup recovery (folder reverse moves)', () => {
+  // Round-7 P1: every replayable REVERSE move (rename rollback,
+  // reference rollback run by recovery itself, delete rollback) runs
+  // under a durable journal — these children kill the real route / the
+  // real recovery mid-rollback and prove the next startup finishes it.
+  const A_RAW = '# a\n'
+  const B_RAW = '# b\n'
+  const IMAGE_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x10])
+
+  it.each([
+    ['rollback-entry:a.md'],
+    ['rollback-entry:image.bin'],
+    ['rollback-after-tree'],
+  ])('completes a rename rollback killed at %s from the flipped journal', async (point) => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seed({ 'proj/a.md': A_RAW, 'proj/nested/b.md': B_RAW, 'ref-a.md': 'see [[proj/a]]\n' })
+    await fs.writeFile(path.join(vault, 'proj', 'image.bin'), IMAGE_BYTES)
+
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: point,
+    }, FOLDER_ROLLBACK_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady(point), point)
+
+    // Pre-recovery proof: the journal was DURABLY FLIPPED to describe
+    // the rollback (srcRel 'ren' → destRel 'proj') before the first
+    // reverse file moved, and the split matches the kill point. Two
+    // journals share the '.proj.docus-journal-' prefix (the reference
+    // transaction journal keeps its own) — select the folder-move one.
+    const journalNames = (await namesIn()).filter((name) => name.startsWith('.proj.docus-journal-'))
+    const journals = await Promise.all(journalNames.map(async (name) => JSON.parse(await fs.readFile(path.join(vault, name), 'utf8'))))
+    const journal = journals.find((entry) => entry.op === 'folder-rename')
+    expect(journal, 'the route must leave its durable folder-move journal behind on crash').toBeDefined()
+    expect(journal.srcRel).toBe('ren')
+    expect(journal.destRel).toBe('proj')
+    expect(journal.strategy).toBe('replayable-move')
+    expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8')).toBe('# externally changed\n')
+    const atProj = (rel: string) => fs.stat(path.join(vault, 'proj', rel)).then(() => true, () => false)
+    const atRen = (rel: string) => fs.stat(path.join(vault, 'ren', rel)).then(() => true, () => false)
+    if (point === 'rollback-entry:a.md') {
+      expect(await atProj('a.md')).toBe(true)
+      expect(await atRen('image.bin')).toBe(true)
+      expect(await atRen('nested/b.md')).toBe(true)
+    } else if (point === 'rollback-entry:image.bin') {
+      expect(await atProj('a.md')).toBe(true)
+      expect(await atProj('image.bin')).toBe(true)
+      expect(await atRen('nested/b.md')).toBe(true)
+    } else {
+      expect(await atProj('a.md')).toBe(true)
+      expect(await atProj('image.bin')).toBe(true)
+      expect(await atProj('nested/b.md')).toBe(true)
+      expect(await namesIn()).not.toContain('ren')
+    }
+
+    const persistedDb = new Database(dbPath)
+    try {
+      // Metadata rode the forward prefix move to ren/ before the crash.
+      const aId = getDocumentMetadata(persistedDb, 'ren/a')?.id
+      const bId = getDocumentMetadata(persistedDb, 'ren/nested/b')?.id
+      expect(aId).toBeTruthy()
+      expect(bId).toBeTruthy()
+
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+      // The whole tree is back at the source, attachment included.
+      expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe(A_RAW)
+      expect(await fs.readFile(path.join(vault, 'proj/image.bin'))).toEqual(IMAGE_BYTES)
+      expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe(B_RAW)
+      // Identity followed the bytes back.
+      expect(getDocumentMetadata(persistedDb, 'proj/a')?.id).toBe(aId)
+      expect(getDocumentMetadata(persistedDb, 'proj/nested/b')?.id).toBe(bId)
+      expect(getDocumentMetadata(persistedDb, 'ren/a')).toBeNull()
+      // The flipped main journal is gone; the reference journal stays
+      // quarantined — ref-a.md changed externally and wins.
+      const remaining = (await namesIn()).filter((name) => name.includes('.docus-journal-'))
+      expect(remaining).toHaveLength(1)
+      expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8')).toBe('# externally changed\n')
+      // Idempotent.
+      await recoverInterruptedOperations(vault, persistedDb)
+      expect(getDocumentMetadata(persistedDb, 'proj/a')?.id).toBe(aId)
+    } finally { persistedDb.close() }
+  })
+
+  it('completes a delete rollback killed mid restore from its snapshot journal', async () => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seed({ 'gone/a.md': A_RAW })
+    await fs.writeFile(path.join(vault, 'gone', 'image.bin'), IMAGE_BYTES)
+    const setupDb = new Database(dbPath)
+    applyMigrations(setupDb)
+    saveDocumentMetadata(setupDb, { id: 'gone-a-id', path: 'gone/a', title: 'A', updatedAt: 1 })
+    setupDb.close()
+
+    const point = 'entry:a.md'
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: point,
+    }, FOLDER_DELETE_ROLLBACK_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady(point), point)
+
+    // Pre-recovery proof: a.md back at the public path, image.bin
+    // still staged, metadata detached, and the rollback journal with
+    // the persisted snapshot beside the staging directory.
+    const stagedName = (await namesIn()).find((name) => name.startsWith('gone.docus-delete-inflight-'))
+    expect(stagedName).toBeDefined()
+    expect(await fs.readFile(path.join(vault, 'gone', 'a.md'), 'utf8')).toBe(A_RAW)
+    expect(await fs.readFile(path.join(vault, stagedName!, 'image.bin'))).toEqual(IMAGE_BYTES)
+    const journalName = (await namesIn()).find((name) => name.startsWith(`.${stagedName}.docus-journal-`))
+    expect(journalName).toBeDefined()
+    const journal = JSON.parse(await fs.readFile(path.join(vault, journalName!), 'utf8'))
+    expect(journal.op).toBe('folder-move')
+    expect(journal.srcRel).toBe(stagedName)
+    expect(journal.destRel).toBe('gone')
+    expect(journal.metadataDisposition.kind).toBe('snapshot-restore')
+    expect(journal.metadataDisposition.snapshot.documents[0].id).toBe('gone-a-id')
+
+    const persistedDb = new Database(dbPath)
+    try {
+      expect(getDocumentMetadata(persistedDb, 'gone/a')).toBeNull()
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+      expect(await fs.readFile(path.join(vault, 'gone/image.bin'))).toEqual(IMAGE_BYTES)
+      // The full metadata graph re-installed from the journal — same id.
+      expect(getDocumentMetadata(persistedDb, 'gone/a')?.id).toBe('gone-a-id')
+      expect(await namesIn()).not.toContain(stagedName)
+      expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
+      expect((await namesIn()).some((name) => name.includes('.docus-quarantine-'))).toBe(false)
+      await recoverInterruptedOperations(vault, persistedDb)
+      expect(getDocumentMetadata(persistedDb, 'gone/a')?.id).toBe('gone-a-id')
+    } finally { persistedDb.close() }
+  })
+
+  it('completes recovery when recovery ITSELF is killed mid folder rollback replay', async () => {
+    // The reference journal's roll-back branch writes its OWN
+    // folder-move journal before reversing the tree; killing recovery
+    // at the first replayed entry leaves that journal in charge, and
+    // the next startup finishes tree + metadata + reference undo.
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    const point = 'replay:a.md'
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: point,
+    }, FOLDER_RECOVERY_REPLAY_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady(point), point)
+
+    // Pre-recovery proof: recovery's move journal exists, the tree is
+    // split by exactly the one replayed entry.
+    const moveJournal = (await namesIn()).find((name) => name.startsWith('.ren.docus-journal-'))
+    expect(moveJournal).toBeDefined()
+    const moveJournalJson = JSON.parse(await fs.readFile(path.join(vault, moveJournal!), 'utf8'))
+    expect(moveJournalJson.srcRel).toBe('ren')
+    expect(moveJournalJson.destRel).toBe('proj')
+    expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
+    expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe('# b\n')
+    expect((await namesIn()).some((name) => name.startsWith('.proj.docus-journal-'))).toBe(true)
+
+    const persistedDb = new Database(dbPath)
+    try {
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+      expect(report.actions.some((a) => a.action === 'failed')).toBe(false)
+      // Tree whole at proj, metadata with it, backlink rewrite undone.
+      expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
+      expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe('# b\n')
+      expect(await namesIn()).not.toContain('ren')
+      expect(getDocumentMetadata(persistedDb, 'proj/a')?.id).toBe('rec-a-id')
+      expect(getDocumentMetadata(persistedDb, 'proj/nested/b')?.id).toBe('rec-b-id')
+      expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8')).toBe('[[old]]\n')
+      expect((await namesIn()).some((name) => name.includes('.docus-journal-') || name.includes('.docus-ref-'))).toBe(false)
+      await recoverInterruptedOperations(vault, persistedDb)
+      expect(getDocumentMetadata(persistedDb, 'proj/a')?.id).toBe('rec-a-id')
     } finally { persistedDb.close() }
   })
 })
@@ -1630,8 +1857,15 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
   async function replayableJournal(entries: Array<{ rel: string; id: string; sourceHash: string }>): Promise<string> {
     const stat = await fs.stat(path.join(vault, 'proj')).catch(async () => fs.stat(path.join(vault, 'ren'))).catch(() => ({ dev: 0, ino: 0 }))
     return JSON.stringify({
-      version: 1, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable',
-      sourceDev: stat.dev, sourceIno: stat.ino, entries,
+      version: 2, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable-move',
+      sourceDev: stat.dev, sourceIno: stat.ino,
+      entries: entries.map((entry) => ({
+        relativeFilePath: `${entry.rel}.md`,
+        sourceHash: entry.sourceHash,
+        documentId: entry.id,
+        documentPath: `proj/${entry.rel}`,
+      })),
+      metadataDisposition: { kind: 'prefix-move' },
     })
   }
   const A_RAW = '# a\n'
@@ -1755,9 +1989,15 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
     // number and the per-entry content hashes remain the strong proof.
     await seed({ 'ren/a.md': A_RAW, 'proj/nested/b.md': B_RAW })
     await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
-      version: 1, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable',
+      version: 2, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable-move',
       sourceDev: 2 ** 60, sourceIno: 2 ** 61 + 2 ** 9,
-      entries: entries(),
+      entries: entries().map((entry) => ({
+        relativeFilePath: `${entry.rel}.md`,
+        sourceHash: entry.sourceHash,
+        documentId: entry.id,
+        documentPath: `proj/${entry.rel}`,
+      })),
+      metadataDisposition: { kind: 'prefix-move' },
     }), 'utf8')
     saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
     saveDocumentMetadata(db, { id: 'ren-b-id', path: 'proj/nested/b', title: 'B', updatedAt: 1 })
@@ -1768,6 +2008,220 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
     expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe(B_RAW)
     expect(getDocumentMetadata(db, 'ren/nested/b')?.id).toBe('ren-b-id')
     expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+  })
+
+  it('still recovers HEAD-era v1 journals that persisted the canonical strategy values', async () => {
+    // Round-7 P0 regression, backwards direction: the pre-fix route
+    // wrote strategy 'replayable-move'/'atomic-rename' into v1
+    // journals while the parser only accepted 'replayable'/'atomic' —
+    // every real journal was "unrecognized". Both spellings now parse;
+    // legacy v1 entries normalize to the physical shape.
+    await seed({ 'ren/a.md': A_RAW, 'proj/nested/b.md': B_RAW })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
+      version: 1, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable-move',
+      sourceDev: 7, sourceIno: 11,
+      entries: [
+        { rel: 'a', id: 'ren-a-id', sourceHash: sha256Hex(A_RAW) },
+        { rel: 'nested/b', id: 'ren-b-id', sourceHash: sha256Hex(B_RAW) },
+      ],
+    }), 'utf8')
+    saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
+    saveDocumentMetadata(db, { id: 'ren-b-id', path: 'proj/nested/b', title: 'B', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('unrecognized'))).toBe(false)
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe(B_RAW)
+    expect(getDocumentMetadata(db, 'ren/nested/b')?.id).toBe('ren-b-id')
+  })
+
+  it('still recovers legacy v1 journals with the short strategy names', async () => {
+    await seed({ 'ren/a.md': A_RAW, 'ren/nested/b.md': B_RAW })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
+      version: 1, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable',
+      sourceDev: 7, sourceIno: 11,
+      entries: [
+        { rel: 'a', id: 'ren-a-id', sourceHash: sha256Hex(A_RAW) },
+        { rel: 'nested/b', id: 'ren-b-id', sourceHash: sha256Hex(B_RAW) },
+      ],
+    }), 'utf8')
+    saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
+  })
+
+  it('accepts every strategy value the platform can persist (schema tying guard)', async () => {
+    // The round-7 P0 was a drift between the persisted value and the
+    // parser. This guard fails loudly if the shared enum and the
+    // platform default ever diverge again: the platform strategy must
+    // be one of the persisted values, and a journal carrying ANY
+    // persisted value must parse and recover.
+    expect(FOLDER_MOVE_STRATEGIES).toContain(platformDirectoryMoveStrategy)
+    for (const strategy of FOLDER_MOVE_STRATEGIES) {
+      await fs.rm(vault, { recursive: true, force: true })
+      await fs.mkdir(vault, { recursive: true })
+      await seed({ 'ren/a.md': A_RAW, 'ren/nested/b.md': B_RAW })
+      await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
+        version: 2, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy,
+        sourceDev: 7, sourceIno: 11,
+        entries: [
+          { relativeFilePath: 'a.md', sourceHash: sha256Hex(A_RAW), documentId: 'ren-a-id', documentPath: 'proj/a' },
+          { relativeFilePath: 'nested/b.md', sourceHash: sha256Hex(B_RAW), documentId: 'ren-b-id', documentPath: 'proj/nested/b' },
+        ],
+        metadataDisposition: { kind: 'prefix-move' },
+      }), 'utf8')
+      saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
+
+      const report = await runRecovery()
+
+      expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('unrecognized')), strategy).toBe(false)
+      expect(report.actions.some((a) => a.action === 'completed-rename'), strategy).toBe(true)
+      db.exec('DELETE FROM documents')
+    }
+  })
+
+  it('replays a binary attachment by its buffer hash, not a utf8 read', async () => {
+    // Attachments are binary: a utf8 read would mangle the bytes and
+    // the hash would never match. The journal hashes every physical
+    // file with sha256HexBuffer and recovery replays by that proof.
+    const imageBytes = Buffer.from([0x00, 0x01, 0xff, 0xfe, 0x89, 0x50, 0x00])
+    await seed({ 'ren/a.md': A_RAW })
+    await fs.mkdir(path.join(vault, 'proj'), { recursive: true })
+    await fs.writeFile(path.join(vault, 'proj', 'image.bin'), imageBytes)
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
+      version: 2, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable-move',
+      sourceDev: 7, sourceIno: 11,
+      entries: [
+        { relativeFilePath: 'a.md', sourceHash: sha256Hex(A_RAW), documentId: 'ren-a-id', documentPath: 'proj/a' },
+        { relativeFilePath: 'image.bin', sourceHash: sha256HexBuffer(imageBytes) },
+      ],
+      metadataDisposition: { kind: 'prefix-move' },
+    }), 'utf8')
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(await fs.readFile(path.join(vault, 'ren/image.bin'))).toEqual(imageBytes)
+    expect(await namesIn()).not.toContain('proj')
+  })
+
+  it('prunes the gate and cleans a stale empty-tree journal', async () => {
+    // An empty folder rename killed after the gate: entries [] with
+    // emptyTree, source directory intact. Stale for a prefix-move
+    // journal — the file-free gate is ours and is pruned.
+    await fs.mkdir(path.join(vault, 'proj'), { recursive: true })
+    await fs.mkdir(path.join(vault, 'ren'), { recursive: true })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
+      version: 2, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable-move',
+      sourceDev: 7, sourceIno: 11, emptyTree: true, entries: [],
+      metadataDisposition: { kind: 'prefix-move' },
+    }), 'utf8')
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'cleaned')).toBe(true)
+    expect(await namesIn()).not.toContain('ren')
+    expect(await namesIn()).toContain('proj')
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+  })
+
+  it('keeps the moved folder when an empty-tree move fully landed', async () => {
+    // The empty move completed before the crash (source gone, empty
+    // destination present): forward completion KEEPS the destination
+    // directory — pruning it would delete the moved folder.
+    await fs.mkdir(path.join(vault, 'ren'), { recursive: true })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
+      version: 2, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable-move',
+      sourceDev: 7, sourceIno: 11, emptyTree: true, entries: [],
+      metadataDisposition: { kind: 'prefix-move' },
+    }), 'utf8')
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(await namesIn()).toContain('ren')
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+  })
+})
+
+describe('recoverInterruptedOperations (folder-move snapshot-restore journal)', () => {
+  // A delete rollback persists its metadata snapshot in the journal:
+  // no matter where the restore crashed, recovery finishes it — the
+  // tree back under the public path AND the full metadata graph
+  // re-installed. Unlike prefix-move journals, an all-at-source state
+  // is NOT stale here: the restore is the durable intent, and the
+  // staged tree must not be stranded under its inflight name.
+  const A_RAW = '# a\n'
+  const IMAGE_BYTES = Buffer.from([0x01, 0x02, 0x03, 0xff])
+  const STAGED = 'gone.docus-delete-inflight-cccccccc'
+
+  async function seedDeleteRollbackState(filesAtDest: { a?: boolean; image?: boolean }): Promise<void> {
+    await fs.mkdir(path.join(vault, STAGED), { recursive: true })
+    if (filesAtDest.a) {
+      await fs.mkdir(path.join(vault, 'gone'), { recursive: true })
+      await fs.writeFile(path.join(vault, 'gone', 'a.md'), A_RAW, 'utf8')
+    } else {
+      await fs.writeFile(path.join(vault, STAGED, 'a.md'), A_RAW, 'utf8')
+    }
+    if (filesAtDest.image) {
+      await fs.mkdir(path.join(vault, 'gone'), { recursive: true })
+      await fs.writeFile(path.join(vault, 'gone', 'image.bin'), IMAGE_BYTES)
+    } else {
+      await fs.writeFile(path.join(vault, STAGED, 'image.bin'), IMAGE_BYTES)
+    }
+    // The delete route detached the prefix before its rollback began;
+    // the persisted snapshot is what recovery must re-install.
+    saveDocumentMetadata(db, { id: 'gone-a-id', path: 'gone/a', title: 'A', updatedAt: 1 })
+    const snapshot = snapshotDocumentMetadataPrefixMutation(db, ['gone'])
+    deleteDocumentMetadataPrefix(db, 'gone')
+    await fs.writeFile(path.join(vault, `.${STAGED}.docus-journal-cccc`), JSON.stringify({
+      version: 2, op: 'folder-move', srcRel: STAGED, destRel: 'gone', strategy: 'replayable-move',
+      sourceDev: 7, sourceIno: 11,
+      entries: [
+        { relativeFilePath: 'a.md', sourceHash: sha256Hex(A_RAW), documentId: 'gone-a-id', documentPath: 'gone/a' },
+        { relativeFilePath: 'image.bin', sourceHash: sha256HexBuffer(IMAGE_BYTES) },
+      ],
+      metadataDisposition: { kind: 'snapshot-restore', snapshot: serializeMetadataSnapshot(snapshot) },
+    }), 'utf8')
+  }
+
+  it('completes a delete rollback that crashed mid restore, metadata graph included', async () => {
+    await seedDeleteRollbackState({ a: true, image: false })
+    expect(getDocumentMetadata(db, 'gone/a')).toBeNull()
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(await fs.readFile(path.join(vault, 'gone/a.md'), 'utf8')).toBe(A_RAW)
+    expect(await fs.readFile(path.join(vault, 'gone/image.bin'))).toEqual(IMAGE_BYTES)
+    // Identity re-installed from the persisted snapshot — same id.
+    expect(getDocumentMetadata(db, 'gone/a')?.id).toBe('gone-a-id')
+    // Staging and journal both gone; nothing was quarantined.
+    expect(await namesIn()).not.toContain(STAGED)
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expect((await namesIn()).some((n) => n.includes('.docus-quarantine-'))).toBe(false)
+    // Idempotent.
+    await runRecovery()
+    expect(getDocumentMetadata(db, 'gone/a')?.id).toBe('gone-a-id')
+  })
+
+  it('completes forward when the delete rollback crashed before its first file moved', async () => {
+    // All entries still in staging: a prefix-move journal would call
+    // this stale and clean up — a snapshot-restore journal completes
+    // the restore instead (stranded staging is never the final state).
+    await seedDeleteRollbackState({ a: false, image: false })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(await fs.readFile(path.join(vault, 'gone/a.md'), 'utf8')).toBe(A_RAW)
+    expect(await fs.readFile(path.join(vault, 'gone/image.bin'))).toEqual(IMAGE_BYTES)
+    expect(getDocumentMetadata(db, 'gone/a')?.id).toBe('gone-a-id')
+    expect(await namesIn()).not.toContain(STAGED)
   })
 })
 
@@ -1970,5 +2424,86 @@ describe('recoverInterruptedOperations (folder reference content proof)', () => 
     expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('generation does not match'))).toBe(true)
     expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# external\n')
     expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
+  })
+
+  it('rejects a journal with MIXED hash coverage instead of downgrading to the weak proof', async () => {
+    // Round-7 P2: one stripped sourceHash must not silently downgrade
+    // the WHOLE directory to dev/ino + existence — a forged or damaged
+    // journal would turn off the content proof entirely. Mixed
+    // coverage is unparseable: the journal stays for inspection and
+    // nothing is touched.
+    await seed({
+      'ren/a.md': '# external\n',
+      'ren/b.md': '# external too\n',
+      'ref-a.md': '[[old]]\n',
+      '.proj.docus-ref-before-aaaa-0': '[[old]]\n',
+      '.proj.docus-ref-after-aaaa-0': '[[new]]\n',
+    })
+    const destStat = await fs.stat(path.join(vault, 'ren'))
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-aaaa'), JSON.stringify({
+      version: 1, op: 'folder-rename-references', phase: 'roll-forward',
+      srcRel: 'proj', destRel: 'ren',
+      sourceDev: destStat.dev, sourceIno: destStat.ino,
+      identities: [
+        { path: 'proj/a', id: 'a-id', sourceHash: sha256Hex('# ours\n') },
+        { path: 'proj/b', id: 'b-id' },
+      ],
+      references: [{
+        path: 'ref-a', beforeHash: sha256Hex('[[old]]\n'), afterHash: sha256Hex('[[new]]\n'),
+        beforePayload: '.proj.docus-ref-before-aaaa-0', afterPayload: '.proj.docus-ref-after-aaaa-0',
+      }],
+    }), 'utf8')
+    saveDocumentMetadata(db, { id: 'a-id', path: 'ren/a', title: 'A', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('unrecognized'))).toBe(true)
+    // Nothing was detached, rewritten, or removed.
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('a-id')
+    expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8')).toBe('[[old]]\n')
+    expect(await namesIn()).toContain('.proj.docus-journal-aaaa')
+  })
+
+  it('proves an internal backlink document by its DESTINATION reference path, not its source identity', async () => {
+    // Round-7 P1: a document INSIDE the renamed folder that links into
+    // the folder carries its reference under the DESTINATION path (the
+    // route rewrites internal sources to their new home). When its
+    // rewrite already landed before the crash, the file no longer
+    // matches sourceHash — the after-rewrite proof must look the
+    // identity up at destRel + suffix, or the legitimate destination
+    // generation is misjudged as external and its identity detached.
+    const internalBefore = '# a sees [[proj/b]]\n'
+    const internalAfter = '# a sees [[ren/b]]\n'
+    await seed({
+      'ren/a.md': internalAfter,
+      'ren/b.md': '# b\n',
+      '.proj.docus-ref-before-aaaa-0': internalBefore,
+      '.proj.docus-ref-after-aaaa-0': internalAfter,
+    })
+    const destStat = await fs.stat(path.join(vault, 'ren'))
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-aaaa'), JSON.stringify({
+      version: 1, op: 'folder-rename-references', phase: 'roll-forward',
+      srcRel: 'proj', destRel: 'ren',
+      sourceDev: destStat.dev, sourceIno: destStat.ino,
+      identities: [
+        { path: 'proj/a', id: 'a-id', sourceHash: sha256Hex(internalBefore) },
+        { path: 'proj/b', id: 'b-id', sourceHash: sha256Hex('# b\n') },
+      ],
+      references: [{
+        path: 'ren/a', beforeHash: sha256Hex(internalBefore), afterHash: sha256Hex(internalAfter),
+        beforePayload: '.proj.docus-ref-before-aaaa-0', afterPayload: '.proj.docus-ref-after-aaaa-0',
+      }],
+    }), 'utf8')
+    saveDocumentMetadata(db, { id: 'a-id', path: 'ren/a', title: 'A', updatedAt: 1 })
+    saveDocumentMetadata(db, { id: 'b-id', path: 'ren/b', title: 'B', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    // Completes — NOT quarantined — with both identities intact.
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(report.actions.some((a) => a.action === 'quarantined')).toBe(false)
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('a-id')
+    expect(getDocumentMetadata(db, 'ren/b')?.id).toBe('b-id')
+    expect((await namesIn()).some((name) => name.includes('.docus-journal-') || name.includes('.docus-ref-'))).toBe(false)
   })
 })
