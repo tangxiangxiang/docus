@@ -8,6 +8,7 @@ import { applyMigrations } from '../db'
 import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
 import { sha256Hex } from '../atomicTextWrite'
 import { recoverInterruptedOperations } from '../crashRecovery'
+import { prepareRenameReferenceJournal } from '../renameReferenceJournal'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 const TSX_CLI = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs')
@@ -128,6 +129,29 @@ describe('recoverInterruptedOperations (journaled replace)', () => {
 
     expect(await fs.readFile(path.join(vault, 'note.md'), 'utf8')).toBe('# base\n')
     expect(await namesIn()).toEqual(['note.md'])
+  })
+
+  it('completes a crash-interrupted save quarantine transition from either payload name', async () => {
+    await seed({
+      'note.md': '# restored\n',
+      '.note.md.docus-save-bbbb': '# replacement\n',
+      '.note.md.docus-journal-cccc': JSON.stringify({
+        version: 1,
+        op: 'replace',
+        staged: '.note.md.docus-staged-aaaa',
+        replacement: '.note.md.docus-save-bbbb',
+        pendingReplacement: '.note.md.docus-quarantine-save-dddd',
+        expectedHash: sha256Hex('# restored\n'),
+        replacementHash: sha256Hex('# replacement\n'),
+        phase: 'quarantine-save-pending',
+      }),
+    })
+
+    await runRecovery()
+    await runRecovery()
+
+    expect(await fs.readFile(path.join(vault, '.note.md.docus-quarantine-save-dddd'), 'utf8')).toBe('# replacement\n')
+    expect(await fs.readFile(path.join(vault, '.note.md.docus-journal-cccc'), 'utf8')).toContain('manual-recovery-required')
   })
 
   it('retains both recoverable generations when an external version owns the target', async () => {
@@ -293,6 +317,26 @@ describe('recoverInterruptedOperations (journal-less orphans)', () => {
 })
 
 describe('recoverInterruptedOperations (delete quarantine)', () => {
+  it('replays a persisted legacy quarantine manifest after a crash before detach', async () => {
+    await seed({
+      'gone.md.docus-quarantine-reuse-aaaa': '# old\n',
+      '.gone.md.docus-quarantine-manifest-bbbb': JSON.stringify({
+        version: 1,
+        op: 'legacy-delete-quarantine',
+        path: 'gone',
+        quarantine: 'gone.md.docus-quarantine-reuse-aaaa',
+        identities: [{ path: 'gone', id: 'legacy-id' }],
+      }),
+    })
+    saveDocumentMetadata(db, { id: 'legacy-id', path: 'gone', title: 'Gone', updatedAt: 1 })
+
+    await runRecovery()
+
+    expect(getDocumentMetadata(db, 'gone')).toBeNull()
+    expect(await namesIn()).toContain('.gone.md.docus-quarantine-manifest-bbbb')
+    expect(await namesIn()).toContain('gone.md.docus-quarantine-reuse-aaaa')
+  })
+
   it('replays identity detachment after a crash between quarantine fsync and metadata update', async () => {
     await seed({
       'gone.md': '# external\n',
@@ -807,6 +851,61 @@ describe('recoverInterruptedOperations (file-rename journal)', () => {
   })
 })
 
+describe('recoverInterruptedOperations (rename reference transaction)', () => {
+  it('rolls forward a partially written backlink batch and cleans durable payloads', async () => {
+    await seed({
+      'old.md': '# moved\n',
+      'ref-a.md': '[[old]]\n',
+      'ref-b.md': '[[old]]\n',
+    })
+    saveDocumentMetadata(db, { id: 'rename-id', path: 'old', title: 'Old', updatedAt: 1 })
+    const prepared = await prepareRenameReferenceJournal({
+      sourceAbs: path.join(vault, 'old.md'),
+      op: 'document-rename-references',
+      srcRel: 'old',
+      destRel: 'new',
+      documentId: 'rename-id',
+      references: [
+        { path: 'ref-a', beforeRaw: '[[old]]\n', afterRaw: '[[new]]\n' },
+        { path: 'ref-b', beforeRaw: '[[old]]\n', afterRaw: '[[new]]\n' },
+      ],
+    })
+    expect(prepared).not.toBeNull()
+    await fs.rename(path.join(vault, 'old.md'), path.join(vault, 'new.md'))
+    db.prepare('UPDATE documents SET path = ? WHERE id = ?').run('new', 'rename-id')
+    await fs.writeFile(path.join(vault, 'ref-a.md'), '[[new]]\n', 'utf8')
+
+    const report = await runRecovery()
+
+    expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8')).toBe('[[new]]\n')
+    expect(await fs.readFile(path.join(vault, 'ref-b.md'), 'utf8')).toBe('[[new]]\n')
+    expect(report.actions.some((action) => action.detail?.includes('rolled forward'))).toBe(true)
+    expect((await namesIn()).some((name) => name.includes('.docus-ref-') || name.includes('.docus-journal-'))).toBe(false)
+  })
+
+  it('stops without overwriting a backlink changed by an external editor', async () => {
+    await seed({ 'old.md': '# moved\n', 'ref.md': '[[old]]\n' })
+    saveDocumentMetadata(db, { id: 'rename-id', path: 'old', title: 'Old', updatedAt: 1 })
+    await prepareRenameReferenceJournal({
+      sourceAbs: path.join(vault, 'old.md'),
+      op: 'document-rename-references',
+      srcRel: 'old',
+      destRel: 'new',
+      documentId: 'rename-id',
+      references: [{ path: 'ref', beforeRaw: '[[old]]\n', afterRaw: '[[new]]\n' }],
+    })
+    await fs.rename(path.join(vault, 'old.md'), path.join(vault, 'new.md'))
+    db.prepare('UPDATE documents SET path = ? WHERE id = ?').run('new', 'rename-id')
+    await fs.writeFile(path.join(vault, 'ref.md'), '# external\n', 'utf8')
+
+    const report = await runRecovery()
+
+    expect(await fs.readFile(path.join(vault, 'ref.md'), 'utf8')).toBe('# external\n')
+    expect(report.actions.some((action) => action.detail?.includes('changed externally'))).toBe(true)
+    expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(true)
+  })
+})
+
 describe('recoverInterruptedOperations (folder-rename journal)', () => {
   async function folderJournal(srcRel: string, destRel: string, evidenceRel = srcRel): Promise<string> {
     const stat = await fs.stat(path.join(vault, evidenceRel)).catch(() => ({ dev: 0, ino: 0 }))
@@ -859,6 +958,18 @@ describe('recoverInterruptedOperations (folder-rename journal)', () => {
     expect(report.actions.some((a) => a.action === 'cleaned')).toBe(true)
     expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('proj-a-id')
     expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+  })
+
+  it('moves metadata back when durable disk state is source but metadata had reached destination', async () => {
+    await seed({ 'proj/a.md': '# a\n' })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await folderJournal('proj', 'ren'), 'utf8')
+    saveDocumentMetadata(db, { id: 'proj-a-id', path: 'ren/a', title: 'A', updatedAt: 1 })
+
+    await runRecovery()
+
+    expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('proj-a-id')
+    expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
+    expect(await namesIn()).not.toContain('.proj.docus-journal-cccc')
   })
 
   it('never treats an empty destination as proof that the gate is ours', async () => {

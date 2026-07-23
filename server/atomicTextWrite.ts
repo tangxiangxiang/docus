@@ -58,6 +58,28 @@ export async function rewriteDurableJournal(journalPath: string, entry: unknown)
   }
 }
 
+export async function writeDurableRecoveryPayload(payloadPath: string, raw: string): Promise<void> {
+  let handle: Awaited<ReturnType<typeof fs.open>> | null = null
+  try {
+    handle = await fs.open(payloadPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY)
+    await handle.writeFile(raw, 'utf8')
+    await handle.sync()
+    await handle.close()
+    handle = null
+    await syncParentDirectoryBestEffort(payloadPath)
+  } catch (error) {
+    await handle?.close().catch(() => {})
+    await fs.rm(payloadPath, { force: true }).catch(() => {})
+    await syncParentDirectoryBestEffort(payloadPath)
+    throw error
+  }
+}
+
+export async function removeDurableRecoveryPayload(payloadPath: string): Promise<void> {
+  await fs.rm(payloadPath, { force: true })
+  await syncParentDirectoryBestEffort(payloadPath)
+}
+
 /** Test-only hooks for real crash tests: a child process installs a
  * hook that kills the process hard at the exact protocol point under
  * test. Null in production; tests reset in afterEach/finally. */

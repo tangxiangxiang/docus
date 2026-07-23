@@ -34,6 +34,7 @@ import {
 } from '../atomicTextWrite.js'
 import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
+import { prepareRenameReferenceJournal, type PreparedRenameReferenceJournal } from '../renameReferenceJournal.js'
 import { trackCleanedDocumentWrite } from '../metadataMigration.js'
 import { CONTENT_DIR, filePathFor, isValidPathSyntax, isValidSegment } from '../paths.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
@@ -517,6 +518,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
   const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [srcPath, destPath, ...referenceSnapshots.map((item) => item.writePath)])
   const written: typeof referenceSnapshots = []
   let renamed = false
+  let referenceJournal: PreparedRenameReferenceJournal | null = null
   try {
     ensureMetadata(srcPath, sourceRaw, sourceStat.mtimeMs)
     for (const reference of referenceSnapshots) {
@@ -525,6 +527,18 @@ postRoutes.patch('/api/posts/*', async (c) => {
         ensureMetadata(reference.sourcePath, reference.raw, stat.mtimeMs)
       }
     }
+    referenceJournal = await prepareRenameReferenceJournal({
+      sourceAbs: src,
+      op: 'document-rename-references',
+      srcRel: srcPath,
+      destRel: destPath,
+      documentId: getDocumentMetadata(metadataDb(), srcPath)?.id,
+      references: referenceSnapshots.map((snapshot) => ({
+        path: snapshot.writePath,
+        beforeRaw: snapshot.raw,
+        afterRaw: snapshot.updated,
+      })),
+    })
     await renameDocumentWithMetadata({ db: metadataDb(), fromPath: srcPath, toPath: destPath, fromAbs: src, toAbs: dest })
     renamed = true
     if (__postRenameRaceHooks?.afterRenameMoved) await __postRenameRaceHooks.afterRenameMoved()
@@ -540,6 +554,8 @@ postRoutes.patch('/api/posts/*', async (c) => {
       snapshot.mtime = stat.mtimeMs
       ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
     }
+    await referenceJournal?.cleanup()
+    referenceJournal = null
   } catch (error) {
     const rollbackErrors: unknown[] = []
     let rollbackSourceReused = false
@@ -605,6 +621,10 @@ postRoutes.patch('/api/posts/*', async (c) => {
           await removeDurableJournal(error.journalPath)
         }
       } catch { /* best effort: the next index rebuild re-derives paths */ }
+    }
+    if (referenceJournal) {
+      try { await referenceJournal.cleanup(); referenceJournal = null }
+      catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'reference update failed and rollback was incomplete')
     if (rollbackSourceReused) {

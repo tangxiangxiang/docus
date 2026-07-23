@@ -23,6 +23,7 @@ import {
   normalizeLogicalContentPath,
 } from '../paths.js'
 import { naturalPathCompare } from '../tree.js'
+import { prepareRenameReferenceJournal, type PreparedRenameReferenceJournal } from '../renameReferenceJournal.js'
 import { getDb } from '../db.js'
 import { withDocumentWriteLock, withVaultStructureLock } from '../documentWriteLock.js'
 import {
@@ -765,11 +766,20 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
   }))
   const databaseSnapshot = snapshotDocumentMetadataMutation(db, [input.path, input.new_path, ...references.map((reference) => reference.path)])
   let rollbackSourceReused = false
+  let referenceJournal: PreparedRenameReferenceJournal | null = null
   try {
     raw = fs.readFileSync(srcAbs, 'utf8')
     const sourceStat = fs.statSync(srcAbs)
     ensureDocumentMetadata(db, input.path, raw, sourceStat.mtimeMs)
     fs.mkdirSync(path.dirname(dstAbs), { recursive: true })
+    referenceJournal = await prepareRenameReferenceJournal({
+      sourceAbs: srcAbs,
+      op: 'document-rename-references',
+      srcRel: input.path,
+      destRel: input.new_path,
+      documentId: getDocumentMetadata(db, input.path)?.id,
+      references: references.map((reference) => ({ path: reference.path, beforeRaw: reference.raw, afterRaw: reference.updated })),
+    })
     await renameDocumentWithMetadata({
       db, fromPath: input.path, toPath: input.new_path, fromAbs: srcAbs, toAbs: dstAbs,
     })
@@ -786,6 +796,8 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
         const stat = fs.statSync(reference.abs)
         ensureDocumentMetadata(db, reference.path, reference.updated, stat.mtimeMs, Date.now())
       }
+      await referenceJournal?.cleanup()
+      referenceJournal = null
     } catch (error) {
       const rollbackErrors: unknown[] = []
       for (const reference of written.reverse()) {
@@ -815,6 +827,10 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
       }
       try { restoreDocumentMetadataMutation(db, databaseSnapshot) }
       catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      if (referenceJournal) {
+        try { await referenceJournal.cleanup(); referenceJournal = null }
+        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      }
       if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'AI rename failed and rollback was incomplete')
       throw error
     }
@@ -822,6 +838,12 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     try { restoreDocumentMetadataMutation(db, databaseSnapshot) }
     catch (rollbackError) {
       return err(`rename_file: ${(e as Error).message}; metadata rollback failed: ${(rollbackError as Error).message}`)
+    }
+    if (referenceJournal) {
+      try { await referenceJournal.cleanup(); referenceJournal = null }
+      catch (cleanupError) {
+        return err(`rename_file: ${(e as Error).message}; reference journal cleanup failed: ${(cleanupError as Error).message}`)
+      }
     }
     if (e instanceof RenameSourceReusedError && e.survivingPath === 'staging') {
       try {

@@ -169,6 +169,7 @@ export async function createOnlyMoveDirectory(
   if (__createOnlyMoveHooks?.afterMkdirGate) await __createOnlyMoveHooks.afterMkdirGate(toDirAbs)
   try {
     await renameWithTransientWindowsRetry(fromDirAbs, toDirAbs)
+    await syncParentDirectoryBestEffort(toDirAbs)
     return { restored: true }
   } catch (error) {
     try {

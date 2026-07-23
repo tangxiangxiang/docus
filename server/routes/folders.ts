@@ -15,6 +15,7 @@ import {
 import { createOnlyMoveDirectory } from '../documentFileLifecycle.js'
 import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
+import { prepareRenameReferenceJournal, type PreparedRenameReferenceJournal } from '../renameReferenceJournal.js'
 import { CONTENT_DIR, filePathFor, folderPathFor, isValidPathSyntax } from '../paths.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
 import { listSubtreePaths } from '../tree.js'
@@ -157,6 +158,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   const written: typeof folderReferenceSnapshots = []
   let renamed = false
   let journalPath: string | null = null
+  let referenceJournal: PreparedRenameReferenceJournal | null = null
   try {
     for (const oldPath of oldPaths) {
       const oldAbs = filePathFor(oldPath)
@@ -169,6 +171,17 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         ensureMetadata(snapshot.sourcePath, snapshot.raw, sourceStat.mtimeMs)
       }
     }
+    referenceJournal = await prepareRenameReferenceJournal({
+      sourceAbs: src,
+      op: 'folder-rename-references',
+      srcRel: srcPath,
+      destRel: newPath,
+      references: folderReferenceSnapshots.map((snapshot) => ({
+        path: snapshot.writePath,
+        beforeRaw: snapshot.raw,
+        afterRaw: snapshot.updated,
+      })),
+    })
     // DURABLE JOURNAL before the move: if the process dies between the
     // directory move and the metadata move, startup crash recovery
     // (server/crashRecovery.ts) reads it and completes the metadata
@@ -209,6 +222,8 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       snapshot.mtime = stat.mtimeMs
       ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
     }
+    await referenceJournal?.cleanup()
+    referenceJournal = null
   } catch (error) {
     const rollbackErrors: unknown[] = []
     let rollbackSourceReused = false
@@ -261,6 +276,10 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         }))
         idx.applyFolderRename(pairs)
       } catch { /* best effort: the next index rebuild re-derives paths */ }
+    }
+    if (referenceJournal) {
+      try { await referenceJournal.cleanup(); referenceJournal = null }
+      catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'folder rename failed and rollback was incomplete')
     if (rollbackSourceReused) {
