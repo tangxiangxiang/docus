@@ -81,11 +81,16 @@ describe('useMarkdownRender (public API smoke)', () => {
       },
     })
     mount(Comp)
-    /* The watchEffect awaits `render()` (which dynamically imports
-       highlight.js), so we need a few ticks before the HTML and
-       headings are populated. 20 ticks is enough on a warm cache. */
-    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0))
     expect(captured).not.toBeNull()
+    /* The watchEffect awaits `render()`, which dynamically imports
+       highlight.js. On a cold cache (fresh CI runner) that import can
+       span many macrotask cycles, so a fixed tick count is flaky —
+       wait for the actual condition (headings populated) instead,
+       failing only if the render genuinely never completes. */
+    const deadline = Date.now() + 5000
+    while (captured!.headings.value.length === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10))
+    }
     expect(captured!.headings.value.length).toBeGreaterThan(0)
     expect(captured!.html.value).toContain('Section')
   })
