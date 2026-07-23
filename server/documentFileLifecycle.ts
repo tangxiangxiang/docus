@@ -147,23 +147,6 @@ export async function createOnlyMoveDirectory(
   fromDirAbs: string,
   toDirAbs: string,
 ): Promise<{ restored: boolean }> {
-  // Win32 rename does not replace even an empty directory, so the
-  // POSIX mkdir gate below always fails with EPERM there. A native
-  // Windows directory rename is itself create-only: an existing
-  // destination is rejected rather than replaced. Use that primitive
-  // directly and classify a concurrently-created destination as reuse.
-  if (process.platform === 'win32') {
-    try {
-      await renameWithTransientWindowsRetry(fromDirAbs, toDirAbs)
-      await syncParentDirectoryBestEffort(toDirAbs)
-      return { restored: true }
-    } catch (error) {
-      if (await fs.stat(toDirAbs).then((stat) => stat.isDirectory(), () => false)) {
-        return { restored: false }
-      }
-      throw error
-    }
-  }
   try {
     await fs.mkdir(toDirAbs)
   } catch (error) {
