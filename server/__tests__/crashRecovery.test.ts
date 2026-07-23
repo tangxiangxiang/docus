@@ -852,6 +852,91 @@ describe('recoverInterruptedOperations (file-rename journal)', () => {
 })
 
 describe('recoverInterruptedOperations (rename reference transaction)', () => {
+  it('rejects a document reference journal without a bound document identity', async () => {
+    await seed({
+      'new.md': '# moved\n',
+      'victim.md': 'safe\n',
+      '.old.md.docus-ref-before-a': 'safe\n',
+      '.old.md.docus-ref-after-a': 'forged\n',
+      '.old.md.docus-journal-aaaa': JSON.stringify({
+        version: 1, op: 'document-rename-references', phase: 'roll-forward',
+        srcRel: 'old', destRel: 'new', sourceHash: sha256Hex('# moved\n'),
+        references: [{ path: 'victim', beforeHash: sha256Hex('safe\n'), afterHash: sha256Hex('forged\n'), beforePayload: '.old.md.docus-ref-before-a', afterPayload: '.old.md.docus-ref-after-a' }],
+      }),
+    })
+    await runRecovery()
+    expect(await fs.readFile(path.join(vault, 'victim.md'), 'utf8')).toBe('safe\n')
+    expect(await namesIn()).toContain('.old.md.docus-journal-aaaa')
+  })
+
+  it('does not update backlinks when the destination generation was replaced externally', async () => {
+    await seed({ 'old.md': '# owned\n', 'ref.md': '[[old]]\n' })
+    saveDocumentMetadata(db, { id: 'rename-id', path: 'old', title: 'Old', updatedAt: 1 })
+    await prepareRenameReferenceJournal({
+      sourceAbs: path.join(vault, 'old.md'), op: 'document-rename-references',
+      srcRel: 'old', destRel: 'new', documentId: 'rename-id',
+      references: [{ path: 'ref', beforeRaw: '[[old]]\n', afterRaw: '[[new]]\n' }],
+    })
+    await fs.rm(path.join(vault, 'old.md'))
+    await fs.writeFile(path.join(vault, 'new.md'), '# external\n')
+    db.prepare('UPDATE documents SET path = ? WHERE id = ?').run('new', 'rename-id')
+    const report = await runRecovery()
+    expect(await fs.readFile(path.join(vault, 'ref.md'), 'utf8')).toBe('[[old]]\n')
+    expect(report.actions.some((action) => action.detail?.includes('destination generation'))).toBe(true)
+  })
+
+  it('cleans declared payloads from an interrupted preparing phase', async () => {
+    await seed({
+      'old.md': '# old\n',
+      '.old.md.docus-ref-before-a': 'before',
+      '.old.md.docus-journal-aaaa': JSON.stringify({
+        version: 1, op: 'document-rename-references', phase: 'preparing',
+        srcRel: 'old', destRel: 'new', documentId: 'id', sourceHash: sha256Hex('# old\n'),
+        references: [{ path: 'ref', beforeHash: sha256Hex('before'), afterHash: sha256Hex('after'), beforePayload: '.old.md.docus-ref-before-a', afterPayload: '.old.md.docus-ref-after-a' }],
+      }),
+    })
+    await runRecovery()
+    expect((await namesIn()).filter((name) => name.includes('.docus-ref-') || name.includes('.docus-journal-'))).toEqual([])
+  })
+
+  it('replays a durable reference rollback before deleting its evidence', async () => {
+    await seed({ 'old.md': '# owned\n', 'ref.md': '[[old]]\n' })
+    saveDocumentMetadata(db, { id: 'rename-id', path: 'old', title: 'Old', updatedAt: 1 })
+    const prepared = await prepareRenameReferenceJournal({
+      sourceAbs: path.join(vault, 'old.md'), op: 'document-rename-references',
+      srcRel: 'old', destRel: 'new', documentId: 'rename-id',
+      references: [{ path: 'ref', beforeRaw: '[[old]]\n', afterRaw: '[[new]]\n' }],
+    })
+    await prepared!.setDirection('roll-back')
+    await fs.writeFile(path.join(vault, 'ref.md'), '[[new]]\n')
+    await runRecovery()
+    expect(await fs.readFile(path.join(vault, 'ref.md'), 'utf8')).toBe('[[old]]\n')
+    expect((await namesIn()).some((name) => name.includes('.docus-ref-') || name.includes('.docus-journal-'))).toBe(false)
+  })
+
+  it('settles the main rename before references regardless of journal filename order', async () => {
+    await seed({ 'old.md': '# owned\n', 'ref.md': '[[old]]\n' })
+    saveDocumentMetadata(db, { id: 'rename-id', path: 'old', title: 'Old', updatedAt: 1 })
+    const prepared = await prepareRenameReferenceJournal({
+      sourceAbs: path.join(vault, 'old.md'), op: 'document-rename-references',
+      srcRel: 'old', destRel: 'new', documentId: 'rename-id',
+      references: [{ path: 'ref', beforeRaw: '[[old]]\n', afterRaw: '[[new]]\n' }],
+    })
+    const earlyReferenceJournal = path.join(vault, '.old.md.docus-journal-0000')
+    await fs.rename(prepared!.journalPath, earlyReferenceJournal)
+    await fs.writeFile(path.join(vault, '.old.md.docus-journal-ffff'), JSON.stringify({
+      version: 1, op: 'file-rename', srcRel: 'old', destRel: 'new',
+      documentId: 'rename-id', sourceHash: sha256Hex('# owned\n'),
+    }))
+    await fs.rename(path.join(vault, 'old.md'), path.join(vault, 'new.md'))
+
+    await runRecovery()
+
+    expect(getDocumentMetadata(db, 'new')?.id).toBe('rename-id')
+    expect(await fs.readFile(path.join(vault, 'ref.md'), 'utf8')).toBe('[[new]]\n')
+    expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
+  })
+
   it('rolls forward a partially written backlink batch and cleans durable payloads', async () => {
     await seed({
       'old.md': '# moved\n',

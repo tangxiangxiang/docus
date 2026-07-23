@@ -767,17 +767,20 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
   const databaseSnapshot = snapshotDocumentMetadataMutation(db, [input.path, input.new_path, ...references.map((reference) => reference.path)])
   let rollbackSourceReused = false
   let referenceJournal: PreparedRenameReferenceJournal | null = null
+  let preserveReferenceJournal = false
   try {
     raw = fs.readFileSync(srcAbs, 'utf8')
     const sourceStat = fs.statSync(srcAbs)
     ensureDocumentMetadata(db, input.path, raw, sourceStat.mtimeMs)
     fs.mkdirSync(path.dirname(dstAbs), { recursive: true })
+    const sourceDocumentId = getDocumentMetadata(db, input.path)?.id
+    if (!sourceDocumentId) throw new Error('source document identity was not created')
     referenceJournal = await prepareRenameReferenceJournal({
       sourceAbs: srcAbs,
       op: 'document-rename-references',
       srcRel: input.path,
       destRel: input.new_path,
-      documentId: getDocumentMetadata(db, input.path)?.id,
+      documentId: sourceDocumentId,
       references: references.map((reference) => ({ path: reference.path, beforeRaw: reference.raw, afterRaw: reference.updated })),
     })
     await renameDocumentWithMetadata({
@@ -800,13 +803,17 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
       referenceJournal = null
     } catch (error) {
       const rollbackErrors: unknown[] = []
+      if (referenceJournal) {
+        try { await referenceJournal.setDirection('roll-back') }
+        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      }
       for (const reference of written.reverse()) {
         try {
           // Undo ONLY our rewrite: an external save on top of it wins
           // and the undo leaves those bytes untouched.
           await atomicReplaceTextIfUnchanged(reference.abs, reference.updated, reference.raw)
         } catch (rollbackError) {
-          if (!(rollbackError instanceof AtomicTextWriteConflictError)) rollbackErrors.push(rollbackError)
+          rollbackErrors.push(rollbackError)
         }
       }
       try {
@@ -828,8 +835,17 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
       try { restoreDocumentMetadataMutation(db, databaseSnapshot) }
       catch (rollbackError) { rollbackErrors.push(rollbackError) }
       if (referenceJournal) {
-        try { await referenceJournal.cleanup(); referenceJournal = null }
-        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        try {
+          if (rollbackSourceReused) {
+            await referenceJournal.setDirection('roll-forward')
+            preserveReferenceJournal = true
+          } else if (!rollbackErrors.length) {
+            await referenceJournal.cleanup()
+            referenceJournal = null
+          } else {
+            preserveReferenceJournal = true
+          }
+        } catch (rollbackError) { rollbackErrors.push(rollbackError); preserveReferenceJournal = true }
       }
       if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'AI rename failed and rollback was incomplete')
       throw error
@@ -839,7 +855,7 @@ async function executeRenameFile(input: { path?: string; new_path?: string; upda
     catch (rollbackError) {
       return err(`rename_file: ${(e as Error).message}; metadata rollback failed: ${(rollbackError as Error).message}`)
     }
-    if (referenceJournal) {
+    if (referenceJournal && !preserveReferenceJournal) {
       try { await referenceJournal.cleanup(); referenceJournal = null }
       catch (cleanupError) {
         return err(`rename_file: ${(e as Error).message}; reference journal cleanup failed: ${(cleanupError as Error).message}`)

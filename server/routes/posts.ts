@@ -527,12 +527,14 @@ postRoutes.patch('/api/posts/*', async (c) => {
         ensureMetadata(reference.sourcePath, reference.raw, stat.mtimeMs)
       }
     }
+    const sourceDocumentId = getDocumentMetadata(metadataDb(), srcPath)?.id
+    if (!sourceDocumentId) throw new Error('source document identity was not created')
     referenceJournal = await prepareRenameReferenceJournal({
       sourceAbs: src,
       op: 'document-rename-references',
       srcRel: srcPath,
       destRel: destPath,
-      documentId: getDocumentMetadata(metadataDb(), srcPath)?.id,
+      documentId: sourceDocumentId,
       references: referenceSnapshots.map((snapshot) => ({
         path: snapshot.writePath,
         beforeRaw: snapshot.raw,
@@ -559,6 +561,10 @@ postRoutes.patch('/api/posts/*', async (c) => {
   } catch (error) {
     const rollbackErrors: unknown[] = []
     let rollbackSourceReused = false
+    if (referenceJournal) {
+      try { await referenceJournal.setDirection('roll-back') }
+      catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    }
     for (const snapshot of written.reverse()) {
       try {
         // Undo ONLY our rewrite: if the bytes on disk are no longer
@@ -566,7 +572,7 @@ postRoutes.patch('/api/posts/*', async (c) => {
         // the external content wins and the undo leaves it untouched.
         await atomicReplaceTextIfUnchanged(snapshot.abs, snapshot.updated, snapshot.raw)
       } catch (rollbackError) {
-        if (!(rollbackError instanceof AtomicTextWriteConflictError)) rollbackErrors.push(rollbackError)
+        rollbackErrors.push(rollbackError)
       }
     }
     if (renamed) {
@@ -623,8 +629,10 @@ postRoutes.patch('/api/posts/*', async (c) => {
       } catch { /* best effort: the next index rebuild re-derives paths */ }
     }
     if (referenceJournal) {
-      try { await referenceJournal.cleanup(); referenceJournal = null }
-      catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      try {
+        if (rollbackSourceReused) await referenceJournal.setDirection('roll-forward')
+        else if (!rollbackErrors.length) { await referenceJournal.cleanup(); referenceJournal = null }
+      } catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'reference update failed and rollback was incomplete')
     if (rollbackSourceReused) {

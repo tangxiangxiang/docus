@@ -228,6 +228,10 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     const rollbackErrors: unknown[] = []
     let rollbackSourceReused = false
     let rolledTreeBack = !renamed
+    if (referenceJournal) {
+      try { await referenceJournal.setDirection('roll-back') }
+      catch (rollbackError) { rollbackErrors.push(rollbackError) }
+    }
     for (const snapshot of written.reverse()) {
       const target = filePathFor(snapshot.writePath)
       if (await exists(target)) {
@@ -236,7 +240,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
           // and the undo leaves those bytes untouched.
           await atomicReplaceTextIfUnchanged(target, snapshot.updated, snapshot.raw)
         } catch (rollbackError) {
-          if (!(rollbackError instanceof AtomicTextWriteConflictError)) rollbackErrors.push(rollbackError)
+          rollbackErrors.push(rollbackError)
         }
       }
     }
@@ -278,8 +282,10 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       } catch { /* best effort: the next index rebuild re-derives paths */ }
     }
     if (referenceJournal) {
-      try { await referenceJournal.cleanup(); referenceJournal = null }
-      catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      try {
+        if (rollbackSourceReused) await referenceJournal.setDirection('roll-forward')
+        else if (rolledTreeBack && !rollbackErrors.length) { await referenceJournal.cleanup(); referenceJournal = null }
+      } catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'folder rename failed and rollback was incomplete')
     if (rollbackSourceReused) {

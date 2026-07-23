@@ -140,9 +140,11 @@ interface LegacyDeleteQuarantineManifest {
 interface RenameReferencesJournal {
   version: 1
   op: 'document-rename-references' | 'folder-rename-references'
+  phase: 'preparing' | 'roll-forward' | 'roll-back' | 'cleanup'
   srcRel: string
   destRel: string
   documentId?: string
+  sourceHash?: string
   sourceDev?: number
   sourceIno?: number
   references: Array<{
@@ -333,10 +335,14 @@ function parseRenameReferencesJournal(raw: string): RenameReferencesJournal | nu
   try {
     const entry = JSON.parse(raw) as Partial<RenameReferencesJournal>
     if (entry.version !== 1 || (entry.op !== 'document-rename-references' && entry.op !== 'folder-rename-references')) return null
+    if (entry.phase !== 'preparing' && entry.phase !== 'roll-forward' && entry.phase !== 'roll-back' && entry.phase !== 'cleanup') return null
     if (typeof entry.srcRel !== 'string' || typeof entry.destRel !== 'string') return null
     if (entry.documentId !== undefined && typeof entry.documentId !== 'string') return null
     if (entry.sourceDev !== undefined && typeof entry.sourceDev !== 'number') return null
     if (entry.sourceIno !== undefined && typeof entry.sourceIno !== 'number') return null
+    if (entry.sourceHash !== undefined && typeof entry.sourceHash !== 'string') return null
+    if (entry.op === 'document-rename-references'
+      && (typeof entry.documentId !== 'string' || typeof entry.sourceHash !== 'string')) return null
     if (!Array.isArray(entry.references) || !entry.references.every((ref) => ref
       && typeof ref.path === 'string' && typeof ref.beforeHash === 'string' && typeof ref.afterHash === 'string'
       && typeof ref.beforePayload === 'string' && typeof ref.afterPayload === 'string')) return null
@@ -659,18 +665,33 @@ async function recoverRenameReferencesJournal(
     for (const payload of payloads) await removeDurableRecoveryPayload(payload).catch(() => {})
     await removeDurableJournal(journalAbs)
   }
-  if (srcExists && !destExists) {
+  if (journal.phase === 'preparing' || journal.phase === 'cleanup') {
     await cleanup()
-    note(journalAbs, 'cleaned', 'rename-reference transaction never committed')
+    note(journalAbs, 'cleaned', `rename-reference ${journal.phase} state cleaned`)
     return
   }
-  if (!destExists || srcExists) {
-    note(journalAbs, 'quarantined', 'rename-reference transaction has ambiguous source/destination state')
+  if (journal.phase === 'roll-forward') {
+    if (!destExists || srcExists) {
+      note(journalAbs, 'quarantined', 'rename-reference transaction has ambiguous source/destination state')
+      return
+    }
+    if (kind === 'file') {
+      if (getDocumentMetadata(db, journal.destRel)?.id !== journal.documentId) {
+        note(journalAbs, 'quarantined', 'rename-reference destination identity does not match journal')
+        return
+      }
+      const destinationAfterHash = journal.references.find((reference) => reference.path === journal.destRel)?.afterHash
+      if (!await hashMatches(destAbs, journal.sourceHash!)
+        && (!destinationAfterHash || !await hashMatches(destAbs, destinationAfterHash))) {
+        note(journalAbs, 'quarantined', 'rename-reference destination generation does not match journal')
+        return
+      }
+    }
+  } else if (!srcExists || destExists) {
+    note(journalAbs, 'quarantined', 'rename-reference rollback has ambiguous source/destination state')
     return
-  }
-  if (kind === 'file' && journal.documentId
-    && getDocumentMetadata(db, journal.destRel)?.id !== journal.documentId) {
-    note(journalAbs, 'quarantined', 'rename-reference destination identity does not match journal')
+  } else if (kind === 'file' && getDocumentMetadata(db, journal.srcRel)?.id !== journal.documentId) {
+    note(journalAbs, 'quarantined', 'rename-reference rollback source identity does not match journal')
     return
   }
   if (kind === 'folder') {
@@ -678,9 +699,10 @@ async function recoverRenameReferencesJournal(
       note(journalAbs, 'quarantined', 'folder reference transaction lacks source generation evidence')
       return
     }
-    const destinationStat = await fs.stat(destAbs)
-    if (destinationStat.dev !== journal.sourceDev || destinationStat.ino !== journal.sourceIno) {
-      note(journalAbs, 'quarantined', 'folder reference destination generation does not match journal')
+    const ownedAbs = journal.phase === 'roll-forward' ? destAbs : srcAbs
+    const ownedStat = await fs.stat(ownedAbs)
+    if (ownedStat.dev !== journal.sourceDev || ownedStat.ino !== journal.sourceIno) {
+      note(journalAbs, 'quarantined', 'folder reference generation does not match journal')
       return
     }
   }
@@ -692,21 +714,27 @@ async function recoverRenameReferencesJournal(
       note(journalAbs, 'quarantined', `rename-reference payload hash mismatch: ${reference.path}`)
       return
     }
-    if (await hashMatches(referenceAbs, reference.afterHash)) continue
-    if (!await hashMatches(referenceAbs, reference.beforeHash)) {
+    const expectedHash = journal.phase === 'roll-forward' ? reference.beforeHash : reference.afterHash
+    const desiredHash = journal.phase === 'roll-forward' ? reference.afterHash : reference.beforeHash
+    if (await hashMatches(referenceAbs, desiredHash)) continue
+    if (!await hashMatches(referenceAbs, expectedHash)) {
       note(journalAbs, 'quarantined', `reference changed externally: ${reference.path}`)
       return
     }
     const [beforeRaw, afterRaw] = await Promise.all([fs.readFile(beforeAbs, 'utf8'), fs.readFile(afterAbs, 'utf8')])
     try {
-      await atomicReplaceTextIfUnchanged(referenceAbs, beforeRaw, afterRaw)
+      await atomicReplaceTextIfUnchanged(
+        referenceAbs,
+        journal.phase === 'roll-forward' ? beforeRaw : afterRaw,
+        journal.phase === 'roll-forward' ? afterRaw : beforeRaw,
+      )
     } catch (error) {
       note(journalAbs, 'failed', `could not roll forward reference ${reference.path}: ${(error as Error).message}`)
       return
     }
   }
   await cleanup()
-  note(destAbs, 'completed-rename', 'rename reference transaction rolled forward')
+  note(journal.phase === 'roll-forward' ? destAbs : srcAbs, 'completed-rename', `rename reference transaction ${journal.phase === 'roll-forward' ? 'rolled forward' : 'rolled back'}`)
 }
 
 async function recoverFolderRenameJournal(
@@ -1013,11 +1041,24 @@ async function recoverDirectory(
         note(manifestAbs, 'failed', (error as Error).message)
       }
     }
-    // Journals are authoritative and go first.
+    // Main file/directory state must settle before reference replay. The
+    // two journals use independent UUIDs, so filename order is not a
+    // transaction order.
+    const orderedJournals: Array<{ name: string; raw: string; references: boolean }> = []
     for (const journalName of group.journals.sort()) {
       const journalAbs = path.join(dir, journalName)
       try {
-        const journalRaw = await fs.readFile(journalAbs, 'utf8')
+        const raw = await fs.readFile(journalAbs, 'utf8')
+        orderedJournals.push({ name: journalName, raw, references: parseRenameReferencesJournal(raw) !== null })
+      } catch (error) {
+        note(journalAbs, 'failed', (error as Error).message)
+      }
+    }
+    orderedJournals.sort((a, b) => Number(a.references) - Number(b.references) || a.name.localeCompare(b.name))
+    for (const { name: journalName, raw: journalRaw } of orderedJournals) {
+      const journalAbs = path.join(dir, journalName)
+      try {
+        if (!await exists(journalAbs)) continue
         const replaceJournal = parseReplaceJournal(journalRaw)
         if (replaceJournal) {
           await recoverReplaceJournal(contentDir, dir, targetAbs, journalAbs, replaceJournal, note)
