@@ -353,8 +353,13 @@ function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
       && typeof entry.destRel === 'string'
       && typeof entry.sourceDev === 'number'
       && typeof entry.sourceIno === 'number'
-      && Number.isSafeInteger(entry.sourceDev) && entry.sourceDev >= 0
-      && Number.isSafeInteger(entry.sourceIno) && entry.sourceIno >= 0
+      // NOT isSafeInteger: Windows volumes (NTFS with large file
+      // records, ReFS/Dev Drive) report file IDs beyond 2**53, which
+      // JSON round-trips as a finite double. The values are compared
+      // for equality against the same stat conversion, and the strong
+      // proof is the per-entry content hash anyway.
+      && Number.isFinite(entry.sourceDev) && entry.sourceDev >= 0
+      && Number.isFinite(entry.sourceIno) && entry.sourceIno >= 0
       && (entry.strategy === undefined || entry.strategy === 'atomic' || entry.strategy === 'replayable')
     ) {
       if (entry.entries !== undefined) {
@@ -429,7 +434,10 @@ function parseRenameReferencesJournal(raw: string): RenameReferencesJournal | nu
       && (typeof entry.documentId !== 'string' || entry.documentId.length === 0
         || typeof entry.sourceHash !== 'string' || !SHA256_RE.test(entry.sourceHash))) return null
     if (entry.op === 'folder-rename-references'
-      && (!Number.isSafeInteger(entry.sourceDev) || !Number.isSafeInteger(entry.sourceIno)
+      // NOT isSafeInteger — see parseFolderRenameJournal: Windows file
+      // IDs beyond 2**53 must stay parseable; the content hash is the
+      // strong generation proof.
+      && (!Number.isFinite(entry.sourceDev) || !Number.isFinite(entry.sourceIno)
         || !Array.isArray(entry.identities) || entry.identities.length === 0
         || !entry.identities.every((identity) => identity && typeof identity.path === 'string'
           && typeof identity.id === 'string' && identity.id.length > 0

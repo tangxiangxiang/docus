@@ -1746,6 +1746,29 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
     expect(await namesIn()).toContain('.proj.docus-journal-cccc')
     expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe(A_RAW)
   })
+
+  it('parses journals whose dev/ino exceed Number.MAX_SAFE_INTEGER (Windows large file IDs)', async () => {
+    // NTFS volumes with large file records and ReFS/Dev Drive report
+    // file IDs beyond 2**53; JSON round-trips them as finite doubles.
+    // Rejecting them as "unsafe integers" would orphan every production
+    // folder journal on such volumes — the parser accepts any finite
+    // number and the per-entry content hashes remain the strong proof.
+    await seed({ 'ren/a.md': A_RAW, 'proj/nested/b.md': B_RAW })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
+      version: 1, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable',
+      sourceDev: 2 ** 60, sourceIno: 2 ** 61 + 2 ** 9,
+      entries: entries(),
+    }), 'utf8')
+    saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
+    saveDocumentMetadata(db, { id: 'ren-b-id', path: 'proj/nested/b', title: 'B', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe(B_RAW)
+    expect(getDocumentMetadata(db, 'ren/nested/b')?.id).toBe('ren-b-id')
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+  })
 })
 
 describe('recoverInterruptedOperations (symlink containment)', () => {
@@ -1923,5 +1946,29 @@ describe('recoverInterruptedOperations (folder reference content proof)', () => 
     expect(report.actions.some((a) => a.action === 'quarantined')).toBe(false)
     expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8')).toBe('[[new]]\n')
     expect((await namesIn()).some((name) => name.includes('.docus-journal-') || name.includes('.docus-ref-'))).toBe(false)
+  })
+
+  it('enforces the content proof when the journal carries Windows large file IDs beyond MAX_SAFE_INTEGER', async () => {
+    // The production route writes the real stat values: on volumes with
+    // file IDs beyond 2**53 the journal must still parse — and the
+    // per-file content hashes must still be the deciding proof.
+    await seed({
+      'ren/a.md': '# external\n',
+      'ref-a.md': '[[old]]\n',
+      '.proj.docus-ref-before-aaaa-0': '[[old]]\n',
+      '.proj.docus-ref-after-aaaa-0': '[[new]]\n',
+    })
+    await fs.writeFile(
+      path.join(vault, '.proj.docus-journal-aaaa'),
+      await folderReferenceJournal(2 ** 60, 2 ** 61, sha256Hex('# ours\n')),
+      'utf8',
+    )
+    saveDocumentMetadata(db, { id: 'a-id', path: 'ren/a', title: 'A', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('generation does not match'))).toBe(true)
+    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# external\n')
+    expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
   })
 })

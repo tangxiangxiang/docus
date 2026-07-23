@@ -453,7 +453,12 @@ describe('write routes update the index', () => {
     const before = snapshotDocumentMetadataDatabase(db)
     const originalRm = fs.rm.bind(fs)
     const remove = vi.spyOn(fs, 'rm').mockImplementation(async (target, options) => {
-      if (String(target).includes('.docus-delete-')) throw new Error('injected recursive removal failure')
+      // Match the staged directory's own name, not any path merely
+      // CONTAINING it: the Windows replayable restore moves files via
+      // create-only links whose private staging names live INSIDE the
+      // staged directory (`.a.md.docus-rename-*`), and those cleanups
+      // must not trip the injected removal failure.
+      if (path.basename(String(target)).includes('.docus-delete-')) throw new Error('injected recursive removal failure')
       return originalRm(target, options)
     })
     try {
@@ -476,7 +481,9 @@ describe('write routes update the index', () => {
     __resetLinkIndexForTesting()
     const originalRm = fs.rm.bind(fs)
     const remove = vi.spyOn(fs, 'rm').mockImplementation(async (target, options) => {
-      if (String(target).includes('.docus-delete-')) {
+      // Basename match: see the sibling test — nested per-file link
+      // staging names inside the staged directory must pass through.
+      if (path.basename(String(target)).includes('.docus-delete-')) {
         // An external writer re-creates the folder tree with a NEW
         // generation while the staged removal is failing.
         await fs.mkdir(path.join(sandbox, 'gone'), { recursive: true })
@@ -828,19 +835,24 @@ describe('round 5: folder delete rollback gates metadata on a create-only restor
 
     const originalRm = fs.rm.bind(fs)
     const remove = vi.spyOn(fs, 'rm').mockImplementation(async (target, options) => {
-      if (String(target).includes('.docus-delete-')) throw new Error('injected recursive removal failure')
+      if (path.basename(String(target)).includes('.docus-delete-')) throw new Error('injected recursive removal failure')
       return originalRm(target, options)
     })
-    const originalRename = fs.rename.bind(fs)
-    const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
-      if (String(from).includes('.docus-delete-inflight-') && String(to) === path.join(sandbox, 'gone')) {
-        // External content lands inside the just-created mkdir gate
-        // directory: the restore rename then fails (ENOTEMPTY) and the
-        // gate is no longer ours.
-        await fs.writeFile(path.join(String(to), 'external.md'), '# external\n', 'utf8')
-        throw Object.assign(new Error('ENOTEMPTY'), { code: 'ENOTEMPTY' })
+    // The restore is create-only on both platforms: POSIX's atomic
+    // rename and Windows's replayable per-file protocol BOTH open with
+    // a mkdir gate, so external content claiming the path inside that
+    // gate window (EEXIST) is the platform-uniform contention failure.
+    // (The POSIX ENOTEMPTY-inside-gate variant — content landing
+    // BETWEEN mkdir and rename — is covered by the afterMkdirGate race
+    // tests in createOnlyMove.test.ts.)
+    const originalMkdir = fs.mkdir.bind(fs)
+    const mkdir = vi.spyOn(fs, 'mkdir').mockImplementation(async (target, options) => {
+      if (String(target) === path.join(sandbox, 'gone')) {
+        await originalMkdir(target, options)
+        await fs.writeFile(path.join(String(target), 'external.md'), '# external\n', 'utf8')
+        throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' })
       }
-      return originalRename(from, to)
+      return originalMkdir(target, options)
     })
     try {
       const response = await app.fetch(new Request('http://localhost/api/folders/gone?recursive=true', {
@@ -862,7 +874,7 @@ describe('round 5: folder delete rollback gates metadata on a create-only restor
       expect(snap.paths).not.toContain('gone/a')
     } finally {
       remove.mockRestore()
-      rename.mockRestore()
+      mkdir.mockRestore()
     }
   })
 })
