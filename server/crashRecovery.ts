@@ -2089,16 +2089,27 @@ export async function recoverInterruptedOperations(
     // detection pass. The hard ceiling guards against any unforeseen
     // cycle.
     const maxPasses = Math.min(authoritativeArtifacts + 4, 64)
-    let previousActionCount = -1
+    // Progress = a NEW DISTINCT action. A retained (quarantined)
+    // journal is re-noted every pass but produces the SAME action, so
+    // it is not progress — counting raw action count would loop to
+    // maxPasses whenever any journal is retained. Stop once a whole
+    // pass adds nothing new (a fixed point).
+    const seenActions = new Set<string>()
     for (let pass = 0; pass < maxPasses; pass++) {
       inodeMap = null
+      const before = actions.length
       await walkDirectories(contentDir, async (dir, entries) => {
         await recoverDirectory(contentDir, db, dir, entries, getInodeMap, note)
       })
-      // No new action this pass ⇒ nothing was resolved ⇒ further passes
-      // cannot help. Stop early.
-      if (actions.length === previousActionCount) break
-      previousActionCount = actions.length
+      let progressed = false
+      for (let i = before; i < actions.length; i++) {
+        const key = JSON.stringify(actions[i])
+        if (!seenActions.has(key)) {
+          seenActions.add(key)
+          progressed = true
+        }
+      }
+      if (!progressed) break
     }
   } catch (error) {
     note(contentDir, 'failed', (error as Error).message)
