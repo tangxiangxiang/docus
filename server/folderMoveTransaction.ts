@@ -24,7 +24,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
-import { sha256Hex, sha256HexBuffer } from './atomicTextWrite.js'
+import { sha256HexBuffer } from './atomicTextWrite.js'
 import type { DocumentMetadataMutationSnapshot } from './documentMetadata.js'
 import { UnsupportedDirectoryMoveError } from './documentFileLifecycle.js'
 
@@ -315,7 +315,6 @@ export function validateDirectoryManifest(
     }
   }
   // No file path is also a directory path.
-  const fileSet = new Set(entryRels)
   for (const fileRel of entryRels) {
     if (dirSet.has(fileRel)) return `file path also listed as directory: ${fileRel}`
   }

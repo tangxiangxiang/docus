@@ -208,7 +208,7 @@ export class UnstableTextSnapshotError extends Error {
 export async function syncParentDirectoryBestEffort(targetPath: string): Promise<void> {
   let directory: Awaited<ReturnType<typeof fs.open>> | null = null
   try {
-    directory = await fs.open(path.dirname(targetPath), constants.O_RDONLY)
+    directory = await fs.open(path.dirname(targetPath), 'r')
     await directory.sync()
   } catch {
     // Directory fsync is not supported on every platform/filesystem.

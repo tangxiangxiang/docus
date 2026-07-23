@@ -289,7 +289,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       moved = await executeFolderMove(moveStrategy, src, dest, physicalEntryRels, {
         directories: physicalDirectories,
         gateToken: journalUuid,
-        gateTokenContent: gateTokenSecret,
+        gateTokenValue: gateTokenSecret,
         entries: physicalEntries,
         vaultRoot: CONTENT_DIR,
       })
@@ -378,7 +378,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
           const rolledBack = await executeFolderMove(moveStrategy, dest, src, physicalEntryRels, {
             directories: physicalDirectories,
             gateToken: journalUuid,
-            gateTokenContent: folderMoveJournal!.gateToken,
+            gateTokenValue: folderMoveJournal!.gateToken,
             entries: folderMoveJournal!.entries,
             vaultRoot: CONTENT_DIR,
           })
@@ -609,7 +609,7 @@ folderRoutes.delete('/api/folders/*', async (c) => {
           restored = (await executeFolderMove(rollbackStrategy, staged, abs, rollbackPhysical.entries.map((entry) => entry.relativeFilePath), {
             directories: rollbackPhysical.directories,
             gateToken: rollbackUuid,
-            gateTokenContent: rollbackGateSecret,
+            gateTokenValue: rollbackGateSecret,
             entries: rollbackPhysical.entries,
             vaultRoot: CONTENT_DIR,
           })).restored

@@ -96,7 +96,6 @@ import {
   RenameSourceReusedError,
   verifyExactParity,
   type FolderMoveJournalStrategy,
-  type FolderMoveExecuteOptions,
 } from './documentFileLifecycle.js'
 import {
   isValidDeleteRollbackSnapshot,
@@ -1572,7 +1571,7 @@ async function recoverFolderMoveJournal(
         entries,
         directories: parityDirectories,
         gateToken: transactionId,
-        gateTokenContent: journal.gateToken,
+        gateTokenValue: journal.gateToken,
       })
       if (parityFailedAfterRestore) {
         note(journalAbs, 'quarantined', 'exact parity failed after snapshot-restore replay')
@@ -1610,7 +1609,7 @@ async function recoverFolderMoveJournal(
     entries,
     directories: parityDirectories,
     gateToken: transactionId,
-    gateTokenContent: journal.gateToken,
+    gateTokenValue: journal.gateToken,
   })
   if (parityFailed) {
     note(journalAbs, 'quarantined', 'exact parity failed after recovery replay')

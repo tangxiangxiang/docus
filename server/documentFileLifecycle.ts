@@ -343,7 +343,7 @@ export type FolderMoveExecuteOptions = {
   /** The unpredictable gate-token secret (v3) persisted in the journal.
    * Written into the gate marker file so recovery can verify the exact
    * bytes, not just the filename (round-9 F2). */
-  gateTokenContent?: string
+  gateTokenValue?: string
   /** Vault root; when present every per-entry source AND destination
    * path is physically containment-checked (no symlinked ancestor)
    * before it is hashed/mkdir/renamed/linked (round-8 P0/P1). Also
@@ -364,7 +364,6 @@ export async function executeReplayableFolderMove(
 ): Promise<{ restored: boolean }> {
   const directories = options.directories ?? []
   const vaultRoot = options.vaultRoot
-  const entries = options.entries
   try {
     await fs.mkdir(toDirAbs)
   } catch (error) {
@@ -374,7 +373,7 @@ export async function executeReplayableFolderMove(
   }
   // Prove the gate is ours for recovery: drop the hidden marker before
   // anything else lands inside it. v3 (round-9 F2): the marker carries
-  // the unpredictable gateTokenContent (persisted in the journal) so
+  // the unpredictable gateTokenValue (persisted in the journal) so
   // recovery can verify the exact bytes, not just the filename.
   if (options.gateToken) {
     const tokenPath = path.join(toDirAbs, gateTokenName(options.gateToken))
@@ -387,7 +386,7 @@ export async function executeReplayableFolderMove(
     try {
       const fh = await fs.open(tokenPath, 'wx')
       try {
-        await fh.writeFile(options.gateTokenContent ?? '', 'utf8')
+        await fh.writeFile(options.gateTokenValue ?? '', 'utf8')
         await fh.sync()
       } finally {
         await fh.close()
@@ -419,8 +418,9 @@ export async function executeReplayableFolderMove(
       const toEntry = path.join(fromDirAbs, entryRel)
       if (vaultRoot) {
         if (!await isPhysicallyContained(vaultRoot, fromEntry) || !await isPhysicallyContained(vaultRoot, toEntry)) {
-          rollbackFailed = true
-          continue
+          throw new UnsupportedDirectoryMoveError(
+            `rollback containment failed for ${entryRel}: an external symlink or junction would escape the vault`,
+          )
         }
       }
       try {
@@ -508,7 +508,7 @@ export async function verifyExactParity(
   const expectedFiles = new Set(options.entries?.map((e) => e.relativeFilePath) ?? [])
   const expectedDirs = new Set(options.directories ?? [])
   const tokenName = options.gateToken ? gateTokenName(options.gateToken) : null
-  const tokenContent = options.gateTokenContent ?? null
+  const tokenContent = options.gateTokenValue ?? null
   const entryByRel = new Map((options.entries ?? []).map((e) => [e.relativeFilePath, e]))
   let landedFileCount = 0
   const landedDirs: string[] = []
@@ -625,9 +625,25 @@ export async function createOnlyMoveDirectory(
     // Journal-less callers enumerate fresh; unsupported entries
     // (symlink/junction/special) fail closed BEFORE the gate is
     // created, so nothing needs rolling back.
-    const entries = await listRegularFileEntries(fromDirAbs)
+    const entryRels = await listRegularFileEntries(fromDirAbs)
     const directories = await listDirectoryEntries(fromDirAbs)
-    return executeReplayableFolderMove(fromDirAbs, toDirAbs, entries, { directories })
+    // Compute source hashes and dev/ino for exact final parity (F3/F4).
+    // Journal-less callers (tests, external moves) still verify every
+    // landed byte before committing.
+    const entries: FolderMoveJournalEntry[] = await Promise.all(
+      entryRels.map(async (rel) => {
+        const absPath = path.join(fromDirAbs, rel)
+        const buf = await fs.readFile(absPath)
+        const stat = await fs.stat(absPath, { bigint: true })
+        return {
+          relativeFilePath: rel,
+          sourceHash: sha256HexBuffer(buf),
+          sourceDev: stat.dev.toString(),
+          sourceIno: stat.ino.toString(),
+        }
+      }),
+    )
+    return executeReplayableFolderMove(fromDirAbs, toDirAbs, entryRels, { directories, entries })
   }
   try {
     await fs.mkdir(toDirAbs)
