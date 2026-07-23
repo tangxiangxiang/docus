@@ -44,6 +44,8 @@
 // the real runChat chain.
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+
+const E2E_VAULT = process.env.DOCUS_DRAFT_E2E_VAULT ?? path.join('src', 'content')
 import { expect, test } from '@playwright/test'
 import {
   type AnyRecord,
@@ -128,7 +130,7 @@ test('Long Flow A — Recovery → History/Diff → Rename across one document l
   await interceptAutosaveAborted(page, slug)
   await appendEditorText(page, markerD)
   await expect.poll(() => draftRowCount(page, markerD), { timeout: 15000 }).toBeGreaterThanOrEqual(1)
-  await fs.appendFile(path.join('src', 'content', `${slug}.md`), `\n${markerX}\n`)
+  await fs.appendFile(path.join(E2E_VAULT, `${slug}.md`), `\n${markerX}\n`)
 
   // Pin the fake timeline BEFORE this reload: the History composable
   // fetches status/timeline at app boot (it drives the activity-bar

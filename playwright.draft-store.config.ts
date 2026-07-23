@@ -14,7 +14,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'node scripts/start-draft-e2e.mjs',
+    command: `"${process.execPath}" scripts/start-draft-e2e.mjs`,
     url: 'http://127.0.0.1:4175/',
     reuseExistingServer: false,
   },

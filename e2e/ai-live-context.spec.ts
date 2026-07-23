@@ -36,6 +36,8 @@ import {
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
+const E2E_VAULT = process.env.DOCUS_DRAFT_E2E_VAULT ?? path.join('src', 'content')
+
 const RUN_ID = String(Date.now())
 const createdPaths: string[] = []
 
@@ -359,7 +361,7 @@ test('E2E-10 external conflict: buffer and disk version travel together', async 
   const tail = `E2E10_DIRTY_TAIL_${RUN_ID}`
   await appendEditorText(page, tail) // buffer is dirty again
   const diskBody = `E2E10_DISK_${RUN_ID} changed externally\n`
-  await fs.writeFile(path.join('src', 'content', `${slug}.md`), diskBody, 'utf8')
+  await fs.writeFile(path.join(E2E_VAULT, `${slug}.md`), diskBody, 'utf8')
   // The debounced autosave's baseRaw now mismatches the disk: the 409
   // conflict path flips the tab to 'external' with the disk side attached.
   await expect(page.locator(`[data-tab-id="${slug}"][data-save-status="external"]`)).toBeVisible({ timeout: 20000 })

@@ -20,6 +20,8 @@
 //     into the real vault repo.
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+
+const E2E_VAULT = process.env.DOCUS_DRAFT_E2E_VAULT ?? path.join('src', 'content')
 import { expect, type APIRequestContext, type Page } from '@playwright/test'
 
 export const DATABASE_NAME = 'docus-draft-recovery'
@@ -390,6 +392,6 @@ export async function openRecoveryDialog(page: Page) {
 export async function cleanupCreatedPaths(request: APIRequestContext, createdPaths: string[]) {
   for (const slug of createdPaths) {
     await request.delete(`/api/posts/${slug}`).catch(() => {})
-    await fs.rm(path.join('src', 'content', `${slug}.md`), { force: true }).catch(() => {})
+    await fs.rm(path.join(E2E_VAULT, `${slug}.md`), { force: true }).catch(() => {})
   }
 }

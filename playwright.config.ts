@@ -1,4 +1,8 @@
 import { defineConfig, devices } from '@playwright/test'
+import os from 'node:os'
+import path from 'node:path'
+
+process.env.DOCUS_DRAFT_E2E_VAULT ??= path.join(os.tmpdir(), 'docus-draft-e2e-vault')
 
 export default defineConfig({
   testDir: './e2e',
@@ -6,6 +10,7 @@ export default defineConfig({
   // they cannot race the visual/view-mode workers over database lifecycle.
   testIgnore: ['draft-store.spec.ts', 'draft-file-transactions.spec.ts'],
   fullyParallel: false,
+  workers: 1,
   retries: 0,
   use: {
     baseURL: 'http://127.0.0.1:4174',
@@ -18,7 +23,7 @@ export default defineConfig({
     // mid-run so the Playwright CLI and the collected specs resolve two
     // distinct physical @playwright/test instances ("did not expect test()
     // to be called here"). Matches the draft-store config's npm exec.
-    command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4174',
+    command: `"${process.execPath}" scripts/start-draft-e2e.mjs 4174`,
     url: 'http://127.0.0.1:4174/__markdown-test?mode=reading',
     reuseExistingServer: true,
   },
