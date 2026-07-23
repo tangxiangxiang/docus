@@ -289,6 +289,16 @@ test('Long Flow B — AI live context, external conflict, and multi-tab authorit
   const docA = await createDoc(request, slugA, bodyA, createdPaths)
   const docB = await createDoc(request, slugB, bodyB, createdPaths)
 
+  // Install the AI route before boot: AiPanel loads /api/ai/settings
+  // eagerly, so a post-boot interceptor can miss that request and
+  // leave the composer correctly disabled on a clean CI machine with
+  // no real API key.
+  const chatBodies: AnyRecord[] = []
+  let releaseRace = () => {}
+  const raceGate = new Promise<void>((resolve) => { releaseRace = resolve })
+  let descriptor: { mtime: number } | null = null
+  await interceptAiChatGated(page, chatBodies, raceGate, () => raceSse(slugB, aiBodyB, descriptor?.mtime ?? 0))
+
   await reloadApp(page)
   await openDoc(page, slugA)
   await openDoc(page, slugB) // both tabs open; B is active
@@ -304,11 +314,6 @@ test('Long Flow B — AI live context, external conflict, and multi-tab authorit
 
   // ── 2. Send on CLEAN B: the snapshot carries B's identity and B's
   //    bytes only ────────────────────────────────────────────────────
-  const chatBodies: AnyRecord[] = []
-  let releaseRace = () => {}
-  const raceGate = new Promise<void>((resolve) => { releaseRace = resolve })
-  let descriptor: { mtime: number } | null = null
-  await interceptAiChatGated(page, chatBodies, raceGate, () => raceSse(slugB, aiBodyB, descriptor?.mtime ?? 0))
   const autosave = { seen: false, statuses: [] as number[] }
   let releaseAutosave = () => {}
   const autosaveGate = new Promise<void>((resolve) => { releaseAutosave = resolve })
