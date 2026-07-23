@@ -124,3 +124,308 @@ describe('deterministic rename-reference recovery model', () => {
     }
   }, 120_000)
 })
+
+/** Every file under a directory, keyed by relative path. */
+async function collectTree(dir: string): Promise<Map<string, string>> {
+  const tree = new Map<string, string>()
+  const walk = async (current: string, rel: string): Promise<void> => {
+    let dirents
+    try {
+      dirents = await fs.readdir(current, { withFileTypes: true })
+    } catch { return }
+    for (const entry of dirents.sort((a, b) => a.name.localeCompare(b.name))) {
+      const entryRel = rel === '' ? entry.name : `${rel}/${entry.name}`
+      if (entry.isDirectory()) await walk(path.join(current, entry.name), entryRel)
+      else if (entry.isFile()) tree.set(entryRel, await fs.readFile(path.join(current, entry.name), 'utf8'))
+    }
+  }
+  await walk(dir, '')
+  return tree
+}
+
+describe('deterministic replayable folder-move recovery model', () => {
+  it('reconciles every split crash state and never touches external bytes for 500 seeds', async () => {
+    // The Windows protocol can crash with the tree SPLIT between source
+    // and destination in every combination; the journal's per-entry
+    // hashes must reconcile all of them: complete forward when every
+    // entry is replayable, clean the stale gate when the move never
+    // started, quarantine on foreign content — never losing our bytes,
+    // never touching external ones, idempotent across restarts.
+    const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
+    const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 500 }, (_, index) => index + 1)
+    for (const seed of seeds) {
+      const random = rngFor(seed ^ 0x5eed11)
+      const prefix = `fm-${seed.toString(16)}`
+      const caseDir = path.join(root, prefix)
+      const srcRel = `${prefix}/proj`
+      const destRel = `${prefix}/ren`
+      const aRaw = `# a ${seed}\n`
+      const bRaw = `# b ${seed}\n`
+      const entries = [
+        { rel: 'a', id: `a-id-${seed}`, sourceHash: sha256Hex(aRaw), raw: aRaw },
+        { rel: 'nested/b', id: `b-id-${seed}`, sourceHash: sha256Hex(bRaw), raw: bRaw },
+      ]
+      const journalName = `.proj.docus-journal-${seed.toString(16)}`
+      let model: Record<string, unknown> | null = null
+      try {
+        await fs.mkdir(caseDir, { recursive: true })
+        const srcAbs = path.join(caseDir, 'proj')
+        const destAbs = path.join(caseDir, 'ren')
+        const placements = entries.map(() => (['src', 'dest', 'both', 'external', 'missing'] as const)[Math.floor(random() * 5)])
+        const externalBodies = new Map<string, string>()
+        const writeExternal = async (relPath: string, body: string): Promise<void> => {
+          const abs = path.join(caseDir, relPath)
+          await fs.mkdir(path.dirname(abs), { recursive: true })
+          await fs.writeFile(abs, body, 'utf8')
+          externalBodies.set(relPath, body)
+        }
+        for (let index = 0; index < entries.length; index += 1) {
+          const entry = entries[index]
+          const placement = placements[index]
+          const writeOurs = async (base: string): Promise<void> => {
+            const abs = path.join(base, `${entry.rel}.md`)
+            await fs.mkdir(path.dirname(abs), { recursive: true })
+            await fs.writeFile(abs, entry.raw, 'utf8')
+          }
+          if (placement === 'src' || placement === 'both') await writeOurs(srcAbs)
+          if (placement === 'dest' || placement === 'both') await writeOurs(destAbs)
+          if (placement === 'external') await writeExternal(`ren/${entry.rel}.md`, `# external ${seed}/${index}\n`)
+        }
+        const gateExists = placements.some((p) => p === 'dest' || p === 'both' || p === 'external') || random() < 0.6
+        if (gateExists) await fs.mkdir(destAbs, { recursive: true })
+        if (gateExists && random() < 0.3) await fs.mkdir(path.join(destAbs, 'nested'), { recursive: true })
+        const externalInGate = gateExists && random() < 0.25
+        if (externalInGate) await writeExternal(`ren/external-gate-${seed}.md`, `# external gate ${seed}\n`)
+        const metadataSides = entries.map(() => (['src', 'dest', 'none'] as const)[Math.floor(random() * 3)])
+        for (let index = 0; index < entries.length; index += 1) {
+          const entry = entries[index]
+          const side = metadataSides[index]
+          if (side === 'src') saveDocumentMetadata(db, { id: entry.id, path: `${srcRel}/${entry.rel}`, title: `Seed ${seed}`, updatedAt: seed })
+          if (side === 'dest') saveDocumentMetadata(db, { id: entry.id, path: `${destRel}/${entry.rel}`, title: `Seed ${seed}`, updatedAt: seed })
+        }
+        const sourceHasMetadata = metadataSides.includes('src')
+        const destinationHasMetadata = metadataSides.includes('dest')
+        const allAtSource = placements.every((p) => p === 'src')
+        await fs.writeFile(path.join(caseDir, journalName), JSON.stringify({
+          version: 1, op: 'folder-rename', srcRel, destRel, strategy: 'replayable',
+          sourceDev: 0, sourceIno: 0,
+          entries: entries.map(({ rel, id, sourceHash }) => ({ rel, id, sourceHash })),
+        }))
+        model = { placements, externalInGate, sourceHasMetadata, destinationHasMetadata, allAtSource }
+
+        await recoverInterruptedOperations(root, db)
+        const onceTree = await collectTree(caseDir)
+        await recoverInterruptedOperations(root, db)
+        await recoverInterruptedOperations(root, db)
+        const finalTree = await collectTree(caseDir)
+        const detail = `seed=${seed} model=${JSON.stringify(model)}`
+
+        // Idempotent across repeated startups — names AND bodies.
+        expect([...finalTree.entries()], detail).toEqual([...onceTree.entries()])
+        // External bytes are never modified or removed.
+        for (const [relPath, body] of externalBodies) {
+          expect(finalTree.get(relPath), `external ${relPath}; ${detail}`).toBe(body)
+        }
+        // No create-only staging may survive a recovery pass.
+        expect([...finalTree.keys()].some((name) => name.includes('.docus-rename-')), detail).toBe(false)
+        // Our bytes are never lost: every entry resident somewhere at
+        // crash time still has its content on disk afterwards.
+        for (let index = 0; index < entries.length; index += 1) {
+          const placement = placements[index]
+          if (placement !== 'src' && placement !== 'dest' && placement !== 'both') continue
+          const present = [...finalTree.values()].some((body) => sha256Hex(body) === entries[index].sourceHash)
+          expect(present, `entry ${entries[index].rel} lost; ${detail}`).toBe(true)
+        }
+        const journalKept = [...finalTree.keys()].includes(journalName)
+        const replayBlocked = placements.includes('external') || placements.includes('missing')
+        if (!replayBlocked && !allAtSource) {
+          // Fully replayable split: the journal must be consumed and
+          // every entry must land at the destination with its content;
+          // metadata follows the bytes to the destination prefix.
+          expect(journalKept, `journal kept; ${detail}`).toBe(false)
+          for (const entry of entries) {
+            expect(finalTree.get(`ren/${entry.rel}.md`), `entry not at dest; ${detail}`).toBe(entry.raw)
+          }
+          for (let index = 0; index < entries.length; index += 1) {
+            if (metadataSides[index] === 'none') continue
+            expect(getDocumentMetadata(db, `${destRel}/${entries[index].rel}`)?.id, `metadata; ${detail}`).toBe(entries[index].id)
+          }
+        } else if (allAtSource && !externalInGate && !(sourceHasMetadata && destinationHasMetadata)) {
+          // The move never started and the gate (if any) is provably
+          // ours: stale journal cleaned, source intact. Destination-only
+          // metadata (a crash mid-metadata-move) rolls back to the
+          // source prefix alongside the bytes.
+          expect(journalKept, `stale journal kept; ${detail}`).toBe(false)
+          for (const entry of entries) {
+            expect(finalTree.get(`proj/${entry.rel}.md`), `source lost; ${detail}`).toBe(entry.raw)
+          }
+          for (let index = 0; index < entries.length; index += 1) {
+            if (metadataSides[index] === 'none') continue
+            expect(getDocumentMetadata(db, `${srcRel}/${entries[index].rel}`)?.id, `metadata rollback; ${detail}`).toBe(entries[index].id)
+          }
+        } else {
+          // Foreign content, a missing generation, or a metadata split
+          // across both prefixes: the journal stays authoritative.
+          expect(journalKept, `journal dropped; ${detail}`).toBe(true)
+        }
+      } catch (error) {
+        throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\nmodel=${JSON.stringify(model)}\n${(error as Error).stack}`)
+      } finally {
+        await fs.rm(caseDir, { recursive: true, force: true })
+        for (const entry of entries) db.prepare('DELETE FROM documents WHERE id = ?').run(entry.id)
+      }
+    }
+  }, 120_000)
+})
+
+describe('deterministic folder-reference content-proof model', () => {
+  it('never completes a reference transaction onto an externally recreated folder for 300 seeds', async () => {
+    // Forged journal carrying the destination directory's real dev/ino
+    // but files recreated by an external sync: the per-identity content
+    // hashes are the only proof that may pass — inode+existence would
+    // complete onto foreign bytes.
+    const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
+    const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 300 }, (_, index) => index + 1)
+    for (const seed of seeds) {
+      const random = rngFor(seed ^ 0xf01dab1e)
+      const prefix = `fr-${seed.toString(16)}`
+      const caseDir = path.join(root, prefix)
+      const srcRel = `${prefix}/proj`
+      const destRel = `${prefix}/ren`
+      const sourceRaw = `# ours ${seed}\n`
+      const externalRaw = `# external ${seed}\n`
+      const content = (['ours', 'external'] as const)[Math.floor(random() * 2)]
+      const journalName = `.proj.docus-journal-${seed.toString(16)}`
+      const beforePayload = `.proj.docus-ref-before-${seed.toString(16)}-0`
+      const afterPayload = `.proj.docus-ref-after-${seed.toString(16)}-0`
+      let model: Record<string, unknown> | null = null
+      try {
+        await fs.mkdir(path.join(caseDir, 'ren'), { recursive: true })
+        await fs.writeFile(path.join(caseDir, 'ren', 'a.md'), content === 'external' ? externalRaw : sourceRaw, 'utf8')
+        const refBefore = `[[old]] ${seed}\n`
+        const refAfter = `[[new]] ${seed}\n`
+        const refLanded = content !== 'external' && random() < 0.5
+        await fs.writeFile(path.join(caseDir, 'ref-a.md'), refLanded ? refAfter : refBefore, 'utf8')
+        await fs.writeFile(path.join(caseDir, beforePayload), refBefore, 'utf8')
+        await fs.writeFile(path.join(caseDir, afterPayload), refAfter, 'utf8')
+        const destStat = await fs.stat(path.join(caseDir, 'ren'))
+        saveDocumentMetadata(db, { id: `id-${seed}`, path: `${destRel}/a`, title: `Seed ${seed}`, updatedAt: seed })
+        await fs.writeFile(path.join(caseDir, journalName), JSON.stringify({
+          version: 1, op: 'folder-rename-references', phase: 'roll-forward',
+          srcRel, destRel, sourceDev: destStat.dev, sourceIno: destStat.ino,
+          identities: [{ path: `${srcRel}/a`, id: `id-${seed}`, sourceHash: sha256Hex(sourceRaw) }],
+          references: [{
+            path: `${prefix}/ref-a`, beforeHash: sha256Hex(refBefore), afterHash: sha256Hex(refAfter),
+            beforePayload, afterPayload,
+          }],
+        }))
+        model = { content, refLanded }
+
+        await recoverInterruptedOperations(root, db)
+        const onceTree = await collectTree(caseDir)
+        await recoverInterruptedOperations(root, db)
+        await recoverInterruptedOperations(root, db)
+        const finalTree = await collectTree(caseDir)
+        const detail = `seed=${seed} model=${JSON.stringify(model)}`
+
+        expect([...finalTree.entries()], detail).toEqual([...onceTree.entries()])
+        if (content === 'external') {
+          // External recreation despite the journal carrying the
+          // directory's REAL dev/ino: quarantine, journal kept, the
+          // foreign file and the reference rewrite untouched, identity
+          // detached from the foreign bytes.
+          expect(finalTree.get(journalName), detail).toBeDefined()
+          expect(finalTree.get('ren/a.md'), detail).toBe(externalRaw)
+          expect(finalTree.get('ref-a.md'), detail).toBe(refLanded ? refAfter : refBefore)
+          expect(getDocumentMetadata(db, `${destRel}/a`), detail).toBeNull()
+        } else {
+          // Our generation proven by content hash: the transaction
+          // completes and cleans up.
+          expect(finalTree.get(journalName), detail).toBeUndefined()
+          expect(finalTree.get('ref-a.md'), detail).toBe(refAfter)
+          expect([...finalTree.keys()].some((name) => name.includes('.docus-ref-')), detail).toBe(false)
+        }
+      } catch (error) {
+        throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\nmodel=${JSON.stringify(model)}\n${(error as Error).stack}`)
+      } finally {
+        await fs.rm(caseDir, { recursive: true, force: true })
+        db.prepare('DELETE FROM documents WHERE id = ?').run(`id-${seed}`)
+      }
+    }
+  }, 120_000)
+})
+
+describe('deterministic legacy delete-quarantine promotion model', () => {
+  it('promotes legacy artifacts without ever writing an empty manifest for 300 seeds', async () => {
+    // Timestamp-only delete artifacts are ambiguous after upgrade:
+    // always promoted to the permanent quarantine, never auto-deleted;
+    // a manifest is written ONLY when there is an identity to persist
+    // (an empty one would be unparseable and block the basename
+    // forever).
+    const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
+    const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 300 }, (_, index) => index + 1)
+    for (const seed of seeds) {
+      const random = rngFor(seed ^ 0xde1e7e)
+      const prefix = `ld-${seed.toString(16)}`
+      const caseDir = path.join(root, prefix)
+      const isFolder = random() < 0.5
+      const withMetadata = random() < 0.5
+      const targetReused = random() < 0.4
+      const artifactBody = isFolder ? `# folder ${seed}\n` : `# old ${seed}\n`
+      const metaPath = `${prefix}/gone`
+      let model: Record<string, unknown> | null = null
+      try {
+        await fs.mkdir(caseDir, { recursive: true })
+        if (isFolder) {
+          await fs.mkdir(path.join(caseDir, `gone.docus-delete-${seed}`), { recursive: true })
+          await fs.writeFile(path.join(caseDir, `gone.docus-delete-${seed}`, 'a.md'), artifactBody, 'utf8')
+        } else {
+          await fs.writeFile(path.join(caseDir, `gone.md.docus-delete-${seed}`), artifactBody, 'utf8')
+        }
+        if (withMetadata) saveDocumentMetadata(db, { id: `id-${seed}`, path: metaPath, title: `Seed ${seed}`, updatedAt: seed })
+        if (targetReused) {
+          if (isFolder) {
+            await fs.mkdir(path.join(caseDir, 'gone'), { recursive: true })
+            await fs.writeFile(path.join(caseDir, 'gone', 'a.md'), `# reused ${seed}\n`, 'utf8')
+          } else {
+            await fs.writeFile(path.join(caseDir, 'gone.md'), `# reused ${seed}\n`, 'utf8')
+          }
+        }
+        model = { isFolder, withMetadata, targetReused }
+
+        const first = await recoverInterruptedOperations(root, db)
+        const onceTree = await collectTree(caseDir)
+        const second = await recoverInterruptedOperations(root, db)
+        await recoverInterruptedOperations(root, db)
+        const finalTree = await collectTree(caseDir)
+        const detail = `seed=${seed} model=${JSON.stringify(model)}`
+
+        expect([...finalTree.entries()], detail).toEqual([...onceTree.entries()])
+        // Bytes are preserved under the permanent quarantine name —
+        // a legacy artifact is never auto-deleted.
+        const quarantineName = isFolder
+          ? [...finalTree.keys()].map((name) => name.split('/')[0]).find((name) => name.startsWith('gone.docus-quarantine-reuse-'))
+          : [...finalTree.keys()].find((name) => name.startsWith('gone.md.docus-quarantine-reuse-'))
+        expect(quarantineName, detail).toBeDefined()
+        const quarantinedBody = isFolder ? finalTree.get(`${quarantineName}/a.md`) : finalTree.get(quarantineName!)
+        expect(quarantinedBody, detail).toBe(artifactBody)
+        // Manifest exists if and only if there was an identity.
+        const manifestPresent = [...finalTree.keys()].some((name) => name.includes('.docus-quarantine-manifest-'))
+        expect(manifestPresent, `first=${JSON.stringify(first.actions)}; ${detail}`).toBe(withMetadata)
+        // No startup may ever report an invalid manifest for the
+        // generated artifact.
+        expect(second.actions.some((a) => a.detail?.includes('invalid legacy delete quarantine manifest')), detail).toBe(false)
+        if (targetReused) {
+          const reusedBody = isFolder ? finalTree.get('gone/a.md') : finalTree.get('gone.md')
+          expect(reusedBody, detail).toBe(`# reused ${seed}\n`)
+        }
+        if (withMetadata) expect(getDocumentMetadata(db, metaPath), detail).toBeNull()
+      } catch (error) {
+        throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\nmodel=${JSON.stringify(model)}\n${(error as Error).stack}`)
+      } finally {
+        await fs.rm(caseDir, { recursive: true, force: true })
+        db.prepare('DELETE FROM documents WHERE id = ?').run(`id-${seed}`)
+      }
+    }
+  }, 120_000)
+})

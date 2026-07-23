@@ -44,8 +44,8 @@ jobs:
 
       - name: Run crash recovery suite twice
         run: |
-          node node_modules/vitest/vitest.mjs run server/__tests__/crashRecovery.test.ts server/__tests__/atomicTextWrite.test.ts server/__tests__/documentFileLifecycle.test.ts server/__tests__/createOnlyMove.test.ts
-          node node_modules/vitest/vitest.mjs run server/__tests__/crashRecovery.test.ts server/__tests__/atomicTextWrite.test.ts server/__tests__/documentFileLifecycle.test.ts server/__tests__/createOnlyMove.test.ts
+          node node_modules/vitest/vitest.mjs run server/__tests__/crashRecovery.test.ts server/__tests__/crashRecovery.state-machine.test.ts server/__tests__/atomicTextWrite.test.ts server/__tests__/documentFileLifecycle.test.ts server/__tests__/createOnlyMove.test.ts
+          node node_modules/vitest/vitest.mjs run server/__tests__/crashRecovery.test.ts server/__tests__/crashRecovery.state-machine.test.ts server/__tests__/atomicTextWrite.test.ts server/__tests__/documentFileLifecycle.test.ts server/__tests__/createOnlyMove.test.ts
 
       - name: Install Chromium
         run: npx playwright install chromium
