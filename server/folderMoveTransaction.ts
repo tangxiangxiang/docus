@@ -12,6 +12,10 @@
 //     not just markdown (round-7 P1: the mover moved images/attachments
 //     the journal never recorded, so a crash mid-move stranded them
 //     with no reconciliation proof); empty trees carry `emptyTree`;
+//   * `directories` cover EVERY subdirectory, including empty ones
+//     (round-8 P1: a replayable move only created parents-of-files, so
+//     nested empty directories vanished on Windows — the tree builder
+//     shows directory nodes, so empty dirs are visible vault state);
 //   * every replayable reverse move (rename rollback, reference
 //     rollback, delete rollback) gets its own durable journal BEFORE
 //     the first file moves — a crash mid-rollback completes forward
@@ -33,6 +37,13 @@ export type FolderMoveJournalEntry = {
   sourceHash: string
   documentId?: string
   documentPath?: string
+}
+
+/** The physical enumeration a journal persists: every regular file
+ * (with content hash) AND every subdirectory (including empty ones). */
+export type FolderMoveEnumeration = {
+  entries: FolderMoveJournalEntry[]
+  directories: string[]
 }
 
 /** The metadata outcome a completed move must produce. Rename moves
@@ -107,21 +118,132 @@ export function reviveMetadataSnapshot(serialized: SerializedMetadataSnapshot): 
   }
 }
 
-/** Enumerate EVERY regular file under dirAbs with its content hash —
- * the journal must cover exactly what the mover will move: markdown,
- * images, PDFs, any attachment. A symlink/junction or special entry
- * cannot move create-only (link(2) would FOLLOW it outside the tree):
- * fail closed before anything is journaled or moved. */
+// Fixed table column allowlists (server/migrations). A persisted
+// snapshot row may carry EXACTLY these keys — nothing else. An unknown
+// column would either fail the INSERT or silently map to a column the
+// schema gains later; a row is rejected unless every key is allowed.
+const DOCUMENT_COLUMNS = new Set(['id', 'path', 'title', 'summary', 'created_at', 'updated_at'])
+const TAG_COLUMNS = new Set(['id', 'name', 'normalized_name'])
+const DOCUMENT_TAG_COLUMNS = new Set(['document_id', 'tag_id'])
+const EMBEDDING_COLUMNS = new Set(['document_id', 'content_hash', 'model', 'embedding', 'indexed_at'])
+const MIGRATION_COLUMNS = new Set([
+  'path', 'document_id', 'original_path', 'status', 'source_hash', 'error', 'updated_at', 'frontmatter_backup', 'cleaned_hash',
+])
+
+function exactColumns(row: unknown, allowed: Set<string>): row is Record<string, unknown> {
+  if (!row || typeof row !== 'object') return false
+  const keys = Object.keys(row)
+  return keys.length > 0 && keys.every((key) => allowed.has(key))
+}
+
+function setEquals(a: Set<unknown>, b: Set<unknown>): boolean {
+  if (a.size !== b.size) return false
+  for (const value of a) if (!b.has(value)) return false
+  return true
+}
+
+/**
+ * Trust boundary for a persisted delete-rollback snapshot (round-8 P0).
+ * `restoreDocumentMetadataMutation` deletes every row matching the
+ * snapshot's paths/ids and re-inserts the snapshot rows verbatim — so a
+ * forged journal could delete or replace metadata anywhere in the vault
+ * unless the snapshot is proven to describe ONLY the folder being
+ * restored (`destRel`). Every constraint below is required; any failure
+ * makes the journal unparseable so recovery never touches the DB:
+ *
+ *   * paths all sit inside the destRel subtree;
+ *   * documents[].path ∈ paths and documents[].id ∈ documentIds, and
+ *     set(documentIds) === set(documents[].id) exactly (a deleted id
+ *     always carries its row, and no foreign id is deletable);
+ *   * document_tags / embeddings reference only those documentIds (and
+ *     tag_ids only the declared tags);
+ *   * set(tags[].id) === set(tagIds) exactly;
+ *   * migrations reference only the same paths / ids;
+ *   * every row carries exactly its table's columns.
+ */
+export function isValidDeleteRollbackSnapshot(snapshot: unknown, destRel: string): snapshot is SerializedMetadataSnapshot {
+  if (!snapshot || typeof snapshot !== 'object') return false
+  const item = snapshot as Partial<SerializedMetadataSnapshot>
+  const isArrayOf = (value: unknown, check: (element: unknown) => boolean): boolean =>
+    Array.isArray(value) && value.every(check)
+  // Scalar arrays.
+  if (!isArrayOf(item.paths, (e) => typeof e === 'string')) return false
+  if (!isArrayOf(item.documentIds, (e) => typeof e === 'string' && (e as string).length > 0)) return false
+  if (!isArrayOf(item.tagIds, (e) => typeof e === 'number' && Number.isInteger(e))) return false
+  if (!isArrayOf(item.preexistingTagIds, (e) => typeof e === 'number' && Number.isInteger(e))) return false
+  // Row arrays with exact column shapes.
+  if (!isArrayOf(item.documents, (e) => exactColumns(e, DOCUMENT_COLUMNS))) return false
+  if (!isArrayOf(item.tags, (e) => exactColumns(e, TAG_COLUMNS))) return false
+  if (!isArrayOf(item.documentTags, (e) => exactColumns(e, DOCUMENT_TAG_COLUMNS))) return false
+  if (!isArrayOf(item.embeddings, (e) => exactColumns(e, EMBEDDING_COLUMNS))) return false
+  if (!isArrayOf(item.migrations, (e) => exactColumns(e, MIGRATION_COLUMNS))) return false
+
+  const paths = item.paths as string[]
+  const documentIds = item.documentIds as string[]
+  const tagIds = item.tagIds as number[]
+  const documents = item.documents as Record<string, unknown>[]
+  const tags = item.tags as Record<string, unknown>[]
+  const documentTags = item.documentTags as Record<string, unknown>[]
+  const embeddings = item.embeddings as Record<string, unknown>[]
+  const migrations = item.migrations as Record<string, unknown>[]
+
+  // Every path is inside the restored folder's subtree — never a
+  // sibling or an unrelated document.
+  const inSubtree = (p: unknown): boolean => typeof p === 'string' && p.startsWith(`${destRel}/`)
+  if (!paths.every(inSubtree)) return false
+
+  // documentIds and documents[].id are the SAME set; every document
+  // path is one of the declared (subtree) paths.
+  const pathSet = new Set(paths)
+  const idSet = new Set(documentIds)
+  const documentIdSet = new Set(documents.map((row) => row.id))
+  if (!setEquals(idSet, documentIdSet)) return false
+  if (!documents.every((row) => typeof row.id === 'string' && typeof row.path === 'string' && pathSet.has(row.path) && inSubtree(row.path))) return false
+
+  // tags[].id is exactly the declared tagIds.
+  const tagIdSet = new Set(tagIds)
+  if (!setEquals(new Set(tags.map((row) => row.id)), tagIdSet)) return false
+
+  // document_tags / embeddings reference only declared ids.
+  if (!documentTags.every((row) => typeof row.document_id === 'string' && idSet.has(row.document_id)
+    && typeof row.tag_id === 'number' && tagIdSet.has(row.tag_id))) return false
+  if (!embeddings.every((row) => typeof row.document_id === 'string' && idSet.has(row.document_id))) return false
+
+  // migrations reference only this transaction's paths / ids. A
+  // migration path is either a subtree path or the `@deleted/<id>`
+  // tombstone of a declared id; document_id (when set) is declared;
+  // original_path (when non-empty) is a subtree path.
+  for (const row of migrations) {
+    const mPath = row.path
+    const okPath = inSubtree(mPath) || (typeof mPath === 'string' && mPath.startsWith('@deleted/') && idSet.has(mPath.slice('@deleted/'.length)))
+    if (!okPath) return false
+    if (row.document_id !== null && row.document_id !== undefined) {
+      if (typeof row.document_id !== 'string' || !idSet.has(row.document_id)) return false
+    }
+    if (row.original_path !== '' && row.original_path !== undefined && !inSubtree(row.original_path)) return false
+  }
+  return true
+}
+
+/** Enumerate EVERY regular file (with content hash) AND every
+ * subdirectory under dirAbs — the journal must cover exactly what the
+ * mover will move and recreate: markdown, images, PDFs, any attachment,
+ * and empty directories (visible vault state). A symlink/junction or
+ * special entry cannot move create-only (link(2) would FOLLOW it
+ * outside the tree): fail closed before anything is journaled or
+ * moved. */
 export async function listPhysicalMoveEntries(
   dirAbs: string,
   identityFor?: (relativeFilePath: string) => { documentId: string; documentPath: string } | null,
-): Promise<FolderMoveJournalEntry[]> {
+): Promise<FolderMoveEnumeration> {
   const entries: FolderMoveJournalEntry[] = []
+  const directories: string[] = []
   const walk = async (dir: string, rel: string): Promise<void> => {
     const dirents = await fs.readdir(dir, { withFileTypes: true })
     for (const entry of dirents) {
       const entryRel = rel === '' ? entry.name : `${rel}/${entry.name}`
       if (entry.isDirectory()) {
+        directories.push(entryRel)
         await walk(path.join(dir, entry.name), entryRel)
       } else if (entry.isFile()) {
         const raw = await fs.readFile(path.join(dir, entry.name))
@@ -139,5 +261,6 @@ export async function listPhysicalMoveEntries(
   }
   await walk(dirAbs, '')
   entries.sort((a, b) => a.relativeFilePath.localeCompare(b.relativeFilePath))
-  return entries
+  directories.sort((a, b) => a.localeCompare(b))
+  return { entries, directories }
 }

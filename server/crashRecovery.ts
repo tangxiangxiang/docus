@@ -88,6 +88,8 @@ import {
   executeFolderMove,
   FOLDER_MOVE_STRATEGIES,
   fireReplayableMovedEntryHook,
+  gateTokenName,
+  isPhysicallyContained,
   resolveDirectoryMoveStrategy,
   pruneEmptyDirectories,
   RenameDestinationOccupiedError,
@@ -95,11 +97,11 @@ import {
   type FolderMoveJournalStrategy,
 } from './documentFileLifecycle.js'
 import {
+  isValidDeleteRollbackSnapshot,
   listPhysicalMoveEntries,
   reviveMetadataSnapshot,
   type FolderMoveJournalEntry,
   type FolderMoveMetadataDisposition,
-  type SerializedMetadataSnapshot,
 } from './folderMoveTransaction.js'
 
 export interface RecoveryAction {
@@ -147,6 +149,9 @@ interface FolderRenameJournal {
   strategy?: FolderMoveJournalStrategy
   emptyTree?: boolean
   entries?: FolderMoveJournalEntry[]
+  /** Every subdirectory (including empty ones) the move must recreate
+   * and verify — round-8 P1. v2 only; v1 journals predate it. */
+  directories?: string[]
   /** v2 only; v1 journals default to prefix-move. */
   metadataDisposition?: FolderMoveMetadataDisposition
 }
@@ -289,42 +294,12 @@ function parseReplaceJournal(raw: string): ReplaceJournal | null {
 }
 
 /**
- * Vault containment is checked physically, not lexically. A resolved
- * string can stay inside the vault while the FILESYSTEM path escapes
- * it: `vault/link → /outside` makes `vault/link/victim.md` resolve to
- * a string under the vault that accesses a file outside it, and every
- * journal-driven operation (payload reads, reference rewrites,
- * link(2) commits — which also create their `.docus-save-*` temps in
- * the target's parent) would then touch the outside tree.
- *
- * The check: string containment, then an lstat walk of every ancestor
- * strictly below the vault root — a symlink (or Windows junction /
- * reparse point, which lstat reports as a symlink) fails it — then the
- * leaf itself, because link(2)-based commits would FOLLOW a symlinked
- * leaf into an external inode. A missing leaf is contained.
+ * Vault containment is checked physically, not lexically — see
+ * `isPhysicallyContained` in documentFileLifecycle.ts (shared with the
+ * mover, which containment-checks every per-entry path before touching
+ * it). Recovery applies it to journal paths and to every folder-move
+ * entry's source and destination.
  */
-async function isPhysicallyContained(contentDir: string, candidate: string): Promise<boolean> {
-  const root = path.resolve(contentDir)
-  const resolved = path.resolve(candidate)
-  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) return false
-  let current = path.dirname(resolved)
-  while (current.length > root.length) {
-    let stats
-    try {
-      stats = await fs.lstat(current)
-    } catch {
-      return false
-    }
-    if (stats.isSymbolicLink()) return false
-    current = path.dirname(current)
-  }
-  try {
-    if ((await fs.lstat(resolved)).isSymbolicLink()) return false
-  } catch {
-    /* an absent leaf is contained */
-  }
-  return true
-}
 
 async function validReplaceJournalPaths(dir: string, contentDir: string, targetAbs: string, journal: ReplaceJournal): Promise<boolean> {
   const targetBase = path.basename(targetAbs)
@@ -384,20 +359,6 @@ function isValidRelativeFilePath(rel: string): boolean {
   return rel.split('/').every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
 }
 
-function isValidSerializedSnapshot(snapshot: unknown): snapshot is SerializedMetadataSnapshot {
-  if (!snapshot || typeof snapshot !== 'object') return false
-  const item = snapshot as Partial<SerializedMetadataSnapshot>
-  const isArrayOf = (value: unknown, check: (element: unknown) => boolean): boolean =>
-    Array.isArray(value) && value.every(check)
-  const isRowArray = (value: unknown): boolean => isArrayOf(value, (element) => Boolean(element) && typeof element === 'object')
-  return isArrayOf(item.paths, (element) => typeof element === 'string')
-    && isArrayOf(item.documentIds, (element) => typeof element === 'string')
-    && isArrayOf(item.tagIds, (element) => typeof element === 'number')
-    && isArrayOf(item.preexistingTagIds, (element) => typeof element === 'number')
-    && isRowArray(item.documents) && isRowArray(item.tags) && isRowArray(item.documentTags)
-    && isRowArray(item.embeddings) && isRowArray(item.migrations)
-}
-
 function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
   try {
     const entry = JSON.parse(raw) as Omit<Partial<FolderRenameJournal>, 'strategy' | 'entries' | 'metadataDisposition'> & { strategy?: unknown; entries?: unknown; metadataDisposition?: unknown }
@@ -429,6 +390,7 @@ function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
     }
     if (entry.emptyTree !== undefined && typeof entry.emptyTree !== 'boolean') return null
     let entries: FolderMoveJournalEntry[] | undefined
+    let directories: string[] | undefined
     let metadataDisposition: FolderMoveMetadataDisposition | undefined
     if (entry.version === 2) {
       if (!Array.isArray(entry.entries)) return null
@@ -447,19 +409,30 @@ function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
         sourceHash: item.sourceHash as string,
         ...(item.documentId !== undefined ? { documentId: item.documentId, documentPath: item.documentPath } : {}),
       }))
+      // directories (round-8): optional; every entry a safe relative
+      // path with no duplicates. An empty/absent list means no
+      // subdirectories to recreate.
+      if (entry.directories !== undefined) {
+        if (!Array.isArray(entry.directories)
+          || !entry.directories.every((dir) => typeof dir === 'string' && isValidRelativeFilePath(dir))) return null
+        if (new Set(entry.directories).size !== entry.directories.length) return null
+        directories = [...entry.directories]
+      }
       if (entry.metadataDisposition === undefined) {
         metadataDisposition = { kind: 'prefix-move' }
       } else if (entry.metadataDisposition && typeof entry.metadataDisposition === 'object') {
         const disposition = entry.metadataDisposition as { kind?: string; snapshot?: unknown }
         if (disposition.kind === 'prefix-move') metadataDisposition = { kind: 'prefix-move' }
-        else if (disposition.kind === 'snapshot-restore' && isValidSerializedSnapshot(disposition.snapshot)) {
+        else if (disposition.kind === 'snapshot-restore'
+          && isValidDeleteRollbackSnapshot(disposition.snapshot, entry.destRel)) {
           metadataDisposition = { kind: 'snapshot-restore', snapshot: disposition.snapshot }
         } else return null
       } else return null
       return {
         version: 2, op: entry.op, srcRel: entry.srcRel, destRel: entry.destRel,
         sourceDev: entry.sourceDev, sourceIno: entry.sourceIno,
-        strategy, ...(emptyTree ? { emptyTree } : {}), entries, metadataDisposition,
+        strategy, ...(emptyTree ? { emptyTree } : {}), entries,
+        ...(directories !== undefined ? { directories } : {}), metadataDisposition,
       }
     }
     // v1: legacy `{rel, id, sourceHash}` entries — normalized to the
@@ -1105,19 +1078,23 @@ async function recoverRenameReferencesJournal(
           return
         }
         let moveEntries: FolderMoveJournalEntry[]
+        let moveDirectories: string[]
         try {
-          moveEntries = await listPhysicalMoveEntries(destAbs, (relativeFilePath) => {
+          const enumerated = await listPhysicalMoveEntries(destAbs, (relativeFilePath) => {
             if (!relativeFilePath.endsWith('.md')) return null
             const documentSuffix = relativeFilePath.slice(0, -'.md'.length)
             const sourceIdentityPath = `${journal.srcRel}/${documentSuffix}`
             const identity = journal.identities!.find((item) => item.path === sourceIdentityPath)
             return identity ? { documentId: identity.id, documentPath: sourceIdentityPath } : null
           })
+          moveEntries = enumerated.entries
+          moveDirectories = enumerated.directories
         } catch (error) {
           note(journalAbs, 'failed', `could not enumerate the folder rollback tree: ${(error as Error).message}`)
           return
         }
-        const moveJournalAbs = path.join(path.dirname(destAbs), `.${path.basename(destAbs)}.docus-journal-${randomUUID()}`)
+        const moveUuid = randomUUID()
+        const moveJournalAbs = path.join(path.dirname(destAbs), `.${path.basename(destAbs)}.docus-journal-${moveUuid}`)
         // Same default as the routes (the platform strategy); the
         // test-only override lets crash children run the journaled
         // per-file protocol on POSIX and kill recovery mid-replay.
@@ -1134,9 +1111,14 @@ async function recoverRenameReferencesJournal(
             strategy: moveStrategy,
             ...(moveEntries.length === 0 ? { emptyTree: true } : {}),
             entries: moveEntries,
+            directories: moveDirectories,
             metadataDisposition: { kind: 'prefix-move' },
           })
-          const moved = await executeFolderMove(moveStrategy, destAbs, srcAbs, moveEntries.map((entry) => entry.relativeFilePath))
+          const moved = await executeFolderMove(moveStrategy, destAbs, srcAbs, moveEntries.map((entry) => entry.relativeFilePath), {
+            directories: moveDirectories,
+            gateToken: moveUuid,
+            vaultRoot: contentDir,
+          })
           if (!moved.restored) {
             // Clean contention: the source path belongs to an external
             // writer and the move rolled itself fully back — the tree
@@ -1213,30 +1195,45 @@ async function fileHashMatches(absPath: string, expectedHash: string): Promise<b
   }
 }
 
+/** Destination inventory result (round-8 P1/P3). Recovery must account
+ * for the destination BEFORE replaying anything, so it never merges
+ * journaled bytes into a directory an external writer owns. */
+type DestInventory =
+  | { kind: 'absent' }
+  | { kind: 'external'; reason: string }
+  | { kind: 'ours'; hasLandedFiles: boolean; hasGateToken: boolean }
+
 /**
  * Reconcile a journaled folder move (the unified replay for every
  * journal that carries entries — v2 physical journals and normalized
  * v1 journals alike). The entries — every moved file's relative path
- * and content hash — are the proof:
+ * and content hash — plus the journaled directory set are the proof:
  *
  *   * every entry still at the source: the file move never landed.
  *     For a prefix-move journal (rename, either direction) that is a
- *     STALE journal: a destination holding no files at all is our own
- *     mkdir gate plus empty intermediates — pruned, any partial
- *     metadata move rolled back, journal removed; a destination with
- *     external content quarantines. For a snapshot-restore journal
- *     (delete rollback) the restore IS the durable intent — the tree
- *     must not be stranded under its staging name, so the move
- *     completes FORWARD instead;
+ *     STALE journal: a destination proven ours by its gate token (not
+ *     by mere emptiness) is pruned, any partial metadata move rolled
+ *     back, journal removed; anything external quarantines. For a
+ *     snapshot-restore journal (delete rollback) the restore IS the
+ *     durable intent — the tree must not be stranded under its staging
+ *     name, so the move completes FORWARD instead (into an absent or
+ *     provably-ours destination only);
  *   * otherwise the move is completed FORWARD: every source-resident
  *     entry replays create-only into the destination, then the
  *     metadata disposition runs (prefix move, or the persisted
  *     snapshot restore). Recovery never moves an entry whose journaled
- *     generation it cannot find, and never replaces a file at the
- *     destination (create-only link): an external generation at either
- *     path retains the journal for inspection instead.
+ *     generation it cannot find, never replaces a destination file
+ *     (create-only link), and never merges into a destination holding
+ *     undeclared content: an external generation anywhere retains the
+ *     journal for inspection instead.
+ *
+ * Every per-entry source AND destination path is physically
+ * containment-checked first (round-8 P0/P1), so a symlinked ancestor
+ * planted after the journal was written cannot route a read/rename/link
+ * outside the vault.
  */
 async function recoverFolderMoveJournal(
+  contentDir: string,
   db: DatabaseT,
   journalAbs: string,
   journal: FolderRenameJournal,
@@ -1245,7 +1242,29 @@ async function recoverFolderMoveJournal(
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
   const entries = journal.entries!
+  const directories = journal.directories ?? []
+  // Directory-set parity applies only when the journal declared its
+  // directories (v2). v1 journals predate the field; enforcing it there
+  // would flag their legitimate nested dirs as external.
+  const declaredDirs = journal.directories
   const disposition: FolderMoveMetadataDisposition = journal.metadataDisposition ?? { kind: 'prefix-move' }
+  // The journal's transaction id (its filename suffix) is the gate
+  // token the mover drops inside the destination gate it creates.
+  const transactionId = path.basename(journalAbs).split('.docus-journal-')[1] ?? ''
+  const tokenName = gateTokenName(transactionId)
+  const entryByRel = new Map(entries.map((entry) => [entry.relativeFilePath, entry]))
+  const expectedDirs = new Set(declaredDirs ?? [])
+
+  // Physical containment of every entry's two paths (round-8 P0/P1).
+  for (const entry of entries) {
+    const srcFile = path.join(srcAbs, entry.relativeFilePath)
+    const destFile = path.join(destAbs, entry.relativeFilePath)
+    if (!await isPhysicallyContained(contentDir, srcFile) || !await isPhysicallyContained(contentDir, destFile)) {
+      note(journalAbs, 'quarantined', `folder-move entry escapes the vault via a symlinked path: ${entry.relativeFilePath}`)
+      return
+    }
+  }
+
   type Placement = 'src' | 'dest' | 'external' | 'missing'
   const placements: Placement[] = await Promise.all(entries.map(async (entry) => {
     const srcFile = path.join(srcAbs, entry.relativeFilePath)
@@ -1258,12 +1277,69 @@ async function recoverFolderMoveJournal(
     return 'missing'
   }))
   const countAt = (placement: Placement): number => placements.filter((found) => found === placement).length
+
+  // Inventory the destination (round-8 P1/P3): everything present must
+  // be provably ours — a hash-matched landed entry, a journaled
+  // directory, or our gate token. Any undeclared file, symlink, special
+  // entry, or foreign directory means an external writer owns (part of)
+  // the destination and we quarantine rather than merge into it.
+  const inventoryDestination = async (): Promise<DestInventory> => {
+    if (!await exists(destAbs)) return { kind: 'absent' }
+    if (!await isDirectory(destAbs)) return { kind: 'external', reason: 'destination exists but is not a directory' }
+    let hasLandedFiles = false
+    let hasGateToken = false
+    let external: string | null = null
+    const walk = async (dir: string, rel: string): Promise<void> => {
+      if (external) return
+      let dirents
+      try {
+        dirents = await fs.readdir(dir, { withFileTypes: true })
+      } catch {
+        external = `destination directory is unreadable: ${rel || '.'}`
+        return
+      }
+      for (const dirent of dirents) {
+        if (external) return
+        const relPath = rel === '' ? dirent.name : `${rel}/${dirent.name}`
+        const absPath = path.join(dir, dirent.name)
+        if (dirent.isSymbolicLink()) { external = `destination holds a symlink: ${relPath}`; return }
+        if (dirent.isDirectory()) {
+          if (declaredDirs !== undefined && !expectedDirs.has(relPath)) { external = `destination holds an undeclared directory: ${relPath}`; return }
+          await walk(absPath, relPath)
+        } else if (dirent.isFile()) {
+          if (dirent.name === tokenName && rel === '') { hasGateToken = true; continue }
+          const entry = entryByRel.get(relPath)
+          if (!entry) { external = `destination holds an undeclared file: ${relPath}`; return }
+          if (!await fileHashMatches(absPath, entry.sourceHash)) { external = `destination file does not match the journal: ${relPath}`; return }
+          hasLandedFiles = true
+        } else {
+          external = `destination holds a special entry: ${relPath}`
+          return
+        }
+      }
+    }
+    await walk(destAbs, '')
+    if (external) return { kind: 'external', reason: external }
+    return { kind: 'ours', hasLandedFiles, hasGateToken }
+  }
+
   const completeMetadata = (): void => {
     if (disposition.kind === 'snapshot-restore') {
-      restoreDocumentMetadataMutation(db, reviveMetadataSnapshot(disposition.snapshot))
+      const revived = reviveMetadataSnapshot(disposition.snapshot)
+      // Do NOT trust the persisted preexistingTagIds for the orphan-tag
+      // cleanup: recompute against the live DB so a forged snapshot can
+      // never mark an unrelated tag "created by the mutation" and have
+      // it deleted. Unioning with the live ids makes the cleanup a
+      // no-op (safe — a rollback re-installs the folder's own tags).
+      const liveTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>).map((row) => row.id)
+      revived.preexistingTagIds = [...new Set([...liveTagIds, ...revived.preexistingTagIds])]
+      restoreDocumentMetadataMutation(db, revived)
     } else {
       moveDocumentMetadataPrefix(db, journal.srcRel, journal.destRel)
     }
+  }
+  const removeGateToken = async (): Promise<void> => {
+    await fs.rm(path.join(destAbs, tokenName), { force: true })
   }
   const finishForward = async (detail: string): Promise<void> => {
     try {
@@ -1272,6 +1348,7 @@ async function recoverFolderMoveJournal(
       note(journalAbs, 'failed', `could not complete folder-move metadata: ${(error as Error).message}`)
       return
     }
+    await removeGateToken()
     await pruneEmptyDirectories(srcAbs)
     await removeDurableJournal(journalAbs).catch(() => {})
     note(destAbs, 'completed-rename', detail)
@@ -1296,40 +1373,63 @@ async function recoverFolderMoveJournal(
       return false
     }
   }
+  // Prune a stale destination gate proven ours by its gate token
+  // (round-8: emptiness alone is NOT ownership proof).
+  const pruneStaleGate = async (inventory: DestInventory): Promise<boolean> => {
+    if (inventory.kind === 'absent') return true
+    if (inventory.kind === 'ours' && !inventory.hasLandedFiles && inventory.hasGateToken) {
+      await removeGateToken()
+      await pruneEmptyDirectories(destAbs)
+      return true
+    }
+    note(journalAbs, 'quarantined', inventory.kind === 'ours'
+      ? 'source intact but the destination gate is not provably ours (no gate token)'
+      : `source intact but the destination holds external content (${inventory.reason})`)
+    return false
+  }
 
   const emptyTree = journal.emptyTree === true
   const srcIsDir = await isDirectory(srcAbs)
-  const destIsDir = await isDirectory(destAbs)
+  const inventory = await inventoryDestination()
 
   if (emptyTree) {
     if (srcIsDir) {
       if (disposition.kind === 'prefix-move') {
         // The empty tree never left the source: stale journal. Prune
-        // our own file-free gate; anything else is external content.
-        const destIsProvablyOurs = !destIsDir || await directoryHoldsNoRegularFiles(destAbs)
-        if (!destIsProvablyOurs) {
-          note(journalAbs, 'quarantined', 'source intact but the destination holds external content')
-          return
-        }
+        // our own gate (proven by token); anything else is external.
+        if (!await pruneStaleGate(inventory)) return
         if (!rollbackStaleMetadata()) return
-        if (destIsDir) await pruneEmptyDirectories(destAbs)
         await removeDurableJournal(journalAbs).catch(() => {})
-        note(journalAbs, 'cleaned', destIsDir
-          ? 'stale empty-tree folder-move journal (gate pruned)'
-          : 'stale empty-tree folder-move journal (move never started)')
+        note(journalAbs, 'cleaned', inventory.kind === 'absent'
+          ? 'stale empty-tree folder-move journal (move never started)'
+          : 'stale empty-tree folder-move journal (gate pruned)')
         return
       }
       // snapshot-restore: the restore is the durable intent — recreate
-      // the empty folder and its metadata.
-      try { await fs.mkdir(destAbs) } catch { /* an empty dir already there is fine */ }
+      // the empty folder (and its directories) plus metadata, into an
+      // absent or provably-ours destination only.
+      if (inventory.kind === 'external') {
+        note(journalAbs, 'quarantined', `destination holds external content (${inventory.reason})`)
+        return
+      }
+      if (inventory.kind === 'ours' && inventory.hasLandedFiles) {
+        note(journalAbs, 'quarantined', 'empty-tree journal but the destination holds files')
+        return
+      }
+      try { await fs.mkdir(destAbs, { recursive: true }) } catch { /* ours or absent */ }
+      for (const dirRel of directories) await fs.mkdir(path.join(destAbs, dirRel), { recursive: true })
       await finishForward('interrupted empty-tree folder restore completed from journal')
       return
     }
-    if (destIsDir) {
+    if (inventory.kind === 'ours') {
       await finishForward('interrupted empty-tree folder move completed from journal')
       return
     }
-    note(journalAbs, 'failed', 'empty-tree folder-move journal but neither source nor destination exists')
+    if (inventory.kind === 'absent') {
+      note(journalAbs, 'failed', 'empty-tree folder-move journal but neither source nor destination exists')
+      return
+    }
+    note(journalAbs, 'quarantined', `destination holds external content (${inventory.reason})`)
     return
   }
 
@@ -1337,47 +1437,74 @@ async function recoverFolderMoveJournal(
     if (disposition.kind === 'snapshot-restore') {
       // A delete rollback crashed before its first file moved: the
       // restore is the durable intent and the staged tree must not be
-      // stranded under its inflight name — complete forward.
-      if (!await replayEntries(entries, placements, srcAbs, destAbs, journalAbs, note)) return
+      // stranded under its inflight name — complete forward, but only
+      // into an absent or provably-ours destination (never merge into
+      // an externally-created directory — round-8 P1).
+      if (inventory.kind === 'external') {
+        note(journalAbs, 'quarantined', `destination holds external content (${inventory.reason})`)
+        return
+      }
+      if (inventory.kind === 'ours' && inventory.hasLandedFiles) {
+        note(journalAbs, 'quarantined', 'all entries at source but the destination already holds files')
+        return
+      }
+      if (!await replayEntries(contentDir, entries, directories, placements, srcAbs, destAbs, journalAbs, note)) return
       await finishForward('interrupted folder restore completed from journal')
       return
     }
-    // The file move never landed. The destination is provably ours
-    // only when it is absent or holds no files at all (our mkdir gate
-    // plus the empty intermediate directories we create per entry);
-    // anything else is external content and quarantines the journal.
-    const destIsProvablyOurs = !destIsDir || await directoryHoldsNoRegularFiles(destAbs)
-    if (!destIsProvablyOurs) {
-      note(journalAbs, 'quarantined', 'source intact but the destination holds external content')
-      return
-    }
+    // The file move never landed: stale journal. Prune our own gate
+    // (proven by its token, not by emptiness); roll back any partial
+    // metadata move; remove the journal.
+    if (!await pruneStaleGate(inventory)) return
     if (!rollbackStaleMetadata()) return
-    if (destIsDir) await pruneEmptyDirectories(destAbs)
     await removeDurableJournal(journalAbs).catch(() => {})
-    note(journalAbs, 'cleaned', destIsDir
-      ? 'stale folder-move journal (empty gate pruned)'
-      : 'stale folder-move journal (move never started)')
+    note(journalAbs, 'cleaned', inventory.kind === 'absent'
+      ? 'stale folder-move journal (move never started)'
+      : 'stale folder-move journal (gate pruned)')
     return
   }
 
-  // Split or fully landed: complete forward.
-  if (!await replayEntries(entries, placements, srcAbs, destAbs, journalAbs, note)) return
+  // Split or fully landed: complete forward — but only if the
+  // destination holds nothing external (round-8 P1: never merge
+  // journaled bytes into an externally-owned directory).
+  if (inventory.kind === 'external') {
+    note(journalAbs, 'quarantined', `destination holds external content (${inventory.reason})`)
+    return
+  }
+  if (!await replayEntries(contentDir, entries, directories, placements, srcAbs, destAbs, journalAbs, note)) return
   await finishForward('interrupted folder move completed from journal')
 }
 
 /** Replay every source-resident entry create-only into the
- * destination. Never replaces a destination file (create-only link);
- * an external or missing generation fails closed with the journal
- * retained. Fires the per-entry crash seam so a kill mid-recovery
- * replays again on the next startup. */
+ * destination, recreating the journaled directory structure first
+ * (round-8 P1: nested empty directories are preserved). Never replaces
+ * a destination file (create-only link); an external or missing
+ * generation fails closed with the journal retained. Every path is
+ * containment-checked again at replay time. Fires the per-entry crash
+ * seam so a kill mid-recovery replays again on the next startup. */
 async function replayEntries(
+  contentDir: string,
   entries: FolderMoveJournalEntry[],
+  directories: string[],
   placements: Array<'src' | 'dest' | 'external' | 'missing'>,
   srcAbs: string,
   destAbs: string,
   journalAbs: string,
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<boolean> {
+  for (const dirRel of directories) {
+    const dirAbs = path.join(destAbs, dirRel)
+    if (!await isPhysicallyContained(contentDir, dirAbs)) {
+      note(journalAbs, 'quarantined', `folder-move directory escapes the vault via a symlinked path: ${dirRel}`)
+      return false
+    }
+    try {
+      await fs.mkdir(dirAbs, { recursive: true })
+    } catch (error) {
+      note(journalAbs, 'failed', `could not recreate folder-move directory ${dirRel}: ${(error as Error).message}`)
+      return false
+    }
+  }
   for (let index = 0; index < entries.length; index += 1) {
     const placement = placements[index]
     if (placement === 'dest') continue
@@ -1388,6 +1515,10 @@ async function replayEntries(
     }
     const srcFile = path.join(srcAbs, entry.relativeFilePath)
     const destFile = path.join(destAbs, entry.relativeFilePath)
+    if (!await isPhysicallyContained(contentDir, srcFile) || !await isPhysicallyContained(contentDir, destFile)) {
+      note(journalAbs, 'quarantined', `folder-move entry escapes the vault via a symlinked path: ${entry.relativeFilePath}`)
+      return false
+    }
     try {
       await fs.mkdir(path.dirname(destFile), { recursive: true })
       await createOnlyMoveFile(srcFile, destFile)
@@ -1427,7 +1558,7 @@ async function recoverFolderRenameJournal(
   const srcAbs = path.join(contentDir, journal.srcRel)
   const destAbs = path.join(contentDir, journal.destRel)
   if (journal.emptyTree || (journal.entries !== undefined && journal.entries.length > 0)) {
-    await recoverFolderMoveJournal(db, journalAbs, journal, srcAbs, destAbs, note)
+    await recoverFolderMoveJournal(contentDir, db, journalAbs, journal, srcAbs, destAbs, note)
     return
   }
   // The directory move is a single rename(2) over our own mkdir-gated
@@ -1949,14 +2080,46 @@ export async function recoverInterruptedOperations(
     return map
   }
   try {
-    // Two bounded passes let an inner atomic reference-write journal
-    // restore its formal path before the outer rename-reference
-    // transaction is retried in the same startup.
-    for (let pass = 0; pass < 2; pass++) {
+    // Bounded multi-pass reconciliation (round-8 P1/P2). Recovery
+    // artifacts form dependency chains — e.g. a reference journal whose
+    // companion folder-move journal itself left an inner `.docus-rename-*`
+    // staging: the inner staging must restore before the companion move
+    // can complete, which must complete before the reference journal can
+    // finish. A fixed two-pass scan cannot close arbitrarily deep chains
+    // in one startup. So: loop until a pass makes NO progress (nothing
+    // resolved), capped by the number of authoritative artifacts present
+    // at startup (each pass resolves at least one dependency layer, so
+    // this is a tight bound) plus a hard ceiling for safety.
+    let authoritativeArtifacts = 0
+    await walkDirectories(contentDir, async (dir, entries) => {
+      for (const entry of entries) {
+        if (!entry.isFile()) {
+          if (entry.isDirectory() && DELETE_INFLIGHT_RE.test(entry.name)) authoritativeArtifacts += 1
+          continue
+        }
+        if (JOURNAL_RE.test(entry.name) || DELETE_MANIFEST_RE.test(entry.name)
+          || LEGACY_QUARANTINE_MANIFEST_RE.test(entry.name) || RENAME_RE.test(entry.name)
+          || STAGED_RE.test(entry.name) || SAVE_RE.test(entry.name) || REMOVE_RE.test(entry.name)) {
+          authoritativeArtifacts += 1
+        }
+      }
+    })
+    // Each pass resolves at least one dependency layer; +4 gives
+    // headroom for the deepest plausible chain (inner staging →
+    // companion move → reference journal) plus the final no-progress
+    // detection pass. The hard ceiling guards against any unforeseen
+    // cycle.
+    const maxPasses = Math.min(authoritativeArtifacts + 4, 64)
+    let previousActionCount = -1
+    for (let pass = 0; pass < maxPasses; pass++) {
       inodeMap = null
       await walkDirectories(contentDir, async (dir, entries) => {
         await recoverDirectory(contentDir, db, dir, entries, getInodeMap, note)
       })
+      // No new action this pass ⇒ nothing was resolved ⇒ further passes
+      // cannot help. Stop early.
+      if (actions.length === previousActionCount) break
+      previousActionCount = actions.length
     }
   } catch (error) {
     note(contentDir, 'failed', (error as Error).message)

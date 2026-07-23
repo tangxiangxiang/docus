@@ -228,6 +228,75 @@ export async function pruneEmptyDirectories(dirAbs: string): Promise<void> {
   await fs.rmdir(dirAbs).catch(() => {})
 }
 
+/** Relative subdirectory paths under dirAbs (excluding the root
+ * itself), for destination directory-set parity. Symlinked directories
+ * are rejected like the file walk rejects symlinked files. */
+async function listDirectoryEntries(fromDirAbs: string): Promise<string[]> {
+  const directories: string[] = []
+  const walk = async (dirAbs: string, rel: string): Promise<void> => {
+    const dirents = await fs.readdir(dirAbs, { withFileTypes: true })
+    for (const entry of dirents) {
+      const entryRel = rel === '' ? entry.name : `${rel}/${entry.name}`
+      if (entry.isDirectory()) {
+        directories.push(entryRel)
+        await walk(path.join(dirAbs, entry.name), entryRel)
+      } else if (!entry.isFile()) {
+        throw new UnsupportedDirectoryMoveError(`unsupported entry inside the moved folder: ${entryRel}`)
+      }
+    }
+  }
+  await walk(fromDirAbs, '')
+  directories.sort()
+  return directories
+}
+
+/**
+ * Physical vault containment (round-6 F4, extended round-8 to every
+ * per-entry path). A resolved string can stay inside the vault while
+ * the FILESYSTEM path escapes it: with `vault/proj/sub → /outside`,
+ * `vault/proj/sub/victim.bin` resolves to a string under the vault but
+ * accesses a file outside it. Every journal-driven filesystem touch
+ * (hash read, mkdir, rename, link — which also creates its private
+ * staging in the source's parent) must first prove no ancestor below
+ * the vault root is a symlink (Windows junction / reparse point reports
+ * as a symlink under lstat). The leaf itself is checked too, because a
+ * create-only link would FOLLOW a symlinked leaf into an external
+ * inode. A missing leaf is contained.
+ */
+export async function isPhysicallyContained(vaultRoot: string, candidateAbs: string): Promise<boolean> {
+  const root = path.resolve(vaultRoot)
+  const resolved = path.resolve(candidateAbs)
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) return false
+  let current = path.dirname(resolved)
+  while (current.length > root.length) {
+    try {
+      if ((await fs.lstat(current)).isSymbolicLink()) return false
+    } catch {
+      // A missing ancestor cannot be a symlink we'd escape through —
+      // the mover/recovery creates it with mkdir -p as a real
+      // directory. Keep walking up to check the ancestors that DO
+      // exist (a symlinked grandparent is still caught).
+    }
+    current = path.dirname(current)
+  }
+  try {
+    if ((await fs.lstat(resolved)).isSymbolicLink()) return false
+  } catch {
+    /* an absent leaf is contained */
+  }
+  return true
+}
+
+/** Hidden marker the replayable mover drops inside the destination
+ * gate it created. Recovery treats a destination directory as "provably
+ * ours" only when it finds this exact token — an empty directory alone
+ * is NOT ownership proof (round-8 P1/P3). */
+export const GATE_TOKEN_PREFIX = '.docus-folder-gate-'
+export function gateTokenName(gateToken: string): string {
+  return `${GATE_TOKEN_PREFIX}${gateToken}`
+}
+
+
 /**
  * The REPLAYABLE directory move: the Windows-compatible create-only
  * protocol. rename(2) cannot replace a directory on Windows (even an
@@ -257,11 +326,27 @@ export async function pruneEmptyDirectories(dirAbs: string): Promise<void> {
  * re-used source path keeps its bytes at the destination instead of
  * clobbering the external file) and the gate tree is pruned.
  */
+export type FolderMoveExecuteOptions = {
+  /** Every subdirectory the journal declared (including empty ones);
+   * created at the destination and verified by the end parity. */
+  directories?: string[]
+  /** Transaction token; when present the mover drops a hidden gate
+   * marker inside the destination gate it creates, so recovery can tell
+   * its own gate from an externally-created empty directory. */
+  gateToken?: string
+  /** Vault root; when present every per-entry source AND destination
+   * path is physically containment-checked (no symlinked ancestor)
+   * before it is hashed/mkdir/renamed/linked (round-8 P0/P1). */
+  vaultRoot?: string
+}
+
 export async function executeReplayableFolderMove(
   fromDirAbs: string,
   toDirAbs: string,
   entryRels: string[],
+  options: FolderMoveExecuteOptions = {},
 ): Promise<{ restored: boolean }> {
+  const directories = options.directories ?? []
   try {
     await fs.mkdir(toDirAbs)
   } catch (error) {
@@ -269,7 +354,15 @@ export async function executeReplayableFolderMove(
     if (code === 'EEXIST' || code === 'ENOTDIR') return { restored: false }
     throw error
   }
+  // Prove the gate is ours for recovery: drop the hidden marker before
+  // anything else lands inside it.
+  if (options.gateToken) {
+    await fs.writeFile(path.join(toDirAbs, gateTokenName(options.gateToken)), '', 'utf8')
+  }
   if (__createOnlyMoveHooks?.afterReplayableGate) await __createOnlyMoveHooks.afterReplayableGate(toDirAbs)
+  const removeGateToken = async (): Promise<void> => {
+    if (options.gateToken) await fs.rm(path.join(toDirAbs, gateTokenName(options.gateToken)), { force: true })
+  }
   const moved: string[] = []
   // Roll back every landed entry create-only: an external writer that
   // re-used a source path during rollback keeps its file — the moved
@@ -284,13 +377,32 @@ export async function executeReplayableFolderMove(
         rollbackFailed = true
       }
     }
+    await removeGateToken()
     await pruneEmptyDirectories(toDirAbs)
     return rollbackFailed
   }
   try {
+    // Recreate the journaled directory structure first (this is what
+    // preserves nested EMPTY directories a files-only replay would
+    // drop). Parents of files are a subset, created recursively.
+    for (const dirRel of directories) {
+      const dirAbs = path.join(toDirAbs, dirRel)
+      if (options.vaultRoot && !await isPhysicallyContained(options.vaultRoot, dirAbs)) {
+        throw new UnsupportedDirectoryMoveError(`directory path escapes the vault: ${dirRel}`)
+      }
+      await fs.mkdir(dirAbs, { recursive: true })
+    }
     for (const entryRel of entryRels) {
       const entryFromAbs = path.join(fromDirAbs, entryRel)
       const entryToAbs = path.join(toDirAbs, entryRel)
+      // Physical containment of BOTH ends before any syscall touches
+      // them — a symlinked ancestor (planted after the journal was
+      // written) must not route the move outside the vault.
+      if (options.vaultRoot
+        && (!await isPhysicallyContained(options.vaultRoot, entryFromAbs)
+          || !await isPhysicallyContained(options.vaultRoot, entryToAbs))) {
+        throw new UnsupportedDirectoryMoveError(`entry path escapes the vault: ${entryRel}`)
+      }
       await fs.mkdir(path.dirname(entryToAbs), { recursive: true })
       await createOnlyMoveFile(entryFromAbs, entryToAbs)
       moved.push(entryRel)
@@ -305,6 +417,7 @@ export async function executeReplayableFolderMove(
         { cause: error },
       )
     }
+    if (error instanceof UnsupportedDirectoryMoveError) throw error
     if (!rollbackFailed && (error instanceof RenameDestinationOccupiedError || code === 'EEXIST' || code === 'ENOTDIR')) {
       // Clean contention: a destination path belongs to an external
       // writer and every moved entry is back at its source.
@@ -312,18 +425,24 @@ export async function executeReplayableFolderMove(
     }
     throw error
   }
-  // End-check: the destination must hold EXACTLY the journaled entries.
-  // An external writer that dropped a file inside our gate mid-move
-  // fails the whole move closed — the replayable parity of the atomic
-  // protocol's ENOTEMPTY gate check — with every entry rolled back. A
-  // non-regular entry (symlink/junction) the walk rejects is external
-  // content too and fails closed the same way.
-  let landedAtDestination: string[]
+  // End-check: the destination must hold EXACTLY the journaled file AND
+  // directory sets. An external writer that dropped a file or directory
+  // inside our gate mid-move fails the whole move closed — the
+  // replayable parity of the atomic protocol's ENOTEMPTY gate check —
+  // with every entry rolled back. A non-regular entry (symlink/junction)
+  // the walk rejects is external content too and fails closed the same
+  // way. The mover's own gate token is excluded from the file parity.
   let externalAtDestination = false
   try {
-    landedAtDestination = await listRegularFileEntries(toDirAbs)
+    const landedFiles = (await listRegularFileEntries(toDirAbs))
+      .filter((name) => !name.startsWith(GATE_TOKEN_PREFIX))
     const expectedEntries = new Set(entryRels)
-    externalAtDestination = landedAtDestination.some((entryRel) => !expectedEntries.has(entryRel))
+    if (landedFiles.some((entryRel) => !expectedEntries.has(entryRel))) externalAtDestination = true
+    const landedDirs = await listDirectoryEntries(toDirAbs)
+    const expectedDirs = new Set(directories)
+    if (landedDirs.length !== expectedDirs.size || landedDirs.some((dirRel) => !expectedDirs.has(dirRel))) {
+      externalAtDestination = true
+    }
   } catch {
     externalAtDestination = true
   }
@@ -337,6 +456,7 @@ export async function executeReplayableFolderMove(
   // External content that landed in the source during the move stays at
   // the source path (its directories prune as non-empty); the journaled
   // entries are what the move promised.
+  await removeGateToken()
   await pruneEmptyDirectories(fromDirAbs)
   await syncParentDirectoryBestEffort(toDirAbs)
   return { restored: true }
@@ -351,8 +471,9 @@ export async function executeFolderMove(
   fromDirAbs: string,
   toDirAbs: string,
   entryRels: string[],
+  options: FolderMoveExecuteOptions = {},
 ): Promise<{ restored: boolean }> {
-  if (strategy === 'replayable-move') return executeReplayableFolderMove(fromDirAbs, toDirAbs, entryRels)
+  if (strategy === 'replayable-move') return executeReplayableFolderMove(fromDirAbs, toDirAbs, entryRels, options)
   return createOnlyMoveDirectory(fromDirAbs, toDirAbs, 'atomic-rename')
 }
 
@@ -384,7 +505,8 @@ export async function createOnlyMoveDirectory(
     // (symlink/junction/special) fail closed BEFORE the gate is
     // created, so nothing needs rolling back.
     const entries = await listRegularFileEntries(fromDirAbs)
-    return executeReplayableFolderMove(fromDirAbs, toDirAbs, entries)
+    const directories = await listDirectoryEntries(fromDirAbs)
+    return executeReplayableFolderMove(fromDirAbs, toDirAbs, entries, { directories })
   }
   try {
     await fs.mkdir(toDirAbs)
