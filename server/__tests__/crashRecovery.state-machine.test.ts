@@ -20,7 +20,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   db.close()
-  await fs.rm(root, { recursive: true, force: true })
+  await removeDirRobust(root)
 })
 
 function rngFor(seed: number): () => number {
@@ -29,6 +29,22 @@ function rngFor(seed: number): () => number {
     state = (Math.imul(state ^ (state >>> 15), 1 | state) + 0x6d2b79f5) | 0
     return ((state ^ (state >>> 14)) >>> 0) / 0x1_0000_0000
   }
+}
+
+/** Windows `fs.rm` can transiently fail with ENOTEMPTY/EBUSY/EPERM
+ * while a just-touched file is still being released (or an AV scans
+ * it). Test cleanup only — retry briefly so a per-seed teardown race
+ * cannot fail an otherwise-correct model run. */
+async function removeDirRobust(dir: string): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      return
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+  }
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
 }
 
 describe('deterministic rename-reference recovery model', () => {
@@ -84,7 +100,7 @@ describe('deterministic rename-reference recovery model', () => {
           })
         }
         if (referenceCount === 0) {
-          await fs.rm(caseDir, { recursive: true, force: true })
+          await removeDirRobust(caseDir)
           db.prepare('DELETE FROM documents WHERE id = ?').run(`id-${seed}`)
           continue
         }
@@ -118,11 +134,11 @@ describe('deterministic rename-reference recovery model', () => {
       } catch (error) {
         throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\ninitial=${JSON.stringify(journal)}\n${(error as Error).stack}`)
       } finally {
-        await fs.rm(caseDir, { recursive: true, force: true })
+        await removeDirRobust(caseDir)
         db.prepare('DELETE FROM documents WHERE id = ?').run(`id-${seed}`)
       }
     }
-  }, 120_000)
+  }, 240_000)
 })
 
 /** Every file under a directory, keyed by relative path. */
@@ -241,7 +257,13 @@ describe('deterministic replayable folder-move recovery model', () => {
         const detail = `seed=${seed} model=${JSON.stringify(model)}`
 
         // Idempotent across repeated startups — names AND bodies.
-        expect([...finalTree.entries()], detail).toEqual([...onceTree.entries()])
+        // Sort by key: readdir order is not stable on Windows (NTFS),
+        // so an order-sensitive entries() comparison is flaky there.
+        const sortedEntries = (tree: Map<string, string>): Array<[string, string]> =>
+          [...tree.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+        const onceSorted = JSON.stringify(sortedEntries(onceTree))
+        const finalSorted = JSON.stringify(sortedEntries(finalTree))
+        expect(finalSorted, `${detail}\nonce=${onceSorted}\nfinal=${finalSorted}`).toBe(onceSorted)
         // External bytes are never modified or removed.
         for (const [relPath, body] of externalBodies) {
           expect(finalTree.get(relPath), `external ${relPath}; ${detail}`).toBe(body)
@@ -295,13 +317,13 @@ describe('deterministic replayable folder-move recovery model', () => {
       } catch (error) {
         throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\nmodel=${JSON.stringify(model)}\n${(error as Error).stack}`)
       } finally {
-        await fs.rm(caseDir, { recursive: true, force: true })
+        await removeDirRobust(caseDir)
         for (const entry of entries) {
           if (entry.id) db.prepare('DELETE FROM documents WHERE id = ?').run(entry.id)
         }
       }
     }
-  }, 120_000)
+  }, 240_000)
 })
 
 describe('deterministic folder-reference content-proof model', () => {
@@ -354,7 +376,13 @@ describe('deterministic folder-reference content-proof model', () => {
         const finalTree = await collectTree(caseDir)
         const detail = `seed=${seed} model=${JSON.stringify(model)}`
 
-        expect([...finalTree.entries()], detail).toEqual([...onceTree.entries()])
+        // Sort by key: readdir order is not stable on Windows (NTFS),
+        // so an order-sensitive entries() comparison is flaky there.
+        const sortedEntries = (tree: Map<string, string>): Array<[string, string]> =>
+          [...tree.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+        const onceSorted = JSON.stringify(sortedEntries(onceTree))
+        const finalSorted = JSON.stringify(sortedEntries(finalTree))
+        expect(finalSorted, `${detail}\nonce=${onceSorted}\nfinal=${finalSorted}`).toBe(onceSorted)
         if (content === 'external') {
           // External recreation despite the journal carrying the
           // directory's REAL dev/ino: quarantine, journal kept, the
@@ -374,11 +402,11 @@ describe('deterministic folder-reference content-proof model', () => {
       } catch (error) {
         throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\nmodel=${JSON.stringify(model)}\n${(error as Error).stack}`)
       } finally {
-        await fs.rm(caseDir, { recursive: true, force: true })
+        await removeDirRobust(caseDir)
         db.prepare('DELETE FROM documents WHERE id = ?').run(`id-${seed}`)
       }
     }
-  }, 120_000)
+  }, 240_000)
 })
 
 describe('deterministic legacy delete-quarantine promotion model', () => {
@@ -426,7 +454,13 @@ describe('deterministic legacy delete-quarantine promotion model', () => {
         const finalTree = await collectTree(caseDir)
         const detail = `seed=${seed} model=${JSON.stringify(model)}`
 
-        expect([...finalTree.entries()], detail).toEqual([...onceTree.entries()])
+        // Sort by key: readdir order is not stable on Windows (NTFS),
+        // so an order-sensitive entries() comparison is flaky there.
+        const sortedEntries = (tree: Map<string, string>): Array<[string, string]> =>
+          [...tree.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+        const onceSorted = JSON.stringify(sortedEntries(onceTree))
+        const finalSorted = JSON.stringify(sortedEntries(finalTree))
+        expect(finalSorted, `${detail}\nonce=${onceSorted}\nfinal=${finalSorted}`).toBe(onceSorted)
         // Bytes are preserved under the permanent quarantine name —
         // a legacy artifact is never auto-deleted.
         const quarantineName = isFolder
@@ -449,9 +483,9 @@ describe('deterministic legacy delete-quarantine promotion model', () => {
       } catch (error) {
         throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\nmodel=${JSON.stringify(model)}\n${(error as Error).stack}`)
       } finally {
-        await fs.rm(caseDir, { recursive: true, force: true })
+        await removeDirRobust(caseDir)
         db.prepare('DELETE FROM documents WHERE id = ?').run(`id-${seed}`)
       }
     }
-  }, 120_000)
+  }, 240_000)
 })

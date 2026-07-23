@@ -2065,42 +2065,45 @@ export async function recoverInterruptedOperations(
     // staging: the inner staging must restore before the companion move
     // can complete, which must complete before the reference journal can
     // finish. A fixed two-pass scan cannot close arbitrarily deep chains
-    // in one startup. So: loop until a pass makes NO progress (nothing
-    // resolved), capped by the number of authoritative artifacts present
-    // at startup (each pass resolves at least one dependency layer, so
-    // this is a tight bound) plus a hard ceiling for safety.
-    let authoritativeArtifacts = 0
-    await walkDirectories(contentDir, async (_dir, entries) => {
-      for (const entry of entries) {
-        if (!entry.isFile()) {
-          if (entry.isDirectory() && DELETE_INFLIGHT_RE.test(entry.name)) authoritativeArtifacts += 1
-          continue
-        }
-        if (JOURNAL_RE.test(entry.name) || DELETE_MANIFEST_RE.test(entry.name)
-          || LEGACY_QUARANTINE_MANIFEST_RE.test(entry.name) || RENAME_RE.test(entry.name)
-          || STAGED_RE.test(entry.name) || SAVE_RE.test(entry.name) || REMOVE_RE.test(entry.name)) {
-          authoritativeArtifacts += 1
-        }
-      }
-    })
-    // Each pass resolves at least one dependency layer; +4 gives
-    // headroom for the deepest plausible chain (inner staging →
-    // companion move → reference journal) plus the final no-progress
-    // detection pass. The hard ceiling guards against any unforeseen
-    // cycle.
-    const maxPasses = Math.min(authoritativeArtifacts + 4, 64)
-    // Progress = a NEW DISTINCT action. A retained (quarantined)
-    // journal is re-noted every pass but produces the SAME action, so
-    // it is not progress — counting raw action count would loop to
-    // maxPasses whenever any journal is retained. Stop once a whole
-    // pass adds nothing new (a fixed point).
+    // in one startup. So: loop until a pass makes NO progress, capped by
+    // the number of authoritative artifacts present at startup (each
+    // pass resolves at least one dependency layer — a tight bound) plus
+    // a hard ceiling for safety.
+    //
+    // Progress = a NEW DISTINCT action. A retained (quarantined) journal
+    // is re-noted every pass but produces the SAME action, so it is not
+    // progress — counting raw action count would loop to maxPasses
+    // whenever any journal is retained. Stop once a whole pass adds
+    // nothing new (a fixed point).
+    //
+    // The artifact count is folded into the FIRST pass's walk (no
+    // separate pre-scan): on a slow filesystem the extra walk over
+    // thousands of tiny per-seed vaults was the dominant cost.
     const seenActions = new Set<string>()
+    let maxPasses = 16
     for (let pass = 0; pass < maxPasses; pass++) {
       inodeMap = null
       const before = actions.length
+      let authoritativeArtifacts = 0
       await walkDirectories(contentDir, async (dir, entries) => {
+        if (pass === 0) {
+          for (const entry of entries) {
+            if (!entry.isFile()) {
+              if (entry.isDirectory() && DELETE_INFLIGHT_RE.test(entry.name)) authoritativeArtifacts += 1
+              continue
+            }
+            if (JOURNAL_RE.test(entry.name) || DELETE_MANIFEST_RE.test(entry.name)
+              || LEGACY_QUARANTINE_MANIFEST_RE.test(entry.name) || RENAME_RE.test(entry.name)
+              || STAGED_RE.test(entry.name) || SAVE_RE.test(entry.name) || REMOVE_RE.test(entry.name)) {
+              authoritativeArtifacts += 1
+            }
+          }
+        }
         await recoverDirectory(contentDir, db, dir, entries, getInodeMap, note)
       })
+      // +4 gives headroom for the deepest plausible chain plus the
+      // final no-progress detection pass; hard ceiling guards cycles.
+      if (pass === 0) maxPasses = Math.min(Math.max(maxPasses, authoritativeArtifacts + 4), 64)
       let progressed = false
       for (let i = before; i < actions.length; i++) {
         const key = JSON.stringify(actions[i])
