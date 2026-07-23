@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
@@ -10,10 +11,10 @@ import { sha256Hex, sha256HexBuffer } from '../atomicTextWrite'
 import { recoverInterruptedOperations } from '../crashRecovery'
 import { prepareRenameReferenceJournal } from '../renameReferenceJournal'
 import { serializeMetadataSnapshot } from '../folderMoveTransaction'
-import { FOLDER_MOVE_STRATEGIES, platformDirectoryMoveStrategy } from '../documentFileLifecycle'
+import { __setCreateOnlyMoveHooksForTesting, FOLDER_MOVE_STRATEGIES, platformDirectoryMoveStrategy } from '../documentFileLifecycle'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
-const TSX_CLI = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs')
+const TSX_CLI = fileURLToPath(import.meta.resolve('tsx/cli'))
 const CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'commit-crash-child.ts')
 const RENAME_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'rename-crash-child.ts')
 const RENAME_METADATA_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'rename-metadata-crash-child.ts')
@@ -34,6 +35,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  __setCreateOnlyMoveHooksForTesting(null)
   db.close()
   await fs.rm(vault, { recursive: true, force: true })
 })
@@ -963,8 +965,8 @@ describe('real subprocess crash + startup recovery', () => {
   it('cleans the stale journal when the replayable folder move was killed right after its mkdir gate', async () => {
     // The real HTTP route killed at its first seam: the child drove
     // PATCH /api/folders/proj, the route wrote the REAL durable
-    // journal (schema v2 — every physical entry with its content
-    // hash, the runtime strategy), created the destination gate, and
+    // journal (schema v3 — every physical entry with its content hash
+    // and exact bigint dev/ino identity), created the destination gate, and
     // died before the first file moved. The gate is provably ours
     // (file-free) — recovery prunes it and removes the stale journal.
     const dbPath = path.join(vault, 'metadata.sqlite')
@@ -981,14 +983,17 @@ describe('real subprocess crash + startup recovery', () => {
     // strategy, entries cover the attachment too, identities ride only
     // on the markdown documents.
     const journal = await readFolderMoveJournal()
-    expect(journal.version).toBe(2)
+    expect(journal.version).toBe(3)
     expect(journal.op).toBe('folder-rename')
     expect(journal.strategy).toBe('replayable-move')
     expect(journal.srcRel).toBe('proj')
     expect(journal.destRel).toBe('ren')
+    expect(journal.gateToken).toMatch(/^[0-9a-f]{64}$/)
     expect(journal.entries.map((entry: any) => entry.relativeFilePath).sort()).toEqual(['a.md', 'image.bin', 'nested/b.md'])
     for (const entry of journal.entries) {
       expect(entry.sourceHash).toMatch(/^[0-9a-f]{64}$/)
+      expect(entry.sourceDev).toMatch(/^\d+$/)
+      expect(entry.sourceIno).toMatch(/^[1-9]\d*$/)
       if (entry.relativeFilePath.endsWith('.md')) {
         expect(typeof entry.documentId).toBe('string')
         expect(entry.documentId.length).toBeGreaterThan(0)
@@ -1007,8 +1012,11 @@ describe('real subprocess crash + startup recovery', () => {
     expect(crashState).toContain('proj')
     expect(crashState).toContain('ren')
     const renContents = await fs.readdir(path.join(vault, 'ren'))
-    expect(renContents.length).toBeGreaterThan(0)
-    expect(renContents.every((name) => name.startsWith('.docus-folder-gate-'))).toBe(true)
+    const journalName = crashState.find((name) => name.startsWith('.proj.docus-journal-'))!
+    const transactionId = journalName.slice(journalName.indexOf('.docus-journal-') + '.docus-journal-'.length)
+    expect(renContents).toEqual([`.docus-folder-gate-${transactionId}`])
+    expect(await fs.readFile(path.join(vault, 'ren', renContents[0]!), 'utf8')).toBe(journal.gateToken)
+    expect(journal.gateToken).not.toContain(transactionId)
     expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
     expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe('# b\n')
 
@@ -1022,6 +1030,31 @@ describe('real subprocess crash + startup recovery', () => {
       expect(await fs.readFile(path.join(vault, 'proj/image.bin'))).toEqual(IMAGE_BYTES)
       expect(getDocumentMetadata(persistedDb, 'proj/a')).not.toBeNull()
       expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
+    } finally { persistedDb.close() }
+  })
+
+  it('does not trust a predictable-name gate whose secret bytes were replaced', async () => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seedFolderMoveVault()
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: 'gate',
+    }, FOLDER_MOVE_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady('gate'), 'gate')
+
+    const journalName = (await namesIn()).find((name) => name.startsWith('.proj.docus-journal-'))!
+    const transactionId = journalName.slice(journalName.indexOf('.docus-journal-') + '.docus-journal-'.length)
+    const marker = path.join(vault, 'ren', `.docus-folder-gate-${transactionId}`)
+    await fs.writeFile(marker, 'forged-but-correct-name', 'utf8')
+
+    const persistedDb = new Database(dbPath)
+    try {
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(report.actions.some((action) => action.action === 'quarantined' && action.detail?.includes('gate token'))).toBe(true)
+      expect(await fs.readFile(marker, 'utf8')).toBe('forged-but-correct-name')
+      expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
+      expect(await namesIn()).toContain(journalName)
     } finally { persistedDb.close() }
   })
 
@@ -1080,6 +1113,100 @@ describe('real subprocess crash + startup recovery', () => {
       await recoverInterruptedOperations(vault, persistedDb)
       expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
       expect(getDocumentMetadata(persistedDb, 'ren/a')?.id).toBe(aId)
+    } finally { persistedDb.close() }
+  })
+
+  it('recovers a hard kill after shared final parity but before metadata', async () => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seedFolderMoveVault()
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: 'parity',
+    }, FOLDER_MOVE_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady('parity'), 'parity')
+
+    const journal = await readFolderMoveJournal()
+    expect(journal.version).toBe(3)
+    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
+    expect(await fs.readFile(path.join(vault, 'ren/image.bin'))).toEqual(IMAGE_BYTES)
+    expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe('# b\n')
+    expect(await namesIn()).not.toContain('proj')
+    const marker = (await fs.readdir(path.join(vault, 'ren'))).find((name) => name.startsWith('.docus-folder-gate-'))
+    expect(marker).toBeDefined()
+    expect(await fs.readFile(path.join(vault, 'ren', marker!), 'utf8')).toBe(journal.gateToken)
+
+    const persistedDb = new Database(dbPath)
+    try {
+      // The READY seam is immediately before metadata: identities still
+      // carry the source prefix even though exact physical parity passed.
+      expect(getDocumentMetadata(persistedDb, 'proj/a')).not.toBeNull()
+      expect(getDocumentMetadata(persistedDb, 'ren/a')).toBeNull()
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(report.actions.some((action) => action.action === 'completed-rename')).toBe(true)
+      expect(getDocumentMetadata(persistedDb, 'ren/a')).not.toBeNull()
+      expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
+      expect((await fs.readdir(path.join(vault, 'ren'))).some((name) => name.startsWith('.docus-folder-gate-'))).toBe(false)
+    } finally { persistedDb.close() }
+  })
+
+  it('quarantines identical replacement bytes that do not preserve the landed hard-link identity', async () => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seedFolderMoveVault()
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: 'entry:a.md',
+    }, FOLDER_MOVE_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady('entry:a.md'), 'entry:a.md')
+
+    // Pre-create a distinct inode before unlinking the owned landing, then
+    // publish it at the same pathname with byte-identical content. A hash
+    // alone cannot distinguish this external generation.
+    const replacement = path.join(vault, 'same-bytes-replacement')
+    await fs.writeFile(replacement, '# a\n', 'utf8')
+    const originalIdentity = await fs.stat(path.join(vault, 'ren/a.md'), { bigint: true })
+    const replacementIdentity = await fs.stat(replacement, { bigint: true })
+    expect(`${replacementIdentity.dev}:${replacementIdentity.ino}`).not.toBe(`${originalIdentity.dev}:${originalIdentity.ino}`)
+    await fs.rm(path.join(vault, 'ren/a.md'))
+    await fs.rename(replacement, path.join(vault, 'ren/a.md'))
+
+    const persistedDb = new Database(dbPath)
+    try {
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(report.actions.some((action) => action.action === 'quarantined' && /identity|generation/.test(action.detail ?? ''))).toBe(true)
+      expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
+      expect(await fs.readFile(path.join(vault, 'proj/image.bin'))).toEqual(IMAGE_BYTES)
+      expect((await namesIn()).some((name) => name.startsWith('.proj.docus-journal-'))).toBe(true)
+      expect(getDocumentMetadata(persistedDb, 'ren/a')).toBeNull()
+    } finally { persistedDb.close() }
+  })
+
+  it('runs shared exact parity again after recovery replay and before metadata', async () => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seedFolderMoveVault()
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: 'entry:a.md',
+    }, FOLDER_MOVE_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady('entry:a.md'), 'entry:a.md')
+    __setCreateOnlyMoveHooksForTesting({
+      afterReplayableMovedEntry: async (entryRel) => {
+        if (entryRel === 'nested/b.md') {
+          await fs.writeFile(path.join(vault, 'ren', 'external-after-replay.md'), '# external\n', 'utf8')
+        }
+      },
+    })
+
+    const persistedDb = new Database(dbPath)
+    try {
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(report.actions.some((action) => action.action === 'quarantined' && action.detail?.includes('parity'))).toBe(true)
+      expect(await fs.readFile(path.join(vault, 'ren/external-after-replay.md'), 'utf8')).toBe('# external\n')
+      expect((await namesIn()).some((name) => name.startsWith('.proj.docus-journal-'))).toBe(true)
+      expect(getDocumentMetadata(persistedDb, 'ren/a')).toBeNull()
+      expect(getDocumentMetadata(persistedDb, 'proj/a')).not.toBeNull()
     } finally { persistedDb.close() }
   })
 })
@@ -1214,6 +1341,33 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
       expect((await namesIn()).some((name) => name.includes('.docus-quarantine-'))).toBe(false)
       await recoverInterruptedOperations(vault, persistedDb)
       expect(getDocumentMetadata(persistedDb, 'gone/a')?.id).toBe('gone-a-id')
+    } finally { persistedDb.close() }
+  })
+
+  it('preserves a fresh live DB owner instead of restoring a stale delete snapshot over it', async () => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seed({ 'gone/a.md': A_RAW })
+    await fs.writeFile(path.join(vault, 'gone', 'image.bin'), IMAGE_BYTES)
+    const setupDb = new Database(dbPath)
+    applyMigrations(setupDb)
+    saveDocumentMetadata(setupDb, { id: 'gone-old-id', path: 'gone/a', title: 'Old', updatedAt: 1 })
+    setupDb.close()
+
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: 'entry:a.md',
+    }, FOLDER_DELETE_ROLLBACK_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady('entry:a.md'), 'entry:a.md')
+
+    const persistedDb = new Database(dbPath)
+    try {
+      saveDocumentMetadata(persistedDb, { id: 'fresh-owner-id', path: 'gone/a', title: 'Fresh', updatedAt: 2 })
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(report.actions.some((action) => action.action === 'quarantined' && action.detail?.includes('metadata ownership'))).toBe(true)
+      expect(getDocumentMetadata(persistedDb, 'gone/a')?.id).toBe('fresh-owner-id')
+      expect(getDocumentMetadata(persistedDb, 'gone/a')?.title).toBe('Fresh')
+      expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(true)
     } finally { persistedDb.close() }
   })
 
@@ -2005,6 +2159,60 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
     expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe(A_RAW)
   })
 
+  it('quarantines a v2 journal that omitted its directory manifest', async () => {
+    // v2 made directories optional even though replay can only prove an
+    // exact tree when every nested/empty directory is declared. Missing
+    // is not equivalent to an empty manifest; legacy ambiguity fails
+    // closed instead of silently accepting an open directory set.
+    await seed({ 'ren/a.md': A_RAW, 'proj/nested/b.md': B_RAW })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
+      version: 2, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable-move',
+      sourceDev: 7, sourceIno: 11,
+      entries: [
+        { relativeFilePath: 'a.md', sourceHash: sha256Hex(A_RAW), documentId: 'ren-a-id', documentPath: 'proj/a' },
+        { relativeFilePath: 'nested/b.md', sourceHash: sha256Hex(B_RAW), documentId: 'ren-b-id', documentPath: 'proj/nested/b' },
+      ],
+      metadataDisposition: { kind: 'prefix-move' },
+    }), 'utf8')
+    saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
+    saveDocumentMetadata(db, { id: 'ren-b-id', path: 'proj/nested/b', title: 'B', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((action) => action.action === 'quarantined' && action.detail?.includes('unrecognized'))).toBe(true)
+    expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe(B_RAW)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
+    expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
+  })
+
+  it.each([
+    ['missing', undefined, 'a.md'],
+    ['unsorted', ['nested/deeper', 'nested'], 'nested/deeper/a.md'],
+    ['not parent-closed', ['nested/deeper'], 'nested/deeper/a.md'],
+    ['not closed over file parents', [], 'nested/a.md'],
+  ])('quarantines a v3 directory manifest that is %s', async (_case, directories, relativeFilePath) => {
+    const source = path.join(vault, 'proj', relativeFilePath)
+    await fs.mkdir(path.dirname(source), { recursive: true })
+    await fs.writeFile(source, A_RAW, 'utf8')
+    const stat = await fs.stat(source, { bigint: true })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
+      version: 3, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable-move',
+      sourceDev: '1', sourceIno: '1', gateToken: 'a'.repeat(64),
+      entries: [{
+        relativeFilePath, sourceHash: sha256Hex(A_RAW),
+        sourceDev: stat.dev.toString(), sourceIno: stat.ino.toString(),
+      }],
+      ...(directories === undefined ? {} : { directories }),
+      metadataDisposition: { kind: 'prefix-move' },
+    }), 'utf8')
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((action) => action.action === 'quarantined' && action.detail?.includes('unrecognized'))).toBe(true)
+    expect(await fs.readFile(source, 'utf8')).toBe(A_RAW)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
+  })
+
   it('parses journals whose dev/ino exceed Number.MAX_SAFE_INTEGER (Windows large file IDs)', async () => {
     // NTFS volumes with large file records and ReFS/Dev Drive report
     // file IDs beyond 2**53; JSON round-trips them as finite doubles.
@@ -2289,6 +2497,35 @@ describe('recoverInterruptedOperations (folder-move snapshot-restore journal)', 
     expect(await fs.readFile(path.join(vault, 'gone/image.bin'))).toEqual(IMAGE_BYTES)
     expect(getDocumentMetadata(db, 'gone/a')?.id).toBe('gone-a-id')
     expect(await namesIn()).not.toContain(STAGED)
+  })
+
+  it('rejects a snapshot document that has no corresponding physical Markdown entry', async () => {
+    await fs.mkdir(path.join(vault, STAGED), { recursive: true })
+    await fs.writeFile(path.join(vault, STAGED, 'a.md'), A_RAW, 'utf8')
+    await fs.writeFile(path.join(vault, `.${STAGED}.docus-journal-cccc`), JSON.stringify({
+      version: 2, op: 'folder-move', srcRel: STAGED, destRel: 'gone', strategy: 'replayable-move',
+      sourceDev: 7, sourceIno: 11,
+      entries: [{
+        relativeFilePath: 'a.md', sourceHash: sha256Hex(A_RAW),
+        documentId: 'gone-a-id', documentPath: 'gone/a',
+      }],
+      directories: [],
+      metadataDisposition: {
+        kind: 'snapshot-restore',
+        snapshot: {
+          paths: ['gone/ghost'], documentIds: ['ghost-id'], tagIds: [], preexistingTagIds: [],
+          documents: [{ id: 'ghost-id', path: 'gone/ghost', title: 'Ghost', summary: '', created_at: 1, updated_at: 1 }],
+          tags: [], documentTags: [], embeddings: [], migrations: [],
+        },
+      },
+    }), 'utf8')
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((action) => action.action === 'quarantined' && action.detail?.includes('unrecognized'))).toBe(true)
+    expect(getDocumentMetadata(db, 'gone/ghost')).toBeNull()
+    expect(await fs.readFile(path.join(vault, STAGED, 'a.md'), 'utf8')).toBe(A_RAW)
+    expect(await namesIn()).toContain(`.${STAGED}.docus-journal-cccc`)
   })
 
   it('refuses a forged snapshot that targets metadata outside the restored folder', async () => {

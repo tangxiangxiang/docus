@@ -20,7 +20,7 @@ import {
   withDocumentWriteLock,
 } from '../documentWriteLock.js'
 import { __setFolderRaceHooksForTesting } from '../routes/folders.js'
-import { __setDirectoryMoveStrategyOverrideForTesting } from '../documentFileLifecycle.js'
+import { __setCreateOnlyMoveHooksForTesting, __setDirectoryMoveStrategyOverrideForTesting } from '../documentFileLifecycle.js'
 import { __setPostRenameRaceHooksForTesting } from '../routes/posts.js'
 
 let sandbox: string
@@ -42,6 +42,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  __setCreateOnlyMoveHooksForTesting(null)
+  __setDirectoryMoveStrategyOverrideForTesting(null)
   __setMetadataDbForTesting(null)
   await fs.rm(sandbox, { recursive: true, force: true })
   setContentDir(originalContentDir)
@@ -799,6 +801,33 @@ describe('round 5: rename destinations are create-only (external writer wins)', 
     } finally {
       __setFolderRaceHooksForTesting(null)
     }
+  })
+
+  it('does not commit metadata when final exact parity sees changed landed bytes', async () => {
+    await fs.mkdir(path.join(sandbox, 'notes'))
+    await fs.writeFile(path.join(sandbox, 'notes', 'a.md'), '# original\n', 'utf8')
+    saveDocumentMetadata(db, { id: 'parity-id', path: 'notes/a', title: 'A', updatedAt: 1 })
+    __setDirectoryMoveStrategyOverrideForTesting('replayable-move')
+    __setCreateOnlyMoveHooksForTesting({
+      afterReplayableMovedEntry: async (entryRel) => {
+        if (entryRel === 'a.md') {
+          // Same declared pathname, different bytes, after link landing
+          // and before the mover's final parity/metadata boundary.
+          await fs.writeFile(path.join(sandbox, 'renamed', 'a.md'), '# external edit\n', 'utf8')
+        }
+      },
+    })
+
+    const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ newPath: 'renamed' }),
+    }))
+
+    expect(response.status).toBe(409)
+    expect(getDocumentMetadata(db, 'notes/a')?.id).toBe('parity-id')
+    expect(getDocumentMetadata(db, 'renamed/a')).toBeNull()
+    expect(await fs.readFile(path.join(sandbox, 'notes', 'a.md'), 'utf8')).toBe('# external edit\n')
+    await expect(fs.stat(path.join(sandbox, 'renamed', 'a.md'))).rejects.toThrow()
   })
 })
 

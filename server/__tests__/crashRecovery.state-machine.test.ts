@@ -160,7 +160,7 @@ async function collectTree(dir: string): Promise<Map<string, string>> {
 }
 
 describe('deterministic replayable folder-move recovery model', () => {
-  it('reconciles every split crash state and never touches external bytes for 500 seeds', async () => {
+  it('reconciles every split crash state and never touches external bytes for 1000 Round-9 seeds', async () => {
     // The Windows protocol can crash with the tree SPLIT between source
     // and destination in every combination; the journal's per-entry
     // hashes must reconcile all of them: complete forward when every
@@ -168,7 +168,7 @@ describe('deterministic replayable folder-move recovery model', () => {
     // started, quarantine on foreign content — never losing our bytes,
     // never touching external ones, idempotent across restarts.
     const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
-    const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 500 }, (_, index) => index + 1)
+    const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 1000 }, (_, index) => index + 1)
     for (const seed of seeds) {
       const random = rngFor(seed ^ 0x5eed11)
       const prefix = `fm-${seed.toString(16)}`

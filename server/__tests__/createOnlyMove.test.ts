@@ -16,6 +16,7 @@ import {
   UnsupportedDirectoryMoveError,
   createOnlyMoveDirectory,
   createOnlyMoveFile,
+  executeReplayableFolderMove,
   renameDocumentWithMetadata,
   __setCreateOnlyMoveHooksForTesting,
 } from '../documentFileLifecycle'
@@ -303,6 +304,98 @@ describe('createOnlyMoveDirectory (replayable per-file protocol)', () => {
 
     expect(await fs.stat(path.join(dir, 'dest')).then(() => true, () => false)).toBe(false)
     expect(await fs.readFile(path.join(dir, 'src', 'a.md'), 'utf8')).toBe('# a\n')
+  })
+
+  it('creates the unpredictable gate token O_EXCL and fsyncs it plus its parent', async () => {
+    await fs.mkdir(path.join(dir, 'src'))
+    await fs.writeFile(path.join(dir, 'src', 'a.md'), '# a\n', 'utf8')
+    const secret = 'a'.repeat(64)
+    const realOpen = fs.open.bind(fs)
+    const opened: Array<{ target: string; flags: string | number; sync: ReturnType<typeof vi.spyOn> }> = []
+    const open = vi.spyOn(fs, 'open').mockImplementation(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await realOpen(...args)
+      const sync = vi.spyOn(handle, 'sync')
+      opened.push({ target: String(args[0]), flags: args[1], sync })
+      return handle
+    })
+    __setCreateOnlyMoveHooksForTesting({
+      afterReplayableGate: async (gateDir) => {
+        expect(await fs.readFile(path.join(gateDir, '.docus-folder-gate-durability-id'), 'utf8')).toBe(secret)
+      },
+    })
+    try {
+      await executeReplayableFolderMove(
+        path.join(dir, 'src'), path.join(dir, 'dest'), ['a.md'],
+        { gateToken: 'durability-id', gateTokenValue: secret, vaultRoot: dir } as any,
+      )
+      const markerOpen = opened.find((item) => path.basename(item.target) === '.docus-folder-gate-durability-id')
+      expect(markerOpen?.flags).toBe('wx')
+      expect(markerOpen?.sync).toHaveBeenCalled()
+      const parentSync = opened.find((item) => path.resolve(item.target) === path.join(dir, 'dest') && item.flags === 'r')
+      expect(parentSync?.sync).toHaveBeenCalled()
+    } finally { open.mockRestore() }
+  })
+
+  it('contains the destination gate before creating its token', async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-move-outside-'))
+    try {
+      await fs.mkdir(path.join(dir, 'src'))
+      await fs.writeFile(path.join(dir, 'src', 'a.md'), '# a\n', 'utf8')
+      await fs.symlink(outside, path.join(dir, 'escape'), process.platform === 'win32' ? 'junction' : 'dir')
+      __setCreateOnlyMoveHooksForTesting({
+        afterReplayableGate: async (gateDir) => {
+          // If this hook fires, mkdir/token creation already escaped the
+          // vault. Leave durable evidence outside so cleanup cannot make
+          // the violation look harmless.
+          await fs.writeFile(path.join(gateDir, 'outside-sentinel'), 'escaped', 'utf8')
+        },
+      })
+
+      await expect(executeReplayableFolderMove(
+        path.join(dir, 'src'),
+        path.join(dir, 'escape', 'dest'),
+        ['a.md'],
+        { gateToken: 'gate-id', vaultRoot: dir },
+      )).rejects.toBeInstanceOf(UnsupportedDirectoryMoveError)
+
+      expect(await fs.stat(path.join(outside, 'dest')).then(() => true, () => false)).toBe(false)
+      expect(await fs.readFile(path.join(dir, 'src', 'a.md'), 'utf8')).toBe('# a\n')
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('re-checks rollback containment immediately before each reverse syscall', async () => {
+    if (process.platform === 'win32') return // file symlink creation requires elevation; junction containment is covered above
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-move-rollback-outside-'))
+    try {
+      await fs.mkdir(path.join(dir, 'src', 'nested'), { recursive: true })
+      await fs.writeFile(path.join(dir, 'src', 'nested', 'a.md'), '# ours\n', 'utf8')
+      __setCreateOnlyMoveHooksForTesting({
+        afterReplayableMovedEntry: async (entryRel) => {
+          if (entryRel !== 'nested/a.md') return
+          // The forward move emptied src/nested. Replace that directory
+          // with an escape and force final parity to roll the entry back.
+          await fs.rmdir(path.join(dir, 'src', 'nested'))
+          await fs.symlink(outside, path.join(dir, 'src', 'nested'), 'dir')
+          await fs.writeFile(path.join(dir, 'dest', 'external.md'), '# external\n', 'utf8')
+        },
+      })
+
+      await expect(executeReplayableFolderMove(
+        path.join(dir, 'src'),
+        path.join(dir, 'dest'),
+        ['nested/a.md'],
+        { directories: ['nested'], gateToken: 'rollback-id', vaultRoot: dir },
+      )).rejects.toBeInstanceOf(UnsupportedDirectoryMoveError)
+
+      // The reverse link must never follow src/nested into `outside`.
+      expect(await fs.stat(path.join(outside, 'a.md')).then(() => true, () => false)).toBe(false)
+      expect(await fs.readFile(path.join(dir, 'dest', 'nested', 'a.md'), 'utf8')).toBe('# ours\n')
+      expect(await fs.readFile(path.join(dir, 'dest', 'external.md'), 'utf8')).toBe('# external\n')
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true })
+    }
   })
 })
 

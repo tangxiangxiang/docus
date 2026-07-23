@@ -8,8 +8,8 @@
 // hand-copied here — it is the route's own artifact.
 //
 // Env: DOCUS_FOLDER_VAULT, DOCUS_FOLDER_DB (sqlite path),
-//      DOCUS_FOLDER_CRASH_POINT ('gate' | 'entry:<relativeFilePath>',
-//      e.g. 'entry:a.md'). The vault must hold proj/a.md,
+//      DOCUS_FOLDER_CRASH_POINT ('gate' | 'entry:<relativeFilePath>' |
+//      'parity', e.g. 'entry:a.md'). The vault must hold proj/a.md,
 //      proj/image.bin and proj/nested/b.md.
 import Database from 'better-sqlite3'
 
@@ -44,7 +44,8 @@ __setCreateOnlyMoveHooksForTesting({
   afterReplayableMovedEntry: point.startsWith('entry:')
     ? (entryRel) => { if (entryRel === point.slice('entry:'.length)) return readyAndWait(`entry:${entryRel}`) }
     : undefined,
-})
+  afterReplayableFinalParity: point === 'parity' ? () => readyAndWait('parity') : undefined,
+} as any)
 
 const response = await app.fetch(new Request('http://localhost/api/folders/proj', {
   method: 'PATCH',
