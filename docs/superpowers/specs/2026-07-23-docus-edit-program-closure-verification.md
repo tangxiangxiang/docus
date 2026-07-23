@@ -120,3 +120,63 @@ Draft Store E2E 38; app E2E 22; vault debris scan clean; zero mutation markers.
 This is verification evidence, NOT a new seal: the program verdict stays
 `Reopened / fixes implemented; fresh closure verification pending` until the
 reviewer confirms the closure round.
+
+## Round-7 remediation (source-composition review) and verification
+
+Production commits: `bafe32e` (fix), `9b9c2ae` (tests).
+
+The reviewer's source-composition audit of the round-6 tree found five issues;
+all are fixed in `bafe32e` with mutation-verified tests (M18–M25):
+
+1. **Strategy schema drift (P0).** The route persisted `strategy:
+   'replayable-move'` / `'atomic-rename'` (the runtime enum), while the
+   recovery parser only accepted `'replayable'` / `'atomic'` — every real
+   folder-rename journal would have been rejected as unrecognized after a
+   crash. Both sides now share one `FolderMoveJournalStrategy` type
+   (`server/documentFileLifecycle.ts`); the parser accepts the canonical
+   values and normalizes the legacy short spellings; a tying test asserts the
+   parser accepts every value `platformDirectoryMoveStrategy` can emit.
+2. **Journal covers every physical file (P1).** `listPhysicalMoveEntries`
+   enumerates every regular file (markdown AND attachments, buffer-hashed
+   with `sha256HexBuffer`), with `documentId`/`documentPath` attached only to
+   markdown documents; recovery replays `relativeFilePath` verbatim and never
+   appends `.md`. Empty trees carry `emptyTree: true` with `entries: []` and a
+   dedicated recovery path (stale gate prune vs. completed-forward) instead of
+   an unparseable empty entries array.
+3. **Every replayable reverse move is journaled (P1).** Rename rollback
+   durably flips the main journal's direction (srcRel↔destRel) BEFORE the
+   first reverse file moves, so a mid-rollback crash replays to completion
+   instead of stranding a split tree no journal describes. Reference-recovery
+   rollback and folder-delete rollback each write their own folder-move
+   journal first (delete rollback persists the metadata snapshot, so recovery
+   re-installs the full graph); the delete-inflight orphan rule stands down
+   while a companion journal exists. Real SIGKILL crash children cover:
+   rollback after the first file, mid-rollback, after-all-files-before-
+   metadata, delete-rollback mid-move, and recovery itself killed mid-replay.
+4. **Self-reference generation proof (P1).** `folderGenerationMatches` now
+   looks up an internal backlink document's after-hash by its DESTINATION
+   identity path (`destRel + suffix`), not the source path, so an
+   already-rewritten internal document is recognized as ours instead of being
+   quarantined as an external generation with its identity detached.
+5. **Mixed hash coverage rejected (P2).** A folder-reference journal with
+   some identities hashed and some not no longer parses — a stripped hash can
+   no longer silently downgrade the whole tree to the weak dev/ino+existence
+   proof.
+
+The crash children now drive the REAL HTTP route (`app.fetch(PATCH
+/api/folders/...)` with a test-only strategy override to force the replayable
+protocol on any platform) instead of hand-copying the journal JSON, so the
+fixture can no longer drift from production.
+
+GitHub Actions run [`29988809662`](https://github.com/tangxiangxiang/docus/actions/runs/29988809662)
+on `9b9c2ae0d665d7c9f91ef7555edfce09d74a25cd` (contains production tree
+`bafe32e`): `verify (ubuntu-latest)` success, `verify (macos-latest)` success,
+`verify (windows-latest)` success, `visual` success — the first green
+three-platform run including all round-7 fixes. Local gates at the same tree:
+typecheck clean; vitest 141 files / 2156 tests; crash bundle ×2 at 147 tests
+each; cross-platform browser E2E 20; Draft Store E2E 38; app E2E 22; vault
+debris scan clean; zero mutation markers.
+
+This is verification evidence, NOT a new seal: the program verdict stays
+`Reopened / fixes implemented; fresh closure verification pending` until the
+reviewer confirms the closure round.
