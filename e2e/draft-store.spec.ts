@@ -1,10 +1,12 @@
 import { promises as fs } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { expect, test } from '@playwright/test'
 
 const DATABASE_NAME = 'docus-draft-recovery'
 // The draft-store Playwright config serves this vault directory, so tests
 // can modify authoritative disk content directly (external-edit scenarios).
-const VAULT_DIR = '/tmp/docus-draft-e2e-vault'
+const VAULT_DIR = process.env.DOCUS_DRAFT_E2E_VAULT ?? path.join(os.tmpdir(), 'docus-draft-e2e-vault')
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')

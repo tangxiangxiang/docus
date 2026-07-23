@@ -636,15 +636,13 @@ async function executeDeleteFile(input: { path?: string }, db: DatabaseT): Promi
   const databaseSnapshot = snapshotDocumentMetadataMutation(db, [input.path])
   const reuseManifest = path.join(path.dirname(abs), `.${path.basename(abs)}.docus-delete-manifest-${randomUUID()}`)
   const persistReuseQuarantine = async (): Promise<void> => {
-    await writeDurableJournal(reuseManifest, {
-      version: 1,
-      op: 'delete-path-reuse',
-      kind: 'file',
-      path: input.path,
-      inflight: path.basename(staged),
-      quarantine: path.basename(quarantine),
-      identities: databaseSnapshot.documents.map((row) => ({ path: String(row.path), id: String(row.id) })),
-    })
+    const identities = databaseSnapshot.documents.map((row) => ({ path: String(row.path), id: String(row.id) }))
+    if (identities.length) {
+      await writeDurableJournal(reuseManifest, {
+        version: 1, op: 'delete-path-reuse', kind: 'file', path: input.path,
+        inflight: path.basename(staged), quarantine: path.basename(quarantine), identities,
+      })
+    }
     fs.renameSync(staged, quarantine)
     await syncParentDirectoryBestEffort(quarantine)
   }

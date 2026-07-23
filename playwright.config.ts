@@ -18,7 +18,7 @@ export default defineConfig({
     // mid-run so the Playwright CLI and the collected specs resolve two
     // distinct physical @playwright/test instances ("did not expect test()
     // to be called here"). Matches the draft-store config's npm exec.
-    command: 'npm exec vite -- --host 127.0.0.1 --port 4174',
+    command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4174',
     url: 'http://127.0.0.1:4174/__markdown-test?mode=reading',
     reuseExistingServer: true,
   },

@@ -40,6 +40,27 @@ async function names(): Promise<string[]> {
 }
 
 describe('createOnlyMoveFile', () => {
+  it('never overwrites an external destination when hard links are unsupported', async () => {
+    const from = path.join(dir, 'old.md')
+    const to = path.join(dir, 'new.md')
+    await fs.writeFile(from, '# ours\n', 'utf8')
+    const link = vi.spyOn(fs, 'link').mockRejectedValueOnce(Object.assign(new Error('unsupported'), { code: 'EPERM' }))
+    const realStat = fs.stat.bind(fs)
+    const stat = vi.spyOn(fs, 'stat').mockImplementationOnce(async (candidate) => {
+      expect(candidate).toBe(to)
+      await fs.writeFile(to, '# external\n', 'utf8')
+      throw Object.assign(new Error('not found at check time'), { code: 'ENOENT' })
+    }).mockImplementation(realStat)
+    try {
+      await expect(createOnlyMoveFile(from, to)).rejects.toMatchObject({ code: 'EPERM' })
+      expect(await fs.readFile(to, 'utf8')).toBe('# external\n')
+      expect(await fs.readFile(from, 'utf8')).toBe('# ours\n')
+    } finally {
+      link.mockRestore()
+      stat.mockRestore()
+    }
+  })
+
   it('reports source reuse when a non-EEXIST link failure leaves the old generation staged', async () => {
     const from = path.join(dir, 'old.md')
     const to = path.join(dir, 'new.md')

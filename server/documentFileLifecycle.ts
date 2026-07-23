@@ -81,10 +81,10 @@ export class RenameSourceReusedError extends Error {
  * "does the destination exist?" check at the route layer can never
  * protect external editors (Obsidian/vim/sync software ignore our
  * in-process locks). link(2) is its create-only counterpart. Both
- * paths are inside the vault, i.e. on one filesystem; on the rare
- * link-incapable filesystem (EPERM/EOPNOTSUPP/ENOTSUP) the move
- * degrades to a re-checked plain rename — a small check-to-rename
- * window exists only there.
+ * paths are inside the vault, i.e. on one filesystem. A link-incapable
+ * filesystem (EPERM/EOPNOTSUPP/ENOTSUP) fails closed after restoring
+ * the source: a check-then-rename fallback would reintroduce the exact
+ * external-overwrite race this primitive exists to prevent.
  */
 export async function createOnlyMoveFile(fromAbs: string, toAbs: string, preparedStagingPath?: string): Promise<void> {
   const stagedPath = preparedStagingPath ?? path.join(
@@ -98,28 +98,16 @@ export async function createOnlyMoveFile(fromAbs: string, toAbs: string, prepare
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'EPERM' || code === 'EOPNOTSUPP' || code === 'ENOTSUP') {
-      // link(2) unsupported on this filesystem: degrade to a guarded
-      // plain move (see the function comment).
-      const targetStillFree = await fs.stat(toAbs).then(() => false, () => true)
-      if (targetStillFree) {
-        try {
-          await renameWithTransientWindowsRetry(stagedPath, toAbs)
-          await syncParentDirectoryBestEffort(toAbs)
-          return
-        } catch (fallbackError) {
-          const { quarantined } = await restoreStagedGeneration(stagedPath, fromAbs)
-          if (quarantined) {
-            throw new RenameSourceReusedError(fromAbs, {
-              stagingPath: stagedPath,
-              survivingPath: 'staging',
-              destinationOccupied: false,
-            })
-          }
-          throw fallbackError
-        }
-      }
       const { quarantined } = await restoreStagedGeneration(stagedPath, fromAbs)
-      throw quarantined ? new RenameSourceReusedError(fromAbs, { stagingPath: stagedPath, survivingPath: 'staging', destinationOccupied: true }) : new RenameDestinationOccupiedError(toAbs)
+      if (quarantined) {
+        throw new RenameSourceReusedError(fromAbs, {
+          stagingPath: stagedPath,
+          survivingPath: 'staging',
+          destinationOccupied: await fs.stat(toAbs).then(() => true, () => false),
+        })
+      }
+      if (await fs.stat(toAbs).then(() => true, () => false)) throw new RenameDestinationOccupiedError(toAbs)
+      throw error
     }
     if (code === 'EEXIST') {
       // An external writer won the destination: restore the source

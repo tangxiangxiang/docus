@@ -176,6 +176,11 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       op: 'folder-rename-references',
       srcRel: srcPath,
       destRel: newPath,
+      identities: oldPaths.map((oldPath) => {
+        const identity = getDocumentMetadata(metadataDb(), oldPath)
+        if (!identity) throw new Error(`source document identity was not created: ${oldPath}`)
+        return { path: oldPath, id: identity.id }
+      }),
       references: folderReferenceSnapshots.map((snapshot) => ({
         path: snapshot.writePath,
         beforeRaw: snapshot.raw,
@@ -356,15 +361,13 @@ folderRoutes.delete('/api/folders/*', async (c) => {
   const databaseSnapshot = snapshotDocumentMetadataPrefixMutation(metadataDb(), [folderP], all)
   const reuseManifest = path.join(path.dirname(abs), `.${path.basename(abs)}.docus-delete-manifest-${randomUUID()}`)
   const persistReuseQuarantine = async (): Promise<void> => {
-    await writeDurableJournal(reuseManifest, {
-      version: 1,
-      op: 'delete-path-reuse',
-      kind: 'folder',
-      path: folderP,
-      inflight: path.basename(staged),
-      quarantine: path.basename(quarantine),
-      identities: databaseSnapshot.documents.map((row) => ({ path: String(row.path), id: String(row.id) })),
-    })
+    const identities = databaseSnapshot.documents.map((row) => ({ path: String(row.path), id: String(row.id) }))
+    if (identities.length) {
+      await writeDurableJournal(reuseManifest, {
+        version: 1, op: 'delete-path-reuse', kind: 'folder', path: folderP,
+        inflight: path.basename(staged), quarantine: path.basename(quarantine), identities,
+      })
+    }
     await fs.rename(staged, quarantine)
     await syncParentDirectoryBestEffort(quarantine)
   }

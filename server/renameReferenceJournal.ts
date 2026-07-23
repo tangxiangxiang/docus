@@ -34,6 +34,7 @@ type JournalEntry = {
   sourceHash?: string
   sourceDev?: number
   sourceIno?: number
+  identities?: Array<{ path: string; id: string }>
   references: ReferenceEntry[]
 }
 
@@ -41,6 +42,19 @@ export type PreparedRenameReferenceJournal = {
   journalPath: string
   setDirection(direction: 'roll-forward' | 'roll-back'): Promise<void>
   cleanup(): Promise<void>
+}
+
+/** Exact protocol seams for subprocess crash verification. Null in
+ * production and unreachable from requests. */
+export type RenameReferenceJournalCrashHooks = {
+  afterPreparingJournal?: () => void | Promise<void>
+  afterPayloadWrite?: (index: number, kind: 'before' | 'after') => void | Promise<void>
+  afterPhaseRewrite?: (phase: 'roll-forward' | 'roll-back' | 'cleanup') => void | Promise<void>
+  afterPayloadRemove?: (index: number) => void | Promise<void>
+}
+let __crashHooks: RenameReferenceJournalCrashHooks | null = null
+export function __setRenameReferenceJournalCrashHooksForTesting(hooks: RenameReferenceJournalCrashHooks | null): void {
+  __crashHooks = hooks
 }
 
 type PrepareRenameReferenceJournalInput = {
@@ -54,6 +68,7 @@ type PrepareRenameReferenceJournalInput = {
 } | {
   op: 'folder-rename-references'
   documentId?: never
+  identities: readonly { path: string; id: string }[]
 })
 
 export async function prepareRenameReferenceJournal(input: PrepareRenameReferenceJournalInput): Promise<PreparedRenameReferenceJournal | null> {
@@ -63,13 +78,14 @@ export async function prepareRenameReferenceJournal(input: PrepareRenameReferenc
   }
   const dir = path.dirname(input.sourceAbs)
   const base = path.basename(input.sourceAbs)
-  const journalPath = path.join(dir, `.${base}.docus-journal-${randomUUID()}`)
-  const references = input.references.map((reference) => ({
+  const transactionId = randomUUID()
+  const journalPath = path.join(dir, `.${base}.docus-journal-${transactionId}`)
+  const references = input.references.map((reference, index) => ({
     path: reference.path,
     beforeHash: sha256Hex(reference.beforeRaw),
     afterHash: sha256Hex(reference.afterRaw),
-    beforePayload: `.${base}.docus-ref-before-${randomUUID()}`,
-    afterPayload: `.${base}.docus-ref-after-${randomUUID()}`,
+    beforePayload: `.${base}.docus-ref-before-${transactionId}-${index}`,
+    afterPayload: `.${base}.docus-ref-after-${transactionId}-${index}`,
   }))
   const payloadPaths = references.flatMap((reference) => [
     path.join(dir, reference.beforePayload),
@@ -87,34 +103,52 @@ export async function prepareRenameReferenceJournal(input: PrepareRenameReferenc
       : undefined,
     sourceDev: sourceStat?.dev,
     sourceIno: sourceStat?.ino,
+    identities: input.op === 'folder-rename-references' ? [...input.identities] : undefined,
     references,
   }
   await writeDurableJournal(journalPath, { ...baseEntry, phase: 'preparing' })
+  if (__crashHooks?.afterPreparingJournal) await __crashHooks.afterPreparingJournal()
+  const removePayloads = async (): Promise<void> => {
+    for (let index = 0; index < payloadPaths.length; index += 1) {
+      await removeDurableRecoveryPayload(payloadPaths[index])
+      if (__crashHooks?.afterPayloadRemove) await __crashHooks.afterPayloadRemove(index)
+    }
+  }
   try {
     for (let index = 0; index < references.length; index += 1) {
       await writeDurableRecoveryPayload(path.join(dir, references[index].beforePayload), input.references[index].beforeRaw)
+      if (__crashHooks?.afterPayloadWrite) await __crashHooks.afterPayloadWrite(index, 'before')
       await writeDurableRecoveryPayload(path.join(dir, references[index].afterPayload), input.references[index].afterRaw)
+      if (__crashHooks?.afterPayloadWrite) await __crashHooks.afterPayloadWrite(index, 'after')
     }
     let phase: JournalEntry['phase'] = 'roll-forward'
     await rewriteDurableJournal(journalPath, { ...baseEntry, phase })
+    if (__crashHooks?.afterPhaseRewrite) await __crashHooks.afterPhaseRewrite(phase)
     return {
       journalPath,
       async setDirection(direction) {
         phase = direction
         await rewriteDurableJournal(journalPath, { ...baseEntry, phase })
+        if (__crashHooks?.afterPhaseRewrite) await __crashHooks.afterPhaseRewrite(phase)
       },
       async cleanup() {
         phase = 'cleanup'
         await rewriteDurableJournal(journalPath, { ...baseEntry, phase })
-        for (const payloadPath of payloadPaths) await removeDurableRecoveryPayload(payloadPath).catch(() => {})
+        if (__crashHooks?.afterPhaseRewrite) await __crashHooks.afterPhaseRewrite(phase)
+        await removePayloads()
         await removeDurableJournal(journalPath)
       },
     }
   } catch (error) {
     // The preparing journal remains authoritative until every declared
     // payload has been removed. Startup recovery can repeat this cleanup.
-    for (const payloadPath of payloadPaths) await removeDurableRecoveryPayload(payloadPath).catch(() => {})
-    await removeDurableJournal(journalPath).catch(() => {})
+    try {
+      await removePayloads()
+      await removeDurableJournal(journalPath)
+    } catch {
+      // Retain the preparing journal whenever cleanup is incomplete.
+      // Startup recovery can repeat removal without orphaning payloads.
+    }
     throw error
   }
 }

@@ -705,15 +705,13 @@ postRoutes.delete('/api/posts/*', async (c) => {
   const databaseSnapshot = snapshotDocumentMetadataMutation(metadataDb(), [splat])
   const reuseManifest = path.join(path.dirname(abs), `.${path.basename(abs)}.docus-delete-manifest-${randomUUID()}`)
   const persistReuseQuarantine = async (): Promise<void> => {
-    await writeDurableJournal(reuseManifest, {
-      version: 1,
-      op: 'delete-path-reuse',
-      kind: 'file',
-      path: splat,
-      inflight: path.basename(staged),
-      quarantine: path.basename(quarantine),
-      identities: databaseSnapshot.documents.map((row) => ({ path: String(row.path), id: String(row.id) })),
-    })
+    const identities = databaseSnapshot.documents.map((row) => ({ path: String(row.path), id: String(row.id) }))
+    if (identities.length) {
+      await writeDurableJournal(reuseManifest, {
+        version: 1, op: 'delete-path-reuse', kind: 'file', path: splat,
+        inflight: path.basename(staged), quarantine: path.basename(quarantine), identities,
+      })
+    }
     await fs.rename(staged, quarantine)
     await syncParentDirectoryBestEffort(quarantine)
   }
