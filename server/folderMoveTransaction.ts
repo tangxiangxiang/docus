@@ -6,37 +6,41 @@
 //
 //   * `strategy` is the runtime DirectoryMoveStrategy itself — the
 //     route persists exactly what the mover runs and the parser
-//     accepts (round-7 P0: the route wrote 'replayable-move' while the
-//     parser only accepted 'replayable', orphaning every real journal);
+//     accepts (round-7 P0);
 //   * `entries` cover EVERY physical regular file the mover touches —
-//     not just markdown (round-7 P1: the mover moved images/attachments
-//     the journal never recorded, so a crash mid-move stranded them
-//     with no reconciliation proof); empty trees carry `emptyTree`;
+//     not just markdown (round-7 P1); empty trees carry `emptyTree`;
 //   * `directories` cover EVERY subdirectory, including empty ones
-//     (round-8 P1: a replayable move only created parents-of-files, so
-//     nested empty directories vanished on Windows — the tree builder
-//     shows directory nodes, so empty dirs are visible vault state);
-//   * every replayable reverse move (rename rollback, reference
-//     rollback, delete rollback) gets its own durable journal BEFORE
-//     the first file moves — a crash mid-rollback completes forward
-//     from the journal instead of leaving a split tree nothing
-//     describes (round-7 P1).
+//     (round-8 P1); v2 directories were optional → ambiguous; v3
+//     enforces mandatory, sorted, ancestor-closed directories (round-9
+//     F6);
+//   * every replayable reverse move gets its own durable journal
+//     BEFORE the first file moves (round-7 P1);
+//   * v3 (round-9 F1–F6) promotes the gate token from a predictable
+//     name to unpredictable content persisted in the journal so
+//     recovery can verify the exact bytes, not just the filename;
+//   * v3 entries persist source dev/ino so recovery can distinguish a
+//     byte-identical external replacement from the original landed
+//     generation — hash alone cannot tell them apart (round-9 F4).
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { sha256HexBuffer } from './atomicTextWrite.js'
+import { randomBytes } from 'node:crypto'
+import { sha256Hex, sha256HexBuffer } from './atomicTextWrite.js'
 import type { DocumentMetadataMutationSnapshot } from './documentMetadata.js'
 import { UnsupportedDirectoryMoveError } from './documentFileLifecycle.js'
 
-/** One physically moved file in a folder-move journal (schema v2).
+/** One physically moved file in a folder-move journal (schema v2/v3).
  * `relativeFilePath` keeps the real extension — recovery never appends
  * '.md'. `documentId`/`documentPath` exist ONLY for markdown documents
  * bound to metadata; attachments move without an identity. The pair is
- * all-or-nothing per entry. */
+ * all-or-nothing per entry. v3 adds `sourceDev`/`sourceIno` (string)
+ * for generation-proof verification on replay. */
 export type FolderMoveJournalEntry = {
   relativeFilePath: string
   sourceHash: string
   documentId?: string
   documentPath?: string
+  sourceDev?: string
+  sourceIno?: string
 }
 
 /** The physical enumeration a journal persists: every regular file
@@ -64,6 +68,15 @@ export type SerializedMetadataSnapshot = {
   documentTags: Record<string, unknown>[]
   embeddings: Record<string, unknown>[]
   migrations: Record<string, unknown>[]
+}
+
+/** Generate an unpredictable gate-token secret (32 random bytes → 64
+ * hex chars). The journal persists it so recovery can verify the exact
+ * bytes inside the gate marker file — an external writer who plants a
+ * file with the correct name but wrong content is detected (round-9
+ * F2). */
+export function generateGateTokenSecret(): string {
+  return randomBytes(32).toString('hex')
 }
 
 const BUFFER_MARKER = '__docusBuffer'
@@ -247,7 +260,13 @@ export async function listPhysicalMoveEntries(
         await walk(path.join(dir, entry.name), entryRel)
       } else if (entry.isFile()) {
         const raw = await fs.readFile(path.join(dir, entry.name))
-        const item: FolderMoveJournalEntry = { relativeFilePath: entryRel, sourceHash: sha256HexBuffer(raw) }
+        const stat = await fs.stat(path.join(dir, entry.name), { bigint: true })
+        const item: FolderMoveJournalEntry = {
+          relativeFilePath: entryRel,
+          sourceHash: sha256HexBuffer(raw),
+          sourceDev: stat.dev.toString(),
+          sourceIno: stat.ino.toString(),
+        }
         const identity = identityFor?.(entryRel)
         if (identity) {
           item.documentId = identity.documentId
@@ -263,4 +282,88 @@ export async function listPhysicalMoveEntries(
   entries.sort((a, b) => a.relativeFilePath.localeCompare(b.relativeFilePath))
   directories.sort((a, b) => a.localeCompare(b))
   return { entries, directories }
+}
+
+// ---- v3 directory-manifest validation (round-9 F6) ----
+
+/** Validate a v3 `directories` manifest: must be non-null, sorted, no
+ * duplicates, every file's parent and every directory's ancestor must
+ * be declared, and no path can be simultaneously a file and a
+ * directory. Returns null on success or a reason string on failure. */
+export function validateDirectoryManifest(
+  directories: string[],
+  entryRels: string[],
+  reservedPrefixes: string[] = [],
+): string | null {
+  // Must be present (even if empty).
+  if (!Array.isArray(directories)) return 'directories missing'
+  // No duplicates; canonical sorted order.
+  if (new Set(directories).size !== directories.length) return 'duplicate directory'
+  const sorted = [...directories].sort((a, b) => a.localeCompare(b))
+  for (let i = 0; i < directories.length; i++) {
+    if (directories[i] !== sorted[i]) return 'directories not sorted'
+  }
+  const dirSet = new Set(directories)
+  // Every directory entry must be a valid relative path.
+  for (const dir of directories) {
+    if (!dir || dir.startsWith('/') || dir.endsWith('/') || dir.includes('\\') || dir.includes('\0')) return `invalid directory path: ${dir}`
+    const segments = dir.split('/')
+    if (segments.some((s) => s.length === 0 || s === '.' || s === '..')) return `invalid directory path: ${dir}`
+    // Reserved names.
+    for (const prefix of reservedPrefixes) {
+      if (segments.some((s) => s.startsWith(prefix))) return `reserved directory segment: ${dir}`
+    }
+  }
+  // No file path is also a directory path.
+  const fileSet = new Set(entryRels)
+  for (const fileRel of entryRels) {
+    if (dirSet.has(fileRel)) return `file path also listed as directory: ${fileRel}`
+  }
+  // Every file's parent directories must be declared.
+  for (const fileRel of entryRels) {
+    const parts = fileRel.split('/')
+    for (let i = 1; i < parts.length; i++) {
+      const ancestor = parts.slice(0, i).join('/')
+      if (!dirSet.has(ancestor)) return `missing file parent directory: ${ancestor} (required by ${fileRel})`
+    }
+  }
+  // Every directory's ancestor must be declared (ancestor closure).
+  for (const dir of directories) {
+    const parts = dir.split('/')
+    for (let i = 1; i < parts.length; i++) {
+      const ancestor = parts.slice(0, i).join('/')
+      if (!dirSet.has(ancestor)) return `missing directory ancestor: ${ancestor} (required by ${dir})`
+    }
+  }
+  // No directory is listed under a file path.
+  for (const dir of directories) {
+    for (const fileRel of entryRels) {
+      if (dir.startsWith(`${fileRel}/`)) return `directory ${dir} is underneath file ${fileRel}`
+    }
+  }
+  return null
+}
+
+/** Verify a snapshot's Markdown document entries each have at least one
+ * corresponding physical Markdown entry in the journal. A snapshot
+ * document claiming a path without any journal entry backing it cannot
+ * be verified — the journal must be quarantined (round-9 F1). */
+export function validateSnapshotPhysicalEntries(
+  snapshot: SerializedMetadataSnapshot,
+  entries: FolderMoveJournalEntry[],
+  destRel: string,
+): string | null {
+  const mdPaths = new Set(
+    entries
+      .filter((e) => e.documentPath !== undefined)
+      .map((e) => e.documentPath as string),
+  )
+  for (const doc of snapshot.documents) {
+    const docPath = doc.path as string
+    // Must be inside destRel.
+    if (!docPath.startsWith(`${destRel}/`)) return `snapshot document path outside destRel: ${docPath}`
+    // Must have a corresponding physical Markdown entry.
+    if (!mdPaths.has(docPath)) return `snapshot document has no physical entry: ${docPath}`
+  }
+  return null
 }

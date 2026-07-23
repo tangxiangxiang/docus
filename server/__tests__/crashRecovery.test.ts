@@ -2229,6 +2229,7 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
         documentId: entry.id,
         documentPath: `proj/${entry.rel}`,
       })),
+      directories: ['nested'],
       metadataDisposition: { kind: 'prefix-move' },
     }), 'utf8')
     saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
@@ -2304,6 +2305,7 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
           { relativeFilePath: 'a.md', sourceHash: sha256Hex(A_RAW), documentId: 'ren-a-id', documentPath: 'proj/a' },
           { relativeFilePath: 'nested/b.md', sourceHash: sha256Hex(B_RAW), documentId: 'ren-b-id', documentPath: 'proj/nested/b' },
         ],
+        directories: ['nested'],
         metadataDisposition: { kind: 'prefix-move' },
       }), 'utf8')
       saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
@@ -2331,6 +2333,7 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
         { relativeFilePath: 'a.md', sourceHash: sha256Hex(A_RAW), documentId: 'ren-a-id', documentPath: 'proj/a' },
         { relativeFilePath: 'image.bin', sourceHash: sha256HexBuffer(imageBytes) },
       ],
+      directories: [],
       metadataDisposition: { kind: 'prefix-move' },
     }), 'utf8')
 
@@ -2460,6 +2463,7 @@ describe('recoverInterruptedOperations (folder-move snapshot-restore journal)', 
         { relativeFilePath: 'a.md', sourceHash: sha256Hex(A_RAW), documentId: 'gone-a-id', documentPath: 'gone/a' },
         { relativeFilePath: 'image.bin', sourceHash: sha256HexBuffer(IMAGE_BYTES) },
       ],
+      directories: [],
       metadataDisposition: { kind: 'snapshot-restore', snapshot: serializeMetadataSnapshot(snapshot) },
     }), 'utf8')
   }
@@ -2542,6 +2546,7 @@ describe('recoverInterruptedOperations (folder-move snapshot-restore journal)', 
       version: 2, op: 'folder-move', srcRel: STAGED, destRel: 'gone', strategy: 'replayable-move',
       sourceDev: 7, sourceIno: 11,
       entries: [{ relativeFilePath: 'a.md', sourceHash: sha256Hex(A_RAW) }],
+      directories: [],
       metadataDisposition: {
         kind: 'snapshot-restore',
         snapshot: {
@@ -2705,6 +2710,7 @@ describe('recoverInterruptedOperations (symlink containment)', () => {
       version: 2, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable-move',
       sourceDev: 7, sourceIno: 11,
       entries: [{ relativeFilePath: 'sub/victim.bin', sourceHash: sha256HexBuffer(VICTIM) }],
+      directories: ['sub'],
       metadataDisposition: { kind: 'prefix-move' },
     }), 'utf8')
 
@@ -2729,6 +2735,7 @@ describe('recoverInterruptedOperations (symlink containment)', () => {
       version: 2, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable-move',
       sourceDev: 7, sourceIno: 11,
       entries: [{ relativeFilePath: 'sub/victim.bin', sourceHash: sha256HexBuffer(VICTIM) }],
+      directories: ['sub'],
       metadataDisposition: { kind: 'prefix-move' },
     }), 'utf8')
 

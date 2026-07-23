@@ -94,12 +94,16 @@ import {
   pruneEmptyDirectories,
   RenameDestinationOccupiedError,
   RenameSourceReusedError,
+  verifyExactParity,
   type FolderMoveJournalStrategy,
+  type FolderMoveExecuteOptions,
 } from './documentFileLifecycle.js'
 import {
   isValidDeleteRollbackSnapshot,
   listPhysicalMoveEntries,
   reviveMetadataSnapshot,
+  validateDirectoryManifest,
+  validateSnapshotPhysicalEntries,
   type FolderMoveJournalEntry,
   type FolderMoveMetadataDisposition,
 } from './folderMoveTransaction.js'
@@ -128,17 +132,16 @@ interface ReplaceJournal {
 }
 
 /** The unified in-memory shape of every folder-move journal. Schema
- * v2 (persisted since round 7) covers EVERY physical file the mover
- * touches — markdown and attachments alike — with per-file content
- * hashes, an empty-tree state, and the metadata disposition; journals
- * with entries describe a per-file (replayable) move that can crash
- * mid-flight with the tree SPLIT between source and destination, while
- * strategy 'atomic-rename' journals describe the single-rename POSIX
- * protocol (the whole tree sits at exactly one path, never split).
+ * v3 (round-9) adds: unpredictable gateToken secret persisted in the
+ * journal (so recovery can verify the exact marker bytes, not just
+ * the filename — F2); entries carry sourceDev/sourceIno as strings
+ * (safe for Windows large file IDs — F4); directories are mandatory
+ * and closed over file parents and ancestors (F6). v2 journals that
+ * omitted directories are rejected (the absence is ambiguous — F6).
  * Legacy v1 journals (`{rel, id, sourceHash}` entries, short strategy
  * names) are NORMALIZED into this shape at parse time. */
 interface FolderRenameJournal {
-  version: 1 | 2
+  version: 1 | 2 | 3
   op: 'folder-rename' | 'folder-move'
   /** Vault-relative folder paths (no leading/trailing slash). */
   srcRel: string
@@ -150,10 +153,14 @@ interface FolderRenameJournal {
   emptyTree?: boolean
   entries?: FolderMoveJournalEntry[]
   /** Every subdirectory (including empty ones) the move must recreate
-   * and verify — round-8 P1. v2 only; v1 journals predate it. */
+   * and verify — round-8 P1. v3 mandatory; v2 optional (rejected when
+   * missing — round-9 F6). */
   directories?: string[]
-  /** v2 only; v1 journals default to prefix-move. */
+  /** v2+ only; v1 journals default to prefix-move. */
   metadataDisposition?: FolderMoveMetadataDisposition
+  /** v3+: unpredictable gate-token secret persisted so recovery can
+   * verify the exact marker bytes, not just the name (round-9 F2). */
+  gateToken?: string
 }
 
 interface FileRenameJournal {
@@ -361,8 +368,8 @@ function isValidRelativeFilePath(rel: string): boolean {
 
 function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
   try {
-    const entry = JSON.parse(raw) as Omit<Partial<FolderRenameJournal>, 'strategy' | 'entries' | 'metadataDisposition'> & { strategy?: unknown; entries?: unknown; metadataDisposition?: unknown }
-    if (entry.version !== 1 && entry.version !== 2) return null
+    const entry = JSON.parse(raw) as Omit<Partial<FolderRenameJournal>, 'strategy' | 'entries' | 'metadataDisposition'> & { strategy?: unknown; entries?: unknown; metadataDisposition?: unknown; gateToken?: unknown }
+    if (entry.version !== 1 && entry.version !== 2 && entry.version !== 3) return null
     if (entry.op !== 'folder-rename' && entry.op !== 'folder-move') return null
     if (typeof entry.srcRel !== 'string' || typeof entry.destRel !== 'string') return null
     if (typeof entry.sourceDev !== 'number' || typeof entry.sourceIno !== 'number') return null
@@ -384,15 +391,21 @@ function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
       if (entry.strategy === 'atomic' || entry.strategy === 'atomic-rename') strategy = 'atomic-rename'
       else if (entry.strategy === 'replayable' || entry.strategy === 'replayable-move') strategy = 'replayable-move'
       else return null
-      if (entry.version === 2 && !FOLDER_MOVE_STRATEGIES.includes(entry.strategy as FolderMoveJournalStrategy)) return null
-    } else if (entry.version === 2) {
+      if (entry.version >= 2 && !FOLDER_MOVE_STRATEGIES.includes(entry.strategy as FolderMoveJournalStrategy)) return null
+    } else if (entry.version >= 2) {
       return null
     }
     if (entry.emptyTree !== undefined && typeof entry.emptyTree !== 'boolean') return null
     let entries: FolderMoveJournalEntry[] | undefined
     let directories: string[] | undefined
     let metadataDisposition: FolderMoveMetadataDisposition | undefined
-    if (entry.version === 2) {
+    let gateToken: string | undefined
+    // v3 gateToken: unpredictable secret persisted in the journal (F2).
+    if (entry.version >= 3) {
+      if (typeof entry.gateToken !== 'string' || !/^[0-9a-f]{64}$/.test(entry.gateToken as string)) return null
+      gateToken = entry.gateToken as string
+    }
+    if (entry.version >= 2) {
       if (!Array.isArray(entry.entries)) return null
       const emptyTree = entry.emptyTree === true
       if (emptyTree ? entry.entries.length !== 0 : entry.entries.length === 0) return null
@@ -404,20 +417,51 @@ function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
           || (typeof item.documentId === 'string' && item.documentId.length > 0
             && typeof item.documentPath === 'string' && isValidPathSyntax(item.documentPath))))) return null
       if (new Set(rawEntries.map((item) => item.relativeFilePath)).size !== rawEntries.length) return null
-      entries = rawEntries.map((item) => ({
-        relativeFilePath: item.relativeFilePath as string,
-        sourceHash: item.sourceHash as string,
-        ...(item.documentId !== undefined ? { documentId: item.documentId, documentPath: item.documentPath } : {}),
-      }))
-      // directories (round-8): optional; every entry a safe relative
-      // path with no duplicates. An empty/absent list means no
-      // subdirectories to recreate.
-      if (entry.directories !== undefined) {
+      // v3: sourceDev/sourceIno must be present as strings on every entry.
+      const isV3 = entry.version >= 3
+      if (isV3) {
+        if (!rawEntries.every((item) => {
+          const rec = item as Record<string, unknown>
+          return typeof rec.sourceDev === 'string' && /^\d+$/.test(rec.sourceDev as string)
+            && typeof rec.sourceIno === 'string' && /^[1-9]\d*$/.test(rec.sourceIno as string)
+        })) return null
+      }
+      entries = rawEntries.map((item) => {
+        const mapped: FolderMoveJournalEntry = {
+          relativeFilePath: item.relativeFilePath as string,
+          sourceHash: item.sourceHash as string,
+          ...(item.documentId !== undefined ? { documentId: item.documentId as string, documentPath: item.documentPath as string } : {}),
+        }
+        if (isV3) {
+          mapped.sourceDev = (item as Record<string, string>).sourceDev
+          mapped.sourceIno = (item as Record<string, string>).sourceIno
+        }
+        return mapped
+      })
+      // directories: v3 mandatory, validated (F6); v2 optional but
+      // replayable without directories is rejected (ambiguous).
+      if (entry.version >= 3) {
+        // v3: directories mandatory.
+        if (!Array.isArray(entry.directories)) return null
+        if (!entry.directories.every((dir) => typeof dir === 'string' && isValidRelativeFilePath(dir))) return null
+        if (new Set(entry.directories).size !== entry.directories.length) return null
+        directories = [...entry.directories]
+        // Validate against entry paths (sorted, parent-closed, no conflicts).
+        const entryRels = entries.map((e) => e.relativeFilePath)
+        const dirError = validateDirectoryManifest(directories, entryRels, ['.docus-'])
+        if (dirError !== null) return null
+      } else if (entry.directories !== undefined) {
         if (!Array.isArray(entry.directories)
           || !entry.directories.every((dir) => typeof dir === 'string' && isValidRelativeFilePath(dir))) return null
         if (new Set(entry.directories).size !== entry.directories.length) return null
         directories = [...entry.directories]
       }
+      // v2 replayable journals without a directory manifest are rejected
+      // (F6): the absence is ambiguous — undeclared empty dirs could be
+      // external content silently merged during replay. Empty-tree
+      // journals carry no entries and therefore need no directory
+      // manifest: the journal declares the move's shape exhaustively.
+      if (entry.version === 2 && strategy === 'replayable-move' && directories === undefined && !emptyTree) return null
       if (entry.metadataDisposition === undefined) {
         metadataDisposition = { kind: 'prefix-move' }
       } else if (entry.metadataDisposition && typeof entry.metadataDisposition === 'object') {
@@ -425,14 +469,26 @@ function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
         if (disposition.kind === 'prefix-move') metadataDisposition = { kind: 'prefix-move' }
         else if (disposition.kind === 'snapshot-restore'
           && isValidDeleteRollbackSnapshot(disposition.snapshot, entry.destRel)) {
+          // v2+ snapshot-restore: also validate physical Markdown entry
+          // correspondence — no snapshot document without a journaled
+          // physical entry backing it (F1).
+          if (entry.version >= 2 && entries) {
+            const snapError = validateSnapshotPhysicalEntries(
+              disposition.snapshot as import('./folderMoveTransaction.js').SerializedMetadataSnapshot,
+              entries,
+              entry.destRel,
+            )
+            if (snapError !== null) return null
+          }
           metadataDisposition = { kind: 'snapshot-restore', snapshot: disposition.snapshot }
         } else return null
       } else return null
       return {
-        version: 2, op: entry.op, srcRel: entry.srcRel, destRel: entry.destRel,
+        version: entry.version as 2 | 3, op: entry.op, srcRel: entry.srcRel, destRel: entry.destRel,
         sourceDev: entry.sourceDev, sourceIno: entry.sourceIno,
         strategy, ...(emptyTree ? { emptyTree } : {}), entries,
         ...(directories !== undefined ? { directories } : {}), metadataDisposition,
+        ...(gateToken !== undefined ? { gateToken } : {}),
       }
     }
     // v1: legacy `{rel, id, sourceHash}` entries — normalized to the
@@ -1164,6 +1220,20 @@ async function recoverRenameReferencesJournal(
   note(journal.phase === 'roll-forward' ? destAbs : srcAbs, 'completed-rename', `rename reference transaction ${journal.phase === 'roll-forward' ? 'rolled forward' : 'rolled back'}`)
 }
 
+/** Derive every parent directory implied by entry file paths. Used when a
+ * journal predates the directories field (v1) or when the declared set
+ * must be extended for exact-parity checking. */
+function deriveParentDirectories(entries: readonly FolderMoveJournalEntry[]): string[] {
+  const dirs = new Set<string>()
+  for (const entry of entries) {
+    const parts = entry.relativeFilePath.split('/')
+    for (let i = 1; i < parts.length; i++) {
+      dirs.add(parts.slice(0, i).join('/'))
+    }
+  }
+  return [...dirs].sort((a, b) => a.localeCompare(b))
+}
+
 /** Binary-safe content proof: folder-move journals hash EVERY physical
  * file (attachments included) with sha256HexBuffer. */
 async function fileHashMatches(absPath: string, expectedHash: string): Promise<boolean> {
@@ -1226,6 +1296,15 @@ async function recoverFolderMoveJournal(
   // directories (v2). v1 journals predate the field; enforcing it there
   // would flag their legitimate nested dirs as external.
   const declaredDirs = journal.directories
+  // Exact-parity directories: the union of declared directories and
+  // every parent implied by entry paths. For v3 this is the same set
+  // (the parser enforces parent-closure); for v2 with directories it
+  // extends the declared set so on-demand mkdir-p during replay is
+  // covered; for v1 it is the complete set derived from entries alone.
+  const parityDirectories = [...new Set([
+    ...(journal.directories ?? []),
+    ...deriveParentDirectories(entries),
+  ])].sort((a, b) => a.localeCompare(b))
   const disposition: FolderMoveMetadataDisposition = journal.metadataDisposition ?? { kind: 'prefix-move' }
   // The journal's transaction id (its filename suffix) is the gate
   // token the mover drops inside the destination gate it creates.
@@ -1286,10 +1365,36 @@ async function recoverFolderMoveJournal(
           if (declaredDirs !== undefined && !expectedDirs.has(relPath)) { external = `destination holds an undeclared directory: ${relPath}`; return }
           await walk(absPath, relPath)
         } else if (dirent.isFile()) {
-          if (dirent.name === tokenName && rel === '') { hasGateToken = true; continue }
+          if (dirent.name === tokenName && rel === '') {
+            // v3 gateToken: verify exact content, not just name (F2).
+            if (journal.gateToken) {
+              try {
+                if (await fs.readFile(absPath, 'utf8') !== journal.gateToken) {
+                  external = 'gate token content does not match the journal'
+                  return
+                }
+              } catch { external = 'gate token file is unreadable'; return }
+            }
+            hasGateToken = true
+            continue
+          }
           const entry = entryByRel.get(relPath)
           if (!entry) { external = `destination holds an undeclared file: ${relPath}`; return }
           if (!await fileHashMatches(absPath, entry.sourceHash)) { external = `destination file does not match the journal: ${relPath}`; return }
+          // v3 generation proof (F4): a byte-identical external
+          // replacement gets a fresh inode — the hard-linked landing
+          // preserves the source identity. The hash matched but the
+          // generation is a different physical file.
+          if (entry.sourceDev && entry.sourceIno) {
+            try {
+              const destStat = await fs.stat(absPath, { bigint: true })
+              if (destStat.dev.toString() !== entry.sourceDev
+                || destStat.ino.toString() !== entry.sourceIno) {
+                external = `destination file generation identity does not match the journal: ${relPath}`
+                return
+              }
+            } catch { external = `destination file is unreadable: ${relPath}`; return }
+          }
           hasLandedFiles = true
         } else {
           external = `destination holds a special entry: ${relPath}`
@@ -1305,6 +1410,41 @@ async function recoverFolderMoveJournal(
   const completeMetadata = (): void => {
     if (disposition.kind === 'snapshot-restore') {
       const revived = reviveMetadataSnapshot(disposition.snapshot)
+      // Live DB ownership validation (round-9 F1): every snapshot
+      // documentId must either not exist in the live DB or still be
+      // bound to the declared path. A forged snapshot reusing a live ID
+      // bound to an unrelated path must be rejected.
+      const snapshotIdSet = new Set(revived.documentIds)
+      if (snapshotIdSet.size > 0) {
+        const liveRows = db.prepare('SELECT id, path FROM documents WHERE id IN (' +
+          [...snapshotIdSet].map(() => '?').join(',') + ')'
+        ).all(...snapshotIdSet) as Array<{ id: string; path: string }>
+        const snapshotPathById = new Map<string, string>(
+          revived.documents.map((d) => [d.id as string, d.path as string]),
+        )
+        for (const live of liveRows) {
+          const declaredPath = snapshotPathById.get(live.id)
+          // If this ID exists in the live DB but is bound to a
+          // DIFFERENT path than the snapshot declares, the snapshot is
+          // reusing a live identity → the journal is forged.
+          if (declaredPath !== undefined && live.path !== declaredPath) {
+            throw new Error(`metadata ownership: snapshot documentId ${live.id} is currently bound to ${live.path}, not the declared ${declaredPath}`)
+          }
+        }
+        // Also: any snapshot path currently occupied by a DIFFERENT
+        // live documentId means the snapshot path was reused externally.
+        const snapshotPathSet = new Set(revived.paths)
+        if (snapshotPathSet.size > 0) {
+          const pathRows = db.prepare('SELECT id, path FROM documents WHERE path IN (' +
+            [...snapshotPathSet].map(() => '?').join(',') + ')'
+          ).all(...snapshotPathSet) as Array<{ id: string; path: string }>
+          for (const row of pathRows) {
+            if (!snapshotIdSet.has(row.id)) {
+              throw new Error(`metadata ownership: snapshot path ${row.path} is currently owned by a different documentId ${row.id}`)
+            }
+          }
+        }
+      }
       // Do NOT trust the persisted preexistingTagIds for the orphan-tag
       // cleanup: recompute against the live DB so a forged snapshot can
       // never mark an unrelated tag "created by the mutation" and have
@@ -1324,7 +1464,7 @@ async function recoverFolderMoveJournal(
     try {
       completeMetadata()
     } catch (error) {
-      note(journalAbs, 'failed', `could not complete folder-move metadata: ${(error as Error).message}`)
+      note(journalAbs, 'quarantined', `could not complete folder-move metadata: ${(error as Error).message}`)
       return
     }
     await removeGateToken()
@@ -1428,6 +1568,16 @@ async function recoverFolderMoveJournal(
         return
       }
       if (!await replayEntries(contentDir, entries, directories, placements, srcAbs, destAbs, journalAbs, note)) return
+      const parityFailedAfterRestore = await verifyExactParity(destAbs, {
+        entries,
+        directories: parityDirectories,
+        gateToken: transactionId,
+        gateTokenContent: journal.gateToken,
+      })
+      if (parityFailedAfterRestore) {
+        note(journalAbs, 'quarantined', 'exact parity failed after snapshot-restore replay')
+        return
+      }
       await finishForward('interrupted folder restore completed from journal')
       return
     }
@@ -1451,6 +1601,21 @@ async function recoverFolderMoveJournal(
     return
   }
   if (!await replayEntries(contentDir, entries, directories, placements, srcAbs, destAbs, journalAbs, note)) return
+  // Exact final parity (round-9 F3): after replay, verify the
+  // destination holds exactly the journaled file+directory set with
+  // matching content hashes and exact gate token before committing
+  // metadata. An external writer that modified the destination during
+  // replay must fail closed — the journal stays for inspection.
+  const parityFailed = await verifyExactParity(destAbs, {
+    entries,
+    directories: parityDirectories,
+    gateToken: transactionId,
+    gateTokenContent: journal.gateToken,
+  })
+  if (parityFailed) {
+    note(journalAbs, 'quarantined', 'exact parity failed after recovery replay')
+    return
+  }
   await finishForward('interrupted folder move completed from journal')
 }
 

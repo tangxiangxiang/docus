@@ -20,7 +20,7 @@ import {
   UnsupportedDirectoryMoveError,
   type FolderMoveJournalStrategy,
 } from '../documentFileLifecycle.js'
-import { listPhysicalMoveEntries, serializeMetadataSnapshot, type FolderMoveJournalEntry } from '../folderMoveTransaction.js'
+import { generateGateTokenSecret, listPhysicalMoveEntries, serializeMetadataSnapshot, type FolderMoveJournalEntry } from '../folderMoveTransaction.js'
 import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { prepareRenameReferenceJournal, type PreparedRenameReferenceJournal } from '../renameReferenceJournal.js'
@@ -182,7 +182,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   // rollback, which durably flips its direction before reversing the
   // tree (and flips it back if the source was re-used).
   let folderMoveJournal: {
-    version: 2
+    version: 3
     op: 'folder-rename'
     srcRel: string
     destRel: string
@@ -191,7 +191,8 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     strategy: FolderMoveJournalStrategy
     emptyTree?: boolean
     entries: FolderMoveJournalEntry[]
-    directories?: string[]
+    directories: string[]
+    gateToken: string
     metadataDisposition: { kind: 'prefix-move' }
   } | null = null
   let physicalEntryRels: string[] = []
@@ -257,19 +258,19 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     // move before the HTTP server accepts requests. Removed LAST.
     const sourceDirectoryStat = await fs.stat(src)
     journalUuid = randomUUID()
+    const gateTokenSecret = generateGateTokenSecret()
     folderMoveJournal = {
-      version: 2,
+      version: 3,
       op: 'folder-rename',
       srcRel: srcPath,
       destRel: newPath,
       sourceDev: sourceDirectoryStat.dev,
       sourceIno: sourceDirectoryStat.ino,
-      // The persisted value IS the runtime strategy (one shared enum):
-      // recovery parses exactly what the route ran.
       strategy: moveStrategy,
       ...(physicalEntries.length === 0 ? { emptyTree: true } : {}),
       entries: physicalEntries,
       directories: physicalDirectories,
+      gateToken: gateTokenSecret,
       metadataDisposition: { kind: 'prefix-move' },
     }
     journalPath = path.join(path.dirname(src), `.${path.basename(src)}.docus-journal-${journalUuid}`)
@@ -288,6 +289,8 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       moved = await executeFolderMove(moveStrategy, src, dest, physicalEntryRels, {
         directories: physicalDirectories,
         gateToken: journalUuid,
+        gateTokenContent: gateTokenSecret,
+        entries: physicalEntries,
         vaultRoot: CONTENT_DIR,
       })
     } catch (moveError) {
@@ -375,6 +378,8 @@ folderRoutes.patch('/api/folders/*', async (c) => {
           const rolledBack = await executeFolderMove(moveStrategy, dest, src, physicalEntryRels, {
             directories: physicalDirectories,
             gateToken: journalUuid,
+            gateTokenContent: folderMoveJournal!.gateToken,
+            entries: folderMoveJournal!.entries,
             vaultRoot: CONTENT_DIR,
           })
           if (rolledBack.restored) {
@@ -579,10 +584,16 @@ folderRoutes.delete('/api/folders/*', async (c) => {
         let restored = false
         let rollbackMoveThrew = false
         try {
-          const rollbackPhysical = await listPhysicalMoveEntries(staged)
+          const rollbackPhysical = await listPhysicalMoveEntries(staged, (relativeFilePath) => {
+            if (!relativeFilePath.endsWith('.md')) return null
+            const docPath = `${folderP}/${relativeFilePath.slice(0, -'.md'.length)}`
+            const doc = databaseSnapshot.documents.find((d) => String(d.path) === docPath)
+            return doc ? { documentId: String(doc.id), documentPath: docPath } : null
+          })
           const stagedStat = await fs.stat(staged)
+          const rollbackGateSecret = generateGateTokenSecret()
           await writeDurableJournal(rollbackJournalPath, {
-            version: 2,
+            version: 3,
             op: 'folder-move',
             srcRel: stagedRel,
             destRel: folderP,
@@ -592,11 +603,14 @@ folderRoutes.delete('/api/folders/*', async (c) => {
             ...(rollbackPhysical.entries.length === 0 ? { emptyTree: true } : {}),
             entries: rollbackPhysical.entries,
             directories: rollbackPhysical.directories,
+            gateToken: rollbackGateSecret,
             metadataDisposition: { kind: 'snapshot-restore', snapshot: serializeMetadataSnapshot(databaseSnapshot) },
           })
           restored = (await executeFolderMove(rollbackStrategy, staged, abs, rollbackPhysical.entries.map((entry) => entry.relativeFilePath), {
             directories: rollbackPhysical.directories,
             gateToken: rollbackUuid,
+            gateTokenContent: rollbackGateSecret,
+            entries: rollbackPhysical.entries,
             vaultRoot: CONTENT_DIR,
           })).restored
         } catch (rollbackError) {

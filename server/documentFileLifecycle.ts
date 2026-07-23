@@ -8,9 +8,11 @@ import {
   restoreStagedGeneration,
   syncParentDirectoryBestEffort,
   sha256Hex,
+  sha256HexBuffer,
   removeDurableJournal,
   writeDurableJournal,
 } from './atomicTextWrite.js'
+import type { FolderMoveJournalEntry } from './folderMoveTransaction.js'
 
 /** Test-only hooks for the create-only move race/crash windows. Null
  * in production; tests reset in finally. `afterMkdirGate` fires right
@@ -32,6 +34,10 @@ export type CreateOnlyMoveHooks = {
    * lands at the destination — the crash window that leaves the tree
    * split between source and destination. */
   afterReplayableMovedEntry?: (entryRel: string) => void | Promise<void>
+  /** Fires right after the shared exact final parity passes (all files
+   * and directories match the journal) but BEFORE the gate token is
+   * removed and metadata is committed — the crash window for F3. */
+  afterReplayableFinalParity?: (toDirAbs: string) => void | Promise<void>
 }
 let __createOnlyMoveHooks: CreateOnlyMoveHooks | null = null
 export function __setCreateOnlyMoveHooksForTesting(hooks: CreateOnlyMoveHooks | null): void {
@@ -334,10 +340,20 @@ export type FolderMoveExecuteOptions = {
    * marker inside the destination gate it creates, so recovery can tell
    * its own gate from an externally-created empty directory. */
   gateToken?: string
+  /** The unpredictable gate-token secret (v3) persisted in the journal.
+   * Written into the gate marker file so recovery can verify the exact
+   * bytes, not just the filename (round-9 F2). */
+  gateTokenContent?: string
   /** Vault root; when present every per-entry source AND destination
    * path is physically containment-checked (no symlinked ancestor)
-   * before it is hashed/mkdir/renamed/linked (round-8 P0/P1). */
+   * before it is hashed/mkdir/renamed/linked (round-8 P0/P1). Also
+   * passed through to rollback so compensation moves are contained
+   * (round-9 F5). */
   vaultRoot?: string
+  /** The full journal entries (with sourceHash and sourceDev/sourceIno)
+   * for exact final parity verification — file set equality, per-file
+   * content hash, and landed generation identity (round-9 F3). */
+  entries?: readonly FolderMoveJournalEntry[]
 }
 
 export async function executeReplayableFolderMove(
@@ -347,6 +363,8 @@ export async function executeReplayableFolderMove(
   options: FolderMoveExecuteOptions = {},
 ): Promise<{ restored: boolean }> {
   const directories = options.directories ?? []
+  const vaultRoot = options.vaultRoot
+  const entries = options.entries
   try {
     await fs.mkdir(toDirAbs)
   } catch (error) {
@@ -355,24 +373,58 @@ export async function executeReplayableFolderMove(
     throw error
   }
   // Prove the gate is ours for recovery: drop the hidden marker before
-  // anything else lands inside it.
+  // anything else lands inside it. v3 (round-9 F2): the marker carries
+  // the unpredictable gateTokenContent (persisted in the journal) so
+  // recovery can verify the exact bytes, not just the filename.
   if (options.gateToken) {
-    await fs.writeFile(path.join(toDirAbs, gateTokenName(options.gateToken)), '', 'utf8')
+    const tokenPath = path.join(toDirAbs, gateTokenName(options.gateToken))
+    if (vaultRoot && !await isPhysicallyContained(vaultRoot, tokenPath)) {
+      await fs.rmdir(toDirAbs).catch(() => {})
+      throw new UnsupportedDirectoryMoveError(`gate token path escapes the vault: ${gateTokenName(options.gateToken)}`)
+    }
+    // O_CREAT | O_EXCL | O_WRONLY — create-only; EEXIST means an
+    // external writer planted the exact token name first.
+    try {
+      const fh = await fs.open(tokenPath, 'wx')
+      try {
+        await fh.writeFile(options.gateTokenContent ?? '', 'utf8')
+        await fh.sync()
+      } finally {
+        await fh.close()
+      }
+      await syncParentDirectoryBestEffort(tokenPath)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'EEXIST') {
+        await fs.rmdir(toDirAbs).catch(() => {})
+        return { restored: false }
+      }
+      throw error
+    }
   }
   if (__createOnlyMoveHooks?.afterReplayableGate) await __createOnlyMoveHooks.afterReplayableGate(toDirAbs)
   const removeGateToken = async (): Promise<void> => {
     if (options.gateToken) await fs.rm(path.join(toDirAbs, gateTokenName(options.gateToken)), { force: true })
   }
   const moved: string[] = []
-  // Roll back every landed entry create-only: an external writer that
-  // re-used a source path during rollback keeps its file — the moved
-  // bytes then stay at the destination under their new path instead of
-  // overwriting anything. Either way nothing external is replaced.
+  // Roll back every landed entry create-only with per-entry containment
+  // (round-9 F5): each reverse source AND destination must be
+  // physically contained immediately before the syscall — a symlink
+  // planted after the forward move must not route compensation outside
+  // the vault.
   const rollbackMoved = async (): Promise<boolean> => {
     let rollbackFailed = false
     for (const entryRel of [...moved].reverse()) {
+      const fromEntry = path.join(toDirAbs, entryRel)
+      const toEntry = path.join(fromDirAbs, entryRel)
+      if (vaultRoot) {
+        if (!await isPhysicallyContained(vaultRoot, fromEntry) || !await isPhysicallyContained(vaultRoot, toEntry)) {
+          rollbackFailed = true
+          continue
+        }
+      }
       try {
-        await createOnlyMoveFile(path.join(toDirAbs, entryRel), path.join(fromDirAbs, entryRel))
+        await createOnlyMoveFile(fromEntry, toEntry)
       } catch {
         rollbackFailed = true
       }
@@ -382,12 +434,10 @@ export async function executeReplayableFolderMove(
     return rollbackFailed
   }
   try {
-    // Recreate the journaled directory structure first (this is what
-    // preserves nested EMPTY directories a files-only replay would
-    // drop). Parents of files are a subset, created recursively.
+    // Recreate the journaled directory structure first.
     for (const dirRel of directories) {
       const dirAbs = path.join(toDirAbs, dirRel)
-      if (options.vaultRoot && !await isPhysicallyContained(options.vaultRoot, dirAbs)) {
+      if (vaultRoot && !await isPhysicallyContained(vaultRoot, dirAbs)) {
         throw new UnsupportedDirectoryMoveError(`directory path escapes the vault: ${dirRel}`)
       }
       await fs.mkdir(dirAbs, { recursive: true })
@@ -395,12 +445,9 @@ export async function executeReplayableFolderMove(
     for (const entryRel of entryRels) {
       const entryFromAbs = path.join(fromDirAbs, entryRel)
       const entryToAbs = path.join(toDirAbs, entryRel)
-      // Physical containment of BOTH ends before any syscall touches
-      // them — a symlinked ancestor (planted after the journal was
-      // written) must not route the move outside the vault.
-      if (options.vaultRoot
-        && (!await isPhysicallyContained(options.vaultRoot, entryFromAbs)
-          || !await isPhysicallyContained(options.vaultRoot, entryToAbs))) {
+      if (vaultRoot
+        && (!await isPhysicallyContained(vaultRoot, entryFromAbs)
+          || !await isPhysicallyContained(vaultRoot, entryToAbs))) {
         throw new UnsupportedDirectoryMoveError(`entry path escapes the vault: ${entryRel}`)
       }
       await fs.mkdir(path.dirname(entryToAbs), { recursive: true })
@@ -419,47 +466,121 @@ export async function executeReplayableFolderMove(
     }
     if (error instanceof UnsupportedDirectoryMoveError) throw error
     if (!rollbackFailed && (error instanceof RenameDestinationOccupiedError || code === 'EEXIST' || code === 'ENOTDIR')) {
-      // Clean contention: a destination path belongs to an external
-      // writer and every moved entry is back at its source.
       return { restored: false }
     }
     throw error
   }
-  // End-check: the destination must hold EXACTLY the journaled file AND
-  // directory sets. An external writer that dropped a file or directory
-  // inside our gate mid-move fails the whole move closed — the
-  // replayable parity of the atomic protocol's ENOTEMPTY gate check —
-  // with every entry rolled back. A non-regular entry (symlink/junction)
-  // the walk rejects is external content too and fails closed the same
-  // way. The mover's own gate token is excluded from the file parity.
-  let externalAtDestination = false
-  try {
-    const landedFiles = (await listRegularFileEntries(toDirAbs))
-      .filter((name) => !name.startsWith(GATE_TOKEN_PREFIX))
-    const expectedEntries = new Set(entryRels)
-    if (landedFiles.some((entryRel) => !expectedEntries.has(entryRel))) externalAtDestination = true
-    const landedDirs = await listDirectoryEntries(toDirAbs)
-    const expectedDirs = new Set(directories)
-    if (landedDirs.length !== expectedDirs.size || landedDirs.some((dirRel) => !expectedDirs.has(dirRel))) {
-      externalAtDestination = true
-    }
-  } catch {
-    externalAtDestination = true
-  }
-  if (externalAtDestination) {
+  // Exact final parity (round-9 F3): shared by mover AND recovery.
+  // Must verify file-set equality, per-file content hash, directory-set
+  // equality, and exact gate-token content. Any mismatch fails closed:
+  // do NOT move metadata, do NOT remove the journal, do NOT roll
+  // unverified destination bytes back to source.
+  const parityFailed = await verifyExactParity(toDirAbs, options)
+  if (parityFailed) {
     const rollbackFailed = await rollbackMoved()
     if (rollbackFailed) {
-      throw new Error('external content landed inside the destination gate and the rollback was incomplete')
+      throw new Error('exact parity failed and the rollback was incomplete')
     }
     return { restored: false }
   }
-  // External content that landed in the source during the move stays at
-  // the source path (its directories prune as non-empty); the journaled
-  // entries are what the move promised.
-  await removeGateToken()
+  // Clean up the empty source tree before the crash seam so a killed
+  // process leaves the vault without the stale source directory. The
+  // gate marker stays until after the seam — recovery needs it to
+  // prove destination ownership. External content that landed in the
+  // source during the move is untouched (directories stay non-empty).
   await pruneEmptyDirectories(fromDirAbs)
+  // Crash seam: after parity passes but before metadata commit (F3).
+  if (__createOnlyMoveHooks?.afterReplayableFinalParity) await __createOnlyMoveHooks.afterReplayableFinalParity(toDirAbs)
+  await removeGateToken()
   await syncParentDirectoryBestEffort(toDirAbs)
   return { restored: true }
+}
+
+/** Shared exact final parity (round-9 F3) — used by the mover AND by
+ * recovery replay. Verifies file-set equality (no missing, no extra),
+ * per-file content hash, directory-set equality, exact gate-token file
+ * presence + content, and no symlink/special/undeclared entries.
+ * Returns true when parity fails (destination is not provably ours). */
+export async function verifyExactParity(
+  toDirAbs: string,
+  options: FolderMoveExecuteOptions,
+): Promise<boolean> {
+  const expectedFiles = new Set(options.entries?.map((e) => e.relativeFilePath) ?? [])
+  const expectedDirs = new Set(options.directories ?? [])
+  const tokenName = options.gateToken ? gateTokenName(options.gateToken) : null
+  const tokenContent = options.gateTokenContent ?? null
+  const entryByRel = new Map((options.entries ?? []).map((e) => [e.relativeFilePath, e]))
+  let landedFileCount = 0
+  const landedDirs: string[] = []
+  try {
+    // Destination must be a real directory (not symlink/junction).
+    const destStat = await fs.lstat(toDirAbs)
+    if (destStat.isSymbolicLink()) return true
+    if (!destStat.isDirectory()) return true
+
+    const walk = async (dir: string, rel: string): Promise<boolean> => {
+      const dirents = await fs.readdir(dir, { withFileTypes: true })
+      for (const dirent of dirents) {
+        const relPath = rel === '' ? dirent.name : `${rel}/${dirent.name}`
+        const absPath = path.join(dir, dirent.name)
+        if (dirent.isSymbolicLink()) return true // fail: unexpected symlink
+        if (dirent.isDirectory()) {
+          if (!expectedDirs.has(relPath)) return true // fail: undeclared dir
+          landedDirs.push(relPath)
+          if (await walk(absPath, relPath)) return true
+        } else if (dirent.isFile()) {
+          // Exact gate token: verify content, then skip from file set.
+          if (tokenName && dirent.name === tokenName && rel === '') {
+            if (tokenContent !== null) {
+              try {
+                if (await fs.readFile(absPath, 'utf8') !== tokenContent) return true
+              } catch { return true }
+            }
+            continue
+          }
+          const entry = entryByRel.get(relPath)
+          if (!entry) return true // fail: undeclared file
+          if (!await fileHashMatchesBuffer(absPath, entry.sourceHash)) return true // fail: content mismatch
+          // v3 generation proof (F4): a byte-identical external
+          // replacement gets a fresh inode — the hard-linked landing
+          // preserves the source identity. If the journal carried
+          // sourceDev/sourceIno, the landing must still match.
+          if (entry.sourceDev && entry.sourceIno) {
+            try {
+              const landingStat = await fs.stat(absPath, { bigint: true })
+              if (landingStat.dev.toString() !== entry.sourceDev
+                || landingStat.ino.toString() !== entry.sourceIno) return true
+            } catch { return true }
+          }
+          landedFileCount++
+        } else {
+          return true // fail: special/socket/device/fifo
+        }
+      }
+      return false
+    }
+    if (await walk(toDirAbs, '')) return true
+  } catch {
+    return true
+  }
+  // File set must be exactly equal (no missing, no extra).
+  if (landedFileCount !== expectedFiles.size) return true
+  // Directory set must be exactly equal.
+  if (landedDirs.length !== expectedDirs.size) return true
+  for (const dir of landedDirs) {
+    if (!expectedDirs.has(dir)) return true
+  }
+  return false // parity passed
+}
+
+/** Binary-safe content hash verification — shared by inventory and
+ * exact parity so buffer hashing is consistent everywhere. */
+async function fileHashMatchesBuffer(absPath: string, expectedHash: string): Promise<boolean> {
+  try {
+    return sha256HexBuffer(await fs.readFile(absPath)) === expectedHash
+  } catch {
+    return false
+  }
 }
 
 /** Execute the moved file set of a folder-move journal. The replayable
