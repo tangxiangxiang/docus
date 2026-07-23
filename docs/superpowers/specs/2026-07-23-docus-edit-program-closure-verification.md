@@ -180,3 +180,80 @@ debris scan clean; zero mutation markers.
 This is verification evidence, NOT a new seal: the program verdict stays
 `Reopened / fixes implemented; fresh closure verification pending` until the
 reviewer confirms the closure round.
+
+## Round-8 remediation (source-composition review) and verification
+
+Production commits: `e5bea53` (snapshot trust + containment + destination
+merge + directories + reverse-move durability), `c61737c` (recovery
+multi-pass bound); tests `438af88`; CI-stabilization `b8a7483`, `5b211a5`,
+`bf28078`, `c87802f`, `81b49e8`, `9e0d501`.
+
+The reviewer's next source-composition audit found six further issues in the
+v2 folder-move journal; all are fixed with mutation-verified tests (M26–M32):
+
+1. **snapshot-restore trust boundary (P0/P1).** A persisted delete-rollback
+   snapshot is now scoped at parse time (`isValidDeleteRollbackSnapshot`):
+   every path inside the restored folder's subtree, `documents[].path`/`id`
+   cross-referencing the declared paths/ids exactly, `document_tags`/
+   `embeddings` referencing only those ids, `tags` matching the declared
+   tagIds, `migrations` referencing only the transaction's paths/ids, and
+   every row carrying exactly its table's columns — so a forged journal can
+   no longer delete or replace unrelated metadata (a malicious-journal test
+   proves `unrelated/*` rows are untouched). `preexistingTagIds` is
+   recomputed against the live DB at restore so the orphan-tag cleanup
+   cannot be weaponized.
+2. **Nested symlink/junction containment (P0/P1).** Recovery
+   containment-checks every folder-move entry's source AND destination
+   path (lstat walk of existing ancestors, rejecting any symlink — Windows
+   junctions report as symlinks) before hash/mkdir/rename/link, so a
+   symlinked subdir planted after the journal was written cannot route a
+   touch outside the vault (shared with the mover; not-yet-created
+   ancestors are skipped and made as real directories).
+3. **Destination generation merge (P1).** Recovery inventories the
+   destination before replaying: every present file must be a hash-matched
+   landed entry, every directory a declared one, the only other allowed
+   entry the mover's hidden gate token; any undeclared file/symlink/special
+   entry quarantines instead of merging, and an otherwise-empty destination
+   is provably ours only via its gate token, never by emptiness alone.
+4. **Nested empty directories (P1).** The journal records `directories[]`
+   (every subdir including empty ones); the mover and recovery recreate and
+   parity-check the set, so empty directory nodes survive Windows replayable
+   moves.
+5. **Reverse-move durability (P1).** For the replayable protocol the journal
+   direction flip is a hard precondition of the reverse move: if it cannot
+   be persisted, not one file moves (the tree stays forward-consistent with
+   both journals preserved for recovery); atomic moves — a single rename,
+   never split — still proceed.
+6. **Recovery pass bound (P1/P2).** `recoverInterruptedOperations` loops
+   until a pass makes no NEW DISTINCT progress (a re-noted retained journal
+   is not progress), capped by the startup artifact count plus headroom
+   (hard ceiling 64), so arbitrarily deep crash-dependency chains (inner
+   `.docus-rename-*` staging → companion folder-move journal → reference
+   journal) close in one startup instead of stranding behind a fixed
+   two-pass scan (a three-layer chain test proves it).
+
+The bound CI runs additionally exposed platform-specific test-harness issues
+(no production-behavior change beyond efficiency): the multi-pass loop's
+separate pre-scan walk was the dominant cost on slow Windows fs (folded into
+the first pass); the deterministic models compared trees in NTFS-unstable
+readdir order, tore down with a Windows-transient `fs.rm`, and ran to the
+120s ceiling (sorted comparison, a retrying teardown, 240s ceilings); a
+cold-cache flake in an unrelated markdown-render smoke test (waits on the
+render condition); slow real-git tests hitting the 5s default on Windows
+(explicit ceilings, matching their siblings); and a draft-store IndexedDB
+blocked-open test whose late version-change resume stalls under CI load
+(every step bounded, with the deletion assertion as arbiter — a real leak
+still fails).
+
+GitHub Actions run [`30002043137`](https://github.com/tangxiangxiang/docus/actions/runs/30002043137)
+on `9e0d501944302f219d1c5a846a07341293e92094`: `verify (ubuntu-latest)`
+success, `verify (macos-latest)` success, `verify (windows-latest)` success,
+`visual` success — the first green three-platform run including all round-8
+fixes. Local gates at the same tree: typecheck clean; build clean; vitest
+141 files / 2164 tests; crash bundle ×2 at 154 tests each; cross-platform
+browser E2E 20; Draft Store E2E 38; app E2E 22; vault debris scan clean;
+zero mutation markers.
+
+This is verification evidence, NOT a new seal: the program verdict stays
+`Reopened / fixes implemented; fresh closure verification pending` until the
+reviewer confirms the closure round.
