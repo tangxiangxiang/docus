@@ -197,7 +197,14 @@ describe('deterministic replayable folder-move recovery model', () => {
           if (placement === 'external') await writeExternal(`ren/${entry.rel}`, `# external ${seed}/${index}\n`)
         }
         const gateExists = placements.some((p) => p === 'dest' || p === 'both' || p === 'external') || random() < 0.6
-        if (gateExists) await fs.mkdir(destAbs, { recursive: true })
+        const transactionId = seed.toString(16)
+        if (gateExists) {
+          await fs.mkdir(destAbs, { recursive: true })
+          // The mover drops a hidden gate token when it creates the
+          // gate — recovery needs it to prove an otherwise-empty
+          // destination is ours (round-8: emptiness is not proof).
+          await fs.writeFile(path.join(destAbs, `.docus-folder-gate-${transactionId}`), '', 'utf8')
+        }
         if (gateExists && random() < 0.3) await fs.mkdir(path.join(destAbs, 'nested'), { recursive: true })
         const externalInGate = gateExists && random() < 0.25
         if (externalInGate) await writeExternal(`ren/external-gate-${seed}.md`, `# external gate ${seed}\n`)
@@ -219,6 +226,9 @@ describe('deterministic replayable folder-move recovery model', () => {
             sourceHash,
             ...(id ? { documentId: id, documentPath: `${srcRel}/${docRel}` } : {}),
           })),
+          directories: [...new Set(entries
+            .map((entry) => entry.rel.includes('/') ? entry.rel.slice(0, entry.rel.lastIndexOf('/')) : null)
+            .filter((dir): dir is string => dir !== null))],
           metadataDisposition: { kind: 'prefix-move' },
         }))
         model = { placements, externalInGate, sourceHasMetadata, destinationHasMetadata, allAtSource }
@@ -247,7 +257,11 @@ describe('deterministic replayable folder-move recovery model', () => {
           expect(present, `entry ${entries[index].rel} lost; ${detail}`).toBe(true)
         }
         const journalKept = [...finalTree.keys()].includes(journalName)
-        const replayBlocked = placements.includes('external') || placements.includes('missing')
+        // Round-8: recovery quarantines (never merges) when the
+        // destination holds ANY external content — an entry at a
+        // foreign generation, a missing generation, OR an undeclared
+        // file inside the gate (externalInGate).
+        const replayBlocked = placements.includes('external') || placements.includes('missing') || externalInGate
         if (!replayBlocked && !allAtSource) {
           // Fully replayable split: the journal must be consumed and
           // every entry must land at the destination with its content;

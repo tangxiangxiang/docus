@@ -20,6 +20,7 @@ import {
   withDocumentWriteLock,
 } from '../documentWriteLock.js'
 import { __setFolderRaceHooksForTesting } from '../routes/folders.js'
+import { __setDirectoryMoveStrategyOverrideForTesting } from '../documentFileLifecycle.js'
 import { __setPostRenameRaceHooksForTesting } from '../routes/posts.js'
 
 let sandbox: string
@@ -405,6 +406,67 @@ describe('write routes update the index', () => {
       expect(names.some((name) => name.includes('.docus-save-'))).toBe(false)
       expect(names.some((name) => name.includes('.docus-staged-'))).toBe(false)
     } finally { __setFolderRaceHooksForTesting(null) }
+  })
+
+  it('refuses the replayable reverse move when the journal direction flip cannot be persisted', async () => {
+    // Round-8 P1: for the replayable protocol the journal direction
+    // flip is a HARD precondition of the reverse move. If the flip
+    // cannot be durably written (ENOSPC/EIO/perm), NOT ONE file may
+    // move back — a per-file reverse move without a durable journal
+    // would re-open the split-tree-without-transaction hole on a
+    // mid-rollback crash. The forward tree stays intact at the new path
+    // and both journals are preserved so recovery completes forward.
+    await fs.mkdir(path.join(sandbox, 'notes'))
+    await fs.writeFile(path.join(sandbox, 'notes', 'target.md'), '# target', 'utf8')
+    await fs.writeFile(path.join(sandbox, 'c.md'), '[[notes/target]]', 'utf8')
+    __resetLinkIndexForTesting()
+    await get('/api/links/index')
+    saveDocumentMetadata(db, { id: 'target-id', path: 'notes/target', title: 'T', updatedAt: 1 })
+    const external = 'external save [[notes/target]]'
+    __setDirectoryMoveStrategyOverrideForTesting('replayable-move')
+    __setFolderRaceHooksForTesting({
+      // Make the reference write fail AFTER the forward move landed,
+      // forcing the rollback path.
+      afterRenamePlanBuilt: async () => {
+        await fs.writeFile(path.join(sandbox, 'c.md'), external, 'utf8')
+      },
+      // The durable direction flip fails.
+      failJournalFlip: true,
+    })
+    try {
+      const response = await app.fetch(new Request('http://localhost/api/folders/notes', {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ newPath: 'renamed', updateReferences: true }),
+      }))
+      // The flip failure surfaces as an incomplete-rollback 500 (the
+      // route refuses to reverse-move without a durable journal and
+      // leaves recovery to finish forward); the important contract is
+      // below — nothing moved and the evidence is intact.
+      expect(response.status).toBe(500)
+      // ZERO files moved back: the forward tree is intact at the new
+      // path, the source folder is gone (not restored).
+      await expect(fs.stat(path.join(sandbox, 'renamed', 'target.md'))).resolves.toBeTruthy()
+      await expect(fs.stat(path.join(sandbox, 'notes'))).rejects.toThrow()
+      // Metadata stayed with the forward tree.
+      expect(getDocumentMetadata(db, 'renamed/target')?.id).toBe('target-id')
+      expect(getDocumentMetadata(db, 'notes/target')).toBeNull()
+      // External bytes preserved.
+      expect(await fs.readFile(path.join(sandbox, 'c.md'), 'utf8')).toBe(external)
+      // The main folder journal survived AND is still forward (the flip
+      // never persisted) — recovery's complete evidence for the next
+      // startup. The reference journal is preserved too.
+      const journals = (await fs.readdir(sandbox)).filter((name) => name.includes('.docus-journal-'))
+      expect(journals.length).toBeGreaterThanOrEqual(2)
+      const parsed = await Promise.all(journals.map(async (name) => JSON.parse(await fs.readFile(path.join(sandbox, name), 'utf8'))))
+      const mainJournal = parsed.find((entry) => entry.op === 'folder-rename')
+      expect(mainJournal).toBeDefined()
+      expect(mainJournal.srcRel).toBe('notes')
+      expect(mainJournal.destRel).toBe('renamed')
+      expect(parsed.some((entry) => entry.op === 'folder-rename-references')).toBe(true)
+    } finally {
+      __setFolderRaceHooksForTesting(null)
+      __setDirectoryMoveStrategyOverrideForTesting(null)
+    }
   })
 
   it('does not delete destination recovery metadata when the filesystem rename fails', async () => {
