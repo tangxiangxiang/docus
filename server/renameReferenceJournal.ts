@@ -34,7 +34,11 @@ type JournalEntry = {
   sourceHash?: string
   sourceDev?: number
   sourceIno?: number
-  identities?: Array<{ path: string; id: string }>
+  /** Folder identities carry each document's source hash so recovery
+   * can verify the actual generation — a directory's dev/ino is weak
+   * evidence (recycled after external delete/recreate, unreliable on
+   * some Windows file systems, brand-new after a replayable move). */
+  identities?: Array<{ path: string; id: string; sourceHash?: string }>
   references: ReferenceEntry[]
 }
 
@@ -68,7 +72,7 @@ type PrepareRenameReferenceJournalInput = {
 } | {
   op: 'folder-rename-references'
   documentId?: never
-  identities: readonly { path: string; id: string }[]
+  identities: readonly { path: string; id: string; sourceHash: string }[]
 })
 
 export async function prepareRenameReferenceJournal(input: PrepareRenameReferenceJournalInput): Promise<PreparedRenameReferenceJournal | null> {

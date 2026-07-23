@@ -3,7 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import { canModify } from '../../src/composables/archiveProtocol.js'
-import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged, removeDurableJournal, syncParentDirectoryBestEffort, writeDurableJournal } from '../atomicTextWrite.js'
+import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged, removeDurableJournal, sha256Hex, syncParentDirectoryBestEffort, writeDurableJournal } from '../atomicTextWrite.js'
 import {
   deleteDocumentMetadata,
   deleteDocumentMetadataPrefix,
@@ -12,7 +12,13 @@ import {
   restoreDocumentMetadataMutation,
   snapshotDocumentMetadataPrefixMutation,
 } from '../documentMetadata.js'
-import { createOnlyMoveDirectory } from '../documentFileLifecycle.js'
+import {
+  createOnlyMoveDirectory,
+  platformDirectoryMoveStrategy,
+  RenameDestinationOccupiedError,
+  RenameSourceReusedError,
+  UnsupportedDirectoryMoveError,
+} from '../documentFileLifecycle.js'
 import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { prepareRenameReferenceJournal, type PreparedRenameReferenceJournal } from '../renameReferenceJournal.js'
@@ -159,11 +165,19 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   let renamed = false
   let journalPath: string | null = null
   let referenceJournal: PreparedRenameReferenceJournal | null = null
+  // Replayable moves (the Windows protocol) can crash mid-flight with
+  // the tree split between source and destination: a thrown move may
+  // have left journaled entries at the destination, so the journal
+  // must survive for startup recovery even though `renamed` is false.
+  let moveThrew = false
+  const moveStrategy = platformDirectoryMoveStrategy
   try {
+    const sourceHashes = new Map<string, string>()
     for (const oldPath of oldPaths) {
       const oldAbs = filePathFor(oldPath)
       const [raw, stat] = await Promise.all([fs.readFile(oldAbs, 'utf8'), fs.stat(oldAbs)])
       ensureMetadata(oldPath, raw, stat.mtimeMs)
+      sourceHashes.set(oldPath, sha256Hex(raw))
     }
     for (const snapshot of folderReferenceSnapshots) {
       if (!oldPaths.includes(snapshot.sourcePath)) {
@@ -179,7 +193,9 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       identities: oldPaths.map((oldPath) => {
         const identity = getDocumentMetadata(metadataDb(), oldPath)
         if (!identity) throw new Error(`source document identity was not created: ${oldPath}`)
-        return { path: oldPath, id: identity.id }
+        const sourceHash = sourceHashes.get(oldPath)
+        if (!sourceHash) throw new Error(`source document hash was not captured: ${oldPath}`)
+        return { path: oldPath, id: identity.id, sourceHash }
       }),
       references: folderReferenceSnapshots.map((snapshot) => ({
         path: snapshot.writePath,
@@ -200,12 +216,34 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       destRel: newPath,
       sourceDev: sourceDirectoryStat.dev,
       sourceIno: sourceDirectoryStat.ino,
+      strategy: moveStrategy,
+      // A replayable move can crash mid-flight with the tree split
+      // between both paths: startup recovery replays the remaining
+      // entries from this list, verified by content hash.
+      ...(moveStrategy === 'replayable-move'
+        ? {
+            entries: oldPaths.map((oldPath) => {
+              const identity = getDocumentMetadata(metadataDb(), oldPath)
+              const sourceHash = sourceHashes.get(oldPath)
+              if (!identity || !sourceHash) throw new Error(`source document identity was not created: ${oldPath}`)
+              return { rel: oldPath.slice(srcPath.length + 1), id: identity.id, sourceHash }
+            }),
+          }
+        : {}),
     })
     deleteDocumentMetadataPrefix(metadataDb(), newPath)
     // Create-only: mkdir is the gate — an external writer claiming the
     // destination after the earlier exists() check fails the move
     // closed (restored: false) instead of being replaced by rename(2).
-    const moved = await createOnlyMoveDirectory(src, dest)
+    // On Windows (rename(2) cannot replace a directory there) the
+    // replayable per-file protocol runs under this same journal.
+    let moved: { restored: boolean }
+    try {
+      moved = await createOnlyMoveDirectory(src, dest, moveStrategy)
+    } catch (moveError) {
+      moveThrew = true
+      throw moveError
+    }
     if (!moved.restored) {
       await removeDurableJournal(journalPath).catch(() => {})
       return bad(c, 'destination was claimed by an external writer during the move; retry', 409)
@@ -255,7 +293,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         // while the reference writes were failing, the rollback fails
         // closed (restored: false) and the tree stays at the
         // destination — never replacing the external folder.
-        const rolledBack = await createOnlyMoveDirectory(dest, src)
+        const rolledBack = await createOnlyMoveDirectory(dest, src, moveStrategy)
         if (rolledBack.restored) rolledTreeBack = true
         else rollbackSourceReused = true
       } catch (rollbackError) { rollbackErrors.push(rollbackError) }
@@ -268,7 +306,11 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     // source was re-used), KEEP it: should a crash interrupt this
     // rollback, startup recovery reads it and completes the metadata
     // move to dest instead of binding identities to a missing tree.
-    if (rolledTreeBack && journalPath) await removeDurableJournal(journalPath).catch(() => {})
+    // A thrown replayable move may have left journaled entries at the
+    // destination: keep the journal so startup recovery replays them
+    // (it removes the journal itself when the tree is provably at the
+    // source).
+    if (rolledTreeBack && journalPath && !moveThrew) await removeDurableJournal(journalPath).catch(() => {})
     if (rollbackSourceReused) {
       // Identity follows the bytes: the tree is at newPath. Move every
       // restored row under srcPath back under newPath (or drop them if
@@ -293,6 +335,19 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       } catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
     if (rollbackErrors.length) throw new AggregateError([error, ...rollbackErrors], 'folder rename failed and rollback was incomplete')
+    if (error instanceof UnsupportedDirectoryMoveError) {
+      return bad(c, 'this filesystem does not support the create-only folder move (hard links); the folder was not renamed', 501)
+    }
+    const moveErrorCode = (error as NodeJS.ErrnoException).code
+    if (moveErrorCode === 'EPERM' || moveErrorCode === 'EOPNOTSUPP' || moveErrorCode === 'ENOTSUP') {
+      return bad(c, 'this filesystem does not support the create-only folder move (hard links); the folder was not renamed', 501)
+    }
+    if (error instanceof RenameDestinationOccupiedError) {
+      return bad(c, 'destination was claimed by an external writer during the move; retry', 409)
+    }
+    if (error instanceof RenameSourceReusedError) {
+      return bad(c, 'the folder move conflicted with an external writer on both paths; nothing was overwritten; retry', 409)
+    }
     if (rollbackSourceReused) {
       return bad(c, 'the source folder was re-used externally during rollback; the folder was kept at the new path without overwriting the external folder; reference updates were not applied', 409)
     }
@@ -400,11 +455,12 @@ folderRoutes.delete('/api/folders/*', async (c) => {
       if (!await exists(abs)) {
         // The path is still empty: put the old tree back WITH its
         // identity — the path again holds exactly the staged
-        // generation. createOnlyMoveDirectory's mkdir gate + rmdir
-        // ownership check make the restore create-only: if an external
-        // writer claimed the path between the exists() check above and
-        // the restore, restored: false reports it and the metadata is
-        // NEVER restored onto foreign bytes.
+        // generation. createOnlyMoveDirectory's create-only protocol
+        // (atomic rename over its own mkdir gate on POSIX; replayable
+        // per-file links on Windows) makes the restore create-only: if
+        // an external writer claimed the path between the exists()
+        // check above and the restore, restored: false reports it and
+        // the metadata is NEVER restored onto foreign bytes.
         let restored = false
         try { restored = (await createOnlyMoveDirectory(staged, abs)).restored }
         catch (rollbackError) { rollbackErrors.push(rollbackError) }

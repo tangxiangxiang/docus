@@ -13,6 +13,7 @@ import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
 import {
   RenameDestinationOccupiedError,
   RenameSourceReusedError,
+  UnsupportedDirectoryMoveError,
   createOnlyMoveDirectory,
   createOnlyMoveFile,
   renameDocumentWithMetadata,
@@ -115,7 +116,7 @@ describe('createOnlyMoveFile', () => {
 })
 
 describe('createOnlyMoveDirectory', () => {
-  it('moves a whole tree in one atomic rename and leaves no gate residue', async () => {
+  it('moves a whole tree with the platform default strategy and leaves no gate or source residue', async () => {
     await fs.mkdir(path.join(dir, 'src'))
     await fs.writeFile(path.join(dir, 'src', 'a.md'), '# a\n', 'utf8')
     await fs.mkdir(path.join(dir, 'src', 'nested'))
@@ -173,7 +174,9 @@ describe('createOnlyMoveDirectory', () => {
     // The dangerous in-flight window: our own empty gate directory is
     // claimed by an external writer between mkdir and rename. rename
     // then fails (ENOTEMPTY) and rmdir proves the directory is no
-    // longer ours — the source tree must stay untouched.
+    // longer ours — the source tree must stay untouched. Explicitly
+    // the atomic strategy: the replayable protocol's parity check is
+    // covered in its own describe block below.
     await fs.mkdir(path.join(dir, 'src'))
     await fs.writeFile(path.join(dir, 'src', 'a.md'), '# a\n', 'utf8')
     __setCreateOnlyMoveHooksForTesting({
@@ -182,10 +185,123 @@ describe('createOnlyMoveDirectory', () => {
       },
     })
 
-    const moved = await createOnlyMoveDirectory(path.join(dir, 'src'), path.join(dir, 'dest'))
+    const moved = await createOnlyMoveDirectory(path.join(dir, 'src'), path.join(dir, 'dest'), 'atomic-rename')
 
     expect(moved).toEqual({ restored: false })
     expect(await fs.readFile(path.join(dir, 'dest', 'external.md'), 'utf8')).toBe('# external\n')
+    expect(await fs.readFile(path.join(dir, 'src', 'a.md'), 'utf8')).toBe('# a\n')
+  })
+
+  it('reports an unsupported platform move as a typed error instead of a raw rename failure', async () => {
+    // Platforms where rename(2) cannot replace a directory (Windows)
+    // fail the atomic strategy with EPERM; the guard must surface a
+    // typed error the route maps to a clear 501 — never a raw errno.
+    await fs.mkdir(path.join(dir, 'src'))
+    await fs.writeFile(path.join(dir, 'src', 'a.md'), '# a\n', 'utf8')
+    const rename = vi.spyOn(fs, 'rename').mockRejectedValueOnce(Object.assign(new Error('no directory replace'), { code: 'EPERM' }))
+    try {
+      await expect(
+        createOnlyMoveDirectory(path.join(dir, 'src'), path.join(dir, 'dest'), 'atomic-rename'),
+      ).rejects.toBeInstanceOf(UnsupportedDirectoryMoveError)
+      expect(await fs.stat(path.join(dir, 'dest')).then(() => true, () => false)).toBe(false)
+      expect(await fs.readFile(path.join(dir, 'src', 'a.md'), 'utf8')).toBe('# a\n')
+    } finally { rename.mockRestore() }
+  })
+})
+
+describe('createOnlyMoveDirectory (replayable per-file protocol)', () => {
+  // rename(2) cannot replace a directory on Windows — even an empty
+  // one — so the folder move runs as journaled per-file create-only
+  // links instead. These tests force the strategy so every platform
+  // exercises the exact protocol Windows runs in production.
+  it('moves the whole tree through create-only per-file links and leaves no gate or source residue', async () => {
+    await fs.mkdir(path.join(dir, 'src', 'nested'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'src', 'a.md'), '# a\n', 'utf8')
+    await fs.writeFile(path.join(dir, 'src', 'nested', 'b.md'), '# b\n', 'utf8')
+
+    const moved = await createOnlyMoveDirectory(path.join(dir, 'src'), path.join(dir, 'dest'), 'replayable-move')
+
+    expect(moved).toEqual({ restored: true })
+    expect(await fs.readFile(path.join(dir, 'dest', 'a.md'), 'utf8')).toBe('# a\n')
+    expect(await fs.readFile(path.join(dir, 'dest', 'nested', 'b.md'), 'utf8')).toBe('# b\n')
+    expect(await names()).toEqual(['dest'])
+  })
+
+  it('fails closed when the destination is an external EMPTY directory', async () => {
+    await fs.mkdir(path.join(dir, 'src'))
+    await fs.writeFile(path.join(dir, 'src', 'a.md'), '# a\n', 'utf8')
+    await fs.mkdir(path.join(dir, 'dest'))
+
+    const moved = await createOnlyMoveDirectory(path.join(dir, 'src'), path.join(dir, 'dest'), 'replayable-move')
+
+    expect(moved).toEqual({ restored: false })
+    expect(await fs.readdir(path.join(dir, 'dest'))).toEqual([])
+    expect(await fs.readFile(path.join(dir, 'src', 'a.md'), 'utf8')).toBe('# a\n')
+  })
+
+  it('rolls every already-moved entry back when an external writer claims a destination path mid-move', async () => {
+    // The replayable move's defining race: entry a.md has already
+    // landed at the destination when an external writer claims the
+    // NEXT entry's path. The whole move must fail closed with EVERY
+    // moved entry back at its source — a missing rollback would strand
+    // a.md at the destination (mutation M11).
+    await fs.mkdir(path.join(dir, 'src', 'nested'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'src', 'a.md'), '# ours a\n', 'utf8')
+    await fs.writeFile(path.join(dir, 'src', 'nested', 'b.md'), '# ours b\n', 'utf8')
+    __setCreateOnlyMoveHooksForTesting({
+      afterReplayableMovedEntry: async (entryRel) => {
+        if (entryRel === 'a.md') {
+          await fs.mkdir(path.join(dir, 'dest', 'nested'), { recursive: true })
+          await fs.writeFile(path.join(dir, 'dest', 'nested', 'b.md'), '# external\n', 'utf8')
+        }
+      },
+    })
+
+    const moved = await createOnlyMoveDirectory(path.join(dir, 'src'), path.join(dir, 'dest'), 'replayable-move')
+
+    expect(moved).toEqual({ restored: false })
+    // Both our entries are back at the source; the external file wins.
+    expect(await fs.readFile(path.join(dir, 'src', 'a.md'), 'utf8')).toBe('# ours a\n')
+    expect(await fs.readFile(path.join(dir, 'src', 'nested', 'b.md'), 'utf8')).toBe('# ours b\n')
+    expect(await fs.readFile(path.join(dir, 'dest', 'nested', 'b.md'), 'utf8')).toBe('# external\n')
+    expect(await fs.stat(path.join(dir, 'dest', 'a.md')).then(() => true, () => false)).toBe(false)
+    expect((await names()).some((name) => name.includes('.docus-rename-'))).toBe(false)
+  })
+
+  it('fails closed when external content lands inside the gate before the move ends', async () => {
+    // The replayable parity of the atomic protocol's ENOTEMPTY gate
+    // check: an external file dropped into our destination mid-move
+    // fails the whole move closed with every entry rolled back.
+    await fs.mkdir(path.join(dir, 'src'))
+    await fs.writeFile(path.join(dir, 'src', 'a.md'), '# a\n', 'utf8')
+    __setCreateOnlyMoveHooksForTesting({
+      afterReplayableMovedEntry: async () => {
+        await fs.writeFile(path.join(dir, 'dest', 'external.md'), '# external\n', 'utf8')
+      },
+    })
+
+    const moved = await createOnlyMoveDirectory(path.join(dir, 'src'), path.join(dir, 'dest'), 'replayable-move')
+
+    expect(moved).toEqual({ restored: false })
+    expect(await fs.readFile(path.join(dir, 'dest', 'external.md'), 'utf8')).toBe('# external\n')
+    expect(await fs.readFile(path.join(dir, 'src', 'a.md'), 'utf8')).toBe('# a\n')
+    expect(await fs.stat(path.join(dir, 'dest', 'a.md')).then(() => true, () => false)).toBe(false)
+  })
+
+  it('fails closed without moving when the folder contains a symlink', async () => {
+    // link(2) FOLLOWS symlinks — moving one would hardlink an external
+    // inode into the destination. The move must refuse before any
+    // entry moves and prune its own gate.
+    if (process.platform === 'win32') return // file symlinks need elevation on Windows; junction escape is covered by the containment tests
+    await fs.mkdir(path.join(dir, 'src'))
+    await fs.writeFile(path.join(dir, 'src', 'a.md'), '# a\n', 'utf8')
+    await fs.symlink(path.join(dir, 'src', 'a.md'), path.join(dir, 'src', 'link.md'))
+
+    await expect(
+      createOnlyMoveDirectory(path.join(dir, 'src'), path.join(dir, 'dest'), 'replayable-move'),
+    ).rejects.toBeInstanceOf(UnsupportedDirectoryMoveError)
+
+    expect(await fs.stat(path.join(dir, 'dest')).then(() => true, () => false)).toBe(false)
     expect(await fs.readFile(path.join(dir, 'src', 'a.md'), 'utf8')).toBe('# a\n')
   })
 })

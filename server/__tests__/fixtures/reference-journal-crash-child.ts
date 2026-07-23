@@ -1,29 +1,40 @@
+// Crash-test child: runs the REAL rename-reference transaction (no fs
+// mocks) and pauses at the exact protocol seam named by
+// DOCUS_REFERENCE_CRASH_POINT, announcing READY:<point>; the parent
+// force-kills it there, asserts the exact journal phase + payload set
+// on disk, and replays the transaction through startup recovery.
+//
+// Points: preparing | payload-<i>-<before|after> | roll-forward |
+//         roll-back | cleanup | cleanup-payload-0
+// Env: DOCUS_REFERENCE_VAULT, DOCUS_REFERENCE_CRASH_POINT
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
   __setRenameReferenceJournalCrashHooksForTesting,
   prepareRenameReferenceJournal,
 } from '../../renameReferenceJournal.js'
+import { readyAndWait } from './crash-child-ready.js'
 
 const vault = process.env.DOCUS_REFERENCE_VAULT
 const point = process.env.DOCUS_REFERENCE_CRASH_POINT
-if (!vault || !point) process.exit(2)
+if (!vault || !point) {
+  console.error('missing DOCUS_REFERENCE_* env')
+  process.exit(2)
+}
 
-const kill = (): never => process.kill(process.pid, 'SIGKILL') as never
 __setRenameReferenceJournalCrashHooksForTesting({
-  afterPreparingJournal: point === 'preparing' ? kill : undefined,
+  afterPreparingJournal: point === 'preparing' ? () => readyAndWait('preparing') : undefined,
   afterPayloadWrite: point.startsWith('payload-')
-    ? (index, kind) => { if (`payload-${index}-${kind}` === point) kill() }
+    ? (index, kind) => {
+        const reached = `payload-${index}-${kind}`
+        if (reached === point) return readyAndWait(reached)
+      }
     : undefined,
-  afterPhaseRewrite: point === 'roll-forward'
-    ? (phase) => { if (phase === 'roll-forward') kill() }
-    : point === 'roll-back'
-      ? (phase) => { if (phase === 'roll-back') kill() }
-      : point === 'cleanup'
-        ? (phase) => { if (phase === 'cleanup') kill() }
-        : undefined,
+  afterPhaseRewrite: point === 'roll-forward' || point === 'roll-back' || point === 'cleanup'
+    ? (phase) => { if (phase === point) return readyAndWait(point) }
+    : undefined,
   afterPayloadRemove: point === 'cleanup-payload-0'
-    ? (index) => { if (index === 0) kill() }
+    ? (index) => { if (index === 0) return readyAndWait('cleanup-payload-0') }
     : undefined,
 })
 
@@ -39,8 +50,12 @@ const prepared = await prepareRenameReferenceJournal({
     { path: 'ref-b', beforeRaw: '[[old]]\n', afterRaw: '[[new]]\n' },
   ],
 })
-if (!prepared) process.exit(3)
+if (!prepared) {
+  console.error('prepareRenameReferenceJournal returned null')
+  process.exit(3)
+}
 if (point === 'roll-back') await prepared.setDirection('roll-back')
 if (point === 'cleanup' || point === 'cleanup-payload-0') await prepared.cleanup()
-await fs.writeFile(path.join(vault, 'unexpected-completion'), point)
+// Reaching this line means the crash hook never fired.
+console.error('child completed without crashing')
 process.exit(1)

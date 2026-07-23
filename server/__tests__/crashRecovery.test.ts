@@ -16,6 +16,7 @@ const CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'commit-crash-chi
 const RENAME_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'rename-crash-child.ts')
 const RENAME_METADATA_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'rename-metadata-crash-child.ts')
 const REFERENCE_JOURNAL_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'reference-journal-crash-child.ts')
+const FOLDER_MOVE_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'folder-move-crash-child.ts')
 
 let vault: string
 let db: InstanceType<typeof Database>
@@ -453,6 +454,45 @@ describe('recoverInterruptedOperations (delete quarantine)', () => {
     expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
   })
 
+  it('never writes an empty manifest for a metadata-less legacy delete artifact', async () => {
+    // A metadata-less legacy artifact used to write an
+    // {identities: []} manifest — which the parser (rightly) rejects,
+    // so the unparseable manifest stayed "authoritative" and blocked
+    // every orphan rule for this basename on every future startup.
+    // The promotion must skip the manifest entirely while still
+    // preserving the bytes under the permanent quarantine name.
+    await seed({ 'gone.md.docus-delete-123': '# old\n' })
+
+    const report = await runRecovery()
+
+    expect((await namesIn()).some((name) => name.startsWith('gone.md.docus-quarantine-reuse-'))).toBe(true)
+    expect((await namesIn()).some((name) => name.startsWith('.gone.md.docus-quarantine-manifest-'))).toBe(false)
+    expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
+
+    // Second startup: the permanent quarantine is stable and no
+    // invalid-manifest note appears for this basename.
+    const second = await runRecovery()
+    expect(second.actions.some((a) => a.detail?.includes('invalid legacy delete quarantine manifest'))).toBe(false)
+    expect((await namesIn()).some((name) => name.startsWith('gone.md.docus-quarantine-reuse-'))).toBe(true)
+  })
+
+  it('replays the generated legacy manifest on a second startup', async () => {
+    // The real generation path end to end (not a hand-crafted
+    // manifest): the first startup writes the manifest and detaches
+    // the identity; the second startup parses it cleanly and replays
+    // the detachment.
+    await seed({ 'gone.md.docus-delete-123': '# old\n' })
+    saveDocumentMetadata(db, { id: 'gone-id', path: 'gone', title: 'Gone', updatedAt: 1 })
+
+    await runRecovery()
+    expect((await namesIn()).some((name) => name.startsWith('.gone.md.docus-quarantine-manifest-'))).toBe(true)
+    expect(getDocumentMetadata(db, 'gone')).toBeNull()
+
+    const second = await runRecovery()
+    expect(second.actions.some((a) => a.detail?.includes('legacy quarantine identity detachment replayed'))).toBe(true)
+    expect(second.actions.some((a) => a.detail?.includes('invalid legacy delete quarantine manifest'))).toBe(false)
+  })
+
   it('leaves quarantine in place when the path was re-used', async () => {
     await seed({
       'gone.md': '# new generation\n',
@@ -497,33 +537,121 @@ describe('recoverInterruptedOperations (delete quarantine)', () => {
 })
 
 describe('real subprocess crash + startup recovery', () => {
-  function spawnChild(env: Record<string, string>, fixture: string = CRASH_CHILD) {
-    return spawn(process.execPath, [TSX_CLI, fixture], {
+  type CrashChildResult = {
+    code: number | null
+    signal: NodeJS.Signals | null
+    readyPoints: string[]
+    stderr: string
+  }
+
+  /** Spawn a crash child under the READY handshake: the child runs the
+   * real protocol and, at its exact crash seam, prints `READY:<point>`
+   * and hangs; the parent force-kills it only AFTER receiving that
+   * line. READY receipt is the proof the hook was reached and the disk
+   * holds exactly that point's state. A child that exits on its own —
+   * hook never fired, missing env, a fixture bug — never prints READY,
+   * and waitReady rejects with its exit code and stderr. This replaces
+   * the old self-SIGKILL children, whose "any non-zero exit counts as
+   * a hard kill" judgment produced false positives on Windows. */
+  function spawnCrashChild(env: Record<string, string>, fixture: string) {
+    const child = spawn(process.execPath, [TSX_CLI, fixture], {
       env: { ...process.env, ...env },
       stdio: 'pipe',
     })
-  }
-
-  /** A self-inflicted SIGKILL surfaces as signal 'SIGKILL' or exit
-   * code 137 (128 + 9) depending on the platform/libuv path. */
-  function expectHardKill(result: { code: number | null; signal: NodeJS.Signals | null }) {
-    const windowsForcedTermination = process.platform === 'win32'
-      && result.signal === null && result.code !== null && result.code !== 0
-    expect(result.signal === 'SIGKILL' || result.code === 137 || windowsForcedTermination).toBe(true)
-  }
-
-  async function waitExit(child: ReturnType<typeof spawn>): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('crash child timed out')), 20000)
-      child.on('exit', (code, signal) => {
-        clearTimeout(timer)
-        resolve({ code, signal })
-      })
-      child.on('error', (error) => {
-        clearTimeout(timer)
-        reject(error)
-      })
+    const readyPoints: string[] = []
+    let stderr = ''
+    let stdoutBuffer = ''
+    const readyResolvers = new Map<string, Array<() => void>>()
+    child.stdout!.on('data', (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString('utf8')
+      let newlineIndex = stdoutBuffer.indexOf('\n')
+      while (newlineIndex !== -1) {
+        const line = stdoutBuffer.slice(0, newlineIndex).trim()
+        stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1)
+        const match = /^READY:(.+)$/.exec(line)
+        if (match) {
+          readyPoints.push(match[1])
+          for (const resolve of readyResolvers.get(match[1]) ?? []) resolve()
+        }
+        newlineIndex = stdoutBuffer.indexOf('\n')
+      }
     })
+    child.stderr!.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
+    const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(
+        `crash child timed out (ready: ${readyPoints.join(',') || 'none'}; stderr: ${stderr.slice(0, 500)})`,
+      )), 20000)
+      child.on('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal }) })
+      child.on('error', (error) => { clearTimeout(timer); reject(error) })
+    })
+    exitPromise.catch(() => {}) // observed through killAfterReady/waitReady
+    const waitReady = (expectedPoint: string): Promise<void> => {
+      if (readyPoints.includes(expectedPoint)) return Promise.resolve()
+      return Promise.race([
+        new Promise<void>((resolve) => {
+          const resolvers = readyResolvers.get(expectedPoint) ?? []
+          resolvers.push(resolve)
+          readyResolvers.set(expectedPoint, resolvers)
+        }),
+        exitPromise.then((result) => {
+          if (!readyPoints.includes(expectedPoint)) {
+            throw new Error(`crash child exited (code=${result.code}, signal=${result.signal}) before READY:${expectedPoint}; stderr: ${stderr.slice(0, 500)}`)
+          }
+        }),
+      ])
+    }
+    return {
+      /** Wait for the child to reach its crash seam, SIGKILL it from
+       * the parent, and return the exit evidence. */
+      async killAfterReady(expectedPoint: string): Promise<CrashChildResult> {
+        await waitReady(expectedPoint)
+        child.kill('SIGKILL')
+        const result = await exitPromise
+        return { ...result, readyPoints: [...readyPoints], stderr }
+      },
+    }
+  }
+
+  /** A true hard kill is proven by the handshake, never by a non-zero
+   * exit code alone: the child reached its crash seam (READY received),
+   * the PARENT initiated SIGKILL, and the child exited — on POSIX that
+   * surfaces as signal SIGKILL or code 137 (128 + 9); on Windows
+   * kill() maps to TerminateProcess, so READY receipt plus a
+   * parent-initiated termination is the evidence there. */
+  function expectParentKilled(result: CrashChildResult, expectedPoint: string): void {
+    expect(result.readyPoints).toContain(expectedPoint)
+    if (process.platform === 'win32') {
+      expect(result.code !== null || result.signal !== null).toBe(true)
+    } else {
+      expect(result.signal === 'SIGKILL' || result.code === 137).toBe(true)
+    }
+  }
+
+  // Exact on-disk state of the reference transaction at each crash
+  // point — asserted BEFORE recovery runs, so the recovery tests prove
+  // they handle the real crash state, not whatever the child happened
+  // to leave behind.
+  const REFERENCE_PAYLOADS_BY_POINT: Record<string, string[]> = {
+    'preparing': [],
+    'payload-0-before': ['before-0'],
+    'payload-0-after': ['before-0', 'after-0'],
+    'payload-1-before': ['before-0', 'after-0', 'before-1'],
+    'payload-1-after': ['before-0', 'after-0', 'before-1', 'after-1'],
+    'roll-forward': ['before-0', 'after-0', 'before-1', 'after-1'],
+    'roll-back': ['before-0', 'after-0', 'before-1', 'after-1'],
+    'cleanup': ['before-0', 'after-0', 'before-1', 'after-1'],
+    'cleanup-payload-0': ['after-0', 'before-1', 'after-1'],
+  }
+  const REFERENCE_PHASE_BY_POINT: Record<string, string> = {
+    'preparing': 'preparing',
+    'payload-0-before': 'preparing',
+    'payload-0-after': 'preparing',
+    'payload-1-before': 'preparing',
+    'payload-1-after': 'preparing',
+    'roll-forward': 'roll-forward',
+    'roll-back': 'roll-back',
+    'cleanup': 'cleanup',
+    'cleanup-payload-0': 'cleanup',
   }
 
   it.each([
@@ -539,11 +667,35 @@ describe('real subprocess crash + startup recovery', () => {
   ])('replays an exact reference-journal SIGKILL point idempotently: %s', async (point) => {
     await seed({ 'old.md': '# owned\n', 'ref-a.md': '[[old]]\n', 'ref-b.md': '[[old]]\n' })
     saveDocumentMetadata(db, { id: 'rename-id', path: 'old', title: 'Old', updatedAt: 1 })
-    const child = spawnChild({
+    const child = spawnCrashChild({
       DOCUS_REFERENCE_VAULT: vault,
       DOCUS_REFERENCE_CRASH_POINT: point,
     }, REFERENCE_JOURNAL_CRASH_CHILD)
-    expectHardKill(await waitExit(child))
+    expectParentKilled(await child.killAfterReady(point), point)
+
+    // Pre-recovery proof of the exact crash state: journal phase and
+    // the precise payload set written at this point — nothing more,
+    // nothing less — with the live documents untouched.
+    const crashState = await namesIn()
+    const journalName = crashState.find((name) => name.includes('.docus-journal-'))
+    expect(journalName).toBeDefined()
+    const journal = JSON.parse(await fs.readFile(path.join(vault, journalName!), 'utf8')) as { op: string; phase: string }
+    expect(journal.op).toBe('document-rename-references')
+    expect(journal.phase).toBe(REFERENCE_PHASE_BY_POINT[point])
+    const payloadSuffixes = crashState
+      .filter((name) => name.includes('.docus-ref-'))
+      .map((name) => {
+        const match = /\.docus-ref-(before|after)-[0-9a-f-]+-(\d+)$/.exec(name)
+        expect(match).not.toBeNull()
+        return `${match![1]}-${match![2]}`
+      })
+      .sort()
+    expect(payloadSuffixes).toEqual([...REFERENCE_PAYLOADS_BY_POINT[point]].sort())
+    expect(crashState).toContain('old.md')
+    expect(crashState).toContain('ref-a.md')
+    expect(crashState).toContain('ref-b.md')
+    expect(await fs.readFile(path.join(vault, 'old.md'), 'utf8')).toBe('# owned\n')
+    expect(crashState).not.toContain('unexpected-completion')
 
     await runRecovery()
     const once = await namesIn()
@@ -573,13 +725,13 @@ describe('real subprocess crash + startup recovery', () => {
     await seed({ 'note.md': '# base\n' })
     saveDocumentMetadata(db, { id: 'pre-crash-id', path: 'note', title: 'Note', updatedAt: 1 })
 
-    const child = spawnChild({
+    const child = spawnCrashChild({
       DOCUS_CRASH_TARGET: abs,
       DOCUS_CRASH_EXPECTED: '# base\n',
       DOCUS_CRASH_REPLACEMENT: '# replacement\n',
       DOCUS_CRASH_POINT: 'takeover',
-    })
-    expectHardKill(await waitExit(child))
+    }, CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady('takeover'), 'takeover')
 
     // The formal path is missing and only hidden staging files remain
     // — exactly the "note vanished" disk state the recovery fixes.
@@ -606,13 +758,23 @@ describe('real subprocess crash + startup recovery', () => {
     const abs = path.join(vault, 'note.md')
     await seed({ 'note.md': '# base\n' })
 
-    const child = spawnChild({
+    const child = spawnCrashChild({
       DOCUS_CRASH_TARGET: abs,
       DOCUS_CRASH_EXPECTED: '# base\n',
       DOCUS_CRASH_REPLACEMENT: '# replacement\n',
       DOCUS_CRASH_POINT: 'journal',
-    })
-    expectHardKill(await waitExit(child))
+    }, CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady('journal'), 'journal')
+
+    // Pre-recovery proof of the exact crash state: the journal and the
+    // save temp exist, the takeover never happened — the target still
+    // holds the base generation and no staging name exists.
+    const crashState = await namesIn()
+    expect(crashState).toContain('note.md')
+    expect(await fs.readFile(abs, 'utf8')).toBe('# base\n')
+    expect(crashState.some((name) => name.startsWith('.note.md.docus-journal-'))).toBe(true)
+    expect(crashState.some((name) => name.startsWith('.note.md.docus-save-'))).toBe(true)
+    expect(crashState.some((name) => name.startsWith('.note.md.docus-staged-'))).toBe(false)
 
     const report = await runRecovery()
 
@@ -691,8 +853,8 @@ describe('real subprocess crash + startup recovery', () => {
     await seed({ 'old.md': '# doc\n' })
     saveDocumentMetadata(db, { id: 'pre-rename-id', path: 'old', title: 'Doc', updatedAt: 1 })
 
-    const child = spawnChild({ DOCUS_CRASH_FROM: fromAbs, DOCUS_CRASH_TO: toAbs }, RENAME_CRASH_CHILD)
-    expectHardKill(await waitExit(child))
+    const child = spawnCrashChild({ DOCUS_CRASH_FROM: fromAbs, DOCUS_CRASH_TO: toAbs }, RENAME_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady('linked'), 'linked')
 
     // Crash state: source gone, staging + destination both name the
     // same inode.
@@ -723,12 +885,12 @@ describe('real subprocess crash + startup recovery', () => {
     const dbPath = path.join(vault, 'metadata.sqlite')
     await seed({ 'old.md': '# original\n' })
 
-    const child = spawnChild({
+    const child = spawnCrashChild({
       DOCUS_RENAME_FROM: from,
       DOCUS_RENAME_TO: to,
       DOCUS_RENAME_DB: dbPath,
     }, RENAME_METADATA_CRASH_CHILD)
-    expectHardKill(await waitExit(child))
+    expectParentKilled(await child.killAfterReady('finalized'), 'finalized')
 
     expect(await fs.stat(from).then(() => true, () => false)).toBe(false)
     expect(await fs.readFile(to, 'utf8')).toBe('# original\n')
@@ -750,15 +912,21 @@ describe('real subprocess crash + startup recovery', () => {
     const dbPath = path.join(vault, 'metadata.sqlite')
     await seed({ 'old.md': '# original\n' })
 
-    const child = spawnChild({
+    const child = spawnCrashChild({
       DOCUS_RENAME_FROM: from,
       DOCUS_RENAME_TO: to,
       DOCUS_RENAME_DB: dbPath,
       DOCUS_RENAME_CRASH_POINT: 'takeover',
     }, RENAME_METADATA_CRASH_CHILD)
-    expectHardKill(await waitExit(child))
+    expectParentKilled(await child.killAfterReady('takeover'), 'takeover')
+    // Pre-recovery proof of the exact crash state: the source was
+    // taken aside (staging + durable journal exist) but the destination
+    // link never happened.
+    const crashState = await namesIn()
     expect(await fs.stat(from).then(() => true, () => false)).toBe(false)
     expect(await fs.stat(to).then(() => true, () => false)).toBe(false)
+    expect(crashState.some((name) => name.startsWith('.old.md.docus-rename-'))).toBe(true)
+    expect(crashState.some((name) => name.startsWith('.old.md.docus-journal-'))).toBe(true)
 
     const persistedDb = new Database(dbPath)
     try {
@@ -768,6 +936,87 @@ describe('real subprocess crash + startup recovery', () => {
       expect(getDocumentMetadata(persistedDb, 'new')).toBeNull()
       expect(report.actions.some((a) => a.action === 'restored')).toBe(true)
       expect((await namesIn()).some((name) => name.includes('.docus-rename-') || name.includes('.docus-journal-'))).toBe(false)
+    } finally { persistedDb.close() }
+  })
+
+  it('cleans the stale journal when the replayable folder move was killed right after its mkdir gate', async () => {
+    // The real Windows protocol killed at its first seam: the child
+    // wrote the durable journal, created the destination gate, and
+    // died before the first file moved. The gate is provably ours
+    // (file-free) — recovery prunes it and removes the stale journal.
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seed({ 'proj/a.md': '# a\n', 'proj/nested/b.md': '# b\n' })
+
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_SRC: 'proj',
+      DOCUS_FOLDER_DEST: 'ren',
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: 'gate',
+    }, FOLDER_MOVE_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady('gate'), 'gate')
+
+    // Pre-recovery proof of the exact crash state: empty gate, every
+    // file still at the source, durable journal.
+    const crashState = await namesIn()
+    expect(crashState).toContain('proj')
+    expect(crashState).toContain('ren')
+    expect(await fs.readdir(path.join(vault, 'ren'))).toEqual([])
+    expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
+    expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe('# b\n')
+    expect(crashState.some((name) => name.includes('.docus-journal-'))).toBe(true)
+
+    const persistedDb = new Database(dbPath)
+    try {
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(report.actions.some((a) => a.action === 'cleaned')).toBe(true)
+      expect(await namesIn()).not.toContain('ren')
+      expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
+      expect(getDocumentMetadata(persistedDb, 'proj/a')?.id).toBe('folder-a-id')
+      expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
+    } finally { persistedDb.close() }
+  })
+
+  it('replays a replayable folder move killed between per-file entries, split tree to destination', async () => {
+    // The defining replayable crash: a.md already landed at the
+    // destination, nested/b.md still at the source — the tree is SPLIT
+    // and only the journaled entry hashes can decide it. Recovery
+    // completes the move FORWARD and moves the metadata prefix.
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seed({ 'proj/a.md': '# a\n', 'proj/nested/b.md': '# b\n' })
+
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_SRC: 'proj',
+      DOCUS_FOLDER_DEST: 'ren',
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: 'entry-a',
+    }, FOLDER_MOVE_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady('entry-a'), 'entry-a')
+
+    // Pre-recovery proof of the exact split state.
+    const crashState = await namesIn()
+    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
+    expect(await fs.stat(path.join(vault, 'proj/a.md')).then(() => true, () => false)).toBe(false)
+    expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe('# b\n')
+    expect(crashState.some((name) => name.includes('.docus-journal-'))).toBe(true)
+    expect(crashState.some((name) => name.includes('.docus-rename-'))).toBe(false)
+
+    const persistedDb = new Database(dbPath)
+    try {
+      const report = await recoverInterruptedOperations(vault, persistedDb)
+      expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+      expect(report.actions.some((a) => a.action === 'failed')).toBe(false)
+      expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
+      expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe('# b\n')
+      expect(await namesIn()).not.toContain('proj')
+      expect(getDocumentMetadata(persistedDb, 'ren/a')?.id).toBe('folder-a-id')
+      expect(getDocumentMetadata(persistedDb, 'ren/nested/b')?.id).toBe('folder-b-id')
+      expect(getDocumentMetadata(persistedDb, 'proj/a')).toBeNull()
+      expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
+      // Idempotent across repeated startups.
+      await recoverInterruptedOperations(vault, persistedDb)
+      expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
     } finally { persistedDb.close() }
   })
 })
@@ -1370,5 +1619,309 @@ describe('recoverInterruptedOperations (folder-rename journal)', () => {
 
     expect(report.actions.some((a) => a.action === 'failed')).toBe(true)
     expect(await namesIn()).toContain('.proj.docus-journal-cccc')
+  })
+})
+
+describe('recoverInterruptedOperations (replayable folder-rename journal)', () => {
+  // Windows cannot replace a directory with rename(2), so the folder
+  // move runs as journaled per-file create-only links: a crash can
+  // leave the tree SPLIT between source and destination, and the
+  // journal's per-entry content hashes are the proof that replays it.
+  async function replayableJournal(entries: Array<{ rel: string; id: string; sourceHash: string }>): Promise<string> {
+    const stat = await fs.stat(path.join(vault, 'proj')).catch(async () => fs.stat(path.join(vault, 'ren'))).catch(() => ({ dev: 0, ino: 0 }))
+    return JSON.stringify({
+      version: 1, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable',
+      sourceDev: stat.dev, sourceIno: stat.ino, entries,
+    })
+  }
+  const A_RAW = '# a\n'
+  const B_RAW = '# b\n'
+  const entries = (): Array<{ rel: string; id: string; sourceHash: string }> => [
+    { rel: 'a', id: 'ren-a-id', sourceHash: sha256Hex(A_RAW) },
+    { rel: 'nested/b', id: 'ren-b-id', sourceHash: sha256Hex(B_RAW) },
+  ]
+
+  it('replays a move that crashed between entries and completes the metadata prefix move', async () => {
+    // Exact mid-move crash state: entry a.md already landed at the
+    // destination, nested/b.md still at the source, durable journal.
+    await seed({ 'ren/a.md': A_RAW, 'proj/nested/b.md': B_RAW })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await replayableJournal(entries()), 'utf8')
+    saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
+    saveDocumentMetadata(db, { id: 'ren-b-id', path: 'proj/nested/b', title: 'B', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe(A_RAW)
+    expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe(B_RAW)
+    expect(await namesIn()).not.toContain('proj')
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
+    expect(getDocumentMetadata(db, 'ren/nested/b')?.id).toBe('ren-b-id')
+    expect(getDocumentMetadata(db, 'proj/a')).toBeNull()
+    // Idempotent across repeated startups.
+    await runRecovery()
+    await runRecovery()
+    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe(A_RAW)
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
+  })
+
+  it('completes forward when every entry already landed at the destination', async () => {
+    await seed({ 'ren/a.md': A_RAW, 'ren/nested/b.md': B_RAW })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await replayableJournal(entries()), 'utf8')
+    saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
+    saveDocumentMetadata(db, { id: 'ren-b-id', path: 'proj/nested/b', title: 'B', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+  })
+
+  it('prunes the empty gate when the crash hit before the first entry moved', async () => {
+    // A replayable move's destination gate — unlike the atomic
+    // protocol's — is provably ours when it holds no files at all:
+    // every entry is still at the source, so the gate and its empty
+    // intermediates are pruned and the stale journal removed.
+    await seed({ 'proj/a.md': A_RAW, 'proj/nested/b.md': B_RAW })
+    await fs.mkdir(path.join(vault, 'ren', 'nested'), { recursive: true })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await replayableJournal(entries()), 'utf8')
+    saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'cleaned')).toBe(true)
+    expect(await namesIn()).not.toContain('ren')
+    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe(A_RAW)
+    expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('ren-a-id')
+  })
+
+  it('quarantines when the source is intact but the destination holds external content', async () => {
+    await seed({ 'proj/a.md': A_RAW, 'proj/nested/b.md': B_RAW, 'ren/external.md': '# external\n' })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await replayableJournal(entries()), 'utf8')
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
+    expect(await fs.readFile(path.join(vault, 'ren/external.md'), 'utf8')).toBe('# external\n')
+    expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe(A_RAW)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
+  })
+
+  it('never replays an entry onto an external generation at the destination', async () => {
+    // An external writer owns ren/a.md with different bytes: replaying
+    // would mean overwriting it. Recovery must fail closed with the
+    // journal retained — and must not have moved the other entry.
+    await seed({ 'ren/a.md': '# external\n', 'proj/nested/b.md': B_RAW })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await replayableJournal(entries()), 'utf8')
+    saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
+    saveDocumentMetadata(db, { id: 'ren-b-id', path: 'proj/nested/b', title: 'B', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'failed')).toBe(true)
+    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# external\n')
+    expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe(B_RAW)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
+    // Metadata never moved onto the foreign generation.
+    expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
+    expect(getDocumentMetadata(db, 'proj/nested/b')?.id).toBe('ren-b-id')
+  })
+
+  it('leaves an unrecognized journal in place when a replayable journal lost its entries', async () => {
+    // A forged/corrupted replayable journal without its entry list can
+    // never be reconciled safely: it must NOT parse, and it must stay
+    // on disk for inspection instead of being auto-removed.
+    await seed({ 'proj/a.md': A_RAW })
+    await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
+      version: 1, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable',
+      sourceDev: 0, sourceIno: 0, entries: [],
+    }), 'utf8')
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('unrecognized'))).toBe(true)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
+    expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe(A_RAW)
+  })
+})
+
+describe('recoverInterruptedOperations (symlink containment)', () => {
+  // String-level containment is not enough: `vault/evil → /outside`
+  // keeps every resolved-against-vault path STRING inside the vault
+  // while the filesystem access lands outside — and an atomic rewrite
+  // also creates its `.docus-save-*` temp in the target's parent. The
+  // recovery walk itself never descends symlinked directories (Dirent
+  // isDirectory is false for links); these tests prove the journals it
+  // DOES find cannot route any touch outside through a symlinked
+  // ancestor. Junctions on Windows report isSymbolicLink under lstat,
+  // so both platforms share one code path.
+  let outside: string
+  beforeEach(async () => {
+    outside = path.join(path.dirname(vault), `${path.basename(vault)}-outside`)
+    await fs.mkdir(outside, { recursive: true })
+    await fs.symlink(outside, path.join(vault, 'evil'), process.platform === 'win32' ? 'junction' : 'dir')
+  })
+  afterEach(async () => {
+    await fs.rm(outside, { recursive: true, force: true })
+  })
+
+  it('quarantines a roll-forward reference journal whose reference path escapes the vault through a symlink', async () => {
+    // The reviewer's exact vector: the journal and payloads are
+    // legitimately inside the vault; only reference.path points
+    // through the symlink. Roll-forward would atomically rewrite
+    // outside/victim.md (and drop its save temp outside).
+    await fs.writeFile(path.join(outside, 'victim.md'), '# external\n', 'utf8')
+    await seed({
+      'old.md': '# owned\n',
+      'ref-a.md': '[[old]]\n',
+      '.old.md.docus-ref-before-aaaa-0': '[[old]]\n',
+      '.old.md.docus-ref-after-aaaa-0': '[[new]]\n',
+      '.old.md.docus-ref-before-aaaa-1': '# external\n',
+      '.old.md.docus-ref-after-aaaa-1': '# rewritten\n',
+      '.old.md.docus-journal-aaaa': JSON.stringify({
+        version: 1, op: 'document-rename-references', phase: 'roll-forward',
+        srcRel: 'old', destRel: 'new', documentId: 'rename-id',
+        sourceHash: sha256Hex('# owned\n'),
+        references: [
+          {
+            path: 'ref-a', beforeHash: sha256Hex('[[old]]\n'), afterHash: sha256Hex('[[new]]\n'),
+            beforePayload: '.old.md.docus-ref-before-aaaa-0', afterPayload: '.old.md.docus-ref-after-aaaa-0',
+          },
+          {
+            path: 'evil/victim', beforeHash: sha256Hex('# external\n'), afterHash: sha256Hex('# rewritten\n'),
+            beforePayload: '.old.md.docus-ref-before-aaaa-1', afterPayload: '.old.md.docus-ref-after-aaaa-1',
+          },
+        ],
+      }),
+    })
+    saveDocumentMetadata(db, { id: 'rename-id', path: 'old', title: 'Old', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('escapes the vault'))).toBe(true)
+    // Nothing outside was touched — no rewrite, no save temp.
+    expect(await fs.readFile(path.join(outside, 'victim.md'), 'utf8')).toBe('# external\n')
+    expect((await fs.readdir(outside)).some((name) => name.includes('.docus-'))).toBe(false)
+    // All-or-nothing: the legitimate reference was not rewritten either,
+    // and the journal stays authoritative for inspection.
+    expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8')).toBe('[[old]]\n')
+    expect(await namesIn()).toContain('.old.md.docus-journal-aaaa')
+  })
+
+  it('quarantines a reference journal whose rename paths point through a vault symlink', async () => {
+    await seed({
+      'old.md': '# owned\n',
+      '.old.md.docus-journal-aaaa': JSON.stringify({
+        version: 1, op: 'document-rename-references', phase: 'preparing',
+        srcRel: 'old', destRel: 'evil/new-name', documentId: 'rename-id',
+        sourceHash: sha256Hex('# owned\n'),
+        references: [{
+          path: 'ref-a', beforeHash: sha256Hex('[[old]]\n'), afterHash: sha256Hex('[[new]]\n'),
+          beforePayload: '.old.md.docus-ref-before-aaaa-0', afterPayload: '.old.md.docus-ref-after-aaaa-0',
+        }],
+      }),
+    })
+    saveDocumentMetadata(db, { id: 'rename-id', path: 'old', title: 'Old', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('provenance'))).toBe(true)
+    expect((await fs.readdir(outside)).some((name) => name.includes('.docus-'))).toBe(false)
+    expect(await fs.readFile(path.join(vault, 'old.md'), 'utf8')).toBe('# owned\n')
+  })
+
+  it('never descends symlinked directories while scanning for artifacts', async () => {
+    // Defense in depth: a fully valid-looking journal planted INSIDE
+    // the symlinked directory (on disk: outside the vault) is never
+    // found by the walk, so nothing outside is ever read, replayed,
+    // or removed.
+    await fs.writeFile(path.join(outside, 'old2.md'), '# owned2\n', 'utf8')
+    await fs.writeFile(path.join(outside, '.old2.md.docus-journal-aaaa'), JSON.stringify({
+      version: 1, op: 'file-rename', srcRel: 'old2', destRel: 'new2',
+      staging: '.old2.md.docus-rename-aaaa', documentId: 'id-2',
+      sourceHash: sha256Hex('# owned2\n'),
+    }), 'utf8')
+
+    const report = await runRecovery()
+
+    expect(report.actions.every((a) => !a.file.includes('old2'))).toBe(true)
+    expect(await fs.readFile(path.join(outside, 'old2.md'), 'utf8')).toBe('# owned2\n')
+    expect(await fs.stat(path.join(outside, '.old2.md.docus-journal-aaaa')).then(() => true, () => false)).toBe(true)
+  })
+})
+
+describe('recoverInterruptedOperations (folder reference content proof)', () => {
+  // Directory dev/ino is weak evidence: recycled after external
+  // delete/recreate, unreliable on some Windows file systems, and a
+  // replayable move's destination directory is brand new. A forged
+  // journal carrying the destination's REAL dev/ino must still fail
+  // when the destination files are an external recreation — every
+  // journaled document has to hold its journaled content hash.
+  async function folderReferenceJournal(dev: number, ino: number, identitySourceHash: string): Promise<string> {
+    return JSON.stringify({
+      version: 1, op: 'folder-rename-references', phase: 'roll-forward',
+      srcRel: 'proj', destRel: 'ren',
+      sourceDev: dev, sourceIno: ino,
+      identities: [{ path: 'proj/a', id: 'a-id', sourceHash: identitySourceHash }],
+      references: [{
+        path: 'ref-a', beforeHash: sha256Hex('[[old]]\n'), afterHash: sha256Hex('[[new]]\n'),
+        beforePayload: '.proj.docus-ref-before-aaaa-0', afterPayload: '.proj.docus-ref-after-aaaa-0',
+      }],
+    })
+  }
+
+  it('quarantines a roll-forward whose destination files are an external recreation even when the directory inode matches', async () => {
+    await seed({
+      'ren/a.md': '# external\n',
+      'ref-a.md': '[[old]]\n',
+      '.proj.docus-ref-before-aaaa-0': '[[old]]\n',
+      '.proj.docus-ref-after-aaaa-0': '[[new]]\n',
+    })
+    // Forge the journal with the destination directory's REAL dev/ino:
+    // the legacy inode+existence proof would pass; only the per-file
+    // content hashes catch the external recreation.
+    const destStat = await fs.stat(path.join(vault, 'ren'))
+    await fs.writeFile(
+      path.join(vault, '.proj.docus-journal-aaaa'),
+      await folderReferenceJournal(destStat.dev, destStat.ino, sha256Hex('# ours\n')),
+      'utf8',
+    )
+    saveDocumentMetadata(db, { id: 'a-id', path: 'ren/a', title: 'A', updatedAt: 1 })
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('generation does not match'))).toBe(true)
+    // The external file was never rewritten, the reference rewrite
+    // never ran, and the journal stays authoritative.
+    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# external\n')
+    expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8')).toBe('[[old]]\n')
+    expect(await namesIn()).toContain('.proj.docus-journal-aaaa')
+    expect(await namesIn()).toContain('.proj.docus-ref-before-aaaa-0')
+    // The stale identity binding to the foreign bytes is detached.
+    expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
+  })
+
+  it('completes a roll-forward when every destination file matches its journaled content hash', async () => {
+    await seed({
+      'ren/a.md': '# ours\n',
+      'ref-a.md': '[[old]]\n',
+      '.proj.docus-ref-before-aaaa-0': '[[old]]\n',
+      '.proj.docus-ref-after-aaaa-0': '[[new]]\n',
+    })
+    const destStat = await fs.stat(path.join(vault, 'ren'))
+    await fs.writeFile(
+      path.join(vault, '.proj.docus-journal-aaaa'),
+      await folderReferenceJournal(destStat.dev, destStat.ino, sha256Hex('# ours\n')),
+      'utf8',
+    )
+
+    const report = await runRecovery()
+
+    expect(report.actions.some((a) => a.action === 'quarantined')).toBe(false)
+    expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8')).toBe('[[new]]\n')
+    expect((await namesIn()).some((name) => name.includes('.docus-journal-') || name.includes('.docus-ref-'))).toBe(false)
   })
 })
