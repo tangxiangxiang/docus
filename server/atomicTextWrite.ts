@@ -6,6 +6,13 @@ export function sha256Hex(raw: string): string {
   return createHash('sha256').update(raw, 'utf8').digest('hex')
 }
 
+/** Content proof for ANY file the folder mover touches — including
+ * binary attachments a utf8 read would mangle. Folder-move journals
+ * hash every physical file with this. */
+export function sha256HexBuffer(raw: Buffer | Uint8Array): string {
+  return createHash('sha256').update(raw).digest('hex')
+}
+
 /**
  * Write a small JSON journal durably (O_EXCL create + write + fsync) so
  * it is on disk BEFORE the operation it describes begins. Startup crash

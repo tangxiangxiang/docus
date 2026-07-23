@@ -72,7 +72,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
 import type { Database as DatabaseT } from 'better-sqlite3'
-import { atomicReplaceTextIfUnchanged, removeDurableJournal, removeDurableRecoveryPayload, rewriteDurableJournal, sha256Hex, syncParentDirectoryBestEffort, writeDurableJournal } from './atomicTextWrite.js'
+import { atomicReplaceTextIfUnchanged, removeDurableJournal, removeDurableRecoveryPayload, rewriteDurableJournal, sha256Hex, sha256HexBuffer, syncParentDirectoryBestEffort, writeDurableJournal } from './atomicTextWrite.js'
 import { isValidPathSyntax } from './paths.js'
 import {
   deleteDocumentMetadata,
@@ -81,14 +81,26 @@ import {
   listDocumentMetadata,
   moveDocumentMetadataPrefix,
   moveDocumentMetadataReplacingDestination,
+  restoreDocumentMetadataMutation,
 } from './documentMetadata.js'
 import {
-  createOnlyMoveDirectory,
   createOnlyMoveFile,
+  executeFolderMove,
+  FOLDER_MOVE_STRATEGIES,
+  fireReplayableMovedEntryHook,
+  resolveDirectoryMoveStrategy,
   pruneEmptyDirectories,
   RenameDestinationOccupiedError,
   RenameSourceReusedError,
+  type FolderMoveJournalStrategy,
 } from './documentFileLifecycle.js'
+import {
+  listPhysicalMoveEntries,
+  reviveMetadataSnapshot,
+  type FolderMoveJournalEntry,
+  type FolderMoveMetadataDisposition,
+  type SerializedMetadataSnapshot,
+} from './folderMoveTransaction.js'
 
 export interface RecoveryAction {
   /** Vault-relative path of the affected file/folder (or artifact). */
@@ -113,22 +125,30 @@ interface ReplaceJournal {
   pendingReplacement?: string
 }
 
+/** The unified in-memory shape of every folder-move journal. Schema
+ * v2 (persisted since round 7) covers EVERY physical file the mover
+ * touches — markdown and attachments alike — with per-file content
+ * hashes, an empty-tree state, and the metadata disposition; journals
+ * with entries describe a per-file (replayable) move that can crash
+ * mid-flight with the tree SPLIT between source and destination, while
+ * strategy 'atomic-rename' journals describe the single-rename POSIX
+ * protocol (the whole tree sits at exactly one path, never split).
+ * Legacy v1 journals (`{rel, id, sourceHash}` entries, short strategy
+ * names) are NORMALIZED into this shape at parse time. */
 interface FolderRenameJournal {
-  version: 1
-  op: 'folder-rename'
+  version: 1 | 2
+  op: 'folder-rename' | 'folder-move'
   /** Vault-relative folder paths (no leading/trailing slash). */
   srcRel: string
   destRel: string
   sourceDev: number
   sourceIno: number
-  /** 'replayable' journals describe every moved entry so startup
-   * recovery can complete a per-file move that crashed mid-flight with
-   * the tree split between source and destination (the Windows
-   * protocol — rename(2) cannot replace a directory there). Absent or
-   * 'atomic' means the single-rename POSIX protocol: the whole tree
-   * sits at exactly one of the two paths, never split. */
-  strategy?: 'atomic' | 'replayable'
-  entries?: Array<{ rel: string; id: string; sourceHash: string }>
+  /** Canonical after parsing; v1 'atomic'/'replayable' normalize. */
+  strategy?: FolderMoveJournalStrategy
+  emptyTree?: boolean
+  entries?: FolderMoveJournalEntry[]
+  /** v2 only; v1 journals default to prefix-move. */
+  metadataDisposition?: FolderMoveMetadataDisposition
 }
 
 interface FileRenameJournal {
@@ -335,47 +355,142 @@ function journalBelongsToSource(
   journalAbs: string,
   srcRel: string,
   kind: 'file' | 'folder',
+  destRel?: string,
 ): boolean {
   const sourceAbs = kind === 'file'
     ? path.join(contentDir, `${srcRel}.md`)
     : path.join(contentDir, srcRel)
-  return path.dirname(journalAbs) === path.dirname(sourceAbs)
-    && path.basename(journalAbs).startsWith(`.${path.basename(sourceAbs)}.docus-journal-`)
+  if (path.dirname(journalAbs) !== path.dirname(sourceAbs)) return false
+  const base = path.basename(journalAbs)
+  if (base.startsWith(`.${path.basename(sourceAbs)}.docus-journal-`)) return true
+  // A folder journal durably flipped to describe its own ROLLBACK is
+  // physically named after the original source — bind it through the
+  // destination endpoint. Same-parent renames share this directory, so
+  // the dirname check above still pins the journal next to both ends.
+  if (kind === 'folder' && destRel !== undefined) {
+    const destAbs = path.join(contentDir, destRel)
+    return path.dirname(journalAbs) === path.dirname(destAbs)
+      && base.startsWith(`.${path.basename(destAbs)}.docus-journal-`)
+  }
+  return false
+}
+
+/** Physical relative paths inside a moved folder keep their real
+ * extensions (and may be unicode attachment names), so the strict
+ * kebab-only document syntax does not apply — but no segment may
+ * escape the moved directory. */
+function isValidRelativeFilePath(rel: string): boolean {
+  if (!rel || rel.startsWith('/') || rel.endsWith('/') || rel.includes('\\') || rel.includes('\0')) return false
+  return rel.split('/').every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+}
+
+function isValidSerializedSnapshot(snapshot: unknown): snapshot is SerializedMetadataSnapshot {
+  if (!snapshot || typeof snapshot !== 'object') return false
+  const item = snapshot as Partial<SerializedMetadataSnapshot>
+  const isArrayOf = (value: unknown, check: (element: unknown) => boolean): boolean =>
+    Array.isArray(value) && value.every(check)
+  const isRowArray = (value: unknown): boolean => isArrayOf(value, (element) => Boolean(element) && typeof element === 'object')
+  return isArrayOf(item.paths, (element) => typeof element === 'string')
+    && isArrayOf(item.documentIds, (element) => typeof element === 'string')
+    && isArrayOf(item.tagIds, (element) => typeof element === 'number')
+    && isArrayOf(item.preexistingTagIds, (element) => typeof element === 'number')
+    && isRowArray(item.documents) && isRowArray(item.tags) && isRowArray(item.documentTags)
+    && isRowArray(item.embeddings) && isRowArray(item.migrations)
 }
 
 function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
   try {
-    const entry = JSON.parse(raw) as Partial<FolderRenameJournal>
-    if (
-      entry.version === 1
-      && entry.op === 'folder-rename'
-      && typeof entry.srcRel === 'string'
-      && typeof entry.destRel === 'string'
-      && typeof entry.sourceDev === 'number'
-      && typeof entry.sourceIno === 'number'
-      // NOT isSafeInteger: Windows volumes (NTFS with large file
-      // records, ReFS/Dev Drive) report file IDs beyond 2**53, which
-      // JSON round-trips as a finite double. The values are compared
-      // for equality against the same stat conversion, and the strong
-      // proof is the per-entry content hash anyway.
-      && Number.isFinite(entry.sourceDev) && entry.sourceDev >= 0
-      && Number.isFinite(entry.sourceIno) && entry.sourceIno >= 0
-      && (entry.strategy === undefined || entry.strategy === 'atomic' || entry.strategy === 'replayable')
-    ) {
-      if (entry.entries !== undefined) {
-        if (!Array.isArray(entry.entries) || entry.entries.length === 0
-          || !entry.entries.every((item) => item && typeof item.rel === 'string' && isValidPathSyntax(item.rel)
-            && typeof item.id === 'string' && item.id.length > 0
-            && typeof item.sourceHash === 'string' && SHA256_RE.test(item.sourceHash))) return null
-        if (new Set(entry.entries.map((item) => item.rel)).size !== entry.entries.length) return null
-        if (new Set(entry.entries.map((item) => item.id)).size !== entry.entries.length) return null
-      }
-      // A replayable journal is worthless without its entry list: it
-      // must reconcile a tree that may be split between two paths.
-      if (entry.strategy === 'replayable' && (entry.entries === undefined || !Array.isArray(entry.entries) || entry.entries.length === 0)) return null
-      return entry as FolderRenameJournal
+    const entry = JSON.parse(raw) as Omit<Partial<FolderRenameJournal>, 'strategy' | 'entries' | 'metadataDisposition'> & { strategy?: unknown; entries?: unknown; metadataDisposition?: unknown }
+    if (entry.version !== 1 && entry.version !== 2) return null
+    if (entry.op !== 'folder-rename' && entry.op !== 'folder-move') return null
+    if (typeof entry.srcRel !== 'string' || typeof entry.destRel !== 'string') return null
+    if (typeof entry.sourceDev !== 'number' || typeof entry.sourceIno !== 'number') return null
+    // NOT isSafeInteger: Windows volumes (NTFS with large file records,
+    // ReFS/Dev Drive) report file IDs beyond 2**53, which JSON
+    // round-trips as a finite double. The values are compared for
+    // equality against the same stat conversion, and the strong proof
+    // is the per-entry content hash anyway.
+    if (!Number.isFinite(entry.sourceDev) || entry.sourceDev < 0) return null
+    if (!Number.isFinite(entry.sourceIno) || entry.sourceIno < 0) return null
+    // The persisted strategy is the ONE shared enum the mover runs
+    // (FOLDER_MOVE_STRATEGIES). v2 journals must carry it — persisted
+    // exactly as run. v1 journals may also carry the legacy short
+    // names; both spellings normalize to the canonical value (accepting
+    // the canonical names in v1 also repairs the journals the round-7
+    // HEAD route already wrote with them).
+    let strategy: FolderMoveJournalStrategy | undefined
+    if (entry.strategy !== undefined) {
+      if (entry.strategy === 'atomic' || entry.strategy === 'atomic-rename') strategy = 'atomic-rename'
+      else if (entry.strategy === 'replayable' || entry.strategy === 'replayable-move') strategy = 'replayable-move'
+      else return null
+      if (entry.version === 2 && !FOLDER_MOVE_STRATEGIES.includes(entry.strategy as FolderMoveJournalStrategy)) return null
+    } else if (entry.version === 2) {
+      return null
     }
-    return null
+    if (entry.emptyTree !== undefined && typeof entry.emptyTree !== 'boolean') return null
+    let entries: FolderMoveJournalEntry[] | undefined
+    let metadataDisposition: FolderMoveMetadataDisposition | undefined
+    if (entry.version === 2) {
+      if (!Array.isArray(entry.entries)) return null
+      const emptyTree = entry.emptyTree === true
+      if (emptyTree ? entry.entries.length !== 0 : entry.entries.length === 0) return null
+      const rawEntries = entry.entries as Array<Partial<FolderMoveJournalEntry>>
+      if (!rawEntries.every((item) => item
+        && typeof item.relativeFilePath === 'string' && isValidRelativeFilePath(item.relativeFilePath)
+        && typeof item.sourceHash === 'string' && SHA256_RE.test(item.sourceHash)
+        && ((item.documentId === undefined && item.documentPath === undefined)
+          || (typeof item.documentId === 'string' && item.documentId.length > 0
+            && typeof item.documentPath === 'string' && isValidPathSyntax(item.documentPath))))) return null
+      if (new Set(rawEntries.map((item) => item.relativeFilePath)).size !== rawEntries.length) return null
+      entries = rawEntries.map((item) => ({
+        relativeFilePath: item.relativeFilePath as string,
+        sourceHash: item.sourceHash as string,
+        ...(item.documentId !== undefined ? { documentId: item.documentId, documentPath: item.documentPath } : {}),
+      }))
+      if (entry.metadataDisposition === undefined) {
+        metadataDisposition = { kind: 'prefix-move' }
+      } else if (entry.metadataDisposition && typeof entry.metadataDisposition === 'object') {
+        const disposition = entry.metadataDisposition as { kind?: string; snapshot?: unknown }
+        if (disposition.kind === 'prefix-move') metadataDisposition = { kind: 'prefix-move' }
+        else if (disposition.kind === 'snapshot-restore' && isValidSerializedSnapshot(disposition.snapshot)) {
+          metadataDisposition = { kind: 'snapshot-restore', snapshot: disposition.snapshot }
+        } else return null
+      } else return null
+      return {
+        version: 2, op: entry.op, srcRel: entry.srcRel, destRel: entry.destRel,
+        sourceDev: entry.sourceDev, sourceIno: entry.sourceIno,
+        strategy, ...(emptyTree ? { emptyTree } : {}), entries, metadataDisposition,
+      }
+    }
+    // v1: legacy `{rel, id, sourceHash}` entries — normalized to the
+    // physical shape (the old recovery appended '.md' itself).
+    if (entry.emptyTree !== undefined) return null
+    if (entry.metadataDisposition !== undefined) return null
+    if (entry.entries !== undefined) {
+      const legacy = entry.entries as Array<{ rel?: unknown; id?: unknown; sourceHash?: unknown }>
+      if (!Array.isArray(legacy) || legacy.length === 0
+        || !legacy.every((item) => item && typeof item.rel === 'string' && isValidPathSyntax(item.rel)
+          && typeof item.id === 'string' && (item.id as string).length > 0
+          && typeof item.sourceHash === 'string' && SHA256_RE.test(item.sourceHash as string))) return null
+      if (new Set(legacy.map((item) => item.rel)).size !== legacy.length) return null
+      if (new Set(legacy.map((item) => item.id)).size !== legacy.length) return null
+      entries = legacy.map((item) => ({
+        relativeFilePath: `${item.rel}.md`,
+        sourceHash: item.sourceHash as string,
+        documentId: item.id as string,
+        documentPath: `${entry.srcRel}/${item.rel}`,
+      }))
+    }
+    // A replayable journal is worthless without its entry list: it must
+    // reconcile a tree that may be split between two paths.
+    if (strategy === 'replayable-move' && (entries === undefined || entries.length === 0)) return null
+    return {
+      version: 1, op: entry.op === 'folder-move' ? 'folder-move' : 'folder-rename',
+      srcRel: entry.srcRel, destRel: entry.destRel,
+      sourceDev: entry.sourceDev, sourceIno: entry.sourceIno,
+      ...(strategy !== undefined ? { strategy } : {}),
+      ...(entries !== undefined ? { entries } : {}),
+    }
   } catch {
     return null
   }
@@ -443,6 +558,15 @@ function parseRenameReferencesJournal(raw: string): RenameReferencesJournal | nu
           && typeof identity.id === 'string' && identity.id.length > 0
           && (identity.sourceHash === undefined
             || (typeof identity.sourceHash === 'string' && SHA256_RE.test(identity.sourceHash)))))) return null
+    // No MIXED hash coverage: all identities carry a sourceHash (strong
+    // content proof) or none do (legacy weak dev/ino proof). A journal
+    // with one hash stripped must not silently downgrade the WHOLE
+    // directory to the weak proof — it is unparseable and stays for
+    // inspection.
+    if (entry.op === 'folder-rename-references' && Array.isArray(entry.identities)) {
+      const hashedCount = entry.identities.filter((identity) => identity && identity.sourceHash !== undefined).length
+      if (hashedCount > 0 && hashedCount < entry.identities.length) return null
+    }
     if (!Array.isArray(entry.references) || entry.references.length === 0 || !entry.references.every((ref) => ref
       && typeof ref.path === 'string' && typeof ref.beforeHash === 'string' && typeof ref.afterHash === 'string'
       && SHA256_RE.test(ref.beforeHash) && SHA256_RE.test(ref.afterHash) && ref.beforeHash !== ref.afterHash
@@ -736,6 +860,34 @@ async function recoverFileRenameJournal(
   note(journalAbs, 'quarantined', 'ambiguous file-rename state retained for inspection')
 }
 
+/** Find a folder-move journal bound to the move srcRel→destRel living
+ * next to the move's source directory — the durable companion a
+ * reference rollback (or delete rollback) writes before moving. Used
+ * to DEFER: while the companion exists, it owns the tree, and the
+ * reference journal must not move anything itself (either group order
+ * in the recovery walk converges the same way). */
+async function findCompanionFolderMoveJournal(contentDir: string, moveSrcRel: string, moveDestRel: string): Promise<string | null> {
+  const moveSrcAbs = path.join(contentDir, moveSrcRel)
+  const dir = path.dirname(moveSrcAbs)
+  let dirents: Dirent[]
+  try {
+    dirents = await fs.readdir(dir, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const entry of dirents) {
+    if (!entry.isFile()) continue
+    const match = JOURNAL_RE.exec(entry.name)
+    if (!match || match[1] !== path.basename(moveSrcAbs)) continue
+    const abs = path.join(dir, entry.name)
+    try {
+      const journal = parseFolderRenameJournal(await fs.readFile(abs, 'utf8'))
+      if (journal && journal.srcRel === moveSrcRel && journal.destRel === moveDestRel) return abs
+    } catch { /* unreadable companion: treat as absent */ }
+  }
+  return null
+}
+
 async function recoverRenameReferencesJournal(
   contentDir: string,
   db: DatabaseT,
@@ -820,7 +972,16 @@ async function recoverRenameReferencesJournal(
         return (await Promise.all(identities.map(async (identity) => {
           const fileAbs = path.join(absPath, `${identity.path.slice(journal.srcRel.length)}.md`)
           if (await hashMatches(fileAbs, identity.sourceHash!)) return true
-          const selfReference = journal.references.find((reference) => reference.path === identity.path)
+          // A backlink file INSIDE the renamed folder carries its
+          // reference under the DESTINATION path — the route rewrites
+          // internal sources to their new home — so the after-rewrite
+          // proof must look the identity up at the destination path,
+          // not the source path (round-7 P1: the source-path lookup
+          // misjudged a legitimately rewritten internal document as an
+          // external generation and detached its identity forever).
+          const destinationIdentityPath = journal.destRel + identity.path.slice(journal.srcRel.length)
+          const selfReference = journal.references.find((reference) => reference.path === destinationIdentityPath)
+            ?? journal.references.find((reference) => reference.path === identity.path)
           return Boolean(selfReference && await hashMatches(fileAbs, selfReference.afterHash))
         }))).every(Boolean)
       }
@@ -929,14 +1090,73 @@ async function recoverRenameReferencesJournal(
           throw new Error('rename-reference rollback destination metadata is missing')
         }
       } else {
-        const moved = await createOnlyMoveDirectory(destAbs, srcAbs)
-        if (!moved.restored) {
-          const forward = { ...journal, phase: 'roll-forward' as const }
-          await rewriteDurableJournal(journalAbs, forward)
-          await recoverRenameReferencesJournal(contentDir, db, journalAbs, forward, note)
+        // DURABLE reverse move (round-7 P1): the reference journal
+        // records direction, not per-file placement — a replayable
+        // rollback that crashed mid-move would leave a split tree
+        // nothing describes (both sides fail the generation check and
+        // the journal would be retained forever). The reverse move
+        // therefore gets its OWN folder-move journal BEFORE the first
+        // file moves. If that journal already exists (a crash left
+        // it), it owns the tree and this journal waits: recovery
+        // replays it on a later startup once the tree has settled.
+        const companion = await findCompanionFolderMoveJournal(contentDir, journal.destRel, journal.srcRel)
+        if (companion) {
+          note(journalAbs, 'quarantined', 'rename-reference rollback deferred to its folder-move journal')
           return
         }
-        moveDocumentMetadataPrefix(db, journal.destRel, journal.srcRel)
+        let moveEntries: FolderMoveJournalEntry[]
+        try {
+          moveEntries = await listPhysicalMoveEntries(destAbs, (relativeFilePath) => {
+            if (!relativeFilePath.endsWith('.md')) return null
+            const documentSuffix = relativeFilePath.slice(0, -'.md'.length)
+            const sourceIdentityPath = `${journal.srcRel}/${documentSuffix}`
+            const identity = journal.identities!.find((item) => item.path === sourceIdentityPath)
+            return identity ? { documentId: identity.id, documentPath: sourceIdentityPath } : null
+          })
+        } catch (error) {
+          note(journalAbs, 'failed', `could not enumerate the folder rollback tree: ${(error as Error).message}`)
+          return
+        }
+        const moveJournalAbs = path.join(path.dirname(destAbs), `.${path.basename(destAbs)}.docus-journal-${randomUUID()}`)
+        // Same default as the routes (the platform strategy); the
+        // test-only override lets crash children run the journaled
+        // per-file protocol on POSIX and kill recovery mid-replay.
+        const moveStrategy = resolveDirectoryMoveStrategy()
+        try {
+          const destStat = await fs.stat(destAbs)
+          await writeDurableJournal(moveJournalAbs, {
+            version: 2,
+            op: 'folder-move',
+            srcRel: journal.destRel,
+            destRel: journal.srcRel,
+            sourceDev: destStat.dev,
+            sourceIno: destStat.ino,
+            strategy: moveStrategy,
+            ...(moveEntries.length === 0 ? { emptyTree: true } : {}),
+            entries: moveEntries,
+            metadataDisposition: { kind: 'prefix-move' },
+          })
+          const moved = await executeFolderMove(moveStrategy, destAbs, srcAbs, moveEntries.map((entry) => entry.relativeFilePath))
+          if (!moved.restored) {
+            // Clean contention: the source path belongs to an external
+            // writer and the move rolled itself fully back — the tree
+            // is whole at the destination. Drop the move journal and
+            // durably switch the transaction forward.
+            await removeDurableJournal(moveJournalAbs).catch(() => {})
+            const forward = { ...journal, phase: 'roll-forward' as const }
+            await rewriteDurableJournal(journalAbs, forward)
+            await recoverRenameReferencesJournal(contentDir, db, journalAbs, forward, note)
+            return
+          }
+          await removeDurableJournal(moveJournalAbs).catch(() => {})
+          moveDocumentMetadataPrefix(db, journal.destRel, journal.srcRel)
+        } catch (error) {
+          // A thrown move may have left the tree SPLIT: the move
+          // journal stays (it completes the rollback at the next
+          // startup) and this journal replays afterwards.
+          note(journalAbs, 'failed', `folder-move journal will complete the reference rollback: ${(error as Error).message}`)
+          return
+        }
       }
     } catch (error) {
       if (error instanceof RenameDestinationOccupiedError || error instanceof RenameSourceReusedError) {
@@ -983,26 +1203,40 @@ async function directoryHoldsNoRegularFiles(abs: string): Promise<boolean> {
   return true
 }
 
+/** Binary-safe content proof: folder-move journals hash EVERY physical
+ * file (attachments included) with sha256HexBuffer. */
+async function fileHashMatches(absPath: string, expectedHash: string): Promise<boolean> {
+  try {
+    return sha256HexBuffer(await fs.readFile(absPath)) === expectedHash
+  } catch {
+    return false
+  }
+}
+
 /**
- * Replay a per-file folder move that crashed mid-flight (the Windows
- * protocol — rename(2) cannot replace a directory there, so the tree
- * moves one create-only link(2) per file and may be SPLIT between
- * source and destination after a crash). The journal's entries — every
- * moved file's relative path and content hash — are the proof:
+ * Reconcile a journaled folder move (the unified replay for every
+ * journal that carries entries — v2 physical journals and normalized
+ * v1 journals alike). The entries — every moved file's relative path
+ * and content hash — are the proof:
  *
- *   * every entry still at the source: the move never landed. An
- *     absent destination means a pre-move crash (stale journal); a
- *     destination that holds no files at all is our own mkdir gate +
- *     the empty intermediate directories we create per entry — proven
- *     ours by holding nothing, pruned, journal removed;
+ *   * every entry still at the source: the file move never landed.
+ *     For a prefix-move journal (rename, either direction) that is a
+ *     STALE journal: a destination holding no files at all is our own
+ *     mkdir gate plus empty intermediates — pruned, any partial
+ *     metadata move rolled back, journal removed; a destination with
+ *     external content quarantines. For a snapshot-restore journal
+ *     (delete rollback) the restore IS the durable intent — the tree
+ *     must not be stranded under its staging name, so the move
+ *     completes FORWARD instead;
  *   * otherwise the move is completed FORWARD: every source-resident
  *     entry replays create-only into the destination, then the
- *     metadata prefix moves. Recovery never moves an entry whose
- *     journaled generation it cannot find, and never replaces a file
- *     at the destination (create-only link): an external generation at
- *     either path retains the journal for inspection instead.
+ *     metadata disposition runs (prefix move, or the persisted
+ *     snapshot restore). Recovery never moves an entry whose journaled
+ *     generation it cannot find, and never replaces a file at the
+ *     destination (create-only link): an external generation at either
+ *     path retains the journal for inspection instead.
  */
-async function recoverReplayableFolderRename(
+async function recoverFolderMoveJournal(
   db: DatabaseT,
   journalAbs: string,
   journal: FolderRenameJournal,
@@ -1011,82 +1245,159 @@ async function recoverReplayableFolderRename(
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
   const entries = journal.entries!
+  const disposition: FolderMoveMetadataDisposition = journal.metadataDisposition ?? { kind: 'prefix-move' }
   type Placement = 'src' | 'dest' | 'external' | 'missing'
   const placements: Placement[] = await Promise.all(entries.map(async (entry) => {
-    const srcFile = path.join(srcAbs, `${entry.rel}.md`)
-    const destFile = path.join(destAbs, `${entry.rel}.md`)
+    const srcFile = path.join(srcAbs, entry.relativeFilePath)
+    const destFile = path.join(destAbs, entry.relativeFilePath)
     // Destination first: replay only moves forward, so a landed entry
     // is done even if an external file re-appeared at the source path.
-    if (await hashMatches(destFile, entry.sourceHash)) return 'dest'
-    if (await hashMatches(srcFile, entry.sourceHash)) return 'src'
+    if (await fileHashMatches(destFile, entry.sourceHash)) return 'dest'
+    if (await fileHashMatches(srcFile, entry.sourceHash)) return 'src'
     if (await exists(destFile) || await exists(srcFile)) return 'external'
     return 'missing'
   }))
   const countAt = (placement: Placement): number => placements.filter((found) => found === placement).length
+  const completeMetadata = (): void => {
+    if (disposition.kind === 'snapshot-restore') {
+      restoreDocumentMetadataMutation(db, reviveMetadataSnapshot(disposition.snapshot))
+    } else {
+      moveDocumentMetadataPrefix(db, journal.srcRel, journal.destRel)
+    }
+  }
+  const finishForward = async (detail: string): Promise<void> => {
+    try {
+      completeMetadata()
+    } catch (error) {
+      note(journalAbs, 'failed', `could not complete folder-move metadata: ${(error as Error).message}`)
+      return
+    }
+    await pruneEmptyDirectories(srcAbs)
+    await removeDurableJournal(journalAbs).catch(() => {})
+    note(destAbs, 'completed-rename', detail)
+  }
+  // A crash mid-metadata-move can leave rows at the destination prefix
+  // even though no file moved: roll them back with the bytes. Rows
+  // split across BOTH prefixes are ambiguous and quarantine.
+  const rollbackStaleMetadata = (): boolean => {
+    const allMetadata = listDocumentMetadata(db)
+    const sourceHasMetadata = allMetadata.some((item) => item.path === journal.srcRel || item.path.startsWith(`${journal.srcRel}/`))
+    const destinationHasMetadata = allMetadata.some((item) => item.path === journal.destRel || item.path.startsWith(`${journal.destRel}/`))
+    if (!destinationHasMetadata) return true
+    if (sourceHasMetadata) {
+      note(journalAbs, 'quarantined', 'folder source exists but metadata is split across both prefixes')
+      return false
+    }
+    try {
+      moveDocumentMetadataPrefix(db, journal.destRel, journal.srcRel)
+      return true
+    } catch (error) {
+      note(journalAbs, 'failed', `could not restore folder metadata prefix: ${(error as Error).message}`)
+      return false
+    }
+  }
+
+  const emptyTree = journal.emptyTree === true
+  const srcIsDir = await isDirectory(srcAbs)
+  const destIsDir = await isDirectory(destAbs)
+
+  if (emptyTree) {
+    if (srcIsDir) {
+      if (disposition.kind === 'prefix-move') {
+        // The empty tree never left the source: stale journal. Prune
+        // our own file-free gate; anything else is external content.
+        const destIsProvablyOurs = !destIsDir || await directoryHoldsNoRegularFiles(destAbs)
+        if (!destIsProvablyOurs) {
+          note(journalAbs, 'quarantined', 'source intact but the destination holds external content')
+          return
+        }
+        if (!rollbackStaleMetadata()) return
+        if (destIsDir) await pruneEmptyDirectories(destAbs)
+        await removeDurableJournal(journalAbs).catch(() => {})
+        note(journalAbs, 'cleaned', destIsDir
+          ? 'stale empty-tree folder-move journal (gate pruned)'
+          : 'stale empty-tree folder-move journal (move never started)')
+        return
+      }
+      // snapshot-restore: the restore is the durable intent — recreate
+      // the empty folder and its metadata.
+      try { await fs.mkdir(destAbs) } catch { /* an empty dir already there is fine */ }
+      await finishForward('interrupted empty-tree folder restore completed from journal')
+      return
+    }
+    if (destIsDir) {
+      await finishForward('interrupted empty-tree folder move completed from journal')
+      return
+    }
+    note(journalAbs, 'failed', 'empty-tree folder-move journal but neither source nor destination exists')
+    return
+  }
 
   if (countAt('src') === entries.length) {
+    if (disposition.kind === 'snapshot-restore') {
+      // A delete rollback crashed before its first file moved: the
+      // restore is the durable intent and the staged tree must not be
+      // stranded under its inflight name — complete forward.
+      if (!await replayEntries(entries, placements, srcAbs, destAbs, journalAbs, note)) return
+      await finishForward('interrupted folder restore completed from journal')
+      return
+    }
     // The file move never landed. The destination is provably ours
     // only when it is absent or holds no files at all (our mkdir gate
     // plus the empty intermediate directories we create per entry);
     // anything else is external content and quarantines the journal.
-    const destIsDir = await isDirectory(destAbs)
     const destIsProvablyOurs = !destIsDir || await directoryHoldsNoRegularFiles(destAbs)
     if (!destIsProvablyOurs) {
       note(journalAbs, 'quarantined', 'source intact but the destination holds external content')
       return
     }
-    // A crash mid-metadata-move can leave rows at the destination
-    // prefix even though no file moved: roll them back with the bytes.
-    // Rows split across BOTH prefixes are ambiguous and quarantine.
-    const allMetadata = listDocumentMetadata(db)
-    const sourceHasMetadata = allMetadata.some((item) => item.path === journal.srcRel || item.path.startsWith(`${journal.srcRel}/`))
-    const destinationHasMetadata = allMetadata.some((item) => item.path === journal.destRel || item.path.startsWith(`${journal.destRel}/`))
-    if (destinationHasMetadata) {
-      if (sourceHasMetadata) {
-        note(journalAbs, 'quarantined', 'folder source exists but metadata is split across both prefixes')
-        return
-      }
-      try { moveDocumentMetadataPrefix(db, journal.destRel, journal.srcRel) }
-      catch (error) {
-        note(journalAbs, 'failed', `could not restore folder metadata prefix: ${(error as Error).message}`)
-        return
-      }
-    }
+    if (!rollbackStaleMetadata()) return
     if (destIsDir) await pruneEmptyDirectories(destAbs)
     await removeDurableJournal(journalAbs).catch(() => {})
     note(journalAbs, 'cleaned', destIsDir
-      ? 'stale replayable folder-rename journal (empty gate pruned)'
-      : 'stale replayable folder-rename journal (move never started)')
+      ? 'stale folder-move journal (empty gate pruned)'
+      : 'stale folder-move journal (move never started)')
     return
   }
 
+  // Split or fully landed: complete forward.
+  if (!await replayEntries(entries, placements, srcAbs, destAbs, journalAbs, note)) return
+  await finishForward('interrupted folder move completed from journal')
+}
+
+/** Replay every source-resident entry create-only into the
+ * destination. Never replaces a destination file (create-only link);
+ * an external or missing generation fails closed with the journal
+ * retained. Fires the per-entry crash seam so a kill mid-recovery
+ * replays again on the next startup. */
+async function replayEntries(
+  entries: FolderMoveJournalEntry[],
+  placements: Array<'src' | 'dest' | 'external' | 'missing'>,
+  srcAbs: string,
+  destAbs: string,
+  journalAbs: string,
+  note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
+): Promise<boolean> {
   for (let index = 0; index < entries.length; index += 1) {
     const placement = placements[index]
     if (placement === 'dest') continue
     const entry = entries[index]
     if (placement !== 'src') {
-      note(journalAbs, 'failed', `replayable folder-rename entry is not replayable (${placement}): ${entry.rel}`)
-      return
+      note(journalAbs, 'failed', `folder-move entry is not replayable (${placement}): ${entry.relativeFilePath}`)
+      return false
     }
-    const srcFile = path.join(srcAbs, `${entry.rel}.md`)
-    const destFile = path.join(destAbs, `${entry.rel}.md`)
+    const srcFile = path.join(srcAbs, entry.relativeFilePath)
+    const destFile = path.join(destAbs, entry.relativeFilePath)
     try {
       await fs.mkdir(path.dirname(destFile), { recursive: true })
       await createOnlyMoveFile(srcFile, destFile)
+      await fireReplayableMovedEntryHook(entry.relativeFilePath)
     } catch (error) {
-      note(journalAbs, 'failed', `could not replay folder-rename entry ${entry.rel}: ${(error as Error).message}`)
-      return
+      note(journalAbs, 'failed', `could not replay folder-move entry ${entry.relativeFilePath}: ${(error as Error).message}`)
+      return false
     }
   }
-  try {
-    moveDocumentMetadataPrefix(db, journal.srcRel, journal.destRel)
-  } catch (error) {
-    note(journalAbs, 'failed', `could not complete folder-rename metadata move: ${(error as Error).message}`)
-    return
-  }
-  await pruneEmptyDirectories(srcAbs)
-  await removeDurableJournal(journalAbs).catch(() => {})
-  note(destAbs, 'completed-rename', 'interrupted replayable folder rename completed from journal')
+  return true
 }
 
 async function recoverFolderRenameJournal(
@@ -1096,20 +1407,27 @@ async function recoverFolderRenameJournal(
   journal: FolderRenameJournal,
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
+  // Source provenance: a real folder path for rename journals; the
+  // reserved delete-staging name for snapshot-restore (delete
+  // rollback) journals — those are never user paths.
+  const srcRelIsValid = journal.metadataDisposition?.kind === 'snapshot-restore'
+    ? DELETE_INFLIGHT_RE.test(journal.srcRel)
+      && journal.srcRel.split('/').every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+    : await validRenameRel(contentDir, journal.srcRel)
   if (
     journal.srcRel === journal.destRel
     || path.dirname(journal.srcRel) !== path.dirname(journal.destRel)
-    || !await validRenameRel(contentDir, journal.srcRel)
+    || !srcRelIsValid
     || !await validRenameRel(contentDir, journal.destRel)
-    || !journalBelongsToSource(contentDir, journalAbs, journal.srcRel, 'folder')
+    || !journalBelongsToSource(contentDir, journalAbs, journal.srcRel, 'folder', journal.destRel)
   ) {
     note(journalAbs, 'quarantined', 'invalid folder-rename journal paths; no referenced path was touched')
     return
   }
   const srcAbs = path.join(contentDir, journal.srcRel)
   const destAbs = path.join(contentDir, journal.destRel)
-  if (journal.strategy === 'replayable') {
-    await recoverReplayableFolderRename(db, journalAbs, journal, srcAbs, destAbs, note)
+  if (journal.emptyTree || (journal.entries !== undefined && journal.entries.length > 0)) {
+    await recoverFolderMoveJournal(db, journalAbs, journal, srcAbs, destAbs, note)
     return
   }
   // The directory move is a single rename(2) over our own mkdir-gated
@@ -1507,6 +1825,16 @@ async function recoverDirectory(
     for (const quarantineName of group.quarantines) {
       const quarantineAbs = path.join(dir, quarantineName)
       if (!await exists(quarantineAbs)) continue
+      if (DELETE_INFLIGHT_RE.test(quarantineName)
+        && entries.some((entry) => entry.isFile()
+          && entry.name.startsWith(`.${quarantineName}.docus-journal-`)
+          && JOURNAL_RE.test(entry.name))) {
+        // A delete-rollback journal is bound to this staging directory
+        // and owns its recovery (completing the restore — files AND
+        // the metadata snapshot — or quarantining). This rule stands
+        // down while the journal exists, in either group order.
+        continue
+      }
       try {
         if (DELETE_QUARANTINE_RE.test(quarantineName)) {
           note(quarantineAbs, 'quarantined', 'path-reuse quarantine is never auto-deleted')

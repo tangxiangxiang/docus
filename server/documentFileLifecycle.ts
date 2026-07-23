@@ -38,6 +38,14 @@ export function __setCreateOnlyMoveHooksForTesting(hooks: CreateOnlyMoveHooks | 
   __createOnlyMoveHooks = hooks
 }
 
+/** Internal: notify the per-entry crash seam. Both the mover AND the
+ * recovery replay loop call it, so a crash child can pause at the same
+ * seam whether the move runs in the route or at startup recovery
+ * (the "kill recovery mid-replay" point). No-op in production. */
+export async function fireReplayableMovedEntryHook(entryRel: string): Promise<void> {
+  if (__createOnlyMoveHooks?.afterReplayableMovedEntry) await __createOnlyMoveHooks.afterReplayableMovedEntry(entryRel)
+}
+
 /** The move destination was claimed by an external writer. The source
  * was restored (or quarantined if it too was re-used); nothing was
  * overwritten. Callers map this to a retryable conflict. */
@@ -162,7 +170,29 @@ export async function createOnlyMoveFile(fromAbs: string, toAbs: string, prepare
  * even an empty one — and gets the journaled per-file replay instead. */
 export type DirectoryMoveStrategy = 'atomic-rename' | 'replayable-move'
 
+/** The strategy value PERSISTED in the folder-move journal. It is the
+ * runtime strategy itself: routes, the recovery parser, and the crash
+ * fixtures all import this ONE type, so the persisted value can never
+ * drift away from what the mover and the parser understand. (Round-7
+ * P0: the route persisted 'replayable-move'/'atomic-rename' while the
+ * parser only accepted 'replayable'/'atomic' — every real journal was
+ * unparseable and its recovery could never run.) */
+export type FolderMoveJournalStrategy = DirectoryMoveStrategy
+export const FOLDER_MOVE_STRATEGIES: readonly FolderMoveJournalStrategy[] = ['atomic-rename', 'replayable-move']
+
 export const platformDirectoryMoveStrategy: DirectoryMoveStrategy = process.platform === 'win32' ? 'replayable-move' : 'atomic-rename'
+
+let __directoryMoveStrategyOverride: DirectoryMoveStrategy | null = null
+/** Test-only seam: force the Windows replayable protocol on POSIX so
+ * crash children can exercise the journaled per-file path the real
+ * HTTP route persists — through the route itself, not a copy. Null in
+ * production. */
+export function __setDirectoryMoveStrategyOverrideForTesting(strategy: DirectoryMoveStrategy | null): void {
+  __directoryMoveStrategyOverride = strategy
+}
+export function resolveDirectoryMoveStrategy(): DirectoryMoveStrategy {
+  return __directoryMoveStrategyOverride ?? platformDirectoryMoveStrategy
+}
 
 async function listRegularFileEntries(fromDirAbs: string): Promise<string[]> {
   const entries: string[] = []
@@ -205,25 +235,32 @@ export async function pruneEmptyDirectories(dirAbs: string): Promise<void> {
  *
  *   1. mkdir(destination) — the same create-only gate as the atomic
  *      protocol; EEXIST means an external writer claimed it;
- *   2. every regular file moves create-only (staging + link(2)) under
- *      its own relative path, parent directories created on demand;
- *   3. the emptied source directories are pruned bottom-up.
+ *   2. EXACTLY the journaled entries move create-only (staging +
+ *      link(2)) under their relative paths, parents created on demand;
+ *   3. the destination is parity-checked against the entry list;
+ *   4. the emptied source directories are pruned bottom-up.
  *
  * The move is replayable, not atomic: a crash between per-file moves
  * leaves the tree SPLIT between source and destination. The caller
- * writes a durable folder-rename journal with every entry's relative
- * path and content hash BEFORE calling (see server/routes/folders.ts);
- * startup crash recovery then replays the remaining moves to the
- * destination — the journal is the proof that decides the split.
+ * writes a durable folder-move journal whose `entries` ARE the list
+ * passed here BEFORE calling (see server/folderMoveTransaction.ts and
+ * server/routes/folders.ts); startup crash recovery replays the
+ * remaining entries from the same list — the journal is the proof that
+ * decides the split. Moving ONLY the journaled set is what makes the
+ * journal authoritative: a file added to the source by an external
+ * writer after the journal was written simply stays at the source
+ * (never lost, never split), and the destination parity check fails
+ * closed if anything external lands inside the gate mid-move.
  *
  * Any external writer winning a destination path fails the WHOLE move
  * closed: every already-moved entry is rolled back create-only (a
  * re-used source path keeps its bytes at the destination instead of
  * clobbering the external file) and the gate tree is pruned.
  */
-export async function createOnlyMoveDirectoryReplayable(
+export async function executeReplayableFolderMove(
   fromDirAbs: string,
   toDirAbs: string,
+  entryRels: string[],
 ): Promise<{ restored: boolean }> {
   try {
     await fs.mkdir(toDirAbs)
@@ -233,15 +270,6 @@ export async function createOnlyMoveDirectoryReplayable(
     throw error
   }
   if (__createOnlyMoveHooks?.afterReplayableGate) await __createOnlyMoveHooks.afterReplayableGate(toDirAbs)
-  let entries: string[]
-  try {
-    entries = await listRegularFileEntries(fromDirAbs)
-  } catch (error) {
-    // Unsupported entry (symlink/junction/special file) or unreadable
-    // subtree: nothing has moved yet — drop the gate and fail closed.
-    await pruneEmptyDirectories(toDirAbs)
-    throw error
-  }
   const moved: string[] = []
   // Roll back every landed entry create-only: an external writer that
   // re-used a source path during rollback keeps its file — the moved
@@ -260,13 +288,13 @@ export async function createOnlyMoveDirectoryReplayable(
     return rollbackFailed
   }
   try {
-    for (const entryRel of entries) {
+    for (const entryRel of entryRels) {
       const entryFromAbs = path.join(fromDirAbs, entryRel)
       const entryToAbs = path.join(toDirAbs, entryRel)
       await fs.mkdir(path.dirname(entryToAbs), { recursive: true })
       await createOnlyMoveFile(entryFromAbs, entryToAbs)
       moved.push(entryRel)
-      if (__createOnlyMoveHooks?.afterReplayableMovedEntry) await __createOnlyMoveHooks.afterReplayableMovedEntry(entryRel)
+      await fireReplayableMovedEntryHook(entryRel)
     }
   } catch (error) {
     const rollbackFailed = await rollbackMoved()
@@ -284,9 +312,9 @@ export async function createOnlyMoveDirectoryReplayable(
     }
     throw error
   }
-  // End-check: the destination must hold EXACTLY the moved entries. An
-  // external writer that dropped a file inside our gate mid-move fails
-  // the whole move closed — the replayable parity of the atomic
+  // End-check: the destination must hold EXACTLY the journaled entries.
+  // An external writer that dropped a file inside our gate mid-move
+  // fails the whole move closed — the replayable parity of the atomic
   // protocol's ENOTEMPTY gate check — with every entry rolled back. A
   // non-regular entry (symlink/junction) the walk rejects is external
   // content too and fails closed the same way.
@@ -294,7 +322,7 @@ export async function createOnlyMoveDirectoryReplayable(
   let externalAtDestination = false
   try {
     landedAtDestination = await listRegularFileEntries(toDirAbs)
-    const expectedEntries = new Set(entries)
+    const expectedEntries = new Set(entryRels)
     externalAtDestination = landedAtDestination.some((entryRel) => !expectedEntries.has(entryRel))
   } catch {
     externalAtDestination = true
@@ -312,6 +340,20 @@ export async function createOnlyMoveDirectoryReplayable(
   await pruneEmptyDirectories(fromDirAbs)
   await syncParentDirectoryBestEffort(toDirAbs)
   return { restored: true }
+}
+
+/** Execute the moved file set of a folder-move journal. The replayable
+ * strategy moves EXACTLY `entryRels` (the journal is the authority);
+ * the atomic strategy is a single rename(2) over the mkdir gate — the
+ * whole directory crosses at once, so the entry list needs no replay. */
+export async function executeFolderMove(
+  strategy: DirectoryMoveStrategy,
+  fromDirAbs: string,
+  toDirAbs: string,
+  entryRels: string[],
+): Promise<{ restored: boolean }> {
+  if (strategy === 'replayable-move') return executeReplayableFolderMove(fromDirAbs, toDirAbs, entryRels)
+  return createOnlyMoveDirectory(fromDirAbs, toDirAbs, 'atomic-rename')
 }
 
 /**
@@ -337,7 +379,13 @@ export async function createOnlyMoveDirectory(
   toDirAbs: string,
   strategy: DirectoryMoveStrategy = platformDirectoryMoveStrategy,
 ): Promise<{ restored: boolean }> {
-  if (strategy === 'replayable-move') return createOnlyMoveDirectoryReplayable(fromDirAbs, toDirAbs)
+  if (strategy === 'replayable-move') {
+    // Journal-less callers enumerate fresh; unsupported entries
+    // (symlink/junction/special) fail closed BEFORE the gate is
+    // created, so nothing needs rolling back.
+    const entries = await listRegularFileEntries(fromDirAbs)
+    return executeReplayableFolderMove(fromDirAbs, toDirAbs, entries)
+  }
   try {
     await fs.mkdir(toDirAbs)
   } catch (error) {
