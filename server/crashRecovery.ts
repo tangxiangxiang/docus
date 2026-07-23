@@ -1164,27 +1164,6 @@ async function recoverRenameReferencesJournal(
   note(journal.phase === 'roll-forward' ? destAbs : srcAbs, 'completed-rename', `rename reference transaction ${journal.phase === 'roll-forward' ? 'rolled forward' : 'rolled back'}`)
 }
 
-/** True only when the directory tree holds NO non-directory entries:
- * a file, symlink, or junction anywhere inside proves external
- * ownership of the tree (our mkdir gate and the intermediate
- * directories we create during a replayable move are file-free). */
-async function directoryHoldsNoRegularFiles(abs: string): Promise<boolean> {
-  let entries: Dirent[]
-  try {
-    entries = await fs.readdir(abs, { withFileTypes: true })
-  } catch {
-    return false
-  }
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (!await directoryHoldsNoRegularFiles(path.join(abs, entry.name))) return false
-    } else {
-      return false
-    }
-  }
-  return true
-}
-
 /** Binary-safe content proof: folder-move journals hash EVERY physical
  * file (attachments included) with sha256HexBuffer. */
 async function fileHashMatches(absPath: string, expectedHash: string): Promise<boolean> {
@@ -2091,7 +2070,7 @@ export async function recoverInterruptedOperations(
     // at startup (each pass resolves at least one dependency layer, so
     // this is a tight bound) plus a hard ceiling for safety.
     let authoritativeArtifacts = 0
-    await walkDirectories(contentDir, async (dir, entries) => {
+    await walkDirectories(contentDir, async (_dir, entries) => {
       for (const entry of entries) {
         if (!entry.isFile()) {
           if (entry.isDirectory() && DELETE_INFLIGHT_RE.test(entry.name)) authoritativeArtifacts += 1
