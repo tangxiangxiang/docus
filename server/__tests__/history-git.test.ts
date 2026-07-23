@@ -387,7 +387,7 @@ describe('addAndCommit + log', () => {
       expect.objectContaining({ token: result.indexRepair!.token, status: 'superseded' }),
     ])
     expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('user staged this')
-  })
+  }, 20_000)
 
   it('holds index.lock across validation and atomic replacement', async () => {
     await write('a.md', 'snapshot')

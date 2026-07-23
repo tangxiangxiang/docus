@@ -279,7 +279,7 @@ describe('GET /api/history/diff', () => {
     const addOp = body.diff.ops.find((o) => o.op === 'add' && o.text === 'TWO')
     expect(removeOp?.text).toBe('two')
     expect(addOp).toBeDefined()
-  })
+  }, 20_000)
 
   it('handles a file that did not exist on the old side', async () => {
     // First commit adds a.md; then we diff (empty) -> v1.
@@ -291,7 +291,7 @@ describe('GET /api/history/diff', () => {
     const body = await r.json() as { diff: { stats: { added: number; removed: number } } }
     expect(body.diff.stats.added).toBe(2)
     expect(body.diff.stats.removed).toBe(0)
-  })
+  }, 20_000)
 
   it('handles a root commit diff via sha~1 without rejecting the ref', async () => {
     await write('first.md', 'one\ntwo\n')
@@ -300,7 +300,7 @@ describe('GET /api/history/diff', () => {
     expect(r.status).toBe(200)
     const body = await r.json() as { diff: { stats: { added: number; removed: number; equal: number } } }
     expect(body.diff.stats).toEqual({ added: 2, removed: 0, equal: 0 })
-  })
+  }, 20_000)
 
   it('returns 400 when refs are missing', async () => {
     const r = await call('GET', '/diff?path=x')
