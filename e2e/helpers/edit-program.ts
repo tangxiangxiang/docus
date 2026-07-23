@@ -293,6 +293,11 @@ export async function openAiRail(page: Page) {
 export async function sendAi(page: Page, message: string) {
   const input = page.locator('textarea.ai-input')
   await input.fill(message)
+  // AiPanel loads settings/active-session state asynchronously. The
+  // composer is visible before that request resolves, but onSend
+  // intentionally ignores input while `configured` is still false.
+  // Gate sends on the same readiness signal a user sees.
+  await expect(page.locator('button.ai-send')).toBeEnabled()
   await input.press('Enter')
 }
 
