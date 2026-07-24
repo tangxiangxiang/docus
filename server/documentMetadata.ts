@@ -180,6 +180,41 @@ export function restoreDocumentMetadataMutation(
   })()
 }
 
+/** Round-10 F8: a restore whose ownership validation and the actual
+ * restore happen in the SAME SQLite IMMEDIATE transaction. The
+ * `expect` callback runs INSIDE the transaction with a fresh snapshot
+ * of the live rows the restore is about to overwrite; if it returns
+ * false (or throws) the entire transaction is rolled back and the
+ * metadata stays unchanged. Concurrent writers cannot race the
+ * restore: better-sqlite3 IMMEDIATE acquires a RESERVED lock before
+ * any reads, so the rows the validator observes are exactly the rows
+ * the restore writes against. The callback must be synchronous. */
+export function restoreDocumentMetadataMutationCAS(
+  db: DatabaseT,
+  snapshot: DocumentMetadataMutationSnapshot,
+  expect?: (current: DocumentMetadataMutationSnapshot) => boolean,
+): void {
+  const tx = db.transaction(() => {
+    if (expect) {
+      const current = snapshotDocumentMetadataMutation(db, snapshot.paths)
+      let ok = false
+      try {
+        ok = expect(current)
+      } catch (error) {
+        // bubble to roll back the transaction
+        throw error
+      }
+      if (!ok) throw new Error('metadata ownership: live rows do not match the restore-time expectation')
+    }
+    restoreDocumentMetadataMutation(db, snapshot)
+  })
+  // better-sqlite3's .immediate variant opens the transaction with
+  // BEGIN IMMEDIATE — a write lock acquired up front, so the snapshot
+  // the validator reads cannot change between the validation and the
+  // restore.
+  tx.immediate()
+}
+
 function dateMs(value: unknown, fallback: number): number {
   if (value instanceof Date && Number.isFinite(value.getTime())) return value.getTime()
   if (typeof value === 'string') {

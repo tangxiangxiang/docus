@@ -205,6 +205,44 @@ export class UnstableTextSnapshotError extends Error {
   }
 }
 
+/** Verify a file at `absPath` belongs to the generation described by
+ * `expected` — same dev, same ino, same content hash. Used to prove
+ * the bytes recovery is about to touch still match the journal; an
+ * external replacement that lands a byte-identical fresh inode is
+ * detected by the (dev, ino) pair, not by hash alone (round-10 F1/F2).
+ * A missing path returns `false` rather than throwing. */
+export async function verifyExpectedGeneration(
+  absPath: string,
+  expected: { dev: string; ino: string; hash: string } | undefined,
+): Promise<boolean> {
+  if (!expected) return true
+  try {
+    const buf = await fs.readFile(absPath)
+    if (sha256HexBuffer(buf) !== expected.hash) return false
+    const stat = await fs.stat(absPath, { bigint: true })
+    return stat.dev.toString() === expected.dev && stat.ino.toString() === expected.ino
+  } catch {
+    return false
+  }
+}
+
+/** Read a file's current generation (dev + ino + content hash) for
+ * callers that need to capture it before mutating or to confirm it
+ * after. Buffer-hashed so binary attachments are handled correctly. */
+export async function readCurrentGeneration(absPath: string): Promise<{ dev: string; ino: string; hash: string } | null> {
+  try {
+    const buf = await fs.readFile(absPath)
+    const stat = await fs.stat(absPath, { bigint: true })
+    return {
+      dev: stat.dev.toString(),
+      ino: stat.ino.toString(),
+      hash: sha256HexBuffer(buf),
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function syncParentDirectoryBestEffort(targetPath: string): Promise<void> {
   let directory: Awaited<ReturnType<typeof fs.open>> | null = null
   try {

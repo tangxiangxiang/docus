@@ -81,7 +81,7 @@ import {
   listDocumentMetadata,
   moveDocumentMetadataPrefix,
   moveDocumentMetadataReplacingDestination,
-  restoreDocumentMetadataMutation,
+  restoreDocumentMetadataMutationCAS,
 } from './documentMetadata.js'
 import {
   createOnlyMoveFile,
@@ -1409,41 +1409,6 @@ async function recoverFolderMoveJournal(
   const completeMetadata = (): void => {
     if (disposition.kind === 'snapshot-restore') {
       const revived = reviveMetadataSnapshot(disposition.snapshot)
-      // Live DB ownership validation (round-9 F1): every snapshot
-      // documentId must either not exist in the live DB or still be
-      // bound to the declared path. A forged snapshot reusing a live ID
-      // bound to an unrelated path must be rejected.
-      const snapshotIdSet = new Set(revived.documentIds)
-      if (snapshotIdSet.size > 0) {
-        const liveRows = db.prepare('SELECT id, path FROM documents WHERE id IN (' +
-          [...snapshotIdSet].map(() => '?').join(',') + ')'
-        ).all(...snapshotIdSet) as Array<{ id: string; path: string }>
-        const snapshotPathById = new Map<string, string>(
-          revived.documents.map((d) => [d.id as string, d.path as string]),
-        )
-        for (const live of liveRows) {
-          const declaredPath = snapshotPathById.get(live.id)
-          // If this ID exists in the live DB but is bound to a
-          // DIFFERENT path than the snapshot declares, the snapshot is
-          // reusing a live identity → the journal is forged.
-          if (declaredPath !== undefined && live.path !== declaredPath) {
-            throw new Error(`metadata ownership: snapshot documentId ${live.id} is currently bound to ${live.path}, not the declared ${declaredPath}`)
-          }
-        }
-        // Also: any snapshot path currently occupied by a DIFFERENT
-        // live documentId means the snapshot path was reused externally.
-        const snapshotPathSet = new Set(revived.paths)
-        if (snapshotPathSet.size > 0) {
-          const pathRows = db.prepare('SELECT id, path FROM documents WHERE path IN (' +
-            [...snapshotPathSet].map(() => '?').join(',') + ')'
-          ).all(...snapshotPathSet) as Array<{ id: string; path: string }>
-          for (const row of pathRows) {
-            if (!snapshotIdSet.has(row.id)) {
-              throw new Error(`metadata ownership: snapshot path ${row.path} is currently owned by a different documentId ${row.id}`)
-            }
-          }
-        }
-      }
       // Do NOT trust the persisted preexistingTagIds for the orphan-tag
       // cleanup: recompute against the live DB so a forged snapshot can
       // never mark an unrelated tag "created by the mutation" and have
@@ -1451,13 +1416,59 @@ async function recoverFolderMoveJournal(
       // no-op (safe — a rollback re-installs the folder's own tags).
       const liveTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>).map((row) => row.id)
       revived.preexistingTagIds = [...new Set([...liveTagIds, ...revived.preexistingTagIds])]
-      restoreDocumentMetadataMutation(db, revived)
+      // Round-10 F8: validation + restore happen in the SAME SQLite
+      // IMMEDIATE transaction. The validator runs INSIDE the
+      // transaction with a fresh snapshot of the live rows the restore
+      // is about to overwrite — concurrent writers cannot race the
+      // restore because IMMEDIATE acquires a write lock up front.
+      restoreDocumentMetadataMutationCAS(db, revived, (current) => {
+        // Live DB ownership validation (round-9 F1): every snapshot
+        // documentId must either not exist in the live DB or still be
+        // bound to the declared path. A forged snapshot reusing a live
+        // ID bound to an unrelated path must be rejected.
+        const snapshotIdSet = new Set(revived.documentIds)
+        if (snapshotIdSet.size > 0) {
+          const liveById = new Map<string, string>(
+            current.documents
+              .filter((row) => snapshotIdSet.has(row.id as string))
+              .map((row) => [row.id as string, row.path as string]),
+          )
+          const snapshotPathById = new Map<string, string>(
+            revived.documents.map((d) => [d.id as string, d.path as string]),
+          )
+          for (const [id, declaredPath] of snapshotPathById) {
+            const livePath = liveById.get(id)
+            if (livePath !== undefined && livePath !== declaredPath) {
+              throw new Error(`metadata ownership: snapshot documentId ${id} is currently bound to ${livePath}, not the declared ${declaredPath}`)
+            }
+          }
+          const snapshotPathSet = new Set(revived.paths)
+          for (const row of current.documents) {
+            const livePath = row.path as string
+            if (snapshotPathSet.has(livePath) && !snapshotIdSet.has(row.id as string)) {
+              throw new Error(`metadata ownership: snapshot path ${livePath} is currently owned by a different documentId ${row.id as string}`)
+            }
+          }
+        }
+        return true
+      })
     } else {
       moveDocumentMetadataPrefix(db, journal.srcRel, journal.destRel)
     }
   }
-  const removeGateToken = async (): Promise<void> => {
-    await fs.rm(path.join(destAbs, tokenName), { force: true })
+  // Round-10 F3: owned gate-token removal (read+verify+unlink). The
+  // marker is the recovery ownership proof; an external writer who
+  // replaced it is detected here — the marker stays on disk and the
+  // journal stays so recovery can re-verify later.
+  const removeOwnedGateToken = async (): Promise<void> => {
+    if (!tokenName) return
+    try {
+      const buf = await fs.readFile(path.join(destAbs, tokenName), 'utf8')
+      if (buf !== (journal.gateToken ?? '')) return
+      await fs.unlink(path.join(destAbs, tokenName))
+    } catch {
+      // missing or unreadable — leave the marker on disk
+    }
   }
   const finishForward = async (detail: string): Promise<void> => {
     try {
@@ -1466,7 +1477,10 @@ async function recoverFolderMoveJournal(
       note(journalAbs, 'quarantined', `could not complete folder-move metadata: ${(error as Error).message}`)
       return
     }
-    await removeGateToken()
+    // Round-10 F5: metadata has just committed; remove the owned gate
+    // token (the recovery ownership proof). The token removal is the
+    // last filesystem step before clearing the journal.
+    await removeOwnedGateToken()
     await pruneEmptyDirectories(srcAbs)
     await removeDurableJournal(journalAbs).catch(() => {})
     note(destAbs, 'completed-rename', detail)
@@ -1492,11 +1506,13 @@ async function recoverFolderMoveJournal(
     }
   }
   // Prune a stale destination gate proven ours by its gate token
-  // (round-8: emptiness alone is NOT ownership proof).
+  // (round-8: emptiness alone is NOT ownership proof). Round-10 F3:
+  // removes the token only when the on-disk content matches the
+  // journaled gate secret.
   const pruneStaleGate = async (inventory: DestInventory): Promise<boolean> => {
     if (inventory.kind === 'absent') return true
     if (inventory.kind === 'ours' && !inventory.hasLandedFiles && inventory.hasGateToken) {
-      await removeGateToken()
+      await removeOwnedGateToken()
       await pruneEmptyDirectories(destAbs)
       return true
     }
@@ -1567,11 +1583,15 @@ async function recoverFolderMoveJournal(
         return
       }
       if (!await replayEntries(contentDir, entries, directories, placements, srcAbs, destAbs, journalAbs, note)) return
+      const tokenFileOnDiskRestore = inventory.kind === 'ours' ? inventory.hasGateToken : false
+      const shouldCheckTokenRestore = (journal.gateToken !== undefined && tokenFileOnDiskRestore)
+        || (journal.gateToken === undefined && tokenFileOnDiskRestore)
       const parityFailedAfterRestore = await verifyExactParity(destAbs, {
         entries,
         directories: parityDirectories,
-        gateToken: transactionId,
-        gateTokenValue: journal.gateToken,
+        // Same alias-ownership rules as the forward replay path.
+        ...(shouldCheckTokenRestore ? { gateToken: transactionId } : {}),
+        ...(journal.gateToken && tokenFileOnDiskRestore ? { gateTokenValue: journal.gateToken } : {}),
       })
       if (parityFailedAfterRestore) {
         note(journalAbs, 'quarantined', 'exact parity failed after snapshot-restore replay')
@@ -1605,11 +1625,31 @@ async function recoverFolderMoveJournal(
   // matching content hashes and exact gate token before committing
   // metadata. An external writer that modified the destination during
   // replay must fail closed — the journal stays for inspection.
+  //
+  // Round-10 F4: only pass the gate token to parity when it is still
+  // expected to be on disk. The route's finalize removes the token
+  // (F3) AFTER parity passes, so a journal whose destination has all
+  // entries landed but no token is a successfully-completed forward
+  // move awaiting metadata commit — the token is NOT required in
+  // that case.
+  // Pass `gateToken` to parity only when we know the journal's token
+  // marker file SHOULD be on disk. v3 journals with the secret persist
+  // both name + value; v1/v2 journals without a secret that left a
+  // token file behind still own it by name. v1/v2 journals with no
+  // gateTokenValue and no token on disk must skip the marker check
+  // (parity treats it as undeclared otherwise).
+  const tokenFileOnDisk = inventory.kind === 'ours' ? inventory.hasGateToken : false
+  // v3 journal + no token file on disk: the route's finalize removed
+  // it after parity passed (round-10 F3/F5). The forward move
+  // completed; metadata commit is the only outstanding step — skip
+  // the token check entirely.
+  const shouldCheckToken = (journal.gateToken !== undefined && tokenFileOnDisk)
+    || (journal.gateToken === undefined && tokenFileOnDisk)
   const parityFailed = await verifyExactParity(destAbs, {
     entries,
     directories: parityDirectories,
-    gateToken: transactionId,
-    gateTokenValue: journal.gateToken,
+    ...(shouldCheckToken ? { gateToken: transactionId } : {}),
+    ...(journal.gateToken && tokenFileOnDisk ? { gateTokenValue: journal.gateToken } : {}),
   })
   if (parityFailed) {
     note(journalAbs, 'quarantined', 'exact parity failed after recovery replay')

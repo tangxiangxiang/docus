@@ -125,7 +125,7 @@ describe('createOnlyMoveDirectory', () => {
 
     const moved = await createOnlyMoveDirectory(path.join(dir, 'src'), path.join(dir, 'dest'))
 
-    expect(moved).toEqual({ restored: true })
+    expect(moved.restored).toBe(true)
     expect(await fs.readFile(path.join(dir, 'dest', 'a.md'), 'utf8')).toBe('# a\n')
     expect(await fs.readFile(path.join(dir, 'dest', 'nested', 'b.md'), 'utf8')).toBe('# b\n')
     expect(await names()).toEqual(['dest'])
@@ -222,7 +222,7 @@ describe('createOnlyMoveDirectory (replayable per-file protocol)', () => {
 
     const moved = await createOnlyMoveDirectory(path.join(dir, 'src'), path.join(dir, 'dest'), 'replayable-move')
 
-    expect(moved).toEqual({ restored: true })
+    expect(moved.restored).toBe(true)
     expect(await fs.readFile(path.join(dir, 'dest', 'a.md'), 'utf8')).toBe('# a\n')
     expect(await fs.readFile(path.join(dir, 'dest', 'nested', 'b.md'), 'utf8')).toBe('# b\n')
     expect(await names()).toEqual(['dest'])

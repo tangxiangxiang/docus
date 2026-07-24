@@ -826,8 +826,12 @@ describe('round 5: rename destinations are create-only (external writer wins)', 
     expect(response.status).toBe(409)
     expect(getDocumentMetadata(db, 'notes/a')?.id).toBe('parity-id')
     expect(getDocumentMetadata(db, 'renamed/a')).toBeNull()
-    expect(await fs.readFile(path.join(sandbox, 'notes', 'a.md'), 'utf8')).toBe('# external edit\n')
-    await expect(fs.stat(path.join(sandbox, 'renamed', 'a.md'))).rejects.toThrow()
+    // Round-10 F2: when external bytes landed at the destination, the
+    // rollback refuses to carry those foreign bytes back to the source.
+    // notes/a.md is gone (no move back); renamed/a.md keeps the
+    // external bytes; identity stays bound to the original source.
+    expect(await fs.readFile(path.join(sandbox, 'renamed', 'a.md'), 'utf8')).toBe('# external edit\n')
+    await expect(fs.stat(path.join(sandbox, 'notes', 'a.md'))).rejects.toThrow()
   })
 })
 

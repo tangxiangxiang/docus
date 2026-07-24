@@ -44,7 +44,12 @@ __setCreateOnlyMoveHooksForTesting({
   afterReplayableMovedEntry: point.startsWith('entry:')
     ? (entryRel) => { if (entryRel === point.slice('entry:'.length)) return readyAndWait(`entry:${entryRel}`) }
     : undefined,
+  // Round-10 F5: parity passes, metadata has not yet committed — the
+  // crash child fires here to leave recovery a clear "finish metadata"
+  // job. The hook name was renamed in F5; the legacy alias is kept
+  // here for the fixtures and any external tests.
   afterReplayableFinalParity: point === 'parity' ? () => readyAndWait('parity') : undefined,
+  afterParityBeforeMetadata: point === 'parity' ? () => readyAndWait('parity') : undefined,
 } as any)
 
 const response = await app.fetch(new Request('http://localhost/api/folders/proj', {

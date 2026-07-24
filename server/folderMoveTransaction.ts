@@ -284,7 +284,69 @@ export async function listPhysicalMoveEntries(
   return { entries, directories }
 }
 
+// ---- v3 markdown identity schema enforcement (round-10 F6) ----
+
+/** Round-10 F6: every journal entry's identity pairing must be exact.
+ *
+ *   * Markdown entries (.md) MUST carry BOTH `documentId` and
+ *     `documentPath`. The `documentPath` must equal the journaled
+ *     subtree root + this entry's relative path without its `.md`
+ *     extension — so an attacker cannot bind a foreign identity to a
+ *     physical attachment (image.bin → documentPath="...") and get
+ *     the rollback / recovery to move metadata that doesn't belong to
+ *     the bytes on disk.
+ *
+ *   * Attachment entries (non-.md) MUST NOT carry either field —
+ *     image.bin with a documentId would let a malicious journal claim
+ *     metadata ownership of a non-markdown file.
+ *
+ * Returns null on success or a reason string on failure. */
+export function validateJournalEntriesV3(
+  entries: readonly FolderMoveJournalEntry[],
+  srcRel: string,
+): string | null {
+  for (const entry of entries) {
+    const rel = entry.relativeFilePath
+    const isMarkdown = rel.endsWith('.md')
+    const hasDocumentId = entry.documentId !== undefined && entry.documentId !== null && entry.documentId !== ''
+    const hasDocumentPath = entry.documentPath !== undefined && entry.documentPath !== null && entry.documentPath !== ''
+    if (isMarkdown) {
+      if (!hasDocumentId || !hasDocumentPath) {
+        return `markdown entry missing identity: ${rel}`
+      }
+      // documentPath must equal srcRel + "/" + rel without .md
+      const expectedPath = `${srcRel}/${rel.slice(0, -'.md'.length)}`
+      if (entry.documentPath !== expectedPath) {
+        return `markdown entry documentPath mismatch: ${rel} declared ${entry.documentPath} expected ${expectedPath}`
+      }
+    } else {
+      if (hasDocumentId || hasDocumentPath) {
+        return `attachment carrying markdown identity: ${rel}`
+      }
+    }
+  }
+  return null
+}
+
 // ---- v3 directory-manifest validation (round-9 F6) ----
+
+/** Reserved path segments that no journaled file or directory is
+ * allowed to claim (round-10 F9). These names belong to vault internals
+ * — moving them through a folder-move journal could let an attacker
+ * bind a Docus identity to an internal artifact or shadow a real
+ * document. */
+export const RESERVED_PATH_SEGMENTS = [
+  '.git',
+  'node_modules',
+  '.docus-journal-',
+  '.docus-folder-gate-',
+  '.docus-rename-',
+  '.docus-staged-',
+  '.docus-delete-inflight-',
+  '.docus-quarantine-reuse-',
+  '.docus-delete-manifest-',
+  'metadata.sqlite',
+]
 
 /** Validate a v3 `directories` manifest: must be non-null, sorted, no
  * duplicates, every file's parent and every directory's ancestor must
@@ -304,19 +366,25 @@ export function validateDirectoryManifest(
     if (directories[i] !== sorted[i]) return 'directories not sorted'
   }
   const dirSet = new Set(directories)
+  const allReserved = [...RESERVED_PATH_SEGMENTS, ...reservedPrefixes]
   // Every directory entry must be a valid relative path.
   for (const dir of directories) {
     if (!dir || dir.startsWith('/') || dir.endsWith('/') || dir.includes('\\') || dir.includes('\0')) return `invalid directory path: ${dir}`
     const segments = dir.split('/')
     if (segments.some((s) => s.length === 0 || s === '.' || s === '..')) return `invalid directory path: ${dir}`
     // Reserved names.
-    for (const prefix of reservedPrefixes) {
-      if (segments.some((s) => s.startsWith(prefix))) return `reserved directory segment: ${dir}`
+    for (const prefix of allReserved) {
+      if (segments.some((s) => s === prefix || s.startsWith(prefix))) return `reserved directory segment: ${dir}`
     }
   }
-  // No file path is also a directory path.
+  // No file path is also a directory path; and no file path is reserved.
   for (const fileRel of entryRels) {
     if (dirSet.has(fileRel)) return `file path also listed as directory: ${fileRel}`
+    const segments = fileRel.split('/')
+    if (segments.some((s) => s.length === 0 || s === '.' || s === '..')) return `invalid file path: ${fileRel}`
+    for (const prefix of allReserved) {
+      if (segments.some((s) => s === prefix || s.startsWith(prefix))) return `reserved file segment: ${fileRel}`
+    }
   }
   // Every file's parent directories must be declared.
   for (const fileRel of entryRels) {
@@ -343,26 +411,46 @@ export function validateDirectoryManifest(
   return null
 }
 
-/** Verify a snapshot's Markdown document entries each have at least one
- * corresponding physical Markdown entry in the journal. A snapshot
- * document claiming a path without any journal entry backing it cannot
- * be verified — the journal must be quarantined (round-9 F1). */
+/** Verify a snapshot's Markdown document entries each have at least
+ * one corresponding physical Markdown entry in the journal — and the
+ * physical entry binds the EXACT documentId AND documentPath the
+ * snapshot declares. Round-10 F7: a snapshot document claiming a path
+ * without any journal entry backing it cannot be verified, AND a
+ * physical entry whose identity does not match the snapshot row is a
+ * forged journal. The journal must be quarantined. */
 export function validateSnapshotPhysicalEntries(
   snapshot: SerializedMetadataSnapshot,
   entries: FolderMoveJournalEntry[],
   destRel: string,
 ): string | null {
-  const mdPaths = new Set(
-    entries
-      .filter((e) => e.documentPath !== undefined)
-      .map((e) => e.documentPath as string),
-  )
+  // Index physical entries by the documentPath they claim. Each md
+  // physical entry is keyed by both documentId and documentPath so the
+  // snapshot must match BOTH, not just one.
+  const byDocId = new Map<string, FolderMoveJournalEntry>()
+  const byDocPath = new Map<string, FolderMoveJournalEntry>()
+  for (const entry of entries) {
+    if (entry.documentId !== undefined && entry.documentPath !== undefined) {
+      byDocId.set(entry.documentId, entry)
+      byDocPath.set(entry.documentPath, entry)
+    }
+  }
   for (const doc of snapshot.documents) {
     const docPath = doc.path as string
-    // Must be inside destRel.
+    const docId = doc.id as string
     if (!docPath.startsWith(`${destRel}/`)) return `snapshot document path outside destRel: ${docPath}`
-    // Must have a corresponding physical Markdown entry.
-    if (!mdPaths.has(docPath)) return `snapshot document has no physical entry: ${docPath}`
+    // For each (id, path) the snapshot declares, BOTH lookups must
+    // succeed AND they must resolve to the SAME physical entry —
+    // the entry that binds this id to this path.
+    const byId = byDocId.get(docId)
+    const byPath = byDocPath.get(docPath)
+    if (!byId && !byPath) {
+      return `snapshot document has no physical entry: ${docPath} (${docId})`
+    }
+    if (!byId) return `snapshot document id has no physical entry: ${docId}`
+    if (!byPath) return `snapshot document path has no physical entry: ${docPath}`
+    if (byId !== byPath) return `snapshot document identity/path binding disagrees with journal: ${docPath} (${docId})`
+    if (byId.documentId !== docId) return `snapshot document id disagrees with journal: ${docId} vs ${byId.documentId}`
+    if (byId.documentPath !== docPath) return `snapshot document path disagrees with journal: ${docPath} vs ${byId.documentPath}`
   }
   return null
 }

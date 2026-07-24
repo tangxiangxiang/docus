@@ -36,8 +36,19 @@ export type CreateOnlyMoveHooks = {
   afterReplayableMovedEntry?: (entryRel: string) => void | Promise<void>
   /** Fires right after the shared exact final parity passes (all files
    * and directories match the journal) but BEFORE the gate token is
-   * removed and metadata is committed — the crash window for F3. */
+   * removed and metadata is committed — the crash window for F3.
+   * Deprecated alias for `afterParityBeforeMetadata` (round-10 F5) —
+   * kept so legacy tests / fixtures can still target the same seam. */
   afterReplayableFinalParity?: (toDirAbs: string) => void | Promise<void>
+  /** Fires after exact final parity passes but BEFORE the metadata
+   * transaction is committed — round-10 F5 crash window. */
+  afterParityBeforeMetadata?: (toDirAbs: string) => void | Promise<void>
+  /** Fires after the metadata transaction has committed but BEFORE the
+   * owned gate token is removed and the durable journal is cleared —
+   * round-10 F5 crash window. A kill here must still leave recovery
+   * able to complete forward (token + journal both present, metadata
+   * already at destination). */
+  afterMetadataBeforeTokenRemoval?: (toDirAbs: string) => void | Promise<void>
 }
 let __createOnlyMoveHooks: CreateOnlyMoveHooks | null = null
 export function __setCreateOnlyMoveHooksForTesting(hooks: CreateOnlyMoveHooks | null): void {
@@ -103,6 +114,51 @@ export class UnsupportedDirectoryMoveError extends Error {
   }
 }
 
+/** The bytes about to be moved (or already moved) do not match the
+ * journaled generation. The recovery/replay path proves this BEFORE
+ * any reverse syscall — moving a foreign file under a Docus identity
+ * is the exact hole round-10 closes. The owner of the bytes (Docus
+ * staging vs external) is preserved; nothing was overwritten. */
+export class GenerationMismatchError extends Error {
+  readonly generationMismatch = true
+  readonly path: string
+  readonly expected: { dev: string; ino: string; hash: string }
+  readonly actual: { dev: string; ino: string; hash: string } | null
+  constructor(path: string, expected: { dev: string; ino: string; hash: string }, actual: { dev: string; ino: string; hash: string } | null) {
+    super(`generation mismatch at ${path}: expected ${expected.dev}:${expected.ino}/${expected.hash.slice(0, 8)} but found ${actual ? `${actual.dev}:${actual.ino}/${actual.hash.slice(0, 8)}` : 'missing'}`)
+    this.name = 'GenerationMismatchError'
+    this.path = path
+    this.expected = expected
+    this.actual = actual
+  }
+}
+
+/** A generation that a Docus-owned move can be required to prove —
+ * content hash, device id, and inode — before its syscall runs. Hash
+ * alone is insufficient (byte-identical external replacement gets a
+ * fresh inode). The trio is persisted in the v3 journal. */
+export type ExpectedGeneration = {
+  dev: string
+  ino: string
+  hash: string
+}
+
+/** Read the current generation of a file for callers that need to
+ * compare against an ExpectedGeneration. null when missing. */
+async function readGeneration(absPath: string): Promise<ExpectedGeneration | null> {
+  try {
+    const buf = await fs.readFile(absPath)
+    const stat = await fs.stat(absPath, { bigint: true })
+    return {
+      dev: stat.dev.toString(),
+      ino: stat.ino.toString(),
+      hash: sha256HexBuffer(buf),
+    }
+  } catch {
+    return null
+  }
+}
+
 const LINK_INCAPABLE_CODES = new Set(['EPERM', 'EOPNOTSUPP', 'ENOTSUP'])
 
 /**
@@ -110,11 +166,16 @@ const LINK_INCAPABLE_CODES = new Set(['EPERM', 'EOPNOTSUPP', 'ENOTSUP'])
  *
  *   1. take the source aside to a private staging path (ownership of
  *      the source bytes is now ours alone);
- *   2. link(2) the staging into the destination — create-only: if an
+ *   2. when `expectedSource` is provided, VERIFY the staging bytes
+ *      still match the journaled (dev, ino, hash) — round-10 F1. A
+ *      byte-identical external replacement has a fresh inode; the
+ *      hard-link would carry that inode into the destination as
+ *      "ours" unless the trio is checked;
+ *   3. link(2) the staging into the destination — create-only: if an
  *      external writer claimed the destination, EEXIST fails the move
  *      closed and the source is restored (itself create-only, so a
  *      re-used source quarantines the bytes instead of clobbering);
- *   3. unlink the staging name; the inode now has exactly one name.
+ *   4. unlink the staging name; the inode now has exactly one name.
  *
  * POSIX rename(2) atomically REPLACES an existing target, so a plain
  * "does the destination exist?" check at the route layer can never
@@ -125,13 +186,42 @@ const LINK_INCAPABLE_CODES = new Set(['EPERM', 'EOPNOTSUPP', 'ENOTSUP'])
  * the source: a check-then-rename fallback would reintroduce the exact
  * external-overwrite race this primitive exists to prevent.
  */
-export async function createOnlyMoveFile(fromAbs: string, toAbs: string, preparedStagingPath?: string): Promise<void> {
-  const stagedPath = preparedStagingPath ?? path.join(
+export async function createOnlyMoveFile(
+  fromAbs: string,
+  toAbs: string,
+  options: {
+    preparedStagingPath?: string
+    /** When provided, the staging inode (after the takeover rename) MUST
+     * still match this generation — round-10 F1. A mismatch throws
+     * GenerationMismatchError with the staging bytes preserved (the
+     * source path was already moved aside; we don't try to restore
+     * bytes that don't belong to us). */
+    expectedSource?: ExpectedGeneration
+  } = {},
+): Promise<void> {
+  const stagedPath = options.preparedStagingPath ?? path.join(
     path.dirname(fromAbs),
     `.${path.basename(fromAbs)}.docus-rename-${randomUUID()}`,
   )
   await renameWithTransientWindowsRetry(fromAbs, stagedPath)
   if (__createOnlyMoveHooks?.afterRenameTakenOver) await __createOnlyMoveHooks.afterRenameTakenOver(stagedPath)
+  // Round-10 F1: prove the staging bytes are STILL the journaled
+  // generation before linking. A byte-identical external replacement
+  // is detected by (dev, ino), not by hash alone.
+  if (options.expectedSource) {
+    const actual = await readGeneration(stagedPath)
+    if (!actual
+      || actual.dev !== options.expectedSource.dev
+      || actual.ino !== options.expectedSource.ino
+      || actual.hash !== options.expectedSource.hash) {
+      // The bytes we hold under the staging name are not the journaled
+      // generation. The source path is gone (already renamed); the
+      // only safe disposition is to leave the staging bytes where
+      // they are (they belong to whatever landed them) and report the
+      // mismatch — never link them into the destination.
+      throw new GenerationMismatchError(fromAbs, options.expectedSource, actual)
+    }
+  }
   try {
     await fs.link(stagedPath, toAbs)
   } catch (error) {
@@ -361,7 +451,7 @@ export async function executeReplayableFolderMove(
   toDirAbs: string,
   entryRels: string[],
   options: FolderMoveExecuteOptions = {},
-): Promise<{ restored: boolean }> {
+): Promise<{ restored: boolean; parityPassed?: boolean }> {
   const directories = options.directories ?? []
   const vaultRoot = options.vaultRoot
   try {
@@ -402,15 +492,31 @@ export async function executeReplayableFolderMove(
     }
   }
   if (__createOnlyMoveHooks?.afterReplayableGate) await __createOnlyMoveHooks.afterReplayableGate(toDirAbs)
-  const removeGateToken = async (): Promise<void> => {
-    if (options.gateToken) await fs.rm(path.join(toDirAbs, gateTokenName(options.gateToken)), { force: true })
+  const entryByRel = new Map((options.entries ?? []).map((e) => [e.relativeFilePath, e]))
+  /** Owned gate-token removal (round-10 F3): read+stat+content-match
+   * the marker file before unlinking. An external writer who replaced
+   * our token is detected; the journal stays so recovery can re-prove
+   * destination ownership later. */
+  const removeOwnedGateToken = async (): Promise<void> => {
+    if (!options.gateToken) return
+    const tokenPath = path.join(toDirAbs, gateTokenName(options.gateToken))
+    if (vaultRoot && !await isPhysicallyContained(vaultRoot, tokenPath)) return
+    try {
+      const buf = await fs.readFile(tokenPath, 'utf8')
+      if (buf !== (options.gateTokenValue ?? '')) return
+      await fs.unlink(tokenPath)
+    } catch {
+      // missing or unreadable — leave the marker on disk
+    }
   }
   const moved: string[] = []
   // Roll back every landed entry create-only with per-entry containment
-  // (round-9 F5): each reverse source AND destination must be
-  // physically contained immediately before the syscall — a symlink
-  // planted after the forward move must not route compensation outside
-  // the vault.
+  // (round-9 F5) AND per-entry destination generation verification
+  // (round-10 F2): the destination bytes must still match the
+  // journaled (dev, ino, hash) — an external writer who replaced a
+  // landed file between forward move and rollback must NOT see its
+  // bytes carried back to the source. The bytes stay at the
+  // destination; the journal stays so recovery can reconcile.
   const rollbackMoved = async (): Promise<boolean> => {
     let rollbackFailed = false
     for (const entryRel of [...moved].reverse()) {
@@ -423,13 +529,33 @@ export async function executeReplayableFolderMove(
           )
         }
       }
+      // Round-10 F2: prove the landed bytes are STILL the journaled
+      // generation BEFORE rolling them back. If an external writer
+      // replaced the file (different inode, even with the same hash),
+      // do NOT move those bytes back to the source — keep them where
+      // they are, mark the rollback as failed, and let the journal
+      // stay so recovery decides.
+      const journalEntry = entryByRel.get(entryRel)
+      if (journalEntry?.sourceDev && journalEntry?.sourceIno && journalEntry?.sourceHash) {
+        const actual = await readGeneration(fromEntry)
+        if (!actual
+          || actual.dev !== journalEntry.sourceDev
+          || actual.ino !== journalEntry.sourceIno
+          || actual.hash !== journalEntry.sourceHash) {
+          // External generation at the destination path: do not move
+          // it. The rollback fails closed at this entry; remaining
+          // entries are still reversed below.
+          rollbackFailed = true
+          continue
+        }
+      }
       try {
         await createOnlyMoveFile(fromEntry, toEntry)
       } catch {
         rollbackFailed = true
       }
     }
-    await removeGateToken()
+    await removeOwnedGateToken()
     await pruneEmptyDirectories(toDirAbs)
     return rollbackFailed
   }
@@ -451,7 +577,13 @@ export async function executeReplayableFolderMove(
         throw new UnsupportedDirectoryMoveError(`entry path escapes the vault: ${entryRel}`)
       }
       await fs.mkdir(path.dirname(entryToAbs), { recursive: true })
-      await createOnlyMoveFile(entryFromAbs, entryToAbs)
+      // Round-10 F1: pass the journaled generation so createOnlyMoveFile
+      // proves the source bytes still match before the link(2).
+      const journalEntry = entryByRel.get(entryRel)
+      const expectedSource = journalEntry?.sourceDev && journalEntry?.sourceIno && journalEntry?.sourceHash
+        ? { dev: journalEntry.sourceDev, ino: journalEntry.sourceIno, hash: journalEntry.sourceHash }
+        : undefined
+      await createOnlyMoveFile(entryFromAbs, entryToAbs, { expectedSource })
       moved.push(entryRel)
       await fireReplayableMovedEntryHook(entryRel)
     }
@@ -485,22 +617,74 @@ export async function executeReplayableFolderMove(
   }
   // Clean up the empty source tree before the crash seam so a killed
   // process leaves the vault without the stale source directory. The
-  // gate marker stays until after the seam — recovery needs it to
-  // prove destination ownership. External content that landed in the
-  // source during the move is untouched (directories stay non-empty).
+  // gate marker stays — recovery needs it to prove destination
+  // ownership. External content that landed in the source during the
+  // move is untouched (directories stay non-empty).
   await pruneEmptyDirectories(fromDirAbs)
-  // Crash seam: after parity passes but before metadata commit (F3).
-  if (__createOnlyMoveHooks?.afterReplayableFinalParity) await __createOnlyMoveHooks.afterReplayableFinalParity(toDirAbs)
-  await removeGateToken()
-  await syncParentDirectoryBestEffort(toDirAbs)
-  return { restored: true }
+  // Crash seam: after parity passes but BEFORE the metadata transaction
+  // runs (round-10 F5, first window). A kill here leaves the
+  // destination provably ours (token + journaled entries both present)
+  // and the metadata still at the source — recovery will replay and
+  // commit metadata forward.
+  if (__createOnlyMoveHooks?.afterParityBeforeMetadata) await __createOnlyMoveHooks.afterParityBeforeMetadata(toDirAbs)
+  // Legacy alias: route-level tests still install the old name.
+  else if (__createOnlyMoveHooks?.afterReplayableFinalParity) await __createOnlyMoveHooks.afterReplayableFinalParity(toDirAbs)
+  // The route commits metadata AFTER this point (between the two seams
+  // wired in the route layer — see FolderRaceHooks.afterMetadataBeforeTokenRemoval),
+  // then calls finalizeReplayableFolderMove which fires the second seam,
+  // removes the owned gate token, and syncs.
+  return { restored: true, parityPassed: true }
 }
 
-/** Shared exact final parity (round-9 F3) — used by the mover AND by
- * recovery replay. Verifies file-set equality (no missing, no extra),
- * per-file content hash, directory-set equality, exact gate-token file
- * presence + content, and no symlink/special/undeclared entries.
- * Returns true when parity fails (destination is not provably ours). */
+/** Round-10 F5 finalizer: the route calls this AFTER the metadata
+ * transaction commits. Fires the second crash seam, removes the owned
+ * gate token (round-10 F3), and fsyncs the destination directory. The
+ * token is the recovery ownership proof — its removal is the LAST
+ * filesystem step so a kill at any earlier seam still leaves recovery
+ * able to complete forward. */
+export async function finalizeReplayableFolderMove(
+  toDirAbs: string,
+  options: FolderMoveExecuteOptions = {},
+): Promise<void> {
+  if (options.vaultRoot && !await isPhysicallyContained(options.vaultRoot, toDirAbs)) {
+    throw new UnsupportedDirectoryMoveError(`finalize destination escapes the vault: ${toDirAbs}`)
+  }
+  // Crash seam: AFTER metadata has committed but BEFORE the owned gate
+  // token is removed and the durable journal is cleared (round-10 F5,
+  // second window). A kill here must still leave the vault recoverable
+  // forward — token + journal both present prove ownership; metadata
+  // is already at the destination. Recovery finishes the commit
+  // (removes token + journal) on the next startup.
+  if (__createOnlyMoveHooks?.afterMetadataBeforeTokenRemoval) await __createOnlyMoveHooks.afterMetadataBeforeTokenRemoval(toDirAbs)
+  if (options.gateToken) {
+    const tokenPath = path.join(toDirAbs, gateTokenName(options.gateToken))
+    if (options.vaultRoot && !await isPhysicallyContained(options.vaultRoot, tokenPath)) {
+      // gate path escaped — token removal is unsafe, leave it for recovery
+      return
+    }
+    // Owned-token removal (round-10 F3): read+verify-content+unlink.
+    // A missing marker or a content mismatch is a no-op — the journal
+    // stays so recovery can re-verify destination ownership later.
+    try {
+      const buf = await fs.readFile(tokenPath, 'utf8')
+      if (buf === (options.gateTokenValue ?? '')) {
+        await fs.unlink(tokenPath)
+      }
+    } catch {
+      // missing or unreadable — leave the marker on disk
+    }
+  }
+  await syncParentDirectoryBestEffort(toDirAbs)
+}
+
+/** Shared exact final parity (round-9 F3 + round-10 F4) — used by the
+ * mover AND by recovery replay. Verifies file-set equality (no missing,
+ * no extra), per-file content hash, directory-set equality, exact
+ * gate-token file presence + content, and no symlink/special/undeclared
+ * entries. Round-10 F4: when a journaled gate token is expected, its
+ * presence AND content are REQUIRED — a missing token fails parity
+ * closed (the destination cannot be proven ours without it). Returns
+ * true when parity fails (destination is not provably ours). */
 export async function verifyExactParity(
   toDirAbs: string,
   options: FolderMoveExecuteOptions,
@@ -512,6 +696,7 @@ export async function verifyExactParity(
   const entryByRel = new Map((options.entries ?? []).map((e) => [e.relativeFilePath, e]))
   let landedFileCount = 0
   const landedDirs: string[] = []
+  let tokenSeen = false
   try {
     // Destination must be a real directory (not symlink/junction).
     const destStat = await fs.lstat(toDirAbs)
@@ -523,14 +708,17 @@ export async function verifyExactParity(
       for (const dirent of dirents) {
         const relPath = rel === '' ? dirent.name : `${rel}/${dirent.name}`
         const absPath = path.join(dir, dirent.name)
-        if (dirent.isSymbolicLink()) return true // fail: unexpected symlink
+        if (dirent.isSymbolicLink()) return true
         if (dirent.isDirectory()) {
-          if (!expectedDirs.has(relPath)) return true // fail: undeclared dir
+          if (!expectedDirs.has(relPath)) return true
           landedDirs.push(relPath)
           if (await walk(absPath, relPath)) return true
         } else if (dirent.isFile()) {
-          // Exact gate token: verify content, then skip from file set.
+          // Exact gate token: skip from file set when the filename
+          // matches the expected marker. Content verification only
+          // runs when `gateTokenValue` is provided (round-10 F4).
           if (tokenName && dirent.name === tokenName && rel === '') {
+            tokenSeen = true
             if (tokenContent !== null) {
               try {
                 if (await fs.readFile(absPath, 'utf8') !== tokenContent) return true
@@ -539,9 +727,9 @@ export async function verifyExactParity(
             continue
           }
           const entry = entryByRel.get(relPath)
-          if (!entry) return true // fail: undeclared file
-          if (!await fileHashMatchesBuffer(absPath, entry.sourceHash)) return true // fail: content mismatch
-          // v3 generation proof (F4): a byte-identical external
+          if (!entry) return true
+          if (!await fileHashMatchesBuffer(absPath, entry.sourceHash)) return true
+          // v3 generation proof: a byte-identical external
           // replacement gets a fresh inode — the hard-linked landing
           // preserves the source identity. If the journal carried
           // sourceDev/sourceIno, the landing must still match.
@@ -570,6 +758,11 @@ export async function verifyExactParity(
   for (const dir of landedDirs) {
     if (!expectedDirs.has(dir)) return true
   }
+  // Round-10 F4: token presence is required when `gateToken` was passed
+  // (its filename is the ownership marker). Content verification only
+  // runs when `gateTokenValue` is also provided — legacy v1/v2 journals
+  // that don't persist the secret accept filename-only ownership proof.
+  if (tokenName !== null && !tokenSeen) return true
   return false // parity passed
 }
 
@@ -586,14 +779,20 @@ async function fileHashMatchesBuffer(absPath: string, expectedHash: string): Pro
 /** Execute the moved file set of a folder-move journal. The replayable
  * strategy moves EXACTLY `entryRels` (the journal is the authority);
  * the atomic strategy is a single rename(2) over the mkdir gate — the
- * whole directory crosses at once, so the entry list needs no replay. */
+ * whole directory crosses at once, so the entry list needs no replay.
+ *
+ * Replayable returns `parityPassed: true` when exact parity passed but
+ * metadata has NOT been committed yet — the caller commits metadata
+ * then calls finalizeReplayableFolderMove to remove the owned gate
+ * token and clear the journal. Atomic returns no parityPassed flag
+ * because there is no token to remove at the mover layer. */
 export async function executeFolderMove(
   strategy: DirectoryMoveStrategy,
   fromDirAbs: string,
   toDirAbs: string,
   entryRels: string[],
   options: FolderMoveExecuteOptions = {},
-): Promise<{ restored: boolean }> {
+): Promise<{ restored: boolean; parityPassed?: boolean }> {
   if (strategy === 'replayable-move') return executeReplayableFolderMove(fromDirAbs, toDirAbs, entryRels, options)
   return createOnlyMoveDirectory(fromDirAbs, toDirAbs, 'atomic-rename')
 }
@@ -620,7 +819,7 @@ export async function createOnlyMoveDirectory(
   fromDirAbs: string,
   toDirAbs: string,
   strategy: DirectoryMoveStrategy = platformDirectoryMoveStrategy,
-): Promise<{ restored: boolean }> {
+): Promise<{ restored: boolean; parityPassed?: boolean }> {
   if (strategy === 'replayable-move') {
     // Journal-less callers enumerate fresh; unsupported entries
     // (symlink/junction/special) fail closed BEFORE the gate is
@@ -656,7 +855,12 @@ export async function createOnlyMoveDirectory(
   try {
     await renameWithTransientWindowsRetry(fromDirAbs, toDirAbs)
     await syncParentDirectoryBestEffort(toDirAbs)
-    return { restored: true }
+    // Atomic: a single rename(2) covers the whole move + the
+    // mkdir gate has no token to remove at this layer — the route's
+    // finalizeReplayableFolderMove is replayable-only. parityPassed is
+    // still reported so the route's `if (moved.parityPassed)`
+    // dispatch is safe on every platform.
+    return { restored: true, parityPassed: true }
   } catch (error) {
     try {
       // Only removable while still OUR empty gate directory.
@@ -712,7 +916,7 @@ export async function renameDocumentWithMetadata(input: {
       sourceHash: sha256Hex(sourceRaw),
     })
   }
-  const forwardRename = input.renameFile ?? ((from: string, to: string) => createOnlyMoveFile(from, to, journalStagingPath ?? undefined))
+  const forwardRename = input.renameFile ?? ((from: string, to: string) => createOnlyMoveFile(from, to, { preparedStagingPath: journalStagingPath ?? undefined }))
   try {
     await forwardRename(fromAbs, toAbs)
   } catch (error) {
