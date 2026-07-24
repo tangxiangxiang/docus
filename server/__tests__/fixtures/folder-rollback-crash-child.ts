@@ -10,9 +10,11 @@
 //
 // Env: DOCUS_FOLDER_VAULT, DOCUS_FOLDER_DB (sqlite path),
 //      DOCUS_FOLDER_CRASH_POINT:
-//        'rollback-entry:a.md'       — after the first reverse file landed
-//        'rollback-entry:image.bin'  — mid reverse move
-//        'rollback-after-tree'       — whole tree back, metadata pending
+//        'reverse-gate'              — after reverse gate mkdir + phase rewrite
+//        'reverse-entry:a.md'        — after first reverse file landed
+//        'reverse-parity'            — after reverse exact parity passed
+//        'reverse-metadata'          — after reverse metadata restore
+//        'reverse-journal-remove'    — just before reverse journal removal
 // The vault must hold proj/a.md, proj/image.bin, proj/nested/b.md and
 // ref-a.md linking into the folder.
 import Database from 'better-sqlite3'
@@ -49,16 +51,38 @@ __setDirectoryMoveStrategyOverrideForTesting('replayable-move')
 // metadata commit and journal removal, right before the reference
 // write loop. The external save planted there is what fails the
 // reference write and drives the route into its real rollback.
+const raceHooks: import('../../routes/folders.js').FolderRaceHooks = {}
+if (point === 'rollback-after-tree') {
+  raceHooks.afterRollbackMove = () => readyAndWait(point)
+}
+__setFolderRaceHooksForTesting(raceHooks)
 __setFolderRaceHooksForTesting({
+  ...raceHooks,
   afterRenamePlanBuilt: async () => {
-    __setCreateOnlyMoveHooksForTesting({
-      afterReplayableMovedEntry: point.startsWith('rollback-entry:')
-        ? (entryRel) => { if (entryRel === point.slice('rollback-entry:'.length)) return readyAndWait(point) }
-        : undefined,
-    })
+    const hooks: Record<string, unknown> = {}
+    // Support both old "rollback-" and new "reverse-" prefixes
+    const effectivePoint = point.replace(/^rollback-/, 'reverse-')
+    if (effectivePoint.startsWith('reverse-entry:')) {
+      const targetEntry = effectivePoint.slice('reverse-entry:'.length)
+      hooks.afterReplayableMovedEntry = (entryRel: string) => {
+        if (entryRel === targetEntry) return readyAndWait(point)
+      }
+    }
+    if (effectivePoint === 'reverse-gate') {
+      hooks.afterReverseGateCreated = () => readyAndWait(point)
+    }
+    if (effectivePoint === 'reverse-parity') {
+      hooks.afterReverseParity = () => readyAndWait(point)
+    }
+    if (effectivePoint === 'reverse-metadata') {
+      hooks.afterReverseMetadata = () => readyAndWait(point)
+    }
+    if (effectivePoint === 'reverse-journal-remove') {
+      hooks.beforeReverseJournalRemove = () => readyAndWait(point)
+    }
+    __setCreateOnlyMoveHooksForTesting(hooks as any)
     await fs.writeFile(path.join(vault, 'ref-a.md'), '# externally changed\n', 'utf8')
   },
-  afterRollbackMove: point === 'rollback-after-tree' ? () => readyAndWait(point) : undefined,
 })
 
 const response = await app.fetch(new Request('http://localhost/api/folders/proj', {

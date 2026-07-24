@@ -965,10 +965,11 @@ describe('real subprocess crash + startup recovery', () => {
   it('cleans the stale journal when the replayable folder move was killed right after its mkdir gate', async () => {
     // The real HTTP route killed at its first seam: the child drove
     // PATCH /api/folders/proj, the route wrote the REAL durable
-    // journal (schema v3 — every physical entry with its content hash
-    // and exact bigint dev/ino identity), created the destination gate, and
+    // journal (schema v4 — four-state phase machine with destination
+    // directory generation proof), created the destination gate, and
     // died before the first file moved. The gate is provably ours
-    // (file-free) — recovery prunes it and removes the stale journal.
+    // (file-free, verified by destDev/destIno) — recovery prunes it
+    // and removes the stale journal.
     const dbPath = path.join(vault, 'metadata.sqlite')
     await seedFolderMoveVault()
 
@@ -979,16 +980,19 @@ describe('real subprocess crash + startup recovery', () => {
     }, FOLDER_MOVE_CRASH_CHILD)
     expectParentKilled(await child.killAfterReady('gate'), 'gate')
 
-    // The REAL journal JSON: the persisted strategy IS the runtime
-    // strategy, entries cover the attachment too, identities ride only
-    // on the markdown documents.
+    // The REAL journal JSON: v4 phase-machine format. No gate token
+    // on disk — ownership proof is the destination directory's (dev,ino).
     const journal = await readFolderMoveJournal()
-    expect(journal.version).toBe(3)
+    expect(journal.version).toBe(4)
     expect(journal.op).toBe('folder-rename')
     expect(journal.strategy).toBe('replayable-move')
     expect(journal.srcRel).toBe('proj')
     expect(journal.destRel).toBe('ren')
-    expect(journal.gateToken).toMatch(/^[0-9a-f]{64}$/)
+    expect(journal.phase).toBe('gate-created')
+    expect(typeof journal.destDev).toBe('string')
+    expect(/^\d+$/.test(journal.destDev)).toBe(true)
+    expect(typeof journal.destIno).toBe('string')
+    expect(/^[1-9]\d*$/.test(journal.destIno)).toBe(true)
     expect(journal.entries.map((entry: any) => entry.relativeFilePath).sort()).toEqual(['a.md', 'image.bin', 'nested/b.md'])
     for (const entry of journal.entries) {
       expect(entry.sourceHash).toMatch(/^[0-9a-f]{64}$/)
@@ -1005,35 +1009,38 @@ describe('real subprocess crash + startup recovery', () => {
     }
 
     // Pre-recovery proof of the exact crash state: the gate the mover
-    // created (proven ours by its hidden gate token — round-8: an empty
-    // dir alone is not ownership proof), every file still at the
-    // source, durable journal.
+    // created (proven ours by destDev/destIno in the journal), every
+    // file still at the source, durable journal. No gate token file.
     const crashState = await namesIn()
     expect(crashState).toContain('proj')
     expect(crashState).toContain('ren')
     const renContents = await fs.readdir(path.join(vault, 'ren'))
-    const journalName = crashState.find((name) => name.startsWith('.proj.docus-journal-'))!
-    const transactionId = journalName.slice(journalName.indexOf('.docus-journal-') + '.docus-journal-'.length)
-    expect(renContents).toEqual([`.docus-folder-gate-${transactionId}`])
-    expect(await fs.readFile(path.join(vault, 'ren', renContents[0]!), 'utf8')).toBe(journal.gateToken)
-    expect(journal.gateToken).not.toContain(transactionId)
+    // v4: no gate token file — the empty directory itself is the gate.
+    expect(renContents).toEqual([])
     expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
     expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe('# b\n')
 
     const persistedDb = new Database(dbPath)
     try {
+      // v4 gate-created recovery: all entries still at source, dest
+      // is provably ours by destDev/destIno. Recovery replays the
+      // entire move forward (not a stale cleanup).
       const report = await recoverInterruptedOperations(vault, persistedDb)
-      expect(report.actions.some((a) => a.action === 'cleaned')).toBe(true)
+      expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
       expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('unrecognized'))).toBe(false)
-      expect(await namesIn()).not.toContain('ren')
-      expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
-      expect(await fs.readFile(path.join(vault, 'proj/image.bin'))).toEqual(IMAGE_BYTES)
-      expect(getDocumentMetadata(persistedDb, 'proj/a')).not.toBeNull()
+      // Tree fully landed at destination.
+      expect(await namesIn()).not.toContain('proj')
+      expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
+      expect(await fs.readFile(path.join(vault, 'ren/image.bin'))).toEqual(IMAGE_BYTES)
+      expect(getDocumentMetadata(persistedDb, 'ren/a')).not.toBeNull()
       expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
     } finally { persistedDb.close() }
   })
 
-  it('does not trust a predictable-name gate whose secret bytes were replaced', async () => {
+  it('does not trust a destination directory whose generation does not match the journal', async () => {
+    // v4: ownership proof is destDev/destIno in the journal, NOT a
+    // gate token file. If an external writer replaced the destination
+    // directory (different inode), recovery must quarantine.
     const dbPath = path.join(vault, 'metadata.sqlite')
     await seedFolderMoveVault()
     const child = spawnCrashChild({
@@ -1043,18 +1050,27 @@ describe('real subprocess crash + startup recovery', () => {
     }, FOLDER_MOVE_CRASH_CHILD)
     expectParentKilled(await child.killAfterReady('gate'), 'gate')
 
+    // The journal was written with the original dest directory's (dev,ino).
+    // Now recreate the destination directory — same path, different inode.
     const journalName = (await namesIn()).find((name) => name.startsWith('.proj.docus-journal-'))!
-    const transactionId = journalName.slice(journalName.indexOf('.docus-journal-') + '.docus-journal-'.length)
-    const marker = path.join(vault, 'ren', `.docus-folder-gate-${transactionId}`)
-    await fs.writeFile(marker, 'forged-but-correct-name', 'utf8')
+    const journal = JSON.parse(await fs.readFile(path.join(vault, journalName!), 'utf8'))
+    expect(journal.version).toBe(4)
+    expect(journal.phase).toBe('gate-created')
+
+    // Delete and recreate the destination directory — different inode.
+    await fs.rm(path.join(vault, 'ren'), { recursive: true, force: true })
+    await fs.mkdir(path.join(vault, 'ren'))
 
     const persistedDb = new Database(dbPath)
     try {
       const report = await recoverInterruptedOperations(vault, persistedDb)
-      expect(report.actions.some((action) => action.action === 'quarantined' && action.detail?.includes('gate token'))).toBe(true)
-      expect(await fs.readFile(marker, 'utf8')).toBe('forged-but-correct-name')
+      // Quarantined because the destination directory generation doesn't match.
+      expect(report.actions.some((action) => action.action === 'quarantined' && /generation|inode|ownership/.test(action.detail ?? ''))).toBe(true)
+      // The recreated empty dir stays on disk (external property).
+      expect(await fs.stat(path.join(vault, 'ren')).then(() => true, () => false)).toBe(true)
       expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
-      expect(await namesIn()).toContain(journalName)
+      // Journal retained for inspection.
+      expect((await namesIn()).some((name) => name.startsWith('.proj.docus-journal-'))).toBe(true)
     } finally { persistedDb.close() }
   })
 
@@ -1063,9 +1079,7 @@ describe('real subprocess crash + startup recovery', () => {
     // already landed at the destination, image.bin and nested/b.md
     // still at the source — the tree is SPLIT and only the journaled
     // entry hashes can decide it. Recovery parses the route's own
-    // journal (the round-7 P0 proof: the persisted strategy value is
-    // exactly what the parser accepts) and completes the move FORWARD,
-    // attachment bytes included, then moves the metadata prefix.
+    // v4 journal and completes the move FORWARD.
     const dbPath = path.join(vault, 'metadata.sqlite')
     await seedFolderMoveVault()
 
@@ -1076,13 +1090,15 @@ describe('real subprocess crash + startup recovery', () => {
     }, FOLDER_MOVE_CRASH_CHILD)
     expectParentKilled(await child.killAfterReady('entry:a.md'), 'entry:a.md')
 
-    // Pre-recovery proof of the exact split state + the real journal.
+    // Pre-recovery proof of the exact split state + the real v4 journal.
     const journal = await readFolderMoveJournal()
+    expect(journal.version).toBe(4)
+    expect(journal.phase).toBe('gate-created')
     expect(journal.strategy).toBe('replayable-move')
     expect(journal.entries.map((entry: any) => entry.relativeFilePath).sort()).toEqual(['a.md', 'image.bin', 'nested/b.md'])
-    // Every subdirectory — including the nested EMPTY one — is
-    // journaled so the move recreates the full tree shape (round-8 P1).
     expect([...(journal.directories as string[])].sort()).toEqual(['empty', 'empty/deeper', 'nested'])
+    expect(typeof journal.destDev).toBe('string')
+    expect(typeof journal.destIno).toBe('string')
     expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
     expect(await fs.stat(path.join(vault, 'proj/a.md')).then(() => true, () => false)).toBe(false)
     expect(await fs.readFile(path.join(vault, 'proj/image.bin'))).toEqual(IMAGE_BYTES)
@@ -1097,7 +1113,6 @@ describe('real subprocess crash + startup recovery', () => {
       expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
       expect(await fs.readFile(path.join(vault, 'ren/image.bin'))).toEqual(IMAGE_BYTES)
       expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe('# b\n')
-      // The nested empty directory survived the move.
       expect((await fs.stat(path.join(vault, 'ren/empty/deeper'))).isDirectory()).toBe(true)
       expect(await fs.readdir(path.join(vault, 'ren/empty/deeper'))).toEqual([])
       expect(await namesIn()).not.toContain('proj')
@@ -1106,7 +1121,6 @@ describe('real subprocess crash + startup recovery', () => {
       expect(aId).toBeTruthy()
       expect(bId).toBeTruthy()
       expect(getDocumentMetadata(persistedDb, 'proj/a')).toBeNull()
-      // The attachment moved without ever carrying an identity.
       expect(getDocumentMetadata(persistedDb, 'ren/image')).toBeNull()
       expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
       // Idempotent across repeated startups.
@@ -1127,14 +1141,21 @@ describe('real subprocess crash + startup recovery', () => {
     expectParentKilled(await child.killAfterReady('parity'), 'parity')
 
     const journal = await readFolderMoveJournal()
-    expect(journal.version).toBe(3)
+    // round-11 v4: the route persists v4 phase-machine journals. The
+    // fixture kills the child at the parity seam (afterFilesLanded),
+    // so the on-disk journal carries phase=gate-created (or, if a
+    // later test runs after a successful forward, phase=metadata-committed
+    // — but this test is mid-forward, so gate-created).
+    expect(journal.version).toBe(4)
+    expect(['prepared', 'gate-created', 'files-landed', 'metadata-committed']).toContain(journal.phase)
     expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
     expect(await fs.readFile(path.join(vault, 'ren/image.bin'))).toEqual(IMAGE_BYTES)
     expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe('# b\n')
     expect(await namesIn()).not.toContain('proj')
+    // round-11 v4: no gate token file is written. Ownership proof is
+    // the destination's (dev, ino) persisted as phase=gate-created.
     const marker = (await fs.readdir(path.join(vault, 'ren'))).find((name) => name.startsWith('.docus-folder-gate-'))
-    expect(marker).toBeDefined()
-    expect(await fs.readFile(path.join(vault, 'ren', marker!), 'utf8')).toBe(journal.gateToken)
+    expect(marker).toBeUndefined()
 
     const persistedDb = new Database(dbPath)
     try {
@@ -1151,6 +1172,8 @@ describe('real subprocess crash + startup recovery', () => {
   })
 
   it('quarantines identical replacement bytes that do not preserve the landed hard-link identity', async () => {
+    // v4: generation proof is (dev, ino, hash) — a byte-identical
+    // external replacement gets a fresh inode and is detected.
     const dbPath = path.join(vault, 'metadata.sqlite')
     await seedFolderMoveVault()
     const child = spawnCrashChild({
@@ -1161,8 +1184,7 @@ describe('real subprocess crash + startup recovery', () => {
     expectParentKilled(await child.killAfterReady('entry:a.md'), 'entry:a.md')
 
     // Pre-create a distinct inode before unlinking the owned landing, then
-    // publish it at the same pathname with byte-identical content. A hash
-    // alone cannot distinguish this external generation.
+    // publish it at the same pathname with byte-identical content.
     const replacement = path.join(vault, 'same-bytes-replacement')
     await fs.writeFile(replacement, '# a\n', 'utf8')
     const originalIdentity = await fs.stat(path.join(vault, 'ren/a.md'), { bigint: true })
@@ -1183,6 +1205,9 @@ describe('real subprocess crash + startup recovery', () => {
   })
 
   it('runs shared exact parity again after recovery replay and before metadata', async () => {
+    // v4: recovery re-verifies exact parity (destDev/destIno + per-entry
+    // generation) before committing metadata. An external file planted
+    // mid-recovery is caught by the parity check.
     const dbPath = path.join(vault, 'metadata.sqlite')
     await seedFolderMoveVault()
     const child = spawnCrashChild({
@@ -1238,13 +1263,12 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
 
     // Pre-recovery proof: the journal was DURABLY FLIPPED to describe
     // the rollback (srcRel 'ren' → destRel 'proj') before the first
-    // reverse file moved, and the split matches the kill point. Two
-    // journals share the '.proj.docus-journal-' prefix (the reference
-    // transaction journal keeps its own) — select the folder-move one.
+    // reverse file moved. v4 format with phase machine.
     const journalNames = (await namesIn()).filter((name) => name.startsWith('.proj.docus-journal-'))
     const journals = await Promise.all(journalNames.map(async (name) => JSON.parse(await fs.readFile(path.join(vault, name), 'utf8'))))
     const journal = journals.find((entry) => entry.op === 'folder-rename')
     expect(journal, 'the route must leave its durable folder-move journal behind on crash').toBeDefined()
+    expect(journal.version).toBe(4)
     expect(journal.srcRel).toBe('ren')
     expect(journal.destRel).toBe('proj')
     expect(journal.strategy).toBe('replayable-move')

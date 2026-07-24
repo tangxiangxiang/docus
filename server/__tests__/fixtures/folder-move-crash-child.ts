@@ -1,16 +1,18 @@
 // Crash-test child: runs the REAL folder rename HTTP route against a
-// temp vault — the route writes the real durable journal (schema v2:
-// every PHYSICAL entry with its content hash, the runtime strategy
-// value) and performs the real move. The child pauses at the named
-// seam announcing READY:<point>; the parent force-kills it there,
-// asserts the exact split state on disk INCLUDING the real journal
-// JSON, and replays from the journal. The journal is never
-// hand-copied here — it is the route's own artifact.
+// temp vault — the route writes the real durable journal (schema v4:
+// four-state phase machine with destination directory generation proof)
+// and performs the real move. The child pauses at the named seam
+// announcing READY:<point>; the parent force-kills it there, asserts
+// the exact split state on disk INCLUDING the real journal JSON, and
+// replays from the journal. The journal is never hand-copied here —
+// it is the route's own artifact.
 //
 // Env: DOCUS_FOLDER_VAULT, DOCUS_FOLDER_DB (sqlite path),
 //      DOCUS_FOLDER_CRASH_POINT ('gate' | 'entry:<relativeFilePath>' |
-//      'parity', e.g. 'entry:a.md'). The vault must hold proj/a.md,
-//      proj/image.bin and proj/nested/b.md.
+//      'parity' | 'metadata' | 'journal-remove' |
+//      'reverse-gate' | 'reverse-entry:<relativeFilePath>' |
+//      'reverse-parity' | 'reverse-metadata' | 'reverse-journal-remove').
+//      The vault must hold proj/a.md, proj/image.bin and proj/nested/b.md.
 import Database from 'better-sqlite3'
 
 const vault = process.env.DOCUS_FOLDER_VAULT
@@ -39,18 +41,60 @@ __setMetadataDbForTesting(database)
 // every platform: the override makes the route PERSIST strategy
 // 'replayable-move' and run the per-file move under that journal.
 __setDirectoryMoveStrategyOverrideForTesting('replayable-move')
-__setCreateOnlyMoveHooksForTesting({
-  afterReplayableGate: point === 'gate' ? () => readyAndWait('gate') : undefined,
-  afterReplayableMovedEntry: point.startsWith('entry:')
-    ? (entryRel) => { if (entryRel === point.slice('entry:'.length)) return readyAndWait(`entry:${entryRel}`) }
-    : undefined,
-  // Round-10 F5: parity passes, metadata has not yet committed — the
-  // crash child fires here to leave recovery a clear "finish metadata"
-  // job. The hook name was renamed in F5; the legacy alias is kept
-  // here for the fixtures and any external tests.
-  afterReplayableFinalParity: point === 'parity' ? () => readyAndWait('parity') : undefined,
-  afterParityBeforeMetadata: point === 'parity' ? () => readyAndWait('parity') : undefined,
-} as any)
+
+// Build the hook bag based on which crash point the parent requested.
+const hooks: Record<string, unknown> = {}
+
+// Forward seams (v4)
+if (point === 'gate') {
+  hooks.afterGateCreated = () => readyAndWait('gate')
+}
+if (point.startsWith('entry:')) {
+  const targetEntry = point.slice('entry:'.length)
+  hooks.afterReplayableMovedEntry = (entryRel: string) => {
+    if (entryRel === targetEntry) return readyAndWait(`entry:${entryRel}`)
+  }
+}
+if (point === 'parity') {
+  hooks.afterFilesLanded = () => readyAndWait('parity')
+}
+if (point === 'metadata') {
+  hooks.afterMetadataCommitted = () => readyAndWait('metadata')
+}
+if (point === 'journal-remove') {
+  hooks.afterMetadataCommitted = () => readyAndWait('journal-remove')
+}
+
+// Reverse seams — support both old "rollback-" and new "reverse-" prefixes
+// for backward compatibility with existing test names.
+const reversePoint = point.replace(/^rollback-/, 'reverse-')
+if (reversePoint === 'reverse-gate' || point === 'rollback-after-tree') {
+  if (point === 'rollback-after-tree') {
+    // Old name for afterRollbackMove in the route hooks
+    hooks.afterRollbackMove = () => readyAndWait('rollback-after-tree')
+  } else {
+    hooks.afterReverseGateCreated = () => readyAndWait('reverse-gate')
+  }
+}
+if (reversePoint.startsWith('reverse-entry:') || point.startsWith('rollback-entry:')) {
+  const targetEntry = point.startsWith('rollback-entry:')
+    ? point.slice('rollback-entry:'.length)
+    : point.slice('reverse-entry:'.length)
+  hooks.afterReplayableMovedEntry = (entryRel: string) => {
+    if (entryRel === targetEntry) return readyAndWait(point)
+  }
+}
+if (reversePoint === 'reverse-parity') {
+  hooks.afterReverseParity = () => readyAndWait('reverse-parity')
+}
+if (reversePoint === 'reverse-metadata') {
+  hooks.afterReverseMetadata = () => readyAndWait('reverse-metadata')
+}
+if (reversePoint === 'reverse-journal-remove') {
+  hooks.beforeReverseJournalRemove = () => readyAndWait('reverse-journal-remove')
+}
+
+__setCreateOnlyMoveHooksForTesting(hooks as any)
 
 const response = await app.fetch(new Request('http://localhost/api/folders/proj', {
   method: 'PATCH',
