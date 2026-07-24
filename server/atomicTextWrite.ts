@@ -13,6 +13,55 @@ export function sha256HexBuffer(raw: Buffer | Uint8Array): string {
   return createHash('sha256').update(raw).digest('hex')
 }
 
+/** round-11 v4: a directory's (dev, ino) generation tuple persisted
+ * in the journal. The pair uniquely identifies an inode on its
+ * filesystem across the lifetime of the mount. */
+export type DirectoryGeneration = { dev: string; ino: string }
+
+/** round-11 v4: create a destination gate as an empty directory the
+ * caller will move into. The (dev, ino) of the freshly mkdir'd
+ * directory IS the ownership proof — no token file is written inside
+ * the destination. Returns null when the path was already taken (an
+ * external writer claimed the destination before us) or when a file
+ * occupies the destination path. Throws on any other I/O error. */
+export async function createDestinationGate(
+  destinationAbs: string,
+): Promise<DirectoryGeneration | null> {
+  try {
+    await fs.mkdir(destinationAbs)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'EEXIST' || code === 'ENOTDIR') return null
+    throw error
+  }
+  await syncParentDirectoryBestEffort(destinationAbs)
+  const stat = await fs.stat(destinationAbs, { bigint: true })
+  if (!stat.isDirectory()) {
+    throw new Error(`destination gate is not a directory: ${destinationAbs}`)
+  }
+  return { dev: stat.dev.toString(), ino: stat.ino.toString() }
+}
+
+/** round-11 v4: confirm a directory at `directoryAbs` is the same
+ * inode the caller originally created. Used by recovery to prove the
+ * destination is still the route's gate (an external writer could
+ * unlink our gate, recreate a different one at the same path, and
+ * try to confuse recovery). Returns true ONLY when (dev, ino) match
+ * AND the path is a real directory. */
+export async function verifyDirectoryGeneration(
+  directoryAbs: string,
+  expected: DirectoryGeneration,
+): Promise<boolean> {
+  try {
+    const stat = await fs.stat(directoryAbs, { bigint: true })
+    return stat.isDirectory()
+      && stat.dev.toString() === expected.dev
+      && stat.ino.toString() === expected.ino
+  } catch {
+    return false
+  }
+}
+
 /**
  * Write a small JSON journal durably (O_EXCL create + write + fsync) so
  * it is on disk BEFORE the operation it describes begins. Startup crash

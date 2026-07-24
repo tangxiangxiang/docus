@@ -111,6 +111,139 @@ export function snapshotDocumentMetadataPrefixMutation(
   return snapshotDocumentMetadataMutation(db, [...matched])
 }
 
+/** round-11 v4 / F1: ownership CAS requires reading live rows by BOTH
+ * path AND documentId AND tagId. The previous CAS only read by path,
+ * so a snapshot whose `documentId` was already bound to an unrelated
+ * path in the live DB would not be detected — a forged journal could
+ * rebind that id onto the new folder. This snapshot returns a union
+ * of all three reads, with deduplication by primary key. */
+export function snapshotDocumentMetadataOwnership(
+  db: DatabaseT,
+  paths: readonly string[],
+  documentIds: readonly string[],
+  tagIds: readonly number[],
+): DocumentMetadataMutationSnapshot {
+  const uniquePaths = [...new Set(paths)]
+  const uniqueDocumentIds = [...new Set(documentIds.filter((id) => typeof id === 'string' && id.length > 0))]
+  const uniqueTagIds = [...new Set(tagIds.filter((id) => typeof id === 'number'))]
+
+  const documentClauses: string[] = []
+  const documentArgs: unknown[] = []
+  if (uniquePaths.length > 0) {
+    documentClauses.push(`path IN (${placeholders(uniquePaths)})`)
+    documentArgs.push(...uniquePaths)
+  }
+  if (uniqueDocumentIds.length > 0) {
+    documentClauses.push(`id IN (${placeholders(uniqueDocumentIds)})`)
+    documentArgs.push(...uniqueDocumentIds)
+  }
+  const documents = documentClauses.length > 0
+    ? db.prepare(`SELECT * FROM documents WHERE ${documentClauses.join(' OR ')} ORDER BY id`).all(...documentArgs) as Record<string, unknown>[]
+    : []
+
+  const documentTags = uniqueDocumentIds.length > 0
+    ? db.prepare(`SELECT * FROM document_tags WHERE document_id IN (${placeholders(uniqueDocumentIds)}) ORDER BY document_id, tag_id`).all(...uniqueDocumentIds) as Record<string, unknown>[]
+    : []
+
+  const embeddings = uniqueDocumentIds.length > 0
+    ? db.prepare(`SELECT * FROM document_embeddings WHERE document_id IN (${placeholders(uniqueDocumentIds)}) ORDER BY document_id`).all(...uniqueDocumentIds) as Record<string, unknown>[]
+    : []
+
+  const tags = uniqueTagIds.length > 0
+    ? db.prepare(`SELECT * FROM tags WHERE id IN (${placeholders(uniqueTagIds)}) ORDER BY id`).all(...uniqueTagIds) as Record<string, unknown>[]
+    : []
+
+  const migrationClauses: string[] = []
+  const migrationArgs: unknown[] = []
+  if (uniquePaths.length > 0) {
+    migrationClauses.push(`path IN (${placeholders(uniquePaths)})`)
+    migrationArgs.push(...uniquePaths)
+    migrationClauses.push(`original_path IN (${placeholders(uniquePaths)})`)
+    migrationArgs.push(...uniquePaths)
+  }
+  if (uniqueDocumentIds.length > 0) {
+    const tombstones = uniqueDocumentIds.map((id) => `@deleted/${id}`)
+    migrationClauses.push(`path IN (${placeholders(tombstones)})`)
+    migrationArgs.push(...tombstones)
+    migrationClauses.push(`document_id IN (${placeholders(uniqueDocumentIds)})`)
+    migrationArgs.push(...uniqueDocumentIds)
+  }
+  const migrations = migrationClauses.length > 0
+    ? db.prepare(`SELECT * FROM metadata_migrations WHERE ${migrationClauses.join(' OR ')} ORDER BY path`).all(...migrationArgs) as Record<string, unknown>[]
+    : []
+
+  const preexistingTagIds = (db.prepare('SELECT id FROM tags ORDER BY id').all() as Array<{ id: number }>).map((row) => row.id)
+
+  return {
+    paths: uniquePaths,
+    documentIds: uniqueDocumentIds,
+    tagIds: uniqueTagIds,
+    preexistingTagIds,
+    documents,
+    documentTags,
+    embeddings,
+    tags,
+    migrations,
+  }
+}
+
+/** round-11 v4 production validator: check the live DB snapshot
+ * against the expected snapshot. A live row that disagrees with the
+ * expected row on its (id, path) OR (id, path) for a tag OR
+ * (path, document_id, original_path) for a migration means the live
+ * state has drifted from the journal's expected state — the restore
+ * is unsafe. Returns true when ownership is intact. */
+export function validateSnapshotOwnership(
+  current: DocumentMetadataMutationSnapshot,
+  expected: DocumentMetadataMutationSnapshot,
+): boolean {
+  const expectedPathById = new Map<string, string>()
+  for (const row of expected.documents) {
+    const id = String(row.id)
+    const path = String(row.path)
+    if (!expectedPathById.has(id)) expectedPathById.set(id, path)
+  }
+  const expectedIdByPath = new Map<string, string>()
+  for (const row of expected.documents) {
+    const id = String(row.id)
+    const path = String(row.path)
+    if (!expectedIdByPath.has(path)) expectedIdByPath.set(path, id)
+  }
+
+  for (const live of current.documents) {
+    const liveId = String(live.id)
+    const livePath = String(live.path)
+    const expectedPath = expectedPathById.get(liveId)
+    if (expectedPath !== undefined && livePath !== expectedPath) return false
+    const expectedId = expectedIdByPath.get(livePath)
+    if (expectedId !== undefined && liveId !== expectedId) return false
+  }
+
+  const expectedTagById = new Map<number, string>()
+  for (const row of expected.tags) {
+    const id = Number(row.id)
+    const normalized = String(row.normalized_name)
+    if (!expectedTagById.has(id)) expectedTagById.set(id, normalized)
+  }
+  for (const liveTag of current.tags) {
+    const id = Number(liveTag.id)
+    const expectedNormalized = expectedTagById.get(id)
+    if (expectedNormalized !== undefined && String(liveTag.normalized_name) !== expectedNormalized) return false
+  }
+
+  const allowedMigrationKeys = new Set<string>()
+  for (const row of expected.migrations) {
+    allowedMigrationKeys.add(JSON.stringify([row.path, row.document_id, row.original_path]))
+  }
+  for (const migration of current.migrations) {
+    const key = JSON.stringify([migration.path, migration.document_id, migration.original_path])
+    const isReferencedBySnapshot = expected.documentIds.includes(String(migration.document_id))
+    if (isReferencedBySnapshot && !allowedMigrationKeys.has(key)) return false
+  }
+
+  return true
+}
+
 function insertRows(db: DatabaseT, table: string, rows: Record<string, unknown>[]): void {
   if (!rows.length) return
   const columns = Object.keys(rows[0])
@@ -196,7 +329,12 @@ export function restoreDocumentMetadataMutationCAS(
 ): void {
   const tx = db.transaction(() => {
     if (expect) {
-      const current = snapshotDocumentMetadataMutation(db, snapshot.paths)
+      // round-11 v4: read by BOTH path AND documentId AND tagId so
+      // a forged journal that reuses a live id on an unrelated path
+      // is detected.
+      const current = snapshotDocumentMetadataOwnership(
+        db, snapshot.paths, snapshot.documentIds, snapshot.tagIds,
+      )
       let ok = false
       try {
         ok = expect(current)

@@ -11,8 +11,9 @@ import {
   sha256HexBuffer,
   removeDurableJournal,
   writeDurableJournal,
+  verifyDirectoryGeneration,
 } from './atomicTextWrite.js'
-import type { FolderMoveJournalEntry } from './folderMoveTransaction.js'
+import type { FolderMoveJournalEntry, FolderMoveJournalEntryV4 } from './folderMoveTransaction.js'
 
 /** Test-only hooks for the create-only move race/crash windows. Null
  * in production; tests reset in finally. `afterMkdirGate` fires right
@@ -49,10 +50,44 @@ export type CreateOnlyMoveHooks = {
    * able to complete forward (token + journal both present, metadata
    * already at destination). */
   afterMetadataBeforeTokenRemoval?: (toDirAbs: string) => void | Promise<void>
+  // ===== round-11 v4 phase seams =====
+  /** Fires immediately after `createDestinationGate` succeeds on the
+   * forward path. The journal's phase=prepared has been written; the
+   * route rewrites phase=gate-created next. */
+  afterGateCreated?: (toDirAbs: string, generation: { dev: string; ino: string }) => void | Promise<void>
+  /** Fires after the v4 exact parity passes, just before the route
+   * commits metadata and rewrites phase=files-landed. */
+  afterFilesLanded?: (toDirAbs: string) => void | Promise<void>
+  /** Fires after metadata has been committed, just before the route
+   * rewrites phase=metadata-committed and removes the journal. A
+   * kill here must still leave recovery able to complete the commit
+   * (dest dir's (dev,ino) + per-entry (dev,ino,hash) match; metadata
+   * already at destination). */
+  afterMetadataCommitted?: (toDirAbs: string) => void | Promise<void>
+  /** Reverse path: after the destination gate for the reverse move
+   * has been created and the journal's phase=gate-created rewritten. */
+  afterReverseGateCreated?: (toDirAbs: string) => void | Promise<void>
+  /** Reverse path: after the first reverse file has landed. */
+  afterReverseFirstEntry?: (entryRel: string) => void | Promise<void>
+  /** Reverse path: after v4 exact parity on the reverse move passes. */
+  afterReverseParity?: (toDirAbs: string) => void | Promise<void>
+  /** Reverse path: after the reverse metadata restore has run. */
+  afterReverseMetadata?: (toDirAbs: string) => void | Promise<void>
+  /** Reverse path: after the reverse journal's phase=metadata-committed
+   * has been rewritten, just before the route removes the journal. */
+  beforeReverseJournalRemove?: (toDirAbs: string) => void | Promise<void>
 }
 let __createOnlyMoveHooks: CreateOnlyMoveHooks | null = null
 export function __setCreateOnlyMoveHooksForTesting(hooks: CreateOnlyMoveHooks | null): void {
   __createOnlyMoveHooks = hooks
+}
+/** Read-only access to the current test hook bag. Production code
+ * never installs hooks; only the test fixtures and the routes'
+ * post-`if (renamed)` blocks inspect the bag to fire per-phase crash
+ * seams (round-11 v4: afterGateCreated, afterFilesLanded,
+ * afterMetadataCommitted, etc.). */
+export function getCreateOnlyMoveHooksForTesting(): CreateOnlyMoveHooks | null {
+  return __createOnlyMoveHooks
 }
 
 /** Internal: notify the per-entry crash seam. Both the mover AND the
@@ -124,12 +159,25 @@ export class GenerationMismatchError extends Error {
   readonly path: string
   readonly expected: { dev: string; ino: string; hash: string }
   readonly actual: { dev: string; ino: string; hash: string } | null
-  constructor(path: string, expected: { dev: string; ino: string; hash: string }, actual: { dev: string; ino: string; hash: string } | null) {
+  /** round-11 F6: when the post-takeover re-check restores the foreign
+   * replacement, this is the result of that restore. `true` means the
+   * bytes are quarantined under the staging name (the source was
+   * re-used externally between the takeover and the restore attempt);
+   * `false` means the bytes were successfully re-published create-
+   * only back to the source path. */
+  readonly restored: { quarantined: boolean } | null
+  constructor(
+    path: string,
+    expected: { dev: string; ino: string; hash: string },
+    actual: { dev: string; ino: string; hash: string } | null,
+    restored: { quarantined: boolean } | null = null,
+  ) {
     super(`generation mismatch at ${path}: expected ${expected.dev}:${expected.ino}/${expected.hash.slice(0, 8)} but found ${actual ? `${actual.dev}:${actual.ino}/${actual.hash.slice(0, 8)}` : 'missing'}`)
     this.name = 'GenerationMismatchError'
     this.path = path
     this.expected = expected
     this.actual = actual
+    this.restored = restored
   }
 }
 
@@ -191,11 +239,13 @@ export async function createOnlyMoveFile(
   toAbs: string,
   options: {
     preparedStagingPath?: string
-    /** When provided, the staging inode (after the takeover rename) MUST
-     * still match this generation — round-10 F1. A mismatch throws
-     * GenerationMismatchError with the staging bytes preserved (the
-     * source path was already moved aside; we don't try to restore
-     * bytes that don't belong to us). */
+    /** round-10/11: when provided, the bytes about to be moved MUST
+     * still match this generation (dev + ino + hash). A mismatch —
+     * detected either BEFORE the takeover rename (the cheap pre-check)
+     * or AFTER the takeover (the post-takeover re-check that catches a
+     * race-window external replacement) — throws
+     * GenerationMismatchError. The source is restored create-only
+     * (F6 round-11: the foreign replacement never hides in staging). */
     expectedSource?: ExpectedGeneration
   } = {},
 ): Promise<void> {
@@ -203,25 +253,41 @@ export async function createOnlyMoveFile(
     path.dirname(fromAbs),
     `.${path.basename(fromAbs)}.docus-rename-${randomUUID()}`,
   )
-  await renameWithTransientWindowsRetry(fromAbs, stagedPath)
-  if (__createOnlyMoveHooks?.afterRenameTakenOver) await __createOnlyMoveHooks.afterRenameTakenOver(stagedPath)
-  // Round-10 F1: prove the staging bytes are STILL the journaled
-  // generation before linking. A byte-identical external replacement
-  // is detected by (dev, ino), not by hash alone.
+
+  // round-11 F6 + round-10 F1: PRE-CHECK. This is the cheap, race-free
+  // observation: if the source is already not the journaled generation
+  // before we touch anything, throw immediately and leave the source
+  // untouched. This is NOT a TOCTOU guarantee on its own — the post-
+  // takeover re-check below is the only safe one — but it lets obvious
+  // mismatches fail without ever moving the file aside.
   if (options.expectedSource) {
-    const actual = await readGeneration(stagedPath)
-    if (!actual
-      || actual.dev !== options.expectedSource.dev
-      || actual.ino !== options.expectedSource.ino
-      || actual.hash !== options.expectedSource.hash) {
-      // The bytes we hold under the staging name are not the journaled
-      // generation. The source path is gone (already renamed); the
-      // only safe disposition is to leave the staging bytes where
-      // they are (they belong to whatever landed them) and report the
-      // mismatch — never link them into the destination.
-      throw new GenerationMismatchError(fromAbs, options.expectedSource, actual)
+    const before = await readGeneration(fromAbs)
+    if (!generationMatches(before, options.expectedSource)) {
+      throw new GenerationMismatchError(fromAbs, options.expectedSource, before)
     }
   }
+
+  await renameWithTransientWindowsRetry(fromAbs, stagedPath)
+  if (__createOnlyMoveHooks?.afterRenameTakenOver) await __createOnlyMoveHooks.afterRenameTakenOver(stagedPath)
+
+  // round-11 F6: POST-TAKEOVER RE-CHECK. The pre-check above is not
+  // enough: between the pre-check and the rename, an external writer
+  // could unlink our source and create a fresh inode with the same
+  // bytes (a byte-identical replacement). The staging inode now holds
+  // the foreign replacement, not our bytes. Prove the staging
+  // generation matches the journal — if not, the foreign replacement
+  // is restored create-only back to the source path (which the
+  // external writer may have re-used in the meantime; if so, the
+  // bytes stay quarantined under the staging name rather than
+  // clobbering either side).
+  if (options.expectedSource) {
+    const stagedGeneration = await readGeneration(stagedPath)
+    if (!generationMatches(stagedGeneration, options.expectedSource)) {
+      const restored = await restoreStagedGeneration(stagedPath, fromAbs)
+      throw new GenerationMismatchError(fromAbs, options.expectedSource, stagedGeneration, restored)
+    }
+  }
+
   try {
     await fs.link(stagedPath, toAbs)
   } catch (error) {
@@ -239,10 +305,6 @@ export async function createOnlyMoveFile(
       throw error
     }
     if (code === 'EEXIST') {
-      // An external writer won the destination: restore the source
-      // create-only and fail closed. If the source was re-used too,
-      // the bytes stay quarantined rather than overwriting either
-      // external file.
       const { quarantined } = await restoreStagedGeneration(stagedPath, fromAbs)
       throw quarantined ? new RenameSourceReusedError(fromAbs, { stagingPath: stagedPath, survivingPath: 'staging', destinationOccupied: true }) : new RenameDestinationOccupiedError(toAbs)
     }
@@ -259,6 +321,18 @@ export async function createOnlyMoveFile(
   if (__createOnlyMoveHooks?.afterRenameLinked) await __createOnlyMoveHooks.afterRenameLinked()
   await fs.rm(stagedPath, { force: true })
   await syncParentDirectoryBestEffort(toAbs)
+}
+
+/** True iff `actual` (dev, ino, hash) all equal `expected`. A missing
+ * `actual` is NEVER a match. */
+function generationMatches(
+  actual: ExpectedGeneration | null,
+  expected: ExpectedGeneration,
+): boolean {
+  return actual !== null
+    && actual.dev === expected.dev
+    && actual.ino === expected.ino
+    && actual.hash === expected.hash
 }
 
 /** How a directory move is executed. POSIX gets the single-syscall
@@ -675,6 +749,201 @@ export async function finalizeReplayableFolderMove(
     }
   }
   await syncParentDirectoryBestEffort(toDirAbs)
+}
+
+// =================== round-11 v4 phase-aware mover ===================
+
+/** Options for the v4 phase-aware mover. The destination gate is
+ * already created by the route via `createDestinationGate`; the mover
+ * just moves the entries into it and lets the caller rewrite the
+ * journal's phase. */
+export type MoveEntriesIntoGateOptions = {
+  /** Vault root for physical-containment checks on every per-entry
+   * source AND destination path (round-8 P0/P1). */
+  vaultRoot?: string
+  /** v4 per-file entries — each MUST carry (sourceDev, sourceIno,
+   * sourceHash) for the post-takeover generation check. The
+   * `expectedSource` of each `createOnlyMoveFile` is derived from
+   * these. */
+  entries: readonly FolderMoveJournalEntryV4[]
+  /** Every subdirectory (including empty ones) the move must recreate
+   * at the destination. Sorted, ancestor-closed, parent-closed. */
+  directories: readonly string[]
+}
+
+/** round-11 v4: move every journaled entry into a destination gate the
+ * route already created. No token file is written inside the
+ * destination. Ownership proof is the destination directory's
+ * (dev, ino) which the route captured at journal-write time. Every
+ * per-file move binds the source inode to the journaled generation
+ * via `createOnlyMoveFile`'s post-takeover re-check (round-10 F1 +
+ * round-11 F6). On any move failure, the whole forward move rolls
+ * back create-only: landed entries are reversed with
+ * `createOnlyMoveFile` (which refuses to move foreign bytes — the
+ * F2 invariant carries forward). */
+export async function moveFolderEntriesIntoExistingGate(
+  fromDirAbs: string,
+  toDirAbs: string,
+  options: MoveEntriesIntoGateOptions,
+): Promise<{ moved: string[]; incomplete: boolean }> {
+  const entryByRel = new Map(options.entries.map((e) => [e.relativeFilePath, e]))
+  const moved: string[] = []
+  // Recreate every declared directory at the destination.
+  for (const dirRel of options.directories) {
+    const dirAbs = path.join(toDirAbs, dirRel)
+    if (options.vaultRoot && !await isPhysicallyContained(options.vaultRoot, dirAbs)) {
+      throw new UnsupportedDirectoryMoveError(`directory path escapes the vault: ${dirRel}`)
+    }
+    await fs.mkdir(dirAbs, { recursive: true })
+  }
+  let incomplete = false
+  for (const entry of options.entries) {
+    const fromEntry = path.join(fromDirAbs, entry.relativeFilePath)
+    const toEntry = path.join(toDirAbs, entry.relativeFilePath)
+    if (options.vaultRoot
+      && (!await isPhysicallyContained(options.vaultRoot, fromEntry)
+        || !await isPhysicallyContained(options.vaultRoot, toEntry))) {
+      throw new UnsupportedDirectoryMoveError(`entry path escapes the vault: ${entry.relativeFilePath}`)
+    }
+    await fs.mkdir(path.dirname(toEntry), { recursive: true })
+    try {
+      await createOnlyMoveFile(fromEntry, toEntry, {
+        expectedSource: { dev: entry.sourceDev, ino: entry.sourceIno, hash: entry.sourceHash },
+      })
+      moved.push(entry.relativeFilePath)
+      await fireReplayableMovedEntryHook(entry.relativeFilePath)
+    } catch (error) {
+      // Roll back everything that landed create-only. The rollback
+      // is itself creation-only (F2 invariant): an externally-
+      // replaced landed file stays at the destination; the journal
+      // remains so recovery can reconcile.
+      incomplete = true
+      for (const movedRel of moved.reverse()) {
+        const rFrom = path.join(toDirAbs, movedRel)
+        const rTo = path.join(fromDirAbs, movedRel)
+        if (options.vaultRoot
+          && (!await isPhysicallyContained(options.vaultRoot, rFrom)
+            || !await isPhysicallyContained(options.vaultRoot, rTo))) continue
+        const mEntry = entryByRel.get(movedRel)
+        if (!mEntry?.sourceDev || !mEntry?.sourceIno || !mEntry?.sourceHash) continue
+        try {
+          await createOnlyMoveFile(rFrom, rTo, {
+            expectedSource: { dev: mEntry.sourceDev, ino: mEntry.sourceIno, hash: mEntry.sourceHash },
+          })
+        } catch {
+          // foreign generation at the destination: leave the foreign
+          // bytes in place; recovery decides.
+        }
+      }
+      // Clean up the gate if it's now empty.
+      await pruneEmptyDirectories(toDirAbs)
+      // The error is typed; callers map to 409.
+      throw error
+    }
+  }
+  // Forward success: the source is empty (every entry moved create-
+  // only into the destination). Prune so a crash before metadata
+  // commit doesn't leave an empty-but-occupied source dir for
+  // recovery to misinterpret as "source still has its bytes".
+  await pruneEmptyDirectories(fromDirAbs)
+  return { moved, incomplete: false }
+}
+
+/** round-11 v4: exact parity for the destination directory. No token
+ * file is consulted. Verification is:
+ *   1. destination directory's (dev, ino) matches the journal's
+ *      `destDev`/`destIno` (the v4 ownership proof);
+ *   2. the file set is exactly the journaled entries, each with
+ *      (dev, ino, hash) matching the journal;
+ *   3. the directory set is exactly the journaled directories;
+ *   4. no symlink / special / undeclared entry.
+ * Returns `true` when parity FAILS. */
+export async function verifyFolderMoveDestinationV4(
+  destinationAbs: string,
+  journal: {
+    destDev?: string
+    destIno?: string
+    entries: readonly FolderMoveJournalEntryV4[]
+    directories: readonly string[]
+  },
+): Promise<boolean> {
+  if (!journal.destDev || !journal.destIno) return true
+  if (!await verifyDirectoryGeneration(destinationAbs, { dev: journal.destDev, ino: journal.destIno })) {
+    return true
+  }
+  const expectedFiles = new Map(journal.entries.map((e) => [e.relativeFilePath, e]))
+  const expectedDirs = new Set(journal.directories)
+  const discoveredFiles = new Set<string>()
+  const discoveredDirs = new Set<string>()
+  const walk = async (dirAbs: string, rel: string): Promise<boolean> => {
+    const dirents = await fs.readdir(dirAbs, { withFileTypes: true })
+    for (const dirent of dirents) {
+      const relPath = rel === '' ? dirent.name : `${rel}/${dirent.name}`
+      const absPath = path.join(dirAbs, dirent.name)
+      if (dirent.isSymbolicLink()) return true
+      if (dirent.isDirectory()) {
+        if (!expectedDirs.has(relPath)) return true
+        discoveredDirs.add(relPath)
+        if (await walk(absPath, relPath)) return true
+        continue
+      }
+      if (!dirent.isFile()) return true
+      const expected = expectedFiles.get(relPath)
+      if (!expected) return true
+      const current = await readCurrentGeneration(absPath)
+      if (!current
+        || current.dev !== expected.sourceDev
+        || current.ino !== expected.sourceIno
+        || current.hash !== expected.sourceHash) {
+        return true
+      }
+      discoveredFiles.add(relPath)
+    }
+    return false
+  }
+  try {
+    if (await walk(destinationAbs, '')) return true
+  } catch {
+    return true
+  }
+  if (discoveredFiles.size !== expectedFiles.size) return true
+  if (discoveredDirs.size !== expectedDirs.size) return true
+  for (const expectedPath of expectedFiles.keys()) {
+    if (!discoveredFiles.has(expectedPath)) return true
+  }
+  for (const expectedPath of expectedDirs) {
+    if (!discoveredDirs.has(expectedPath)) return true
+  }
+  return false
+}
+
+/** round-11 v4: classify an entry's placement using generation proof
+ * — NEVER hash alone. Returns 'src' | 'dest' | 'external' | 'missing'. */
+export async function classifyPlacementV4(
+  srcFile: string,
+  destFile: string,
+  entry: { sourceDev: string; sourceIno: string; sourceHash: string },
+): Promise<'src' | 'dest' | 'external' | 'missing'> {
+  const destGen = await readCurrentGeneration(destFile)
+  if (destGen
+    && destGen.dev === entry.sourceDev
+    && destGen.ino === entry.sourceIno
+    && destGen.hash === entry.sourceHash) {
+    return 'dest'
+  }
+  const srcGen = await readCurrentGeneration(srcFile)
+  if (srcGen
+    && srcGen.dev === entry.sourceDev
+    && srcGen.ino === entry.sourceIno
+    && srcGen.hash === entry.sourceHash) {
+    return 'src'
+  }
+  if (srcGen !== null || destGen !== null) return 'external'
+  return 'missing'
+}
+
+async function readCurrentGeneration(absPath: string): Promise<ExpectedGeneration | null> {
+  return readGeneration(absPath)
 }
 
 /** Shared exact final parity (round-9 F3 + round-10 F4) — used by the

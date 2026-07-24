@@ -72,7 +72,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
 import type { Database as DatabaseT } from 'better-sqlite3'
-import { atomicReplaceTextIfUnchanged, removeDurableJournal, removeDurableRecoveryPayload, rewriteDurableJournal, sha256Hex, sha256HexBuffer, syncParentDirectoryBestEffort, writeDurableJournal } from './atomicTextWrite.js'
+import { atomicReplaceTextIfUnchanged, createDestinationGate, removeDurableJournal, removeDurableRecoveryPayload, rewriteDurableJournal, sha256Hex, sha256HexBuffer, syncParentDirectoryBestEffort, verifyDirectoryGeneration, writeDurableJournal } from './atomicTextWrite.js'
 import { isValidPathSyntax } from './paths.js'
 import {
   deleteDocumentMetadata,
@@ -82,19 +82,23 @@ import {
   moveDocumentMetadataPrefix,
   moveDocumentMetadataReplacingDestination,
   restoreDocumentMetadataMutationCAS,
+  validateSnapshotOwnership,
 } from './documentMetadata.js'
 import {
+  classifyPlacementV4,
   createOnlyMoveFile,
   executeFolderMove,
   FOLDER_MOVE_STRATEGIES,
   fireReplayableMovedEntryHook,
   gateTokenName,
   isPhysicallyContained,
+  moveFolderEntriesIntoExistingGate,
   resolveDirectoryMoveStrategy,
   pruneEmptyDirectories,
   RenameDestinationOccupiedError,
   RenameSourceReusedError,
   verifyExactParity,
+  verifyFolderMoveDestinationV4,
   type FolderMoveJournalStrategy,
 } from './documentFileLifecycle.js'
 import {
@@ -102,8 +106,12 @@ import {
   listPhysicalMoveEntries,
   reviveMetadataSnapshot,
   validateDirectoryManifest,
+  validateFolderMovePhaseShape,
+  validateJournalEntriesV4,
   validateSnapshotPhysicalEntries,
   type FolderMoveJournalEntry,
+  type FolderMoveJournalEntryV4,
+  type FolderMoveJournalV4,
   type FolderMoveMetadataDisposition,
 } from './folderMoveTransaction.js'
 
@@ -367,7 +375,10 @@ function isValidRelativeFilePath(rel: string): boolean {
 
 function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
   try {
-    const entry = JSON.parse(raw) as Omit<Partial<FolderRenameJournal>, 'strategy' | 'entries' | 'metadataDisposition'> & { strategy?: unknown; entries?: unknown; metadataDisposition?: unknown; gateToken?: unknown }
+    const entry = JSON.parse(raw) as Omit<Partial<FolderRenameJournal>, 'strategy' | 'entries' | 'metadataDisposition'> & { strategy?: unknown; entries?: unknown; metadataDisposition?: unknown; gateToken?: unknown; version?: unknown }
+    // v4 is handled by the dedicated v4 parser. The legacy parser
+    // does not (and must not) accept v4.
+    if ((entry as { version?: number }).version === 4) return null
     if (entry.version !== 1 && entry.version !== 2 && entry.version !== 3) return null
     if (entry.op !== 'folder-rename' && entry.op !== 'folder-move') return null
     if (typeof entry.srcRel !== 'string' || typeof entry.destRel !== 'string') return null
@@ -519,6 +530,33 @@ function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
       ...(strategy !== undefined ? { strategy } : {}),
       ...(entries !== undefined ? { entries } : {}),
     }
+  } catch {
+    return null
+  }
+}
+
+/** Parse a v4 folder-move journal. v4 has additional required fields
+ * (phase, destDev/destIno from phase=gate-created onward) and a
+ * mandatory (sourceDev, sourceIno, sourceHash) trio on every entry.
+ * The legacy parser rejects v4; this is the only entry point for v4. */
+function parseFolderRenameJournalV4(raw: string): FolderMoveJournalV4 | null {
+  try {
+    const entry = JSON.parse(raw) as Partial<FolderMoveJournalV4> & { phase?: unknown; entries?: unknown; directories?: unknown; metadataDisposition?: unknown; destDev?: unknown; destIno?: unknown }
+    if (entry.version !== 4) return null
+    if (entry.op !== 'folder-rename' && entry.op !== 'folder-move') return null
+    if (typeof entry.srcRel !== 'string' || typeof entry.destRel !== 'string') return null
+    if (typeof entry.sourceDev !== 'number' || typeof entry.sourceIno !== 'number') return null
+    if (!Number.isFinite(entry.sourceDev) || entry.sourceDev < 0) return null
+    if (!Number.isFinite(entry.sourceIno) || entry.sourceIno < 0) return null
+    if (entry.phase !== 'prepared' && entry.phase !== 'gate-created'
+      && entry.phase !== 'files-landed' && entry.phase !== 'metadata-committed') return null
+    if (entry.strategy !== 'atomic-rename' && entry.strategy !== 'replayable-move') return null
+    if (!Array.isArray(entry.entries)) return null
+    if (!Array.isArray(entry.directories)) return null
+    if (typeof entry.metadataDisposition !== 'object' || entry.metadataDisposition === null) return null
+    const md = entry.metadataDisposition as { kind?: unknown }
+    if (md.kind !== 'prefix-move' && md.kind !== 'snapshot-restore') return null
+    return entry as unknown as FolderMoveJournalV4
   } catch {
     return null
   }
@@ -1278,8 +1316,246 @@ type DestInventory =
  * Every per-entry source AND destination path is physically
  * containment-checked first (round-8 P0/P1), so a symlinked ancestor
  * planted after the journal was written cannot route a read/rename/link
- * outside the vault.
+ * (an external symlink planted after journal-write can only route
+ * a read — the linker is what reads, not the journal).
  */
+async function recoverFolderMoveJournalV4(
+  contentDir: string,
+  db: DatabaseT,
+  journalAbs: string,
+  journal: FolderMoveJournalV4,
+  srcAbs: string,
+  destAbs: string,
+  note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
+): Promise<void> {
+  // Parser-level identity validation (round-11 F2). The journal is
+  // unparseable if any entry fails the v4 entry-shape check.
+  // For snapshot-restore journals, srcRel is a staging directory name
+  // (e.g. .docus-delete-inflight-xxx) so the documentPath validation
+  // against srcRel is meaningless — skip it for snapshot-restore.
+  const entries = journal.entries
+  const directories = journal.directories
+  const isSnapshotRestore = journal.metadataDisposition.kind === 'snapshot-restore'
+  const effectiveSrcRel = isSnapshotRestore ? '' : journal.srcRel
+  const entryError = validateJournalEntriesV4(entries, effectiveSrcRel, isSnapshotRestore)
+  if (entryError !== null) {
+    note(journalAbs, 'quarantined', `v4 entry validation failed: ${entryError}`)
+    return
+  }
+  const phaseError = validateFolderMovePhaseShape(journal)
+  if (phaseError !== null) {
+    note(journalAbs, 'quarantined', `v4 phase shape failed: ${phaseError}`)
+    return
+  }
+  const disposition: FolderMoveMetadataDisposition = journal.metadataDisposition
+
+  // Per-entry physical containment (round-8 P0/P1). Same rules as
+  // legacy recovery — a symlinked ancestor planted after journal
+  // write must not route a replay.
+  for (const entry of entries) {
+    const srcFile = path.join(srcAbs, entry.relativeFilePath)
+    const destFile = path.join(destAbs, entry.relativeFilePath)
+    if (!await isPhysicallyContained(contentDir, srcFile)
+      || !await isPhysicallyContained(contentDir, destFile)) {
+      note(journalAbs, 'quarantined', `v4 entry escapes the vault: ${entry.relativeFilePath}`)
+      return
+    }
+  }
+  for (const dirRel of directories) {
+    const dirAbs = path.join(destAbs, dirRel)
+    if (!await isPhysicallyContained(contentDir, dirAbs)) {
+      note(journalAbs, 'quarantined', `v4 directory escapes the vault: ${dirRel}`)
+      return
+    }
+  }
+
+  // Classify each entry's placement using generation proof (NEVER
+  // hash alone). v4 invariant: the journaled (dev, ino, hash) is the
+  // single source of truth.
+  const placements: Array<'src' | 'dest' | 'external' | 'missing'> = []
+  for (const entry of entries) {
+    const placement = await classifyPlacementV4(
+      path.join(srcAbs, entry.relativeFilePath),
+      path.join(destAbs, entry.relativeFilePath),
+      { sourceDev: entry.sourceDev, sourceIno: entry.sourceIno, sourceHash: entry.sourceHash },
+    )
+    if (placement === 'external') {
+      note(journalAbs, 'quarantined', `v4 entry has an external generation: ${entry.relativeFilePath}`)
+      return
+    }
+    placements.push(placement)
+  }
+
+  // Phase machine. The journal's persisted phase is the ONLY
+  // source of truth — never inferred from token presence.
+  if (journal.phase === 'prepared') {
+    // No dest generation persisted. If destination absent, the move
+    // never landed — safe to remove the journal.
+    const destExists = await isDirectory(destAbs)
+    if (!destExists) {
+      await removeDurableJournal(journalAbs).catch(() => {})
+      note(journalAbs, 'cleaned', 'stale v4 prepared journal (destination absent)')
+      return
+    }
+    // Destination present but no ownership proof — quarantine.
+    note(journalAbs, 'quarantined', 'v4 prepared journal with destination present cannot prove ownership')
+    return
+  }
+
+  // All phases prepared < p <= metadata-committed MUST have
+  // destDev/destIno (validated above).
+  const destOk = await verifyDirectoryGeneration(destAbs, {
+    dev: journal.destDev as string,
+    ino: journal.destIno as string,
+  })
+  if (!destOk) {
+    note(journalAbs, 'quarantined', 'v4 destination directory generation does not match journal')
+    return
+  }
+
+  const allAtDest = placements.every((p) => p === 'dest')
+  const anyAtSrc = placements.some((p) => p === 'src')
+
+  if (journal.phase === 'gate-created') {
+    // Replay whatever is still at source. Entries already at dest are
+    // no-ops. If the source is empty AND every entry is at dest, the
+    // forward move already completed — the route just hadn't rewritten
+    // the journal past gate-created. Skip the replay and continue
+    // forward to files-landed → metadata-committed.
+    if (anyAtSrc) {
+      // Only replay entries that are still at source — entries already
+      // at destination were moved by the route before the crash.
+      const remainingEntries = entries.filter((_, idx) => placements[idx] !== 'dest')
+      try {
+        await moveFolderEntriesIntoExistingGate(srcAbs, destAbs, {
+          vaultRoot: contentDir,
+          entries: remainingEntries,
+          directories,
+        })
+      } catch (replayError) {
+        note(journalAbs, 'failed', `v4 replay failed: ${(replayError as Error).message}`)
+        return
+      }
+    } else if (!allAtDest) {
+      // Source empty AND destination does not have every entry —
+      // external writer removed something OR the source was pruned
+      // before any files moved. Quarantine.
+      note(journalAbs, 'quarantined', 'v4 gate-created journal: source empty but destination incomplete')
+      return
+    }
+    // else: source empty AND destination complete — move already
+    // landed forward, continue to files-landed.
+    const parityFailed = await verifyFolderMoveDestinationV4(destAbs, journal)
+    if (parityFailed) {
+      note(journalAbs, 'quarantined', 'v4 parity failed after recovery replay')
+      return
+    }
+    // phase gate-created → files-landed
+    const filesLanded: FolderMoveJournalV4 = { ...journal, phase: 'files-landed' }
+    await rewriteDurableJournal(journalAbs, filesLanded)
+    // commit metadata
+    if (disposition.kind === 'snapshot-restore') {
+      if (!isValidDeleteRollbackSnapshot(disposition.snapshot, journal.destRel)) {
+        note(journalAbs, 'quarantined', 'v4 snapshot-restore snapshot is invalid')
+        return
+      }
+      const entryShapeError = validateSnapshotPhysicalEntries(disposition.snapshot, entries as unknown as FolderMoveJournalEntry[], journal.destRel)
+      if (entryShapeError !== null) {
+        note(journalAbs, 'quarantined', `v4 snapshot physical entries: ${entryShapeError}`)
+        return
+      }
+      const revived = reviveMetadataSnapshot(disposition.snapshot)
+      const liveTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>).map((row) => row.id)
+      revived.preexistingTagIds = [...new Set([...liveTagIds, ...revived.preexistingTagIds])]
+      try {
+        restoreDocumentMetadataMutationCAS(db, revived, (current) =>
+          validateSnapshotOwnership(current, revived),
+        )
+      } catch (casError) {
+        note(journalAbs, 'quarantined', `v4 metadata CAS failed: ${(casError as Error).message}`)
+        return
+      }
+    } else {
+      moveDocumentMetadataPrefix(db, journal.srcRel, journal.destRel)
+    }
+    // phase files-landed → metadata-committed
+    const metadataCommitted: FolderMoveJournalV4 = { ...filesLanded, phase: 'metadata-committed' }
+    await rewriteDurableJournal(journalAbs, metadataCommitted)
+    await pruneEmptyDirectories(srcAbs)
+    await removeDurableJournal(journalAbs).catch(() => {})
+    note(destAbs, 'completed-rename', 'v4 folder move completed from journal')
+    return
+  }
+
+  if (journal.phase === 'files-landed') {
+    // Parity must already pass (the route left phase=files-landed only
+    // after exact parity). Re-verify for safety.
+    const parityFailed = await verifyFolderMoveDestinationV4(destAbs, journal)
+    if (parityFailed) {
+      note(journalAbs, 'quarantined', 'v4 files-landed parity check failed')
+      return
+    }
+    if (disposition.kind === 'snapshot-restore') {
+      if (!isValidDeleteRollbackSnapshot(disposition.snapshot, journal.destRel)) {
+        note(journalAbs, 'quarantined', 'v4 snapshot-restore snapshot is invalid')
+        return
+      }
+      const entryShapeError = validateSnapshotPhysicalEntries(disposition.snapshot, entries as unknown as FolderMoveJournalEntry[], journal.destRel)
+      if (entryShapeError !== null) {
+        note(journalAbs, 'quarantined', `v4 snapshot physical entries: ${entryShapeError}`)
+        return
+      }
+      const revived = reviveMetadataSnapshot(disposition.snapshot)
+      const liveTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>).map((row) => row.id)
+      revived.preexistingTagIds = [...new Set([...liveTagIds, ...revived.preexistingTagIds])]
+      try {
+        restoreDocumentMetadataMutationCAS(db, revived, (current) =>
+          validateSnapshotOwnership(current, revived),
+        )
+      } catch (casError) {
+        note(journalAbs, 'quarantined', `v4 metadata CAS failed: ${(casError as Error).message}`)
+        return
+      }
+    } else {
+      moveDocumentMetadataPrefix(db, journal.srcRel, journal.destRel)
+    }
+    const metadataCommitted: FolderMoveJournalV4 = { ...journal, phase: 'metadata-committed' }
+    await rewriteDurableJournal(journalAbs, metadataCommitted)
+    await pruneEmptyDirectories(srcAbs)
+    await removeDurableJournal(journalAbs).catch(() => {})
+    note(destAbs, 'completed-rename', 'v4 folder move completed from journal')
+    return
+  }
+
+  if (journal.phase === 'metadata-committed') {
+    // Final step on disk. Verify dest generation AND metadata state,
+    // then remove the journal.
+    if (disposition.kind === 'snapshot-restore') {
+      // The snapshot was already installed; verify it is still there.
+      const revived = reviveMetadataSnapshot(disposition.snapshot)
+      const liveDoc = db.prepare('SELECT id FROM documents WHERE id = ?').get(revived.documentIds[0]) as { id: string } | undefined
+      if (!liveDoc) {
+        note(journalAbs, 'quarantined', 'v4 metadata-committed but metadata not installed')
+        return
+      }
+    } else {
+      // Prefix-move: metadata is at destRel. A quick existence check.
+      const samplePath = journal.destRel
+      const liveDoc = db.prepare('SELECT id FROM documents WHERE path = ?').get(samplePath) as { id: string } | undefined
+      if (!liveDoc) {
+        note(journalAbs, 'quarantined', 'v4 metadata-committed but metadata not at destination prefix')
+        return
+      }
+    }
+    await pruneEmptyDirectories(srcAbs)
+    await removeDurableJournal(journalAbs).catch(() => {})
+    note(destAbs, 'completed-rename', 'v4 metadata-committed cleanup')
+    return
+  }
+
+  note(journalAbs, 'quarantined', `v4 unknown phase: ${journal.phase}`)
+}
+
 async function recoverFolderMoveJournal(
   contentDir: string,
   db: DatabaseT,
@@ -1741,6 +2017,18 @@ async function recoverFolderRenameJournal(
   const srcAbs = path.join(contentDir, journal.srcRel)
   const destAbs = path.join(contentDir, journal.destRel)
   if (journal.emptyTree || (journal.entries !== undefined && journal.entries.length > 0)) {
+    // v4 (round-11): dedicated phase-aware recovery. v1–v3 fall through
+    // to the legacy token-based path.
+    if ((journal as unknown as { version?: number }).version === 4) {
+      const raw = await fs.readFile(journalAbs, 'utf8')
+      const v4 = parseFolderRenameJournalV4(raw)
+      if (v4 === null) {
+        note(journalAbs, 'quarantined', 'v4 journal could not be parsed')
+        return
+      }
+      await recoverFolderMoveJournalV4(contentDir, db, journalAbs, v4, srcAbs, destAbs, note)
+      return
+    }
     await recoverFolderMoveJournal(contentDir, db, journalAbs, journal, srcAbs, destAbs, note)
     return
   }
@@ -2065,6 +2353,15 @@ async function recoverDirectory(
         const folderJournal = parseFolderRenameJournal(journalRaw)
         if (folderJournal) {
           await recoverFolderRenameJournal(contentDir, db, journalAbs, folderJournal, note)
+          continue
+        }
+        // v4 journals are NOT parsed by the legacy parser — they fall through
+        // here. Check for v4 explicitly before marking as unrecognized.
+        const v4Journal = parseFolderRenameJournalV4(journalRaw)
+        if (v4Journal) {
+          const srcAbs = path.join(contentDir, v4Journal.srcRel)
+          const destAbs = path.join(contentDir, v4Journal.destRel)
+          await recoverFolderMoveJournalV4(contentDir, db, journalAbs, v4Journal, srcAbs, destAbs, note)
           continue
         }
         note(journalAbs, 'quarantined', 'unrecognized journal left in place')

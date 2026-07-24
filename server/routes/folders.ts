@@ -3,7 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import { canModify } from '../../src/composables/archiveProtocol.js'
-import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged, removeDurableJournal, rewriteDurableJournal, sha256Hex, syncParentDirectoryBestEffort, writeDurableJournal } from '../atomicTextWrite.js'
+import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged, createDestinationGate, removeDurableJournal, rewriteDurableJournal, sha256Hex, syncParentDirectoryBestEffort, writeDurableJournal } from '../atomicTextWrite.js'
 import {
   deleteDocumentMetadata,
   deleteDocumentMetadataPrefix,
@@ -14,14 +14,23 @@ import {
 } from '../documentMetadata.js'
 import {
   executeFolderMove,
-  finalizeReplayableFolderMove,
+  getCreateOnlyMoveHooksForTesting,
+  moveFolderEntriesIntoExistingGate,
   resolveDirectoryMoveStrategy,
   RenameDestinationOccupiedError,
   RenameSourceReusedError,
   UnsupportedDirectoryMoveError,
+  verifyFolderMoveDestinationV4,
   type FolderMoveJournalStrategy,
 } from '../documentFileLifecycle.js'
-import { generateGateTokenSecret, listPhysicalMoveEntries, serializeMetadataSnapshot, type FolderMoveJournalEntry } from '../folderMoveTransaction.js'
+import {
+  FOLDER_MOVE_JOURNAL_VERSION,
+  listPhysicalMoveEntries,
+  serializeMetadataSnapshot,
+  type FolderMoveJournalEntry,
+  type FolderMoveJournalV4,
+  type FolderMovePhase,
+} from '../folderMoveTransaction.js'
 import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { prepareRenameReferenceJournal, type PreparedRenameReferenceJournal } from '../renameReferenceJournal.js'
@@ -31,6 +40,12 @@ import { listSubtreePaths } from '../tree.js'
 import { bad, ensureMetadata, exists, metadataDb } from './shared.js'
 
 const folderRoutes = new Hono()
+
+/** A directory rename this platform cannot perform (Windows: EPERM
+ * on any existing directory; a link-incapable filesystem: the same
+ * codes createOnlyMoveFile reports). Used by the v4 atomic-rename
+ * path inside the forward phase machine. */
+const LINK_INCAPABLE_CODES = new Set(['EPERM', 'EOPNOTSUPP', 'ENOTSUP'])
 
 /**
  * Test-only seam for the folder lifecycle race regressions: fires
@@ -182,20 +197,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   // The persisted folder-move journal payload — kept in scope for the
   // rollback, which durably flips its direction before reversing the
   // tree (and flips it back if the source was re-used).
-  let folderMoveJournal: {
-    version: 3
-    op: 'folder-rename'
-    srcRel: string
-    destRel: string
-    sourceDev: number
-    sourceIno: number
-    strategy: FolderMoveJournalStrategy
-    emptyTree?: boolean
-    entries: FolderMoveJournalEntry[]
-    directories: string[]
-    gateToken: string
-    metadataDisposition: { kind: 'prefix-move' }
-  } | null = null
+  let folderMoveJournal: FolderMoveJournalV4 | null = null
   let physicalEntryRels: string[] = []
   let physicalDirectories: string[] = []
   let journalUuid = ''
@@ -206,6 +208,9 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   // must survive for startup recovery even though `renamed` is false.
   let moveThrew = false
   const moveStrategy = resolveDirectoryMoveStrategy()
+  // Local alias so per-phase crash seams (round-11 v4) read the current
+  // hook bag without each call going through the module getter.
+  const moveHooks = getCreateOnlyMoveHooksForTesting()
   try {
     const sourceHashes = new Map<string, string>()
     for (const oldPath of oldPaths) {
@@ -251,73 +256,126 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       const identity = getDocumentMetadata(metadataDb(), documentPath)
       return identity ? { documentId: identity.id, documentPath } : null
     })
-    const physicalEntries: FolderMoveJournalEntry[] = physical.entries
-    physicalDirectories = physical.directories
-    // DURABLE JOURNAL before the move: if the process dies between the
-    // directory move and the metadata move, startup crash recovery
-    // (server/crashRecovery.ts) reads it and completes the metadata
-    // move before the HTTP server accepts requests. Removed LAST.
+    // v4 entry shape: mandatory (sourceDev, sourceIno, sourceHash).
+    const physicalEntriesV4: import('../folderMoveTransaction.js').FolderMoveJournalEntryV4[] = physical.entries.map((e) => ({
+      relativeFilePath: e.relativeFilePath,
+      sourceDev: e.sourceDev ?? '',
+      sourceIno: e.sourceIno ?? '',
+      sourceHash: e.sourceHash,
+      ...(e.documentId !== undefined ? { documentId: e.documentId } : {}),
+      ...(e.documentPath !== undefined ? { documentPath: e.documentPath } : {}),
+    }))
+    const physicalDirectoriesV4 = physical.directories
+    // DURABLE JOURNAL (phase=prepared) before any filesystem change:
+    // if the process dies between now and gate creation, recovery
+    // sees phase=prepared with no dest generation → quarantines or
+    // cleans up safely. Removed LAST after metadata-committed.
     const sourceDirectoryStat = await fs.stat(src)
     journalUuid = randomUUID()
-    const gateTokenSecret = generateGateTokenSecret()
     folderMoveJournal = {
-      version: 3,
+      version: FOLDER_MOVE_JOURNAL_VERSION,
       op: 'folder-rename',
+      phase: 'prepared',
       srcRel: srcPath,
       destRel: newPath,
-      sourceDev: sourceDirectoryStat.dev,
-      sourceIno: sourceDirectoryStat.ino,
       strategy: moveStrategy,
-      ...(physicalEntries.length === 0 ? { emptyTree: true } : {}),
-      entries: physicalEntries,
-      directories: physicalDirectories,
-      gateToken: gateTokenSecret,
+      sourceDev: Number(sourceDirectoryStat.dev),
+      sourceIno: Number(sourceDirectoryStat.ino),
+      ...(physicalEntriesV4.length === 0 ? { emptyTree: true } : {}),
+      entries: physicalEntriesV4,
+      directories: physicalDirectoriesV4,
       metadataDisposition: { kind: 'prefix-move' },
     }
     journalPath = path.join(path.dirname(src), `.${path.basename(src)}.docus-journal-${journalUuid}`)
     await writeDurableJournal(journalPath, folderMoveJournal)
     deleteDocumentMetadataPrefix(metadataDb(), newPath)
-    // Create-only: mkdir is the gate — an external writer claiming the
-    // destination after the earlier exists() check fails the move
-    // closed (restored: false) instead of being replaced by rename(2).
-    // On Windows (rename(2) cannot replace a directory there) the
-    // replayable per-file protocol runs under this same journal. The
-    // gate token (= the journal uuid) lets recovery tell its own gate
-    // from an externally-created empty directory.
-    physicalEntryRels = physicalEntries.map((entry) => entry.relativeFilePath)
-    let moved: { restored: boolean; parityPassed?: boolean }
-    try {
-      moved = await executeFolderMove(moveStrategy, src, dest, physicalEntryRels, {
-        directories: physicalDirectories,
-        gateToken: journalUuid,
-        gateTokenValue: gateTokenSecret,
-        entries: physicalEntries,
-        vaultRoot: CONTENT_DIR,
-      })
-    } catch (moveError) {
-      moveThrew = true
-      throw moveError
-    }
-    if (!moved.restored) {
+    // Create the destination gate and capture its (dev, ino). v4
+    // ownership proof: this is the ONLY proof recovery uses. An
+    // external writer who claimed the destination before us fails
+    // this mkdir → 409.
+    const destGate = await createDestinationGate(dest)
+    if (!destGate) {
       await removeDurableJournal(journalPath).catch(() => {})
       return bad(c, 'destination was claimed by an external writer during the move; retry', 409)
     }
+    // phase prepared → gate-created. Failure to rewrite MUST abort the
+    // move before any entry moves.
+    folderMoveJournal = { ...folderMoveJournal, phase: 'gate-created', destDev: destGate.dev, destIno: destGate.ino }
+    await rewriteDurableJournal(journalPath, folderMoveJournal)
+    if (moveHooks?.afterGateCreated) {
+      await moveHooks.afterGateCreated(dest, destGate)
+    }
+    // Move entries into the pre-created gate. No token file is
+    // written inside the destination. The atomic-rename strategy is
+    // also handled inside this single syscall — no per-file replay.
+    if (moveStrategy === 'atomic-rename') {
+      try {
+        await fs.rename(src, dest)
+      } catch (atomicError) {
+        // Atomic rename can fail when the destination has been claimed
+        // by external content (ENOTEMPTY). Quarantine; the journal
+        // remains for inspection.
+        await fs.rmdir(dest).catch(() => {})
+        await removeDurableJournal(journalPath).catch(() => {})
+        if (atomicError instanceof Error && (atomicError as NodeJS.ErrnoException).code === 'ENOTEMPTY') {
+          return bad(c, 'destination was claimed by an external writer during the move; retry', 409)
+        }
+        if (atomicError instanceof Error && LINK_INCAPABLE_CODES.has((atomicError as NodeJS.ErrnoException).code ?? '')) {
+          throw new UnsupportedDirectoryMoveError(
+            `atomic directory rename failed; the platform needs the replayable strategy`,
+            { cause: atomicError },
+          )
+        }
+        throw atomicError
+      }
+    } else {
+      try {
+        await moveFolderEntriesIntoExistingGate(src, dest, {
+          vaultRoot: CONTENT_DIR,
+          entries: physicalEntriesV4,
+          directories: physicalDirectoriesV4,
+        })
+      } catch (moveError) {
+        moveThrew = true
+        throw moveError
+      }
+    }
+    // Exact parity on the destination: dest directory (dev,ino) +
+    // per-entry (dev,ino,hash) all match the journal. NO token check.
+    const parityFailed = await verifyFolderMoveDestinationV4(dest, {
+      destDev: folderMoveJournal.destDev,
+      destIno: folderMoveJournal.destIno,
+      entries: physicalEntriesV4,
+      directories: physicalDirectoriesV4,
+    })
+    if (parityFailed) {
+      await removeDurableJournal(journalPath).catch(() => {})
+      return bad(c, 'destination ownership or exact parity could not be verified; retry', 409)
+    }
+    // Crash seam (round-11 v4): after parity passes, BEFORE metadata
+    // commits and BEFORE the phase is rewritten to files-landed.
+    if (moveHooks?.afterFilesLanded) {
+      await moveHooks.afterFilesLanded(dest)
+    }
+    // phase gate-created → files-landed. Failure aborts before
+    // metadata commit.
+    folderMoveJournal = { ...folderMoveJournal, phase: 'files-landed' }
+    await rewriteDurableJournal(journalPath, folderMoveJournal)
     renamed = true
     moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
-    // Round-10 F5: parity has passed; metadata has just committed;
-    // NOW (and only now) clear the owned gate token + journal. The
-    // token is the recovery ownership proof — its removal is the
-    // last filesystem step so a kill at any earlier seam still
-    // leaves recovery able to complete forward.
-    if (moved.parityPassed) {
-      await finalizeReplayableFolderMove(dest, {
-        directories: physicalDirectories,
-        gateToken: journalUuid,
-        gateTokenValue: gateTokenSecret,
-        entries: physicalEntries,
-        vaultRoot: CONTENT_DIR,
-      })
+    // Crash seam (round-11 v4): after metadata commits, BEFORE the
+    // phase is rewritten to metadata-committed and the journal is
+    // removed.
+    if (moveHooks?.afterMetadataCommitted) {
+      await moveHooks.afterMetadataCommitted(dest)
     }
+    // phase files-landed → metadata-committed. Failure aborts before
+    // journal removal.
+    folderMoveJournal = { ...folderMoveJournal, phase: 'metadata-committed' }
+    await rewriteDurableJournal(journalPath, folderMoveJournal)
+    // Final step: remove the journal. The destination (dev, ino) and
+    // per-entry (dev, ino, hash) are now the durable proof, not a
+    // token file.
     await removeDurableJournal(journalPath).catch(() => {})
     if (__folderRaceHooks?.afterRenamePlanBuilt) await __folderRaceHooks.afterRenamePlanBuilt()
     for (const snapshot of folderReferenceSnapshots) {
@@ -363,89 +421,147 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       // a journal that describes it (round-7 P1: the reverse move was
       // journal-less, and a mid-rollback crash stranded a split tree
       // neither journal direction could reconcile). Same-parent
-      // renames share a directory, so the journal's physical name
-      // stays provenance-valid for both directions.
-      //
-      // For the REPLAYABLE protocol the flip is a HARD precondition
-      // (round-8 P1): a per-file reverse move without a durable journal
-      // re-opens the split-tree-without-transaction hole if it crashes
-      // mid-move. If the flip cannot be persisted (ENOSPC/EIO/perm),
-      // NOT ONE file moves — the tree + metadata stay at the
-      // destination (forward-consistent) and the forward journal +
-      // reference journal are preserved so recovery completes forward.
-      // The ATOMIC move is a single rename — never split — so it may
-      // proceed even if the flip cannot be persisted.
+      // v4 reverse-direction rewrite: phase=prepared, destDev/destIno
+      // removed, srcRel/destRel flipped. The persistent journal at
+      // every phase is the single source of truth.
       const flipIsRequired = moveStrategy === 'replayable-move'
       let flipSucceeded = false
       if (journalPath && folderMoveJournal) {
         try {
           if (__folderRaceHooks?.failJournalFlip) throw new Error('injected journal flip failure')
-          await rewriteDurableJournal(journalPath, { ...folderMoveJournal, srcRel: newPath, destRel: srcPath })
+          const flipped: FolderMoveJournalV4 = {
+            ...folderMoveJournal,
+            srcRel: newPath,
+            destRel: srcPath,
+            phase: 'prepared',
+            // destDev/destIno are removed in the prepared phase; they
+            // are re-persisted when the reverse gate is created.
+            destDev: undefined,
+            destIno: undefined,
+            // Flip each entry's documentPath to match the new srcRel.
+            entries: folderMoveJournal.entries.map((e) => ({
+              ...e,
+              ...(typeof e.documentId === 'string' && typeof e.documentPath === 'string'
+                ? { documentPath: newPath + '/' + e.relativeFilePath.slice(0, -'.md'.length) }
+                : {}),
+            })),
+          }
+          await rewriteDurableJournal(journalPath, flipped)
           flipSucceeded = true
+          // Persist the flipped entries into the running variable so
+          // subsequent rewrites (gate-created, etc.) carry the updated
+          // documentPaths.
+          folderMoveJournal = flipped
         } catch (rollbackError) { rollbackErrors.push(rollbackError) }
       }
       if (flipSucceeded || !flipIsRequired) {
-        try {
-          // Create-only: if an external writer re-used the source folder
-          // while the reference writes were failing, the rollback fails
-          // closed (restored: false) and the tree stays at the
-          // destination — never replacing the external folder.
-          const rolledBack: { restored: boolean; parityPassed?: boolean } = await executeFolderMove(moveStrategy, dest, src, physicalEntryRels, {
-            directories: physicalDirectories,
-            gateToken: journalUuid,
-            gateTokenValue: folderMoveJournal!.gateToken,
-            entries: folderMoveJournal!.entries,
-            vaultRoot: CONTENT_DIR,
-          })
-          if (rolledBack.restored) {
-            rolledTreeBack = true
-            if (rolledBack.parityPassed) {
-              // Round-10 F5: parity has passed during the rollback
-              // direction; metadata was already restored above (or
-              // will be below) — finalize the owned gate token now.
-              await finalizeReplayableFolderMove(src, {
-                directories: physicalDirectories,
-                gateToken: journalUuid,
-                gateTokenValue: folderMoveJournal!.gateToken,
-                entries: folderMoveJournal!.entries,
-                vaultRoot: CONTENT_DIR,
-              })
+        // Create the destination gate at the REVERSE destination
+        // (= original src). v4: every reverse phase must capture the
+        // destination (dev, ino) just like the forward path did.
+        const reverseDest = src
+        const reverseGate = flipSucceeded ? await createDestinationGate(reverseDest) : null
+        if (reverseGate && flipSucceeded && journalPath && folderMoveJournal) {
+          // Reverse phase: prepared → gate-created
+          folderMoveJournal = { ...folderMoveJournal, srcRel: newPath, destRel: srcPath, phase: 'gate-created', destDev: reverseGate.dev, destIno: reverseGate.ino }
+          await rewriteDurableJournal(journalPath, folderMoveJournal)
+          if (moveHooks?.afterReverseGateCreated) await moveHooks.afterReverseGateCreated(reverseDest)
+        }
+        if (reverseGate) {
+          try {
+            if (moveStrategy === 'atomic-rename') {
+              try {
+                await fs.rename(dest, reverseDest)
+              } catch (atomicError) {
+                await fs.rmdir(reverseDest).catch(() => {})
+                if (atomicError instanceof Error && (atomicError as NodeJS.ErrnoException).code === 'ENOTEMPTY') {
+                  rollbackSourceReused = true
+                } else if (atomicError instanceof Error && LINK_INCAPABLE_CODES.has((atomicError as NodeJS.ErrnoException).code ?? '')) {
+                  throw new UnsupportedDirectoryMoveError(
+                    `atomic reverse directory rename failed; the platform needs the replayable strategy`,
+                    { cause: atomicError },
+                  )
+                } else {
+                  throw atomicError
+                }
+              }
+            } else {
+              // Replayable reverse move into the pre-created gate.
+              // Same per-file generation-proof as forward.
+              try {
+                await moveFolderEntriesIntoExistingGate(dest, reverseDest, {
+                  vaultRoot: CONTENT_DIR,
+                  entries: folderMoveJournal!.entries,
+                  directories: folderMoveJournal!.directories,
+                })
+              } catch (reverseMoveError) {
+                if (reverseMoveError instanceof RenameDestinationOccupiedError
+                  || reverseMoveError instanceof RenameSourceReusedError) {
+                  rollbackSourceReused = true
+                } else {
+                  throw reverseMoveError
+                }
+              }
             }
-            if (__folderRaceHooks?.afterRollbackMove) await __folderRaceHooks.afterRollbackMove()
-          } else {
-            rollbackSourceReused = true
+          } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+          if (!rollbackSourceReused && folderMoveJournal) {
+            // Reverse parity: same (dev, ino, hash) proof as forward.
+            const reverseParityFailed = await verifyFolderMoveDestinationV4(reverseDest, {
+              destDev: folderMoveJournal.destDev,
+              destIno: folderMoveJournal.destIno,
+              entries: folderMoveJournal!.entries,
+              directories: folderMoveJournal!.directories,
+            })
+            if (reverseParityFailed) {
+              rollbackSourceReused = true
+            } else {
+              if (moveHooks?.afterReverseParity) await moveHooks.afterReverseParity(reverseDest)
+              // Reverse phase: gate-created → files-landed
+              folderMoveJournal = { ...folderMoveJournal, phase: 'files-landed' }
+              await rewriteDurableJournal(journalPath!, folderMoveJournal)
+              rolledTreeBack = true
+              if (__folderRaceHooks?.afterRollbackMove) await __folderRaceHooks.afterRollbackMove()
+            }
           }
-        } catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        } else {
+          // Could not create the reverse gate (external writer
+          // claimed src) OR the flip failed: the tree stays at newPath.
+          rollbackSourceReused = true
+        }
       } else {
-        // Replayable reverse move without a durable journal: refuse to
-        // move a single file (see above).
+        // Replayable reverse move without a durable journal: refuse
+        // to move a single file.
         rollbackSourceReused = true
       }
     }
     if (!rollbackSourceReused) {
       try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
       catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      if (journalPath && folderMoveJournal && rolledTreeBack) {
+        // Reverse phase: files-landed → metadata-committed
+        folderMoveJournal = { ...folderMoveJournal, phase: 'metadata-committed' }
+        try { await rewriteDurableJournal(journalPath, folderMoveJournal) }
+        catch (rollbackError) { rollbackErrors.push(rollbackError) }
+        if (moveHooks?.afterReverseMetadata) await moveHooks.afterReverseMetadata(src)
+      }
     } else if (journalPath && folderMoveJournal) {
       // The tree stays at newPath: flip the journal back to the
-      // forward direction FIRST, so a crash right here leaves a
-      // journal whose recovery completes the metadata move to newPath
-      // — never one that would bind identities to the externally
-      // re-used source. The rows are already at newPath from the
-      // forward move (the snapshot restore was skipped above).
+      // forward direction (phase=metadata-committed) FIRST, so a
+      // crash right here leaves a journal whose recovery completes
+      // the metadata move to newPath — never one that would bind
+      // identities to the externally re-used source. The rows are
+      // already at newPath from the forward move.
       try { await rewriteDurableJournal(journalPath, folderMoveJournal) }
       catch (rollbackError) { rollbackErrors.push(rollbackError) }
     }
-    // Journal cleanup: removable once the tree is known to be back at
-    // src (or was never moved) — the journal is then unambiguously
-    // stale. If the tree stayed at dest (rollback failed, or the
-    // source was re-used), KEEP it: should a crash interrupt this
-    // rollback, startup recovery reads it and completes the metadata
-    // move to dest instead of binding identities to a missing tree.
-    // A thrown replayable move may have left journaled entries at the
-    // destination: keep the journal so startup recovery replays them
-    // (it removes the journal itself when the tree is provably at the
-    // source).
-    if (rolledTreeBack && journalPath && !moveThrew) await removeDurableJournal(journalPath).catch(() => {})
+    // Journal cleanup: removable once the tree is provably back at
+    // src and metadata is restored. v4: the journal MUST carry
+    // phase=metadata-committed before removal — recovery will fail
+    // closed if the journal is gone but the tree is mid-state.
+    if (rolledTreeBack && !rollbackSourceReused && journalPath && !moveThrew
+      && folderMoveJournal?.phase === 'metadata-committed') {
+      if (moveHooks?.beforeReverseJournalRemove) await moveHooks.beforeReverseJournalRemove(src)
+      await removeDurableJournal(journalPath).catch(() => {})
+    }
     if (rollbackSourceReused) {
       // Identity follows the bytes: the tree is at newPath. Move every
       // restored row under srcPath back under newPath (or drop them if
@@ -616,12 +732,9 @@ folderRoutes.delete('/api/folders/*', async (c) => {
         const rollbackJournalPath = path.join(path.dirname(staged), `.${path.basename(staged)}.docus-journal-${rollbackUuid}`)
         let restored = false
         let rollbackMoveThrew = false
-        // Hoisted so the finalizeReplayableFolderMove call below has
-        // access to the entries/secret even if the inner try completed
-        // successfully but `restored` came back false (round-10 F5).
-        let rollbackPhysicalEntries: FolderMoveJournalEntry[] = []
-        let rollbackPhysicalDirectories: string[] = []
-        let rollbackGateSecret = ''
+        let rollbackPhysicalEntriesV4: import('../folderMoveTransaction.js').FolderMoveJournalEntryV4[] = []
+        let rollbackPhysicalDirectoriesV4: string[] = []
+        let rollbackJournal: FolderMoveJournalV4 | null = null
         try {
           const rollbackPhysical = await listPhysicalMoveEntries(staged, (relativeFilePath) => {
             if (!relativeFilePath.endsWith('.md')) return null
@@ -629,32 +742,65 @@ folderRoutes.delete('/api/folders/*', async (c) => {
             const doc = databaseSnapshot.documents.find((d) => String(d.path) === docPath)
             return doc ? { documentId: String(doc.id), documentPath: docPath } : null
           })
-          rollbackPhysicalEntries = rollbackPhysical.entries
-          rollbackPhysicalDirectories = rollbackPhysical.directories
+          rollbackPhysicalEntriesV4 = rollbackPhysical.entries.map((e) => ({
+            relativeFilePath: e.relativeFilePath,
+            sourceDev: e.sourceDev ?? '',
+            sourceIno: e.sourceIno ?? '',
+            sourceHash: e.sourceHash,
+            ...(e.documentId !== undefined ? { documentId: e.documentId } : {}),
+            ...(e.documentPath !== undefined ? { documentPath: e.documentPath } : {}),
+          }))
+          rollbackPhysicalDirectoriesV4 = rollbackPhysical.directories
           const stagedStat = await fs.stat(staged)
-          rollbackGateSecret = generateGateTokenSecret()
-          await writeDurableJournal(rollbackJournalPath, {
-            version: 3,
+          rollbackJournal = {
+            version: FOLDER_MOVE_JOURNAL_VERSION,
             op: 'folder-move',
+            phase: 'prepared',
             srcRel: stagedRel,
             destRel: folderP,
-            sourceDev: stagedStat.dev,
-            sourceIno: stagedStat.ino,
             strategy: rollbackStrategy,
-            ...(rollbackPhysicalEntries.length === 0 ? { emptyTree: true } : {}),
-            entries: rollbackPhysicalEntries,
-            directories: rollbackPhysicalDirectories,
-            gateToken: rollbackGateSecret,
+            sourceDev: Number(stagedStat.dev),
+            sourceIno: Number(stagedStat.ino),
+            ...(rollbackPhysicalEntriesV4.length === 0 ? { emptyTree: true } : {}),
+            entries: rollbackPhysicalEntriesV4,
+            directories: rollbackPhysicalDirectoriesV4,
             metadataDisposition: { kind: 'snapshot-restore', snapshot: serializeMetadataSnapshot(databaseSnapshot) },
+          }
+          await writeDurableJournal(rollbackJournalPath, rollbackJournal)
+          const rollbackGate = await createDestinationGate(abs)
+          if (!rollbackGate) {
+            // External writer claimed abs before the rollback started:
+            // the staged tree must NOT be merged in. Quarantine the
+            // rollback journal; let the caller fall through to the
+            // persistReuseQuarantine branch.
+            throw new RenameDestinationOccupiedError(abs)
+          }
+          rollbackJournal = { ...rollbackJournal, phase: 'gate-created', destDev: rollbackGate.dev, destIno: rollbackGate.ino }
+          await rewriteDurableJournal(rollbackJournalPath, rollbackJournal)
+          if (rollbackStrategy === 'atomic-rename') {
+            try {
+              await fs.rename(staged, abs)
+            } catch (atomicError) {
+              await fs.rmdir(abs).catch(() => {})
+              throw atomicError
+            }
+          } else {
+            await moveFolderEntriesIntoExistingGate(staged, abs, {
+              vaultRoot: CONTENT_DIR,
+              entries: rollbackPhysicalEntriesV4,
+              directories: rollbackPhysicalDirectoriesV4,
+            })
+          }
+          const rollbackParityFailed = await verifyFolderMoveDestinationV4(abs, {
+            destDev: rollbackJournal.destDev,
+            destIno: rollbackJournal.destIno,
+            entries: rollbackPhysicalEntriesV4,
+            directories: rollbackPhysicalDirectoriesV4,
           })
-          const restoredResult = await executeFolderMove(rollbackStrategy, staged, abs, rollbackPhysicalEntries.map((entry) => entry.relativeFilePath), {
-            directories: rollbackPhysicalDirectories,
-            gateToken: rollbackUuid,
-            gateTokenValue: rollbackGateSecret,
-            entries: rollbackPhysicalEntries,
-            vaultRoot: CONTENT_DIR,
-          })
-          restored = restoredResult.restored
+          if (rollbackParityFailed) throw new Error('rollback parity failed')
+          rollbackJournal = { ...rollbackJournal, phase: 'files-landed' }
+          await rewriteDurableJournal(rollbackJournalPath, rollbackJournal)
+          restored = true
         } catch (rollbackError) {
           rollbackMoveThrew = true
           rollbackErrors.push(rollbackError)
@@ -662,18 +808,11 @@ folderRoutes.delete('/api/folders/*', async (c) => {
         if (restored) {
           try { restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot) }
           catch (rollbackError) { rollbackErrors.push(rollbackError) }
-          // Round-10 F5: parity passed; metadata restored; NOW clear the
-          // owned gate token (and the journal). The token is the
-          // recovery ownership proof — its removal is the last step so a
-          // kill at any earlier seam still leaves recovery able to
-          // complete forward.
-          await finalizeReplayableFolderMove(abs, {
-            directories: rollbackPhysicalDirectories,
-            gateToken: rollbackUuid,
-            gateTokenValue: rollbackGateSecret,
-            entries: rollbackPhysicalEntries,
-            vaultRoot: CONTENT_DIR,
-          })
+          if (rollbackJournal) {
+            rollbackJournal = { ...rollbackJournal, phase: 'metadata-committed' }
+            try { await rewriteDurableJournal(rollbackJournalPath, rollbackJournal) }
+            catch (rollbackError) { rollbackErrors.push(rollbackError) }
+          }
           await removeDurableJournal(rollbackJournalPath).catch(() => {})
         } else if (rollbackMoveThrew) {
           // A thrown move may have left the tree SPLIT between the

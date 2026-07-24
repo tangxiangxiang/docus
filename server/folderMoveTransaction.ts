@@ -21,6 +21,14 @@
 //   * v3 entries persist source dev/ino so recovery can distinguish a
 //     byte-identical external replacement from the original landed
 //     generation — hash alone cannot tell them apart (round-9 F4).
+//
+// v4 (round-11) replaces the v3 gate-token-on-disk ownership proof
+// with a destination-directory (dev, ino) plus a four-state phase
+// machine (prepared → gate-created → files-landed → metadata-committed).
+// State MUST be inferred from the persisted phase, never from the
+// presence/absence of a token file. v1–v3 journals remain parseable
+// for backwards-compat recovery but quarantine when their weak
+// generation proof is insufficient.
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
@@ -453,4 +461,227 @@ export function validateSnapshotPhysicalEntries(
     if (byId.documentPath !== docPath) return `snapshot document path disagrees with journal: ${docPath} vs ${byId.documentPath}`
   }
   return null
+}
+
+// =================== round-11 v4 phase-machine surface ===================
+
+/** Schema version for the phase-machine folder-move journal. The route
+ * persists exactly this number; the Recovery parser accepts 1, 2, 3
+ * (legacy) and 4. v1–v3 quarantine when their weak generation proof
+ * is insufficient — v4 is the only version that drives the full
+ * prepared → gate-created → files-landed → metadata-committed
+ * state machine. */
+export const FOLDER_MOVE_JOURNAL_VERSION = 4 as const
+
+/** Folder-move transaction phase. The journal is the ONLY source of
+ * truth for the current phase; absence-of-marker, presence-of-marker,
+ * source-doesn't-exist, etc. are NEVER used to infer phase. */
+export type FolderMovePhase =
+  | 'prepared'
+  | 'gate-created'
+  | 'files-landed'
+  | 'metadata-committed'
+
+/** Generation proof for a single physical file: (device, inode,
+ * content-hash). All three must match before any link(2) /
+ * restore-from-staging syscall. */
+export type FileGeneration = {
+  dev: string
+  ino: string
+  hash: string
+}
+
+/** Generation proof for a directory: (device, inode). The directory
+ * must be empty AND carry this proof to be considered a "gate" the
+ * route created. */
+export type DirectoryGeneration = {
+  dev: string
+  ino: string
+}
+
+/** v4 per-file entry. Markdown entries MAY carry (documentId,
+ * documentPath) — same as v3 — and v4 adds mandatory (sourceDev,
+ * sourceIno, sourceHash) so byte-identical external replacements are
+ * still detectable. */
+export type FolderMoveJournalEntryV4 = {
+  relativeFilePath: string
+  sourceDev: string
+  sourceIno: string
+  sourceHash: string
+  documentId?: string
+  documentPath?: string
+}
+
+/** v4 journal — the durable, single-source-of-truth record of a
+ * folder-move transaction. Ownership proof = destination directory
+ * (dev, ino) + per-entry (sourceDev, sourceIno, sourceHash). */
+export type FolderMoveJournalV4 = {
+  version: typeof FOLDER_MOVE_JOURNAL_VERSION
+  op: 'folder-rename' | 'folder-move'
+  phase: FolderMovePhase
+  srcRel: string
+  destRel: string
+  strategy: import('./documentFileLifecycle.js').FolderMoveJournalStrategy
+  sourceDev: number
+  sourceIno: number
+  /**
+   * phase=prepared: MUST be undefined.
+   * phase=gate-created, files-landed, metadata-committed: REQUIRED
+   * — the route persists the destination's (dev, ino) immediately
+   * after `mkdir` so recovery can prove ownership without reading
+   * any token file inside the destination.
+   */
+  destDev?: string
+  destIno?: string
+  emptyTree?: true
+  entries: FolderMoveJournalEntryV4[]
+  directories: string[]
+  metadataDisposition: FolderMoveMetadataDisposition
+}
+
+/** Validate the v4 phase shape: prepared MUST NOT carry destination
+ * generation; gate-created and onward MUST carry a well-formed
+ * destDev/destIno. Returns null on success, a reason string on
+ * failure. */
+export function validateFolderMovePhaseShape(
+  journal: FolderMoveJournalV4,
+): string | null {
+  const hasDestinationGeneration =
+    typeof journal.destDev === 'string'
+    && /^\d+$/.test(journal.destDev)
+    && typeof journal.destIno === 'string'
+    && /^[1-9]\d*$/.test(journal.destIno)
+
+  if (journal.phase === 'prepared') {
+    if (journal.destDev !== undefined || journal.destIno !== undefined) {
+      return 'prepared journal must not carry destination generation'
+    }
+    return null
+  }
+
+  if (!hasDestinationGeneration) {
+    return `${journal.phase} journal is missing destination generation`
+  }
+  return null
+}
+
+const SHA256_RE = /^[0-9a-f]{64}$/
+const DECIMAL_RE = /^\d+$/
+const POSITIVE_DECIMAL_RE = /^[1-9]\d*$/
+
+function validRelativePath(value: string): boolean {
+  if (!value
+    || value.startsWith('/')
+    || value.endsWith('/')
+    || value.includes('\\')
+    || value.includes('\0')) {
+    return false
+  }
+  return value
+    .split('/')
+    .every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+}
+
+/** Validate the per-entry shape of a v4 journal. Mandatory fields:
+ *   * relativeFilePath: valid relative path, no duplicates within
+ *     the journal
+ *   * sourceHash: 64-char lowercase hex
+ *   * sourceDev: non-negative decimal string
+ *   * sourceIno: positive decimal string
+ * Markdown entries MUST carry (documentId, documentPath) where
+ * documentPath = srcRel + '/' + rel.slice(0, -'.md'.length).
+ * Attachments MUST NOT carry either field.
+ * When `skipDocumentPathValidation` is true, the documentPath
+ * identity check against srcRel is skipped (used for snapshot-restore
+ * journals where srcRel is a staging name, not a real folder path). */
+export function validateJournalEntriesV4(
+  entries: readonly FolderMoveJournalEntryV4[],
+  srcRel: string,
+  skipDocumentPathValidation = false,
+): string | null {
+  if (!Array.isArray(entries)) {
+    return 'entries must be an array'
+  }
+
+  const paths = new Set<string>()
+  const documentIds = new Set<string>()
+  const documentPaths = new Set<string>()
+
+  for (const entry of entries) {
+    if (!validRelativePath(entry.relativeFilePath)) {
+      return `invalid physical entry path: ${entry.relativeFilePath}`
+    }
+    if (paths.has(entry.relativeFilePath)) {
+      return `duplicate physical entry path: ${entry.relativeFilePath}`
+    }
+    paths.add(entry.relativeFilePath)
+
+    if (!SHA256_RE.test(entry.sourceHash)) {
+      return `invalid sourceHash: ${entry.relativeFilePath}`
+    }
+    if (!DECIMAL_RE.test(entry.sourceDev)) {
+      return `invalid sourceDev: ${entry.relativeFilePath}`
+    }
+    if (!POSITIVE_DECIMAL_RE.test(entry.sourceIno)) {
+      return `invalid sourceIno: ${entry.relativeFilePath}`
+    }
+
+    const markdown = entry.relativeFilePath.endsWith('.md')
+    const hasId = typeof entry.documentId === 'string' && entry.documentId.length > 0
+    const hasPath = typeof entry.documentPath === 'string' && entry.documentPath.length > 0
+
+    if (markdown) {
+      if (!hasId || !hasPath) {
+        return `markdown entry missing identity: ${entry.relativeFilePath}`
+      }
+      if (!skipDocumentPathValidation) {
+        const expectedDocumentPath = `${srcRel}/${entry.relativeFilePath.slice(0, -'.md'.length)}`
+        if (entry.documentPath !== expectedDocumentPath) {
+          return `markdown entry documentPath mismatch: ${entry.relativeFilePath}; expected ${expectedDocumentPath}, received ${entry.documentPath}`
+        }
+      }
+      if (documentIds.has(entry.documentId as string)) {
+        return `duplicate documentId: ${entry.documentId}`
+      }
+      if (documentPaths.has(entry.documentPath as string)) {
+        return `duplicate documentPath: ${entry.documentPath}`
+      }
+      documentIds.add(entry.documentId as string)
+      documentPaths.add(entry.documentPath as string)
+    } else if (entry.documentId !== undefined || entry.documentPath !== undefined) {
+      return `attachment carrying markdown identity: ${entry.relativeFilePath}`
+    }
+  }
+  return null
+}
+
+// ---- round-11 F10 reserved-path exact/prefix split ----
+
+/** Exact reserved segment names. Matched with `===` only. `.gitignore`
+ * and `.github` are NOT reserved; `metadata.sqlite.bak` is NOT
+ * reserved. */
+export const RESERVED_EXACT_SEGMENTS = new Set<string>([
+  '.git',
+  'node_modules',
+  'metadata.sqlite',
+])
+
+/** Reserved segment prefixes. Matched with `startsWith`. A segment
+ * `.docus-journal-anything` is reserved; `.docus-journal` without a
+ * trailing dash is also caught (every reserved prefix has the dash). */
+export const RESERVED_PREFIX_SEGMENTS: readonly string[] = [
+  '.docus-journal-',
+  '.docus-folder-gate-',
+  '.docus-rename-',
+  '.docus-staged-',
+  '.docus-delete-inflight-',
+  '.docus-quarantine-reuse-',
+  '.docus-delete-manifest-',
+]
+
+/** A single path segment is reserved if it equals an exact reserved
+ * name OR starts with a reserved prefix. */
+export function isReservedPhysicalSegment(segment: string): boolean {
+  if (RESERVED_EXACT_SEGMENTS.has(segment)) return true
+  return RESERVED_PREFIX_SEGMENTS.some((prefix) => segment.startsWith(prefix))
 }
