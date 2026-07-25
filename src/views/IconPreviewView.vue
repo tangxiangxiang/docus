@@ -10,7 +10,11 @@
 import * as icons from '../components/vault/icons'
 
 const entries = Object.entries(icons).sort(([a], [b]) => a.localeCompare(b))
-const filled = new Set(['ICON_AI_MEMORY'])
+
+// Filled-glyph icons render as solid fills rather than outline strokes.
+// This crosses all categories (e.g. ICON_AI_MEMORY is both "AI vocab"
+// and filled), so it's checked independently in the badge chain below.
+const filled = new Set(['ICON_AI_MEMORY', 'ICON_STATUS_SUCCESS', 'ICON_STATUS_MODIFIED', 'ICON_STOP'])
 
 const aiSet = new Set([
   'ICON_AI_CONTEXT',
@@ -82,6 +86,22 @@ const utilitySet = new Set([
 ])
 
 const sizes = [14, 18, 22] as const
+
+/** Pre-computed list of icons that belong to at least one category — used by the dark-strip section. */
+const categoryEntries = entries.filter(([name]) => foundSet(name) !== '')
+
+/** Returns the first matching category for an icon name. */
+const foundSet = (name: string): string => {
+  if (aiSet.has(name)) return 'ai'
+  if (knowledgeSet.has(name)) return 'knowledge'
+  if (statusSet.has(name)) return 'status'
+  if (fileTypeSet.has(name)) return 'file-type'
+  if (surfaceSet.has(name)) return 'surface'
+  if (editorSet.has(name)) return 'editor'
+  if (contextMenuSet.has(name)) return 'context-menu'
+  if (utilitySet.has(name)) return 'utility'
+  return ''
+}
 </script>
 
 <template>
@@ -155,7 +175,7 @@ const sizes = [14, 18, 22] as const
         <table class="grid">
           <tbody>
             <tr
-              v-for="[name, svg] in entries.filter(([n]) => aiSet.has(n) || knowledgeSet.has(n) || statusSet.has(n) || fileTypeSet.has(n) || surfaceSet.has(n) || editorSet.has(n) || contextMenuSet.has(n) || utilitySet.has(n))"
+              v-for="[name, svg] in categoryEntries"
               :key="`dark-${name}`"
               :class="{ 'row-filled': filled.has(name) }"
             >
@@ -353,6 +373,15 @@ const sizes = [14, 18, 22] as const
 }
 
 .dark-strip {
+  --dark-accent-ai: #7aa2f7;
+  --dark-accent-knowledge: #c191ff;
+  --dark-accent-status: #e0a458;
+  --dark-accent-file-type: #6ec486;
+  --dark-accent-surface: #5fb8d4;
+  --dark-accent-editor: #d4789c;
+  --dark-accent-context-menu: #9aa0a6;
+  --dark-accent-utility: #f4b860;
+  --dark-accent-filled: #50aa6e;
   background: #1e1e1e;
   color: #d4d4d4;
   padding: 16px 20px;
@@ -377,38 +406,38 @@ const sizes = [14, 18, 22] as const
 }
 
 .dark-strip :deep(.row-ai) {
-  background: color-mix(in srgb, #7aa2f7 16%, transparent);
+  background: color-mix(in srgb, var(--dark-accent-ai, #7aa2f7) 16%, transparent);
 }
 
 .dark-strip :deep(.row-knowledge) {
-  background: color-mix(in srgb, #c191ff 14%, transparent);
+  background: color-mix(in srgb, var(--dark-accent-knowledge, #c191ff) 14%, transparent);
 }
 
 .dark-strip :deep(.row-status) {
-  background: color-mix(in srgb, #e0a458 14%, transparent);
+  background: color-mix(in srgb, var(--dark-accent-status, #e0a458) 14%, transparent);
 }
 
 .dark-strip :deep(.row-file-type) {
-  background: color-mix(in srgb, #6ec486 14%, transparent);
+  background: color-mix(in srgb, var(--dark-accent-file-type, #6ec486) 14%, transparent);
 }
 
 .dark-strip :deep(.row-surface) {
-  background: color-mix(in srgb, #5fb8d4 14%, transparent);
+  background: color-mix(in srgb, var(--dark-accent-surface, #5fb8d4) 14%, transparent);
 }
 
 .dark-strip :deep(.row-editor) {
-  background: color-mix(in srgb, #d4789c 14%, transparent);
+  background: color-mix(in srgb, var(--dark-accent-editor, #d4789c) 14%, transparent);
 }
 
 .dark-strip :deep(.row-context-menu) {
-  background: color-mix(in srgb, #9aa0a6 14%, transparent);
+  background: color-mix(in srgb, var(--dark-accent-context-menu, #9aa0a6) 14%, transparent);
 }
 
 .dark-strip :deep(.row-utility) {
-  background: color-mix(in srgb, #f4b860 14%, transparent);
+  background: color-mix(in srgb, var(--dark-accent-utility, #f4b860) 14%, transparent);
 }
 
 .dark-strip :deep(.row-filled) {
-  background: color-mix(in srgb, #50aa6e 16%, transparent);
+  background: color-mix(in srgb, var(--dark-accent-filled, #50aa6e) 16%, transparent);
 }
 </style>
