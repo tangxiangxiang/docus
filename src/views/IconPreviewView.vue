@@ -87,9 +87,6 @@ const utilitySet = new Set([
 
 const sizes = [14, 18, 22] as const
 
-/** Pre-computed list of icons that belong to at least one category — used by the dark-strip section. */
-const categoryEntries = entries.filter(([name]) => foundSet(name) !== '')
-
 /** Returns the first matching category for an icon name. */
 const foundSet = (name: string): string => {
   if (aiSet.has(name)) return 'ai'
@@ -102,6 +99,9 @@ const foundSet = (name: string): string => {
   if (utilitySet.has(name)) return 'utility'
   return ''
 }
+
+/** Pre-computed list of icons that belong to at least one category — used by the dark-strip section. */
+const categoryEntries = entries.filter(([name]) => foundSet(name) !== '')
 </script>
 
 <template>

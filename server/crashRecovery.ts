@@ -107,6 +107,7 @@ import {
   reviveMetadataSnapshot,
   validateDirectoryManifest,
   validateFolderMovePhaseShape,
+  validateFolderMoveJournalV4Provenance,
   validateJournalEntriesV4,
   validateSnapshotPhysicalEntries,
   type FolderMoveJournalEntry,
@@ -947,7 +948,13 @@ async function findCompanionFolderMoveJournal(contentDir: string, moveSrcRel: st
     if (!match || match[1] !== path.basename(moveSrcAbs)) continue
     const abs = path.join(dir, entry.name)
     try {
-      const journal = parseFolderRenameJournal(await fs.readFile(abs, 'utf8'))
+      // v4 first: if the companion is a v4 journal, it has priority.
+      // Legacy parser rejects v4 — so try the v4 parser first.
+      const raw = await fs.readFile(abs, 'utf8')
+      const v4Journal = parseFolderRenameJournalV4(raw)
+      if (v4Journal && v4Journal.srcRel === moveSrcRel && v4Journal.destRel === moveDestRel) return abs
+      // Fall back to legacy parser for v1–v3 journals.
+      const journal = parseFolderRenameJournal(raw)
       if (journal && journal.srcRel === moveSrcRel && journal.destRel === moveDestRel) return abs
     } catch { /* unreadable companion: treat as absent */ }
   }
@@ -1337,6 +1344,16 @@ async function recoverFolderMoveJournalV4(
   const directories = journal.directories
   const isSnapshotRestore = journal.metadataDisposition.kind === 'snapshot-restore'
   const effectiveSrcRel = isSnapshotRestore ? '' : journal.srcRel
+
+  // round-12 provenance gate: structural validity before path resolution.
+  // A forged journal with srcRel="../outside" or srcRel===destRel would
+  // otherwise resolve to an unexpected path and be processed as valid.
+  const provenanceError = validateFolderMoveJournalV4Provenance(journal)
+  if (provenanceError !== null) {
+    note(journalAbs, 'quarantined', `v4 provenance validation failed: ${provenanceError}`)
+    return
+  }
+
   const entryError = validateJournalEntriesV4(entries, effectiveSrcRel, isSnapshotRestore)
   if (entryError !== null) {
     note(journalAbs, 'quarantined', `v4 entry validation failed: ${entryError}`)
@@ -1404,10 +1421,26 @@ async function recoverFolderMoveJournalV4(
 
   // All phases prepared < p <= metadata-committed MUST have
   // destDev/destIno (validated above).
-  const destOk = await verifyDirectoryGeneration(destAbs, {
-    dev: journal.destDev as string,
-    ino: journal.destIno as string,
-  })
+  let destGeneration = { dev: journal.destDev as string, ino: journal.destIno as string }
+  let destOk = await verifyDirectoryGeneration(destAbs, destGeneration)
+  // round-12 P0: on POSIX with atomic-rename strategy, a successful
+  // fs.rename(src, dest) replaces the pre-created gate directory with
+  // the source directory. The gate's inode is no longer valid — the
+  // destination now carries the source directory's inode. If the
+  // strategy was atomic-rename and verification failed, re-stat the
+  // destination to get the actual generation. This handles the normal
+  // crash-recovery seam where the route died between rename and
+  // rewriting the journal with the corrected dest generation.
+  if (!destOk && journal.strategy === 'atomic-rename') {
+    try {
+      const reStat = await fs.stat(destAbs)
+      destGeneration = { dev: String(reStat.dev), ino: String(reStat.ino) }
+      destOk = true
+    } catch {
+      note(journalAbs, 'quarantined', 'v4 destination directory vanished during recovery re-stat')
+      return
+    }
+  }
   if (!destOk) {
     note(journalAbs, 'quarantined', 'v4 destination directory generation does not match journal')
     return
@@ -1450,8 +1483,13 @@ async function recoverFolderMoveJournalV4(
       note(journalAbs, 'quarantined', 'v4 parity failed after recovery replay')
       return
     }
-    // phase gate-created → files-landed
-    const filesLanded: FolderMoveJournalV4 = { ...journal, phase: 'files-landed' }
+    // phase gate-created → files-landed (use corrected dest generation).
+    const filesLanded: FolderMoveJournalV4 = {
+      ...journal,
+      phase: 'files-landed',
+      destDev: destGeneration.dev,
+      destIno: destGeneration.ino,
+    }
     await rewriteDurableJournal(journalAbs, filesLanded)
     // commit metadata
     if (disposition.kind === 'snapshot-restore') {
@@ -1539,11 +1577,18 @@ async function recoverFolderMoveJournalV4(
         return
       }
     } else {
-      // Prefix-move: metadata is at destRel. A quick existence check.
-      const samplePath = journal.destRel
-      const liveDoc = db.prepare('SELECT id FROM documents WHERE path = ?').get(samplePath) as { id: string } | undefined
-      if (!liveDoc) {
-        note(journalAbs, 'quarantined', 'v4 metadata-committed but metadata not at destination prefix')
+      // Prefix-move: verify that at least one document exists under
+      // destRel (round-12 P1). A folder rename creates documents at
+      // destRel/a, destRel/nested/b, etc. — never exactly destRel.
+      // A crash between metadata commit and journal removal leaves the
+      // journal present but metadata already moved. Check via LIKE
+      // so nested folders are covered.
+      const sampleRow = db.prepare(`SELECT id FROM documents WHERE path = ? OR path LIKE ? LIMIT 1`).get(
+        journal.destRel,
+        `${journal.destRel}/%`,
+      ) as { id: string } | undefined
+      if (!sampleRow) {
+        note(journalAbs, 'quarantined', 'v4 metadata-committed but no destination prefix metadata found')
         return
       }
     }

@@ -118,13 +118,13 @@ describe('Parity failure retains journal', () => {
       metadataDisposition: { kind: 'prefix-move' },
     }
 
-    await writeJournal('.proj.docus-journal-uuid1', journal)
+    await writeJournal('.proj.docus-journal-abcdef012345', journal)
 
     const report = await recoverInterruptedOperations(vault, db)
 
     // Journal MUST still exist after recovery (parity failed).
-    const afterNames = await fs.readdir(path.dirname(path.join(vault, '.proj.docus-journal-uuid1')))
-    expect(afterNames.some((n) => n.includes('.docus-journal-uuid1'))).toBe(true)
+    const afterNames = await fs.readdir(path.dirname(path.join(vault, '.proj.docus-journal-abcdef012345')))
+    expect(afterNames.some((n) => n.includes('.docus-journal-abcdef012345'))).toBe(true)
     expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
   })
 })
@@ -160,7 +160,7 @@ describe('v4 journal provenance validation', () => {
       metadataDisposition: { kind: 'prefix-move' },
     }
 
-    await writeJournal('.proj.docus-journal-uuid1', journal)
+    await writeJournal('.proj.docus-journal-abcdef012345', journal)
     await seed({ 'proj/a.md': '# hello\n' })
     saveDocumentMetadata(db, { id: 'doc-1', path: 'proj/a', title: 'Hello' })
 
@@ -185,7 +185,7 @@ describe('v4 journal provenance validation', () => {
       metadataDisposition: { kind: 'prefix-move' },
     }
 
-    await writeJournal('.proj.docus-journal-uuid1', journal)
+    await writeJournal('.proj.docus-journal-abcdef012345', journal)
     await seed({ 'proj/a.md': '# hi\n' })
     saveDocumentMetadata(db, { id: 'doc-1', path: 'proj/a', title: 'Hi' })
 
@@ -198,9 +198,7 @@ describe('v4 journal provenance validation', () => {
 
 describe('metadata-committed prefix recovery', () => {
   it('removes journal when dest metadata exists under prefix', async () => {
-    await seed({
-      'ren/a.md': '# hello\n',
-    })
+    await seed({ 'ren/a.md': '# hello\n' })
 
     const destStat = await fs.stat(path.join(vault, 'ren'))
 
@@ -220,7 +218,7 @@ describe('metadata-committed prefix recovery', () => {
       metadataDisposition: { kind: 'prefix-move' },
     }
 
-    await writeJournal('.proj.docus-journal-uuid1', journal)
+    await writeJournal('.proj.docus-journal-abcdef012345', journal)
 
     // Metadata is at dest path (simulates successful forward move).
     saveDocumentMetadata(db, { id: 'doc-1', path: 'ren/a', title: 'Hello' })
@@ -229,11 +227,13 @@ describe('metadata-committed prefix recovery', () => {
 
     // The journal should be removed since destRel/a metadata exists.
     const journalsAfter = await namesIn('.')
-    expect(journalsAfter.some((n) => n.includes('.docus-journal-uuid1'))).toBe(false)
+    expect(journalsAfter.some((n) => n.includes('.docus-journal-abcdef012345'))).toBe(false)
     expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
   })
 
   it('quarantines when no dest metadata found under prefix', async () => {
+    // Create the dest directory with gate generation.
+    await fs.mkdir(path.join(vault, 'ren'))
     const destStat = await fs.stat(path.join(vault, 'ren'))
 
     const journal: FolderMoveJournalV4 = {
@@ -252,7 +252,7 @@ describe('metadata-committed prefix recovery', () => {
       metadataDisposition: { kind: 'prefix-move' },
     }
 
-    await writeJournal('.proj.docus-journal-uuid1', journal)
+    await writeJournal('.proj.docus-journal-abcdef012345', journal)
 
     // NO metadata saved — simulating crash between metadata commit and journal removal.
     // But metadata was NOT actually moved yet, so recovery should quarantine.
@@ -283,7 +283,7 @@ describe('v4 companion journal detection', () => {
       directories: [],
       metadataDisposition: { kind: 'prefix-move' },
     }
-    await writeJournal('.proj.docus-journal-uuid-v4', v4Journal)
+    await writeJournal('.proj.docus-journal-abcdef012346', v4Journal)
 
     // Write a rename-reference journal that would try to find a companion.
     const refJournal = JSON.stringify({
@@ -303,7 +303,7 @@ describe('v4 companion journal detection', () => {
         afterPayload: '.proj.docus-ref-after-tx-0',
       }],
     })
-    const refPath = path.join(vault, '.proj.docus-journal-uuid-ref')
+    const refPath = path.join(vault, '.proj.docus-journal-abcdef012347')
     await fs.writeFile(refPath, refJournal)
 
     saveDocumentMetadata(db, { id: 'doc-1', path: 'proj/a', title: 'Hello' })
@@ -316,7 +316,7 @@ describe('v4 companion journal detection', () => {
     const v2Count = journalsAfter.filter(
       (n) => {
         if (!n.includes('.docus-journal-')) return false
-        if (n.includes('uuid-v4') || n.includes('uuid-ref')) return false
+        if (n.includes('abcdef012346') || n.includes('abcdef012347')) return false
         // A new v2 journal would have been written by reference rollback.
         return true
       },

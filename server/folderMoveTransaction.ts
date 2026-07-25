@@ -685,3 +685,51 @@ export function isReservedPhysicalSegment(segment: string): boolean {
   if (RESERVED_EXACT_SEGMENTS.has(segment)) return true
   return RESERVED_PREFIX_SEGMENTS.some((prefix) => segment.startsWith(prefix))
 }
+
+// ---- round-12 v4 provenance validation (trust boundary) ---------------
+
+/** Validate a v4 journal's structural invariants BEFORE any path
+ * resolution or filesystem access. Returns null on success, a reason
+ * string on failure.
+ *
+ * Must run BEFORE resolve(contentDir, srcRel/destRel):
+ *
+ *   * srcRel !== destRel (no-op move);
+ *   * srcRel/destRel are valid relative paths with no `.` / `..` segments;
+ *   * entries use only valid relative file paths (same constraint).
+ *
+ * Does NOT validate vault containment (that happens after resolve in
+ * recovery), but rejects clearly malformed journals that would allow
+ * path traversal attacks if resolved against contentDir. */
+export function validateFolderMoveJournalV4Provenance(
+  journal: FolderMoveJournalV4,
+): string | null {
+  // srcRel and destRel must differ — a no-op move is always a bug.
+  if (journal.srcRel === journal.destRel) {
+    return 'srcRel must not equal destRel'
+  }
+
+  // Both must be valid relative paths with no dots.
+  for (const key of ['srcRel', 'destRel'] as const) {
+    const value = journal[key]
+    if (!validRelativePath(value)) {
+      return `invalid ${key}: ${value}`
+    }
+  }
+
+  // Per-entry paths must also be valid relative paths.
+  for (const entry of journal.entries) {
+    if (!validRelativePath(entry.relativeFilePath)) {
+      return `invalid entry path: ${entry.relativeFilePath}`
+    }
+  }
+
+  // Directory manifest must contain only valid relative paths.
+  for (const dir of journal.directories) {
+    if (!validRelativePath(dir)) {
+      return `invalid directory entry: ${dir}`
+    }
+  }
+
+  return null
+}

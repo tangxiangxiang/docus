@@ -235,10 +235,43 @@ export function validateSnapshotOwnership(
   for (const row of expected.migrations) {
     allowedMigrationKeys.add(JSON.stringify([row.path, row.document_id, row.original_path]))
   }
+  // Collect all snapshot-owned paths and their expected IDs for cross-checks.
+  const snapshotPathsByPath = new Map<string, string>()
+  for (const row of expected.migrations) {
+    const p = String(row.path)
+    if (!snapshotPathsByPath.has(p)) {
+      snapshotPathsByPath.set(p, String(row.document_id ?? ''))
+    }
+    const op = String(row.original_path ?? '')
+    if (op && !snapshotPathsByPath.has(op)) {
+      snapshotPathsByPath.set(op, String(row.document_id ?? ''))
+    }
+  }
+  const snapshotDocIdSet = new Set(expected.documentIds)
   for (const migration of current.migrations) {
     const key = JSON.stringify([migration.path, migration.document_id, migration.original_path])
     const isReferencedBySnapshot = expected.documentIds.includes(String(migration.document_id))
     if (isReferencedBySnapshot && !allowedMigrationKeys.has(key)) return false
+    // round-12 P1: also check for same-path migrations owned by an
+    // unrelated document. If a live migration targets a path that the
+    // snapshot claims, but its document_id is not the snapshot's
+    // expected ID for that path, the live migration could delete data
+    // belonging to a different document when the snapshot restore runs.
+    if (snapshotDocIdSet.size > 0) {
+      const migrationPath = String(migration.path ?? '')
+      const migrationOriginalPath = String(migration.original_path ?? '')
+      for (const sp of [migrationPath, migrationOriginalPath]) {
+        if (snapshotPathsByPath.has(sp)) {
+          const expectedId = snapshotPathsByPath.get(sp)
+          const actualId = String(migration.document_id ?? '')
+          // Empty expectedId means the snapshot has a migration entry
+          // for this path but no specific id (unusual but possible).
+          if (expectedId !== undefined && actualId !== '' && expectedId !== actualId) {
+            return false
+          }
+        }
+      }
+    }
   }
 
   return true
