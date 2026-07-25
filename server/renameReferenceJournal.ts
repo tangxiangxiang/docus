@@ -9,6 +9,10 @@ import {
   writeDurableJournal,
   writeDurableRecoveryPayload,
 } from './atomicTextWrite.js'
+import {
+  FOLDER_MOVE_JOURNAL_VERSION,
+  type FolderMoveJournalEntryV4,
+} from './folderMoveTransaction.js'
 
 export type RenameReferencePlan = {
   path: string
