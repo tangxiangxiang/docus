@@ -262,3 +262,53 @@ describe('snapshot migration CAS ownership — cross-check', () => {
     expect(caught).toBe(false)
   })
 })
+
+// ─── Round-13 P0-2: journal retention on parity failure ───────────
+
+describe('P0-2: journal retention on parity failure', () => {
+  it('keeps the journal when destination parity fails after external mutation', async () => {
+    await seed({
+      'proj/a.md': '# hello\n',
+    })
+    saveDocumentMetadata(db, { id: 'doc-1', path: 'proj/a', title: 'Hello' })
+
+    const realStat = await fs.stat(path.join(vault, 'proj'))
+    const physical = await listPhysicalMoveEntries(path.join(vault, 'proj'), (rel) => {
+      if (!rel.endsWith('.md')) return null
+      return { documentId: 'doc-1', documentPath: `proj/${rel.slice(0, -'.md'.length)}` }
+    })
+
+    const journal: FolderMoveJournalV4 = {
+      version: 4,
+      op: 'folder-rename',
+      phase: 'files-landed',
+      srcRel: 'proj',
+      destRel: 'ren',
+      strategy: 'atomic-rename',
+      sourceDev: Number(realStat.dev),
+      sourceIno: Number(realStat.ino),
+      destDev: String(realStat.dev),
+      destIno: String(realStat.ino),
+      entries: physical.entries.map((entry) => ({
+        relativeFilePath: entry.relativeFilePath,
+        sourceDev: entry.sourceDev ?? '',
+        sourceIno: entry.sourceIno ?? '',
+        sourceHash: entry.sourceHash,
+        documentId: 'doc-1',
+        documentPath: 'proj/a',
+      })),
+      directories: physical.directories,
+      metadataDisposition: { kind: 'prefix-move' },
+    }
+    await writeJournal('.proj.docus-journal-abcdef012345', journal)
+
+    // External mutation replaces the file content; parity will fail.
+    const fileAbs = path.join(vault, 'proj', 'a.md')
+    await fs.writeFile(fileAbs, '# tampered\n', 'utf8')
+
+    const report = await recoverInterruptedOperations(vault, db)
+    expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
+    const journalsAfter = await namesIn('.')
+    expect(journalsAfter.some((n) => n.includes('.docus-journal-'))).toBe(true)
+  })
+})

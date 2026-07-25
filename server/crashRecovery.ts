@@ -102,6 +102,7 @@ import {
   type FolderMoveJournalStrategy,
 } from './documentFileLifecycle.js'
 import {
+  FOLDER_MOVE_JOURNAL_VERSION,
   isValidDeleteRollbackSnapshot,
   listPhysicalMoveEntries,
   reviveMetadataSnapshot,
@@ -115,6 +116,7 @@ import {
   type FolderMoveJournalV4,
   type FolderMoveMetadataDisposition,
 } from './folderMoveTransaction.js'
+import { validateFolderMoveJournalV4Provenance as validateFolderMoveJournalV4RootProvenance } from './folderMoveJournalValidation.js'
 
 export interface RecoveryAction {
   /** Vault-relative path of the affected file/folder (or artifact). */
@@ -1201,6 +1203,14 @@ async function recoverRenameReferencesJournal(
         const moveStrategy = resolveDirectoryMoveStrategy()
         try {
           const destStat = await fs.stat(destAbs)
+          const moveJournalEntries: FolderMoveJournalEntryV4[] = moveEntries.map((entry) => ({
+            relativeFilePath: entry.relativeFilePath,
+            sourceDev: entry.sourceDev ?? '',
+            sourceIno: entry.sourceIno ?? '',
+            sourceHash: entry.sourceHash,
+            ...(entry.documentId !== undefined ? { documentId: entry.documentId } : {}),
+            ...(entry.documentPath !== undefined ? { documentPath: entry.documentPath } : {}),
+          }))
           await writeDurableJournal(moveJournalAbs, {
             version: 2,
             op: 'folder-move',
@@ -1296,6 +1306,34 @@ type DestInventory =
   | { kind: 'external'; reason: string }
   | { kind: 'ours'; hasLandedFiles: boolean; hasGateToken: boolean }
 
+function verifyPrefixMetadataCommitted(
+  db: DatabaseT,
+  journal: FolderMoveJournalV4,
+): string | null {
+  const rows = listDocumentMetadata(db).filter((row) =>
+    row.path === journal.destRel || row.path.startsWith(`${journal.destRel}/`)
+      || row.path === journal.srcRel || row.path.startsWith(`${journal.srcRel}/`),
+  )
+  const expected = new Map<string, string>()
+  for (const entry of journal.entries) {
+    if (entry.documentId === undefined || entry.documentPath === undefined) continue
+    const suffix = entry.documentPath === journal.srcRel
+      ? ''
+      : entry.documentPath.slice(`${journal.srcRel}/`.length)
+    expected.set(`${journal.destRel}${suffix ? `/${suffix}` : ''}`, entry.documentId)
+  }
+  const destinationRows = rows.filter((row) => row.path === journal.destRel || row.path.startsWith(`${journal.destRel}/`))
+  const sourceRows = rows.filter((row) => row.path === journal.srcRel || row.path.startsWith(`${journal.srcRel}/`))
+  if (sourceRows.length > 0) return 'source prefix metadata remains after commit'
+  if (destinationRows.length !== expected.size) {
+    return `destination prefix metadata count mismatch: expected ${expected.size}, found ${destinationRows.length}`
+  }
+  for (const row of destinationRows) {
+    if (expected.get(row.path) !== row.id) return `destination prefix identity mismatch: ${row.path}`
+  }
+  return null
+}
+
 /**
  * Reconcile a journaled folder move (the unified replay for every
  * journal that carries entries — v2 physical journals and normalized
@@ -1351,6 +1389,12 @@ async function recoverFolderMoveJournalV4(
   const provenanceError = validateFolderMoveJournalV4Provenance(journal)
   if (provenanceError !== null) {
     note(journalAbs, 'quarantined', `v4 provenance validation failed: ${provenanceError}`)
+    return
+  }
+
+  const rootProvenanceError = validateFolderMoveJournalV4RootProvenance(journal, contentDir)
+  if (rootProvenanceError !== null) {
+    note(journalAbs, 'quarantined', `v4 root provenance validation failed: ${rootProvenanceError}`)
     return
   }
 
@@ -1610,26 +1654,19 @@ async function recoverFolderMoveJournalV4(
         return
       }
     } else {
-      // Prefix-move: verify that at least one document exists under
-      // destRel (round-12 P1). A folder rename creates documents at
-      // destRel/a, destRel/nested/b, etc. — never exactly destRel.
-      // A crash between metadata commit and journal removal leaves the
-      // journal present but metadata already moved. Check via LIKE
-      // so nested folders are covered.
-      const sampleRow = db.prepare(`SELECT id FROM documents WHERE path = ? OR path LIKE ? LIMIT 1`).get(
-        journal.destRel,
-        `${journal.destRel}/%`,
-      ) as { id: string } | undefined
-      if (!sampleRow) {
-        // Also allow empty-tree moves where no metadata documents exist
-        // under destRel. The source must still be prunable as evidence
-        // that forward completion happened.
-        const srcExists = await isDirectory(srcAbs)
-        if (srcExists) {
-          note(journalAbs, 'quarantined', 'v4 metadata-committed but no destination prefix metadata found')
+      const metadataError = verifyPrefixMetadataCommitted(db, journal)
+      const srcExists = await isDirectory(srcAbs)
+      // Empty expected set is valid for attachment-only/empty trees, but
+      // the source prefix must already be gone. Any metadata mismatch OR
+      // a still-present source leaves the journal authoritative.
+      if (metadataError !== null) {
+        if (journal.entries.some((entry) => entry.documentId !== undefined) || srcExists) {
+          note(journalAbs, 'quarantined', `v4 metadata-committed prefix verification failed: ${metadataError}`)
           return
         }
-        // Source gone means forward completed; safe to clean up.
+      } else if (srcExists) {
+        note(journalAbs, 'quarantined', 'v4 metadata-committed but source prefix still present')
+        return
       }
     }
     await pruneEmptyDirectories(srcAbs)
