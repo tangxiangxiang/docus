@@ -232,7 +232,9 @@ describe('metadata-committed prefix recovery', () => {
   })
 
   it('quarantines when no dest metadata found under prefix', async () => {
-    // Create the dest directory with gate generation.
+    // Create both source and dest directories. Source exists means
+    // forward completion is ambiguous — quarantine is correct.
+    await seed({ 'proj/a.md': '# orphaned\n' })
     await fs.mkdir(path.join(vault, 'ren'))
     const destStat = await fs.stat(path.join(vault, 'ren'))
 

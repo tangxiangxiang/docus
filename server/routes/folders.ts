@@ -340,9 +340,8 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         folderMoveJournal = { ...folderMoveJournal, phase: 'files-landed', destDev: String(finalDestStat.dev), destIno: String(finalDestStat.ino) }
         await rewriteDurableJournal(journalPath, folderMoveJournal)
       } catch (statError) {
-        // Destination vanished between rename and stat — impossible,
-        // but defensively quarantine.
-        await removeDurableJournal(journalPath).catch(() => {})
+        // Destination vanished between rename and stat — impossible in
+        // practice, but the journal must survive for startup recovery.
         throw statError
       }
     } else {

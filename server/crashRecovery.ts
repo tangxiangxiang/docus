@@ -1526,9 +1526,35 @@ async function recoverFolderMoveJournalV4(
   }
 
   if (journal.phase === 'files-landed') {
+    // For atomic-rename strategy on POSIX, the destination directory
+    // may have a different inode than what's recorded in the journal
+    // (the gate was replaced by rename). Re-stat to get the real gen
+    // before parity checking.
+    let filesLandedDestGen = { dev: journal.destDev as string, ino: journal.destIno as string }
+    let filesLandedDestOk = await verifyDirectoryGeneration(destAbs, filesLandedDestGen)
+    if (!filesLandedDestOk && journal.strategy === 'atomic-rename') {
+      try {
+        const reStat = await fs.stat(destAbs)
+        filesLandedDestGen = { dev: String(reStat.dev), ino: String(reStat.ino) }
+        filesLandedDestOk = true
+      } catch {
+        note(journalAbs, 'quarantined', 'v4 files-landed: destination directory vanished during recovery')
+        return
+      }
+    }
+    if (!filesLandedDestOk) {
+      note(journalAbs, 'quarantined', 'v4 files-landed: destination directory generation does not match journal')
+      return
+    }
     // Parity must already pass (the route left phase=files-landed only
-    // after exact parity). Re-verify for safety.
-    const parityFailed = await verifyFolderMoveDestinationV4(destAbs, journal)
+    // after exact parity). Re-verify for safety. Use corrected gen if
+    // we had to re-stat for atomic strategy.
+    const parityFailed = await verifyFolderMoveDestinationV4(destAbs, {
+      destDev: filesLandedDestGen.dev,
+      destIno: filesLandedDestGen.ino,
+      entries: journal.entries,
+      directories: journal.directories,
+    })
     if (parityFailed) {
       note(journalAbs, 'quarantined', 'v4 files-landed parity check failed')
       return
@@ -1571,9 +1597,16 @@ async function recoverFolderMoveJournalV4(
     if (disposition.kind === 'snapshot-restore') {
       // The snapshot was already installed; verify it is still there.
       const revived = reviveMetadataSnapshot(disposition.snapshot)
-      const liveDoc = db.prepare('SELECT id FROM documents WHERE id = ?').get(revived.documentIds[0]) as { id: string } | undefined
-      if (!liveDoc) {
-        note(journalAbs, 'quarantined', 'v4 metadata-committed but metadata not installed')
+      if (revived.documentIds.length > 0) {
+        const liveDoc = db.prepare('SELECT id FROM documents WHERE id = ?').get(revived.documentIds[0]) as { id: string } | undefined
+        if (!liveDoc) {
+          note(journalAbs, 'quarantined', 'v4 metadata-committed but snapshot document not found')
+          return
+        }
+      }
+      // Empty tree snapshot: no documents to verify — dest directory must exist.
+      if (!await isDirectory(destAbs)) {
+        note(journalAbs, 'quarantined', 'v4 snapshot-restore journal but destination directory absent')
         return
       }
     } else {
@@ -1588,8 +1621,15 @@ async function recoverFolderMoveJournalV4(
         `${journal.destRel}/%`,
       ) as { id: string } | undefined
       if (!sampleRow) {
-        note(journalAbs, 'quarantined', 'v4 metadata-committed but no destination prefix metadata found')
-        return
+        // Also allow empty-tree moves where no metadata documents exist
+        // under destRel. The source must still be prunable as evidence
+        // that forward completion happened.
+        const srcExists = await isDirectory(srcAbs)
+        if (srcExists) {
+          note(journalAbs, 'quarantined', 'v4 metadata-committed but no destination prefix metadata found')
+          return
+        }
+        // Source gone means forward completed; safe to clean up.
       }
     }
     await pruneEmptyDirectories(srcAbs)
