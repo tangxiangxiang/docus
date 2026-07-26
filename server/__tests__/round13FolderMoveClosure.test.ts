@@ -13,7 +13,7 @@ import { applyMigrations } from '../db'
 import { recoverInterruptedOperations } from '../crashRecovery'
 import { __setCreateOnlyMoveHooksForTesting, __setDirectoryMoveStrategyOverrideForTesting } from '../documentFileLifecycle'
 import { FOLDER_MOVE_JOURNAL_VERSION, listPhysicalMoveEntries, reviveMetadataSnapshot } from '../folderMoveTransaction.js'
-import { saveDocumentMetadata, restoreDocumentMetadataMutationCAS, validateSnapshotOwnership } from '../documentMetadata'
+import { saveDocumentMetadata, restoreDocumentMetadataMutationCAS, validateSnapshotOwnership, getDocumentMetadata } from '../documentMetadata'
 import { setContentDir } from '../paths'
 import type { FolderMoveJournalEntryV4, FolderMoveJournalV4 } from '../folderMoveTransaction.js'
 
@@ -58,36 +58,36 @@ async function namesIn(rel = '.'): Promise<string[]> {
 // ─── P0-1: atomic rename dest generation tracking ─────────────────
 
 describe('atomic rename destination generation', () => {
-  it('recovery corrects gate-generation mismatch via re-stat', async () => {
-    // Simulate: forward move completed via atomic rename.
-    // Source → dest, dest now has source's inode (not gate's).
-    // Journal records the old gate's inode. Recovery must re-stat.
+  it('recovery quarantines when files-landed destination generation does not match (round-14: no re-stat fall-back)', async () => {
+    // Round-14 P0-2: a files-landed journal's destination generation
+    // is the FINAL post-rename generation the route persisted. If the
+    // on-disk generation does not match, the destination is foreign —
+    // recovery MUST quarantine. Round-13's re-stat fall-back is
+    // forbidden: a brand-new inode on disk could be an external
+    // writer's directory, not the route's post-rename destination.
     await seed({
       'ren/a.md': '# hello\n',
     })
     saveDocumentMetadata(db, { id: 'doc-1', path: 'ren/a', title: 'Hello' })
 
-    // Get the real stats from the actual ren directory.
     const destStat = await fs.stat(path.join(vault, 'ren'))
     const physical = await listPhysicalMoveEntries(path.join(vault, 'ren'), (rel) => {
       if (!rel.endsWith('.md')) return null
       return { documentId: 'doc-1', documentPath: `ren/${rel.slice(0, -'.md'.length)}` }
     })
 
-    // Write a files-landed journal with wrong dest generation
-    // (simulates crash after rename replaced the gate).
     const entriesV4: FolderMoveJournalEntryV4[] = physical.entries.map((e) => ({
       relativeFilePath: e.relativeFilePath,
       sourceDev: e.sourceDev ?? '',
       sourceIno: e.sourceIno ?? '',
       sourceHash: e.sourceHash,
       documentId: 'doc-1',
-      // documentPath matches srcRel + file stem (the original move direction).
-      // srcRel=proj means this entry claims "the original doc was proj/a".
       documentPath: 'proj/a',
     }))
 
-    const fakeGen = { dev: '999', ino: '999' } // wrong — the pre-created gate gen
+    // Wrong (pre-rename gate) destination generation — round-13 would
+    // re-stat and accept; round-14 must quarantine.
+    const fakeGen = { dev: '999', ino: '999' }
     const journal: FolderMoveJournalV4 = {
       version: 4,
       op: 'folder-rename',
@@ -108,12 +108,12 @@ describe('atomic rename destination generation', () => {
 
     const report = await recoverInterruptedOperations(vault, db)
 
-    // Recovery should detect the mismatch, re-stat for real gen,
-    // and complete the transaction successfully.
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
-    // Journal should be removed.
+    expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
     const journalsAfter = await namesIn('.')
-    expect(journalsAfter.some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expect(journalsAfter.some((n) => n.includes('.docus-journal-'))).toBe(true)
+    // Metadata must NOT have moved (the journal is quarantined).
+    expect(getDocumentMetadata(db, 'ren/a')?.id ?? null).toBe('doc-1')
+    expect(getDocumentMetadata(db, 'proj/a') ?? null).toBeNull()
   })
 })
 
