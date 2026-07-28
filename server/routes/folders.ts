@@ -332,18 +332,83 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         }
         throw atomicError
       }
-      // After a successful POSIX atomic rename, stat the destination to
-      // capture its REAL generation (the source directory became dest).
-      // Rewrite the journal with the correct generation before parity.
+      // Round-14 P0-1: capture the POST-RENAME generation BEFORE
+      // declaring the move complete. rename(2) replaces the empty
+      // gate with the original source directory — the destination
+      // now carries the SOURCE'S inode, not the gate's. Persist that
+      // exact generation immediately, then run exact parity against
+      // it. A crash BEFORE this rewrite leaves recovery with a
+      // gate-created journal whose destDev/destIno is the gate's
+      // inode and no inode on disk matches it — recovery must
+      // quarantine (round-14 forbids re-stat fall-back). A crash
+      // AFTER this rewrite leaves a files-landed journal whose
+      // destination generation is exactly the on-disk inode.
+      let finalDestGen: { dev: string; ino: string }
       try {
-        const finalDestStat = await fs.stat(dest)
-        folderMoveJournal = { ...folderMoveJournal, phase: 'files-landed', destDev: String(finalDestStat.dev), destIno: String(finalDestStat.ino) }
-        await rewriteDurableJournal(journalPath, folderMoveJournal)
+        const finalDestStat = await fs.stat(dest, { bigint: true })
+        finalDestGen = { dev: finalDestStat.dev.toString(), ino: finalDestStat.ino.toString() }
       } catch (statError) {
-        // Destination vanished between rename and stat — impossible in
-        // practice, but the journal must survive for startup recovery.
+        // Destination vanished between rename and stat — quarantine;
+        // the journal stays for inspection.
+        await removeDurableJournal(journalPath).catch(() => {})
         throw statError
       }
+      // Exact parity on the destination: dest directory (dev,ino) +
+      // per-entry (dev,ino,hash) all match the journal. NO token check.
+      const parityFailed = await verifyFolderMoveDestinationV4(dest, {
+        destDev: finalDestGen.dev,
+        destIno: finalDestGen.ino,
+        entries: physicalEntriesV4,
+        directories: physicalDirectoriesV4,
+      })
+      if (parityFailed) {
+        // round-14: NEVER remove the journal on parity failure — the journal
+        // is the only recovery evidence. Leaving it lets startup recovery
+        // decide the correct final state.
+        return bad(c, 'destination ownership or exact parity could not be verified; retry', 409)
+      }
+      // Phase rewrite: gate-created → files-landed. We rewrite with the
+      // POST-RENAME generation now (P0-1 ordering) so a crash AFTER this
+      // line still leaves a files-landed journal whose dest generation is
+      // exactly the on-disk inode.
+      folderMoveJournal = { ...folderMoveJournal, phase: 'files-landed', destDev: finalDestGen.dev, destIno: finalDestGen.ino }
+      await rewriteDurableJournal(journalPath, folderMoveJournal)
+      // Crash seam (round-11 v4): after files-landed rewrite, BEFORE
+      // metadata commits.
+      if (moveHooks?.afterFilesLanded) {
+        await moveHooks.afterFilesLanded(dest)
+      }
+      renamed = true
+      moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
+      // Crash seam (round-11 v4): after metadata commits, BEFORE the
+      // phase is rewritten to metadata-committed and the journal is
+      // removed.
+      if (moveHooks?.afterMetadataCommitted) {
+        await moveHooks.afterMetadataCommitted(dest)
+      }
+      // phase files-landed → metadata-committed. Failure aborts before
+      // journal removal.
+      folderMoveJournal = { ...folderMoveJournal, phase: 'metadata-committed' }
+      await rewriteDurableJournal(journalPath, folderMoveJournal)
+      // Final step: remove the journal. The destination (dev, ino) and
+      // per-entry (dev, ino, hash) are now the durable proof.
+      await removeDurableJournal(journalPath).catch(() => {})
+      if (__folderRaceHooks?.afterRenamePlanBuilt) await __folderRaceHooks.afterRenamePlanBuilt()
+      for (const snapshot of folderReferenceSnapshots) {
+        const target = filePathFor(snapshot.writePath)
+        // External-writer-safe: the bytes on disk must still be exactly
+        // what the in-lock plan read. In-process locks do not stop
+        // Obsidian/vim/sync software; the ownership-verified commit
+        // detects their saves and fails the rename closed instead of
+        // silently overwriting them.
+        await atomicReplaceTextIfUnchanged(target, snapshot.raw, snapshot.updated)
+        written.push(snapshot)
+        const stat = await fs.stat(target)
+        snapshot.mtime = stat.mtimeMs
+        ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
+      }
+      await referenceJournal?.cleanup()
+      referenceJournal = null
     } else {
       try {
         await moveFolderEntriesIntoExistingGate(src, dest, {
@@ -355,62 +420,45 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         moveThrew = true
         throw moveError
       }
+      // Replayable path: parity check + files-landed + metadata + phase rewrite.
+      // Round-14 P0-1/P0-2: this parity check runs against the JOURNAL's
+      // gate-created generation. The destination IS the gate (replayable
+      // does not replace the gate's inode), so journaled generation stays
+      // accurate. NO re-stat fall-back.
+      const parityFailedReplayable = await verifyFolderMoveDestinationV4(dest, {
+        destDev: folderMoveJournal.destDev,
+        destIno: folderMoveJournal.destIno,
+        entries: physicalEntriesV4,
+        directories: physicalDirectoriesV4,
+      })
+      if (parityFailedReplayable) {
+        return bad(c, 'destination ownership or exact parity could not be verified; retry', 409)
+      }
+      if (moveHooks?.afterFilesLanded) {
+        await moveHooks.afterFilesLanded(dest)
+      }
+      folderMoveJournal = { ...folderMoveJournal, phase: 'files-landed' }
+      await rewriteDurableJournal(journalPath, folderMoveJournal)
+      renamed = true
+      moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
+      if (moveHooks?.afterMetadataCommitted) {
+        await moveHooks.afterMetadataCommitted(dest)
+      }
+      folderMoveJournal = { ...folderMoveJournal, phase: 'metadata-committed' }
+      await rewriteDurableJournal(journalPath, folderMoveJournal)
+      await removeDurableJournal(journalPath).catch(() => {})
+      if (__folderRaceHooks?.afterRenamePlanBuilt) await __folderRaceHooks.afterRenamePlanBuilt()
+      for (const snapshot of folderReferenceSnapshots) {
+        const target = filePathFor(snapshot.writePath)
+        await atomicReplaceTextIfUnchanged(target, snapshot.raw, snapshot.updated)
+        written.push(snapshot)
+        const stat = await fs.stat(target)
+        snapshot.mtime = stat.mtimeMs
+        ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
+      }
+      await referenceJournal?.cleanup()
+      referenceJournal = null
     }
-    // Exact parity on the destination: dest directory (dev,ino) +
-    // per-entry (dev,ino,hash) all match the journal. NO token check.
-    const parityFailed = await verifyFolderMoveDestinationV4(dest, {
-      destDev: folderMoveJournal.destDev,
-      destIno: folderMoveJournal.destIno,
-      entries: physicalEntriesV4,
-      directories: physicalDirectoriesV4,
-    })
-    if (parityFailed) {
-      // round-12: NEVER remove the journal on parity failure — the journal
-      // is the only recovery evidence. Leaving it lets startup recovery
-      // decide the correct final state (forward completion or reverse move).
-      return bad(c, 'destination ownership or exact parity could not be verified; retry', 409)
-    }
-    // Crash seam (round-11 v4): after parity passes, BEFORE metadata
-    // commits and BEFORE the phase is rewritten to files-landed.
-    if (moveHooks?.afterFilesLanded) {
-      await moveHooks.afterFilesLanded(dest)
-    }
-    // phase gate-created → files-landed. Failure aborts before
-    // metadata commit.
-    folderMoveJournal = { ...folderMoveJournal, phase: 'files-landed' }
-    await rewriteDurableJournal(journalPath, folderMoveJournal)
-    renamed = true
-    moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
-    // Crash seam (round-11 v4): after metadata commits, BEFORE the
-    // phase is rewritten to metadata-committed and the journal is
-    // removed.
-    if (moveHooks?.afterMetadataCommitted) {
-      await moveHooks.afterMetadataCommitted(dest)
-    }
-    // phase files-landed → metadata-committed. Failure aborts before
-    // journal removal.
-    folderMoveJournal = { ...folderMoveJournal, phase: 'metadata-committed' }
-    await rewriteDurableJournal(journalPath, folderMoveJournal)
-    // Final step: remove the journal. The destination (dev, ino) and
-    // per-entry (dev, ino, hash) are now the durable proof, not a
-    // token file.
-    await removeDurableJournal(journalPath).catch(() => {})
-    if (__folderRaceHooks?.afterRenamePlanBuilt) await __folderRaceHooks.afterRenamePlanBuilt()
-    for (const snapshot of folderReferenceSnapshots) {
-      const target = filePathFor(snapshot.writePath)
-      // External-writer-safe: the bytes on disk must still be exactly
-      // what the in-lock plan read. In-process locks do not stop
-      // Obsidian/vim/sync software; the ownership-verified commit
-      // detects their saves and fails the rename closed instead of
-      // silently overwriting them.
-      await atomicReplaceTextIfUnchanged(target, snapshot.raw, snapshot.updated)
-      written.push(snapshot)
-      const stat = await fs.stat(target)
-      snapshot.mtime = stat.mtimeMs
-      ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
-    }
-    await referenceJournal?.cleanup()
-    referenceJournal = null
   } catch (error) {
     const rollbackErrors: unknown[] = []
     let rollbackSourceReused = false

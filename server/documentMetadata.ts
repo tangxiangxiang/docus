@@ -247,16 +247,25 @@ export function validateSnapshotOwnership(
       snapshotPathsByPath.set(op, String(row.document_id ?? ''))
     }
   }
+  // Round-14 P1-3: every live migration at a path the snapshot
+  // claims (via document.path, migration.path, or migration.original_path)
+  // must be in expected.migrations. The previous logic only rejected
+  // when the live migration's document_id was in expected.documentIds
+  // AND not in allowedMigrationKeys — a live migration at a snapshot
+  // path with an external document_id and NO matching expected row
+  // slipped through, and the restore would DELETE that external
+  // migration row (the snapshot's CAS only writes rows from expected).
+  const snapshotClaimedPaths = new Set<string>()
+  for (const row of expected.documents) snapshotClaimedPaths.add(String(row.path))
+  for (const path of expected.paths) snapshotClaimedPaths.add(path)
+  for (const path of snapshotPathsByPath.keys()) snapshotClaimedPaths.add(path)
+
   const snapshotDocIdSet = new Set(expected.documentIds)
   for (const migration of current.migrations) {
     const key = JSON.stringify([migration.path, migration.document_id, migration.original_path])
     const isReferencedBySnapshot = expected.documentIds.includes(String(migration.document_id))
     if (isReferencedBySnapshot && !allowedMigrationKeys.has(key)) return false
-    // round-12 P1: also check for same-path migrations owned by an
-    // unrelated document. If a live migration targets a path that the
-    // snapshot claims, but its document_id is not the snapshot's
-    // expected ID for that path, the live migration could delete data
-    // belonging to a different document when the snapshot restore runs.
+    // Round-12 P1: same-path migrations owned by an unrelated document.
     if (snapshotDocIdSet.size > 0) {
       const migrationPath = String(migration.path ?? '')
       const migrationOriginalPath = String(migration.original_path ?? '')
@@ -264,13 +273,19 @@ export function validateSnapshotOwnership(
         if (snapshotPathsByPath.has(sp)) {
           const expectedId = snapshotPathsByPath.get(sp)
           const actualId = String(migration.document_id ?? '')
-          // Empty expectedId means the snapshot has a migration entry
-          // for this path but no specific id (unusual but possible).
           if (expectedId !== undefined && actualId !== '' && expectedId !== actualId) {
             return false
           }
         }
       }
+    }
+    // Round-14 P1-3: any live migration at a snapshot-claimed path
+    // that is NOT in expected.migrations is an unrelated ownership
+    // and restore must abort before DELETE.
+    const migrationPath = String(migration.path ?? '')
+    const migrationOriginalPath = String(migration.original_path ?? '')
+    if (snapshotClaimedPaths.has(migrationPath) || snapshotClaimedPaths.has(migrationOriginalPath)) {
+      if (!allowedMigrationKeys.has(key)) return false
     }
   }
 

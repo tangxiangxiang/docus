@@ -213,6 +213,7 @@ describe('metadata-committed prefix recovery', () => {
       sourceIno: 1,
       destDev: String(destStat.dev),
       destIno: String(destStat.ino),
+      emptyTree: true,
       entries: [],
       directories: [],
       metadataDisposition: { kind: 'prefix-move' },

@@ -82,6 +82,7 @@ import {
   moveDocumentMetadataPrefix,
   moveDocumentMetadataReplacingDestination,
   restoreDocumentMetadataMutationCAS,
+  snapshotDocumentMetadataOwnership,
   validateSnapshotOwnership,
 } from './documentMetadata.js'
 import {
@@ -108,7 +109,6 @@ import {
   reviveMetadataSnapshot,
   validateDirectoryManifest,
   validateFolderMovePhaseShape,
-  validateFolderMoveJournalV4Provenance,
   validateJournalEntriesV4,
   validateSnapshotPhysicalEntries,
   type FolderMoveJournalEntry,
@@ -929,38 +929,57 @@ async function recoverFileRenameJournal(
   note(journalAbs, 'quarantined', 'ambiguous file-rename state retained for inspection')
 }
 
+type CompanionFolderMoveLookup =
+  | { kind: 'none' }
+  | { kind: 'single'; path: string; version: 1 | 2 | 3 | 4 }
+  | { kind: 'conflict'; paths: string[] }
+
 /** Find a folder-move journal bound to the move srcRel→destRel living
  * next to the move's source directory — the durable companion a
  * reference rollback (or delete rollback) writes before moving. Used
  * to DEFER: while the companion exists, it owns the tree, and the
- * reference journal must not move anything itself (either group order
- * in the recovery walk converges the same way). */
-async function findCompanionFolderMoveJournal(contentDir: string, moveSrcRel: string, moveDestRel: string): Promise<string | null> {
+ * reference journal must not move anything itself.
+ *
+ * Round-14 P1-4: returns a discriminated union so callers can react
+ * to multiple-companion conflict (multiple authoritative companions
+ * for the same move must quarantine the caller without creating any
+ * new journal — round-13 returned the first match, silently missing
+ * later companions). */
+async function findCompanionFolderMoveJournals(
+  contentDir: string,
+  moveSrcRel: string,
+  moveDestRel: string,
+): Promise<CompanionFolderMoveLookup> {
   const moveSrcAbs = path.join(contentDir, moveSrcRel)
   const dir = path.dirname(moveSrcAbs)
   let dirents: Dirent[]
   try {
     dirents = await fs.readdir(dir, { withFileTypes: true })
   } catch {
-    return null
+    return { kind: 'none' }
   }
+  const matches: Array<{ path: string; version: 1 | 2 | 3 | 4 }> = []
   for (const entry of dirents) {
     if (!entry.isFile()) continue
     const match = JOURNAL_RE.exec(entry.name)
     if (!match || match[1] !== path.basename(moveSrcAbs)) continue
     const abs = path.join(dir, entry.name)
     try {
-      // v4 first: if the companion is a v4 journal, it has priority.
-      // Legacy parser rejects v4 — so try the v4 parser first.
       const raw = await fs.readFile(abs, 'utf8')
       const v4Journal = parseFolderRenameJournalV4(raw)
-      if (v4Journal && v4Journal.srcRel === moveSrcRel && v4Journal.destRel === moveDestRel) return abs
-      // Fall back to legacy parser for v1–v3 journals.
+      if (v4Journal && v4Journal.srcRel === moveSrcRel && v4Journal.destRel === moveDestRel) {
+        matches.push({ path: abs, version: 4 })
+        continue
+      }
       const journal = parseFolderRenameJournal(raw)
-      if (journal && journal.srcRel === moveSrcRel && journal.destRel === moveDestRel) return abs
+      if (journal && journal.srcRel === moveSrcRel && journal.destRel === moveDestRel) {
+        matches.push({ path: abs, version: journal.version as 1 | 2 | 3 })
+      }
     } catch { /* unreadable companion: treat as absent */ }
   }
-  return null
+  if (matches.length === 0) return { kind: 'none' }
+  if (matches.length === 1) return { kind: 'single', path: matches[0].path, version: matches[0].version }
+  return { kind: 'conflict', paths: matches.map((m) => m.path) }
 }
 
 async function recoverRenameReferencesJournal(
@@ -1174,8 +1193,12 @@ async function recoverRenameReferencesJournal(
         // file moves. If that journal already exists (a crash left
         // it), it owns the tree and this journal waits: recovery
         // replays it on a later startup once the tree has settled.
-        const companion = await findCompanionFolderMoveJournal(contentDir, journal.destRel, journal.srcRel)
-        if (companion) {
+        const companion = await findCompanionFolderMoveJournals(contentDir, journal.destRel, journal.srcRel)
+        if (companion.kind === 'conflict') {
+          note(journalAbs, 'quarantined', `multiple authoritative folder-move companions exist: ${companion.paths.map((p) => path.basename(p)).join(', ')}`)
+          return
+        }
+        if (companion.kind === 'single') {
           note(journalAbs, 'quarantined', 'rename-reference rollback deferred to its folder-move journal')
           return
         }
@@ -1211,16 +1234,23 @@ async function recoverRenameReferencesJournal(
             ...(entry.documentId !== undefined ? { documentId: entry.documentId } : {}),
             ...(entry.documentPath !== undefined ? { documentPath: entry.documentPath } : {}),
           }))
+          // Round-14 P1-5: recovery-created companion journals are
+          // v4 ONLY. v1–v3 journals were weakly typed (gate token on
+          // disk, no per-entry generation proof) and a recovery that
+          // wrote v2 here could be parsed by legacy parsers but never
+          // reach the v4 phase machine — recovery would resolve to a
+          // stale-journal cleanup and silently lose the data.
           await writeDurableJournal(moveJournalAbs, {
-            version: 2,
+            version: FOLDER_MOVE_JOURNAL_VERSION,
             op: 'folder-move',
+            phase: 'prepared',
             srcRel: journal.destRel,
             destRel: journal.srcRel,
-            sourceDev: destStat.dev,
-            sourceIno: destStat.ino,
             strategy: moveStrategy,
-            ...(moveEntries.length === 0 ? { emptyTree: true } : {}),
-            entries: moveEntries,
+            sourceDev: Number(destStat.dev),
+            sourceIno: Number(destStat.ino),
+            ...(moveJournalEntries.length === 0 ? { emptyTree: true } : {}),
+            entries: moveJournalEntries,
             directories: moveDirectories,
             metadataDisposition: { kind: 'prefix-move' },
           })
@@ -1334,6 +1364,26 @@ function verifyPrefixMetadataCommitted(
   return null
 }
 
+/** Round-14 P1-2: row-by-row equality of two Record arrays. Each row
+ * is serialized to a canonical JSON form (keys sorted) so equality
+ * is independent of key order or whitespace. Order of rows also
+ * matters — both arrays must appear in the same order. */
+function canonicalRow(row: Record<string, unknown>): string {
+  const ordered: Record<string, unknown> = {}
+  for (const key of Object.keys(row).sort()) ordered[key] = row[key]
+  return JSON.stringify(ordered)
+}
+function rowsExactlyEqualSnapshot(
+  live: readonly Record<string, unknown>[],
+  expected: readonly Record<string, unknown>[],
+): boolean {
+  if (live.length !== expected.length) return false
+  for (let i = 0; i < live.length; i += 1) {
+    if (canonicalRow(live[i] as Record<string, unknown>) !== canonicalRow(expected[i] as Record<string, unknown>)) return false
+  }
+  return true
+}
+
 /**
  * Reconcile a journaled folder move (the unified replay for every
  * journal that carries entries — v2 physical journals and normalized
@@ -1383,18 +1433,19 @@ async function recoverFolderMoveJournalV4(
   const isSnapshotRestore = journal.metadataDisposition.kind === 'snapshot-restore'
   const effectiveSrcRel = isSnapshotRestore ? '' : journal.srcRel
 
-  // round-12 provenance gate: structural validity before path resolution.
-  // A forged journal with srcRel="../outside" or srcRel===destRel would
-  // otherwise resolve to an unexpected path and be processed as valid.
-  const provenanceError = validateFolderMoveJournalV4Provenance(journal)
-  if (provenanceError !== null) {
-    note(journalAbs, 'quarantined', `v4 provenance validation failed: ${provenanceError}`)
-    return
-  }
-
-  const rootProvenanceError = validateFolderMoveJournalV4RootProvenance(journal, contentDir)
+  // round-14 P0-3 / P1-1: unified provenance validator. Replaces the
+  // round-12 lexical validator and the round-13 root-aware validator
+  // with a single trust-boundary check covering:
+  //   * structural validity of every path
+  //   * physical containment of every endpoint and per-entry path
+  //   * symlink/junction rejection on the journal file itself and on
+  //     the source/destination endpoints
+  //   * journal filename binding to the source directory
+  //   * directory manifest schema (sort, dedup, parent/ancestor
+  //     closure, reserved-segment detection, emptyTree invariant)
+  const rootProvenanceError = await validateFolderMoveJournalV4RootProvenance(journal, contentDir, journalAbs)
   if (rootProvenanceError !== null) {
-    note(journalAbs, 'quarantined', `v4 root provenance validation failed: ${rootProvenanceError}`)
+    note(journalAbs, 'quarantined', `v4 provenance validation failed: ${rootProvenanceError}`)
     return
   }
 
@@ -1467,24 +1518,13 @@ async function recoverFolderMoveJournalV4(
   // destDev/destIno (validated above).
   let destGeneration = { dev: journal.destDev as string, ino: journal.destIno as string }
   let destOk = await verifyDirectoryGeneration(destAbs, destGeneration)
-  // round-12 P0: on POSIX with atomic-rename strategy, a successful
-  // fs.rename(src, dest) replaces the pre-created gate directory with
-  // the source directory. The gate's inode is no longer valid — the
-  // destination now carries the source directory's inode. If the
-  // strategy was atomic-rename and verification failed, re-stat the
-  // destination to get the actual generation. This handles the normal
-  // crash-recovery seam where the route died between rename and
-  // rewriting the journal with the corrected dest generation.
-  if (!destOk && journal.strategy === 'atomic-rename') {
-    try {
-      const reStat = await fs.stat(destAbs)
-      destGeneration = { dev: String(reStat.dev), ino: String(reStat.ino) }
-      destOk = true
-    } catch {
-      note(journalAbs, 'quarantined', 'v4 destination directory vanished during recovery re-stat')
-      return
-    }
-  }
+  // round-14 P0-1/P0-2: NO re-stat fall-back. A journal at any phase
+  // past `prepared` carries the EXACT destination generation the route
+  // captured (gate-created = gate inode; files-landed+ = the actual
+  // destination inode post-rename or post-replay). If the on-disk
+  // generation does not match the journal, recovery MUST quarantine:
+  // a brand-new inode on disk could be an external writer's directory,
+  // not the route's gate or post-rename destination.
   if (!destOk) {
     note(journalAbs, 'quarantined', 'v4 destination directory generation does not match journal')
     return
@@ -1570,29 +1610,23 @@ async function recoverFolderMoveJournalV4(
   }
 
   if (journal.phase === 'files-landed') {
-    // For atomic-rename strategy on POSIX, the destination directory
-    // may have a different inode than what's recorded in the journal
-    // (the gate was replaced by rename). Re-stat to get the real gen
-    // before parity checking.
-    let filesLandedDestGen = { dev: journal.destDev as string, ino: journal.destIno as string }
-    let filesLandedDestOk = await verifyDirectoryGeneration(destAbs, filesLandedDestGen)
-    if (!filesLandedDestOk && journal.strategy === 'atomic-rename') {
-      try {
-        const reStat = await fs.stat(destAbs)
-        filesLandedDestGen = { dev: String(reStat.dev), ino: String(reStat.ino) }
-        filesLandedDestOk = true
-      } catch {
-        note(journalAbs, 'quarantined', 'v4 files-landed: destination directory vanished during recovery')
-        return
-      }
+    // Round-14 P0-2: NO re-stat fall-back for files-landed. The
+    // journal at this phase carries the FINAL destination generation
+    // the route captured AFTER rename(2) (atomic) or after the
+    // replayable per-file moves completed. If the on-disk generation
+    // does not match, the destination is foreign — quarantine.
+    if (!journal.destDev || !journal.destIno) {
+      note(journalAbs, 'quarantined', 'files-landed journal has no final destination generation')
+      return
     }
+    const filesLandedDestGen = { dev: journal.destDev, ino: journal.destIno }
+    const filesLandedDestOk = await verifyDirectoryGeneration(destAbs, filesLandedDestGen)
     if (!filesLandedDestOk) {
       note(journalAbs, 'quarantined', 'v4 files-landed: destination directory generation does not match journal')
       return
     }
     // Parity must already pass (the route left phase=files-landed only
-    // after exact parity). Re-verify for safety. Use corrected gen if
-    // we had to re-stat for atomic strategy.
+    // after exact parity). Re-verify for safety.
     const parityFailed = await verifyFolderMoveDestinationV4(destAbs, {
       destDev: filesLandedDestGen.dev,
       destIno: filesLandedDestGen.ino,
@@ -1636,21 +1670,52 @@ async function recoverFolderMoveJournalV4(
   }
 
   if (journal.phase === 'metadata-committed') {
-    // Final step on disk. Verify dest generation AND metadata state,
-    // then remove the journal.
+    // Round-14 P0-3 / P1-2 / P1-3: strict verification of destination
+    // generation AND the full metadata graph BEFORE removing the journal.
+    // Round-13 only checked the FIRST documentId of snapshot-restore
+    // journals and a single-row prefix-move check; a forged or
+    // drifted live DB could pass those weak checks and have its
+    // migration rows deleted.
+    if (!journal.destDev || !journal.destIno) {
+      note(journalAbs, 'quarantined', 'metadata-committed journal has no final destination generation')
+      return
+    }
+    const finalDestGen = { dev: journal.destDev, ino: journal.destIno }
+    if (!await verifyDirectoryGeneration(destAbs, finalDestGen)) {
+      note(journalAbs, 'quarantined', 'metadata-committed destination generation no longer matches journal')
+      return
+    }
     if (disposition.kind === 'snapshot-restore') {
-      // The snapshot was already installed; verify it is still there.
-      const revived = reviveMetadataSnapshot(disposition.snapshot)
-      if (revived.documentIds.length > 0) {
-        const liveDoc = db.prepare('SELECT id FROM documents WHERE id = ?').get(revived.documentIds[0]) as { id: string } | undefined
-        if (!liveDoc) {
-          note(journalAbs, 'quarantined', 'v4 metadata-committed but snapshot document not found')
-          return
-        }
+      // Round-14 P1-2: validate the FULL graph inside an IMMEDIATE
+      // transaction. The CAS validate-once-then-restore pattern of
+      // round-13 (the ownership check passed and `restoreDocument
+      // MetadataMutation` deleted rows afterward) leaves a window
+      // where the snapshot says X but a concurrent writer changed
+      // rows to Y between validation and restore. The new behavior
+      // is: verify, and if the snapshot's exact graph is not present,
+      // quarantine WITHOUT touching the DB.
+      if (!isValidDeleteRollbackSnapshot(disposition.snapshot, journal.destRel)) {
+        note(journalAbs, 'quarantined', 'v4 metadata-committed snapshot is invalid')
+        return
       }
-      // Empty tree snapshot: no documents to verify — dest directory must exist.
+      const revived = reviveMetadataSnapshot(disposition.snapshot)
+      const liveTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>).map((row) => row.id)
+      revived.preexistingTagIds = [...new Set([...liveTagIds, ...revived.preexistingTagIds])]
+      // Row-by-row comparison: every snapshot row must exist verbatim
+      // in the live DB. Round-13 used a partial first-document check;
+      // round-14 demands exact identity for ALL tables.
+      const live = snapshotDocumentMetadataOwnership(db, revived.paths, revived.documentIds, revived.tagIds)
+      if (!rowsExactlyEqualSnapshot(live.documents, revived.documents)
+        || !rowsExactlyEqualSnapshot(live.tags, revived.tags)
+        || !rowsExactlyEqualSnapshot(live.documentTags, revived.documentTags)
+        || !rowsExactlyEqualSnapshot(live.embeddings, revived.embeddings)
+        || !rowsExactlyEqualSnapshot(live.migrations, revived.migrations)) {
+        note(journalAbs, 'quarantined', 'v4 metadata-committed snapshot does not match the live graph exactly')
+        return
+      }
+      // Destination must exist as a directory for snapshot-restore.
       if (!await isDirectory(destAbs)) {
-        note(journalAbs, 'quarantined', 'v4 snapshot-restore journal but destination directory absent')
+        note(journalAbs, 'quarantined', 'v4 metadata-committed snapshot-restore destination absent')
         return
       }
     } else {
