@@ -272,6 +272,16 @@ describe('Round-16 prepared snapshot restore recovery', () => {
 })
 
 describe('Round-16 reverse final verification', () => {
+  beforeEach(() => {
+    // This test validates the shared metadata-committed final
+    // verifier, not platform-specific atomic directory rename support.
+    //
+    // Force the replayable protocol so Windows reaches the intended
+    // reverse metadata / final parity seam instead of returning 501
+    // for an unsupported atomic directory rename.
+    __setDirectoryMoveStrategyOverrideForTesting('replayable-move')
+  })
+
   it('retains the rollback journal when the restored directory inode is externally replaced', async () => {
     await seedFolder()
     await fs.writeFile(path.join(vault, 'ref.md'), 'see [[proj/a]]\n')
