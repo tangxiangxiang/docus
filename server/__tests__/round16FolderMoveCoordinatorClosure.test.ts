@@ -16,6 +16,7 @@ import {
 import {
   __setCreateOnlyMoveHooksForTesting,
   __setDirectoryMoveStrategyOverrideForTesting,
+  platformDirectoryMoveStrategy,
 } from '../documentFileLifecycle'
 import { __resetLinkIndexForTesting } from '../linkIndex'
 import { setContentDir } from '../paths'
@@ -42,7 +43,7 @@ beforeEach(async () => {
   __setMetadataDbForTesting(db)
   setContentDir(vault)
   __resetLinkIndexForTesting()
-  __setDirectoryMoveStrategyOverrideForTesting('atomic-rename')
+  __setDirectoryMoveStrategyOverrideForTesting(null)
 })
 
 afterEach(async () => {
@@ -101,7 +102,12 @@ async function readOnlyV4Journal(): Promise<{
   }
 }
 
-describe('Round-16 HTTP executor ownership', () => {
+describe.runIf(platformDirectoryMoveStrategy === 'atomic-rename')(
+  'Round-16 HTTP atomic executor ownership',
+  () => {
+  beforeEach(() => {
+    __setDirectoryMoveStrategyOverrideForTesting('atomic-rename')
+  })
   it('keeps a real post-rename stat failure under durable recovery ownership', async () => {
     await seedFolder()
     let renameLanded = false
@@ -209,7 +215,8 @@ describe('Round-16 HTTP executor ownership', () => {
     expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
     expect(await fs.readFile(path.join(vault, 'ren', 'a.md'), 'utf8')).toBe('# hello\n')
   })
-})
+  },
+)
 
 describe('Round-16 prepared snapshot restore recovery', () => {
   it('resumes a delete rollback killed immediately after its prepared journal', async () => {

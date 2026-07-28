@@ -24,6 +24,7 @@ import {
   listPhysicalMoveEntries,
   type FolderMoveJournalV4,
 } from '../folderMoveTransaction'
+import { platformDirectoryMoveStrategy } from '../documentFileLifecycle'
 import { setContentDir } from '../paths'
 
 const TSX_CLI = fileURLToPath(import.meta.resolve('tsx/cli'))
@@ -179,7 +180,9 @@ describe('Round-15 metadata-committed physical parity', () => {
   })
 })
 
-describe('Round-15 real atomic route crash', () => {
+describe.runIf(platformDirectoryMoveStrategy === 'atomic-rename')(
+  'Round-15 real atomic route crash',
+  () => {
   it('recovers and remains idempotent after rename lands before destination stat', async () => {
     await seed({ 'proj/a.md': '# hello\n' })
     const sourceStat = await fs.stat(path.join(vault, 'proj'), { bigint: true })
@@ -237,9 +240,12 @@ describe('Round-15 real atomic route crash', () => {
       persistedDb.close()
     }
   })
-})
+  },
+)
 
-describe('Round-15 post-rename stat failure', () => {
+describe.runIf(platformDirectoryMoveStrategy === 'atomic-rename')(
+  'Round-15 post-rename stat failure',
+  () => {
   it('retains a gate-created journal that recovery can complete', async () => {
     await seed({ 'proj/a.md': '# hello\n' })
     saveDocumentMetadata(db, { id: 'doc-1', path: 'proj/a', title: 'Hello' })
@@ -301,7 +307,8 @@ describe('Round-15 post-rename stat failure', () => {
     await expect(fs.stat(journalAbs)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(db.prepare('SELECT id FROM documents WHERE path = ?').get('ren/a')).toEqual({ id: 'doc-1' })
   })
-})
+  },
+)
 
 describe('Round-15 snapshot CAS full-row ownership', () => {
   it.each([

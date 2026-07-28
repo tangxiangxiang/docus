@@ -9,7 +9,12 @@ import {
   getDocumentMetadata,
   saveDocumentMetadata,
 } from '../documentMetadata'
-import { __setDirectoryMoveStrategyOverrideForTesting } from '../documentFileLifecycle'
+import {
+  __setCreateOnlyMoveHooksForTesting,
+  __setDirectoryMoveStrategyOverrideForTesting,
+  platformDirectoryMoveStrategy,
+} from '../documentFileLifecycle'
+import { recoverInterruptedOperations } from '../crashRecovery'
 import app, { __setMetadataDbForTesting } from '../index'
 import { __resetLinkIndexForTesting } from '../linkIndex'
 import { setContentDir } from '../paths'
@@ -27,10 +32,13 @@ beforeEach(async () => {
   __setMetadataDbForTesting(db)
   setContentDir(vault)
   __resetLinkIndexForTesting()
-  __setDirectoryMoveStrategyOverrideForTesting('atomic-rename')
+  // Exercise the production capability matrix:
+  // POSIX uses atomic-rename; Windows uses replayable-move.
+  __setDirectoryMoveStrategyOverrideForTesting(null)
 })
 
 afterEach(async () => {
+  __setCreateOnlyMoveHooksForTesting(null)
   __setDirectoryMoveStrategyOverrideForTesting(null)
   __setMetadataDbForTesting(null)
   db.close()
@@ -64,3 +72,68 @@ describe('folder route v4 coordinator', () => {
     expect((await fs.readdir(vault)).some(name => name.includes('.docus-journal-'))).toBe(false)
   })
 })
+
+describe.runIf(platformDirectoryMoveStrategy === 'replayable-move')(
+  'Windows replayable folder move coverage',
+  () => {
+    it('recovers a platform move interrupted after one entry', async () => {
+      await fs.mkdir(path.join(vault, 'proj'))
+      await fs.writeFile(path.join(vault, 'proj', 'a.md'), '# a\n')
+      await fs.writeFile(path.join(vault, 'proj', 'b.md'), '# b\n')
+      saveDocumentMetadata(db, {
+        id: 'route-a-id',
+        path: 'proj/a',
+        title: 'A',
+        updatedAt: 1,
+      })
+      saveDocumentMetadata(db, {
+        id: 'route-b-id',
+        path: 'proj/b',
+        title: 'B',
+        updatedAt: 1,
+      })
+      let interrupted = false
+      __setCreateOnlyMoveHooksForTesting({
+        afterReplayableMovedEntry: async () => {
+          if (interrupted) return
+          interrupted = true
+          throw new Error('injected Windows replayable interruption')
+        },
+      })
+
+      const response = await app.fetch(new Request('http://localhost/api/folders/proj', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ newPath: 'ren' }),
+      }))
+
+      expect(response.status).toBe(500)
+      expect(interrupted).toBe(true)
+      const journalName = (await fs.readdir(vault))
+        .find(name => name.includes('.docus-journal-'))
+      expect(journalName).toBeDefined()
+      const journal = JSON.parse(
+        await fs.readFile(path.join(vault, journalName!), 'utf8'),
+      ) as { phase: string; strategy: string }
+      expect(journal).toMatchObject({
+        phase: 'gate-created',
+        strategy: 'replayable-move',
+      })
+
+      __setCreateOnlyMoveHooksForTesting(null)
+      const first = await recoverInterruptedOperations(vault, db)
+      expect(first.actions).toContainEqual(expect.objectContaining({
+        action: 'completed-rename',
+      }))
+      expect(await fs.readFile(path.join(vault, 'ren', 'a.md'), 'utf8')).toBe('# a\n')
+      expect(await fs.readFile(path.join(vault, 'ren', 'b.md'), 'utf8')).toBe('# b\n')
+      await expect(fs.stat(path.join(vault, 'proj'))).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('route-a-id')
+      expect(getDocumentMetadata(db, 'ren/b')?.id).toBe('route-b-id')
+
+      const second = await recoverInterruptedOperations(vault, db)
+      expect(second.actions).toEqual([])
+      expect((await fs.readdir(vault)).some(name => name.includes('.docus-journal-'))).toBe(false)
+    })
+  },
+)

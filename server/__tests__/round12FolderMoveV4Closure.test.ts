@@ -92,7 +92,7 @@ describe('Parity failure retains journal', () => {
     await fs.writeFile(path.join(vault, 'ren', 'a.md'), 'tampered', 'utf8')
 
     const projStat = await fs.stat(path.join(vault, 'proj'))
-    const destStat = await fs.stat(path.join(vault, 'ren'))
+    const destStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
 
     const physical = await listPhysicalMoveEntries(path.join(vault, 'proj'))
     const entriesV4: FolderMoveJournalEntryV4[] = physical.entries.map((e) => ({
@@ -111,8 +111,8 @@ describe('Parity failure retains journal', () => {
       strategy: 'replayable-move',
       sourceDev: Number(projStat.dev),
       sourceIno: Number(projStat.ino),
-      destDev: String(destStat.dev),
-      destIno: String(destStat.ino),
+      destDev: destStat.dev.toString(),
+      destIno: destStat.ino.toString(),
       entries: entriesV4,
       directories: physical.directories,
       metadataDisposition: { kind: 'prefix-move' },
@@ -200,7 +200,7 @@ describe('metadata-committed prefix recovery', () => {
   it('removes journal when dest metadata exists under prefix', async () => {
     await seed({ 'ren/a.md': '# hello\n' })
 
-    const destStat = await fs.stat(path.join(vault, 'ren'))
+    const destStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
     const physical = await listPhysicalMoveEntries(path.join(vault, 'ren'), () => ({
       documentId: 'doc-1',
       documentPath: 'proj/a',
@@ -215,8 +215,8 @@ describe('metadata-committed prefix recovery', () => {
       strategy: 'atomic-rename',
       sourceDev: 1,
       sourceIno: 1,
-      destDev: String(destStat.dev),
-      destIno: String(destStat.ino),
+      destDev: destStat.dev.toString(),
+      destIno: destStat.ino.toString(),
       entries: physical.entries.map((entry) => ({
         relativeFilePath: entry.relativeFilePath,
         sourceDev: entry.sourceDev!,
@@ -247,7 +247,7 @@ describe('metadata-committed prefix recovery', () => {
     // forward completion is ambiguous — quarantine is correct.
     await seed({ 'proj/a.md': '# orphaned\n' })
     await fs.mkdir(path.join(vault, 'ren'))
-    const destStat = await fs.stat(path.join(vault, 'ren'))
+    const destStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
 
     const journal: FolderMoveJournalV4 = {
       version: 4,
@@ -258,8 +258,8 @@ describe('metadata-committed prefix recovery', () => {
       strategy: 'atomic-rename',
       sourceDev: 1,
       sourceIno: 1,
-      destDev: String(destStat.dev),
-      destIno: String(destStat.ino),
+      destDev: destStat.dev.toString(),
+      destIno: destStat.ino.toString(),
       entries: [],
       directories: [],
       metadataDisposition: { kind: 'prefix-move' },
