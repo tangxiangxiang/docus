@@ -106,6 +106,7 @@ import {
   reviveMetadataSnapshot,
   validateDirectoryManifest,
   validateFolderMovePhaseShape,
+  validateSourceDirectoryGeneration,
   validateJournalEntriesV4,
   validateSnapshotPhysicalEntries,
   type FolderMoveJournalEntry,
@@ -1202,7 +1203,7 @@ async function recoverRenameReferencesJournal(
         // per-file protocol on POSIX and kill recovery mid-replay.
         const moveStrategy = resolveDirectoryMoveStrategy()
         try {
-          const destStat = await fs.stat(destAbs)
+          const destStat = await fs.stat(destAbs, { bigint: true })
           const moveJournalEntries: FolderMoveJournalEntryV4[] = moveEntries.map((entry) => ({
             relativeFilePath: entry.relativeFilePath,
             sourceDev: entry.sourceDev ?? '',
@@ -1224,8 +1225,8 @@ async function recoverRenameReferencesJournal(
             srcRel: journal.destRel,
             destRel: journal.srcRel,
             strategy: moveStrategy,
-            sourceDev: Number(destStat.dev),
-            sourceIno: Number(destStat.ino),
+            sourceDev: destStat.dev.toString(),
+            sourceIno: destStat.ino.toString(),
             ...(moveJournalEntries.length === 0 ? { emptyTree: true } : {}),
             entries: moveJournalEntries,
             directories: moveDirectories,
@@ -1490,6 +1491,11 @@ async function recoverFolderMoveJournalV4(
   const phaseError = validateFolderMovePhaseShape(journal)
   if (phaseError !== null) {
     note(journalAbs, 'quarantined', `v4 phase shape failed: ${phaseError}`)
+    return
+  }
+  const sourceGenerationError = validateSourceDirectoryGeneration(journal)
+  if (sourceGenerationError !== null) {
+    note(journalAbs, 'quarantined', `v4 source generation failed: ${sourceGenerationError}`)
     return
   }
   for (const entry of entries) {

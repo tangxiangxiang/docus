@@ -34,6 +34,7 @@ import {
   type FolderMoveJournalEntryV4,
   type FolderMoveJournalV4,
 } from '../folderMoveTransaction.js'
+import { parseDurableFolderMoveJournalV4 } from '../folderMoveV4DurableJournal'
 import { saveDocumentMetadata } from '../documentMetadata'
 import { setContentDir } from '../paths'
 
@@ -91,7 +92,7 @@ describe('Parity failure retains journal', () => {
     // Tamper with it — wrong content.
     await fs.writeFile(path.join(vault, 'ren', 'a.md'), 'tampered', 'utf8')
 
-    const projStat = await fs.stat(path.join(vault, 'proj'))
+    const projStat = await fs.stat(path.join(vault, 'proj'), { bigint: true })
     const destStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
 
     const physical = await listPhysicalMoveEntries(path.join(vault, 'proj'))
@@ -109,8 +110,8 @@ describe('Parity failure retains journal', () => {
       srcRel: 'proj',
       destRel: 'ren',
       strategy: 'replayable-move',
-      sourceDev: Number(projStat.dev),
-      sourceIno: Number(projStat.ino),
+      sourceDev: projStat.dev.toString(),
+      sourceIno: projStat.ino.toString(),
       destDev: destStat.dev.toString(),
       destIno: destStat.ino.toString(),
       entries: entriesV4,
@@ -151,8 +152,8 @@ describe('v4 journal provenance validation', () => {
       srcRel: '../outside/proj',
       destRel: 'ren',
       strategy: 'atomic-rename',
-      sourceDev: 1,
-      sourceIno: 1,
+      sourceDev: '1',
+      sourceIno: '1',
       destDev: '1',
       destIno: '1',
       entries: entriesV4,
@@ -176,8 +177,8 @@ describe('v4 journal provenance validation', () => {
       srcRel: 'proj',
       destRel: 'proj',
       strategy: 'atomic-rename',
-      sourceDev: 1,
-      sourceIno: 1,
+      sourceDev: '1',
+      sourceIno: '1',
       destDev: '1',
       destIno: '1',
       entries: [],
@@ -191,6 +192,41 @@ describe('v4 journal provenance validation', () => {
 
     const report = await recoverInterruptedOperations(vault, db)
     expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
+  })
+})
+
+describe('v4 directory generation parsing', () => {
+  const journal = {
+    version: 4,
+    op: 'folder-rename',
+    phase: 'prepared',
+    srcRel: 'proj',
+    destRel: 'ren',
+    strategy: 'atomic-rename',
+    entries: [],
+    directories: [],
+    metadataDisposition: { kind: 'prefix-move' },
+  }
+
+  it('normalizes legacy safe integer generations to decimal strings', () => {
+    const parsed = parseDurableFolderMoveJournalV4(JSON.stringify({
+      ...journal,
+      sourceDev: 7,
+      sourceIno: 11,
+    }))
+
+    expect(parsed?.sourceDev).toBe('7')
+    expect(parsed?.sourceIno).toBe('11')
+  })
+
+  it('fails closed when a legacy numeric generation is not a safe integer', () => {
+    const parsed = parseDurableFolderMoveJournalV4(JSON.stringify({
+      ...journal,
+      sourceDev: Number.MAX_SAFE_INTEGER + 1,
+      sourceIno: 11,
+    }))
+
+    expect(parsed).toBeNull()
   })
 })
 
@@ -213,8 +249,8 @@ describe('metadata-committed prefix recovery', () => {
       srcRel: 'proj',
       destRel: 'ren',
       strategy: 'atomic-rename',
-      sourceDev: 1,
-      sourceIno: 1,
+      sourceDev: '1',
+      sourceIno: '1',
       destDev: destStat.dev.toString(),
       destIno: destStat.ino.toString(),
       entries: physical.entries.map((entry) => ({
@@ -256,8 +292,8 @@ describe('metadata-committed prefix recovery', () => {
       srcRel: 'proj',
       destRel: 'ren',
       strategy: 'atomic-rename',
-      sourceDev: 1,
-      sourceIno: 1,
+      sourceDev: '1',
+      sourceIno: '1',
       destDev: destStat.dev.toString(),
       destIno: destStat.ino.toString(),
       entries: [],
@@ -290,8 +326,8 @@ describe('v4 companion journal detection', () => {
       srcRel: 'proj',
       destRel: 'ren',
       strategy: 'atomic-rename',
-      sourceDev: 1,
-      sourceIno: 1,
+      sourceDev: '1',
+      sourceIno: '1',
       entries: [],
       directories: [],
       metadataDisposition: { kind: 'prefix-move' },

@@ -522,8 +522,8 @@ export type FolderMoveJournalV4 = {
   srcRel: string
   destRel: string
   strategy: import('./documentFileLifecycle.js').FolderMoveJournalStrategy
-  sourceDev: number
-  sourceIno: number
+  sourceDev: string
+  sourceIno: string
   /**
    * phase=prepared: MUST be undefined.
    * phase=gate-created, files-landed, metadata-committed: REQUIRED
@@ -568,6 +568,18 @@ export function validateFolderMovePhaseShape(
 const SHA256_RE = /^[0-9a-f]{64}$/
 const DECIMAL_RE = /^\d+$/
 const POSITIVE_DECIMAL_RE = /^[1-9]\d*$/
+
+export function validateSourceDirectoryGeneration(
+  journal: FolderMoveJournalV4,
+): string | null {
+  if (!DECIMAL_RE.test(journal.sourceDev)) {
+    return 'sourceDev must be a decimal string'
+  }
+  if (!POSITIVE_DECIMAL_RE.test(journal.sourceIno)) {
+    return 'sourceIno must be a positive decimal string'
+  }
+  return null
+}
 
 function validRelativePath(value: string): boolean {
   if (!value

@@ -256,6 +256,12 @@ describe('Round-16 prepared snapshot restore recovery', () => {
     const prepared = await readOnlyV4Journal()
     expect(prepared.journal.phase).toBe('prepared')
     expect(prepared.journal.metadataDisposition.kind).toBe('snapshot-restore')
+    const preparedSourceStat = await fs.stat(
+      path.join(vault, prepared.journal.srcRel),
+      { bigint: true },
+    )
+    expect(prepared.journal.sourceDev).toBe(preparedSourceStat.dev.toString())
+    expect(prepared.journal.sourceIno).toBe(preparedSourceStat.ino.toString())
     await expect(fs.stat(path.join(vault, 'gone'))).rejects.toMatchObject({ code: 'ENOENT' })
 
     const recoveryDb = new Database(dbPath)

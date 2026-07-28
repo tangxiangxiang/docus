@@ -70,7 +70,7 @@ describe('atomic rename destination generation', () => {
     })
     saveDocumentMetadata(db, { id: 'doc-1', path: 'ren/a', title: 'Hello' })
 
-    const destStat = await fs.stat(path.join(vault, 'ren'))
+    const destStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
     const physical = await listPhysicalMoveEntries(path.join(vault, 'ren'), (rel) => {
       if (!rel.endsWith('.md')) return null
       return { documentId: 'doc-1', documentPath: `ren/${rel.slice(0, -'.md'.length)}` }
@@ -95,8 +95,8 @@ describe('atomic rename destination generation', () => {
       srcRel: 'proj',
       destRel: 'ren',
       strategy: 'atomic-rename',
-      sourceDev: Number(destStat.dev),
-      sourceIno: Number(destStat.ino),
+      sourceDev: destStat.dev.toString(),
+      sourceIno: destStat.ino.toString(),
       destDev: fakeGen.dev,
       destIno: fakeGen.ino,
       entries: entriesV4,
@@ -122,7 +122,7 @@ describe('atomic rename destination generation', () => {
 describe('metadata-committed snapshot-restore empty-tree', () => {
   it('does not crash on empty documentIds array', async () => {
     await seed({ 'ren': '' })
-    const destStat = await fs.stat(path.join(vault, 'ren'))
+    const destStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
 
     // Empty-tree delete rollback journal.
     const journal: FolderMoveJournalV4 = {
@@ -132,10 +132,10 @@ describe('metadata-committed snapshot-restore empty-tree', () => {
       srcRel: '.docus-delete-inflight-xyz',
       destRel: 'ren',
       strategy: 'atomic-rename',
-      sourceDev: 1,
-      sourceIno: 1,
-      destDev: String(destStat.dev),
-      destIno: String(destStat.ino),
+      sourceDev: '1',
+      sourceIno: '1',
+      destDev: destStat.dev.toString(),
+      destIno: destStat.ino.toString(),
       emptyTree: true,
       entries: [],
       directories: [],
@@ -172,7 +172,7 @@ describe('metadata-committed prefix-move empty-folder', () => {
     await seed({
       'ren/a.bin': 'binary content',
     })
-    const destStat = await fs.stat(path.join(vault, 'ren'))
+    const destStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
 
     const journal: FolderMoveJournalV4 = {
       version: 4,
@@ -181,10 +181,10 @@ describe('metadata-committed prefix-move empty-folder', () => {
       srcRel: 'proj',
       destRel: 'ren',
       strategy: 'atomic-rename',
-      sourceDev: 1,
-      sourceIno: 1,
-      destDev: String(destStat.dev),
-      destIno: String(destStat.ino),
+      sourceDev: '1',
+      sourceIno: '1',
+      destDev: destStat.dev.toString(),
+      destIno: destStat.ino.toString(),
       entries: [{ relativeFilePath: 'a.bin', sourceDev: '1', sourceIno: '1', sourceHash: 'abcdef'.repeat(10) }],
       directories: [],
       metadataDisposition: { kind: 'prefix-move' },
@@ -274,7 +274,7 @@ describe('P0-2: journal retention on parity failure', () => {
     })
     saveDocumentMetadata(db, { id: 'doc-1', path: 'proj/a', title: 'Hello' })
 
-    const realStat = await fs.stat(path.join(vault, 'proj'))
+    const realStat = await fs.stat(path.join(vault, 'proj'), { bigint: true })
     const physical = await listPhysicalMoveEntries(path.join(vault, 'proj'), (rel) => {
       if (!rel.endsWith('.md')) return null
       return { documentId: 'doc-1', documentPath: `proj/${rel.slice(0, -'.md'.length)}` }
@@ -287,10 +287,10 @@ describe('P0-2: journal retention on parity failure', () => {
       srcRel: 'proj',
       destRel: 'ren',
       strategy: 'atomic-rename',
-      sourceDev: Number(realStat.dev),
-      sourceIno: Number(realStat.ino),
-      destDev: String(realStat.dev),
-      destIno: String(realStat.ino),
+      sourceDev: realStat.dev.toString(),
+      sourceIno: realStat.ino.toString(),
+      destDev: realStat.dev.toString(),
+      destIno: realStat.ino.toString(),
       entries: physical.entries.map((entry) => ({
         relativeFilePath: entry.relativeFilePath,
         sourceDev: entry.sourceDev ?? '',

@@ -280,7 +280,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     // if the process dies between now and gate creation, recovery
     // sees phase=prepared with no dest generation → quarantines or
     // cleans up safely. Removed LAST after metadata-committed.
-    const sourceDirectoryStat = await fs.stat(src)
+    const sourceDirectoryStat = await fs.stat(src, { bigint: true })
     journalUuid = randomUUID()
     folderMoveJournal = {
       version: FOLDER_MOVE_JOURNAL_VERSION,
@@ -289,8 +289,8 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       srcRel: srcPath,
       destRel: newPath,
       strategy: moveStrategy,
-      sourceDev: Number(sourceDirectoryStat.dev),
-      sourceIno: Number(sourceDirectoryStat.ino),
+      sourceDev: sourceDirectoryStat.dev.toString(),
+      sourceIno: sourceDirectoryStat.ino.toString(),
       ...(physicalEntriesV4.length === 0 ? { emptyTree: true } : {}),
       entries: physicalEntriesV4,
       directories: physicalDirectoriesV4,
@@ -725,7 +725,7 @@ folderRoutes.delete('/api/folders/*', async (c) => {
             ...(e.documentPath !== undefined ? { documentPath: e.documentPath } : {}),
           }))
           rollbackPhysicalDirectoriesV4 = rollbackPhysical.directories
-          const stagedStat = await fs.stat(staged)
+          const stagedStat = await fs.stat(staged, { bigint: true })
           rollbackJournal = {
             version: FOLDER_MOVE_JOURNAL_VERSION,
             op: 'folder-move',
@@ -733,8 +733,8 @@ folderRoutes.delete('/api/folders/*', async (c) => {
             srcRel: stagedRel,
             destRel: folderP,
             strategy: rollbackStrategy,
-            sourceDev: Number(stagedStat.dev),
-            sourceIno: Number(stagedStat.ino),
+            sourceDev: stagedStat.dev.toString(),
+            sourceIno: stagedStat.ino.toString(),
             ...(rollbackPhysicalEntriesV4.length === 0 ? { emptyTree: true } : {}),
             entries: rollbackPhysicalEntriesV4,
             directories: rollbackPhysicalDirectoriesV4,
