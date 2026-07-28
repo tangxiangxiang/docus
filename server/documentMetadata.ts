@@ -187,109 +187,42 @@ export function snapshotDocumentMetadataOwnership(
   }
 }
 
-/** round-11 v4 production validator: check the live DB snapshot
- * against the expected snapshot. A live row that disagrees with the
- * expected row on its (id, path) OR (id, path) for a tag OR
- * (path, document_id, original_path) for a migration means the live
- * state has drifted from the journal's expected state — the restore
- * is unsafe. Returns true when ownership is intact. */
+function canonicalRecord(row: Record<string, unknown>): string {
+  const normalized: Record<string, unknown> = {}
+  for (const key of Object.keys(row).sort()) {
+    const value = row[key]
+    if (Buffer.isBuffer(value)) {
+      normalized[key] = { __buffer: value.toString('base64') }
+    } else if (value instanceof Uint8Array) {
+      normalized[key] = { __buffer: Buffer.from(value).toString('base64') }
+    } else {
+      normalized[key] = value
+    }
+  }
+  return JSON.stringify(normalized)
+}
+
+function liveRowsAreExpectedSubset(
+  live: readonly Record<string, unknown>[],
+  expected: readonly Record<string, unknown>[],
+): boolean {
+  const expectedRows = new Set(expected.map(canonicalRecord))
+  return live.every((row) => expectedRows.has(canonicalRecord(row)))
+}
+
+/** Every live row in the restore footprint must be byte-for-byte the
+ * row captured by the snapshot. Missing expected rows are allowed:
+ * rollback restores them. Added or column-drifted live rows reject the
+ * restore before it can overwrite an external transaction. */
 export function validateSnapshotOwnership(
   current: DocumentMetadataMutationSnapshot,
   expected: DocumentMetadataMutationSnapshot,
 ): boolean {
-  const expectedPathById = new Map<string, string>()
-  for (const row of expected.documents) {
-    const id = String(row.id)
-    const path = String(row.path)
-    if (!expectedPathById.has(id)) expectedPathById.set(id, path)
-  }
-  const expectedIdByPath = new Map<string, string>()
-  for (const row of expected.documents) {
-    const id = String(row.id)
-    const path = String(row.path)
-    if (!expectedIdByPath.has(path)) expectedIdByPath.set(path, id)
-  }
-
-  for (const live of current.documents) {
-    const liveId = String(live.id)
-    const livePath = String(live.path)
-    const expectedPath = expectedPathById.get(liveId)
-    if (expectedPath !== undefined && livePath !== expectedPath) return false
-    const expectedId = expectedIdByPath.get(livePath)
-    if (expectedId !== undefined && liveId !== expectedId) return false
-  }
-
-  const expectedTagById = new Map<number, string>()
-  for (const row of expected.tags) {
-    const id = Number(row.id)
-    const normalized = String(row.normalized_name)
-    if (!expectedTagById.has(id)) expectedTagById.set(id, normalized)
-  }
-  for (const liveTag of current.tags) {
-    const id = Number(liveTag.id)
-    const expectedNormalized = expectedTagById.get(id)
-    if (expectedNormalized !== undefined && String(liveTag.normalized_name) !== expectedNormalized) return false
-  }
-
-  const allowedMigrationKeys = new Set<string>()
-  for (const row of expected.migrations) {
-    allowedMigrationKeys.add(JSON.stringify([row.path, row.document_id, row.original_path]))
-  }
-  // Collect all snapshot-owned paths and their expected IDs for cross-checks.
-  const snapshotPathsByPath = new Map<string, string>()
-  for (const row of expected.migrations) {
-    const p = String(row.path)
-    if (!snapshotPathsByPath.has(p)) {
-      snapshotPathsByPath.set(p, String(row.document_id ?? ''))
-    }
-    const op = String(row.original_path ?? '')
-    if (op && !snapshotPathsByPath.has(op)) {
-      snapshotPathsByPath.set(op, String(row.document_id ?? ''))
-    }
-  }
-  // Round-14 P1-3: every live migration at a path the snapshot
-  // claims (via document.path, migration.path, or migration.original_path)
-  // must be in expected.migrations. The previous logic only rejected
-  // when the live migration's document_id was in expected.documentIds
-  // AND not in allowedMigrationKeys — a live migration at a snapshot
-  // path with an external document_id and NO matching expected row
-  // slipped through, and the restore would DELETE that external
-  // migration row (the snapshot's CAS only writes rows from expected).
-  const snapshotClaimedPaths = new Set<string>()
-  for (const row of expected.documents) snapshotClaimedPaths.add(String(row.path))
-  for (const path of expected.paths) snapshotClaimedPaths.add(path)
-  for (const path of snapshotPathsByPath.keys()) snapshotClaimedPaths.add(path)
-
-  const snapshotDocIdSet = new Set(expected.documentIds)
-  for (const migration of current.migrations) {
-    const key = JSON.stringify([migration.path, migration.document_id, migration.original_path])
-    const isReferencedBySnapshot = expected.documentIds.includes(String(migration.document_id))
-    if (isReferencedBySnapshot && !allowedMigrationKeys.has(key)) return false
-    // Round-12 P1: same-path migrations owned by an unrelated document.
-    if (snapshotDocIdSet.size > 0) {
-      const migrationPath = String(migration.path ?? '')
-      const migrationOriginalPath = String(migration.original_path ?? '')
-      for (const sp of [migrationPath, migrationOriginalPath]) {
-        if (snapshotPathsByPath.has(sp)) {
-          const expectedId = snapshotPathsByPath.get(sp)
-          const actualId = String(migration.document_id ?? '')
-          if (expectedId !== undefined && actualId !== '' && expectedId !== actualId) {
-            return false
-          }
-        }
-      }
-    }
-    // Round-14 P1-3: any live migration at a snapshot-claimed path
-    // that is NOT in expected.migrations is an unrelated ownership
-    // and restore must abort before DELETE.
-    const migrationPath = String(migration.path ?? '')
-    const migrationOriginalPath = String(migration.original_path ?? '')
-    if (snapshotClaimedPaths.has(migrationPath) || snapshotClaimedPaths.has(migrationOriginalPath)) {
-      if (!allowedMigrationKeys.has(key)) return false
-    }
-  }
-
-  return true
+  return liveRowsAreExpectedSubset(current.documents, expected.documents)
+    && liveRowsAreExpectedSubset(current.tags, expected.tags)
+    && liveRowsAreExpectedSubset(current.documentTags, expected.documentTags)
+    && liveRowsAreExpectedSubset(current.embeddings, expected.embeddings)
+    && liveRowsAreExpectedSubset(current.migrations, expected.migrations)
 }
 
 function insertRows(db: DatabaseT, table: string, rows: Record<string, unknown>[]): void {
