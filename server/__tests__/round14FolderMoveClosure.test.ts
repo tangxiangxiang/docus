@@ -98,48 +98,19 @@ async function namesIn(rel = '.'): Promise<string[]> {
 // ─── P0-1: atomic gate-created crash recovery ─────────────────────
 
 describe('atomic gate-created crash recovery', () => {
-  it('quarantines when journal destDev/destIno is the gate generation but rename already landed', async () => {
-    // Simulate: route ran mkdir gate (persisted gate gen as destDev/destIno),
-    // then fs.rename landed (dest now carries source's inode), then process
-    // died before the route could rewrite the journal with the post-rename
-    // generation. Recovery must NOT silently re-stat to the new inode — it
-    // must quarantine (the gate is gone, so the only proof would be the
-    // journal's generation which does NOT match).
-    //
-    // Note: prior round-13 deliberately re-stats and accepts the new
-    // inode (the "re-stat" rule). Round-14 P0-1 requires the journal to
-    // either carry the post-rename generation or quarantine — the gate
-    // generation alone is NEVER ownership proof after a successful
-    // rename(2).
+  it('completes when the landed destination is the original source generation', async () => {
     await seed({
       'proj/a.md': '# hello\n',
     })
+    saveDocumentMetadata(db, { id: 'doc-1', path: 'proj/a', title: 'Hello' })
 
-    // Set up the source directory with its real inode; the journal will
-    // carry the OLD gate generation (different inode), which is the
-    // exact state the round-12 route crash leaves behind.
     const sourceStat = await fs.stat(path.join(vault, 'proj'), { bigint: true })
-    // Create a dest "gate" directory at a known different inode; then
-    // simulate the rename having already landed by deleting the source
-    // and putting the source's tree under the dest path (but as a fresh
-    // inode, since real rename(2) replaced the gate inode).
-    await fs.mkdir(path.join(vault, 'ren'), { recursive: true })
-    // Move the source contents under the dest path WITHOUT preserving
-    // the gate's inode — the gate inode is gone. The actual dest inode
-    // now comes from a brand-new mkdir inside `ren` (or from the
-    // source's inode when rename(2) succeeded).
-    await fs.rm(path.join(vault, 'proj'), { recursive: true, force: true })
-    await fs.mkdir(path.join(vault, 'proj')) // re-create source (different inode now)
-    await fs.writeFile(path.join(vault, 'proj', 'a.md'), '# hello\n', 'utf8')
-    // The dest is the source directory's inode (the rename actually
-    // swapped the inode — but we just constructed this state by hand).
-    // The journal must carry the OLD gate generation to fail recovery.
-    const fakeGateGen = { dev: '999999999', ino: '999999999' }
-
     const physical = await listPhysicalMoveEntries(path.join(vault, 'proj'), (rel) => {
       if (!rel.endsWith('.md')) return null
       return { documentId: 'doc-1', documentPath: 'proj/a' }
     })
+    await fs.mkdir(path.join(vault, 'ren'))
+    const gateStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
 
     const journal: FolderMoveJournalV4 = {
       version: 4,
@@ -150,8 +121,8 @@ describe('atomic gate-created crash recovery', () => {
       strategy: 'atomic-rename',
       sourceDev: Number(sourceStat.dev),
       sourceIno: Number(sourceStat.ino),
-      destDev: fakeGateGen.dev,
-      destIno: fakeGateGen.ino,
+      destDev: gateStat.dev.toString(),
+      destIno: gateStat.ino.toString(),
       entries: physical.entries.map((e) => ({
         relativeFilePath: e.relativeFilePath,
         sourceDev: e.sourceDev ?? '',
@@ -163,19 +134,24 @@ describe('atomic gate-created crash recovery', () => {
       directories: physical.directories,
       metadataDisposition: { kind: 'prefix-move' },
     }
-    await writeJournal('.proj.docus-journal-abcdef012345', journal)
+    const journalAbs = await writeJournal('.proj.docus-journal-abcdef012345', journal)
 
+    // Produce the exact post-rename crash state while remaining portable:
+    // remove the still-empty owned gate, then publish the source directory
+    // at the destination. The destination retains the source generation.
+    await fs.rmdir(path.join(vault, 'ren'))
+    await fs.rename(path.join(vault, 'proj'), path.join(vault, 'ren'))
+    const landedStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
+    expect(landedStat.dev.toString()).toBe(sourceStat.dev.toString())
+    expect(landedStat.ino.toString()).toBe(sourceStat.ino.toString())
     const report = await recoverInterruptedOperations(vault, db)
 
-    // Journal must be quarantined: gate generation doesn't match the
-    // current dest inode, and the route must not have re-stated to
-    // accept a fresh inode as the "real" generation. (Round-14: the
-    // route's NEW ordering captures the post-rename generation
-    // BEFORE recovery ever needs to re-stat. If recovery sees a
-    // gate-generation mismatch, it must quarantine.)
-    expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
-    const journalsAfter = await namesIn('.')
-    expect(journalsAfter.some((n) => n.includes('.docus-journal-'))).toBe(true)
+    expect(report.actions).toContainEqual(expect.objectContaining({
+      action: 'completed-rename',
+    }))
+    await expect(fs.stat(journalAbs)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(getDocumentMetadata(db, 'proj/a')).toBeUndefined()
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('doc-1')
   })
 })
 
