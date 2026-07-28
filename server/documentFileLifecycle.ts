@@ -55,6 +55,12 @@ export type CreateOnlyMoveHooks = {
    * forward path. The journal's phase=prepared has been written; the
    * route rewrites phase=gate-created next. */
   afterGateCreated?: (toDirAbs: string, generation: { dev: string; ino: string }) => void | Promise<void>
+  /** Fires after an atomic directory rename has landed, before the
+   * destination generation/stat, parity, or files-landed rewrite. */
+  afterAtomicRenameBeforeParity?: (
+    sourceAbs: string,
+    destinationAbs: string,
+  ) => void | Promise<void>
   /** Fires after the v4 exact parity passes, just before the route
    * commits metadata and rewrites phase=files-landed. */
   afterFilesLanded?: (toDirAbs: string) => void | Promise<void>

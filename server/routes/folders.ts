@@ -332,6 +332,9 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         }
         throw atomicError
       }
+      if (moveHooks?.afterAtomicRenameBeforeParity) {
+        await moveHooks.afterAtomicRenameBeforeParity(src, dest)
+      }
       // Round-14 P0-1: capture the POST-RENAME generation BEFORE
       // declaring the move complete. rename(2) replaces the empty
       // gate with the original source directory — the destination
@@ -348,10 +351,14 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         const finalDestStat = await fs.stat(dest, { bigint: true })
         finalDestGen = { dev: finalDestStat.dev.toString(), ino: finalDestStat.ino.toString() }
       } catch (statError) {
-        // Destination vanished between rename and stat — quarantine;
-        // the journal stays for inspection.
-        await removeDurableJournal(journalPath).catch(() => {})
-        throw statError
+        // The physical rename may already be durable. Keep the
+        // gate-created journal so startup recovery can prove that the
+        // destination is the original source generation and finish.
+        return bad(
+          c,
+          `atomic rename landed but destination generation could not be read; recovery journal retained: ${(statError as Error).message}`,
+          500,
+        )
       }
       // Exact parity on the destination: dest directory (dev,ino) +
       // per-entry (dev,ino,hash) all match the journal. NO token check.

@@ -100,13 +100,6 @@ function validateV4DirectoryManifest(journal: FolderMoveJournalV4): string | nul
   if (entries.length > 0 && journal.emptyTree === true) {
     return 'non-empty journal must not declare emptyTree=true'
   }
-  if (directories.length === 0 && journal.emptyTree !== true && entries.length > 0) {
-    // v4 mandates parent closure on directories; an entries-bearing
-    // journal with empty directories list cannot declare its file
-    // parents and is rejected.
-    return 'non-empty journal with file entries must declare its parent directories'
-  }
-
   // No duplicates in directories.
   if (new Set(directories).size !== directories.length) {
     return 'duplicate directory manifest entry'
