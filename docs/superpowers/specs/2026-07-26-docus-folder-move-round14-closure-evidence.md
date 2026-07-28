@@ -1,12 +1,14 @@
-# Docus Folder Move Round-14 / Round-15 Closure Evidence
+# Docus Folder Move Round-14 / Round-15 / Round-16 Closure Evidence
 
 **Status:** Reopened
-**Branch:** codex/round15-folder-move-recovery-closure
+**Branch:** codex/round16-folder-move-v4-coordinator-closure
 **Current closure commit:** not assigned
 
 This document records both the reopened Round-14 attempt and the
-Round-15 recovery closure work. Sections 1–8 retain the historical
-Round-14 evidence. Sections 9 onward are authoritative for Round-15.
+Round-15/Round-16 recovery closure work. Sections 1–8 retain the
+historical Round-14 evidence. The authoritative Round-16 sections
+17–27 follow that history directly; archived Round-15 sections 9–16
+remain at the end for comparison.
 The document does not claim closure until the final pushed SHA has a
 successful Ubuntu, macOS, Windows, and visual GitHub Actions bundle.
 
@@ -20,6 +22,10 @@ successful Ubuntu, macOS, Windows, and visual GitHub Actions bundle.
 | `32e9371` | fix(server): recover landed atomic folder moves from gate-created journals |
 | `c502124` | fix(server): enforce exact metadata snapshot ownership before restore |
 | `cdf774e` | fix(server): run all recovery folder companions through the v4 executor |
+| `79aac65` | test(server): expose round16 folder move coordinator gaps |
+| `3d99814` | fix(server): keep v4 executor failures under durable journal ownership |
+| `b0baca2` | fix(server): resume prepared snapshot restores instead of cleaning them |
+| `1ff0547` | fix(server): finalize all folder move directions through one v4 verifier |
 
 ## 1. Blocker matrix (Round-14 P0/P1)
 
@@ -143,6 +149,138 @@ SHA. Round-14 cannot claim closure until the run is bound AND green.
   reopened status.
 
 ## 8. Closure judgement
+
+NOT READY FOR CLOSURE REVIEW.
+
+## 17. Round-16 blocker matrix
+
+| ID | Blocker | Resolution | Evidence |
+| --- | --- | --- | --- |
+| P0-1 | Executor rewrote the disk journal while the route retained a stale `prepared` object; generic executor errors escaped into the legacy outer rollback. | Every executor failure is a `FolderMoveV4ExecutionError` carrying attempted state and `physicalMayHaveLanded`. The route re-reads the durable v4 journal and always returns from the executor boundary. | Real HTTP post-stat, generation-mismatch, and files-landed-rewrite tests. |
+| P0-2 | A `snapshot-restore` journal at `prepared` was deleted as stale. | Recovery verifies the staged source generation and absent public destination, then runs the complete physical executor and shared metadata finalizer. | `READY:DELETE_ROLLBACK_PREPARED`, exit 93 subprocess test plus second-recovery idempotence. |
+| P0-3 | Reverse and delete rollback manually restored metadata and removed the journal without the full final verifier. | `folderMoveV4Metadata.ts` owns metadata action, durable phase rewrite, directory generation, exact physical parity, exact metadata graph, source emptiness, and final removal. | Forward, reverse, delete, startup recovery, and reference companion call-site audit. |
+| P1-1 | Reverse rollback journal declared prefix-move while the route actually restored a database snapshot. | The flipped journal persists a subtree-scoped `snapshot-restore` disposition captured after missing identities are created. Normal in-process rollback can supply the original full-footprint action and exact graph verifier through the same helper. | Existing reverse crash matrix plus Round-16 external-inode replacement test. |
+| P1-2 | Ordinary `prepared` prefix journals could be deleted without proving metadata remained at source. | Cleanup now requires the original source directory generation, absent destination, exact source identities, and zero destination identities. | Recovery state-machine and full crashRecovery suites. |
+
+## 18. RED evidence
+
+The first Round-16 run contained five tests: one existing post-stat
+baseline passed and four coordinator gaps failed.
+
+| Test | Old behavior / failure | New behavior |
+| --- | --- | --- |
+| Atomic generation mismatch | Real route returned 500 after the error escaped to the outer catch. | 409; disk remains `gate-created`; metadata remains at source; recovery reports the exact atomic-state quarantine detail. |
+| Files-landed rewrite failure | Response was an unstructured internal 500 produced outside the executor boundary. | 500 names durable `gate-created`; physical destination and source metadata remain; recovery owns completion. |
+| Delete rollback prepared crash | The new crash seam was never reached, so no `READY:DELETE_ROLLBACK_PREPARED` / exit 93 proof existed. | Child exits 93 at the durable prepared boundary; recovery restores bytes and full snapshot; second run is empty. |
+| Reverse metadata external replacement | The old route deleted the journal after metadata restore. | Fresh `source/a.md` inode is preserved; exact parity fails; `metadata-committed` journal remains and startup recovery quarantines with the exact detail. |
+
+## 19. Executor error ownership model
+
+`FolderMoveV4DurableState` contains the latest attempted in-memory
+journal and `physicalMayHaveLanded`. The attempted journal is diagnostic,
+not authority. `readDurableFolderMoveJournalV4(journalAbs)` is the only
+route-side phase read after an executor failure.
+
+| Executor outcome | Route action |
+| --- | --- |
+| Returns `files-landed` | Set `physicalPhaseCompleted=true`; call shared metadata finalizer. |
+| Throws before any physical landing | Under generation proof, safely cancel an owned empty gate/prepared attempt and restore planning metadata; return inside the executor catch. |
+| Throws after physical landing may have occurred | Re-read durable journal, leave filesystem/metadata under journal ownership, map 409/500/501, return inside the executor catch. |
+
+The old `renamed` and `moveThrew` flags no longer exist and cannot
+select an executor error rollback path.
+
+## 20. Durable journal phase table
+
+| Durable phase | Proven state | Allowed next action |
+| --- | --- | --- |
+| `prepared` | Intent and source generation only; no destination generation | Disposition decision in section 21. |
+| `gate-created` | Destination gate generation is durable | Resolve intact gate versus landed atomic source, or replay declared entries. |
+| `files-landed` | Destination generation and exact physical manifest passed | Run prefix move or snapshot restore, then durable rewrite. |
+| `metadata-committed` | Metadata mutation rewrite is durable | Re-prove destination generation, exact file/directory parity, exact metadata graph, and source emptiness; only then remove journal. |
+
+## 21. Prepared disposition decision table
+
+| Disposition | Required proof | Outcome |
+| --- | --- | --- |
+| `snapshot-restore` | Original staged source generation intact; public destination absent | Resume the complete v4 executor and metadata finalizer. Never classify as stale. |
+| `snapshot-restore` | Either proof fails | Quarantine; do not move or delete. |
+| `prefix-move` | Source generation intact; destination absent; every journal identity still exact at source; no destination metadata | Safe stale cleanup. |
+| `prefix-move` | Any proof fails | Quarantine and retain journal. |
+
+## 22. Shared finalizer call sites
+
+| Call site | Physical direction | Metadata action |
+| --- | --- | --- |
+| Folder PATCH forward | source -> destination | prefix move |
+| Folder PATCH reverse | destination -> source | persisted snapshot restore; in-process full-footprint restore uses the same helper callback |
+| Recursive folder DELETE rollback | delete staging -> public path | persisted snapshot CAS restore |
+| Rename-reference recovery companion | rename destination -> original source | prefix move |
+| Startup v4 recovery | durable journal direction | disposition-declared prefix move or snapshot restore |
+
+No route call site manually performs the
+metadata/rewrite/parity/remove sequence.
+
+## 23. Route and recovery crash matrices
+
+| Seam | Route result / durable state | Recovery result |
+| --- | --- | --- |
+| Atomic rename landed; destination stat EIO | HTTP 500; source absent; destination present; `gate-created`; source metadata | Completes forward; second recovery has no action. |
+| Atomic destination generation mismatch | HTTP 409; `gate-created`; metadata unchanged | Exact atomic-state quarantine; external directory untouched. |
+| Files parity passed; files-landed rewrite EIO | HTTP 500; physical destination landed; disk remains `gate-created` | Atomic landed-source proof completes forward. |
+| Delete rollback prepared | Child `READY:DELETE_ROLLBACK_PREPARED`, exit 93; staging present; public path absent | Restores tree and complete metadata graph; removes staging/journal; second recovery empty. |
+| Reverse mid-entry / after-tree | Flipped v4 snapshot journal owns split or fully restored tree | Existing subprocess matrix completes, preserving generated document IDs. |
+| Reverse metadata then external file inode replacement | HTTP error; `metadata-committed` retained; external bytes win | Exact parity quarantine; no overwrite; metadata snapshot remains restored. |
+
+## 24. Snapshot CAS and final graph verification
+
+Snapshot restore accepts missing rows created by Docus delete and the
+owned forward-prefix form of the same document IDs. It rejects a
+different live owner or drift in columns that the known move did not
+change. After restore, the finalizer requires exact equality for
+documents, tags, document_tags, embeddings, and migrations. A custom
+in-process rollback action must also provide an exact graph verifier;
+the journal is never removed based only on an in-memory success flag.
+
+## 25. Local Round-16 verification
+
+Verification against implementation commit `1ff0547`:
+
+| Command | Result |
+| --- | --- |
+| `npm run typecheck` | success |
+| `npm run build` | success; existing bundle-size and third-party PURE annotation warnings only |
+| `npm test` | 148 files passed; 2265 tests passed |
+| `npx vitest run server/__tests__/round15FolderMoveRecoveryClosure.test.ts` | 25/25 |
+| `npx vitest run server/__tests__/round16FolderMoveCoordinatorClosure.test.ts` | 5/5 |
+| `npx vitest run server/__tests__/crashRecovery.test.ts` | 125/125 |
+| `npx vitest run server/routes/folders.test.ts` | 1/1 |
+
+The first non-escalated full-test attempt could not create tsx IPC
+sockets in the managed sandbox, so its crash-child cases failed before
+their `READY` seams. The identical `npm test` command was rerun with
+local IPC permission and produced the 148/2265 result above.
+
+## 26. Round-16 GitHub Actions binding
+
+Final SHA: not assigned.
+
+Workflow run ID: not assigned.
+
+| Job | Job ID | Conclusion |
+| --- | --- | --- |
+| Ubuntu | not assigned | pending |
+| macOS | not assigned | pending |
+| Windows | not assigned | pending |
+| visual | not assigned | pending |
+
+## 27. Remaining risks and closure judgement
+
+- The final documentation commit has not been pushed, so no GitHub
+  Actions workflow is bound to its final SHA.
+- Ubuntu, macOS, Windows, and visual job IDs/conclusions remain pending.
+- Build warnings are unchanged third-party PURE annotations and chunk
+  size notices; they do not fail the build.
 
 NOT READY FOR CLOSURE REVIEW.
 
