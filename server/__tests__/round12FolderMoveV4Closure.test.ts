@@ -201,6 +201,10 @@ describe('metadata-committed prefix recovery', () => {
     await seed({ 'ren/a.md': '# hello\n' })
 
     const destStat = await fs.stat(path.join(vault, 'ren'))
+    const physical = await listPhysicalMoveEntries(path.join(vault, 'ren'), () => ({
+      documentId: 'doc-1',
+      documentPath: 'proj/a',
+    }))
 
     const journal: FolderMoveJournalV4 = {
       version: 4,
@@ -213,9 +217,15 @@ describe('metadata-committed prefix recovery', () => {
       sourceIno: 1,
       destDev: String(destStat.dev),
       destIno: String(destStat.ino),
-      emptyTree: true,
-      entries: [],
-      directories: [],
+      entries: physical.entries.map((entry) => ({
+        relativeFilePath: entry.relativeFilePath,
+        sourceDev: entry.sourceDev!,
+        sourceIno: entry.sourceIno!,
+        sourceHash: entry.sourceHash,
+        documentId: entry.documentId,
+        documentPath: entry.documentPath,
+      })),
+      directories: physical.directories,
       metadataDisposition: { kind: 'prefix-move' },
     }
 

@@ -236,7 +236,9 @@ describe('snapshot migration CAS ownership — cross-check', () => {
   it('accepts live migration that matches snapshot ownership', async () => {
     db.exec(`INSERT INTO documents (id, path, title, summary, created_at, updated_at) VALUES ('match-doc', 'gone/doc', 'Match Doc', '', 0, 0)`)
     // Migration owned by the same document — should pass.
-    db.exec(`INSERT INTO metadata_migrations (path, document_id, original_path, status, source_hash, updated_at) VALUES ('gone/doc', 'match-doc', 'gone/doc', 'legacy', 'abc', 0)`)
+    db.exec(`INSERT INTO metadata_migrations
+      (path, document_id, original_path, status, source_hash, updated_at, cleaned_hash)
+      VALUES ('gone/doc', 'match-doc', 'gone/doc', 'legacy', 'abc', 0, 'abc')`)
 
     const snapshot = {
       paths: ['gone/doc'],

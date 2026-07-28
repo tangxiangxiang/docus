@@ -106,10 +106,11 @@ describe('Round-10 F1: createOnlyMoveFile refuses to link a foreign inode', () =
       },
     })).rejects.toBeInstanceOf(GenerationMismatchError)
 
-    // The source path was renamed to staging; staging kept; no link landed.
+    // The pre-takeover generation check fails before any filesystem
+    // mutation: source remains in place, no staging/link is published.
     const staging = (await fs.readdir(dir)).find((name) => name.includes('.docus-rename-'))
-    expect(staging).toBeDefined()
-    expect(await fs.readFile(path.join(dir, staging!), 'utf8')).toBe('# ours\n')
+    expect(staging).toBeUndefined()
+    expect(await fs.readFile(from, 'utf8')).toBe('# ours\n')
     expect(await fs.stat(to).then(() => true, () => false)).toBe(false)
   })
 

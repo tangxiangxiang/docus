@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
@@ -8,6 +8,7 @@ import path from 'node:path'
 
 import { recoverInterruptedOperations } from '../crashRecovery'
 import { applyMigrations } from '../db'
+import { writeDurableJournal } from '../atomicTextWrite'
 import {
   restoreDocumentMetadataMutationCAS,
   saveDocumentMetadata,
@@ -15,6 +16,10 @@ import {
   validateSnapshotOwnership,
 } from '../documentMetadata'
 import { validateFolderMoveJournalV4Provenance } from '../folderMoveJournalValidation'
+import {
+  AtomicRenameLandedGenerationReadError,
+  executeFolderMoveV4Physical,
+} from '../folderMoveV4Executor'
 import {
   listPhysicalMoveEntries,
   type FolderMoveJournalV4,
@@ -40,6 +45,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   db.close()
   await fs.rm(vault, { recursive: true, force: true })
 })
@@ -230,6 +236,70 @@ describe('Round-15 real atomic route crash', () => {
     } finally {
       persistedDb.close()
     }
+  })
+})
+
+describe('Round-15 post-rename stat failure', () => {
+  it('retains a gate-created journal that recovery can complete', async () => {
+    await seed({ 'proj/a.md': '# hello\n' })
+    saveDocumentMetadata(db, { id: 'doc-1', path: 'proj/a', title: 'Hello' })
+    const sourceStat = await fs.stat(path.join(vault, 'proj'), { bigint: true })
+    const physical = await listPhysicalMoveEntries(path.join(vault, 'proj'), relativeFilePath =>
+      relativeFilePath === 'a.md'
+        ? { documentId: 'doc-1', documentPath: 'proj/a' }
+        : null,
+    )
+    const prepared: FolderMoveJournalV4 & { phase: 'prepared' } = {
+      version: 4,
+      op: 'folder-rename',
+      phase: 'prepared',
+      srcRel: 'proj',
+      destRel: 'ren',
+      strategy: 'atomic-rename',
+      sourceDev: Number(sourceStat.dev),
+      sourceIno: Number(sourceStat.ino),
+      entries: physical.entries.map(entry => ({
+        relativeFilePath: entry.relativeFilePath,
+        sourceDev: entry.sourceDev!,
+        sourceIno: entry.sourceIno!,
+        sourceHash: entry.sourceHash,
+        documentId: entry.documentId,
+        documentPath: entry.documentPath,
+      })),
+      directories: physical.directories,
+      metadataDisposition: { kind: 'prefix-move' },
+    }
+    const journalAbs = path.join(vault, '.proj.docus-journal-abcdef012345')
+    await writeDurableJournal(journalAbs, prepared)
+    let renameLanded = false
+    const realStat = fs.stat.bind(fs)
+    vi.spyOn(fs, 'stat').mockImplementation(async (target, options) => {
+      if (renameLanded && String(target) === path.join(vault, 'ren')) {
+        throw Object.assign(new Error('injected post-rename stat failure'), { code: 'EIO' })
+      }
+      return realStat(target, options as never)
+    })
+
+    await expect(executeFolderMoveV4Physical({
+      contentDir: vault,
+      journalAbs,
+      journal: prepared,
+      srcAbs: path.join(vault, 'proj'),
+      destAbs: path.join(vault, 'ren'),
+      strategy: 'atomic-rename',
+      afterAtomicRenameBeforeParity: () => { renameLanded = true },
+    })).rejects.toBeInstanceOf(AtomicRenameLandedGenerationReadError)
+
+    const persisted = JSON.parse(await fs.readFile(journalAbs, 'utf8')) as FolderMoveJournalV4
+    expect(persisted.phase).toBe('gate-created')
+    await expect(realStat(path.join(vault, 'proj'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await realStat(path.join(vault, 'ren'))).toBeDefined()
+    vi.restoreAllMocks()
+
+    const report = await recoverInterruptedOperations(vault, db)
+    expect(report.actions).toContainEqual(expect.objectContaining({ action: 'completed-rename' }))
+    await expect(fs.stat(journalAbs)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(db.prepare('SELECT id FROM documents WHERE path = ?').get('ren/a')).toEqual({ id: 'doc-1' })
   })
 })
 

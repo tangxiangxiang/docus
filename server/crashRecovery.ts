@@ -72,7 +72,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
 import type { Database as DatabaseT } from 'better-sqlite3'
-import { atomicReplaceTextIfUnchanged, createDestinationGate, removeDurableJournal, removeDurableRecoveryPayload, rewriteDurableJournal, sha256Hex, sha256HexBuffer, syncParentDirectoryBestEffort, verifyDirectoryGeneration, writeDurableJournal } from './atomicTextWrite.js'
+import { atomicReplaceTextIfUnchanged, removeDurableJournal, removeDurableRecoveryPayload, rewriteDurableJournal, sha256Hex, sha256HexBuffer, syncParentDirectoryBestEffort, verifyDirectoryGeneration, writeDurableJournal } from './atomicTextWrite.js'
 import { isValidPathSyntax } from './paths.js'
 import {
   deleteDocumentMetadata,
@@ -88,7 +88,6 @@ import {
 import {
   classifyPlacementV4,
   createOnlyMoveFile,
-  executeFolderMove,
   FOLDER_MOVE_STRATEGIES,
   fireReplayableMovedEntryHook,
   gateTokenName,
@@ -117,6 +116,7 @@ import {
   type FolderMoveMetadataDisposition,
 } from './folderMoveTransaction.js'
 import { validateFolderMoveJournalV4Provenance as validateFolderMoveJournalV4RootProvenance } from './folderMoveJournalValidation.js'
+import { executeFolderMoveV4Physical } from './folderMoveV4Executor.js'
 
 export interface RecoveryAction {
   /** Vault-relative path of the affected file/folder (or artifact). */
@@ -1210,7 +1210,8 @@ async function recoverRenameReferencesJournal(
             const documentSuffix = relativeFilePath.slice(0, -'.md'.length)
             const sourceIdentityPath = `${journal.srcRel}/${documentSuffix}`
             const identity = journal.identities!.find((item) => item.path === sourceIdentityPath)
-            return identity ? { documentId: identity.id, documentPath: sourceIdentityPath } : null
+            const moveSourcePath = `${journal.destRel}/${documentSuffix}`
+            return identity ? { documentId: identity.id, documentPath: moveSourcePath } : null
           })
           moveEntries = enumerated.entries
           moveDirectories = enumerated.directories
@@ -1240,7 +1241,7 @@ async function recoverRenameReferencesJournal(
           // wrote v2 here could be parsed by legacy parsers but never
           // reach the v4 phase machine — recovery would resolve to a
           // stale-journal cleanup and silently lose the data.
-          await writeDurableJournal(moveJournalAbs, {
+          const prepared: FolderMoveJournalV4 & { phase: 'prepared' } = {
             version: FOLDER_MOVE_JOURNAL_VERSION,
             op: 'folder-move',
             phase: 'prepared',
@@ -1253,25 +1254,29 @@ async function recoverRenameReferencesJournal(
             entries: moveJournalEntries,
             directories: moveDirectories,
             metadataDisposition: { kind: 'prefix-move' },
+          }
+          await writeDurableJournal(moveJournalAbs, prepared)
+          const physical = await executeFolderMoveV4Physical({
+            contentDir,
+            journalAbs: moveJournalAbs,
+            journal: prepared,
+            srcAbs: destAbs,
+            destAbs: srcAbs,
+            strategy: moveStrategy,
           })
-          const moved = await executeFolderMove(moveStrategy, destAbs, srcAbs, moveEntries.map((entry) => entry.relativeFilePath), {
-            directories: moveDirectories,
-            gateToken: moveUuid,
-            vaultRoot: contentDir,
-          })
-          if (!moved.restored) {
-            // Clean contention: the source path belongs to an external
-            // writer and the move rolled itself fully back — the tree
-            // is whole at the destination. Drop the move journal and
-            // durably switch the transaction forward.
-            await removeDurableJournal(moveJournalAbs).catch(() => {})
-            const forward = { ...journal, phase: 'roll-forward' as const }
-            await rewriteDurableJournal(journalAbs, forward)
-            await recoverRenameReferencesJournal(contentDir, db, journalAbs, forward, note)
+          await completeFolderMoveV4Metadata(
+            contentDir,
+            db,
+            moveJournalAbs,
+            physical.journal,
+            destAbs,
+            srcAbs,
+            note,
+          )
+          if (await exists(moveJournalAbs)) {
+            note(journalAbs, 'failed', 'folder-move companion retained after incomplete v4 metadata finalization')
             return
           }
-          await removeDurableJournal(moveJournalAbs).catch(() => {})
-          moveDocumentMetadataPrefix(db, journal.destRel, journal.srcRel)
         } catch (error) {
           // A thrown move may have left the tree SPLIT: the move
           // journal stays (it completes the rollback at the next
@@ -1485,7 +1490,7 @@ async function resolveAtomicGateCreatedState(
 }
 
 async function finalizeFolderMoveV4Cleanup(
-  contentDir: string,
+  _contentDir: string,
   db: DatabaseT,
   journalAbs: string,
   journal: FolderMoveJournalV4 & { phase: 'metadata-committed' },
@@ -1754,7 +1759,7 @@ async function recoverFolderMoveJournalV4(
       ),
     ))
     if (placements.some((placement) => placement === 'external' || placement === 'missing')) {
-      note(journalAbs, 'quarantined', 'replayable gate-created journal contains external or missing entries')
+      note(journalAbs, 'quarantined', 'replayable gate-created journal contains an external generation or missing entries')
       return
     }
     const remainingEntries = entries.filter((_, index) => placements[index] === 'src')

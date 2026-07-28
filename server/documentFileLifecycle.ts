@@ -802,7 +802,6 @@ export async function moveFolderEntriesIntoExistingGate(
     }
     await fs.mkdir(dirAbs, { recursive: true })
   }
-  let incomplete = false
   for (const entry of options.entries) {
     const fromEntry = path.join(fromDirAbs, entry.relativeFilePath)
     const toEntry = path.join(toDirAbs, entry.relativeFilePath)
@@ -823,7 +822,6 @@ export async function moveFolderEntriesIntoExistingGate(
       // is itself creation-only (F2 invariant): an externally-
       // replaced landed file stays at the destination; the journal
       // remains so recovery can reconcile.
-      incomplete = true
       for (const movedRel of moved.reverse()) {
         const rFrom = path.join(toDirAbs, movedRel)
         const rTo = path.join(fromDirAbs, movedRel)

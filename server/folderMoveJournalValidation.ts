@@ -205,8 +205,18 @@ export async function validateFolderMoveJournalV4Provenance(
     return 'folder move endpoints must share one parent directory'
   }
 
-  if (!journalFilenameMatchesSource(contentDir, journalAbs, journal.srcRel)) {
-    return 'journal filename or location is not bound to srcRel'
+  const filenameBindsSource = journalFilenameMatchesSource(
+    contentDir,
+    journalAbs,
+    journal.srcRel,
+  )
+  // A folder-rename journal keeps its original filename while the
+  // rollback durably flips src/dest. In that reverse direction its
+  // filename is necessarily bound to destRel (the original source).
+  const filenameBindsReverseRename = journal.op === 'folder-rename'
+    && journalFilenameMatchesSource(contentDir, journalAbs, journal.destRel)
+  if (!filenameBindsSource && !filenameBindsReverseRename) {
+    return 'journal filename or location is not bound to the folder rename endpoints'
   }
 
   const root = path.resolve(contentDir)
