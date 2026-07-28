@@ -84,12 +84,20 @@ async function readOnlyV4Journal(): Promise<{
   absolutePath: string
   journal: FolderMoveJournalV4
 }> {
-  const names = (await fs.readdir(vault)).filter(name => name.includes('.docus-journal-'))
-  expect(names).toHaveLength(1)
-  const absolutePath = path.join(vault, names[0]!)
+  const candidates = (await fs.readdir(vault)).filter(name => name.includes('.docus-journal-'))
+  const parsed = await Promise.all(candidates.map(async name => {
+    const absolutePath = path.join(vault, name)
+    const journal = JSON.parse(await fs.readFile(absolutePath, 'utf8')) as { version?: number }
+    return journal.version === 4
+      ? { absolutePath, journal: journal as FolderMoveJournalV4 }
+      : null
+  }))
+  const journals = parsed.filter((item): item is NonNullable<typeof item> => item !== null)
+  expect(journals).toHaveLength(1)
+  const only = journals[0]!
   return {
-    absolutePath,
-    journal: JSON.parse(await fs.readFile(absolutePath, 'utf8')) as FolderMoveJournalV4,
+    absolutePath: only.absolutePath,
+    journal: only.journal,
   }
 }
 
@@ -268,7 +276,7 @@ describe('Round-16 reverse final verification', () => {
     await seedFolder()
     await fs.writeFile(path.join(vault, 'ref.md'), 'see [[proj/a]]\n')
     await app.fetch(new Request('http://localhost/api/links/index'))
-    const replacementStash = path.join(vault, 'restored-owned-stash')
+    const replacementStash = path.join(vault, 'restored-owned-a.md')
     __setFolderRaceHooksForTesting({
       afterRenamePlanBuilt: async () => {
         await fs.writeFile(path.join(vault, 'ref.md'), 'external save\n')
@@ -276,24 +284,20 @@ describe('Round-16 reverse final verification', () => {
     })
     __setCreateOnlyMoveHooksForTesting({
       afterReverseMetadataBeforeFinalVerify: async (source) => {
-        await fs.rename(source, replacementStash)
-        await fs.mkdir(source)
-        await fs.copyFile(
-          path.join(replacementStash, 'a.md'),
-          path.join(source, 'a.md'),
-        )
+        await fs.rename(path.join(source, 'a.md'), replacementStash)
+        await fs.writeFile(path.join(source, 'a.md'), '# external replacement\n')
       },
     } as Parameters<typeof __setCreateOnlyMoveHooksForTesting>[0])
 
     const response = await patchFolder('proj', 'ren', true)
 
-    expect(response.status).toBe(409)
+    expect(response.status).toBe(500)
     const persisted = await readOnlyV4Journal()
     expect(persisted.journal.phase).toBe('metadata-committed')
     expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('proj-a-id')
     expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
-    expect(await fs.readFile(path.join(vault, 'proj', 'a.md'), 'utf8')).toBe('# hello\n')
-    expect(await fs.readFile(path.join(replacementStash, 'a.md'), 'utf8')).toBe('# hello\n')
+    expect(await fs.readFile(path.join(vault, 'proj', 'a.md'), 'utf8')).toBe('# external replacement\n')
+    expect(await fs.readFile(replacementStash, 'utf8')).toBe('# hello\n')
 
     __setFolderRaceHooksForTesting(null)
     __setCreateOnlyMoveHooksForTesting(null)
@@ -301,9 +305,10 @@ describe('Round-16 reverse final verification', () => {
     expect(report.actions).toContainEqual({
       file: path.basename(persisted.absolutePath),
       action: 'quarantined',
-      detail: 'metadata-committed destination generation does not match journal',
+      detail: 'metadata-committed destination exact parity failed',
     })
     expect(await fs.stat(persisted.absolutePath)).toBeDefined()
     expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('proj-a-id')
+    expect(await fs.readFile(path.join(vault, 'proj', 'a.md'), 'utf8')).toBe('# external replacement\n')
   })
 })

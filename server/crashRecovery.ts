@@ -82,8 +82,6 @@ import {
   moveDocumentMetadataPrefix,
   moveDocumentMetadataReplacingDestination,
   restoreDocumentMetadataMutationCAS,
-  snapshotDocumentMetadataOwnership,
-  validateSnapshotOwnership,
 } from './documentMetadata.js'
 import {
   classifyPlacementV4,
@@ -118,6 +116,10 @@ import {
 import { validateFolderMoveJournalV4Provenance as validateFolderMoveJournalV4RootProvenance } from './folderMoveJournalValidation.js'
 import { executeFolderMoveV4Physical } from './folderMoveV4Executor.js'
 import { parseDurableFolderMoveJournalV4 } from './folderMoveV4DurableJournal.js'
+import {
+  completeFolderMoveV4Metadata as completeFolderMoveV4MetadataShared,
+  finalizeFolderMoveV4Cleanup as finalizeFolderMoveV4CleanupShared,
+} from './folderMoveV4Metadata.js'
 
 export interface RecoveryAction {
   /** Vault-relative path of the affected file/folder (or artifact). */
@@ -1315,54 +1317,6 @@ type DestInventory =
   | { kind: 'external'; reason: string }
   | { kind: 'ours'; hasLandedFiles: boolean; hasGateToken: boolean }
 
-function verifyPrefixMetadataCommitted(
-  db: DatabaseT,
-  journal: FolderMoveJournalV4,
-): string | null {
-  const rows = listDocumentMetadata(db).filter((row) =>
-    row.path === journal.destRel || row.path.startsWith(`${journal.destRel}/`)
-      || row.path === journal.srcRel || row.path.startsWith(`${journal.srcRel}/`),
-  )
-  const expected = new Map<string, string>()
-  for (const entry of journal.entries) {
-    if (entry.documentId === undefined || entry.documentPath === undefined) continue
-    const suffix = entry.documentPath === journal.srcRel
-      ? ''
-      : entry.documentPath.slice(`${journal.srcRel}/`.length)
-    expected.set(`${journal.destRel}${suffix ? `/${suffix}` : ''}`, entry.documentId)
-  }
-  const destinationRows = rows.filter((row) => row.path === journal.destRel || row.path.startsWith(`${journal.destRel}/`))
-  const sourceRows = rows.filter((row) => row.path === journal.srcRel || row.path.startsWith(`${journal.srcRel}/`))
-  if (sourceRows.length > 0) return 'source prefix metadata remains after commit'
-  if (destinationRows.length !== expected.size) {
-    return `destination prefix metadata count mismatch: expected ${expected.size}, found ${destinationRows.length}`
-  }
-  for (const row of destinationRows) {
-    if (expected.get(row.path) !== row.id) return `destination prefix identity mismatch: ${row.path}`
-  }
-  return null
-}
-
-/** Round-14 P1-2: row-by-row equality of two Record arrays. Each row
- * is serialized to a canonical JSON form (keys sorted) so equality
- * is independent of key order or whitespace. Order of rows also
- * matters — both arrays must appear in the same order. */
-function canonicalRow(row: Record<string, unknown>): string {
-  const ordered: Record<string, unknown> = {}
-  for (const key of Object.keys(row).sort()) ordered[key] = row[key]
-  return JSON.stringify(ordered)
-}
-function rowsExactlyEqualSnapshot(
-  live: readonly Record<string, unknown>[],
-  expected: readonly Record<string, unknown>[],
-): boolean {
-  if (live.length !== expected.length) return false
-  for (let i = 0; i < live.length; i += 1) {
-    if (canonicalRow(live[i] as Record<string, unknown>) !== canonicalRow(expected[i] as Record<string, unknown>)) return false
-  }
-  return true
-}
-
 /**
  * Reconcile a journaled folder move (the unified replay for every
  * journal that carries entries — v2 physical journals and normalized
@@ -1472,61 +1426,22 @@ async function finalizeFolderMoveV4Cleanup(
   destAbs: string,
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
-  if (!journal.destDev || !journal.destIno) {
-    note(journalAbs, 'quarantined', 'metadata-committed journal is missing final destination generation')
-    return
-  }
-  if (!await verifyDirectoryGeneration(destAbs, {
-    dev: journal.destDev,
-    ino: journal.destIno,
-  })) {
-    note(journalAbs, 'quarantined', 'metadata-committed destination generation does not match journal')
-    return
-  }
-  if (await verifyFolderMoveDestinationV4(destAbs, journal)) {
-    note(journalAbs, 'quarantined', 'metadata-committed destination exact parity failed')
-    return
-  }
-
-  if (journal.metadataDisposition.kind === 'snapshot-restore') {
-    if (!isValidDeleteRollbackSnapshot(journal.metadataDisposition.snapshot, journal.destRel)) {
-      note(journalAbs, 'quarantined', 'metadata-committed snapshot is invalid')
-      return
-    }
-    const revived = reviveMetadataSnapshot(journal.metadataDisposition.snapshot)
-    const liveTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>).map((row) => row.id)
-    revived.preexistingTagIds = [...new Set([...liveTagIds, ...revived.preexistingTagIds])]
-    const live = snapshotDocumentMetadataOwnership(db, revived.paths, revived.documentIds, revived.tagIds)
-    if (!rowsExactlyEqualSnapshot(live.documents, revived.documents)
-      || !rowsExactlyEqualSnapshot(live.tags, revived.tags)
-      || !rowsExactlyEqualSnapshot(live.documentTags, revived.documentTags)
-      || !rowsExactlyEqualSnapshot(live.embeddings, revived.embeddings)
-      || !rowsExactlyEqualSnapshot(live.migrations, revived.migrations)) {
-      note(journalAbs, 'quarantined', 'metadata-committed snapshot graph verification failed: live graph differs from snapshot')
-      return
-    }
-  } else {
-    const metadataError = verifyPrefixMetadataCommitted(db, journal)
-    if (metadataError !== null) {
-      note(journalAbs, 'quarantined', `metadata-committed prefix verification failed: ${metadataError}`)
-      return
-    }
-  }
-
-  if (await isDirectory(srcAbs)) {
-    if ((await fs.readdir(srcAbs)).length > 0) {
-      note(journalAbs, 'quarantined', 'metadata-committed source directory still contains undeclared entries')
-      return
-    }
-    await fs.rmdir(srcAbs)
-  }
-
-  await removeDurableJournal(journalAbs)
-  note(destAbs, 'completed-rename', 'v4 metadata-committed transaction verified and cleaned')
+  const finalization = await finalizeFolderMoveV4CleanupShared(
+    db,
+    journalAbs,
+    journal,
+    srcAbs,
+    destAbs,
+  )
+  note(
+    finalization.completed ? destAbs : journalAbs,
+    finalization.action,
+    finalization.detail,
+  )
 }
 
 async function completeFolderMoveV4Metadata(
-  contentDir: string,
+  _contentDir: string,
   db: DatabaseT,
   journalAbs: string,
   journal: FolderMoveJournalV4 & { phase: 'files-landed' },
@@ -1534,61 +1449,17 @@ async function completeFolderMoveV4Metadata(
   destAbs: string,
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
-  if (await verifyFolderMoveDestinationV4(destAbs, journal)) {
-    note(journalAbs, 'quarantined', 'files-landed physical parity failed before metadata commit')
-    return
-  }
-
-  if (journal.metadataDisposition.kind === 'snapshot-restore') {
-    const snapshot = journal.metadataDisposition.snapshot
-    if (!isValidDeleteRollbackSnapshot(snapshot, journal.destRel)) {
-      note(journalAbs, 'quarantined', 'snapshot-restore metadata disposition is invalid')
-      return
-    }
-    const entryError = validateSnapshotPhysicalEntries(
-      snapshot,
-      journal.entries as unknown as FolderMoveJournalEntry[],
-      journal.destRel,
-    )
-    if (entryError !== null) {
-      note(journalAbs, 'quarantined', `snapshot physical entries are invalid: ${entryError}`)
-      return
-    }
-    const revived = reviveMetadataSnapshot(snapshot)
-    const liveTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>).map((row) => row.id)
-    revived.preexistingTagIds = [...new Set([...liveTagIds, ...revived.preexistingTagIds])]
-    try {
-      restoreDocumentMetadataMutationCAS(
-        db,
-        revived,
-        current => validateSnapshotOwnership(current, revived),
-      )
-    } catch (error) {
-      note(journalAbs, 'quarantined', `snapshot metadata CAS failed: ${(error as Error).message}`)
-      return
-    }
-  } else {
-    try {
-      moveDocumentMetadataPrefix(db, journal.srcRel, journal.destRel)
-    } catch (error) {
-      note(journalAbs, 'failed', `metadata prefix move failed: ${(error as Error).message}`)
-      return
-    }
-  }
-
-  const metadataCommitted = {
-    ...journal,
-    phase: 'metadata-committed' as const,
-  }
-  await rewriteDurableJournal(journalAbs, metadataCommitted)
-  await finalizeFolderMoveV4Cleanup(
-    contentDir,
+  const finalization = await completeFolderMoveV4MetadataShared(
     db,
     journalAbs,
-    metadataCommitted,
+    journal,
     srcAbs,
     destAbs,
-    note,
+  )
+  note(
+    finalization.completed ? destAbs : journalAbs,
+    finalization.action,
+    finalization.detail,
   )
 }
 
