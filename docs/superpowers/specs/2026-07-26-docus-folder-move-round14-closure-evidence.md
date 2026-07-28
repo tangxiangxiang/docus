@@ -1,14 +1,14 @@
-# Docus Folder Move Round-14 Closure Evidence
+# Docus Folder Move Round-14 / Round-15 Closure Evidence
 
 **Status:** Reopened
-**Branch:** round14-folder-move-closure
+**Branch:** codex/round15-folder-move-recovery-closure
 **Current closure commit:** not assigned
 
-This document records the Round-14 closure attempt for the Folder Move
-v4 transaction surface. It supersedes the Round-13 evidence doc but
-does NOT claim closure — Round-14 P0-3, P1-2, P1-3 are implemented but
-the folder-reverse-move subprocess tests regressed and the three-platform
-CI bundle has not been re-verified against the final SHA.
+This document records both the reopened Round-14 attempt and the
+Round-15 recovery closure work. Sections 1–8 retain the historical
+Round-14 evidence. Sections 9 onward are authoritative for Round-15.
+The document does not claim closure until the final pushed SHA has a
+successful Ubuntu, macOS, Windows, and visual GitHub Actions bundle.
 
 ## Commits
 
@@ -16,6 +16,10 @@ CI bundle has not been re-verified against the final SHA.
 | --- | --- |
 | `7e81289` | test(server): expose round14 folder move v4 closure regressions |
 | `cd0fa56` | fix(server): enforce folder move v4 phase and provenance invariants |
+| `1401b43` | test(server): expose round15 folder move recovery closure gaps |
+| `32e9371` | fix(server): recover landed atomic folder moves from gate-created journals |
+| `c502124` | fix(server): enforce exact metadata snapshot ownership before restore |
+| `cdf774e` | fix(server): run all recovery folder companions through the v4 executor |
 
 ## 1. Blocker matrix (Round-14 P0/P1)
 
@@ -139,5 +143,107 @@ SHA. Round-14 cannot claim closure until the run is bound AND green.
   reopened status.
 
 ## 8. Closure judgement
+
+NOT READY FOR CLOSURE REVIEW.
+
+## 9. Round-15 findings and fixes
+
+| ID | Finding | Round-15 resolution | Evidence |
+| --- | --- | --- | --- |
+| P0-1 | Atomic rename could land while the journal remained `gate-created` with the old gate inode. Recovery treated the correct destination source generation as foreign. | `resolveAtomicGateCreatedState` distinguishes an intact empty gate from a landed original-source generation. Only those two ownership proofs proceed. | Round-14 corrected test; Round-15 real atomic subprocess crash test. |
+| P0-2 | A post-rename destination `stat` failure deleted the only recovery journal. | The shared executor throws `AtomicRenameLandedGenerationReadError` and never deletes the gate-created journal. The route returns 500 without entering rollback. | Round-15 injected post-rename stat failure test. |
+| P0-3 | `metadata-committed` cleanup verified generation and metadata but not the complete physical tree. | Cleanup now verifies directory generation plus exact files, file dev/ino/hash, directories, and absence of undeclared content before journal removal. | Missing file, extra file, replaced inode, missing directory, and extra directory tests. |
+| P1-1 | A root-level `a.md` with `directories=[]` was rejected before recovery reached the intended branch. | The invalid blanket rule was removed. Parent closure starts at path segment 1, so root files require no directory entry and nested files still require every parent. | Round-15 root/nested manifest tests. |
+| P1-2 | Broad `some(action === "quarantined")` assertions could pass for provenance instead of the target invariant. | New Round-15 parity tests bind to the exact `metadata-committed destination exact parity failed` detail; the landed atomic test requires `completed-rename`. | `round15FolderMoveRecoveryClosure.test.ts`. |
+| P1-3 | Recovery-created v4 companions still ran the legacy gate-token executor and removed the journal before metadata. | `executeFolderMoveV4Physical` is the only physical executor for the route, rename reverse rollback, delete rollback, and recovery-created reference companion. | Shared executor call-site audit and crash suite. |
+| P1-4 | Snapshot CAS compared only selected identity columns. | Every live row in documents, tags, document_tags, document_embeddings, and metadata_migrations must be a canonical, full-column match for an expected snapshot row. Binary values compare by base64. | Round-15 full-row drift matrix. |
+| P1-5 | Seven reverse-move subprocess scenarios regressed under the Round-14 strict validator. | Reverse folder-rename filenames are accepted only when bound to one of the same-parent transaction endpoints, companion document paths bind to their current physical source, and all reverse moves use durable v4 phases. | `crashRecovery.test.ts`: 125/125, including all reverse subprocess cases. |
+| P1-6 | No real subprocess seam existed after atomic `fs.rename` and before stat/parity/files-landed. | `afterAtomicRenameBeforeParity` fires at that exact location. The child emits `READY:ATOMIC_RENAME_LANDED`, exits 92, and startup recovery completes twice idempotently. | `folder-atomic-after-rename-crash-child.ts`. |
+
+## 10. Atomic gate-created decision table
+
+| Source | Destination | Proof | Outcome |
+| --- | --- | --- | --- |
+| Original source generation | Empty recorded gate generation | Rename not landed | Atomic rename, require destination = original source generation, exact parity, continue. |
+| Absent | Original source generation | Rename landed | Exact parity, rewrite `files-landed` with final generation, continue. |
+| Any other state | Gate/source proof fails | Ownership ambiguous or external | Quarantine; retain journal; do not mutate metadata. |
+
+## 11. Round-15 v4 phase state machine
+
+```text
+prepared
+  -> create destination gate
+  -> durable gate-created
+  -> atomic rename OR replayable entry moves
+  -> exact physical parity
+  -> durable files-landed
+  -> prefix metadata move OR snapshot CAS restore
+  -> durable metadata-committed
+  -> final generation + physical parity + metadata graph + source check
+  -> journal removal
+```
+
+Every executor error retains its journal. Only verified stale
+`prepared` recovery and verified `metadata-committed` finalization
+remove a v4 journal.
+
+## 12. Shared executor call sites
+
+| Call site | Physical direction | Metadata disposition |
+| --- | --- | --- |
+| Folder rename route | old path -> new path | prefix move |
+| Folder rename compensation | new path -> old path | prefix move back |
+| Folder delete rollback | delete staging -> public path | snapshot restore |
+| Rename-reference recovery companion | rename destination -> original source | prefix move back |
+
+## 13. Snapshot CAS matrix
+
+Round-15 rejects external drift in:
+
+- document title, summary, created_at, and updated_at;
+- tag name and normalized_name;
+- document_tags row replacement;
+- embedding content_hash, model, binary embedding, and indexed_at;
+- migration original_path, status, source_hash, error, and updated_at.
+
+Missing expected rows remain recoverable: rollback may restore them.
+Any live row in the owned footprint must otherwise match all columns.
+
+## 14. Local Round-15 verification
+
+Verification against code commit `cdf774e1b13a3a44bcd7446a505f1f1e06ae3f8c`:
+
+| Command | Result |
+| --- | --- |
+| `npm run typecheck` | success |
+| `npm run build` | success |
+| `npm test` | 146 files passed; 2259 tests passed |
+| `npx vitest run server/__tests__/round14FolderMoveClosure.test.ts server/__tests__/round15FolderMoveRecoveryClosure.test.ts` | 2 files; 40 tests passed before the added stat-failure case, then Round-15 alone 25/25 |
+| `npx vitest run server/__tests__/crashRecovery.test.ts` | 125/125 |
+
+The initial RED run produced 22 failures across the Round-14/15 target
+set. It showed provenance short-circuiting the landed atomic branch,
+metadata-committed cleanup removing journals for missing/extra tree
+content, and CAS accepting full-row drift.
+
+## 15. Round-15 CI binding
+
+Final SHA: not assigned.
+
+Workflow run ID: not assigned.
+
+| Job | Job ID | Conclusion |
+| --- | --- | --- |
+| Ubuntu | not assigned | pending |
+| macOS | not assigned | pending |
+| Windows | not assigned | pending |
+| visual | not assigned | pending |
+
+## 16. Round-15 remaining risks and judgement
+
+- GitHub Actions has not yet been run against the final documentation
+  commit, so platform and visual evidence is still pending.
+- The build reports existing bundle-size and third-party PURE annotation
+  warnings; neither warning fails the build or touches folder recovery.
 
 NOT READY FOR CLOSURE REVIEW.
