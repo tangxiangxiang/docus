@@ -79,6 +79,9 @@ export type CreateOnlyMoveHooks = {
   afterReverseParity?: (toDirAbs: string) => void | Promise<void>
   /** Reverse path: after the reverse metadata restore has run. */
   afterReverseMetadata?: (toDirAbs: string) => void | Promise<void>
+  /** Reverse path: metadata is complete, but the shared final verifier
+   * has not yet re-proved directory generation and exact parity. */
+  afterReverseMetadataBeforeFinalVerify?: (toDirAbs: string) => void | Promise<void>
   /** Reverse path: after the reverse journal's phase=metadata-committed
    * has been rewritten, just before the route removes the journal. */
   beforeReverseJournalRemove?: (toDirAbs: string) => void | Promise<void>

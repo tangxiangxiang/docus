@@ -117,6 +117,7 @@ import {
 } from './folderMoveTransaction.js'
 import { validateFolderMoveJournalV4Provenance as validateFolderMoveJournalV4RootProvenance } from './folderMoveJournalValidation.js'
 import { executeFolderMoveV4Physical } from './folderMoveV4Executor.js'
+import { parseDurableFolderMoveJournalV4 } from './folderMoveV4DurableJournal.js'
 
 export interface RecoveryAction {
   /** Vault-relative path of the affected file/folder (or artifact). */
@@ -538,33 +539,6 @@ function parseFolderRenameJournal(raw: string): FolderRenameJournal | null {
   }
 }
 
-/** Parse a v4 folder-move journal. v4 has additional required fields
- * (phase, destDev/destIno from phase=gate-created onward) and a
- * mandatory (sourceDev, sourceIno, sourceHash) trio on every entry.
- * The legacy parser rejects v4; this is the only entry point for v4. */
-function parseFolderRenameJournalV4(raw: string): FolderMoveJournalV4 | null {
-  try {
-    const entry = JSON.parse(raw) as Partial<FolderMoveJournalV4> & { phase?: unknown; entries?: unknown; directories?: unknown; metadataDisposition?: unknown; destDev?: unknown; destIno?: unknown }
-    if (entry.version !== 4) return null
-    if (entry.op !== 'folder-rename' && entry.op !== 'folder-move') return null
-    if (typeof entry.srcRel !== 'string' || typeof entry.destRel !== 'string') return null
-    if (typeof entry.sourceDev !== 'number' || typeof entry.sourceIno !== 'number') return null
-    if (!Number.isFinite(entry.sourceDev) || entry.sourceDev < 0) return null
-    if (!Number.isFinite(entry.sourceIno) || entry.sourceIno < 0) return null
-    if (entry.phase !== 'prepared' && entry.phase !== 'gate-created'
-      && entry.phase !== 'files-landed' && entry.phase !== 'metadata-committed') return null
-    if (entry.strategy !== 'atomic-rename' && entry.strategy !== 'replayable-move') return null
-    if (!Array.isArray(entry.entries)) return null
-    if (!Array.isArray(entry.directories)) return null
-    if (typeof entry.metadataDisposition !== 'object' || entry.metadataDisposition === null) return null
-    const md = entry.metadataDisposition as { kind?: unknown }
-    if (md.kind !== 'prefix-move' && md.kind !== 'snapshot-restore') return null
-    return entry as unknown as FolderMoveJournalV4
-  } catch {
-    return null
-  }
-}
-
 function parseFileRenameJournal(raw: string): FileRenameJournal | null {
   try {
     const entry = JSON.parse(raw) as Partial<FileRenameJournal>
@@ -966,7 +940,7 @@ async function findCompanionFolderMoveJournals(
     const abs = path.join(dir, entry.name)
     try {
       const raw = await fs.readFile(abs, 'utf8')
-      const v4Journal = parseFolderRenameJournalV4(raw)
+      const v4Journal = parseDurableFolderMoveJournalV4(raw)
       if (v4Journal && v4Journal.srcRel === moveSrcRel && v4Journal.destRel === moveDestRel) {
         matches.push({ path: abs, version: 4 })
         continue
@@ -1669,12 +1643,61 @@ async function recoverFolderMoveJournalV4(
       dev: String(journal.sourceDev),
       ino: String(journal.sourceIno),
     })
-    if (sourceGenerationMatches && !await isDirectory(destAbs)) {
-      await removeDurableJournal(journalAbs)
-      note(journalAbs, 'cleaned', 'stale v4 prepared journal (destination absent)')
+    const destinationAbsent = !await isDirectory(destAbs)
+    if (journal.metadataDisposition.kind === 'snapshot-restore') {
+      if (!sourceGenerationMatches || !destinationAbsent) {
+        note(journalAbs, 'quarantined', 'prepared snapshot restore cannot prove an intact source generation with an absent destination')
+        return
+      }
+      try {
+        const physical = await executeFolderMoveV4Physical({
+          contentDir,
+          journalAbs,
+          journal: journal as FolderMoveJournalV4 & { phase: 'prepared' },
+          srcAbs,
+          destAbs,
+          strategy: journal.strategy,
+        })
+        await completeFolderMoveV4Metadata(
+          contentDir,
+          db,
+          journalAbs,
+          physical.journal,
+          srcAbs,
+          destAbs,
+          note,
+        )
+      } catch (error) {
+        note(journalAbs, 'failed', `prepared snapshot restore executor failed: ${(error as Error).message}`)
+      }
       return
     }
-    note(journalAbs, 'quarantined', 'v4 prepared journal cannot prove an intact source with an absent destination')
+
+    const rows = listDocumentMetadata(db).filter((row) =>
+      row.path === journal.srcRel || row.path.startsWith(`${journal.srcRel}/`)
+        || row.path === journal.destRel || row.path.startsWith(`${journal.destRel}/`),
+    )
+    const expectedSource = new Map<string, string>()
+    for (const entry of journal.entries) {
+      if (entry.documentId !== undefined && entry.documentPath !== undefined) {
+        expectedSource.set(entry.documentPath, entry.documentId)
+      }
+    }
+    const sourceRows = rows.filter((row) =>
+      row.path === journal.srcRel || row.path.startsWith(`${journal.srcRel}/`),
+    )
+    const destinationRows = rows.filter((row) =>
+      row.path === journal.destRel || row.path.startsWith(`${journal.destRel}/`),
+    )
+    const sourceMetadataIntact = sourceRows.length === expectedSource.size
+      && sourceRows.every((row) => expectedSource.get(row.path) === row.id)
+    if (sourceGenerationMatches && destinationAbsent
+      && sourceMetadataIntact && destinationRows.length === 0) {
+      await removeDurableJournal(journalAbs)
+      note(journalAbs, 'cleaned', 'stale v4 prefix-move prepared journal (source generation and metadata intact; destination absent)')
+      return
+    }
+    note(journalAbs, 'quarantined', 'v4 prefix-move prepared journal cannot prove intact source generation/metadata with an absent destination')
     return
   }
 
@@ -2294,7 +2317,7 @@ async function recoverFolderRenameJournal(
     // to the legacy token-based path.
     if ((journal as unknown as { version?: number }).version === 4) {
       const raw = await fs.readFile(journalAbs, 'utf8')
-      const v4 = parseFolderRenameJournalV4(raw)
+      const v4 = parseDurableFolderMoveJournalV4(raw)
       if (v4 === null) {
         note(journalAbs, 'quarantined', 'v4 journal could not be parsed')
         return
@@ -2630,7 +2653,7 @@ async function recoverDirectory(
         }
         // v4 journals are NOT parsed by the legacy parser — they fall through
         // here. Check for v4 explicitly before marking as unrecognized.
-        const v4Journal = parseFolderRenameJournalV4(journalRaw)
+        const v4Journal = parseDurableFolderMoveJournalV4(journalRaw)
         if (v4Journal) {
           const srcAbs = path.join(contentDir, v4Journal.srcRel)
           const destAbs = path.join(contentDir, v4Journal.destRel)

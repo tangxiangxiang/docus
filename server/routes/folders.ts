@@ -72,6 +72,9 @@ export type FolderRaceHooks = {
    * prove the replayable reverse move refuses to start without its
    * durable journal (round-8 P1). */
   failJournalFlip?: boolean
+  /** Fires after a delete rollback's prepared snapshot-restore journal
+   * is durable, before its physical executor starts. */
+  afterDeleteRollbackPrepared?: (journalAbs: string) => void | Promise<void>
 }
 let __folderRaceHooks: FolderRaceHooks | null = null
 export function __setFolderRaceHooksForTesting(hooks: FolderRaceHooks | null): void {
@@ -675,6 +678,7 @@ folderRoutes.delete('/api/folders/*', async (c) => {
             metadataDisposition: { kind: 'snapshot-restore', snapshot: serializeMetadataSnapshot(databaseSnapshot) },
           }
           await writeDurableJournal(rollbackJournalPath, rollbackJournal)
+          await __folderRaceHooks?.afterDeleteRollbackPrepared?.(rollbackJournalPath)
           const physical = await executeFolderMoveV4Physical({
             contentDir: CONTENT_DIR,
             journalAbs: rollbackJournalPath,
