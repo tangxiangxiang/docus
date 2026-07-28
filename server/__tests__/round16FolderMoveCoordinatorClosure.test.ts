@@ -163,7 +163,7 @@ describe('Round-16 HTTP executor ownership', () => {
     __setCreateOnlyMoveHooksForTesting(null)
     const report = await recoverInterruptedOperations(vault, db)
     expect(report.actions).toContainEqual({
-      path: persisted.absolutePath,
+      file: path.basename(persisted.absolutePath),
       action: 'quarantined',
       detail: 'atomic gate-created state cannot prove either an intact gate or a landed source generation',
     })
@@ -299,7 +299,7 @@ describe('Round-16 reverse final verification', () => {
     __setCreateOnlyMoveHooksForTesting(null)
     const report = await recoverInterruptedOperations(vault, db)
     expect(report.actions).toContainEqual({
-      path: persisted.absolutePath,
+      file: path.basename(persisted.absolutePath),
       action: 'quarantined',
       detail: 'metadata-committed destination generation does not match journal',
     })

@@ -30,7 +30,10 @@ import {
   AtomicRenameLandedGenerationReadError,
   executeFolderMoveV4Physical,
   FolderMoveExactParityError,
+  FolderMoveGenerationMismatchError,
+  FolderMoveV4ExecutionError,
 } from '../folderMoveV4Executor.js'
+import { readDurableFolderMoveJournalV4 } from '../folderMoveV4DurableJournal.js'
 import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import { prepareRenameReferenceJournal, type PreparedRenameReferenceJournal } from '../renameReferenceJournal.js'
@@ -186,7 +189,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     return bad(c, 'folder metadata changed while rename was being prepared; retry', 409)
   }
   const written: typeof folderReferenceSnapshots = []
-  let renamed = false
+  let physicalPhaseCompleted = false
   let journalPath: string | null = null
   // The persisted folder-move journal payload — kept in scope for the
   // rollback, which durably flips its direction before reversing the
@@ -194,11 +197,6 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   let folderMoveJournal: FolderMoveJournalV4 | null = null
   let journalUuid = ''
   let referenceJournal: PreparedRenameReferenceJournal | null = null
-  // Replayable moves (the Windows protocol) can crash mid-flight with
-  // the tree split between source and destination: a thrown move may
-  // have left journaled entries at the destination, so the journal
-  // must survive for startup recovery even though `renamed` is false.
-  let moveThrew = false
   const moveStrategy = resolveDirectoryMoveStrategy()
   // Local alias so per-phase crash seams (round-11 v4) read the current
   // hook bag without each call going through the module getter.
@@ -295,17 +293,33 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         afterFilesLanded: moveHooks?.afterFilesLanded,
       })
     } catch (error) {
+      const durableJournal = await readDurableFolderMoveJournalV4(journalPath)
+      if (durableJournal) folderMoveJournal = durableJournal
+      const durablePhase = durableJournal?.phase ?? 'unreadable'
+      const executionCause = error instanceof FolderMoveV4ExecutionError
+        ? error.cause
+        : undefined
+      const destinationOccupied = executionCause instanceof RenameDestinationOccupiedError
+      const unsupported = executionCause instanceof UnsupportedDirectoryMoveError
+      if (unsupported) {
+        return bad(c, `this filesystem does not support the create-only folder move; durable phase ${durablePhase}; recovery journal retained`, 501)
+      }
+      if (destinationOccupied) {
+        return bad(c, `destination was claimed by an external writer; durable phase ${durablePhase}; recovery journal retained`, 409)
+      }
       if (error instanceof AtomicRenameLandedGenerationReadError) {
-        return bad(c, `${error.message}; recovery journal retained`, 500)
+        return bad(c, `${error.message}; durable phase ${durablePhase}; recovery journal retained`, 500)
+      }
+      if (error instanceof FolderMoveGenerationMismatchError) {
+        return bad(c, `folder move generation mismatch; durable phase ${durablePhase}; recovery journal retained`, 409)
       }
       if (error instanceof FolderMoveExactParityError) {
-        return bad(c, 'destination ownership or exact parity could not be verified; recovery journal retained', 409)
+        return bad(c, `destination ownership or exact parity could not be verified; durable phase ${durablePhase}; recovery journal retained`, 409)
       }
-      if (moveStrategy === 'replayable-move') moveThrew = true
-      throw error
+      return bad(c, `folder move executor failed at durable phase ${durablePhase}; recovery journal retained`, 500)
     }
     folderMoveJournal = physicalMove.journal
-    renamed = true
+    physicalPhaseCompleted = true
     moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
     if (moveHooks?.afterMetadataCommitted) {
       await moveHooks.afterMetadataCommitted(dest)
@@ -333,7 +347,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   } catch (error) {
     const rollbackErrors: unknown[] = []
     let rollbackSourceReused = false
-    let rolledTreeBack = !renamed
+    let rolledTreeBack = !physicalPhaseCompleted
     if (referenceJournal) {
       try { await referenceJournal.setDirection('roll-back') }
       catch (rollbackError) { rollbackErrors.push(rollbackError) }
@@ -350,7 +364,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         }
       }
     }
-    if (renamed) {
+    if (physicalPhaseCompleted) {
       // DURABLE direction flip BEFORE the first reverse file moves:
       // the journal now describes the rollback (newPath → srcPath), so
       // a crash at ANY point mid-rollback replays forward to the
@@ -450,7 +464,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     // Journal cleanup: removable only when BOTH metadata restore AND
     // durable journal phase rewrite succeeded (round-12 P0/P1). Cannot
     // rely on memory-phase; must verify both mutations completed.
-    if (rolledTreeBack && !rollbackSourceReused && journalPath && !moveThrew
+    if (rolledTreeBack && !rollbackSourceReused && journalPath
       && folderMoveJournal?.phase === 'metadata-committed'
       && rollbackErrors.length === 0) {
       if (moveHooks?.beforeReverseJournalRemove) await moveHooks.beforeReverseJournalRemove(src)
