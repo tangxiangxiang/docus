@@ -79,9 +79,11 @@ import {
   deleteDocumentMetadataPrefix,
   getDocumentMetadata,
   listDocumentMetadata,
+  metadataSnapshotsExactlyEqual,
   moveDocumentMetadataPrefix,
   moveDocumentMetadataReplacingDestination,
   restoreDocumentMetadataMutationCAS,
+  snapshotDocumentMetadataMutationCurrentOwnership,
 } from './documentMetadata.js'
 import {
   classifyPlacementV4,
@@ -1602,13 +1604,32 @@ async function recoverFolderMoveJournalV4(
     )
     const sourceMetadataIntact = sourceRows.length === expectedSource.size
       && sourceRows.every((row) => expectedSource.get(row.path) === row.id)
+    let preparedMetadataIntact = sourceMetadataIntact
+      && destinationRows.length === 0
+    if (journal.metadataDisposition.preparedSnapshot) {
+      const expectedPrepared = reviveMetadataSnapshot(
+        journal.metadataDisposition.preparedSnapshot,
+      )
+      const currentPrepared =
+        snapshotDocumentMetadataMutationCurrentOwnership(db, expectedPrepared)
+      preparedMetadataIntact = metadataSnapshotsExactlyEqual(
+        currentPrepared,
+        expectedPrepared,
+      )
+    }
     if (sourceGenerationMatches && destinationAbsent
-      && sourceMetadataIntact && destinationRows.length === 0) {
+      && preparedMetadataIntact) {
       await removeDurableJournal(journalAbs)
       note(journalAbs, 'cleaned', 'stale v4 prefix-move prepared journal (source generation and metadata intact; destination absent)')
       return
     }
-    note(journalAbs, 'quarantined', 'v4 prefix-move prepared journal cannot prove intact source generation/metadata with an absent destination')
+    note(
+      journalAbs,
+      'quarantined',
+      journal.metadataDisposition.preparedSnapshot
+        ? 'live prefix metadata graph differs from prepared snapshot'
+        : 'v4 prefix-move prepared journal cannot prove intact source generation/metadata with an absent destination',
+    )
     return
   }
 

@@ -12,6 +12,7 @@ import {
   moveDocumentMetadataPrefix,
   restoreDocumentMetadataMutationCAS,
   snapshotDocumentMetadataMutationCurrentOwnership,
+  snapshotDocumentMetadataPrefixMutation,
   snapshotDocumentMetadataOwnership,
   validateSnapshotOwnership,
 } from './documentMetadata.js'
@@ -24,6 +25,7 @@ import {
   isValidDeleteRollbackSnapshot,
   isSerializedMetadataSnapshot,
   reviveMetadataSnapshot,
+  serializeMetadataSnapshot,
   validateSnapshotPhysicalEntries,
   type FolderMoveJournalEntry,
   type FolderMoveJournalV4,
@@ -406,9 +408,37 @@ export async function completeFolderMoveV4Metadata(
   }
 
   await hooks.afterMetadataMutationBeforeJournalRewrite?.()
-  const metadataCommitted = {
-    ...durableJournal,
-    phase: 'metadata-committed' as const,
+  let metadataCommitted: FolderMoveJournalV4 & {
+    phase: 'metadata-committed'
+  }
+  if (durableJournal.metadataDisposition.kind === 'prefix-move') {
+    let committedSnapshot: DocumentMetadataMutationSnapshot
+    try {
+      committedSnapshot = snapshotDocumentMetadataPrefixMutation(
+        db,
+        [durableJournal.srcRel, durableJournal.destRel],
+        durableJournal.metadataDisposition.preparedSnapshot?.paths ?? [],
+      )
+    } catch (error) {
+      return result(
+        durableJournal,
+        'failed',
+        `committed metadata snapshot capture failed: ${(error as Error).message}`,
+      )
+    }
+    metadataCommitted = {
+      ...durableJournal,
+      phase: 'metadata-committed',
+      metadataDisposition: {
+        ...durableJournal.metadataDisposition,
+        committedSnapshot: serializeMetadataSnapshot(committedSnapshot),
+      },
+    }
+  } else {
+    metadataCommitted = {
+      ...durableJournal,
+      phase: 'metadata-committed',
+    }
   }
   try {
     await rewriteDurableJournal(journalAbs, metadataCommitted)

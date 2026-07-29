@@ -632,6 +632,19 @@ function assertPrefixMoveSafe(fromPrefix: string, toPrefix: string, planned: Arr
   }
 }
 
+function movePrefixPath(
+  value: unknown,
+  fromPrefix: string,
+  toPrefix: string,
+): unknown {
+  if (typeof value !== 'string') return value
+  if (value === fromPrefix) return toPrefix
+  if (value.startsWith(`${fromPrefix}/`)) {
+    return toPrefix + value.slice(fromPrefix.length)
+  }
+  return value
+}
+
 export function moveDocumentMetadataPrefix(db: DatabaseT, fromPrefix: string, toPrefix: string): number {
   return db.transaction(() => {
     const rows = db.prepare(
@@ -643,15 +656,114 @@ export function moveDocumentMetadataPrefix(db: DatabaseT, fromPrefix: string, to
       nextPath: toPrefix + row.path.slice(fromPrefix.length),
     }))
     assertPrefixMoveSafe(fromPrefix, toPrefix, planned, db)
+    const movedDocumentIds = planned.map((row) => row.id)
+    const migrationClauses = [
+      'path = ?',
+      'path LIKE ?',
+      'original_path = ?',
+      'original_path LIKE ?',
+    ]
+    const migrationArgs: unknown[] = [
+      fromPrefix,
+      `${fromPrefix}/%`,
+      fromPrefix,
+      `${fromPrefix}/%`,
+    ]
+    if (movedDocumentIds.length > 0) {
+      migrationClauses.push(
+        `document_id IN (${placeholders(movedDocumentIds)})`,
+      )
+      migrationArgs.push(...movedDocumentIds)
+    }
+    const migrationRows = db.prepare(`
+      SELECT *
+      FROM metadata_migrations
+      WHERE ${migrationClauses.join(' OR ')}
+      ORDER BY path
+    `).all(...migrationArgs) as Record<string, unknown>[]
+    const plannedMigrations = migrationRows.map((row) => ({
+      row,
+      fromPath: String(row.path),
+      nextPath: String(movePrefixPath(row.path, fromPrefix, toPrefix)),
+      nextOriginalPath: String(
+        movePrefixPath(row.original_path, fromPrefix, toPrefix) ?? '',
+      ),
+    }))
+    const finalMigrationPaths = new Set<string>()
+    for (const migration of plannedMigrations) {
+      if (finalMigrationPaths.has(migration.nextPath)) {
+        throw new Error(
+          `metadata migration destination collision: ${migration.nextPath}`,
+        )
+      }
+      finalMigrationPaths.add(migration.nextPath)
+    }
+    const movingMigrationPaths = new Set(
+      plannedMigrations.map((migration) => migration.fromPath),
+    )
+    const lookupMigration = db.prepare(
+      'SELECT path FROM metadata_migrations WHERE path = ?',
+    )
+    for (const migration of plannedMigrations) {
+      const existing = lookupMigration.get(migration.nextPath) as
+        | { path: string }
+        | undefined
+      if (existing && !movingMigrationPaths.has(existing.path)) {
+        throw new Error(
+          `metadata migration destination collides with existing path: ${
+            migration.nextPath
+          }`,
+        )
+      }
+    }
+
     const update = db.prepare('UPDATE documents SET path = ?, updated_at = ? WHERE id = ?')
-    const updateMigration = db.prepare(`
-      UPDATE metadata_migrations SET path = ?, document_id = ?, updated_at = ?
-      WHERE document_id = ? OR (document_id IS NULL AND path = ?)
-    `)
     const now = Date.now()
-    for (const { id, fromPath, nextPath } of planned) {
+    for (const { id, nextPath } of planned) {
       update.run(nextPath, now, id)
-      updateMigration.run(nextPath, id, now, id, fromPath)
+    }
+
+    const movingNamespace = `@moving/${randomUUID()}`
+    const moveToTemporary = db.prepare(`
+      UPDATE metadata_migrations
+      SET path = ?
+      WHERE path = ?
+    `)
+    const finishMigration = db.prepare(`
+      UPDATE metadata_migrations
+      SET path = ?, original_path = ?, updated_at = ?
+      WHERE path = ?
+    `)
+    const updateMigrationOriginalPath = db.prepare(`
+      UPDATE metadata_migrations
+      SET original_path = ?, updated_at = ?
+      WHERE path = ?
+    `)
+    const temporaryPaths = new Map<string, string>()
+    let movingIndex = 0
+    for (const migration of plannedMigrations) {
+      if (migration.nextPath === migration.fromPath) continue
+      const temporaryPath = `${movingNamespace}/${movingIndex++}`
+      moveToTemporary.run(temporaryPath, migration.fromPath)
+      temporaryPaths.set(migration.fromPath, temporaryPath)
+    }
+    for (const migration of plannedMigrations) {
+      const temporaryPath = temporaryPaths.get(migration.fromPath)
+      if (temporaryPath) {
+        finishMigration.run(
+          migration.nextPath,
+          migration.nextOriginalPath,
+          now,
+          temporaryPath,
+        )
+      } else if (migration.nextOriginalPath
+        !== String(migration.row.original_path ?? '')) {
+        updateMigrationOriginalPath.run(
+          migration.nextOriginalPath,
+          now,
+          migration.fromPath,
+        )
+      }
     }
     return rows.length
   })()
