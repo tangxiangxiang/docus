@@ -965,6 +965,41 @@ export function validateRound17SnapshotRestoreDisposition(
     return 'snapshot carries an unused companion reference journal proof'
   }
 
+  const durableTagOwnerIds = new Set([
+    ...disposition.physicalDocumentIds,
+    ...disposition.createdMetadataIds.documentIds,
+    ...disposition.metadataOnlyDocumentProofs.map(proof => proof.documentId),
+  ])
+  const expectedDocumentById = new Map(
+    disposition.expectedCurrentSnapshot.documents.map(row => [
+      String(row.id),
+      String(row.path),
+    ]),
+  )
+  for (const documentId of disposition.createdMetadataIds.documentIds) {
+    const documentPath = expectedDocumentById.get(documentId)
+    if (documentPath === undefined
+      || restoreDocuments.has(documentId)
+      || (!pathWithinPrefix(documentPath, journal.srcRel)
+        && !pathWithinPrefix(documentPath, journal.destRel)
+        && !referenceProvesDocument(
+          disposition.referenceJournal?.references ?? [],
+          documentId,
+          documentPath,
+        ))) {
+      return `created document lacks durable transaction provenance: ${documentPath ?? documentId}`
+    }
+  }
+  for (const tagId of disposition.createdMetadataIds.tagIds) {
+    const provenByDurableDocument =
+      disposition.expectedCurrentSnapshot.documentTags.some(row =>
+        Number(row.tag_id) === tagId
+        && durableTagOwnerIds.has(String(row.document_id)))
+    if (!provenByDurableDocument) {
+      return `created tag lacks durable transaction provenance: ${tagId}`
+    }
+  }
+
   const durableReferencePaths = new Set(
     disposition.referenceJournal?.references.flatMap(item => [
       item.sourcePath,
