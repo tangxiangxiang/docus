@@ -2,6 +2,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { constants, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { writeCreateOnlyDurableFile } from './durableCreateOnlyFile.js'
+import {
+  captureDurableDirectoryIdentity,
+  matchesDurableDirectoryIdentity,
+  type DurableDirectoryIdentity,
+} from './durableDirectoryIdentity.js'
 
 export function sha256Hex(raw: string): string {
   return createHash('sha256').update(raw, 'utf8').digest('hex')
@@ -17,7 +22,7 @@ export function sha256HexBuffer(raw: Buffer | Uint8Array): string {
 /** round-11 v4: a directory's (dev, ino) generation tuple persisted
  * in the journal. The pair uniquely identifies an inode on its
  * filesystem across the lifetime of the mount. */
-export type DirectoryGeneration = { dev: string; ino: string }
+export type DirectoryGeneration = DurableDirectoryIdentity
 
 /** Create a destination gate as an empty directory the caller will
  * bind to a durable marker proof before moving into it. The freshly
@@ -36,11 +41,13 @@ export async function createDestinationGate(
     throw error
   }
   await syncParentDirectoryBestEffort(destinationAbs)
-  const stat = await fs.stat(destinationAbs, { bigint: true })
-  if (!stat.isDirectory()) {
-    throw new Error(`destination gate is not a directory: ${destinationAbs}`)
+  try {
+    return await captureDurableDirectoryIdentity(destinationAbs)
+  } catch (error) {
+    await fs.rmdir(destinationAbs).catch(() => {})
+    await syncParentDirectoryBestEffort(destinationAbs)
+    throw error
   }
-  return { dev: stat.dev.toString(), ino: stat.ino.toString() }
 }
 
 /** round-11 v4: confirm a directory at `directoryAbs` is the same
@@ -54,10 +61,8 @@ export async function verifyDirectoryGeneration(
   expected: DirectoryGeneration,
 ): Promise<boolean> {
   try {
-    const stat = await fs.stat(directoryAbs, { bigint: true })
-    return stat.isDirectory()
-      && stat.dev.toString() === expected.dev
-      && stat.ino.toString() === expected.ino
+    const stat = await fs.lstat(directoryAbs, { bigint: true })
+    return matchesDurableDirectoryIdentity(stat, expected)
   } catch {
     return false
   }

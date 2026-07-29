@@ -23,6 +23,7 @@ import {
   removeDeclaredEmptyDirectories,
   verifyFolderMoveDestinationV4,
 } from './documentFileLifecycle.js'
+import { matchesDurableDirectoryIdentity } from './durableDirectoryIdentity.js'
 import {
   removeFolderMoveGateProof,
   verifyFolderMoveGateProof,
@@ -128,7 +129,7 @@ export async function validateDurableSnapshotRestoreDisposition(
 }
 
 async function proveDestinationOwnership(
-  journalAbs: string,
+  _journalAbs: string,
   journal: FolderMoveJournalV4,
   destAbs: string,
   phaseLabel: string,
@@ -136,7 +137,7 @@ async function proveDestinationOwnership(
   | { journal: FolderMoveJournalV4; error?: never }
   | { journal?: never; error: string }
 > {
-  if (!journal.destDev || !journal.destIno) {
+  if (!journal.destDev || !journal.destIno || !journal.destBirthtimeNs) {
     return { error: `${phaseLabel} journal is missing final destination generation` }
   }
   if (journal.strategy === 'replayable-move' && journal.gateProof) {
@@ -152,29 +153,19 @@ async function proveDestinationOwnership(
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
       return { error: 'replayable destination gate proof is missing or mismatched' }
     }
-    const currentGeneration = {
-      dev: stat.dev.toString(),
-      ino: stat.ino.toString(),
-    }
-    if (journal.destDev !== currentGeneration.dev
-      || journal.destIno !== currentGeneration.ino) {
-      const refreshed = {
-        ...journal,
-        destDev: currentGeneration.dev,
-        destIno: currentGeneration.ino,
-      }
-      try {
-        await rewriteDurableJournal(journalAbs, refreshed)
-      } catch (error) {
-        return { error: `${phaseLabel} generation refresh failed: ${(error as Error).message}` }
-      }
-      return { journal: refreshed }
+    if (!matchesDurableDirectoryIdentity(stat, {
+      dev: journal.destDev,
+      ino: journal.destIno,
+      birthtimeNs: journal.destBirthtimeNs,
+    })) {
+      return { error: `${phaseLabel} destination generation does not match journal` }
     }
     return { journal }
   }
   if (!await verifyDirectoryGeneration(destAbs, {
     dev: journal.destDev,
     ino: journal.destIno,
+    birthtimeNs: journal.destBirthtimeNs,
   })) {
     return { error: `${phaseLabel} destination generation does not match journal` }
   }
@@ -470,8 +461,12 @@ export async function finalizeFolderMoveV4Cleanup(
       if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
         return result(durableJournal, 'quarantined', 'metadata-committed source path is not a real directory')
       }
-      if (sourceStat.dev.toString() !== String(durableJournal.sourceDev)
-        || sourceStat.ino.toString() !== String(durableJournal.sourceIno)) {
+      if (!durableJournal.sourceBirthtimeNs
+        || !matchesDurableDirectoryIdentity(sourceStat, {
+          dev: String(durableJournal.sourceDev),
+          ino: String(durableJournal.sourceIno),
+          birthtimeNs: durableJournal.sourceBirthtimeNs,
+        })) {
         return result(
           durableJournal,
           'quarantined',
@@ -488,6 +483,7 @@ export async function finalizeFolderMoveV4Cleanup(
           expectedRootGeneration: {
             dev: String(durableJournal.sourceDev),
             ino: String(durableJournal.sourceIno),
+            birthtimeNs: durableJournal.sourceBirthtimeNs,
           },
           removeRoot: true,
         },
@@ -568,6 +564,7 @@ export async function completeFolderMoveV4Metadata(
     if (!await verifyDirectoryGeneration(srcAbs, {
       dev: durableJournal.sourceDev,
       ino: durableJournal.sourceIno,
+      birthtimeNs: durableJournal.sourceBirthtimeNs as string,
     })) {
       return result(
         durableJournal,

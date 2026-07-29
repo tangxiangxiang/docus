@@ -31,6 +31,10 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { sha256HexBuffer } from './atomicTextWrite.js'
+import {
+  captureDurableDirectoryIdentity,
+  matchesDurableDirectoryIdentity,
+} from './durableDirectoryIdentity.js'
 import type { DocumentMetadataMutationSnapshot } from './documentMetadata.js'
 import { UnsupportedDirectoryMoveError } from './documentFileLifecycle.js'
 
@@ -58,6 +62,7 @@ export type FolderMoveEnumeration = {
     relativeDirectoryPath: string
     sourceDev: string
     sourceIno: string
+    sourceBirthtimeNs: string
   }>
 }
 
@@ -629,6 +634,7 @@ export async function listPhysicalMoveEntries(
   dirAbs: string,
   identityFor?: (relativeFilePath: string) => { documentId: string; documentPath: string } | null,
 ): Promise<FolderMoveEnumeration> {
+  const rootIdentity = await captureDurableDirectoryIdentity(dirAbs)
   const entries: FolderMoveJournalEntry[] = []
   const directories: string[] = []
   const directoryGenerations: FolderMoveEnumeration['directoryGenerations'] = []
@@ -640,12 +646,19 @@ export async function listPhysicalMoveEntries(
       const stat = await fs.lstat(entryAbs, { bigint: true })
       if (entry.isDirectory() && stat.isDirectory() && !stat.isSymbolicLink()) {
         directories.push(entryRel)
+        const directoryIdentity =
+          await captureDurableDirectoryIdentity(entryAbs)
         directoryGenerations.push({
           relativeDirectoryPath: entryRel,
-          sourceDev: stat.dev.toString(),
-          sourceIno: stat.ino.toString(),
+          sourceDev: directoryIdentity.dev,
+          sourceIno: directoryIdentity.ino,
+          sourceBirthtimeNs: directoryIdentity.birthtimeNs,
         })
         await walk(entryAbs, entryRel)
+        const after = await fs.lstat(entryAbs, { bigint: true })
+        if (!matchesDurableDirectoryIdentity(after, directoryIdentity)) {
+          throw new Error('folder move source changed during durable enumeration')
+        }
       } else if (entry.isFile() && stat.isFile() && !stat.isSymbolicLink()) {
         const raw = await fs.readFile(entryAbs)
         const item: FolderMoveJournalEntry = {
@@ -666,6 +679,10 @@ export async function listPhysicalMoveEntries(
     }
   }
   await walk(dirAbs, '')
+  const rootAfter = await fs.lstat(dirAbs, { bigint: true })
+  if (!matchesDurableDirectoryIdentity(rootAfter, rootIdentity)) {
+    throw new Error('folder move source changed during durable enumeration')
+  }
   const codeUnitCompare = (left: string, right: string): number =>
     left < right ? -1 : left > right ? 1 : 0
   entries.sort((a, b) =>
@@ -1425,6 +1442,7 @@ export type FileGeneration = {
 export type DirectoryGeneration = {
   dev: string
   ino: string
+  birthtimeNs: string
 }
 
 /** v4 per-file entry. Markdown entries MAY carry (documentId,
@@ -1486,6 +1504,7 @@ export type FolderMoveJournalV4 = {
   strategy: import('./documentFileLifecycle.js').FolderMoveJournalStrategy
   sourceDev: string
   sourceIno: string
+  sourceBirthtimeNs?: string
   /**
    * phase=prepared: MUST be undefined.
    * phase=gate-created, files-landed, metadata-committed: REQUIRED
@@ -1495,6 +1514,7 @@ export type FolderMoveJournalV4 = {
    */
   destDev?: string
   destIno?: string
+  destBirthtimeNs?: string
   gateProof?: FolderMoveGateProof
   emptyTree?: true
   entries: FolderMoveJournalEntryV4[]
@@ -1526,9 +1546,12 @@ export function validateFolderMovePhaseShape(
     && /^\d+$/.test(journal.destDev)
     && typeof journal.destIno === 'string'
     && /^[1-9]\d*$/.test(journal.destIno)
+    && typeof journal.destBirthtimeNs === 'string'
+    && /^[1-9]\d*$/.test(journal.destBirthtimeNs)
 
   if (journal.phase === 'prepared') {
-    if (journal.destDev !== undefined || journal.destIno !== undefined) {
+    if (journal.destDev !== undefined || journal.destIno !== undefined
+      || journal.destBirthtimeNs !== undefined) {
       return 'prepared journal must not carry destination generation'
     }
     return null
@@ -1552,6 +1575,10 @@ export function validateSourceDirectoryGeneration(
   }
   if (!POSITIVE_DECIMAL_RE.test(journal.sourceIno)) {
     return 'sourceIno must be a positive decimal string'
+  }
+  if (typeof journal.sourceBirthtimeNs !== 'string'
+    || !POSITIVE_DECIMAL_RE.test(journal.sourceBirthtimeNs)) {
+    return 'sourceBirthtimeNs must be a positive decimal string'
   }
   return null
 }

@@ -60,6 +60,7 @@ import {
   markOwnerDurable,
 } from '../renameReferenceOwnerBinding.js'
 import { captureFolderMoveDirectoryEntries } from '../folderMoveDirectoryOwnership.js'
+import { captureDurableDirectoryIdentity } from '../durableDirectoryIdentity.js'
 import { CONTENT_DIR, filePathFor, folderPathFor, isValidPathSyntax } from '../paths.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
 import { listSubtreePaths } from '../tree.js'
@@ -163,9 +164,11 @@ async function restoreForwardJournalAfterReverseContention(
     }
   }
   if (!forwardJournal.destDev || !forwardJournal.destIno
+    || !forwardJournal.destBirthtimeNs
     || !await verifyDirectoryGeneration(destinationAbs, {
       dev: forwardJournal.destDev,
       ino: forwardJournal.destIno,
+      birthtimeNs: forwardJournal.destBirthtimeNs,
     })) {
     return {
       restored: false,
@@ -421,11 +424,8 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     // if the process dies between now and gate creation, recovery
     // sees phase=prepared with no dest generation → quarantines or
     // cleans up safely. Removed LAST after metadata-committed.
-    const sourceDirectoryStat = await fs.lstat(src, { bigint: true })
-    if (!sourceDirectoryStat.isDirectory()
-      || sourceDirectoryStat.isSymbolicLink()) {
-      throw new Error('folder move source is not a real directory')
-    }
+    const sourceDirectoryIdentity =
+      await captureDurableDirectoryIdentity(src)
     const preparedMetadataSnapshot = snapshotDocumentMetadataPrefixMutation(
       metadataDb(),
       [srcPath, newPath],
@@ -443,8 +443,9 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       srcRel: srcPath,
       destRel: newPath,
       strategy: moveStrategy,
-      sourceDev: sourceDirectoryStat.dev.toString(),
-      sourceIno: sourceDirectoryStat.ino.toString(),
+      sourceDev: sourceDirectoryIdentity.dev,
+      sourceIno: sourceDirectoryIdentity.ino,
+      sourceBirthtimeNs: sourceDirectoryIdentity.birthtimeNs,
       gateProof: createFolderMoveGateProof(),
       ...(physicalEntriesV4.length === 0 ? { emptyTree: true } : {}),
       entries: physicalEntriesV4,
@@ -485,9 +486,11 @@ folderRoutes.patch('/api/folders/*', async (c) => {
           const attempted = error.state.journal
           let ownedGateRemoved = false
           if (attempted.phase === 'gate-created' && attempted.destDev && attempted.destIno
+            && attempted.destBirthtimeNs
             && await verifyDirectoryGeneration(dest, {
               dev: attempted.destDev,
               ino: attempted.destIno,
+              birthtimeNs: attempted.destBirthtimeNs,
             })
             && (!attempted.gateProof
               || await verifyFolderMoveGateProof(dest, attempted.gateProof))
@@ -726,10 +729,9 @@ folderRoutes.patch('/api/folders/*', async (c) => {
               .filter(id => !databaseSnapshot.preexistingTagIds.includes(id))
               .sort((left, right) => left - right),
           }
-          const reverseSourceStat = await fs.lstat(dest, { bigint: true })
-          if (!reverseSourceStat.isDirectory()
-            || reverseSourceStat.isSymbolicLink()
-            || !await isPhysicallyContained(CONTENT_DIR, dest)) {
+          const reverseSourceIdentity =
+            await captureDurableDirectoryIdentity(dest)
+          if (!await isPhysicallyContained(CONTENT_DIR, dest)) {
             throw new Error(
               'reverse source is not an owned physical directory',
             )
@@ -758,14 +760,16 @@ folderRoutes.patch('/api/folders/*', async (c) => {
             ...folderMoveJournal,
             srcRel: newPath,
             destRel: srcPath,
-            sourceDev: reverseSourceStat.dev.toString(),
-            sourceIno: reverseSourceStat.ino.toString(),
+            sourceDev: reverseSourceIdentity.dev,
+            sourceIno: reverseSourceIdentity.ino,
+            sourceBirthtimeNs: reverseSourceIdentity.birthtimeNs,
             phase: 'prepared',
             gateProof: createFolderMoveGateProof(),
             // destDev/destIno are removed in the prepared phase; they
             // are re-persisted when the reverse gate is created.
             destDev: undefined,
             destIno: undefined,
+            destBirthtimeNs: undefined,
             destinationDirectoryGenerations: undefined,
             // Flip each entry's documentPath to match the new srcRel.
             entries: reverseEntries,
@@ -1153,10 +1157,8 @@ folderRoutes.delete('/api/folders/*', async (c) => {
             ...(e.documentPath !== undefined ? { documentPath: e.documentPath } : {}),
           }))
           rollbackPhysicalDirectoriesV4 = rollbackPhysical.directories
-          const stagedStat = await fs.lstat(staged, { bigint: true })
-          if (!stagedStat.isDirectory() || stagedStat.isSymbolicLink()) {
-            throw new Error('folder rollback source is not a real directory')
-          }
+          const stagedIdentity =
+            await captureDurableDirectoryIdentity(staged)
           rollbackJournal = {
             version: FOLDER_MOVE_JOURNAL_VERSION,
             op: 'folder-move',
@@ -1164,8 +1166,9 @@ folderRoutes.delete('/api/folders/*', async (c) => {
             srcRel: stagedRel,
             destRel: folderP,
             strategy: rollbackStrategy,
-            sourceDev: stagedStat.dev.toString(),
-            sourceIno: stagedStat.ino.toString(),
+            sourceDev: stagedIdentity.dev,
+            sourceIno: stagedIdentity.ino,
+            sourceBirthtimeNs: stagedIdentity.birthtimeNs,
             gateProof: createFolderMoveGateProof(),
             ...(rollbackPhysicalEntriesV4.length === 0 ? { emptyTree: true } : {}),
             entries: rollbackPhysicalEntriesV4,

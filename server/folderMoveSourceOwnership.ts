@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { sha256HexBuffer } from './atomicTextWrite.js'
 import type { FolderMoveJournalV4 } from './folderMoveTransaction.js'
+import { matchesDurableDirectoryIdentity } from './durableDirectoryIdentity.js'
 
 export type FolderMoveSourceInventory =
   | { kind: 'intact' }
@@ -31,8 +32,12 @@ export async function inspectFolderMoveSourceInventory(
   if (!root.isDirectory() || root.isSymbolicLink()) {
     return { kind: 'external', reason: 'source root is not a real directory' }
   }
-  if (root.dev.toString() !== String(journal.sourceDev)
-    || root.ino.toString() !== String(journal.sourceIno)) {
+  if (typeof journal.sourceBirthtimeNs !== 'string'
+    || !matchesDurableDirectoryIdentity(root, {
+      dev: String(journal.sourceDev),
+      ino: String(journal.sourceIno),
+      birthtimeNs: journal.sourceBirthtimeNs,
+    })) {
     return { kind: 'external', reason: 'source root generation changed' }
   }
 
@@ -73,14 +78,25 @@ export async function inspectFolderMoveSourceInventory(
           return `source contains undeclared directory: ${relative}`
         }
         const generation = directoryGenerations.get(relative)
-        if (!generation
-          || stat.dev.toString() !== generation.sourceDev
-          || stat.ino.toString() !== generation.sourceIno) {
+        if (!generation || typeof generation.sourceBirthtimeNs !== 'string'
+          || !matchesDurableDirectoryIdentity(stat, {
+            dev: generation.sourceDev,
+            ino: generation.sourceIno,
+            birthtimeNs: generation.sourceBirthtimeNs,
+          })) {
           return `source directory generation changed: ${relative}`
         }
         seenDirectories.add(relative)
         const nested = await walk(absolute, relative)
         if (nested) return nested
+        const after = await fs.lstat(absolute, { bigint: true })
+        if (!matchesDurableDirectoryIdentity(after, {
+          dev: generation.sourceDev,
+          ino: generation.sourceIno,
+          birthtimeNs: generation.sourceBirthtimeNs,
+        })) {
+          return `source directory generation changed: ${relative}`
+        }
         continue
       }
       if (!stat.isFile()) {
@@ -101,6 +117,14 @@ export async function inspectFolderMoveSourceInventory(
   try {
     const external = await walk(srcAbs, '')
     if (external) return { kind: 'external', reason: external }
+    const rootAfter = await fs.lstat(srcAbs, { bigint: true })
+    if (!matchesDurableDirectoryIdentity(rootAfter, {
+      dev: String(journal.sourceDev),
+      ino: String(journal.sourceIno),
+      birthtimeNs: journal.sourceBirthtimeNs,
+    })) {
+      return { kind: 'external', reason: 'source root generation changed' }
+    }
   } catch {
     return { kind: 'external', reason: 'source inventory changed while inspecting' }
   }

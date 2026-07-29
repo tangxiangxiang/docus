@@ -14,6 +14,11 @@ import {
   verifyDirectoryGeneration,
 } from './atomicTextWrite.js'
 import type { FolderMoveJournalEntry, FolderMoveJournalEntryV4 } from './folderMoveTransaction.js'
+import {
+  captureDurableDirectoryIdentity,
+  matchesDurableDirectoryIdentity,
+  type DurableDirectoryIdentity,
+} from './durableDirectoryIdentity.js'
 
 /** Test-only hooks for the create-only move race/crash windows. Null
  * in production; tests reset in finally. `afterMkdirGate` fires right
@@ -437,11 +442,12 @@ export async function removeDeclaredEmptyDirectories(
   declaredDirectories: readonly string[],
   options: {
     removeRoot?: boolean
-    expectedRootGeneration?: { dev: string; ino: string }
+    expectedRootGeneration?: DurableDirectoryIdentity
     directoryGenerations?: Array<{
       relativeDirectoryPath: string
       sourceDev: string
       sourceIno: string
+      sourceBirthtimeNs?: string
     }>
   } = {},
 ): Promise<{
@@ -451,11 +457,13 @@ export async function removeDeclaredEmptyDirectories(
   rootRemoved: boolean
 }> {
   const declaredSet = new Set([...new Set(declaredDirectories)])
-  const expectedGen = new Map<string, { dev: string, ino: string }>()
+  const expectedGen = new Map<string, DurableDirectoryIdentity>()
   for (const entry of options.directoryGenerations ?? []) {
+    if (!entry.sourceBirthtimeNs) continue
     expectedGen.set(entry.relativeDirectoryPath, {
       dev: entry.sourceDev,
       ino: entry.sourceIno,
+      birthtimeNs: entry.sourceBirthtimeNs,
     })
   }
   const removed: string[] = []
@@ -482,9 +490,7 @@ export async function removeDeclaredEmptyDirectories(
       continue
     }
     const expected = expectedGen.get(relative)
-    if (expected
-      && (stat.dev.toString() !== expected.dev
-        || stat.ino.toString() !== expected.ino)) {
+    if (!expected || !matchesDurableDirectoryIdentity(stat, expected)) {
       conflict.push(relative)
       continue
     }
@@ -506,8 +512,10 @@ export async function removeDeclaredEmptyDirectories(
       if (!stat.isDirectory() || stat.isSymbolicLink()) {
         retained.push('')
       } else if (options.expectedRootGeneration
-        && (stat.dev.toString() !== options.expectedRootGeneration.dev
-          || stat.ino.toString() !== options.expectedRootGeneration.ino)) {
+        && !matchesDurableDirectoryIdentity(
+          stat,
+          options.expectedRootGeneration,
+        )) {
         conflict.push('')
       } else if ((await fs.readdir(rootAbs)).length !== 0) {
         retained.push('')
@@ -902,11 +910,13 @@ export type MoveEntriesIntoGateOptions = {
     relativeDirectoryPath: string
     sourceDev: string
     sourceIno: string
+    sourceBirthtimeNs?: string
   }[]
   expectedDestinationDirectoryGenerations?: readonly {
     relativeDirectoryPath: string
     sourceDev: string
     sourceIno: string
+    sourceBirthtimeNs?: string
   }[]
   /** Exact destination-root entries owned by the transaction. */
   ignoredDestinationEntries?: readonly string[]
@@ -914,7 +924,7 @@ export type MoveEntriesIntoGateOptions = {
    * resume a split replayable tree after any mover error. */
   preservePartialLandingOnError?: boolean
   /** Original source root generation required before removing its shell. */
-  sourceGeneration?: { dev: string; ino: string }
+  sourceGeneration?: DurableDirectoryIdentity
 }
 
 /** Move every journaled entry into a destination gate the route
@@ -938,6 +948,7 @@ export async function moveFolderEntriesIntoExistingGate(
     relativeDirectoryPath: string
     sourceDev: string
     sourceIno: string
+    sourceBirthtimeNs: string
   }> = []
   // Recreate every declared directory at the destination.
   for (const dirRel of options.directories) {
@@ -946,16 +957,12 @@ export async function moveFolderEntriesIntoExistingGate(
       throw new UnsupportedDirectoryMoveError(`directory path escapes the vault: ${dirRel}`)
     }
     await fs.mkdir(dirAbs, { recursive: true })
-    const destinationStat = await fs.lstat(dirAbs, { bigint: true })
-    if (!destinationStat.isDirectory() || destinationStat.isSymbolicLink()) {
-      throw new UnsupportedDirectoryMoveError(
-        `destination directory is not a real directory: ${dirRel}`,
-      )
-    }
+    const identity = await captureDurableDirectoryIdentity(dirAbs)
     destinationDirectoryGenerations.push({
       relativeDirectoryPath: dirRel,
-      sourceDev: destinationStat.dev.toString(),
-      sourceIno: destinationStat.ino.toString(),
+      sourceDev: identity.dev,
+      sourceIno: identity.ino,
+      sourceBirthtimeNs: identity.birthtimeNs,
     })
   }
   if (options.expectedDestinationDirectoryGenerations) {
@@ -966,6 +973,7 @@ export async function moveFolderEntriesIntoExistingGate(
         return entry.relativeDirectoryPath !== current.relativeDirectoryPath
           || entry.sourceDev !== current.sourceDev
           || entry.sourceIno !== current.sourceIno
+          || entry.sourceBirthtimeNs !== current.sourceBirthtimeNs
       })) {
       throw new UnsupportedDirectoryMoveError(
         'destination declared directory generation changed',
@@ -1041,24 +1049,31 @@ export async function verifyFolderMoveDestinationV4(
   journal: {
     destDev?: string
     destIno?: string
+    destBirthtimeNs?: string
     entries: readonly FolderMoveJournalEntryV4[]
     directories: readonly string[]
     directoryGenerations?: readonly {
       relativeDirectoryPath: string
       sourceDev: string
       sourceIno: string
+      sourceBirthtimeNs?: string
     }[]
     destinationDirectoryGenerations?: readonly {
       relativeDirectoryPath: string
       sourceDev: string
       sourceIno: string
+      sourceBirthtimeNs?: string
     }[]
     strategy?: FolderMoveJournalStrategy
   },
   options: FolderMoveParityOptions = {},
 ): Promise<boolean> {
-  if (!journal.destDev || !journal.destIno) return true
-  if (!await verifyDirectoryGeneration(destinationAbs, { dev: journal.destDev, ino: journal.destIno })) {
+  if (!journal.destDev || !journal.destIno || !journal.destBirthtimeNs) return true
+  if (!await verifyDirectoryGeneration(destinationAbs, {
+    dev: journal.destDev,
+    ino: journal.destIno,
+    birthtimeNs: journal.destBirthtimeNs,
+  })) {
     return true
   }
   const expectedDirectoryGenerations =
@@ -1067,9 +1082,13 @@ export async function verifyFolderMoveDestinationV4(
       : journal.directoryGenerations
   if (expectedDirectoryGenerations) {
     for (const entry of expectedDirectoryGenerations) {
-      if (!await verifyDirectoryGeneration(
+      if (!entry.sourceBirthtimeNs || !await verifyDirectoryGeneration(
         path.join(destinationAbs, entry.relativeDirectoryPath),
-        { dev: entry.sourceDev, ino: entry.sourceIno },
+        {
+          dev: entry.sourceDev,
+          ino: entry.sourceIno,
+          birthtimeNs: entry.sourceBirthtimeNs,
+        },
       )) {
         return true
       }

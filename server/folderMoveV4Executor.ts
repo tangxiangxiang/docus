@@ -22,6 +22,11 @@ import { inspectFolderMoveSourceInventory } from './folderMoveSourceOwnership.js
 import {
   createFolderMoveDestinationDirectories,
 } from './folderMoveDirectoryOwnership.js'
+import {
+  captureDurableDirectoryIdentity,
+  matchesDurableDirectoryIdentity,
+  type DurableDirectoryIdentity,
+} from './durableDirectoryIdentity.js'
 
 export type FolderMoveV4DurableState = {
   /** Latest phase the executor attempted. The disk journal can still be
@@ -79,7 +84,7 @@ export type ExecuteFolderMoveV4Input = {
   strategy: FolderMoveJournalStrategy
   afterGateCreated?: (
     destinationAbs: string,
-    generation: { dev: string; ino: string },
+    generation: DurableDirectoryIdentity,
   ) => void | Promise<void>
   afterAtomicRenameBeforeParity?: (
     sourceAbs: string,
@@ -121,9 +126,12 @@ export async function executeFolderMoveV4Physical(
         state,
       )
     }
-    if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()
-      || sourceStat.dev.toString() !== String(journal.sourceDev)
-      || sourceStat.ino.toString() !== String(journal.sourceIno)
+    if (typeof journal.sourceBirthtimeNs !== 'string'
+      || !matchesDurableDirectoryIdentity(sourceStat, {
+        dev: String(journal.sourceDev),
+        ino: String(journal.sourceIno),
+        birthtimeNs: journal.sourceBirthtimeNs,
+      })
       || !await isPhysicallyContained(contentDir, srcAbs)) {
       throw new FolderMoveSourceGenerationMismatchError(
         'folder move source generation does not match prepared journal',
@@ -160,6 +168,7 @@ export async function executeFolderMoveV4Physical(
       phase: 'gate-created',
       destDev: gate.dev,
       destIno: gate.ino,
+      destBirthtimeNs: gate.birthtimeNs,
     }
     state = { ...state, journal }
     await rewriteDurableJournal(journalAbs, journal)
@@ -190,18 +199,15 @@ export async function executeFolderMoveV4Physical(
       state = { ...state, physicalMayHaveLanded: true }
       await input.afterAtomicRenameBeforeParity?.(srcAbs, destAbs)
 
-      let finalStat: Awaited<ReturnType<typeof fs.stat>>
+      let finalGeneration: DurableDirectoryIdentity
       try {
-        finalStat = await fs.stat(destAbs, { bigint: true })
+        finalGeneration = await captureDurableDirectoryIdentity(destAbs)
       } catch (error) {
         throw new AtomicRenameLandedGenerationReadError(destAbs, state, { cause: error })
       }
-      const finalGeneration = {
-        dev: finalStat.dev.toString(),
-        ino: finalStat.ino.toString(),
-      }
       if (finalGeneration.dev !== String(journal.sourceDev)
-        || finalGeneration.ino !== String(journal.sourceIno)) {
+        || finalGeneration.ino !== String(journal.sourceIno)
+        || finalGeneration.birthtimeNs !== journal.sourceBirthtimeNs) {
         throw new FolderMoveGenerationMismatchError(
           'atomic destination generation does not equal original source generation',
           state,
@@ -210,6 +216,7 @@ export async function executeFolderMoveV4Physical(
       if (await verifyFolderMoveDestinationV4(destAbs, {
         destDev: finalGeneration.dev,
         destIno: finalGeneration.ino,
+        destBirthtimeNs: finalGeneration.birthtimeNs,
         entries: journal.entries,
         directories: journal.directories,
         directoryGenerations: journal.directoryGenerations,
@@ -222,6 +229,7 @@ export async function executeFolderMoveV4Physical(
         phase: 'files-landed',
         destDev: finalGeneration.dev,
         destIno: finalGeneration.ino,
+        destBirthtimeNs: finalGeneration.birthtimeNs,
       }
     } else {
       const destinationDirectoryGenerations =
@@ -254,6 +262,7 @@ export async function executeFolderMoveV4Physical(
         sourceGeneration: {
           dev: String(journal.sourceDev),
           ino: String(journal.sourceIno),
+          birthtimeNs: journal.sourceBirthtimeNs as string,
         },
       })
       if (await verifyFolderMoveDestinationV4(destAbs, journal, {

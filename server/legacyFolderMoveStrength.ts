@@ -121,6 +121,21 @@ export function classifyFolderMoveRecoveryStrength(
       reason: 'v4 journal source root generation is unsafe',
     }
   }
+  if (typeof entry.sourceBirthtimeNs !== 'string'
+    || !/^[1-9]\d*$/.test(entry.sourceBirthtimeNs)) {
+    return {
+      strength: 'weak',
+      reason: 'v4 journal source root birthtime proof is missing or unsafe',
+    }
+  }
+  if (phase !== 'prepared'
+    && (typeof entry.destBirthtimeNs !== 'string'
+      || !/^[1-9]\d*$/.test(entry.destBirthtimeNs))) {
+    return {
+      strength: 'weak',
+      reason: 'v4 journal destination root birthtime proof is missing or unsafe',
+    }
+  }
   return { strength: 'strong' }
 }
 

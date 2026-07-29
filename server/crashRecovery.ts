@@ -73,6 +73,10 @@ import { randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
 import type { Database as DatabaseT } from 'better-sqlite3'
 import { atomicReplaceTextIfUnchanged, removeDurableJournal, removeDurableRecoveryPayload, rewriteDurableJournal, sha256Hex, sha256HexBuffer, syncParentDirectoryBestEffort, verifyDirectoryGeneration, writeDurableJournal } from './atomicTextWrite.js'
+import {
+  captureDurableDirectoryIdentity,
+  type DurableDirectoryIdentity,
+} from './durableDirectoryIdentity.js'
 import { isValidPathSyntax } from './paths.js'
 import {
   parseAndValidateDurableRenameReferenceBundle,
@@ -1276,8 +1280,11 @@ async function recoverRenameReferencesJournal(
         // per-file protocol on POSIX and kill recovery mid-replay.
         const moveStrategy = resolveDirectoryMoveStrategy()
         try {
-          const destStat = await fs.lstat(destAbs, { bigint: true })
-          if (!destStat.isDirectory() || destStat.isSymbolicLink()) {
+          let destinationIdentity: DurableDirectoryIdentity
+          try {
+            destinationIdentity =
+              await captureDurableDirectoryIdentity(destAbs)
+          } catch {
             note(
               journalAbs,
               'quarantined',
@@ -1306,8 +1313,9 @@ async function recoverRenameReferencesJournal(
             srcRel: journal.destRel,
             destRel: journal.srcRel,
             strategy: moveStrategy,
-            sourceDev: destStat.dev.toString(),
-            sourceIno: destStat.ino.toString(),
+            sourceDev: destinationIdentity.dev,
+            sourceIno: destinationIdentity.ino,
+            sourceBirthtimeNs: destinationIdentity.birthtimeNs,
             gateProof: createFolderMoveGateProof(),
             ...(moveJournalEntries.length === 0 ? { emptyTree: true } : {}),
             entries: moveJournalEntries,
@@ -1434,7 +1442,7 @@ type DestInventory =
  */
 type AtomicGateCreatedResolution =
   | { kind: 'rename-not-landed'; finalGeneration?: never }
-  | { kind: 'rename-landed'; finalGeneration: { dev: string; ino: string } }
+  | { kind: 'rename-landed'; finalGeneration: DurableDirectoryIdentity }
   | { kind: 'quarantined'; reason: string }
 
 async function isEmptyDirectoryExcept(
@@ -1453,14 +1461,9 @@ async function isEmptyDirectoryExcept(
 
 async function readDirectoryGeneration(
   directoryAbs: string,
-): Promise<{ dev: string; ino: string } | null> {
+): Promise<DurableDirectoryIdentity | null> {
   try {
-    const stat = await fs.lstat(directoryAbs, { bigint: true })
-    if (!stat.isDirectory() || stat.isSymbolicLink()) return null
-    return {
-      dev: stat.dev.toString(),
-      ino: stat.ino.toString(),
-    }
+    return await captureDurableDirectoryIdentity(directoryAbs)
   } catch {
     return null
   }
@@ -1477,7 +1480,10 @@ async function resolveAtomicGateCreatedState(
       reason: 'atomic gate-created resolver received incompatible journal',
     }
   }
-  if (typeof journal.destDev !== 'string' || typeof journal.destIno !== 'string') {
+  if (typeof journal.destDev !== 'string'
+    || typeof journal.destIno !== 'string'
+    || typeof journal.destBirthtimeNs !== 'string'
+    || typeof journal.sourceBirthtimeNs !== 'string') {
     return {
       kind: 'quarantined',
       reason: 'atomic gate-created journal is missing gate generation',
@@ -1487,8 +1493,13 @@ async function resolveAtomicGateCreatedState(
   const sourceGeneration = {
     dev: String(journal.sourceDev),
     ino: String(journal.sourceIno),
+    birthtimeNs: journal.sourceBirthtimeNs,
   }
-  const gateGeneration = { dev: journal.destDev, ino: journal.destIno }
+  const gateGeneration = {
+    dev: journal.destDev,
+    ino: journal.destIno,
+    birthtimeNs: journal.destBirthtimeNs,
+  }
   const sourceExists = await isDirectory(srcAbs)
   const destinationExists = await isDirectory(destAbs)
   const sourceMatchesOriginal = sourceExists
@@ -1653,6 +1664,7 @@ async function recoverFolderMoveJournalV4(
     const sourceGenerationMatches = await verifyDirectoryGeneration(srcAbs, {
       dev: String(journal.sourceDev),
       ino: String(journal.sourceIno),
+      birthtimeNs: journal.sourceBirthtimeNs as string,
     })
     const destinationAbsent = !await isDirectory(destAbs)
     const sourceInventory = sourceGenerationMatches
@@ -1744,7 +1756,7 @@ async function recoverFolderMoveJournalV4(
         note(journalAbs, 'quarantined', resolution.reason)
         return
       }
-      let finalGeneration: { dev: string; ino: string }
+      let finalGeneration: DurableDirectoryIdentity
       if (resolution.kind === 'rename-not-landed') {
         if (platformDirectoryMoveStrategy !== 'atomic-rename') {
           note(
@@ -1768,19 +1780,16 @@ async function recoverFolderMoveJournalV4(
           note(journalAbs, 'failed', `atomic recovery rename failed: ${(error as Error).message}`)
           return
         }
-        let finalStat: Awaited<ReturnType<typeof fs.stat>>
         try {
-          finalStat = await fs.stat(destAbs, { bigint: true })
+          finalGeneration =
+            await captureDurableDirectoryIdentity(destAbs)
         } catch (error) {
           note(journalAbs, 'failed', `atomic recovery destination stat failed: ${(error as Error).message}`)
           return
         }
-        finalGeneration = {
-          dev: finalStat.dev.toString(),
-          ino: finalStat.ino.toString(),
-        }
         if (finalGeneration.dev !== String(journal.sourceDev)
-          || finalGeneration.ino !== String(journal.sourceIno)) {
+          || finalGeneration.ino !== String(journal.sourceIno)
+          || finalGeneration.birthtimeNs !== journal.sourceBirthtimeNs) {
           note(journalAbs, 'quarantined', 'atomic recovery rename produced a destination generation different from the original source')
           return
         }
@@ -1790,6 +1799,7 @@ async function recoverFolderMoveJournalV4(
       if (await verifyFolderMoveDestinationV4(destAbs, {
         destDev: finalGeneration.dev,
         destIno: finalGeneration.ino,
+        destBirthtimeNs: finalGeneration.birthtimeNs,
         entries,
         directories,
         directoryGenerations: journal.directoryGenerations,
@@ -1803,6 +1813,7 @@ async function recoverFolderMoveJournalV4(
         phase: 'files-landed' as const,
         destDev: finalGeneration.dev,
         destIno: finalGeneration.ino,
+        destBirthtimeNs: finalGeneration.birthtimeNs,
       }
       await rewriteDurableJournal(journalAbs, filesLanded)
       await completeFolderMoveV4Metadata(
@@ -1817,7 +1828,7 @@ async function recoverFolderMoveJournalV4(
       return
     }
 
-    if (!journal.destDev || !journal.destIno) {
+    if (!journal.destDev || !journal.destIno || !journal.destBirthtimeNs) {
       note(journalAbs, 'quarantined', 'replayable gate-created journal is missing gate generation')
       return
     }
@@ -1832,17 +1843,15 @@ async function recoverFolderMoveJournalV4(
         return
       }
       if (journal.destDev !== currentGeneration.dev
-        || journal.destIno !== currentGeneration.ino) {
-        journal = {
-          ...journal,
-          destDev: currentGeneration.dev,
-          destIno: currentGeneration.ino,
-        }
-        await rewriteDurableJournal(journalAbs, journal)
+        || journal.destIno !== currentGeneration.ino
+        || journal.destBirthtimeNs !== currentGeneration.birthtimeNs) {
+        note(journalAbs, 'quarantined', 'replayable destination gate generation does not match journal')
+        return
       }
     } else if (!await verifyDirectoryGeneration(destAbs, {
       dev: journal.destDev,
       ino: journal.destIno,
+      birthtimeNs: journal.destBirthtimeNs,
     })) {
         note(journalAbs, 'quarantined', 'replayable destination gate generation does not match journal')
         return
@@ -1947,7 +1956,7 @@ async function recoverFolderMoveJournalV4(
   }
 
   if (journal.phase === 'files-landed') {
-    if (!journal.destDev || !journal.destIno) {
+    if (!journal.destDev || !journal.destIno || !journal.destBirthtimeNs) {
       note(journalAbs, 'quarantined', 'files-landed journal is missing final destination generation')
       return
     }
@@ -1962,17 +1971,15 @@ async function recoverFolderMoveJournalV4(
         return
       }
       if (journal.destDev !== currentGeneration.dev
-        || journal.destIno !== currentGeneration.ino) {
-        journal = {
-          ...journal,
-          destDev: currentGeneration.dev,
-          destIno: currentGeneration.ino,
-        }
-        await rewriteDurableJournal(journalAbs, journal)
+        || journal.destIno !== currentGeneration.ino
+        || journal.destBirthtimeNs !== currentGeneration.birthtimeNs) {
+        note(journalAbs, 'quarantined', 'files-landed destination generation does not match journal')
+        return
       }
     } else if (!await verifyDirectoryGeneration(destAbs, {
       dev: journal.destDev,
       ino: journal.destIno,
+      birthtimeNs: journal.destBirthtimeNs,
     })) {
         note(journalAbs, 'quarantined', 'files-landed destination generation does not match journal')
         return

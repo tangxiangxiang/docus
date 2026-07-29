@@ -65,6 +65,14 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
   const sourceDev = normalizeGenerationDecimal(entry.sourceDev, { positive: false })
   const sourceIno = normalizeGenerationDecimal(entry.sourceIno, { positive: true })
   if (sourceDev === null || sourceIno === null) return null
+  const sourceBirthtimeNs = entry.sourceBirthtimeNs === undefined
+    ? undefined
+    : normalizeGenerationDecimal(entry.sourceBirthtimeNs, { positive: true })
+  if (entry.sourceBirthtimeNs !== undefined && sourceBirthtimeNs === null) return null
+  const destBirthtimeNs = entry.destBirthtimeNs === undefined
+    ? undefined
+    : normalizeGenerationDecimal(entry.destBirthtimeNs, { positive: true })
+  if (entry.destBirthtimeNs !== undefined && destBirthtimeNs === null) return null
   if (entry.phase !== 'prepared' && entry.phase !== 'gate-created'
     && entry.phase !== 'files-landed' && entry.phase !== 'metadata-committed') return null
   if (entry.strategy !== 'atomic-rename' && entry.strategy !== 'replayable-move') return null
@@ -83,15 +91,20 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
       const rel = raw.relativeDirectoryPath
       const dev = raw.sourceDev
       const ino = raw.sourceIno
+      const birthtimeNs = raw.sourceBirthtimeNs
       if (typeof rel !== 'string'
         || typeof dev !== 'string' || !/^\d+$/.test(dev)
         || typeof ino !== 'string' || !/^[1-9]\d*$/.test(ino)
+        || (birthtimeNs !== undefined
+          && (typeof birthtimeNs !== 'string'
+            || !/^[1-9]\d*$/.test(birthtimeNs)))
         || seenPath.has(rel)) return null
       seenPath.add(rel)
       directoryGenerations.push({
         relativeDirectoryPath: rel,
         sourceDev: dev,
         sourceIno: ino,
+        ...(birthtimeNs === undefined ? {} : { sourceBirthtimeNs: birthtimeNs }),
       })
     }
     if (validateFolderMoveDirectoryGeneration({
@@ -114,11 +127,17 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
         || typeof raw.sourceDev !== 'string'
         || !/^\d+$/.test(raw.sourceDev)
         || typeof raw.sourceIno !== 'string'
-        || !/^[1-9]\d*$/.test(raw.sourceIno)) return null
+        || !/^[1-9]\d*$/.test(raw.sourceIno)
+        || (raw.sourceBirthtimeNs !== undefined
+          && (typeof raw.sourceBirthtimeNs !== 'string'
+            || !/^[1-9]\d*$/.test(raw.sourceBirthtimeNs)))) return null
       destinationDirectoryGenerations.push({
         relativeDirectoryPath: raw.relativeDirectoryPath,
         sourceDev: raw.sourceDev,
         sourceIno: raw.sourceIno,
+        ...(raw.sourceBirthtimeNs === undefined
+          ? {}
+          : { sourceBirthtimeNs: raw.sourceBirthtimeNs }),
       })
     }
     if (validateFolderMoveDirectoryGeneration({
@@ -241,6 +260,8 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
     ...(entry as unknown as FolderMoveJournalV4),
     sourceDev,
     sourceIno,
+    ...(sourceBirthtimeNs ? { sourceBirthtimeNs } : {}),
+    ...(destBirthtimeNs ? { destBirthtimeNs } : {}),
     ...(directoryGenerations ? { directoryGenerations } : {}),
     ...(destinationDirectoryGenerations
       ? { destinationDirectoryGenerations }

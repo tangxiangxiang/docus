@@ -2,11 +2,16 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
 import { isPhysicallyContained } from './documentFileLifecycle.js'
+import {
+  captureDurableDirectoryIdentity,
+  matchesDurableDirectoryIdentity,
+} from './durableDirectoryIdentity.js'
 
 export type FolderMoveDirectoryEntry = {
   relativeDirectoryPath: string
   sourceDev: string
   sourceIno: string
+  sourceBirthtimeNs?: string
 }
 
 export type FolderMoveDirectoryRemovalResult = {
@@ -29,6 +34,7 @@ export async function captureFolderMoveDirectoryEntries(
   dirAbs: string,
   vaultRoot?: string,
 ): Promise<FolderMoveDirectoryEntry[]> {
+  const rootIdentity = await captureDurableDirectoryIdentity(dirAbs)
   const entries: FolderMoveDirectoryEntry[] = []
   const walk = async (current: string, rel: string): Promise<void> => {
     const dirents = await fs.readdir(current, { withFileTypes: true })
@@ -54,15 +60,25 @@ export async function captureFolderMoveDirectoryEntries(
           `unsupported entry inside the moved folder: ${nextRel}`,
         )
       }
+      const identity = await captureDurableDirectoryIdentity(abs)
       entries.push({
         relativeDirectoryPath: nextRel,
-        sourceDev: stat.dev.toString(),
-        sourceIno: stat.ino.toString(),
+        sourceDev: identity.dev,
+        sourceIno: identity.ino,
+        sourceBirthtimeNs: identity.birthtimeNs,
       })
       await walk(abs, nextRel)
+      const after = await fs.lstat(abs, { bigint: true })
+      if (!matchesDurableDirectoryIdentity(after, identity)) {
+        throw new Error('folder move source changed during durable enumeration')
+      }
     }
   }
   await walk(dirAbs, '')
+  const rootAfter = await fs.lstat(dirAbs, { bigint: true })
+  if (!matchesDurableDirectoryIdentity(rootAfter, rootIdentity)) {
+    throw new Error('folder move source changed during durable enumeration')
+  }
   entries.sort((left, right) =>
     left.relativeDirectoryPath < right.relativeDirectoryPath
       ? -1
@@ -105,9 +121,13 @@ export async function verifyFolderMoveDirectoryEntries(
     } catch {
       return `declared directory is missing: ${entry.relativeDirectoryPath}`
     }
-    if (!stat.isDirectory() || stat.isSymbolicLink()
-      || stat.dev.toString() !== entry.sourceDev
-      || stat.ino.toString() !== entry.sourceIno) {
+    if (!entry.sourceBirthtimeNs
+      || !stat.isDirectory() || stat.isSymbolicLink()
+      || !matchesDurableDirectoryIdentity(stat, {
+        dev: entry.sourceDev,
+        ino: entry.sourceIno,
+        birthtimeNs: entry.sourceBirthtimeNs,
+      })) {
       return `declared directory generation changed: ${entry.relativeDirectoryPath}`
     }
   }
@@ -149,6 +169,10 @@ export function validateFolderMoveDirectoryGeneration(
     if (typeof entry.sourceIno !== 'string'
       || !/^[1-9]\d*$/.test(entry.sourceIno)) {
       return 'directory generation sourceIno is invalid'
+    }
+    if (typeof entry.sourceBirthtimeNs !== 'string'
+      || !/^[1-9]\d*$/.test(entry.sourceBirthtimeNs)) {
+      return 'directory generation sourceBirthtimeNs is invalid'
     }
     if (seen.has(entry.relativeDirectoryPath)) {
       return 'directory generation path is duplicated'
