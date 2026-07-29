@@ -114,11 +114,26 @@ describe.runIf(platformDirectoryMoveStrategy === 'replayable-move')(
       expect(journalName).toBeDefined()
       const journal = JSON.parse(
         await fs.readFile(path.join(vault, journalName!), 'utf8'),
-      ) as { phase: string; strategy: string }
+      ) as {
+        phase: string
+        strategy: string
+        gateProof?: {
+          markerName: string
+          secret: string
+        }
+      }
       expect(journal).toMatchObject({
         phase: 'gate-created',
         strategy: 'replayable-move',
       })
+      expect(journal.gateProof).toBeDefined()
+      expect(await fs.readFile(
+        path.join(vault, 'ren', journal.gateProof!.markerName),
+        'utf8',
+      )).toBe(journal.gateProof!.secret)
+      expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
+      await expect(fs.stat(path.join(vault, 'proj/a.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(await fs.readFile(path.join(vault, 'proj/b.md'), 'utf8')).toBe('# b\n')
 
       __setCreateOnlyMoveHooksForTesting(null)
       const first = await recoverInterruptedOperations(vault, db)
@@ -130,6 +145,9 @@ describe.runIf(platformDirectoryMoveStrategy === 'replayable-move')(
       await expect(fs.stat(path.join(vault, 'proj'))).rejects.toMatchObject({ code: 'ENOENT' })
       expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('route-a-id')
       expect(getDocumentMetadata(db, 'ren/b')?.id).toBe('route-b-id')
+      await expect(fs.stat(
+        path.join(vault, 'ren', journal.gateProof!.markerName),
+      )).rejects.toMatchObject({ code: 'ENOENT' })
 
       const second = await recoverInterruptedOperations(vault, db)
       expect(second.actions).toEqual([])

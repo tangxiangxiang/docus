@@ -633,6 +633,44 @@ function expectParentKilled(result: CrashChildResult, expectedPoint: string): vo
   }
 }
 
+describe('Round-17 orphan folder gate marker cleanup', () => {
+  it('removes only an unreferenced regular marker with a strict name', async () => {
+    await fs.mkdir(path.join(vault, 'orphan'))
+    const markerName = '.docus-folder-gate-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const markerAbs = path.join(vault, 'orphan', markerName)
+    await fs.writeFile(markerAbs, 'orphan secret', 'utf8')
+    await fs.writeFile(path.join(vault, 'orphan', '.docus-folder-gate-not-a-uuid'), 'keep', 'utf8')
+
+    const report = await runRecovery()
+
+    await expect(fs.stat(markerAbs)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await fs.readFile(
+      path.join(vault, 'orphan', '.docus-folder-gate-not-a-uuid'),
+      'utf8',
+    )).toBe('keep')
+    expect(report.actions).toContainEqual(expect.objectContaining({
+      action: 'cleaned',
+      detail: 'orphan folder gate marker removed',
+    }))
+  })
+
+  it('retains and reports a non-file marker instead of following it', async () => {
+    const markerAbs = path.join(
+      vault,
+      '.docus-folder-gate-11111111-2222-4333-8444-555555555555',
+    )
+    await fs.mkdir(markerAbs)
+
+    const report = await runRecovery()
+
+    expect((await fs.lstat(markerAbs)).isDirectory()).toBe(true)
+    expect(report.actions).toContainEqual(expect.objectContaining({
+      action: 'quarantined',
+      detail: 'orphan folder gate marker is not a regular file',
+    }))
+  })
+})
+
 describe('real subprocess crash + startup recovery', () => {
   // Exact on-disk state of the reference transaction at each crash
   // point — asserted BEFORE recovery runs, so the recovery tests prove
@@ -980,8 +1018,8 @@ describe('real subprocess crash + startup recovery', () => {
     }, FOLDER_MOVE_CRASH_CHILD)
     expectParentKilled(await child.killAfterReady('gate'), 'gate')
 
-    // The REAL journal JSON: v4 phase-machine format. No gate token
-    // on disk — ownership proof is the destination directory's (dev,ino).
+    // The REAL journal JSON: v4 phase-machine format with a durable,
+    // unpredictable marker proof persisted before gate creation.
     const journal = await readFolderMoveJournal()
     expect(journal.version).toBe(4)
     expect(journal.op).toBe('folder-rename')
@@ -993,6 +1031,10 @@ describe('real subprocess crash + startup recovery', () => {
     expect(/^\d+$/.test(journal.destDev)).toBe(true)
     expect(typeof journal.destIno).toBe('string')
     expect(/^[1-9]\d*$/.test(journal.destIno)).toBe(true)
+    expect(journal.gateProof).toEqual({
+      markerName: expect.stringMatching(/^\.docus-folder-gate-[0-9a-f-]{36}$/),
+      secret: expect.stringMatching(/^[0-9a-f]{64}$/),
+    })
     expect(journal.entries.map((entry: any) => entry.relativeFilePath).sort()).toEqual(['a.md', 'image.bin', 'nested/b.md'])
     for (const entry of journal.entries) {
       expect(entry.sourceHash).toMatch(/^[0-9a-f]{64}$/)
@@ -1009,14 +1051,17 @@ describe('real subprocess crash + startup recovery', () => {
     }
 
     // Pre-recovery proof of the exact crash state: the gate the mover
-    // created (proven ours by destDev/destIno in the journal), every
-    // file still at the source, durable journal. No gate token file.
+    // created, its exact marker proof, every file still at the source,
+    // and the durable journal.
     const crashState = await namesIn()
     expect(crashState).toContain('proj')
     expect(crashState).toContain('ren')
     const renContents = await fs.readdir(path.join(vault, 'ren'))
-    // v4: no gate token file — the empty directory itself is the gate.
-    expect(renContents).toEqual([])
+    expect(renContents).toEqual([journal.gateProof.markerName])
+    expect(await fs.readFile(
+      path.join(vault, 'ren', journal.gateProof.markerName),
+      'utf8',
+    )).toBe(journal.gateProof.secret)
     expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
     expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe('# b\n')
 
@@ -1037,10 +1082,11 @@ describe('real subprocess crash + startup recovery', () => {
     } finally { persistedDb.close() }
   })
 
-  it('does not trust a destination directory whose generation does not match the journal', async () => {
-    // v4: ownership proof is destDev/destIno in the journal, NOT a
-    // gate token file. If an external writer replaced the destination
-    // directory (different inode), recovery must quarantine.
+  it('does not trust a recreated destination gate even when its directory generation is reused', async () => {
+    // Directory generations are vulnerable to inode ABA. Recreate the
+    // destination without the journaled marker, then deliberately set
+    // the journal generation to the replacement's real generation.
+    // Recovery must still reject the foreign directory.
     const dbPath = path.join(vault, 'metadata.sqlite')
     await seedFolderMoveVault()
     const child = spawnCrashChild({
@@ -1056,19 +1102,35 @@ describe('real subprocess crash + startup recovery', () => {
     const journal = JSON.parse(await fs.readFile(path.join(vault, journalName!), 'utf8'))
     expect(journal.version).toBe(4)
     expect(journal.phase).toBe('gate-created')
+    expect(journal.gateProof).toBeDefined()
 
-    // Delete and recreate the destination directory — different inode.
+    // Delete and recreate the destination directory without its marker.
     await fs.rm(path.join(vault, 'ren'), { recursive: true, force: true })
     await fs.mkdir(path.join(vault, 'ren'))
+    const replacementStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
+    journal.destDev = replacementStat.dev.toString()
+    journal.destIno = replacementStat.ino.toString()
+    await fs.writeFile(
+      path.join(vault, journalName),
+      JSON.stringify(journal),
+      'utf8',
+    )
 
     const persistedDb = new Database(dbPath)
     try {
+      const sourceMetadataId = getDocumentMetadata(persistedDb, 'proj/a')?.id
       const report = await recoverInterruptedOperations(vault, persistedDb)
-      // Quarantined because the destination directory generation doesn't match.
-      expect(report.actions.some((action) => action.action === 'quarantined' && /generation|inode|ownership/.test(action.detail ?? ''))).toBe(true)
+      expect(report.actions).toContainEqual(expect.objectContaining({
+        action: 'quarantined',
+        detail: 'replayable destination gate proof is missing or mismatched',
+      }))
       // The recreated empty dir stays on disk (external property).
       expect(await fs.stat(path.join(vault, 'ren')).then(() => true, () => false)).toBe(true)
+      expect(await fs.readdir(path.join(vault, 'ren'))).toEqual([])
       expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# a\n')
+      expect(await fs.readFile(path.join(vault, 'proj/image.bin'))).toEqual(IMAGE_BYTES)
+      expect(getDocumentMetadata(persistedDb, 'proj/a')?.id).toBe(sourceMetadataId)
+      expect(getDocumentMetadata(persistedDb, 'ren/a')).toBeNull()
       // Journal retained for inspection.
       expect((await namesIn()).some((name) => name.startsWith('.proj.docus-journal-'))).toBe(true)
     } finally { persistedDb.close() }
@@ -1152,10 +1214,12 @@ describe('real subprocess crash + startup recovery', () => {
     expect(await fs.readFile(path.join(vault, 'ren/image.bin'))).toEqual(IMAGE_BYTES)
     expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe('# b\n')
     expect(await namesIn()).not.toContain('proj')
-    // round-11 v4: no gate token file is written. Ownership proof is
-    // the destination's (dev, ino) persisted as phase=gate-created.
+    // Replayable markers remain until the shared final verifier removes
+    // the journal and then the marker.
     const marker = (await fs.readdir(path.join(vault, 'ren'))).find((name) => name.startsWith('.docus-folder-gate-'))
-    expect(marker).toBeUndefined()
+    expect(marker).toBe(journal.gateProof.markerName)
+    expect(await fs.readFile(path.join(vault, 'ren', marker!), 'utf8'))
+      .toBe(journal.gateProof.secret)
 
     const persistedDb = new Database(dbPath)
     try {

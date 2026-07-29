@@ -228,6 +228,41 @@ describe('v4 directory generation parsing', () => {
 
     expect(parsed).toBeNull()
   })
+
+  it('accepts a valid optional gate proof while preserving legacy journals without one', () => {
+    const legacy = parseDurableFolderMoveJournalV4(JSON.stringify({
+      ...journal,
+      sourceDev: '7',
+      sourceIno: '11',
+    }))
+    const gateProof = {
+      markerName: '.docus-folder-gate-11111111-2222-4333-8444-555555555555',
+      secret: 'ef'.repeat(32),
+    }
+    const current = parseDurableFolderMoveJournalV4(JSON.stringify({
+      ...journal,
+      sourceDev: '7',
+      sourceIno: '11',
+      gateProof,
+    })) as (NonNullable<typeof legacy> & { gateProof?: typeof gateProof }) | null
+
+    expect(legacy).not.toBeNull()
+    expect(current?.gateProof).toEqual(gateProof)
+  })
+
+  it('rejects a gate proof whose marker is not one strict basename', () => {
+    const parsed = parseDurableFolderMoveJournalV4(JSON.stringify({
+      ...journal,
+      sourceDev: '7',
+      sourceIno: '11',
+      gateProof: {
+        markerName: '../.docus-folder-gate-11111111-2222-4333-8444-555555555555',
+        secret: 'ef'.repeat(32),
+      },
+    }))
+
+    expect(parsed).toBeNull()
+  })
 })
 
 // ─── Issue 5: metadata-committed prefix recovery ──────────────────

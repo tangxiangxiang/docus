@@ -95,6 +95,11 @@ async function namesIn(rel = '.'): Promise<string[]> {
   return fs.readdir(path.join(vault, rel)).catch(() => [] as string[])
 }
 
+const ROUND17_GATE_PROOF = {
+  markerName: '.docus-folder-gate-11111111-2222-4333-8444-555555555555',
+  secret: 'cd'.repeat(32),
+}
+
 // ─── P0-1: atomic gate-created crash recovery ─────────────────────
 
 describe('atomic gate-created crash recovery', () => {
@@ -112,7 +117,7 @@ describe('atomic gate-created crash recovery', () => {
     await fs.mkdir(path.join(vault, 'ren'))
     const gateStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
 
-    const journal: FolderMoveJournalV4 = {
+    const journal = {
       version: 4,
       op: 'folder-rename',
       phase: 'gate-created',
@@ -121,6 +126,7 @@ describe('atomic gate-created crash recovery', () => {
       strategy: 'atomic-rename',
       sourceDev: sourceStat.dev.toString(),
       sourceIno: sourceStat.ino.toString(),
+      gateProof: ROUND17_GATE_PROOF,
       destDev: gateStat.dev.toString(),
       destIno: gateStat.ino.toString(),
       entries: physical.entries.map((e) => ({
@@ -133,13 +139,19 @@ describe('atomic gate-created crash recovery', () => {
       })),
       directories: physical.directories,
       metadataDisposition: { kind: 'prefix-move' },
-    }
+    } as FolderMoveJournalV4
     const journalAbs = await writeJournal('.proj.docus-journal-abcdef012345', journal)
+    await fs.writeFile(
+      path.join(vault, 'ren', ROUND17_GATE_PROOF.markerName),
+      ROUND17_GATE_PROOF.secret,
+      'utf8',
+    )
 
     // Produce the exact post-rename crash state while remaining portable:
-    // remove the still-empty owned gate, then publish the source directory
-    // at the destination. The destination retains the source generation.
-    await fs.rmdir(path.join(vault, 'ren'))
+    // remove the owned gate (including its marker), then publish the
+    // source directory at the destination. Atomic landing replaces the
+    // gate and marker with the source generation.
+    await fs.rm(path.join(vault, 'ren'), { recursive: true })
     await fs.rename(path.join(vault, 'proj'), path.join(vault, 'ren'))
     const landedStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
     expect(landedStat.dev.toString()).toBe(sourceStat.dev.toString())
@@ -152,6 +164,167 @@ describe('atomic gate-created crash recovery', () => {
     await expect(fs.stat(journalAbs)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(getDocumentMetadata(db, 'proj/a')).toBeUndefined()
     expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('doc-1')
+  })
+})
+
+describe('Round-17 v4 gate proof compatibility matrix', () => {
+  async function preparedPhysical() {
+    await seed({ 'proj/a.md': '# hello\n' })
+    saveDocumentMetadata(db, { id: 'doc-1', path: 'proj/a', title: 'Hello' })
+    const sourceStat = await fs.stat(path.join(vault, 'proj'), { bigint: true })
+    const physical = await listPhysicalMoveEntries(path.join(vault, 'proj'), () => ({
+      documentId: 'doc-1',
+      documentPath: 'proj/a',
+    }))
+    return {
+      sourceStat,
+      entries: physical.entries.map(entry => ({
+        relativeFilePath: entry.relativeFilePath,
+        sourceDev: entry.sourceDev!,
+        sourceIno: entry.sourceIno!,
+        sourceHash: entry.sourceHash,
+        documentId: entry.documentId,
+        documentPath: entry.documentPath,
+      })),
+      directories: physical.directories,
+    }
+  }
+
+  it('keeps legacy replayable gate-created recovery strict without gateProof', async () => {
+    const physical = await preparedPhysical()
+    await fs.mkdir(path.join(vault, 'ren'))
+    const journal: FolderMoveJournalV4 = {
+      version: 4,
+      op: 'folder-rename',
+      phase: 'gate-created',
+      srcRel: 'proj',
+      destRel: 'ren',
+      strategy: 'replayable-move',
+      sourceDev: physical.sourceStat.dev.toString(),
+      sourceIno: physical.sourceStat.ino.toString(),
+      destDev: '999999',
+      destIno: '999999',
+      entries: physical.entries,
+      directories: physical.directories,
+      metadataDisposition: { kind: 'prefix-move' },
+    }
+    await writeJournal('.proj.docus-journal-abcdef012345', journal)
+
+    const report = await recoverInterruptedOperations(vault, db)
+
+    expect(report.actions).toContainEqual(expect.objectContaining({
+      action: 'quarantined',
+      detail: 'replayable destination gate generation does not match journal',
+    }))
+    expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# hello\n')
+  })
+
+  it('refreshes a new replayable gate generation only when its marker matches', async () => {
+    const physical = await preparedPhysical()
+    await fs.mkdir(path.join(vault, 'ren'))
+    await fs.writeFile(
+      path.join(vault, 'ren', ROUND17_GATE_PROOF.markerName),
+      ROUND17_GATE_PROOF.secret,
+      'utf8',
+    )
+    const journal = {
+      version: 4,
+      op: 'folder-rename',
+      phase: 'gate-created',
+      srcRel: 'proj',
+      destRel: 'ren',
+      strategy: 'replayable-move',
+      sourceDev: physical.sourceStat.dev.toString(),
+      sourceIno: physical.sourceStat.ino.toString(),
+      destDev: '999999',
+      destIno: '999999',
+      gateProof: ROUND17_GATE_PROOF,
+      entries: physical.entries,
+      directories: physical.directories,
+      metadataDisposition: { kind: 'prefix-move' },
+    } as FolderMoveJournalV4
+    const journalAbs = await writeJournal('.proj.docus-journal-abcdef012345', journal)
+
+    const report = await recoverInterruptedOperations(vault, db)
+
+    expect(report.actions).toContainEqual(expect.objectContaining({ action: 'completed-rename' }))
+    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# hello\n')
+    await expect(fs.stat(path.join(vault, 'proj'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.stat(journalAbs)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(fs.stat(
+      path.join(vault, 'ren', ROUND17_GATE_PROOF.markerName),
+    )).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('requires both generation and marker before recovering an intact atomic gate', async () => {
+    const physical = await preparedPhysical()
+    await fs.mkdir(path.join(vault, 'ren'))
+    const gateStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
+    await fs.writeFile(
+      path.join(vault, 'ren', ROUND17_GATE_PROOF.markerName),
+      ROUND17_GATE_PROOF.secret,
+      'utf8',
+    )
+    const journal = {
+      version: 4,
+      op: 'folder-rename',
+      phase: 'gate-created',
+      srcRel: 'proj',
+      destRel: 'ren',
+      strategy: 'atomic-rename',
+      sourceDev: physical.sourceStat.dev.toString(),
+      sourceIno: physical.sourceStat.ino.toString(),
+      destDev: gateStat.dev.toString(),
+      destIno: gateStat.ino.toString(),
+      gateProof: ROUND17_GATE_PROOF,
+      entries: physical.entries,
+      directories: physical.directories,
+      metadataDisposition: { kind: 'prefix-move' },
+    } as FolderMoveJournalV4
+    await writeJournal('.proj.docus-journal-abcdef012345', journal)
+
+    const report = await recoverInterruptedOperations(vault, db)
+
+    expect(report.actions).toContainEqual(expect.objectContaining({ action: 'completed-rename' }))
+    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# hello\n')
+  })
+
+  it('ignores only the exact declared marker during replayable parity', async () => {
+    const physical = await preparedPhysical()
+    await fs.mkdir(path.join(vault, 'ren'))
+    const gateStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
+    await fs.writeFile(
+      path.join(vault, 'ren', ROUND17_GATE_PROOF.markerName),
+      ROUND17_GATE_PROOF.secret,
+      'utf8',
+    )
+    await fs.writeFile(path.join(vault, 'ren', '.docus-external'), 'external', 'utf8')
+    const journal = {
+      version: 4,
+      op: 'folder-rename',
+      phase: 'gate-created',
+      srcRel: 'proj',
+      destRel: 'ren',
+      strategy: 'replayable-move',
+      sourceDev: physical.sourceStat.dev.toString(),
+      sourceIno: physical.sourceStat.ino.toString(),
+      destDev: gateStat.dev.toString(),
+      destIno: gateStat.ino.toString(),
+      gateProof: ROUND17_GATE_PROOF,
+      entries: physical.entries,
+      directories: physical.directories,
+      metadataDisposition: { kind: 'prefix-move' },
+    } as FolderMoveJournalV4
+    await writeJournal('.proj.docus-journal-abcdef012345', journal)
+
+    const report = await recoverInterruptedOperations(vault, db)
+
+    expect(report.actions).toContainEqual(expect.objectContaining({
+      action: 'quarantined',
+      detail: 'replayable gate-created destination exact parity failed',
+    }))
+    expect(await fs.readFile(path.join(vault, 'ren', '.docus-external'), 'utf8'))
+      .toBe('external')
   })
 })
 

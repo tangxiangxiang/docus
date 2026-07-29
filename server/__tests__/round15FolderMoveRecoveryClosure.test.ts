@@ -19,12 +19,16 @@ import { validateFolderMoveJournalV4Provenance } from '../folderMoveJournalValid
 import {
   AtomicRenameLandedGenerationReadError,
   executeFolderMoveV4Physical,
+  FolderMoveV4ExecutionError,
 } from '../folderMoveV4Executor'
 import {
   listPhysicalMoveEntries,
   type FolderMoveJournalV4,
 } from '../folderMoveTransaction'
-import { platformDirectoryMoveStrategy } from '../documentFileLifecycle'
+import {
+  __setCreateOnlyMoveHooksForTesting,
+  platformDirectoryMoveStrategy,
+} from '../documentFileLifecycle'
 import { setContentDir } from '../paths'
 
 const TSX_CLI = fileURLToPath(import.meta.resolve('tsx/cli'))
@@ -47,6 +51,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks()
+  __setCreateOnlyMoveHooksForTesting(null)
   db.close()
   await fs.rm(vault, { recursive: true, force: true })
 })
@@ -85,6 +90,87 @@ function makeManifestJournal(
     metadataDisposition: { kind: 'prefix-move' },
   }
 }
+
+describe('Round-17 replayable landing uncertainty', () => {
+  it('marks physical landing as possible before invoking the replayable mover', async () => {
+    await seed({
+      'proj/a.md': '# a\n',
+      'proj/b.md': '# b\n',
+    })
+    const physical = await listPhysicalMoveEntries(
+      path.join(vault, 'proj'),
+      relativeFilePath => ({
+        documentId: `doc-${relativeFilePath[0]}`,
+        documentPath: `proj/${relativeFilePath.slice(0, -3)}`,
+      }),
+    )
+    const sourceStat = await fs.stat(path.join(vault, 'proj'), { bigint: true })
+    const gateProof = {
+      markerName: '.docus-folder-gate-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      secret: 'ab'.repeat(32),
+    }
+    const prepared = {
+      version: 4,
+      op: 'folder-rename',
+      phase: 'prepared',
+      srcRel: 'proj',
+      destRel: 'ren',
+      strategy: 'replayable-move',
+      sourceDev: sourceStat.dev.toString(),
+      sourceIno: sourceStat.ino.toString(),
+      gateProof,
+      entries: physical.entries.map(entry => ({
+        relativeFilePath: entry.relativeFilePath,
+        sourceDev: entry.sourceDev!,
+        sourceIno: entry.sourceIno!,
+        sourceHash: entry.sourceHash,
+        documentId: entry.documentId,
+        documentPath: entry.documentPath,
+      })),
+      directories: physical.directories,
+      metadataDisposition: { kind: 'prefix-move' },
+    } as FolderMoveJournalV4 & { phase: 'prepared' }
+    const journalAbs = path.join(vault, '.proj.docus-journal-abcdef012345')
+    await writeDurableJournal(journalAbs, prepared)
+    __setCreateOnlyMoveHooksForTesting({
+      afterReplayableMovedEntry: async relativeFilePath => {
+        if (relativeFilePath === 'a.md') {
+          throw new Error('injected after first landing')
+        }
+      },
+    })
+
+    let thrown: unknown
+    try {
+      await executeFolderMoveV4Physical({
+        contentDir: vault,
+        journalAbs,
+        journal: prepared,
+        srcAbs: path.join(vault, 'proj'),
+        destAbs: path.join(vault, 'ren'),
+        strategy: 'replayable-move',
+      })
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(FolderMoveV4ExecutionError)
+    expect((thrown as FolderMoveV4ExecutionError).state.physicalMayHaveLanded).toBe(true)
+    const persisted = JSON.parse(await fs.readFile(journalAbs, 'utf8')) as {
+      phase: string
+      gateProof?: typeof gateProof
+    }
+    expect(persisted.phase).toBe('gate-created')
+    expect(persisted.gateProof).toEqual(gateProof)
+    expect(await fs.readFile(
+      path.join(vault, 'ren', gateProof.markerName),
+      'utf8',
+    )).toBe(gateProof.secret)
+    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
+    await expect(fs.stat(path.join(vault, 'proj/a.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await fs.readFile(path.join(vault, 'proj/b.md'), 'utf8')).toBe('# b\n')
+  })
+})
 
 describe('Round-15 directory manifest closure', () => {
   const entry = (relativeFilePath: string): FolderMoveJournalV4['entries'][number] => ({
