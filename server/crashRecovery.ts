@@ -126,6 +126,7 @@ import {
 import { validateFolderMoveJournalV4Provenance as validateFolderMoveJournalV4RootProvenance } from './folderMoveJournalValidation.js'
 import { executeFolderMoveV4Physical } from './folderMoveV4Executor.js'
 import { parseDurableFolderMoveJournalV4 } from './folderMoveV4DurableJournal.js'
+import { classifyFolderMoveRecoveryStrength } from './legacyFolderMoveStrength.js'
 import { reconcilePendingRenameReferenceOwner } from './renameReferenceOwnerBinding.js'
 import {
   removeFolderMoveGateProof,
@@ -1557,6 +1558,15 @@ async function recoverFolderMoveJournalV4(
   const directories = journal.directories
   const isSnapshotRestore = journal.metadataDisposition.kind === 'snapshot-restore'
   const effectiveSrcRel = isSnapshotRestore ? '' : journal.srcRel
+  // P1-3: classify recovery strength before any mutation. Weak
+  // journals (legacy variants, v4 markerless / empty-tree / mixed
+  // proof / unsafe-numeric) are quarantined with a documented detail
+  // — disk state and SQLite rows are preserved.
+  const strength = classifyFolderMoveRecoveryStrength(journal)
+  if (strength.strength !== 'strong') {
+    note(journalAbs, 'quarantined', `v4 journal is weak: ${strength.reason}`)
+    return
+  }
   const rootProvenanceError = await validateFolderMoveJournalV4RootProvenance(journal, contentDir, journalAbs)
   if (rootProvenanceError !== null) {
     note(journalAbs, 'quarantined', `v4 provenance validation failed: ${rootProvenanceError}`)
@@ -2369,19 +2379,19 @@ async function recoverFolderRenameJournal(
   }
   const srcAbs = path.join(contentDir, journal.srcRel)
   const destAbs = path.join(contentDir, journal.destRel)
-  if (journal.emptyTree || (journal.entries !== undefined && journal.entries.length > 0)) {
+  if ((journal as unknown as { version?: number }).version === 4) {
     // v4 (round-11): dedicated phase-aware recovery. v1–v3 fall through
-    // to the legacy token-based path.
-    if ((journal as unknown as { version?: number }).version === 4) {
-      const raw = await fs.readFile(journalAbs, 'utf8')
-      const v4 = parseDurableFolderMoveJournalV4(raw)
-      if (v4 === null) {
-        note(journalAbs, 'quarantined', 'v4 journal could not be parsed')
-        return
-      }
-      await recoverFolderMoveJournalV4(contentDir, db, journalAbs, v4, srcAbs, destAbs, note)
+    // to the legacy token-based path below.
+    const raw = await fs.readFile(journalAbs, 'utf8')
+    const v4 = parseDurableFolderMoveJournalV4(raw)
+    if (v4 === null) {
+      note(journalAbs, 'quarantined', 'v4 journal could not be parsed')
       return
     }
+    await recoverFolderMoveJournalV4(contentDir, db, journalAbs, v4, srcAbs, destAbs, note)
+    return
+  }
+  if (journal.emptyTree || (journal.entries !== undefined && journal.entries.length > 0)) {
     await recoverFolderMoveJournal(contentDir, db, journalAbs, journal, srcAbs, destAbs, note)
     return
   }

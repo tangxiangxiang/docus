@@ -668,7 +668,7 @@ describe('Round-17 F11 weak legacy folder-move journal quarantine (P1-3)', () =>
     await fs.mkdir(path.join(vault, 'proj'))
     const stat = await fs.lstat(path.join(vault, 'proj'))
     await writeDurableJournal(
-      path.join(vault, '.proj.docus-journal-markerless-empty'),
+      path.join(vault, '.proj.docus-journal-abcdef012345d'),
       {
         version: 4,
         op: 'folder-move',
@@ -697,7 +697,7 @@ describe('Round-17 F11 weak legacy folder-move journal quarantine (P1-3)', () =>
     await fs.mkdir(path.join(vault, 'proj'))
     const stat = await fs.lstat(path.join(vault, 'proj'))
     await writeDurableJournal(
-      path.join(vault, '.proj.docus-journal-markerless-files-landed'),
+      path.join(vault, '.proj.docus-journal-abcdef012345e'),
       {
         version: 4,
         op: 'folder-move',
