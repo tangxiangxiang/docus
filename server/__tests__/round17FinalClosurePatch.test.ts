@@ -9,17 +9,26 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { recoverInterruptedOperations } from '../crashRecovery'
 import { applyMigrations } from '../db'
 import {
+  createDestinationGate,
   rewriteDurableJournal,
   sha256Hex,
   writeDurableJournal,
   writeDurableRecoveryPayload,
 } from '../atomicTextWrite'
 import {
+  createFolderMoveGateProof,
+  FOLDER_MOVE_JOURNAL_VERSION,
   isSerializedMetadataSnapshot,
   hasValidSnapshotRowSchema,
+  listPhysicalMoveEntries,
   type FolderMoveJournalV4,
   type SerializedMetadataSnapshot,
 } from '../folderMoveTransaction'
+import { writeFolderMoveGateProof } from '../folderMoveGateProof'
+import {
+  createFolderMoveDestinationDirectories,
+} from '../folderMoveDirectoryOwnership'
+import { parseFolderMoveJournalV4Object } from '../folderMoveV4DurableJournal'
 
 // F-tests are the F1..F12 matrix from the round-17 final closure spec.
 // They cover the four holes:
@@ -62,10 +71,10 @@ afterEach(async () => {
 // carrying previousDirection + the owner journal path/transactionId/hash)
 // and adds reconcilePendingRenameReferenceOwner on the recovery side.
 // (B) becomes the precondition; recovery either completes (B) → durable
-// path, or quarantines.
+// path, or durably aborts/quarantines.
 //
-// F1 simulates the crash BEFORE (B) and asserts recovery quarantines the
-// companion rather than silently deferring.
+// F1 simulates the crash BEFORE (B) and asserts recovery leaves pending,
+// restores the prior phase, and records a stable terminal quarantine.
 // F2 simulates the crash AFTER (B), AFTER a hypothetical
 // reconcilePendingRenameReferenceOwner has promoted the pending binding
 // to durable; recovery must finish the handoff and clean up.
@@ -140,7 +149,7 @@ async function writePendingJournal(
 }
 
 describe('Round-17 F1–F3 owner binding crash recoverability (P0-1)', () => {
-  it('F1 quarantines a companion stuck in owner-pending when the owner folder journal is absent', async () => {
+  it('F1 durably aborts owner-pending when the owner folder journal is absent', async () => {
     const proj = path.join(vault, 'proj')
     await fs.mkdir(proj)
     await fs.writeFile(path.join(proj, 'a.md'), '# a\n')
@@ -159,14 +168,23 @@ describe('Round-17 F1–F3 owner binding crash recoverability (P0-1)', () => {
     expect(actions.some(a => a.action === 'quarantined')).toBe(true)
     expect(actions.find(a => a.action === 'quarantined')?.detail)
       .toMatch(/owner[- ]?binding|owner.journal|owner[- ]?pending/i)
-    // Reference journals remain on disk after quarantine (no rename)
-    // so the second run re-reports the same action. Asserting zero
-    // flip-flop: every run reaches the same terminal state.
+    const afterFirst = await fs.readFile(journalPath, 'utf8')
+    expect(JSON.parse(afterFirst)).toMatchObject({
+      phase: 'roll-back',
+      metadataDisposition: {
+        kind: 'folder-snapshot-owner-aborted',
+        previousDirection: 'roll-back',
+        reason: 'owner-journal-absent',
+      },
+    })
+    // The second run reports the same stable terminal state without
+    // re-entering pending or consuming the companion/payloads.
     const second = await recoverInterruptedOperations(vault, db)
     const secondActions = second.actions.filter(a => a.file.endsWith(path.basename(journalPath)))
     const firstTerminal = first.actions.filter(a => a.file.endsWith(path.basename(journalPath)))
       .filter(a => a.action === 'quarantined').length
     expect(secondActions.length).toBe(firstTerminal)
+    expect(await fs.readFile(journalPath, 'utf8')).toBe(afterFirst)
     db.close()
   })
 
@@ -272,6 +290,43 @@ describe('Round-17 F1–F3 owner binding crash recoverability (P0-1)', () => {
 // -- F4..F7: P0-3 declared directory generations ------------------------------
 
 describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () => {
+  async function writePreparedDirectoryJournal(
+    source: string,
+    destinationName = 'dest',
+  ): Promise<{
+    journal: FolderMoveJournalV4
+    journalPath: string
+  }> {
+    const physical = await listPhysicalMoveEntries(source)
+    const sourceStat = await fs.lstat(source, { bigint: true })
+    const journal: FolderMoveJournalV4 = {
+      version: FOLDER_MOVE_JOURNAL_VERSION,
+      op: 'folder-move',
+      phase: 'prepared',
+      srcRel: path.basename(source),
+      destRel: destinationName,
+      strategy: 'replayable-move',
+      sourceDev: sourceStat.dev.toString(),
+      sourceIno: sourceStat.ino.toString(),
+      gateProof: createFolderMoveGateProof(),
+      entries: physical.entries.map(entry => ({
+        relativeFilePath: entry.relativeFilePath,
+        sourceDev: entry.sourceDev!,
+        sourceIno: entry.sourceIno!,
+        sourceHash: entry.sourceHash,
+      })),
+      directories: physical.directories,
+      directoryGenerations: physical.directoryGenerations,
+      metadataDisposition: { kind: 'prefix-move' },
+    }
+    const journalPath = path.join(
+      vault,
+      `.${path.basename(source)}.docus-journal-77777777-7774-4777-8777-777777777777`,
+    )
+    await writeDurableJournal(journalPath, journal)
+    return { journal, journalPath }
+  }
+
   it('F4 preserves an externally-recreated directory under a declared shell', async () => {
     const source = path.join(vault, 'src')
     await fs.mkdir(source)
@@ -448,6 +503,104 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
     )
     expect(result.rootRemoved).toBe(false)
   })
+
+  it('F4 recovery rejects a removed declared empty directory before any mutation', async () => {
+    const source = path.join(vault, 'src')
+    await fs.mkdir(path.join(source, 'declared-empty'), { recursive: true })
+    await fs.writeFile(path.join(source, 'a.bin'), 'owned')
+    const { journalPath } = await writePreparedDirectoryJournal(source)
+    await fs.rmdir(path.join(source, 'declared-empty'))
+
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const first = await recoverInterruptedOperations(vault, db)
+    const second = await recoverInterruptedOperations(vault, db)
+    expect(first.actions).toContainEqual(expect.objectContaining({
+      file: path.basename(journalPath),
+      action: 'quarantined',
+      detail: expect.stringContaining('declared source directory is missing'),
+    }))
+    expect(second.actions).toEqual(first.actions)
+    expect(await fs.readFile(path.join(source, 'a.bin'), 'utf8')).toBe('owned')
+    await expect(fs.stat(path.join(vault, 'dest')))
+      .rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await fs.stat(journalPath)).toBeDefined()
+    db.close()
+  })
+
+  it('F5/F6 recovery rejects ABA replacement of a nested declared directory', async () => {
+    const source = path.join(vault, 'src')
+    await fs.mkdir(path.join(source, 'a', 'b'), { recursive: true })
+    await fs.writeFile(path.join(source, 'owned.bin'), 'owned')
+    const { journalPath } = await writePreparedDirectoryJournal(source)
+    await fs.rmdir(path.join(source, 'a', 'b'))
+    await fs.mkdir(path.join(source, 'a', 'b'))
+
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const first = await recoverInterruptedOperations(vault, db)
+    const stableBytes = await fs.readFile(journalPath)
+    const second = await recoverInterruptedOperations(vault, db)
+    expect(first.actions).toContainEqual(expect.objectContaining({
+      file: path.basename(journalPath),
+      action: 'quarantined',
+      detail: expect.stringContaining('source directory generation changed: a/b'),
+    }))
+    expect(second.actions).toEqual(first.actions)
+    expect(await fs.readFile(journalPath)).toEqual(stableBytes)
+    expect((await fs.stat(path.join(source, 'a', 'b'))).isDirectory())
+      .toBe(true)
+    await expect(fs.stat(path.join(vault, 'dest')))
+      .rejects.toMatchObject({ code: 'ENOENT' })
+    db.close()
+  })
+
+  it('F7 preserves a replaced destination declared directory and retains the journal', async () => {
+    const source = path.join(vault, 'src')
+    await fs.mkdir(path.join(source, 'nested'), { recursive: true })
+    await fs.writeFile(path.join(source, 'owned.bin'), 'owned')
+    const { journal, journalPath } =
+      await writePreparedDirectoryJournal(source)
+    const destination = path.join(vault, 'dest')
+    const gate = await createDestinationGate(destination)
+    expect(gate).not.toBeNull()
+    await writeFolderMoveGateProof(destination, journal.gateProof!)
+    const destinationDirectoryGenerations =
+      await createFolderMoveDestinationDirectories(
+        destination,
+        journal.directories,
+        vault,
+      )
+    const gateCreated: FolderMoveJournalV4 = {
+      ...journal,
+      phase: 'gate-created',
+      destDev: gate!.dev,
+      destIno: gate!.ino,
+      destinationDirectoryGenerations,
+    }
+    await rewriteDurableJournal(journalPath, gateCreated)
+    await fs.rmdir(path.join(destination, 'nested'))
+    await fs.mkdir(path.join(destination, 'nested'))
+
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const first = await recoverInterruptedOperations(vault, db)
+    const second = await recoverInterruptedOperations(vault, db)
+    expect(first.actions).toContainEqual(expect.objectContaining({
+      file: path.basename(journalPath),
+      action: 'quarantined',
+      detail: expect.stringContaining(
+        'declared directory generation changed: nested',
+      ),
+    }))
+    expect(second.actions).toEqual(first.actions)
+    expect((await fs.stat(path.join(destination, 'nested'))).isDirectory())
+      .toBe(true)
+    expect(await fs.readFile(path.join(source, 'owned.bin'), 'utf8'))
+      .toBe('owned')
+    expect(await fs.stat(journalPath)).toBeDefined()
+    db.close()
+  })
 })
 
 // -- F8..F10: P1-2 metadata snapshot closed graphs ----------------------------
@@ -482,6 +635,30 @@ function validBaseSnapshot(): SerializedMetadataSnapshot {
 }
 
 describe('Round-17 F8–F10 closed metadata snapshot graphs (P1-2)', () => {
+  function durableSnapshotJournal(
+    metadataDisposition: FolderMoveJournalV4['metadataDisposition'],
+    phase: FolderMoveJournalV4['phase'] = 'prepared',
+  ): FolderMoveJournalV4 {
+    return {
+      version: FOLDER_MOVE_JOURNAL_VERSION,
+      op: 'folder-move',
+      phase,
+      srcRel: 'src',
+      destRel: 'dest',
+      strategy: 'atomic-rename',
+      sourceDev: '1',
+      sourceIno: '1',
+      ...(phase === 'prepared'
+        ? {}
+        : { destDev: '1', destIno: '1' }),
+      gateProof: createFolderMoveGateProof(),
+      entries: [],
+      directories: [],
+      directoryGenerations: [],
+      metadataDisposition,
+    }
+  }
+
   it('F8 v4 parser rejects a snapshot-restore snapshot whose paths omit a document path', async () => {
     const proj = path.join(vault, 'proj')
     await fs.mkdir(proj)
@@ -596,11 +773,138 @@ describe('Round-17 F8–F10 closed metadata snapshot graphs (P1-2)', () => {
     const raw = await fs.readFile(journalPath, 'utf8')
     expect(parseDurableFolderMoveJournalV4(raw)).toBeNull()
   })
+
+  it.each([
+    ['documentIds', () => {
+      const snapshot = validBaseSnapshot()
+      snapshot.documentIds = ['other-id']
+      return snapshot
+    }],
+    ['tagIds', () => {
+      const snapshot = emptySnapshot()
+      snapshot.tagIds = [2]
+      snapshot.tags = [{
+        id: 1,
+        name: 'one',
+        normalized_name: 'one',
+      }]
+      return snapshot
+    }],
+    ['unexplained path', () => ({
+      ...emptySnapshot(),
+      paths: ['unrelated/path'],
+    })],
+  ])('F8–F10 rejects %s corruption at every durable snapshot field', (_label, corrupt) => {
+    const corrupted = corrupt() as SerializedMetadataSnapshot
+    const valid = emptySnapshot()
+    const journals: FolderMoveJournalV4[] = [
+      durableSnapshotJournal({
+        kind: 'snapshot-restore',
+        snapshot: corrupted,
+      }),
+      durableSnapshotJournal({
+        kind: 'snapshot-restore',
+        snapshot: valid,
+        expectedCurrentSnapshot: corrupted,
+        physicalDocumentIds: [],
+      }),
+      durableSnapshotJournal({
+        kind: 'prefix-move',
+        preparedSnapshot: corrupted,
+      }),
+      durableSnapshotJournal({
+        kind: 'prefix-move',
+        committedSnapshot: corrupted,
+      }, 'metadata-committed'),
+    ]
+    for (const journal of journals) {
+      expect(parseFolderMoveJournalV4Object(journal)).toBeNull()
+    }
+  })
 })
 
 // -- F11: P1-3 weak legacy folder move quarantine ----------------------------
 
 describe('Round-17 F11 weak legacy folder-move journal quarantine (P1-3)', () => {
+  it.each([
+    ['v1 inode-only', (dev: number, ino: number) => ({
+      version: 1,
+      op: 'folder-rename',
+      srcRel: 'proj',
+      destRel: 'ren',
+      sourceDev: dev,
+      sourceIno: ino,
+      entries: [{
+        rel: 'a',
+        id: 'a-id',
+        sourceHash: sha256Hex('# a\n'),
+      }],
+    })],
+    ['v2 missing directory proof', (dev: number, ino: number) => ({
+      version: 2,
+      op: 'folder-rename',
+      srcRel: 'proj',
+      destRel: 'ren',
+      strategy: 'atomic-rename',
+      sourceDev: dev,
+      sourceIno: ino,
+      entries: [{
+        relativeFilePath: 'a.md',
+        sourceHash: sha256Hex('# a\n'),
+        documentId: 'a-id',
+        documentPath: 'proj/a',
+      }],
+      directories: [],
+      metadataDisposition: { kind: 'prefix-move' },
+    })],
+    ['v3 hash/generation proof is still legacy', (dev: number, ino: number) => ({
+      version: 3,
+      op: 'folder-rename',
+      srcRel: 'proj',
+      destRel: 'ren',
+      strategy: 'atomic-rename',
+      sourceDev: dev,
+      sourceIno: ino,
+      gateToken: 'a'.repeat(64),
+      entries: [{
+        relativeFilePath: 'a.md',
+        sourceHash: sha256Hex('# a\n'),
+        sourceDev: String(dev),
+        sourceIno: String(ino),
+        documentId: 'a-id',
+        documentPath: 'proj/a',
+      }],
+      directories: [],
+      metadataDisposition: { kind: 'prefix-move' },
+    })],
+  ])('F11 quarantines %s with the fixed detail and no mutation', async (_label, makeJournal) => {
+    const source = path.join(vault, 'proj')
+    await fs.mkdir(source)
+    await fs.writeFile(path.join(source, 'a.md'), '# a\n')
+    const stat = await fs.lstat(source)
+    const journalPath = path.join(vault, '.proj.docus-journal-abcd')
+    await writeDurableJournal(
+      journalPath,
+      makeJournal(stat.dev, stat.ino),
+    )
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const before = await fs.readFile(path.join(source, 'a.md'))
+    const first = await recoverInterruptedOperations(vault, db)
+    const second = await recoverInterruptedOperations(vault, db)
+    expect(first.actions).toContainEqual({
+      file: path.basename(journalPath),
+      action: 'quarantined',
+      detail: 'legacy journal lacks sufficient durable ownership proof',
+    })
+    expect(second.actions).toEqual(first.actions)
+    expect(await fs.readFile(path.join(source, 'a.md'))).toEqual(before)
+    await expect(fs.stat(path.join(vault, 'ren')))
+      .rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await fs.stat(journalPath)).toBeDefined()
+    db.close()
+  })
+
   async function writeLegacyForward(version: 1 | 2 | 3, strong: boolean): Promise<string> {
     const proj = path.join(vault, 'proj')
     await fs.mkdir(proj)
@@ -722,11 +1026,48 @@ describe('Round-17 F11 weak legacy folder-move journal quarantine (P1-3)', () =>
     db.close()
   })
 
-  it('F11.f numeric-safe-int sourceDev/ino on Windows → quarantined (legacy numeric not strong)', () => {
-    // F1 sub-case: a pre-fix-decimal v4 journal carried numeric dev/ino
-    // that lost precision on 64-bit numbers. The compatibility parser
-    // accepts but the recovery path must still classify weak.
-    expect(true).toBe(true) // TODO: real Windows-only test in CI
+  it('F11.f unsafe numeric directory generation is quarantined on every platform', async () => {
+    const source = path.join(vault, 'proj')
+    await fs.mkdir(path.join(source, 'nested'), { recursive: true })
+    const sourceStat = await fs.lstat(source, { bigint: true })
+    const journalPath = path.join(
+      vault,
+      '.proj.docus-journal-88888888-8884-4888-8888-888888888888',
+    )
+    await writeDurableJournal(journalPath, {
+      version: 4,
+      op: 'folder-move',
+      phase: 'prepared',
+      srcRel: 'proj',
+      destRel: 'dest',
+      strategy: 'replayable-move',
+      sourceDev: sourceStat.dev.toString(),
+      sourceIno: sourceStat.ino.toString(),
+      gateProof: createFolderMoveGateProof(),
+      emptyTree: true,
+      entries: [],
+      directories: ['nested'],
+      directoryGenerations: [{
+        relativeDirectoryPath: 'nested',
+        sourceDev: Number.MAX_SAFE_INTEGER + 1,
+        sourceIno: Number.MAX_SAFE_INTEGER + 2,
+      }],
+      metadataDisposition: { kind: 'prefix-move' },
+    })
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const first = await recoverInterruptedOperations(vault, db)
+    const second = await recoverInterruptedOperations(vault, db)
+    expect(first.actions).toContainEqual({
+      file: path.basename(journalPath),
+      action: 'quarantined',
+      detail: 'legacy journal lacks sufficient durable ownership proof',
+    })
+    expect(second.actions).toEqual(first.actions)
+    expect((await fs.stat(path.join(source, 'nested'))).isDirectory())
+      .toBe(true)
+    expect(await fs.stat(journalPath)).toBeDefined()
+    db.close()
   })
 })
 
@@ -761,6 +1102,13 @@ describe('Round-17 F12 idempotence of every F case', () => {
       const secondQuarantines = secondActions.filter(a => a.action === 'quarantined').length
       expect(secondQuarantines).toBe(firstQuarantines)
     }
+    expect(JSON.parse(await fs.readFile(journalPath, 'utf8')))
+      .toMatchObject({
+        metadataDisposition: {
+          kind: 'folder-snapshot-owner-aborted',
+          reason: 'owner-journal-absent',
+        },
+      })
     db.close()
   })
 })

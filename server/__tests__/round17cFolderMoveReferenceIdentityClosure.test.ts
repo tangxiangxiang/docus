@@ -204,6 +204,7 @@ function journalFor(
       documentPath: 'proj/a',
     }],
     directories: [],
+    directoryGenerations: [],
     metadataDisposition: disposition,
   }
 }

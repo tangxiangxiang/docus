@@ -28,6 +28,7 @@ import {
   __setDirectoryMoveStrategyOverrideForTesting,
 } from '../documentFileLifecycle'
 import {
+  createFolderMoveGateProof,
   FOLDER_MOVE_JOURNAL_VERSION,
   listPhysicalMoveEntries,
   reviveMetadataSnapshot,
@@ -70,6 +71,8 @@ async function writeJournal(basename: string, journal: FolderMoveJournalV4): Pro
   const dir = path.join(vault, path.dirname(basename))
   if (dir !== vault) await fs.mkdir(dir, { recursive: true })
   const journalAbs = path.join(vault, basename)
+  journal.directoryGenerations ??= []
+  journal.gateProof ??= createFolderMoveGateProof()
   await fs.writeFile(journalAbs, JSON.stringify(journal), 'utf8')
   return journalAbs
 }

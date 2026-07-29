@@ -115,6 +115,7 @@ function baseJournal(
       documentPath: 'proj/a',
     }],
     directories: [],
+    directoryGenerations: [],
     metadataDisposition: disposition,
   }
 }
@@ -169,6 +170,8 @@ describe('Round-17B forged snapshot-restore trust boundary', () => {
       created_at: 1,
       updated_at: 1,
     })
+    restore.paths.sort()
+    restore.documentIds.sort()
     const expected = structuredClone(restore)
     const disposition = newDisposition(restore, expected, {
       metadataOnlyDocumentProofs: [],

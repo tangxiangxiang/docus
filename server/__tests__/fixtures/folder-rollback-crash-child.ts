@@ -84,6 +84,13 @@ if (point === 'v4-owner-durable') {
 if (point === 'owner-durable-mark') {
   raceHooks.afterOwnerDurableMark = () => readyAndWait(point)
 }
+if (point === 'bind-owner-pending'
+  || point === 'v4-owner-durable'
+  || point === 'owner-durable-mark') {
+  raceHooks.afterReferenceWrites = () => {
+    throw new Error('force rollback after reference writes')
+  }
+}
 if (point === 'reverse-handoff') {
   raceHooks.afterReferenceWrites = () => {
     throw new Error('force rollback after reference writes')
@@ -122,7 +129,10 @@ __setFolderRaceHooksForTesting({
         () => readyAndWait(point)
     }
     __setCreateOnlyMoveHooksForTesting(hooks as any)
-    if (effectivePoint !== 'reverse-handoff') {
+    if (effectivePoint !== 'reverse-handoff'
+      && point !== 'bind-owner-pending'
+      && point !== 'v4-owner-durable'
+      && point !== 'owner-durable-mark') {
       await fs.writeFile(path.join(vault, 'ref-a.md'), '# externally changed\n', 'utf8')
     }
   },

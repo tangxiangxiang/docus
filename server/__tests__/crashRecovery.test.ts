@@ -7,10 +7,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { applyMigrations } from '../db'
 import { deleteDocumentMetadataPrefix, getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataDatabase, snapshotDocumentMetadataPrefixMutation } from '../documentMetadata'
-import { sha256Hex, sha256HexBuffer } from '../atomicTextWrite'
+import {
+  rewriteDurableJournal,
+  sha256Hex,
+  sha256HexBuffer,
+} from '../atomicTextWrite'
 import { recoverInterruptedOperations } from '../crashRecovery'
 import { prepareRenameReferenceJournal } from '../renameReferenceJournal'
 import { serializeMetadataSnapshot } from '../folderMoveTransaction'
+import { parseFolderMoveJournalV4Object } from '../folderMoveV4DurableJournal'
 import { __setCreateOnlyMoveHooksForTesting, FOLDER_MOVE_STRATEGIES, platformDirectoryMoveStrategy } from '../documentFileLifecycle'
 import {
   terminateProcessTree,
@@ -85,6 +90,17 @@ async function namesIn(rel = '.'): Promise<string[]> {
 
 function runRecovery() {
   return recoverInterruptedOperations(vault, db)
+}
+
+function expectWeakLegacyFolderJournal(
+  report: Awaited<ReturnType<typeof recoverInterruptedOperations>>,
+  file = '.proj.docus-journal-cccc',
+): void {
+  expect(report.actions).toContainEqual({
+    file,
+    action: 'quarantined',
+    detail: 'legacy journal lacks sufficient durable ownership proof',
+  })
 }
 
 describe('recoverInterruptedOperations (journaled replace)', () => {
@@ -1293,7 +1309,13 @@ describe('real subprocess crash + startup recovery', () => {
     expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
     expect(await fs.readFile(path.join(vault, 'ren/image.bin'))).toEqual(IMAGE_BYTES)
     expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe('# b\n')
-    expect(await namesIn()).not.toContain('proj')
+    // The replayable protocol retains the source directory shell until
+    // files-landed is durable and metadata finalization owns cleanup.
+    expect(await namesIn()).toContain('proj')
+    expect(await fs.readdir(path.join(vault, 'proj'))).toEqual(['empty', 'nested'])
+    expect(await fs.readdir(path.join(vault, 'proj/empty'))).toEqual(['deeper'])
+    expect(await fs.readdir(path.join(vault, 'proj/empty/deeper'))).toEqual([])
+    expect(await fs.readdir(path.join(vault, 'proj/nested'))).toEqual([])
     // Replayable markers remain until the shared final verifier removes
     // the journal and then the marker.
     const marker = (await fs.readdir(path.join(vault, 'ren'))).find((name) => name.startsWith('.docus-folder-gate-'))
@@ -1388,6 +1410,223 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
   const A_RAW = '# a\n'
   const B_RAW = '# b\n'
   const IMAGE_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x10])
+
+  async function seedOwnerBindingCrashState(dbPath: string): Promise<void> {
+    await seed({
+      'proj/a.md': A_RAW,
+      'ref-a.md': 'see [[proj/a]]\n',
+    })
+    const setupDb = new Database(dbPath)
+    applyMigrations(setupDb)
+    saveDocumentMetadata(setupDb, {
+      id: 'round17-owner-a',
+      path: 'proj/a',
+      title: 'A',
+      updatedAt: 1,
+    })
+    saveDocumentMetadata(setupDb, {
+      id: 'round17-owner-ref',
+      path: 'ref-a',
+      title: 'Reference',
+      updatedAt: 2,
+    })
+    setupDb.close()
+  }
+
+  it('F1 aborts owner-pending durably after a real crash before the owner journal is durable', async () => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seedOwnerBindingCrashState(dbPath)
+    const point = 'bind-owner-pending'
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: point,
+    }, FOLDER_ROLLBACK_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady(point), point)
+
+    const journalNames = (await namesIn())
+      .filter(name => name.includes('.docus-journal-'))
+    expect(journalNames).toHaveLength(1)
+    const companionPath = path.join(vault, journalNames[0])
+    const companionBefore = await fs.readFile(companionPath, 'utf8')
+    expect(JSON.parse(companionBefore).metadataDisposition).toMatchObject({
+      kind: 'folder-snapshot-owner-pending',
+      previousDirection: 'roll-back',
+    })
+    expect(journalNames.some(name =>
+      JSON.parse(companionBefore).metadataDisposition.ownerJournal
+        === name)).toBe(false)
+    const referenceBefore = await fs.readFile(
+      path.join(vault, 'ref-a.md'),
+      'utf8',
+    )
+    const payloadsBefore = new Map<string, Buffer>()
+    for (const name of (await namesIn()).filter(item =>
+      item.includes('.docus-ref-before-')
+      || item.includes('.docus-ref-after-'))) {
+      payloadsBefore.set(name, await fs.readFile(path.join(vault, name)))
+    }
+    const dbBefore = new Database(dbPath)
+    const graphBefore = snapshotDocumentMetadataDatabase(dbBefore)
+    dbBefore.close()
+
+    const recoveredDb = new Database(dbPath)
+    try {
+      const first = await recoverInterruptedOperations(vault, recoveredDb)
+      const second = await recoverInterruptedOperations(vault, recoveredDb)
+      expect(first.actions).toContainEqual(expect.objectContaining({
+        file: journalNames[0],
+        action: 'quarantined',
+        detail: expect.stringContaining('owner-binding aborted'),
+      }))
+      expect(second.actions).toEqual(first.actions)
+      const companionAfterFirst = await fs.readFile(companionPath, 'utf8')
+      expect(companionAfterFirst).not.toBe(companionBefore)
+      expect(JSON.parse(companionAfterFirst)).toMatchObject({
+        phase: 'roll-back',
+        metadataDisposition: {
+          kind: 'folder-snapshot-owner-aborted',
+          previousDirection: 'roll-back',
+          reason: 'owner-journal-absent',
+        },
+      })
+      expect(await fs.readFile(companionPath, 'utf8'))
+        .toBe(companionAfterFirst)
+      expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8'))
+        .toBe(referenceBefore)
+      for (const [name, bytes] of payloadsBefore) {
+        expect(await fs.readFile(path.join(vault, name))).toEqual(bytes)
+      }
+      expect(snapshotDocumentMetadataDatabase(recoveredDb)).toEqual(graphBefore)
+      expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8'))
+        .toBe(A_RAW)
+      await expect(fs.stat(path.join(vault, 'proj')))
+        .rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      recoveredDb.close()
+    }
+  }, REAL_CRASH_TEST_TIMEOUT)
+
+  it('F2 promotes an exact pending binding and completes owner handoff in the same startup', async () => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seedOwnerBindingCrashState(dbPath)
+    const point = 'v4-owner-durable'
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: point,
+    }, FOLDER_ROLLBACK_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady(point), point)
+
+    const durableArtifacts = await Promise.all(
+      (await namesIn())
+        .filter(name => name.includes('.docus-journal-'))
+        .map(async name => ({
+          name,
+          entry: JSON.parse(await fs.readFile(path.join(vault, name), 'utf8')),
+        })),
+    )
+    const companion = durableArtifacts.find(({ entry }) =>
+      entry.op === 'folder-rename-references')
+    const owner = durableArtifacts.find(({ entry }) => entry.version === 4)
+    expect(
+      parseFolderMoveJournalV4Object(owner?.entry),
+      JSON.stringify(owner?.entry),
+    ).not.toBeNull()
+    expect(companion?.entry.metadataDisposition).toMatchObject({
+      kind: 'folder-snapshot-owner-pending',
+      ownerJournal: owner?.name,
+    })
+    expect(owner?.entry.metadataDisposition.referenceJournal).toMatchObject({
+      relativePath: companion?.name,
+      transactionId: companion?.name
+        .split('.docus-journal-').at(-1),
+      journalHash: companion?.entry.metadataDisposition.ownerDescriptorHash,
+      srcRel: 'proj',
+      destRel: 'ren',
+    })
+
+    const recoveredDb = new Database(dbPath)
+    try {
+      const first = await recoverInterruptedOperations(vault, recoveredDb)
+      expect(first.actions.map(action => action.action))
+        .toContain('completed-rename')
+      expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8'))
+        .toBe(A_RAW)
+      expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8'))
+        .toBe('see [[proj/a]]\n')
+      expect(getDocumentMetadata(recoveredDb, 'proj/a')?.id)
+        .toBe('round17-owner-a')
+      expect(getDocumentMetadata(recoveredDb, 'ren/a')).toBeNull()
+      expect((await namesIn()).some(name =>
+        name.includes('.docus-journal-')
+        || name.includes('.docus-ref-before-')
+        || name.includes('.docus-ref-after-'))).toBe(false)
+      expect((await recoverInterruptedOperations(vault, recoveredDb)).actions)
+        .toEqual([])
+    } finally {
+      recoveredDb.close()
+    }
+  }, REAL_CRASH_TEST_TIMEOUT)
+
+  it('F3 quarantines a pending owner mismatch without filesystem or SQLite mutation', async () => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seedOwnerBindingCrashState(dbPath)
+    const point = 'v4-owner-durable'
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: point,
+    }, FOLDER_ROLLBACK_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady(point), point)
+
+    const artifactNames = (await namesIn())
+      .filter(name => name.includes('.docus-journal-'))
+    const ownerArtifacts = await Promise.all(artifactNames.map(async name => ({
+      name,
+      entry: JSON.parse(await fs.readFile(path.join(vault, name), 'utf8')),
+    })))
+    const owner = ownerArtifacts.find(({ entry }) => entry.version === 4)
+    expect(owner).toBeDefined()
+    owner!.entry.metadataDisposition.referenceJournal.journalHash =
+      '0'.repeat(64)
+    await rewriteDurableJournal(
+      path.join(vault, owner!.name),
+      owner!.entry,
+    )
+    const beforeFiles = new Map<string, Buffer>()
+    for (const name of await namesIn()) {
+      const absolute = path.join(vault, name)
+      const stat = await fs.lstat(absolute)
+      if (stat.isFile() && name !== 'metadata.sqlite'
+        && !name.startsWith('metadata.sqlite-')) {
+        beforeFiles.set(name, await fs.readFile(absolute))
+      }
+    }
+    const recoveredDb = new Database(dbPath)
+    try {
+      const graphBefore = snapshotDocumentMetadataDatabase(recoveredDb)
+      const first = await recoverInterruptedOperations(vault, recoveredDb)
+      const second = await recoverInterruptedOperations(vault, recoveredDb)
+      expect(first.actions
+        .filter(action => action.action === 'quarantined')
+        .map(action => action.detail))
+        .toContainEqual(expect.stringContaining(
+          'owner-binding companion proof mismatch',
+        ))
+      expect(second.actions).toEqual(first.actions)
+      expect(snapshotDocumentMetadataDatabase(recoveredDb)).toEqual(graphBefore)
+      for (const [name, bytes] of beforeFiles) {
+        expect(await fs.readFile(path.join(vault, name))).toEqual(bytes)
+      }
+      expect((await namesIn()).filter(name =>
+        name.includes('.docus-journal-'))).toEqual(
+        expect.arrayContaining(artifactNames),
+      )
+    } finally {
+      recoveredDb.close()
+    }
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it.each([
     ['reverse-prepared'],
@@ -1502,7 +1741,8 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
       expect(await atProj('a.md')).toBe(true)
       expect(await atProj('image.bin')).toBe(true)
       expect(await atProj('nested/b.md')).toBe(true)
-      expect(await namesIn()).not.toContain('ren')
+      // Source shells stay generation-bound until metadata finalization.
+      expect(await namesIn()).toContain('ren')
     }
 
     const persistedDb = new Database(dbPath)
@@ -2420,53 +2660,54 @@ describe('recoverInterruptedOperations (folder-rename journal)', () => {
     expect(report.actions.some((a) => a.action === 'quarantined')).toBe(true)
   })
 
-  it('completes the metadata prefix move when the directory move landed', async () => {
+  it('quarantines a landed weak legacy journal without moving metadata', async () => {
     await seed({ 'ren/a.md': '# a\n' })
     await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await folderJournal('proj', 'ren', 'ren'), 'utf8')
     saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
-    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
-    expect(getDocumentMetadata(db, 'proj/a')).toBeNull()
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expectWeakLegacyFolderJournal(report)
+    expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('ren-a-id')
+    expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 
-  it('is idempotent when the metadata move already landed before the crash', async () => {
+  it('idempotently quarantines weak legacy state after metadata landed', async () => {
     await seed({ 'ren/a.md': '# a\n' })
     await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await folderJournal('proj', 'ren', 'ren'), 'utf8')
     saveDocumentMetadata(db, { id: 'ren-a-id', path: 'ren/a', title: 'A', updatedAt: 1 })
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expectWeakLegacyFolderJournal(report)
     expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 
-  it('removes a stale journal when the source tree is still in place', async () => {
+  it('retains a stale weak legacy journal when the source is intact', async () => {
     await seed({ 'proj/a.md': '# a\n' })
     await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await folderJournal('proj', 'ren'), 'utf8')
     saveDocumentMetadata(db, { id: 'proj-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'cleaned')).toBe(true)
+    expectWeakLegacyFolderJournal(report)
     expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('proj-a-id')
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 
-  it('moves metadata back when durable disk state is source but metadata had reached destination', async () => {
+  it('does not move metadata for a weak legacy journal', async () => {
     await seed({ 'proj/a.md': '# a\n' })
     await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await folderJournal('proj', 'ren'), 'utf8')
     saveDocumentMetadata(db, { id: 'proj-a-id', path: 'ren/a', title: 'A', updatedAt: 1 })
 
-    await runRecovery()
+    const report = await runRecovery()
 
-    expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('proj-a-id')
-    expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
-    expect(await namesIn()).not.toContain('.proj.docus-journal-cccc')
+    expectWeakLegacyFolderJournal(report)
+    expect(getDocumentMetadata(db, 'proj/a')).toBeNull()
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('proj-a-id')
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 
   it('never treats an empty destination as proof that the gate is ours', async () => {
@@ -2499,7 +2740,7 @@ describe('recoverInterruptedOperations (folder-rename journal)', () => {
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'failed')).toBe(true)
+    expectWeakLegacyFolderJournal(report)
     expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 })
@@ -2538,7 +2779,7 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
     { rel: 'nested/b', id: 'ren-b-id', sourceHash: sha256Hex(B_RAW) },
   ]
 
-  it('replays a move that crashed between entries and completes the metadata prefix move', async () => {
+  it('quarantines a split weak legacy move without replaying it', async () => {
     // Exact mid-move crash state: entry a.md already landed at the
     // destination, nested/b.md still at the source, durable journal.
     await seed({ 'ren/a.md': A_RAW, 'proj/nested/b.md': B_RAW })
@@ -2548,22 +2789,20 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expectWeakLegacyFolderJournal(report)
     expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe(A_RAW)
-    expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe(B_RAW)
-    expect(await namesIn()).not.toContain('proj')
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
-    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
-    expect(getDocumentMetadata(db, 'ren/nested/b')?.id).toBe('ren-b-id')
-    expect(getDocumentMetadata(db, 'proj/a')).toBeNull()
+    expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe(B_RAW)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
+    expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('ren-a-id')
+    expect(getDocumentMetadata(db, 'proj/nested/b')?.id).toBe('ren-b-id')
     // Idempotent across repeated startups.
     await runRecovery()
     await runRecovery()
     expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe(A_RAW)
-    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
+    expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('ren-a-id')
   })
 
-  it('completes forward when every entry already landed at the destination', async () => {
+  it('does not infer completion from a fully-landed weak legacy tree', async () => {
     await seed({ 'ren/a.md': A_RAW, 'ren/nested/b.md': B_RAW })
     await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), await replayableJournal(entries()), 'utf8')
     saveDocumentMetadata(db, { id: 'ren-a-id', path: 'proj/a', title: 'A', updatedAt: 1 })
@@ -2571,12 +2810,12 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
-    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expectWeakLegacyFolderJournal(report)
+    expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('ren-a-id')
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 
-  it('prunes the empty gate when the crash hit before the first entry moved', async () => {
+  it('does not prune an empty gate claimed only by a weak legacy journal', async () => {
     // A replayable move's destination gate is provably ours by its
     // hidden gate token (round-8: an empty directory alone is NOT
     // ownership proof): every entry is still at the source, so the
@@ -2590,9 +2829,9 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'cleaned')).toBe(true)
-    expect(await namesIn()).not.toContain('ren')
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expectWeakLegacyFolderJournal(report)
+    expect(await namesIn()).toContain('ren')
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
     expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe(A_RAW)
     expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('ren-a-id')
   })
@@ -2621,7 +2860,7 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('external content'))).toBe(true)
+    expectWeakLegacyFolderJournal(report)
     expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# external\n')
     expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe(B_RAW)
     expect(await namesIn()).toContain('.proj.docus-journal-cccc')
@@ -2642,7 +2881,7 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('unrecognized'))).toBe(true)
+    expectWeakLegacyFolderJournal(report)
     expect(await namesIn()).toContain('.proj.docus-journal-cccc')
     expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe(A_RAW)
   })
@@ -2667,7 +2906,7 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((action) => action.action === 'quarantined' && action.detail?.includes('unrecognized'))).toBe(true)
+    expectWeakLegacyFolderJournal(report)
     expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe(B_RAW)
     expect(await namesIn()).toContain('.proj.docus-journal-cccc')
     expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
@@ -2696,12 +2935,12 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((action) => action.action === 'quarantined' && action.detail?.includes('unrecognized'))).toBe(true)
+    expectWeakLegacyFolderJournal(report)
     expect(await fs.readFile(source, 'utf8')).toBe(A_RAW)
     expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 
-  it('parses journals whose dev/ino exceed Number.MAX_SAFE_INTEGER (Windows large file IDs)', async () => {
+  it('quarantines legacy journals with unsafe numeric generations', async () => {
     // NTFS volumes with large file records and ReFS/Dev Drive report
     // file IDs beyond 2**53; JSON round-trips them as finite doubles.
     // Rejecting them as "unsafe integers" would orphan every production
@@ -2725,13 +2964,13 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
-    expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe(B_RAW)
-    expect(getDocumentMetadata(db, 'ren/nested/b')?.id).toBe('ren-b-id')
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expectWeakLegacyFolderJournal(report)
+    expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe(B_RAW)
+    expect(getDocumentMetadata(db, 'proj/nested/b')?.id).toBe('ren-b-id')
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 
-  it('still recovers HEAD-era v1 journals that persisted the canonical strategy values', async () => {
+  it('parses but quarantines HEAD-era v1 journals with canonical strategy values', async () => {
     // Round-7 P0 regression, backwards direction: the pre-fix route
     // wrote strategy 'replayable-move'/'atomic-rename' into v1
     // journals while the parser only accepted 'replayable'/'atomic' —
@@ -2751,13 +2990,12 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('unrecognized'))).toBe(false)
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
-    expect(await fs.readFile(path.join(vault, 'ren/nested/b.md'), 'utf8')).toBe(B_RAW)
-    expect(getDocumentMetadata(db, 'ren/nested/b')?.id).toBe('ren-b-id')
+    expectWeakLegacyFolderJournal(report)
+    expect(await fs.readFile(path.join(vault, 'proj/nested/b.md'), 'utf8')).toBe(B_RAW)
+    expect(getDocumentMetadata(db, 'proj/nested/b')?.id).toBe('ren-b-id')
   })
 
-  it('still recovers legacy v1 journals with the short strategy names', async () => {
+  it('parses but quarantines legacy v1 journals with short strategy names', async () => {
     await seed({ 'ren/a.md': A_RAW, 'ren/nested/b.md': B_RAW })
     await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({
       version: 1, op: 'folder-rename', srcRel: 'proj', destRel: 'ren', strategy: 'replayable',
@@ -2771,8 +3009,8 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
-    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('ren-a-id')
+    expectWeakLegacyFolderJournal(report)
+    expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('ren-a-id')
   })
 
   it('accepts every strategy value the platform can persist (schema tying guard)', async () => {
@@ -2800,13 +3038,12 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
       const report = await runRecovery()
 
-      expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('unrecognized')), strategy).toBe(false)
-      expect(report.actions.some((a) => a.action === 'completed-rename'), strategy).toBe(true)
+      expectWeakLegacyFolderJournal(report)
       db.exec('DELETE FROM documents')
     }
   })
 
-  it('replays a binary attachment by its buffer hash, not a utf8 read', async () => {
+  it('does not replay a binary attachment from a weak legacy journal', async () => {
     // Attachments are binary: a utf8 read would mangle the bytes and
     // the hash would never match. The journal hashes every physical
     // file with sha256HexBuffer and recovery replays by that proof.
@@ -2827,12 +3064,12 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
-    expect(await fs.readFile(path.join(vault, 'ren/image.bin'))).toEqual(imageBytes)
-    expect(await namesIn()).not.toContain('proj')
+    expectWeakLegacyFolderJournal(report)
+    expect(await fs.readFile(path.join(vault, 'proj/image.bin'))).toEqual(imageBytes)
+    expect(await namesIn()).toContain('proj')
   })
 
-  it('prunes the gate and cleans a stale empty-tree journal', async () => {
+  it('retains a gate claimed only by a weak empty-tree journal', async () => {
     // An empty folder rename killed after the gate: entries [] with
     // emptyTree, source directory intact. Stale for a prefix-move
     // journal — the gate is ours (proven by its token, round-8) and is
@@ -2848,10 +3085,10 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'cleaned')).toBe(true)
-    expect(await namesIn()).not.toContain('ren')
+    expectWeakLegacyFolderJournal(report)
+    expect(await namesIn()).toContain('ren')
     expect(await namesIn()).toContain('proj')
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 
   it('quarantines a stale empty-tree journal whose destination gate is not provably ours', async () => {
@@ -2868,12 +3105,12 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('not provably ours'))).toBe(true)
+    expectWeakLegacyFolderJournal(report)
     expect(await namesIn()).toContain('ren')
     expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 
-  it('recreates nested empty directories declared by the journal', async () => {
+  it('does not recreate directories from a weak legacy manifest', async () => {
     // Round-8 P1: a replayable move records every subdirectory, so
     // nested EMPTY directories (visible vault tree nodes) survive the
     // move — a files-only replay would silently drop them on Windows.
@@ -2889,13 +3126,12 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
-    expect((await fs.stat(path.join(vault, 'ren/empty'))).isDirectory()).toBe(true)
-    expect((await fs.stat(path.join(vault, 'ren/empty/nested'))).isDirectory()).toBe(true)
-    expect(await fs.readdir(path.join(vault, 'ren/empty/nested'))).toEqual([])
+    expectWeakLegacyFolderJournal(report)
+    await expect(fs.stat(path.join(vault, 'ren/empty')))
+      .rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('keeps the moved folder when an empty-tree move fully landed', async () => {
+  it('keeps the moved folder but retains a weak empty-tree journal', async () => {
     // The empty move completed before the crash (source gone, empty
     // destination present): forward completion KEEPS the destination
     // directory — pruning it would delete the moved folder.
@@ -2908,19 +3144,16 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expectWeakLegacyFolderJournal(report)
     expect(await namesIn()).toContain('ren')
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
+    expect(await namesIn()).toContain('.proj.docus-journal-cccc')
   })
 })
 
-describe('recoverInterruptedOperations (folder-move snapshot-restore journal)', () => {
-  // A delete rollback persists its metadata snapshot in the journal:
-  // no matter where the restore crashed, recovery finishes it — the
-  // tree back under the public path AND the full metadata graph
-  // re-installed. Unlike prefix-move journals, an all-at-source state
-  // is NOT stale here: the restore is the durable intent, and the
-  // staged tree must not be stranded under its inflight name.
+describe('recoverInterruptedOperations (weak legacy folder-move snapshot-restore journal)', () => {
+  // Versions 1-3 lack the durable gate, file-generation, and directory-
+  // generation ownership proof required to mutate either the tree or
+  // metadata. Even historically plausible rollback states fail closed.
   const A_RAW = '# a\n'
   const IMAGE_BYTES = Buffer.from([0x01, 0x02, 0x03, 0xff])
   const STAGED = 'gone.docus-delete-inflight-cccccccc'
@@ -2956,39 +3189,35 @@ describe('recoverInterruptedOperations (folder-move snapshot-restore journal)', 
     }), 'utf8')
   }
 
-  it('completes a delete rollback that crashed mid restore, metadata graph included', async () => {
+  it('quarantines a delete rollback that crashed mid restore without mutating either side', async () => {
     await seedDeleteRollbackState({ a: true, image: false })
     expect(getDocumentMetadata(db, 'gone/a')).toBeNull()
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expectWeakLegacyFolderJournal(report, `.${STAGED}.docus-journal-cccc`)
     expect(await fs.readFile(path.join(vault, 'gone/a.md'), 'utf8')).toBe(A_RAW)
-    expect(await fs.readFile(path.join(vault, 'gone/image.bin'))).toEqual(IMAGE_BYTES)
-    // Identity re-installed from the persisted snapshot — same id.
-    expect(getDocumentMetadata(db, 'gone/a')?.id).toBe('gone-a-id')
-    // Staging and journal both gone; nothing was quarantined.
-    expect(await namesIn()).not.toContain(STAGED)
-    expect((await namesIn()).some((n) => n.includes('.docus-journal-'))).toBe(false)
-    expect((await namesIn()).some((n) => n.includes('.docus-quarantine-'))).toBe(false)
+    expect(await fs.readFile(path.join(vault, STAGED, 'image.bin'))).toEqual(IMAGE_BYTES)
+    expect(await fs.stat(path.join(vault, 'gone/image.bin')).then(() => true, () => false)).toBe(false)
+    expect(getDocumentMetadata(db, 'gone/a')).toBeNull()
+    expect(await namesIn()).toContain(STAGED)
+    expect(await namesIn()).toContain(`.${STAGED}.docus-journal-cccc`)
     // Idempotent.
     await runRecovery()
-    expect(getDocumentMetadata(db, 'gone/a')?.id).toBe('gone-a-id')
+    expect(getDocumentMetadata(db, 'gone/a')).toBeNull()
+    expect(await fs.readFile(path.join(vault, STAGED, 'image.bin'))).toEqual(IMAGE_BYTES)
   })
 
-  it('completes forward when the delete rollback crashed before its first file moved', async () => {
-    // All entries still in staging: a prefix-move journal would call
-    // this stale and clean up — a snapshot-restore journal completes
-    // the restore instead (stranded staging is never the final state).
+  it('quarantines a delete rollback that crashed before its first file moved', async () => {
     await seedDeleteRollbackState({ a: false, image: false })
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
-    expect(await fs.readFile(path.join(vault, 'gone/a.md'), 'utf8')).toBe(A_RAW)
-    expect(await fs.readFile(path.join(vault, 'gone/image.bin'))).toEqual(IMAGE_BYTES)
-    expect(getDocumentMetadata(db, 'gone/a')?.id).toBe('gone-a-id')
-    expect(await namesIn()).not.toContain(STAGED)
+    expectWeakLegacyFolderJournal(report, `.${STAGED}.docus-journal-cccc`)
+    expect(await fs.readFile(path.join(vault, STAGED, 'a.md'), 'utf8')).toBe(A_RAW)
+    expect(await fs.readFile(path.join(vault, STAGED, 'image.bin'))).toEqual(IMAGE_BYTES)
+    expect(await fs.stat(path.join(vault, 'gone')).then(() => true, () => false)).toBe(false)
+    expect(getDocumentMetadata(db, 'gone/a')).toBeNull()
   })
 
   it('rejects a snapshot document that has no corresponding physical Markdown entry', async () => {
@@ -3014,7 +3243,7 @@ describe('recoverInterruptedOperations (folder-move snapshot-restore journal)', 
 
     const report = await runRecovery()
 
-    expect(report.actions.some((action) => action.action === 'quarantined' && action.detail?.includes('unrecognized'))).toBe(true)
+    expectWeakLegacyFolderJournal(report, `.${STAGED}.docus-journal-cccc`)
     expect(getDocumentMetadata(db, 'gone/ghost')).toBeNull()
     expect(await fs.readFile(path.join(vault, STAGED, 'a.md'), 'utf8')).toBe(A_RAW)
     expect(await namesIn()).toContain(`.${STAGED}.docus-journal-cccc`)
@@ -3049,8 +3278,7 @@ describe('recoverInterruptedOperations (folder-move snapshot-restore journal)', 
 
     const report = await runRecovery()
 
-    // Unparseable journal: left in place, unrelated metadata untouched.
-    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('unrecognized'))).toBe(true)
+    expectWeakLegacyFolderJournal(report, `.${STAGED}.docus-journal-cccc`)
     expect(getDocumentMetadata(db, 'unrelated/document')?.title).toBe('Original')
     expect(getDocumentMetadata(db, 'unrelated/document')?.id).toBe('unrelated-id')
     expect(await namesIn()).toContain(`.${STAGED}.docus-journal-cccc`)
@@ -3068,7 +3296,7 @@ describe('recoverInterruptedOperations (folder-move snapshot-restore journal)', 
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('external content'))).toBe(true)
+    expectWeakLegacyFolderJournal(report, `.${STAGED}.docus-journal-cccc`)
     // External file untouched; staged tree NOT merged into it.
     expect(await fs.readFile(path.join(vault, 'gone/external.md'), 'utf8')).toBe('# external\n')
     expect(await fs.stat(path.join(vault, 'gone/a.md')).then(() => true, () => false)).toBe(false)
@@ -3132,7 +3360,9 @@ describe('recoverInterruptedOperations (symlink containment)', () => {
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('escapes the vault'))).toBe(true)
+    expect(report.actions.some((a) =>
+      a.action === 'quarantined'
+      && a.detail?.includes('escapes the vault'))).toBe(true)
     // Nothing outside was touched — no rewrite, no save temp.
     expect(await fs.readFile(path.join(outside, 'victim.md'), 'utf8')).toBe('# external\n')
     expect((await fs.readdir(outside)).some((name) => name.includes('.docus-'))).toBe(false)
@@ -3206,7 +3436,7 @@ describe('recoverInterruptedOperations (symlink containment)', () => {
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('escapes the vault'))).toBe(true)
+    expectWeakLegacyFolderJournal(report, '.proj.docus-journal-aaaa')
     // Sentinel untouched and still outside; nothing linked into vault.
     expect(await fs.readFile(path.join(outside, 'victim.bin'))).toEqual(VICTIM)
     expect(await fs.stat(path.join(vault, 'ren', 'sub', 'victim.bin')).then(() => true, () => false)).toBe(false)
@@ -3231,7 +3461,7 @@ describe('recoverInterruptedOperations (symlink containment)', () => {
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('escapes the vault'))).toBe(true)
+    expectWeakLegacyFolderJournal(report, '.proj.docus-journal-aaaa')
     expect(await fs.readFile(path.join(outside, 'victim.bin'))).toEqual(VICTIM)
     // Source never moved toward the symlinked destination.
     expect(await fs.readFile(path.join(vault, 'proj', 'sub', 'victim.bin'))).toEqual(VICTIM)
@@ -3424,7 +3654,7 @@ describe('recoverInterruptedOperations (multi-pass dependency chains)', () => {
   // rename-reference journal in turn waits on. A fixed two-pass scan
   // cannot close arbitrarily deep chains in one startup, so recovery
   // loops until a pass makes no progress (capped by artifact count).
-  it('closes a three-layer crash dependency chain within a single startup', async () => {
+  it('restores the independently-owned inner staging but stops at a weak legacy folder journal', async () => {
     const A_RAW = '# a\n'
     const B_RAW = '# b\n'
     const internalBefore = '[[old]]\n'
@@ -3469,25 +3699,27 @@ describe('recoverInterruptedOperations (multi-pass dependency chains)', () => {
     saveDocumentMetadata(db, { id: 'a-id', path: 'ren/a', title: 'A', updatedAt: 1 })
     saveDocumentMetadata(db, { id: 'b-id', path: 'ren/b', title: 'B', updatedAt: 1 })
 
-    // ONE startup must close the whole chain: pass 1 restores the inner
-    // staging (the reference + companion both wait), pass 2 completes
-    // the companion move, pass 3 completes the reference transaction.
+    // The inner file staging has its own sufficient proof and can be
+    // restored. The v2 companion cannot authorize the next mutation,
+    // so recovery must stop the dependency chain there.
     const report = await runRecovery()
 
     expect(report.actions.some((a) => a.action === 'restored')).toBe(true)
-    expect(report.actions.filter((a) => a.action === 'completed-rename').length).toBeGreaterThanOrEqual(2)
-    // Tree whole at proj, metadata with it.
-    expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe(A_RAW)
+    expectWeakLegacyFolderJournal(report, '.ren.docus-journal-bbb')
+    expect(report.actions.filter((a) => a.action === 'completed-rename')).toHaveLength(0)
+    // The chain remains split exactly at the weak boundary.
+    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe(A_RAW)
     expect(await fs.readFile(path.join(vault, 'proj/b.md'), 'utf8')).toBe(B_RAW)
-    expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('a-id')
-    expect(getDocumentMetadata(db, 'proj/b')?.id).toBe('b-id')
-    expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
-    // Reference rewrite undone; every journal and the staging gone.
-    expect(await fs.readFile(path.join(vault, 'ref.md'), 'utf8')).toBe(internalBefore)
-    expect((await namesIn()).some((name) => name.includes('.docus-journal-') || name.includes('.docus-ref-') || name.includes('.docus-rename-'))).toBe(false)
-    expect(await namesIn()).not.toContain('ren')
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('a-id')
+    expect(getDocumentMetadata(db, 'ren/b')?.id).toBe('b-id')
+    expect(getDocumentMetadata(db, 'proj/a')).toBeNull()
+    expect(await fs.readFile(path.join(vault, 'ref.md'), 'utf8')).toBe(internalAfter)
+    expect(await namesIn()).toContain('.ren.docus-journal-bbb')
+    expect(await namesIn()).toContain('.proj.docus-journal-aaa')
+    expect((await namesIn('ren')).some((name) => name.includes('.docus-rename-'))).toBe(false)
     // Idempotent.
     await runRecovery()
-    expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('a-id')
+    expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('a-id')
+    expect(await fs.readFile(path.join(vault, 'ref.md'), 'utf8')).toBe(internalAfter)
   })
 })

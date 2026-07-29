@@ -22,6 +22,7 @@ import {
   FolderMoveV4ExecutionError,
 } from '../folderMoveV4Executor'
 import {
+  createFolderMoveGateProof,
   listPhysicalMoveEntries,
   type FolderMoveJournalV4,
 } from '../folderMoveTransaction'
@@ -66,6 +67,8 @@ async function seed(files: Record<string, string>): Promise<void> {
 
 async function writeJournal(journal: FolderMoveJournalV4): Promise<string> {
   const journalAbs = path.join(vault, '.proj.docus-journal-abcdef012345')
+  journal.directoryGenerations ??= []
+  journal.gateProof ??= createFolderMoveGateProof()
   await fs.writeFile(journalAbs, JSON.stringify(journal))
   return journalAbs
 }
@@ -128,6 +131,7 @@ describe('Round-17 replayable landing uncertainty', () => {
         documentPath: entry.documentPath,
       })),
       directories: physical.directories,
+      directoryGenerations: physical.directoryGenerations,
       metadataDisposition: { kind: 'prefix-move' },
     } as FolderMoveJournalV4 & { phase: 'prepared' }
     const journalAbs = path.join(vault, '.proj.docus-journal-abcdef012345')
@@ -250,6 +254,8 @@ describe('Round-15 metadata-committed physical parity', () => {
         documentPath: entry.documentPath,
       })),
       directories: physical.directories,
+      directoryGenerations: physical.directoryGenerations,
+      gateProof: createFolderMoveGateProof(),
       metadataDisposition: { kind: 'prefix-move' },
     }
     const journalAbs = await writeJournal(journal)
@@ -359,6 +365,8 @@ describe.runIf(platformDirectoryMoveStrategy === 'atomic-rename')(
         documentPath: entry.documentPath,
       })),
       directories: physical.directories,
+      directoryGenerations: physical.directoryGenerations,
+      gateProof: createFolderMoveGateProof(),
       metadataDisposition: { kind: 'prefix-move' },
     }
     const journalAbs = path.join(vault, '.proj.docus-journal-abcdef012345')

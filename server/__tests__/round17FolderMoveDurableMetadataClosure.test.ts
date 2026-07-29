@@ -19,6 +19,7 @@ import {
   __setDirectoryMoveStrategyOverrideForTesting,
 } from '../documentFileLifecycle'
 import {
+  createFolderMoveGateProof,
   FOLDER_MOVE_JOURNAL_VERSION,
   serializeMetadataSnapshot,
   validateSnapshotPhysicalEntries,
@@ -446,6 +447,8 @@ describe('Round-17 exact committed graph verification', () => {
         documentPath: 'proj/a',
       }],
       directories: [],
+      directoryGenerations: [],
+      gateProof: createFolderMoveGateProof(),
       metadataDisposition: {
         kind: 'prefix-move',
         committedSnapshot,

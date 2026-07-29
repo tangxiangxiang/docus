@@ -88,6 +88,7 @@ async function writeJournal(basename: string, journal: FolderMoveJournalV4): Pro
   const dir = path.join(vault, path.dirname(basename))
   if (dir !== vault) await fs.mkdir(dir, { recursive: true })
   const journalAbs = path.join(vault, basename)
+  journal.directoryGenerations ??= []
   await fs.writeFile(journalAbs, JSON.stringify(journal), 'utf8')
   return journalAbs
 }
@@ -240,7 +241,7 @@ describe('Round-17 v4 gate proof compatibility matrix', () => {
 
     expect(report.actions).toContainEqual(expect.objectContaining({
       action: 'quarantined',
-      detail: 'replayable destination gate generation does not match journal',
+      detail: 'legacy journal lacks sufficient durable ownership proof',
     }))
     expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# hello\n')
   })
@@ -372,7 +373,7 @@ describe('Round-17 v4 gate proof compatibility matrix', () => {
 
     expect(report.actions).toContainEqual(expect.objectContaining({
       action: 'quarantined',
-      detail: 'replayable gate-created destination exact parity failed',
+      detail: 'replayable destination directories lack durable generation proof',
     }))
     expect(await fs.readFile(path.join(vault, 'ren', '.docus-external'), 'utf8'))
       .toBe('external')

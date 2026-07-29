@@ -7,6 +7,11 @@ import { applyMigrations } from '../db'
 import { sha256Hex } from '../atomicTextWrite'
 import { recoverInterruptedOperations } from '../crashRecovery'
 import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata'
+import { createFolderMoveGateProof } from '../folderMoveTransaction'
+import {
+  captureFolderMoveDirectoryEntries,
+} from '../folderMoveDirectoryOwnership'
+import { writeFolderMoveGateProof } from '../folderMoveGateProof'
 
 let root: string
 let db: InstanceType<typeof Database>
@@ -197,6 +202,12 @@ describe('deterministic replayable folder-move recovery model', () => {
         const srcAbs = path.join(caseDir, 'proj')
         const destAbs = path.join(caseDir, 'ren')
         const placements = entries.map(() => (['src', 'dest', 'both', 'external', 'missing'] as const)[Math.floor(random() * 5)])
+        const directories = [...new Set(entries
+          .map((entry) => entry.rel.includes('/')
+            ? entry.rel.slice(0, entry.rel.lastIndexOf('/'))
+            : null)
+          .filter((dir): dir is string => dir !== null))]
+          .sort()
         const externalBodies = new Map<string, string>()
         const writeExternal = async (relPath: string, body: string): Promise<void> => {
           const abs = path.join(caseDir, relPath)
@@ -204,26 +215,50 @@ describe('deterministic replayable folder-move recovery model', () => {
           await fs.writeFile(abs, body, 'utf8')
           externalBodies.set(relPath, body)
         }
+        // Build the complete prepared source generation first. The
+        // journal's file generations are captured before any move, so
+        // even a crash state where a declared entry is now missing
+        // still carries the durable generation that disappeared.
+        await fs.mkdir(srcAbs, { recursive: true })
+        for (const directory of directories) {
+          await fs.mkdir(path.join(srcAbs, directory), { recursive: true })
+        }
+        for (const entry of entries) {
+          await fs.writeFile(path.join(srcAbs, entry.rel), entry.raw, 'utf8')
+        }
+        const sourceRootStat = await fs.lstat(srcAbs, { bigint: true })
+        const sourceDirectoryGenerations =
+          await captureFolderMoveDirectoryEntries(srcAbs, root)
+        const preparedFileGenerations = await Promise.all(
+          entries.map(async entry => {
+            const stat = await fs.lstat(path.join(srcAbs, entry.rel), { bigint: true })
+            return { dev: stat.dev.toString(), ino: stat.ino.toString() }
+          }),
+        )
         for (let index = 0; index < entries.length; index += 1) {
           const entry = entries[index]
           const placement = placements[index]
-          const writeOurs = async (base: string): Promise<void> => {
-            const abs = path.join(base, entry.rel)
-            await fs.mkdir(path.dirname(abs), { recursive: true })
-            await fs.writeFile(abs, entry.raw, 'utf8')
+          const sourceEntry = path.join(srcAbs, entry.rel)
+          const destinationEntry = path.join(destAbs, entry.rel)
+          if (placement === 'dest' || placement === 'both') {
+            await fs.mkdir(path.dirname(destinationEntry), { recursive: true })
+            await fs.link(sourceEntry, destinationEntry)
           }
-          if (placement === 'src' || placement === 'both') await writeOurs(srcAbs)
-          if (placement === 'dest' || placement === 'both') await writeOurs(destAbs)
-          if (placement === 'external') await writeExternal(`ren/${entry.rel}`, `# external ${seed}/${index}\n`)
+          if (placement === 'dest' || placement === 'external' || placement === 'missing') {
+            await fs.unlink(sourceEntry)
+          }
+          if (placement === 'external') {
+            await writeExternal(`ren/${entry.rel}`, `# external ${seed}/${index}\n`)
+          }
         }
         const gateExists = placements.some((p) => p === 'dest' || p === 'both' || p === 'external') || random() < 0.6
-        const transactionId = seed.toString(16)
+        const gateProof = createFolderMoveGateProof()
         if (gateExists) {
           await fs.mkdir(destAbs, { recursive: true })
           // The mover drops a hidden gate token when it creates the
           // gate — recovery needs it to prove an otherwise-empty
           // destination is ours (round-8: emptiness is not proof).
-          await fs.writeFile(path.join(destAbs, `.docus-folder-gate-${transactionId}`), '', 'utf8')
+          await writeFolderMoveGateProof(destAbs, gateProof)
         }
         if (gateExists && random() < 0.3) await fs.mkdir(path.join(destAbs, 'nested'), { recursive: true })
         const externalInGate = gateExists && random() < 0.25
@@ -237,23 +272,86 @@ describe('deterministic replayable folder-move recovery model', () => {
         }
         const sourceHasMetadata = metadataSides.includes('src')
         const destinationHasMetadata = metadataSides.includes('dest')
+        const documentMetadataSides = metadataSides.filter(
+          (_side, index) => entries[index].id !== null,
+        )
+        const allDocumentMetadataAtDestination =
+          documentMetadataSides.length > 0
+          && documentMetadataSides.every(side => side === 'dest')
+        const allDocumentMetadataAtSource =
+          documentMetadataSides.length > 0
+          && documentMetadataSides.every(side => side === 'src')
         const allAtSource = placements.every((p) => p === 'src')
-        await fs.writeFile(path.join(caseDir, journalName), JSON.stringify({
-          version: 2, op: 'folder-rename', srcRel, destRel, strategy: 'replayable-move',
-          sourceDev: 0, sourceIno: 0,
-          entries: entries.map(({ rel, id, docRel, sourceHash }) => ({
+        if (gateExists) {
+          for (const directory of directories) {
+            await fs.mkdir(path.join(destAbs, directory), { recursive: true })
+          }
+        }
+        const destinationDirectoryGenerations = gateExists
+          ? await Promise.all(directories.map(async relativeDirectoryPath => {
+              const stat = await fs.lstat(
+                path.join(destAbs, relativeDirectoryPath),
+                { bigint: true },
+              )
+              return {
+                relativeDirectoryPath,
+                sourceDev: stat.dev.toString(),
+                sourceIno: stat.ino.toString(),
+              }
+            }))
+          : undefined
+        const durableEntries = entries.map(({
+          rel,
+          id,
+          docRel,
+          sourceHash,
+        }, index) => {
+          const generation = preparedFileGenerations[index]
+          return {
             relativeFilePath: rel,
             sourceHash,
-            ...(id ? { documentId: id, documentPath: `${srcRel}/${docRel}` } : {}),
-          })),
-          directories: [...new Set(entries
-            .map((entry) => entry.rel.includes('/') ? entry.rel.slice(0, entry.rel.lastIndexOf('/')) : null)
-            .filter((dir): dir is string => dir !== null))],
+            sourceDev: generation.dev,
+            sourceIno: generation.ino,
+            ...(id
+              ? { documentId: id, documentPath: `${srcRel}/${docRel}` }
+              : {}),
+          }
+        })
+        await fs.writeFile(path.join(caseDir, journalName), JSON.stringify({
+          version: 4,
+          op: 'folder-rename',
+          phase: gateExists ? 'gate-created' : 'prepared',
+          srcRel,
+          destRel,
+          strategy: 'replayable-move',
+          sourceDev: sourceRootStat.dev.toString(),
+          sourceIno: sourceRootStat.ino.toString(),
+          ...(gateExists
+            ? {
+                destDev: (await fs.lstat(destAbs, { bigint: true })).dev.toString(),
+                destIno: (await fs.lstat(destAbs, { bigint: true })).ino.toString(),
+                destinationDirectoryGenerations,
+              }
+            : {}),
+          gateProof,
+          entries: durableEntries,
+          directories,
+          directoryGenerations: sourceDirectoryGenerations,
           metadataDisposition: { kind: 'prefix-move' },
         }))
-        model = { placements, externalInGate, sourceHasMetadata, destinationHasMetadata, allAtSource }
+        model = {
+          placements,
+          gateExists,
+          externalInGate,
+          sourceHasMetadata,
+          destinationHasMetadata,
+          allDocumentMetadataAtDestination,
+          allDocumentMetadataAtSource,
+          allAtSource,
+        }
 
-        await recoverInterruptedOperations(root, db)
+        const firstReport = await recoverInterruptedOperations(root, db)
+        model = { ...model, actions: firstReport.actions }
         const onceTree = await collectTree(caseDir)
         await recoverInterruptedOperations(root, db)
         await recoverInterruptedOperations(root, db)
@@ -287,11 +385,26 @@ describe('deterministic replayable folder-move recovery model', () => {
         // destination holds ANY external content — an entry at a
         // foreign generation, a missing generation, OR an undeclared
         // file inside the gate (externalInGate).
-        const replayBlocked = placements.includes('external') || placements.includes('missing') || externalInGate
-        if (!replayBlocked && !allAtSource) {
+        const replayBlocked =
+          placements.includes('external')
+          || placements.includes('missing')
+          // The create-only mover never exposes the same generation at
+          // both formal paths: it links from hidden staging, then drops
+          // staging. A formal source+destination duplicate therefore
+          // means the source path was reused after landing and must be
+          // quarantined.
+          || placements.includes('both')
+          || externalInGate
+        const durableForwardIntent =
+          !allAtSource
+          || (gateExists && destinationHasMetadata && !sourceHasMetadata)
+        if (!replayBlocked && durableForwardIntent) {
           // Fully replayable split: the journal must be consumed and
           // every entry must land at the destination with its content;
-          // metadata follows the bytes to the destination prefix.
+          // metadata follows the bytes to the destination prefix. A
+          // gate-created transaction whose metadata is already wholly
+          // at the destination also carries forward intent even when
+          // every file is still replayable from the source.
           expect(journalKept, `journal kept; ${detail}`).toBe(false)
           for (const entry of entries) {
             expect(finalTree.get(`ren/${entry.rel}`), `entry not at dest; ${detail}`).toBe(entry.raw)
@@ -300,7 +413,12 @@ describe('deterministic replayable folder-move recovery model', () => {
             if (metadataSides[index] === 'none') continue
             expect(getDocumentMetadata(db, `${destRel}/${entries[index].docRel}`)?.id, `metadata; ${detail}`).toBe(entries[index].id)
           }
-        } else if (allAtSource && !externalInGate && !(sourceHasMetadata && destinationHasMetadata)) {
+        } else if (
+          allAtSource
+          && !externalInGate
+          && !(sourceHasMetadata && destinationHasMetadata)
+          && (gateExists || allDocumentMetadataAtSource)
+        ) {
           // The move never started and the gate (if any) is provably
           // ours: stale journal cleaned, source intact. Destination-only
           // metadata (a crash mid-metadata-move) rolls back to the
