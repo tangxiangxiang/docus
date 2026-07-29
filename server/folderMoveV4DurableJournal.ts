@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 
 import {
+  isSerializedMetadataSnapshot,
   validateFolderMoveGateProof,
   type FolderMoveJournalV4,
 } from './folderMoveTransaction.js'
@@ -39,8 +40,30 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
   if (!Array.isArray(entry.entries) || !Array.isArray(entry.directories)) return null
   if (entry.gateProof !== undefined && !validateFolderMoveGateProof(entry.gateProof)) return null
   if (typeof entry.metadataDisposition !== 'object' || entry.metadataDisposition === null) return null
-  const disposition = entry.metadataDisposition as { kind?: unknown }
-  if (disposition.kind !== 'prefix-move' && disposition.kind !== 'snapshot-restore') return null
+  const disposition = entry.metadataDisposition as Record<string, unknown>
+  if (disposition.kind === 'prefix-move') {
+    if (disposition.preparedSnapshot !== undefined
+      && !isSerializedMetadataSnapshot(disposition.preparedSnapshot)) return null
+    if (disposition.committedSnapshot !== undefined
+      && !isSerializedMetadataSnapshot(disposition.committedSnapshot)) return null
+    if (entry.phase !== 'metadata-committed'
+      && disposition.committedSnapshot !== undefined) return null
+  } else if (disposition.kind === 'snapshot-restore') {
+    if (!isSerializedMetadataSnapshot(disposition.snapshot)) return null
+    if (disposition.expectedCurrentSnapshot !== undefined
+      && !isSerializedMetadataSnapshot(disposition.expectedCurrentSnapshot)) return null
+    if (disposition.physicalDocumentIds !== undefined
+      && (!Array.isArray(disposition.physicalDocumentIds)
+        || !disposition.physicalDocumentIds.every((id) =>
+          typeof id === 'string' && id.length > 0)
+        || new Set(disposition.physicalDocumentIds).size
+          !== disposition.physicalDocumentIds.length)) return null
+    const hasExpected = disposition.expectedCurrentSnapshot !== undefined
+    const hasPhysicalIds = disposition.physicalDocumentIds !== undefined
+    if (hasExpected !== hasPhysicalIds) return null
+  } else {
+    return null
+  }
   return {
     ...(entry as unknown as FolderMoveJournalV4),
     sourceDev,

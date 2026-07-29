@@ -187,19 +187,69 @@ export function snapshotDocumentMetadataOwnership(
   }
 }
 
-function canonicalRecord(row: Record<string, unknown>): string {
-  const normalized: Record<string, unknown> = {}
-  for (const key of Object.keys(row).sort()) {
-    const value = row[key]
-    if (Buffer.isBuffer(value)) {
-      normalized[key] = { __buffer: value.toString('base64') }
-    } else if (value instanceof Uint8Array) {
-      normalized[key] = { __buffer: Buffer.from(value).toString('base64') }
-    } else {
-      normalized[key] = value
+export function snapshotDocumentMetadataMutationCurrentOwnership(
+  db: DatabaseT,
+  target: DocumentMetadataMutationSnapshot,
+): DocumentMetadataMutationSnapshot {
+  return snapshotDocumentMetadataOwnership(
+    db,
+    target.paths,
+    target.documentIds,
+    target.tagIds,
+  )
+}
+
+function canonicalValue(value: unknown): unknown {
+  if (Buffer.isBuffer(value)) {
+    return { __type: 'bytes', base64: value.toString('base64') }
+  }
+  if (value instanceof Uint8Array) {
+    return {
+      __type: 'bytes',
+      base64: Buffer.from(value).toString('base64'),
     }
   }
-  return JSON.stringify(normalized)
+  if (value === undefined) return { __type: 'undefined' }
+  if (typeof value === 'bigint') {
+    return { __type: 'bigint', decimal: value.toString() }
+  }
+  if (typeof value === 'number' && Object.is(value, -0)) {
+    return { __type: 'number', value: '-0' }
+  }
+  return value
+}
+
+function canonicalRecord(row: Record<string, unknown>): string {
+  return JSON.stringify(
+    Object.keys(row)
+      .sort()
+      .map((key) => [key, canonicalValue(row[key])]),
+  )
+}
+
+function canonicalRows(rows: readonly Record<string, unknown>[]): string[] {
+  return rows.map(canonicalRecord).sort()
+}
+
+function rowsExactlyEqual(
+  current: readonly Record<string, unknown>[],
+  expected: readonly Record<string, unknown>[],
+): boolean {
+  const currentRows = canonicalRows(current)
+  const expectedRows = canonicalRows(expected)
+  return currentRows.length === expectedRows.length
+    && currentRows.every((row, index) => row === expectedRows[index])
+}
+
+export function metadataSnapshotsExactlyEqual(
+  current: DocumentMetadataMutationSnapshot,
+  expected: DocumentMetadataMutationSnapshot,
+): boolean {
+  return rowsExactlyEqual(current.documents, expected.documents)
+    && rowsExactlyEqual(current.tags, expected.tags)
+    && rowsExactlyEqual(current.documentTags, expected.documentTags)
+    && rowsExactlyEqual(current.embeddings, expected.embeddings)
+    && rowsExactlyEqual(current.migrations, expected.migrations)
 }
 
 function liveRowsAreExpectedSubset(

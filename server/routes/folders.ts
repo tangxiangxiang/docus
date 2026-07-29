@@ -10,6 +10,7 @@ import {
   getDocumentMetadata,
   moveDocumentMetadataPrefix,
   restoreDocumentMetadataMutation,
+  snapshotDocumentMetadataMutationCurrentOwnership,
   snapshotDocumentMetadataPrefixMutation,
 } from '../documentMetadata.js'
 import {
@@ -194,11 +195,6 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       ...folderReferenceSnapshots.flatMap((item) => [item.sourcePath, item.writePath]),
     ],
   )
-  let folderRollbackSnapshot = snapshotDocumentMetadataPrefixMutation(
-    metadataDb(),
-    [srcPath],
-    oldPaths,
-  )
   const currentDatabasePaths = [...databaseSnapshot.paths].sort()
   const lockedDatabasePaths = [...new Set(plannedDatabasePaths)].sort()
   if (currentDatabasePaths.join('\0') !== lockedDatabasePaths.join('\0')) {
@@ -231,15 +227,6 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         ensureMetadata(snapshot.sourcePath, snapshot.raw, sourceStat.mtimeMs)
       }
     }
-    // ensureMetadata may have created durable identities for Markdown
-    // files that had no row when planning began. A reverse move must
-    // keep those identities with the bytes, while restoring every
-    // pre-existing reference row from the original full footprint.
-    folderRollbackSnapshot = snapshotDocumentMetadataPrefixMutation(
-      metadataDb(),
-      [srcPath],
-      oldPaths,
-    )
     referenceJournal = await prepareRenameReferenceJournal({
       sourceAbs: src,
       op: 'folder-rename-references',
@@ -286,6 +273,15 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     // sees phase=prepared with no dest generation → quarantines or
     // cleans up safely. Removed LAST after metadata-committed.
     const sourceDirectoryStat = await fs.stat(src, { bigint: true })
+    const preparedMetadataSnapshot = snapshotDocumentMetadataPrefixMutation(
+      metadataDb(),
+      [srcPath, newPath],
+      [
+        ...oldPaths,
+        ...oldPaths.map((oldPath) =>
+          newPath + oldPath.slice(srcPath.length)),
+      ],
+    )
     journalUuid = randomUUID()
     folderMoveJournal = {
       version: FOLDER_MOVE_JOURNAL_VERSION,
@@ -300,7 +296,10 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       ...(physicalEntriesV4.length === 0 ? { emptyTree: true } : {}),
       entries: physicalEntriesV4,
       directories: physicalDirectoriesV4,
-      metadataDisposition: { kind: 'prefix-move' },
+      metadataDisposition: {
+        kind: 'prefix-move',
+        preparedSnapshot: serializeMetadataSnapshot(preparedMetadataSnapshot),
+      },
     }
     journalPath = path.join(path.dirname(src), `.${path.basename(src)}.docus-journal-${journalUuid}`)
     await writeDurableJournal(journalPath, folderMoveJournal)
@@ -449,6 +448,16 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       if (journalPath && folderMoveJournal) {
         try {
           if (__folderRaceHooks?.failJournalFlip) throw new Error('injected journal flip failure')
+          const rollbackExpectedCurrentSnapshot =
+            snapshotDocumentMetadataMutationCurrentOwnership(
+              metadataDb(),
+              databaseSnapshot,
+            )
+          const physicalDocumentIds = folderMoveJournal.entries.flatMap(
+            (entry) => typeof entry.documentId === 'string'
+              ? [entry.documentId]
+              : [],
+          )
           const flipped: FolderMoveJournalV4 = {
             ...folderMoveJournal,
             srcRel: newPath,
@@ -468,7 +477,11 @@ folderRoutes.patch('/api/folders/*', async (c) => {
             })),
             metadataDisposition: {
               kind: 'snapshot-restore',
-              snapshot: serializeMetadataSnapshot(folderRollbackSnapshot),
+              snapshot: serializeMetadataSnapshot(databaseSnapshot),
+              expectedCurrentSnapshot: serializeMetadataSnapshot(
+                rollbackExpectedCurrentSnapshot,
+              ),
+              physicalDocumentIds,
             },
           }
           await rewriteDurableJournal(journalPath, flipped)

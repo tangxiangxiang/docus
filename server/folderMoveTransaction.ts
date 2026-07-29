@@ -60,9 +60,22 @@ export type FolderMoveEnumeration = {
  * (forward and rollback) shift the live prefix; a delete rollback
  * re-installs the exact snapshot the delete detached (embeddings
  * included — base64-marked so the JSON journal round-trips Buffers). */
+export type FolderMovePrefixMetadataDisposition = {
+  kind: 'prefix-move'
+  preparedSnapshot?: SerializedMetadataSnapshot
+  committedSnapshot?: SerializedMetadataSnapshot
+}
+
+export type FolderMoveSnapshotRestoreDisposition = {
+  kind: 'snapshot-restore'
+  snapshot: SerializedMetadataSnapshot
+  expectedCurrentSnapshot?: SerializedMetadataSnapshot
+  physicalDocumentIds?: string[]
+}
+
 export type FolderMoveMetadataDisposition =
-  | { kind: 'prefix-move' }
-  | { kind: 'snapshot-restore'; snapshot: SerializedMetadataSnapshot }
+  | FolderMovePrefixMetadataDisposition
+  | FolderMoveSnapshotRestoreDisposition
 
 export type SerializedMetadataSnapshot = {
   paths: string[]
@@ -155,6 +168,32 @@ function exactColumns(row: unknown, allowed: Set<string>): row is Record<string,
   return keys.length > 0 && keys.every((key) => allowed.has(key))
 }
 
+export function isSerializedMetadataSnapshot(
+  snapshot: unknown,
+): snapshot is SerializedMetadataSnapshot {
+  if (!snapshot || typeof snapshot !== 'object') return false
+  const item = snapshot as Partial<SerializedMetadataSnapshot>
+  const isArrayOf = (
+    value: unknown,
+    check: (element: unknown) => boolean,
+  ): boolean => Array.isArray(value) && value.every(check)
+  return isArrayOf(item.paths, (value) => typeof value === 'string')
+    && isArrayOf(item.documentIds, (value) =>
+      typeof value === 'string' && value.length > 0)
+    && isArrayOf(item.tagIds, (value) =>
+      typeof value === 'number' && Number.isInteger(value))
+    && isArrayOf(item.preexistingTagIds, (value) =>
+      typeof value === 'number' && Number.isInteger(value))
+    && isArrayOf(item.documents, (row) => exactColumns(row, DOCUMENT_COLUMNS))
+    && isArrayOf(item.tags, (row) => exactColumns(row, TAG_COLUMNS))
+    && isArrayOf(item.documentTags, (row) =>
+      exactColumns(row, DOCUMENT_TAG_COLUMNS))
+    && isArrayOf(item.embeddings, (row) =>
+      exactColumns(row, EMBEDDING_COLUMNS))
+    && isArrayOf(item.migrations, (row) =>
+      exactColumns(row, MIGRATION_COLUMNS))
+}
+
 function setEquals(a: Set<unknown>, b: Set<unknown>): boolean {
   if (a.size !== b.size) return false
   for (const value of a) if (!b.has(value)) return false
@@ -181,21 +220,8 @@ function setEquals(a: Set<unknown>, b: Set<unknown>): boolean {
  *   * every row carries exactly its table's columns.
  */
 export function isValidDeleteRollbackSnapshot(snapshot: unknown, destRel: string): snapshot is SerializedMetadataSnapshot {
-  if (!snapshot || typeof snapshot !== 'object') return false
-  const item = snapshot as Partial<SerializedMetadataSnapshot>
-  const isArrayOf = (value: unknown, check: (element: unknown) => boolean): boolean =>
-    Array.isArray(value) && value.every(check)
-  // Scalar arrays.
-  if (!isArrayOf(item.paths, (e) => typeof e === 'string')) return false
-  if (!isArrayOf(item.documentIds, (e) => typeof e === 'string' && (e as string).length > 0)) return false
-  if (!isArrayOf(item.tagIds, (e) => typeof e === 'number' && Number.isInteger(e))) return false
-  if (!isArrayOf(item.preexistingTagIds, (e) => typeof e === 'number' && Number.isInteger(e))) return false
-  // Row arrays with exact column shapes.
-  if (!isArrayOf(item.documents, (e) => exactColumns(e, DOCUMENT_COLUMNS))) return false
-  if (!isArrayOf(item.tags, (e) => exactColumns(e, TAG_COLUMNS))) return false
-  if (!isArrayOf(item.documentTags, (e) => exactColumns(e, DOCUMENT_TAG_COLUMNS))) return false
-  if (!isArrayOf(item.embeddings, (e) => exactColumns(e, EMBEDDING_COLUMNS))) return false
-  if (!isArrayOf(item.migrations, (e) => exactColumns(e, MIGRATION_COLUMNS))) return false
+  if (!isSerializedMetadataSnapshot(snapshot)) return false
+  const item = snapshot
 
   const paths = item.paths as string[]
   const documentIds = item.documentIds as string[]
@@ -428,6 +454,9 @@ export function validateSnapshotPhysicalEntries(
   snapshot: SerializedMetadataSnapshot,
   entries: FolderMoveJournalEntry[],
   destRel: string,
+  options: {
+    physicalDocumentIds?: readonly string[]
+  } = {},
 ): string | null {
   // Index physical entries by the documentPath they claim. Each md
   // physical entry is keyed by both documentId and documentPath so the
@@ -440,7 +469,17 @@ export function validateSnapshotPhysicalEntries(
       byDocPath.set(entry.documentPath, entry)
     }
   }
-  for (const doc of snapshot.documents) {
+  const snapshotDocumentsById = new Map(
+    snapshot.documents.map((document) => [String(document.id), document]),
+  )
+  const physicalDocumentIds = options.physicalDocumentIds
+    ? new Set(options.physicalDocumentIds)
+    : new Set(snapshot.documents.map((document) => String(document.id)))
+  for (const documentId of physicalDocumentIds) {
+    const doc = snapshotDocumentsById.get(documentId)
+    if (!doc) {
+      return `physical document id is absent from snapshot: ${documentId}`
+    }
     const docPath = doc.path as string
     const docId = doc.id as string
     if (!docPath.startsWith(`${destRel}/`)) return `snapshot document path outside destRel: ${docPath}`
@@ -457,6 +496,12 @@ export function validateSnapshotPhysicalEntries(
     if (byId !== byPath) return `snapshot document identity/path binding disagrees with journal: ${docPath} (${docId})`
     if (byId.documentId !== docId) return `snapshot document id disagrees with journal: ${docId} vs ${byId.documentId}`
     if (byId.documentPath !== docPath) return `snapshot document path disagrees with journal: ${docPath} vs ${byId.documentPath}`
+  }
+  for (const entry of entries) {
+    if (entry.documentId !== undefined
+      && !physicalDocumentIds.has(entry.documentId)) {
+      return `journal document id is absent from physicalDocumentIds: ${entry.documentId}`
+    }
   }
   return null
 }
@@ -676,9 +721,12 @@ export function validateJournalEntriesV4(
     const hasPath = typeof entry.documentPath === 'string' && entry.documentPath.length > 0
 
     if (markdown) {
-      if (!hasId || !hasPath) {
+      const metadataAbsentFromRestoreTarget =
+        skipDocumentPathValidation && !hasId && !hasPath
+      if ((!hasId || !hasPath) && !metadataAbsentFromRestoreTarget) {
         return `markdown entry missing identity: ${entry.relativeFilePath}`
       }
+      if (metadataAbsentFromRestoreTarget) continue
       if (!skipDocumentPathValidation) {
         const expectedDocumentPath = `${srcRel}/${entry.relativeFilePath.slice(0, -'.md'.length)}`
         if (entry.documentPath !== expectedDocumentPath) {
