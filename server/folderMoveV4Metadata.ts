@@ -328,9 +328,10 @@ export async function finalizeFolderMoveV4Cleanup(
     revived.preexistingTagIds = [...new Set([...liveTagIds, ...revived.preexistingTagIds])]
     const live = snapshotDocumentMetadataOwnership(
       db,
-      revived.paths,
-      revived.documentIds,
-      revived.tagIds,
+      disposition.ownershipFootprint?.paths ?? revived.paths,
+      disposition.ownershipFootprint?.documentIds ?? revived.documentIds,
+      disposition.ownershipFootprint?.tagIds ?? revived.tagIds,
+      disposition.ownershipFootprint,
     )
     if (!rowsExactlyEqualSnapshot(live.documents, revived.documents)
       || !rowsExactlyEqualSnapshot(live.tags, revived.tags)
@@ -457,6 +458,12 @@ export async function completeFolderMoveV4Metadata(
               reviveMetadataSnapshot(disposition.expectedCurrentSnapshot),
             )
           : snapshotRestoreOwnershipMatches(current, revived, durableJournal),
+        disposition.ownershipFootprint
+          ? {
+              ownershipFootprint: disposition.ownershipFootprint,
+              createdMetadataIds: disposition.createdMetadataIds,
+            }
+          : undefined,
       )
     } catch (error) {
       return result(durableJournal, 'quarantined', `snapshot metadata CAS failed: ${(error as Error).message}`)

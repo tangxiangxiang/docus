@@ -45,6 +45,19 @@ export type DocumentMetadataMutationSnapshot = DocumentMetadataDatabaseSnapshot 
   preexistingTagIds: number[]
 }
 
+export type DocumentMetadataOwnershipFootprint = {
+  paths: string[]
+  documentIds: string[]
+  tagIds: number[]
+  migrationPaths: string[]
+  migrationOriginalPaths: string[]
+}
+
+export type CreatedDocumentMetadataIds = {
+  documentIds: string[]
+  tagIds: number[]
+}
+
 export function snapshotDocumentMetadataDatabase(db: DatabaseT): DocumentMetadataDatabaseSnapshot {
   return {
     documents: db.prepare('SELECT * FROM documents ORDER BY id').all() as Record<string, unknown>[],
@@ -122,8 +135,9 @@ export function snapshotDocumentMetadataOwnership(
   paths: readonly string[],
   documentIds: readonly string[],
   tagIds: readonly number[],
+  explicitFootprint?: DocumentMetadataOwnershipFootprint,
 ): DocumentMetadataMutationSnapshot {
-  const uniquePaths = [...new Set(paths)]
+  const uniquePaths = [...new Set(explicitFootprint?.paths ?? paths)].sort()
   const uniqueDocumentIds = [...new Set(documentIds.filter((id) => typeof id === 'string' && id.length > 0))]
   const uniqueTagIds = [...new Set(tagIds.filter((id) => typeof id === 'number'))]
 
@@ -140,33 +154,49 @@ export function snapshotDocumentMetadataOwnership(
   const documents = documentClauses.length > 0
     ? db.prepare(`SELECT * FROM documents WHERE ${documentClauses.join(' OR ')} ORDER BY id`).all(...documentArgs) as Record<string, unknown>[]
     : []
+  const ownedDocumentIds = [...new Set([
+    ...(explicitFootprint?.documentIds ?? uniqueDocumentIds),
+    ...documents.map(row => String(row.id)),
+  ])].sort()
 
-  const documentTags = uniqueDocumentIds.length > 0
-    ? db.prepare(`SELECT * FROM document_tags WHERE document_id IN (${placeholders(uniqueDocumentIds)}) ORDER BY document_id, tag_id`).all(...uniqueDocumentIds) as Record<string, unknown>[]
+  const documentTags = ownedDocumentIds.length > 0
+    ? db.prepare(`SELECT * FROM document_tags WHERE document_id IN (${placeholders(ownedDocumentIds)}) ORDER BY document_id, tag_id`).all(...ownedDocumentIds) as Record<string, unknown>[]
     : []
 
-  const embeddings = uniqueDocumentIds.length > 0
-    ? db.prepare(`SELECT * FROM document_embeddings WHERE document_id IN (${placeholders(uniqueDocumentIds)}) ORDER BY document_id`).all(...uniqueDocumentIds) as Record<string, unknown>[]
+  const embeddings = ownedDocumentIds.length > 0
+    ? db.prepare(`SELECT * FROM document_embeddings WHERE document_id IN (${placeholders(ownedDocumentIds)}) ORDER BY document_id`).all(...ownedDocumentIds) as Record<string, unknown>[]
     : []
 
-  const tags = uniqueTagIds.length > 0
-    ? db.prepare(`SELECT * FROM tags WHERE id IN (${placeholders(uniqueTagIds)}) ORDER BY id`).all(...uniqueTagIds) as Record<string, unknown>[]
+  const ownedTagIds = [...new Set([
+    ...(explicitFootprint?.tagIds ?? uniqueTagIds),
+    ...documentTags.map(row => Number(row.tag_id)),
+  ])].sort((left, right) => left - right)
+  const tags = ownedTagIds.length > 0
+    ? db.prepare(`SELECT * FROM tags WHERE id IN (${placeholders(ownedTagIds)}) ORDER BY id`).all(...ownedTagIds) as Record<string, unknown>[]
     : []
 
   const migrationClauses: string[] = []
   const migrationArgs: unknown[] = []
-  if (uniquePaths.length > 0) {
-    migrationClauses.push(`path IN (${placeholders(uniquePaths)})`)
-    migrationArgs.push(...uniquePaths)
-    migrationClauses.push(`original_path IN (${placeholders(uniquePaths)})`)
-    migrationArgs.push(...uniquePaths)
+  const migrationPaths = [...new Set(
+    explicitFootprint?.migrationPaths ?? uniquePaths,
+  )].sort()
+  const migrationOriginalPaths = [...new Set(
+    explicitFootprint?.migrationOriginalPaths ?? uniquePaths,
+  )].sort()
+  if (migrationPaths.length > 0) {
+    migrationClauses.push(`path IN (${placeholders(migrationPaths)})`)
+    migrationArgs.push(...migrationPaths)
   }
-  if (uniqueDocumentIds.length > 0) {
-    const tombstones = uniqueDocumentIds.map((id) => `@deleted/${id}`)
+  if (migrationOriginalPaths.length > 0) {
+    migrationClauses.push(`original_path IN (${placeholders(migrationOriginalPaths)})`)
+    migrationArgs.push(...migrationOriginalPaths)
+  }
+  if (ownedDocumentIds.length > 0) {
+    const tombstones = ownedDocumentIds.map((id) => `@deleted/${id}`)
     migrationClauses.push(`path IN (${placeholders(tombstones)})`)
     migrationArgs.push(...tombstones)
-    migrationClauses.push(`document_id IN (${placeholders(uniqueDocumentIds)})`)
-    migrationArgs.push(...uniqueDocumentIds)
+    migrationClauses.push(`document_id IN (${placeholders(ownedDocumentIds)})`)
+    migrationArgs.push(...ownedDocumentIds)
   }
   const migrations = migrationClauses.length > 0
     ? db.prepare(`SELECT * FROM metadata_migrations WHERE ${migrationClauses.join(' OR ')} ORDER BY path`).all(...migrationArgs) as Record<string, unknown>[]
@@ -176,8 +206,11 @@ export function snapshotDocumentMetadataOwnership(
 
   return {
     paths: uniquePaths,
-    documentIds: uniqueDocumentIds,
-    tagIds: uniqueTagIds,
+    // Snapshot row identity sets describe rows that actually exist.
+    // Requested-but-absent ownership keys live in the separately
+    // persisted Round-17B footprint.
+    documentIds: documents.map(row => String(row.id)).sort(),
+    tagIds: tags.map(row => Number(row.id)).sort((left, right) => left - right),
     preexistingTagIds,
     documents,
     documentTags,
@@ -344,6 +377,103 @@ export function restoreDocumentMetadataMutation(
   })()
 }
 
+/** Round-17B restore: the delete/update set is exactly the durable
+ * footprint that the CAS read. A live path owner outside that set is
+ * contention, never a reason to grow `affectedIds`. */
+export function restoreDocumentMetadataMutationWithinFootprint(
+  db: DatabaseT,
+  snapshot: DocumentMetadataMutationSnapshot,
+  ownershipFootprint: DocumentMetadataOwnershipFootprint,
+  createdMetadataIds: CreatedDocumentMetadataIds = {
+    documentIds: [],
+    tagIds: [],
+  },
+): void {
+  db.transaction(() => {
+    const footprintDocumentIds = [...new Set(
+      ownershipFootprint.documentIds,
+    )].sort()
+    const footprintPaths = [...new Set(ownershipFootprint.paths)].sort()
+    const currentDocuments = footprintPaths.length || footprintDocumentIds.length
+      ? db.prepare(`
+          SELECT id, path
+          FROM documents
+          WHERE ${
+            [
+              footprintPaths.length
+                ? `path IN (${placeholders(footprintPaths)})`
+                : null,
+              footprintDocumentIds.length
+                ? `id IN (${placeholders(footprintDocumentIds)})`
+                : null,
+            ].filter(Boolean).join(' OR ')
+          }
+          ORDER BY id
+        `).all(
+          ...footprintPaths,
+          ...footprintDocumentIds,
+        ) as Array<{ id: string; path: string }>
+      : []
+    const idSet = new Set(footprintDocumentIds)
+    const pathSet = new Set(footprintPaths)
+    for (const row of currentDocuments) {
+      if (!idSet.has(row.id) || !pathSet.has(row.path)) {
+        throw new Error(
+          `metadata ownership: live path owner is outside durable footprint: ${row.path} (${row.id})`,
+        )
+      }
+    }
+    if (footprintDocumentIds.length) {
+      db.prepare(`DELETE FROM document_tags WHERE document_id IN (${placeholders(footprintDocumentIds)})`)
+        .run(...footprintDocumentIds)
+      db.prepare(`DELETE FROM document_embeddings WHERE document_id IN (${placeholders(footprintDocumentIds)})`)
+        .run(...footprintDocumentIds)
+      db.prepare(`DELETE FROM documents WHERE id IN (${placeholders(footprintDocumentIds)})`)
+        .run(...footprintDocumentIds)
+    }
+    const migrationClauses: string[] = []
+    const migrationArgs: unknown[] = []
+    if (ownershipFootprint.migrationPaths.length) {
+      migrationClauses.push(`path IN (${placeholders(ownershipFootprint.migrationPaths)})`)
+      migrationArgs.push(...ownershipFootprint.migrationPaths)
+    }
+    if (ownershipFootprint.migrationOriginalPaths.length) {
+      migrationClauses.push(`original_path IN (${placeholders(ownershipFootprint.migrationOriginalPaths)})`)
+      migrationArgs.push(...ownershipFootprint.migrationOriginalPaths)
+    }
+    if (footprintDocumentIds.length) {
+      migrationClauses.push(`document_id IN (${placeholders(footprintDocumentIds)})`)
+      migrationArgs.push(...footprintDocumentIds)
+      const tombstones = footprintDocumentIds.map(id => `@deleted/${id}`)
+      migrationClauses.push(`path IN (${placeholders(tombstones)})`)
+      migrationArgs.push(...tombstones)
+    }
+    if (migrationClauses.length) {
+      db.prepare(`DELETE FROM metadata_migrations WHERE ${migrationClauses.join(' OR ')}`)
+        .run(...migrationArgs)
+    }
+
+    insertRows(db, 'documents', snapshot.documents)
+    for (const tag of snapshot.tags) {
+      const columns = Object.keys(tag)
+      db.prepare(`INSERT OR IGNORE INTO tags (${columns.join(', ')}) VALUES (${columns.map(key => `@${key}`).join(', ')})`)
+        .run(tag)
+    }
+    insertRows(db, 'document_tags', snapshot.documentTags)
+    insertRows(db, 'document_embeddings', snapshot.embeddings)
+    insertRows(db, 'metadata_migrations', snapshot.migrations)
+
+    const createdTagIds = [...new Set(createdMetadataIds.tagIds)]
+    if (createdTagIds.length) {
+      db.prepare(`
+        DELETE FROM tags
+        WHERE id IN (${placeholders(createdTagIds)})
+          AND id NOT IN (SELECT DISTINCT tag_id FROM document_tags)
+      `).run(...createdTagIds)
+    }
+  })()
+}
+
 /** Round-10 F8: a restore whose ownership validation and the actual
  * restore happen in the SAME SQLite IMMEDIATE transaction. The
  * `expect` callback runs INSIDE the transaction with a fresh snapshot
@@ -357,6 +487,10 @@ export function restoreDocumentMetadataMutationCAS(
   db: DatabaseT,
   snapshot: DocumentMetadataMutationSnapshot,
   expect?: (current: DocumentMetadataMutationSnapshot) => boolean,
+  options?: {
+    ownershipFootprint: DocumentMetadataOwnershipFootprint
+    createdMetadataIds?: CreatedDocumentMetadataIds
+  },
 ): void {
   const tx = db.transaction(() => {
     if (expect) {
@@ -364,7 +498,11 @@ export function restoreDocumentMetadataMutationCAS(
       // a forged journal that reuses a live id on an unrelated path
       // is detected.
       const current = snapshotDocumentMetadataOwnership(
-        db, snapshot.paths, snapshot.documentIds, snapshot.tagIds,
+        db,
+        options?.ownershipFootprint.paths ?? snapshot.paths,
+        options?.ownershipFootprint.documentIds ?? snapshot.documentIds,
+        options?.ownershipFootprint.tagIds ?? snapshot.tagIds,
+        options?.ownershipFootprint,
       )
       let ok = false
       try {
@@ -375,7 +513,16 @@ export function restoreDocumentMetadataMutationCAS(
       }
       if (!ok) throw new Error('metadata ownership: live rows do not match the restore-time expectation')
     }
-    restoreDocumentMetadataMutation(db, snapshot)
+    if (options) {
+      restoreDocumentMetadataMutationWithinFootprint(
+        db,
+        snapshot,
+        options.ownershipFootprint,
+        options.createdMetadataIds,
+      )
+    } else {
+      restoreDocumentMetadataMutation(db, snapshot)
+    }
   })
   // better-sqlite3's .immediate variant opens the transaction with
   // BEGIN IMMEDIATE — a write lock acquired up front, so the snapshot
