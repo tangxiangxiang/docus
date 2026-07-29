@@ -13,6 +13,7 @@
 //        'reverse-gate'              — after reverse gate mkdir + phase rewrite
 //        'reverse-entry:a.md'        — after first reverse file landed
 //        'reverse-parity'            — after reverse exact parity passed
+//        'reverse-before-metadata'    — immediately before reverse CAS
 //        'reverse-metadata'          — after reverse metadata restore
 //        'reverse-journal-remove'    — just before reverse journal removal
 // The vault must hold proj/a.md, proj/image.bin, proj/nested/b.md and
@@ -45,6 +46,11 @@ applyMigrations(database)
 __setMetadataDbForTesting(database)
 
 __setDirectoryMoveStrategyOverrideForTesting('replayable-move')
+if (point === 'reverse-before-metadata') {
+  __setCreateOnlyMoveHooksForTesting({
+    beforeReverseMetadataRestore: () => readyAndWait(point),
+  })
+}
 // The forward move runs WITHOUT move hooks (they would fire on the
 // forward entries too); the reverse-move kill is armed inside
 // afterRenamePlanBuilt — which fires only after the forward move,
@@ -90,5 +96,7 @@ const response = await app.fetch(new Request('http://localhost/api/folders/proj'
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ newPath: 'ren', updateReferences: true }),
 }))
-console.error(`child completed without crashing (status=${response.status})`)
+console.error(
+  `child completed without crashing (status=${response.status}, body=${await response.text()})`,
+)
 process.exit(1)

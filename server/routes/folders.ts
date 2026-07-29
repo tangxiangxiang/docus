@@ -644,10 +644,26 @@ folderRoutes.patch('/api/folders/*', async (c) => {
               .sort((left, right) =>
                 left.documentId.localeCompare(right.documentId))
           const referenceProofRows = folderReferenceSnapshots
-            .filter(snapshot =>
-              metadataOnlyDocumentProofs.some(proof =>
-                proof.reason === 'reference-journal'
-                && proof.path === snapshot.sourcePath))
+            .filter(snapshot => {
+              const identity = getDocumentMetadata(
+                metadataDb(),
+                snapshot.sourcePath,
+              )
+              if (!identity) return false
+              const isReferenceRestoreDocument =
+                metadataOnlyDocumentProofs.some(proof =>
+                  proof.reason === 'reference-journal'
+                  && proof.documentId === identity.id)
+              const isExpectedOnlyReferenceDocument =
+                rollbackExpectedCurrentSnapshot.documents.some(row =>
+                  String(row.id) === identity.id)
+                && snapshot.sourcePath !== newPath
+                && !snapshot.sourcePath.startsWith(`${newPath}/`)
+                && snapshot.sourcePath !== srcPath
+                && !snapshot.sourcePath.startsWith(`${srcPath}/`)
+              return isReferenceRestoreDocument
+                || isExpectedOnlyReferenceDocument
+            })
             .map((snapshot) => {
               const identity = getDocumentMetadata(
                 metadataDb(),

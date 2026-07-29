@@ -1548,6 +1548,109 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
     } finally { persistedDb.close() }
   }, REAL_CRASH_TEST_TIMEOUT)
 
+  it('fails closed on path-discovered relation drift after a real route crash before reverse CAS', async () => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    const taggedMarkdown = [
+      '---',
+      'title: Created during rename',
+      'tags:',
+      '  - rollback-created',
+      '---',
+      '# a',
+      '',
+    ].join('\n')
+    await seed({
+      'proj/a.md': taggedMarkdown,
+      'proj/nested/b.md': B_RAW,
+      'ref-a.md': 'see [[proj/a]]\n',
+    })
+    await fs.writeFile(path.join(vault, 'proj', 'image.bin'), IMAGE_BYTES)
+    const setupDb = new Database(dbPath)
+    applyMigrations(setupDb)
+    setupDb.close()
+
+    const point = 'reverse-before-metadata'
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: point,
+    }, FOLDER_ROLLBACK_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady(point), point)
+
+    const journalCandidates = await Promise.all(
+      (await namesIn())
+        .filter(name => name.startsWith('.proj.docus-journal-'))
+        .map(async (name) => ({
+          name,
+          journal: JSON.parse(
+            await fs.readFile(path.join(vault, name), 'utf8'),
+          ),
+        })),
+    )
+    const persistedMove = journalCandidates.find(({ journal }) =>
+      journal.version === 4 && journal.op === 'folder-rename')
+    expect(persistedMove).toBeDefined()
+    const journalName = persistedMove!.name
+    const journalAbs = path.join(vault, journalName)
+    const journal = persistedMove!.journal
+    expect(journal).toMatchObject({
+      srcRel: 'ren',
+      destRel: 'proj',
+      phase: 'files-landed',
+      metadataDisposition: {
+        kind: 'snapshot-restore',
+        ownershipFootprint: expect.any(Object),
+        metadataOnlyDocumentProofs: expect.any(Array),
+        createdMetadataIds: expect.any(Object),
+      },
+    })
+
+    const persistedDb = new Database(dbPath)
+    try {
+      const created = getDocumentMetadata(persistedDb, 'ren/a')
+      expect(created?.id).toBeTruthy()
+      persistedDb.prepare(`
+        INSERT INTO document_embeddings (
+          document_id, content_hash, model, embedding, indexed_at
+        ) VALUES (?, 'external-after-crash', 'test', ?, 100)
+      `).run(created!.id, Buffer.from([9, 8, 7]))
+
+      const first = await recoverInterruptedOperations(vault, persistedDb)
+      expect(first.actions.filter(action =>
+        action.file === journalName)).toEqual([{
+        file: journalName,
+        action: 'quarantined',
+        detail: 'snapshot metadata CAS failed: metadata ownership: live rows do not match the restore-time expectation',
+      }])
+      expect(persistedDb.prepare(`
+        SELECT content_hash, embedding
+        FROM document_embeddings
+        WHERE document_id = ?
+      `).get(created!.id)).toEqual({
+        content_hash: 'external-after-crash',
+        embedding: Buffer.from([9, 8, 7]),
+      })
+      expect(await fs.stat(journalAbs)).toBeDefined()
+
+      const second = await recoverInterruptedOperations(vault, persistedDb)
+      expect(second.actions.filter(action =>
+        action.file === journalName)).toEqual([{
+        file: journalName,
+        action: 'quarantined',
+        detail: 'snapshot metadata CAS failed: metadata ownership: live rows do not match the restore-time expectation',
+      }])
+      expect(persistedDb.prepare(`
+        SELECT content_hash
+        FROM document_embeddings
+        WHERE document_id = ?
+      `).get(created!.id)).toEqual({
+        content_hash: 'external-after-crash',
+      })
+    } finally {
+      persistedDb.close()
+    }
+  }, REAL_CRASH_TEST_TIMEOUT)
+
   it('completes a delete rollback killed mid restore from its snapshot journal', async () => {
     const dbPath = path.join(vault, 'metadata.sqlite')
     await seed({ 'gone/a.md': A_RAW })

@@ -875,9 +875,46 @@ export function validateRound17SnapshotRestoreDisposition(
     }
   }
 
+  if (!disposition.createdMetadataIds
+    || !validStableStringArray(disposition.createdMetadataIds.documentIds)
+    || !validStableNumberArray(disposition.createdMetadataIds.tagIds)) {
+    return 'createdMetadataIds contains invalid or unstable identifiers'
+  }
+  const expectedCreatedDocumentIds = stableStrings(
+    disposition.expectedCurrentSnapshot.documentIds.filter(id =>
+      !disposition.snapshot.documentIds.includes(id)),
+  )
+  const expectedCreatedTagIds = stableNumbers(
+    disposition.expectedCurrentSnapshot.tagIds.filter(id =>
+      !disposition.snapshot.preexistingTagIds.includes(id)),
+  )
+  if (!stringArraysEqual(
+    disposition.createdMetadataIds.documentIds,
+    expectedCreatedDocumentIds,
+  )) {
+    return 'createdMetadataIds.documentIds does not equal the expected-current delta'
+  }
+  if (!numberArraysEqual(
+    disposition.createdMetadataIds.tagIds,
+    expectedCreatedTagIds,
+  )) {
+    return 'createdMetadataIds.tagIds does not equal the expected-current delta'
+  }
+
   const referenceProofs = disposition.metadataOnlyDocumentProofs
     .filter(proof => proof.reason === 'reference-journal')
-  if (referenceProofs.length > 0) {
+  const expectedOnlyReferenceDocuments =
+    disposition.expectedCurrentSnapshot.documents
+      .filter(row =>
+        !restoreDocuments.has(String(row.id))
+        && !pathWithinPrefix(String(row.path), journal.srcRel)
+        && !pathWithinPrefix(String(row.path), journal.destRel))
+      .map(row => ({
+        documentId: String(row.id),
+        path: String(row.path),
+      }))
+  if (referenceProofs.length > 0
+    || expectedOnlyReferenceDocuments.length > 0) {
     if (!isRound17BReferenceProof(disposition.referenceJournal)) {
       return 'snapshot companion reference journal proof is invalid'
     }
@@ -903,6 +940,14 @@ export function validateRound17SnapshotRestoreDisposition(
         || value.startsWith(`${proof.documentId}\0${proof.path}\0`)
         || value.endsWith(`\0${proof.path}`))) {
         return `reference metadata proof is absent from companion journal: ${proof.path}`
+      }
+    }
+    for (const document of expectedOnlyReferenceDocuments) {
+      if (![...declared].some(value =>
+        value === `${document.documentId}\0${document.path}\0${document.path}`
+        || value.startsWith(`${document.documentId}\0${document.path}\0`)
+        || value.endsWith(`\0${document.path}`))) {
+        return `expected-current metadata document lacks durable transaction provenance: ${document.path}`
       }
     }
   } else if (disposition.referenceJournal !== undefined) {

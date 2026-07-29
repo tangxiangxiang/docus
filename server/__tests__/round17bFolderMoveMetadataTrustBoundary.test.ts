@@ -16,6 +16,10 @@ import {
   snapshotDocumentMetadataOwnership,
 } from '../documentMetadata'
 import {
+  __setCreateOnlyMoveHooksForTesting,
+  __setDirectoryMoveStrategyOverrideForTesting,
+} from '../documentFileLifecycle'
+import {
   buildMetadataOwnershipFootprint,
   createFolderMoveGateProof,
   FOLDER_MOVE_JOURNAL_VERSION,
@@ -25,19 +29,35 @@ import {
   type FolderMoveSnapshotRestoreDisposition,
   type SerializedMetadataSnapshot,
 } from '../folderMoveTransaction'
+import app, { __setMetadataDbForTesting } from '../index'
+import { __resetLinkIndexForTesting } from '../linkIndex'
+import { setContentDir } from '../paths'
+import { __setFolderRaceHooksForTesting } from '../routes/folders'
 
 let vault: string
 let db: Database.Database
+let originalContentDir: string
 
 beforeEach(async () => {
+  originalContentDir = path.resolve(process.cwd(), 'src/content')
   vault = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-round17b-'))
   db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   applyMigrations(db)
+  __setMetadataDbForTesting(db)
+  setContentDir(vault)
+  __resetLinkIndexForTesting()
+  __setDirectoryMoveStrategyOverrideForTesting('replayable-move')
 })
 
 afterEach(async () => {
+  __setFolderRaceHooksForTesting(null)
+  __setCreateOnlyMoveHooksForTesting(null)
+  __setDirectoryMoveStrategyOverrideForTesting(null)
+  __setMetadataDbForTesting(null)
   db.close()
+  setContentDir(originalContentDir)
+  __resetLinkIndexForTesting()
   await fs.rm(vault, { recursive: true, force: true })
 })
 
@@ -474,6 +494,53 @@ describe('Round-17B metadata CAS read/write closure', () => {
     expect(db.prepare(`
       SELECT document_id, tag_id FROM document_tags WHERE document_id = 'external-id'
     `).get()).toEqual({ document_id: 'external-id', tag_id: tagId })
+  })
+
+  it('cleans the orphan tag created by ensureMetadata after an exact route rollback', async () => {
+    await fs.mkdir(path.join(vault, 'proj'))
+    await fs.writeFile(path.join(vault, 'proj', 'a.md'), [
+      '---',
+      'title: Rollback',
+      'tags:',
+      '  - rollback-created',
+      '---',
+      '# a',
+      '',
+    ].join('\n'))
+    await fs.writeFile(path.join(vault, 'ref.md'), 'see [[proj/a]]\n')
+    await app.fetch(new Request('http://localhost/api/links/index'))
+    __setFolderRaceHooksForTesting({
+      afterRenamePlanBuilt: async () => {
+        await fs.writeFile(
+          path.join(vault, 'ref.md'),
+          '# external reference save\n',
+        )
+      },
+    })
+
+    const response = await app.fetch(new Request(
+      'http://localhost/api/folders/proj',
+      {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          newPath: 'ren',
+          updateReferences: true,
+        }),
+      },
+    ))
+
+    expect(response.status).toBe(409)
+    expect(await fs.readFile(path.join(vault, 'proj', 'a.md'), 'utf8'))
+      .toContain('rollback-created')
+    expect(db.prepare(`
+      SELECT id FROM documents WHERE path IN ('proj/a', 'ren/a')
+    `).all()).toEqual([])
+    expect(db.prepare(`
+      SELECT id FROM tags WHERE normalized_name = 'rollback-created'
+    `).all()).toEqual([])
+    expect(db.prepare('SELECT * FROM document_tags').all()).toEqual([])
+    expect(db.prepare('SELECT * FROM document_embeddings').all()).toEqual([])
   })
 })
 

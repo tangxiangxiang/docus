@@ -190,6 +190,52 @@ function rowsExactlyEqualSnapshot(
     )
 }
 
+function verifyRound17BCreatedMetadataCleanup(
+  db: DatabaseT,
+  disposition: Extract<
+    FolderMoveJournalV4['metadataDisposition'],
+    { kind: 'snapshot-restore' }
+  >,
+  live: DocumentMetadataMutationSnapshot,
+  expected: DocumentMetadataMutationSnapshot,
+): string | null {
+  const created = disposition.createdMetadataIds
+  if (!created) return null
+  const createdDocumentIds = new Set(created.documentIds)
+  if (live.documents.some(row => createdDocumentIds.has(String(row.id)))) {
+    return 'metadata-committed snapshot graph verification failed: created document remains live'
+  }
+  if (live.documentTags.some(row =>
+    createdDocumentIds.has(String(row.document_id)))) {
+    return 'metadata-committed snapshot graph verification failed: created document_tag remains live'
+  }
+  if (live.embeddings.some(row =>
+    createdDocumentIds.has(String(row.document_id)))) {
+    return 'metadata-committed snapshot graph verification failed: created embedding remains live'
+  }
+  if (live.migrations.some(row =>
+    createdDocumentIds.has(String(row.document_id))
+    || (typeof row.path === 'string'
+      && row.path.startsWith('@deleted/')
+      && createdDocumentIds.has(row.path.slice('@deleted/'.length))))) {
+    return 'metadata-committed snapshot graph verification failed: created migration ownership remains live'
+  }
+
+  const expectedTagIds = new Set(expected.tags.map(row => Number(row.id)))
+  for (const tagId of created.tagIds) {
+    if (expectedTagIds.has(tagId)) continue
+    const tag = db.prepare('SELECT id FROM tags WHERE id = ?').get(tagId)
+    if (!tag) continue
+    const liveReference = db.prepare(
+      'SELECT 1 FROM document_tags WHERE tag_id = ? LIMIT 1',
+    ).get(tagId)
+    if (!liveReference) {
+      return 'metadata-committed snapshot graph verification failed: unreferenced created tag remains live'
+    }
+  }
+  return null
+}
+
 function rowsAreExpectedSubset(
   live: readonly Record<string, unknown>[],
   expected: readonly Record<string, unknown>[],
@@ -333,8 +379,26 @@ export async function finalizeFolderMoveV4Cleanup(
       disposition.ownershipFootprint?.tagIds ?? revived.tagIds,
       disposition.ownershipFootprint,
     )
+    const createdCleanupError = verifyRound17BCreatedMetadataCleanup(
+      db,
+      disposition,
+      live,
+      revived,
+    )
+    if (createdCleanupError) {
+      return result(durableJournal, 'quarantined', createdCleanupError)
+    }
+    const externallyReferencedCreatedTagIds = new Set(
+      (disposition.createdMetadataIds?.tagIds ?? []).filter((tagId) =>
+        !revived.tagIds.includes(tagId)
+        && db.prepare(
+          'SELECT 1 FROM document_tags WHERE tag_id = ? LIMIT 1',
+        ).get(tagId) !== undefined),
+    )
+    const comparableLiveTags = live.tags.filter(row =>
+      !externallyReferencedCreatedTagIds.has(Number(row.id)))
     if (!rowsExactlyEqualSnapshot(live.documents, revived.documents)
-      || !rowsExactlyEqualSnapshot(live.tags, revived.tags)
+      || !rowsExactlyEqualSnapshot(comparableLiveTags, revived.tags)
       || !rowsExactlyEqualSnapshot(live.documentTags, revived.documentTags)
       || !rowsExactlyEqualSnapshot(live.embeddings, revived.embeddings)
       || !rowsExactlyEqualSnapshot(live.migrations, revived.migrations)) {
