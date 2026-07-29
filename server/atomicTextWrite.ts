@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, promises as fs } from 'node:fs'
 import path from 'node:path'
+import { writeCreateOnlyDurableFile } from './durableCreateOnlyFile.js'
 
 export function sha256Hex(raw: string): string {
   return createHash('sha256').update(raw, 'utf8').digest('hex')
@@ -69,25 +70,7 @@ export async function verifyDirectoryGeneration(
  * commit from an orphaned temp and to verify both generations by hash.
  */
 export async function writeDurableJournal(journalPath: string, entry: unknown): Promise<void> {
-  let handle: Awaited<ReturnType<typeof fs.open>> | null = null
-  try {
-    handle = await fs.open(
-      journalPath,
-      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-    )
-    await handle.writeFile(JSON.stringify(entry), { encoding: 'utf8' })
-    await handle.sync()
-    await handle.close()
-    handle = null
-    // fsync(file) persists bytes, but a newly-created directory entry is
-    // not power-loss durable until its parent directory is synced too.
-    await syncParentDirectoryBestEffort(journalPath)
-  } catch (error) {
-    await handle?.close().catch(() => {})
-    await fs.rm(journalPath, { force: true }).catch(() => {})
-    await syncParentDirectoryBestEffort(journalPath)
-    throw error
-  }
+  await writeCreateOnlyDurableFile(journalPath, JSON.stringify(entry))
 }
 
 /** Remove a journal and durably persist disappearance of its directory
@@ -115,20 +98,7 @@ export async function rewriteDurableJournal(journalPath: string, entry: unknown)
 }
 
 export async function writeDurableRecoveryPayload(payloadPath: string, raw: string): Promise<void> {
-  let handle: Awaited<ReturnType<typeof fs.open>> | null = null
-  try {
-    handle = await fs.open(payloadPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY)
-    await handle.writeFile(raw, 'utf8')
-    await handle.sync()
-    await handle.close()
-    handle = null
-    await syncParentDirectoryBestEffort(payloadPath)
-  } catch (error) {
-    await handle?.close().catch(() => {})
-    await fs.rm(payloadPath, { force: true }).catch(() => {})
-    await syncParentDirectoryBestEffort(payloadPath)
-    throw error
-  }
+  await writeCreateOnlyDurableFile(payloadPath, raw)
 }
 
 export async function removeDurableRecoveryPayload(payloadPath: string): Promise<void> {

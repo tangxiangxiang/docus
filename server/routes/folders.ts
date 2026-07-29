@@ -20,6 +20,7 @@ import {
   RenameDestinationOccupiedError,
   RenameSourceReusedError,
   UnsupportedDirectoryMoveError,
+  isPhysicallyContained,
   verifyFolderMoveDestinationV4,
 } from '../documentFileLifecycle.js'
 import {
@@ -92,6 +93,13 @@ export type FolderRaceHooks = {
   /** Fires after a delete rollback's prepared snapshot-restore journal
    * is durable, before its physical executor starts. */
   afterDeleteRollbackPrepared?: (journalAbs: string) => void | Promise<void>
+  /** Fires after a rename rollback's prepared snapshot-restore journal
+   * is durable, before the reverse destination gate is created. */
+  afterRenameRollbackPrepared?: (journalAbs: string) => void | Promise<void>
+  /** Fires after every planned reference replacement landed, before its
+   * companion journal is removed. Tests use this to force the real
+   * rollback path after reference bytes changed. */
+  afterReferenceWrites?: () => void | Promise<void>
 }
 let __folderRaceHooks: FolderRaceHooks | null = null
 export function __setFolderRaceHooksForTesting(hooks: FolderRaceHooks | null): void {
@@ -424,6 +432,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       directories: physicalDirectoriesV4,
       metadataDisposition: {
         kind: 'prefix-move',
+        transactionTimestamp: Date.now(),
         preparedSnapshot: serializeMetadataSnapshot(preparedMetadataSnapshot),
       },
     }
@@ -507,7 +516,6 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     }
     folderMoveJournal = physicalMove.journal
     physicalPhaseCompleted = true
-    deleteDocumentMetadataPrefix(metadataDb(), newPath)
     const forwardFinalization = await completeFolderMoveV4Metadata(
       metadataDb(),
       journalPath,
@@ -540,6 +548,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       snapshot.mtime = stat.mtimeMs
       ensureMetadata(snapshot.writePath, snapshot.updated, stat.mtimeMs, Date.now())
     }
+    await __folderRaceHooks?.afterReferenceWrites?.()
     await referenceJournal?.cleanup()
     referenceJournal = null
   } catch (error) {
@@ -697,10 +706,26 @@ folderRoutes.patch('/api/folders/*', async (c) => {
               .filter(id => !databaseSnapshot.preexistingTagIds.includes(id))
               .sort((left, right) => left - right),
           }
+          const reverseSourceStat = await fs.lstat(dest, { bigint: true })
+          if (!reverseSourceStat.isDirectory()
+            || reverseSourceStat.isSymbolicLink()
+            || !await isPhysicallyContained(CONTENT_DIR, dest)) {
+            throw new Error(
+              'reverse source is not an owned physical directory',
+            )
+          }
+          if (referenceProofRows.length > 0) {
+            await referenceJournal!.bindFolderSnapshotOwner({
+              ownerJournal: path.basename(journalPath!),
+              ownerTransactionId: journalUuid,
+            })
+          }
           const flipped: FolderMoveJournalV4 = {
             ...folderMoveJournal,
             srcRel: newPath,
             destRel: srcPath,
+            sourceDev: reverseSourceStat.dev.toString(),
+            sourceIno: reverseSourceStat.ino.toString(),
             phase: 'prepared',
             gateProof: createFolderMoveGateProof(),
             // destDev/destIno are removed in the prepared phase; they
@@ -727,7 +752,24 @@ folderRoutes.patch('/api/folders/*', async (c) => {
                         referenceJournal!.journalPath,
                       ),
                       operation: 'folder-rename-references' as const,
-                      references: referenceProofRows,
+                      transactionId: referenceJournal!.transactionId,
+                      journalHash: referenceJournal!.descriptorHash,
+                      srcRel: srcPath,
+                      destRel: newPath,
+                      references: referenceProofRows.map((proof) => {
+                        const operation = referenceJournal!.entry.references
+                          .find(item => item.path === proof.writePath)
+                        if (!operation) {
+                          throw new Error(
+                            `reference proof operation is missing: ${proof.writePath}`,
+                          )
+                        }
+                        return {
+                          ...proof,
+                          beforePayload: operation.beforePayload,
+                          afterPayload: operation.afterPayload,
+                        }
+                      }),
                     },
                   }
                 : {}),
@@ -741,10 +783,15 @@ folderRoutes.patch('/api/folders/*', async (c) => {
           // subsequent rewrites (gate-created, etc.) carry the updated
           // documentPaths.
           folderMoveJournal = flipped
+          await __folderRaceHooks?.afterRenameRollbackPrepared?.(journalPath)
         } catch (rollbackError) { rollbackErrors.push(rollbackError) }
       }
       if (flipSucceeded && journalPath && folderMoveJournal) {
         try {
+          // Reverse hooks may be armed by the post-forward race seam after
+          // the route captured its forward hook bag. Read the current bag
+          // at the reverse transaction boundary.
+          const reverseMoveHooks = getCreateOnlyMoveHooksForTesting()
           const reverse = await executeFolderMoveV4Physical({
             contentDir: CONTENT_DIR,
             journalAbs: journalPath,
@@ -753,10 +800,10 @@ folderRoutes.patch('/api/folders/*', async (c) => {
             destAbs: src,
             strategy: moveStrategy,
             afterGateCreated: async (destinationAbs) => {
-              await moveHooks?.afterReverseGateCreated?.(destinationAbs)
+              await reverseMoveHooks?.afterReverseGateCreated?.(destinationAbs)
             },
             afterFilesLanded: async (destinationAbs) => {
-              await moveHooks?.afterReverseParity?.(destinationAbs)
+              await reverseMoveHooks?.afterReverseParity?.(destinationAbs)
             },
           })
           folderMoveJournal = reverse.journal
@@ -770,22 +817,26 @@ folderRoutes.patch('/api/folders/*', async (c) => {
             src,
             {
               beforeMetadataMutation: async () => {
-                await moveHooks?.beforeReverseMetadataRestore?.(src)
+                await reverseMoveHooks?.beforeReverseMetadataRestore?.(src)
               },
               afterMetadataMutationBeforeJournalRewrite: async () => {
-                await moveHooks?.afterReverseMetadata?.(src)
+                await reverseMoveHooks?.afterReverseMetadata?.(src)
               },
               afterMetadataJournalRewriteBeforeFinalVerify: async () => {
-                await moveHooks?.afterReverseMetadataBeforeFinalVerify?.(src)
+                await reverseMoveHooks
+                  ?.afterReverseMetadataBeforeFinalVerify?.(src)
               },
               beforeJournalRemove: async () => {
-                await moveHooks?.beforeReverseJournalRemove?.(src)
+                await reverseMoveHooks?.beforeReverseJournalRemove?.(src)
               },
             },
           )
           folderMoveJournal = reverseFinalization.journal
           if (!reverseFinalization.completed) {
             rollbackErrors.push(new Error(reverseFinalization.detail))
+          } else {
+            await reverseMoveHooks
+              ?.afterReverseOwnerCleanupBeforeReferenceCleanup?.(src)
           }
         } catch (rollbackError) {
           if (rollbackError instanceof FolderMoveV4ExecutionError) {

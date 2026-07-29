@@ -1390,9 +1390,11 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
   const IMAGE_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x10])
 
   it.each([
+    ['reverse-prepared'],
     ['rollback-entry:a.md'],
     ['rollback-entry:image.bin'],
     ['rollback-after-tree'],
+    ['reverse-metadata'],
   ])('completes a rename rollback killed at %s from the flipped journal', async (point) => {
     const dbPath = path.join(vault, 'metadata.sqlite')
     await seed({ 'proj/a.md': A_RAW, 'proj/nested/b.md': B_RAW, 'ref-a.md': 'see [[proj/a]]\n' })
@@ -1476,7 +1478,19 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
     expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8')).toBe('# externally changed\n')
     const atProj = (rel: string) => fs.stat(path.join(vault, 'proj', rel)).then(() => true, () => false)
     const atRen = (rel: string) => fs.stat(path.join(vault, 'ren', rel)).then(() => true, () => false)
-    if (point === 'rollback-entry:a.md') {
+    if (point === 'reverse-prepared') {
+      expect(journal.phase).toBe('prepared')
+      const reverseSource = await fs.lstat(path.join(vault, 'ren'), {
+        bigint: true,
+      })
+      expect(`${journal.sourceDev}:${journal.sourceIno}`).toBe(
+        `${reverseSource.dev}:${reverseSource.ino}`,
+      )
+      expect(await atRen('a.md')).toBe(true)
+      expect(await atRen('image.bin')).toBe(true)
+      expect(await atRen('nested/b.md')).toBe(true)
+      expect(await namesIn()).not.toContain('proj')
+    } else if (point === 'rollback-entry:a.md') {
       expect(await atProj('a.md')).toBe(true)
       expect(await atRen('image.bin')).toBe(true)
       expect(await atRen('nested/b.md')).toBe(true)
@@ -1493,9 +1507,18 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
 
     const persistedDb = new Database(dbPath)
     try {
-      // Metadata rode the forward prefix move to ren/ before the crash.
-      const aId = getDocumentMetadata(persistedDb, 'ren/a')?.id
-      const bId = getDocumentMetadata(persistedDb, 'ren/nested/b')?.id
+      // At reverse-metadata the CAS is committed while the durable phase
+      // is still files-landed. Every earlier seam still has the forward
+      // graph at ren/.
+      const metadataPrefix = point === 'reverse-metadata' ? 'proj' : 'ren'
+      const aId = getDocumentMetadata(
+        persistedDb,
+        `${metadataPrefix}/a`,
+      )?.id
+      const bId = getDocumentMetadata(
+        persistedDb,
+        `${metadataPrefix}/nested/b`,
+      )?.id
       expect(aId).toBeTruthy()
       expect(bId).toBeTruthy()
 
@@ -1546,6 +1569,97 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
       expect(snapshotDocumentMetadataDatabase(persistedDb))
         .toEqual(recoveredGraph)
     } finally { persistedDb.close() }
+  }, REAL_CRASH_TEST_TIMEOUT)
+
+  it('finishes reference-only cleanup after a hard kill at the durable folder handoff', async () => {
+    const dbPath = path.join(vault, 'metadata.sqlite')
+    await seed({
+      'proj/a.md': A_RAW,
+      'ref-a.md': 'see [[proj/a]]\n',
+    })
+    const setupDb = new Database(dbPath)
+    applyMigrations(setupDb)
+    saveDocumentMetadata(setupDb, {
+      id: 'round17-handoff-a',
+      path: 'proj/a',
+      title: 'A',
+      updatedAt: 1,
+    })
+    saveDocumentMetadata(setupDb, {
+      id: 'round17-handoff-ref',
+      path: 'ref-a',
+      title: 'Reference',
+      updatedAt: 2,
+    })
+    saveDocumentMetadata(setupDb, {
+      id: 'round17-handoff-orphan',
+      path: 'ren/orphan',
+      title: 'Destination orphan',
+      updatedAt: 3,
+    })
+    setupDb.close()
+
+    const point = 'reverse-handoff'
+    const child = spawnCrashChild({
+      DOCUS_FOLDER_VAULT: vault,
+      DOCUS_FOLDER_DB: dbPath,
+      DOCUS_FOLDER_CRASH_POINT: point,
+    }, FOLDER_ROLLBACK_CRASH_CHILD)
+    expectParentKilled(await child.killAfterReady(point), point)
+
+    const durableArtifacts = await Promise.all(
+      (await namesIn())
+        .filter(name => name.includes('.docus-journal-'))
+        .map(async name => ({
+          name,
+          entry: JSON.parse(await fs.readFile(path.join(vault, name), 'utf8')),
+        })),
+    )
+    expect(durableArtifacts.some(({ entry }) => entry.version === 4)).toBe(false)
+    const reference = durableArtifacts.find(({ entry }) =>
+      entry.op === 'folder-rename-references')
+    expect(reference?.entry.metadataDisposition).toMatchObject({
+      kind: 'folder-snapshot-owned',
+      metadataHandled: true,
+    })
+    const payloadNames = reference!.entry.references.flatMap(
+      (operation: { beforePayload: string; afterPayload: string }) => [
+        operation.beforePayload,
+        operation.afterPayload,
+      ],
+    )
+    for (const payload of payloadNames) {
+      expect(await fs.stat(path.join(vault, payload))).toBeDefined()
+    }
+    expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8'))
+      .toBe('see [[proj/a]]\n')
+
+    const persistedDb = new Database(dbPath)
+    try {
+      expect(getDocumentMetadata(persistedDb, 'proj/a')?.id)
+        .toBe('round17-handoff-a')
+      expect(getDocumentMetadata(persistedDb, 'ren/orphan')?.id)
+        .toBe('round17-handoff-orphan')
+
+      const first = await recoverInterruptedOperations(vault, persistedDb)
+      expect(first.actions).toContainEqual(expect.objectContaining({
+        action: 'completed-rename',
+        detail: 'rename reference transaction rolled back',
+      }))
+      expect(getDocumentMetadata(persistedDb, 'ren/orphan')?.id)
+        .toBe('round17-handoff-orphan')
+      expect(getDocumentMetadata(persistedDb, 'proj/orphan')).toBeNull()
+      expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8'))
+        .toBe('see [[proj/a]]\n')
+      expect((await namesIn()).some(name =>
+        name.includes('.docus-journal-')
+        || name.includes('.docus-ref-'))).toBe(false)
+
+      const second = await recoverInterruptedOperations(vault, persistedDb)
+      expect(second.actions).toEqual([])
+    } finally {
+      persistedDb.close()
+    }
   }, REAL_CRASH_TEST_TIMEOUT)
 
   it('fails closed on path-discovered relation drift after a real route crash before reverse CAS', async () => {
@@ -1620,7 +1734,7 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
         action.file === journalName)).toEqual([{
         file: journalName,
         action: 'quarantined',
-        detail: 'snapshot metadata CAS failed: metadata ownership: live rows do not match the restore-time expectation',
+        detail: 'snapshot metadata CAS failed: live metadata graph matches neither expected-current nor restore snapshot',
       }])
       expect(persistedDb.prepare(`
         SELECT content_hash, embedding
@@ -1637,7 +1751,7 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
         action.file === journalName)).toEqual([{
         file: journalName,
         action: 'quarantined',
-        detail: 'snapshot metadata CAS failed: metadata ownership: live rows do not match the restore-time expectation',
+        detail: 'snapshot metadata CAS failed: live metadata graph matches neither expected-current nor restore snapshot',
       }])
       expect(persistedDb.prepare(`
         SELECT content_hash
@@ -2037,7 +2151,7 @@ describe('recoverInterruptedOperations (rename reference transaction)', () => {
     expect(report.actions.some((action) => action.detail?.includes('destination generation'))).toBe(true)
   })
 
-  it('cleans declared payloads from an interrupted preparing phase', async () => {
+  it('quarantines an incomplete preparing bundle without deleting its evidence', async () => {
     await seed({
       'old.md': '# old\n',
       '.old.md.docus-ref-before-aaaa-0': 'before',
@@ -2047,8 +2161,17 @@ describe('recoverInterruptedOperations (rename reference transaction)', () => {
         references: [{ path: 'ref', beforeHash: sha256Hex('before'), afterHash: sha256Hex('after'), beforePayload: '.old.md.docus-ref-before-aaaa-0', afterPayload: '.old.md.docus-ref-after-aaaa-0' }],
       }),
     })
-    await runRecovery()
-    expect((await namesIn()).filter((name) => name.includes('.docus-ref-') || name.includes('.docus-journal-'))).toEqual([])
+    const report = await runRecovery()
+    expect(report.actions).toContainEqual(expect.objectContaining({
+      action: 'quarantined',
+      detail: 'invalid durable rename-reference bundle',
+    }))
+    expect((await namesIn()).filter((name) =>
+      name.includes('.docus-ref-')
+      || name.includes('.docus-journal-'))).toEqual([
+      '.old.md.docus-journal-aaaa',
+      '.old.md.docus-ref-before-aaaa-0',
+    ])
   })
 
   it('retains the journal when cleanup cannot remove a declared payload', async () => {
@@ -2072,7 +2195,9 @@ describe('recoverInterruptedOperations (rename reference transaction)', () => {
     expect(stable).toContain('.old.md.docus-journal-aaaa')
     expect(stable).toContain(beforePayload)
     expect(stable).toContain(afterPayload)
-    expect(first.actions.some((action) => action.action === 'failed')).toBe(true)
+    expect(first.actions.some((action) =>
+      action.action === 'quarantined'
+      && action.detail === 'invalid durable rename-reference bundle')).toBe(true)
   })
 
   it('replays a durable reference rollback before deleting its evidence', async () => {
@@ -2169,14 +2294,20 @@ describe('recoverInterruptedOperations (rename reference transaction)', () => {
       srcRel: 'old', destRel: 'new', documentId: 'rename-id',
       references: [{ path: 'ref', beforeRaw: '[[old]]\n', afterRaw: '[[new]]\n' }],
     })
-    const earlyReferenceJournal = path.join(vault, '.old.md.docus-journal-0000')
+    const earlyTransactionId = '00000000-0000-4000-8000-000000000000'
+    const earlyReferenceJournal = path.join(
+      vault,
+      `.old.md.docus-journal-${earlyTransactionId}`,
+    )
     const referenceEntry = JSON.parse(await fs.readFile(prepared!.journalPath, 'utf8')) as {
       references: Array<{ beforePayload: string; afterPayload: string }>
     }
     const originalBefore = referenceEntry.references[0].beforePayload
     const originalAfter = referenceEntry.references[0].afterPayload
-    referenceEntry.references[0].beforePayload = '.old.md.docus-ref-before-0000-0'
-    referenceEntry.references[0].afterPayload = '.old.md.docus-ref-after-0000-0'
+    referenceEntry.references[0].beforePayload
+      = `.old.md.docus-ref-before-${earlyTransactionId}-0`
+    referenceEntry.references[0].afterPayload
+      = `.old.md.docus-ref-after-${earlyTransactionId}-0`
     await fs.rename(path.join(vault, originalBefore), path.join(vault, referenceEntry.references[0].beforePayload))
     await fs.rename(path.join(vault, originalAfter), path.join(vault, referenceEntry.references[0].afterPayload))
     await fs.writeFile(prepared!.journalPath, JSON.stringify(referenceEntry))
@@ -2265,8 +2396,9 @@ describe('recoverInterruptedOperations (rename reference transaction)', () => {
 
     expect(await fs.readFile(path.join(vault, 'new/external.md'), 'utf8')).toBe('# external\n')
     expect(await fs.readFile(path.join(vault, 'ref.md'), 'utf8')).toBe('[[old/note]]\n')
-    expect(getDocumentMetadata(db, 'new/note')).toBeNull()
-    expect(report.actions.some((action) => action.detail?.includes('generation'))).toBe(true)
+    expect(getDocumentMetadata(db, 'new/note')?.id).toBe('folder-note-id')
+    expect(report.actions.some((action) =>
+      action.detail === 'legacy journal lacks sufficient durable ownership proof')).toBe(true)
     expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(true)
   })
 })
@@ -3027,7 +3159,9 @@ describe('recoverInterruptedOperations (symlink containment)', () => {
 
     const report = await runRecovery()
 
-    expect(report.actions.some((a) => a.action === 'quarantined' && a.detail?.includes('provenance'))).toBe(true)
+    expect(report.actions.some((a) =>
+      a.action === 'quarantined'
+      && a.detail === 'invalid durable rename-reference bundle')).toBe(true)
     expect((await fs.readdir(outside)).some((name) => name.includes('.docus-'))).toBe(false)
     expect(await fs.readFile(path.join(vault, 'old.md'), 'utf8')).toBe('# owned\n')
   })

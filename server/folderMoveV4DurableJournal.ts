@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 
 import {
   isSerializedMetadataSnapshot,
+  hasValidSnapshotRowSchema,
   validateFolderMoveGateProof,
   type FolderMoveJournalV4,
 } from './folderMoveTransaction.js'
@@ -42,6 +43,10 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
   if (typeof entry.metadataDisposition !== 'object' || entry.metadataDisposition === null) return null
   const disposition = entry.metadataDisposition as Record<string, unknown>
   if (disposition.kind === 'prefix-move') {
+    if (disposition.transactionTimestamp !== undefined
+      && (typeof disposition.transactionTimestamp !== 'number'
+        || !Number.isSafeInteger(disposition.transactionTimestamp)
+        || disposition.transactionTimestamp < 0)) return null
     if (disposition.preparedSnapshot !== undefined
       && !isSerializedMetadataSnapshot(disposition.preparedSnapshot)) return null
     if (disposition.committedSnapshot !== undefined
@@ -49,9 +54,11 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
     if (entry.phase !== 'metadata-committed'
       && disposition.committedSnapshot !== undefined) return null
   } else if (disposition.kind === 'snapshot-restore') {
-    if (!isSerializedMetadataSnapshot(disposition.snapshot)) return null
+    if (!hasValidSnapshotRowSchema(disposition.snapshot)) return null
     if (disposition.expectedCurrentSnapshot !== undefined
-      && !isSerializedMetadataSnapshot(disposition.expectedCurrentSnapshot)) return null
+      && !hasValidSnapshotRowSchema(
+        disposition.expectedCurrentSnapshot,
+      )) return null
     if (disposition.physicalDocumentIds !== undefined
       && (!Array.isArray(disposition.physicalDocumentIds)
         || !disposition.physicalDocumentIds.every((id) =>

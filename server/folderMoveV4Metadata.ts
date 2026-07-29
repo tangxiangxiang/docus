@@ -9,15 +9,20 @@ import {
 } from './atomicTextWrite.js'
 import {
   type DocumentMetadataMutationSnapshot,
+  deleteDocumentMetadataPrefix,
   metadataSnapshotsExactlyEqual,
   moveDocumentMetadataPrefix,
   restoreDocumentMetadataMutationCAS,
+  restoreDocumentMetadataMutationCASIdempotent,
   snapshotDocumentMetadataMutationCurrentOwnership,
   snapshotDocumentMetadataPrefixMutation,
   snapshotDocumentMetadataOwnership,
   validateSnapshotOwnership,
 } from './documentMetadata.js'
-import { verifyFolderMoveDestinationV4 } from './documentFileLifecycle.js'
+import {
+  removeDeclaredEmptyDirectories,
+  verifyFolderMoveDestinationV4,
+} from './documentFileLifecycle.js'
 import {
   removeFolderMoveGateProof,
   verifyFolderMoveGateProof,
@@ -25,6 +30,7 @@ import {
 import {
   isValidDeleteRollbackSnapshot,
   isSerializedMetadataSnapshot,
+  deriveCommittedPrefixSnapshot,
   reviveMetadataSnapshot,
   serializeMetadataSnapshot,
   validateRound17SnapshotRestoreDisposition,
@@ -33,7 +39,10 @@ import {
   type FolderMoveJournalV4,
   type ParsedFolderRenameReferenceJournal,
 } from './folderMoveTransaction.js'
-import { readRenameReferenceJournal } from './renameReferenceJournal.js'
+import {
+  markRenameReferenceMetadataHandled,
+  parseAndValidateDurableRenameReferenceBundle,
+} from './renameReferenceJournal.js'
 
 export type FolderMoveV4FinalizationResult = {
   completed: boolean
@@ -57,6 +66,15 @@ function result(
   return { completed: action === 'completed-rename', action, detail, journal }
 }
 
+function contentDirForFolderJournal(
+  journalAbs: string,
+  journal: FolderMoveJournalV4,
+): string {
+  const parent = path.dirname(journal.srcRel)
+  const segments = parent === '.' ? [] : parent.split('/')
+  return path.resolve(path.dirname(journalAbs), ...segments.map(() => '..'))
+}
+
 export async function validateDurableSnapshotRestoreDisposition(
   journalAbs: string,
   journal: FolderMoveJournalV4,
@@ -75,22 +93,34 @@ export async function validateDurableSnapshotRestoreDisposition(
   }
   let referenceJournal: ParsedFolderRenameReferenceJournal | undefined
   if (disposition.referenceJournal) {
-    const candidate = await readRenameReferenceJournal(path.join(
+    const contentDir = contentDirForFolderJournal(journalAbs, journal)
+    const candidate = await parseAndValidateDurableRenameReferenceBundle({
+      contentDir,
+      journalPath: path.join(
       path.dirname(journalAbs),
       disposition.referenceJournal.relativePath,
-    ))
-    if (candidate?.op === 'folder-rename-references') {
+      ),
+    })
+    if (candidate?.entry.op === 'folder-rename-references') {
       referenceJournal = {
-        ...candidate,
+        ...candidate.entry,
         op: 'folder-rename-references',
-        identities: candidate.identities ?? [],
+        identities: candidate.entry.identities ?? [],
+        transactionId: candidate.transactionId,
+        descriptorHash: candidate.descriptorHash,
       }
     }
   }
+  const ownerTransactionId = path.basename(journalAbs)
+    .split('.docus-journal-').at(-1)
   return validateRound17SnapshotRestoreDisposition(
     journal,
     disposition,
-    { referenceJournal },
+    {
+      referenceJournal,
+      ownerJournal: path.basename(journalAbs),
+      ownerTransactionId,
+    },
   )
 }
 
@@ -420,11 +450,26 @@ export async function finalizeFolderMoveV4Cleanup(
   }
 
   try {
-    const sourceStat = await fs.lstat(srcAbs).catch(() => null)
+    const sourceStat = await fs.lstat(srcAbs, { bigint: true })
+      .catch(() => null)
     if (sourceStat !== null) {
       if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
         return result(durableJournal, 'quarantined', 'metadata-committed source path is not a real directory')
       }
+      if (sourceStat.dev.toString() !== String(durableJournal.sourceDev)
+        || sourceStat.ino.toString() !== String(durableJournal.sourceIno)) {
+        return result(
+          durableJournal,
+          'quarantined',
+          durableJournal.metadataDisposition.kind === 'prefix-move'
+            ? 'forward transaction committed but original source path was externally reused'
+            : 'metadata-committed source path was externally reused',
+        )
+      }
+      await removeDeclaredEmptyDirectories(
+        srcAbs,
+        durableJournal.directories,
+      )
       if ((await fs.readdir(srcAbs)).length > 0) {
         if (durableJournal.metadataDisposition.kind === 'prefix-move') {
           return result(
@@ -513,30 +558,165 @@ export async function completeFolderMoveV4Metadata(
       .map((row) => row.id)
     revived.preexistingTagIds = [...new Set([...liveTagIds, ...revived.preexistingTagIds])]
     try {
-      restoreDocumentMetadataMutationCAS(
-        db,
-        revived,
-        current => disposition.expectedCurrentSnapshot
-          ? metadataSnapshotsExactlyEqual(
-              current,
-              reviveMetadataSnapshot(disposition.expectedCurrentSnapshot),
-            )
-          : snapshotRestoreOwnershipMatches(current, revived, durableJournal),
-        disposition.ownershipFootprint
-          ? {
-              ownershipFootprint: disposition.ownershipFootprint,
-              createdMetadataIds: disposition.createdMetadataIds,
-            }
-          : undefined,
-      )
+      if (disposition.expectedCurrentSnapshot) {
+        const cas = restoreDocumentMetadataMutationCASIdempotent(
+          db,
+          revived,
+          reviveMetadataSnapshot(disposition.expectedCurrentSnapshot),
+          disposition.ownershipFootprint
+            ? {
+                ownershipFootprint: disposition.ownershipFootprint,
+                createdMetadataIds: disposition.createdMetadataIds,
+              }
+            : undefined,
+        )
+        if (cas.kind === 'conflict') {
+          throw new Error(cas.reason)
+        }
+      } else {
+        restoreDocumentMetadataMutationCAS(
+          db,
+          revived,
+          current => snapshotRestoreOwnershipMatches(
+            current,
+            revived,
+            durableJournal,
+          ),
+        )
+      }
     } catch (error) {
       return result(durableJournal, 'quarantined', `snapshot metadata CAS failed: ${(error as Error).message}`)
     }
   } else {
     try {
-      moveDocumentMetadataPrefix(db, durableJournal.srcRel, durableJournal.destRel)
+      const prefixDisposition = durableJournal.metadataDisposition
+      if (prefixDisposition.preparedSnapshot
+        && prefixDisposition.transactionTimestamp !== undefined) {
+        const prepared = reviveMetadataSnapshot(
+          prefixDisposition.preparedSnapshot,
+        )
+        const committedSerialized = deriveCommittedPrefixSnapshot(
+          prefixDisposition.preparedSnapshot,
+          durableJournal.srcRel,
+          durableJournal.destRel,
+          prefixDisposition.transactionTimestamp,
+        )
+        const committed = reviveMetadataSnapshot(committedSerialized)
+        const transition = db.transaction(():
+          'already-committed' | 'committed-now' | 'conflict' => {
+          const footprint = {
+            paths: [...new Set([
+              ...prepared.paths,
+              ...committed.paths,
+            ])].sort(),
+            documentIds: [...new Set([
+              ...prepared.documentIds,
+              ...committed.documentIds,
+            ])].sort(),
+            tagIds: [...new Set([
+              ...prepared.tagIds,
+              ...committed.tagIds,
+            ])].sort((left, right) => left - right),
+            migrationPaths: [...new Set([
+              ...prepared.migrations,
+              ...committed.migrations,
+            ].map(row => String(row.path)))].sort(),
+            migrationOriginalPaths: [...new Set([
+              ...prepared.migrations,
+              ...committed.migrations,
+            ].map(row => String(row.original_path))
+              .filter(Boolean))].sort(),
+          }
+          const readCurrent = (): DocumentMetadataMutationSnapshot =>
+            snapshotDocumentMetadataOwnership(
+              db,
+              footprint.paths,
+              footprint.documentIds,
+              footprint.tagIds,
+              footprint,
+            )
+          const current = readCurrent()
+          if (metadataSnapshotsExactlyEqual(current, committed)) {
+            return 'already-committed'
+          }
+          if (!metadataSnapshotsExactlyEqual(current, prepared)) {
+            return 'conflict'
+          }
+          deleteDocumentMetadataPrefix(
+            db,
+            durableJournal.destRel,
+            prefixDisposition.transactionTimestamp,
+          )
+          moveDocumentMetadataPrefix(
+            db,
+            durableJournal.srcRel,
+            durableJournal.destRel,
+            prefixDisposition.transactionTimestamp,
+          )
+          if (!metadataSnapshotsExactlyEqual(readCurrent(), committed)) {
+            throw new Error(
+              'prefix metadata move did not produce deterministic committed graph',
+            )
+          }
+          return 'committed-now'
+        })
+        if (transition.immediate() === 'conflict') {
+          return result(
+            durableJournal,
+            'quarantined',
+            'prefix metadata graph matches neither prepared nor committed snapshot',
+          )
+        }
+      } else {
+        moveDocumentMetadataPrefix(
+          db,
+          durableJournal.srcRel,
+          durableJournal.destRel,
+        )
+      }
     } catch (error) {
       return result(durableJournal, 'failed', `metadata prefix move failed: ${(error as Error).message}`)
+    }
+  }
+
+  const referenceProof = durableJournal.metadataDisposition.kind
+    === 'snapshot-restore'
+    ? durableJournal.metadataDisposition.referenceJournal
+    : undefined
+  if (referenceProof?.transactionId && referenceProof.journalHash) {
+    const ownerTransactionId = path.basename(journalAbs)
+      .split('.docus-journal-').at(-1)
+    if (!ownerTransactionId) {
+      return result(
+        durableJournal,
+        'failed',
+        'folder snapshot owner transaction id is missing',
+      )
+    }
+    try {
+      const handled = await markRenameReferenceMetadataHandled({
+        contentDir: contentDirForFolderJournal(journalAbs, durableJournal),
+        journalPath: path.join(
+          path.dirname(journalAbs),
+          referenceProof.relativePath,
+        ),
+        ownerJournal: path.basename(journalAbs),
+        ownerTransactionId,
+        ownerDescriptorHash: referenceProof.journalHash,
+      })
+      if (!handled) {
+        return result(
+          durableJournal,
+          'quarantined',
+          'folder snapshot metadata handoff could not be durably bound',
+        )
+      }
+    } catch (error) {
+      return result(
+        durableJournal,
+        'failed',
+        `folder snapshot metadata handoff failed: ${(error as Error).message}`,
+      )
     }
   }
 
@@ -547,11 +727,20 @@ export async function completeFolderMoveV4Metadata(
   if (durableJournal.metadataDisposition.kind === 'prefix-move') {
     let committedSnapshot: DocumentMetadataMutationSnapshot
     try {
-      committedSnapshot = snapshotDocumentMetadataPrefixMutation(
-        db,
-        [durableJournal.srcRel, durableJournal.destRel],
-        durableJournal.metadataDisposition.preparedSnapshot?.paths ?? [],
-      )
+      const prefixDisposition = durableJournal.metadataDisposition
+      committedSnapshot = prefixDisposition.preparedSnapshot
+          && prefixDisposition.transactionTimestamp !== undefined
+        ? reviveMetadataSnapshot(deriveCommittedPrefixSnapshot(
+            prefixDisposition.preparedSnapshot,
+            durableJournal.srcRel,
+            durableJournal.destRel,
+            prefixDisposition.transactionTimestamp,
+          ))
+        : snapshotDocumentMetadataPrefixMutation(
+            db,
+            [durableJournal.srcRel, durableJournal.destRel],
+            prefixDisposition.preparedSnapshot?.paths ?? [],
+          )
     } catch (error) {
       return result(
         durableJournal,

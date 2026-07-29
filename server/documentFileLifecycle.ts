@@ -88,6 +88,12 @@ export type CreateOnlyMoveHooks = {
   /** Reverse path: after the reverse journal's phase=metadata-committed
    * has been rewritten, just before the route removes the journal. */
   beforeReverseJournalRemove?: (toDirAbs: string) => void | Promise<void>
+  /** Reverse path: the owner folder journal is gone and its metadata
+   * handoff is durable, but the dependent reference journal and payloads
+   * have not yet been cleaned. */
+  afterReverseOwnerCleanupBeforeReferenceCleanup?: (
+    toDirAbs: string,
+  ) => void | Promise<void>
 }
 let __createOnlyMoveHooks: CreateOnlyMoveHooks | null = null
 export function __setCreateOnlyMoveHooksForTesting(hooks: CreateOnlyMoveHooks | null): void {
@@ -408,6 +414,55 @@ export async function pruneEmptyDirectories(dirAbs: string): Promise<void> {
     if (entry.isDirectory()) await pruneEmptyDirectories(path.join(dirAbs, entry.name))
   }
   await fs.rmdir(dirAbs).catch(() => {})
+}
+
+/**
+ * Remove only directory shells explicitly declared by a durable manifest.
+ * Undeclared (even empty) directories are external state and are untouched.
+ */
+export async function removeDeclaredEmptyDirectories(
+  rootAbs: string,
+  declaredDirectories: readonly string[],
+  options: {
+    removeRoot?: boolean
+    expectedRootGeneration?: { dev: string; ino: string }
+  } = {},
+): Promise<{ rootRemoved: boolean }> {
+  const ordered = [...new Set(declaredDirectories)]
+    .sort((left, right) => {
+      const depth = right.split('/').length - left.split('/').length
+      return depth || (left < right ? -1 : left > right ? 1 : 0)
+    })
+  for (const relative of ordered) {
+    const directoryAbs = path.join(rootAbs, relative)
+    try {
+      const stat = await fs.lstat(directoryAbs)
+      if (!stat.isDirectory() || stat.isSymbolicLink()) continue
+      if ((await fs.readdir(directoryAbs)).length !== 0) continue
+      await fs.rmdir(directoryAbs)
+    } catch {
+      // Missing/non-empty/raced directories stay untouched.
+    }
+  }
+  if (!options.removeRoot) return { rootRemoved: false }
+  try {
+    const stat = await fs.lstat(rootAbs, { bigint: true })
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      return { rootRemoved: false }
+    }
+    if (options.expectedRootGeneration
+      && (stat.dev.toString() !== options.expectedRootGeneration.dev
+        || stat.ino.toString() !== options.expectedRootGeneration.ino)) {
+      return { rootRemoved: false }
+    }
+    if ((await fs.readdir(rootAbs)).length !== 0) {
+      return { rootRemoved: false }
+    }
+    await fs.rmdir(rootAbs)
+    return { rootRemoved: true }
+  } catch {
+    return { rootRemoved: false }
+  }
 }
 
 /** Relative subdirectory paths under dirAbs (excluding the root
@@ -789,6 +844,8 @@ export type MoveEntriesIntoGateOptions = {
   /** Leave already-landed entries in place so durable recovery can
    * resume a split replayable tree after any mover error. */
   preservePartialLandingOnError?: boolean
+  /** Original source root generation required before removing its shell. */
+  sourceGeneration?: { dev: string; ino: string }
 }
 
 /** Move every journaled entry into a destination gate the route
@@ -857,7 +914,7 @@ export async function moveFolderEntriesIntoExistingGate(
         }
       }
       // Clean up the gate if it's now empty.
-      await pruneEmptyDirectories(toDirAbs)
+      await removeDeclaredEmptyDirectories(toDirAbs, options.directories)
       // The error is typed; callers map to 409.
       throw error
     }
@@ -866,7 +923,10 @@ export async function moveFolderEntriesIntoExistingGate(
   // only into the destination). Prune so a crash before metadata
   // commit doesn't leave an empty-but-occupied source dir for
   // recovery to misinterpret as "source still has its bytes".
-  await pruneEmptyDirectories(fromDirAbs)
+  await removeDeclaredEmptyDirectories(fromDirAbs, options.directories, {
+    removeRoot: true,
+    expectedRootGeneration: options.sourceGeneration,
+  })
   return { moved, incomplete: false }
 }
 

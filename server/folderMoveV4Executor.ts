@@ -7,6 +7,7 @@ import {
 } from './atomicTextWrite.js'
 import {
   moveFolderEntriesIntoExistingGate,
+  isPhysicallyContained,
   RenameDestinationOccupiedError,
   UnsupportedDirectoryMoveError,
   verifyFolderMoveDestinationV4,
@@ -17,6 +18,7 @@ import {
   writeFolderMoveGateProof,
 } from './folderMoveGateProof.js'
 import type { FolderMoveJournalV4 } from './folderMoveTransaction.js'
+import { inspectFolderMoveSourceInventory } from './folderMoveSourceOwnership.js'
 
 export type FolderMoveV4DurableState = {
   /** Latest phase the executor attempted. The disk journal can still be
@@ -47,6 +49,14 @@ export class FolderMoveGenerationMismatchError extends FolderMoveV4ExecutionErro
   constructor(message: string, state: FolderMoveV4DurableState) {
     super(message, state)
     this.name = 'FolderMoveGenerationMismatchError'
+  }
+}
+
+export class FolderMoveSourceGenerationMismatchError
+  extends FolderMoveV4ExecutionError {
+  constructor(message: string, state: FolderMoveV4DurableState) {
+    super(message, state)
+    this.name = 'FolderMoveSourceGenerationMismatchError'
   }
 }
 
@@ -99,6 +109,36 @@ export async function executeFolderMoveV4Physical(
   }
 
   try {
+    let sourceStat: Awaited<ReturnType<typeof fs.lstat>>
+    try {
+      sourceStat = await fs.lstat(srcAbs, { bigint: true })
+    } catch {
+      throw new FolderMoveSourceGenerationMismatchError(
+        'folder move source generation is missing',
+        state,
+      )
+    }
+    if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()
+      || sourceStat.dev.toString() !== String(journal.sourceDev)
+      || sourceStat.ino.toString() !== String(journal.sourceIno)
+      || !await isPhysicallyContained(contentDir, srcAbs)) {
+      throw new FolderMoveSourceGenerationMismatchError(
+        'folder move source generation does not match prepared journal',
+        state,
+      )
+    }
+    const sourceInventory = await inspectFolderMoveSourceInventory(
+      srcAbs,
+      journal,
+    )
+    if (sourceInventory.kind !== 'intact') {
+      throw new FolderMoveSourceGenerationMismatchError(
+        sourceInventory.kind === 'external'
+          ? sourceInventory.reason
+          : `folder move source inventory is ${sourceInventory.kind}`,
+        state,
+      )
+    }
     const gate = await createDestinationGate(destAbs)
     if (!gate) {
       throw new RenameDestinationOccupiedError(destAbs)
@@ -191,6 +231,10 @@ export async function executeFolderMoveV4Physical(
           ? [journal.gateProof.markerName]
           : [],
         preservePartialLandingOnError: true,
+        sourceGeneration: {
+          dev: String(journal.sourceDev),
+          ino: String(journal.sourceIno),
+        },
       })
       if (await verifyFolderMoveDestinationV4(destAbs, journal, {
         ignoredRelativePaths: journal.gateProof

@@ -28,8 +28,10 @@ import {
   type SerializedMetadataSnapshot,
 } from '../folderMoveTransaction'
 
-const BEFORE_HASH = '1'.repeat(64)
-const AFTER_HASH = '2'.repeat(64)
+const BEFORE_RAW = 'before'
+const AFTER_RAW = 'after'
+const BEFORE_HASH = sha256HexBuffer(Buffer.from(BEFORE_RAW))
+const AFTER_HASH = sha256HexBuffer(Buffer.from(AFTER_RAW))
 
 function emptySnapshot(paths: string[] = []): SerializedMetadataSnapshot {
   return {
@@ -481,6 +483,11 @@ describe('Round-17C recovery trust boundary', () => {
       await writeDurableJournal(journalAbs, journal)
       await writeDurableJournal(companionAbs, {
         ...parsedReferenceJournal(references),
+        identities: [{
+          path: 'proj/a',
+          id: 'proj-a-id',
+          sourceHash: sha256HexBuffer(fileRaw),
+        }],
         references: [{
           path: 'ref',
           beforeHash: BEFORE_HASH,
@@ -489,6 +496,20 @@ describe('Round-17C recovery trust boundary', () => {
           afterPayload: '.proj.docus-ref-after-fedcba987654-0',
         }],
       })
+      await fs.writeFile(
+        path.join(
+          recoveryVault,
+          '.proj.docus-ref-before-fedcba987654-0',
+        ),
+        BEFORE_RAW,
+      )
+      await fs.writeFile(
+        path.join(
+          recoveryVault,
+          '.proj.docus-ref-after-fedcba987654-0',
+        ),
+        AFTER_RAW,
+      )
       saveDocumentMetadata(recoveryDb, {
         id: 'real-id',
         path: 'ref',

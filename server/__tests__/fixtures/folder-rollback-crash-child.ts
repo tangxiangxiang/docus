@@ -16,6 +16,8 @@
 //        'reverse-before-metadata'    — immediately before reverse CAS
 //        'reverse-metadata'          — after reverse metadata restore
 //        'reverse-journal-remove'    — just before reverse journal removal
+//        'reverse-prepared'           — reverse journal durable, before gate
+//        'reverse-handoff'            — owner gone, dependent still durable
 // The vault must hold proj/a.md, proj/image.bin, proj/nested/b.md and
 // ref-a.md linking into the folder.
 import Database from 'better-sqlite3'
@@ -61,6 +63,14 @@ const raceHooks: import('../../routes/folders.js').FolderRaceHooks = {}
 if (point === 'rollback-after-tree') {
   raceHooks.afterRollbackMove = () => readyAndWait(point)
 }
+if (point === 'reverse-prepared') {
+  raceHooks.afterRenameRollbackPrepared = () => readyAndWait(point)
+}
+if (point === 'reverse-handoff') {
+  raceHooks.afterReferenceWrites = () => {
+    throw new Error('force rollback after reference writes')
+  }
+}
 __setFolderRaceHooksForTesting(raceHooks)
 __setFolderRaceHooksForTesting({
   ...raceHooks,
@@ -80,14 +90,23 @@ __setFolderRaceHooksForTesting({
     if (effectivePoint === 'reverse-parity') {
       hooks.afterReverseParity = () => readyAndWait(point)
     }
+    if (effectivePoint === 'reverse-before-metadata') {
+      hooks.beforeReverseMetadataRestore = () => readyAndWait(point)
+    }
     if (effectivePoint === 'reverse-metadata') {
       hooks.afterReverseMetadata = () => readyAndWait(point)
     }
     if (effectivePoint === 'reverse-journal-remove') {
       hooks.beforeReverseJournalRemove = () => readyAndWait(point)
     }
+    if (effectivePoint === 'reverse-handoff') {
+      hooks.afterReverseOwnerCleanupBeforeReferenceCleanup =
+        () => readyAndWait(point)
+    }
     __setCreateOnlyMoveHooksForTesting(hooks as any)
-    await fs.writeFile(path.join(vault, 'ref-a.md'), '# externally changed\n', 'utf8')
+    if (effectivePoint !== 'reverse-handoff') {
+      await fs.writeFile(path.join(vault, 'ref-a.md'), '# externally changed\n', 'utf8')
+    }
   },
 })
 

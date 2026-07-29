@@ -127,7 +127,11 @@ describe('deterministic rename-reference recovery model', () => {
         if (externalSource) expect(await fs.readFile(path.join(caseDir, 'old.md'), 'utf8')).toBe(`# external source ${seed}\n`)
         if (externalDestination) {
           expect(await fs.readFile(path.join(caseDir, 'new.md'), 'utf8')).toBe(`# external destination ${seed}\n`)
-          expect(getDocumentMetadata(db, destRel)).toBeNull()
+          if (missingPayload) {
+            expect(getDocumentMetadata(db, destRel)?.id).toBe(`id-${seed}`)
+          } else {
+            expect(getDocumentMetadata(db, destRel)).toBeNull()
+          }
         }
         const remainingPayloads = onceNames.filter((name) => name.includes('.docus-ref-'))
         if (remainingPayloads.length) expect(onceNames).toContain(journalName)

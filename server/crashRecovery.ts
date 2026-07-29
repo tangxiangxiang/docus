@@ -75,6 +75,10 @@ import type { Database as DatabaseT } from 'better-sqlite3'
 import { atomicReplaceTextIfUnchanged, removeDurableJournal, removeDurableRecoveryPayload, rewriteDurableJournal, sha256Hex, sha256HexBuffer, syncParentDirectoryBestEffort, verifyDirectoryGeneration, writeDurableJournal } from './atomicTextWrite.js'
 import { isValidPathSyntax } from './paths.js'
 import {
+  parseAndValidateDurableRenameReferenceBundle,
+  parseRenameReferenceJournalObject,
+} from './renameReferenceJournal.js'
+import {
   deleteDocumentMetadata,
   deleteDocumentMetadataPrefix,
   getDocumentMetadata,
@@ -600,59 +604,9 @@ function parseLegacyDeleteQuarantineManifest(raw: string): LegacyDeleteQuarantin
 
 function parseRenameReferencesJournal(raw: string): RenameReferencesJournal | null {
   try {
-    const entry = JSON.parse(raw) as Partial<RenameReferencesJournal>
-    if (entry.version !== 1 || (entry.op !== 'document-rename-references' && entry.op !== 'folder-rename-references')) return null
-    if (entry.phase !== 'preparing' && entry.phase !== 'roll-forward' && entry.phase !== 'roll-back' && entry.phase !== 'cleanup') return null
-    if (typeof entry.srcRel !== 'string' || typeof entry.destRel !== 'string') return null
-    if (entry.documentId !== undefined && typeof entry.documentId !== 'string') return null
-    if (entry.sourceDev !== undefined && typeof entry.sourceDev !== 'number') return null
-    if (entry.sourceIno !== undefined && typeof entry.sourceIno !== 'number') return null
-    if (entry.sourceHash !== undefined && typeof entry.sourceHash !== 'string') return null
-    if (entry.op === 'document-rename-references'
-      && (typeof entry.documentId !== 'string' || entry.documentId.length === 0
-        || typeof entry.sourceHash !== 'string' || !SHA256_RE.test(entry.sourceHash))) return null
-    if (entry.op === 'folder-rename-references'
-      // NOT isSafeInteger — see parseFolderRenameJournal: Windows file
-      // IDs beyond 2**53 must stay parseable; the content hash is the
-      // strong generation proof.
-      && (!Number.isFinite(entry.sourceDev) || !Number.isFinite(entry.sourceIno)
-        || !Array.isArray(entry.identities) || entry.identities.length === 0
-        || !entry.identities.every((identity) => identity && typeof identity.path === 'string'
-          && typeof identity.id === 'string' && identity.id.length > 0
-          && (identity.sourceHash === undefined
-            || (typeof identity.sourceHash === 'string' && SHA256_RE.test(identity.sourceHash)))))) return null
-    if (entry.referenceIdentities !== undefined
-      && (!Array.isArray(entry.referenceIdentities)
-        || !entry.referenceIdentities.every((identity) => identity
-          && typeof identity.documentId === 'string'
-          && identity.documentId.length > 0
-          && typeof identity.sourcePath === 'string'
-          && typeof identity.writePath === 'string'
-          && typeof identity.beforeHash === 'string'
-          && SHA256_RE.test(identity.beforeHash)
-          && typeof identity.afterHash === 'string'
-          && SHA256_RE.test(identity.afterHash)))) return null
-    // No MIXED hash coverage: all identities carry a sourceHash (strong
-    // content proof) or none do (legacy weak dev/ino proof). A journal
-    // with one hash stripped must not silently downgrade the WHOLE
-    // directory to the weak proof — it is unparseable and stays for
-    // inspection.
-    if (entry.op === 'folder-rename-references' && Array.isArray(entry.identities)) {
-      const hashedCount = entry.identities.filter((identity) => identity && identity.sourceHash !== undefined).length
-      if (hashedCount > 0 && hashedCount < entry.identities.length) return null
-    }
-    if (!Array.isArray(entry.references) || entry.references.length === 0 || !entry.references.every((ref) => ref
-      && typeof ref.path === 'string' && typeof ref.beforeHash === 'string' && typeof ref.afterHash === 'string'
-      && SHA256_RE.test(ref.beforeHash) && SHA256_RE.test(ref.afterHash) && ref.beforeHash !== ref.afterHash
-      && typeof ref.beforePayload === 'string' && typeof ref.afterPayload === 'string'
-      && ref.beforePayload !== ref.afterPayload)) return null
-    if (new Set(entry.references.map((ref) => ref.path)).size !== entry.references.length) return null
-    const payloadNames = entry.references.flatMap((ref) => [ref.beforePayload, ref.afterPayload])
-    if (new Set(payloadNames).size !== payloadNames.length) return null
-    if (entry.identities
-      && (new Set(entry.identities.map((identity) => identity.path)).size !== entry.identities.length
-        || new Set(entry.identities.map((identity) => identity.id)).size !== entry.identities.length)) return null
-    return entry as RenameReferencesJournal
+    return parseRenameReferenceJournalObject(
+      JSON.parse(raw),
+    ) as RenameReferencesJournal | null
   } catch { return null }
 }
 
@@ -994,6 +948,46 @@ async function recoverRenameReferencesJournal(
   journal: RenameReferencesJournal,
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
+  const bundle = await parseAndValidateDurableRenameReferenceBundle({
+    contentDir,
+    journalPath: journalAbs,
+    value: journal,
+  })
+  if (!bundle) {
+    note(journalAbs, 'quarantined', 'invalid durable rename-reference bundle')
+    return
+  }
+  journal = bundle.entry as RenameReferencesJournal
+  if (journal.op === 'folder-rename-references'
+    && bundle.proofStrength !== 'strong') {
+    note(
+      journalAbs,
+      'quarantined',
+      'legacy journal lacks sufficient durable ownership proof',
+    )
+    return
+  }
+  const metadataDisposition = bundle.entry.metadataDisposition
+  if (metadataDisposition?.kind === 'folder-snapshot-owned'
+    && !metadataDisposition.metadataHandled) {
+    // The owner folder journal pins this journal and its payloads.  Do not
+    // report a terminal action: a later recovery pass may complete the
+    // durable handoff in this same startup.
+    return
+  }
+  if (metadataDisposition?.kind === 'folder-snapshot-owned'
+    && await exists(path.join(
+      path.dirname(journalAbs),
+      metadataDisposition.ownerJournal,
+    ))) {
+    // Even after the handoff bit is durable, the owner journal must finish
+    // its final verification and be removed before dependents consume the
+    // companion/payload proof.
+    return
+  }
+  const referenceOnly = metadataDisposition?.kind
+    === 'folder-snapshot-owned'
+    && metadataDisposition.metadataHandled
   const kind = journal.op === 'document-rename-references' ? 'file' : 'folder'
   if (journal.srcRel === journal.destRel
     || !await validRenameRel(contentDir, journal.srcRel)
@@ -1308,7 +1302,8 @@ async function recoverRenameReferencesJournal(
       note(journalAbs, 'failed', 'could not restore rename-reference source metadata')
       return
     }
-  } else if (journal.phase === 'roll-back' && kind === 'folder') {
+  } else if (journal.phase === 'roll-back' && kind === 'folder'
+    && !referenceOnly) {
     moveDocumentMetadataPrefix(db, journal.destRel, journal.srcRel)
   }
   await cleanup()
@@ -1562,6 +1557,14 @@ async function recoverFolderMoveJournalV4(
   const sourceGenerationError = validateSourceDirectoryGeneration(journal)
   if (sourceGenerationError !== null) {
     note(journalAbs, 'quarantined', `v4 source generation failed: ${sourceGenerationError}`)
+    return
+  }
+  if (journal.emptyTree === true && journal.entries.length === 0) {
+    note(
+      journalAbs,
+      'quarantined',
+      'legacy journal lacks sufficient durable ownership proof',
+    )
     return
   }
   for (const entry of entries) {

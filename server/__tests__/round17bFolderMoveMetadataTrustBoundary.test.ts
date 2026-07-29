@@ -270,7 +270,7 @@ describe('Round-17B forged snapshot-restore trust boundary', () => {
     const expected = structuredClone(restore)
     const disposition = newDisposition(restore, expected)
     expect(validateRound17SnapshotRestoreDisposition(baseJournal(disposition), disposition))
-      .toMatch(/migration ownership lacks durable transaction provenance: private\/secret/)
+      .toBe('round17 snapshot-restore journal lacks durable metadata provenance')
   })
 
   it('rejects expected-current paths outside the shared ownership footprint', () => {

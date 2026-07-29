@@ -62,6 +62,7 @@ export type FolderMoveEnumeration = {
  * included — base64-marked so the JSON journal round-trips Buffers). */
 export type FolderMovePrefixMetadataDisposition = {
   kind: 'prefix-move'
+  transactionTimestamp?: number
   preparedSnapshot?: SerializedMetadataSnapshot
   committedSnapshot?: SerializedMetadataSnapshot
 }
@@ -83,12 +84,18 @@ export type FolderMoveMetadataOwnershipFootprint = {
 export type FolderMoveReferenceJournalProof = {
   relativePath: string
   operation: 'folder-rename-references'
+  transactionId?: string
+  journalHash?: string
+  srcRel?: string
+  destRel?: string
   references: Array<{
     documentId: string
     sourcePath: string
     writePath: string
     beforeHash: string
     afterHash: string
+    beforePayload?: string
+    afterPayload?: string
   }>
 }
 
@@ -103,8 +110,19 @@ export type ParsedFolderRenameReferenceJournal = {
   phase: 'preparing' | 'roll-forward' | 'roll-back' | 'cleanup'
   srcRel: string
   destRel: string
+  transactionId?: string
+  descriptorHash?: string
   identities: Array<{ path: string; id: string; sourceHash?: string }>
   referenceIdentities?: FolderMoveReferenceJournalProof['references']
+  metadataDisposition?: {
+    kind: 'legacy-prefix-move'
+  } | {
+    kind: 'folder-snapshot-owned'
+    ownerJournal: string
+    ownerTransactionId: string
+    ownerDescriptorHash: string
+    metadataHandled: boolean
+  }
   references: Array<{
     path: string
     beforeHash: string
@@ -176,10 +194,10 @@ function mapRow(row: Record<string, unknown>, convert: (value: unknown) => unkno
  * draft bodies, travels through the journal. */
 export function serializeMetadataSnapshot(snapshot: DocumentMetadataMutationSnapshot): SerializedMetadataSnapshot {
   return {
-    paths: [...snapshot.paths],
-    documentIds: [...snapshot.documentIds],
-    tagIds: [...snapshot.tagIds],
-    preexistingTagIds: [...snapshot.preexistingTagIds],
+    paths: [...new Set(snapshot.paths)].sort(),
+    documentIds: [...new Set(snapshot.documentIds)].sort(),
+    tagIds: [...new Set(snapshot.tagIds)].sort((left, right) => left - right),
+    preexistingTagIds: [...new Set(snapshot.preexistingTagIds)].sort((left, right) => left - right),
     documents: snapshot.documents.map((row) => mapRow(row, encodeBufferValue)),
     tags: snapshot.tags.map((row) => mapRow(row, encodeBufferValue)),
     documentTags: snapshot.documentTags.map((row) => mapRow(row, encodeBufferValue)),
@@ -202,48 +220,297 @@ export function reviveMetadataSnapshot(serialized: SerializedMetadataSnapshot): 
   }
 }
 
-// Fixed table column allowlists (server/migrations). A persisted
-// snapshot row may carry EXACTLY these keys — nothing else. An unknown
-// column would either fail the INSERT or silently map to a column the
-// schema gains later; a row is rejected unless every key is allowed.
-const DOCUMENT_COLUMNS = new Set(['id', 'path', 'title', 'summary', 'created_at', 'updated_at'])
-const TAG_COLUMNS = new Set(['id', 'name', 'normalized_name'])
-const DOCUMENT_TAG_COLUMNS = new Set(['document_id', 'tag_id'])
-const EMBEDDING_COLUMNS = new Set(['document_id', 'content_hash', 'model', 'embedding', 'indexed_at'])
-const MIGRATION_COLUMNS = new Set([
+function moveSerializedPrefixPath(
+  value: string,
+  fromPrefix: string,
+  toPrefix: string,
+): string {
+  if (value === fromPrefix) return toPrefix
+  return value.startsWith(`${fromPrefix}/`)
+    ? toPrefix + value.slice(fromPrefix.length)
+    : value
+}
+
+/** Deterministically compute the exact graph a prefix transition commits. */
+export function deriveCommittedPrefixSnapshot(
+  prepared: SerializedMetadataSnapshot,
+  srcRel: string,
+  destRel: string,
+  transactionTimestamp: number,
+): SerializedMetadataSnapshot {
+  const destinationDocumentIds = new Set(
+    prepared.documents
+      .filter(row => pathWithinPrefix(String(row.path), destRel))
+      .map(row => String(row.id)),
+  )
+  const documents: Record<string, unknown>[] = prepared.documents
+    .filter(row => !destinationDocumentIds.has(String(row.id)))
+    .map((row): Record<string, unknown> => {
+    const currentPath = String(row.path)
+    const nextPath = moveSerializedPrefixPath(currentPath, srcRel, destRel)
+    return nextPath === currentPath
+      ? { ...row }
+      : { ...row, path: nextPath, updated_at: transactionTimestamp }
+    })
+  const migrations = prepared.migrations.map((row) => {
+    const originalDocumentId = typeof row.document_id === 'string'
+      ? row.document_id
+      : null
+    const destinationDocument = prepared.documents.find(document =>
+      String(document.id) === originalDocumentId)
+    if (destinationDocument
+      && destinationDocumentIds.has(String(destinationDocument.id))
+      && row.path === destinationDocument.path) {
+      return {
+        ...row,
+        path: `@deleted/${String(destinationDocument.id)}`,
+        document_id: null,
+        original_path: row.original_path === ''
+          ? String(row.path)
+          : row.original_path,
+        status: 'orphaned',
+        updated_at: transactionTimestamp,
+      }
+    }
+    const detached = originalDocumentId !== null
+      && destinationDocumentIds.has(originalDocumentId)
+      ? { ...row, document_id: null }
+      : { ...row }
+    const currentPath = String(row.path)
+    const currentOriginalPath = String(row.original_path)
+    const nextPath = moveSerializedPrefixPath(currentPath, srcRel, destRel)
+    const nextOriginalPath = currentOriginalPath
+      ? moveSerializedPrefixPath(currentOriginalPath, srcRel, destRel)
+      : ''
+    return nextPath === currentPath && nextOriginalPath === currentOriginalPath
+      ? detached
+      : {
+          ...detached,
+          path: nextPath,
+          original_path: nextOriginalPath,
+          updated_at: transactionTimestamp,
+        }
+  })
+  return {
+    ...prepared,
+    paths: [...new Set(prepared.paths.map(item =>
+      moveSerializedPrefixPath(item, srcRel, destRel)))].sort(),
+    documents,
+    documentIds: documents.map(row => String(row.id)).sort(),
+    documentTags: prepared.documentTags.filter(row =>
+      !destinationDocumentIds.has(String(row.document_id))),
+    embeddings: prepared.embeddings.filter(row =>
+      !destinationDocumentIds.has(String(row.document_id))),
+    migrations,
+  }
+}
+
+const SNAPSHOT_COLUMNS = new Set([
+  'paths', 'documentIds', 'tagIds', 'preexistingTagIds', 'documents',
+  'tags', 'documentTags', 'embeddings', 'migrations',
+])
+const DOCUMENT_COLUMNS = ['id', 'path', 'title', 'summary', 'created_at', 'updated_at'] as const
+const TAG_COLUMNS = ['id', 'name', 'normalized_name'] as const
+const DOCUMENT_TAG_COLUMNS = ['document_id', 'tag_id'] as const
+const EMBEDDING_COLUMNS = ['document_id', 'content_hash', 'model', 'embedding', 'indexed_at'] as const
+const MIGRATION_COLUMNS = [
   'path', 'document_id', 'original_path', 'status', 'source_hash', 'error', 'updated_at', 'frontmatter_backup', 'cleaned_hash',
+ ] as const
+const MIGRATION_STATUSES = new Set([
+  'legacy', 'imported', 'verified', 'cleaned', 'failed', 'orphaned',
 ])
 
-function exactColumns(row: unknown, allowed: Set<string>): row is Record<string, unknown> {
-  if (!row || typeof row !== 'object') return false
-  const keys = Object.keys(row)
-  return keys.length > 0 && keys.every((key) => allowed.has(key))
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function hasExactColumns(
+  row: unknown,
+  columns: readonly string[],
+): row is Record<string, unknown> {
+  if (!isPlainRecord(row)) return false
+  const keys = Object.keys(row).sort()
+  return keys.length === columns.length
+    && keys.every((key, index) => key === [...columns].sort()[index])
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0
+}
+
+function isSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return isSafeInteger(value) && value > 0
+}
+
+function isSerializedBufferMarker(value: unknown): boolean {
+  if (!hasExactColumns(value, [BUFFER_MARKER])
+    || typeof value[BUFFER_MARKER] !== 'string') {
+    return false
+  }
+  const encoded = value[BUFFER_MARKER]
+  try {
+    return Buffer.from(encoded, 'base64').toString('base64') === encoded
+  } catch {
+    return false
+  }
+}
+
+function isDocumentRow(row: unknown): row is Record<string, unknown> {
+  return hasExactColumns(row, DOCUMENT_COLUMNS)
+    && isNonEmptyString(row.id)
+    && typeof row.path === 'string' && validRelativePath(row.path)
+    && typeof row.title === 'string'
+    && typeof row.summary === 'string'
+    && isSafeInteger(row.created_at)
+    && isSafeInteger(row.updated_at)
+}
+
+function isTagRow(row: unknown): row is Record<string, unknown> {
+  return hasExactColumns(row, TAG_COLUMNS)
+    && isPositiveSafeInteger(row.id)
+    && isNonEmptyString(row.name)
+    && isNonEmptyString(row.normalized_name)
+}
+
+function isDocumentTagRow(row: unknown): row is Record<string, unknown> {
+  return hasExactColumns(row, DOCUMENT_TAG_COLUMNS)
+    && isNonEmptyString(row.document_id)
+    && isPositiveSafeInteger(row.tag_id)
+}
+
+function isEmbeddingRow(row: unknown): row is Record<string, unknown> {
+  return hasExactColumns(row, EMBEDDING_COLUMNS)
+    && isNonEmptyString(row.document_id)
+    && typeof row.content_hash === 'string'
+    && typeof row.model === 'string'
+    && isSerializedBufferMarker(row.embedding)
+    && isSafeInteger(row.indexed_at)
+}
+
+function isMigrationRow(row: unknown): row is Record<string, unknown> {
+  return hasExactColumns(row, MIGRATION_COLUMNS)
+    && typeof row.path === 'string'
+    && (row.path.startsWith('@deleted/')
+      ? isNonEmptyString(row.path.slice('@deleted/'.length))
+      : validRelativePath(row.path))
+    && (row.document_id === null || isNonEmptyString(row.document_id))
+    && typeof row.original_path === 'string'
+    && (row.original_path === '' || validRelativePath(row.original_path))
+    && typeof row.status === 'string' && MIGRATION_STATUSES.has(row.status)
+    && typeof row.source_hash === 'string'
+    && typeof row.error === 'string'
+    && isSafeInteger(row.updated_at)
+    && typeof row.frontmatter_backup === 'string'
+    && typeof row.cleaned_hash === 'string'
+}
+
+function isStableUniqueStrings(value: unknown, pathValues = false): value is string[] {
+  return Array.isArray(value)
+    && value.every(item => isNonEmptyString(item)
+      && (!pathValues || validRelativePath(item)))
+    && value.every((item, index) => index === 0 || value[index - 1] < item)
+}
+
+function isStableUniquePositiveIntegers(value: unknown): value is number[] {
+  return Array.isArray(value)
+    && value.every(isPositiveSafeInteger)
+    && value.every((item, index) => index === 0 || value[index - 1] < item)
 }
 
 export function isSerializedMetadataSnapshot(
   snapshot: unknown,
 ): snapshot is SerializedMetadataSnapshot {
-  if (!snapshot || typeof snapshot !== 'object') return false
+  if (!isPlainRecord(snapshot)
+    || !hasExactColumns(snapshot, [...SNAPSHOT_COLUMNS])) return false
   const item = snapshot as Partial<SerializedMetadataSnapshot>
   const isArrayOf = (
     value: unknown,
     check: (element: unknown) => boolean,
   ): boolean => Array.isArray(value) && value.every(check)
-  return isArrayOf(item.paths, (value) => typeof value === 'string')
-    && isArrayOf(item.documentIds, (value) =>
-      typeof value === 'string' && value.length > 0)
-    && isArrayOf(item.tagIds, (value) =>
-      typeof value === 'number' && Number.isInteger(value))
-    && isArrayOf(item.preexistingTagIds, (value) =>
-      typeof value === 'number' && Number.isInteger(value))
-    && isArrayOf(item.documents, (row) => exactColumns(row, DOCUMENT_COLUMNS))
-    && isArrayOf(item.tags, (row) => exactColumns(row, TAG_COLUMNS))
-    && isArrayOf(item.documentTags, (row) =>
-      exactColumns(row, DOCUMENT_TAG_COLUMNS))
-    && isArrayOf(item.embeddings, (row) =>
-      exactColumns(row, EMBEDDING_COLUMNS))
-    && isArrayOf(item.migrations, (row) =>
-      exactColumns(row, MIGRATION_COLUMNS))
+  if (!isStableUniqueStrings(item.paths, true)
+    || !isStableUniqueStrings(item.documentIds)
+    || !isStableUniquePositiveIntegers(item.tagIds)
+    || !isStableUniquePositiveIntegers(item.preexistingTagIds)
+    || !isArrayOf(item.documents, isDocumentRow)
+    || !isArrayOf(item.tags, isTagRow)
+    || !isArrayOf(item.documentTags, isDocumentTagRow)
+    || !isArrayOf(item.embeddings, isEmbeddingRow)
+    || !isArrayOf(item.migrations, isMigrationRow)) {
+    return false
+  }
+  const parsed = item as SerializedMetadataSnapshot
+
+  const documentIds = new Set(parsed.documents.map(row => row.id as string))
+  const documentPaths = new Set(parsed.documents.map(row => row.path as string))
+  const tagIds = new Set(parsed.tags.map(row => row.id as number))
+  const normalizedTagNames = new Set(parsed.tags.map(row => row.normalized_name as string))
+  if (documentIds.size !== parsed.documents.length
+    || documentPaths.size !== parsed.documents.length
+    || tagIds.size !== parsed.tags.length
+    || normalizedTagNames.size !== parsed.tags.length) {
+    return false
+  }
+  const documentTagKeys = new Set<string>()
+  for (const row of parsed.documentTags) {
+    if (!documentIds.has(row.document_id as string)
+      || (!tagIds.has(row.tag_id as number)
+        && !parsed.preexistingTagIds.includes(row.tag_id as number))) {
+      return false
+    }
+    const key = `${row.document_id}\0${row.tag_id}`
+    if (documentTagKeys.has(key)) return false
+    documentTagKeys.add(key)
+  }
+  const embeddingIds = new Set<string>()
+  for (const row of parsed.embeddings) {
+    const id = row.document_id as string
+    if (!documentIds.has(id) || embeddingIds.has(id)) return false
+    embeddingIds.add(id)
+  }
+  const migrationPaths = new Set<string>()
+  for (const row of parsed.migrations) {
+    const migrationPath = row.path as string
+    const migrationDocumentId = row.document_id as string | null
+    if (migrationPaths.has(migrationPath)
+      || (migrationDocumentId !== null
+        && !documentIds.has(migrationDocumentId)
+        && !parsed.documentIds.includes(migrationDocumentId))) {
+      return false
+    }
+    migrationPaths.add(migrationPath)
+  }
+  return true
+}
+
+export function hasValidSnapshotRowSchema(
+  snapshot: unknown,
+): snapshot is SerializedMetadataSnapshot {
+  if (!isPlainRecord(snapshot)
+    || !hasExactColumns(snapshot, [...SNAPSHOT_COLUMNS])) return false
+  const item = snapshot as Partial<SerializedMetadataSnapshot>
+  return Array.isArray(item.paths)
+    && item.paths.every(value =>
+      typeof value === 'string' && validRelativePath(value))
+    && Array.isArray(item.documentIds)
+    && item.documentIds.every(isNonEmptyString)
+    && Array.isArray(item.tagIds)
+    && item.tagIds.every(isPositiveSafeInteger)
+    && Array.isArray(item.preexistingTagIds)
+    && item.preexistingTagIds.every(isPositiveSafeInteger)
+    && Array.isArray(item.documents) && item.documents.every(isDocumentRow)
+    && Array.isArray(item.tags) && item.tags.every(isTagRow)
+    && Array.isArray(item.documentTags)
+    && item.documentTags.every(isDocumentTagRow)
+    && Array.isArray(item.embeddings)
+    && item.embeddings.every(isEmbeddingRow)
+    && Array.isArray(item.migrations)
+    && item.migrations.every(isMigrationRow)
 }
 
 function setEquals(a: Set<unknown>, b: Set<unknown>): boolean {
@@ -559,7 +826,7 @@ export function validateSnapshotPhysicalEntries(
 }
 
 function stableStrings(values: Iterable<string>): string[] {
-  return [...new Set(values)].sort((left, right) => left.localeCompare(right))
+  return [...new Set(values)].sort()
 }
 
 function stableNumbers(values: Iterable<number>): number[] {
@@ -723,13 +990,30 @@ function isRound17BReferenceProof(
     return false
   }
   const SHA256 = /^[0-9a-f]{64}$/
+  const hasBinding = proof.transactionId !== undefined
+    || proof.journalHash !== undefined
+    || proof.srcRel !== undefined
+    || proof.destRel !== undefined
+  if (hasBinding
+    && (typeof proof.transactionId !== 'string'
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(proof.transactionId)
+      || typeof proof.journalHash !== 'string'
+      || !SHA256.test(proof.journalHash)
+      || typeof proof.srcRel !== 'string' || !validRelativePath(proof.srcRel)
+      || typeof proof.destRel !== 'string' || !validRelativePath(proof.destRel)
+      || proof.srcRel === proof.destRel)) return false
   return proof.references.every(item =>
     item && typeof item === 'object'
     && typeof item.documentId === 'string' && item.documentId.length > 0
     && typeof item.sourcePath === 'string' && validRelativePath(item.sourcePath)
     && typeof item.writePath === 'string' && validRelativePath(item.writePath)
     && typeof item.beforeHash === 'string' && SHA256.test(item.beforeHash)
-    && typeof item.afterHash === 'string' && SHA256.test(item.afterHash))
+    && typeof item.afterHash === 'string' && SHA256.test(item.afterHash)
+    && (!hasBinding
+      || (typeof item.beforePayload === 'string'
+        && path.basename(item.beforePayload) === item.beforePayload
+        && typeof item.afterPayload === 'string'
+        && path.basename(item.afterPayload) === item.afterPayload)))
 }
 
 function referenceRowsEqual(
@@ -769,10 +1053,12 @@ export function validateRound17SnapshotRestoreDisposition(
   disposition: FolderMoveSnapshotRestoreDisposition,
   context: {
     referenceJournal?: ParsedFolderRenameReferenceJournal
+    ownerJournal?: string
+    ownerTransactionId?: string
   } = {},
 ): string | null {
-  if (!isSerializedMetadataSnapshot(disposition.snapshot)
-    || !isSerializedMetadataSnapshot(disposition.expectedCurrentSnapshot)
+  if (!hasValidSnapshotRowSchema(disposition.snapshot)
+    || !hasValidSnapshotRowSchema(disposition.expectedCurrentSnapshot)
     || !Array.isArray(disposition.physicalDocumentIds)
     || !Array.isArray(disposition.metadataOnlyDocumentProofs)
     || !disposition.ownershipFootprint) {
@@ -942,6 +1228,31 @@ export function validateRound17SnapshotRestoreDisposition(
         disposition.referenceJournal.references,
       )) {
       return 'companion reference journal identity/path/hash proof does not match'
+    }
+    if (companion.metadataDisposition?.kind === 'folder-snapshot-owned') {
+      if (disposition.referenceJournal.transactionId
+          !== companion.transactionId
+        || disposition.referenceJournal.journalHash
+          !== companion.descriptorHash
+        || disposition.referenceJournal.srcRel !== companion.srcRel
+        || disposition.referenceJournal.destRel !== companion.destRel
+        || companion.metadataDisposition.ownerJournal
+          !== context.ownerJournal
+        || companion.metadataDisposition.ownerTransactionId
+          !== context.ownerTransactionId
+        || companion.metadataDisposition.ownerDescriptorHash
+          !== companion.descriptorHash) {
+        return 'snapshot reference companion transaction binding does not match owner'
+      }
+      for (const proof of disposition.referenceJournal.references) {
+        const operations = companion.references.filter(operation =>
+          operation.path === proof.writePath)
+        if (operations.length !== 1
+          || proof.beforePayload !== operations[0].beforePayload
+          || proof.afterPayload !== operations[0].afterPayload) {
+          return 'snapshot reference companion payload binding does not match operation'
+        }
+      }
     }
     for (const proof of referenceProofs) {
       if (!referenceProvesDocument(

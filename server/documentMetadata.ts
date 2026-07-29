@@ -531,6 +531,61 @@ export function restoreDocumentMetadataMutationCAS(
   tx.immediate()
 }
 
+export type MetadataRestoreCASResult =
+  | { kind: 'restored-now' }
+  | { kind: 'already-restored' }
+  | { kind: 'conflict'; reason: string }
+
+/**
+ * A crash-idempotent three-state restore transition.  Both comparisons and
+ * the optional mutation run under the same BEGIN IMMEDIATE transaction.
+ */
+export function restoreDocumentMetadataMutationCASIdempotent(
+  db: DatabaseT,
+  restoreSnapshot: DocumentMetadataMutationSnapshot,
+  expectedCurrentSnapshot: DocumentMetadataMutationSnapshot,
+  options?: {
+    ownershipFootprint: DocumentMetadataOwnershipFootprint
+    createdMetadataIds?: CreatedDocumentMetadataIds
+  },
+): MetadataRestoreCASResult {
+  const tx = db.transaction((): MetadataRestoreCASResult => {
+    const readCurrent = (): DocumentMetadataMutationSnapshot =>
+      snapshotDocumentMetadataOwnership(
+        db,
+        options?.ownershipFootprint.paths ?? restoreSnapshot.paths,
+        options?.ownershipFootprint.documentIds ?? restoreSnapshot.documentIds,
+        options?.ownershipFootprint.tagIds ?? restoreSnapshot.tagIds,
+        options?.ownershipFootprint,
+      )
+    const current = readCurrent()
+    if (metadataSnapshotsExactlyEqual(current, restoreSnapshot)) {
+      return { kind: 'already-restored' }
+    }
+    if (!metadataSnapshotsExactlyEqual(current, expectedCurrentSnapshot)) {
+      return {
+        kind: 'conflict',
+        reason: 'live metadata graph matches neither expected-current nor restore snapshot',
+      }
+    }
+    if (options) {
+      restoreDocumentMetadataMutationWithinFootprint(
+        db,
+        restoreSnapshot,
+        options.ownershipFootprint,
+        options.createdMetadataIds,
+      )
+    } else {
+      restoreDocumentMetadataMutation(db, restoreSnapshot)
+    }
+    if (!metadataSnapshotsExactlyEqual(readCurrent(), restoreSnapshot)) {
+      throw new Error('metadata restore transaction did not produce the durable restore snapshot')
+    }
+    return { kind: 'restored-now' }
+  })
+  return tx.immediate()
+}
+
 function dateMs(value: unknown, fallback: number): number {
   if (value instanceof Date && Number.isFinite(value.getTime())) return value.getTime()
   if (typeof value === 'string') {
@@ -618,8 +673,11 @@ export function saveDocumentMetadata(db: DatabaseT, input: SaveDocumentMetadata)
     const existing = getDocumentMetadata(db, path)
     const now = Date.now()
     const id = existing?.id ?? input.id ?? randomUUID()
-    const createdAt = input.createdAt ?? existing?.createdAt ?? now
-    const updatedAt = input.updatedAt ?? now
+    const createdAt = Math.trunc(input.createdAt ?? existing?.createdAt ?? now)
+    const updatedAt = Math.trunc(input.updatedAt ?? now)
+    if (!Number.isSafeInteger(createdAt) || !Number.isSafeInteger(updatedAt)) {
+      throw new Error('metadata timestamps must be safe integers')
+    }
     db.prepare(`
       INSERT INTO documents (id, path, title, summary, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -704,7 +762,12 @@ export function moveDocumentMetadata(db: DatabaseT, fromPath: string, toPath: st
   })()
 }
 
-function quarantineMigrationAtPath(db: DatabaseT, path: string, documentId?: string): void {
+function quarantineMigrationAtPath(
+  db: DatabaseT,
+  path: string,
+  documentId?: string,
+  timestamp = Date.now(),
+): void {
   const row = db.prepare('SELECT path FROM metadata_migrations WHERE path = ?').get(path)
   if (!row) return
   const tombstone = `@deleted/${documentId ?? randomUUID()}`
@@ -713,7 +776,7 @@ function quarantineMigrationAtPath(db: DatabaseT, path: string, documentId?: str
     SET path = ?, original_path = CASE WHEN original_path = '' THEN path ELSE original_path END,
         document_id = NULL, status = 'orphaned', updated_at = ?
     WHERE path = ?
-  `).run(tombstone, Date.now(), path)
+  `).run(tombstone, timestamp, path)
 }
 
 /** Atomically isolate a stale destination generation and move the source identity. */
@@ -792,7 +855,12 @@ function movePrefixPath(
   return value
 }
 
-export function moveDocumentMetadataPrefix(db: DatabaseT, fromPrefix: string, toPrefix: string): number {
+export function moveDocumentMetadataPrefix(
+  db: DatabaseT,
+  fromPrefix: string,
+  toPrefix: string,
+  transactionTimestamp = Date.now(),
+): number {
   return db.transaction(() => {
     const rows = db.prepare(
       'SELECT id, path FROM documents WHERE path = ? OR path LIKE ? ORDER BY length(path)',
@@ -865,7 +933,7 @@ export function moveDocumentMetadataPrefix(db: DatabaseT, fromPrefix: string, to
     }
 
     const update = db.prepare('UPDATE documents SET path = ?, updated_at = ? WHERE id = ?')
-    const now = Date.now()
+    const now = transactionTimestamp
     for (const { id, nextPath } of planned) {
       update.run(nextPath, now, id)
     }
@@ -916,12 +984,23 @@ export function moveDocumentMetadataPrefix(db: DatabaseT, fromPrefix: string, to
   })()
 }
 
-export function deleteDocumentMetadataPrefix(db: DatabaseT, prefix: string): number {
+export function deleteDocumentMetadataPrefix(
+  db: DatabaseT,
+  prefix: string,
+  transactionTimestamp = Date.now(),
+): number {
   return db.transaction(() => {
     const documents = db.prepare(
       'SELECT id, path FROM documents WHERE path = ? OR path LIKE ?',
     ).all(prefix, `${prefix}/%`) as Array<{ id: string; path: string }>
-    for (const document of documents) quarantineMigrationAtPath(db, document.path, document.id)
+    for (const document of documents) {
+      quarantineMigrationAtPath(
+        db,
+        document.path,
+        document.id,
+        transactionTimestamp,
+      )
+    }
     const result = db.prepare('DELETE FROM documents WHERE path = ? OR path LIKE ?')
       .run(prefix, `${prefix}/%`)
     return result.changes

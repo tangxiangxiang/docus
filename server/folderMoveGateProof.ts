@@ -1,7 +1,8 @@
-import { constants, promises as fs } from 'node:fs'
+import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
 import { syncParentDirectoryBestEffort } from './atomicTextWrite.js'
+import { writeCreateOnlyDurableFile } from './durableCreateOnlyFile.js'
 import type { FolderMoveGateProof } from './folderMoveTransaction.js'
 
 export function folderMoveGateMarkerAbs(
@@ -16,24 +17,7 @@ export async function writeFolderMoveGateProof(
   proof: FolderMoveGateProof,
 ): Promise<void> {
   const markerAbs = folderMoveGateMarkerAbs(destinationAbs, proof)
-  let handle: Awaited<ReturnType<typeof fs.open>> | null = null
-  try {
-    handle = await fs.open(
-      markerAbs,
-      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-      0o600,
-    )
-    await handle.writeFile(proof.secret, 'utf8')
-    await handle.sync()
-    await handle.close()
-    handle = null
-    await syncParentDirectoryBestEffort(markerAbs)
-  } catch (error) {
-    await handle?.close().catch(() => {})
-    await fs.rm(markerAbs, { force: true }).catch(() => {})
-    await syncParentDirectoryBestEffort(markerAbs)
-    throw error
-  }
+  await writeCreateOnlyDurableFile(markerAbs, proof.secret, { mode: 0o600 })
 }
 
 export async function verifyFolderMoveGateProof(
