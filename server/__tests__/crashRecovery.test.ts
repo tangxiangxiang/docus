@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { applyMigrations } from '../db'
@@ -12,6 +12,10 @@ import { recoverInterruptedOperations } from '../crashRecovery'
 import { prepareRenameReferenceJournal } from '../renameReferenceJournal'
 import { serializeMetadataSnapshot } from '../folderMoveTransaction'
 import { __setCreateOnlyMoveHooksForTesting, FOLDER_MOVE_STRATEGIES, platformDirectoryMoveStrategy } from '../documentFileLifecycle'
+import {
+  terminateProcessTree,
+  waitForChildClose,
+} from './helpers/crashProcessTree'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 const TSX_CLI = fileURLToPath(import.meta.resolve('tsx/cli'))
@@ -23,9 +27,15 @@ const FOLDER_MOVE_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'fold
 const FOLDER_ROLLBACK_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'folder-rollback-crash-child.ts')
 const FOLDER_DELETE_ROLLBACK_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'folder-delete-rollback-crash-child.ts')
 const FOLDER_RECOVERY_REPLAY_CRASH_CHILD = path.join(import.meta.dirname, 'fixtures', 'folder-recovery-replay-crash-child.ts')
+const PROCESS_TREE_LOCK_PARENT = path.join(import.meta.dirname, 'fixtures', 'process-tree-lock-parent.ts')
+
+const REAL_CRASH_TEST_TIMEOUT = process.platform === 'win32' ? 30_000 : 15_000
+const READY_TIMEOUT = process.platform === 'win32' ? 15_000 : 8_000
+const TERMINATION_TIMEOUT = process.platform === 'win32' ? 10_000 : 5_000
 
 let vault: string
 let db: InstanceType<typeof Database>
+const activeCrashChildren = new Set<ChildProcess>()
 
 beforeEach(async () => {
   vault = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-crash-'))
@@ -36,8 +46,18 @@ beforeEach(async () => {
 
 afterEach(async () => {
   __setCreateOnlyMoveHooksForTesting(null)
+  await Promise.allSettled(
+    [...activeCrashChildren].map((child) =>
+      terminateProcessTree(child, { timeoutMs: 10_000 })),
+  )
+  activeCrashChildren.clear()
   db.close()
-  await fs.rm(vault, { recursive: true, force: true })
+  await fs.rm(vault, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === 'win32' ? 10 : 3,
+    retryDelay: 100,
+  })
 })
 
 async function seed(files: Record<string, string>): Promise<void> {
@@ -563,11 +583,14 @@ function spawnCrashChild(env: Record<string, string>, fixture: string) {
     const child = spawn(process.execPath, [TSX_CLI, fixture], {
       env: { ...process.env, ...env },
       stdio: 'pipe',
+      detached: process.platform !== 'win32',
+      windowsHide: true,
     })
+    activeCrashChildren.add(child)
     const readyPoints: string[] = []
     let stderr = ''
     let stdoutBuffer = ''
-    const readyResolvers = new Map<string, Array<() => void>>()
+    const readyResolvers = new Map<string, Set<() => void>>()
     child.stdout!.on('data', (chunk: Buffer) => {
       stdoutBuffer += chunk.toString('utf8')
       let newlineIndex = stdoutBuffer.indexOf('\n')
@@ -578,42 +601,67 @@ function spawnCrashChild(env: Record<string, string>, fixture: string) {
         if (match) {
           readyPoints.push(match[1])
           for (const resolve of readyResolvers.get(match[1]) ?? []) resolve()
+          readyResolvers.delete(match[1])
         }
         newlineIndex = stdoutBuffer.indexOf('\n')
       }
     })
     child.stderr!.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
-    const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(
-        `crash child timed out (ready: ${readyPoints.join(',') || 'none'}; stderr: ${stderr.slice(0, 500)})`,
-      )), 20000)
-      child.on('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal }) })
-      child.on('error', (error) => { clearTimeout(timer); reject(error) })
+    const closePromise = waitForChildClose(child).finally(() => {
+      activeCrashChildren.delete(child)
     })
-    exitPromise.catch(() => {}) // observed through killAfterReady/waitReady
+    void closePromise.catch(() => {})
     const waitReady = (expectedPoint: string): Promise<void> => {
       if (readyPoints.includes(expectedPoint)) return Promise.resolve()
-      return Promise.race([
-        new Promise<void>((resolve) => {
-          const resolvers = readyResolvers.get(expectedPoint) ?? []
-          resolvers.push(resolve)
-          readyResolvers.set(expectedPoint, resolvers)
-        }),
-        exitPromise.then((result) => {
+      return new Promise<void>((resolve, reject) => {
+        let settled = false
+        const finish = (error?: Error): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          const resolvers = readyResolvers.get(expectedPoint)
+          resolvers?.delete(onReady)
+          if (resolvers?.size === 0) readyResolvers.delete(expectedPoint)
+          if (error) reject(error)
+          else resolve()
+        }
+        const onReady = (): void => finish()
+        const resolvers = readyResolvers.get(expectedPoint) ?? new Set()
+        resolvers.add(onReady)
+        readyResolvers.set(expectedPoint, resolvers)
+        const timer = setTimeout(() => {
+          finish(new Error(
+            `crash child did not reach READY:${expectedPoint} within ${READY_TIMEOUT}ms `
+            + `(ready: ${readyPoints.join(',') || 'none'}; stderr: ${stderr.slice(0, 500)})`,
+          ))
+        }, READY_TIMEOUT)
+        void closePromise.then((result) => {
           if (!readyPoints.includes(expectedPoint)) {
-            throw new Error(`crash child exited (code=${result.code}, signal=${result.signal}) before READY:${expectedPoint}; stderr: ${stderr.slice(0, 500)}`)
+            finish(new Error(
+              `crash child closed (code=${result.code}, signal=${result.signal}) before `
+              + `READY:${expectedPoint}; stderr: ${stderr.slice(0, 500)}`,
+            ))
           }
-        }),
-      ])
+        }, (error) => finish(error as Error))
+      })
     }
     return {
-      /** Wait for the child to reach its crash seam, SIGKILL it from
-       * the parent, and return the exit evidence. */
+      /** Wait for the child to reach its crash seam, terminate its
+       * complete process tree, and wait for stdio closure. */
       async killAfterReady(expectedPoint: string): Promise<CrashChildResult> {
-        await waitReady(expectedPoint)
-        child.kill('SIGKILL')
-        const result = await exitPromise
-        return { ...result, readyPoints: [...readyPoints], stderr }
+        try {
+          await waitReady(expectedPoint)
+          const result = await terminateProcessTree(child, {
+            timeoutMs: TERMINATION_TIMEOUT,
+          })
+          return { ...result, readyPoints: [...readyPoints], stderr }
+        } catch (error) {
+          await terminateProcessTree(child, { timeoutMs: 10_000 }).catch(() => {})
+          throw error
+        }
+      },
+      async dispose(): Promise<void> {
+        await terminateProcessTree(child, { timeoutMs: 10_000 }).catch(() => {})
       },
     }
   }
@@ -672,6 +720,25 @@ describe('Round-17 orphan folder gate marker cleanup', () => {
 })
 
 describe('real subprocess crash + startup recovery', () => {
+  it('terminates the entire crash child tree before deleting a locked SQLite database', async () => {
+    const dbPath = path.join(vault, 'tree-lock.sqlite')
+    const child = spawnCrashChild({
+      DOCUS_PROCESS_TREE_DB: dbPath,
+    }, PROCESS_TREE_LOCK_PARENT)
+
+    const result = await child.killAfterReady('grandchild-lock')
+    expectParentKilled(result, 'grandchild-lock')
+
+    await fs.rm(dbPath, {
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    })
+    await expect(fs.stat(dbPath)).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  }, REAL_CRASH_TEST_TIMEOUT)
+
   // Exact on-disk state of the reference transaction at each crash
   // point — asserted BEFORE recovery runs, so the recovery tests prove
   // they handle the real crash state, not whatever the child happened
@@ -761,7 +828,7 @@ describe('real subprocess crash + startup recovery', () => {
       const declared = journal.references.flatMap((reference) => [reference.beforePayload, reference.afterPayload])
       expect(payloads.every((payload) => declared.includes(payload))).toBe(true)
     }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('recovers the formal path after a kill -9 inside the commit window', async () => {
     // The reviewer scenario: the child runs the REAL commit protocol
@@ -797,7 +864,7 @@ describe('real subprocess crash + startup recovery', () => {
     // protocol and survives the crash + recovery byte-for-byte.
     expect(getDocumentMetadata(db, 'note')?.id).toBe('pre-crash-id')
     expect(await namesIn()).toEqual(['note.md'])
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('recovers when the process dies after the journal write but before takeover', async () => {
     const abs = path.join(vault, 'note.md')
@@ -828,7 +895,7 @@ describe('real subprocess crash + startup recovery', () => {
     expect(await fs.readFile(abs, 'utf8')).toBe('# base\n')
     expect(report.actions.some((a) => a.action === 'failed')).toBe(false)
     expect(await namesIn()).toEqual(['note.md'])
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('auto-recovers on a real service restart (prod entry, HTTP probe)', async () => {
     // Full "restart the service" evidence: a temp vault holds the
@@ -855,7 +922,14 @@ describe('real subprocess crash + startup recovery', () => {
         cwd: workdir,
         env: { ...process.env, VAULT_DIR: restartVault, PORT: '0', HOST: '127.0.0.1' },
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
+        windowsHide: true,
       })
+      activeCrashChildren.add(server)
+      const serverClosePromise = waitForChildClose(server).finally(() => {
+        activeCrashChildren.delete(server)
+      })
+      void serverClosePromise.catch(() => {})
       try {
         const port = await new Promise<number>((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error('server did not start listening')), 20000)
@@ -879,13 +953,19 @@ describe('real subprocess crash + startup recovery', () => {
         const body = await response.json() as { raw: string }
         expect(body.raw).toBe('# replacement\n')
       } finally {
-        server.kill('SIGKILL')
-        await new Promise((resolve) => { server.on('exit', resolve) })
+        await terminateProcessTree(server, {
+          timeoutMs: TERMINATION_TIMEOUT,
+        })
       }
     } finally {
-      await fs.rm(workdir, { recursive: true, force: true })
+      await fs.rm(workdir, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === 'win32' ? 10 : 3,
+        retryDelay: 100,
+      })
     }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('completes an interrupted rename after a kill -9 inside the link window, without losing the documentId', async () => {
     // The reviewer scenario applied to rename: the child runs the REAL
@@ -922,7 +1002,7 @@ describe('real subprocess crash + startup recovery', () => {
     expect(getDocumentMetadata(db, 'old')).toBeNull()
     expect((await namesIn()).some((n) => n.includes('.docus-rename-'))).toBe(false)
     expect(await namesIn()).toEqual(['new.md'])
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('recovers documentId after kill -9 when staging is gone but metadata has not moved', async () => {
     const from = path.join(vault, 'old.md')
@@ -949,7 +1029,7 @@ describe('real subprocess crash + startup recovery', () => {
       expect(getDocumentMetadata(persistedDb, 'new')?.id).toBe('post-staging-crash-id')
       expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('restores the source after kill -9 between rename takeover and destination link', async () => {
     const from = path.join(vault, 'old.md')
@@ -982,7 +1062,7 @@ describe('real subprocess crash + startup recovery', () => {
       expect(report.actions.some((a) => a.action === 'restored')).toBe(true)
       expect((await namesIn()).some((name) => name.includes('.docus-rename-') || name.includes('.docus-journal-'))).toBe(false)
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   // Binary attachment bytes: the journal must cover EVERY physical
   // file the mover touches, not just markdown.
@@ -1080,7 +1160,7 @@ describe('real subprocess crash + startup recovery', () => {
       expect(getDocumentMetadata(persistedDb, 'ren/a')).not.toBeNull()
       expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('does not trust a recreated destination gate even when its directory generation is reused', async () => {
     // Directory generations are vulnerable to inode ABA. Recreate the
@@ -1134,7 +1214,7 @@ describe('real subprocess crash + startup recovery', () => {
       // Journal retained for inspection.
       expect((await namesIn()).some((name) => name.startsWith('.proj.docus-journal-'))).toBe(true)
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('replays the route journal of a folder move killed between per-file entries, attachment included', async () => {
     // The defining replayable crash through the REAL route: a.md
@@ -1190,7 +1270,7 @@ describe('real subprocess crash + startup recovery', () => {
       expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# a\n')
       expect(getDocumentMetadata(persistedDb, 'ren/a')?.id).toBe(aId)
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('recovers a hard kill after shared final parity but before metadata', async () => {
     const dbPath = path.join(vault, 'metadata.sqlite')
@@ -1233,7 +1313,7 @@ describe('real subprocess crash + startup recovery', () => {
       expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(false)
       expect((await fs.readdir(path.join(vault, 'ren'))).some((name) => name.startsWith('.docus-folder-gate-'))).toBe(false)
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('quarantines identical replacement bytes that do not preserve the landed hard-link identity', async () => {
     // v4: generation proof is (dev, ino, hash) — a byte-identical
@@ -1266,7 +1346,7 @@ describe('real subprocess crash + startup recovery', () => {
       expect((await namesIn()).some((name) => name.startsWith('.proj.docus-journal-'))).toBe(true)
       expect(getDocumentMetadata(persistedDb, 'ren/a')).toBeNull()
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('runs shared exact parity again after recovery replay and before metadata', async () => {
     // v4: recovery re-verifies exact parity (destDev/destIno + per-entry
@@ -1297,7 +1377,7 @@ describe('real subprocess crash + startup recovery', () => {
       expect(getDocumentMetadata(persistedDb, 'ren/a')).toBeNull()
       expect(getDocumentMetadata(persistedDb, 'proj/a')).not.toBeNull()
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 })
 
 describe('real subprocess crash + startup recovery (folder reverse moves)', () => {
@@ -1381,7 +1461,7 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
       await recoverInterruptedOperations(vault, persistedDb)
       expect(getDocumentMetadata(persistedDb, 'proj/a')?.id).toBe(aId)
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('completes a delete rollback killed mid restore from its snapshot journal', async () => {
     const dbPath = path.join(vault, 'metadata.sqlite')
@@ -1430,7 +1510,7 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
       await recoverInterruptedOperations(vault, persistedDb)
       expect(getDocumentMetadata(persistedDb, 'gone/a')?.id).toBe('gone-a-id')
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('preserves a fresh live DB owner instead of restoring a stale delete snapshot over it', async () => {
     const dbPath = path.join(vault, 'metadata.sqlite')
@@ -1457,7 +1537,7 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
       expect(getDocumentMetadata(persistedDb, 'gone/a')?.title).toBe('Fresh')
       expect((await namesIn()).some((name) => name.includes('.docus-journal-'))).toBe(true)
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 
   it('completes recovery when recovery ITSELF is killed mid folder rollback replay', async () => {
     // The reference journal's roll-back branch writes its OWN
@@ -1500,7 +1580,7 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
       await recoverInterruptedOperations(vault, persistedDb)
       expect(getDocumentMetadata(persistedDb, 'proj/a')?.id).toBe('rec-a-id')
     } finally { persistedDb.close() }
-  })
+  }, REAL_CRASH_TEST_TIMEOUT)
 })
 
 describe('recoverInterruptedOperations (rename staging, journal-less)', () => {
