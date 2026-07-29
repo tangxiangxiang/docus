@@ -18,10 +18,10 @@ export function sha256HexBuffer(raw: Buffer | Uint8Array): string {
  * filesystem across the lifetime of the mount. */
 export type DirectoryGeneration = { dev: string; ino: string }
 
-/** round-11 v4: create a destination gate as an empty directory the
- * caller will move into. The (dev, ino) of the freshly mkdir'd
- * directory IS the ownership proof — no token file is written inside
- * the destination. Returns null when the path was already taken (an
+/** Create a destination gate as an empty directory the caller will
+ * bind to a durable marker proof before moving into it. The freshly
+ * mkdir'd (dev, ino) remains a secondary generation check. Returns
+ * null when the path was already taken (an
  * external writer claimed the destination before us) or when a file
  * occupies the destination path. Throws on any other I/O error. */
 export async function createDestinationGate(

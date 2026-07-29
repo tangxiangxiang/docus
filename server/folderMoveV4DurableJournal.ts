@@ -1,6 +1,9 @@
 import { promises as fs } from 'node:fs'
 
-import type { FolderMoveJournalV4 } from './folderMoveTransaction.js'
+import {
+  validateFolderMoveGateProof,
+  type FolderMoveJournalV4,
+} from './folderMoveTransaction.js'
 
 function normalizeGenerationDecimal(
   value: unknown,
@@ -34,6 +37,7 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
     && entry.phase !== 'files-landed' && entry.phase !== 'metadata-committed') return null
   if (entry.strategy !== 'atomic-rename' && entry.strategy !== 'replayable-move') return null
   if (!Array.isArray(entry.entries) || !Array.isArray(entry.directories)) return null
+  if (entry.gateProof !== undefined && !validateFolderMoveGateProof(entry.gateProof)) return null
   if (typeof entry.metadataDisposition !== 'object' || entry.metadataDisposition === null) return null
   const disposition = entry.metadataDisposition as { kind?: unknown }
   if (disposition.kind !== 'prefix-move' && disposition.kind !== 'snapshot-restore') return null

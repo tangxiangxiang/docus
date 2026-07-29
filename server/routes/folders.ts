@@ -20,6 +20,7 @@ import {
   UnsupportedDirectoryMoveError,
 } from '../documentFileLifecycle.js'
 import {
+  createFolderMoveGateProof,
   FOLDER_MOVE_JOURNAL_VERSION,
   listPhysicalMoveEntries,
   serializeMetadataSnapshot,
@@ -33,6 +34,10 @@ import {
   FolderMoveV4ExecutionError,
 } from '../folderMoveV4Executor.js'
 import { readDurableFolderMoveJournalV4 } from '../folderMoveV4DurableJournal.js'
+import {
+  removeFolderMoveGateProof,
+  verifyFolderMoveGateProof,
+} from '../folderMoveGateProof.js'
 import {
   completeFolderMoveV4Metadata,
   verifyMetadataSnapshotGraphExact,
@@ -291,6 +296,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       strategy: moveStrategy,
       sourceDev: sourceDirectoryStat.dev.toString(),
       sourceIno: sourceDirectoryStat.ino.toString(),
+      gateProof: createFolderMoveGateProof(),
       ...(physicalEntriesV4.length === 0 ? { emptyTree: true } : {}),
       entries: physicalEntriesV4,
       directories: physicalDirectoriesV4,
@@ -329,7 +335,14 @@ folderRoutes.patch('/api/folders/*', async (c) => {
               dev: attempted.destDev,
               ino: attempted.destIno,
             })
-            && (await fs.readdir(dest)).length === 0) {
+            && (!attempted.gateProof
+              || await verifyFolderMoveGateProof(dest, attempted.gateProof))
+            && (await fs.readdir(dest)).every(name =>
+              attempted.gateProof !== undefined
+              && name === attempted.gateProof.markerName)) {
+            if (attempted.gateProof) {
+              await removeFolderMoveGateProof(dest, attempted.gateProof)
+            }
             await fs.rmdir(dest)
             ownedGateRemoved = true
           }
@@ -441,6 +454,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
             srcRel: newPath,
             destRel: srcPath,
             phase: 'prepared',
+            gateProof: createFolderMoveGateProof(),
             // destDev/destIno are removed in the prepared phase; they
             // are re-persisted when the reverse gate is created.
             destDev: undefined,
@@ -735,6 +749,7 @@ folderRoutes.delete('/api/folders/*', async (c) => {
             strategy: rollbackStrategy,
             sourceDev: stagedStat.dev.toString(),
             sourceIno: stagedStat.ino.toString(),
+            gateProof: createFolderMoveGateProof(),
             ...(rollbackPhysicalEntriesV4.length === 0 ? { emptyTree: true } : {}),
             entries: rollbackPhysicalEntriesV4,
             directories: rollbackPhysicalDirectoriesV4,

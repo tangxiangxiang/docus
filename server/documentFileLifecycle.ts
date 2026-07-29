@@ -527,6 +527,9 @@ export type FolderMoveExecuteOptions = {
    * for exact final parity verification — file set equality, per-file
    * content hash, and landed generation identity (round-9 F3). */
   entries?: readonly FolderMoveJournalEntry[]
+  /** Exact root-relative paths excluded from parity. No prefixes,
+   * descendants, or other hidden files are implicitly ignored. */
+  ignoredRelativePaths?: readonly string[]
 }
 
 export async function executeReplayableFolderMove(
@@ -778,12 +781,17 @@ export type MoveEntriesIntoGateOptions = {
   /** Every subdirectory (including empty ones) the move must recreate
    * at the destination. Sorted, ancestor-closed, parent-closed. */
   directories: readonly string[]
+  /** Exact destination-root entries owned by the transaction. */
+  ignoredDestinationEntries?: readonly string[]
+  /** Leave already-landed entries in place so durable recovery can
+   * resume a split replayable tree after any mover error. */
+  preservePartialLandingOnError?: boolean
 }
 
-/** round-11 v4: move every journaled entry into a destination gate the
- * route already created. No token file is written inside the
- * destination. Ownership proof is the destination directory's
- * (dev, ino) which the route captured at journal-write time. Every
+/** Move every journaled entry into a destination gate the route
+ * already created and bound to its optional v4 durable marker.
+ * Destination (dev, ino) remains the strict proof for legacy journals
+ * and a secondary signal for marker-bearing journals. Every
  * per-file move binds the source inode to the journaled generation
  * via `createOnlyMoveFile`'s post-takeover re-check (round-10 F1 +
  * round-11 F6). On any move failure, the whole forward move rolls
@@ -821,6 +829,9 @@ export async function moveFolderEntriesIntoExistingGate(
       moved.push(entry.relativeFilePath)
       await fireReplayableMovedEntryHook(entry.relativeFilePath)
     } catch (error) {
+      if (options.preservePartialLandingOnError) {
+        throw error
+      }
       // Roll back everything that landed create-only. The rollback
       // is itself creation-only (F2 invariant): an externally-
       // replaced landed file stays at the destination; the journal
@@ -856,8 +867,7 @@ export async function moveFolderEntriesIntoExistingGate(
   return { moved, incomplete: false }
 }
 
-/** round-11 v4: exact parity for the destination directory. No token
- * file is consulted. Verification is:
+/** Exact parity for the destination directory. Verification is:
  *   1. destination directory's (dev, ino) matches the journal's
  *      `destDev`/`destIno` (the v4 ownership proof);
  *   2. the file set is exactly the journaled entries, each with
@@ -873,6 +883,7 @@ export async function verifyFolderMoveDestinationV4(
     entries: readonly FolderMoveJournalEntryV4[]
     directories: readonly string[]
   },
+  options: FolderMoveParityOptions = {},
 ): Promise<boolean> {
   if (!journal.destDev || !journal.destIno) return true
   if (!await verifyDirectoryGeneration(destinationAbs, { dev: journal.destDev, ino: journal.destIno })) {
@@ -882,11 +893,13 @@ export async function verifyFolderMoveDestinationV4(
   const expectedDirs = new Set(journal.directories)
   const discoveredFiles = new Set<string>()
   const discoveredDirs = new Set<string>()
+  const ignored = new Set(options.ignoredRelativePaths ?? [])
   const walk = async (dirAbs: string, rel: string): Promise<boolean> => {
     const dirents = await fs.readdir(dirAbs, { withFileTypes: true })
     for (const dirent of dirents) {
       const relPath = rel === '' ? dirent.name : `${rel}/${dirent.name}`
       const absPath = path.join(dirAbs, dirent.name)
+      if (rel === '' && ignored.has(relPath)) continue
       if (dirent.isSymbolicLink()) return true
       if (dirent.isDirectory()) {
         if (!expectedDirs.has(relPath)) return true
@@ -922,6 +935,10 @@ export async function verifyFolderMoveDestinationV4(
     if (!discoveredDirs.has(expectedPath)) return true
   }
   return false
+}
+
+export type FolderMoveParityOptions = {
+  ignoredRelativePaths?: readonly string[]
 }
 
 /** round-11 v4: classify an entry's placement using generation proof
@@ -969,6 +986,7 @@ export async function verifyExactParity(
   const expectedDirs = new Set(options.directories ?? [])
   const tokenName = options.gateToken ? gateTokenName(options.gateToken) : null
   const tokenContent = options.gateTokenValue ?? null
+  const ignored = new Set(options.ignoredRelativePaths ?? [])
   const entryByRel = new Map((options.entries ?? []).map((e) => [e.relativeFilePath, e]))
   let landedFileCount = 0
   const landedDirs: string[] = []
@@ -984,6 +1002,7 @@ export async function verifyExactParity(
       for (const dirent of dirents) {
         const relPath = rel === '' ? dirent.name : `${rel}/${dirent.name}`
         const absPath = path.join(dir, dirent.name)
+        if (rel === '' && ignored.has(relPath)) continue
         if (dirent.isSymbolicLink()) return true
         if (dirent.isDirectory()) {
           if (!expectedDirs.has(relPath)) return true

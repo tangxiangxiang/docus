@@ -16,6 +16,10 @@ import {
 } from './documentMetadata.js'
 import { verifyFolderMoveDestinationV4 } from './documentFileLifecycle.js'
 import {
+  removeFolderMoveGateProof,
+  verifyFolderMoveGateProof,
+} from './folderMoveGateProof.js'
+import {
   isValidDeleteRollbackSnapshot,
   reviveMetadataSnapshot,
   validateSnapshotPhysicalEntries,
@@ -44,6 +48,68 @@ function result(
   detail: string,
 ): FolderMoveV4FinalizationResult {
   return { completed: action === 'completed-rename', action, detail, journal }
+}
+
+async function proveDestinationOwnership(
+  journalAbs: string,
+  journal: FolderMoveJournalV4,
+  destAbs: string,
+  phaseLabel: string,
+): Promise<
+  | { journal: FolderMoveJournalV4; error?: never }
+  | { journal?: never; error: string }
+> {
+  if (!journal.destDev || !journal.destIno) {
+    return { error: `${phaseLabel} journal is missing final destination generation` }
+  }
+  if (journal.strategy === 'replayable-move' && journal.gateProof) {
+    if (!await verifyFolderMoveGateProof(destAbs, journal.gateProof)) {
+      return { error: 'replayable destination gate proof is missing or mismatched' }
+    }
+    let stat: Awaited<ReturnType<typeof fs.lstat>>
+    try {
+      stat = await fs.lstat(destAbs, { bigint: true })
+    } catch {
+      return { error: 'replayable destination gate proof is missing or mismatched' }
+    }
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      return { error: 'replayable destination gate proof is missing or mismatched' }
+    }
+    const currentGeneration = {
+      dev: stat.dev.toString(),
+      ino: stat.ino.toString(),
+    }
+    if (journal.destDev !== currentGeneration.dev
+      || journal.destIno !== currentGeneration.ino) {
+      const refreshed = {
+        ...journal,
+        destDev: currentGeneration.dev,
+        destIno: currentGeneration.ino,
+      }
+      try {
+        await rewriteDurableJournal(journalAbs, refreshed)
+      } catch (error) {
+        return { error: `${phaseLabel} generation refresh failed: ${(error as Error).message}` }
+      }
+      return { journal: refreshed }
+    }
+    return { journal }
+  }
+  if (!await verifyDirectoryGeneration(destAbs, {
+    dev: journal.destDev,
+    ino: journal.destIno,
+  })) {
+    return { error: `${phaseLabel} destination generation does not match journal` }
+  }
+  return { journal }
+}
+
+function parityOptions(journal: FolderMoveJournalV4): {
+  ignoredRelativePaths?: readonly string[]
+} {
+  return journal.strategy === 'replayable-move' && journal.gateProof
+    ? { ignoredRelativePaths: [journal.gateProof.markerName] }
+    : {}
 }
 
 function verifyPrefixMetadataCommitted(
@@ -199,24 +265,31 @@ export async function finalizeFolderMoveV4Cleanup(
   destAbs: string,
   hooks: Pick<FinalizationHooks, 'beforeJournalRemove' | 'verifyMetadataGraph'> = {},
 ): Promise<FolderMoveV4FinalizationResult> {
-  if (!journal.destDev || !journal.destIno) {
-    return result(journal, 'quarantined', 'metadata-committed journal is missing final destination generation')
+  const ownership = await proveDestinationOwnership(
+    journalAbs,
+    journal,
+    destAbs,
+    'metadata-committed',
+  )
+  if (ownership.error) {
+    return result(journal, 'quarantined', ownership.error)
   }
-  if (!await verifyDirectoryGeneration(destAbs, {
-    dev: journal.destDev,
-    ino: journal.destIno,
-  })) {
-    return result(journal, 'quarantined', 'metadata-committed destination generation does not match journal')
+  const durableJournal = ownership.journal as FolderMoveJournalV4 & {
+    phase: 'metadata-committed'
   }
-  if (await verifyFolderMoveDestinationV4(destAbs, journal)) {
-    return result(journal, 'quarantined', 'metadata-committed destination exact parity failed')
+  if (await verifyFolderMoveDestinationV4(
+    destAbs,
+    durableJournal,
+    parityOptions(durableJournal),
+  )) {
+    return result(durableJournal, 'quarantined', 'metadata-committed destination exact parity failed')
   }
 
-  if (!hooks.verifyMetadataGraph && journal.metadataDisposition.kind === 'snapshot-restore') {
-    if (!isValidDeleteRollbackSnapshot(journal.metadataDisposition.snapshot, journal.destRel)) {
-      return result(journal, 'quarantined', 'metadata-committed snapshot is invalid')
+  if (!hooks.verifyMetadataGraph && durableJournal.metadataDisposition.kind === 'snapshot-restore') {
+    if (!isValidDeleteRollbackSnapshot(durableJournal.metadataDisposition.snapshot, durableJournal.destRel)) {
+      return result(durableJournal, 'quarantined', 'metadata-committed snapshot is invalid')
     }
-    const revived = reviveMetadataSnapshot(journal.metadataDisposition.snapshot)
+    const revived = reviveMetadataSnapshot(durableJournal.metadataDisposition.snapshot)
     const liveTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>)
       .map((row) => row.id)
     revived.preexistingTagIds = [...new Set([...liveTagIds, ...revived.preexistingTagIds])]
@@ -232,42 +305,48 @@ export async function finalizeFolderMoveV4Cleanup(
       || !rowsExactlyEqualSnapshot(live.embeddings, revived.embeddings)
       || !rowsExactlyEqualSnapshot(live.migrations, revived.migrations)) {
       return result(
-        journal,
+        durableJournal,
         'quarantined',
         'metadata-committed snapshot graph verification failed: live graph differs from snapshot',
       )
     }
   } else if (!hooks.verifyMetadataGraph) {
-    const metadataError = verifyPrefixMetadataCommitted(db, journal)
+    const metadataError = verifyPrefixMetadataCommitted(db, durableJournal)
     if (metadataError !== null) {
       return result(
-        journal,
+        durableJournal,
         'quarantined',
         `metadata-committed prefix verification failed: ${metadataError}`,
       )
     }
   }
   if (hooks.verifyMetadataGraph && !hooks.verifyMetadataGraph()) {
-    return result(journal, 'quarantined', 'metadata-committed custom graph verification failed')
+    return result(durableJournal, 'quarantined', 'metadata-committed custom graph verification failed')
   }
 
   try {
     const sourceStat = await fs.lstat(srcAbs).catch(() => null)
     if (sourceStat !== null) {
       if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
-        return result(journal, 'quarantined', 'metadata-committed source path is not a real directory')
+        return result(durableJournal, 'quarantined', 'metadata-committed source path is not a real directory')
       }
       if ((await fs.readdir(srcAbs)).length > 0) {
-        return result(journal, 'quarantined', 'metadata-committed source directory still contains undeclared entries')
+        return result(durableJournal, 'quarantined', 'metadata-committed source directory still contains undeclared entries')
       }
       await fs.rmdir(srcAbs)
     }
     await hooks.beforeJournalRemove?.()
     await removeDurableJournal(journalAbs)
+    if (durableJournal.strategy === 'replayable-move' && durableJournal.gateProof) {
+      await removeFolderMoveGateProof(destAbs, durableJournal.gateProof).catch(() => {
+        // A journal-less marker is harmless and startup recovery
+        // removes it once no v4 journal references its exact name.
+      })
+    }
   } catch (error) {
-    return result(journal, 'failed', `v4 final cleanup failed: ${(error as Error).message}`)
+    return result(durableJournal, 'failed', `v4 final cleanup failed: ${(error as Error).message}`)
   }
-  return result(journal, 'completed-rename', 'v4 metadata-committed transaction verified and cleaned')
+  return result(durableJournal, 'completed-rename', 'v4 metadata-committed transaction verified and cleaned')
 }
 
 export async function completeFolderMoveV4Metadata(
@@ -278,28 +357,44 @@ export async function completeFolderMoveV4Metadata(
   destAbs: string,
   hooks: FinalizationHooks = {},
 ): Promise<FolderMoveV4FinalizationResult> {
-  if (await verifyFolderMoveDestinationV4(destAbs, journal)) {
-    return result(journal, 'quarantined', 'files-landed physical parity failed before metadata commit')
+  const ownership = await proveDestinationOwnership(
+    journalAbs,
+    journal,
+    destAbs,
+    'files-landed',
+  )
+  if (ownership.error) {
+    return result(journal, 'quarantined', ownership.error)
+  }
+  const durableJournal = ownership.journal as FolderMoveJournalV4 & {
+    phase: 'files-landed'
+  }
+  if (await verifyFolderMoveDestinationV4(
+    destAbs,
+    durableJournal,
+    parityOptions(durableJournal),
+  )) {
+    return result(durableJournal, 'quarantined', 'files-landed physical parity failed before metadata commit')
   }
 
   if (hooks.metadataAction) {
     try {
       hooks.metadataAction()
     } catch (error) {
-      return result(journal, 'failed', `custom metadata action failed: ${(error as Error).message}`)
+      return result(durableJournal, 'failed', `custom metadata action failed: ${(error as Error).message}`)
     }
-  } else if (journal.metadataDisposition.kind === 'snapshot-restore') {
-    const snapshot = journal.metadataDisposition.snapshot
-    if (!isValidDeleteRollbackSnapshot(snapshot, journal.destRel)) {
-      return result(journal, 'quarantined', 'snapshot-restore metadata disposition is invalid')
+  } else if (durableJournal.metadataDisposition.kind === 'snapshot-restore') {
+    const snapshot = durableJournal.metadataDisposition.snapshot
+    if (!isValidDeleteRollbackSnapshot(snapshot, durableJournal.destRel)) {
+      return result(durableJournal, 'quarantined', 'snapshot-restore metadata disposition is invalid')
     }
     const entryError = validateSnapshotPhysicalEntries(
       snapshot,
-      journal.entries as unknown as FolderMoveJournalEntry[],
-      journal.destRel,
+      durableJournal.entries as unknown as FolderMoveJournalEntry[],
+      durableJournal.destRel,
     )
     if (entryError !== null) {
-      return result(journal, 'quarantined', `snapshot physical entries are invalid: ${entryError}`)
+      return result(durableJournal, 'quarantined', `snapshot physical entries are invalid: ${entryError}`)
     }
     const revived = reviveMetadataSnapshot(snapshot)
     const liveTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>)
@@ -309,22 +404,22 @@ export async function completeFolderMoveV4Metadata(
       restoreDocumentMetadataMutationCAS(
         db,
         revived,
-        current => snapshotRestoreOwnershipMatches(current, revived, journal),
+        current => snapshotRestoreOwnershipMatches(current, revived, durableJournal),
       )
     } catch (error) {
-      return result(journal, 'quarantined', `snapshot metadata CAS failed: ${(error as Error).message}`)
+      return result(durableJournal, 'quarantined', `snapshot metadata CAS failed: ${(error as Error).message}`)
     }
   } else {
     try {
-      moveDocumentMetadataPrefix(db, journal.srcRel, journal.destRel)
+      moveDocumentMetadataPrefix(db, durableJournal.srcRel, durableJournal.destRel)
     } catch (error) {
-      return result(journal, 'failed', `metadata prefix move failed: ${(error as Error).message}`)
+      return result(durableJournal, 'failed', `metadata prefix move failed: ${(error as Error).message}`)
     }
   }
 
   await hooks.afterMetadataMutationBeforeJournalRewrite?.()
   const metadataCommitted = {
-    ...journal,
+    ...durableJournal,
     phase: 'metadata-committed' as const,
   }
   try {

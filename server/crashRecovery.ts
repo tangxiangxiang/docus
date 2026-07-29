@@ -100,7 +100,9 @@ import {
   type FolderMoveJournalStrategy,
 } from './documentFileLifecycle.js'
 import {
+  createFolderMoveGateProof,
   FOLDER_MOVE_JOURNAL_VERSION,
+  isFolderMoveGateMarkerName,
   isValidDeleteRollbackSnapshot,
   listPhysicalMoveEntries,
   reviveMetadataSnapshot,
@@ -117,6 +119,10 @@ import {
 import { validateFolderMoveJournalV4Provenance as validateFolderMoveJournalV4RootProvenance } from './folderMoveJournalValidation.js'
 import { executeFolderMoveV4Physical } from './folderMoveV4Executor.js'
 import { parseDurableFolderMoveJournalV4 } from './folderMoveV4DurableJournal.js'
+import {
+  removeFolderMoveGateProof,
+  verifyFolderMoveGateProof,
+} from './folderMoveGateProof.js'
 import {
   completeFolderMoveV4Metadata as completeFolderMoveV4MetadataShared,
   finalizeFolderMoveV4Cleanup as finalizeFolderMoveV4CleanupShared,
@@ -1227,6 +1233,7 @@ async function recoverRenameReferencesJournal(
             strategy: moveStrategy,
             sourceDev: destStat.dev.toString(),
             sourceIno: destStat.ino.toString(),
+            gateProof: createFolderMoveGateProof(),
             ...(moveJournalEntries.length === 0 ? { emptyTree: true } : {}),
             entries: moveJournalEntries,
             directories: moveDirectories,
@@ -1353,13 +1360,32 @@ type AtomicGateCreatedResolution =
   | { kind: 'rename-landed'; finalGeneration: { dev: string; ino: string } }
   | { kind: 'quarantined'; reason: string }
 
-async function isEmptyDirectory(directoryAbs: string): Promise<boolean> {
+async function isEmptyDirectoryExcept(
+  directoryAbs: string,
+  ignoredName?: string,
+): Promise<boolean> {
   try {
     const stat = await fs.lstat(directoryAbs)
     if (!stat.isDirectory() || stat.isSymbolicLink()) return false
-    return (await fs.readdir(directoryAbs)).length === 0
+    const entries = await fs.readdir(directoryAbs)
+    return entries.every(name => ignoredName !== undefined && name === ignoredName)
   } catch {
     return false
+  }
+}
+
+async function readDirectoryGeneration(
+  directoryAbs: string,
+): Promise<{ dev: string; ino: string } | null> {
+  try {
+    const stat = await fs.lstat(directoryAbs, { bigint: true })
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return null
+    return {
+      dev: stat.dev.toString(),
+      ino: stat.ino.toString(),
+    }
+  } catch {
+    return null
   }
 }
 
@@ -1396,7 +1422,14 @@ async function resolveAtomicGateCreatedState(
     && await verifyDirectoryGeneration(destAbs, sourceGeneration)
 
   if (sourceMatchesOriginal && destinationMatchesGate) {
-    if (!await isEmptyDirectory(destAbs)) {
+    if (journal.gateProof
+      && !await verifyFolderMoveGateProof(destAbs, journal.gateProof)) {
+      return {
+        kind: 'quarantined',
+        reason: 'atomic destination gate proof is missing or mismatched',
+      }
+    }
+    if (!await isEmptyDirectoryExcept(destAbs, journal.gateProof?.markerName)) {
       return {
         kind: 'quarantined',
         reason: 'atomic destination gate contains undeclared external content',
@@ -1587,6 +1620,14 @@ async function recoverFolderMoveJournalV4(
       }
       let finalGeneration: { dev: string; ino: string }
       if (resolution.kind === 'rename-not-landed') {
+        if (journal.gateProof) {
+          try {
+            await removeFolderMoveGateProof(destAbs, journal.gateProof)
+          } catch (error) {
+            note(journalAbs, 'failed', `atomic recovery gate marker removal failed: ${(error as Error).message}`)
+            return
+          }
+        }
         try {
           await fs.rename(srcAbs, destAbs)
         } catch (error) {
@@ -1644,12 +1685,31 @@ async function recoverFolderMoveJournalV4(
       note(journalAbs, 'quarantined', 'replayable gate-created journal is missing gate generation')
       return
     }
-    if (!await verifyDirectoryGeneration(destAbs, {
+    if (journal.gateProof) {
+      if (!await verifyFolderMoveGateProof(destAbs, journal.gateProof)) {
+        note(journalAbs, 'quarantined', 'replayable destination gate proof is missing or mismatched')
+        return
+      }
+      const currentGeneration = await readDirectoryGeneration(destAbs)
+      if (currentGeneration === null) {
+        note(journalAbs, 'quarantined', 'replayable destination gate proof is missing or mismatched')
+        return
+      }
+      if (journal.destDev !== currentGeneration.dev
+        || journal.destIno !== currentGeneration.ino) {
+        journal = {
+          ...journal,
+          destDev: currentGeneration.dev,
+          destIno: currentGeneration.ino,
+        }
+        await rewriteDurableJournal(journalAbs, journal)
+      }
+    } else if (!await verifyDirectoryGeneration(destAbs, {
       dev: journal.destDev,
       ino: journal.destIno,
     })) {
-      note(journalAbs, 'quarantined', 'replayable destination gate generation does not match journal')
-      return
+        note(journalAbs, 'quarantined', 'replayable destination gate generation does not match journal')
+        return
     }
     const placements = await Promise.all(entries.map((entry) =>
       classifyPlacementV4(
@@ -1669,13 +1729,21 @@ async function recoverFolderMoveJournalV4(
           vaultRoot: contentDir,
           entries: remainingEntries,
           directories,
+          ignoredDestinationEntries: journal.gateProof
+            ? [journal.gateProof.markerName]
+            : [],
+          preservePartialLandingOnError: true,
         })
       } catch (error) {
         note(journalAbs, 'failed', `replayable recovery failed: ${(error as Error).message}`)
         return
       }
     }
-    const parityFailed = await verifyFolderMoveDestinationV4(destAbs, journal)
+    const parityFailed = await verifyFolderMoveDestinationV4(destAbs, journal, {
+      ignoredRelativePaths: journal.gateProof
+        ? [journal.gateProof.markerName]
+        : [],
+    })
     if (parityFailed) {
       note(journalAbs, 'quarantined', 'replayable gate-created destination exact parity failed')
       return
@@ -1694,12 +1762,31 @@ async function recoverFolderMoveJournalV4(
       note(journalAbs, 'quarantined', 'files-landed journal is missing final destination generation')
       return
     }
-    if (!await verifyDirectoryGeneration(destAbs, {
+    if (journal.strategy === 'replayable-move' && journal.gateProof) {
+      if (!await verifyFolderMoveGateProof(destAbs, journal.gateProof)) {
+        note(journalAbs, 'quarantined', 'replayable destination gate proof is missing or mismatched')
+        return
+      }
+      const currentGeneration = await readDirectoryGeneration(destAbs)
+      if (currentGeneration === null) {
+        note(journalAbs, 'quarantined', 'replayable destination gate proof is missing or mismatched')
+        return
+      }
+      if (journal.destDev !== currentGeneration.dev
+        || journal.destIno !== currentGeneration.ino) {
+        journal = {
+          ...journal,
+          destDev: currentGeneration.dev,
+          destIno: currentGeneration.ino,
+        }
+        await rewriteDurableJournal(journalAbs, journal)
+      }
+    } else if (!await verifyDirectoryGeneration(destAbs, {
       dev: journal.destDev,
       ino: journal.destIno,
     })) {
-      note(journalAbs, 'quarantined', 'files-landed destination generation does not match journal')
-      return
+        note(journalAbs, 'quarantined', 'files-landed destination generation does not match journal')
+        return
     }
     await completeFolderMoveV4Metadata(
       contentDir,
@@ -2692,6 +2779,58 @@ async function recoverDirectory(
   }
 }
 
+async function cleanupOrphanFolderMoveGateMarkers(
+  contentDir: string,
+  note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
+): Promise<void> {
+  const referencedMarkerNames = new Set<string>()
+  const markerPaths: string[] = []
+  await walkDirectories(contentDir, async (dir, entries) => {
+    for (const entry of entries) {
+      const abs = path.join(dir, entry.name)
+      if (isFolderMoveGateMarkerName(entry.name)) {
+        markerPaths.push(abs)
+      }
+      if (!entry.isFile() || !JOURNAL_RE.test(entry.name)) continue
+      try {
+        const value = JSON.parse(await fs.readFile(abs, 'utf8')) as {
+          version?: unknown
+          gateProof?: { markerName?: unknown }
+        }
+        if (value.version === 4
+          && isFolderMoveGateMarkerName(value.gateProof?.markerName)) {
+          referencedMarkerNames.add(value.gateProof.markerName)
+        }
+      } catch {
+        // Unreadable journals remain authoritative artifacts. Without
+        // a trustworthy markerName there is no proof that an otherwise
+        // orphaned marker belongs to them.
+      }
+    }
+  })
+
+  for (const markerAbs of markerPaths) {
+    const markerName = path.basename(markerAbs)
+    if (referencedMarkerNames.has(markerName)) continue
+    if (!await isPhysicallyContained(contentDir, path.dirname(markerAbs))) {
+      note(markerAbs, 'quarantined', 'orphan folder gate marker parent escapes the vault')
+      continue
+    }
+    try {
+      const stat = await fs.lstat(markerAbs)
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        note(markerAbs, 'quarantined', 'orphan folder gate marker is not a regular file')
+        continue
+      }
+      await fs.rm(markerAbs, { force: true })
+      await syncParentDirectoryBestEffort(markerAbs)
+      note(markerAbs, 'cleaned', 'orphan folder gate marker removed')
+    } catch (error) {
+      note(markerAbs, 'failed', `orphan folder gate marker cleanup failed: ${(error as Error).message}`)
+    }
+  }
+}
+
 /**
  * Reconcile interrupted atomic operations found under `contentDir`.
  * Runs at startup before the HTTP server accepts requests. Never
@@ -2788,6 +2927,7 @@ export async function recoverInterruptedOperations(
       }
       if (!progressed) break
     }
+    await cleanupOrphanFolderMoveGateMarkers(contentDir, note)
   } catch (error) {
     note(contentDir, 'failed', (error as Error).message)
   }

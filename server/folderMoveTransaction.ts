@@ -22,16 +22,14 @@
 //     byte-identical external replacement from the original landed
 //     generation — hash alone cannot tell them apart (round-9 F4).
 //
-// v4 (round-11) replaces the v3 gate-token-on-disk ownership proof
-// with a destination-directory (dev, ino) plus a four-state phase
-// machine (prepared → gate-created → files-landed → metadata-committed).
-// State MUST be inferred from the persisted phase, never from the
-// presence/absence of a token file. v1–v3 journals remain parseable
-// for backwards-compat recovery but quarantine when their weak
-// generation proof is insufficient.
+// v4 uses a four-state phase machine (prepared → gate-created →
+// files-landed → metadata-committed). New v4 transactions add an
+// unpredictable marker proof to close directory-generation ABA;
+// marker-less v4 journals remain parseable under strict legacy
+// generation rules. State is always inferred from the persisted phase.
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { sha256HexBuffer } from './atomicTextWrite.js'
 import type { DocumentMetadataMutationSnapshot } from './documentMetadata.js'
 import { UnsupportedDirectoryMoveError } from './documentFileLifecycle.js'
@@ -512,9 +510,43 @@ export type FolderMoveJournalEntryV4 = {
   documentPath?: string
 }
 
+export type FolderMoveGateProof = {
+  /** Strict basename of the marker stored inside the destination gate. */
+  markerName: string
+  /** 32 unpredictable random bytes encoded as lowercase hex. */
+  secret: string
+}
+
+const GATE_MARKER_RE = /^\.docus-folder-gate-[0-9a-f-]{36}$/
+const GATE_SECRET_RE = /^[0-9a-f]{64}$/
+
+export function isFolderMoveGateMarkerName(value: unknown): value is string {
+  return typeof value === 'string'
+    && path.basename(value) === value
+    && GATE_MARKER_RE.test(value)
+}
+
+export function createFolderMoveGateProof(): FolderMoveGateProof {
+  return {
+    markerName: `.docus-folder-gate-${randomUUID()}`,
+    secret: randomBytes(32).toString('hex'),
+  }
+}
+
+export function validateFolderMoveGateProof(
+  proof: unknown,
+): proof is FolderMoveGateProof {
+  if (!proof || typeof proof !== 'object') return false
+  const item = proof as Partial<FolderMoveGateProof>
+  return isFolderMoveGateMarkerName(item.markerName)
+    && typeof item.secret === 'string'
+    && GATE_SECRET_RE.test(item.secret)
+}
+
 /** v4 journal — the durable, single-source-of-truth record of a
- * folder-move transaction. Ownership proof = destination directory
- * (dev, ino) + per-entry (sourceDev, sourceIno, sourceHash). */
+ * folder-move transaction. New journals bind the destination gate to
+ * an unpredictable durable marker in addition to directory and entry
+ * generations. Legacy v4 journals may omit `gateProof`. */
 export type FolderMoveJournalV4 = {
   version: typeof FOLDER_MOVE_JOURNAL_VERSION
   op: 'folder-rename' | 'folder-move'
@@ -533,6 +565,7 @@ export type FolderMoveJournalV4 = {
    */
   destDev?: string
   destIno?: string
+  gateProof?: FolderMoveGateProof
   emptyTree?: true
   entries: FolderMoveJournalEntryV4[]
   directories: string[]

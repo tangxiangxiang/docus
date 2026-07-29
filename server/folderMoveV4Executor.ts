@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import {
   createDestinationGate,
   rewriteDurableJournal,
+  syncParentDirectoryBestEffort,
 } from './atomicTextWrite.js'
 import {
   moveFolderEntriesIntoExistingGate,
@@ -11,6 +12,10 @@ import {
   verifyFolderMoveDestinationV4,
   type FolderMoveJournalStrategy,
 } from './documentFileLifecycle.js'
+import {
+  removeFolderMoveGateProof,
+  writeFolderMoveGateProof,
+} from './folderMoveGateProof.js'
 import type { FolderMoveJournalV4 } from './folderMoveTransaction.js'
 
 export type FolderMoveV4DurableState = {
@@ -98,6 +103,15 @@ export async function executeFolderMoveV4Physical(
     if (!gate) {
       throw new RenameDestinationOccupiedError(destAbs)
     }
+    if (journal.gateProof) {
+      try {
+        await writeFolderMoveGateProof(destAbs, journal.gateProof)
+      } catch (error) {
+        await fs.rmdir(destAbs).catch(() => {})
+        await syncParentDirectoryBestEffort(destAbs)
+        throw error
+      }
+    }
     journal = {
       ...journal,
       phase: 'gate-created',
@@ -109,6 +123,12 @@ export async function executeFolderMoveV4Physical(
     await input.afterGateCreated?.(destAbs, gate)
 
     if (strategy === 'atomic-rename') {
+      // POSIX can replace an empty directory, so remove the verified
+      // marker immediately before rename. A landed atomic source
+      // replaces the gate generation and does not retain the marker.
+      if (journal.gateProof) {
+        await removeFolderMoveGateProof(destAbs, journal.gateProof)
+      }
       try {
         await fs.rename(srcAbs, destAbs)
       } catch (error) {
@@ -159,13 +179,24 @@ export async function executeFolderMoveV4Physical(
         destIno: finalGeneration.ino,
       }
     } else {
+      // Enter uncertainty before the mover: its first create-only link
+      // can land before any hook or later I/O failure becomes visible
+      // to this boundary.
       state = { ...state, physicalMayHaveLanded: true }
       await moveFolderEntriesIntoExistingGate(srcAbs, destAbs, {
         vaultRoot: contentDir,
         entries: journal.entries,
         directories: journal.directories,
+        ignoredDestinationEntries: journal.gateProof
+          ? [journal.gateProof.markerName]
+          : [],
+        preservePartialLandingOnError: true,
       })
-      if (await verifyFolderMoveDestinationV4(destAbs, journal)) {
+      if (await verifyFolderMoveDestinationV4(destAbs, journal, {
+        ignoredRelativePaths: journal.gateProof
+          ? [journal.gateProof.markerName]
+          : [],
+      })) {
         throw new FolderMoveExactParityError('replayable destination exact parity failed', state)
       }
       journal = {
