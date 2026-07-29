@@ -2,10 +2,31 @@ import { promises as fs } from 'node:fs'
 
 import {
   isSerializedMetadataSnapshot,
-  hasValidSnapshotRowSchema,
   validateFolderMoveGateProof,
   type FolderMoveJournalV4,
+  type SerializedMetadataSnapshot,
 } from './folderMoveTransaction.js'
+
+/**
+ * The parser's closed-graph check (`isSerializedMetadataSnapshot`)
+ * requires stable-sorted top-level arrays. Production snapshots are
+ * written sorted by `serializeMetadataSnapshot`, but a well-formed
+ * snapshot whose rows arrive unsorted must still reach the trust
+ * boundary so the actual reason (missing provenance, cross-row
+ * mismatch, etc.) can be reported. Sort a shallow copy here — the
+ * durable on-disk journal is unchanged.
+ */
+function sortSerializedSnapshotArrays(
+  snapshot: SerializedMetadataSnapshot,
+): SerializedMetadataSnapshot {
+  return {
+    ...snapshot,
+    paths: [...snapshot.paths].sort(),
+    documentIds: [...snapshot.documentIds].sort(),
+    tagIds: [...snapshot.tagIds].sort((a, b) => a - b),
+    preexistingTagIds: [...snapshot.preexistingTagIds].sort((a, b) => a - b),
+  }
+}
 
 function normalizeGenerationDecimal(
   value: unknown,
@@ -83,11 +104,27 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
     if (entry.phase !== 'metadata-committed'
       && disposition.committedSnapshot !== undefined) return null
   } else if (disposition.kind === 'snapshot-restore') {
-    if (!hasValidSnapshotRowSchema(disposition.snapshot)) return null
+    // P1-2: durable snapshot sites require the closed-graph check —
+    // top-level ID set equality, row set equality, duplicate detection,
+    // cross-table references. The weaker row-schema check is no longer
+    // acceptable for v4 durable snapshot persistence.
+    //
+    // Stable-sort is enforced by the trust boundary
+    // (validateRound17SnapshotRestoreDisposition checks the sorted
+    // footprint / physicalDocumentIds), not by the parser: production
+    // snapshots are written sorted by serializeMetadataSnapshot, but a
+    // snapshot whose rows are well-formed but arrived in a different
+    // on-disk order must still reach the trust boundary so the actual
+    // reason (e.g. metadata-only document lacks provenance) can be
+    // reported. Sorting in the parser is a no-op for production data
+    // and lets the trust boundary see the same shape it would have
+    // seen for a sorted-on-disk journal.
+    const sortedSnapshot = sortSerializedSnapshotArrays(disposition.snapshot as SerializedMetadataSnapshot)
+    if (!isSerializedMetadataSnapshot(sortedSnapshot)) return null
     if (disposition.expectedCurrentSnapshot !== undefined
-      && !hasValidSnapshotRowSchema(
-        disposition.expectedCurrentSnapshot,
-      )) return null
+      && !isSerializedMetadataSnapshot(
+        sortSerializedSnapshotArrays(
+          disposition.expectedCurrentSnapshot as SerializedMetadataSnapshot))) return null
     if (disposition.physicalDocumentIds !== undefined
       && (!Array.isArray(disposition.physicalDocumentIds)
         || !disposition.physicalDocumentIds.every((id) =>

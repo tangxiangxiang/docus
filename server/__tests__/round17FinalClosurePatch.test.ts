@@ -482,37 +482,73 @@ function validBaseSnapshot(): SerializedMetadataSnapshot {
 }
 
 describe('Round-17 F8–F10 closed metadata snapshot graphs (P1-2)', () => {
-  it('F8 row schema passes but paths omits a document path → closed graph fails', () => {
+  it('F8 v4 parser rejects a snapshot-restore snapshot whose paths omit a document path', async () => {
+    const proj = path.join(vault, 'proj')
+    await fs.mkdir(proj)
     const base = validBaseSnapshot()
-    expect(hasValidSnapshotRowSchema(base)).toBe(true)
-    // Tamper: drop a path from the top-level ID set but keep the row.
     const tampered: SerializedMetadataSnapshot = {
       ...base,
       paths: [],
     }
-    // The closed-graph validator must reject this; the row-schema-only
-    // validator currently does not.
-    expect(isSerializedMetadataSnapshot(tampered)).toBe(true)
-    expect(
-      import('../metadataSnapshotClosure').then(m =>
-        m.validateSerializedMetadataSnapshot(tampered, { mode: 'closed-graph' })),
-    ).resolves.toBeNull()
+    // hasValidSnapshotRowSchema would have accepted this (rows-typed
+    // but undeclared path). The parser (closed-graph) must reject.
+    expect(hasValidSnapshotRowSchema(tampered)).toBe(true)
+    const journalPath = path.join(proj, '.proj.docus-journal-f8-closed-graph')
+    await writeDurableJournal(journalPath, {
+      version: 4,
+      op: 'folder-move',
+      phase: 'gate-created',
+      srcRel: 'proj',
+      destRel: 'dest',
+      strategy: 'atomic-rename',
+      sourceDev: '0',
+      sourceIno: '0',
+      entries: [],
+      directories: [],
+      metadataDisposition: {
+        kind: 'snapshot-restore',
+        snapshot: tampered,
+      },
+    })
+    const { parseDurableFolderMoveJournalV4 } = await import('../folderMoveV4DurableJournal')
+    const raw = await fs.readFile(journalPath, 'utf8')
+    expect(parseDurableFolderMoveJournalV4(raw)).toBeNull()
   })
 
-  it('F9 documentIds lists an id not present in documents[] → closed graph catches', () => {
+  it('F9 v4 parser rejects a snapshot-restore snapshot whose documentIds lists an id not in documents[]', async () => {
+    const proj = path.join(vault, 'proj')
+    await fs.mkdir(proj)
     const base = validBaseSnapshot()
     const tampered: SerializedMetadataSnapshot = {
       ...base,
       documentIds: ['a-id', 'phantom-id'],
     }
-    expect(isSerializedMetadataSnapshot(tampered)).toBe(true)
-    expect(
-      import('../metadataSnapshotClosure').then(m =>
-        m.validateSerializedMetadataSnapshot(tampered, { mode: 'closed-graph' })),
-    ).resolves.toBeNull()
+    expect(hasValidSnapshotRowSchema(tampered)).toBe(true)
+    const journalPath = path.join(proj, '.proj.docus-journal-f9-closed-graph')
+    await writeDurableJournal(journalPath, {
+      version: 4,
+      op: 'folder-move',
+      phase: 'gate-created',
+      srcRel: 'proj',
+      destRel: 'dest',
+      strategy: 'atomic-rename',
+      sourceDev: '0',
+      sourceIno: '0',
+      entries: [],
+      directories: [],
+      metadataDisposition: {
+        kind: 'snapshot-restore',
+        snapshot: tampered,
+      },
+    })
+    const { parseDurableFolderMoveJournalV4 } = await import('../folderMoveV4DurableJournal')
+    const raw = await fs.readFile(journalPath, 'utf8')
+    expect(parseDurableFolderMoveJournalV4(raw)).toBeNull()
   })
 
-  it('F10 migrations duplicate a path → closed graph catches (no leaked migration copy)', () => {
+  it('F10 v4 parser rejects a snapshot-restore snapshot with duplicate migration path', async () => {
+    const proj = path.join(vault, 'proj')
+    await fs.mkdir(proj)
     const base = validBaseSnapshot()
     const tampered: SerializedMetadataSnapshot = {
       ...base,
@@ -524,8 +560,8 @@ describe('Round-17 F8–F10 closed metadata snapshot graphs (P1-2)', () => {
         source_hash: 'h',
         error: '',
         updated_at: 1,
-        frontmatter_backup: null,
-        cleaned_hash: null,
+        frontmatter_backup: '',
+        cleaned_hash: '',
       }, {
         path: 'proj/migration',
         document_id: 'a-id',
@@ -534,15 +570,31 @@ describe('Round-17 F8–F10 closed metadata snapshot graphs (P1-2)', () => {
         source_hash: 'h',
         error: '',
         updated_at: 1,
-        frontmatter_backup: null,
-        cleaned_hash: null,
+        frontmatter_backup: '',
+        cleaned_hash: '',
       }],
     }
-    expect(isSerializedMetadataSnapshot(tampered)).toBe(true)
-    expect(
-      import('../metadataSnapshotClosure').then(m =>
-        m.validateSerializedMetadataSnapshot(tampered, { mode: 'closed-graph' })),
-    ).resolves.toBeNull()
+    expect(hasValidSnapshotRowSchema(tampered)).toBe(true)
+    const journalPath = path.join(proj, '.proj.docus-journal-f10-closed-graph')
+    await writeDurableJournal(journalPath, {
+      version: 4,
+      op: 'folder-move',
+      phase: 'gate-created',
+      srcRel: 'proj',
+      destRel: 'dest',
+      strategy: 'atomic-rename',
+      sourceDev: '0',
+      sourceIno: '0',
+      entries: [],
+      directories: [],
+      metadataDisposition: {
+        kind: 'snapshot-restore',
+        snapshot: tampered,
+      },
+    })
+    const { parseDurableFolderMoveJournalV4 } = await import('../folderMoveV4DurableJournal')
+    const raw = await fs.readFile(journalPath, 'utf8')
+    expect(parseDurableFolderMoveJournalV4(raw)).toBeNull()
   })
 })
 

@@ -27,9 +27,11 @@ import {
   removeFolderMoveGateProof,
   verifyFolderMoveGateProof,
 } from './folderMoveGateProof.js'
+import { validateSerializedMetadataSnapshot } from './metadataSnapshotClosure.js'
 import {
   isValidDeleteRollbackSnapshot,
-  isSerializedMetadataSnapshot,
+} from './folderMoveTransaction.js'
+import {
   deriveCommittedPrefixSnapshot,
   reviveMetadataSnapshot,
   serializeMetadataSnapshot,
@@ -394,7 +396,7 @@ export async function finalizeFolderMoveV4Cleanup(
     const isRound17B = disposition.ownershipFootprint !== undefined
       && disposition.metadataOnlyDocumentProofs !== undefined
     if (isRound17B
-      ? !isSerializedMetadataSnapshot(disposition.snapshot)
+      ? !(await validateSerializedMetadataSnapshot(disposition.snapshot, { mode: 'closed-graph' }))
       : !isValidDeleteRollbackSnapshot(disposition.snapshot, durableJournal.destRel)) {
       return result(durableJournal, 'quarantined', 'metadata-committed snapshot is invalid')
     }
@@ -558,7 +560,7 @@ export async function completeFolderMoveV4Metadata(
     const isRound17B = disposition.ownershipFootprint !== undefined
       && disposition.metadataOnlyDocumentProofs !== undefined
     if (isRound17B
-      ? !isSerializedMetadataSnapshot(snapshot)
+      ? !(await validateSerializedMetadataSnapshot(snapshot, { mode: 'closed-graph' }))
       : !isValidDeleteRollbackSnapshot(snapshot, durableJournal.destRel)) {
       return result(durableJournal, 'quarantined', 'snapshot-restore metadata disposition is invalid')
     }
