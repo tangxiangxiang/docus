@@ -91,6 +91,7 @@ import {
   gateTokenName,
   isPhysicallyContained,
   moveFolderEntriesIntoExistingGate,
+  platformDirectoryMoveStrategy,
   resolveDirectoryMoveStrategy,
   pruneEmptyDirectories,
   RenameDestinationOccupiedError,
@@ -1620,6 +1621,14 @@ async function recoverFolderMoveJournalV4(
       }
       let finalGeneration: { dev: string; ino: string }
       if (resolution.kind === 'rename-not-landed') {
+        if (platformDirectoryMoveStrategy !== 'atomic-rename') {
+          note(
+            journalAbs,
+            'quarantined',
+            'atomic directory rename is unsupported on this platform',
+          )
+          return
+        }
         if (journal.gateProof) {
           try {
             await removeFolderMoveGateProof(destAbs, journal.gateProof)
@@ -2453,6 +2462,7 @@ async function recoverDirectory(
   entries: Dirent[],
   getInodeMap: () => Promise<Map<string, string[]>>,
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
+  terminalArtifacts: ReadonlySet<string>,
 ): Promise<void> {
   const groups = new Map<string, ArtifactGroup>()
   const groupFor = (base: string): ArtifactGroup => {
@@ -2502,6 +2512,7 @@ async function recoverDirectory(
     const targetAbs = path.join(dir, group.base)
     for (const manifestName of group.legacyQuarantineManifests.sort()) {
       const manifestAbs = path.join(dir, manifestName)
+      if (terminalArtifacts.has(path.resolve(manifestAbs))) continue
       try {
         const manifest = parseLegacyDeleteQuarantineManifest(await fs.readFile(manifestAbs, 'utf8'))
         const expectedMetaPath = metadataPathFor(vaultRelative(contentDir, targetAbs))
@@ -2530,6 +2541,7 @@ async function recoverDirectory(
     }
     for (const manifestName of group.deleteManifests.sort()) {
       const manifestAbs = path.join(dir, manifestName)
+      if (terminalArtifacts.has(path.resolve(manifestAbs))) continue
       try {
         const manifest = parseDeleteReuseManifest(await fs.readFile(manifestAbs, 'utf8'))
         if (!manifest || !isValidPathSyntax(manifest.path)) {
@@ -2583,6 +2595,7 @@ async function recoverDirectory(
     const orderedJournals: Array<{ name: string; raw: string; references: boolean }> = []
     for (const journalName of group.journals.sort()) {
       const journalAbs = path.join(dir, journalName)
+      if (terminalArtifacts.has(path.resolve(journalAbs))) continue
       try {
         const raw = await fs.readFile(journalAbs, 'utf8')
         orderedJournals.push({ name: journalName, raw, references: parseRenameReferencesJournal(raw) !== null })
@@ -2593,6 +2606,7 @@ async function recoverDirectory(
     orderedJournals.sort((a, b) => Number(a.references) - Number(b.references) || a.name.localeCompare(b.name))
     for (const { name: journalName, raw: journalRaw } of orderedJournals) {
       const journalAbs = path.join(dir, journalName)
+      if (terminalArtifacts.has(path.resolve(journalAbs))) continue
       try {
         if (!await exists(journalAbs)) continue
         const replaceJournal = parseReplaceJournal(journalRaw)
@@ -2843,7 +2857,19 @@ export async function recoverInterruptedOperations(
   db: DatabaseT,
 ): Promise<RecoveryReport> {
   const actions: RecoveryAction[] = []
+  const terminalArtifacts = new Set<string>()
+  const terminalActionKeys = new Set<string>()
   const note = (absPath: string, action: RecoveryAction['action'], detail?: string): void => {
+    if (action === 'failed' || action === 'quarantined') {
+      terminalArtifacts.add(path.resolve(absPath))
+      const terminalActionKey = JSON.stringify([
+        path.resolve(absPath),
+        action,
+        detail,
+      ])
+      if (terminalActionKeys.has(terminalActionKey)) return
+      terminalActionKeys.add(terminalActionKey)
+    }
     actions.push(detail === undefined
       ? { file: vaultRelative(contentDir, absPath), action }
       : { file: vaultRelative(contentDir, absPath), action, detail })
@@ -2912,8 +2938,25 @@ export async function recoverInterruptedOperations(
             }
           }
         }
-        await recoverDirectory(contentDir, db, dir, entries, getInodeMap, note)
+        await recoverDirectory(
+          contentDir,
+          db,
+          dir,
+          entries,
+          getInodeMap,
+          note,
+          terminalArtifacts,
+        )
       })
+      // A quarantine can also mean "deferred to a companion artifact".
+      // If this pass completed/restored/cleaned anything, let retained
+      // artifacts re-evaluate against that new state on the next pass.
+      // With no non-terminal progress, failed/quarantined artifacts are
+      // terminal for this invocation and remain skipped.
+      if (actions.slice(before).some((action) =>
+        action.action !== 'failed' && action.action !== 'quarantined')) {
+        terminalArtifacts.clear()
+      }
       // +4 gives headroom for the deepest plausible chain plus the
       // final no-progress detection pass; hard ceiling guards cycles.
       if (pass === 0) maxPasses = Math.min(Math.max(maxPasses, authoritativeArtifacts + 4), 64)
