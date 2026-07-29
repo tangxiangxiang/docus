@@ -18,6 +18,9 @@
 //        'reverse-journal-remove'    — just before reverse journal removal
 //        'reverse-prepared'           — reverse journal durable, before gate
 //        'reverse-handoff'            — owner gone, dependent still durable
+//        'bind-owner-pending'         — owner-pending rewrite; v4 not yet durable
+//        'v4-owner-durable'           — v4 owner journal durable; pending still
+//        'owner-durable-mark'         — mark owner durable; handoff complete
 // The vault must hold proj/a.md, proj/image.bin, proj/nested/b.md and
 // ref-a.md linking into the folder.
 import Database from 'better-sqlite3'
@@ -65,6 +68,21 @@ if (point === 'rollback-after-tree') {
 }
 if (point === 'reverse-prepared') {
   raceHooks.afterRenameRollbackPrepared = () => readyAndWait(point)
+}
+// F1 / F2 owner-binding crash seams. The route binds owner-pending durably,
+// then durably rewrites the flipped v4 owner journal (the second durable
+// write), then promotes the companion to owner-durable. The fixture waits
+// at each of the three seams: bind-owner-pending (after pending-rewite,
+// before v4 owner journal rewrite), v4-owner-durable (after v4 rewrite,
+// before owner-durable mark), owner-durable-mark (after mark).
+if (point === 'bind-owner-pending') {
+  raceHooks.afterBindOwnerPending = () => readyAndWait(point)
+}
+if (point === 'v4-owner-durable') {
+  raceHooks.afterV4OwnerJournalDurable = () => readyAndWait(point)
+}
+if (point === 'owner-durable-mark') {
+  raceHooks.afterOwnerDurableMark = () => readyAndWait(point)
 }
 if (point === 'reverse-handoff') {
   raceHooks.afterReferenceWrites = () => {
