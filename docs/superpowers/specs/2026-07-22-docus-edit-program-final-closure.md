@@ -264,6 +264,62 @@ The full crash suite, Round-16/folder routes, build, full test corpus,
 and the four-platform workflow remain to be bound to the final
 implementation SHA. This section therefore does not declare `READY`,
 `CLOSED`, or `SEALED`.
+
+## Round-17C Reference Identity and Created-Tag Provenance Closure
+
+**Status:** Reopened. **Current closure commit:** not assigned. Final CI
+evidence is published in the annotated closure tag/release rather than
+written back into the implementation SHA that CI verifies.
+
+Round-17C closes the final two trust-boundary findings without changing
+journal version 4, the ownership footprint, the physical folder mover,
+or strict restore semantics:
+
+- A companion reference path no longer proves identity by itself.
+  Restore metadata-only proofs and expected-current-only reference
+  documents both call one structured matcher that requires exact
+  `documentId` equality and exact equality with either `sourcePath` or
+  `writePath`. The former string concatenation plus prefix/suffix
+  matching is gone. Companion operation, direction, complete identity
+  rows, and before/after hashes remain exact.
+- A tag in the expected-current delta is not sufficient evidence that
+  the failed transaction created it. Every `createdMetadataIds.tagIds`
+  member must be referenced in the expected-current graph by a
+  durable transaction document: a physical document, a transaction
+  created document, or a metadata-only document with its own durable
+  proof. Transaction-created documents must themselves lie under one
+  of the folder endpoints or have the exact companion reference
+  mapping.
+- Strict restore still removes a declared created tag only after the
+  transaction-owned relations have been restored and the live
+  `document_tags` table has no remaining reference to that tag. It
+  never performs a global orphan-tag cleanup, and an external
+  successful document/tag relation is retained.
+
+The dedicated
+`round17cFolderMoveReferenceIdentityClosure.test.ts` records the RED
+counterexamples for same-path/different-ID restore proof,
+expected-current identity mismatch, a forged unreferenced created tag,
+and full Startup Recovery. It also guards wrong and prefix-like paths,
+valid source/write mappings, valid created/physical tag owners, an
+unrelated claimed owner, and preservation of an external successful
+tag relation. The Recovery case uses a real parseable v4 folder journal
+plus its companion artifact and proves that forged identity is
+quarantined before CAS, with live metadata and both journals retained.
+
+Local focused evidence at documentation time:
+
+| Verification | Result |
+| ------------ | ------ |
+| `round17cFolderMoveReferenceIdentityClosure.test.ts` | 11 passed |
+| Round-17B + Round-17C trust-boundary tests | 26 passed |
+| forged-reference Startup Recovery case | passed |
+| `npm run typecheck` with RED test source | passed |
+
+The remaining Round-17/crash/folder-route matrix, build, full test
+corpus, and four-platform workflow are intentionally verified after
+this documentation commit. This section therefore does not declare
+`READY`, `CLOSED`, or `SEALED`.
 - Non-blocking artifacts:
   - Monaco dev-server "Canceled" unhandled-rejection teardown noise during navigation (third-party teardown noise; present in every sealed round; no user-visible effect).
   - Documentation drift (historical examples, not contracts): `README.md:241` / `README.zh-CN.md:219` and the `2026-06-07-llm-integration.md` plan example still mention the legacy `currentNoteContent` request field, which the server ignores (liveContext is the only content door — enforced by `live-context.test.ts`). Per-round test counts inside the sealed Edit-09/10 specs are snapshots of their closure rounds; current totals live in this document.
