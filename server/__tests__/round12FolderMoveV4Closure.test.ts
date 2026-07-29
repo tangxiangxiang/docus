@@ -268,7 +268,7 @@ describe('v4 directory generation parsing', () => {
 // ─── Issue 5: metadata-committed prefix recovery ──────────────────
 
 describe('metadata-committed prefix recovery', () => {
-  it('removes journal when dest metadata exists under prefix', async () => {
+  it('retains a legacy committed journal that lacks an exact metadata snapshot', async () => {
     await seed({ 'ren/a.md': '# hello\n' })
 
     const destStat = await fs.stat(path.join(vault, 'ren'), { bigint: true })
@@ -307,10 +307,13 @@ describe('metadata-committed prefix recovery', () => {
 
     const report = await recoverInterruptedOperations(vault, db)
 
-    // The journal should be removed since destRel/a metadata exists.
     const journalsAfter = await namesIn('.')
-    expect(journalsAfter.some((n) => n.includes('.docus-journal-abcdef012345'))).toBe(false)
-    expect(report.actions.some((a) => a.action === 'completed-rename')).toBe(true)
+    expect(journalsAfter.some((n) => n.includes('.docus-journal-abcdef012345'))).toBe(true)
+    expect(report.actions).toContainEqual({
+      file: '.proj.docus-journal-abcdef012345',
+      action: 'quarantined',
+      detail: 'metadata-committed prefix journal lacks exact committed snapshot',
+    })
   })
 
   it('quarantines when no dest metadata found under prefix', async () => {

@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { applyMigrations } from '../db'
-import { deleteDocumentMetadataPrefix, getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataPrefixMutation } from '../documentMetadata'
+import { deleteDocumentMetadataPrefix, getDocumentMetadata, saveDocumentMetadata, snapshotDocumentMetadataDatabase, snapshotDocumentMetadataPrefixMutation } from '../documentMetadata'
 import { sha256Hex, sha256HexBuffer } from '../atomicTextWrite'
 import { recoverInterruptedOperations } from '../crashRecovery'
 import { prepareRenameReferenceJournal } from '../renameReferenceJournal'
@@ -1397,6 +1397,63 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
     const dbPath = path.join(vault, 'metadata.sqlite')
     await seed({ 'proj/a.md': A_RAW, 'proj/nested/b.md': B_RAW, 'ref-a.md': 'see [[proj/a]]\n' })
     await fs.writeFile(path.join(vault, 'proj', 'image.bin'), IMAGE_BYTES)
+    const setupDb = new Database(dbPath)
+    applyMigrations(setupDb)
+    saveDocumentMetadata(setupDb, {
+      id: 'round17-proj-a',
+      path: 'proj/a',
+      title: 'A',
+      tags: ['round17'],
+      updatedAt: 1,
+    })
+    saveDocumentMetadata(setupDb, {
+      id: 'round17-proj-b',
+      path: 'proj/nested/b',
+      title: 'B',
+      updatedAt: 2,
+    })
+    saveDocumentMetadata(setupDb, {
+      id: 'round17-ref',
+      path: 'ref-a',
+      title: 'Reference',
+      summary: 'original reference metadata',
+      updatedAt: 3,
+    })
+    saveDocumentMetadata(setupDb, {
+      id: 'round17-destination-orphan',
+      path: 'ren/orphan',
+      title: 'Destination orphan',
+      updatedAt: 4,
+    })
+    setupDb.prepare(`
+      INSERT INTO document_embeddings (
+        document_id,
+        content_hash,
+        model,
+        embedding,
+        indexed_at
+      ) VALUES ('round17-proj-a', 'round17-hash', 'test', ?, 5)
+    `).run(Buffer.from([1, 2, 3]))
+    setupDb.prepare(`
+      INSERT INTO metadata_migrations (
+        path,
+        document_id,
+        original_path,
+        status,
+        source_hash,
+        error,
+        updated_at
+      ) VALUES (
+        'proj/missing',
+        NULL,
+        'proj/missing',
+        'legacy',
+        'round17-migration',
+        '',
+        6
+      )
+    `).run()
+    setupDb.close()
 
     const child = spawnCrashChild({
       DOCUS_FOLDER_VAULT: vault,
@@ -1452,14 +1509,42 @@ describe('real subprocess crash + startup recovery (folder reverse moves)', () =
       expect(getDocumentMetadata(persistedDb, 'proj/a')?.id).toBe(aId)
       expect(getDocumentMetadata(persistedDb, 'proj/nested/b')?.id).toBe(bId)
       expect(getDocumentMetadata(persistedDb, 'ren/a')).toBeNull()
+      expect(getDocumentMetadata(persistedDb, 'ref-a')).toMatchObject({
+        id: 'round17-ref',
+        summary: 'original reference metadata',
+      })
+      expect(getDocumentMetadata(persistedDb, 'ren/orphan')?.id)
+        .toBe('round17-destination-orphan')
+      expect(persistedDb.prepare(`
+        SELECT path, original_path, document_id
+        FROM metadata_migrations
+        WHERE path = 'proj/missing'
+      `).get()).toEqual({
+        path: 'proj/missing',
+        original_path: 'proj/missing',
+        document_id: null,
+      })
+      expect(persistedDb.prepare(`
+        SELECT content_hash, embedding
+        FROM document_embeddings
+        WHERE document_id = 'round17-proj-a'
+      `).get()).toEqual({
+        content_hash: 'round17-hash',
+        embedding: Buffer.from([1, 2, 3]),
+      })
+      expect(getDocumentMetadata(persistedDb, 'proj/a')?.tags)
+        .toEqual(['round17'])
       // The flipped main journal is gone; the reference journal stays
       // quarantined — ref-a.md changed externally and wins.
       const remaining = (await namesIn()).filter((name) => name.includes('.docus-journal-'))
       expect(remaining).toHaveLength(1)
       expect(await fs.readFile(path.join(vault, 'ref-a.md'), 'utf8')).toBe('# externally changed\n')
       // Idempotent.
+      const recoveredGraph = snapshotDocumentMetadataDatabase(persistedDb)
       await recoverInterruptedOperations(vault, persistedDb)
       expect(getDocumentMetadata(persistedDb, 'proj/a')?.id).toBe(aId)
+      expect(snapshotDocumentMetadataDatabase(persistedDb))
+        .toEqual(recoveredGraph)
     } finally { persistedDb.close() }
   }, REAL_CRASH_TEST_TIMEOUT)
 
