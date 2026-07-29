@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import type { Database as DatabaseT } from 'better-sqlite3'
 import { Hono } from 'hono'
 import { canModify } from '../../src/composables/archiveProtocol.js'
 import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged, removeDurableJournal, rewriteDurableJournal, sha256Hex, syncParentDirectoryBestEffort, verifyDirectoryGeneration, writeDurableJournal } from '../atomicTextWrite.js'
@@ -19,11 +20,13 @@ import {
   RenameDestinationOccupiedError,
   RenameSourceReusedError,
   UnsupportedDirectoryMoveError,
+  verifyFolderMoveDestinationV4,
 } from '../documentFileLifecycle.js'
 import {
   createFolderMoveGateProof,
   FOLDER_MOVE_JOURNAL_VERSION,
   listPhysicalMoveEntries,
+  reviveMetadataSnapshot,
   serializeMetadataSnapshot,
   type FolderMoveJournalV4,
 } from '../folderMoveTransaction.js'
@@ -38,9 +41,11 @@ import { readDurableFolderMoveJournalV4 } from '../folderMoveV4DurableJournal.js
 import {
   removeFolderMoveGateProof,
   verifyFolderMoveGateProof,
+  writeFolderMoveGateProof,
 } from '../folderMoveGateProof.js'
 import {
   completeFolderMoveV4Metadata,
+  verifyMetadataSnapshotGraphExact,
 } from '../folderMoveV4Metadata.js'
 import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
@@ -87,6 +92,98 @@ export type FolderRaceHooks = {
 let __folderRaceHooks: FolderRaceHooks | null = null
 export function __setFolderRaceHooksForTesting(hooks: FolderRaceHooks | null): void {
   __folderRaceHooks = hooks
+}
+
+function cloneFolderMoveJournal(
+  journal: FolderMoveJournalV4,
+): FolderMoveJournalV4 {
+  return JSON.parse(JSON.stringify(journal)) as FolderMoveJournalV4
+}
+
+async function restoreForwardJournalAfterReverseContention(
+  db: DatabaseT,
+  journalAbs: string,
+  forwardJournal: FolderMoveJournalV4,
+  sourceAbs: string,
+  destinationAbs: string,
+  options: {
+    requireSourceOccupancy: boolean
+  },
+): Promise<
+  | { restored: true }
+  | { restored: false; reason: string }
+> {
+  if (forwardJournal.phase !== 'metadata-committed'
+    || forwardJournal.metadataDisposition.kind !== 'prefix-move'
+    || !forwardJournal.metadataDisposition.committedSnapshot) {
+    return {
+      restored: false,
+      reason: 'saved forward journal is not an exact committed prefix transaction',
+    }
+  }
+  const sourceStat = await fs.lstat(sourceAbs).catch(() => null)
+  if (sourceStat === null && options.requireSourceOccupancy) {
+    return {
+      restored: false,
+      reason: 'original source path is not externally occupied',
+    }
+  }
+  if (sourceStat !== null
+    && (!sourceStat.isDirectory() || sourceStat.isSymbolicLink())) {
+    return {
+      restored: false,
+      reason: 'original source path is not a real external directory',
+    }
+  }
+  if (!forwardJournal.destDev || !forwardJournal.destIno
+    || !await verifyDirectoryGeneration(destinationAbs, {
+      dev: forwardJournal.destDev,
+      ino: forwardJournal.destIno,
+    })) {
+    return {
+      restored: false,
+      reason: 'forward destination generation no longer matches',
+    }
+  }
+  if (await verifyFolderMoveDestinationV4(
+    destinationAbs,
+    forwardJournal,
+    forwardJournal.strategy === 'replayable-move' && forwardJournal.gateProof
+      ? { ignoredRelativePaths: [forwardJournal.gateProof.markerName] }
+      : {},
+  )) {
+    return {
+      restored: false,
+      reason: 'forward destination exact physical parity failed',
+    }
+  }
+  const expected = reviveMetadataSnapshot(
+    forwardJournal.metadataDisposition.committedSnapshot,
+  )
+  if (!verifyMetadataSnapshotGraphExact(db, expected)) {
+    return {
+      restored: false,
+      reason: 'forward committed metadata snapshot no longer matches',
+    }
+  }
+  if (forwardJournal.strategy === 'replayable-move'
+    && forwardJournal.gateProof) {
+    try {
+      await writeFolderMoveGateProof(
+        destinationAbs,
+        forwardJournal.gateProof,
+      )
+    } catch (error) {
+      return {
+        restored: false,
+        reason: `forward destination gate proof could not be restored: ${
+          (error as Error).message
+        }`,
+      }
+    }
+  }
+  await rewriteDurableJournal(journalAbs, forwardJournal)
+  return { restored: true }
 }
 
 // Create an empty folder. Body: { path: string }
@@ -206,6 +303,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   // rollback, which durably flips its direction before reversing the
   // tree (and flips it back if the source was re-used).
   let folderMoveJournal: FolderMoveJournalV4 | null = null
+  let forwardCommittedJournal: FolderMoveJournalV4 | null = null
   let journalUuid = ''
   let referenceJournal: PreparedRenameReferenceJournal | null = null
   const moveStrategy = resolveDirectoryMoveStrategy()
@@ -216,14 +314,21 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     const sourceHashes = new Map<string, string>()
     for (const oldPath of oldPaths) {
       const oldAbs = filePathFor(oldPath)
-      const [raw, stat] = await Promise.all([fs.readFile(oldAbs, 'utf8'), fs.stat(oldAbs)])
+      const [raw, stat] = await Promise.all([
+        fs.readFile(oldAbs, 'utf8'),
+        fs.stat(oldAbs),
+      ])
       ensureMetadata(oldPath, raw, stat.mtimeMs)
       sourceHashes.set(oldPath, sha256Hex(raw))
     }
     for (const snapshot of folderReferenceSnapshots) {
       if (!oldPaths.includes(snapshot.sourcePath)) {
         const sourceStat = await fs.stat(filePathFor(snapshot.sourcePath))
-        ensureMetadata(snapshot.sourcePath, snapshot.raw, sourceStat.mtimeMs)
+        ensureMetadata(
+          snapshot.sourcePath,
+          snapshot.raw,
+          sourceStat.mtimeMs,
+        )
       }
     }
     referenceJournal = await prepareRenameReferenceJournal({
@@ -401,6 +506,9 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         forwardFinalization.action === 'quarantined' ? 409 : 500,
       )
     }
+    forwardCommittedJournal = cloneFolderMoveJournal(
+      forwardFinalization.journal,
+    )
     if (__folderRaceHooks?.afterRenamePlanBuilt) await __folderRaceHooks.afterRenamePlanBuilt()
     for (const snapshot of folderReferenceSnapshots) {
       const target = filePathFor(snapshot.writePath)
@@ -415,6 +523,9 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   } catch (error) {
     const rollbackErrors: unknown[] = []
     let rollbackSourceReused = false
+    let reversePhysicalMayHaveLanded = false
+    let reverseDirectionPersisted = false
+    let forwardJournalRestored = false
     let rolledTreeBack = !physicalPhaseCompleted
     if (referenceJournal) {
       try { await referenceJournal.setDirection('roll-back') }
@@ -452,7 +563,33 @@ folderRoutes.patch('/api/folders/*', async (c) => {
               metadataDb(),
               databaseSnapshot,
             )
-          const physicalDocumentIds = folderMoveJournal.entries.flatMap(
+          const rollbackTargetDocumentIds = new Set(
+            databaseSnapshot.documentIds,
+          )
+          const reverseEntries:
+            import('../folderMoveTransaction.js').FolderMoveJournalEntryV4[] =
+            folderMoveJournal.entries.map((entry) => {
+            if (typeof entry.documentId !== 'string'
+              || typeof entry.documentPath !== 'string') {
+              return entry
+            }
+            if (!rollbackTargetDocumentIds.has(entry.documentId)) {
+              const {
+                documentId: _documentId,
+                documentPath: _documentPath,
+                ...physicalEntry
+              } = entry
+              return physicalEntry
+            }
+            return {
+              ...entry,
+              documentPath:
+                srcPath
+                + '/'
+                + entry.relativeFilePath.slice(0, -'.md'.length),
+            }
+          })
+          const physicalDocumentIds = reverseEntries.flatMap(
             (entry) => typeof entry.documentId === 'string'
               ? [entry.documentId]
               : [],
@@ -468,12 +605,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
             destDev: undefined,
             destIno: undefined,
             // Flip each entry's documentPath to match the new srcRel.
-            entries: folderMoveJournal.entries.map((e) => ({
-              ...e,
-              ...(typeof e.documentId === 'string' && typeof e.documentPath === 'string'
-                ? { documentPath: srcPath + '/' + e.relativeFilePath.slice(0, -'.md'.length) }
-                : {}),
-            })),
+            entries: reverseEntries,
             metadataDisposition: {
               kind: 'snapshot-restore',
               snapshot: serializeMetadataSnapshot(databaseSnapshot),
@@ -485,6 +617,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
           }
           await rewriteDurableJournal(journalPath, flipped)
           flipSucceeded = true
+          reverseDirectionPersisted = true
           // Persist the flipped entries into the running variable so
           // subsequent rewrites (gate-created, etc.) carry the updated
           // documentPaths.
@@ -536,6 +669,10 @@ folderRoutes.patch('/api/folders/*', async (c) => {
             rollbackErrors.push(new Error(reverseFinalization.detail))
           }
         } catch (rollbackError) {
+          if (rollbackError instanceof FolderMoveV4ExecutionError) {
+            reversePhysicalMayHaveLanded =
+              rollbackError.state.physicalMayHaveLanded
+          }
           const rollbackCause = rollbackError instanceof FolderMoveV4ExecutionError
             ? rollbackError.cause
             : rollbackError
@@ -557,8 +694,38 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       // the metadata move to newPath — never one that would bind
       // identities to the externally re-used source. The rows are
       // already at newPath from the forward move.
-      try { await rewriteDurableJournal(journalPath, folderMoveJournal) }
-      catch (rollbackError) { rollbackErrors.push(rollbackError) }
+      if (reversePhysicalMayHaveLanded) {
+        rollbackErrors.push(
+          new Error(
+            'reverse physical entries may have landed; committed forward journal cannot be restored',
+          ),
+        )
+      } else if (!forwardCommittedJournal) {
+        rollbackErrors.push(
+          new Error('committed forward journal was not saved before rollback'),
+        )
+      } else {
+        try {
+          const restored = await restoreForwardJournalAfterReverseContention(
+            metadataDb(),
+            journalPath,
+            forwardCommittedJournal,
+            src,
+            dest,
+            {
+              requireSourceOccupancy: reverseDirectionPersisted,
+            },
+          )
+          if (restored.restored) {
+            folderMoveJournal = forwardCommittedJournal
+            forwardJournalRestored = true
+          } else {
+            rollbackErrors.push(new Error(restored.reason))
+          }
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError)
+        }
+      }
     }
     if (rollbackSourceReused) {
       // Identity follows the bytes: the tree is at newPath. Move every
@@ -566,8 +733,13 @@ folderRoutes.patch('/api/folders/*', async (c) => {
       // the destination vanished too, so no identity ever binds to a
       // missing tree).
       try {
-        if (await exists(dest)) moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
-        else deleteDocumentMetadataPrefix(metadataDb(), srcPath)
+        if (!forwardJournalRestored) {
+          if (await exists(dest)) {
+            moveDocumentMetadataPrefix(metadataDb(), srcPath, newPath)
+          } else {
+            deleteDocumentMetadataPrefix(metadataDb(), srcPath)
+          }
+        }
         const idx = await getLinkIndex()
         const pairs = await Promise.all(oldPaths.map(async (oldPath) => {
           const movedPath = newPath + oldPath.slice(srcPath.length)

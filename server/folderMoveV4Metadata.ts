@@ -313,6 +313,13 @@ export async function finalizeFolderMoveV4Cleanup(
         return result(durableJournal, 'quarantined', 'metadata-committed source path is not a real directory')
       }
       if ((await fs.readdir(srcAbs)).length > 0) {
+        if (durableJournal.metadataDisposition.kind === 'prefix-move') {
+          return result(
+            durableJournal,
+            'quarantined',
+            'forward transaction committed but original source path was externally reused',
+          )
+        }
         return result(durableJournal, 'quarantined', 'metadata-committed source directory still contains undeclared entries')
       }
       await fs.rmdir(srcAbs)

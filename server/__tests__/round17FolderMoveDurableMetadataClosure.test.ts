@@ -212,6 +212,97 @@ describe('Round-17 durable reverse metadata intent', () => {
     expect(await fs.readFile(path.join(vault, 'ren', 'a.md'), 'utf8'))
       .toBe('# hello\n')
   })
+
+  it('rejects an external metadata mutation through the durable reverse CAS', async () => {
+    await seedRenameGraph()
+    __setFolderRaceHooksForTesting({
+      afterRenamePlanBuilt: async () => {
+        await fs.writeFile(path.join(vault, 'ref.md'), 'external reference save\n')
+      },
+    })
+    __setCreateOnlyMoveHooksForTesting({
+      beforeReverseMetadataRestore: () => {
+        db.prepare(`
+          UPDATE documents
+          SET summary = 'external metadata transaction'
+          WHERE id = 'ref-id'
+        `).run()
+      },
+    })
+
+    await patchFolder()
+
+    const persisted = await readOnlyV4Journal()
+    expect(persisted.journal).toMatchObject({
+      srcRel: 'ren',
+      destRel: 'proj',
+      phase: 'files-landed',
+      metadataDisposition: {
+        kind: 'snapshot-restore',
+        expectedCurrentSnapshot: expect.any(Object),
+      },
+    })
+    expect(getDocumentMetadata(db, 'ref')?.summary)
+      .toBe('external metadata transaction')
+    expect(getDocumentMetadata(db, 'proj/a')).toBeNull()
+
+    __setCreateOnlyMoveHooksForTesting(null)
+    const report = await recoverInterruptedOperations(vault, db)
+    expect(report.actions).toContainEqual(expect.objectContaining({
+      file: path.basename(persisted.absolutePath),
+      action: 'quarantined',
+      detail: expect.stringMatching(/^snapshot metadata CAS failed:/),
+    }))
+    expect(getDocumentMetadata(db, 'ref')?.summary)
+      .toBe('external metadata transaction')
+    expect(await fs.stat(persisted.absolutePath)).toBeDefined()
+  })
+
+  it('keeps the reverse journal after partial landing instead of restoring forward direction', async () => {
+    await seedRenameGraph()
+    await fs.writeFile(path.join(vault, 'proj', 'b.md'), '# second\n')
+    saveDocumentMetadata(db, {
+      id: 'proj-b-id',
+      path: 'proj/b',
+      title: 'Project B',
+      updatedAt: 5,
+    })
+    await app.fetch(new Request('http://localhost/api/links/index'))
+    __setFolderRaceHooksForTesting({
+      afterRenamePlanBuilt: async () => {
+        await fs.writeFile(path.join(vault, 'ref.md'), 'external reference save\n')
+        let planted = false
+        __setCreateOnlyMoveHooksForTesting({
+          afterReplayableMovedEntry: async (entryRel) => {
+            if (planted || entryRel !== 'a.md') return
+            planted = true
+            await fs.writeFile(
+              path.join(vault, 'proj', 'b.md'),
+              '# external claimant\n',
+            )
+          },
+        })
+      },
+    })
+
+    await patchFolder()
+
+    const { journal } = await readOnlyV4Journal()
+    expect(journal).toMatchObject({
+      srcRel: 'ren',
+      destRel: 'proj',
+      phase: 'gate-created',
+      metadataDisposition: {
+        kind: 'snapshot-restore',
+      },
+    })
+    expect(await fs.readFile(path.join(vault, 'proj', 'a.md'), 'utf8'))
+      .toBe('# hello\n')
+    expect(await fs.readFile(path.join(vault, 'proj', 'b.md'), 'utf8'))
+      .toBe('# external claimant\n')
+    expect(await fs.readFile(path.join(vault, 'ren', 'b.md'), 'utf8'))
+      .toBe('# second\n')
+  })
 })
 
 describe('Round-17 snapshot physical footprint', () => {
