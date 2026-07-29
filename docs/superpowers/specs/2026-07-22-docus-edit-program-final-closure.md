@@ -193,6 +193,77 @@ Local evidence at documentation time:
 | `npm run typecheck` | passed |
 
 Final `npm run build`, full `npm test`, and bound four-job GitHub Actions evidence remain pending. Therefore this section does not declare `READY FOR CLOSURE`, `CLOSED`, or `SEALED`.
+
+## Round-17B Metadata Trust Boundary Closure
+
+**Status:** Reopened. **Current closure commit:** not assigned. Final CI
+evidence is published in the annotated closure tag/release rather than
+written back into the production SHA that CI verifies.
+
+Round-17B closes the independent-review gaps without changing journal
+version 4 or redesigning the physical mover:
+
+- Every new `snapshot-restore` persists a stable
+  `ownershipFootprint`, one proof for each metadata-only restore
+  document, a durable companion reference-journal binding when a
+  document is outside both folder endpoints, and the exact
+  transaction-created document/tag IDs. Recovery recomputes the union
+  and rejects a path, ID, tag, migration key, or relationship outside
+  that provenance before any physical or SQLite mutation.
+- The snapshot validator requires row-graph closure:
+  `documentIds` exactly equals `documents[].id`, `tagIds` exactly
+  equals `tags[].id`, and every `document_tag`/embedding/migration is
+  bound to the shared footprint. Physical IDs must bind exact journal
+  entries at the restore destination; prefix metadata-only rows prove
+  themselves through the folder endpoints; external reference rows
+  require a separately parsed companion journal with matching
+  operation, document identity, source/write paths, and before/after
+  hashes.
+- Round-17 journals that have `expectedCurrentSnapshot` and
+  `physicalDocumentIds` but lack the new durable provenance remain
+  parseable for diagnosis and fail closed with
+  `round17 snapshot-restore journal lacks durable metadata provenance`.
+  Strict legacy delete snapshots continue through their pre-existing
+  subtree validator.
+- Ownership capture first resolves documents by both path and requested
+  ID, then closes over every discovered ID's `document_tags`,
+  embeddings, migration ownership, and referenced tags. The CAS and
+  strict restore use the same persisted union inside one SQLite
+  `BEGIN IMMEDIATE`; restore never dynamically absorbs a live path
+  owner outside that set.
+- The reverse journal records IDs created by `ensureMetadata`. Exact
+  restore removes their relations and removes only the declared
+  transaction-created tags that have no remaining reference. A tag
+  referenced by an unrelated successful document is preserved, and
+  final verification checks only the declared created-ID residue
+  rather than imposing a global no-orphan policy.
+
+The dedicated
+`round17bFolderMoveMetadataTrustBoundary.test.ts` covers forged
+unrelated documents, embeddings, tag graphs, migrations,
+expected-current footprint expansion, old Round-17 quarantine,
+path-discovered relation and migration drift, footprint-external path
+owners, orphan-tag cleanup, external tag references, destination-prefix
+metadata orphans, and companion reference proof. A real route
+subprocess is killed immediately before reverse CAS after
+`ensureMetadata` creates a new identity/tag; an external embedding is
+then attached to that newly discovered ID, and two Startup Recovery
+invocations both retain the mutation and journal with one fail-closed
+quarantine action.
+
+Local focused evidence at documentation time:
+
+| Verification | Result |
+| ------------ | ------ |
+| `round17bFolderMoveMetadataTrustBoundary.test.ts` | 15 passed |
+| `round17FolderMoveDurableMetadataClosure.test.ts` | 13 passed |
+| real route pre-CAS subprocess drift case | passed |
+| `npm run typecheck` | passed |
+
+The full crash suite, Round-16/folder routes, build, full test corpus,
+and the four-platform workflow remain to be bound to the final
+implementation SHA. This section therefore does not declare `READY`,
+`CLOSED`, or `SEALED`.
 - Non-blocking artifacts:
   - Monaco dev-server "Canceled" unhandled-rejection teardown noise during navigation (third-party teardown noise; present in every sealed round; no user-visible effect).
   - Documentation drift (historical examples, not contracts): `README.md:241` / `README.zh-CN.md:219` and the `2026-06-07-llm-integration.md` plan example still mention the legacy `currentNoteContent` request field, which the server ignores (liveContext is the only content door — enforced by `live-context.test.ts`). Per-round test counts inside the sealed Edit-09/10 specs are snapshots of their closure rounds; current totals live in this document.
