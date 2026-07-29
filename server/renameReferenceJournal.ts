@@ -54,6 +54,12 @@ export type RenameReferenceJournalEntry = {
     ownerTransactionId: string
     ownerDescriptorHash: string
     metadataHandled: boolean
+  } | {
+    kind: 'folder-snapshot-owner-pending'
+    ownerJournal: string
+    ownerTransactionId: string
+    ownerDescriptorHash: string
+    previousDirection: 'roll-forward' | 'roll-back'
   }
   references: RenameReferenceEntry[]
 }
@@ -386,6 +392,13 @@ export function parseRenameReferenceJournalObject(
         || !UUID_RE.test(disposition.ownerTransactionId)
         || !SHA256_RE.test(disposition.ownerDescriptorHash)
         || typeof disposition.metadataHandled !== 'boolean') return null
+    } else if (disposition.kind === 'folder-snapshot-owner-pending') {
+      if (path.basename(disposition.ownerJournal) !== disposition.ownerJournal
+        || !disposition.ownerJournal.includes('.docus-journal-')
+        || !UUID_RE.test(disposition.ownerTransactionId)
+        || !SHA256_RE.test(disposition.ownerDescriptorHash)
+        || (disposition.previousDirection !== 'roll-forward'
+          && disposition.previousDirection !== 'roll-back')) return null
     } else {
       return null
     }
@@ -481,10 +494,10 @@ export async function parseAndValidateDurableRenameReferenceBundle(input: {
     ),
     entry,
     payloadPaths,
-    proofStrength: entry.op === 'folder-rename-references'
-      && entry.identities?.every(item => item.sourceHash !== undefined)
-      ? 'strong'
-      : entry.op === 'document-rename-references' ? 'strong' : 'weak',
+    proofStrength: (entry.op === 'folder-rename-references'
+      && entry.identities?.every(item => item.sourceHash !== undefined))
+      || entry.op === 'document-rename-references'
+      ? 'strong' : 'weak',
   }
 }
 

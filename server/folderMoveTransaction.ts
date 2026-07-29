@@ -122,6 +122,12 @@ export type ParsedFolderRenameReferenceJournal = {
     ownerTransactionId: string
     ownerDescriptorHash: string
     metadataHandled: boolean
+  } | {
+    kind: 'folder-snapshot-owner-pending'
+    ownerJournal: string
+    ownerTransactionId: string
+    ownerDescriptorHash: string
+    previousDirection: 'roll-forward' | 'roll-back'
   }
   references: Array<{
     path: string

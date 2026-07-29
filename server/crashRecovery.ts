@@ -126,6 +126,7 @@ import {
 import { validateFolderMoveJournalV4Provenance as validateFolderMoveJournalV4RootProvenance } from './folderMoveJournalValidation.js'
 import { executeFolderMoveV4Physical } from './folderMoveV4Executor.js'
 import { parseDurableFolderMoveJournalV4 } from './folderMoveV4DurableJournal.js'
+import { reconcilePendingRenameReferenceOwner } from './renameReferenceOwnerBinding.js'
 import {
   removeFolderMoveGateProof,
   verifyFolderMoveGateProof,
@@ -968,6 +969,35 @@ async function recoverRenameReferencesJournal(
     return
   }
   const metadataDisposition = bundle.entry.metadataDisposition
+  // P0-1 owner binding reconciliation: a companion stuck in owner-pending
+  // cannot remain stuck forever. Recovery either promotes it (v4 owner
+  // journal on disk and matches) or quarantines it (owner journal absent
+  // or mismatched). Both cases advance the companion — the previous
+  // round-17 behavior of deferring with metadataHandled:false left the
+  // companion pinned and never reached a terminal action.
+  if (metadataDisposition?.kind === 'folder-snapshot-owner-pending') {
+    const reconcile = await reconcilePendingRenameReferenceOwner({
+      contentDir,
+      journalPath: journalAbs,
+      entry: bundle.entry,
+      ownerDescriptorHash: bundle.descriptorHash,
+    })
+    if (reconcile.action === 'quarantine') {
+      note(journalAbs, 'quarantined', reconcile.reason)
+      return
+    }
+    if (reconcile.action === 'promote') {
+      const refreshed = await parseAndValidateDurableRenameReferenceBundle({
+        contentDir,
+        journalPath: journalAbs,
+      })
+      if (!refreshed) {
+        note(journalAbs, 'quarantined', 'owner-binding promotion refresh failed')
+        return
+      }
+      journal = refreshed.entry as RenameReferencesJournal
+    }
+  }
   if (metadataDisposition?.kind === 'folder-snapshot-owned'
     && !metadataDisposition.metadataHandled) {
     // The owner folder journal pins this journal and its payloads.  Do not

@@ -55,6 +55,10 @@ import {
   prepareRenameReferenceJournal,
   type PreparedRenameReferenceJournal,
 } from '../renameReferenceJournal.js'
+import {
+  bindOwnerPending,
+  markOwnerDurable,
+} from '../renameReferenceOwnerBinding.js'
 import { CONTENT_DIR, filePathFor, folderPathFor, isValidPathSyntax } from '../paths.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
 import { listSubtreePaths } from '../tree.js'
@@ -100,6 +104,16 @@ export type FolderRaceHooks = {
    * companion journal is removed. Tests use this to force the real
    * rollback path after reference bytes changed. */
   afterReferenceWrites?: () => void | Promise<void>
+  /** Fires after the rename rollback companion is rewritten as
+   * folder-snapshot-owner-pending — the first durable write of the
+   * two-step P0-1 owner binding protocol. */
+  afterBindOwnerPending?: () => void | Promise<void>
+  /** Fires after the flipped v4 owner folder journal is durable but
+   * before the companion is promoted to folder-snapshot-owned. */
+  afterV4OwnerJournalDurable?: () => void | Promise<void>
+  /** Fires after the companion is rewritten as
+   * folder-snapshot-owned / metadataHandled=false. */
+  afterOwnerDurableMark?: () => void | Promise<void>
 }
 let __folderRaceHooks: FolderRaceHooks | null = null
 export function __setFolderRaceHooksForTesting(hooks: FolderRaceHooks | null): void {
@@ -715,10 +729,22 @@ folderRoutes.patch('/api/folders/*', async (c) => {
             )
           }
           if (referenceProofRows.length > 0) {
-            await referenceJournal!.bindFolderSnapshotOwner({
-              ownerJournal: path.basename(journalPath!),
-              ownerTransactionId: journalUuid,
+            // P0-1 step 1: rewrite the companion as
+            // folder-snapshot-owner-pending BEFORE the flipped v4 owner
+            // folder journal is durably rewritten below. A crash here
+            // must NOT leave the companion at metadataHandled:false
+            // forever — recovery promotes or quarantines.
+            await bindOwnerPending({
+              journalPath: referenceJournal!.journalPath,
+              phase: 'roll-back',
+              baseEntry: referenceJournal!.entry,
+              descriptorHash: referenceJournal!.descriptorHash,
+              owner: {
+                ownerJournal: path.basename(journalPath!),
+                ownerTransactionId: journalUuid,
+              },
             })
+            await __folderRaceHooks?.afterBindOwnerPending?.()
           }
           const flipped: FolderMoveJournalV4 = {
             ...folderMoveJournal,
@@ -783,6 +809,32 @@ folderRoutes.patch('/api/folders/*', async (c) => {
           // subsequent rewrites (gate-created, etc.) carry the updated
           // documentPaths.
           folderMoveJournal = flipped
+          // P0-1 v4 owner durable seam: the flipped v4 owner folder
+          // journal is on disk. Tests observe this before the companion
+          // promotion runs.
+          if (referenceProofRows.length > 0
+            && __folderRaceHooks?.afterV4OwnerJournalDurable) {
+            await __folderRaceHooks.afterV4OwnerJournalDurable()
+          }
+          // P0-1 step 3: now that the v4 owner folder journal is durable,
+          // promote the companion to folder-snapshot-owned. A crash
+          // between step 1 and step 3 leaves the companion owner-pending
+          // and recovery reconciles by either promoting (this point) or
+          // quarantining (no matching v4 owner journal). A crash after
+          // step 3 is the normal "owned but unhandled" early-return path.
+          if (referenceProofRows.length > 0) {
+            await markOwnerDurable({
+              journalPath: referenceJournal!.journalPath,
+              phase: 'roll-back',
+              baseEntry: referenceJournal!.entry,
+              owner: {
+                ownerJournal: path.basename(journalPath!),
+                ownerTransactionId: journalUuid,
+              },
+              descriptorHash: referenceJournal!.descriptorHash,
+            })
+            await __folderRaceHooks?.afterOwnerDurableMark?.()
+          }
           await __folderRaceHooks?.afterRenameRollbackPrepared?.(journalPath)
         } catch (rollbackError) { rollbackErrors.push(rollbackError) }
       }
