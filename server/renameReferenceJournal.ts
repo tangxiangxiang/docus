@@ -15,7 +15,7 @@ export type RenameReferencePlan = {
   afterRaw: string
 }
 
-type ReferenceEntry = {
+export type RenameReferenceEntry = {
   path: string
   beforeHash: string
   afterHash: string
@@ -23,7 +23,7 @@ type ReferenceEntry = {
   afterPayload: string
 }
 
-type JournalEntry = {
+export type RenameReferenceJournalEntry = {
   version: 1
   op: 'document-rename-references' | 'folder-rename-references'
   phase: 'preparing' | 'roll-forward' | 'roll-back' | 'cleanup'
@@ -38,7 +38,14 @@ type JournalEntry = {
    * evidence (recycled after external delete/recreate, unreliable on
    * some Windows file systems, brand-new after a replayable move). */
   identities?: Array<{ path: string; id: string; sourceHash?: string }>
-  references: ReferenceEntry[]
+  referenceIdentities?: Array<{
+    documentId: string
+    sourcePath: string
+    writePath: string
+    beforeHash: string
+    afterHash: string
+  }>
+  references: RenameReferenceEntry[]
 }
 
 export type PreparedRenameReferenceJournal = {
@@ -65,6 +72,11 @@ type PrepareRenameReferenceJournalInput = {
   srcRel: string
   destRel: string
   references: readonly RenameReferencePlan[]
+  referenceIdentities?: readonly {
+    documentId: string
+    sourcePath: string
+    writePath: string
+  }[]
 } & ({
   op: 'document-rename-references'
   documentId: string
@@ -95,7 +107,20 @@ export async function prepareRenameReferenceJournal(input: PrepareRenameReferenc
     path.join(dir, reference.afterPayload),
   ])
   const sourceStat = input.op === 'folder-rename-references' ? await fs.stat(input.sourceAbs) : null
-  const baseEntry: Omit<JournalEntry, 'phase'> = {
+  const referenceIdentities = input.referenceIdentities?.map((identity) => {
+    const reference = references.find(item => item.path === identity.writePath)
+    if (!reference) {
+      throw new Error(
+        `reference metadata identity has no matching write path: ${identity.writePath}`,
+      )
+    }
+    return {
+      ...identity,
+      beforeHash: reference.beforeHash,
+      afterHash: reference.afterHash,
+    }
+  })
+  const baseEntry: Omit<RenameReferenceJournalEntry, 'phase'> = {
     version: 1,
     op: input.op,
     srcRel: input.srcRel,
@@ -107,6 +132,7 @@ export async function prepareRenameReferenceJournal(input: PrepareRenameReferenc
     sourceDev: sourceStat?.dev,
     sourceIno: sourceStat?.ino,
     identities: input.op === 'folder-rename-references' ? [...input.identities] : undefined,
+    referenceIdentities,
     references,
   }
   await writeDurableJournal(journalPath, { ...baseEntry, phase: 'preparing' })
@@ -124,7 +150,7 @@ export async function prepareRenameReferenceJournal(input: PrepareRenameReferenc
       await writeDurableRecoveryPayload(path.join(dir, references[index].afterPayload), input.references[index].afterRaw)
       if (__crashHooks?.afterPayloadWrite) await __crashHooks.afterPayloadWrite(index, 'after')
     }
-    let phase: JournalEntry['phase'] = 'roll-forward'
+    let phase: RenameReferenceJournalEntry['phase'] = 'roll-forward'
     await rewriteDurableJournal(journalPath, { ...baseEntry, phase })
     if (__crashHooks?.afterPhaseRewrite) await __crashHooks.afterPhaseRewrite(phase)
     return {
@@ -153,5 +179,66 @@ export async function prepareRenameReferenceJournal(input: PrepareRenameReferenc
       // Startup recovery can repeat removal without orphaning payloads.
     }
     throw error
+  }
+}
+
+const SHA256_RE = /^[0-9a-f]{64}$/
+
+/** Shared structural parser for the durable reference companion used by
+ * both ordinary reference recovery and Round-17B metadata provenance. */
+export function parseRenameReferenceJournalObject(
+  value: unknown,
+): RenameReferenceJournalEntry | null {
+  if (!value || typeof value !== 'object') return null
+  const entry = value as Partial<RenameReferenceJournalEntry>
+  if (entry.version !== 1
+    || (entry.op !== 'document-rename-references'
+      && entry.op !== 'folder-rename-references')
+    || (entry.phase !== 'preparing'
+      && entry.phase !== 'roll-forward'
+      && entry.phase !== 'roll-back'
+      && entry.phase !== 'cleanup')
+    || typeof entry.srcRel !== 'string'
+    || typeof entry.destRel !== 'string'
+    || !Array.isArray(entry.references)
+    || !entry.references.every(reference =>
+      reference && typeof reference.path === 'string'
+      && typeof reference.beforeHash === 'string'
+      && SHA256_RE.test(reference.beforeHash)
+      && typeof reference.afterHash === 'string'
+      && SHA256_RE.test(reference.afterHash)
+      && reference.beforeHash !== reference.afterHash
+      && typeof reference.beforePayload === 'string'
+      && typeof reference.afterPayload === 'string'
+      && reference.beforePayload !== reference.afterPayload)) {
+    return null
+  }
+  if (entry.referenceIdentities !== undefined
+    && (!Array.isArray(entry.referenceIdentities)
+      || !entry.referenceIdentities.every(identity =>
+        identity && typeof identity.documentId === 'string'
+        && identity.documentId.length > 0
+        && typeof identity.sourcePath === 'string'
+        && identity.sourcePath.length > 0
+        && typeof identity.writePath === 'string'
+        && identity.writePath.length > 0
+        && typeof identity.beforeHash === 'string'
+        && SHA256_RE.test(identity.beforeHash)
+        && typeof identity.afterHash === 'string'
+        && SHA256_RE.test(identity.afterHash)))) {
+    return null
+  }
+  return entry as RenameReferenceJournalEntry
+}
+
+export async function readRenameReferenceJournal(
+  journalPath: string,
+): Promise<RenameReferenceJournalEntry | null> {
+  try {
+    return parseRenameReferenceJournalObject(
+      JSON.parse(await fs.readFile(journalPath, 'utf8')),
+    )
+  } catch {
+    return null
   }
 }

@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import path from 'node:path'
 import type { Database as DatabaseT } from 'better-sqlite3'
 
 import {
@@ -26,10 +27,13 @@ import {
   isSerializedMetadataSnapshot,
   reviveMetadataSnapshot,
   serializeMetadataSnapshot,
+  validateRound17SnapshotRestoreDisposition,
   validateSnapshotPhysicalEntries,
   type FolderMoveJournalEntry,
   type FolderMoveJournalV4,
+  type ParsedFolderRenameReferenceJournal,
 } from './folderMoveTransaction.js'
+import { readRenameReferenceJournal } from './renameReferenceJournal.js'
 
 export type FolderMoveV4FinalizationResult = {
   completed: boolean
@@ -51,6 +55,43 @@ function result(
   detail: string,
 ): FolderMoveV4FinalizationResult {
   return { completed: action === 'completed-rename', action, detail, journal }
+}
+
+export async function validateDurableSnapshotRestoreDisposition(
+  journalAbs: string,
+  journal: FolderMoveJournalV4,
+): Promise<string | null> {
+  const disposition = journal.metadataDisposition
+  if (disposition.kind !== 'snapshot-restore') return null
+  const hasExpected = disposition.expectedCurrentSnapshot !== undefined
+  const hasPhysical = disposition.physicalDocumentIds !== undefined
+  const hasProofs = disposition.metadataOnlyDocumentProofs !== undefined
+  const hasFootprint = disposition.ownershipFootprint !== undefined
+  if (!hasExpected && !hasPhysical && !hasProofs && !hasFootprint) {
+    return null
+  }
+  if (hasExpected && hasPhysical && !hasProofs && !hasFootprint) {
+    return 'round17 snapshot-restore journal lacks durable metadata provenance'
+  }
+  let referenceJournal: ParsedFolderRenameReferenceJournal | undefined
+  if (disposition.referenceJournal) {
+    const candidate = await readRenameReferenceJournal(path.join(
+      path.dirname(journalAbs),
+      disposition.referenceJournal.relativePath,
+    ))
+    if (candidate?.op === 'folder-rename-references') {
+      referenceJournal = {
+        ...candidate,
+        op: 'folder-rename-references',
+        identities: candidate.identities ?? [],
+      }
+    }
+  }
+  return validateRound17SnapshotRestoreDisposition(
+    journal,
+    disposition,
+    { referenceJournal },
+  )
 }
 
 async function proveDestinationOwnership(
@@ -267,9 +308,16 @@ export async function finalizeFolderMoveV4Cleanup(
 
   if (durableJournal.metadataDisposition.kind === 'snapshot-restore') {
     const disposition = durableJournal.metadataDisposition
-    const isRound17 = disposition.expectedCurrentSnapshot !== undefined
-      && disposition.physicalDocumentIds !== undefined
-    if (isRound17
+    const provenanceError = await validateDurableSnapshotRestoreDisposition(
+      journalAbs,
+      durableJournal,
+    )
+    if (provenanceError) {
+      return result(durableJournal, 'quarantined', provenanceError)
+    }
+    const isRound17B = disposition.ownershipFootprint !== undefined
+      && disposition.metadataOnlyDocumentProofs !== undefined
+    if (isRound17B
       ? !isSerializedMetadataSnapshot(disposition.snapshot)
       : !isValidDeleteRollbackSnapshot(disposition.snapshot, durableJournal.destRel)) {
       return result(durableJournal, 'quarantined', 'metadata-committed snapshot is invalid')
@@ -370,9 +418,16 @@ export async function completeFolderMoveV4Metadata(
   if (durableJournal.metadataDisposition.kind === 'snapshot-restore') {
     const disposition = durableJournal.metadataDisposition
     const snapshot = disposition.snapshot
-    const isRound17 = disposition.expectedCurrentSnapshot !== undefined
-      && disposition.physicalDocumentIds !== undefined
-    if (isRound17
+    const provenanceError = await validateDurableSnapshotRestoreDisposition(
+      journalAbs,
+      durableJournal,
+    )
+    if (provenanceError) {
+      return result(durableJournal, 'quarantined', provenanceError)
+    }
+    const isRound17B = disposition.ownershipFootprint !== undefined
+      && disposition.metadataOnlyDocumentProofs !== undefined
+    if (isRound17B
       ? !isSerializedMetadataSnapshot(snapshot)
       : !isValidDeleteRollbackSnapshot(snapshot, durableJournal.destRel)) {
       return result(durableJournal, 'quarantined', 'snapshot-restore metadata disposition is invalid')

@@ -129,6 +129,7 @@ import {
 import {
   completeFolderMoveV4Metadata as completeFolderMoveV4MetadataShared,
   finalizeFolderMoveV4Cleanup as finalizeFolderMoveV4CleanupShared,
+  validateDurableSnapshotRestoreDisposition,
 } from './folderMoveV4Metadata.js'
 
 export interface RecoveryAction {
@@ -231,6 +232,13 @@ interface RenameReferencesJournal {
    * verifies the actual file content instead. Optional only for
    * legacy in-flight journals written before the hash existed. */
   identities?: Array<{ path: string; id: string; sourceHash?: string }>
+  referenceIdentities?: Array<{
+    documentId: string
+    sourcePath: string
+    writePath: string
+    beforeHash: string
+    afterHash: string
+  }>
   references: Array<{
     path: string
     beforeHash: string
@@ -613,6 +621,17 @@ function parseRenameReferencesJournal(raw: string): RenameReferencesJournal | nu
           && typeof identity.id === 'string' && identity.id.length > 0
           && (identity.sourceHash === undefined
             || (typeof identity.sourceHash === 'string' && SHA256_RE.test(identity.sourceHash)))))) return null
+    if (entry.referenceIdentities !== undefined
+      && (!Array.isArray(entry.referenceIdentities)
+        || !entry.referenceIdentities.every((identity) => identity
+          && typeof identity.documentId === 'string'
+          && identity.documentId.length > 0
+          && typeof identity.sourcePath === 'string'
+          && typeof identity.writePath === 'string'
+          && typeof identity.beforeHash === 'string'
+          && SHA256_RE.test(identity.beforeHash)
+          && typeof identity.afterHash === 'string'
+          && SHA256_RE.test(identity.afterHash)))) return null
     // No MIXED hash coverage: all identities carry a sourceHash (strong
     // content proof) or none do (legacy weak dev/ino proof). A journal
     // with one hash stripped must not silently downgrade the WHOLE
@@ -1517,6 +1536,17 @@ async function recoverFolderMoveJournalV4(
   if (rootProvenanceError !== null) {
     note(journalAbs, 'quarantined', `v4 provenance validation failed: ${rootProvenanceError}`)
     return
+  }
+  if (isSnapshotRestore) {
+    const metadataProvenanceError =
+      await validateDurableSnapshotRestoreDisposition(
+        journalAbs,
+        journal,
+      )
+    if (metadataProvenanceError !== null) {
+      note(journalAbs, 'quarantined', metadataProvenanceError)
+      return
+    }
   }
 
   const entryError = validateJournalEntriesV4(entries, effectiveSrcRel, isSnapshotRestore)

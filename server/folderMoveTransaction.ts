@@ -66,11 +66,63 @@ export type FolderMovePrefixMetadataDisposition = {
   committedSnapshot?: SerializedMetadataSnapshot
 }
 
+export type FolderMoveMetadataOnlyDocumentProof = {
+  documentId: string
+  path: string
+  reason: 'source-prefix' | 'destination-prefix' | 'reference-journal'
+}
+
+export type FolderMoveMetadataOwnershipFootprint = {
+  paths: string[]
+  documentIds: string[]
+  tagIds: number[]
+  migrationPaths: string[]
+  migrationOriginalPaths: string[]
+}
+
+export type FolderMoveReferenceJournalProof = {
+  relativePath: string
+  operation: 'folder-rename-references'
+  references: Array<{
+    documentId: string
+    sourcePath: string
+    writePath: string
+    beforeHash: string
+    afterHash: string
+  }>
+}
+
+export type FolderMoveCreatedMetadataIds = {
+  documentIds: string[]
+  tagIds: number[]
+}
+
+export type ParsedFolderRenameReferenceJournal = {
+  version: 1
+  op: 'folder-rename-references'
+  phase: 'preparing' | 'roll-forward' | 'roll-back' | 'cleanup'
+  srcRel: string
+  destRel: string
+  identities: Array<{ path: string; id: string; sourceHash?: string }>
+  referenceIdentities?: FolderMoveReferenceJournalProof['references']
+  references: Array<{
+    path: string
+    beforeHash: string
+    afterHash: string
+    beforePayload: string
+    afterPayload: string
+  }>
+}
+
 export type FolderMoveSnapshotRestoreDisposition = {
   kind: 'snapshot-restore'
   snapshot: SerializedMetadataSnapshot
   expectedCurrentSnapshot?: SerializedMetadataSnapshot
   physicalDocumentIds?: string[]
+  metadataOnlyDocumentProofs?: FolderMoveMetadataOnlyDocumentProof[]
+  ownershipFootprint?: FolderMoveMetadataOwnershipFootprint
+  referenceJournal?: FolderMoveReferenceJournalProof
+  createdMetadataIds?: FolderMoveCreatedMetadataIds
 }
 
 export type FolderMoveMetadataDisposition =
@@ -501,6 +553,389 @@ export function validateSnapshotPhysicalEntries(
     if (entry.documentId !== undefined
       && !physicalDocumentIds.has(entry.documentId)) {
       return `journal document id is absent from physicalDocumentIds: ${entry.documentId}`
+    }
+  }
+  return null
+}
+
+function stableStrings(values: Iterable<string>): string[] {
+  return [...new Set(values)].sort((left, right) => left.localeCompare(right))
+}
+
+function stableNumbers(values: Iterable<number>): number[] {
+  return [...new Set(values)].sort((left, right) => left - right)
+}
+
+function snapshotMigrationPaths(
+  snapshot: SerializedMetadataSnapshot,
+  key: 'path' | 'original_path',
+): string[] {
+  return snapshot.migrations.flatMap((row) =>
+    typeof row[key] === 'string' && row[key].length > 0
+      ? [row[key] as string]
+      : [])
+}
+
+/** Construct the immutable union that both the Round-17B CAS read and
+ * strict restore write must use. The value is persisted in the journal;
+ * recovery recomputes it and requires exact stable-array equality. */
+export function buildMetadataOwnershipFootprint(
+  snapshot: SerializedMetadataSnapshot,
+  expectedCurrentSnapshot: SerializedMetadataSnapshot,
+  physicalDocumentIds: readonly string[],
+): FolderMoveMetadataOwnershipFootprint {
+  const snapshots = [snapshot, expectedCurrentSnapshot]
+  return {
+    paths: stableStrings(snapshots.flatMap(item => item.paths)),
+    documentIds: stableStrings([
+      ...snapshots.flatMap(item => item.documentIds),
+      ...physicalDocumentIds,
+    ]),
+    tagIds: stableNumbers([
+      ...snapshots.flatMap(item => item.tagIds),
+      ...snapshots.flatMap(item =>
+        item.documentTags.map(row => Number(row.tag_id))),
+    ]),
+    migrationPaths: stableStrings(
+      snapshots.flatMap(item => snapshotMigrationPaths(item, 'path')),
+    ),
+    migrationOriginalPaths: stableStrings(
+      snapshots.flatMap(item => snapshotMigrationPaths(item, 'original_path')),
+    ),
+  }
+}
+
+function stringArraysEqual(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  return left.length === right.length
+    && left.every((value, index) => value === right[index])
+}
+
+function numberArraysEqual(
+  left: readonly number[],
+  right: readonly number[],
+): boolean {
+  return left.length === right.length
+    && left.every((value, index) => value === right[index])
+}
+
+function validStableStringArray(
+  value: unknown,
+  options: { allowTombstones?: boolean } = {},
+): value is string[] {
+  if (!Array.isArray(value)
+    || !value.every(item => typeof item === 'string' && item.length > 0)) {
+    return false
+  }
+  const values = value as string[]
+  if (!stringArraysEqual(values, stableStrings(values))) return false
+  return values.every(item =>
+    options.allowTombstones && item.startsWith('@deleted/')
+      ? validRelativePath(item.slice('@deleted/'.length))
+      : validRelativePath(item))
+}
+
+function validStableNumberArray(value: unknown): value is number[] {
+  if (!Array.isArray(value)
+    || !value.every(item => typeof item === 'number'
+      && Number.isSafeInteger(item)
+      && item >= 0)) {
+    return false
+  }
+  return numberArraysEqual(value as number[], stableNumbers(value as number[]))
+}
+
+function pathWithinPrefix(value: string, prefix: string): boolean {
+  return value === prefix || value.startsWith(`${prefix}/`)
+}
+
+function validateSnapshotClosure(
+  snapshot: SerializedMetadataSnapshot,
+  label: string,
+): string | null {
+  const paths = new Set(snapshot.paths)
+  if (paths.size !== snapshot.paths.length
+    || snapshot.paths.some(item => !validRelativePath(item))) {
+    return `${label}.paths must be unique valid metadata paths`
+  }
+  const documentIds = new Set(snapshot.documentIds)
+  const documentRows = snapshot.documents.map(row => String(row.id))
+  if (documentIds.size !== snapshot.documentIds.length
+    || !setEquals(documentIds, new Set(documentRows))) {
+    return `${label}.documentIds does not equal documents[].id`
+  }
+  const documentPaths = new Set<string>()
+  for (const row of snapshot.documents) {
+    const documentPath = row.path
+    if (typeof row.id !== 'string' || row.id.length === 0
+      || typeof documentPath !== 'string'
+      || !paths.has(documentPath)
+      || documentPaths.has(documentPath)) {
+      return `${label} contains an invalid or duplicate document path`
+    }
+    documentPaths.add(documentPath)
+  }
+  const tagIds = new Set(snapshot.tagIds)
+  const tagRows = snapshot.tags.map(row => Number(row.id))
+  if (tagIds.size !== snapshot.tagIds.length
+    || !setEquals(tagIds, new Set(tagRows))) {
+    return `${label}.tagIds does not equal tags[].id`
+  }
+  for (const row of snapshot.documentTags) {
+    const documentId = String(row.document_id)
+    const tagId = Number(row.tag_id)
+    if (!documentIds.has(documentId)) {
+      return `${label} document_tag document_id is outside snapshot documentIds: ${documentId}`
+    }
+    if (!tagIds.has(tagId)) {
+      return `${label} document_tag tag_id is outside snapshot tagIds: ${tagId}`
+    }
+  }
+  for (const row of snapshot.embeddings) {
+    const documentId = String(row.document_id)
+    if (!documentIds.has(documentId)) {
+      return `${label} embedding document_id is outside snapshot documentIds: ${documentId}`
+    }
+  }
+  return null
+}
+
+function canonicalSerializedRow(row: Record<string, unknown>): string {
+  return JSON.stringify(
+    Object.keys(row)
+      .sort()
+      .map(key => [key, row[key]]),
+  )
+}
+
+function isRound17BReferenceProof(
+  value: unknown,
+): value is FolderMoveReferenceJournalProof {
+  if (!value || typeof value !== 'object') return false
+  const proof = value as Partial<FolderMoveReferenceJournalProof>
+  if (typeof proof.relativePath !== 'string'
+    || path.basename(proof.relativePath) !== proof.relativePath
+    || !proof.relativePath.includes('.docus-journal-')
+    || proof.operation !== 'folder-rename-references'
+    || !Array.isArray(proof.references)) {
+    return false
+  }
+  const SHA256 = /^[0-9a-f]{64}$/
+  return proof.references.every(item =>
+    item && typeof item === 'object'
+    && typeof item.documentId === 'string' && item.documentId.length > 0
+    && typeof item.sourcePath === 'string' && validRelativePath(item.sourcePath)
+    && typeof item.writePath === 'string' && validRelativePath(item.writePath)
+    && typeof item.beforeHash === 'string' && SHA256.test(item.beforeHash)
+    && typeof item.afterHash === 'string' && SHA256.test(item.afterHash))
+}
+
+function referenceRowsEqual(
+  left: FolderMoveReferenceJournalProof['references'],
+  right: FolderMoveReferenceJournalProof['references'],
+): boolean {
+  const canonical = (
+    values: FolderMoveReferenceJournalProof['references'],
+  ): string[] => values.map(item => JSON.stringify([
+    item.documentId,
+    item.sourcePath,
+    item.writePath,
+    item.beforeHash,
+    item.afterHash,
+  ])).sort()
+  return stringArraysEqual(canonical(left), canonical(right))
+}
+
+/** Synchronous Round-17B trust-boundary validation. Execution supplies
+ * the separately parsed companion reference journal when any metadata
+ * document lies outside both folder endpoints. */
+export function validateRound17SnapshotRestoreDisposition(
+  journal: FolderMoveJournalV4,
+  disposition: FolderMoveSnapshotRestoreDisposition,
+  context: {
+    referenceJournal?: ParsedFolderRenameReferenceJournal
+  } = {},
+): string | null {
+  if (!isSerializedMetadataSnapshot(disposition.snapshot)
+    || !isSerializedMetadataSnapshot(disposition.expectedCurrentSnapshot)
+    || !Array.isArray(disposition.physicalDocumentIds)
+    || !Array.isArray(disposition.metadataOnlyDocumentProofs)
+    || !disposition.ownershipFootprint) {
+    return 'round17 snapshot-restore journal lacks durable metadata provenance'
+  }
+  const restoreClosure = validateSnapshotClosure(disposition.snapshot, 'snapshot')
+  if (restoreClosure) return restoreClosure
+  const expectedClosure = validateSnapshotClosure(
+    disposition.expectedCurrentSnapshot,
+    'expectedCurrentSnapshot',
+  )
+  if (expectedClosure) return expectedClosure
+  const referencedRestoreTagIds = new Set(
+    disposition.snapshot.documentTags.map(row => Number(row.tag_id)),
+  )
+  const expectedTagById = new Map(
+    disposition.expectedCurrentSnapshot.tags.map(row => [
+      Number(row.id),
+      row,
+    ]),
+  )
+  for (const tag of disposition.snapshot.tags) {
+    const tagId = Number(tag.id)
+    if (referencedRestoreTagIds.has(tagId)) continue
+    const expectedTag = expectedTagById.get(tagId)
+    if (!disposition.snapshot.preexistingTagIds.includes(tagId)
+      || !expectedTag
+      || canonicalSerializedRow(tag)
+        !== canonicalSerializedRow(expectedTag)) {
+      return `snapshot unreferenced tag lacks matching expected-current preexisting proof: ${tagId}`
+    }
+  }
+  const physicalDocumentIds = stableStrings(disposition.physicalDocumentIds)
+  if (!stringArraysEqual(disposition.physicalDocumentIds, physicalDocumentIds)
+    || !disposition.physicalDocumentIds.every(id => id.length > 0)) {
+    return 'physicalDocumentIds must be unique and stably sorted'
+  }
+  const footprint = disposition.ownershipFootprint
+  if (!validStableStringArray(footprint.paths)
+    || !validStableStringArray(footprint.documentIds)
+    || !validStableNumberArray(footprint.tagIds)
+    || !validStableStringArray(footprint.migrationPaths, {
+      allowTombstones: true,
+    })
+    || !validStableStringArray(footprint.migrationOriginalPaths)) {
+    return 'ownershipFootprint contains invalid or unstable ownership keys'
+  }
+  const expectedFootprint = buildMetadataOwnershipFootprint(
+    disposition.snapshot,
+    disposition.expectedCurrentSnapshot,
+    disposition.physicalDocumentIds,
+  )
+  for (const key of ['paths', 'documentIds', 'migrationPaths', 'migrationOriginalPaths'] as const) {
+    if (!stringArraysEqual(footprint[key], expectedFootprint[key])) {
+      return `ownershipFootprint.${key} does not equal the snapshot union`
+    }
+  }
+  if (!numberArraysEqual(footprint.tagIds, expectedFootprint.tagIds)) {
+    return 'ownershipFootprint.tagIds does not equal the snapshot union'
+  }
+
+  const proofKeys = new Set<string>()
+  for (const proof of disposition.metadataOnlyDocumentProofs) {
+    if (!proof || typeof proof !== 'object'
+      || typeof proof.documentId !== 'string' || proof.documentId.length === 0
+      || typeof proof.path !== 'string' || !validRelativePath(proof.path)
+      || (proof.reason !== 'source-prefix'
+        && proof.reason !== 'destination-prefix'
+        && proof.reason !== 'reference-journal')) {
+      return 'metadataOnlyDocumentProofs contains an invalid proof'
+    }
+    const key = `${proof.documentId}\0${proof.path}`
+    if (proofKeys.has(key)) {
+      return `snapshot metadata-only document has duplicate provenance: ${proof.path}`
+    }
+    proofKeys.add(key)
+    if (proof.reason === 'source-prefix'
+      && !pathWithinPrefix(proof.path, journal.srcRel)) {
+      return `metadata-only document proof is outside source prefix: ${proof.path}`
+    }
+    if (proof.reason === 'destination-prefix'
+      && !pathWithinPrefix(proof.path, journal.destRel)) {
+      return `metadata-only document proof is outside destination prefix: ${proof.path}`
+    }
+  }
+
+  const physicalIds = new Set(disposition.physicalDocumentIds)
+  const restoreDocuments = new Map(
+    disposition.snapshot.documents.map(row => [String(row.id), String(row.path)]),
+  )
+  for (const [documentId, documentPath] of restoreDocuments) {
+    if (physicalIds.has(documentId)) continue
+    if (!proofKeys.has(`${documentId}\0${documentPath}`)) {
+      return `snapshot metadata-only document lacks durable transaction provenance: ${documentPath}`
+    }
+  }
+  for (const proof of disposition.metadataOnlyDocumentProofs) {
+    if (restoreDocuments.get(proof.documentId) !== proof.path
+      || physicalIds.has(proof.documentId)) {
+      return `metadata-only document proof does not match one restore row: ${proof.path}`
+    }
+  }
+  const physicalError = validateSnapshotPhysicalEntries(
+    disposition.snapshot,
+    journal.entries as unknown as FolderMoveJournalEntry[],
+    journal.destRel,
+    { physicalDocumentIds: disposition.physicalDocumentIds },
+  )
+  if (physicalError) return `snapshot physical entries are invalid: ${physicalError}`
+  for (const id of disposition.physicalDocumentIds) {
+    if (!footprint.documentIds.includes(id)) {
+      return `physical document id is absent from ownership footprint: ${id}`
+    }
+  }
+
+  const referenceProofs = disposition.metadataOnlyDocumentProofs
+    .filter(proof => proof.reason === 'reference-journal')
+  if (referenceProofs.length > 0) {
+    if (!isRound17BReferenceProof(disposition.referenceJournal)) {
+      return 'snapshot companion reference journal proof is invalid'
+    }
+    const companion = context.referenceJournal
+    if (!companion) return 'companion reference journal is required'
+    if (companion.op !== disposition.referenceJournal.operation
+      || companion.srcRel !== journal.destRel
+      || companion.destRel !== journal.srcRel
+      || !Array.isArray(companion.referenceIdentities)
+      || !referenceRowsEqual(
+        companion.referenceIdentities,
+        disposition.referenceJournal.references,
+      )) {
+      return 'companion reference journal identity/path/hash proof does not match'
+    }
+    const declared = new Set(
+      disposition.referenceJournal.references.map(item =>
+        `${item.documentId}\0${item.sourcePath}\0${item.writePath}`),
+    )
+    for (const proof of referenceProofs) {
+      if (![...declared].some(value =>
+        value === `${proof.documentId}\0${proof.path}\0${proof.path}`
+        || value.startsWith(`${proof.documentId}\0${proof.path}\0`)
+        || value.endsWith(`\0${proof.path}`))) {
+        return `reference metadata proof is absent from companion journal: ${proof.path}`
+      }
+    }
+  } else if (disposition.referenceJournal !== undefined) {
+    return 'snapshot carries an unused companion reference journal proof'
+  }
+
+  const durableReferencePaths = new Set(
+    disposition.referenceJournal?.references.flatMap(item => [
+      item.sourcePath,
+      item.writePath,
+    ]) ?? [],
+  )
+  const migrationRows = [
+    ...disposition.snapshot.migrations,
+    ...disposition.expectedCurrentSnapshot.migrations,
+  ]
+  for (const row of migrationRows) {
+    const documentId = typeof row.document_id === 'string'
+      ? row.document_id
+      : null
+    const keys = [row.path, row.original_path]
+      .filter((value): value is string =>
+        typeof value === 'string' && value.length > 0)
+    const ownedByDocument = documentId !== null
+      && footprint.documentIds.includes(documentId)
+    const ownedByPath = keys.every((key) =>
+      key.startsWith('@deleted/')
+        ? footprint.documentIds.includes(key.slice('@deleted/'.length))
+        : pathWithinPrefix(key, journal.srcRel)
+          || pathWithinPrefix(key, journal.destRel)
+          || durableReferencePaths.has(key))
+    if (!ownedByDocument && !ownedByPath) {
+      return `migration ownership lacks durable transaction provenance: ${keys[0] ?? documentId ?? 'unknown'}`
     }
   }
   return null

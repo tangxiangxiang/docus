@@ -61,6 +61,40 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
     const hasExpected = disposition.expectedCurrentSnapshot !== undefined
     const hasPhysicalIds = disposition.physicalDocumentIds !== undefined
     if (hasExpected !== hasPhysicalIds) return null
+    const hasMetadataOnlyProofs =
+      disposition.metadataOnlyDocumentProofs !== undefined
+    const hasOwnershipFootprint =
+      disposition.ownershipFootprint !== undefined
+    if (hasMetadataOnlyProofs !== hasOwnershipFootprint) return null
+    if (hasMetadataOnlyProofs) {
+      if (!Array.isArray(disposition.metadataOnlyDocumentProofs)
+        || !disposition.metadataOnlyDocumentProofs.every((proof) =>
+          proof && typeof proof === 'object'
+          && typeof (proof as Record<string, unknown>).documentId === 'string'
+          && typeof (proof as Record<string, unknown>).path === 'string'
+          && (
+            (proof as Record<string, unknown>).reason === 'source-prefix'
+            || (proof as Record<string, unknown>).reason === 'destination-prefix'
+            || (proof as Record<string, unknown>).reason === 'reference-journal'
+          ))) return null
+      const footprint =
+        disposition.ownershipFootprint as Record<string, unknown>
+      if (!footprint || typeof footprint !== 'object'
+        || !Array.isArray(footprint.paths)
+        || !Array.isArray(footprint.documentIds)
+        || !Array.isArray(footprint.tagIds)
+        || !Array.isArray(footprint.migrationPaths)
+        || !Array.isArray(footprint.migrationOriginalPaths)) return null
+      if (disposition.referenceJournal !== undefined
+        && (!disposition.referenceJournal
+          || typeof disposition.referenceJournal !== 'object')) return null
+      if (disposition.createdMetadataIds !== undefined) {
+        const created = disposition.createdMetadataIds as Record<string, unknown>
+        if (!created || typeof created !== 'object'
+          || !Array.isArray(created.documentIds)
+          || !Array.isArray(created.tagIds)) return null
+      }
+    }
   } else {
     return null
   }

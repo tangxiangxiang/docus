@@ -23,6 +23,7 @@ import {
   verifyFolderMoveDestinationV4,
 } from '../documentFileLifecycle.js'
 import {
+  buildMetadataOwnershipFootprint,
   createFolderMoveGateProof,
   FOLDER_MOVE_JOURNAL_VERSION,
   listPhysicalMoveEntries,
@@ -49,7 +50,10 @@ import {
 } from '../folderMoveV4Metadata.js'
 import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
-import { prepareRenameReferenceJournal, type PreparedRenameReferenceJournal } from '../renameReferenceJournal.js'
+import {
+  prepareRenameReferenceJournal,
+  type PreparedRenameReferenceJournal,
+} from '../renameReferenceJournal.js'
 import { CONTENT_DIR, filePathFor, folderPathFor, isValidPathSyntax } from '../paths.js'
 import { rewriteDocumentReferences } from '../renameReferences.js'
 import { listSubtreePaths } from '../tree.js'
@@ -348,6 +352,24 @@ folderRoutes.patch('/api/folders/*', async (c) => {
         beforeRaw: snapshot.raw,
         afterRaw: snapshot.updated,
       })),
+      referenceIdentities: folderReferenceSnapshots
+        .filter(snapshot => !oldPaths.includes(snapshot.sourcePath))
+        .map((snapshot) => {
+          const identity = getDocumentMetadata(
+            metadataDb(),
+            snapshot.sourcePath,
+          )
+          if (!identity) {
+            throw new Error(
+              `reference document identity was not created: ${snapshot.sourcePath}`,
+            )
+          }
+          return {
+            documentId: identity.id,
+            sourcePath: snapshot.sourcePath,
+            writePath: snapshot.writePath,
+          }
+        }),
     })
     // Physical entries: the journal must describe EVERY file the move
     // touches — markdown AND attachments — or a crash mid-move would
@@ -593,7 +615,72 @@ folderRoutes.patch('/api/folders/*', async (c) => {
             (entry) => typeof entry.documentId === 'string'
               ? [entry.documentId]
               : [],
-          )
+          ).sort()
+          const rollbackSnapshot =
+            serializeMetadataSnapshot(databaseSnapshot)
+          const expectedCurrentSnapshot =
+            serializeMetadataSnapshot(rollbackExpectedCurrentSnapshot)
+          const metadataOnlyDocumentProofs =
+            rollbackSnapshot.documents
+              .filter(row =>
+                !physicalDocumentIds.includes(String(row.id)))
+              .map((row) => {
+                const documentId = String(row.id)
+                const documentPath = String(row.path)
+                const reason =
+                  documentPath === newPath
+                    || documentPath.startsWith(`${newPath}/`)
+                    ? 'source-prefix' as const
+                    : documentPath === srcPath
+                        || documentPath.startsWith(`${srcPath}/`)
+                      ? 'destination-prefix' as const
+                      : 'reference-journal' as const
+                return {
+                  documentId,
+                  path: documentPath,
+                  reason,
+                }
+              })
+              .sort((left, right) =>
+                left.documentId.localeCompare(right.documentId))
+          const referenceProofRows = folderReferenceSnapshots
+            .filter(snapshot =>
+              metadataOnlyDocumentProofs.some(proof =>
+                proof.reason === 'reference-journal'
+                && proof.path === snapshot.sourcePath))
+            .map((snapshot) => {
+              const identity = getDocumentMetadata(
+                metadataDb(),
+                snapshot.sourcePath,
+              )
+              if (!identity) {
+                throw new Error(
+                  `reference document identity is missing: ${snapshot.sourcePath}`,
+                )
+              }
+              return {
+                documentId: identity.id,
+                sourcePath: snapshot.sourcePath,
+                writePath: snapshot.writePath,
+                beforeHash: sha256Hex(snapshot.raw),
+                afterHash: sha256Hex(snapshot.updated),
+              }
+            })
+            .sort((left, right) =>
+              left.documentId.localeCompare(right.documentId))
+          if (referenceProofRows.length > 0 && !referenceJournal) {
+            throw new Error(
+              'reverse metadata provenance requires a durable reference journal',
+            )
+          }
+          const createdMetadataIds = {
+            documentIds: rollbackExpectedCurrentSnapshot.documentIds
+              .filter(id => !databaseSnapshot.documentIds.includes(id))
+              .sort(),
+            tagIds: rollbackExpectedCurrentSnapshot.tagIds
+              .filter(id => !databaseSnapshot.preexistingTagIds.includes(id))
+              .sort((left, right) => left - right),
+          }
           const flipped: FolderMoveJournalV4 = {
             ...folderMoveJournal,
             srcRel: newPath,
@@ -608,11 +695,27 @@ folderRoutes.patch('/api/folders/*', async (c) => {
             entries: reverseEntries,
             metadataDisposition: {
               kind: 'snapshot-restore',
-              snapshot: serializeMetadataSnapshot(databaseSnapshot),
-              expectedCurrentSnapshot: serializeMetadataSnapshot(
-                rollbackExpectedCurrentSnapshot,
-              ),
+              snapshot: rollbackSnapshot,
+              expectedCurrentSnapshot,
               physicalDocumentIds,
+              metadataOnlyDocumentProofs,
+              ownershipFootprint: buildMetadataOwnershipFootprint(
+                rollbackSnapshot,
+                expectedCurrentSnapshot,
+                physicalDocumentIds,
+              ),
+              ...(referenceProofRows.length > 0
+                ? {
+                    referenceJournal: {
+                      relativePath: path.basename(
+                        referenceJournal!.journalPath,
+                      ),
+                      operation: 'folder-rename-references' as const,
+                      references: referenceProofRows,
+                    },
+                  }
+                : {}),
+              createdMetadataIds,
             },
           }
           await rewriteDurableJournal(journalPath, flipped)
