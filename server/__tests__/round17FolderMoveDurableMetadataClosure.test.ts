@@ -436,8 +436,10 @@ describe('Round-17 exact committed graph verification', () => {
       strategy: 'atomic-rename',
       sourceDev: directoryStat.dev.toString(),
       sourceIno: directoryStat.ino.toString(),
+      sourceBirthtimeNs: directoryStat.birthtimeNs.toString(),
       destDev: directoryStat.dev.toString(),
       destIno: directoryStat.ino.toString(),
+      destBirthtimeNs: directoryStat.birthtimeNs.toString(),
       entries: [{
         relativeFilePath: 'a.md',
         sourceHash: sha256HexBuffer(raw),

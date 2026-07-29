@@ -29,6 +29,10 @@ import {
   createFolderMoveDestinationDirectories,
 } from '../folderMoveDirectoryOwnership'
 import { parseFolderMoveJournalV4Object } from '../folderMoveV4DurableJournal'
+import {
+  captureDurableDirectoryIdentity,
+} from '../durableDirectoryIdentity'
+import { classifyFolderMoveRecoveryStrength } from '../legacyFolderMoveStrength'
 
 // F-tests are the F1..F12 matrix from the round-17 final closure spec.
 // They cover the four holes:
@@ -290,6 +294,20 @@ describe('Round-17 F1–F3 owner binding crash recoverability (P0-1)', () => {
 // -- F4..F7: P0-3 declared directory generations ------------------------------
 
 describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () => {
+  async function recreateWithDifferentBirthtime(
+    directoryAbs: string,
+    oldBirthtimeNs: string,
+  ): Promise<Awaited<ReturnType<typeof captureDurableDirectoryIdentity>>> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await fs.rm(directoryAbs, { recursive: true, force: true })
+      await new Promise(resolve => setTimeout(resolve, 2))
+      await fs.mkdir(directoryAbs)
+      const identity = await captureDurableDirectoryIdentity(directoryAbs)
+      if (identity.birthtimeNs !== oldBirthtimeNs) return identity
+    }
+    throw new Error('test filesystem did not advance directory birthtime')
+  }
+
   async function writePreparedDirectoryJournal(
     source: string,
     destinationName = 'dest',
@@ -298,7 +316,7 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
     journalPath: string
   }> {
     const physical = await listPhysicalMoveEntries(source)
-    const sourceStat = await fs.lstat(source, { bigint: true })
+    const sourceIdentity = await captureDurableDirectoryIdentity(source)
     const journal: FolderMoveJournalV4 = {
       version: FOLDER_MOVE_JOURNAL_VERSION,
       op: 'folder-move',
@@ -306,8 +324,9 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
       srcRel: path.basename(source),
       destRel: destinationName,
       strategy: 'replayable-move',
-      sourceDev: sourceStat.dev.toString(),
-      sourceIno: sourceStat.ino.toString(),
+      sourceDev: sourceIdentity.dev,
+      sourceIno: sourceIdentity.ino,
+      sourceBirthtimeNs: sourceIdentity.birthtimeNs,
       gateProof: createFolderMoveGateProof(),
       entries: physical.entries.map(entry => ({
         relativeFilePath: entry.relativeFilePath,
@@ -330,15 +349,14 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
   it('F4 preserves an externally-recreated directory under a declared shell', async () => {
     const source = path.join(vault, 'src')
     await fs.mkdir(source)
-    const stat = await fs.lstat(source, { bigint: true })
+    const root = await captureDurableDirectoryIdentity(source)
     const nestedDir = path.join(source, 'sub')
     await fs.mkdir(nestedDir)
-    const nestedStat = await fs.lstat(nestedDir, { bigint: true })
+    const original = await captureDurableDirectoryIdentity(nestedDir)
 
     // Externally replace nested dir before journal cleanup.
-    await fs.rm(nestedDir, { recursive: true, force: true })
-    await fs.mkdir(path.join(source, 'sub'))
-    const recreatedStat = await fs.lstat(path.join(source, 'sub'), { bigint: true })
+    const recreated =
+      await recreateWithDifferentBirthtime(nestedDir, original.birthtimeNs)
 
     const journal: FolderMoveJournalV4 = {
       version: 4,
@@ -347,14 +365,16 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
       srcRel: 'src',
       destRel: 'dest',
       strategy: 'atomic-rename',
-      sourceDev: stat.dev.toString(),
-      sourceIno: stat.ino.toString(),
+      sourceDev: root.dev,
+      sourceIno: root.ino,
+      sourceBirthtimeNs: root.birthtimeNs,
       entries: [],
       directories: ['sub'],
       directoryGenerations: [{
         relativeDirectoryPath: 'sub',
-        sourceDev: nestedStat.dev.toString(),
-        sourceIno: nestedStat.ino.toString(),
+        sourceDev: recreated.dev,
+        sourceIno: recreated.ino,
+        sourceBirthtimeNs: original.birthtimeNs,
       }],
       metadataDisposition: { kind: 'prefix-move' },
     }
@@ -362,12 +382,15 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
     // The fixed cleanup must NOT remove the externally-recreated `sub`.
     // It must also fail closed (return a conflict report) rather than silently
     // dropping the directory and polluting the reverse tree.
-    const __ = recreatedStat
     const result = await import('../documentFileLifecycle').then(m =>
       m.removeDeclaredEmptyDirectories(source, journal.directories, {
         directoryGenerations: journal.directoryGenerations ?? [],
         removeRoot: true,
-        expectedRootGeneration: { dev: journal.sourceDev!, ino: journal.sourceIno! },
+        expectedRootGeneration: {
+          dev: journal.sourceDev,
+          ino: journal.sourceIno,
+          birthtimeNs: journal.sourceBirthtimeNs!,
+        },
       }),
     )
     expect((await fs.stat(path.join(source, 'sub'))).isDirectory()).toBe(true)
@@ -381,15 +404,15 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
   it('F5 removes a declared empty dir only when its dev/ino matches the declared generation', async () => {
     const source = path.join(vault, 'src')
     await fs.mkdir(source)
-    const stat = await fs.lstat(source, { bigint: true })
+    const root = await captureDurableDirectoryIdentity(source)
     const targetDir = path.join(source, 'gone')
     await fs.mkdir(targetDir)
-    const generatedStat = await fs.lstat(targetDir, { bigint: true })
+    const original = await captureDurableDirectoryIdentity(targetDir)
 
     // Externally swap: same path, different dev/ino (e.g. chown or replayable
     // copy + delete). Without the dev/ino proof, cleanup would wipe it.
-    await fs.rm(targetDir, { recursive: true, force: true })
-    await fs.mkdir(targetDir)
+    const recreated =
+      await recreateWithDifferentBirthtime(targetDir, original.birthtimeNs)
 
     const journal: FolderMoveJournalV4 = {
       version: 4,
@@ -398,14 +421,16 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
       srcRel: 'src',
       destRel: 'dest',
       strategy: 'atomic-rename',
-      sourceDev: stat.dev.toString(),
-      sourceIno: stat.ino.toString(),
+      sourceDev: root.dev,
+      sourceIno: root.ino,
+      sourceBirthtimeNs: root.birthtimeNs,
       entries: [],
       directories: ['gone'],
       directoryGenerations: [{
         relativeDirectoryPath: 'gone',
-        sourceDev: generatedStat.dev.toString(),
-        sourceIno: generatedStat.ino.toString(),
+        sourceDev: recreated.dev,
+        sourceIno: recreated.ino,
+        sourceBirthtimeNs: original.birthtimeNs,
       }],
       metadataDisposition: { kind: 'prefix-move' },
     }
@@ -414,7 +439,11 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
       m.removeDeclaredEmptyDirectories(source, journal.directories, {
         directoryGenerations: journal.directoryGenerations ?? [],
         removeRoot: true,
-        expectedRootGeneration: { dev: journal.sourceDev!, ino: journal.sourceIno! },
+        expectedRootGeneration: {
+          dev: journal.sourceDev,
+          ino: journal.sourceIno,
+          birthtimeNs: journal.sourceBirthtimeNs!,
+        },
       }),
     )
     // External recreation must NOT be removed.
@@ -424,16 +453,21 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
   it('F6 removes nested empty dirs under a declared shell only when each generation matches', async () => {
     const source = path.join(vault, 'src')
     await fs.mkdir(source)
-    const stat = await fs.lstat(source, { bigint: true })
+    const root = await captureDurableDirectoryIdentity(source)
     const deepDir = path.join(source, 'top', 'next', 'leaf')
     await fs.mkdir(path.dirname(deepDir), { recursive: true })
     await fs.mkdir(deepDir)
     // Walk up and capture each directory's generation.
-    const dirPairs: Array<{ rel: string; dev: string; ino: string }> = []
+    const dirPairs: Array<{
+      rel: string
+      dev: string
+      ino: string
+      birthtimeNs: string
+    }> = []
     for (const rel of ['top', 'top/next', 'top/next/leaf']) {
       const abs = path.join(source, rel)
-      const st = await fs.lstat(abs, { bigint: true })
-      dirPairs.push({ rel, dev: st.dev.toString(), ino: st.ino.toString() })
+      const identity = await captureDurableDirectoryIdentity(abs)
+      dirPairs.push({ rel, ...identity })
     }
 
     const journal: FolderMoveJournalV4 = {
@@ -443,27 +477,41 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
       srcRel: 'src',
       destRel: 'dest',
       strategy: 'atomic-rename',
-      sourceDev: stat.dev.toString(),
-      sourceIno: stat.ino.toString(),
+      sourceDev: root.dev,
+      sourceIno: root.ino,
+      sourceBirthtimeNs: root.birthtimeNs,
       entries: [],
       directories: dirPairs.map(p => p.rel),
       directoryGenerations: dirPairs.map(p => ({
         relativeDirectoryPath: p.rel,
         sourceDev: p.dev,
         sourceIno: p.ino,
+        sourceBirthtimeNs: p.birthtimeNs,
       })),
       metadataDisposition: { kind: 'prefix-move' },
     }
 
     // Tamper: the leaf is externally replaced with another inode.
-    await fs.rm(path.join(source, 'top/next/leaf'), { recursive: true, force: true })
-    await fs.mkdir(path.join(source, 'top/next/leaf'))
+    const leaf = dirPairs.at(-1)!
+    const recreatedLeaf = await recreateWithDifferentBirthtime(
+      path.join(source, leaf.rel),
+      leaf.birthtimeNs,
+    )
+    journal.directoryGenerations![2] = {
+      ...journal.directoryGenerations![2],
+      sourceDev: recreatedLeaf.dev,
+      sourceIno: recreatedLeaf.ino,
+    }
 
     const result = await import('../documentFileLifecycle').then(m =>
       m.removeDeclaredEmptyDirectories(source, journal.directories, {
         directoryGenerations: journal.directoryGenerations ?? [],
         removeRoot: true,
-        expectedRootGeneration: { dev: journal.sourceDev!, ino: journal.sourceIno! },
+        expectedRootGeneration: {
+          dev: journal.sourceDev,
+          ino: journal.sourceIno,
+          birthtimeNs: journal.sourceBirthtimeNs!,
+        },
       }),
     )
     // Leaf was tampered: must NOT be removed, and conflict surfaced.
@@ -476,10 +524,10 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
   it('F7 root source externally reused: expected root generation mismatch is observed', async () => {
     const source = path.join(vault, 'src')
     await fs.mkdir(source)
-    const stat = await fs.lstat(source, { bigint: true })
+    const original = await captureDurableDirectoryIdentity(source)
     // Externally recreate the source root before cleanup.
-    await fs.rm(source, { recursive: true, force: true })
-    await fs.mkdir(source)
+    const recreated =
+      await recreateWithDifferentBirthtime(source, original.birthtimeNs)
 
     const journal: FolderMoveJournalV4 = {
       version: 4,
@@ -488,8 +536,9 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
       srcRel: 'src',
       destRel: 'dest',
       strategy: 'atomic-rename',
-      sourceDev: stat.dev.toString(),
-      sourceIno: stat.ino.toString(),
+      sourceDev: recreated.dev,
+      sourceIno: recreated.ino,
+      sourceBirthtimeNs: original.birthtimeNs,
       entries: [],
       directories: [],
       metadataDisposition: { kind: 'prefix-move' },
@@ -498,7 +547,11 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
       m.removeDeclaredEmptyDirectories(source, journal.directories, {
         directoryGenerations: journal.directoryGenerations ?? [],
         removeRoot: true,
-        expectedRootGeneration: { dev: journal.sourceDev!, ino: journal.sourceIno! },
+        expectedRootGeneration: {
+          dev: journal.sourceDev,
+          ino: journal.sourceIno,
+          birthtimeNs: journal.sourceBirthtimeNs!,
+        },
       }),
     )
     expect(result.rootRemoved).toBe(false)
@@ -533,8 +586,17 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
     await fs.mkdir(path.join(source, 'a', 'b'), { recursive: true })
     await fs.writeFile(path.join(source, 'owned.bin'), 'owned')
     const { journalPath } = await writePreparedDirectoryJournal(source)
-    await fs.rmdir(path.join(source, 'a', 'b'))
-    await fs.mkdir(path.join(source, 'a', 'b'))
+    const journal = JSON.parse(await fs.readFile(journalPath, 'utf8')) as FolderMoveJournalV4
+    const nested = journal.directoryGenerations!.find(
+      entry => entry.relativeDirectoryPath === 'a/b',
+    )!
+    const recreated = await recreateWithDifferentBirthtime(
+      path.join(source, 'a', 'b'),
+      nested.sourceBirthtimeNs!,
+    )
+    nested.sourceDev = recreated.dev
+    nested.sourceIno = recreated.ino
+    await rewriteDurableJournal(journalPath, journal)
 
     const db = new Database(':memory:')
     applyMigrations(db)
@@ -576,11 +638,18 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
       phase: 'gate-created',
       destDev: gate!.dev,
       destIno: gate!.ino,
+      destBirthtimeNs: gate!.birthtimeNs,
       destinationDirectoryGenerations,
     }
     await rewriteDurableJournal(journalPath, gateCreated)
-    await fs.rmdir(path.join(destination, 'nested'))
-    await fs.mkdir(path.join(destination, 'nested'))
+    const expectedNested = gateCreated.destinationDirectoryGenerations![0]
+    const recreated = await recreateWithDifferentBirthtime(
+      path.join(destination, 'nested'),
+      expectedNested.sourceBirthtimeNs!,
+    )
+    expectedNested.sourceDev = recreated.dev
+    expectedNested.sourceIno = recreated.ino
+    await rewriteDurableJournal(journalPath, gateCreated)
 
     const db = new Database(':memory:')
     applyMigrations(db)
@@ -601,6 +670,69 @@ describe('Round-17 F4–F7 declared directory durable generations (P0-3)', () =>
     expect(await fs.stat(journalPath)).toBeDefined()
     db.close()
   })
+})
+
+describe('Round-17 P0-3 immutable directory identity schema', () => {
+  const base = (): FolderMoveJournalV4 => ({
+    version: 4,
+    op: 'folder-move',
+    phase: 'prepared',
+    srcRel: 'src',
+    destRel: 'dest',
+    strategy: 'replayable-move',
+    sourceDev: '1',
+    sourceIno: '1',
+    gateProof: createFolderMoveGateProof(),
+    entries: [],
+    directories: [],
+    directoryGenerations: [],
+    metadataDisposition: { kind: 'prefix-move' },
+  })
+
+  it('A4 atomic rename preserves the durable birthtime identity', async () => {
+    const source = path.join(vault, 'atomic-source')
+    const destination = path.join(vault, 'atomic-destination')
+    await fs.mkdir(source)
+    const before = await captureDurableDirectoryIdentity(source)
+    await fs.rename(source, destination)
+    expect(await captureDurableDirectoryIdentity(destination)).toEqual(before)
+  })
+
+  it('A5 replayable destination directories persist birthtime before files land', async () => {
+    const destination = path.join(vault, 'destination')
+    await fs.mkdir(destination)
+    const rows = await createFolderMoveDestinationDirectories(
+      destination,
+      ['a', 'a/b'],
+      vault,
+    )
+    expect(rows).toHaveLength(2)
+    expect(rows.every(row => /^[1-9]\d*$/.test(row.sourceBirthtimeNs!)))
+      .toBe(true)
+  })
+
+  it('A6 missing-birthtime legacy v4 parses for diagnosis but is weak', () => {
+    const journal = base()
+    expect(parseFolderMoveJournalV4Object(journal)).not.toBeNull()
+    expect(classifyFolderMoveRecoveryStrength(journal).strength).toBe('weak')
+  })
+
+  it('A7 zero birthtime journal is weak', () => {
+    expect(classifyFolderMoveRecoveryStrength({
+      ...base(),
+      sourceBirthtimeNs: '0',
+    }).strength).toBe('weak')
+  })
+
+  it.each(['01', '-1', '1.0', 'x'])(
+    'A8 parser rejects malformed or noncanonical birthtime %s',
+    (sourceBirthtimeNs) => {
+      expect(parseFolderMoveJournalV4Object({
+        ...base(),
+        sourceBirthtimeNs,
+      })).toBeNull()
+    },
+  )
 })
 
 // -- F8..F10: P1-2 metadata snapshot closed graphs ----------------------------

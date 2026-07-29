@@ -31,6 +31,7 @@ import {
   platformDirectoryMoveStrategy,
 } from '../documentFileLifecycle'
 import { setContentDir } from '../paths'
+import { addCurrentDirectoryBirthtimes } from './folderMoveBirthtimeTestSupport'
 
 const TSX_CLI = fileURLToPath(import.meta.resolve('tsx/cli'))
 const ATOMIC_CRASH_CHILD = path.join(
@@ -69,6 +70,7 @@ async function writeJournal(journal: FolderMoveJournalV4): Promise<string> {
   const journalAbs = path.join(vault, '.proj.docus-journal-abcdef012345')
   journal.directoryGenerations ??= []
   journal.gateProof ??= createFolderMoveGateProof()
+  await addCurrentDirectoryBirthtimes(vault, journal)
   await fs.writeFile(journalAbs, JSON.stringify(journal))
   return journalAbs
 }
@@ -121,6 +123,7 @@ describe('Round-17 replayable landing uncertainty', () => {
       strategy: 'replayable-move',
       sourceDev: sourceStat.dev.toString(),
       sourceIno: sourceStat.ino.toString(),
+      sourceBirthtimeNs: sourceStat.birthtimeNs.toString(),
       gateProof,
       entries: physical.entries.map(entry => ({
         relativeFilePath: entry.relativeFilePath,
@@ -243,8 +246,10 @@ describe('Round-15 metadata-committed physical parity', () => {
       strategy: 'atomic-rename',
       sourceDev: destinationStat.dev.toString(),
       sourceIno: destinationStat.ino.toString(),
+      sourceBirthtimeNs: destinationStat.birthtimeNs.toString(),
       destDev: destinationStat.dev.toString(),
       destIno: destinationStat.ino.toString(),
+      destBirthtimeNs: destinationStat.birthtimeNs.toString(),
       entries: physical.entries.map((entry) => ({
         relativeFilePath: entry.relativeFilePath,
         sourceDev: entry.sourceDev!,
@@ -356,6 +361,7 @@ describe.runIf(platformDirectoryMoveStrategy === 'atomic-rename')(
       strategy: 'atomic-rename',
       sourceDev: sourceStat.dev.toString(),
       sourceIno: sourceStat.ino.toString(),
+      sourceBirthtimeNs: sourceStat.birthtimeNs.toString(),
       entries: physical.entries.map(entry => ({
         relativeFilePath: entry.relativeFilePath,
         sourceDev: entry.sourceDev!,
@@ -373,11 +379,12 @@ describe.runIf(platformDirectoryMoveStrategy === 'atomic-rename')(
     await writeDurableJournal(journalAbs, prepared)
     let renameLanded = false
     const realStat = fs.stat.bind(fs)
-    vi.spyOn(fs, 'stat').mockImplementation(async (target, options) => {
+    const realLstat = fs.lstat.bind(fs)
+    vi.spyOn(fs, 'lstat').mockImplementation(async (target, options) => {
       if (renameLanded && String(target) === path.join(vault, 'ren')) {
         throw Object.assign(new Error('injected post-rename stat failure'), { code: 'EIO' })
       }
-      return realStat(target, options as never)
+      return realLstat(target, options as never)
     })
 
     await expect(executeFolderMoveV4Physical({

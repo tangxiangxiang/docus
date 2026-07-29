@@ -23,6 +23,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { applyMigrations } from '../db'
 import { recoverInterruptedOperations } from '../crashRecovery'
+import { addCurrentDirectoryBirthtimes } from './folderMoveBirthtimeTestSupport'
 import {
   __setCreateOnlyMoveHooksForTesting,
   __setDirectoryMoveStrategyOverrideForTesting,
@@ -73,6 +74,7 @@ async function writeJournal(basename: string, journal: FolderMoveJournalV4): Pro
   const journalAbs = path.join(vault, basename)
   journal.directoryGenerations ??= []
   journal.gateProof ??= createFolderMoveGateProof()
+  await addCurrentDirectoryBirthtimes(vault, journal)
   await fs.writeFile(journalAbs, JSON.stringify(journal), 'utf8')
   return journalAbs
 }

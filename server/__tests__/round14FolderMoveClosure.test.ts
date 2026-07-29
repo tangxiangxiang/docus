@@ -33,6 +33,7 @@
 // This file is intentionally RED on baseline (4a78223).
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { addCurrentDirectoryBirthtimes } from './folderMoveBirthtimeTestSupport'
 import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
@@ -89,6 +90,7 @@ async function writeJournal(basename: string, journal: FolderMoveJournalV4): Pro
   if (dir !== vault) await fs.mkdir(dir, { recursive: true })
   const journalAbs = path.join(vault, basename)
   journal.directoryGenerations ??= []
+  await addCurrentDirectoryBirthtimes(vault, journal)
   await fs.writeFile(journalAbs, JSON.stringify(journal), 'utf8')
   return journalAbs
 }
@@ -246,7 +248,7 @@ describe('Round-17 v4 gate proof compatibility matrix', () => {
     expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# hello\n')
   })
 
-  it('refreshes a new replayable gate generation only when its marker matches', async () => {
+  it('does not refresh a mismatched replayable gate identity even when its marker matches', async () => {
     const physical = await preparedPhysical()
     await fs.mkdir(path.join(vault, 'ren'))
     await fs.writeFile(
@@ -274,13 +276,12 @@ describe('Round-17 v4 gate proof compatibility matrix', () => {
 
     const report = await recoverInterruptedOperations(vault, db)
 
-    expect(report.actions).toContainEqual(expect.objectContaining({ action: 'completed-rename' }))
-    expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('# hello\n')
-    await expect(fs.stat(path.join(vault, 'proj'))).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(fs.stat(journalAbs)).rejects.toMatchObject({ code: 'ENOENT' })
-    await expect(fs.stat(
-      path.join(vault, 'ren', ROUND17_GATE_PROOF.markerName),
-    )).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(report.actions).toContainEqual(expect.objectContaining({
+      action: 'quarantined',
+      detail: 'replayable destination gate generation does not match journal',
+    }))
+    expect(await fs.readFile(path.join(vault, 'proj/a.md'), 'utf8')).toBe('# hello\n')
+    expect(await fs.stat(journalAbs)).toBeDefined()
   })
 
   it.runIf(

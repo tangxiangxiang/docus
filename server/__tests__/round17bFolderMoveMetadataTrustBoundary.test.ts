@@ -105,6 +105,7 @@ function baseJournal(
     strategy: 'replayable-move',
     sourceDev: '1',
     sourceIno: '1',
+    sourceBirthtimeNs: '1',
     gateProof: createFolderMoveGateProof(),
     entries: [{
       relativeFilePath: 'a.md',

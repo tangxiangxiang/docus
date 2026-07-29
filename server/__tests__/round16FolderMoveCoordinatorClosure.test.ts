@@ -113,12 +113,13 @@ describe.runIf(platformDirectoryMoveStrategy === 'atomic-rename')(
     let renameLanded = false
     let injected = false
     const realStat = fs.stat.bind(fs)
-    vi.spyOn(fs, 'stat').mockImplementation(async (target, options) => {
+    const realLstat = fs.lstat.bind(fs)
+    vi.spyOn(fs, 'lstat').mockImplementation(async (target, options) => {
       if (renameLanded && !injected && String(target) === path.join(vault, 'ren')) {
         injected = true
         throw Object.assign(new Error('injected post-rename stat failure'), { code: 'EIO' })
       }
-      return realStat(target, options as never)
+      return realLstat(target, options as never)
     })
     __setCreateOnlyMoveHooksForTesting({
       afterAtomicRenameBeforeParity: () => { renameLanded = true },
@@ -132,6 +133,11 @@ describe.runIf(platformDirectoryMoveStrategy === 'atomic-rename')(
     })
     const persisted = await readOnlyV4Journal()
     expect(persisted.journal.phase).toBe('gate-created')
+    expect(persisted.journal.sourceBirthtimeNs).toMatch(/^[1-9]\d*$/)
+    expect(persisted.journal.destBirthtimeNs).toMatch(/^[1-9]\d*$/)
+    expect(persisted.journal.directoryGenerations?.every(
+      row => /^[1-9]\d*$/.test(row.sourceBirthtimeNs ?? ''),
+    )).toBe(true)
     expect(getDocumentMetadata(db, 'proj/a')?.id).toBe('proj-a-id')
     expect(getDocumentMetadata(db, 'ren/a')).toBeNull()
     await expect(realStat(path.join(vault, 'proj'))).rejects.toMatchObject({ code: 'ENOENT' })
@@ -262,6 +268,8 @@ describe('Round-16 prepared snapshot restore recovery', () => {
     )
     expect(prepared.journal.sourceDev).toBe(preparedSourceStat.dev.toString())
     expect(prepared.journal.sourceIno).toBe(preparedSourceStat.ino.toString())
+    expect(prepared.journal.sourceBirthtimeNs)
+      .toBe(preparedSourceStat.birthtimeNs.toString())
     await expect(fs.stat(path.join(vault, 'gone'))).rejects.toMatchObject({ code: 'ENOENT' })
 
     const recoveryDb = new Database(dbPath)

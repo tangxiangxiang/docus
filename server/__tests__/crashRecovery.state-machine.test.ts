@@ -12,6 +12,7 @@ import {
   captureFolderMoveDirectoryEntries,
 } from '../folderMoveDirectoryOwnership'
 import { writeFolderMoveGateProof } from '../folderMoveGateProof'
+import { captureDurableDirectoryIdentity } from '../durableDirectoryIdentity'
 
 let root: string
 let db: InstanceType<typeof Database>
@@ -226,7 +227,8 @@ describe('deterministic replayable folder-move recovery model', () => {
         for (const entry of entries) {
           await fs.writeFile(path.join(srcAbs, entry.rel), entry.raw, 'utf8')
         }
-        const sourceRootStat = await fs.lstat(srcAbs, { bigint: true })
+        const sourceRootIdentity =
+          await captureDurableDirectoryIdentity(srcAbs)
         const sourceDirectoryGenerations =
           await captureFolderMoveDirectoryEntries(srcAbs, root)
         const preparedFileGenerations = await Promise.all(
@@ -289,14 +291,14 @@ describe('deterministic replayable folder-move recovery model', () => {
         }
         const destinationDirectoryGenerations = gateExists
           ? await Promise.all(directories.map(async relativeDirectoryPath => {
-              const stat = await fs.lstat(
+              const identity = await captureDurableDirectoryIdentity(
                 path.join(destAbs, relativeDirectoryPath),
-                { bigint: true },
               )
               return {
                 relativeDirectoryPath,
-                sourceDev: stat.dev.toString(),
-                sourceIno: stat.ino.toString(),
+                sourceDev: identity.dev,
+                sourceIno: identity.ino,
+                sourceBirthtimeNs: identity.birthtimeNs,
               }
             }))
           : undefined
@@ -324,12 +326,18 @@ describe('deterministic replayable folder-move recovery model', () => {
           srcRel,
           destRel,
           strategy: 'replayable-move',
-          sourceDev: sourceRootStat.dev.toString(),
-          sourceIno: sourceRootStat.ino.toString(),
+          sourceDev: sourceRootIdentity.dev,
+          sourceIno: sourceRootIdentity.ino,
+          sourceBirthtimeNs: sourceRootIdentity.birthtimeNs,
           ...(gateExists
             ? {
-                destDev: (await fs.lstat(destAbs, { bigint: true })).dev.toString(),
-                destIno: (await fs.lstat(destAbs, { bigint: true })).ino.toString(),
+                ...await captureDurableDirectoryIdentity(destAbs).then(
+                  identity => ({
+                    destDev: identity.dev,
+                    destIno: identity.ino,
+                    destBirthtimeNs: identity.birthtimeNs,
+                  }),
+                ),
                 destinationDirectoryGenerations,
               }
             : {}),
