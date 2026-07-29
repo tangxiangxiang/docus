@@ -39,6 +39,35 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
     && entry.phase !== 'files-landed' && entry.phase !== 'metadata-committed') return null
   if (entry.strategy !== 'atomic-rename' && entry.strategy !== 'replayable-move') return null
   if (!Array.isArray(entry.entries) || !Array.isArray(entry.directories)) return null
+  // directoryGenerations is optional for backwards compat but MUST have
+  // every declared directory covered when present (sparse coverage is
+  // not allowed — P1-3 weak legacy classification flags such journals).
+  let directoryGenerations:
+    import('./folderMoveDirectoryOwnership.js').FolderMoveDirectoryEntry[] | undefined
+  if (entry.directoryGenerations !== undefined) {
+    if (!Array.isArray(entry.directoryGenerations)) return null
+    directoryGenerations = []
+    const seenPath = new Set<string>()
+    for (const raw of entry.directoryGenerations as Array<Record<string, unknown>>) {
+      if (!raw || typeof raw !== 'object') return null
+      const rel = raw.relativeDirectoryPath
+      const dev = raw.sourceDev
+      const ino = raw.sourceIno
+      if (typeof rel !== 'string'
+        || typeof dev !== 'string'
+        || typeof ino !== 'string'
+        || seenPath.has(rel)) return null
+      seenPath.add(rel)
+      directoryGenerations.push({
+        relativeDirectoryPath: rel,
+        sourceDev: dev,
+        sourceIno: ino,
+      })
+    }
+    if (directoryGenerations.length !== new Set(entry.directories as string[]).size) {
+      return null
+    }
+  }
   if (entry.gateProof !== undefined && !validateFolderMoveGateProof(entry.gateProof)) return null
   if (typeof entry.metadataDisposition !== 'object' || entry.metadataDisposition === null) return null
   const disposition = entry.metadataDisposition as Record<string, unknown>
@@ -109,6 +138,7 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
     ...(entry as unknown as FolderMoveJournalV4),
     sourceDev,
     sourceIno,
+    ...(directoryGenerations ? { directoryGenerations } : {}),
   }
 }
 

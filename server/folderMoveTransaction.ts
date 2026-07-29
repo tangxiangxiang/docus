@@ -1457,6 +1457,13 @@ export type FolderMoveJournalV4 = {
   emptyTree?: true
   entries: FolderMoveJournalEntryV4[]
   directories: string[]
+  /**
+   * Dev/ino proof captured at journal-write time for every directory
+   * in `directories`. Required when the route writes a new journal;
+   * legacy on-disk v4 journals without this field are accepted for
+   * read-only paths but are classified 'weak' (round-17 P0-3).
+   */
+  directoryGenerations?: import('./folderMoveDirectoryOwnership.js').FolderMoveDirectoryEntry[]
   metadataDisposition: FolderMoveMetadataDisposition
 }
 

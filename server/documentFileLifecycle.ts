@@ -419,6 +419,18 @@ export async function pruneEmptyDirectories(dirAbs: string): Promise<void> {
 /**
  * Remove only directory shells explicitly declared by a durable manifest.
  * Undeclared (even empty) directories are external state and are untouched.
+ *
+ * The optional `directoryGenerations` parameter carries the captured
+ * dev/ino of every declared directory at journal write time. Removal
+ * proceeds bottom-up only when:
+ *
+ *   (1) every declared directory still matches its journaled generation,
+ *   (2) it is empty, and
+ *   (3) it is a real directory (not a symlink/junction/special entry).
+ *
+ * When the journaled generation mismatches the on-disk generation the
+ * helper reports the conflict and skips removal — the directory is
+ * external state, NOT ours to remove.
  */
 export async function removeDeclaredEmptyDirectories(
   rootAbs: string,
@@ -426,43 +438,86 @@ export async function removeDeclaredEmptyDirectories(
   options: {
     removeRoot?: boolean
     expectedRootGeneration?: { dev: string; ino: string }
+    directoryGenerations?: Array<{
+      relativeDirectoryPath: string
+      sourceDev: string
+      sourceIno: string
+    }>
   } = {},
-): Promise<{ rootRemoved: boolean }> {
-  const ordered = [...new Set(declaredDirectories)]
-    .sort((left, right) => {
-      const depth = right.split('/').length - left.split('/').length
-      return depth || (left < right ? -1 : left > right ? 1 : 0)
+): Promise<{
+  removed: string[]
+  retained: string[]
+  conflict: string[]
+  rootRemoved: boolean
+}> {
+  const declaredSet = new Set([...new Set(declaredDirectories)])
+  const expectedGen = new Map<string, { dev: string, ino: string }>()
+  for (const entry of options.directoryGenerations ?? []) {
+    expectedGen.set(entry.relativeDirectoryPath, {
+      dev: entry.sourceDev,
+      ino: entry.sourceIno,
     })
+  }
+  const removed: string[] = []
+  const retained: string[] = []
+  const conflict: string[] = []
+  const ordered = [...declaredSet].sort((left, right) => {
+    const depth = right.split('/').length - left.split('/').length
+    return depth || (left < right ? -1 : left > right ? 1 : 0)
+  })
   for (const relative of ordered) {
     const directoryAbs = path.join(rootAbs, relative)
+    let stat: import('fs').BigIntStats
     try {
-      const stat = await fs.lstat(directoryAbs)
-      if (!stat.isDirectory() || stat.isSymbolicLink()) continue
-      if ((await fs.readdir(directoryAbs)).length !== 0) continue
-      await fs.rmdir(directoryAbs)
+      stat = await fs.lstat(directoryAbs, { bigint: true })
     } catch {
-      // Missing/non-empty/raced directories stay untouched.
+      // Already absent — declare it retained for transparency.
+      retained.push(relative)
+      continue
     }
-  }
-  if (!options.removeRoot) return { rootRemoved: false }
-  try {
-    const stat = await fs.lstat(rootAbs, { bigint: true })
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      return { rootRemoved: false }
+      conflict.push(relative)
+      continue
     }
-    if (options.expectedRootGeneration
-      && (stat.dev.toString() !== options.expectedRootGeneration.dev
-        || stat.ino.toString() !== options.expectedRootGeneration.ino)) {
-      return { rootRemoved: false }
+    const expected = expectedGen.get(relative)
+    if (expected
+      && (stat.dev.toString() !== expected.dev
+        || stat.ino.toString() !== expected.ino)) {
+      conflict.push(relative)
+      continue
     }
-    if ((await fs.readdir(rootAbs)).length !== 0) {
-      return { rootRemoved: false }
+    try {
+      if ((await fs.readdir(directoryAbs)).length !== 0) {
+        retained.push(relative)
+        continue
+      }
+      await fs.rmdir(directoryAbs)
+      removed.push(relative)
+    } catch {
+      retained.push(relative)
     }
-    await fs.rmdir(rootAbs)
-    return { rootRemoved: true }
-  } catch {
-    return { rootRemoved: false }
   }
+  let rootRemoved = false
+  if (options.removeRoot) {
+    try {
+      const stat = await fs.lstat(rootAbs, { bigint: true })
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        retained.push('')
+      } else if (options.expectedRootGeneration
+        && (stat.dev.toString() !== options.expectedRootGeneration.dev
+          || stat.ino.toString() !== options.expectedRootGeneration.ino)) {
+        conflict.push('')
+      } else if ((await fs.readdir(rootAbs)).length !== 0) {
+        retained.push('')
+      } else {
+        await fs.rmdir(rootAbs)
+        rootRemoved = true
+      }
+    } catch {
+      retained.push('')
+    }
+  }
+  return { removed, retained, conflict, rootRemoved }
 }
 
 /** Relative subdirectory paths under dirAbs (excluding the root

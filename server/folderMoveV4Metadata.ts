@@ -466,10 +466,30 @@ export async function finalizeFolderMoveV4Cleanup(
             : 'metadata-committed source path was externally reused',
         )
       }
-      await removeDeclaredEmptyDirectories(
+      const cleanup = await removeDeclaredEmptyDirectories(
         srcAbs,
         durableJournal.directories,
+        {
+          directoryGenerations: durableJournal.directoryGenerations,
+          expectedRootGeneration: {
+            dev: String(durableJournal.sourceDev),
+            ino: String(durableJournal.sourceIno),
+          },
+          removeRoot: false,
+        },
       )
+      // P0-3: any declared directory whose generation proof no longer
+      // matches the on-disk directory is external state. The journal
+      // classifies "weak" if it lacked the generation proof; here we
+      // surface the actual mismatch as a quarantine detail rather
+      // than silently removing the directory tree.
+      if (cleanup.conflict.length > 0) {
+        return result(
+          durableJournal,
+          'quarantined',
+          `metadata-committed declared directories were externally replaced: ${cleanup.conflict.join(',')}`,
+        )
+      }
       if ((await fs.readdir(srcAbs)).length > 0) {
         if (durableJournal.metadataDisposition.kind === 'prefix-move') {
           return result(
