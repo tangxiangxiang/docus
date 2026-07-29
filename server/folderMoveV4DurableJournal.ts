@@ -1,31 +1,38 @@
 import { promises as fs } from 'node:fs'
 
 import {
-  isSerializedMetadataSnapshot,
   validateFolderMoveGateProof,
   type FolderMoveJournalV4,
   type SerializedMetadataSnapshot,
 } from './folderMoveTransaction.js'
+import { validateFolderMoveDirectoryGeneration } from './folderMoveDirectoryOwnership.js'
+import { validateSerializedMetadataSnapshot } from './metadataSnapshotClosure.js'
 
-/**
- * The parser's closed-graph check (`isSerializedMetadataSnapshot`)
- * requires stable-sorted top-level arrays. Production snapshots are
- * written sorted by `serializeMetadataSnapshot`, but a well-formed
- * snapshot whose rows arrive unsorted must still reach the trust
- * boundary so the actual reason (missing provenance, cross-row
- * mismatch, etc.) can be reported. Sort a shallow copy here — the
- * durable on-disk journal is unchanged.
- */
-function sortSerializedSnapshotArrays(
+function movePrefixPath(
+  value: string,
+  fromPrefix: string,
+  toPrefix: string,
+): string {
+  if (value === fromPrefix) return toPrefix
+  return value.startsWith(`${fromPrefix}/`)
+    ? toPrefix + value.slice(fromPrefix.length)
+    : value
+}
+
+function snapshotRowOwnedPaths(
   snapshot: SerializedMetadataSnapshot,
-): SerializedMetadataSnapshot {
-  return {
-    ...snapshot,
-    paths: [...snapshot.paths].sort(),
-    documentIds: [...snapshot.documentIds].sort(),
-    tagIds: [...snapshot.tagIds].sort((a, b) => a - b),
-    preexistingTagIds: [...snapshot.preexistingTagIds].sort((a, b) => a - b),
-  }
+): string[] {
+  return [...new Set([
+    ...snapshot.documents.map(row => String(row.path)),
+    ...snapshot.migrations.flatMap(row => {
+      const migrationPath = String(row.path)
+      const originalPath = String(row.original_path ?? '')
+      return [
+        ...(migrationPath.startsWith('@deleted/') ? [] : [migrationPath]),
+        ...(originalPath === '' ? [] : [originalPath]),
+      ]
+    }),
+  ])]
 }
 
 function normalizeGenerationDecimal(
@@ -53,6 +60,8 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
   if (entry.version !== 4) return null
   if (entry.op !== 'folder-rename' && entry.op !== 'folder-move') return null
   if (typeof entry.srcRel !== 'string' || typeof entry.destRel !== 'string') return null
+  const srcRel = entry.srcRel
+  const destRel = entry.destRel
   const sourceDev = normalizeGenerationDecimal(entry.sourceDev, { positive: false })
   const sourceIno = normalizeGenerationDecimal(entry.sourceIno, { positive: true })
   if (sourceDev === null || sourceIno === null) return null
@@ -60,9 +69,9 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
     && entry.phase !== 'files-landed' && entry.phase !== 'metadata-committed') return null
   if (entry.strategy !== 'atomic-rename' && entry.strategy !== 'replayable-move') return null
   if (!Array.isArray(entry.entries) || !Array.isArray(entry.directories)) return null
-  // directoryGenerations is optional for backwards compat but MUST have
-  // every declared directory covered when present (sparse coverage is
-  // not allowed — P1-3 weak legacy classification flags such journals).
+  // directoryGenerations remains optional only so historical v4
+  // artifacts can be parsed for reporting. Recovery strength classifies
+  // every missing/sparse/unsafe manifest as weak before mutation.
   let directoryGenerations:
     import('./folderMoveDirectoryOwnership.js').FolderMoveDirectoryEntry[] | undefined
   if (entry.directoryGenerations !== undefined) {
@@ -75,8 +84,8 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
       const dev = raw.sourceDev
       const ino = raw.sourceIno
       if (typeof rel !== 'string'
-        || typeof dev !== 'string'
-        || typeof ino !== 'string'
+        || typeof dev !== 'string' || !/^\d+$/.test(dev)
+        || typeof ino !== 'string' || !/^[1-9]\d*$/.test(ino)
         || seenPath.has(rel)) return null
       seenPath.add(rel)
       directoryGenerations.push({
@@ -85,9 +94,37 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
         sourceIno: ino,
       })
     }
-    if (directoryGenerations.length !== new Set(entry.directories as string[]).size) {
+    if (validateFolderMoveDirectoryGeneration({
+      directories: entry.directories as string[],
+      directoryGenerations,
+    }) !== null) {
       return null
     }
+  }
+  let destinationDirectoryGenerations:
+    import('./folderMoveDirectoryOwnership.js').FolderMoveDirectoryEntry[] | undefined
+  if (entry.destinationDirectoryGenerations !== undefined) {
+    if (entry.phase === 'prepared'
+      || entry.strategy !== 'replayable-move') return null
+    if (!Array.isArray(entry.destinationDirectoryGenerations)) return null
+    destinationDirectoryGenerations = []
+    for (const raw of entry.destinationDirectoryGenerations as Array<Record<string, unknown>>) {
+      if (!raw || typeof raw !== 'object'
+        || typeof raw.relativeDirectoryPath !== 'string'
+        || typeof raw.sourceDev !== 'string'
+        || !/^\d+$/.test(raw.sourceDev)
+        || typeof raw.sourceIno !== 'string'
+        || !/^[1-9]\d*$/.test(raw.sourceIno)) return null
+      destinationDirectoryGenerations.push({
+        relativeDirectoryPath: raw.relativeDirectoryPath,
+        sourceDev: raw.sourceDev,
+        sourceIno: raw.sourceIno,
+      })
+    }
+    if (validateFolderMoveDirectoryGeneration({
+      directories: entry.directories as string[],
+      directoryGenerations: destinationDirectoryGenerations,
+    }) !== null) return null
   }
   if (entry.gateProof !== undefined && !validateFolderMoveGateProof(entry.gateProof)) return null
   if (typeof entry.metadataDisposition !== 'object' || entry.metadataDisposition === null) return null
@@ -97,10 +134,32 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
       && (typeof disposition.transactionTimestamp !== 'number'
         || !Number.isSafeInteger(disposition.transactionTimestamp)
         || disposition.transactionTimestamp < 0)) return null
-    if (disposition.preparedSnapshot !== undefined
-      && !isSerializedMetadataSnapshot(disposition.preparedSnapshot)) return null
+    const preparedSnapshot = disposition.preparedSnapshot as
+      | SerializedMetadataSnapshot
+      | undefined
+    if (preparedSnapshot !== undefined
+      && !validateSerializedMetadataSnapshot(
+        preparedSnapshot,
+        {
+          mode: 'closed-graph',
+          ownershipPaths: snapshotRowOwnedPaths(preparedSnapshot)
+            .flatMap(item => [
+              movePrefixPath(item, srcRel, destRel),
+              movePrefixPath(item, destRel, srcRel),
+            ]),
+        },
+      )) return null
     if (disposition.committedSnapshot !== undefined
-      && !isSerializedMetadataSnapshot(disposition.committedSnapshot)) return null
+      && !validateSerializedMetadataSnapshot(
+        disposition.committedSnapshot as SerializedMetadataSnapshot,
+        {
+          mode: 'closed-graph',
+          ownershipPaths: preparedSnapshot
+            ? preparedSnapshot.paths.map(item =>
+                movePrefixPath(item, srcRel, destRel))
+            : [],
+        },
+      )) return null
     if (entry.phase !== 'metadata-committed'
       && disposition.committedSnapshot !== undefined) return null
   } else if (disposition.kind === 'snapshot-restore') {
@@ -109,22 +168,29 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
     // cross-table references. The weaker row-schema check is no longer
     // acceptable for v4 durable snapshot persistence.
     //
-    // Stable-sort is enforced by the trust boundary
-    // (validateRound17SnapshotRestoreDisposition checks the sorted
-    // footprint / physicalDocumentIds), not by the parser: production
-    // snapshots are written sorted by serializeMetadataSnapshot, but a
-    // snapshot whose rows are well-formed but arrived in a different
-    // on-disk order must still reach the trust boundary so the actual
-    // reason (e.g. metadata-only document lacks provenance) can be
-    // reported. Sorting in the parser is a no-op for production data
-    // and lets the trust boundary see the same shape it would have
-    // seen for a sorted-on-disk journal.
-    const sortedSnapshot = sortSerializedSnapshotArrays(disposition.snapshot as SerializedMetadataSnapshot)
-    if (!isSerializedMetadataSnapshot(sortedSnapshot)) return null
+    // Stable order is part of the durable trust boundary. Never sort
+    // untrusted bytes in-memory before validation: doing so would turn
+    // a non-canonical journal into a recoverable one.
+    const durableSnapshot = disposition.snapshot as SerializedMetadataSnapshot
+    const ownershipPaths = disposition.ownershipFootprint
+      && typeof disposition.ownershipFootprint === 'object'
+      && Array.isArray(
+        (disposition.ownershipFootprint as Record<string, unknown>).paths,
+      )
+      ? (disposition.ownershipFootprint as { paths: string[] }).paths
+      : []
+    if (!validateSerializedMetadataSnapshot(durableSnapshot, {
+      mode: 'closed-graph',
+      ownershipPaths,
+    })) return null
     if (disposition.expectedCurrentSnapshot !== undefined
-      && !isSerializedMetadataSnapshot(
-        sortSerializedSnapshotArrays(
-          disposition.expectedCurrentSnapshot as SerializedMetadataSnapshot))) return null
+      && !validateSerializedMetadataSnapshot(
+        disposition.expectedCurrentSnapshot as SerializedMetadataSnapshot,
+        {
+          mode: 'closed-graph',
+          ownershipPaths,
+        },
+      )) return null
     if (disposition.physicalDocumentIds !== undefined
       && (!Array.isArray(disposition.physicalDocumentIds)
         || !disposition.physicalDocumentIds.every((id) =>
@@ -176,6 +242,9 @@ export function parseFolderMoveJournalV4Object(value: unknown): FolderMoveJourna
     sourceDev,
     sourceIno,
     ...(directoryGenerations ? { directoryGenerations } : {}),
+    ...(destinationDirectoryGenerations
+      ? { destinationDirectoryGenerations }
+      : {}),
   }
 }
 

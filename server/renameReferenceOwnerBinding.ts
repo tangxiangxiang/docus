@@ -10,6 +10,8 @@ import {
   type RenameReferenceJournalEntry,
 } from './renameReferenceJournal.js'
 import { isPhysicallyContained } from './documentFileLifecycle.js'
+import { parseFolderMoveJournalV4Object } from './folderMoveV4DurableJournal.js'
+import { validateRound17SnapshotRestoreDisposition } from './folderMoveTransaction.js'
 
 export type RenameReferenceOwnerDisposition =
   | { kind: 'legacy-prefix-move' }
@@ -20,6 +22,14 @@ export type RenameReferenceOwnerDisposition =
     ownerTransactionId: string,
     ownerDescriptorHash: string,
     previousDirection: 'roll-forward' | 'roll-back',
+  }
+  | {
+    kind: 'folder-snapshot-owner-aborted',
+    ownerJournal: string,
+    ownerTransactionId: string,
+    ownerDescriptorHash: string,
+    previousDirection: 'roll-forward' | 'roll-back',
+    reason: 'owner-journal-absent',
   }
 
 export type FolderRaceOwnerHooks = {
@@ -129,6 +139,7 @@ export async function markOwnerHandled(input: {
 
 export type ReconcilePendingResult =
   | { action: 'promote', reason: 'owner journal matches' }
+  | { action: 'abort', reason: string }
   | { action: 'quarantine', reason: string }
   | { action: 'no-action', reason: string }
 
@@ -146,6 +157,7 @@ export async function reconcilePendingRenameReferenceOwner(input: {
   contentDir: string
   journalPath: string
   entry: RenameReferenceJournalEntry
+  transactionId: string
   ownerDescriptorHash: string
 }): Promise<ReconcilePendingResult> {
   const disposition = input.entry.metadataDisposition
@@ -169,13 +181,26 @@ export async function reconcilePendingRenameReferenceOwner(input: {
       }
     }
   } catch {
-    // The owner folder journal is absent. The v4 owner rename never
-    // flipped durable before the route crashed between bindOwnerPending
-    // and the durable v4 owner journal rewrite. The companion cannot
-    // promote; fail closed by quarantining with the documented detail.
+    // The owner folder journal is absent. Durably leave the pending
+    // state, restore the independent reference direction, and record a
+    // terminal fail-closed disposition. The terminal marker keeps later
+    // startups from replaying references or prefix metadata without the
+    // owner-backed snapshot decision.
+    await rewriteDurableJournal(input.journalPath, {
+      ...input.entry,
+      phase: disposition.previousDirection,
+      metadataDisposition: {
+        kind: 'folder-snapshot-owner-aborted',
+        ownerJournal: disposition.ownerJournal,
+        ownerTransactionId: disposition.ownerTransactionId,
+        ownerDescriptorHash: disposition.ownerDescriptorHash,
+        previousDirection: disposition.previousDirection,
+        reason: 'owner-journal-absent',
+      },
+    })
     return {
-      action: 'quarantine',
-      reason: 'rename-reference owner-binding pending and owner folder journal is absent',
+      action: 'abort',
+      reason: 'rename-reference owner-binding aborted because owner folder journal is absent',
     }
   }
   // Owner folder journal exists: validate that the journal entry binds
@@ -189,15 +214,16 @@ export async function reconcilePendingRenameReferenceOwner(input: {
       reason: 'rename-reference owner-binding pending and owner folder journal is unreadable',
     }
   }
-  if (!ownerEntry || typeof ownerEntry !== 'object') {
+  const ownerJournal = parseFolderMoveJournalV4Object(ownerEntry)
+  if (!ownerJournal) {
     return {
       action: 'quarantine',
       reason: 'rename-reference owner-binding pending and owner folder journal is unreadable',
     }
   }
-  const ownerObj = ownerEntry as Record<string, unknown>
-  if (typeof ownerObj.transactionId !== 'string'
-    || ownerObj.transactionId !== disposition.ownerTransactionId) {
+  const ownerFileTransactionId = path.basename(ownerJournalAbs)
+    .split('.docus-journal-').at(-1)
+  if (ownerFileTransactionId !== disposition.ownerTransactionId) {
     return {
       action: 'quarantine',
       reason: 'rename-reference owner-binding transactionId mismatch',
@@ -213,18 +239,62 @@ export async function reconcilePendingRenameReferenceOwner(input: {
       reason: 'rename-reference owner-binding descriptorHash mismatch',
     }
   }
+  if (ownerJournal.srcRel !== input.entry.destRel
+    || ownerJournal.destRel !== input.entry.srcRel
+    || ownerJournal.metadataDisposition.kind !== 'snapshot-restore') {
+    return {
+      action: 'quarantine',
+      reason: 'rename-reference owner-binding folder direction mismatch',
+    }
+  }
+  const referenceProof = ownerJournal.metadataDisposition.referenceJournal
+  if (!referenceProof
+    || referenceProof.relativePath !== path.basename(input.journalPath)
+    || referenceProof.operation !== 'folder-rename-references'
+    || referenceProof.transactionId !== input.transactionId
+    || referenceProof.journalHash !== input.ownerDescriptorHash
+    || referenceProof.srcRel !== input.entry.srcRel
+    || referenceProof.destRel !== input.entry.destRel) {
+    return {
+      action: 'quarantine',
+      reason: 'rename-reference owner-binding companion proof mismatch',
+    }
+  }
+  const promotedDisposition = {
+    kind: 'folder-snapshot-owned' as const,
+    ownerJournal: disposition.ownerJournal,
+    ownerTransactionId: disposition.ownerTransactionId,
+    ownerDescriptorHash: disposition.ownerDescriptorHash,
+    metadataHandled: false,
+  }
+  const ownerValidation = validateRound17SnapshotRestoreDisposition(
+    ownerJournal,
+    ownerJournal.metadataDisposition,
+    {
+      referenceJournal: {
+        ...input.entry,
+        op: 'folder-rename-references',
+        identities: input.entry.identities ?? [],
+        transactionId: input.transactionId,
+        descriptorHash: input.ownerDescriptorHash,
+        metadataDisposition: promotedDisposition,
+      },
+      ownerJournal: disposition.ownerJournal,
+      ownerTransactionId: disposition.ownerTransactionId,
+    },
+  )
+  if (ownerValidation !== null) {
+    return {
+      action: 'quarantine',
+      reason: `rename-reference owner-binding owner proof mismatch: ${ownerValidation}`,
+    }
+  }
   // All checks pass: promote to folder-snapshot-owned (metadataHandled=false).
   // Recovery will continue; if the owner journal completes its handoff,
   // the companion is consumed; otherwise it remains a pinned dependent.
   await rewriteDurableJournal(input.journalPath, {
     ...input.entry,
-    metadataDisposition: {
-      kind: 'folder-snapshot-owned',
-      ownerJournal: disposition.ownerJournal,
-      ownerTransactionId: disposition.ownerTransactionId,
-      ownerDescriptorHash: disposition.ownerDescriptorHash,
-      metadataHandled: false,
-    },
+    metadataDisposition: promotedDisposition,
   })
   return { action: 'promote', reason: 'owner journal matches' }
 }

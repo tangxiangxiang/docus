@@ -54,6 +54,11 @@ export type FolderMoveJournalEntry = {
 export type FolderMoveEnumeration = {
   entries: FolderMoveJournalEntry[]
   directories: string[]
+  directoryGenerations: Array<{
+    relativeDirectoryPath: string
+    sourceDev: string
+    sourceIno: string
+  }>
 }
 
 /** The metadata outcome a completed move must produce. Rename moves
@@ -128,6 +133,13 @@ export type ParsedFolderRenameReferenceJournal = {
     ownerTransactionId: string
     ownerDescriptorHash: string
     previousDirection: 'roll-forward' | 'roll-back'
+  } | {
+    kind: 'folder-snapshot-owner-aborted'
+    ownerJournal: string
+    ownerTransactionId: string
+    ownerDescriptorHash: string
+    previousDirection: 'roll-forward' | 'roll-back'
+    reason: 'owner-journal-absent'
   }
   references: Array<{
     path: string
@@ -297,7 +309,7 @@ export function deriveCommittedPrefixSnapshot(
           updated_at: transactionTimestamp,
         }
   })
-  return {
+  const committed = {
     ...prepared,
     paths: [...new Set(prepared.paths.map(item =>
       moveSerializedPrefixPath(item, srcRel, destRel)))].sort(),
@@ -309,6 +321,10 @@ export function deriveCommittedPrefixSnapshot(
       !destinationDocumentIds.has(String(row.document_id))),
     migrations,
   }
+  if (!isSerializedMetadataSnapshot(committed)) {
+    throw new Error('derived committed prefix snapshot is not a closed metadata graph')
+  }
+  return committed
 }
 
 const SNAPSHOT_COLUMNS = new Set([
@@ -459,7 +475,11 @@ export function isSerializedMetadataSnapshot(
   if (documentIds.size !== parsed.documents.length
     || documentPaths.size !== parsed.documents.length
     || tagIds.size !== parsed.tags.length
-    || normalizedTagNames.size !== parsed.tags.length) {
+    || normalizedTagNames.size !== parsed.tags.length
+    || !setEquals(new Set(parsed.documentIds), documentIds)
+    || !setEquals(new Set(parsed.tagIds), tagIds)
+    || !parsed.documents.every(row =>
+      parsed.paths.includes(row.path as string))) {
     return false
   }
   const documentTagKeys = new Set<string>()
@@ -483,10 +503,13 @@ export function isSerializedMetadataSnapshot(
   for (const row of parsed.migrations) {
     const migrationPath = row.path as string
     const migrationDocumentId = row.document_id as string | null
+    const deletedId = migrationPath.startsWith('@deleted/')
+      ? migrationPath.slice('@deleted/'.length)
+      : null
     if (migrationPaths.has(migrationPath)
       || (migrationDocumentId !== null
-        && !documentIds.has(migrationDocumentId)
-        && !parsed.documentIds.includes(migrationDocumentId))) {
+        && !documentIds.has(migrationDocumentId))
+      || (deletedId !== null && !documentIds.has(deletedId))) {
       return false
     }
     migrationPaths.add(migrationPath)
@@ -608,16 +631,23 @@ export async function listPhysicalMoveEntries(
 ): Promise<FolderMoveEnumeration> {
   const entries: FolderMoveJournalEntry[] = []
   const directories: string[] = []
+  const directoryGenerations: FolderMoveEnumeration['directoryGenerations'] = []
   const walk = async (dir: string, rel: string): Promise<void> => {
     const dirents = await fs.readdir(dir, { withFileTypes: true })
     for (const entry of dirents) {
       const entryRel = rel === '' ? entry.name : `${rel}/${entry.name}`
-      if (entry.isDirectory()) {
+      const entryAbs = path.join(dir, entry.name)
+      const stat = await fs.lstat(entryAbs, { bigint: true })
+      if (entry.isDirectory() && stat.isDirectory() && !stat.isSymbolicLink()) {
         directories.push(entryRel)
-        await walk(path.join(dir, entry.name), entryRel)
-      } else if (entry.isFile()) {
-        const raw = await fs.readFile(path.join(dir, entry.name))
-        const stat = await fs.stat(path.join(dir, entry.name), { bigint: true })
+        directoryGenerations.push({
+          relativeDirectoryPath: entryRel,
+          sourceDev: stat.dev.toString(),
+          sourceIno: stat.ino.toString(),
+        })
+        await walk(entryAbs, entryRel)
+      } else if (entry.isFile() && stat.isFile() && !stat.isSymbolicLink()) {
+        const raw = await fs.readFile(entryAbs)
         const item: FolderMoveJournalEntry = {
           relativeFilePath: entryRel,
           sourceHash: sha256HexBuffer(raw),
@@ -636,9 +666,14 @@ export async function listPhysicalMoveEntries(
     }
   }
   await walk(dirAbs, '')
-  entries.sort((a, b) => a.relativeFilePath.localeCompare(b.relativeFilePath))
-  directories.sort((a, b) => a.localeCompare(b))
-  return { entries, directories }
+  const codeUnitCompare = (left: string, right: string): number =>
+    left < right ? -1 : left > right ? 1 : 0
+  entries.sort((a, b) =>
+    codeUnitCompare(a.relativeFilePath, b.relativeFilePath))
+  directories.sort(codeUnitCompare)
+  directoryGenerations.sort((a, b) =>
+    codeUnitCompare(a.relativeDirectoryPath, b.relativeDirectoryPath))
+  return { entries, directories, directoryGenerations }
 }
 
 // ---- v3 markdown identity schema enforcement (round-10 F6) ----
@@ -1235,6 +1270,13 @@ export function validateRound17SnapshotRestoreDisposition(
       )) {
       return 'companion reference journal identity/path/hash proof does not match'
     }
+    const hasTransactionBinding =
+      disposition.referenceJournal.transactionId !== undefined
+      || disposition.referenceJournal.journalHash !== undefined
+    if (hasTransactionBinding
+      && companion.metadataDisposition?.kind !== 'folder-snapshot-owned') {
+      return 'snapshot reference companion is not durably owned'
+    }
     if (companion.metadataDisposition?.kind === 'folder-snapshot-owned') {
       if (disposition.referenceJournal.transactionId
           !== companion.transactionId
@@ -1464,6 +1506,11 @@ export type FolderMoveJournalV4 = {
    * read-only paths but are classified 'weak' (round-17 P0-3).
    */
   directoryGenerations?: import('./folderMoveDirectoryOwnership.js').FolderMoveDirectoryEntry[]
+  /**
+   * Replayable moves create new destination directory generations.
+   * Persist them while phase=gate-created, before any file landing.
+   */
+  destinationDirectoryGenerations?: import('./folderMoveDirectoryOwnership.js').FolderMoveDirectoryEntry[]
   metadataDisposition: FolderMoveMetadataDisposition
 }
 

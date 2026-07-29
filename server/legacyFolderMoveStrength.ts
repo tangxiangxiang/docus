@@ -1,4 +1,6 @@
 import type { FolderMoveJournalV4 } from './folderMoveTransaction.js'
+import { validateFolderMoveDirectoryGeneration } from './folderMoveDirectoryOwnership.js'
+import { validateFolderMoveGateProof } from './folderMoveTransaction.js'
 
 export type FolderMoveRecoveryStrength = 'strong' | 'weak' | 'unusable'
 
@@ -23,12 +25,6 @@ export type FolderMoveRecoveryStrength = 'strong' | 'weak' | 'unusable'
  *   - v4 unsafe-numeric dev/ino (legacy numeric compatibility path;
  *     precision lost).
  *
- * Existing on-disk v4 journals written BEFORE commit 3 (no
- * directoryGenerations field, but with proper entries, gateProof,
- * and phase) are still replayed — they have every other durable
- * site populated. The directoryGenerations field is an additive
- * strengthening, not a hard requirement for backwards compatibility.
- *
  * The classifier is consulted by crashRecovery before any
  * filesystem/SQLite mutation. Weak journals are quarantined with a
  * documented detail — disk state is preserved as-is.
@@ -52,28 +48,38 @@ export function classifyFolderMoveRecoveryStrength(
   const phase = entry.phase
   const entries = Array.isArray(entry.entries) ? entry.entries : []
   const gateProof = entry.gateProof
-  // v4 markerless: at gate-created/files-landed, with NO entries
-  // AND no gateProof. Such a journal has no per-entry dev/ino/hash
-  // proof and no gate token to prove the phase advance — anything
-  // written to disk has no durable ownership guarantee. Empty-tree
-  // journals are also caught by this rule.
-  const hasGateProof = gateProof !== undefined && gateProof !== null
-    && !(typeof gateProof === 'string' && gateProof.length === 0)
-  if ((phase === 'gate-created' || phase === 'files-landed')
-    && !hasGateProof && entries.length === 0) {
+  if (!validateFolderMoveGateProof(gateProof)) {
     return {
       strength: 'weak',
-      reason: 'v4 markerless journal: no gateProof and no per-entry proof',
+      reason: `v4 markerless ${String(phase)} journal lacks destination ownership proof`,
     }
   }
-  // Empty-tree journals with no gateProof cannot prove what was on
-  // disk — a sibling may have moved/created files in the meantime.
-  const emptyTree = entry.emptyTree === true
-  if (emptyTree && entries.length === 0
-    && (gateProof === undefined || gateProof === null)) {
+  if (!Array.isArray(entry.directories)) {
     return {
       strength: 'weak',
-      reason: 'v4 empty-tree journal lacks gateProof',
+      reason: 'v4 journal lacks a directory manifest',
+    }
+  }
+  const directoryGenerationError =
+    validateFolderMoveDirectoryGeneration({
+      directories: entry.directories as string[],
+      directoryGenerations: Array.isArray(entry.directoryGenerations)
+        ? entry.directoryGenerations as FolderMoveJournalV4['directoryGenerations']
+        : undefined,
+    })
+  if (directoryGenerationError !== null) {
+    return {
+      strength: 'weak',
+      reason: directoryGenerationError,
+    }
+  }
+  if (entry.strategy === 'replayable-move'
+    && (phase === 'files-landed' || phase === 'metadata-committed')
+    && (entry.directories as string[]).length > 0
+    && !Array.isArray(entry.destinationDirectoryGenerations)) {
+    return {
+      strength: 'weak',
+      reason: 'destination directory generation manifest is missing',
     }
   }
   // Mixed proof across entries: some carry dev/ino/hash, some don't.
@@ -106,7 +112,15 @@ export function classifyFolderMoveRecoveryStrength(
       reason: 'v4 journal uses unsafe-numeric dev/ino (precision lost)',
     }
   }
-  // Markers present — accept as strong.
+  if (typeof entry.sourceDev !== 'string'
+    || !/^\d+$/.test(entry.sourceDev)
+    || typeof entry.sourceIno !== 'string'
+    || !/^[1-9]\d*$/.test(entry.sourceIno)) {
+    return {
+      strength: 'weak',
+      reason: 'v4 journal source root generation is unsafe',
+    }
+  }
   return { strength: 'strong' }
 }
 

@@ -128,6 +128,11 @@ import { executeFolderMoveV4Physical } from './folderMoveV4Executor.js'
 import { parseDurableFolderMoveJournalV4 } from './folderMoveV4DurableJournal.js'
 import { classifyFolderMoveRecoveryStrength } from './legacyFolderMoveStrength.js'
 import { reconcilePendingRenameReferenceOwner } from './renameReferenceOwnerBinding.js'
+import { inspectFolderMoveSourceInventory } from './folderMoveSourceOwnership.js'
+import {
+  createFolderMoveDestinationDirectories,
+  verifyFolderMoveDirectoryEntries,
+} from './folderMoveDirectoryOwnership.js'
 import {
   removeFolderMoveGateProof,
   verifyFolderMoveGateProof,
@@ -969,7 +974,7 @@ async function recoverRenameReferencesJournal(
     )
     return
   }
-  const metadataDisposition = bundle.entry.metadataDisposition
+  let metadataDisposition = bundle.entry.metadataDisposition
   // P0-1 owner binding reconciliation: a companion stuck in owner-pending
   // cannot remain stuck forever. Recovery either promotes it (v4 owner
   // journal on disk and matches) or quarantines it (owner journal absent
@@ -981,9 +986,11 @@ async function recoverRenameReferencesJournal(
       contentDir,
       journalPath: journalAbs,
       entry: bundle.entry,
+      transactionId: bundle.transactionId,
       ownerDescriptorHash: bundle.descriptorHash,
     })
-    if (reconcile.action === 'quarantine') {
+    if (reconcile.action === 'quarantine'
+      || reconcile.action === 'abort') {
       note(journalAbs, 'quarantined', reconcile.reason)
       return
     }
@@ -997,7 +1004,16 @@ async function recoverRenameReferencesJournal(
         return
       }
       journal = refreshed.entry as RenameReferencesJournal
+      metadataDisposition = refreshed.entry.metadataDisposition
     }
+  }
+  if (metadataDisposition?.kind === 'folder-snapshot-owner-aborted') {
+    note(
+      journalAbs,
+      'quarantined',
+      'rename-reference owner-binding aborted because owner folder journal is absent',
+    )
+    return
   }
   if (metadataDisposition?.kind === 'folder-snapshot-owned'
     && !metadataDisposition.metadataHandled) {
@@ -1234,6 +1250,9 @@ async function recoverRenameReferencesJournal(
         }
         let moveEntries: FolderMoveJournalEntry[]
         let moveDirectories: string[]
+        let moveDirectoryGenerations: NonNullable<
+          FolderMoveJournalV4['directoryGenerations']
+        >
         try {
           const enumerated = await listPhysicalMoveEntries(destAbs, (relativeFilePath) => {
             if (!relativeFilePath.endsWith('.md')) return null
@@ -1245,6 +1264,7 @@ async function recoverRenameReferencesJournal(
           })
           moveEntries = enumerated.entries
           moveDirectories = enumerated.directories
+          moveDirectoryGenerations = enumerated.directoryGenerations
         } catch (error) {
           note(journalAbs, 'failed', `could not enumerate the folder rollback tree: ${(error as Error).message}`)
           return
@@ -1256,7 +1276,15 @@ async function recoverRenameReferencesJournal(
         // per-file protocol on POSIX and kill recovery mid-replay.
         const moveStrategy = resolveDirectoryMoveStrategy()
         try {
-          const destStat = await fs.stat(destAbs, { bigint: true })
+          const destStat = await fs.lstat(destAbs, { bigint: true })
+          if (!destStat.isDirectory() || destStat.isSymbolicLink()) {
+            note(
+              journalAbs,
+              'quarantined',
+              'folder rollback source is not a real directory',
+            )
+            return
+          }
           const moveJournalEntries: FolderMoveJournalEntryV4[] = moveEntries.map((entry) => ({
             relativeFilePath: entry.relativeFilePath,
             sourceDev: entry.sourceDev ?? '',
@@ -1284,6 +1312,7 @@ async function recoverRenameReferencesJournal(
             ...(moveJournalEntries.length === 0 ? { emptyTree: true } : {}),
             entries: moveJournalEntries,
             directories: moveDirectories,
+            directoryGenerations: moveDirectoryGenerations,
             metadataDisposition: { kind: 'prefix-move' },
           }
           await writeDurableJournal(moveJournalAbs, prepared)
@@ -1564,7 +1593,11 @@ async function recoverFolderMoveJournalV4(
   // — disk state and SQLite rows are preserved.
   const strength = classifyFolderMoveRecoveryStrength(journal)
   if (strength.strength !== 'strong') {
-    note(journalAbs, 'quarantined', `v4 journal is weak: ${strength.reason}`)
+    note(
+      journalAbs,
+      'quarantined',
+      'legacy journal lacks sufficient durable ownership proof',
+    )
     return
   }
   const rootProvenanceError = await validateFolderMoveJournalV4RootProvenance(journal, contentDir, journalAbs)
@@ -1599,14 +1632,6 @@ async function recoverFolderMoveJournalV4(
     note(journalAbs, 'quarantined', `v4 source generation failed: ${sourceGenerationError}`)
     return
   }
-  if (journal.emptyTree === true && journal.entries.length === 0) {
-    note(
-      journalAbs,
-      'quarantined',
-      'legacy journal lacks sufficient durable ownership proof',
-    )
-    return
-  }
   for (const entry of entries) {
     const srcFile = path.join(srcAbs, entry.relativeFilePath)
     const destFile = path.join(destAbs, entry.relativeFilePath)
@@ -1630,6 +1655,9 @@ async function recoverFolderMoveJournalV4(
       ino: String(journal.sourceIno),
     })
     const destinationAbsent = !await isDirectory(destAbs)
+    const sourceInventory = sourceGenerationMatches
+      ? await inspectFolderMoveSourceInventory(srcAbs, journal)
+      : { kind: 'external' as const, reason: 'source root generation changed' }
     if (journal.metadataDisposition.kind === 'snapshot-restore') {
       if (!sourceGenerationMatches || !destinationAbsent) {
         note(journalAbs, 'quarantined', 'prepared snapshot restore cannot prove an intact source generation with an absent destination')
@@ -1690,7 +1718,8 @@ async function recoverFolderMoveJournalV4(
         expectedPrepared,
       )
     }
-    if (sourceGenerationMatches && destinationAbsent
+    if (sourceGenerationMatches && sourceInventory.kind === 'intact'
+      && destinationAbsent
       && preparedMetadataIntact) {
       await removeDurableJournal(journalAbs)
       note(journalAbs, 'cleaned', 'stale v4 prefix-move prepared journal (source generation and metadata intact; destination absent)')
@@ -1699,7 +1728,9 @@ async function recoverFolderMoveJournalV4(
     note(
       journalAbs,
       'quarantined',
-      journal.metadataDisposition.preparedSnapshot
+      sourceInventory.kind === 'external'
+        ? sourceInventory.reason
+        : journal.metadataDisposition.preparedSnapshot
         ? 'live prefix metadata graph differs from prepared snapshot'
         : 'v4 prefix-move prepared journal cannot prove intact source generation/metadata with an absent destination',
     )
@@ -1761,6 +1792,8 @@ async function recoverFolderMoveJournalV4(
         destIno: finalGeneration.ino,
         entries,
         directories,
+        directoryGenerations: journal.directoryGenerations,
+        strategy: journal.strategy,
       })) {
         note(journalAbs, 'quarantined', 'atomic gate-created destination exact parity failed')
         return
@@ -1814,6 +1847,56 @@ async function recoverFolderMoveJournalV4(
         note(journalAbs, 'quarantined', 'replayable destination gate generation does not match journal')
         return
     }
+    if (journal.destinationDirectoryGenerations === undefined) {
+      let unexpectedDestinationEntries: string[]
+      try {
+        unexpectedDestinationEntries = (await fs.readdir(destAbs))
+          .filter(name => name !== journal.gateProof?.markerName)
+      } catch (error) {
+        note(
+          journalAbs,
+          'failed',
+          `replayable destination directory inspection failed: ${(error as Error).message}`,
+        )
+        return
+      }
+      if (unexpectedDestinationEntries.length > 0) {
+        note(
+          journalAbs,
+          'quarantined',
+          'replayable destination directories lack durable generation proof',
+        )
+        return
+      }
+      try {
+        journal = {
+          ...journal,
+          destinationDirectoryGenerations:
+            await createFolderMoveDestinationDirectories(
+              destAbs,
+              journal.directories,
+              contentDir,
+            ),
+        }
+        await rewriteDurableJournal(journalAbs, journal)
+      } catch (error) {
+        note(
+          journalAbs,
+          'failed',
+          `replayable destination directory creation failed: ${(error as Error).message}`,
+        )
+        return
+      }
+    } else {
+      const directoryConflict = await verifyFolderMoveDirectoryEntries(
+        destAbs,
+        journal.destinationDirectoryGenerations,
+      )
+      if (directoryConflict !== null) {
+        note(journalAbs, 'quarantined', directoryConflict)
+        return
+      }
+    }
     const placements = await Promise.all(entries.map((entry) =>
       classifyPlacementV4(
         path.join(srcAbs, entry.relativeFilePath),
@@ -1832,6 +1915,9 @@ async function recoverFolderMoveJournalV4(
           vaultRoot: contentDir,
           entries: remainingEntries,
           directories,
+          directoryGenerations: journal.directoryGenerations,
+          expectedDestinationDirectoryGenerations:
+            journal.destinationDirectoryGenerations,
           ignoredDestinationEntries: journal.gateProof
             ? [journal.gateProof.markerName]
             : [],
@@ -2360,6 +2446,15 @@ async function recoverFolderRenameJournal(
   journal: FolderRenameJournal,
   note: (absPath: string, action: RecoveryAction['action'], detail?: string) => void,
 ): Promise<void> {
+  const recoveryStrength = classifyFolderMoveRecoveryStrength(journal)
+  if (recoveryStrength.strength !== 'strong') {
+    note(
+      journalAbs,
+      'quarantined',
+      'legacy journal lacks sufficient durable ownership proof',
+    )
+    return
+  }
   // Source provenance: a real folder path for rename journals; the
   // reserved delete-staging name for snapshot-restore (delete
   // rollback) journals — those are never user paths.
@@ -2697,7 +2792,26 @@ async function recoverDirectory(
         note(journalAbs, 'failed', (error as Error).message)
       }
     }
-    orderedJournals.sort((a, b) => Number(a.references) - Number(b.references) || a.name.localeCompare(b.name))
+    const recoveryOrder = (candidate: {
+      raw: string
+      references: boolean
+    }): number => {
+      if (!candidate.references) return 1
+      try {
+        const parsed = parseRenameReferenceJournalObject(
+          JSON.parse(candidate.raw),
+        )
+        return parsed?.metadataDisposition?.kind
+          === 'folder-snapshot-owner-pending'
+          ? 0
+          : 2
+      } catch {
+        return 2
+      }
+    }
+    orderedJournals.sort((a, b) =>
+      recoveryOrder(a) - recoveryOrder(b)
+      || a.name.localeCompare(b.name))
     for (const { name: journalName, raw: journalRaw } of orderedJournals) {
       const journalAbs = path.join(dir, journalName)
       if (terminalArtifacts.has(path.resolve(journalAbs))) continue
@@ -2731,6 +2845,24 @@ async function recoverDirectory(
           const destAbs = path.join(contentDir, v4Journal.destRel)
           await recoverFolderMoveJournalV4(contentDir, db, journalAbs, v4Journal, srcAbs, destAbs, note)
           continue
+        }
+        try {
+          const rawFolderJournal = JSON.parse(journalRaw)
+          if (rawFolderJournal
+            && typeof rawFolderJournal === 'object'
+            && (rawFolderJournal.op === 'folder-rename'
+              || rawFolderJournal.op === 'folder-move')
+            && classifyFolderMoveRecoveryStrength(rawFolderJournal).strength
+              === 'weak') {
+            note(
+              journalAbs,
+              'quarantined',
+              'legacy journal lacks sufficient durable ownership proof',
+            )
+            continue
+          }
+        } catch {
+          // Fall through to the generic unrecognized-journal report.
         }
         note(journalAbs, 'quarantined', 'unrecognized journal left in place')
       } catch (error) {

@@ -471,8 +471,10 @@ export async function removeDeclaredEmptyDirectories(
     try {
       stat = await fs.lstat(directoryAbs, { bigint: true })
     } catch {
-      // Already absent — declare it retained for transparency.
-      retained.push(relative)
+      // The replayable protocol keeps source shells until the durable
+      // files-landed phase. Absence therefore cannot be attributed to
+      // this transaction and is an ownership conflict.
+      conflict.push(relative)
       continue
     }
     if (!stat.isDirectory() || stat.isSymbolicLink()) {
@@ -514,7 +516,8 @@ export async function removeDeclaredEmptyDirectories(
         rootRemoved = true
       }
     } catch {
-      retained.push('')
+      if (options.expectedRootGeneration) conflict.push('')
+      else retained.push('')
     }
   }
   return { removed, retained, conflict, rootRemoved }
@@ -894,6 +897,17 @@ export type MoveEntriesIntoGateOptions = {
   /** Every subdirectory (including empty ones) the move must recreate
    * at the destination. Sorted, ancestor-closed, parent-closed. */
   directories: readonly string[]
+  /** Source dev/ino for every declared directory. */
+  directoryGenerations?: readonly {
+    relativeDirectoryPath: string
+    sourceDev: string
+    sourceIno: string
+  }[]
+  expectedDestinationDirectoryGenerations?: readonly {
+    relativeDirectoryPath: string
+    sourceDev: string
+    sourceIno: string
+  }[]
   /** Exact destination-root entries owned by the transaction. */
   ignoredDestinationEntries?: readonly string[]
   /** Leave already-landed entries in place so durable recovery can
@@ -920,6 +934,11 @@ export async function moveFolderEntriesIntoExistingGate(
 ): Promise<{ moved: string[]; incomplete: boolean }> {
   const entryByRel = new Map(options.entries.map((e) => [e.relativeFilePath, e]))
   const moved: string[] = []
+  const destinationDirectoryGenerations: Array<{
+    relativeDirectoryPath: string
+    sourceDev: string
+    sourceIno: string
+  }> = []
   // Recreate every declared directory at the destination.
   for (const dirRel of options.directories) {
     const dirAbs = path.join(toDirAbs, dirRel)
@@ -927,6 +946,31 @@ export async function moveFolderEntriesIntoExistingGate(
       throw new UnsupportedDirectoryMoveError(`directory path escapes the vault: ${dirRel}`)
     }
     await fs.mkdir(dirAbs, { recursive: true })
+    const destinationStat = await fs.lstat(dirAbs, { bigint: true })
+    if (!destinationStat.isDirectory() || destinationStat.isSymbolicLink()) {
+      throw new UnsupportedDirectoryMoveError(
+        `destination directory is not a real directory: ${dirRel}`,
+      )
+    }
+    destinationDirectoryGenerations.push({
+      relativeDirectoryPath: dirRel,
+      sourceDev: destinationStat.dev.toString(),
+      sourceIno: destinationStat.ino.toString(),
+    })
+  }
+  if (options.expectedDestinationDirectoryGenerations) {
+    const expected = options.expectedDestinationDirectoryGenerations
+    if (expected.length !== destinationDirectoryGenerations.length
+      || expected.some((entry, index) => {
+        const current = destinationDirectoryGenerations[index]
+        return entry.relativeDirectoryPath !== current.relativeDirectoryPath
+          || entry.sourceDev !== current.sourceDev
+          || entry.sourceIno !== current.sourceIno
+      })) {
+      throw new UnsupportedDirectoryMoveError(
+        'destination declared directory generation changed',
+      )
+    }
   }
   for (const entry of options.entries) {
     const fromEntry = path.join(fromDirAbs, entry.relativeFilePath)
@@ -969,19 +1013,18 @@ export async function moveFolderEntriesIntoExistingGate(
         }
       }
       // Clean up the gate if it's now empty.
-      await removeDeclaredEmptyDirectories(toDirAbs, options.directories)
+      await removeDeclaredEmptyDirectories(toDirAbs, options.directories, {
+        directoryGenerations: destinationDirectoryGenerations,
+      })
       // The error is typed; callers map to 409.
       throw error
     }
   }
-  // Forward success: the source is empty (every entry moved create-
-  // only into the destination). Prune so a crash before metadata
-  // commit doesn't leave an empty-but-occupied source dir for
-  // recovery to misinterpret as "source still has its bytes".
-  await removeDeclaredEmptyDirectories(fromDirAbs, options.directories, {
-    removeRoot: true,
-    expectedRootGeneration: options.sourceGeneration,
-  })
+  // Do not remove source directory shells here. The files-landed phase
+  // must become durable first; finalization then removes source shells
+  // using their persisted generations. This prevents a crash during
+  // cleanup from making an empty declared directory indistinguishable
+  // from an external deletion.
   return { moved, incomplete: false }
 }
 
@@ -1000,12 +1043,37 @@ export async function verifyFolderMoveDestinationV4(
     destIno?: string
     entries: readonly FolderMoveJournalEntryV4[]
     directories: readonly string[]
+    directoryGenerations?: readonly {
+      relativeDirectoryPath: string
+      sourceDev: string
+      sourceIno: string
+    }[]
+    destinationDirectoryGenerations?: readonly {
+      relativeDirectoryPath: string
+      sourceDev: string
+      sourceIno: string
+    }[]
+    strategy?: FolderMoveJournalStrategy
   },
   options: FolderMoveParityOptions = {},
 ): Promise<boolean> {
   if (!journal.destDev || !journal.destIno) return true
   if (!await verifyDirectoryGeneration(destinationAbs, { dev: journal.destDev, ino: journal.destIno })) {
     return true
+  }
+  const expectedDirectoryGenerations =
+    journal.strategy === 'replayable-move'
+      ? journal.destinationDirectoryGenerations
+      : journal.directoryGenerations
+  if (expectedDirectoryGenerations) {
+    for (const entry of expectedDirectoryGenerations) {
+      if (!await verifyDirectoryGeneration(
+        path.join(destinationAbs, entry.relativeDirectoryPath),
+        { dev: entry.sourceDev, ino: entry.sourceIno },
+      )) {
+        return true
+      }
+    }
   }
   const expectedFiles = new Map(journal.entries.map((e) => [e.relativeFilePath, e]))
   const expectedDirs = new Set(journal.directories)

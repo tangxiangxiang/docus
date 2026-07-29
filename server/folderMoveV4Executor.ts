@@ -19,6 +19,9 @@ import {
 } from './folderMoveGateProof.js'
 import type { FolderMoveJournalV4 } from './folderMoveTransaction.js'
 import { inspectFolderMoveSourceInventory } from './folderMoveSourceOwnership.js'
+import {
+  createFolderMoveDestinationDirectories,
+} from './folderMoveDirectoryOwnership.js'
 
 export type FolderMoveV4DurableState = {
   /** Latest phase the executor attempted. The disk journal can still be
@@ -209,6 +212,8 @@ export async function executeFolderMoveV4Physical(
         destIno: finalGeneration.ino,
         entries: journal.entries,
         directories: journal.directories,
+        directoryGenerations: journal.directoryGenerations,
+        strategy: journal.strategy,
       })) {
         throw new FolderMoveExactParityError('atomic destination exact parity failed', state)
       }
@@ -219,6 +224,18 @@ export async function executeFolderMoveV4Physical(
         destIno: finalGeneration.ino,
       }
     } else {
+      const destinationDirectoryGenerations =
+        await createFolderMoveDestinationDirectories(
+          destAbs,
+          journal.directories,
+          contentDir,
+        )
+      journal = {
+        ...journal,
+        destinationDirectoryGenerations,
+      }
+      state = { ...state, journal }
+      await rewriteDurableJournal(journalAbs, journal)
       // Enter uncertainty before the mover: its first create-only link
       // can land before any hook or later I/O failure becomes visible
       // to this boundary.
@@ -227,6 +244,9 @@ export async function executeFolderMoveV4Physical(
         vaultRoot: contentDir,
         entries: journal.entries,
         directories: journal.directories,
+        directoryGenerations: journal.directoryGenerations,
+        expectedDestinationDirectoryGenerations:
+          journal.destinationDirectoryGenerations,
         ignoredDestinationEntries: journal.gateProof
           ? [journal.gateProof.markerName]
           : [],

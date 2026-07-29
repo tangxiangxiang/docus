@@ -40,7 +40,20 @@ export async function inspectFolderMoveSourceInventory(
     journal.entries.map(entry => [entry.relativeFilePath, entry]),
   )
   const declaredDirectories = new Set(journal.directories)
+  const directoryGenerations = new Map(
+    (journal.directoryGenerations ?? []).map(entry => [
+      entry.relativeDirectoryPath,
+      entry,
+    ]),
+  )
+  if (directoryGenerations.size !== declaredDirectories.size) {
+    return {
+      kind: 'external',
+      reason: 'source directory generation manifest is incomplete',
+    }
+  }
   const remainingEntries: string[] = []
+  const seenDirectories = new Set<string>()
   const walk = async (
     directoryAbs: string,
     relativeParent: string,
@@ -59,6 +72,13 @@ export async function inspectFolderMoveSourceInventory(
         if (!declaredDirectories.has(relative)) {
           return `source contains undeclared directory: ${relative}`
         }
+        const generation = directoryGenerations.get(relative)
+        if (!generation
+          || stat.dev.toString() !== generation.sourceDev
+          || stat.ino.toString() !== generation.sourceIno) {
+          return `source directory generation changed: ${relative}`
+        }
+        seenDirectories.add(relative)
         const nested = await walk(absolute, relative)
         if (nested) return nested
         continue
@@ -85,6 +105,14 @@ export async function inspectFolderMoveSourceInventory(
     return { kind: 'external', reason: 'source inventory changed while inspecting' }
   }
 
+  for (const relative of declaredDirectories) {
+    if (!seenDirectories.has(relative)) {
+      return {
+        kind: 'external',
+        reason: `declared source directory is missing: ${relative}`,
+      }
+    }
+  }
   remainingEntries.sort()
   if (remainingEntries.length === journal.entries.length) {
     return { kind: 'intact' }

@@ -60,6 +60,20 @@ export type RenameReferenceJournalEntry = {
     ownerTransactionId: string
     ownerDescriptorHash: string
     previousDirection: 'roll-forward' | 'roll-back'
+  } | {
+    /**
+     * Terminal fail-closed state written when a pending binding cannot
+     * acquire its owner because the owner journal never became durable.
+     * The independent reference direction is restored in `phase`, while
+     * this disposition prevents a later startup from replaying it without
+     * an owner-backed metadata decision.
+     */
+    kind: 'folder-snapshot-owner-aborted'
+    ownerJournal: string
+    ownerTransactionId: string
+    ownerDescriptorHash: string
+    previousDirection: 'roll-forward' | 'roll-back'
+    reason: 'owner-journal-absent'
   }
   references: RenameReferenceEntry[]
 }
@@ -399,6 +413,14 @@ export function parseRenameReferenceJournalObject(
         || !SHA256_RE.test(disposition.ownerDescriptorHash)
         || (disposition.previousDirection !== 'roll-forward'
           && disposition.previousDirection !== 'roll-back')) return null
+    } else if (disposition.kind === 'folder-snapshot-owner-aborted') {
+      if (path.basename(disposition.ownerJournal) !== disposition.ownerJournal
+        || !disposition.ownerJournal.includes('.docus-journal-')
+        || !UUID_RE.test(disposition.ownerTransactionId)
+        || !SHA256_RE.test(disposition.ownerDescriptorHash)
+        || (disposition.previousDirection !== 'roll-forward'
+          && disposition.previousDirection !== 'roll-back')
+        || disposition.reason !== 'owner-journal-absent') return null
     } else {
       return null
     }

@@ -23,12 +23,36 @@ export type MetadataSnapshotValidationMode = 'row-schema-only' | 'closed-graph'
  * row-schema-only mode is kept for diagnostic / non-persistence
  * callers that want the cheaper check.
  */
-export async function validateSerializedMetadataSnapshot(
+export function validateSerializedMetadataSnapshot(
   snapshot: SerializedMetadataSnapshot,
-  options: { mode: MetadataSnapshotValidationMode },
-): Promise<SerializedMetadataSnapshot | null> {
+  options: {
+    mode: MetadataSnapshotValidationMode
+    /** Exact durable mutation-footprint paths that may intentionally
+     * have no current document/migration row. */
+    ownershipPaths?: readonly string[]
+  },
+): SerializedMetadataSnapshot | null {
   if (options.mode === 'row-schema-only') {
     return hasValidSnapshotRowSchema(snapshot) ? snapshot : null
   }
-  return isSerializedMetadataSnapshot(snapshot) ? snapshot : null
+  if (!isSerializedMetadataSnapshot(snapshot)) return null
+
+  const explainedPaths = new Set<string>(
+    snapshot.documents.map(row => String(row.path)),
+  )
+  for (const row of snapshot.migrations) {
+    const migrationPath = String(row.path)
+    if (!migrationPath.startsWith('@deleted/')) {
+      explainedPaths.add(migrationPath)
+    }
+    const originalPath = String(row.original_path ?? '')
+    if (originalPath !== '') explainedPaths.add(originalPath)
+  }
+  const exactOwnership = new Set(options.ownershipPaths ?? [])
+  if (!snapshot.paths.every(snapshotPath =>
+    explainedPaths.has(snapshotPath)
+    || exactOwnership.has(snapshotPath))) {
+    return null
+  }
+  return snapshot
 }

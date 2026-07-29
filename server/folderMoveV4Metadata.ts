@@ -28,6 +28,7 @@ import {
   verifyFolderMoveGateProof,
 } from './folderMoveGateProof.js'
 import { validateSerializedMetadataSnapshot } from './metadataSnapshotClosure.js'
+import { verifyFolderMoveDirectoryEntries } from './folderMoveDirectoryOwnership.js'
 import {
   isValidDeleteRollbackSnapshot,
 } from './folderMoveTransaction.js'
@@ -396,7 +397,10 @@ export async function finalizeFolderMoveV4Cleanup(
     const isRound17B = disposition.ownershipFootprint !== undefined
       && disposition.metadataOnlyDocumentProofs !== undefined
     if (isRound17B
-      ? !(await validateSerializedMetadataSnapshot(disposition.snapshot, { mode: 'closed-graph' }))
+      ? !validateSerializedMetadataSnapshot(disposition.snapshot, {
+          mode: 'closed-graph',
+          ownershipPaths: disposition.ownershipFootprint?.paths,
+        })
       : !isValidDeleteRollbackSnapshot(disposition.snapshot, durableJournal.destRel)) {
       return result(durableJournal, 'quarantined', 'metadata-committed snapshot is invalid')
     }
@@ -454,6 +458,14 @@ export async function finalizeFolderMoveV4Cleanup(
   try {
     const sourceStat = await fs.lstat(srcAbs, { bigint: true })
       .catch(() => null)
+    if (sourceStat === null
+      && durableJournal.strategy === 'replayable-move') {
+      return result(
+        durableJournal,
+        'quarantined',
+        'metadata-committed replayable source root is missing',
+      )
+    }
     if (sourceStat !== null) {
       if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) {
         return result(durableJournal, 'quarantined', 'metadata-committed source path is not a real directory')
@@ -477,7 +489,7 @@ export async function finalizeFolderMoveV4Cleanup(
             dev: String(durableJournal.sourceDev),
             ino: String(durableJournal.sourceIno),
           },
-          removeRoot: false,
+          removeRoot: true,
         },
       )
       // P0-3: any declared directory whose generation proof no longer
@@ -492,7 +504,8 @@ export async function finalizeFolderMoveV4Cleanup(
           `metadata-committed declared directories were externally replaced: ${cleanup.conflict.join(',')}`,
         )
       }
-      if ((await fs.readdir(srcAbs)).length > 0) {
+      if (!cleanup.rootRemoved
+        && (await fs.readdir(srcAbs).catch(() => [])).length > 0) {
         if (durableJournal.metadataDisposition.kind === 'prefix-move') {
           return result(
             durableJournal,
@@ -502,7 +515,13 @@ export async function finalizeFolderMoveV4Cleanup(
         }
         return result(durableJournal, 'quarantined', 'metadata-committed source directory still contains undeclared entries')
       }
-      await fs.rmdir(srcAbs)
+      if (!cleanup.rootRemoved) {
+        return result(
+          durableJournal,
+          'failed',
+          'metadata-committed owned source directory cleanup did not complete',
+        )
+      }
     }
     await hooks.beforeJournalRemove?.()
     await removeDurableJournal(journalAbs)
@@ -545,6 +564,29 @@ export async function completeFolderMoveV4Metadata(
   )) {
     return result(durableJournal, 'quarantined', 'files-landed physical parity failed before metadata commit')
   }
+  if (durableJournal.strategy === 'replayable-move') {
+    if (!await verifyDirectoryGeneration(srcAbs, {
+      dev: durableJournal.sourceDev,
+      ino: durableJournal.sourceIno,
+    })) {
+      return result(
+        durableJournal,
+        'quarantined',
+        'files-landed source root generation changed before metadata commit',
+      )
+    }
+    const directoryConflict = await verifyFolderMoveDirectoryEntries(
+      srcAbs,
+      durableJournal.directoryGenerations ?? [],
+    )
+    if (directoryConflict !== null) {
+      return result(
+        durableJournal,
+        'quarantined',
+        `${directoryConflict} before metadata commit`,
+      )
+    }
+  }
 
   await hooks.beforeMetadataMutation?.()
   if (durableJournal.metadataDisposition.kind === 'snapshot-restore') {
@@ -560,7 +602,10 @@ export async function completeFolderMoveV4Metadata(
     const isRound17B = disposition.ownershipFootprint !== undefined
       && disposition.metadataOnlyDocumentProofs !== undefined
     if (isRound17B
-      ? !(await validateSerializedMetadataSnapshot(snapshot, { mode: 'closed-graph' }))
+      ? !validateSerializedMetadataSnapshot(snapshot, {
+          mode: 'closed-graph',
+          ownershipPaths: disposition.ownershipFootprint?.paths,
+        })
       : !isValidDeleteRollbackSnapshot(snapshot, durableJournal.destRel)) {
       return result(durableJournal, 'quarantined', 'snapshot-restore metadata disposition is invalid')
     }
