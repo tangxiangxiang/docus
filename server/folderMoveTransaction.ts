@@ -748,6 +748,19 @@ function referenceRowsEqual(
   return stringArraysEqual(canonical(left), canonical(right))
 }
 
+function referenceProvesDocument(
+  references: ReadonlyArray<
+    FolderMoveReferenceJournalProof['references'][number]
+  >,
+  documentId: string,
+  documentPath: string,
+): boolean {
+  return references.some(reference =>
+    reference.documentId === documentId
+    && (reference.sourcePath === documentPath
+      || reference.writePath === documentPath))
+}
+
 /** Synchronous Round-17B trust-boundary validation. Execution supplies
  * the separately parsed companion reference journal when any metadata
  * document lies outside both folder endpoints. */
@@ -930,23 +943,21 @@ export function validateRound17SnapshotRestoreDisposition(
       )) {
       return 'companion reference journal identity/path/hash proof does not match'
     }
-    const declared = new Set(
-      disposition.referenceJournal.references.map(item =>
-        `${item.documentId}\0${item.sourcePath}\0${item.writePath}`),
-    )
     for (const proof of referenceProofs) {
-      if (![...declared].some(value =>
-        value === `${proof.documentId}\0${proof.path}\0${proof.path}`
-        || value.startsWith(`${proof.documentId}\0${proof.path}\0`)
-        || value.endsWith(`\0${proof.path}`))) {
+      if (!referenceProvesDocument(
+        disposition.referenceJournal.references,
+        proof.documentId,
+        proof.path,
+      )) {
         return `reference metadata proof is absent from companion journal: ${proof.path}`
       }
     }
     for (const document of expectedOnlyReferenceDocuments) {
-      if (![...declared].some(value =>
-        value === `${document.documentId}\0${document.path}\0${document.path}`
-        || value.startsWith(`${document.documentId}\0${document.path}\0`)
-        || value.endsWith(`\0${document.path}`))) {
+      if (!referenceProvesDocument(
+        disposition.referenceJournal.references,
+        document.documentId,
+        document.path,
+      )) {
         return `expected-current metadata document lacks durable transaction provenance: ${document.path}`
       }
     }
