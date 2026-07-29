@@ -41,7 +41,6 @@ import {
 } from '../folderMoveGateProof.js'
 import {
   completeFolderMoveV4Metadata,
-  verifyMetadataSnapshotGraphExact,
 } from '../folderMoveV4Metadata.js'
 import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
@@ -518,11 +517,9 @@ folderRoutes.patch('/api/folders/*', async (c) => {
             dest,
             src,
             {
-              metadataAction: () => {
-                restoreDocumentMetadataMutation(metadataDb(), databaseSnapshot)
+              beforeMetadataMutation: async () => {
+                await moveHooks?.beforeReverseMetadataRestore?.(src)
               },
-              verifyMetadataGraph: () =>
-                verifyMetadataSnapshotGraphExact(metadataDb(), databaseSnapshot),
               afterMetadataMutationBeforeJournalRewrite: async () => {
                 await moveHooks?.afterReverseMetadata?.(src)
               },

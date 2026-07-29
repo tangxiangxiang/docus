@@ -77,6 +77,9 @@ export type CreateOnlyMoveHooks = {
   afterReverseFirstEntry?: (entryRel: string) => void | Promise<void>
   /** Reverse path: after v4 exact parity on the reverse move passes. */
   afterReverseParity?: (toDirAbs: string) => void | Promise<void>
+  /** Reverse path: after files-landed is durable and immediately
+   * before the journal-declared metadata CAS begins. */
+  beforeReverseMetadataRestore?: (toDirAbs: string) => void | Promise<void>
   /** Reverse path: after the reverse metadata restore has run. */
   afterReverseMetadata?: (toDirAbs: string) => void | Promise<void>
   /** Reverse path: metadata is complete, but the shared final verifier

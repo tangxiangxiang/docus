@@ -8,9 +8,10 @@ import {
 } from './atomicTextWrite.js'
 import {
   type DocumentMetadataMutationSnapshot,
-  listDocumentMetadata,
+  metadataSnapshotsExactlyEqual,
   moveDocumentMetadataPrefix,
   restoreDocumentMetadataMutationCAS,
+  snapshotDocumentMetadataMutationCurrentOwnership,
   snapshotDocumentMetadataOwnership,
   validateSnapshotOwnership,
 } from './documentMetadata.js'
@@ -21,6 +22,7 @@ import {
 } from './folderMoveGateProof.js'
 import {
   isValidDeleteRollbackSnapshot,
+  isSerializedMetadataSnapshot,
   reviveMetadataSnapshot,
   validateSnapshotPhysicalEntries,
   type FolderMoveJournalEntry,
@@ -35,8 +37,7 @@ export type FolderMoveV4FinalizationResult = {
 }
 
 type FinalizationHooks = {
-  metadataAction?: () => void
-  verifyMetadataGraph?: () => boolean
+  beforeMetadataMutation?: () => void | Promise<void>
   afterMetadataMutationBeforeJournalRewrite?: () => void | Promise<void>
   afterMetadataJournalRewriteBeforeFinalVerify?: () => void | Promise<void>
   beforeJournalRemove?: () => void | Promise<void>
@@ -116,32 +117,18 @@ function verifyPrefixMetadataCommitted(
   db: DatabaseT,
   journal: FolderMoveJournalV4,
 ): string | null {
-  const rows = listDocumentMetadata(db).filter((row) =>
-    row.path === journal.destRel || row.path.startsWith(`${journal.destRel}/`)
-      || row.path === journal.srcRel || row.path.startsWith(`${journal.srcRel}/`),
-  )
-  const expected = new Map<string, string>()
-  for (const entry of journal.entries) {
-    if (entry.documentId === undefined || entry.documentPath === undefined) continue
-    const suffix = entry.documentPath === journal.srcRel
-      ? ''
-      : entry.documentPath.slice(`${journal.srcRel}/`.length)
-    expected.set(`${journal.destRel}${suffix ? `/${suffix}` : ''}`, entry.documentId)
+  const disposition = journal.metadataDisposition
+  if (disposition.kind !== 'prefix-move') {
+    return 'prefix metadata verifier received non-prefix disposition'
   }
-  const destinationRows = rows.filter((row) =>
-    row.path === journal.destRel || row.path.startsWith(`${journal.destRel}/`),
-  )
-  const sourceRows = rows.filter((row) =>
-    row.path === journal.srcRel || row.path.startsWith(`${journal.srcRel}/`),
-  )
-  if (sourceRows.length > 0) return 'source prefix metadata remains after commit'
-  if (destinationRows.length !== expected.size) {
-    return `destination prefix metadata count mismatch: expected ${expected.size}, found ${destinationRows.length}`
+  if (!disposition.committedSnapshot) {
+    return 'metadata-committed prefix journal lacks exact committed snapshot'
   }
-  for (const row of destinationRows) {
-    if (expected.get(row.path) !== row.id) return `destination prefix identity mismatch: ${row.path}`
-  }
-  return null
+  const expected = reviveMetadataSnapshot(disposition.committedSnapshot)
+  const current = snapshotDocumentMetadataMutationCurrentOwnership(db, expected)
+  return metadataSnapshotsExactlyEqual(current, expected)
+    ? null
+    : 'live prefix metadata graph differs from committed snapshot'
 }
 
 function canonicalRow(row: Record<string, unknown>): string {
@@ -172,17 +159,8 @@ export function verifyMetadataSnapshotGraphExact(
   db: DatabaseT,
   snapshot: DocumentMetadataMutationSnapshot,
 ): boolean {
-  const live = snapshotDocumentMetadataOwnership(
-    db,
-    snapshot.paths,
-    snapshot.documentIds,
-    snapshot.tagIds,
-  )
-  return rowsExactlyEqualSnapshot(live.documents, snapshot.documents)
-    && rowsExactlyEqualSnapshot(live.tags, snapshot.tags)
-    && rowsExactlyEqualSnapshot(live.documentTags, snapshot.documentTags)
-    && rowsExactlyEqualSnapshot(live.embeddings, snapshot.embeddings)
-    && rowsExactlyEqualSnapshot(live.migrations, snapshot.migrations)
+  const live = snapshotDocumentMetadataMutationCurrentOwnership(db, snapshot)
+  return metadataSnapshotsExactlyEqual(live, snapshot)
 }
 
 function snapshotRestoreOwnershipMatches(
@@ -263,7 +241,7 @@ export async function finalizeFolderMoveV4Cleanup(
   journal: FolderMoveJournalV4 & { phase: 'metadata-committed' },
   srcAbs: string,
   destAbs: string,
-  hooks: Pick<FinalizationHooks, 'beforeJournalRemove' | 'verifyMetadataGraph'> = {},
+  hooks: Pick<FinalizationHooks, 'beforeJournalRemove'> = {},
 ): Promise<FolderMoveV4FinalizationResult> {
   const ownership = await proveDestinationOwnership(
     journalAbs,
@@ -285,11 +263,16 @@ export async function finalizeFolderMoveV4Cleanup(
     return result(durableJournal, 'quarantined', 'metadata-committed destination exact parity failed')
   }
 
-  if (!hooks.verifyMetadataGraph && durableJournal.metadataDisposition.kind === 'snapshot-restore') {
-    if (!isValidDeleteRollbackSnapshot(durableJournal.metadataDisposition.snapshot, durableJournal.destRel)) {
+  if (durableJournal.metadataDisposition.kind === 'snapshot-restore') {
+    const disposition = durableJournal.metadataDisposition
+    const isRound17 = disposition.expectedCurrentSnapshot !== undefined
+      && disposition.physicalDocumentIds !== undefined
+    if (isRound17
+      ? !isSerializedMetadataSnapshot(disposition.snapshot)
+      : !isValidDeleteRollbackSnapshot(disposition.snapshot, durableJournal.destRel)) {
       return result(durableJournal, 'quarantined', 'metadata-committed snapshot is invalid')
     }
-    const revived = reviveMetadataSnapshot(durableJournal.metadataDisposition.snapshot)
+    const revived = reviveMetadataSnapshot(disposition.snapshot)
     const liveTagIds = (db.prepare('SELECT id FROM tags').all() as Array<{ id: number }>)
       .map((row) => row.id)
     revived.preexistingTagIds = [...new Set([...liveTagIds, ...revived.preexistingTagIds])]
@@ -310,18 +293,15 @@ export async function finalizeFolderMoveV4Cleanup(
         'metadata-committed snapshot graph verification failed: live graph differs from snapshot',
       )
     }
-  } else if (!hooks.verifyMetadataGraph) {
+  } else {
     const metadataError = verifyPrefixMetadataCommitted(db, durableJournal)
     if (metadataError !== null) {
       return result(
         durableJournal,
         'quarantined',
-        `metadata-committed prefix verification failed: ${metadataError}`,
+        metadataError,
       )
     }
-  }
-  if (hooks.verifyMetadataGraph && !hooks.verifyMetadataGraph()) {
-    return result(durableJournal, 'quarantined', 'metadata-committed custom graph verification failed')
   }
 
   try {
@@ -377,21 +357,24 @@ export async function completeFolderMoveV4Metadata(
     return result(durableJournal, 'quarantined', 'files-landed physical parity failed before metadata commit')
   }
 
-  if (hooks.metadataAction) {
-    try {
-      hooks.metadataAction()
-    } catch (error) {
-      return result(durableJournal, 'failed', `custom metadata action failed: ${(error as Error).message}`)
-    }
-  } else if (durableJournal.metadataDisposition.kind === 'snapshot-restore') {
-    const snapshot = durableJournal.metadataDisposition.snapshot
-    if (!isValidDeleteRollbackSnapshot(snapshot, durableJournal.destRel)) {
+  await hooks.beforeMetadataMutation?.()
+  if (durableJournal.metadataDisposition.kind === 'snapshot-restore') {
+    const disposition = durableJournal.metadataDisposition
+    const snapshot = disposition.snapshot
+    const isRound17 = disposition.expectedCurrentSnapshot !== undefined
+      && disposition.physicalDocumentIds !== undefined
+    if (isRound17
+      ? !isSerializedMetadataSnapshot(snapshot)
+      : !isValidDeleteRollbackSnapshot(snapshot, durableJournal.destRel)) {
       return result(durableJournal, 'quarantined', 'snapshot-restore metadata disposition is invalid')
     }
     const entryError = validateSnapshotPhysicalEntries(
       snapshot,
       durableJournal.entries as unknown as FolderMoveJournalEntry[],
       durableJournal.destRel,
+      {
+        physicalDocumentIds: disposition.physicalDocumentIds,
+      },
     )
     if (entryError !== null) {
       return result(durableJournal, 'quarantined', `snapshot physical entries are invalid: ${entryError}`)
@@ -404,7 +387,12 @@ export async function completeFolderMoveV4Metadata(
       restoreDocumentMetadataMutationCAS(
         db,
         revived,
-        current => snapshotRestoreOwnershipMatches(current, revived, durableJournal),
+        current => disposition.expectedCurrentSnapshot
+          ? metadataSnapshotsExactlyEqual(
+              current,
+              reviveMetadataSnapshot(disposition.expectedCurrentSnapshot),
+            )
+          : snapshotRestoreOwnershipMatches(current, revived, durableJournal),
       )
     } catch (error) {
       return result(durableJournal, 'quarantined', `snapshot metadata CAS failed: ${(error as Error).message}`)
