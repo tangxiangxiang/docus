@@ -41,10 +41,12 @@ starting point of this consolidation.
 | `856f310951d95c0c97fe7883b5323e88e6b60077` | record Round 5 correction SHA |
 | `d054b3c1c183694eaaa4aa80b21a40a3cd6996d7` | align final reconstruction contracts |
 | `b33fbfe351bce23d69e76e564e73f4a7dc605800` | record Round 6 correction SHA |
+| `15104e23c3df2a8caa18ab10ebe1f05714cc1b64` | consolidate final documentation review findings |
 
-The Final Documentation Consolidation correction SHA is recorded only
+The Final Documentation Consolidation correction SHA above is added
 by a later bookkeeping commit. A commit never records its own
-not-yet-known SHA.
+not-yet-known SHA; the bookkeeping commit is therefore reported at
+handoff rather than written into itself.
 
 ## 2. Current Status
 
