@@ -1378,17 +1378,13 @@ main.container {
   border-top: 1px solid var(--vs-border, var(--border));
 }
 
-/* FileTree: scope token names so it picks up VSCode palette */
-.vault .file-tree {
-  background: var(--vs-bg-2);
-  color: var(--vs-text-1);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  /* The right-side seam is drawn by the splitter to the right of this
-     panel, not by this panel itself, so it doesn't get reflowed when
-     the user drags the handle. */
-}
+/* FileTree: scope token names so it picks up VSCode palette.
+   Surface tokens (background/color/display/flex-direction/overflow)
+   are owned by the shared `.vault .file-tree, .vault .tag-panel` rule
+   above so the two sidebars always render the same surface. The
+   right-side seam is drawn by the splitter to the right of this
+   panel, not by this panel itself, so it doesn't get reflowed when
+   the user drags the handle. */
 .vault .file-tree header {
   display: flex;
   flex-direction: column;
@@ -1403,13 +1399,32 @@ main.container {
   box-sizing: border-box;
   background: var(--vs-bg-2);
 }
-/* Always-on search input. Icon + active-tag chips + input + clear-x
-   all share one flex row; chips wrap to a second line when there
-   are too many to fit alongside the input. AND-composes with the
-   chip filters inlined to the left of the input. height: 36px
-   matches the activity-bar (.ab-btn) and the editor .tabs row
-   so all three top strips sit on the same baseline. */
-.vault .file-tree header .search {
+/* Shared sidebar surface tokens. Both .file-tree and .tag-panel
+   share the same VSCode-palette text color + flex column layout
+   so the two sidebars read as the same surface when the user
+   switches between Files and Tags. The canonical background is
+   owned by `.vault > .file-tree, .vault > .tag-panel` further down
+   (which pins it to `var(--bg)` = `--vs-bg-1`, the same token
+   used by the activity-bar and splitter columns). Anything that
+   genuinely differs lives in a per-panel override below. */
+.vault .file-tree,
+.vault .tag-panel {
+  color: var(--vs-text-1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Always-on search input (Files) / tag filter input (Tags). Both
+   rows are 36px tall to match the activity-bar (.ab-btn) and the
+   editor .tabs row, so all three top strips sit on the same
+   baseline. Divider lives on the row itself so it tracks the row
+   even when chips wrap and the row grows. Shared selector list
+   keeps the two sidebars visually identical — only the chips/
+   count slot differs (FileTree: inlined tag chips, TagPanel:
+   visible/total count). */
+.vault .file-tree header .search,
+.vault .tag-panel .tag-filter {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1419,8 +1434,10 @@ main.container {
   box-sizing: border-box;
   padding: 0 12px;
   border-bottom: 1px solid var(--vs-border);
+  background: var(--vs-bg-2);
 }
-.vault .file-tree header .search-icon {
+.vault .file-tree header .search-icon,
+.vault .tag-panel .tag-filter-icon {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -1428,8 +1445,16 @@ main.container {
   width: 16px;
   height: 16px;
   color: var(--vs-text-3);
+  transition: color 100ms;
 }
-.vault .file-tree header .search-input {
+/* Tag filter picks up the accent on focus-within so it visually
+   matches the editor .tabs focus state — FileTree has no equivalent
+   focus-within accent (chips are not interactive in the same way). */
+.vault .tag-panel .tag-filter:focus-within .tag-filter-icon {
+  color: var(--vs-accent);
+}
+.vault .file-tree header .search-input,
+.vault .tag-panel .tag-filter-input {
   /* `flex: 1 1 120px` keeps the input filling the row when there
      are no chips. The explicit `height: 100%` makes the input fill
      the 36px row vertically — combined with `padding: 0` and
@@ -1450,10 +1475,12 @@ main.container {
   line-height: normal;
   box-sizing: border-box;
 }
-.vault .file-tree header .search-input::placeholder {
+.vault .file-tree header .search-input::placeholder,
+.vault .tag-panel .tag-filter-input::placeholder {
   color: var(--vs-text-3);
 }
-.vault .file-tree header .search-clear-x {
+.vault .file-tree header .search-clear-x,
+.vault .tag-panel .tag-filter-clear-x {
   flex-shrink: 0;
   width: 16px;
   height: 16px;
@@ -1468,8 +1495,10 @@ main.container {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: background 100ms, color 100ms;
 }
-.vault .file-tree header .search-clear-x:hover {
+.vault .file-tree header .search-clear-x:hover,
+.vault .tag-panel .tag-filter-clear-x:hover {
   background: var(--vs-hover-bg);
   color: var(--vs-text-1);
 }
@@ -1900,14 +1929,11 @@ main.container {
 /* TagPanel: shares the file-tree column in the vault. Layout is a
    vertical stack: header (label + count pill), filter row (search icon
    + input + clear), tag list (flex: 1), and an optional results section
-   capped at 55% so the picker never gets squeezed. */
-.vault .tag-panel {
-  background: var(--vs-bg-2);
-  color: var(--vs-text-1);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
+   capped at 55% so the picker never gets squeezed. Surface tokens
+   (background/color/display/flex-direction/overflow) are owned by the
+   shared `.vault .file-tree, .vault .tag-panel` rule above, so the two
+   sidebars always render the same surface — only the inner
+   substructure differs. */
 .vault .tag-panel > header {
   /* Mirrors .vault .file-tree header: a column container that holds
      one row (.tag-filter) at exactly 36px so it sits flush with the
@@ -1946,7 +1972,7 @@ main.container {
 .vault .tag-panel .tag-filter {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px; /* Match FileTree header .search gap */
   height: 36px;
   min-height: 36px;
   box-sizing: border-box;
@@ -1969,101 +1995,46 @@ main.container {
   letter-spacing: 0;
   line-height: 1;
 }
-.vault .tag-panel .tag-filter-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  color: var(--vs-text-3);
-  transition: color 100ms;
-}
-.vault .tag-panel .tag-filter:focus-within .tag-filter-icon {
-  color: var(--vs-accent);
-}
-.vault .tag-panel .tag-filter-input {
-  /* Fills the 36px row vertically without contributing its own
-     padding/border/line-height. font-size matches the editor tabs
-     (0.8rem) so the input glyph optical-center aligns with the tab
-     title optical-center on the row above. */
-  flex: 1;
-  min-width: 0;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  color: var(--vs-text-1);
-  font: inherit;
-  font-size: 0.8rem;
-  line-height: normal;
-  height: 100%;
-  box-sizing: border-box;
-  outline: none;
-}
-.vault .tag-panel .tag-filter-input::placeholder { color: var(--vs-text-3); }
-.vault .tag-panel .tag-filter-clear-x {
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--vs-text-3);
-  font-size: 0.85rem;
-  line-height: 1;
-  cursor: pointer;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 100ms, color 100ms;
-}
-.vault .tag-panel .tag-filter-clear-x:hover {
-  background: var(--vs-hover-bg);
-  color: var(--vs-text-1);
-}
 
-/* Tag rows. Default text is one step dimmer (--vs-text-2) so the
-   selected tag naturally pops. Hover lifts both bg and text; the
-   active state swaps to an accent-tinted background and adds a 5px
-   dot before the tag name (in addition to the 2px left strip) as
-   a second visual anchor. All state changes use a 100ms multi-
-   property transition, matching the .scope-chip / .tag-filter-input
-   convention. */
+/* Tag rows. Same chrome as FileTree .row-line: same height, same
+   row padding (left = 6px to mirror row-line at depth=0), same gap,
+   same color tokens, same hover/active treatment — only the
+   count slot differs (`.tag-entry` uses justify-content: space-between
+   to push the count to the far right). */
 .vault .tag-panel .tag-entry {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 5px;
   width: 100%;
-  padding: 3px 14px;
-  font-size: 0.85rem;
-  line-height: 1.4;
-  color: var(--vs-text-2);
+  padding: 3px 8px 3px 6px;
+  min-height: 30px;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  color: var(--vs-text-1);
   text-decoration: none;
   background: transparent;
   border: 0;
-  border-left: 2px solid transparent;
   cursor: pointer;
   text-align: left;
   font-family: inherit;
-  transition: background 100ms, color 100ms, border-left-color 100ms;
+  transition: background 100ms, color 100ms;
 }
 .vault .tag-panel .tag-entry:hover {
   background: var(--vs-hover-bg);
   color: var(--vs-text-1);
 }
 .vault .tag-panel .tag-entry.active {
-  background: var(--vs-accent-bg);
-  border-left-color: var(--vs-accent);
+  /* Same active background as FileTree (.tree-row.active .row-line::before).
+     Subtle --vs-active-bg, no left border stripe, no accent-tinted chip. */
+  background: var(--vs-active-bg);
   color: var(--vs-text-1);
+  font-weight: 500;
 }
 .vault .tag-panel .tag-entry.active:hover {
-  background: var(--vs-accent-bg);
+  background: var(--vs-active-bg);
 }
 .vault .tag-panel .tag-name {
-  font-family: var(--mono);
-  font-size: 0.82rem;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -2071,75 +2042,103 @@ main.container {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Inherit font family from row so the label reads as plain prose,
+     not as a mono ID. */
+  font-family: inherit;
 }
-.vault .tag-panel .tag-entry.active .tag-name::before {
-  content: '';
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--vs-accent);
+.vault .tag-panel .tag-hash {
+  /* `#` rendered as a 14×14 muted icon-sized cell so it lines up
+     visually with the file-tree's row-icon. Same color, same box
+     dimensions. The text is centered with line-height: 1 so the
+     glyph optical-centers inside the 14px box like the other
+     sidebar icons. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
+  color: var(--vs-text-3);
+  font-family: var(--mono);
+  font-size: 0.84rem;
+  line-height: 1;
+  font-weight: 400;
+}
+.vault .tag-panel .tag-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .vault .tag-panel .tag-count {
   font-size: 0.7rem;
   font-variant-numeric: tabular-nums;
   color: var(--vs-text-3);
   flex-shrink: 0;
-  min-width: 14px;
+  min-width: 36px; /* wider to accommodate multi-digit counts */
   text-align: right;
   transition: color 100ms;
 }
 .vault .tag-panel .tag-entry:hover .tag-count { color: var(--vs-text-2); }
 .vault .tag-panel .tag-entry.active .tag-count { color: var(--vs-text-1); }
+/* Empty state inside the tag list. Same chrome as .vault .file-tree .empty
+   — no italic, same 12px padding, same muted color — so both sidebars
+   fall back to the same "nothing here" treatment. */
 .vault .tag-panel .empty {
-  padding: 14px;
+  padding: 12px;
   color: var(--vs-text-3);
-  font-style: italic;
   font-size: 0.85rem;
 }
 
-/* Results section. The list fills the panel; the results are capped at
-   55% max-height with their own scroll so picking a tag never squeezes
-   the picker. The header shows the OR-joined active tags (∪) plus an
-   accent-tinted count pill. */
+/* Results section. When a tag is selected, the list owns the remaining
+   height of the panel (composed with `.tag-list-region` which shrinks
+   to `flex: 0 1 42%` / `min-height: 100px`). No max-height so the
+   detail region can grow as large as the splitter-driven layout
+   allows. `border-top` uses the project-wide `--vs-border` token so
+   the seam reads as the same hairline the file-tree uses everywhere. */
 .vault .tag-panel .results {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   border-top: 1px solid var(--vs-border);
-  flex: 0 1 auto;
+  flex: 1 1 58%;
   min-height: 0;
-  max-height: 55%;
+  max-height: none;
 }
+/* Header aligns with FileTree's row rhythm: same 6px left/right
+   insets as .row-line so the active-tag title starts at the same
+   x position as a top-level file-tree folder row. Sticky so the
+   title stays visible while the notes list scrolls underneath.
+   Two-line column layout (title + count) keeps the count from
+   crowding the title on narrow sidebars. */
 .vault .tag-panel .results-header {
-  /* Same rhythm as the main header (10px 14px padding, no uppercase)
-     so the two sections stack visually as one continuous panel. */
-  padding: 10px 14px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: 0.02em;
-  color: var(--vs-text-2);
-  background: var(--vs-bg-2);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  box-sizing: border-box;
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-height: 52px;
+  padding: 8px 14px;
   flex: 0 0 auto;
+  background: transparent;
+  color: var(--vs-text-2);
 }
 .vault .tag-panel .results-title {
-  font-family: var(--mono);
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--vs-text-1);
-  font-size: 0.78rem;
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
+  color: var(--vs-text-1);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  font-family: var(--sans);
 }
 .vault .tag-panel .results-sep {
   color: var(--vs-text-3);
@@ -2147,13 +2146,16 @@ main.container {
   font-weight: 400;
   opacity: 0.7;
 }
+/* Inline note count uses the same muted-text + tabular-nums
+   treatment as the file-tree's path hints so both sidebars render
+   "N items" in the same visual weight. */
 .vault .tag-panel .results-count {
-  font-weight: 500;
+  font-weight: 400;
   font-size: 0.7rem;
-  color: var(--vs-text-1);
-  background: var(--vs-accent-bg);
-  border-radius: 8px;
-  padding: 1px 8px;
+  color: var(--vs-text-3);
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
   text-transform: none;
@@ -2168,7 +2170,14 @@ main.container {
   flex: 1 1 auto;
   min-height: 0;
 }
-.vault .document-row {
+/* Document row — canonical definition lives here (not duplicated
+   per-component). Both the file-tree's history rows and the
+   tag-panel's results list bind to `.document-row`, so any future
+   tweak to the document surface happens in one place. Hover and
+   active use the same `--vs-hover-bg` / `--vs-active-bg` as the
+   file-tree row-line, so the two sidebars read as one system. */
+.vault .document-row,
+.vault .tag-panel .result-entry {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
@@ -2180,24 +2189,26 @@ main.container {
   background: transparent;
   border: 0;
   color: var(--vs-text-1);
-  font-size: 0.84rem;
-  line-height: 1.35;
-  user-select: none;
-}
-.vault .document-row:hover { background: var(--vs-hover-bg); }
-.vault .document-row.active { background: var(--vs-active-bg); }
-.vault .document-row:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
-  outline-offset: -1px;
-}
-.vault .tag-panel .result-entry {
-  text-align: left;
-  cursor: pointer;
   font: inherit;
   font-size: 0.84rem;
   line-height: 1.35;
-  transition: background 100ms;
+  user-select: none;
+  position: relative;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms, color 100ms;
 }
+.vault .document-row:hover,
+.vault .tag-panel .result-entry:hover { background: var(--vs-hover-bg); }
+.vault .document-row.active,
+.vault .tag-panel .result-entry.active { background: var(--vs-active-bg); }
+.vault .document-row:focus-visible,
+.vault .tag-panel .result-entry:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
+  outline-offset: -1px;
+}
+/* Chevron-spacer + icon sized to match the file-tree's row chevron
+   and row icon exactly (14×14 chevron, 16×16 icon, --vs-text-2). */
 .vault .tag-panel .result-chevron-spacer {
   width: 14px;
   height: 14px;
@@ -2217,6 +2228,8 @@ main.container {
   max-height: 18px;
   overflow: hidden;
 }
+/* Title weight mirrors a file-tree document row (font-weight: 450),
+   so the two sidebars' document items read at the same visual weight. */
 .vault .tag-panel .result-title {
   display: block;
   min-width: 0;
@@ -2249,60 +2262,16 @@ main.container {
   overflow-y: auto;
 }
 
-/* Tags read as stable navigation rows: the hash is supporting chrome,
-   while selection changes weight and color without changing geometry. */
-.vault .tag-panel .tag-name {
-  gap: 5px;
-  font-family: inherit;
-}
-.vault .tag-panel .tag-hash {
-  color: var(--vs-text-3);
-  font-family: var(--mono);
-  font-weight: 400;
-  flex-shrink: 0;
-}
-.vault .tag-panel .tag-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.vault .tag-panel .tag-entry.active .tag-name::before {
-  content: none;
-}
-.vault .tag-panel .tag-entry.active .tag-label {
-  font-weight: 600;
-}
-.vault .tag-panel .tag-entry.active .tag-count {
-  color: var(--vs-text-2);
-}
+/* The duplicate `.tag-name` / `.tag-hash` / `.tag-label` /
+   `.results` / `.results-header` / `.results-title` /
+   `.results-count` rules that used to live below this block were
+   removed: every property they set is already owned by the
+   consolidated rules above (so both sidebars read as one system).
+   The behavior they carried — sticky results header, 58/42 split
+   between the results region and the tag list when a tag is
+   selected, sans-serif results title — is preserved in the
+   consolidated block above. */
 
-/* Results are a detail region that owns the remaining height. The header
-   remains visible while the note list scrolls independently. */
-.vault .tag-panel .results {
-  flex: 1 1 58%;
-  max-height: none;
-}
-.vault .tag-panel .results-header {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 2px;
-  height: auto;
-  min-height: 52px;
-  padding: 8px 14px;
-}
-.vault .tag-panel .results-title {
-  gap: 4px;
-}
-.vault .tag-panel .results-count {
-  padding: 0;
-  color: var(--vs-text-3);
-  background: transparent;
-  border-radius: 0;
-  font-weight: 400;
-}
 /* Editor Area */
 .editor-area {
   /* Status bar used to live here as a 3rd row, but it now spans the
@@ -3069,8 +3038,15 @@ main.container {
   padding: 16px 20px;
 }
 .vault .empty.error { color: #f48771; font-style: normal; }
+/* Direct-child vault columns. TagPanel must be in this list so its
+   surface matches FileTree's -- exactly the same `var(--bg)` token
+   (which the vault rebinds to `--vs-bg-1`) — otherwise TagPanel
+   silently falls through to `--vs-bg-2` and the two sidebars
+   render in different tones. Activity bar and splitter keep the
+   same treatment as before. */
 .vault > .activity-bar,
 .vault > .file-tree,
+.vault > .tag-panel,
 .vault > .splitter {
   background: var(--bg);
   overflow: hidden;
