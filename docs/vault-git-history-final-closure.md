@@ -1,508 +1,376 @@
 # Vault Git History — Final Closure
 
-**Status:** DRAFT — CLOSURE IN PROGRESS
-
-> This is a draft closure record. It defines the evidence required
-> to close the Vault Git History feature, but the feature is **not**
-> yet declared closed. Maintenance-mode rules in §9 do not take
-> effect until this document is upgraded to **CLOSED** status.
-
----
-
-## 1. Current Baseline
-
 ```text
-Repository:           tangxiangxiang/docus
-Branch:               main
-Documentation Review Baseline (tip of main at reconstruction):
-                      00b17359d151bbdbe56115ed992700ecbb5e1ca1
-
-Spec:                 docs/superpowers/specs/2026-07-30-vault-git-history-design.md
-Plan:                 docs/superpowers/plans/2026-07-30-vault-git-history-implementation-plan.md
-Implementation:       docs/vault-git-history-implementation-record.md
-Closure (this file):  docs/vault-git-history-final-closure.md
+Status: DRAFT — CLOSURE IN PROGRESS
+Owner Approval: PENDING / BLOCKED
+Final Production Baseline: NOT YET CAPTURED
+Maintenance Mode: NOT ENTERED
 ```
 
-The Documentation Review Baseline is **not** the Final Production
-Code Baseline. The Final Production Code SHA is the SHA recorded
-under Plan History-C11 after the closure verification (see §3 of the
-Plan). Marking this document as CLOSED before that SHA is recorded
-is not allowed.
+This document is a live Closure record, not a closure declaration.
+Production remediation has not started. Future contracts in the
+[Spec](superpowers/specs/2026-07-30-vault-git-history-design.md) and
+[Plan](superpowers/plans/2026-07-30-vault-git-history-implementation-plan.md)
+are **not implemented on the reviewed production baseline**.
 
-Production Code Review Baseline (the commit on `main` whose
-production code was reviewed for this documentation chain):
+## 1. Current Baseline and Audit Chain
 
-`00b17359d151bbdbe56115ed992700ecbb5e1ca1`
+### Production-code review baseline
 
-Documentation Reconstruction Commit (first round of retrospective docs):
+```text
+00b17359d151bbdbe56115ed992700ecbb5e1ca1
+```
 
-`ff2f992eb809af091bb9260846aef02ebee8519a` (Spec, Plan, Implementation Record, Draft Closure, README)
+This is the source-review baseline only. It is not the Final
+Production Baseline.
 
-Documentation Correction Commits:
+No History production or test file changed between that SHA and the
+starting point of this consolidation.
 
-`adfc4d733efdf990d413022d5aa36433da4db356` (Round 1 — 14 findings)
-`7b1bb2c7912869a1e8faf8c3ac40346696d99682` (Round 2 — 13 findings)
-`de85039d01c44e1b6cc80d8baa3cc5dd2ad69d2e` (Round 3 — 8 findings)
+### Documentation audit chain observed in Git history
 
-Documentation Bookkeeping Commit:
+| SHA | Purpose |
+|---|---|
+| `ff2f992eb809af091bb9260846aef02ebee8519a` | reconstruct Vault Git History documentation chain |
+| `adfc4d733efdf990d413022d5aa36433da4db356` | correct reconstruction review findings |
+| `7b1bb2c7912869a1e8faf8c3ac40346696d99682` | correct second-round review findings |
+| `de85039d01c44e1b6cc80d8baa3cc5dd2ad69d2e` | correct third-round review findings |
+| `2d5ce3f8a388e957d83195a73acdc3b73dd03aaa` | record final Round 3 SHA |
+| `8d6f71aba406b4e96123ddecd70b9c1d1001e17b` | update Index synchronization and Repair documentation |
+| `234bbdee10734b86d5f35ef7557f073dfc376327` | finalize reconstruction review contract |
+| `856f310951d95c0c97fe7883b5323e88e6b60077` | record Round 5 correction SHA |
+| `d054b3c1c183694eaaa4aa80b21a40a3cd6996d7` | align final reconstruction contracts |
+| `b33fbfe351bce23d69e76e564e73f4a7dc605800` | record Round 6 correction SHA |
 
-`2d5ce3f8a388e957d83195a73acdc3b73dd03aaa`
-
-Documentation Correction Commit — Round 4:
-
-`8d6f71aba406b4e96123ddecd70b9c1d1001e17b`
-
-Documentation Correction Commit — Round 5:
-
-`234bbdee10734b86d5f35ef7557f073dfc376327`
-
-Documentation Bookkeeping Commit — Round 5:
-
-`856f310951d95c0c97fe7883b5323e88e6b60077`
-
-Documentation Correction Commit — Round 6:
-
-`d054b3c1c183694eaaa4aa80b21a40a3cd6996d7`
+The Final Documentation Consolidation correction SHA is recorded only
+by a later bookkeeping commit. A commit never records its own
+not-yet-known SHA.
 
 ## 2. Current Status
 
-```text
-VAULT GIT HISTORY:           CLOSURE IN PROGRESS
-RETROSPECTIVE SPEC:          COMPLETE — PENDING OWNER APPROVAL
-RETROSPECTIVE PLAN:          COMPLETE
-IMPLEMENTATION RECORD:       COMPLETE FOR DOCUMENTATION REVIEW BASELINE
-FINAL PRODUCTION BASELINE:   NOT YET CAPTURED
-DOCUMENTATION CHAIN:         RECONSTRUCTED
-OPEN P1 FINDINGS:            PRESENT
-OPEN P2 FINDINGS:            PRESENT
-FINAL VERIFICATION:          NOT COMPLETE
-CI THREE-PLATFORM:           NOT RE-RUN DURING RECONSTRUCTION
-MAINTENANCE MODE:            NOT ENTERED
-```
+| Area | State |
+|---|---|
+| Documentation consolidation | COMPLETE after the correction and bookkeeping commits |
+| Production remediation | NOT STARTED |
+| Final production verification | NOT RUN |
+| Owner Approval | PENDING |
+| Closure | DRAFT |
+| Maintenance Mode | NOT ENTERED |
 
-## 3. Delivered Scope (Observed on `main`)
+The reviewed implementation remains usable but is not closable because
+the findings in §4 remain open.
 
-The following is what is actually implemented on the
-Documentation Review Baseline. It is **not** a claim that every
-function is bug-free or verified end-to-end — see §4 for the open
-findings.
+## 3. Delivered Scope
 
-### 3.1 Capability and bootstrap
+Everything in this section is **Observed on production-code review
+baseline**.
 
-- `GET /api/history/capability` — `gitAvailable`, `repoInitialized`,
-  `initError?`. Capability cached for process lifetime.
-- `ensureRepo(repoRoot)` — writes `.gitignore` and `.gitattributes`
-  once (never overwriting), `git init` (3-step fallback), and
-  `core.autocrlf false`.
-- `ensureAuthorIdentity` — local-config probe; env-var precedence
-  over fallback (`docus` / `docus@localhost`).
-- Capability cached; per-request `probeGit()`.
+### 3.1 Repository and read surfaces
 
-### 3.2 Read-only state
+- Git capability and first-touch Vault repository setup;
+- Status, Log, Snapshot, WORKTREE, and Diff endpoints;
+- logical path and ref allowlists;
+- empty-repository handling;
+- client History state and read-only panes.
 
-- `GET /api/history/status` — porcelain `--untracked-files=all`,
-  filtered to managed Markdown paths.
-- `GET /api/history/log?path=&limit=` — newest-first, limit 200.
-- `GET /api/history/file?path=&ref=` — ref defaults `HEAD`;
-  `WORKTREE` allowed.
-- `GET /api/history/diff?path=&old=&new=` — line + optional word
-  breakdown.
+### 3.2 Create Version
 
-### 3.3 Mutating operations
+- client save and path-mutation barriers;
+- exact Working Tree hash capture;
+- server status re-read before byte capture;
+- Temporary Commit Index seeded from old HEAD;
+- plumbing tree/commit creation;
+- second repository-idle check;
+- CAS HEAD movement;
+- immutable commit-file query before Real-Index sync;
+- auxiliary sync and Repair response.
 
-- `POST /api/history/commits` — temporary Git Index,
-  `hash-object` + `update-index` + `write-tree` + `commit-tree`
-  (plumbing), CAS `update-ref HEAD`, Real-Index sync with retry.
-- `POST /api/history/restore` — `git restore --source=<ref>
-  --worktree -- <path>`. WORKTREE rejected.
-- `POST /api/history/drop` — two-phase: non-root `update-ref HEAD
-  <parent> <expected>`, root `update-ref -d HEAD <expected>`.
+Create routine sync still uses up to three Real-Index resets and does
+not implement F0/F1 path outcomes.
 
-### 3.4 Index repair
+### 3.3 Index Repair and Withdraw
 
-- `GET /api/history/repair-status` — `{ transactions: [...] }`.
-- `POST /api/history/repair-index` — opaque 32-hex token,
-  hand-taken `.git/index.lock`, atomic repair.
-- `POST /api/history/repair-index/discard` — selective metadata
-  removal.
+- schema-v2 Repair metadata with v1 migration and corrupt quarantine;
+- normal-restart persistence;
+- hand-taken `.git/index.lock` Repair;
+- Repair and Withdraw synchronization publish via
+  `fsync → close → rename`;
+- pre-rename failure cleanup removes lock and Temporary Index;
+- Withdraw preserves Working Tree bytes and uses CAS.
 
-### 3.5 Client surface
+Repair metadata has no cross-process lost-update protection. Withdraw
+has no marker check and does not fail closed on parent-resolution
+errors.
 
-- `HistoryPanel.vue` — emptiness / capability / withdraw menu.
-- `HistoryChangesPanel.vue` — selection + version-message
-  composer + Repair banner.
-- `HistorySnapshotPane.vue` — read-only snapshot view.
-- `HistoryComparisonPane.vue` — read-only side-by-side diff.
-- `TimelineDocumentRow.vue`, `TimelineRevisionRow.vue`,
-  `TimelineGroup.vue`, `SideBySideDiff.vue`.
-- Composable layer: `useHistory`, `useHistoryCommit`,
-  `useHistoryTimeline`, `useHistorySnapshots`, `useHistoryComparisons`,
-  `useHistoryRestore`, `useHistoryWithdraw`.
-- Mutation lock: `pathMutationLock.createPathMutationLock`.
+### 3.4 Restore and client reconciliation
 
-### 3.6 Test coverage (observed)
+- `git restore --worktree` without `--staged`;
+- one server mutation transaction inside `restoreFile`;
+- client confirmation snapshot, save barrier, newer-edit
+  preservation, and settled refreshes.
 
-Real-git tests (no mocks, per the source comment "Mocks would test
-the mock."):
+The route pre-reads outside the transaction and the client trusts
+gesture-time `historicalRaw`, so the intended atomic snapshot contract
+is not delivered.
 
-- `server/__tests__/history-git.test.ts` — 50+ cases covering L0
-  spawn, parsing, repository ops, addAndCommit, dropHeadCommit,
-  author identity, restoreFile, CRLF safety.
-- `server/__tests__/history-routes.test.ts` — 40+ cases covering
-  every endpoint's happy path, validation, conflict mapping, 503
-  graceful.
-- `server/__tests__/history-diff.test.ts` — pure-function tests of
-  `computeFileDiff`.
-- `src/lib/__tests__/history-api.test.ts` — wire-level fetch
-  wrappers.
-- `src/lib/__tests__/history-date.test.ts` — locale formatter.
-- `src/composables/vault/__tests__/pathMutationLock.test.ts` —
-  per-path and vault-wide locks.
-- `src/composables/vault/__tests__/useHistoryCommit.test.ts` —
-  24 cases.
-- `src/composables/vault/__tests__/useHistoryWithdraw.test.ts` —
-  6 cases.
-- `src/composables/vault/__tests__/useHistoryRestore.test.ts` —
-  12 cases.
-- `src/composables/vault/__tests__/useHistorySnapshots.test.ts` —
-  5 cases.
-- `src/composables/vault/__tests__/useHistoryComparisons.test.ts` —
-  10 cases.
-- `src/composables/vault/__tests__/useHistoryTimeline.test.ts` —
-  1 case (grouping).
-- `src/__tests__/useHistory.test.ts` — 7 cases.
-- `src/components/vault/__tests__/HistoryPanel.test.ts` — 12
-  cases.
-- `src/components/vault/__tests__/HistoryChangesPanel.test.ts` —
-  6 cases.
-- `src/components/vault/__tests__/HistorySnapshotPane.test.ts` —
-  5 cases.
-- `src/components/vault/__tests__/HistoryComparisonPane.test.ts` —
-  5 cases.
-- `e2e/edit-program-long-flows.spec.ts` — Long Flow A exercises
-  History in the browser stack.
+### 3.5 Test source
+
+History Git, route, API, composable, component, and e2e test files
+exist. Their presence is not a claim that they passed for this
+Closure. The Implementation Record §12 distinguishes current source
+coverage from missing scenarios.
 
 ## 4. Open Closure Findings
 
-These are the items that must be **resolved or explicitly
-accepted** before this document may be flipped to **CLOSED**.
+This table is canonical across all five documents.
 
-| ID | Finding | Severity | Status | Closure blocker |
-|----|---------|----------|--------|-----------------|
-| H-C1 | `/status` response contract — `getStatus` swallows genuine 5xx because `allowNonOkJson: true` is unconditional | P1 | Open | **Yes** |
-| H-C2 | Commit success vs post-success refresh failure classification | P1 | Open | **Yes** |
-| H-C3 | Routine Real-Index synchronization can overwrite target-path staged intent in two cases: the target path was already staged before Create Version or Withdraw began; or an external Git writer changes the target path during the current reset / verify retry window. Working Tree bytes may remain intact, but the user's exact staged state can be lost. | P1 | Open | **Yes** |
-| H-C4 | Withdraw lacks canonical same-vault Docus commit marker verification (also depends on Owner choice for legacy-marker migration; default Option A — fail closed) | P1 | Open | **Yes** |
-| H-C5 | Restore reads a mutable ref outside the repository mutation transaction, returns pre-restore source bytes, and the current client writes `request.historicalRaw` into the editor tab and the file-change event. | P1 | Open | **Yes** |
-| H-C6 | Short SHA at `/drop` never matches full HEAD | P2 | Open | Yes (UX) |
-| H-C7 | Timeline date grouping uses an 86_400_000 ms window between local-midnight `startOfDay` timestamps; across a DST transition the bucket does not match the local-calendar day boundary. | P2 | Open | **Yes** |
-| H-C8 | Three-platform CI verification not re-run for this reconstruction | P1 (Verification) | Open | **Yes** |
-| H-C9 | Missing regression tests (markers, path shape, multi-vault keying, Restore race) | P1 | Open | **Yes** |
-| H-K8 | Rename history not `--follow`-merged | P2 | Open | No |
-| H-K9 | Symlink containment check missing on History paths | P2 | Open | No |
-| H-K10 | No Timeline / Log pagination | P2 | Open | No |
-| H-K11 | Cross-platform / full-suite verification missing (tracked as H-C8) | P1 (Verification) | Open | **Yes** |
-| H-K12 | Canonical marker scheme awaits implementation and Owner approval (tracked as H-C4) | P1 | Open | **Yes** |
-| H-K13 | SHA-256 vault compatibility (40-zero CAS sentinel) | P2 | Open | No |
-
-The full descriptions for each item live in
-[`Implementation Record §14.2`](vault-git-history-implementation-record.md#142-known-divergences-from-intended-contract)
-and [`Spec §25`](superpowers/specs/2026-07-30-vault-git-history-design.md#25-known-risks-and-open-questions).
-The remediation tasks live in
-[`Plan Part B`](superpowers/plans/2026-07-30-vault-git-history-implementation-plan.md#part-b--closure-remediation-tasks).
+| ID | Finding | Severity | Status | Closure Blocker |
+|---|---|---|---|---|
+| H-C1 | `/status` genuine server failures are swallowed as graceful unavailable | P1 | Open | Yes |
+| H-C2 | Create Version can report a successful commit as failure after refresh | P1 | Open | Yes |
+| H-C3 | Routine Real-Index sync can overwrite target-path staged intent | P1 | Open | Yes |
+| H-C4 | Withdraw lacks valid canonical same-vault marker enforcement | P1 | Open | Yes |
+| H-C5 | Restore ref/read/write/result are not one atomic observed snapshot | P1 | Open | Yes |
+| H-C6 | Short Withdraw SHA is accepted but never equals full HEAD | P2 | Open | Yes |
+| H-C7 | Timeline grouping uses fixed-duration day arithmetic across DST | P2 | Open | Yes |
+| H-C8 | Three-platform full-suite verification is missing | P1 (Verification) | Open | Yes |
+| H-C9 | Required History regression coverage is incomplete | P1 (Verification) | Open | Yes |
+| H-C10 | History filesystem reads/writes lack symlink-safe Vault containment | P1 | Open | Yes |
+| H-C11 | HEAD and Withdraw parent resolution do not fail closed | P1 | Open | Yes |
+| H-C12 | Repair metadata lacks cross-process lost-update protection | P1 | Open | Yes |
+| H-C13 | `ensureRepo` non-overwrite bootstrap has access/write TOCTOU | P2 | Open | Yes |
+| H-C14 | Textual Git-log separator is injectable through commit messages | P2 | Open | Yes |
+| H-K8 | Rename history is not `--follow`-merged | P2 | Open | No |
+| H-K10 | Timeline and Log have no pagination | P2 | Open | No |
+| H-K13 | SHA-256 Vault repositories are unsupported by the 40-zero CAS sentinel | P2 | Open | No |
 
 ## 5. Candidate Final Invariants
 
-The following invariants have been verified individually during
-implementation or via the test suite, but have **not** been verified
-as a complete set under the final closure gate. They are recorded
-here as **Candidate invariant — pending verification** until each
-gets explicit owner sign-off.
+No group below is a final-baseline verification claim.
 
-1. **Create Version commits only the selected paths**.
-   - Verified by `server/__tests__/history-git.test.ts > 'commits only
-     selected paths when an unrelated file is already staged'` and
-     `'commits both sides of an externally moved file'`.
-2. **HEAD moves only via CAS**. `git update-ref HEAD <new>
-   <expected>` with an `expectedOld` of `'0'×40` for the empty-repo
-   case. Second `assertRepositoryIdle` runs immediately before
-   `update-ref`.
-   - Verified by `'rejects with CAS conflict when HEAD changes
-     before update-ref'`.
-3. **Plumbing commit, no hooks, no signing**. The Commit record is
-   always produced via `git commit-tree` with a fixed-tree temp
-   index; no `commit-msg` / `pre-commit` hooks run.
-   - Source-traceable; behavior captured in repository-level commit
-     objects.
-4. **Working Tree bytes are preserved by Withdraw**. `dropHeadCommit`
-   never mutates the Worktree.
-   - Verified by `'withdraws only the latest version, preserves
-     Worktree bytes, and keeps unrelated staged entries'`.
-5. **Latest version only can be Withdrawn**. Withdraw rejects any
-   commit that is not at HEAD with
-   `'only the latest version can be withdrawn'`.
-   - Verified by `'rejects an older version and uses CAS without
-     overwriting an external version'`. **Note**: this
-   verification is about HEAD identity, **not** about a canonical
-   same-vault Docus marker — see H-C4.
-6. **Index Repair is durable + atomic**. JSON file at
-   `<git-dir>/docus/index-repair.json`, schema version 2, v1→v2
-   migration, corrupt quarantine, temp-file + `fs.rename`,
-   empty-list removal.
-   - Verified by a cluster of tests including `'migrates a valid
-     version 1 repair file to version 2 without quarantine'`,
-     `'quarantines corrupt repair state before committing'`.
-7. **Index Repair is CAS-protected**. Repair takes
-   `.git/index.lock` by hand; re-checks fingerprint **before and
-   after**; mismatch throws `'index changed after repair was
-   requested'`.
-   - Verified by `'holds index.lock across validation and atomic
-     replacement'`, `'refuses repair after the user changes the real
-     index entry'`.
-8. **Restore mutates only the Working Tree**. `git restore
-   --source=<ref> --worktree`; `--staged` is never used.
-   - Verified by `'overwrites the working-tree copy with the old
-     ref\'s content'` and the route's 503 path.
-   **Note**: the returned `raw` is currently the **pre-restore**
-   bytes; see H-C5.
-9. **Newer in-editor edits survive a concurrent Restore**.
-   - Verified by `'preserves edits made while restore is pending and
-     resumes saving after commit'`.
-10. **Repository-operation markers are checked**. Merge / cherry-pick
-    / revert / rebase / rebase-merge / rebase-apply / sequencer all
-    reject Create and Withdraw.
-    - Verified by `'rejects Create Version while ${marker} is
-      present'` (parametrized for three markers) and
-      `'rejects when a repository operation starts after snapshot
-      capture'`. **Note**: only three of seven markers are
-      parametrized; see H-C9.
-11. **Multi-vault isolation** on the client (`useHistory` per
-    `VaultContext`) and on the server (`withRepoMutation` keyed by
-    `path.resolve(repoRoot)`).
-    - Verified by `useHistory.test.ts > 'shares state within the
-      same vault owner'` / `'rebinds when the provider-less vault
-      owner changes'`. **Note**: multi-vault server-side keying has
-      no dedicated test; see H-C9.
-12. **Path-mutation lock** excludes overlapping vault mutations
-    (Create ↔ Restore ↔ Withdraw ↔ editor save).
-    - Verified by `pathMutationLock.test.ts` (2 cases).
-13. **Canonical same-vault Docus marker** for commits.
-    - **Not yet verified**; the marker is an accidental-withdrawal
-      guard, not cryptographic provenance proof. See H-C4.
+### 5.1 Verified individually on review baseline
 
-Each invariant moves from "Candidate" to "Verified" only after the
-closure verification (Section §7) reproduces it on the Final
-Production Code Baseline.
+These have direct existing test-source cases, though the full suite was
+not rerun for this consolidation:
+
+1. Create commits selected captured bytes through a Temporary Commit
+   Index.
+2. Create and Withdraw use CAS HEAD movement.
+3. Withdraw leaves Working Tree bytes unchanged.
+4. Repair takes `.git/index.lock`, verifies fingerprints, writes,
+   fsyncs, closes, and renames.
+5. Restore uses `--worktree`, not `--staged`.
+6. newer editor edits are preserved during a pending Restore.
+7. client path/Vault mutation barriers exclude overlapping in-app
+   workflows.
+
+### 5.2 Source-traceable but incompletely tested
+
+1. all seven repository-operation markers are present in source;
+   direct Create parametrization covers only `MERGE_HEAD` and
+   `CHERRY_PICK_HEAD`;
+2. server `withRepoMutation` is keyed by resolved Vault path, but
+   same-Vault serialization plus different-Vault parallelism lacks a
+   dedicated test;
+3. Repair v1 migration and quarantine branches exist, but no
+   cross-process lost-update test exists;
+4. plumbing commits bypass ordinary commit hooks and signing;
+5. bootstrap intends non-overwrite behavior, but concurrent first
+   touch is not protected.
+
+### 5.3 Unimplemented closure candidates
+
+1. symlink-safe filesystem containment;
+2. fail-closed HEAD/full-commit/parent resolution;
+3. atomic Vault identity and exactly one valid canonical same-vault
+   marker;
+4. F0/F1 path-selective routine Index synchronization;
+5. `synchronizedPaths`, `preservedExternalPaths`, and `failedPaths`;
+6. F0-bound failed-path Repair;
+7. cross-process Repair metadata locking;
+8. one-entry `restoreFileAtomic` and authoritative `result.raw`;
+9. Create success boundary before all refreshes;
+10. marker-specific Withdraw client errors;
+11. machine-safe NUL-framed Log parser;
+12. DST-safe grouping and explicit child-process TZ tests;
+13. three-platform full-suite evidence.
+
+The canonical marker is an accidental-withdrawal guard, not
+cryptographic provenance proof.
 
 ## 6. Closure Gate
 
-The Vault Git History feature is closable when **all** of the
-following are true. None of these are currently satisfied (status
-in brackets):
+Every item must be complete on one immutable Final Production
+Baseline.
+
+### 6.1 Governance and findings
 
 ```text
-[ ] Spec reviewed and approved by owner                            [NOT DONE]
-[ ] Implementation plan approved                                    [OWNER PENDING]
-[ ] Implementation record matches current main                      [DRAFT]
-[ ] All P1 code/data-safety findings closed
-    (H-C1, H-C2, H-C3, H-C4, H-C5)                                  [OPEN]
-[ ] All P1 verification findings closed
-    (H-C8, H-C9)                                                     [OPEN]
-[ ] H-C6 (short SHA boundary) closed or owner-accepted as P2 UX     [OPEN]
-[ ] H-C7 (DST-safe local-calendar grouping) implementation
-    and deterministic TZ tests completed                             [OPEN]
-[ ] H-C8 (three-platform CI) green run captured                     [NOT RUN]
-[ ] H-C9 (missing regression tests) written                         [OPEN]
-[ ] 500-regression test added for /status                           [OPEN]
-[ ] Commit-then-refresh-failure test added                          [OPEN]
-[ ] External-staged-Index race test added                           [OPEN]
-[ ] Non-Docus-commit withdraw rejection test added                  [OPEN]
-[ ] Restore mutable-ref / ref-resolution test added                 [OPEN]
-[ ] History unit tests pass                                         [NOT RUN THIS BASELINE]
-[ ] History route tests pass                                        [NOT RUN THIS BASELINE]
-[ ] History component / composable tests pass                       [NOT RUN THIS BASELINE]
-[ ] Long Flow A e2e passes                                          [NOT RUN THIS BASELINE]
-[ ] No History-related test timeout                                [NOT VERIFIED]
-[ ] No History-related EBUSY / EPERM cleanup failure                [NOT VERIFIED]
-[ ] npm run typecheck passes                                        [NOT RUN THIS BASELINE]
-[ ] npm run build passes                                            [NOT RUN THIS BASELINE]
-[ ] npm test -- --run passes                                        [NOT RUN THIS BASELINE]
-[ ] git diff --check passes                                         [NOT RUN THIS BASELINE]
-[ ] Final immutable production baseline SHA recorded                 [NOT YET]
-[ ] README updated to reflect closed state                          [NOT YET]
-[ ] Maintenance-mode rules approved                                 [PENDING]
+[ ] Owner approves Spec and Plan
+[ ] H-C1 through H-C14 are closed
+[ ] H-K8, H-K10, and H-K13 are either retained as non-blocking scope
+    or changed only with Owner approval
+[ ] Final Production Baseline SHA is captured
+```
+
+### 6.2 Required regression evidence
+
+```text
+[ ] F0 captured before HEAD move
+[ ] pre-staged and F0→F1 changed paths preserved
+[ ] mixed safe/preserved path classification
+[ ] Repair created only for failedPaths and bound to F0
+[ ] no-lock/no-write/all-preserved branches
+[ ] index.lock cleanup after Temporary Index and verification failure
+[ ] close-before-rename and external git add after each failure
+[ ] no rename after fingerprint mismatch
+
+[ ] symlink leaf and directory-segment rejection
+[ ] no outside-Vault hash, commit, WORKTREE file/diff, or Restore
+
+[ ] unborn HEAD distinguished from operational failure
+[ ] 7–40 hex request resolved to one full immutable SHA
+[ ] strict root/one-parent/merge parsing
+[ ] no HEAD move on command failure or malformed output
+
+[ ] atomic Vault-id first touch and locked malformed-ID quarantine
+[ ] exact final canonical marker block
+[ ] user-body fake trailers are not authoritative
+[ ] unmarked, malformed, ambiguous and cross-vault marker rejection
+[ ] merge and invalid-changed-path rejection
+[ ] marker-specific client UX
+
+[ ] concurrent Repair record/settle serialization
+[ ] no migration/quarantine lost update
+[ ] Repair metadata lock cleanup
+[ ] repair-status performs no unlocked mutation
+
+[ ] Restore uses one immutable SHA for read and write
+[ ] post-restore observed raw/mtime identity
+[ ] client uses result.raw in editor and VaultFileChanges
+[ ] newer editor edits preserved
+[ ] no double repository mutex
+[ ] completed Restore stays successful on refresh failure
+
+[ ] Create stays successful on Status, Log, or Comparison refresh failure
+[ ] composer settles before refresh and retry cannot duplicate
+[ ] Withdraw stays successful on Repair-status or local cleanup failure
+
+[ ] DST spring/fall cases under explicit child-process TZ
+[ ] Log delimiter/control/multiline cases produce no phantom record
+[ ] bootstrap concurrent no-overwrite and idempotence
+[ ] all seven repository-operation markers
+[ ] direct logical path-shape cases
+[ ] same-Vault serialization and different-Vault parallelism
+```
+
+### 6.3 Final commands and platform matrix
+
+```text
+[ ] npm run typecheck
+[ ] npm run build
+[ ] npm test -- --run
+[ ] approved History Long Flow
+[ ] git diff --check
+[ ] Linux full suite
+[ ] macOS full suite
+[ ] Windows full suite
 ```
 
 ## 7. Verification Evidence
 
-For each command in the verification list, mark the status.
+### 7.1 Documentation consolidation
 
-### 7.1 Local / on-this-baseline verifications
+The following evidence is for documentation only and does not satisfy
+the Final Production Baseline gate:
 
-| Command | Status | Notes |
-|---------|--------|-------|
-| `git log -- server/history/` | **Done** | Captured Implementation Record §13 commit list. |
-| `git log -- src/lib/history-api.ts src/composables/vault/useHistory*.ts src/components/vault/History*.vue src/components/vault/Timeline*.vue` | **Done** | Captured Implementation Record §13 commit list. |
-| `grep -rn 'WORKTREE' server/history src/lib/history-api.ts src/composables/vault/` | **Done** | Identified READ-ONLY usages and the single 400-rejection on `/restore`. |
-| `grep -rn 'git update-ref' server/history/` | **Done** | Confirmed CAS use on commit, withdraw non-root, withdraw root (`-d`). |
-| `grep -rn 'GIT_INDEX_FILE' server/history/` | **Done** | Confirmed temp index flow for Create Version. |
-| Source review of `server/history/git.ts` | **Done** | Mapped every function and side effect (agent output committed to research). |
-| Source review of `server/history/routes.ts` | **Done** | Mapped every endpoint, every validation, every 503 path (agent output committed to research). |
-| `npm test -- --run` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Last local-run evidence is from the Tags closure (`tags-query-index-refactor-final-closure.md`); not re-run for this History reconstruction. |
-| `npm run typecheck` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Same. |
-| `npm run build` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Same. |
-| `git diff --check` | **PASS on documentation commits** | `ff2f992`, `adfc4d7`, `7b1bb2c`, `de85039`, `2d5ce3f`, `8d6f71a`, `234bbde`, `856f310`, and `d054b3c`. This documentation-only verification does not substitute for the Final Production Baseline `git diff --check`, tests, build, typecheck, or CI required by the Closure Gate. |
-| Code-fence-aware Markdown relative-link check | **PASS on Round 5 and Round 6 documentation** | README, Spec, Plan, Implementation Record, and Draft Closure were checked after each round. This does not substitute for Final Production Baseline verification. |
+| Check | Result |
+|---|---|
+| source review of the specified server/client/test files | PASS — facts incorporated |
+| only the five authorized Markdown files changed | PASS — `git diff --name-only b33fbfe351bce23d69e76e564e73f4a7dc605800` listed README, Spec, Plan, Implementation Record, and Draft Closure only |
+| `git diff --check` | PASS — exit 0, no output |
+| code-fence-aware relative Markdown links | PASS — 43 relative links resolved across the five documents; fenced code ignored |
+| prohibited stale terminology scan | PASS — both required grep expressions returned no matches (exit 1) |
+| finding-ID/title/severity/blocker consistency | PASS — 17 canonical findings matched in all four finding tables; all 14 blockers matched in README |
 
-### 7.2 Cross-platform CI
+### 7.2 Production verification
 
 ```text
-GitHub CI: NOT INDEPENDENTLY VERIFIED FOR THIS BASELINE.
+npm test -- --run: NOT RUN
+npm run typecheck: NOT RUN
+npm run build: NOT RUN
+History Long Flow: NOT RUN
+Linux/macOS/Windows matrix: NOT RUN
 ```
 
-No CI workflow run was located for the Documentation Review
-Baseline `00b17359d151bbdbe56115ed992700ecbb5e1ca1`. The previous
-History-feature CI evidence (if any) is not asserted for this
-reconstruction.
-
-### 7.3 Test timeouts / resource leaks
-
-```text
-NOT INDEPENDENTLY VERIFIED FOR THIS BASELINE.
-```
-
-The Windows-timeout mitigation for slow real-git history tests
-landed in `bf28078` (2026-07-23). The reconstruction did not
-re-run the Windows suite to confirm.
+No CI result is asserted. Existing CI configuration is not a completed
+verification run.
 
 ## 8. Accepted Risks
 
-**None** are currently approved for acceptance. Risks below the
-"Closure Blocker" line in §4 are the only candidates; they have not
-been reviewed by the owner.
+No Accepted Risk has Owner Approval.
 
-The risks below are **explicitly NOT acceptable** as Accepted Risks
-and must be resolved as Closure Blockers rather than downgraded:
+These items may not be accepted or downgraded:
 
-- Any path that would let Docus overwrite the user's externally
-  staged content.
-- Any path that would let Docus withdraw an unmarked, cross-vault
-  marked, malformed-marker, or ambiguous-marker commit.
-- Any path that would cause a successful commit to be reported as
-  a failure.
-- Any path that would let Editor Buffer and disk diverge silently.
-- Any data-loss scenario.
-- Any path that would clear the Real Index unintentionally.
-- Any Windows stability gap with documented failure evidence.
+- symlink escape;
+- staged-intent loss;
+- fail-open HEAD or parent resolution;
+- cross-process Repair lost update;
+- successful commit reported as failure;
+- invalid-marker withdrawal;
+- silent editor/disk divergence;
+- any unverified power-loss durability claim.
 
-Risks that **may** be acceptable as non-blocking once the closure
-gate has run end-to-end on a Final Production Baseline:
+Only these current non-blocking candidates may be considered later:
 
-- None for H-C7: DST-safe local-calendar grouping and deterministic TZ
-  tests remain a Closure Blocker until completed.
-- No Timeline / Log pagination (H-K10) — known design tradeoff
-  for vaults of expected size; recorded but not a blocker.
-- Rename history not `--follow`-merged (H-K8) — product scope
-  limitation.
-- Symlink containment check absent on History paths (H-K9) —
-  consistent with the rest of History's surface, not with the rest
-  of the codebase.
-- SHA-256 vault support (H-K13) — out-of-scope, no current user.
+- H-K8 rename history not `--follow`-merged;
+- H-K10 no Timeline/Log pagination;
+- H-K13 no SHA-256 Vault support.
 
 ## 9. Maintenance-Mode Rules (Candidate)
 
-The following rules are recorded as **candidates**. They do **not**
-take effect until this document is upgraded to **CLOSED** status
-with Owner Approval. Until then, all History changes must reopen
-this closure.
+These rules are inactive until Closure is CLOSED and Owner Approval is
+recorded.
 
-1. Any change touching `server/history/*`, `src/lib/history-api.ts`,
-   `src/lib/history-date.ts`, `src/lib/file-diff.ts`,
-   `src/composables/vault/useHistory*.ts`,
-   `src/composables/vault/pathMutationLock.ts`, the four History
-   `*.vue` components, or the four Timeline components must:
-   - Update or create a Spec describing the change.
-   - Create a Plan documenting the change sequence.
-   - Preserve the documented invariants (Section §5 once
-     finalized).
-2. The **authority model** (§6 of the Spec) is the binding contract:
-   Editor ↔ Working Tree ↔ Real Index ↔ HEAD. Any change that moves
-   state across these boundaries must respect the source-of-truth
-   ordering.
-3. **Docus commits never go through the Real Index directly**.
-   Every Create Version must build its commit from a Temporary Git
-   Index.
-4. **HEAD is updated only via CAS**. `update-ref HEAD <new>
-   <expected>`. A non-CAS HEAD update is a Closure violation.
-5. **External staged content is preserved**. The Real-Index sync
-   path must not clear or alter entries that were not part of the
-   commit / withdraw.
-6. **Restore does not touch HEAD or the Real Index**. Restore is
-   strictly Working-Tree-only via `git restore --source=<ref>
-   --worktree`.
-7. **Withdraw requires one canonical same-vault Docus marker block**.
-   The Docus-Vault trailer scheme (H-C4) — once finalized — must be
-   enforced under this trust boundary:
-
-   The canonical Docus marker is an accidental-withdrawal guard,
-   not cryptographic provenance proof.
-
-   A local actor with write access to Git objects or the Git directory
-   can forge a matching marker and is outside the History feature's
-   trust boundary.
-8. **Withdraw runs at a vault-wide lock**; Create and Restore run
-   at per-path locks. Cross-workflow exclusion is required.
-9. **All mutating routes** must continue to:
-   - acquire `withRepoMutation` (in server `git.ts`),
-   - check `assertRepositoryIdle` at entry and immediately before
-     `update-ref`,
-   - return `409` on the repository-operation-in-progress state,
-   - distinguish Commit Success / Index Refresh Degraded / Repair
-     State Persistence Failed / Post-Success Refresh Error in the
-     response shape.
-10. **Regression tests** are required for every behavioral change.
-    Test fixtures must use real `git` (no mocks of the CLI per the
-    repository convention "Mocks would test the mock").
-11. **No silent scope expansion**. A change that adds General Git
-    Client features (branch UI, merge UI, remote sync, signing,
-    hooks) is out of scope here; it requires a new spec and a new
-    chain of documents.
-12. **No data-safety risk may be downgraded** to non-blocking
-    without Owner Approval.
-13. **Verification** before any merge to `main`:
-    - `npm run typecheck`
-    - `npm run build`
-    - `npm test -- --run`
-    - `git diff --check`
-    - Playwright Long Flow A in
-      `e2e/edit-program-long-flows.spec.ts` (or its replacement
-      History e2e) green
+1. Every server-side mutation enters exactly one repository mutation
+   transaction and applies the operation-state check appropriate to
+   that operation.
+2. Every HEAD-moving mutation performs a second repository-idle check
+   immediately before CAS `update-ref`.
+3. Restore and Repair are not HEAD-moving mutations and are not
+   described as requiring that second pre-`update-ref` check.
+4. Create uses a Temporary Commit Index and never stages a version
+   through the Real Index.
+5. Routine Index sync preserves pre-existing and concurrent staged
+   intent path by path.
+6. Only Failed Sync Paths can create a Repair Transaction.
+7. Restore changes Working Tree only and returns the post-restore
+   snapshot observed in its transaction.
+8. Withdraw requires exactly one valid canonical same-vault marker.
+9. The marker remains an accidental-withdrawal guard, not
+   cryptographic provenance proof.
+10. All migration, quarantine, and Repair read-modify-write metadata
+    operations hold the dedicated cross-process metadata lock.
+11. Regression tests and the approved verification matrix accompany
+    every safety-contract change.
 
 ## 10. Final Closure Procedure
 
-When all of §6 are checked, perform the following in order:
+1. Implement Plan History-C1 through History-C14 in dependency order.
+2. Complete History-C9 regression coverage.
+3. Run History-C8 and History-C15 on one immutable candidate SHA.
+4. Record exact local, e2e, CI, and platform evidence.
+5. Capture the Final Production Baseline in a later commit that can
+   know the SHA it records.
+6. Obtain Owner Approval.
+7. Move findings to Closed or Owner-approved non-blocking risk.
+8. Flip Status to CLOSED and enter Maintenance Mode.
 
-1. Run `npm test -- --run`, `npm run typecheck`, `npm run build`,
-   and `git diff --check` on the Final Production Baseline SHA.
-2. Record the **Final Production Code SHA** in §1 of this
-   document.
-3. Move every Open Finding from §4 to a **Closed Findings** table
-   (or to Accepted Risks in §8, with Owner Approval).
-4. For every Candidate Invariant in §5, record its verification
-   status and the test(s) that established it.
-5. Flip this document's status from **DRAFT — CLOSURE IN PROGRESS**
-   to **CLOSED**.
-6. Update the README §3 ("Feature Status" or equivalent):
-   - Add Vault Git History with the linked Chain of Documents.
-   - State the Final Production Baseline SHA.
-   - Note Maintenance-Mode is now active.
-7. Apply Maintenance-Mode Rules from §9 going forward.
+Until every step is complete:
 
-No step in this procedure is allowed without Owner Approval.
-
----
-
-**Status:** DRAFT — CLOSURE IN PROGRESS
-**Next Step:** Owner Review of the documentation chain and the
-open P1 findings. No production code change should be attempted
-until the Owner has approved the Spec and Plan.
+```text
+Status: DRAFT — CLOSURE IN PROGRESS
+Owner Approval: PENDING / BLOCKED
+Final Production Baseline: NOT YET CAPTURED
+Maintenance Mode: NOT ENTERED
+```

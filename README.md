@@ -60,9 +60,9 @@ before any implementation.
 
 ### Vault Git History
 
-Documentation reconstruction complete.
-Closure work is in progress.
-The feature is **not** yet in maintenance mode.
+Final documentation consolidation is complete. Production remediation
+has not started, Closure work is still in progress, and the feature is
+**not** in maintenance mode.
 
 Documentation Review Baseline (the commit on `main` at the time
 the documentation chain was assembled):
@@ -95,34 +95,45 @@ The feature currently exposes, on `main`:
   `HistorySnapshotPane`, `HistoryComparisonPane`, the three
   `Timeline*` rows, and `SideBySideDiff`.
 
-**Closure blockers currently open** (see the Spec §25 and the
-Draft Closure §4 for full descriptions):
+**Closure blockers currently open** (see the Spec §25 and Draft
+Closure §4 for the authoritative titles, severities, and required
+tests):
 
-- `H-C1` — `/status` response contract treats genuine 5xx as
-  graceful-unavailable.
-- `H-C2` — Commit success vs post-success refresh failure
-  classification.
-- `H-C3` — Routine Real-Index synchronization can overwrite
-  target-path staged intent in two cases: the target path was already
-  staged before Create Version or Withdraw began; or an external Git
-  writer changes it during the current reset / verify retry window.
-  Working Tree bytes may remain intact, but the user's exact staged
-  state can be lost.
-- `H-C4` — Withdraw lacks canonical same-vault Docus commit marker
-  verification.
-- `H-C5` — Restore reads a mutable ref outside the repository
-  mutation transaction, returns pre-restore source bytes, and the
-  current client writes the gesture-time snapshot
-  (`request.historicalRaw`) into the editor tab and the file-change
-  event.
-- `H-C6` — Short SHA at `/drop` never matches full HEAD.
-- `H-C7` — Timeline date grouping uses fixed-duration day arithmetic;
-  closure requires DST-safe local-calendar ordinals and deterministic
-  timezone regression tests.
-- `H-C8` — Three-platform CI has not been re-run for this
-  reconstruction.
-- `H-C9` — Missing regression tests for repository-operation markers,
-  path shape, multi-vault keying, and Restore race coverage.
+- `H-C1` — `/status` genuine server failures are swallowed as
+  graceful unavailable — P1, Closure Blocker: Yes.
+- `H-C2` — Create Version can report a successful commit as failure
+  after refresh — P1, Closure Blocker: Yes. Withdraw already settles
+  its three principal refreshes, but remaining success callbacks need
+  isolation tests.
+- `H-C3` — Routine Real-Index sync can overwrite target-path staged
+  intent — P1, Closure Blocker: Yes.
+- `H-C4` — Withdraw lacks valid canonical same-vault marker
+  enforcement — P1, Closure Blocker: Yes. The marker is an
+  accidental-withdrawal guard, not cryptographic provenance proof.
+- `H-C5` — Restore ref/read/write/result are not one atomic observed
+  snapshot — P1, Closure Blocker: Yes.
+- `H-C6` — Short Withdraw SHA is accepted but never equals full HEAD
+  — P2, Closure Blocker: Yes.
+- `H-C7` — Timeline grouping uses fixed-duration day arithmetic
+  across DST — P2, Closure Blocker: Yes.
+- `H-C8` — Three-platform full-suite verification is missing — P1
+  (Verification), Closure Blocker: Yes.
+- `H-C9` — Required History regression coverage is incomplete — P1
+  (Verification), Closure Blocker: Yes.
+- `H-C10` — History filesystem reads/writes lack symlink-safe Vault
+  containment — P1, Closure Blocker: Yes.
+- `H-C11` — HEAD and Withdraw parent resolution do not fail closed —
+  P1, Closure Blocker: Yes.
+- `H-C12` — Repair metadata lacks cross-process lost-update
+  protection — P1, Closure Blocker: Yes.
+- `H-C13` — `ensureRepo` non-overwrite bootstrap has access/write
+  TOCTOU — P2, Closure Blocker: Yes.
+- `H-C14` — Textual Git-log separator is injectable through commit
+  messages — P2, Closure Blocker: Yes.
+
+All behavior required to close these findings is an **Intended
+contract / Planned remediation / Closure requirement** and is **not
+implemented on the reviewed production baseline**.
 
 The Draft Closure is the **single source of truth** for what
 must be verified before the feature may be declared CLOSED.

@@ -1,1043 +1,611 @@
 # Vault Git History — Design
 
 **Date:** 2026-07-30
+**Consolidated:** 2026-07-31
 **Status:** Retrospective Reconstruction — Pending Owner Approval
-**Scope:** Docus Vault Git History
-**Repository:** tangxiangxiang/docus
+**Closure:** DRAFT — CLOSURE IN PROGRESS
+**Production-code review baseline:** `00b17359d151bbdbe56115ed992700ecbb5e1ca1`
+**Repository:** `tangxiangxiang/docus`
 
-> ⚠️ This specification was reconstructed after implementation to restore
-> the repository's required spec → plan → implementation → closure chain.
-> It does **not** claim that this exact document existed before
-> implementation. Sections marked "**observed**" describe what the
-> currently-checked-in code in `main` actually does; sections marked
-> "**intended**" describe design rules the implementation honors and
-> that later closures are expected to verify; deviations between the two
-> are listed in §25 (Known Risks and Open Questions) and §15 (Restore).
+This retrospective specification is the design authority for Vault Git
+History. It must be read with the
+[Implementation Plan](../plans/2026-07-30-vault-git-history-implementation-plan.md),
+[Implementation Record](../../vault-git-history-implementation-record.md),
+and [Draft Closure](../../vault-git-history-final-closure.md).
 
-The Production Code Review Baseline for this retrospective document is
-the commit on `main` at the time the documentation was assembled
-(`00b17359d151bbdbe56115ed992700ecbb5e1ca1`). Production-code SHAs
-referenced in this Spec are the SHAs documented in the
-Implementation Record.
+No production or test file changed between the production-code review
+baseline and this consolidation. The labels below are normative:
 
-This document is the design authority for the Vault Git History feature.
-It is read together with the Implementation Plan, the Implementation
-Record, and the (Draft) Final Closure for the feature.
-
----
+- **Observed on production-code review baseline** — source behavior at
+  `00b17359d151bbdbe56115ed992700ecbb5e1ca1`.
+- **Intended contract / Planned remediation / Closure requirement /
+  Not implemented on the reviewed production baseline** — required
+  future behavior. It must not be cited as current behavior.
 
 ## 1. Problem
 
-A Docus vault is a directory of plain Markdown files plus a SQLite
-metadata database. The user owns both: there is no remote sync, no
-background service, and the editor writes to disk directly. The
-History feature exists to answer one product question:
+Vault Git History must let a user inspect, compare, restore, create, and
+withdraw versions without becoming a general Git client and without
+silently destroying Working Tree or Real-Index intent created outside
+Docus.
 
-> "Show me what changed, let me step through older versions, and let me
-> safely put good content back."
+The state authorities are distinct:
 
-That question has to be answered **without** the History feature
-becoming either (a) a generic Git client, or (b) a place where Docus
-silently overwrites what the user did outside Docus. Concretely:
+```text
+Editor Buffer → Working Tree → Temporary Commit Index → Commit/HEAD
+                                      │
+                         Real Git Index is independent
+```
 
-1. A Markdown file lives on disk. Auto-save is the editor's job, not the
-   History feature's. A version is something the user **creates
-   intentionally** — entering a version message and pressing a button.
-2. The editor buffer is not the only authoritative copy of bytes.
-   The Editor Buffer may be ahead of the Working Tree (unsaved typing),
-   the Working Tree may be ahead of HEAD, and the Real Git Index may
-   carry staged entries created by an external Git process outside of
-   Docus. History reads and writes must respect this layered model.
-3. Docus must coexist with the user's other Git tooling. Running
-   `git add` in a terminal while Docus is committing must not corrupt
-   either side, and Docus must not erase staged intent the user
-   created outside of Docus.
-4. History is **not** a UI for branch management, conflict resolution,
-   or remote sync. Those are out of scope (§4).
-
-The problem these sections solve: define what History does, what it
-explicitly refuses to do, and what guarantees it makes about the
-interaction between Editor / Working Tree / Real Index / HEAD.
+The Working Tree supplies version bytes. A Temporary Git Index builds
+the commit. The Real Git Index may contain external staged intent and
+must not be treated as disposable.
 
 ## 2. Product Goal
 
-The user-facing goals of Vault Git History are:
+The feature shall:
 
-1. **See** what files in the current vault have uncommitted changes
-   (Changes panel).
-2. **Compose** a multi-file version by selecting documents, entering a
-   human-readable version message, and confirming a single Create
-   Version action.
-3. **Browse** every version of the vault in a timeline grouped first by
-   document and then by date — recent versions surface first; older
-   versions remain reachable.
-4. **Read** any historical version of a document in a dedicated, read-
-   only pane that cannot be edited by accident or by an AI tool that
-   uses the Document mutation surface.
-5. **Compare** the historical version of a document against either the
-   currently-open editor buffer (preferred) or the on-disk Working Tree
-   (fallback), as a side-by-side line + word diff.
-6. **Restore** an older version of a single document into the Working
-   Tree without creating a commit (the user can then keep or amend).
-7. **Withdraw** the most recent version created by Docus, leaving
-   Working Tree bytes intact and unrelated Real-Index entries staged.
-8. **Survive** an Index Repair: when Docus has committed successfully
-   but cannot synchronize the Real Index, the change has happened and
-   the visible UI reconciles via a persistent repair transaction the
-   user can retry or dismiss.
+1. show managed dirty Markdown paths;
+2. create one explicit multi-file version from exact Working Tree
+   bytes;
+3. browse document history and compare a revision with current content;
+4. restore one historical document to the Working Tree only;
+5. withdraw the latest commit only when it carries exactly one valid
+   canonical same-vault Docus marker block, while preserving Working
+   Tree bytes and unrelated Real-Index entries;
+6. distinguish synchronized, preserved-external, and failed Index-sync
+   paths truthfully;
+7. expose a persistent, conflict-safe Repair path only for failed sync
+   paths.
 
-These goals are the functional surface. The next sections are the
-contracts that make them safe.
+The marker is an accidental-withdrawal guard, not cryptographic
+provenance proof.
 
 ## 3. Scope
 
-The History feature, **as currently implemented on `main`**, exposes:
+**Observed on production-code review baseline**
 
-| Surface | Behavior |
-|---------|----------|
-| Git capability detection | `GET /api/history/capability` — tells the client whether `git` is on PATH and whether the vault has been initialized. Cached for process lifetime. |
-| Per-vault repo initialization | `ensureRepo` — creates the vault's own `.git/`, writes `.gitignore` and `.gitattributes` once, does not overwrite user customization, surfaces `core.autocrlf=false`. |
-| Status (read-only) | `git status --porcelain --untracked-files=all` filtered to managed Markdown paths. Surfaces new (`??`/`A`), modified (`M`), and deleted (`D`). Read-only — never modifies the index, never touches HEAD. |
-| Log (read-only) | `git log` for the whole vault (newest first, limit 200) or one document via `-- <path>`. Returns SHA, author, ISO date, subject, body, files-touched. |
-| Single-document log | Same as `Log`, scoped to a path — the source for the per-document revision list. |
-| Read-only Snapshot | `GET /api/history/file?path=&ref=` (default `HEAD`); `ref=WORKTREE` resolves to the on-disk file. |
-| Diff / Comparison | `GET /api/history/diff?path=&old=&new=` — line-level (with optional word-level breakdown on edit-shaped remove+add pairs). Client-side `computeFileDiff` powers the Comparison pane's "current side". |
-| Create Version | `POST /api/history/commits` — manages a `Mutation Barrier` (`pathMutationLock`), captures exact Working Tree bytes, runs a temporary Git Index in `GIT_INDEX_FILE`, runs `read-tree` / `hash-object` / `update-index --cacheinfo 100644` / `write-tree` / `commit-tree` (plumbing — no hooks, no signing), CAS-updates `HEAD`, then attempts Real-Index sync. |
-| Index Repair (transactional) | `GET /api/history/repair-status`, `POST /api/history/repair-index`, `POST /api/history/repair-index/discard` — opaque token (`/^[0-9a-f]{32}$/`), JSON file at `<git-dir>/docus/index-repair.json` with schema version 2, atomic temp-file + `rename`. |
-| Restore | `POST /api/history/restore` — reads the source bytes via `rawAt(requestedRef)` **outside** the repository mutation section, then enters `withRepoMutation` to run `git restore --source=<requestedRef> --worktree -- <path>`. Returns `{ path, ref, raw, mtime }` where `raw` is the source bytes obtained by the off-mutex `rawAt` pre-check (not a post-restore re-read). **No** `--staged`, no `update-ref`, no Real-Index mutation, no automatic commit. The intended contract (Spec §15 / Plan History-C5) requires resolving the ref to one immutable SHA inside the mutation transaction and returning post-restore Working Tree bytes. |
-| Withdraw Latest Version | `POST /api/history/drop` — discovers `filesChanged` **before** moving HEAD, filters by `.endsWith('.md')` only (does **not** enforce the full Managed History Path contract; see H-C4), two-phase CAS (non-root: `git update-ref HEAD <parent> <expectedOld>`; root: `git update-ref -d HEAD <expectedOld>`). After HEAD moves, attempts a scoped Real-Index synchronization on the affected paths; failure becomes an Index Repair Transaction, not a withdrawal failure. Working Tree bytes preserved in both branches. |
-| File-change Watch | `useHistory` subscribes to `VaultFileChanges.events` and refreshes Status on every `seq` increment. |
-| Status refresh after mutation | `useHistoryCommit.submit()` and `useHistoryWithdraw.withdraw()` call `refreshStatus()`, `refreshLog()`, and `refreshComparison` on the changed paths. |
-| Multi-vault isolation | Per-VaultContext `WeakMap` of `useHistory` instances; legacy `getFallbackVaultFileChanges` kept for tests. Per-repo `Promise`-chain mutex keyed by `path.resolve(repoRoot)` serializes Create / Withdraw / Restore / Repair. |
-| Git-Unavailable state | `GET /api/history/status` returns `503 { dirty: [], available: false }` for graceful "git is not installed" surfaces; the panel renders an EmptyState instead of an error. |
-| Empty-repo state | `GET /api/history/log` returns `{ commits: [] }` (not 500) for a vault with no commits yet; `parseLog` matches `/does not have any commits yet/i`. |
+- capability and repository bootstrap;
+- Status, Log, Snapshot, and Diff APIs;
+- Create Version with exact-byte capture, a Temporary Commit Index,
+  `commit-tree`, and CAS `update-ref`;
+- persisted Index Repair metadata;
+- Working-Tree-only Restore;
+- latest-HEAD Withdraw;
+- Vue History panels, timeline, snapshots, comparisons, Restore,
+  Withdraw, and per-Vault mutation barriers.
+
+**Intended closure contract — not implemented on the reviewed
+production baseline**
+
+- canonical same-vault markers and atomic Vault identity;
+- F0/F1 path-selective Real-Index synchronization;
+- symlink-safe filesystem containment;
+- fail-closed HEAD/commit/parent resolution;
+- cross-process Repair metadata serialization;
+- one-transaction Restore with authoritative post-read bytes;
+- machine-safe Git-log framing;
+- DST-safe local-calendar grouping;
+- complete regression and three-platform verification.
 
 ## 4. Non-Goals
 
-These are explicitly **not** part of Vault Git History. They are
-recorded here so future readers do not assume otherwise.
-
-1. A general-purpose Git UI (no status tab, no branch switcher, no
-   graph view, no reflog inspection).
-2. Branch creation, deletion, rename, switch, or merge.
-3. Push / pull to any remote.
-4. Merge, rebase, cherry-pick, revert, interactive rebase.
-5. History rewriting (no `git rebase -i`, no `git filter-branch`, no
-   BFG, no `git replace`).
-6. Withdrawing an arbitrary historic commit. **Only the latest commit
-   is withdrawable**, and only if Docus is prepared to recognize it as
-   its own (see §16 and Known Risks H-K4).
-7. Auto / scheduled / hook-triggered versions. Versions are created
-   only by explicit user action.
-8. Binary attachment versioning. Only files matched by the History
-   path contract (`*.md`, lowercase kebab segments, no hidden dirs) are
-   managed.
-9. Non-Markdown file management in History. Status filters out anything
-   that won't be accepted by the commit contract (§7).
-10. GitHub / GitLab / remote sync.
-11. Multi-device sync.
-12. GPG / SSH commit signing.
-13. Execution of Git hooks on Docus commits. Hooks do not run because
-    the commit is a plumbing commit (§10). Side effect: user-installed
-    `commit-msg` / `pre-commit` hooks are **not** honored by History.
-14. A conflict-merge editor.
-15. Tag, branch, release management.
-16. Server-side tag normalization. (Out of scope here; adjacent to,
-    but separate from, the Tags feature.)
+- branch, tag, merge, rebase, remote, or reflog management;
+- arbitrary history rewriting;
+- binary attachment history;
+- Git hook or signing support for plumbing commits;
+- a conflict-merge editor;
+- treating a marker as proof of authorship or ownership;
+- accepting legacy unmarked commits for Withdraw. They must be
+  recommitted through the remediated Create Version flow.
 
 ## 5. Terminology
 
-The following terms have specific meanings throughout the spec, plan,
-implementation record, and closure.
-
 | Term | Definition |
-|------|-----------|
-| **Editor Buffer** | The mutable text in the current Monaco editor tab for a document. May be ahead of the Working Tree (unsaved typing). |
-| **Saved Editor Revision** | The Editor Buffer at the moment the editor flushed to disk via its save flow (`tab.savedRevision`). |
-| **Working Tree** | The bytes of a file as they exist on disk under the vault root. The source of truth for uncommitted changes. |
-| **Real Git Index** | The `.git/index` file. Reflects staged content. May carry entries the user added outside Docus. |
-| **Temporary Git Index** | A `mkdtemp`-created file pointed to by `GIT_INDEX_FILE` while Docus builds a commit. Never co-located with `.git/index`. |
-| **HEAD** | The latest commit SHA the vault's `HEAD` ref currently names. Updated only via `git update-ref HEAD <new> <expected>` (CAS). |
-| **Commit** | A Git commit object created via `git commit-tree`. For Docus versions only. |
-| **History Revision** | A single `CommitRecord` for a single document, surfaced in the Timeline. |
-| **Docus Version** | A Commit created by Docus's Create Version flow with the user-provided message. |
-| **Mutation Barrier** | Per-vault in-memory exclusion that prevents two workflows (Create Version ↔ Restore ↔ Withdraw ↔ AI edits ↔ editor save) from mutating the same path simultaneously. Implemented by `pathMutationLock.createPathMutationLock`. |
-| **CAS** | Compare-And-Swap. `git update-ref` with an explicit expected old value; `git merge-base --is-ancestor` for repair compatibility. |
-| **Index Repair Transaction** | A persistent record of a Real-Index-sync failure, identified by a 32-hex token, recoverable via `/repair-index` or dismissable via `/repair-index/discard`. |
-| **Pending Repair** | A transaction the user has not yet acted on. |
-| **Superseded Repair** | A transaction the user has marked as a conflict (or which auto-detected an external change); UI offers "Keep staged changes and dismiss" rather than retry. |
-| **Degraded Success** | The success-shaped HTTP response carries auxiliary flags (`indexRefreshFailed`, `repairStatePersistenceFailed`) that the UI must surface as a toast, **without** flipping the operation to a failure. |
-| **Repository Operation In Progress** | The vault is mid-way through an external `git merge` / `cherry-pick` / `revert` / `rebase`, evidenced by one or more sentinel files under the absolute Git dir. Docus commits and withdrawals must reject (409). |
-| **Managed History Path** | A path under the vault root that passes `isValidHistoryPath` (§7) and is not a History-managed dotfile (`.gitignore`, `.gitattributes`). |
-| **WORKTREE** | The literal sentinel value `'WORKTREE'` (re-exported as `WORKTREE_REF`) meaning "the on-disk file"; resolved server-side to a direct `fs.readFile` and never sent to Git itself. Used by History Snapshot reads for `HEAD..WORKTREE` diffs. |
+|---|---|
+| Editor Buffer | Mutable editor text; it may be ahead of disk. |
+| Working Tree | On-disk Vault bytes. |
+| Real Git Index | `.git/index`; it may contain external staged intent. |
+| Temporary Commit Index | `GIT_INDEX_FILE` used to build a fixed commit tree without staging through the Real Index. |
+| Commit | An immutable Git commit object. The term alone makes no Docus provenance claim. |
+| Docus-marked Version | Intended closure term: a commit whose final canonical trailer paragraph contains exactly one `Docus-Version: 1` and exactly one `Docus-Vault-Version` matching current Vault metadata. This is not implemented on the reviewed production baseline. |
+| Valid canonical same-vault marker | The exact marker block above, parsed from the final canonical trailer paragraph. It is an accidental-withdrawal guard, not cryptographic provenance proof. |
+| Mutation Barrier | Client-side exclusion for overlapping Vault path mutations. |
+| Repository mutation transaction | One `withRepoMutation(repoRoot)` execution. It is process-local on the reviewed baseline. |
+| F0 | Real-Index fingerprints captured for every target path before the HEAD CAS. |
+| F1 | Real-Index fingerprints re-read after acquiring `.git/index.lock`. |
+| Preserved External Path | A target path whose Real Index contained pre-existing staged intent or changed between F0 and F1. It is preserved unchanged, creates no Repair Transaction, exposes no Retry action, and produces informational success only. |
+| Failed Sync Path | A safe candidate whose synchronization failed because of lock, I/O, Temporary Index, verification, fsync, close, or atomic replacement failure. Only this class may create a Repair Transaction. |
+| Index Repair Transaction | Intended closure definition: persistent metadata for failed sync paths, bound to the pre-HEAD F0 fingerprints. On the reviewed baseline, routine sync instead captures failure-time Real-Index fingerprints. |
+| Degraded Success | The primary mutation succeeded but `failedPaths` or Repair-state persistence requires an informational warning. Preserved External Paths alone are informational success, not degraded failure. |
+| WORKTREE | Sentinel for current on-disk content. |
 
 ## 6. Authority Model
 
-The Docus History feature operates across **five** stateful entities
-with layered authority. The relationship between them is the core of
-the History contract. Editor Buffer and Working Tree are ahead-of-HEAD
-risks; Real Git Index is an independent staged-state authority that
-may carry entries created outside Docus; the Temporary Git Index is
-the staging area Docus builds each commit inside and **never** the
-Real Index.
-
-```text
-   ┌────────────────────┐
-   │   Editor Buffer    │
-   └─────────┬──────────┘
-             │ editor save (Document Save Barrier)
-             ▼
-   ┌────────────────────┐
-   │    Working Tree    │ ◀── may be ahead of HEAD
-   └─────────┬──────────┘
-             │ capture exact bytes; sha256 CAS
-             ▼
-   ┌────────────────────┐
-   │  Temporary Index   │  ◀── Docus-only staging
-   └─────────┬──────────┘  ─── never the Real Index
-             │ write-tree / commit-tree (plumbing;
-             │ no hooks, no signing)
-             ▼
-   ┌────────────────────┐
-   │ Commit Graph / HEAD│  ◀── immutable commit objects
-   └─────────┬──────────┘
-             │ scoped post-commit Real-Index sync
-             ▼
-   ┌────────────────────┐
-   │   Real Git Index   │  ◀── external staged state preserved
-   └────────────────────┘
-```
-
-Reads go through `git show <ref>:<path>` or, for `WORKTREE`, a
-direct `fs.readFile`, into the History Snapshot (read-only),
-Comparison, or Restore file-change event.
-
-Rules the implementation honors:
-
-1. **Editor vs Working Tree** — The Editor can be ahead of the Working
-   Tree (unsaved typing). A Restore may produce bytes that conflict
-   with newer Editor edits; `useHistoryRestore` compares
-   `tab.revision` before/after the save barrier to detect that and
-   preserves the newer edit instead of overwriting it.
-2. **Working Tree vs HEAD** — A Create Version captures the **exact**
-   Working Tree bytes via `captureExpectedFiles` (sha256 + buffer
-   capture) **after** the editor save barrier flushes. The expected
-   SHA-256 hashes ride on the request as `expected`. If the bytes shift
-   between capture and commit, the server rejects with
-   `409 { error: 'content changed before commit' }`.
-3. **Real Index vs HEAD** — The Real Index may contain staged content
-   from external `git add`. Docus must **not** commit any of that
-   content unless the path is in the user's selection. The Create
-   Version flow uses a Temporary Git Index seeded only from HEAD, then
-   stages exactly the user's selection.
-4. **HEAD vs external commit** — Docus moves HEAD only via CAS. If the
-   current HEAD value at the moment of `update-ref` differs from what
-   the server expected, the server returns `409 { error: 'repository
-   changed before commit' }`. The client then refreshes status + log
-   and surfaces the conflict as `commit_repository_changed`.
-5. **History Snapshot vs Real Git ref** — A Snapshot reads the bytes at
-   a ref via `git show <ref>:<path>` and renders them in a read-only
-   pane. The pane does not write to disk.
-6. **Comparison Current side** — When the user has the document open
-   in the editor (a Tab whose `.path === comparison.path` and which is
-   not loading and has no `loadError`), the Current side is read from
-   the editor's live raw (`tab.raw`). Otherwise it falls back to
-   `loadCurrentDocument(path)` which reads via the saved-document API.
-7. **Restore mutates Working Tree, not HEAD** — `git restore
-   --source=<ref> --worktree` writes the file to disk and does not
-   touch HEAD. There is no automatic `git add` of the restored path.
-8. **Withdraw mutates HEAD, preserves Working Tree bytes** — The
-   `dropHeadCommit` flow verifies `HEAD === sha`, then moves HEAD to
-   the parent (or deletes `HEAD` for root). No worktree-side mutation.
-
-> ⚠️ **Known divergence (H-K5)** — The current `/restore` route
-> reads the source ref **outside** `withRepoMutation` and never
-> resolves the accepted ref to one immutable SHA. The full
-> description lives in §15 and the closure block is H-C5; see
-> the long-form note in §15 for the source-byte vs restored-byte
-> divergence, the client amplification through
-> `request.historicalRaw`, and the closure task that must close
-> both halves.
+1. Editor saves precede Create byte capture.
+2. Create commits captured Working Tree bytes through a Temporary
+   Commit Index.
+3. HEAD moves only by CAS.
+4. Real-Index synchronization is auxiliary to a successful HEAD move.
+5. Existing or concurrent staged intent has authority over routine
+   synchronization and must be preserved.
+6. Restore changes Working Tree only.
+7. A canonical same-vault marker controls Withdraw eligibility but
+   does not establish cryptographic provenance.
 
 ## 7. Managed Path Contract
 
-The History feature only operates on a strictly-validated subset of
-paths under the vault root.
+**Observed on production-code review baseline**
 
-A path is a **Managed History Path** iff all of the following hold:
+`isValidHistoryPath` validates only logical string shape:
+
+- relative POSIX path;
+- no NUL, backslash, absolute path, `..`, hidden segment, or trailing
+  slash;
+- lowercase kebab directory segments;
+- lowercase kebab `.md` leaf.
+
+It does not call `lstat`, reject symlinks, canonicalize a real path, or
+verify filesystem containment. `safeWorktreeFile` checks lexical
+containment after `path.resolve`, but ordinary reads still follow
+symlinks.
+
+**Intended closure contract — not implemented on the reviewed
+production baseline**
+
+Every History filesystem read or write uses one shared resolver:
 
 ```text
-- it is a non-empty string;
-- it contains no NUL bytes;
-- it does not contain a backslash '\';
-- it is not absolute (does not start with '/' on POSIX, or
-  'C:\' / '\\\\' on Windows);
-- it equals its own POSIX normalization
-  (i.e. it cannot contain '.' or '..' segments or '//');
-- it does not end with '/';
-- none of its directory segments starts with '.' (no hidden dirs,
-  no '.git/' traversals);
-- the file name segment matches
-  /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.md$/ — lowercase kebab + .md;
-- every directory segment matches the project's `SEGMENT_RE`
-  (re-used from `server/paths.ts:104`,
-  /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/) — lowercase, no underscores,
-  no special characters.
+1. Validate logical History path syntax.
+2. Walk path segments with lstat.
+3. Reject every symbolic-link segment and symbolic-link leaf.
+4. Resolve canonical real path.
+5. Verify containment under the canonical Vault root.
+6. Use the verified path or verified file handle for reads and writes.
 ```
 
-Files matched as inputs but **not** surfaced in `/status`:
-
-- `.gitignore`
-- `.gitattributes`
-
-These are History-managed dotfiles; they are written by `ensureRepo`
-on first touch and never clutter the user-facing Changes list.
-
-What the contract **also** forbids:
-
-- Symbolic links. The validation passes on string shape but no
-  symlink resolution / `lstat` containment check runs in the History
-  surface (unlike the Folder Move / Edit program's path-resolution
-  layers; see §10 Known Risks H-K9 — this is a documented consistency
-  gap with the rest of the codebase, **out of scope** for this
-  closure).
-- Files inside a directory whose name starts with `.`. A user with a
-  vault containing `.archive/foo.md` cannot commit it through
-  History. This is consistent with the Folder Move contract.
-
-The path `.git/` is implicitly excluded because no Status entry for
-it can exist (git porcelain ignores it).
-
-The ref string (used by `/file`, `/diff`, `/drop`, `/restore`) must
-match **one** of:
-
-- `HEAD` (optionally followed by `~[1-9][0-9]*`),
-- `^[0-9a-f]{7,40}$` (abbreviated or full SHA-1 object id; SHA-256 object ids are not accepted by the current History ref contract),
-- `^[0-9a-f]{7,40}~[1-9][0-9]*$` (SHA + ancestor),
-- `WORKTREE` (only on `/file` and `/diff` when `allowWorktree`).
-
-Branch names, tags, `@{upstream}`, and `..` ranges are deliberately
-rejected — History never talks to anything but `HEAD` and immutable
-commit objects.
+This applies to `/content-hashes`, Create capture, WORKTREE `/file`,
+WORKTREE `/diff`, Restore read/write/post-read, and future
+`restoreFileAtomic`.
 
 ## 8. Repository Initialization Contract
 
-`ensureRepo(repoRoot)` is the single entry point for first-touch repo
-setup. Behavior:
+**Observed on production-code review baseline**
 
-1. **Idempotent**: calling it on a vault that already has a `.git/`
-   (detected via `hasOwnGitDir` — either directory or file, to support
-   worktrees and submodules) is a no-op.
-2. **First-touch sequence** (observed):
-   1. `outerRepoRoot` walks ancestors for an external repo. If found,
-      a console warn is emitted but the vault is **still
-      initialized** — nested vaults are allowed.
-   2. `.gitignore` is written **only if missing**. Sample lines
-      (observed in source): excludes node_modules, .DS_Store, etc.
-   3. `.gitattributes` is written **only if missing**. Content is
-      the empty string — this is intentional. Adding any
-      `* text=auto` line would override `core.autocrlf=false` and
-      silently convert `\r\n` ↔ `\n` on Windows, breaking the CRLF
-      round-trip test.
-   4. `git init` runs (3-step fallback: `--initial-branch=main`,
-      `--initial-branch=master`, then plain init).
-3. **Configuration**: `git config core.autocrlf false` is set on the
-   vault's local git config. This is what gives the
-   `CRLF safety` round-trip test its guarantee.
-4. **Author identity**: `git config --local --get user.name` /
-   `user.email` is probed. If absent, `docus` / `docus@localhost`
-   are written. The env vars `GIT_AUTHOR_NAME` /
-   `GIT_AUTHOR_EMAIL` take precedence (verified by test).
-5. **Git-Unavailable**: every History route guards with `probeGit()`.
-   A failure is surfaced as **503** with the body shape:
-   `{ dirty: [], available: false }` on `/status`, or
-   `{ error: 'git not available' }` everywhere else.
+`ensureRepo` returns when the Vault has its own `.git`, otherwise writes
+missing `.gitignore` and `.gitattributes`, initializes Git, and sets
+`core.autocrlf=false`. `writeIfMissing` currently performs:
 
-Initialization is **lazy** — it runs on the first request that
-touches a vault via the History router. The client does not block on
-init; it surfaces `repoInitialized: false` (and optionally
-`initError: <reason>`) on capability checks.
+```text
+fs.access(path) → fs.writeFile(path)
+```
+
+The check/write gap can overwrite a file another process creates.
+
+**Intended closure contract — not implemented on the reviewed
+production baseline**
+
+Use `fs.writeFile(path, content, { flag: 'wx' })`; treat `EEXIST` as
+successful idempotence. Concurrent first-touch callers must never
+overwrite user bytes.
 
 ## 9. Status Contract
 
-`GET /api/history/status` is the read-only entry point for "what is
-dirty in this vault".
+**Observed on production-code review baseline**
 
-- **Command**: `git status --porcelain --untracked-files=all`. The
-  `=all` is deliberate: the default `normal` collapses untracked
-  directories to a single line, hiding the individual files a user is
-  likely to want to commit.
-- **Filter**:
-  - reject entries whose path is `.gitignore` or `.gitattributes`
-    (`MANAGED_HISTORY_DOTFILES`),
-  - reject entries whose path fails `isValidHistoryPath` (which
-    means dotfile segments and non-`.md` files are filtered out).
-- **Sort**: Status preserves git's own order (path-as-printed).
-- **Restoration of rename lines**: `git status` writes `R  old -> new`
-  on a rename. The current parser captures `old -> new` as the path,
-  which then fails `isValidHistoryPath` (the `->` is not a `.md`
-  kebab). **Renames therefore do not surface in the Changes list.**
-  This is a documented boundary — see §11 (Log and Timeline) for the
-  related `--follow` decision and §25 H-K8.
-- **Per-entry shape**:
-  ```ts
-  interface StatusEntry {
-    path: string         // forward-slash, relative to vault root
-    index: string        // one porcelain column char (' ', 'M', 'A', 'D', '?', ...)
-    worktree: string     // one porcelain column char (' ', 'M', 'A', 'D', '?', ...)
-  }
-  ```
-  Observed `index`/`worktree` values for **untracked** files are
-  `?` / `?` (or `?` / `?` with the `index = '?'` first char). The
-  **rule of thumb the UI uses**: if either side is `?`, the entry is
-  "new"; if either side is `D`, the entry is "deleted"; otherwise
-  "modified".
-- **Read-only**: Status never modifies anything. It does not
-  auto-stage, does not auto-clean, does not clear the Index, and does
-  not `update-ref`.
-- **503 graceful-unavailable**: Git missing on PATH returns
-  `{ dirty: [], available: false }` with HTTP 503. The client uses
-  `readJson(r, 'getStatus failed', { allowNonOkJson: true })` to
-  recover the body rather than throwing. This is explicitly pinned by
-  `history-api.test.ts > getStatus > resolves with { available: false }
-  on a 503 (graceful unavailable, not an error)`.
-- **Other failure (500)**: A 500 (git crashes mid-call, for example) is
-  currently treated as "empty JSON success" by `getStatus`, because
-  every non-2xx response is routed through
-  `allowNonOkJson: true`. **Known divergence (H-C1)** — §25 calls
-  this out as a candidate P1 fix; it is intentional for "git missing"
-  but the same code path also swallows genuine server faults.
+The server returns `503 { dirty: [], available: false }` when Git is
+unavailable. The client passes `allowNonOkJson: true` unconditionally,
+so a genuine non-graceful 5xx can be returned as a body-shaped success.
+
+**Intended closure contract — not implemented on the reviewed
+production baseline**
+
+Only the exact graceful 503 body is recovered. Every other non-2xx
+throws `HistoryApiError`.
 
 ## 10. Create Version Contract
 
-Create Version is the only History workflow that produces a commit.
-The contract is:
+### 10.1 Observed on production-code review baseline
+
+The server sequence is:
 
 ```text
-User selects changed paths in the Changes panel
-   ↓
-Editor save barrier flushes (saveSelected resolves; DocumentMutationBarrier)
-   ↓
-Server: route /api/history/commits
-   ↓
-   ├─ validate path list and message (400 on shape error)
-   ├─ validate expected content hashes (exact-key-parity)
-   ├─ acquire withRepoMutation(repoRoot)   (per-vault queue)
-   ├─ assertRepositoryIdle                  (no MERGE_HEAD / etc.)
-   ├─ ensureIndexRepairStorageReady         (preflight write probe)
-   ├─ re-read status; 409 'selection is stale' if any selected path
-   │  is no longer dirty
-   ├─ captureExpectedFiles
-   │  ├─ readWorkingTreePath(filePath)  → sha256 + buffer
-   │  └─ abort 409 'content changed before commit' if actual != expected
-   ├─ ensureAuthorIdentity
-   ├─ mkdtemp → indexPath, set GIT_INDEX_FILE
-   ├─ for each selected path:
-   │  ├─ if deleted → update-index --force-remove
-   │  └─ if present → hash-object -w --path --stdin
-   │                → update-index --add --cacheinfo 100644 <oid> <path>
-   ├─ verify staged blobs:
-   │      ls-files --stage in temp index; require oid present
-   ├─ if tree resolves to same tree as HEAD^{tree} → 409 'nothing to commit'
-   ├─ write-tree
-   ├─ commit-tree <tree> (-p parent) -m <message>
-   ├─ capture expectedIndexBeforeHeadMove (F0) from the Real Index
-   │  for every target path before moving HEAD
-   ├─ compare F0 with each oldHead tree entry:
-   │  ├─ equal → safeCandidatePaths
-   │  └─ different → preservedExternalPaths
-   ├─ empty repository (oldHead and oldHead entry absent):
-   │  ├─ Real Index entry absent → safeCandidatePaths
-   │  └─ Real Index entry present → preservedExternalPaths
-   ├─ assertRepositoryIdle again (right before moving HEAD)
-   ├─ update-ref HEAD <new> <expectedOld>   (CAS; '0'×40 for empty repo)
-   ├─ acquire .git/index.lock and re-read locked Index as F1
-   ├─ syncIndexAtomic(repoRoot, { oldHead, targetHead, paths,
-   │  │                     expectedIndexBeforeHeadMove: F0 }):
-   │  one Temporary-Index attempt + verification + atomic rename;
-   │  synchronize only paths where F0 equals the oldHead entry and
-   │  F1 still equals F0
-   │  on success → settleIndexRepairPaths(synchronizedPaths)
-   │  on F1 mismatch → preserve path unchanged in preservedExternalPaths
-   │  on sync failure → persist only failedPaths as a Repair Transaction
-   │                    bound to the pre-HEAD F0
-   ├─ show --name-only --pretty= <sha> → filesCommitted[]
-   ├─ return { sha, filesCommitted, synchronizedPaths,
-   │           preservedExternalPaths, failedPaths, indexRepair? }
-   └─ refresh UI: status, log, comparison(s) for the committed paths
+validate request
+→ ensureRepo
+→ acquire withRepoMutation
+→ assertRepositoryIdle
+→ ensureIndexRepairStorageReady
+→ re-read Status
+→ reject stale selections
+→ captureExpectedFiles
+→ ensure author
+→ read old HEAD
+→ build Temporary Commit Index from old HEAD
+→ stage captured bytes and verify
+→ write tree
+→ create commit object with user message
+→ assertRepositoryIdle
+→ CAS update-ref HEAD
+→ show immutable commit files
+→ routine Real-Index sync
+→ settle or record Repair metadata
 ```
 
-Additional obligations:
+Current routine Create sync runs
+`git reset -q <targetHead> -- <paths>` against the Real Index with up
+to three attempts. It does not capture F0, compare F0 to old HEAD,
+re-read F1 under a hand-taken lock, or return the three path classes.
+On routine failure, `recordIndexRepair` re-reads the failure-time Real
+Index as `expectedIndex`.
 
-- **Only selected files are committed**. The Real Index may carry
-  pre-staged entries from external `git add`; those are **never**
-  carried into the Docus commit because the temp index is seeded
-  only from HEAD (or empty repo).
-- **Plumbing commit, no hooks, no signing**. Verified by `commit-tree`
-  invocation inventory and by the absence of any `-S` /
-  `--gpg-sign` / `--no-verify` argument.
-- **HEAD CAS is mandatory**. The expected old value is the SHA read at
-  the start of the request, plus an additional `assertRepositoryIdle`
-  immediately before the `update-ref`. On mismatch → 409
-  `'repository changed before commit'`; the client refreshes status +
-  log and reports `commit_repository_changed`.
-- **Working tree CAS via expected hashes**. The client computes
-  SHA-256s of the bytes it believes to be on disk and sends them as
-  `expected`. The server re-hashes captured bytes; mismatch → 409
-  `'content changed before commit'`.
-- **Empty / clean selection → 409**. `selection is stale` (re-read
-  status says selected path is now clean) or `nothing to commit`
-  (every selected path's tree diff is empty).
-- **Repository Operation In Progress → 409**. Checked at entry and
-  again immediately before `update-ref`. Markers checked:
-  `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `REBASE_HEAD`,
-  `rebase-merge`, `rebase-apply`, `sequencer`.
-- **Index Repair metadata is durable**. Repairs survive server
-  restarts — the file lives next to `.git/`. Repair-record metadata
-  persistence failure is **degraded success**, not API failure, with
-  toast `commit_repair_state_persistence_failed`.
-- **Commit-then-refresh ordering**. The commit CAS is the success
-  boundary. A subsequent UI refresh failure (status / log /
-  comparison) cannot be reported as "commit failed" — the user sees
-  the version, then a deferred refresh error if it happens. Currently
-  implemented this way (the `try { commit }` block writes the user-
-  visible success state before the refresh block). See §25 H-K2 for
-  the residual surface area where this contract could still be made
-  more explicit.
+The client acknowledges the returned commit inside a `try` that also
+contains:
 
-> ⚠️ **Known divergence (H-C1)** — `getStatus` treats every non-2xx
-> response (including genuine 500s) as a body-shaped success because
-> `allowNonOkJson: true` is passed unconditionally. The Create
-> Version / Withdraw Restore 409 mapping relies on the **body** of the
-> response to determine "stale selection vs CAS conflict vs
-> repository operation". A future refactor that prefers
-> `r.ok`-first parsing would break this.
+```text
+release barrier
+→ Promise.all(refreshStatus, refreshLog)
+→ refreshComparisons
+→ selection/message cleanup
+```
+
+Any refresh rejection enters the overall failure catch, may show
+`commit_failed`, and may leave selection/message uncleared. A retry can
+therefore create a duplicate version.
+
+### 10.2 Intended closure contract
+
+**Planned remediation / Closure requirement / Not implemented on the
+reviewed production baseline**
+
+The only accepted sequence is:
+
+```text
+validate request
+→ acquire withRepoMutation
+→ assertRepositoryIdle
+→ ensure Repair storage preflight
+→ re-read Status
+→ capture exact expected Working Tree bytes
+→ ensure author / Vault metadata
+→ build Temporary Commit Index from oldHead
+→ write tree
+→ create commit object
+→ capture F0 from Real Index for every target path
+→ compare F0 with oldHead tree entries
+→ classify safeCandidatePaths / preservedExternalPaths
+→ assertRepositoryIdle immediately before HEAD move
+→ CAS update-ref HEAD
+→ routine Real-Index synchronization
+```
+
+Root/empty semantics:
+
+```text
+oldHead entry absent + Real Index entry absent
+→ safe candidate
+
+oldHead entry absent + Real Index entry present
+→ preserved external staged intent
+```
+
+Create appends exactly one canonical marker block. Commit success is
+acknowledged immediately after the success response. Selection and
+message settle at that boundary. Every refresh runs outside the
+commit-failure catch and can only produce a refresh warning.
 
 ## 11. Real Index Safety Contract
 
-The Real Index is the most fragile piece of the system because it
-lies between Docus and any external Git command. The current
-implementation performs Real-Index synchronization through repeated
-`git reset -q <target> -- <paths>` + verify steps; that implementation
-has a real data-safety and intent-preservation gap, recorded below
-as H-C3. The intended contract §11 is what the closure gate must
-verify against.
+### 11.1 Observed on production-code review baseline
 
-1. Docus **does not own** the Real Index. The user's external
-   `git add` / stage entries are legitimate state the user wants
-   preserved.
-2. After a successful commit, Docus **synchronizes only the paths
-   in the commit**. Unrelated staged entries are not touched.
-3. The Real Index is synchronized through a **temporary index
-   built from a copy of the current Real Index**, never by
-   running `git reset` directly on the locked Real Index:
-   ```text
-   1. resolve absolute Git directory
-   2. acquire .git/index.lock (exclusive create; EEXIST => 'git index is locked')
-   3. read current .git/index bytes into memory
-   4. write those bytes into a Temporary Index file via a TempDir
-   5. point GIT_INDEX_FILE at the Temporary Index
-   6. classify every target path independently: F1 != F0 or
-      F0 != oldHead entry → preservedExternalPaths; F1 == F0
-      and F0 == oldHead entry → pathsToSynchronize
-   7. apply scoped git reset -q <target> -- <pathsToSynchronize> (or
-      update-index --force-remove for deleted paths) against the
-      Temporary Index
-   8. verify only pathsToSynchronize against target HEAD
-   9. re-check repository-idle and current HEAD
-   10. write the Temporary Index bytes into .git/index.lock
-   11. fsync the lock file
-   12. atomically rename .git/index.lock to .git/index
-   ```
-   This is the same lock-and-rename pattern the existing Repair
-   flow already uses (`repairIndexWithLock`); the closure task
-   History-C3 applies it to the routine post-commit Real-Index
-   sync as well.
-4. **Settled vs. persisted-state separation.** A successful
-   Real-Index sync that preserves a transaction entry is
-   considered settled: the entry is cleared from the persisted
-   metadata (or its paths are removed). A failed sync surfaces
-   as an Index Repair Transaction, never as a commit failure.
-   The authoritative routine-sync result is:
-   ```ts
-   interface IndexSyncOutcome {
-     synchronizedPaths: string[]
-     preservedExternalPaths: string[]
-     failedPaths: string[]
-   }
-   ```
-   `synchronizedPaths` passed both fingerprint checks and Temporary
-   Index synchronization and verification; settle old Repair metadata
-   for those paths. `preservedExternalPaths` either had pre-existing
-   staged intent or changed from F0 to F1 under lock; preserve it
-   unchanged, create no Repair Transaction or banner, offer no Retry,
-   return it through Commit / Withdraw, and show one informational
-   toast. `failedPaths` were safe candidates whose synchronization
-   failed due to lock contention, I/O, Temporary Index creation,
-   verification, or atomic rename; only these paths may create a
-   pending Repair Transaction bound to F0.
-   `indexRefreshFailed = failedPaths.length > 0`; preserved paths do
-   not set it.
-   A per-path F1 mismatch is not a batch failure: that path remains
-   unchanged while other safe paths continue. Only a global
-   transaction failure (repository operation, changed HEAD, lock or
-   Temporary Index failure, I/O, synchronized-path verification,
-   lock write/fsync, or atomic rename failure) aborts remaining work.
-   Already-preserved paths stay preserved; unfinished safe candidates
-   become `failedPaths`, and only those paths may create a Repair
-   Transaction bound to F0. When `pathsToSynchronize` is empty, do
-   not run reset/update-index and do not write or rename
-   `.git/index.lock`; return informational success with
-   `failedPaths: []` and `indexRefreshFailed: false`.
-5. **Repair Transaction schema (version 2)**:
-   ```ts
-   {
-     version: 2,
-     transactions: [{
-       token: string    // /^[0-9a-f]{32}$/, opaque, 32 hex chars
-       status: 'pending' | 'superseded'
-       head: string | null     // 40–64 hex SHA-1 or SHA-256, or null
-       paths: string[]         // non-empty, .md, no leading slashes
-       expectedIndex: Record<string, Array<{ mode: string; oid: string; stage: number }>>
-     }]
-   }
-   ```
-   Validation is strict: malformed `expectedIndex` entries throw at
-   parse time; **corrupt files are quarantined**, not deleted
-   (`<file>.corrupt-<ts>-<uuid>.json`).
-6. **Repair Token is opaque** to the client. The server is the
-   authority on which `expectedIndex` a given token refers to.
-7. **Repair has its own CAS**: `repairIndexWithLock` already takes
-   `.git/index.lock` by hand (`open(lockPath, 'wx')` →
-   `EEXIST` → `'git index is locked'`), re-checks fingerprint both
-   **before** and **after** a staged reset, and on mismatch throws
-   `'index changed after repair was requested'` and marks the
-   transaction `superseded`.
-8. **Compatibility check** on resume: `currentHead === transaction.head`
-   OR `merge-base --is-ancestor transaction.head currentHead` —
-   refuses to repair against a non-ancestor.
-9. **Discard is selective**: `discardIndexRepair` only clears the
-   metadata entry; it **never** alters the Real Index. The UI surfaces
-   it as "Keep staged changes and dismiss".
-10. **Repair persistence failure → degraded success**, not API error.
-    `repairStatePersistenceFailed` flag carries the warning.
+- Create routine sync uses the three-attempt Real-Index reset described
+  in §10.
+- Withdraw routine sync already takes `.git/index.lock`, copies the
+  Real Index into a Temporary Index, updates and verifies it, then
+  publishes it.
+- `repairIndexWithLock` and `syncDroppedIndexPaths` both already use
+  the correct publication lifecycle:
 
-> ⚠️ **Known divergence (H-C3)** — Routine Real-Index synchronization
-> can overwrite target-path staged intent in two cases: the target
-> path was already staged before Create Version or Withdraw began; or
-> an external Git writer changes the target path during the current
-> reset / verify retry window. Working Tree bytes may remain intact,
-> but the user's exact staged state can be lost. The current Create
-> routine still uses direct `git reset` / verify retries; Withdraw
-> already uses the Temporary Index + `index.lock` path. This
-> is a data-safety and intent-preservation problem that remains a
-> P1 Closure Blocker. The current behaviour is fully captured in
-> the Implementation Record's `/commits` sequence and is exercised
-> only in the success path; the race window is documented but not
-> asserted by any test. See §25 H-K3 / H-C3 and Plan closure task
-> History-C3.
+```text
+write replacement bytes into .git/index.lock
+→ fsync lock handle
+→ close lock handle
+→ rename .git/index.lock to .git/index
+```
+
+Before rename, failures execute:
+
+```text
+close handle
+→ remove .git/index.lock
+→ remove Temporary Index directory
+```
+
+There is no observed open-handle rename defect in these current
+helpers. The gap is that planned `syncIndexAtomic` must explicitly
+inherit this lifecycle.
+
+### 11.2 Intended closure contract
+
+**Planned remediation / Closure requirement / Not implemented on the
+reviewed production baseline**
+
+```ts
+interface IndexSyncRequest {
+  oldHead: string | null
+  targetHead: string | null
+  paths: string[]
+  expectedIndexBeforeHeadMove:
+    Record<string, IndexEntryFingerprint[]>
+}
+
+interface IndexSyncOutcome {
+  synchronizedPaths: string[]
+  preservedExternalPaths: string[]
+  failedPaths: string[]
+}
+```
+
+`safeCandidatePaths` is derived inside the server from F0 and old-HEAD
+tree entries. It is not a caller-supplied second authority.
+
+Classification:
+
+- `synchronizedPaths` passed F0/old-HEAD and F1/F0 checks and were
+  synchronized and verified.
+- `preservedExternalPaths` had pre-existing or concurrent staged
+  intent. Their Real-Index entries stay unchanged; they create no
+  Repair, banner, or Retry and produce one informational toast.
+- `failedPaths` were safe candidates but synchronization failed.
+  Only these paths may create a Repair bound to F0.
+
+Compatibility:
+
+```ts
+indexRefreshFailed = failedPaths.length > 0
+```
+
+Preserved paths never set `indexRefreshFailed`.
+
+The lock lifecycle is fixed:
+
+```text
+Acquire .git/index.lock via open(..., 'wx')
+→ read Real Index / classify F1
+→ build and verify Temporary Index
+→ truncate/write lock file
+→ fsync lock handle
+→ close lock handle
+→ rename index.lock to index
+```
+
+If rename has not committed, close the handle, remove `index.lock`,
+and remove the Temporary Index directory.
+
+- No safe path before locking: do not create `index.lock`; do not run
+  reset/update-index; do not write or rename.
+- Lock acquired but all paths become preserved: close and remove
+  `index.lock`; return informational success; do not write or rename.
+- Mixed paths are classified independently. An F1 mismatch preserves
+  that path and does not fail safe siblings.
+- Only a global transaction, lock, I/O, Temporary Index,
+  synchronized-path verification, fsync, close, or rename failure
+  fails remaining safe candidates.
+- Routine sync performs no destructive retry.
+- Windows degraded-success normalization is limited to `EEXIST`,
+  `EBUSY`, `EAGAIN`, and `EPERM` only when positively classified as
+  lock contention. Ordinary permission errors remain failures.
 
 ## 12. Log and Timeline Contract
 
-```text
-GET /api/history/log?path=<opt>&limit=<opt, defaults to nothing ⇒ 200>
-```
+### 12.1 Observed on production-code review baseline
 
-- **Default limit**: 200 (client-side). The server accepts `limit`
-  via query string and applies it to `git log -n<limit>`.
-- **Path filter**: optional `path=<note-relative>` segments the log to
-  commits touching that file. Implemented server-side as
-  `git log --pretty=format:… --name-only -n<limit> -- <path>`.
-- **Order**: newest first.
-- **No `--follow`**: by deliberate decision. The comment in source
-  states: *"No `--follow` for now: on a vanilla "create new file"
-  commit, `--follow` falsely attributes earlier commits of unrelated
-  files to this path."* Therefore a rename is logged under the new
-  path only — earlier history of the old path is **not** pulled in.
-  See §25 H-K8 (Rename history not followed).
-- **CommitRecord shape** (server `parseLog`):
-  ```ts
-  interface CommitRecord {
-    sha: string         // '0'..'f' full SHA, 40 chars
-    author: string
-    date: string        // ISO 8601 committer date (strict)
-    subject: string
-    body: string        // may be empty
-    files: string[]     // paths in --name-only order
-  }
-  ```
-- **Empty repo**: `parseLog` collapses the
-  `/does not have any commits yet/i` / `/ambiguous argument ['"]?HEAD['"]?/i`
-  patterns and returns `[]`.
-- **Timeline aggregation**: `useHistoryTimeline` walks the log, splits
-  commits by per-file `files[]`, and produces one
-  `DocumentHistory` per path with sorted revisions and a `modifiedAt`
-  timestamp.
-- **Date grouping**: `groupTimelineItems` uses local-time
-  `getFullYear` / `getMonth` / `getDate` and a 86_400_000 ms window
-  to bucket items into Today / Yesterday / weekday names / Last Week /
-  Month / Earlier. (See §25 H-K7 — DST boundaries may shift a
-  timestamp into the wrong local-day bucket; observed behavior and a
-  Closure Blocker; see H-C7.)
-- **Per-document loading**: clicking a `DocumentHistory` issues
-  `getLog({ path, limit: 200 })`. Request ID guards (`revisionRequestId`)
-  prevent a slow stale response from overwriting a newer one.
-- **Empty / error states**: rendered inline via
-  `history-empty-inline` ("No revisions available for this document.")
-  and `history-error` (with a Retry button). Localized via
-  `useI18n`.
+`log()` frames records with
+`\x1e__DOCUS_LOG__\x1e`. Commit messages are only checked for
+non-empty text, so the separator can occur in a message and
+`parseLog` can split a phantom record. The `log()` JSDoc says
+`--follow`, while the implementation intentionally does not use it.
+
+Timeline grouping computes day deltas by dividing local-midnight
+millisecond differences by `86_400_000`, which is wrong across
+23-hour and 25-hour DST days.
+
+### 12.2 Intended closure contract
+
+**Planned remediation / Closure requirement / Not implemented on the
+reviewed production baseline**
+
+- Replace the custom textual record separator with a machine-safe,
+  NUL-framed Git log format and parse exact field boundaries.
+- Round-trip multiline bodies and control characters without phantom
+  records or body lines becoming file names.
+- Use local-calendar ordinals for day grouping.
+- Run DST regression cases by spawning a child Node/Vitest process
+  with an explicit `TZ` environment.
+
+Rename history remains path-scoped and not `--follow`-merged
+(`H-K8`). Log/Timeline pagination remains out of scope (`H-K10`).
 
 ## 13. Snapshot Contract
 
-A Snapshot is a read-only view of the bytes of a single document at a
-specific commit.
+Committed refs are read through `git show <ref>:<path>`. WORKTREE reads
+are direct filesystem reads.
 
-- **Endpoint**: `GET /api/history/file?path=<file>&ref=<ref>`. `ref`
-  defaults to `HEAD`. `ref=WORKTREE` resolves to the on-disk bytes.
-- **Identity**: snapshot tab id is `history:<path>` (one tab per
-  document; re-using it on another revision updates its body).
-- **Loading / ready / error** is a tri-state in
-  `useHistorySnapshots` (`HistorySnapshotStatus`). Initial fetch goes
-  through `loading`; `ready` once the `getFileAt` promise resolves;
-  `error` if it rejects (along with `error: <message>`).
-- **Request ID cancellation**: each `(re)open` increments the
-  per-tabId request counter. Slow responses that arrive after a newer
-  selection are dropped.
-- **Cached revisions**: `openCachedRevision(rawMarkdown)` reuses the
-  same tab with `status='ready'` and the supplied bytes (used when an
-  existing comparison should pivot to a snapshot, e.g. opening a
-  snapshot from a Comparison pane).
-- **Retry**: `retrySnapshot(tabId)` re-issues `openRevision` with the
-  existing `revisionId` without changing the tab identity.
-- **Read-only storage**: The `HistorySnapshot.rawMarkdown` is the
-  renderer's input. The pane (`HistorySnapshotPane.vue`) renders it
-  through `<ReadingPane>`, which uses the same markdown pipeline as
-  the live Reading Pane — but the snapshot is **not** an editable
-  Monaco tab, so AI / Document mutation tools that target the editor
-  cannot reach it.
-- **AI surface separation**: A Snapshot tab id of `history:<path>`
-  never collides with the editor's `tab.id` for the same path. The
-  AI tool-card contract writes only to editor tabs identified by the
-  document path; a History tab does not satisfy that contract.
+**Observed on production-code review baseline:** logical path
+validation does not prevent symlink traversal.
+
+**Intended closure contract:** every WORKTREE read uses the resolver
+in §7. A committed Git object read does not dereference a Working Tree
+symlink, but every path presented to filesystem I/O must still pass the
+same logical contract.
 
 ## 14. Comparison Contract
 
-A Comparison is the side-by-side diff between a historical revision
-and the current content of the document.
+Comparison uses the selected historical revision as the old side and
+prefers a loaded editor buffer for the current side, falling back to
+WORKTREE content. It is read-only.
 
-- **Endpoint flow**:
-  ```text
-  snapshot.rawMarkdown = getFileAt(path, ref)         // server
-  comparison.newRaw = openEditorTab.raw ?? loadCurrentDocument(path)  // client
-  comparison.diff = computeFileDiff(oldRaw, newRaw)  // client-only
-  ```
-- **Historical side**: server `getFileAt`. Refresh-capable via
-  `openRevision` (same `tabId = 'history:<path>'`) so opening the
-  Comparison from a Snapshot tab reuses the cached bytes.
-- **Current side — live editor raw preferred**: `useHistoryComparisons`
-  is constructed with `getCurrentDocument(path)` and
-  `loadCurrentDocument(path)`. If the path is open in an editor tab
-  that is not loading and has no `loadError`, the live raw is used
-  and `currentDirty = (tab.raw !== tab.originalRaw)`. Otherwise the
-  saved-document API is consulted.
-- **`currentDirty`** is a UI flag, not a diff input. It renders as a
-  "Unsaved changes" badge in the Comparison pane so the user knows
-  the comparison's Current side is showing in-memory unsaved edits.
-- **Identical content**: `computeFileDiff` short-circuits to
-  `{ ops: [], stats: { 0, 0, 0 } }` when `oldContent === newContent`.
-  The Comparison pane renders the "identical" state with a "Latest
-  version" badge in that case (verified by test).
-- **Refresh path**: a successful Create Version / Withdraw calls
-  `refreshDocumentComparison(path)` for each touched path; partial
-  success is logged but does not roll back the main op.
-- **Refresh failure is not commit failure**: client code never
-  blends refresh failures into the commit success state. See §25 H-K2
-  for the residual surface.
+WORKTREE `/diff` inherits the symlink blocker in §7. The closure tests
+must prove that outside-Vault bytes are not exposed through either
+WORKTREE `/file` or `/diff`.
 
 ## 15. Restore Contract
 
-Restore writes the bytes of a document at a chosen ref into the
-Working Tree without creating a commit.
+### 15.1 Observed on production-code review baseline
+
+The route:
 
 ```text
-user clicks Restore this version (Snapshot pane)
-   ↓
-useHistoryRestore.buildRequest(source)
-   ├─ snapshots the current dirty state via getLoadedEditorDocument
-   ├─ captures revisionA + raw + revisionTime at the moment of the
-   │  user gesture (mutations to source afterwards cannot affect the
-   │  request)
-   ↓
-options.confirm(request)               ← user confirms in dialog
-   ↓
-options.acquireMutation([<path>])      ← pathMutationLock
-   ↓
-options.prepareEditorRestore(path)     ← DocumentMutationBarrier
-   ├─ if prepareEditorRestore rejects: rollback
-   ↓
-server /api/history/restore:
-   ├─ validate { path, acceptedRef }                       ← shape: 400
-   ├─ if acceptedRef === 'WORKTREE' → 400 'cannot restore to the working tree'
-   ├─ enter one withRepoMutation(repoRoot) transaction
-   ├─ resolve acceptedRef → resolvedSha:
-   │     rev-parse --verify <acceptedRef>                  ← mutable HEAD path
-   ├─ read:  git show <resolvedSha>:<path>
-   │         if null → 404 'file does not exist at ref <acceptedRef>'
-   ├─ write: git restore --source=<resolvedSha> --worktree -- <path>
-   ├─ re-read: fs.readFile(repoRoot/<path>)        ← post-restore bytes
-   ├─ stat:    fs.stat(repoRoot/<path>).mtimeMs
-   └─ return {
-         path,
-         requestedRef: acceptedRef,
-         resolvedRef: resolvedSha,
-         raw: postRestoreWorkingTreeBytes,
-         mtime,
-       }
-   ↓
-client applyRestoredContent OR applyRestoreWithoutOverwritingNewerEdit
-   ↓
-editorBarrier.commit([path])
-   ↓
-options.fileChanges.publish({ kind: 'write', newRaw, source: 'history-restore' })
-   ↓
-Promise.allSettled([ refreshVault, refreshComparison ])
-   ↓
-options.onSuccess({ refreshFailed })  ← refreshFailed true is partial-success, not failure
+rawAt(requestedRef, path) outside repository mutation transaction
+→ restoreFile(requestedRef, path)
+   → one withRepoMutation
+   → git restore --source=<requestedRef> --worktree
+→ fs.stat(path)
+→ return pre-restore source raw + later mtime
 ```
 
-Hard rules:
+The client then uses `request.historicalRaw`, not `result.raw`, for
+the editor baseline and `VaultFileChanges`. Logical path validation
+does not reject symlink destinations.
 
-- **WORKTREE is forbidden as a Restore source.** The route validates
-  `ref === WORKTREE_REF` and rejects with **400 'cannot restore to
-  the working tree'**. WORKTREE is permitted on `/file` and `/diff`
-  only.
-- **The accepted request ref is validated but not yet resolved.**
-  The route validates the request shape with `isValidHistoryRef`,
-  which accepts only `HEAD` (optionally `~N`), `sha~N`, or a
-  7–40-hex SHA. Branch names, tags, `@{upstream}`, and
-  `..` ranges are rejected. None of those accepted shapes is
-  itself immutable: `HEAD` and `HEAD~N` resolve at call time; a
-  7-char short SHA resolves only when the route asks Git for
-  the matching full SHA. The route must therefore, before any
-  read or write, resolve the **accepted request ref** to **one
-  immutable full commit SHA** inside the repository mutation
-  transaction.
-- **Read and write use the resolved SHA verbatim.** Both
-  `git show <sha>:<path>` and `git restore --source=<sha>
-  --worktree` are invoked with that resolved SHA; the textual
-  request ref is never reused.
-- **The destination is the Working Tree, not HEAD and not the Real
-  Index.** `git restore --source=<sha> --worktree` is used. The
-  `--worktree` flag is the only safe choice — checkout-style
-  restore would also update the Index, silently staging a
-  destructive restore.
-- **Client treats `result.raw` as authoritative.** The
-  `RestoreFileResult.raw` returned by the route is the
-  post-restore Working Tree bytes (read inside the same mutex as
-  `restoreFile`). The client uses `result.raw` — not
-  `request.historicalRaw`, which is the source ref's snapshot
-  bytes captured at the moment of the user's gesture —
-  to update `tab.raw`, `tab.originalRaw`, and
-  `VaultFileChanges.newRaw`. The `applyRestoredContent` /
-  `applyRestoreWithoutOverwritingNewerEdit` helpers take both
-  the source bytes and `result.mtime`. If the server contract
-  ever diverges from the source snapshot (e.g. server-side
-  normalization), the client surfaces the discrepancy via
-  `result.raw` rather than silently trusting the historical
-  view.
-- **Newer in-editor edits are not overwritten.** `useHistoryRestore`
-  compares `tab.revision` before/after the prepare barrier; if the
-  tab was edited concurrently (a user typed while restore was pending),
-  the helper enters `applyRestoreWithoutOverwritingNewerEdit` and
-  marks the tab dirty, while still publishing `result.raw` as the
-  new `originalRaw` and `newRaw` (verified by `useHistoryRestore.test.ts`).
-- **Mutation lock is held across the whole op**. The path lock is
-  released in the `finally`. If another workflow (Create Version,
-  another Restore) holds the lock at entry, the user sees
-  'document_mutation_in_progress' and `onConflict` fires.
-- **Failure during restore rolls back the editor save barrier** so
-  the editor can resume saving with whatever bytes it had before the
-  barrier was opened.
+### 15.2 Intended closure contract
 
-> ⚠️ **Known divergence (H-C5)** — The current `/restore` route
-> reads the source ref **outside** `withRepoMutation` and never
-> resolves the accepted ref to one immutable SHA. For mutable refs
-> such as `HEAD` or `HEAD~N`, the source-byte read and the
-> `git restore` invocation may resolve to different commits: the
-> response may report source bytes from one commit while the
-> Working Tree is restored from another. Worse, the response's
-> `raw` field carries pre-restore source bytes — not a
-> post-restore Working Tree re-read — so a concurrent writer
-> between `restoreFile` and the response yields an `raw` /
-> `mtime` pair that does not match the bytes on disk. The
-> current client also writes `request.historicalRaw` into the
-> editor tab and the file-change event, which amplifies the
-> divergence: the editor sees the user's gesture-time snapshot
-> instead of what actually landed on disk. See §25 H-K5 /
-> H-C5. Plan closure task History-C5 requires resolving the
-> accepted ref to one immutable SHA inside the same mutex as
-> the file write **and** routing the post-restore bytes back
-> to the client as the authoritative `result.raw`.
+**Planned remediation / Closure requirement / Not implemented on the
+reviewed production baseline**
+
+`restoreFileAtomic(...)` is the sole entry point and owns exactly one
+`withRepoMutation`. The route adds no outer mutex, performs no
+`rawAt` pre-check, and does not call the old internally locked helper.
+
+Inside that transaction:
+
+```text
+resolve accepted ref once to one immutable full commit SHA
+→ use that SHA for source read and restore
+→ resolve and reject symlink-safe destination
+→ restore Working Tree only
+→ open verified destination handle
+→ fstat/read/fstat identity check
+→ bounded retry or conflict
+→ return the post-restore snapshot observed inside the repository
+  mutation transaction
+```
+
+The contract cannot prevent an external process from changing the
+file immediately after the transaction. It promises only the
+post-restore snapshot observed inside the transaction. `result.raw`
+and `result.mtime` must describe the same file identity/version.
+The client uses `result.raw` for editor state and file-change events
+while preserving newer editor edits.
 
 ## 16. Withdraw Contract
 
-Withdraw drops the latest commit. The exact sequence matters
-because the Real-Index synchronization path set is derived from
-the commit's changed files — discover them **before** moving
-HEAD.
+### 16.1 Observed on production-code review baseline
+
+`/drop` accepts 7–40 hex, but compares the request directly with the
+full SHA returned for HEAD. It performs no marker check and filters
+changed files only by `.endsWith('.md')`.
+
+`readCurrentHead` maps every non-zero `rev-parse --verify HEAD` result
+to `null`. Parent resolution runs `git rev-parse <sha>^`; every
+non-zero result is treated as root, after which Withdraw may run:
 
 ```text
-useHistoryWithdraw.withdraw(sha):
-   1. confirm + acquireMutation()                        ← pathMutationLock.acquireAll()
-   2. POST /api/history/drop { sha }
-        │
-        ▼ server:
-   3.  validate sha                                       ← 400
-   4.  ensureRepo + probeGit                              ← 503 graceful
-   5.  withRepoMutation(repoRoot, async () => {
-   6.    assertRepositoryIdle                             ← 409 'repository operation in progress'
-   7.    rev-parse --verify HEAD  → expectedOld
-   8.    assert HEAD === sha                              ← 409 'only the latest version can be withdrawn'
-   9.    show --no-renames --name-only <sha>             → filesChanged
-   10.   filter filesChanged by .endsWith('.md') (does NOT enforce
-         the full Managed History Path contract; see H-C4)
-   11.   resolve parent: rev-parse <sha>^                → parent | null
-   12.   assertRepositoryIdle (again, immediately before moving HEAD)
-   13.   CAS move HEAD:
-            parent === null: update-ref -d HEAD <expectedOld>      ← root withdraw
-            else:            update-ref HEAD <parent> <expectedOld> ← non-root
-   14.   syncDroppedIndexPaths(repoRoot, filesChanged)    ← scoped Real-Index sync
-            failure ⇒ recordIndexRepair(...)
-            success ⇒ settleIndexRepairPaths(filesChanged)
-   15.   return { sha, droppedSha, filesChanged,
-                   indexRefreshFailed, indexRepair?, repairStatePersistenceFailed }
-         })
-   16. closeDroppedRevision(droppedSha)            ← snapshot/diff tab closure
-   17. Promise.allSettled([refreshStatus, refreshLog,
-                           refreshComparisons(filesChanged)])
-   18. registerIndexRepair / settleIndexRepairPaths as appropriate
-   19. toast.success(success) — partial degradation surfaces as info toast
+git update-ref -d HEAD <sha>
 ```
 
-Hard rules:
+This does not fail closed on operational or malformed-resolution
+errors. After a successful HEAD CAS, Withdraw uses the lock lifecycle
+in §11. Its three principal refreshes already use
+`Promise.allSettled`; `closeDroppedRevision`,
+`refreshIndexRepairStatus`, and other local success updates still need
+isolation tests.
 
-- **Only the latest commit is withdrawable.** The server checks
-  `HEAD === sha` and rejects mismatches with
-  409 `'only the latest version can be withdrawn'`.
-- **Withdraw always attempts a CAS mutation of HEAD.** No
-  commit is created; no commit object is rewritten; no
-  `git reset --mixed` is used.
-- **After HEAD moves successfully, Docus attempts scoped
-  Real-Index synchronization for affected Markdown paths.**
-  The synchronization covers only the `.md`-suffix paths
-  in `filesChanged` (the current implementation does not
-  enforce the full Managed History Path contract during
-  Withdraw — see H-C4); it preserves every unrelated staged
-  entry.
-  Failure is recorded as an Index Repair Transaction
-  (`recordIndexRepair`) and reported as a degraded success via
-  `indexRefreshFailed` — never as a withdrawal failure.
-- **For a withdrawn root commit**, the affected Markdown paths
-  are removed from the Real Index (the index reflects "nothing
-  here yet"), their Working Tree bytes remain on disk, and
-  they become untracked in `git status` (`??`). The user can
-  recommit them through the normal Create Version flow.
-- **Unrelated Real-Index entries survive.** The Real-Index
-  sync touches only the affected paths in `filesChanged`; any
-  entry the user staged with external `git add` on a different
-  path is left exactly as it was.
-- **Working Tree bytes are preserved.** Withdraw never touches
-  the Working Tree, regardless of root or non-root case.
-- **Index-Repair-aware.** Withdraw passes through the same Repair
-  transaction machinery as Create Version.
-- **Refresh after withdraw**: `useHistoryWithdraw.withdraw` calls
-  `useHistory.refreshStatus`, `useHistory.refreshLog`, and
-  `refreshComparisons(<filesChanged>)`. Timeline selections are
-  reconciled by `HistoryPanel`'s watcher on `withdraw.completionId`,
-  which calls `selectDocument` if there is still a selected document
-  (and `showDocuments()` if it has no revisions left).
-- **Snapshot / Comparison tabs**: when a withdrawn revision is open,
-  `closeDroppedRevision` (host-supplied, verified test
-  `'is single-flight and refreshes Status, Timeline, revisions,
-  comparisons, and repair state'`) is invoked to close those tabs.
+### 16.2 Intended closure contract
 
-> ⚠️ **Known divergence (H-C4)** — The current implementation
-> withdraws any commit currently at `HEAD`, regardless of whether
-> Docus created it. A user's external commit (e.g. made from the
-> terminal) can be withdrawn by the History UI if it is the most
-> recent commit. The intended contract, per the task instructions, is
-> "Withdraw can only withdraw versions created and owned by Docus".
-> The Plan §15 closure task proposes a commit trailer scheme (e.g.
-> `Docus-Version: 1` + a stable `Docus-Vault-Version: <id>`) and a
-> corresponding check in `dropHeadCommit`. See §25 H-K4 and the
-> closure blockers §25 H-C4.
+**Planned remediation / Closure requirement / Not implemented on the
+reviewed production baseline**
 
-> ⚠️ **Known divergence (H-K6)** — The validation
-> `isValidCommitSha` accepts **7-character short SHAs**. The server
-> comparison is `head === sha` where `head` is always a 40-character
-> full SHA. A short SHA can never match. The user sees
-> 'only the latest version can be withdrawn' on every short-SHA
-> request — not a resolution failure, but an obvious UX wart. The
-> Plan §15 closure task (History-C6) requires resolving the short
-> SHA to a full SHA before the `HEAD === sha` check.
+1. Resolve a 7–40 hex request to one full immutable commit SHA.
+2. Use that full SHA for HEAD equality, marker check, parent parse,
+   changed paths, and CAS update-ref.
+3. Require exactly one valid canonical same-vault marker.
+4. Reject unmarked, malformed, ambiguous, cross-vault, merge, and
+   invalid-changed-path candidates.
+5. Legacy unmarked commits fail closed and must be recommitted through
+   the new Create Version flow.
+6. Resolve parents with:
+
+```text
+git rev-list --parents -n 1 <resolvedSha>
+
+1 token  → root commit
+2 tokens → exactly one parent
+3+       → merge commit, reject
+command failure / malformed output → abort, do not move HEAD
+```
+
+HEAD resolution uses:
+
+```ts
+type HeadResolution =
+  | { kind: 'head'; sha: string }
+  | { kind: 'unborn' }
+```
+
+Only a positively identified unborn repository returns `unborn`;
+operational errors throw.
+
+Client conflict UX distinguishes latest-changed, repository operation,
+invalid same-vault marker, cross-vault marker, ambiguous marker,
+legacy unmarked commit, merge commit, and invalid changed path.
 
 ## 17. Repository Mutation Serialization
 
-Docus never assumes two processes — or two workflows within one
-process — are isolated by Git's `index.lock`. Beyond the file lock,
-Docus serializes **mutating** operations per vault through
-`withRepoMutation(repoRoot)`:
+### 17.1 Observed on production-code review baseline
 
-| Operation | Wrapped? |
-|-----------|----------|
-| `addAndCommit` (Create Version) | Yes |
-| `dropHeadCommit` (Withdraw) | Yes |
-| `restoreFile` (Restore) | Yes |
-| `repairIndex` | Yes |
-| `discardIndexRepair` | Yes |
-| `status` | No (read-only) |
-| `log` | No (read-only) |
-| `rawAt` | No (read-only) |
-| `isRepo` / `initRepo` | No |
+`addAndCommit`, `dropHeadCommit`, `restoreFile`, `repairIndex`, and
+`discardIndexRepair` use one process-local Promise-chain mutex keyed by
+`path.resolve(repoRoot)`.
 
-Mechanism:
+Repair JSON migration, quarantine, and read-modify-write operations do
+not all hold a cross-process metadata lock. Atomic rename prevents a
+half-published file but does not prevent:
 
-- A module-scope `Map<repoRoot, Promise<void>>` is keyed by
-  `path.resolve(repoRoot)`.
-- Each new operation tails onto the previous one with
-  `previous.catch(() => {}).then(operation)` so a rejected
-  predecessor doesn't poison the chain.
-- On completion, the chain tail removes itself from the map.
+```text
+process A reads state
+process B writes new transaction
+process A writes stale state
+→ B update lost
+```
 
-**Limits**:
+### 17.2 Intended closure contract
 
-- This mutex is **process-local**. Two Docus processes on the same
-  vault are still serialized only by Git's own `index.lock`.
-- Read-only operations bypass the mutex; an `addAndCommit` running
-  in one corner does not pause a `status` in another.
-- The mutex does **not** close TOCTOU windows that begin outside the
-  locked section (Restore §15 Known Divergence).
+**Planned remediation / Closure requirement / Not implemented on the
+reviewed production baseline**
 
-Client-side, `pathMutationLock.createPathMutationLock` provides an
-in-memory exclusion that prevents:
+One Docus process per Vault is not an implicit guarantee. Introduce a
+dedicated Repair metadata lock/CAS under `<git-dir>/docus/`.
 
-- a Create Version from starting while a Restore holds the path,
-- a Restore from starting while a Create Version or Withdraw holds
-  the path,
-- an editor save from interleaving with either of the above.
+- record, settle, discard, migration, and quarantine use the lock;
+- a read-only status request does not trigger an unlocked write;
+- lock cleanup is guaranteed after failure.
 
-The lock also has an `acquireAll()` mode used by Withdraw to take a
-vault-wide lock for the drop's CAS. Verified by
-`pathMutationLock.test.ts > uses a Vault-wide lock to exclude Create
-Version and Restore mutations`.
+These properties are distinct:
+
+- atomic publication — observed for non-empty Repair JSON writes;
+- process-restart persistence — observed;
+- power-loss durability — not established;
+- cross-process lost-update protection — not implemented.
+
+Vault-id first-touch uses its own atomic claim protocol: dedicated
+metadata creation lock, temporary file, full UUID write, fsync, close,
+atomic publication, and parent-directory fsync where supported.
 
 ## 18. Repository Operation State
 
-Docus **must not** continue Git operations while another process is
-in the middle of `git merge`, `git cherry-pick`, `git revert`, or
-`git rebase`. The server probes the absolute Git directory (via
-`rev-parse --absolute-git-dir`) for the following sentinel files /
-directories at the start of mutating operations:
+**Observed on production-code review baseline**
+
+The source checks seven markers:
 
 ```text
 MERGE_HEAD
@@ -1049,304 +617,254 @@ rebase-apply
 sequencer
 ```
 
-Presence of any of these (other than `ENOENT`) is a `409 Repository
-operation in progress`. Both Create Version and Withdraw check this
-state **at entry** and **again immediately before moving HEAD**.
-Repair (`repairIndex`) and the auxiliary sync helpers check it after
-each reset / repair write.
+Create and Withdraw check at entry and immediately before HEAD CAS.
+Only `MERGE_HEAD` and `CHERRY_PICK_HEAD` are directly parametrized by
+the current Create test; the full seven-marker behavior is
+source-traceable but incompletely tested.
 
-When a Repository-Operation conflict fires, the client UI shows
-`history.repository_operation_in_progress` (Create Version) or
-`history.withdraw_repository_operation` (Withdraw) and refreshes
-status.
+**Intended closure contract**
+
+All server-side mutations enter exactly one repository mutation
+transaction and apply the operation-state check appropriate to that
+operation. HEAD-moving mutations perform a second idle check
+immediately before CAS `update-ref`. Restore and Repair do not move
+HEAD and are not described as HEAD-moving operations.
 
 ## 19. Error Model
 
-The History feature distinguishes the following failure shapes. Each
-has a recommended HTTP status and UI behavior.
+### 19.1 Observed on production-code review baseline
 
-| Class | HTTP | UI |
-|-------|------|----|
-| Validation Error | 400 | Toast `history.commit_save_failed` (or mirror); no commit happened. |
-| Not Found | 404 | Read-side error in snapshot/diff/restore; the pane renders an alert with Retry. |
-| Conflict — content changed | 409 `'content changed before commit'` | `commit_repository_changed`; status + log refreshed; no commit. |
-| Conflict — stale selection | 409 `'selection is stale'` | Same as above; the panel deselects stale rows. |
-| Conflict — CAS | 409 `'repository changed before commit'` | `commit_repository_changed`; status + log refreshed. |
-| Conflict — operation in progress | 409 `'repository operation in progress'` | `history.repository_operation_in_progress`; status refreshed. |
-| Conflict — Index Repair | 409 `'index changed after repair was requested'` | `history.index_repair_conflict`; UI offers Discard, not retry. |
-| Git Unavailable | 503 `git not available` for most routes; 503 `{dirty:[],available:false}` for `/status` | EmptyState panel; mutating buttons disabled. |
-| Degraded Success | 200 with `indexRefreshFailed` / `repairStatePersistenceFailed` flags | Info toast, operation counted as success. |
-| Post-success Refresh Failure | Network / 5xx after the success response | Per-workflow toast (`history.commit_repository_changed` family); user sees the commit succeeded. |
-| Unexpected Server Failure | 5xx without `error` body | Generic fallback string `'createCommit failed: 500'`. |
+- Validation: 400.
+- Missing ref/path: usually 404.
+- stale bytes, stale selection, HEAD CAS, or repository operation:
+  409.
+- Index synchronization after a successful HEAD move:
+  success response with `indexRefreshFailed`.
+- Create post-response refresh rejection can enter `commit_failed`
+  (`H-C2`).
+- Withdraw principal refreshes use `Promise.allSettled`, but remaining
+  success callbacks are not all isolated.
+- all Withdraw 409 errors except repository operation are currently
+  displayed as latest-changed.
 
-The three "commit succeeded but…" shapes — `indexRefreshFailed`,
-`repairStatePersistenceFailed`, and post-success refresh — must
-**not** collapse into a single "creation failed" toast. The current
-implementation distinguishes them via separate `toast.info` variants:
-`commit_index_refresh_failed`, `commit_repair_state_persistence_failed`,
-and a normal success. See §25 H-K2 for the residual surface where a
-network outage between `fetch 201` and `Promise.all([refreshStatus,
-refreshLog])` could surface as the wrong flavor of degraded success.
+### 19.2 Intended closure contract
+
+**Planned remediation / Closure requirement / Not implemented on the
+reviewed production baseline**
+
+| Class | HTTP/result | UI |
+|---|---|---|
+| Primary mutation failed before success | 4xx/5xx | Error; no success acknowledgement. |
+| Successful commit/withdraw plus refresh failure | Success | Mutation remains successful; one informational refresh warning. |
+| Preserved External Staged Intent | Success; `failedPaths: []`; `preservedExternalPaths` non-empty | One informational toast; no Repair banner or Retry. |
+| Failed Sync Path | Success with `failedPaths` and optional Repair | Informational degraded-success toast; Repair only for failed paths. |
+| Marker/ref/parent conflict | Specific 409 code | Specific client message; never collapsed into latest-changed. |
+
+Commit success is acknowledged immediately after the success response.
+Every later refresh is outside the commit-failure catch boundary.
 
 ## 20. Accessibility
 
-The current code has the following accessibility affordances:
-
-- `HistoryPanel` root: `aria-label="History"` (i18n key `history.title`).
-- `HistoryChangesPanel`:
-  - `<section aria-busy>` on the Changes section and the version
-    composer;
-  - `<input type="checkbox">` per change row with an `aria-label` of
-    `history.include_document { path }`;
-  - the textarea has `aria-label="Version message"`;
-  - the create-version button changes its visible label to
-    `history.creating_version` while busy, with a `role="status"`
-    mirror for screen readers;
-  - error / status strings are exposed via `role="alert"` /
-    `role="status"` so AT users hear them.
-- `TimelineGroup`: `role="group"` with `aria-label="<label>"`.
-- `TimelineDocumentRow` / `TimelineRevisionRow`: `role="option"` with
-  `aria-selected` toggling; Enter opens, ArrowDown/ArrowUp walk
-  options, Escape returns to the document list (HistoryPanel wires
-  these).
-- `HistorySnapshotPane` / `HistoryComparisonPane`: `aria-busy` while
-  restoring, `aria-label` on the toolbar, `<h2 tabindex="-1">` as the
-  focus target exposed through `defineExpose({ focusViewer })`.
-- `HistoryContextMenu` (revision menu): `role="menu"` with a single
-  `role="menuitem"` button. Opens on `contextmenu` (right click) or
-  `Shift+F10` / `ContextMenu` key. Closes on Escape (focus is
-  restored to the row that opened it) or on a document-level
-  `pointerdown` outside the menu.
-- Empty / loading / error states:
-  `role="status"` for skeleton + loading; `role="alert"` for errors
-  with a Retry button.
-
-What is **not** currently implemented (boundary recorded here, not a
-Spec deviation):
-
-- The `HistoryChangesPanel` `<select-all>` button currently toggles
-  to "Deselect all" but does not carry an `aria-pressed` to expose the
-  toggle state to AT. (Sympathetic to a non-blocker improvement; not
-  counted as a closure blocker.)
-- The `HistoryContextMenu` does not support arrow-key navigation
-  inside the menu; only Escape closes it. (Acceptable; one item.)
+Existing keyboard and ARIA behavior remains required: listbox/option
+semantics, keyboard navigation, context-menu keyboard access,
+confirmation before Restore/Withdraw, busy state, and focus
+restoration.
 
 ## 21. Performance
 
-- **Git subprocess overhead**: each route is a fresh
-  `child_process.spawn`. There is no caching of `git status`,
-  `git log`, etc. across requests. For a vault of N notes, the
-  cost is `O(N)` file-system listings per Status and `O(N)`
-  walk per `git log -n 200 --name-only`.
-- **Status cadence**: `git status --porcelain --untracked-files=all`
-  enumerates each untracked file individually. The default cwd is
-  the vault root; the test suite runs in `mkdtemp` repositories.
-- **`git log` limit (default)**: 200. Set client-side (`useHistory`'s
-  `refreshLog` passes `limit: 200`). The server does not enforce a
-  cap.
-- **Single-document log**: same limit (200) for the per-document
-  flow.
-- **`MAX_CAPTURE_BYTES`**: 10 MiB per `git` invocation. Compared
-  against `current.length` — i.e. **JS string UTF-16 code units**, not
-  bytes. Non-ASCII output caps sooner. Overflow SIGKILLs the child.
-- **Default timeout**: 15 000 ms per `git` invocation
-  (`DEFAULT_GIT_TIMEOUT_MS`). On timeout, the child is SIGKILLed
-  and the route returns the captured stderr as part of the
-  rejection message.
-- **Diff is computed on whichever side computes it first**:
-  `computeFileDiff` runs in `useHistoryComparisons` (client) for
-  the current-side flows and in `server/history/diff.ts` (which
-  re-exports `computeFileDiff`) for `/diff` endpoints.
-- **Timeline aggregation**: `O(total revisions)` over the global
-  log; per-document fetch is an additional O(revisions-in-this-doc)
-  walk that runs once per `selectDocument`.
-- **Large-vault risk**: there is no pagination of the Timeline or
-  any other History surface. A vault with thousands of documents /
-  tens of thousands of commits ships everything to the client and
-  re-renders on every refresh. Not a blocker for the documented use
-  case, recorded as H-K10.
+Log defaults to 200 entries; there is no Timeline/Log pagination.
+`H-K10` remains a non-blocking product limitation. Safety checks may
+add filesystem segment walks and metadata locks; correctness takes
+precedence over micro-optimizing these local operations.
 
 ## 22. Security
 
-- **No shell**: `child_process.spawn('git', args, { cwd: repoRoot,
-  windowsHide: true })` — args array only. No `shell: true`. No
-  string interpolation into args.
-- **`--` separator**: any path passed to git commands is preceded by
-  `--` (e.g. `git ls-files --stage -- <path>`,
-  `git restore --source=<ref> --worktree -- <path>`), preventing a
-  leading-`-` path from being interpreted as a flag.
-- **Path validation**: §7. Strict allowlist; paths must lowercase
-  kebab segments and a `.md` extension; no `..` segments, no
-  backslashes, no dotfile segments, no absolute paths.
-- **Ref validation**: HEAD / `HEAD~N` / 7–40-hex SHA / 7–40-hex + `~N`.
-  Branch names, tags, `@{upstream}`, `..` ranges are rejected.
-- **SHA validation** in the rest of the API: same 7–40 hex.
-- **WORKTREE sentinel** never reaches git. The route guards
-  `body.ref === WORKTREE_REF` and rejects with 400 on `/restore`.
-  `rawAt` short-circuits the sentinel to `fs.readFile` plus a
-  path-containment check (`safeWorktreeFile`).
-- **Opaque repair token**: `/^[0-9a-f]{32}$/`. Validation in
-  `validRepairTransaction`. Clients cannot forge a repair; they
-  can only act on tokens the server returned.
-- **repoRoot is trusted input**: it comes from `routes._repoRoot`
-  which defaults to `CONTENT_DIR`. It is not a request-derived
-  value.
-- **No path escape**: `safeWorktreeFile` re-validates the resolved
-  path under the vault root as a defense-in-depth measure.
-- **Git stderr**: surfaced to the UI through the `error` field on
-  the response. The error string is git's own stderr (e.g. "file
-  does not exist at ref HEAD~1"), which is informational and does
-  not disclose anything sensitive.
-- **External staged content protection**: §11.
-- **Invalid same-vault marker withdraw risk**: §16 / H-C4.
+**Observed on production-code review baseline**
+
+- Git is spawned without a shell and paths are separated with `--`.
+- logical path and ref syntax are allowlisted;
+- WORKTREE does not reach Git;
+- repair tokens are opaque 32-hex values;
+- no filesystem symlink containment is enforced;
+- any current HEAD commit can be withdrawn;
+- log framing trusts an injectable textual separator.
+
+**Intended closure contract**
+
+- the resolver in §7 closes filesystem containment;
+- marker checks close accidental withdrawal of unrelated commits;
+- machine-safe log framing closes delimiter injection;
+- fail-closed ref/parent resolution prevents destructive
+  misclassification.
+
+The marker trust boundary is exact: it is an
+accidental-withdrawal guard, not cryptographic provenance proof. A
+local actor who can write Git objects or `<git-dir>/docus/` can forge
+it and is outside this feature's trust boundary.
 
 ## 23. Compatibility
 
-- **Operating systems**: Windows, macOS, Linux. Tested via the
-  per-platform CI (`playwright.cross-platform.config.ts`,
-  `playwright.draft-store.config.ts`) and the slow real-git history
-  tests (which have explicit timeout ceilings as of `bf28078`).
-- **CRLF**: handled — `core.autocrlf=false` is set on first
-  initialization. `commit-tree` is a plumbing commit whose object
-  bytes are exactly what was given to `hash-object`; the CRLF
-  round-trip test passes byte-for-byte.
-- **SHA-1 assumption**: the route validators accept 7–40 hex
-  (SHA-1 range). The `update-ref` CAS sentinel `'0'.repeat(40)` is
-  **40 zeros**, hardcoded. A SHA-256 vault would need 64 zeros; the
-  repair-file validator already accepts 40–64. This is documented
-  but **not** a current incompatibility (we still ship with SHA-1).
-- **Root commit / empty repo**: handled; sentinel `'0'×40` enables
-  the first commit, and the route returns 404 / 200 cleanly when
-  there are no commits yet.
-- **Nested repos**: `outerRepoRoot` warns but proceeds. The
-  History feature manages the **inner** vault's `.git` only.
-- **Existing repo**: `ensureRepo` is a no-op when `.git` already
-  exists. The user's existing `.gitignore` and `.gitattributes`
-  are not overwritten.
-- **Git missing**: 503 + body shape per §19.
-- **`.git` as file (worktree/submodule)**: supported by
-  `hasOwnGitDir` checking both file and directory.
-- **File locks**: Only `EEXIST` on `.git/index.lock` is currently
-  normalized to `'git index is locked'` and surfaced as such.
-  Other platform-specific lock errors (e.g. `EPERM`, `EBUSY`,
-  `EAGAIN` on Windows) currently propagate unchanged. The
-  intended C3 contract normalizes the explicitly reviewed
-  Windows lock-error set.
-- **SQLite is NOT used for History state**. Index-repair metadata
-  is JSON on disk under the git dir, not a DB. The vault's SQLite
-  metadata is left alone by the History feature.
+### 23.1 Observed on production-code review baseline
+
+- Windows, macOS, and Linux are historically supported.
+- CI configurations exist.
+- The current closure baseline has not been independently verified on
+  all three platforms.
+- `core.autocrlf=false` and a CRLF real-Git test exist.
+- SHA-1 is assumed by the 40-zero empty-HEAD CAS sentinel (`H-K13`).
+- only `EEXIST` is normalized as hand-taken Index-lock contention in
+  current helpers.
+
+No test, build, typecheck, or cross-platform result is inferred from
+source review.
+
+### 23.2 Intended closure contract
+
+**Closure requirement / Not implemented or not verified on the
+reviewed production baseline**
+
+- complete Linux, macOS, and Windows full-suite verification;
+- normalize only positively identified contention codes listed in
+  §11;
+- retain exact-byte behavior across supported platforms.
 
 ## 24. Acceptance Criteria
 
-The Vault Git History feature is closable when **all** of the
-following are verified:
+Closure requires all applicable tests below and the full Plan/Closure
+gate.
+
+### Index synchronization
 
 ```text
-[ ] Git capability detection surfaces 503 + appropriate body on
-    every mutating endpoint when git is missing.
-[ ] Status read-only returns a managed subset of dirty paths
-    with stable index/worktree letters.
-[ ] Log newest-first with limit 200.
-[ ] Snapshot reads the bytes at the requested ref
-    (file does not exist at ref → 404).
-[ ] Diff returns line + word ops; identical content →
-    empty ops / zero stats.
-[ ] Create Version:
-      [ ] commits only selected paths
-      [ ] preserves unrelated staged entries
-      [ ] rejects with 409 'selection is stale'
-      [ ] rejects with 409 'content changed before commit'
-      [ ] rejects with 409 'repository changed before commit'
-      [ ] rejects with 409 'repository operation in progress'
-      [ ] updates HEAD via CAS only
-      [ ] routine Real-Index sync returns synchronizedPaths,
-          preservedExternalPaths, and failedPaths
-      [ ] synchronizedPaths are updated to targetHead and old Repair
-          metadata for those paths is settled
-      [ ] preservedExternalPaths keep existing Real Index entries
-          unchanged, create no Repair Transaction or banner, expose
-          no Retry action, and surface as informational success
-      [ ] only failedPaths may create a pending Repair Transaction
-      [ ] every routine-sync Repair Transaction uses pre-HEAD F0
-          as expectedIndex
-      [ ] indexRefreshFailed is true iff failedPaths.length > 0
-      [ ] plumbing commit: no hooks, no signing
-      [ ] refreshes Status / Log / Comparison for committed paths
-[ ] Restore:
-      [ ] rejects WORKTREE
-      [ ] changes Working Tree only (no HEAD, no Index)
-      [ ] bars concurrent Create Version on the same path
-      [ ] preserves newer in-editor edits
-      [ ] resolves ref to immutable SHA inside the same mutex
-        (H-C5 — closure blocker)
-[ ] Withdraw:
-      [ ] only the latest version can be withdrawn
-      [ ] does not touch Working Tree
-      [ ] preserves unrelated staged entries
-      [ ] rejects an unmarked, cross-vault marked, malformed, or
-          ambiguous-marker HEAD; accepts exactly one valid same-vault
-          Docus marker (H-C4 — closure blocker)
-      [ ] returns synchronizedPaths, preservedExternalPaths, and
-          failedPaths under the same routine-sync contract as Create
-      [ ] resolves short SHAs to full SHAs before the HEAD
-        comparison (H-K6)
-      [ ] refreshes Status / Log / Timeline / Comparison /
-        Repair / Snapshot / Diff tabs
-[ ] Index Repair:
-      [ ] disk-persisted, durable across restarts
-      [ ] schema version 2 with v1 migration path
-      [ ] quarantine on corrupt parse
-      [ ] supersede-on-external-change with safe Discard
-      [ ] repair-token opaque
-      [ ] Routine Real-Index synchronization uses one lock-protected
-          Temporary-Index attempt with atomic replacement.
-      [ ] No destructive reset retry is performed on the Real Index
-          during routine sync (user-initiated Repair retry is a
-          separate, manual operation).
-[ ] Accessibility:
-      [ ] Keyboard nav: Enter, ArrowUp/Down, Escape
-      [ ] Context menu opens on right-click and Shift+F10
-      [ ] Tab focus restored on Escape close
-[ ] Multi-vault isolation:
-      [ ] Per-vault status / log caches
-      [ ] Per-vault mutation serialization
-[ ] Test:
-      [ ] All server history tests pass
-      [ ] All composable history tests pass
-      [ ] All component history tests pass
-      [ ] Long Flow A e2e passes
-      [ ] npm test -- --run is green
-[ ] Tools:
-      [ ] npm run typecheck is green
-      [ ] npm run build is green
-      [ ] git diff --check is green
+captures F0 before moving HEAD
+preserves a path staged before Create Version
+preserves a path changed from F0 to F1
+synchronizes one safe path while preserving one mismatched path
+creates Repair only for failedPaths
+binds failed-path Repair to pre-HEAD F0
+does not acquire index.lock when no safe path exists
+removes index.lock when all paths become preserved under lock
+removes index.lock after Temporary Index creation failure
+removes index.lock after verification failure
+closes index.lock before atomic rename
+allows a subsequent external git add after every failure branch
+does not rename after fingerprint mismatch
 ```
+
+### Symlink safety
+
+```text
+rejects a symlink Markdown leaf
+rejects a symlink directory segment
+does not hash bytes outside the Vault
+does not commit bytes outside the Vault
+does not expose outside bytes through WORKTREE file or diff
+Restore rejects a symlink destination
+```
+
+### Ref and parent resolution
+
+```text
+distinguishes unborn HEAD from operational failure
+resolves a short SHA to a full commit SHA
+classifies root commit only from valid parent output
+rejects merge commits
+does not move HEAD on parent-resolution failure
+does not move HEAD on malformed parser output
+```
+
+### Marker and Vault metadata
+
+```text
+creates vault id atomically on first touch
+concurrent first touch produces one stable vault id
+does not expose a partial vault id
+quarantines malformed vault id without racing a writer
+Create appends exactly one canonical trailer block
+user body fake trailers are not authoritative
+Withdraw rejects unmarked external commit
+Withdraw rejects cross-vault marker
+Withdraw rejects duplicate or ambiguous canonical trailers
+Withdraw rejects merge commit
+Withdraw rejects non-managed changed path
+client shows marker-specific conflict rather than latest-changed
+```
+
+### Repair metadata
+
+```text
+serializes concurrent record and settle
+does not lose transactions during migration
+does not lose transactions during quarantine
+cleans metadata lock after failure
+repair-status does not perform an unlocked write
+```
+
+### Restore
+
+```text
+resolves accepted ref once to one immutable full SHA
+uses the resolved SHA for read and write
+returns post-restore observed Working Tree bytes
+uses result.raw in editor state
+uses result.raw in VaultFileChanges
+preserves newer editor edits
+does not double-acquire withRepoMutation
+rejects symlink target paths
+does not report completed restore as failed when refresh fails
+```
+
+### Commit and Withdraw success boundary
+
+```text
+commit remains successful when refreshStatus rejects
+commit remains successful when refreshLog rejects
+commit remains successful when comparison refresh rejects
+selection and message settle immediately after commit response
+retry after refresh failure does not create a duplicate version
+withdraw remains successful when repair-status refresh rejects
+withdraw remains successful when local tab cleanup throws or is isolated
+```
+
+### Timeline, parser, and bootstrap
+
+```text
+groups correctly across DST spring-forward
+groups correctly across DST fall-back
+runs DST cases under an explicit child-process TZ
+does not create phantom log records from delimiter characters
+round-trips multiline commit bodies and control characters safely
+does not overwrite a dotfile created concurrently
+concurrent ensureRepo calls remain idempotent
+```
+
+The Closure additionally requires typecheck, build, full tests, Long
+Flow, and Linux/macOS/Windows evidence on the final production SHA.
 
 ## 25. Known Risks and Open Questions
 
-These are the open items at the time of this reconstruction. P1 items
-are Closure Blockers; the rest are documented hazards that future
-maintainers need to be aware of.
+The following table is canonical across the Spec, Plan, Implementation
+Record, Closure, and README.
 
-| ID | Item | Severity | Closure Blocker |
-|----|------|----------|-----------------|
-| H-K1 | `getStatus` resolves every non-2xx response as a body-shaped success because `allowNonOkJson: true` is passed unconditionally. This is the right behavior for the `503 { available: false }` graceful-unavailable signal but it also swallows genuine 500 responses without an error path. | P1 | **Yes** (H-C1) |
-| H-K2 | Commit / Withdraw success-state and refresh-error separation depends on every downstream `Promise.all([refreshStatus, refreshLog, …])` not being treated as failure. A network error between `fetch 201` and the refresh round-trip could still surface ambiguously in the toast flavor; the per-workflow tests assert the variants but a tighter contract for "commit succeeded, refresh failed" is not formally written down. | P1 | **Yes** (H-C2) |
-| H-K3 | Routine Real-Index synchronization can overwrite target-path staged intent in two cases: (1) the target path was already staged before Create Version or Withdraw began (deterministic — no concurrency required; the user's `git add -p` entry is replaced when `syncIndexPaths` resets to the new HEAD), and (2) an external `git add <target-path>` lands during the current reset/verify retry window and is cleared by the next retry. Working Tree bytes may remain intact in both cases, but the user's exact staged state can be lost. This is a data-safety and intent-preservation problem and remains a P1 Closure Blocker. The closure task History-C3 must add pre-sync fingerprint CAS (skip paths whose pre-commit Index entry differed from old HEAD) AND move the sync to a Temporary Index seeded from the current Real Index and renamed into place under hand-taken `.git/index.lock`. | P1 | **Yes** (H-C3) |
-| H-K4 | `dropHeadCommit` withdraws any commit currently at HEAD. Intended contract requires exactly one canonical same-vault Docus marker block. The marker is an accidental-withdrawal guard, not cryptographic provenance proof; a local actor with repository and Git-directory write access can forge it and is outside the History feature's trust boundary. | P1 | **Yes** (H-C4) |
-| H-K5 | Restore resolves and reads a mutable ref outside the repository mutation transaction and never resolves the accepted ref to one immutable full commit SHA. The response carries pre-restore source bytes (read by `rawAt`), not a post-restore Working Tree re-read, so a concurrent writer between `restoreFile` and the response yields an `raw` / `mtime` pair that does not match disk. The current client also writes `request.historicalRaw` (the gesture-time snapshot bytes) into `tab.raw`, `tab.originalRaw`, and the file-change event, which amplifies the divergence. The closure task History-C5 must resolve the accepted ref to one immutable SHA inside `withRepoMutation`, re-read disk after `restoreFile`, and route the post-restore bytes back to the client as `result.raw`. | P1 | **Yes** (H-C5) |
-| H-K6 | `isValidCommitSha` accepts 7-character short SHAs; `head !== sha` compares two 40-character SHAs. A short SHA can never match → user always sees 'only the latest version can be withdrawn' on a short request. | P2 | Yes |
-| H-K7 | fixed-duration day arithmetic does not match local-calendar day boundaries across 23-hour and 25-hour DST days | P2 | **Yes** (H-C7) |
-| H-K8 | Rename history is **not** `--follow`-merged. A rename produces two separate `DocumentHistory` entries (old-path, new-path). The Status contract hides rename lines because they fail `isValidHistoryPath`. | P2 | No |
-| H-K9 | History path validation does NOT include a symlink / `lstat` containment check (unlike the Folder Move / Edit-program layers). A symlink-shaped path inside the vault is validated by string shape only. This is a consistency gap with the rest of the codebase. | P2 | No |
-| H-K10 | No pagination on Timeline or Log; large-vault performance is unknown and bounded only by the 200-row client-side log limit. | P2 / risk | No |
-| H-K11 | Full-suite CI / Windows / cross-platform verification was not independently re-run during this reconstruction. | P1 | **Yes** (H-C8) |
-| H-K12 | The canonical same-vault Docus marker scheme (H-K4) has not been finalized. The Plan §15 closure task proposes a concrete accidental-withdrawal guard, subject to owner approval. | P1 | Yes (H-C4) |
-| H-K13 | SHA-256 vault repositories are not supported; the `'0'×40` CAS sentinel hardcodes SHA-1. The repair-file validator already accepts 40–64 hex. | P2 | No |
+| ID | Finding | Severity | Closure Blocker |
+|---|---|---|---|
+| H-C1 | `/status` genuine server failures are swallowed as graceful unavailable | P1 | Yes |
+| H-C2 | Create Version can report a successful commit as failure after refresh | P1 | Yes |
+| H-C3 | Routine Real-Index sync can overwrite target-path staged intent | P1 | Yes |
+| H-C4 | Withdraw lacks valid canonical same-vault marker enforcement | P1 | Yes |
+| H-C5 | Restore ref/read/write/result are not one atomic observed snapshot | P1 | Yes |
+| H-C6 | Short Withdraw SHA is accepted but never equals full HEAD | P2 | Yes |
+| H-C7 | Timeline grouping uses fixed-duration day arithmetic across DST | P2 | Yes |
+| H-C8 | Three-platform full-suite verification is missing | P1 (Verification) | Yes |
+| H-C9 | Required History regression coverage is incomplete | P1 (Verification) | Yes |
+| H-C10 | History filesystem reads/writes lack symlink-safe Vault containment | P1 | Yes |
+| H-C11 | HEAD and Withdraw parent resolution do not fail closed | P1 | Yes |
+| H-C12 | Repair metadata lacks cross-process lost-update protection | P1 | Yes |
+| H-C13 | `ensureRepo` non-overwrite bootstrap has access/write TOCTOU | P2 | Yes |
+| H-C14 | Textual Git-log separator is injectable through commit messages | P2 | Yes |
+| H-K8 | Rename history is not `--follow`-merged | P2 | No |
+| H-K10 | Timeline and Log have no pagination | P2 | No |
+| H-K13 | SHA-256 Vault repositories are unsupported by the 40-zero CAS sentinel | P2 | No |
 
-### Verified (not open)
-
-| ID | Item | Evidence |
-|----|------|----------|
-| H-V1 | AI mutation tools treat live History, Diff, and Recovery workspace contexts as read-only and deny mutation of the protected path through `deriveToolSafetyPolicy` in [`server/ai/tool-safety.ts`](../../../server/ai/tool-safety.ts). The exhaustive switch over `ClassifiedToolName` makes unclassified additions to the AI surface a typecheck error; the exhaustive switch over `AiLiveContextSnapshot['kind']` makes unclassified context kinds a typecheck error; unknown / malformed tool inputs fail closed with `{ kind: 'unknown' }` instead of being treated as read-only. | `tool-safety.ts:155-203` (`deriveToolSafetyPolicy` cases `history` / `diff` / `recovery` return `deny-protected-path` with `reason: 'read-only-context'`); tool-safety tests pin the classify + guard behavior; `tools.test` asserts set equality with `TOOL_DEFINITIONS` so a tool added there fails tests until classified. |
-| H-V2 | The verification of "Capture every mutable value before the confirmation opens" in Restore relies on the source being captured by `buildRequest({ ...source })` once and not mutated again. The `useHistoryRestore.test.ts > 'captures revision A even if the mutable viewer source changes before confirmation resolves'` test pins this. | `useHistoryRestore.test.ts` (existing test, verified against current `main`). |
+No Closure Blocker in this table is an Accepted Risk. Owner Approval
+remains pending; no Final Production Baseline has been captured.
