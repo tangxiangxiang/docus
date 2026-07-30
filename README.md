@@ -58,6 +58,61 @@ Final production code baseline:
 These are separate features that require new Spec and Owner Approval
 before any implementation.
 
+### Vault Git History
+
+Documentation reconstruction complete.
+Closure work is in progress.
+The feature is **not** yet in maintenance mode.
+
+Documentation Review Baseline (the commit on `main` at the time
+the documentation chain was assembled):
+
+`00b17359d151bbdbe56115ed992700ecbb5e1ca1`
+
+This is **not** the Final Production Code Baseline — the final
+baseline is recorded only after the Closure Gate in
+`docs/vault-git-history-final-closure.md` §6 is satisfied.
+
+| Document | Link |
+|----------|------|
+| Spec | [`docs/superpowers/specs/2026-07-30-vault-git-history-design.md`](docs/superpowers/specs/2026-07-30-vault-git-history-design.md) |
+| Plan | [`docs/superpowers/plans/2026-07-30-vault-git-history-implementation-plan.md`](docs/superpowers/plans/2026-07-30-vault-git-history-implementation-plan.md) |
+| Implementation Record | [`docs/vault-git-history-implementation-record.md`](docs/vault-git-history-implementation-record.md) |
+| Draft Closure | [`docs/vault-git-history-final-closure.md`](docs/vault-git-history-final-closure.md) |
+
+The feature currently exposes, on `main`:
+
+- `GET /api/history/{capability,status,log,file,diff}`,
+  `POST /api/history/{commits,drop,restore,repair-index,
+  repair-index/discard,content-hashes}`,
+  `GET /api/history/repair-status`.
+- Client composables: `useHistory`, `useHistoryCommit`,
+  `useHistoryTimeline`, `useHistorySnapshots`,
+  `useHistoryComparisons`, `useHistoryRestore`,
+  `useHistoryWithdraw`, plus the per-vault
+  `pathMutationLock`.
+- Vue components: `HistoryPanel`, `HistoryChangesPanel`,
+  `HistorySnapshotPane`, `HistoryComparisonPane`, the three
+  `Timeline*` rows, and `SideBySideDiff`.
+
+**P1 closure blockers currently open** (see the Spec §25 and the
+Draft Closure §4 for full descriptions):
+
+- `H-C1` — `/status` response contract treats genuine 5xx as
+  graceful-unavailable.
+- `H-C2` — Commit success vs post-success refresh failure
+  classification.
+- `H-C3` — Real-Index synchronization race with external
+  `git add`.
+- `H-C4` — Withdraw lacks a Docus commit ownership check.
+- `H-C5` — Restore pre-check lives outside `withRepoMutation`
+  and the returned `raw` is the pre-restore bytes.
+- `H-C8` — Three-platform CI has not been re-run for this
+  reconstruction.
+
+The Draft Closure is the **single source of truth** for what
+must be verified before the feature may be declared CLOSED.
+
 ## Quick start
 
 ```bash
