@@ -25,16 +25,21 @@ NOT production code baselines.
 infrastructure module `src/lib/tags.ts` and wired it into TagPanel
 and FileTree.
 
-**Files changed (6 files, +1005/-21):**
+**Files changed (6 files, additions 1026, deletions 21):**
 
-| File | Change |
-|------|--------|
-| `src/lib/tags.ts` | +358 lines — new module |
-| `src/lib/__tests__/tags.test.ts` | +471 lines — 57 new tests |
-| `src/components/vault/FileTree.vue` | +46 lines — additive `#tag` branch |
-| `src/components/vault/TagPanel.vue` | +80/-21 lines — TagIndex integration |
-| `src/components/vault/__tests__/FileTree.test.ts` | +54 lines — 3 new tests |
-| `src/components/vault/__tests__/TagPanel.test.ts` | +17 lines — 1 new test |
+| File | Additions | Deletions | Notes |
+|------|-----------|-----------|-------|
+| `src/lib/tags.ts` | 358 | 0 | new module |
+| `src/lib/__tests__/tags.test.ts` | 471 | 0 | 57 new test cases |
+| `src/components/vault/FileTree.vue` | 46 | 0 | additive `#tag` branch |
+| `src/components/vault/TagPanel.vue` | 80 | 21 | TagIndex integration |
+| `src/components/vault/__tests__/FileTree.test.ts` | 54 | 0 | 3 new test cases |
+| `src/components/vault/__tests__/TagPanel.test.ts` | 17 | 0 | 1 new test case |
+
+> Note: the original Implementation Record reported "+1005" — that was
+> the GitHub compare "changes" column (additions + deletions). The
+> actual additions total is 1026, deletions 21. This correction matters
+> because per-file row totals are additions, not changes.
 
 **Key implementations:**
 - `normalizeTag`, `parseTagQuery`, `matchesTagQuery`, `buildTagIndex`,
@@ -62,16 +67,16 @@ and FileTree.
 **Summary:** Phase 1.1 review fixes for index consistency, file-tree
 semantics, and tag-panel filtering.
 
-**Files changed (6 files, +611/-196):**
+**Files changed (6 files, additions 611, deletions 196):**
 
-| File | Change |
-|------|--------|
-| `src/lib/tags.ts` | +198/-160 lines — API redesign, textTokens, displayName fix |
-| `src/lib/__tests__/tags.test.ts` | +355/-116 lines — 19 new test cases, invariant helper |
-| `src/components/vault/FileTree.vue` | +120/-74 lines — unified query path |
-| `src/components/vault/TagPanel.vue` | +40/-21 lines — filter and active-state fixes |
-| `src/components/vault/__tests__/FileTree.test.ts` | +45 lines — 3 new tests |
-| `src/components/vault/__tests__/TagPanel.test.ts` | +49 lines — 3 new tests |
+| File | Additions | Deletions | Notes |
+|------|-----------|-----------|-------|
+| `src/lib/tags.ts` | 198 | 160 | API redesign, textTokens, displayName fix |
+| `src/lib/__tests__/tags.test.ts` | 355 | 116 | 19 new test cases, invariant helper |
+| `src/components/vault/FileTree.vue` | 120 | 74 | unified query path |
+| `src/components/vault/TagPanel.vue` | 40 | 21 | filter and active-state fixes |
+| `src/components/vault/__tests__/FileTree.test.ts` | 45 | 0 | 3 new test cases |
+| `src/components/vault/__tests__/TagPanel.test.ts` | 49 | 0 | 3 new test cases |
 
 **Key fixes (Phase 1.1 closures):**
 
@@ -114,7 +119,7 @@ index logic. No Vue, no DOM, no fetch.
 **Cases:** 76 (57 from Phase 1 + 19 from Phase 1.1)
 
 **Coverage:**
-- `normalizeTag` (10 cases)
+- `normalizeTag` (9 cases)
 - `normalizeTagDisplay` (5 cases)
 - `parseTagQuery` (17 cases)
 - `matchesTagQuery` (17 cases)
@@ -122,6 +127,11 @@ index logic. No Vue, no DOM, no fetch.
 - `updateDocumentTags` (14 cases)
 - `sortTagsByCountDescThenName` (3 cases)
 - `TagQuery` contract (2 cases)
+- **Total: 76**
+
+> The original Implementation Record reported `normalizeTag` as 10 cases
+> (sum 77). The actual count in the file is 9, summing to 76. This
+> matches the test runner's reported 76 cases in `tags.test.ts`.
 
 **Key test infrastructure:** `expectTagIndexConsistent` helper validates
 the three-way invariant on every index-producing test.
@@ -250,6 +260,10 @@ refactor:
 - **AI tag suggestions** — LLM-driven tag proposals
 
 The `useTagFilter` composable (`src/composables/vault/useTagFilter.ts`)
-remains in the codebase as dead code — it has no callers and is replaced
-by the shared `TagQuery.includeAll` model. Removal is deferred to a
-future cleanup pass.
+remains in the codebase as un-referenced historical code — it has no
+production callers (only its own test file imports it). It implements
+multi-select OR semantics plus auto-switch to the Files panel, which
+this refactor does **not** provide an equivalent for: `TagQuery.includeAll`
+is an AND query field used by FileTree's shared matcher, not the
+OR-driven panel→tree state machine `useTagFilter` modeled. Removal
+(or proper integration) is deferred to a future Phase 2 change.

@@ -114,9 +114,16 @@ All findings from the Phase 1 review (`7bd502e`) were closed by Phase
 The closed system preserves the following invariants. Any future change
 that weakens any of them must reopen the closure.
 
-1. **Unique canonical identity.** `normalizeTag(raw)` is the sole
-   definition of tag identity. Two strings that normalize to the same
-   value are the same tag.
+1. **Single canonical identity for the client query surface.**
+   `normalizeTag(raw)` is the **shared** definition of tag identity for
+   the client query surface (TagPanel list/results and FileTree search).
+   Two strings that normalize to the same value are the same tag for
+   matching and indexing in that surface.
+   This is **not** the system-wide tag identity: the SQLite tag-
+   persistence layer on the server does not currently run through
+   `normalizeTag` (it does its own trim + lowercase, without stripping
+   a leading `#`). Persistence-layer normalization is explicitly out of
+   scope for this closure — see §7.
 2. **Display name rules.** `normalizeTagDisplay(raw)` strips one leading
    `#` and preserves casing. The UI `#` glyph is separate.
 3. **FileTree multi-text-token AND.** Every text token must match
@@ -176,33 +183,73 @@ non-blocking for closure:
    Phase 4 OR-mode toggle. It is always `[]` in Phase 1. No user-facing
    behavior depends on it.
 
-2. **Tag normalization is client-side only.**
-   The shared `normalizeTag` is used by FileTree, TagPanel, and the
-   query model — all client-side. The SQLite persistence layer and
-   server-side tag handling do not normalize tags through this module.
-   This is acceptable for Phase 1 because server-side tag operations
-   (rename/merge/remove) are NOT STARTED.
+2. **Tag identity is unified only on the client query surface.**
+   `normalizeTag` is the shared identity for TagPanel and FileTree —
+   both client-side. The SQLite persistence layer does not currently
+   route tag values through `normalizeTag`; server-side tag handling
+   applies its own trim + lowercase, without stripping a leading `#`.
+   This is acceptable for Phase 1 because the Query & Index Refactor
+   intentionally scopes itself to the client query surface and because
+   server-side tag operations (rename / merge / remove) are NOT
+   STARTED. A future server-side refactor that normalizes tags on the
+   SQLite side is out of scope here.
 
-3. **Rename / Merge / Remove are NOT STARTED.**
+3. **`VaultView` tag deselect uses raw string equality, not
+   `normalizeTag`.**
+   `VaultView.vue` toggles selection with `selectedTag === $event ? null
+   : $event`. Two tags that normalize to the same identity but differ
+   in casing (e.g. `Math` vs `math`) are not recognized as equal by this
+   raw compare. The visible TagPanel row's active state does correctly
+   key off `normalizeTag` (so the row lights up), but the toggle itself
+   uses raw equality. This is recorded here, not as a violation of the
+   closed invariant (the TagPanel inner state is normalized correctly),
+   but as a documented boundary of where the refactor's unification
+   reaches. Closing this gap requires a small follow-up change to
+   `VaultView` and is intentionally out of scope for this closure.
+
+4. **Rename / Merge / Remove are NOT STARTED.**
    The current system provides no persistent tag-management operations.
    Users cannot rename a tag across all documents, merge two tags into
    one, or remove a tag site-wide. This is explicitly out of scope for
    the Query & Index Refactor.
 
-4. **No server-side transactions or Undo.**
+5. **No server-side transactions or Undo.**
    Tag mutations are not atomic across documents, and there is no Undo
    mechanism. These are Phase 2 concerns.
 
-5. **`useTagFilter` composable is dead code.**
-   `src/composables/vault/useTagFilter.ts` has no callers and is
-   superseded by the shared `TagQuery.includeAll` model. It remains in
-   the codebase but is not imported by any active component.
+6. **`useTagFilter` composable is un-referenced historical code.**
+   `src/composables/vault/useTagFilter.ts` has no production callers
+   (it is imported only by its own test file) and is therefore not
+   active behavior. It implements **multi-select OR semantics** plus an
+   auto-switch to the Files panel — UI surface and state shape that
+   this refactor does **not** provide an equivalent for. It is
+   **incorrect** to describe it as "superseded by `TagQuery.includeAll`":
+   `includeAll` is an AND query field used by the FileTree's shared
+   matcher, not the OR-driven panel→tree state machine that
+   `useTagFilter` modeled. The composable remains in the codebase as
+   unused; a future Phase 2 may revisit it or delete it.
 
-6. **`MINISEARCH_OPTIONS`-based tag search is separate.**
-   `src/lib/search.ts` maintains its own MiniSearch index for the
-   command palette (full-text body search). It is not tag-aware. This
-   is by design — the palette is a "go-to-anything" tool, not a tag
-   browser.
+7. **Command Palette has its own tag handling — but does not share
+   the unified identity.**
+   `src/lib/search.ts` builds its own MiniSearch index over
+   `{ title, path, tags, summary }` (with `tags` boosted at 2 and a
+   `'tag'` match category). So the palette **does** index and return
+   hits on the `tags` field — it is not "not tag-aware". What it does
+   **not** share with the Query & Index Refactor is:
+     - it does not apply `normalizeTag` to indexed tag values (raw,
+       case-preserved strings joined into a single haystack), and
+     - it does not implement the `parseTagQuery` `#tag` / `-#tag`
+       structured-query semantics; users type free text only.
+   This is recorded as a documented boundary: future work could route
+   the palette through `normalizeTag` and add a `#`-prefixed structured
+   query syntax; both are out of scope for this closure.
+
+8. **TagPanel results region lacks a top-level `aria-label`.**
+   The `<div class="results" aria-live="polite">` announces via
+   `aria-live` but does not carry its own `aria-label`. This is a
+   pre-existing gap; the refactor did not add or remove it. Closing
+   the gap is a follow-up maintenance change, not a Phase 1.1
+   regression.
 
 ---
 

@@ -95,7 +95,9 @@ src/
     vault/               useVaultLayout, useEditorTabs, useTagFilter,
                          useAiHistory, useCurrentNote — the state and
                          side-effects split out of VaultView.vue and
-                         AiPanel.vue
+                         AiPanel.vue. (useTagFilter is currently
+                         un-referenced; see
+                         docs/tags-query-index-refactor-final-closure.md §7.)
   lib/
     api.ts               Typed fetch wrappers for /api/posts, /api/tree, …
     ai-api.ts            Typed fetch wrappers for /api/ai/*, including
@@ -340,10 +342,10 @@ Manual smoke testing remains useful for browser-specific editor behavior.
   pattern when they hold cross-component state (toasts, confirm
   queue, prompt queue, theme, AI history), and the pure-function-
   module pattern when they are stateless rules (`archiveProtocol.ts`).
-- **The vault composables** (`useVaultLayout`, `useEditorTabs`,
-  `useTagFilter`) are per-component factories. Cross-composable
-  dependencies are taken as constructor arguments — `useTagFilter({ activePanel })`,
-  `useEditorTabs({ selectPanel })` — so the coupling is typed and
+- **The vault composables** (`useVaultLayout`, `useEditorTabs`)
+  are per-component factories. Cross-composable
+  dependencies are taken as constructor arguments — `useEditorTabs({ selectPanel })`
+  — so the coupling is typed and
   intention-revealing.
 - **The AI service layer** in `server/ai/` is a flat module of
   pure functions: each function takes the open `Database` as its

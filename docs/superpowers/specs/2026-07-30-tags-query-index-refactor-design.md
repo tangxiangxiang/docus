@@ -8,17 +8,23 @@
 > the repository's required spec → plan → implementation → closure chain.
 > It does not claim that this exact document existed before implementation.
 
-The predecessor design is [2026-06-02-vault-tag-filter-design.md](2026-06-02-vault-tag-filter-design.md),
-which defined in-vault single-tag filtering via TagPanel clicks. This
-specification supersedes it as the authoritative design record for the
-Tags Query & Index Refactor and its Phase 1.1 review fixes.
+The predecessor document [2026-06-02-vault-tag-filter-design.md](2026-06-02-vault-tag-filter-design.md)
+described an earlier design in which clicking a tag in TagPanel would
+filter the FileTree (lifting `activeTagFilter` into `VaultView`). That
+proposed interaction was **not** the implementation that landed. The
+current implementation keeps `selectedTag` purely in `VaultView` for the
+in-panel results section; the FileTree is **not** driven by tag clicks.
+This specification records the Query & Index Refactor that was actually
+shipped. The predecessor design is preserved as historical reference but
+must NOT be read as the current contract — its interaction design has
+been superseded.
 
 ---
 
 ## 1. Problem
 
-The vault had three independent, drifting implementations of tag-related
-logic:
+The vault had two independent, drifting implementations of tag-related
+logic in the surfaces that the refactor covers:
 
 1. **TagPanel** hand-rolled a `tagMap` computed that counted raw tag
    strings without normalization — `Java`, `JAVA`, and ` java ` were
@@ -26,16 +32,19 @@ logic:
 2. **FileTree** had its own legacy substring-based filter that treated
    `#java` as a literal text search of paths and titles, returning zero
    matches for tag-shaped queries.
-3. **VaultView** filtered posts with a naive `p.tags.includes(t)` that
-   was case-sensitive and unaware of leading `#`.
 
-These three consumers could — and did — drift apart in tag semantics.
-There was no shared tag identity, query model, or index.
+These two query surfaces (the panel list and the tree search) used
+different tag semantics. The refactor unifies them on a shared module
+so the two query surfaces cannot drift apart again. It does **not**
+change the TagPanel ↔ FileTree interaction: the panel renders its own
+selected-tag results region, and the tree is driven by its own search
+input — the two are independent surfaces sharing a tag model.
 
 ## 2. Goal
 
-Create a single, pure, shared module (`src/lib/tags.ts`) that every tag
-consumer draws from, so the three surfaces can never drift apart again:
+Create a single, pure, shared module (`src/lib/tags.ts`) that every
+in-scope tag consumer draws from, so the covered surfaces cannot drift
+apart again:
 
 - **One definition** of tag identity (`normalizeTag`).
 - **One query parser** (`parseTagQuery`) that classifies tokens into
@@ -44,6 +53,12 @@ consumer draws from, so the three surfaces can never drift apart again:
   query to a document.
 - **One index** (`buildTagIndex` / `updateDocumentTags`) that maintains
   forward, reverse, and count consistency with a verifiable invariant.
+
+The refactor's scope is the **client query surface**: the TagPanel
+list/results and the FileTree search input. Out of client scope
+(see §4): the SQLite tag-persistence layer (no shared `normalizeTag`
+on the server side), the Command Palette (a separate MiniSearch index),
+and any persistent tag-management operations.
 
 ## 3. Scope
 
@@ -126,7 +141,10 @@ interface TagQuery {
 
 - `textTokens` is always the lowercased whitespace-split of `text`.
 - `includeAny` is always `[]` in Phase 1 — no user-visible OR syntax.
-- Repeated tokens are deduplicated.
+- Repeated **include and exclude tag tokens** are deduplicated. Plain
+  text tokens preserve their input occurrences — duplicate text tokens
+  do not collapse, but the AND semantics make their effect
+  indistinguishable in practice.
 - Mixed case `#Tag` → normalized to lowercase for matching.
 
 ### Match Semantics (`matchesTagQuery(doc, query): boolean`)
@@ -222,9 +240,9 @@ construction:
 | Component / Module | Responsibility |
 |-------------------|---------------|
 | `src/lib/tags.ts` | All tag identity, query, match, and index logic. Pure module — no Vue, no DOM, no fetch. |
-| `TagPanel.vue` | Renders the tag list and results from `TagIndex`. Filters by tag name. Emits `select`. |
-| `FileTree.vue` | Filters the tree via `parseTagQuery` + `matchesTagQuery`. No separate text-only branch. |
-| `VaultView.vue` | Owns `activeTagFilter` ref and wires `onTagSelect` to TagPanel and FileTree. |
+| `TagPanel.vue` | Renders the tag list from `TagIndex`. Filters the list by tag name. Renders its own selected-tag results region (note list) from the same `TagIndex`. Emits `select`. |
+| `FileTree.vue` | Filters the tree via `parseTagQuery` + `matchesTagQuery`. Drives its own search input independently — does NOT respond to TagPanel's selection. |
+| `VaultView.vue` | Owns the `selectedTag` ref passed to TagPanel. Does NOT forward TagPanel selection to FileTree, and does NOT filter the FileTree by tag. The original `2026-06-02` design that lifted `activeTagFilter` into VaultView and used it to drive FileTree was not the implementation that shipped. |
 
 ## 14. Compatibility Requirements
 
@@ -235,11 +253,26 @@ construction:
 
 ## 15. Accessibility Requirements
 
+The following accessibility properties are implemented in the current
+codebase and the spec must match the code:
+
 - TagPanel tag list: `role="listbox"` with `role="option"` entries.
 - `aria-selected` on the active tag row.
-- `aria-label` on the tag filter input, tag list, and result region.
+- `aria-label` on the tag filter input, the tag list (`tags.list_label`),
+  and the panel root (`tags.panel_label`).
 - FileTree search: `aria-label` on the search input.
 - `aria-live="polite"` on the TagPanel results region.
+
+### Known non-blocking accessibility gap
+
+The TagPanel results region (`<div class="results" aria-live="polite">`)
+is announced on change by `aria-live="polite"` but does **not** carry an
+`aria-label` or `aria-labelledby`. The selected tag chip inside the
+results header carries the visible label, but a screen reader that
+exposes the live region will hear it without a leading label. This
+gap is recorded for a future maintenance change; it is not a regression
+introduced by the Query & Index Refactor (the refactor did not add or
+remove this attribute — it was already absent in the pre-Phase-1 code).
 
 ## 16. Performance Constraints
 
@@ -265,18 +298,20 @@ construction:
 | Chinese tag names | Fully supported — no ASCII-only assumption |
 | Slashes in tag names (`a/b/c`) | Preserved — treated as one atomic tag |
 | Empty posts list | `buildTagIndex([])` → empty index (no crash) |
-| Unknown path in `updateDocumentTags` | Added as a new entry |
+| Unknown path + non-empty tags in `updateDocumentTags` | Added as a new entry (`documentTags`, `tagDocuments`, and `tags` all updated) |
+| Unknown path + empty tags (`[]`) in `updateDocumentTags` | No-op — returns the same index reference. `documentTags` is **not** updated with an empty set, because the function's no-op short-circuit runs before any write. |
 
 ## 18. Acceptance Criteria
 
 1. `normalizeTag` and `normalizeTagDisplay` behave as specified in §6–7.
 2. `parseTagQuery` correctly classifies `#tag`, `-#tag`, bare `#`, and
-   text tokens.
+   text tokens; deduplicates `includeAll` and `exclude` only.
 3. `matchesTagQuery` applies AND for text tokens and includeAll, NOT
    for exclude, and exclude overrides includeAll.
 4. Text tokens search only `path` + `title`, never `summary`.
 5. `buildTagIndex` produces a consistent three-way index.
-6. `updateDocumentTags` preserves the invariant for all input shapes.
+6. `updateDocumentTags` preserves the invariant for all input shapes,
+   including the unknown-path + `[]` no-op short-circuit.
 7. FileTree uses the unified query path for every search (no dual
    branch).
 8. TagPanel filter normalizes input and uses case-insensitive selected
@@ -289,8 +324,9 @@ construction:
 - `npm run typecheck` — clean (client + server).
 - `npm test -- --run` — all tests pass.
 - `npm run build` — succeeds.
-- Manual smoke: tag click filters FileTree, `#tag` in FileTree search
-  finds tagged documents, TagPanel filter handles `#`-prefixed input.
+- Manual smoke: TagPanel renders tag list and selected-tag results
+  region; `#tag` in FileTree search finds tagged documents; TagPanel
+  filter handles `#`-prefixed input.
 
 ## 20. Future Work Boundary
 
