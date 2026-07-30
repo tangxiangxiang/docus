@@ -54,7 +54,7 @@ Documentation Correction Commit — Round 4:
 
 Documentation Correction Commit — Round 5:
 
-`PENDING — record the actual full SHA in a bookkeeping commit`
+`234bbdee10734b86d5f35ef7557f073dfc376327`
 
 ## 2. Current Status
 
