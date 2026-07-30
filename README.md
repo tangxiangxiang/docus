@@ -25,7 +25,9 @@ The vault is split into three zones, and docus treats them differently:
 
 Notes flow one way: Literature feeds Inbox, where AI helps you think; what earns its place then moves to Archive, where AI helps you connect the dots. docus is built around that flow.
 
-## Edit Feature Status
+## Feature Status
+
+### Edit Feature
 
 The Edit feature development program is complete and is now in maintenance mode.
 
@@ -35,6 +37,26 @@ Final production code baseline:
 
 See [`docs/edit-feature-final-closure.md`](docs/edit-feature-final-closure.md)
 for the full closure record.
+
+### Tags Query & Index Refactor
+
+The Tags Query & Index Refactor (Phase 1 + Phase 1.1 review fixes) is
+closed and in maintenance mode.
+
+Final production code baseline:
+
+`8a5b452b9e48c97d52065c30204ff57b898d4a1a`
+
+| Document | Link |
+|----------|------|
+| Spec | [`docs/superpowers/specs/2026-07-30-tags-query-index-refactor-design.md`](docs/superpowers/specs/2026-07-30-tags-query-index-refactor-design.md) |
+| Plan | [`docs/superpowers/plans/2026-07-30-tags-query-index-refactor-implementation-plan.md`](docs/superpowers/plans/2026-07-30-tags-query-index-refactor-implementation-plan.md) |
+| Implementation Record | [`docs/tags-query-index-refactor-implementation-record.md`](docs/tags-query-index-refactor-implementation-record.md) |
+| Closure | [`docs/tags-query-index-refactor-final-closure.md`](docs/tags-query-index-refactor-final-closure.md) |
+
+**Tag Management (Rename / Merge / Remove) is NOT STARTED.**
+These are separate features that require new Spec and Owner Approval
+before any implementation.
 
 ## Quick start
 
@@ -400,10 +422,14 @@ The detailed design and plan documents for each feature live under
 [docs/superpowers/](docs/superpowers/):
 
 - [specs/](docs/superpowers/specs/) — design intent before code
+  - [`2026-06-02-vault-tag-filter-design.md`](docs/superpowers/specs/2026-06-02-vault-tag-filter-design.md) — in-vault single-tag FileTree filter
   - [`2026-06-06-ai-panel-design.md`](docs/superpowers/specs/2026-06-06-ai-panel-design.md) — right-rail AI panel skeleton
   - [`2026-06-07-sqlite-ai-history.md`](docs/superpowers/specs/2026-06-07-sqlite-ai-history.md) — SQLite-backed multi-session chat history
   - [`2026-06-07-llm-integration.md`](docs/superpowers/specs/2026-06-07-llm-integration.md) — server-proxied Anthropic streaming, note context, no-key banner
+  - [`2026-07-30-tags-query-index-refactor-design.md`](docs/superpowers/specs/2026-07-30-tags-query-index-refactor-design.md) — unified tag identity, query, index; retrospective reconstruction
 - [plans/](docs/superpowers/plans/) — step-by-step implementation
   plans, often with the commit sequence already chosen
+  - [`2026-06-02-vault-tag-filter.md`](docs/superpowers/plans/2026-06-02-vault-tag-filter.md)
   - [`2026-06-07-sqlite-ai-history.md`](docs/superpowers/plans/2026-06-07-sqlite-ai-history.md)
   - [`2026-06-07-llm-integration.md`](docs/superpowers/plans/2026-06-07-llm-integration.md)
+  - [`2026-07-30-tags-query-index-refactor-implementation-plan.md`](docs/superpowers/plans/2026-07-30-tags-query-index-refactor-implementation-plan.md) — retrospective reconstruction
