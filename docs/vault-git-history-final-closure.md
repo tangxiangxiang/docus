@@ -56,6 +56,14 @@ Documentation Correction Commit — Round 5:
 
 `234bbdee10734b86d5f35ef7557f073dfc376327`
 
+Documentation Bookkeeping Commit — Round 5:
+
+`856f310951d95c0c97fe7883b5323e88e6b60077`
+
+Documentation Correction Commit — Round 6:
+
+`d054b3c1c183694eaaa4aa80b21a40a3cd6996d7`
+
 ## 2. Current Status
 
 ```text
@@ -343,8 +351,8 @@ For each command in the verification list, mark the status.
 | `npm test -- --run` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Last local-run evidence is from the Tags closure (`tags-query-index-refactor-final-closure.md`); not re-run for this History reconstruction. |
 | `npm run typecheck` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Same. |
 | `npm run build` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Same. |
-| `git diff --check` | **PASS on documentation commits** | `ff2f992`, `adfc4d7`, `7b1bb2c`, `de85039`, `2d5ce3f`, `8d6f71a`, `234bbde`, and `856f310`. This documentation-only verification does not substitute for the Final Production Baseline `git diff --check`, tests, build, typecheck, or CI required by the Closure Gate. |
-| Code-fence-aware Markdown relative-link check | **PASS on Round 5 documentation** | README, Spec, Plan, Implementation Record, and Draft Closure were checked after Round 5. This does not substitute for Final Production Baseline verification. |
+| `git diff --check` | **PASS on documentation commits** | `ff2f992`, `adfc4d7`, `7b1bb2c`, `de85039`, `2d5ce3f`, `8d6f71a`, `234bbde`, `856f310`, and `d054b3c`. This documentation-only verification does not substitute for the Final Production Baseline `git diff --check`, tests, build, typecheck, or CI required by the Closure Gate. |
+| Code-fence-aware Markdown relative-link check | **PASS on Round 5 and Round 6 documentation** | README, Spec, Plan, Implementation Record, and Draft Closure were checked after each round. This does not substitute for Final Production Baseline verification. |
 
 ### 7.2 Cross-platform CI
 
