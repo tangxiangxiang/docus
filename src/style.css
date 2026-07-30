@@ -1453,6 +1453,22 @@ main.container {
 .vault .tag-panel .tag-filter:focus-within .tag-filter-icon {
   color: var(--vs-accent);
 }
+/* Narrow-width hardening for the TagPanel search row. The shared
+   rule above sets `flex-wrap: wrap` so FileTree's tag-filter chips
+   can spill to a second line — but TagPanel has no chips, only
+   icon + input + clear-x + count, so wrapping would either get
+   clipped by the fixed 36px row height or push the count onto a
+   new line and break the layout. `flex-wrap: nowrap` + the input's
+   `flex: 1 1 0` override (defined alongside the shared input rule)
+   let the input shrink to whatever space remains while keeping
+   the clear-x and the visible/total count pinned at their natural
+   size. `min-width: 0` lets the row itself shrink below its
+   intrinsic content width inside its flex-column parent (.tag-panel)
+   when the sidebar is squeezed below 150px. */
+.vault .tag-panel .tag-filter {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
 .vault .file-tree header .search-input,
 .vault .tag-panel .tag-filter-input {
   /* `flex: 1 1 120px` keeps the input filling the row when there
@@ -1474,6 +1490,14 @@ main.container {
   height: 100%;
   line-height: normal;
   box-sizing: border-box;
+}
+/* TagPanel search input prefers a 0px flex-basis so the input can
+   shrink all the way down on narrow sidebars (≈150px) without
+   squeezing out the clear-x button or the visible/total count.
+   FileTree keeps the 120px basis so the chips still have a useful
+   minimum to coexist with. */
+.vault .tag-panel .tag-filter-input {
+  flex: 1 1 0;
 }
 .vault .file-tree header .search-input::placeholder,
 .vault .tag-panel .tag-filter-input::placeholder {
@@ -1997,17 +2021,28 @@ main.container {
 }
 
 /* Tag rows. Same chrome as FileTree .row-line: same height, same
-   row padding (left = 6px to mirror row-line at depth=0), same gap,
-   same color tokens, same hover/active treatment — only the
+   gap, same color tokens, same hover/active treatment — only the
    count slot differs (`.tag-entry` uses justify-content: space-between
-   to push the count to the far right). */
+   to push the count to the far right).
+
+   `padding-left: 26px` makes the tag label start at the same x
+   position as a FileTree first-level file/folder node's name.
+   FileTree depth=0 row-line is:
+     6px padding + 14px chevron + 5px gap + 16px icon + 5px gap
+     = 46px to text-start.
+   `.tag-entry` is:
+     26px padding + 16px hash-icon + 5px gap = 47px to text-start.
+   The 1px optical difference (47 vs 46) is fine — the hash glyph
+   is narrower than the file-icon's hollow square so visually the
+   tag label reads flush with the tree label. Don't try to "fix" it
+   with margin, the padding is the structural alignment. */
 .vault .tag-panel .tag-entry {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 5px;
   width: 100%;
-  padding: 3px 8px 3px 6px;
+  padding: 3px 8px 3px 26px;
   min-height: 30px;
   font-size: 0.84rem;
   line-height: 1.35;
@@ -2104,12 +2139,15 @@ main.container {
   min-height: 0;
   max-height: none;
 }
-/* Header aligns with FileTree's row rhythm: same 6px left/right
-   insets as .row-line so the active-tag title starts at the same
-   x position as a top-level file-tree folder row. Sticky so the
-   title stays visible while the notes list scrolls underneath.
-   Two-line column layout (title + count) keeps the count from
-   crowding the title on narrow sidebars. */
+/* Header aligns with FileTree's row rhythm: `padding-left: 26px`
+   makes the active-tag title (which renders `#` + tag-name via
+   `.results-title`'s 16px hash-icon + 4px gap) start at the same
+   x position as a FileTree first-level node name. The count line
+   below the title inherits the same 26px inset so the two lines
+   share the same reading edge. Sticky so the title stays visible
+   while the notes list scrolls underneath. Two-line column layout
+   (title + count) keeps the count from crowding the title on
+   narrow sidebars. */
 .vault .tag-panel .results-header {
   position: sticky;
   top: 0;
@@ -2121,7 +2159,7 @@ main.container {
   justify-content: center;
   gap: 2px;
   min-height: 52px;
-  padding: 8px 14px;
+  padding: 8px 14px 8px 26px;
   flex: 0 0 auto;
   background: transparent;
   color: var(--vs-text-2);
@@ -2175,7 +2213,15 @@ main.container {
    tag-panel's results list bind to `.document-row`, so any future
    tweak to the document surface happens in one place. Hover and
    active use the same `--vs-hover-bg` / `--vs-active-bg` as the
-   file-tree row-line, so the two sidebars read as one system. */
+   file-tree row-line, so the two sidebars read as one system.
+
+   `padding-left: 6px` aligns the row's text-start x position with
+   FileTree depth=0 file rows: 6px padding + 14px chevron + 5px
+   gap + 16px icon + 5px gap = 46px to text-start, matching
+   `.row-line` at depth 0. The history rows override padding
+   completely (`.history-panel .history-document-row { padding: 5px
+   7px }`) so this base padding only affects the tag-panel's
+   `.result-entry` row, which is exactly what we want. */
 .vault .document-row,
 .vault .tag-panel .result-entry {
   display: flex;
@@ -2185,7 +2231,7 @@ main.container {
   width: 100%;
   min-height: 30px;
   box-sizing: border-box;
-  padding: 3px 8px;
+  padding: 3px 8px 3px 6px;
   background: transparent;
   border: 0;
   color: var(--vs-text-1);
@@ -2593,9 +2639,6 @@ main.container {
 /* Label sits in column 1; kbd sits in column 2 (right-aligned by
    grid auto-flow + `justify-self`). No special alignment needed on
    the label cell beyond default. */
-.empty-state-hint .hint-label {
-  /* Default left-align. */
-}
 .empty-state-hint .hint-kbd {
   justify-self: end;
 }
