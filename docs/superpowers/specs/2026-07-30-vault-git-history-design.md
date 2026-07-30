@@ -861,7 +861,8 @@ useHistoryWithdraw.withdraw(sha):
    7.    rev-parse --verify HEAD  → expectedOld
    8.    assert HEAD === sha                              ← 409 'only the latest version can be withdrawn'
    9.    show --no-renames --name-only <sha>             → filesChanged
-   10.   filter filesChanged to managed Markdown paths
+   10.   filter filesChanged by .endsWith('.md') (does NOT enforce
+         the full Managed History Path contract; see H-C4)
    11.   resolve parent: rev-parse <sha>^                → parent | null
    12.   assertRepositoryIdle (again, immediately before moving HEAD)
    13.   CAS move HEAD:
@@ -890,8 +891,11 @@ Hard rules:
   `git reset --mixed` is used.
 - **After HEAD moves successfully, Docus attempts scoped
   Real-Index synchronization for affected Markdown paths.**
-  The synchronization covers only the managed Markdown paths
-  in `filesChanged`; it preserves every unrelated staged entry.
+  The synchronization covers only the `.md`-suffix paths
+  in `filesChanged` (the current implementation does not
+  enforce the full Managed History Path contract during
+  Withdraw — see H-C4); it preserves every unrelated staged
+  entry.
   Failure is recorded as an Index Repair Transaction
   (`recordIndexRepair`) and reported as a degraded success via
   `indexRefreshFailed` — never as a withdrawal failure.
@@ -1277,7 +1281,7 @@ maintainers need to be aware of.
 |----|------|----------|-----------------|
 | H-K1 | `getStatus` resolves every non-2xx response as a body-shaped success because `allowNonOkJson: true` is passed unconditionally. This is the right behavior for the `503 { available: false }` graceful-unavailable signal but it also swallows genuine 500 responses without an error path. | P1 | **Yes** (H-C1) |
 | H-K2 | Commit / Withdraw success-state and refresh-error separation depends on every downstream `Promise.all([refreshStatus, refreshLog, …])` not being treated as failure. A network error between `fetch 201` and the refresh round-trip could still surface ambiguously in the toast flavor; the per-workflow tests assert the variants but a tighter contract for "commit succeeded, refresh failed" is not formally written down. | P1 | **Yes** (H-C2) |
-| H-K3 | The current retrying Real-Index synchronization can overwrite or clear newly staged target-path entries created by an external Git operation during the reset/verify retry window. Working Tree bytes may remain intact, but the user's staged intent can be lost. This is a data-safety and intent-preservation problem and remains a P1 Closure Blocker. The closure task History-C3 must move the sync to a Temporary Index seeded from the current Real Index and renamed into place under hand-taken `.git/index.lock`, matching the existing Repair flow's lock-and-rename pattern. | P1 | **Yes** (H-C3) |
+| H-K3 | Routine Real-Index synchronization can overwrite target-path staged intent in two cases: (1) the target path was already staged before Create Version or Withdraw began (deterministic — no concurrency required; the user's `git add -p` entry is replaced when `syncIndexPaths` resets to the new HEAD), and (2) an external `git add <target-path>` lands during the current reset/verify retry window and is cleared by the next retry. Working Tree bytes may remain intact in both cases, but the user's exact staged state can be lost. This is a data-safety and intent-preservation problem and remains a P1 Closure Blocker. The closure task History-C3 must add pre-sync fingerprint CAS (skip paths whose pre-commit Index entry differed from old HEAD) AND move the sync to a Temporary Index seeded from the current Real Index and renamed into place under hand-taken `.git/index.lock`. | P1 | **Yes** (H-C3) |
 | H-K4 | `dropHeadCommit` withdraws any commit currently at HEAD, regardless of who created it. A user's external commit can be withdrawn by the History UI. Intended contract requires a Docus commit trailer (e.g. `Docus-Version: 1` + stable `Docus-Vault-Version`). | P1 | **Yes** (H-C4) |
 | H-K5 | Restore resolves and reads a mutable ref outside the repository mutation transaction and never resolves the accepted ref to one immutable full commit SHA. The response carries pre-restore source bytes (read by `rawAt`), not a post-restore Working Tree re-read, so a concurrent writer between `restoreFile` and the response yields an `raw` / `mtime` pair that does not match disk. The current client also writes `request.historicalRaw` (the gesture-time snapshot bytes) into `tab.raw`, `tab.originalRaw`, and the file-change event, which amplifies the divergence. The closure task History-C5 must resolve the accepted ref to one immutable SHA inside `withRepoMutation`, re-read disk after `restoreFile`, and route the post-restore bytes back to the client as `result.raw`. | P1 | **Yes** (H-C5) |
 | H-K6 | `isValidCommitSha` accepts 7-character short SHAs; `head !== sha` compares two 40-character SHAs. A short SHA can never match → user always sees 'only the latest version can be withdrawn' on a short request. | P2 | Yes |

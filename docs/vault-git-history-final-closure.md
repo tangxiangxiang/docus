@@ -36,12 +36,13 @@ production code was reviewed for this documentation chain):
 
 Documentation Reconstruction Commit (first round of retrospective docs):
 
-`ff2f992...` (Spec, Plan, Implementation Record, Draft Closure, README)
+`ff2f992eb809af091bb9260846aef02ebee8519a` (Spec, Plan, Implementation Record, Draft Closure, README)
 
 Documentation Correction Commits:
 
-`adfc4d7...` (first review round — 14 findings addressed)
-`210a80d...` (second review round — 13 findings addressed)
+`adfc4d733efdf990d413022d5aa36433da4db356` (Round 1 — 14 findings)
+`7b1bb2c7912869a1e8faf8c3ac40346696d99682` (Round 2 — 13 findings)
+`b97bc3740c5e14f2ddfbfcf1d4629e014d9f7acc` (Round 3 — 8 findings)
 
 ## 2. Current Status
 
@@ -281,9 +282,13 @@ in brackets):
 [ ] Spec reviewed and approved by owner                            [NOT DONE]
 [ ] Implementation plan approved                                    [OWNER PENDING]
 [ ] Implementation record matches current main                      [DRAFT]
-[ ] All P1 findings closed (H-C1, H-C2, H-C3, H-C4, H-C5)           [OPEN]
+[ ] All P1 code/data-safety findings closed
+    (H-C1, H-C2, H-C3, H-C4, H-C5)                                  [OPEN]
+[ ] All P1 verification findings closed
+    (H-C8, H-C9)                                                     [OPEN]
 [ ] H-C6 (short SHA boundary) closed or owner-accepted as P2 UX     [OPEN]
-[ ] H-C7 (DST grouping) documentation comment landed                 [OPEN]
+[ ] H-C7 (DST-safe local-calendar grouping) implementation
+    and deterministic TZ tests completed                             [OPEN]
 [ ] H-C8 (three-platform CI) green run captured                     [NOT RUN]
 [ ] H-C9 (missing regression tests) written                         [OPEN]
 [ ] 500-regression test added for /status                           [OPEN]
@@ -324,7 +329,7 @@ For each command in the verification list, mark the status.
 | `npm test -- --run` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Last local-run evidence is from the Tags closure (`tags-query-index-refactor-final-closure.md`); not re-run for this History reconstruction. |
 | `npm run typecheck` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Same. |
 | `npm run build` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Same. |
-| `git diff --check` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | The documentation commit will be checked before push but had not been written at the time of this draft. |
+| `git diff --check` | **PASS on documentation commits** | Ran on `ff2f992` (reconstruction), `adfc4d7` (Round 1), and `7b1bb2c` (Round 2) — exit 0 each time. This is documentation-only verification and does **not** substitute for the Final Production Baseline `git diff --check` required by the Closure Gate. |
 
 ### 7.2 Cross-platform CI
 

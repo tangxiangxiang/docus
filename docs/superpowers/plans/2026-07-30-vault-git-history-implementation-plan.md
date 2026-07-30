@@ -824,15 +824,26 @@ the toast variant is unambiguous.
 
 ---
 
-### History-C3 — Eliminate Real-Index synchronization race
+### History-C3 — Eliminate Real-Index synchronization overwrite
 
-**Goal:** Close the documented race between an external `git add`
-and the Docus Index Repair fingerprint capture (Spec §11 / H-K3 /
-H-C3). The current implementation runs `git reset -q <target> --
-<paths>` directly against the Real Index with up to three retries;
-an external `git add <target-path>` that lands during the retry
-window can be silently cleared on the next attempt, losing the
-user's staged intent even though Working Tree bytes may remain.
+**Goal:** Close the documented cases where routine Real-Index
+synchronization can overwrite target-path staged intent. There
+are **two** distinct cases, both covered by this closure task:
+
+1. **Pre-existing same-path staged intent** (deterministic — no
+   concurrency required). The user runs `git add -p <path>` before
+   opening the Docus Create Version flow. The Real Index entry for
+   `<path>` differs from the old HEAD tree entry. After the commit
+   lands and `syncIndexPaths` resets the Real Index to the new HEAD,
+   the user's staged entry is silently replaced. Working Tree bytes
+   may remain intact, but the exact staged state is lost.
+
+2. **Concurrent staged intent during the reset/verify retry window**
+   (Spec §11 / H-K3). An external `git add <target-path>` lands
+   between one `git reset` attempt and the next; the subsequent
+   retry clears it. The current implementation runs `git reset -q
+   <target> -- <paths>` directly against the Real Index with up to
+   three retries.
 
 **Involved files:**
 
@@ -957,15 +968,77 @@ The rule is:
 > operation and whose fingerprint did not change between the
 > initial capture and the lock acquisition.
 
+**Result model — three outcome classes:**
+
+The current Repair Transaction has only `status: 'pending' |
+'superseded'` and a single `paths[]` list. After C3, the
+sync outcome must distinguish three classes of path:
+
+```ts
+interface IndexSyncOutcome {
+  synchronizedPaths: string[]
+  preservedExternalPaths: string[]
+  failedPaths: string[]
+}
+```
+
+Rules:
+
+- **`synchronizedPaths`** — paths whose pre-commit Index entry
+  matched old HEAD AND whose fingerprint was unchanged under lock.
+  These were safely reset to the new HEAD. No repair transaction
+  is created for them.
+
+- **`preservedExternalPaths`** — paths that had external staged
+  intent (pre-commit Index entry ≠ old HEAD, or fingerprint
+  changed between capture and lock). Docus **preserved** the
+  existing Real Index entry. These paths must **not** generate a
+  pending Repair Transaction — they are not "broken," they are
+  intentionally left as-is. The UI may show a non-disruptive
+  informational indicator.
+
+- **`failedPaths`** — paths that were safe to sync (entry matched
+  old HEAD, fingerprint stable) but the sync operation itself
+  failed due to an I/O error, lock contention, or verification
+  mismatch. These **may** generate a pending Repair Transaction
+  because the user's intent was to sync them and the operation
+  did not complete.
+
+The Repair Transaction schema should gain an explicit `reason`
+field so the UI knows whether a transaction is retryable:
+
+```ts
+reason: 'sync-failed' | 'external-staged-intent-preserved'
+```
+
+A transaction with `reason: 'external-staged-intent-preserved'`
+must **never** be retryable — clicking "Retry" on it would
+overwrite the external staged state that Docus deliberately
+preserved. The UI should show a distinct, non-actionable indicator
+for these paths.
+
+If adding a `reason` field to the Repair Transaction schema is
+deemed too invasive for this closure, the minimum viable contract
+is:
+
+- `preservedExternalPaths` are **not** recorded in any Repair
+  Transaction at all — they are reported inline in the Commit /
+  Withdraw response and shown as a one-shot informational toast.
+- Only `failedPaths` are persisted as `pending` Repair
+  Transactions.
+
 **Tests required (`server/__tests__/history-git.test.ts`):**
 
 - existing test `'holds index.lock across validation and atomic replacement'` — unchanged.
 - existing test `'discards only repair metadata and preserves newer staged content'` — unchanged.
 - new: `'preserves externally staged target-path entry when external staging predates lock acquisition'` —
   seed the Real Index with a staged entry for a target path
-  before the Create Version flow starts; assert the entry
-  survives the sync (pre-sync fingerprint CAS detects the
-  external staged intent and skips the path).
+  before the Create Version flow starts; capture the pre-existing
+  staged OID via `git ls-files --stage -- <path>`; run the full
+  Create Version + sync flow; assert the OID is **unchanged**
+  (not just "entry still present" — `ls-files --stage` always
+  shows an entry for tracked files). The pre-sync fingerprint
+  CAS detects the external staged intent and skips the path.
 - new: `'external git add fails with index.lock while Docus holds the lock'` —
   after Docus acquires `.git/index.lock`, spawn an external
   `git add <target-path>`; assert the external add fails with
@@ -973,9 +1046,14 @@ The rule is:
   `/index.lock|another git process/` (the existing Repair test
   already verifies this for the Repair path).
 - new: `'external git add succeeds after atomic rename and its staged state persists'` —
-  complete the sync and release the lock, then run external
-  `git add <target-path>`; assert the add succeeds and the
-  staged entry is visible in `git ls-files --stage`.
+  complete the sync and release the lock, then write unique
+  content `"external-after-sync"` to the target file, run
+  external `git add <target-path>`, and assert:
+  (a) `git show :<path>` equals `"external-after-sync"` (proves
+  the new content is truly staged, not just that the path has
+  an Index entry — tracked files always appear in `ls-files`),
+  (b) `git diff --cached --quiet HEAD -- <path>` exits non-zero
+  (proves the staged content differs from HEAD).
 - new: `'preserves unrelated staged entries while synchronizing selected paths'` —
   seed the Real Index with an entry for a non-selected path,
   commit, sync, assert the unrelated entry still resolves via
@@ -1133,6 +1211,36 @@ Docus-Vault-Version: <stable-id>
 
 `<stable-id>` is the local `docus-vault-id`.
 
+**Trailer authority rules:**
+
+The current Create Version accepts the user's message verbatim
+(after trim); the user can supply arbitrary text including
+trailer-like lines. The closure must therefore enforce:
+
+1. **Server-appended, never user-supplied.** The `Docus-Version`
+   and `Docus-Vault-Version` trailers are appended by the server
+   after the user message. The server concatenates:
+   `userMessage + '\n' + 'Docus-Version: 1\nDocus-Vault-Version: <id>\n'`
+2. **The user message cannot supply authoritative trailers.**
+   If the user message happens to contain `Docus-Version:` or
+   `Docus-Vault-Version:` lines, those are user text — they are
+   **not** the canonical ownership trailers.
+3. **Withdraw requires exactly one canonical trailer block.**
+   The canonical block is the **last** contiguous `Key: Value`
+   paragraph of the commit message (Git's `interpret-trailers`
+   convention). The parser must find exactly one `Docus-Version`
+   and exactly one `Docus-Vault-Version` in that block.
+4. **Duplicate or ambiguous trailers are rejected.** If the
+   canonical trailer block contains more than one `Docus-Version`
+   or more than one `Docus-Vault-Version` line, the commit is
+   rejected as `409 'commit has ambiguous ownership trailers;
+   cannot withdraw'`.
+
+This is not a cryptographic signature — the user can copy the
+trailer bytes to a fake commit. But it prevents the trailer
+parser from silently accepting a malformed or user-planted
+trailer block.
+
 Withdraw verification:
 
 ```text
@@ -1174,6 +1282,18 @@ under the same fix).
   - new: `'withdraw accepts a Docus commit whose vault-id matches'`.
   - new: `'withdraw rejects a merge commit even with a valid trailer'`.
   - new: `'withdraw rejects a commit whose change set includes a non-Markdown path'`.
+  - new: `'withdraw rejects duplicate ownership trailers'` —
+    commit message has two `Docus-Version: 1` lines in the
+    trailer block; expect 409 'ambiguous ownership trailers'.
+  - new: `'user message containing a fake Docus-Version line does not satisfy ownership check'` —
+    user message contains `Docus-Version: 1` in the body (not
+    the canonical trailer block); server appends the real
+    trailer block; withdraw verifies against the canonical
+    block only.
+  - new: `'external commit with copied author identity but no canonical trailer is rejected'` —
+    commit authored by `docus <docus@localhost>` with no
+    trailer block; withdraw rejects with 409 'not a Docus
+    version'.
 
 - `server/__tests__/history-routes.test.ts`:
   - new: `'returns 409 when an external commit is at HEAD'`.
@@ -1235,10 +1355,13 @@ restore. The client must treat the server's post-restore bytes
 
 **Involved files:**
 
-- `server/history/routes.ts` — `POST /restore` (resolves to
-  immutable SHA inside `withRepoMutation`).
-- `server/history/git.ts` — `restoreFile` (route-side invocation
-  already passes `--source=<sha>`; no underlying change).
+- `server/history/git.ts` — introduce `restoreFileAtomic(repoRoot,
+  requestedRef, filePath)` as the single transaction entry point.
+  This is a **new** export; the existing `restoreFile` is either
+  kept as a lower-level helper or removed.
+- `server/history/routes.ts` — `POST /restore` calls
+  `restoreFileAtomic` and does **not** acquire its own
+  `withRepoMutation`.
 - `src/lib/history-api.ts` — `RestoreFileResult` shape gains
   `requestedRef` and `resolvedRef` fields and renames `ref` →
   `requestedRef` for callers that want to display the
@@ -1251,32 +1374,62 @@ restore. The client must treat the server's post-restore bytes
 - `src/composables/vault/__tests__/useHistoryRestore.test.ts` —
   new cases below.
 
-**Recommended implementation — server:**
+**⚠️ Critical design constraint — avoid nested deadlock:**
 
-Inside one `withRepoMutation(repoRoot)` transaction:
+The current `restoreFile()` already calls `withRepoMutation(repoRoot)`
+internally. `withRepoMutation` is a per-repo Promise-chain mutex
+— it is **not** reentrant. If the route layer acquires
+`withRepoMutation` and then calls `restoreFile()`, the inner
+`withRepoMutation` waits forever for the outer to complete:
 
 ```text
-1. Resolve the accepted request ref to a full immutable commit SHA:
-       rev-parse --verify <acceptedRef>^{commit}
-   Failure ⇒ 404 'cannot resolve ref <acceptedRef>'.
-2. Read the source snapshot:
-       git show <resolvedSha>:<path>          → source raw
-   null ⇒ 404 'file does not exist at ref <acceptedRef>'.
-3. Apply the restore:
-       git restore --source=<resolvedSha> --worktree -- <path>
-4. Re-read the post-restore Working Tree bytes:
-       fs.readFile(repoRoot/<path>, 'utf8')   → restored raw
-5. Stat for mtime:
-       fs.stat(repoRoot/<path>).mtimeMs      → restored mtime
-6. Return:
-       {
-         path,
-         requestedRef: acceptedRef,   // textual as the client sent it
-         resolvedRef: resolvedSha,    // full 40-char SHA, authoritative
-         raw: restored raw,           // post-restore Working Tree bytes
-         mtime: restored mtime,
-       }
+outer withRepoMutation
+  → await restoreFile()
+      → inner withRepoMutation ← DEADLOCK: waits for outer
 ```
+
+The closure must therefore introduce a **single** transaction
+entry point that owns the one and only `withRepoMutation` call.
+The route must **not** acquire its own mutex around it.
+
+**Recommended implementation — server (single-entry `restoreFileAtomic`):**
+
+```ts
+// server/history/git.ts (new export)
+export async function restoreFileAtomic(
+  repoRoot: string,
+  requestedRef: string,
+  filePath: string,
+): Promise<RestoreFileResult> {
+  return withRepoMutation(repoRoot, async () => {
+    // 1. Resolve the accepted request ref to a full immutable commit SHA:
+    //        rev-parse --verify <acceptedRef>^{commit}
+    //    Failure ⇒ 404 'cannot resolve ref <acceptedRef>'.
+    // 2. Read the source snapshot:
+    //        git show <resolvedSha>:<path>          → source raw
+    //    null ⇒ 404 'file does not exist at ref <acceptedRef>'.
+    // 3. Apply the restore (spawn directly — do NOT delegate to
+    //    the existing restoreFile which would double-lock):
+    //        git restore --source=<resolvedSha> --worktree -- <path>
+    // 4. Re-read the post-restore Working Tree bytes:
+    //        fs.readFile(repoRoot/<path>, 'utf8')   → restored raw
+    // 5. Stat for mtime:
+    //        fs.stat(repoRoot/<path>).mtimeMs      → restored mtime
+    // 6. Return:
+    //        {
+    //          path,
+    //          requestedRef: acceptedRef,
+    //          resolvedRef: resolvedSha,
+    //          raw: restored raw,
+    //          mtime: restored mtime,
+    //        }
+  })
+}
+```
+
+The route handler calls `restoreFileAtomic(repoRoot, body.ref, body.path)`
+and does **nothing** else — no outer `withRepoMutation`, no `rawAt`
+pre-check, no separate `restoreFile` call.
 
 `source raw` and `restored raw` are both kept in the local scope
 for an optional audit log; only `restored raw` ships in the

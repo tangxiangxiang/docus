@@ -147,13 +147,15 @@ API base: `/api/history`. All bodies are JSON. Error bodies are
   two-phase CAS mutation of `HEAD` (non-root: `update-ref HEAD
   <parent> <expectedOld>`; root: `update-ref -d HEAD
   <expectedOld>`), and after HEAD moves attempts a scoped
-  Real-Index synchronization on the affected managed Markdown
-  paths (`syncDroppedIndexPaths`). For a root withdraw, the
-  affected paths are removed from the Real Index; their Working
-  Tree bytes remain on disk and become untracked. Withdraw never
-  edits the Working Tree and may emit or settle an Index Repair
-  Transaction. Withdraw does **not** currently verify commit
-  ownership — see Plan History-C4 / Spec H-C4.
+  Real-Index synchronization on the affected `.md`-suffix paths
+  (`syncDroppedIndexPaths`; the current implementation does
+  **not** enforce the full Managed History Path contract during
+  Withdraw — it filters by `.endsWith('.md')` only). For a root
+  withdraw, the affected paths are removed from the Real Index;
+  their Working Tree bytes remain on disk and become untracked.
+  Withdraw never edits the Working Tree and may emit or settle an
+  Index Repair Transaction. Withdraw does **not** currently verify
+  commit ownership — see Plan History-C4 / Spec H-C4.
 - `/repair-index` writes to the Real Index by hand via
   hand-taken `.git/index.lock` + Temporary Index + `fs.rename`.
   Always inside `withRepoMutation`.
@@ -287,11 +289,18 @@ useHistoryCommit.submit():
 
 Failure-path mapping:
 
+- `ensureIndexRepairStorageReady` failure → aborts Create Version
+  **before** the commit object and `update-ref HEAD`. The preflight
+  runs inside `withRepoMutation` immediately after the idle check;
+  if it throws, no commit is created and no HEAD mutation occurs.
+  The error is surfaced as a 500 (not degraded success).
 - `captureExpectedFiles` mismatch → 409 `'content changed before commit'`.
 - Status re-read shows selected path no longer dirty → 409 `'selection is stale'`.
 - Repository operation conflict at any idle check → 409 `'repository operation in progress'`.
 - `update-ref` non-zero exit → 409 `'repository changed before commit'`.
-- Index Repair persistence failure → 200 with `repairStatePersistenceFailed: true`, toast `commit_repair_state_persistence_failed`, not a failure toast.
+- Index Repair persistence failure (after a successful HEAD update)
+  → 200 with `repairStatePersistenceFailed: true`, toast
+  `commit_repair_state_persistence_failed`, not a failure toast.
 - Index Repair captured and persisted → 200 with `indexRepair` payload, surface the Repair banner in `HistoryChangesPanel`.
 
 ## 7. Index Synchronization and Repair
