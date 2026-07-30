@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { PostSummary } from '../../lib/api'
+import {
+  buildTagIndex,
+  normalizeTag,
+  parseTagQuery,
+  sortTagsByCountDescThenName,
+  type TagRecord,
+} from '../../lib/tags'
 import { useI18n } from '../../composables/useI18n'
 import { useDocumentHoverCard } from '../../composables/useDocumentHoverCard'
 import DocumentHoverCard from './DocumentHoverCard.vue'
@@ -15,30 +22,61 @@ const emit = defineEmits<{ select: [tag: string]; open: [path: string] }>()
 const filter = defineModel<string>('filter', { default: '' })
 const { t } = useI18n()
 
-const tagMap = computed(() => {
-  const map = new Map<string, number>()
-  for (const post of props.posts) {
-    for (const tag of post.tags) map.set(tag, (map.get(tag) ?? 0) + 1)
-  }
-  return Array.from(map.entries()).sort((a, b) => {
-    if (a[1] !== b[1]) return b[1] - a[1]
-    return a[0].localeCompare(b[0])
-  })
-})
+/* Phase 1 of the unified tag plan. The tag list and the
+   single-tag post filter used to be hand-rolled in this component;
+   both now go through the shared `lib/tags` module so the tag
+   query semantics can never drift between TagPanel and FileTree.
+   The user-visible behavior is identical:
+   - The list is still sorted by count desc then name asc.
+   - The filter is still a case-insensitive substring of the tag
+     name (plain text only; `#`-prefixed tokens in the filter
+     parse to `includeAll` but the list filter only consults the
+     `text` channel — see `visibleTags` below).
+   - Selecting a tag still shows posts whose `tags` array contains
+     that exact tag (case-insensitive on the server side, but we
+     also normalize here so a `Java` / `java` mismatch can't sneak
+     through). */
+const tagIndex = computed(() => buildTagIndex(props.posts))
 
-const visibleTags = computed(() => {
-  const query = filter.value.trim().toLocaleLowerCase()
-  if (!query) return tagMap.value
-  return tagMap.value.filter(([tag]) => tag.toLocaleLowerCase().includes(query))
+const allTagsSorted = computed<TagRecord[]>(() =>
+  sortTagsByCountDescThenName(Array.from(tagIndex.value.tags.values())),
+)
+
+const visibleTags = computed<TagRecord[]>(() => {
+  const query = parseTagQuery(filter.value)
+  // Phase 1 keeps the historical "filter the tag list by tag-name
+  // substring" behavior — only the `text` channel of the parsed
+  // query participates. Tag-shaped tokens (`#xxx` / `-#xxx`) are
+  // honored by the FileTree's file filter (see
+  // FileTree.vue filterByQuery) but not by the list filter itself,
+  // because the user-visible UI is "type a few characters, see
+  // matching tag names" — not "type a structured query".
+  const needle = query.text.toLocaleLowerCase()
+  if (!needle) return allTagsSorted.value
+  return allTagsSorted.value.filter((tag) =>
+    tag.displayName.toLocaleLowerCase().includes(needle),
+  )
 })
 
 const tagCountLabel = computed(() => filter.value.trim()
-  ? t('tags.filtered_count', { visible: visibleTags.value.length, total: tagMap.value.length })
-  : t('tags.total', { count: tagMap.value.length }))
+  ? t('tags.filtered_count', { visible: visibleTags.value.length, total: allTagsSorted.value.length })
+  : t('tags.total', { count: allTagsSorted.value.length }))
 
 const filteredPosts = computed(() => {
   if (!props.selectedTag) return []
-  return props.posts.filter((post) => post.tags.includes(props.selectedTag!))
+  // Use the normalized form as the index key — this is what
+  // TagIndex.tagDocuments was built on. A user-selected `#Java`
+  // will resolve via the same lookup as the index's `java` entry,
+  // so casing mismatches in the selected tag can't cause "no
+  // notes" when notes clearly carry the tag.
+  const target = normalizeTag(props.selectedTag)
+  if (!target) return []
+  const paths = tagIndex.value.tagDocuments.get(target)
+  if (!paths || paths.size === 0) return []
+  // Preserve the input order of `posts` so the result list order
+  // is deterministic — building a Set first and then sorting would
+  // either shuffle the order or require an extra sort.
+  return props.posts.filter((post) => paths.has(post.path))
 })
 
 const hoveredPost = ref<PostSummary | null>(null)
@@ -73,10 +111,10 @@ function onFilterKeydown(event: KeyboardEvent) {
 
     <div class="tag-list-region">
       <ul v-if="visibleTags.length" class="tag-list" role="listbox" :aria-label="t('tags.list_label')">
-        <li v-for="[tag, count] in visibleTags" :key="tag" role="presentation">
-          <button class="tag-entry" role="option" :class="{ active: selectedTag === tag }" :aria-selected="selectedTag === tag" :title="selectedTag === tag ? t('tags.deselect', { tag }) : t('tags.browse', { tag })" @click="emit('select', tag)">
-            <span class="tag-name"><span class="tag-hash" aria-hidden="true">#</span><span class="tag-label">{{ tag }}</span></span>
-            <span class="tag-count">{{ count }}</span>
+        <li v-for="tagRecord in visibleTags" :key="tagRecord.normalizedName" role="presentation">
+          <button class="tag-entry" role="option" :class="{ active: selectedTag === tagRecord.displayName }" :aria-selected="selectedTag === tagRecord.displayName" :title="selectedTag === tagRecord.displayName ? t('tags.deselect', { tag: tagRecord.displayName }) : t('tags.browse', { tag: tagRecord.displayName })" @click="emit('select', tagRecord.displayName)">
+            <span class="tag-name"><span class="tag-hash" aria-hidden="true">#</span><span class="tag-label">{{ tagRecord.displayName }}</span></span>
+            <span class="tag-count">{{ tagRecord.count }}</span>
           </button>
         </li>
       </ul>

@@ -173,4 +173,21 @@ describe('Tags filter', () => {
     expect(wrapper.get('.tag-filter-input').attributes('placeholder')).toBe('Filter tags...')
     expect(wrapper.text()).toContain('3 notes')
   })
+
+  // Phase 1 of the unified tag plan. Tag identity is now driven by
+  // `normalizeTag` (trim + lowercase + strip leading `#`), so the
+  // panel must collapse `Java` / `JAVA` / `java ` from three
+  // separate posts into a single entry whose display name preserves
+  // the first-seen casing and whose count sums the three posts.
+  it('normalizes case-and-whitespace variants into a single tag entry', () => {
+    const posts: PostSummary[] = [
+      { path: 'a', title: 'A', tags: ['Java'], summary: '', created: '', updated: '', size: 0, mtime: 0 },
+      { path: 'b', title: 'B', tags: ['JAVA'], summary: '', created: '', updated: '', size: 0, mtime: 0 },
+      { path: 'c', title: 'C', tags: [' java '], summary: '', created: '', updated: '', size: 0, mtime: 0 },
+    ]
+    const wrapper = mountPanel({ posts })
+    const names = wrapper.findAll('.tag-label').map((n) => n.text())
+    expect(names).toEqual(['Java'])
+    expect(wrapper.findAll('.tag-count').map((n) => n.text())).toEqual(['3'])
+  })
 })

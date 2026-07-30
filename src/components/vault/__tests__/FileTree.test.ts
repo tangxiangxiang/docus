@@ -193,4 +193,58 @@ describe('Files filter', () => {
     await wrapper.find('.search-input').setValue('backend')
     expect(rowByName(wrapper, 'redis-note').find('.row-name').attributes('title')).toContain('路径')
   })
+
+  // Phase 1 of the unified tag plan: tag-shaped tokens (`#xxx`,
+  // `-#xxx`) are routed through the shared `lib/tags` parser /
+  // matcher so FileTree and TagPanel can never drift apart on tag
+  // semantics again. Pure text queries continue to use the legacy
+  // substring branch.
+  it('matches `#tag` tokens against post.tags (shared with TagPanel)', async () => {
+    // `POSTS` carries `inbox/draft` with tag `redis`. Neither the
+    // file's path (`inbox/draft`) nor its title (`Release checklist`)
+    // contains the literal `redis`, so a legacy substring search
+    // would not find it. The shared tag matcher must.
+    const wrapper = mountTree()
+    await wrapper.find('.search-input').setValue('#redis')
+    expect(rowByName(wrapper, 'draft')).toBeDefined()
+    // Files without that tag must NOT appear.
+    expect(rowByName(wrapper, 'redis-note')).toBeUndefined()
+    expect(rowByName(wrapper, 'history')).toBeUndefined()
+    expect(rowByName(wrapper, 'cache-paper')).toBeUndefined()
+  })
+
+  it('excludes files with `-#tag` tokens', async () => {
+    // Same data; -#redis must drop the only redis-tagged file.
+    const wrapper = mountTree()
+    await wrapper.find('.search-input').setValue('-#redis')
+    expect(rowByName(wrapper, 'draft')).toBeUndefined()
+    // Other files don't carry the tag either, but they also don't
+    // carry it, so they should still appear (exclude only filters
+    // out matches, doesn't require inclusion).
+    expect(rowByName(wrapper, 'redis-note')).toBeDefined()
+  })
+
+  it('combines `#tag` and plain text with AND', async () => {
+    const wrapper = mountTree()
+    // `#redis` alone matches the `draft` file via its tag. Adding
+    // `release` (which is in the title) keeps the match. Adding
+    // `nonexistent-needle` should drop it.
+    await wrapper.find('.search-input').setValue('#redis release')
+    expect(rowByName(wrapper, 'draft')).toBeDefined()
+
+    await wrapper.find('.search-input').setValue('#redis nonexistent-needle')
+    expect(rowByName(wrapper, 'draft')).toBeUndefined()
+  })
+
+  it('preserves the legacy substring branch for queries without `#` tokens', async () => {
+    // Pure-text queries must continue to match by path / title
+    // substring (case-insensitive), exactly as before Phase 1.
+    const wrapper = mountTree()
+    await wrapper.find('.search-input').setValue('checklist')
+    expect(rowByName(wrapper, 'draft')).toBeDefined()
+    // `redis-note` is matched by its path segment in the legacy
+    // branch — confirms the branch wasn't accidentally bypassed.
+    await wrapper.find('.search-input').setValue('redis-note')
+    expect(rowByName(wrapper, 'redis-note')).toBeDefined()
+  })
 })

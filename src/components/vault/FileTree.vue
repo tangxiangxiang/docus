@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import type { TreeNode, PostSummary } from '../../lib/api'
+import { matchesTagQuery, parseTagQuery, type TagQuery } from '../../lib/tags'
 import TreeRow from './TreeRow.vue'
 import { useConfirm } from '../../composables/useConfirm'
 import { usePrompt } from '../../composables/usePrompt'
@@ -115,14 +116,59 @@ const duplicateTitles = computed<Set<string>>(() => {
 const contentText = defineModel<string>('filter', { default: '' })
 
 const effectiveQuery = computed(() => contentText.value.trim())
+// Plain-text branch: legacy tokenization used by every existing
+// FileTree filter test (e.g. `"CHECKLIST"`, `"redis-note"`, `"redis cache"`).
+// The branch is unchanged byte-for-byte from before Phase 1 — it is
+// preserved so all the existing substring tests stay green, and so a
+// user who never types `#` keeps getting the exact old behavior.
 const filterTokens = computed(() =>
   effectiveQuery.value
     .toLocaleLowerCase()
     .split(/\s+/)
     .filter(Boolean),
 )
+// Phase 1 of the unified tag plan: when the user types any `#`-shaped
+// token (e.g. `#java`, `-#archive`), the file-tree search now parses
+// the query through the shared `parseTagQuery` model and runs
+// `matchesTagQuery` against the document's tags (plus path/title/
+// summary for the text channel). When there are no `#` tokens, the
+// legacy `filterTokens` branch is used so non-tag queries stay
+// byte-identical to the previous behavior.
+const parsedQuery = computed<TagQuery>(() => parseTagQuery(contentText.value))
+const hasTagTokens = computed(() =>
+  parsedQuery.value.includeAll.length > 0 || parsedQuery.value.exclude.length > 0,
+)
+// Lookup so `filterByQuery` can resolve a tree node's path to its
+// `PostSummary` (and therefore to its tags) without a linear scan.
+const postsByPath = computed<Map<string, PostSummary>>(
+  () => new Map(props.posts.map((p) => [p.path, p])),
+)
 
 function filterByQuery(node: TreeNode, tokens: string[]): TreeNode | null {
+  if (hasTagTokens.value) {
+    const query = parsedQuery.value
+    if (node.kind === 'file') {
+      const post = postsByPath.value.get(node.path)
+      const doc = post
+        ? { path: node.path, title: node.title, tags: post.tags, summary: post.summary }
+        // Files we have no `PostSummary` for (e.g. just-created empty
+        // notes still being snapshotted by the server) carry an empty
+        // tag set so an `#xxx` query correctly excludes them. The
+        // text channel still has path/title to match against.
+        : { path: node.path, title: node.title, tags: [] as string[] }
+      return matchesTagQuery(doc, query) ? node : null
+    }
+    // Folder: keep its complete subtree if any descendant file
+    // matches. Mirrors the legacy "folder match keeps subtree"
+    // behavior, just driven by the tag-aware predicate instead of
+    // raw token substring.
+    const kids = node.children
+      .map((c) => filterByQuery(c, tokens))
+      .filter((n): n is TreeNode => n !== null)
+    if (kids.length === 0) return null
+    return { ...node, children: kids }
+  }
+  // Legacy plain-text branch — unchanged.
   if (node.kind === 'file') {
     const hay = `${node.path}\n${node.title}`.toLocaleLowerCase()
     return tokens.every((token) => hay.includes(token)) ? node : null
