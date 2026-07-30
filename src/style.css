@@ -2031,11 +2031,14 @@ main.container {
      6px padding + 14px chevron + 5px gap + 16px icon + 5px gap
      = 46px to text-start.
    `.tag-entry` is:
-     26px padding + 16px hash-icon + 5px gap = 47px to text-start.
-   The 1px optical difference (47 vs 46) is fine — the hash glyph
-   is narrower than the file-icon's hollow square so visually the
-   tag label reads flush with the tree label. Don't try to "fix" it
-   with margin, the padding is the structural alignment. */
+     26px padding + 16px hash-icon + 4px gap
+     = 46px to text-start.
+   The 5px gap on `.tag-entry` itself is the space between
+   `.tag-name` and `.tag-count` (justify-content: space-between
+   pushes the count to the far right), not the gap inside the
+   name slot — that one lives on `.tag-name` as `gap: 4px`.
+   Don't try to "fix" the alignment with margin; the padding is
+   the structural alignment. */
 .vault .tag-panel .tag-entry {
   display: flex;
   align-items: center;
