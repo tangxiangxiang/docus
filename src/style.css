@@ -2157,14 +2157,15 @@ main.container {
   z-index: 1;
   box-sizing: border-box;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 2px;
-  min-height: 52px;
-  padding: 8px 14px 8px 26px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 30px;
+  padding: 8px 14px;
   flex: 0 0 auto;
   background: transparent;
+  border-bottom: 1px solid var(--vs-border);
   color: var(--vs-text-2);
 }
 .vault .tag-panel .results-title {
