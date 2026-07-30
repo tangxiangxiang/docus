@@ -29,11 +29,19 @@ under Plan History-C11 after the closure verification (see §3 of the
 Plan). Marking this document as CLOSED before that SHA is recorded
 is not allowed.
 
-For convenience — the latest branch tip captured at the time this
-draft was assembled is `00b17359d151bbdbe56115ed992700ecbb5e1ca1`
-("docs(tags): correct bare-hash behavior in freeze record"), which
-follows the Tags closure commits and includes all Vault Git History
-feature commits documented here.
+Production Code Review Baseline (the commit on `main` whose
+production code was reviewed for this documentation chain):
+
+`00b17359d151bbdbe56115ed992700ecbb5e1ca1`
+
+Documentation Reconstruction Commit (first round of retrospective docs):
+
+`ff2f992...` (Spec, Plan, Implementation Record, Draft Closure, README)
+
+Documentation Correction Commits:
+
+`adfc4d7...` (first review round — 14 findings addressed)
+`210a80d...` (second review round — 13 findings addressed)
 
 ## 2. Current Status
 

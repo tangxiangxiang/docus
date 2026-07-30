@@ -104,8 +104,8 @@ The History feature, **as currently implemented on `main`**, exposes:
 | Diff / Comparison | `GET /api/history/diff?path=&old=&new=` — line-level (with optional word-level breakdown on edit-shaped remove+add pairs). Client-side `computeFileDiff` powers the Comparison pane's "current side". |
 | Create Version | `POST /api/history/commits` — manages a `Mutation Barrier` (`pathMutationLock`), captures exact Working Tree bytes, runs a temporary Git Index in `GIT_INDEX_FILE`, runs `read-tree` / `hash-object` / `update-index --cacheinfo 100644` / `write-tree` / `commit-tree` (plumbing — no hooks, no signing), CAS-updates `HEAD`, then attempts Real-Index sync. |
 | Index Repair (transactional) | `GET /api/history/repair-status`, `POST /api/history/repair-index`, `POST /api/history/repair-index/discard` — opaque token (`/^[0-9a-f]{32}$/`), JSON file at `<git-dir>/docus/index-repair.json` with schema version 2, atomic temp-file + `rename`. |
-| Restore | `POST /api/history/restore` — accepts an accepted request ref (HEAD, HEAD~N, 7–40 hex SHA, `sha~N`), resolves it to one immutable full commit SHA inside the repository mutation transaction, then runs `git restore --source=<sha> --worktree -- <path>`. **No** `--staged`, no `update-ref`, no Real-Index mutation, no automatic commit. Returns the post-restore Working Tree bytes and mtime. |
-| Withdraw Latest Version | `POST /api/history/drop` — discovers `filesChanged` **before** moving HEAD, filters to managed Markdown paths, two-phase CAS (non-root: `git update-ref HEAD <parent> <expectedOld>`; root: `git update-ref -d HEAD <expectedOld>`). After HEAD moves, attempts a scoped Real-Index synchronization on the affected paths; failure becomes an Index Repair Transaction, not a withdrawal failure. Working Tree bytes preserved in both branches. |
+| Restore | `POST /api/history/restore` — reads the source bytes via `rawAt(requestedRef)` **outside** the repository mutation section, then enters `withRepoMutation` to run `git restore --source=<requestedRef> --worktree -- <path>`. Returns `{ path, ref, raw, mtime }` where `raw` is the source bytes obtained by the off-mutex `rawAt` pre-check (not a post-restore re-read). **No** `--staged`, no `update-ref`, no Real-Index mutation, no automatic commit. The intended contract (Spec §15 / Plan History-C5) requires resolving the ref to one immutable SHA inside the mutation transaction and returning post-restore Working Tree bytes. |
+| Withdraw Latest Version | `POST /api/history/drop` — discovers `filesChanged` **before** moving HEAD, filters by `.endsWith('.md')` only (does **not** enforce the full Managed History Path contract; see H-C4), two-phase CAS (non-root: `git update-ref HEAD <parent> <expectedOld>`; root: `git update-ref -d HEAD <expectedOld>`). After HEAD moves, attempts a scoped Real-Index synchronization on the affected paths; failure becomes an Index Repair Transaction, not a withdrawal failure. Working Tree bytes preserved in both branches. |
 | File-change Watch | `useHistory` subscribes to `VaultFileChanges.events` and refreshes Status on every `seq` increment. |
 | Status refresh after mutation | `useHistoryCommit.submit()` and `useHistoryWithdraw.withdraw()` call `refreshStatus()`, `refreshLog()`, and `refreshComparison` on the changed paths. |
 | Multi-vault isolation | Per-VaultContext `WeakMap` of `useHistory` instances; legacy `getFallbackVaultFileChanges` kept for tests. Per-repo `Promise`-chain mutex keyed by `path.resolve(repoRoot)` serializes Create / Withdraw / Restore / Repair. |
@@ -312,7 +312,7 @@ The ref string (used by `/file`, `/diff`, `/drop`, `/restore`) must
 match **one** of:
 
 - `HEAD` (optionally followed by `~[1-9][0-9]*`),
-- `^[0-9a-f]{7,40}$` (short or full SHA-1 / SHA-256),
+- `^[0-9a-f]{7,40}$` (abbreviated or full SHA-1 object id; SHA-256 object ids are not accepted by the current History ref contract),
 - `^[0-9a-f]{7,40}~[1-9][0-9]*$` (SHA + ancestor),
 - `WORKTREE` (only on `/file` and `/diff` when `allowWorktree`).
 
@@ -1184,9 +1184,12 @@ Spec deviation):
 - **Git missing**: 503 + body shape per §19.
 - **`.git` as file (worktree/submodule)**: supported by
   `hasOwnGitDir` checking both file and directory.
-- **File locks**: EPERM / EBUSY on `.git/index.lock` are handled
-  by treating them as 'git index is locked' and surfacing that
-  message.
+- **File locks**: Only `EEXIST` on `.git/index.lock` is currently
+  normalized to `'git index is locked'` and surfaced as such.
+  Other platform-specific lock errors (e.g. `EPERM`, `EBUSY`,
+  `EAGAIN` on Windows) currently propagate unchanged. The
+  intended C3 contract normalizes the explicitly reviewed
+  Windows lock-error set.
 - **SQLite is NOT used for History state**. Index-repair metadata
   is JSON on disk under the git dir, not a DB. The vault's SQLite
   metadata is left alone by the History feature.
@@ -1240,7 +1243,11 @@ following are verified:
       [ ] quarantine on corrupt parse
       [ ] supersede-on-external-change with safe Discard
       [ ] repair-token opaque
-      [ ] 3-attempt retry budget per sync
+      [ ] Routine Real-Index synchronization uses one lock-protected
+          Temporary-Index attempt with atomic replacement.
+      [ ] No destructive reset retry is performed on the Real Index
+          during routine sync (user-initiated Repair retry is a
+          separate, manual operation).
 [ ] Accessibility:
       [ ] Keyboard nav: Enter, ArrowUp/Down, Escape
       [ ] Context menu opens on right-click and Shift+F10
@@ -1281,11 +1288,10 @@ maintainers need to be aware of.
 | H-K11 | Full-suite CI / Windows / cross-platform verification was not independently re-run during this reconstruction. | P1 | **Yes** (H-C8) |
 | H-K12 | The Docus commit-trailer scheme (H-K4) has not been finalized. The Plan §15 closure task proposes a concrete form but the choice is up to the owner at the time of closure approval. | P1 | Yes (H-C4) |
 | H-K13 | SHA-256 vault repositories are not supported; the `'0'×40` CAS sentinel hardcodes SHA-1. The repair-file validator already accepts 40–64 hex. | P2 | No |
-| H-K14 | (moved — see Verified Table below) |
-| H-K15 | The verification of "Capture every mutable value before the confirmation opens" in Restore relies on the source being captured by `buildRequest({ ...source })` once and not mutated again. The `useHistoryRestore.test.ts > 'captures revision A even if the mutable viewer source changes before confirmation resolves'` test pins this. | (Verified) | No |
 
 ### Verified (not open)
 
 | ID | Item | Evidence |
 |----|------|----------|
 | H-V1 | AI mutation tools treat live History, Diff, and Recovery workspace contexts as read-only and deny mutation of the protected path through `deriveToolSafetyPolicy` in [`server/ai/tool-safety.ts`](../../../server/ai/tool-safety.ts). The exhaustive switch over `ClassifiedToolName` makes unclassified additions to the AI surface a typecheck error; the exhaustive switch over `AiLiveContextSnapshot['kind']` makes unclassified context kinds a typecheck error; unknown / malformed tool inputs fail closed with `{ kind: 'unknown' }` instead of being treated as read-only. | `tool-safety.ts:155-203` (`deriveToolSafetyPolicy` cases `history` / `diff` / `recovery` return `deny-protected-path` with `reason: 'read-only-context'`); tool-safety tests pin the classify + guard behavior; `tools.test` asserts set equality with `TOOL_DEFINITIONS` so a tool added there fails tests until classified. |
+| H-V2 | The verification of "Capture every mutable value before the confirmation opens" in Restore relies on the source being captured by `buildRequest({ ...source })` once and not mutated again. The `useHistoryRestore.test.ts > 'captures revision A even if the mutable viewer source changes before confirmation resolves'` test pins this. | `useHistoryRestore.test.ts` (existing test, verified against current `main`). |

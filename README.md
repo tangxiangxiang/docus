@@ -95,7 +95,7 @@ The feature currently exposes, on `main`:
   `HistorySnapshotPane`, `HistoryComparisonPane`, the three
   `Timeline*` rows, and `SideBySideDiff`.
 
-**P1 closure blockers currently open** (see the Spec §25 and the
+**Closure blockers currently open** (see the Spec §25 and the
 Draft Closure §4 for full descriptions):
 
 - `H-C1` — `/status` response contract treats genuine 5xx as

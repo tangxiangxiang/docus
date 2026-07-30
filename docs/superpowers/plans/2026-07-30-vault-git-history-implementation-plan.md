@@ -469,12 +469,11 @@ intact in `5e735d1` and have not been rewritten.
 
 - [x] `POST /api/history/restore` runs `git restore --source=<ref>
       --worktree -- <path>` with `WORKTREE` explicitly rejected.
-- [x] Returns `{ path, ref, raw, mtime }`. The route resolves
-      the accepted ref to one full immutable SHA inside the
-      repository mutation section (per Spec §15 / Plan History-C5);
-      `raw` is intended to be the post-restore Working Tree bytes —
-      the current implementation is documented as a Known Divergence
-      that pre-dates this contract (see Spec H-K5 / H-C5).
+- [x] Returns `{ path, ref, raw, mtime }` where `raw` is currently
+      the source bytes obtained by the off-mutex `rawAt` pre-check.
+- [ ] Atomic ref resolution to one immutable SHA inside
+      `withRepoMutation` and post-restore `result.raw` authority
+      are deferred to History-C5.
 - [x] `useHistoryRestore` composable with `pathMutationLock`,
       `DocumentMutationBarrier`, captured-at-confirmation semantics
       (`buildRequest({ ...source })`).
@@ -910,15 +909,73 @@ not):
   shared between routine sync, repair, and any future reads
   that need index consistency.
 
+**Same-path staged-intent protection (pre-sync CAS):**
+
+Seeding the Temporary Index from a copy of the Real Index
+protects **unrelated** paths' staged entries, but it does not,
+on its own, protect a **same-path** staged entry from being
+overwritten. Example:
+
+```text
+HEAD a.md       = A
+Real Index a.md = B       ← user staged via git add -p
+Working Tree    = C       ← unsaved editor content
+
+Docus Create Version commits C (Working Tree bytes).
+Temporary Index is seeded from Real Index copy → initially B.
+Then reset newHead -- a.md → a.md becomes C.
+Atomic rename → Real Index a.md is now C.
+User's staged B is cleared.
+```
+
+The closure must therefore add a **pre-sync fingerprint CAS**:
+
+```text
+1. Before moving HEAD, capture Real Index fingerprints for
+   every selected path.
+2. For each selected path, determine whether its Index entry
+   equals the old HEAD's tree entry:
+   - Equal ⇒ path is safe for Docus to synchronize.
+   - Not equal ⇒ an external staged intent exists; Docus must
+     NOT synchronize this path.
+3. After the HEAD CAS succeeds and index.lock is acquired:
+   a. Re-read selected-path fingerprints under the lock.
+   b. Only paths whose fingerprint is unchanged from step 1
+      AND whose pre-commit entry matched old HEAD are reset
+      in the Temporary Index to the new HEAD.
+   c. Paths that had external staged intent (step 2 mismatch)
+      or whose fingerprint changed (step 3a mismatch) are
+      preserved as-is in the Real Index.
+4. Return degraded success with a `superseded` / `external
+   staged intent preserved` marker for skipped paths.
+```
+
+The rule is:
+
+> Docus may synchronize only those target paths whose Real
+> Index entry matched the old HEAD tree at the start of the
+> operation and whose fingerprint did not change between the
+> initial capture and the lock acquisition.
+
 **Tests required (`server/__tests__/history-git.test.ts`):**
 
 - existing test `'holds index.lock across validation and atomic replacement'` — unchanged.
 - existing test `'discards only repair metadata and preserves newer staged content'` — unchanged.
-- new: `'does not clear externally staged target content during index synchronization'` —
-  start a Create Version flow, land an external `git add
-  <target-path>` between the build-temp-index step and the
-  rename, then assert the Final Index still carries the
-  externally staged entry.
+- new: `'preserves externally staged target-path entry when external staging predates lock acquisition'` —
+  seed the Real Index with a staged entry for a target path
+  before the Create Version flow starts; assert the entry
+  survives the sync (pre-sync fingerprint CAS detects the
+  external staged intent and skips the path).
+- new: `'external git add fails with index.lock while Docus holds the lock'` —
+  after Docus acquires `.git/index.lock`, spawn an external
+  `git add <target-path>`; assert the external add fails with
+  a non-zero exit and stderr matching
+  `/index.lock|another git process/` (the existing Repair test
+  already verifies this for the Repair path).
+- new: `'external git add succeeds after atomic rename and its staged state persists'` —
+  complete the sync and release the lock, then run external
+  `git add <target-path>`; assert the add succeeds and the
+  staged entry is visible in `git ls-files --stage`.
 - new: `'preserves unrelated staged entries while synchronizing selected paths'` —
   seed the Real Index with an entry for a non-selected path,
   commit, sync, assert the unrelated entry still resolves via
@@ -935,6 +992,11 @@ not):
 - new: `'atomically replaces the Real Index only after Temporary Index verification'` —
   verify the temp index entry set matches the expected commit
   tree, then assert the rename happens exactly once.
+- new: `'skips target-path sync when pre-existing staged entry differs from old HEAD'` —
+  seed Real Index with a staged entry for a target path that
+  differs from the old HEAD tree entry; assert the sync skips
+  that path and returns `superseded` rather than overwriting
+  the external staged intent.
 
 **Definition of Done:** The routine Create / Withdraw Real-Index
 sync uses the temp-index + atomic-rename path described above.
@@ -986,6 +1048,20 @@ Both halves are required.
   already-initialized vault.
 
 **Recommended implementation — metadata init:**
+
+The helper `ensureDocusHistoryMetadata` needs the absolute Git
+directory. The current `absoluteGitDir` is an internal (non-exported)
+helper inside `git.ts`. The closure task must choose one of:
+
+- **Option 1** — Export a public `resolveAbsoluteGitDir(repoRoot)`
+  from `git.ts`.
+- **Option 2** — Keep `ensureDocusHistoryMetadata` inside `git.ts`
+  (where `absoluteGitDir` is already in scope).
+- **Option 3** — Introduce a small public Git-dir resolver in
+  `repo.ts` without duplicating the spawn logic.
+
+The example below assumes Option 1 or 2 has been applied;
+without an export change the example code does not compile.
 
 ```ts
 // server/history/repo.ts (new export)
@@ -1408,14 +1484,22 @@ Tests:
 
 - existing case `'groups Today, Yesterday, weekdays, and Last
   Week in display order'` — unchanged.
-- new: `'groups yesterday correctly across DST spring-forward'`
-  — TZ `America/Los_Angeles`, `now` set to 03:30 on the
-  day **after** the 02:00 spring-forward, an item with
-  timestamp at 01:30 on the same day → bucket `'yesterday'`.
-- new: `'groups yesterday correctly across DST fall-back'`
-  — TZ `America/Los_Angeles`, `now` at 01:30 after the
-  02:00 fall-back, item at 23:30 the previous calendar day →
-  bucket `'yesterday'` (not `'today'`).
+- new: `'groups correctly across DST spring-forward (23-hour gap)'`
+  — TZ `America/Los_Angeles`.
+  `now`:    2026-03-09T00:30:00-07:00 (after spring-forward).
+  `item`:   2026-03-08T00:30:00-08:00 (before spring-forward).
+  Elapsed duration: 23 hours real time.
+  Expected bucket: `'yesterday'` (different local calendar day;
+  the 23-hour real gap would produce `dayDelta = 0` under the
+  old 86_400_000 ms window, but `localDayOrdinal` correctly
+  sees the ordinal difference of 1).
+- new: `'groups correctly across DST fall-back (25-hour gap)'`
+  — TZ `America/Los_Angeles`.
+  `now`:    2026-11-02T00:30:00-08:00 (after fall-back).
+  `item`:   2026-11-01T00:30:00-07:00 (before fall-back).
+  Elapsed duration: 25 hours real time.
+  Expected bucket: `'yesterday'` (different local calendar day;
+  `localDayOrdinal` correctly sees the ordinal difference of 1).
 - new: `'groups today correctly near local midnight'`
   — TZ `Europe/Berlin`, `now` at 00:30 local, item at
   23:30 the previous local day → bucket `'yesterday'`.
@@ -1469,19 +1553,19 @@ sensitive area. Mitigation is the explicit timeouts added in
 
 Concrete cases (referenced in Implementation Record §12):
 
-- [x] The `GIT_INDEX_FILE`/temp index contract is asserted by
+- [ ] The `GIT_INDEX_FILE`/temp index contract is asserted by
       outcomes, not by direct instrumentation. Add a test using
       `GIT_INDEX_FILE` monkey-patch or a stream-level probe.
-- [x] Repository-operation markers not all parametrized. Add direct
+- [ ] Repository-operation markers not all parametrized. Add direct
       tests for `REVERT_HEAD`, `REBASE_HEAD`, `rebase-apply`,
       `sequencer`.
-- [x] Path validation for backslash, absolute, hidden-dir. Add direct
+- [ ] Path validation for backslash, absolute, hidden-dir. Add direct
       cases.
-- [x] Short SHA behavior at `/drop`. (Covered by History-C6 tests.)
-- [x] Multi-vault / `withRepoMutation` keying — instrument to
+- [ ] Short SHA behavior at `/drop`. (Covered by History-C6 tests.)
+- [ ] Multi-vault / `withRepoMutation` keying — instrument to
       assert two operations on the same vault serialize and two
       operations on different vaults parallel.
-- [x] Restore race — refer to History-C5 tests.
+- [ ] Restore race — refer to History-C5 tests.
 
 **Tests required:** listed above.
 

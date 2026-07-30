@@ -132,14 +132,17 @@ API base: `/api/history`. All bodies are JSON. Error bodies are
   success with `indexRefreshFailed` + persisted Repair Transaction
   on failure), and may persist or settle an Index Repair
   Transaction.
-- `/restore` resolves the accepted request ref to one immutable
-  full commit SHA, mutates the Working Tree via
-  `git restore --source=<sha> --worktree -- <path>`, and reads
-  the post-restore Working Tree bytes. **No** `update-ref`, no
-  Real-Index manipulation, no commit creation. The current
-  implementation reads the source ref outside `withRepoMutation`
-  and does not yet round-trip the post-restore read through the
-  server response — see Plan History-C5 / Spec H-C5.
+- `/restore` currently reads the source bytes via `rawAt(requestedRef)`
+  **outside** `withRepoMutation`, then enters `withRepoMutation`
+  to run `git restore --source=<requestedRef> --worktree -- <path>`.
+  The response `raw` carries the pre-restore source bytes from the
+  `rawAt` pre-check, not a post-restore Working Tree re-read.
+  **No** `update-ref`, no Real-Index manipulation, no commit
+  creation. The intended contract (Plan History-C5 / Spec §15)
+  requires resolving the accepted ref to one immutable full commit
+  SHA inside `withRepoMutation`, using that SHA for both the read
+  and the write, and returning post-restore Working Tree bytes as
+  `result.raw`.
 - `/drop` discovers `filesChanged` before moving HEAD, performs a
   two-phase CAS mutation of `HEAD` (non-root: `update-ref HEAD
   <parent> <expectedOld>`; root: `update-ref -d HEAD
@@ -370,7 +373,8 @@ useHistoryWithdraw.withdraw(sha):
    9.    HEAD = rev-parse --verify HEAD
    10.   if HEAD !== sha ⇒ 409 'only the latest version can be withdrawn'
    11.   filesChanged = show --no-renames --name-only <sha>
-                  ↓ filtered to managed Markdown paths in the route
+                  ↓ filtered by .endsWith('.md') only (does NOT enforce
+                    the full Managed History Path contract; see H-C4)
    12.   parent = rev-parse <sha>^                    // null for root
    13.   assertRepositoryIdle                         // second check, immediately before ref move
    14.   if parent === null:                          // ROOT
@@ -830,7 +834,7 @@ records the remediation tasks.
 | H-C4 | Withdraw has no Docus commit ownership check; any commit at HEAD (including external) is withdrawable. | Plan History-C4 |
 | H-C5 | Restore resolves a mutable ref outside the repository mutation transaction; the route's `raw` carries pre-`restoreFile` source bytes (not a post-restore re-read); the client writes gesture-time `request.historicalRaw` into the editor tab and the file-change event. | Plan History-C5 (server + client) |
 | H-K6 | `isValidCommitSha` accepts 7–40 hex; `HEAD === sha` compares two 40-char SHAs; short SHAs can never match. | Plan History-C6 |
-| H-K7 | Local-calendar bucket for `groupTimelineItems` uses `Date` arithmetic; DST forward-day may bucket to "Yesterday". | Plan History-C7 (documentation-only) |
+| H-K7 | Local-calendar bucket for `groupTimelineItems` uses `Date` arithmetic with an 86_400_000 ms window; across a DST transition that window does not match the local-calendar day boundary. | Plan History-C7 (DST fix — real correctness fix, not documentation-only) |
 | H-K9 | Rename lines filtered out of `/status` because path shape fails; rename history not `--follow`-merged. | Spec H-K9 |
 | H-K10 | No pagination on Timeline or Log. | Spec H-K10 |
 | H-K11 | Docus commit-trailer scheme proposed (Plan History-C4) but not implemented; owner sign-off required. | Plan History-C4 |
@@ -877,9 +881,9 @@ records the remediation tasks.
 | ID | Finding | Verification |
 |----|---------|--------------|
 | H-C8 | Three-platform CI (Windows / macOS / Linux) passing for the current `main` tip | Plan History-C8 |
-| H-K1 | The repository-operation marker list is implemented in `git.ts` (`REPOSITORY_OPERATION_MARKERS`) but only three of seven markers are exercised by the parametrized test | Plan History-C9 |
-| H-K11 | Whether forward-migration (existing Docus versions without `Docus-Version` trailer) should refuse to withdraw | Owner decision during Plan History-C4 |
-| H-K12 | Whether `MAX_CAPTURE_BYTES` should be measured in bytes not UTF-16 units | Out of scope (Spec §21) |
+| H-T1 | The repository-operation marker list is implemented in `git.ts` (`REPOSITORY_OPERATION_MARKERS`) but only three of seven markers are exercised by the parametrized test | Plan History-C9 |
+| H-T2 | Whether forward-migration (existing Docus versions without `Docus-Version` trailer) should refuse to withdraw | Owner decision during Plan History-C4 |
+| H-T3 | Whether `MAX_CAPTURE_BYTES` should be measured in bytes not UTF-16 units | Out of scope (Spec §21) |
 
 ### 15.5 Verified — implemented protections
 
