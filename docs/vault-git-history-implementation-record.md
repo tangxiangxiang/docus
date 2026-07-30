@@ -154,8 +154,9 @@ API base: `/api/history`. All bodies are JSON. Error bodies are
   withdraw, the affected paths are removed from the Real Index;
   their Working Tree bytes remain on disk and become untracked.
   Withdraw never edits the Working Tree and may emit or settle an
-  Index Repair Transaction. Withdraw does **not** currently verify
-  commit ownership — see Plan History-C4 / Spec H-C4.
+  Index Repair Transaction. Withdraw does **not** currently verify a
+  canonical same-vault Docus commit marker — see Plan History-C4 /
+  Spec H-C4.
 - `/repair-index` writes to the Real Index by hand via
   hand-taken `.git/index.lock` + Temporary Index + `fs.rename`.
   Always inside `withRepoMutation`.
@@ -840,14 +841,14 @@ records the remediation tasks.
 |----|-------------|----------------|
 | H-C1 | `getStatus` swallows genuine 5xx because `allowNonOkJson: true` is unconditional. | Plan History-C1 |
 | H-C2 | Commit / Withdraw success state vs post-success refresh error split is per-test verified but not formally written as a contract. | Plan History-C2 |
-| H-C3 | Real-Index sync resets + verifies, with fingerprint capture after the failure — race with external `git add` possible. | Plan History-C3 |
-| H-C4 | Withdraw has no Docus commit ownership check; any commit at HEAD (including external) is withdrawable. | Plan History-C4 |
+| H-C3 | Routine Real-Index synchronization can overwrite target-path staged intent in two cases: the target path was already staged before Create Version or Withdraw began; or an external Git writer changes the target path during the current reset / verify retry window. Working Tree bytes may remain intact, but the user's exact staged state can be lost. | Plan History-C3 |
+| H-C4 | Withdraw lacks canonical same-vault Docus commit marker verification; any commit at HEAD is currently withdrawable. | Plan History-C4 |
 | H-C5 | Restore resolves a mutable ref outside the repository mutation transaction; the route's `raw` carries pre-`restoreFile` source bytes (not a post-restore re-read); the client writes gesture-time `request.historicalRaw` into the editor tab and the file-change event. | Plan History-C5 (server + client) |
 | H-K6 | `isValidCommitSha` accepts 7–40 hex; `HEAD === sha` compares two 40-char SHAs; short SHAs can never match. | Plan History-C6 |
 | H-K7 | Local-calendar bucket for `groupTimelineItems` uses `Date` arithmetic with an 86_400_000 ms window; across a DST transition that window does not match the local-calendar day boundary. | Plan History-C7 (DST fix — real correctness fix, not documentation-only) |
 | H-K9 | Rename lines filtered out of `/status` because path shape fails; rename history not `--follow`-merged. | Spec H-K9 |
 | H-K10 | No pagination on Timeline or Log. | Spec H-K10 |
-| H-K11 | Docus commit-trailer scheme proposed (Plan History-C4) but not implemented; owner sign-off required. | Plan History-C4 |
+| H-K11 | Canonical same-vault Docus marker scheme proposed (Plan History-C4) but not implemented; it is an accidental-withdrawal guard, not cryptographic ownership proof, and requires owner sign-off. | Plan History-C4 |
 | H-K13 | SHA-256 vault repositories are not supported; `'0'×40` is hardcoded. Repair validator already accepts 40–64 hex. | Spec H-K13 |
 
 ## 15. Current Open Findings
@@ -858,17 +859,17 @@ records the remediation tasks.
 |----|---------|--------------|
 | H-C1 | `/status` response contract treats genuine 5xx as graceful unavailable | Plan History-C1 |
 | H-C2 | Commit success vs post-success refresh failure classification | Plan History-C2 |
-| H-C3 | Real-Index synchronization race with external `git add` | Plan History-C3 |
-| H-C4 | Withdraw lacks Docus commit ownership verification | Plan History-C4 |
+| H-C3 | Routine Real-Index synchronization can overwrite pre-existing or concurrently changed target-path staged intent | Plan History-C3 |
+| H-C4 | Withdraw lacks canonical same-vault Docus commit marker verification | Plan History-C4 |
 | H-C5 | Restore uses a mutable ref + pre-restore `raw` outside the mutex | Plan History-C5 |
 | H-C8 | Three-platform CI verification has not been re-run for this reconstruction | Plan History-C8 |
 
-### 15.2 P2 (Severe UX warts / non-trivial but not blockers)
+### 15.2 P2 (Severe UX warts; H-C7 remains a Closure Blocker)
 
 | ID | Finding | Closure task |
 |----|---------|--------------|
 | H-K6 | Short SHA at `/drop` never matches full HEAD | Plan History-C6 |
-| H-K7 | Timeline date grouping uses an 86_400_000 ms window between local-midnight `startOfDay` timestamps; across a DST transition that window does not match the local-calendar day boundary. | Plan History-C7 (DST fix; closure must not pin the current behavior) |
+| H-K7 | Fixed-duration day arithmetic does not match local-calendar day boundaries across 23-hour and 25-hour DST days. **Closure Blocker: Yes (H-C7).** | Plan History-C7 (DST fix; closure must not pin the current behavior) |
 | H-K8 | Rename history not `--follow`-merged | None planned |
 | H-K9 | Symlink containment not applied to History paths | None planned |
 | H-K10 | No Timeline / Log pagination | None planned |
@@ -892,7 +893,7 @@ records the remediation tasks.
 |----|---------|--------------|
 | H-C8 | Three-platform CI (Windows / macOS / Linux) passing for the current `main` tip | Plan History-C8 |
 | H-T1 | The repository-operation marker list is implemented in `git.ts` (`REPOSITORY_OPERATION_MARKERS`) but only three of seven markers are exercised by the parametrized test | Plan History-C9 |
-| H-T2 | Whether forward-migration (existing Docus versions without `Docus-Version` trailer) should refuse to withdraw | Owner decision during Plan History-C4 |
+| H-T2 | Whether forward-migration (existing Docus versions without a canonical marker) should refuse to withdraw | Owner decision during Plan History-C4 |
 | H-T3 | Whether `MAX_CAPTURE_BYTES` should be measured in bytes not UTF-16 units | Out of scope (Spec §21) |
 
 ### 15.5 Verified — implemented protections

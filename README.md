@@ -102,15 +102,23 @@ Draft Closure §4 for full descriptions):
   graceful-unavailable.
 - `H-C2` — Commit success vs post-success refresh failure
   classification.
-- `H-C3` — Retrying Real-Index synchronization can clear newly
-  staged target-path entries created by an external Git operation.
-- `H-C4` — Withdraw lacks a Docus commit ownership check.
+- `H-C3` — Routine Real-Index synchronization can overwrite
+  target-path staged intent in two cases: the target path was already
+  staged before Create Version or Withdraw began; or an external Git
+  writer changes it during the current reset / verify retry window.
+  Working Tree bytes may remain intact, but the user's exact staged
+  state can be lost.
+- `H-C4` — Withdraw lacks canonical same-vault Docus commit marker
+  verification.
 - `H-C5` — Restore reads a mutable ref outside the repository
   mutation transaction, returns pre-restore source bytes, and the
   current client writes the gesture-time snapshot
   (`request.historicalRaw`) into the editor tab and the file-change
   event.
 - `H-C6` — Short SHA at `/drop` never matches full HEAD.
+- `H-C7` — Timeline date grouping uses fixed-duration day arithmetic;
+  closure requires DST-safe local-calendar ordinals and deterministic
+  timezone regression tests.
 - `H-C8` — Three-platform CI has not been re-run for this
   reconstruction.
 - `H-C9` — Missing regression tests for History invariants.

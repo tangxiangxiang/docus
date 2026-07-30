@@ -686,7 +686,7 @@ Concrete behavior (current source):
 
 **Known residual risks (closure blockers — see Part B):**
 
-- H-K4 (H-C4) — No Docus commit ownership.
+- H-K4 (H-C4) — No canonical same-vault Docus commit marker check.
 - H-K6 — Short SHA never matches the full-SHA HEAD.
 
 ---
@@ -830,6 +830,17 @@ the toast variant is unambiguous.
 synchronization can overwrite target-path staged intent. There
 are **two** distinct cases, both covered by this closure task:
 
+H-C3 — Routine Real-Index synchronization can overwrite target-path
+staged intent in two cases:
+
+1. the target path was already staged before Create Version or
+   Withdraw began; or
+2. an external Git writer changes the target path during the current
+   reset / verify retry window.
+
+Working Tree bytes may remain intact, but the user's exact staged
+state can be lost.
+
 1. **Pre-existing same-path staged intent** (deterministic — no
    concurrency required). The user runs `git add -p <path>` before
    opening the Docus Create Version flow. The Real Index entry for
@@ -961,23 +972,27 @@ User's staged B is cleared.
 The closure must therefore add a **pre-sync fingerprint CAS**:
 
 ```text
-1. Before moving HEAD, capture Real Index fingerprints for
-   every selected path.
-2. For each selected path, determine whether its Index entry
-   equals the old HEAD's tree entry:
+1. Read and retain oldHead.
+2. Build the Temporary Index.
+3. Build the tree and commit object.
+4. Before moving HEAD, capture F0 from the Real Index for every
+   target path.
+5. Compare F0 with the oldHead tree entry:
    - Equal ⇒ path is safe for Docus to synchronize.
    - Not equal ⇒ an external staged intent exists; Docus must
      NOT synchronize this path.
-3. After the HEAD CAS succeeds and index.lock is acquired:
-   a. Re-read selected-path fingerprints under the lock.
-   b. Only paths whose fingerprint is unchanged from step 1
-      AND whose pre-commit entry matched old HEAD are reset
-      in the Temporary Index to the new HEAD.
-   c. Paths that had external staged intent (step 2 mismatch)
-      or whose fingerprint changed (step 3a mismatch) are
-      preserved as-is in the Real Index.
-4. Return degraded success with a `superseded` / `external
-   staged intent preserved` marker for skipped paths.
+   Empty repository semantics are exact: when oldHead and its tree
+   entry are absent, an absent Real Index entry is safe; a present
+   Real Index entry is external staged intent. Never substitute an
+   empty string, zero SHA, or Working Tree entry for an absent entry.
+6. Run the second assertRepositoryIdle.
+7. CAS with update-ref HEAD <newCommit> <oldHead>.
+8. After CAS succeeds, acquire .git/index.lock.
+9. Re-read the locked Index as F1.
+10. Synchronize only paths where F0 equals the oldHead entry AND
+    F1 equals F0.
+11. Return synchronizedPaths, preservedExternalPaths, and failedPaths.
+12. Bind any Repair Transaction for failedPaths to F0.
 ```
 
 The rule is:
@@ -1003,48 +1018,57 @@ interface IndexSyncOutcome {
 
 Rules:
 
-- **`synchronizedPaths`** — paths whose pre-commit Index entry
-  matched old HEAD AND whose fingerprint was unchanged under lock.
-  These were safely reset to the new HEAD. No repair transaction
-  is created for them.
+- **`synchronizedPaths`** — F0 equals the oldHead entry, F1 still
+  equals F0 under lock, and Temporary Index synchronization and
+  verification succeed. No Repair Transaction is created; settle
+  old Repair metadata for these paths.
 
 - **`preservedExternalPaths`** — paths that had external staged
   intent (pre-commit Index entry ≠ old HEAD, or fingerprint
   changed between capture and lock). Docus **preserved** the
   existing Real Index entry. These paths must **not** generate a
-  pending Repair Transaction — they are not "broken," they are
-  intentionally left as-is. The UI may show a non-disruptive
-  informational indicator.
+  pending Repair Transaction or Repair banner, and offer no Retry.
+  Return them through Commit / Withdraw API results and show one
+  non-destructive informational toast.
 
 - **`failedPaths`** — paths that were safe to sync (entry matched
   old HEAD, fingerprint stable) but the sync operation itself
-  failed due to an I/O error, lock contention, or verification
-  mismatch. These **may** generate a pending Repair Transaction
-  because the user's intent was to sync them and the operation
-  did not complete.
+  failed due to lock contention, I/O failure, Temporary Index
+  creation failure, verification failure, or atomic rename failure.
+  These **may** generate a pending Repair Transaction. Its
+  `expectedIndex` must be the pre-HEAD F0; never recapture the
+  post-failure Index.
 
-The Repair Transaction schema should gain an explicit `reason`
-field so the UI knows whether a transaction is retryable:
+`indexRefreshFailed = failedPaths.length > 0`.
+`preservedExternalPaths` never sets it to `true`.
+
+The server, wire types, clients, UI, and tests use one empty-array
+convention and these result contracts:
 
 ```ts
-reason: 'sync-failed' | 'external-staged-intent-preserved'
+interface CommitResult {
+  sha: string
+  filesCommitted: string[]
+  synchronizedPaths: string[]
+  preservedExternalPaths: string[]
+  failedPaths: string[]
+  indexRefreshFailed?: boolean
+  indexRepair?: IndexRepairTransaction
+  repairStatePersistenceFailed?: boolean
+}
+
+interface DropCommitResult {
+  sha: string
+  droppedSha: string
+  filesChanged: string[]
+  synchronizedPaths: string[]
+  preservedExternalPaths: string[]
+  failedPaths: string[]
+  indexRefreshFailed?: boolean
+  indexRepair?: IndexRepairTransaction
+  repairStatePersistenceFailed?: boolean
+}
 ```
-
-A transaction with `reason: 'external-staged-intent-preserved'`
-must **never** be retryable — clicking "Retry" on it would
-overwrite the external staged state that Docus deliberately
-preserved. The UI should show a distinct, non-actionable indicator
-for these paths.
-
-If adding a `reason` field to the Repair Transaction schema is
-deemed too invasive for this closure, the minimum viable contract
-is:
-
-- `preservedExternalPaths` are **not** recorded in any Repair
-  Transaction at all — they are reported inline in the Commit /
-  Withdraw response and shown as a one-shot informational toast.
-- Only `failedPaths` are persisted as `pending` Repair
-  Transactions.
 
 **Tests required (`server/__tests__/history-git.test.ts`):**
 
@@ -1078,10 +1102,10 @@ is:
   commit, sync, assert the unrelated entry still resolves via
   `git ls-files --stage -- <unrelated-path>`.
 - new: `'does not retry destructively after an index fingerprint mismatch'` —
-  construct a Verified fingerprint but introduce a mismatch
-  between verification step and rename; expect a single rename
-  attempt followed by a `superseded` repair, NOT three reset
-  attempts.
+  capture F0, then make the locked F1 differ. Expect zero rename
+  attempts, zero destructive reset attempts, unchanged Real Index
+  bytes and staged OID, classification in
+  `preservedExternalPaths`, and no Repair Transaction.
 - new: `'returns degraded success when index.lock is already held'` —
   pre-create `.git/index.lock` from the test; run sync;
   expect `indexRefreshFailed: true` and no destructive Real Index
@@ -1092,8 +1116,16 @@ is:
 - new: `'skips target-path sync when pre-existing staged entry differs from old HEAD'` —
   seed Real Index with a staged entry for a target path that
   differs from the old HEAD tree entry; assert the sync skips
-  that path and returns `superseded` rather than overwriting
-  the external staged intent.
+  that path; assert `preservedExternalPaths` contains it,
+  `failedPaths` does not, `indexRepair` is undefined, and the
+  staged OID is unchanged. `superseded` is reserved for a persisted
+  Repair Transaction whose Retry finds current Index != F0.
+- new: `'binds a failed sync Repair Transaction to the pre-HEAD F0 fingerprint'` —
+  capture F0 before moving HEAD; make routine sync fail due to lock
+  or I/O; let external Git change the Index to F1; assert persisted
+  Repair `expectedIndex` still equals F0. Retry observes F1 != F0,
+  marks the transaction `superseded`, performs no reset, and
+  preserves the F1 staged OID.
 
 **Definition of Done:** The routine Create / Withdraw Real-Index
 sync uses the temp-index + atomic-rename path described above.
@@ -1109,20 +1141,26 @@ test remains the safety floor.
 
 ---
 
-### History-C4 — Establish Docus commit ownership
+### History-C4 — Establish canonical same-vault Docus commit markers
 
-**Goal:** Withdraw must reject any commit not created by Docus.
+**Goal:** Withdraw accepts only commits carrying exactly one canonical
+same-vault Docus marker block and rejects ordinary, cross-vault,
+merge, malformed, ambiguous, or unmarked commits.
 
 This closure has two halves:
 
 1. **Vault metadata initialization** — every vault must carry a
    `docus-vault-id`, including **already-existing** vault
    repositories that were initialized before this task lands.
-2. **Withdraw commit ownership check** — the trailer on a
-   candidate commit must be parsed and verified against the
+2. **Withdraw marker check** — the trailer on a candidate commit
+   must be parsed and verified against the
    vault metadata.
 
-Both halves are required.
+Both halves are required. The Docus commit trailer and local vault-id
+are an accidental-withdrawal guard, not cryptographic ownership
+proof. A local actor with write access to the repository and Git
+directory can forge a matching marker; this is outside the History
+feature's trust boundary.
 
 **Involved files:**
 
@@ -1219,7 +1257,7 @@ Properties:
   repository is touched by a read that needs an authoritative
   vault-id.
 
-**Recommended implementation — commit ownership:**
+**Recommended implementation — canonical marker:**
 
 Create Version trailer:
 
@@ -1243,7 +1281,7 @@ trailer-like lines. The closure must therefore enforce:
 2. **The user message cannot supply authoritative trailers.**
    If the user message happens to contain `Docus-Version:` or
    `Docus-Vault-Version:` lines, those are user text — they are
-   **not** the canonical ownership trailers.
+   **not** the canonical marker trailers.
 3. **Withdraw requires exactly one canonical trailer block.**
    The canonical block is the **last** contiguous `Key: Value`
    paragraph of the commit message (Git's `interpret-trailers`
@@ -1252,7 +1290,7 @@ trailer-like lines. The closure must therefore enforce:
 4. **Duplicate or ambiguous trailers are rejected.** If the
    canonical trailer block contains more than one `Docus-Version`
    or more than one `Docus-Vault-Version` line, the commit is
-   rejected as `409 'commit has ambiguous ownership trailers;
+   rejected as `409 'commit has ambiguous Docus marker trailers;
    cannot withdraw'`.
 
 This is not a cryptographic signature — the user can copy the
@@ -1301,12 +1339,12 @@ under the same fix).
   - new: `'withdraw accepts a Docus commit whose vault-id matches'`.
   - new: `'withdraw rejects a merge commit even with a valid trailer'`.
   - new: `'withdraw rejects a commit whose change set includes a non-Markdown path'`.
-  - new: `'withdraw rejects duplicate ownership trailers'` —
+  - new: `'withdraw rejects duplicate canonical marker trailers'` —
     commit message has two `Docus-Version: 1` lines in the
-    trailer block; expect 409 'ambiguous ownership trailers'.
+    trailer block; expect 409 'ambiguous Docus marker trailers'.
   - new: user body contains a fake trailer while the server-appended
     canonical block makes Withdraw succeed; an external commit with
-    only the fake body line is rejected; duplicate canonical ownership
+    only the fake body line is rejected; duplicate canonical marker
     trailers are rejected as ambiguous.
   - new: `'external commit with copied author identity but no canonical trailer is rejected'` —
     commit authored by `docus <docus@localhost>` with no
@@ -1337,7 +1375,7 @@ Option B:
    migration. Every other old commit is refused.
 
 Option C:
-   Legacy ownership is inferred by a strictly documented,
+   Legacy marker eligibility is inferred by a strictly documented,
    fail-closed compatibility rule (e.g. "commits authored
    by the local docus identity, after a watermark date, are
    treated as Docus commits"). Rejected by default because
@@ -1348,9 +1386,13 @@ The default in the absence of an Owner choice is **Option A
 — fail closed**. Document this default in the Final
 Closure's Known Risks.
 
-**Definition of Done:** Withdraw is restricted to Docus-created
-commits from the same vault, AND every active vault has a
-`docus-vault-id` file under `<git-dir>/docus/`.
+**Definition of Done:** Withdraw recognizes only commits carrying one
+canonical `Docus-Version` / `Docus-Vault-Version` trailer block
+matching the current vault metadata, and every active vault has a
+`docus-vault-id` file under `<git-dir>/docus/`. This prevents
+accidental withdrawal of ordinary terminal-created commits, but it is
+not a security boundary against a local actor who can write Git
+objects or the Git directory.
 
 **Risk:** Medium.
 
@@ -1820,7 +1862,7 @@ Phase 0  Documentation reconstruction                    [in flight]
 Phase 1  API and UI truthfulness fixes
    History-C1, History-C2                                ← client-only
    History-C9 (overlap)
-Phase 2  Git ownership and index-safety fixes
+Phase 2  Git marker and index-safety fixes
    History-C3, History-C4                                ← server-side
 Phase 3  Restore + edge-case fixes
    History-C5, History-C6, History-C7                    ← server + client

@@ -44,6 +44,18 @@ Documentation Correction Commits:
 `7b1bb2c7912869a1e8faf8c3ac40346696d99682` (Round 2 — 13 findings)
 `de85039d01c44e1b6cc80d8baa3cc5dd2ad69d2e` (Round 3 — 8 findings)
 
+Documentation Bookkeeping Commit:
+
+`2d5ce3f8a388e957d83195a73acdc3b73dd03aaa`
+
+Documentation Correction Commit — Round 4:
+
+`8d6f71aba406b4e96123ddecd70b9c1d1001e17b`
+
+Documentation Correction Commit — Round 5:
+
+`PENDING — record the actual full SHA in a bookkeeping commit`
+
 ## 2. Current Status
 
 ```text
@@ -171,8 +183,8 @@ accepted** before this document may be flipped to **CLOSED**.
 |----|---------|----------|--------|-----------------|
 | H-C1 | `/status` response contract — `getStatus` swallows genuine 5xx because `allowNonOkJson: true` is unconditional | P1 | Open | **Yes** |
 | H-C2 | Commit success vs post-success refresh failure classification | P1 | Open | **Yes** |
-| H-C3 | Retrying Real-Index synchronization can clear newly staged target-path entries created by an external Git operation. Working Tree bytes may remain, but staged intent can be lost. | P1 | Open | **Yes** |
-| H-C4 | Withdraw lacks Docus commit ownership verification (also depends on Owner choice for legacy-commit migration; default Option A — fail closed) | P1 | Open | **Yes** |
+| H-C3 | Routine Real-Index synchronization can overwrite target-path staged intent in two cases: the target path was already staged before Create Version or Withdraw began; or an external Git writer changes the target path during the current reset / verify retry window. Working Tree bytes may remain intact, but the user's exact staged state can be lost. | P1 | Open | **Yes** |
+| H-C4 | Withdraw lacks canonical same-vault Docus commit marker verification (also depends on Owner choice for legacy-marker migration; default Option A — fail closed) | P1 | Open | **Yes** |
 | H-C5 | Restore reads a mutable ref outside the repository mutation transaction, returns pre-restore source bytes, and the current client writes `request.historicalRaw` into the editor tab and the file-change event. | P1 | Open | **Yes** |
 | H-C6 | Short SHA at `/drop` never matches full HEAD | P2 | Open | Yes (UX) |
 | H-C7 | Timeline date grouping uses an 86_400_000 ms window between local-midnight `startOfDay` timestamps; across a DST transition the bucket does not match the local-calendar day boundary. | P2 | Open | **Yes** |
@@ -221,8 +233,8 @@ gets explicit owner sign-off.
    `'only the latest version can be withdrawn'`.
    - Verified by `'rejects an older version and uses CAS without
      overwriting an external version'`. **Note**: this
-   verification is about HEAD identity, **not** about Docus
-   ownership — see H-C4.
+   verification is about HEAD identity, **not** about a canonical
+   same-vault Docus marker — see H-C4.
 6. **Index Repair is durable + atomic**. JSON file at
    `<git-dir>/docus/index-repair.json`, schema version 2, v1→v2
    migration, corrupt quarantine, temp-file + `fs.rename`,
@@ -264,9 +276,9 @@ gets explicit owner sign-off.
 12. **Path-mutation lock** excludes overlapping vault mutations
     (Create ↔ Restore ↔ Withdraw ↔ editor save).
     - Verified by `pathMutationLock.test.ts` (2 cases).
-13. **Identity attribution** for Docus commits.
-    - **Not yet verified under any Docus-commit-ownership scheme**;
-      see H-C4.
+13. **Canonical same-vault Docus marker** for commits.
+    - **Not yet verified**; the marker is an accidental-withdrawal
+      guard, not cryptographic ownership proof. See H-C4.
 
 Each invariant moves from "Candidate" to "Verified" only after the
 closure verification (Section §7) reproduces it on the Final
@@ -416,8 +428,10 @@ this closure.
 6. **Restore does not touch HEAD or the Real Index**. Restore is
    strictly Working-Tree-only via `git restore --source=<ref>
    --worktree`.
-7. **Withdraw only withdraws what Docus created**. The Docus-Vault
-   commit trailer scheme (H-C4) — once finalized — must be enforced.
+7. **Withdraw requires one canonical same-vault Docus marker block**.
+   The Docus-Vault trailer scheme (H-C4) — once finalized — must be
+   enforced as an accidental-withdrawal guard, not a security
+   boundary.
 8. **Withdraw runs at a vault-wide lock**; Create and Restore run
    at per-path locks. Cross-workflow exclusion is required.
 9. **All mutating routes** must continue to:
