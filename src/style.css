@@ -2012,29 +2012,24 @@ main.container {
   background: var(--vs-bg-2);
 }
 
-/* Tag chips. Compact pill-shaped buttons that flow inside `.tag-list`
-   via flex-wrap. Each chip sizes to its content; the chip itself
-   carries no full-row padding, so a list of tags reads as a single
-   block of grouped labels rather than a stack of full-width rows.
-
-   The `.tag-name` and `.tag-count` children stack inline-flex with
-   a 6px gap (close to the label — not pushed to the far right of
-   the chip), so a chip reads visually as `#java 12` rather than
-   `#java … 12`.
+/* Tag chips. Equal-width pill-shaped buttons laid out by the
+   `auto-fill / minmax(110px, 1fr)` grid on `.tag-list`. Every chip
+   fills its grid cell so the column rhythm stays stable; the
+   `.tag-name` and `.tag-count` children are pushed to opposite
+   edges via `margin-left: auto` on the count, so a chip reads
+   visually as `#java … 12` regardless of label length.
 
    `border-radius: 999px` + `border: 1px solid var(--vs-border)`
    produces the neutral pill. Default background is the existing
    `--vs-bg-2` token (already used by `.tag-filter`), which keeps
    the chip visually subordinate to the active accent state.
-   `max-width` keeps long tags from pushing the chip beyond the
-   sidebar; `.tag-label` truncates with ellipsis and the existing
-   `title` attribute shows the full name on hover. */
+   `.tag-label` truncates with ellipsis and the existing `title`
+   attribute shows the full name on hover. */
 .vault .tag-panel .tag-entry {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  width: auto;
-  max-width: min(100%, 220px);
+  width: 100%;
   min-width: 0;
   height: 26px;
   padding: 0 10px;
@@ -2109,6 +2104,7 @@ main.container {
   font-variant-numeric: tabular-nums;
   color: var(--vs-text-3);
   flex-shrink: 0;
+  margin-left: auto;
   transition: color 100ms;
 }
 .vault .tag-panel .tag-entry:hover .tag-count { color: var(--vs-text-2); }
@@ -2304,13 +2300,15 @@ main.container {
 .vault .tag-panel .tag-list {
   flex: 1 1 auto;
   min-height: 0;
-  /* Chip/pill flow layout: tags wrap onto multiple lines as the
-     sidebar width changes. Padding separates the row from the
-     filter row above and the results header below; overflow-y:
-     auto keeps vertical scrolling on long lists. */
-  display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
+  /* Equal-width chip grid. auto-fill + minmax(110px, 1fr) lets the
+     column count scale with the sidebar width — typically 2 columns,
+     falling back to 1 column when the sidebar narrows and growing
+     to 3+ when it widens. Padding separates the row from the filter
+     row above and the results header below; overflow-y: auto keeps
+     vertical scrolling on long lists. */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  align-content: start;
   gap: 6px;
   padding: 8px 12px;
   overflow-y: auto;
