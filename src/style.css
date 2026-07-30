@@ -2012,57 +2012,63 @@ main.container {
   background: var(--vs-bg-2);
 }
 
-/* Tag rows. Same chrome as FileTree .row-line: same height, same
-   gap, same color tokens, same hover/active treatment — only the
-   count slot differs (`.tag-entry` uses justify-content: space-between
-   to push the count to the far right).
+/* Tag chips. Compact pill-shaped buttons that flow inside `.tag-list`
+   via flex-wrap. Each chip sizes to its content; the chip itself
+   carries no full-row padding, so a list of tags reads as a single
+   block of grouped labels rather than a stack of full-width rows.
 
-   `padding-left: 26px` makes the tag label start at the same x
-   position as a FileTree first-level file/folder node's name.
-   FileTree depth=0 row-line is:
-     6px padding + 14px chevron + 5px gap + 16px icon + 5px gap
-     = 46px to text-start.
-   `.tag-entry` is:
-     26px padding + 16px hash-icon + 4px gap
-     = 46px to text-start.
-   The 5px gap on `.tag-entry` itself is the space between
-   `.tag-name` and `.tag-count` (justify-content: space-between
-   pushes the count to the far right), not the gap inside the
-   name slot — that one lives on `.tag-name` as `gap: 4px`.
-   Don't try to "fix" the alignment with margin; the padding is
-   the structural alignment. */
+   The `.tag-name` and `.tag-count` children stack inline-flex with
+   a 6px gap (close to the label — not pushed to the far right of
+   the chip), so a chip reads visually as `#java 12` rather than
+   `#java … 12`.
+
+   `border-radius: 999px` + `border: 1px solid var(--vs-border)`
+   produces the neutral pill. Default background is the existing
+   `--vs-bg-2` token (already used by `.tag-filter`), which keeps
+   the chip visually subordinate to the active accent state.
+   `max-width` keeps long tags from pushing the chip beyond the
+   sidebar; `.tag-label` truncates with ellipsis and the existing
+   `title` attribute shows the full name on hover. */
 .vault .tag-panel .tag-entry {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 5px;
-  width: 100%;
-  padding: 3px 8px 3px 26px;
-  min-height: 30px;
-  font-size: 0.84rem;
-  line-height: 1.35;
+  gap: 6px;
+  width: auto;
+  max-width: min(100%, 220px);
+  min-width: 0;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 0.78rem;
+  line-height: 1;
   color: var(--vs-text-1);
   text-decoration: none;
-  background: transparent;
-  border: 0;
+  background: var(--vs-bg-2);
+  border: 1px solid var(--vs-border);
+  border-radius: 999px;
   cursor: pointer;
   text-align: left;
   font-family: inherit;
-  transition: background 100ms, color 100ms;
+  transition: background 100ms, color 100ms, border-color 100ms;
 }
 .vault .tag-panel .tag-entry:hover {
   background: var(--vs-hover-bg);
   color: var(--vs-text-1);
 }
 .vault .tag-panel .tag-entry.active {
-  /* Same active background as FileTree (.tree-row.active .row-line::before).
-     Subtle --vs-active-bg, no left border stripe, no accent-tinted chip. */
-  background: var(--vs-active-bg);
+  /* Accent-tinted pill for the selected tag. Tinted background plus
+     accent border keeps the active chip unmistakable against the
+     neutral default chips without an over-saturated fill. */
+  background: color-mix(in srgb, var(--vs-accent) 18%, transparent);
   color: var(--vs-text-1);
+  border-color: var(--vs-accent);
   font-weight: 500;
 }
 .vault .tag-panel .tag-entry.active:hover {
-  background: var(--vs-active-bg);
+  background: color-mix(in srgb, var(--vs-accent) 24%, transparent);
+}
+.vault .tag-panel .tag-entry:focus-visible {
+  outline: 2px solid var(--vs-accent);
+  outline-offset: 2px;
 }
 .vault .tag-panel .tag-name {
   display: inline-flex;
@@ -2077,20 +2083,18 @@ main.container {
   font-family: inherit;
 }
 .vault .tag-panel .tag-hash {
-  /* `#` rendered as a 14×14 muted icon-sized cell so it lines up
-     visually with the file-tree's row-icon. Same color, same box
-     dimensions. The text is centered with line-height: 1 so the
-     glyph optical-centers inside the 14px box like the other
-     sidebar icons. */
+  /* `#` glyph sized to the chip's 0.78rem label so the chip reads as
+     one typographic unit (no oversized icon cell like the file-tree
+     rows). Same muted color as before. */
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: auto;
+  height: auto;
   flex-shrink: 0;
   color: var(--vs-text-3);
   font-family: var(--mono);
-  font-size: 0.84rem;
+  font-size: 0.78rem;
   line-height: 1;
   font-weight: 400;
 }
@@ -2098,14 +2102,13 @@ main.container {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .vault .tag-panel .tag-count {
   font-size: 0.7rem;
   font-variant-numeric: tabular-nums;
   color: var(--vs-text-3);
   flex-shrink: 0;
-  min-width: 36px; /* wider to accommodate multi-digit counts */
-  text-align: right;
   transition: color 100ms;
 }
 .vault .tag-panel .tag-entry:hover .tag-count { color: var(--vs-text-2); }
@@ -2301,6 +2304,15 @@ main.container {
 .vault .tag-panel .tag-list {
   flex: 1 1 auto;
   min-height: 0;
+  /* Chip/pill flow layout: tags wrap onto multiple lines as the
+     sidebar width changes. Padding separates the row from the
+     filter row above and the results header below; overflow-y:
+     auto keeps vertical scrolling on long lists. */
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  padding: 8px 12px;
   overflow-y: auto;
 }
 
