@@ -445,19 +445,16 @@ Server: route /api/history/commits
    ├─ assertRepositoryIdle again (right before moving HEAD)
    ├─ if non-empty repo:
    │  ├─ ls-files --stage on Real Index for staged paths
-   │  ├─ capture index fingerprint for repair records
-   │  ├─ syncIndexPaths(repoRoot, <immutable-commit-sha>, paths):
-   │  │  retry up to 3× with backoff 25/50/75ms:
-   │  │     reset -q <commit-sha> -- <paths>
-   │  │     verify HEAD still matches commit-sha
-   │  │     verify diff --cached --quiet <commit-sha> -- <paths> exits 0
-   │  │  on success → settleIndexRepairPaths(paths)
-   │  │  on failure → recordIndexRepair(repoRoot, commitSha, paths,
-   │  │                              fingerprintedRealIndex)
-   │  │                              inside withRepoMutation + .lock
+   │  ├─ capture expectedIndexBeforeHeadMove (F0) for each path
+   │  ├─ syncIndexAtomic(repoRoot, { oldHead, targetHead, paths,
+   │  │                     expectedIndexBeforeHeadMove: F0 }):
+   │  │  one Temporary-Index attempt + verification + atomic rename
+   │  │  on success → settleIndexRepairPaths(synchronizedPaths)
+   │  │  on failure → preserve external paths; persist only failedPaths
+   │  │              as a Repair Transaction bound to F0
    ├─ show --name-only --pretty= <sha> → filesCommitted[]
-   ├─ return { sha, filesCommitted, indexRefreshFailed?,
-   │           indexRepair?, repairStatePersistenceFailed? }
+   ├─ return { sha, filesCommitted, synchronizedPaths,
+   │           preservedExternalPaths, failedPaths, indexRepair? }
    └─ refresh UI: status, log, comparison(s) for the committed paths
 ```
 

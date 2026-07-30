@@ -391,7 +391,8 @@ useHistoryWithdraw.withdraw(sha):
          else:
             update-ref HEAD <parent> <expectedOld>    // CAS move
    15.   syncDroppedIndexPaths(repoRoot, filesChanged):
-         - for each .md path: same lock-and-rename Reset + Verify pattern as Create
+         - uses the lock-and-rename Temporary Index path; Create's
+           routine sync still uses direct reset/retry until History-C3 lands
          - failure: persist Repair transaction
    16.   return { sha, droppedSha, filesChanged, indexRefreshFailed, ... }
         })

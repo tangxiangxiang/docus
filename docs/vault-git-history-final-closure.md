@@ -175,7 +175,7 @@ accepted** before this document may be flipped to **CLOSED**.
 | H-C4 | Withdraw lacks Docus commit ownership verification (also depends on Owner choice for legacy-commit migration; default Option A — fail closed) | P1 | Open | **Yes** |
 | H-C5 | Restore reads a mutable ref outside the repository mutation transaction, returns pre-restore source bytes, and the current client writes `request.historicalRaw` into the editor tab and the file-change event. | P1 | Open | **Yes** |
 | H-C6 | Short SHA at `/drop` never matches full HEAD | P2 | Open | Yes (UX) |
-| H-C7 | Timeline date grouping uses an 86_400_000 ms window between local-midnight `startOfDay` timestamps; across a DST transition the bucket does not match the local-calendar day boundary. | P2 | Open | No (DST fix required) |
+| H-C7 | Timeline date grouping uses an 86_400_000 ms window between local-midnight `startOfDay` timestamps; across a DST transition the bucket does not match the local-calendar day boundary. | P2 | Open | **Yes** |
 | H-C8 | Three-platform CI verification not re-run for this reconstruction | P1 (Verification) | Open | **Yes** |
 | H-C9 | Missing regression tests (markers, path shape, multi-vault keying, Restore race) | P1 | Open | **Yes** |
 | H-K8 | Rename history not `--follow`-merged | P2 | Open | No |
@@ -329,7 +329,7 @@ For each command in the verification list, mark the status.
 | `npm test -- --run` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Last local-run evidence is from the Tags closure (`tags-query-index-refactor-final-closure.md`); not re-run for this History reconstruction. |
 | `npm run typecheck` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Same. |
 | `npm run build` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Same. |
-| `git diff --check` | **PASS on documentation commits** | Ran on `ff2f992` (reconstruction), `adfc4d7` (Round 1), and `7b1bb2c` (Round 2) — exit 0 each time. This is documentation-only verification and does **not** substitute for the Final Production Baseline `git diff --check` required by the Closure Gate. |
+| `git diff --check` | **PASS on documentation commits** | Ran on `ff2f992` (reconstruction), `adfc4d7` (Round 1), `7b1bb2c` (Round 2), `de85039` (Round 3), and `2d5ce3f` (bookkeeping) — exit 0 each time. This is documentation-only verification and does **not** substitute for the Final Production Baseline `git diff --check` required by the Closure Gate. |
 
 ### 7.2 Cross-platform CI
 
@@ -374,8 +374,8 @@ and must be resolved as Closure Blockers rather than downgraded:
 Risks that **may** be acceptable as non-blocking once the closure
 gate has run end-to-end on a Final Production Baseline:
 
-- DST bucket boundary edge (H-C7) — code behavior pinned by test
-  + comment.
+- None for H-C7: DST-safe local-calendar grouping and deterministic TZ
+  tests remain a Closure Blocker until completed.
 - No Timeline / Log pagination (H-K10) — known design tradeoff
   for vaults of expected size; recorded but not a blocker.
 - Rename history not `--follow`-merged (H-K8) — product scope

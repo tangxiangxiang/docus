@@ -848,12 +848,31 @@ are **two** distinct cases, both covered by this closure task:
 **Involved files:**
 
 - `server/history/git.ts` — introduce `syncIndexAtomic(repoRoot,
-  targetSha, paths)` modeled on the existing `repairIndexWithLock`;
+  request: IndexSyncRequest)`. The request contains `oldHead`,
+  `targetHead`, `paths`, `expectedIndexBeforeHeadMove`, and derived
+  `safeCandidatePaths`; repair transactions remain bound to F0 and are
+  superseded without reset when current Index != F0;
   rewrite `syncIndexPaths` and `syncDroppedIndexPaths` to delegate
   to it.
 - `server/__tests__/history-git.test.ts` — new cases listed below.
+- `server/history/routes.ts`, `src/lib/history-api.ts`,
+  `src/composables/vault/useHistoryCommit.ts`,
+  `src/composables/vault/useHistoryWithdraw.ts`,
+  `src/components/vault/HistoryChangesPanel.vue`,
+  `src/i18n/locales/en.ts`, `src/i18n/locales/zh.ts`, plus API,
+  composable, and route regression tests — propagate
+  `synchronizedPaths`, `preservedExternalPaths`, and `failedPaths`.
 
 **Recommended implementation (Temporary Index + atomic replacement):**
+
+**Repair transaction contract:** capture F0 before the HEAD CAS. Only
+paths whose F0 equals the old-HEAD entry are safe candidates. If sync
+fails, persist F0 as `expectedIndex`, without calling the existing
+failure-time recapture helper. Retry must compare the current Index to
+F0 first; if it differs, mark the transaction `superseded` and do not
+reset. Return `synchronizedPaths`, `preservedExternalPaths`, and
+`failedPaths`; only `failedPaths` may create a pending Repair banner.
+`preservedExternalPaths` is an informational, non-retryable result.
 
 The exact shape of this closure is fixed by two facts about Git:
 
@@ -1220,7 +1239,7 @@ trailer-like lines. The closure must therefore enforce:
 1. **Server-appended, never user-supplied.** The `Docus-Version`
    and `Docus-Vault-Version` trailers are appended by the server
    after the user message. The server concatenates:
-   `userMessage + '\n' + 'Docus-Version: 1\nDocus-Vault-Version: <id>\n'`
+   `${userMessage.trimEnd()}\n\nDocus-Version: 1\nDocus-Vault-Version: <id>`
 2. **The user message cannot supply authoritative trailers.**
    If the user message happens to contain `Docus-Version:` or
    `Docus-Vault-Version:` lines, those are user text — they are
@@ -1285,11 +1304,10 @@ under the same fix).
   - new: `'withdraw rejects duplicate ownership trailers'` —
     commit message has two `Docus-Version: 1` lines in the
     trailer block; expect 409 'ambiguous ownership trailers'.
-  - new: `'user message containing a fake Docus-Version line does not satisfy ownership check'` —
-    user message contains `Docus-Version: 1` in the body (not
-    the canonical trailer block); server appends the real
-    trailer block; withdraw verifies against the canonical
-    block only.
+  - new: user body contains a fake trailer while the server-appended
+    canonical block makes Withdraw succeed; an external commit with
+    only the fake body line is rejected; duplicate canonical ownership
+    trailers are rejected as ambiguous.
   - new: `'external commit with copied author identity but no canonical trailer is rejected'` —
     commit authored by `docus <docus@localhost>` with no
     trailer block; withdraw rejects with 409 'not a Docus
@@ -1668,7 +1686,7 @@ configured TZ, and no future-bucket key is emitted.
 
 **Risk:** Low — pure-function change isolated to one file.
 
-**Closure Blocker:** No (P2 from the prior review; correctness
+**Closure Blocker:** **Yes** (DST correctness and deterministic TZ tests
 fix rather than a new feature).
 
 ---
