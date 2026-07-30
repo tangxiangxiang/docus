@@ -25,6 +25,17 @@ The vault is split into three zones, and docus treats them differently:
 
 Notes flow one way: Literature feeds Inbox, where AI helps you think; what earns its place then moves to Archive, where AI helps you connect the dots. docus is built around that flow.
 
+## Edit Feature Status
+
+The Edit feature development program is complete and is now in maintenance mode.
+
+Final production code baseline:
+
+`83abbf336785290a667321a8817ff6898176a678`
+
+See [`docs/edit-feature-final-closure.md`](docs/edit-feature-final-closure.md)
+for the full closure record.
+
 ## Quick start
 
 ```bash
