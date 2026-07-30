@@ -1521,6 +1521,13 @@ main.container {
   justify-content: center;
   transition: background 100ms, color 100ms;
 }
+/* Push the filter clear button to the right edge of the filter row.
+   Previously the rightward push came from `.tag-filter-count`'s
+   `margin-left: auto`; with the count removed the clear button needs
+   to claim that role or it would sit flush against the input. */
+.vault .tag-panel .tag-filter-clear-x {
+  margin-left: auto;
+}
 .vault .file-tree header .search-clear-x:hover,
 .vault .tag-panel .tag-filter-clear-x:hover {
   background: var(--vs-hover-bg);
@@ -2003,21 +2010,6 @@ main.container {
   padding: 0 12px;
   border-bottom: 1px solid var(--vs-border);
   background: var(--vs-bg-2);
-}
-/* Total tag count on the far right. `margin-left: auto` claims the
-   space between input/clear-x and the count; `flex-shrink: 0` keeps
-   it pinned when the input grows. Tabular-nums so digit changes
-   don't shift the input width. Same visual weight as the original
-   header .count (0.7rem, --vs-text-2, mono numerals). */
-.vault .tag-panel .tag-filter-count {
-  flex-shrink: 0;
-  margin-left: auto;
-  font-weight: 500;
-  font-size: 0.7rem;
-  color: var(--vs-text-2);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
-  line-height: 1;
 }
 
 /* Tag rows. Same chrome as FileTree .row-line: same height, same

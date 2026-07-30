@@ -72,10 +72,6 @@ const visibleTags = computed<TagRecord[]>(() => {
 // up. Normalize once into a key and compare keys.
 const selectedTagKey = computed(() => normalizeTag(props.selectedTag))
 
-const tagCountLabel = computed(() => filter.value.trim()
-  ? t('tags.filtered_count', { visible: visibleTags.value.length, total: allTagsSorted.value.length })
-  : t('tags.total', { count: allTagsSorted.value.length }))
-
 const filteredPosts = computed(() => {
   if (!props.selectedTag) return []
   // Use the normalized form as the index key — this is what
@@ -119,7 +115,6 @@ function onFilterKeydown(event: KeyboardEvent) {
         <span class="tag-filter-icon" v-html="ICON_SEARCH" aria-hidden="true" />
         <input v-model="filter" class="tag-filter-input" type="text" :placeholder="t('tags.filter')" :aria-label="t('tags.filter')" @keydown="onFilterKeydown" />
         <button v-if="filter" class="tag-filter-clear-x" :title="t('tags.clear_filter')" :aria-label="t('tags.clear_filter')" @click="filter = ''">×</button>
-        <span class="tag-filter-count" :title="tagCountLabel" :aria-label="tagCountLabel">{{ visibleTags.length }}</span>
       </div>
     </header>
 

@@ -62,15 +62,6 @@ describe('Tags filter', () => {
     expect((input.element as HTMLInputElement).value).toBe('')
   })
 
-  it('shows the visible count and exposes visible/total details while filtering', async () => {
-    const wrapper = mountPanel()
-    await wrapper.get('.tag-filter-input').setValue('ref')
-    const count = wrapper.get('.tag-filter-count')
-    expect(count.text()).toBe('1')
-    expect(count.attributes('title')).toBe('显示 1 / 5 个标签')
-    expect(count.attributes('aria-label')).toBe('显示 1 / 5 个标签')
-  })
-
   it('shows notes for the selected tag and emits the selected note path', async () => {
     const wrapper = mountPanel({ selectedTag: 'reference' })
     expect(wrapper.findAll('.result-entry')).toHaveLength(3)
