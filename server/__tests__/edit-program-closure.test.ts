@@ -56,6 +56,22 @@ vi.mock('../ai/llm', () => ({
 
 const RUN = String(Date.now())
 const ORIGINAL_CONTENT_DIR = CONTENT_DIR
+const INTEGRATION_TEST_TIMEOUT = 30_000
+const INTEGRATION_HOOK_TIMEOUT = 30_000
+
+// Track every real route request so afterEach can wait for any in-flight
+// requests to settle BEFORE we close the metadata DB, reset globals, or
+// remove the temporary vault. On Windows a leftover request holding a
+// file handle causes EBUSY in fs.rm and cross-test contamination.
+const inFlightRequests = new Set<Promise<unknown>>()
+
+function trackRequest<T>(request: Promise<T>): Promise<T> {
+  inFlightRequests.add(request)
+  request.finally(() => {
+    inFlightRequests.delete(request)
+  })
+  return request
+}
 
 // Stale-body sentinels: T1 moves these between the old and the new
 // document so the identity gate is probed at BYTE-IDENTICAL raw.
@@ -79,7 +95,7 @@ async function call(method: string, urlPath: string, body?: unknown) {
     headers: body ? { 'content-type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   })
-  return app.fetch(req)
+  return trackRequest(app.fetch(req))
 }
 
 async function getDetail(slug: string): Promise<{ raw: string; id: string; mtime: number }> {
@@ -195,14 +211,26 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  // Wait for every in-flight route request to settle BEFORE we close
+  // the metadata DB, reset globals, or remove the temporary vault.
+  // On Windows a leftover request holding a file handle causes EBUSY
+  // in fs.rm and cross-test contamination.
+  await Promise.allSettled([...inFlightRequests])
+  inFlightRequests.clear()
+
   for (const spy of consoleSpies) spy.mockRestore()
   __setMetadataDbForTesting(null)
   __resetRepoRootForTesting()
   __resetGitCapabilityForTesting()
   setContentDir(ORIGINAL_CONTENT_DIR)
   db.close()
-  await fs.rm(contentDir, { recursive: true, force: true })
-})
+  await fs.rm(contentDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  })
+}, INTEGRATION_HOOK_TIMEOUT)
 
 describe('Docus Edit Program closure: cross-Edit contracts', () => {
   it('Journey 8 — path reuse never inherits the old identity: stale baseRaw 409s, a stale AI documentId is blocked even at byte-identical raw, the correct identity passes', async () => {
@@ -288,7 +316,7 @@ describe('Docus Edit Program closure: cross-Edit contracts', () => {
         }
       }
     }
-  })
+  }, INTEGRATION_TEST_TIMEOUT)
 
   it('Journey 5 — rename keeps documentId; the new path serves the same bytes; pre-rename revisions stay retrievable at the old git path; reusing the old path mints a new identity', async () => {
     const slug = `inbox/epc-rename-${RUN}`
@@ -363,5 +391,5 @@ describe('Docus Edit Program closure: cross-Edit contracts', () => {
         }
       }
     }
-  })
+  }, INTEGRATION_TEST_TIMEOUT)
 })

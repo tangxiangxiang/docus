@@ -35,6 +35,16 @@ let vault: string
 let originalContentDir: string
 let db: Database.Database
 
+const INTEGRATION_TEST_TIMEOUT = 30_000
+const INTEGRATION_HOOK_TIMEOUT = 30_000
+
+// Track every real /api/folders PATCH request so afterEach can wait
+// for any in-flight requests to settle BEFORE we reset hooks, close
+// the metadata DB, or remove the temporary vault. On Windows a leftover
+// request holding a file handle causes EBUSY in fs.rm and cross-test
+// contamination (which surfaces as journal=[] on the next test).
+const inFlightFolderRequests = new Set<Promise<Response>>()
+
 beforeEach(async () => {
   originalContentDir = path.resolve(process.cwd(), 'src/content')
   vault = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-round17-'))
@@ -48,6 +58,13 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  // Wait for every in-flight /api/folders PATCH request to settle
+  // BEFORE we reset hooks, close the metadata DB, or remove the
+  // temporary vault. On Windows a leftover request holding a file
+  // handle causes EBUSY in fs.rm and cross-test contamination.
+  await Promise.allSettled([...inFlightFolderRequests])
+  inFlightFolderRequests.clear()
+
   __setCreateOnlyMoveHooksForTesting(null)
   __setDirectoryMoveStrategyOverrideForTesting(null)
   __setFolderRaceHooksForTesting(null)
@@ -55,8 +72,13 @@ afterEach(async () => {
   db.close()
   setContentDir(originalContentDir)
   __resetLinkIndexForTesting()
-  await fs.rm(vault, { recursive: true, force: true })
-})
+  await fs.rm(vault, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  })
+}, INTEGRATION_HOOK_TIMEOUT)
 
 function insertMigration(
   migrationPath: string,
@@ -114,19 +136,24 @@ async function seedRenameGraph(): Promise<void> {
 }
 
 async function patchFolder(): Promise<Response> {
-  return app.fetch(new Request('http://localhost/api/folders/proj', {
+  const request = app.fetch(new Request('http://localhost/api/folders/proj', {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ newPath: 'ren', updateReferences: true }),
   }))
+  inFlightFolderRequests.add(request)
+  request.finally(() => {
+    inFlightFolderRequests.delete(request)
+  })
+  return request
 }
 
-async function readOnlyV4Journal(): Promise<{
+async function readOnlyV4Journal(routeResponse?: Response): Promise<{
   absolutePath: string
   journal: FolderMoveJournalV4
 }> {
-  const names = (await fs.readdir(vault))
-    .filter((name) => name.includes('.docus-journal-'))
+  const allNames = await fs.readdir(vault)
+  const names = allNames.filter((name) => name.includes('.docus-journal-'))
   const journals = (await Promise.all(names.map(async (name) => {
     const absolutePath = path.join(vault, name)
     const parsed = JSON.parse(await fs.readFile(absolutePath, 'utf8')) as {
@@ -136,7 +163,47 @@ async function readOnlyV4Journal(): Promise<{
       ? { absolutePath, journal: parsed as FolderMoveJournalV4 }
       : null
   }))).filter((item): item is NonNullable<typeof item> => item !== null)
-  expect(journals).toHaveLength(1)
+  if (journals.length !== 1) {
+    let routeBody: string | undefined
+    if (routeResponse) {
+      try {
+        routeBody = await routeResponse.clone().text()
+      } catch {
+        routeBody = '<body already consumed>'
+      }
+    }
+    const parsedCandidates = await Promise.all(
+      names
+        .map(async (name) => {
+          const absolutePath = path.join(vault, name)
+          try {
+            const raw = JSON.parse(await fs.readFile(absolutePath, 'utf8')) as {
+              version?: number
+              op?: string
+              phase?: string
+            }
+            return {
+              name,
+              version: raw.version,
+              op: raw.op,
+              phase: raw.phase,
+            }
+          } catch {
+            return { name, version: undefined, op: undefined, phase: undefined }
+          }
+        }),
+    )
+    expect(
+      journals,
+      JSON.stringify({
+        status: routeResponse?.status,
+        body: routeBody,
+        vaultEntries: allNames,
+        journalNames: names,
+        candidates: parsedCandidates,
+      }),
+    ).toHaveLength(1)
+  }
   return journals[0]!
 }
 
@@ -154,9 +221,9 @@ describe('Round-17 durable reverse metadata intent', () => {
       },
     })
 
-    await patchFolder()
+    const patchResponse = await patchFolder()
 
-    const { journal } = await readOnlyV4Journal()
+    const { journal } = await readOnlyV4Journal(patchResponse)
     expect(journal.metadataDisposition.kind).toBe('snapshot-restore')
     if (journal.metadataDisposition.kind !== 'snapshot-restore') return
     const snapshot = journal.metadataDisposition.snapshot
@@ -176,7 +243,7 @@ describe('Round-17 durable reverse metadata intent', () => {
       expectedCurrentSnapshot: expect.any(Object),
       physicalDocumentIds: ['proj-a-id'],
     })
-  })
+  }, INTEGRATION_TEST_TIMEOUT)
 
   it('restores the real committed forward journal when reverse contention lands no entry', async () => {
     await seedRenameGraph()
@@ -188,9 +255,9 @@ describe('Round-17 durable reverse metadata intent', () => {
       },
     })
 
-    await patchFolder()
+    const patchResponse = await patchFolder()
 
-    const { journal } = await readOnlyV4Journal()
+    const { journal } = await readOnlyV4Journal(patchResponse)
     expect(journal).toMatchObject({
       srcRel: 'proj',
       destRel: 'ren',
@@ -212,7 +279,7 @@ describe('Round-17 durable reverse metadata intent', () => {
       .toBe('# external\n')
     expect(await fs.readFile(path.join(vault, 'ren', 'a.md'), 'utf8'))
       .toBe('# hello\n')
-  })
+  }, INTEGRATION_TEST_TIMEOUT)
 
   it('rejects an external metadata mutation through the durable reverse CAS', async () => {
     await seedRenameGraph()
@@ -231,9 +298,9 @@ describe('Round-17 durable reverse metadata intent', () => {
       },
     })
 
-    await patchFolder()
+    const patchResponse = await patchFolder()
 
-    const persisted = await readOnlyV4Journal()
+    const persisted = await readOnlyV4Journal(patchResponse)
     expect(persisted.journal).toMatchObject({
       srcRel: 'ren',
       destRel: 'proj',
@@ -257,7 +324,7 @@ describe('Round-17 durable reverse metadata intent', () => {
     expect(getDocumentMetadata(db, 'ref')?.summary)
       .toBe('external metadata transaction')
     expect(await fs.stat(persisted.absolutePath)).toBeDefined()
-  })
+  }, INTEGRATION_TEST_TIMEOUT)
 
   it('keeps the reverse journal after partial landing instead of restoring forward direction', async () => {
     await seedRenameGraph()
@@ -286,9 +353,9 @@ describe('Round-17 durable reverse metadata intent', () => {
       },
     })
 
-    await patchFolder()
+    const patchResponse = await patchFolder()
 
-    const { journal } = await readOnlyV4Journal()
+    const { journal } = await readOnlyV4Journal(patchResponse)
     expect(journal).toMatchObject({
       srcRel: 'ren',
       destRel: 'proj',
@@ -303,7 +370,7 @@ describe('Round-17 durable reverse metadata intent', () => {
       .toBe('# external claimant\n')
     expect(await fs.readFile(path.join(vault, 'ren', 'b.md'), 'utf8'))
       .toBe('# second\n')
-  })
+  }, INTEGRATION_TEST_TIMEOUT)
 })
 
 describe('Round-17 snapshot physical footprint', () => {
