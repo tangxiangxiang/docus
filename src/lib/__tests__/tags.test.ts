@@ -4,11 +4,51 @@ import {
   buildTagIndex,
   matchesTagQuery,
   normalizeTag,
+  normalizeTagDisplay,
   parseTagQuery,
   sortTagsByCountDescThenName,
   updateDocumentTags,
   type SearchableDoc,
+  type TagIndex,
+  type TagQuery,
 } from '../tags'
+
+/**
+ * Cross-validates the three-way invariant that `TagIndex` advertises
+ * in its docstring:
+ *   for every (path, tag) pair, documentTags[path] agrees with
+ *   tagDocuments[tag] AND tags[tag].count equals tagDocuments[tag].size.
+ * `updateDocumentTags` is supposed to maintain this invariant by
+ * construction; this helper exists so any test that produces an
+ * index can re-check it cheaply. Caught several subtle drift bugs
+ * during Phase 1 review.
+ */
+function expectTagIndexConsistent(index: TagIndex) {
+  // Forward pass: every (path, tag) in documentTags must appear in
+  // tagDocuments, and tags.count must reflect tagDocuments.size.
+  for (const [path, tagsForPath] of index.documentTags) {
+    for (const tag of tagsForPath) {
+      expect(index.tagDocuments.get(tag)?.has(path)).toBe(true)
+    }
+  }
+  // Reverse pass: every (tag, path) in tagDocuments must appear in
+  // documentTags, and tags.count must equal tagDocuments.size.
+  for (const [tag, paths] of index.tagDocuments) {
+    for (const path of paths) {
+      expect(index.documentTags.get(path)?.has(tag)).toBe(true)
+    }
+    expect(index.tags.get(tag)?.count).toBe(paths.size)
+  }
+  // Tags not present in tagDocuments must not be present in
+  // documentTags either, and `tags` must agree.
+  for (const [tag, rec] of index.tags) {
+    if (!index.tagDocuments.has(tag)) {
+      expect(rec.count).toBe(0)
+    } else {
+      expect(rec.count).toBe(index.tagDocuments.get(tag)!.size)
+    }
+  }
+}
 
 // -------- normalizeTag --------
 
@@ -20,6 +60,15 @@ describe('normalizeTag', () => {
   it('trims leading and trailing whitespace', () => {
     expect(normalizeTag('  java  ')).toBe('java')
     expect(normalizeTag('\t#java\n')).toBe('java')
+  })
+
+  it('re-trims after stripping `#` so `# java` does not leak the inner space', () => {
+    // Pre-Phase-1 fix: this used to return `' java'` (with a
+    // leading space) because the post-strip trim only ran as part
+    // of the empty-string check. Phase 1.1 makes the trim
+    // unconditional so the normalized form is always clean.
+    expect(normalizeTag('# java')).toBe('java')
+    expect(normalizeTag('#  spring  ')).toBe('spring')
   })
 
   it('lowercases for matching', () => {
@@ -66,12 +115,45 @@ describe('normalizeTag', () => {
   })
 })
 
+// -------- normalizeTagDisplay --------
+
+describe('normalizeTagDisplay', () => {
+  it('strips one leading `#` but preserves casing', () => {
+    expect(normalizeTagDisplay('#Java')).toBe('Java')
+    expect(normalizeTagDisplay('#java')).toBe('java')
+    expect(normalizeTagDisplay('Java')).toBe('Java')
+  })
+
+  it('trims surrounding whitespace', () => {
+    expect(normalizeTagDisplay('  #java  ')).toBe('java')
+    expect(normalizeTagDisplay('\t#Java\n')).toBe('Java')
+  })
+
+  it('returns empty string for blank input', () => {
+    expect(normalizeTagDisplay('')).toBe('')
+    expect(normalizeTagDisplay('   ')).toBe('')
+    expect(normalizeTagDisplay('#')).toBe('')
+    expect(normalizeTagDisplay(null)).toBe('')
+  })
+
+  it('strips the leading `#` even when followed by inner whitespace', () => {
+    // `# java` should not display as ` java` (with a leading space)
+    // — the trim handles the post-strip whitespace too.
+    expect(normalizeTagDisplay('# java')).toBe('java')
+  })
+
+  it('only strips ONE leading `#`', () => {
+    expect(normalizeTagDisplay('##java')).toBe('#java')
+  })
+})
+
 // -------- parseTagQuery --------
 
 describe('parseTagQuery', () => {
   it('returns an empty query for empty input', () => {
     expect(parseTagQuery('')).toEqual({
       text: '',
+      textTokens: [],
       includeAll: [],
       includeAny: [],
       exclude: [],
@@ -79,7 +161,9 @@ describe('parseTagQuery', () => {
   })
 
   it('returns an empty query for whitespace-only input', () => {
-    expect(parseTagQuery('   \t\n  ').text).toBe('')
+    const q = parseTagQuery('   \t\n  ')
+    expect(q.text).toBe('')
+    expect(q.textTokens).toEqual([])
   })
 
   it('parses a single #tag into includeAll', () => {
@@ -87,12 +171,13 @@ describe('parseTagQuery', () => {
     expect(q.includeAll).toEqual(['java'])
     expect(q.exclude).toEqual([])
     expect(q.text).toBe('')
+    expect(q.textTokens).toEqual([])
   })
 
   it('parses multiple #tags as AND (all into includeAll)', () => {
     const q = parseTagQuery('#java #spring')
     expect(q.includeAll).toEqual(['java', 'spring'])
-    expect(q.text).toBe('')
+    expect(q.textTokens).toEqual([])
   })
 
   it('parses -#exclude tokens', () => {
@@ -106,13 +191,24 @@ describe('parseTagQuery', () => {
     expect(q.includeAll).toEqual(['java', 'spring'])
     expect(q.exclude).toEqual(['archive'])
     expect(q.text).toBe('nacos')
+    expect(q.textTokens).toEqual(['nacos'])
   })
 
-  it('treats plain text as text query', () => {
-    const q = parseTagQuery('hello world')
-    expect(q.text).toBe('hello world')
-    expect(q.includeAll).toEqual([])
-    expect(q.exclude).toEqual([])
+  it('tokenizes multi-word plain text into textTokens', () => {
+    const q = parseTagQuery('redis cache')
+    expect(q.text).toBe('redis cache')
+    expect(q.textTokens).toEqual(['redis', 'cache'])
+  })
+
+  it('combines tag and text in any order', () => {
+    const q1 = parseTagQuery('#java nacos')
+    expect(q1.includeAll).toEqual(['java'])
+    expect(q1.text).toBe('nacos')
+    expect(q1.textTokens).toEqual(['nacos'])
+
+    const q2 = parseTagQuery('nacos #java')
+    expect(q2.includeAll).toEqual(['java'])
+    expect(q2.textTokens).toEqual(['nacos'])
   })
 
   it('dedupes repeated #tags in includeAll', () => {
@@ -126,22 +222,16 @@ describe('parseTagQuery', () => {
   })
 
   it('records both includeAll and exclude when same tag is in both', () => {
-    // matchesTagQuery is responsible for logical resolution;
-    // the parser just records the user's intent.
     const q = parseTagQuery('#java -#java')
     expect(q.includeAll).toEqual(['java'])
     expect(q.exclude).toEqual(['java'])
   })
 
   it('tolerates a bare `#` (no tag name)', () => {
-    // `#` alone is a recognized separator that produces no tag; the
-    // surrounding plain text falls into the text channel. The
-    // parser deliberately does NOT try to glue `#` to the next
-    // token — that's a more complex shape the Phase 4 OR-mode UI
-    // might add, not Phase 1.
     const q = parseTagQuery('# java')
     expect(q.includeAll).toEqual([])
     expect(q.text).toBe('java')
+    expect(q.textTokens).toEqual(['java'])
   })
 
   it('tolerates multiple spaces between tokens', () => {
@@ -165,24 +255,17 @@ describe('parseTagQuery', () => {
     expect(q.exclude).toEqual(['archive'])
   })
 
-  it('combines tag and text in any order', () => {
-    const q1 = parseTagQuery('#java nacos')
-    expect(q1.includeAll).toEqual(['java'])
-    expect(q1.text).toBe('nacos')
-
-    const q2 = parseTagQuery('nacos #java')
-    expect(q2.includeAll).toEqual(['java'])
-    expect(q2.text).toBe('nacos')
+  it('lowercases textTokens so the matcher can do simple substring comparison', () => {
+    const q = parseTagQuery('Redis CACHE')
+    expect(q.textTokens).toEqual(['redis', 'cache'])
   })
 
   it('handles tag tokens adjacent to text without space', () => {
-    // While unusual, '#java' followed by text without space is still
-    // one token. The parser preserves that as-is (it gets pushed to
-    // text). This is the same behavior as the legacy substring
-    // search — we don't introduce new edge cases here.
+    // `#javanacos` is one token; the parser puts it in includeAll.
+    // The same behavior as the legacy substring search.
     const q = parseTagQuery('#javanacos')
     expect(q.includeAll).toEqual(['javanacos'])
-    expect(q.text).toBe('')
+    expect(q.textTokens).toEqual([])
   })
 })
 
@@ -226,19 +309,22 @@ describe('matchesTagQuery', () => {
 
   it('exclude takes precedence over includeAll', () => {
     const q = parseTagQuery('#a -#a')
-    // Both listed: matches-tag-query must NOT match because the
-    // exclude filter runs first. Returning true here would make
-    // `#a -#a` mean "everything with a", which contradicts the
-    // user's intent.
     expect(matchesTagQuery(doc({ path: 'a.md', title: 'A', tags: ['a'] }), q)).toBe(false)
   })
 
-  it('plain text matches path or title or summary (case-insensitive)', () => {
+  it('plain text matches path or title (case-insensitive)', () => {
     const q = parseTagQuery('Redis')
     expect(matchesTagQuery(doc({ path: 'notes/redis.md', title: 'A', tags: [] }), q)).toBe(true)
     expect(matchesTagQuery(doc({ path: 'a.md', title: 'Redis notes', tags: [] }), q)).toBe(true)
-    expect(matchesTagQuery(doc({ path: 'a.md', title: 'A', tags: [], summary: 'about redis' }), q)).toBe(true)
-    expect(matchesTagQuery(doc({ path: 'other.md', title: 'B', tags: [] }), q)).toBe(false)
+    expect(matchesTagQuery(doc({ path: 'a.md', title: 'A', tags: [] }), q)).toBe(false)
+  })
+
+  it('multi-text-token requires every token (AND)', () => {
+    const q = parseTagQuery('redis cache')
+    // Both tokens present in different fields → match
+    expect(matchesTagQuery(doc({ path: 'redis.md', title: 'Cache notes', tags: [] }), q)).toBe(true)
+    // Only one token present → no match
+    expect(matchesTagQuery(doc({ path: 'redis.md', title: 'Notes', tags: [] }), q)).toBe(false)
   })
 
   it('text + #tag requires both', () => {
@@ -273,8 +359,6 @@ describe('matchesTagQuery', () => {
 
   it('treats `undefined` tags as empty without crashing', () => {
     const q = parseTagQuery('#java')
-    // Server-side rename / tree-builder paths can theoretically emit
-    // tags: undefined; matchesTagQuery must not throw.
     const docWithUndefinedTags = { path: 'a.md', title: 'A', tags: undefined } as unknown as SearchableDoc
     expect(matchesTagQuery(docWithUndefinedTags, q)).toBe(false)
   })
@@ -283,6 +367,60 @@ describe('matchesTagQuery', () => {
     const q = parseTagQuery('#java')
     const docWithNullEntries = { path: 'a.md', title: 'A', tags: [null, 'java', undefined] } as unknown as SearchableDoc
     expect(matchesTagQuery(docWithNullEntries, q)).toBe(true)
+  })
+
+  // P1.3 fix: text tokens MUST NOT search the summary. A mixed
+  // query like `#java redis cache` keeps the legacy "every text
+  // token must match in path or title (AND)" semantic, with the
+  // body summary deliberately excluded. Otherwise a `#tag` token
+  // would silently widen the search scope.
+  it('text tokens do NOT search the body summary (P1.3)', () => {
+    const q = parseTagQuery('#java redis cache')
+    const docOnlyInSummary = doc({
+      path: 'a.md',
+      title: 'untitled',
+      tags: ['java'],
+      summary: 'a deep dive into redis and cache internals',
+    })
+    // `redis` and `cache` exist only in the summary; without the
+    // P1.3 fix the old shared-model branch would match. The
+    // matcher must NOT — text tokens only look at path/title.
+    expect(matchesTagQuery(docOnlyInSummary, q)).toBe(false)
+  })
+
+  it('multi-text-token AND semantics survive a `#tag` prefix', () => {
+    // `redis cache` typed alone: both tokens must appear (anywhere
+    // in path/title).
+    const q1 = parseTagQuery('redis cache')
+    expect(
+      matchesTagQuery(
+        doc({ path: 'redis.md', title: 'Cache notes', tags: [] }),
+        q1,
+      ),
+    ).toBe(true)
+    expect(
+      matchesTagQuery(
+        doc({ path: 'cache.md', title: 'Redis notes', tags: [] }),
+        q1,
+      ),
+    ).toBe(true)
+    // `#java redis cache`: still AND across the text tokens, AND
+    // the tag must be present. A doc with both tags and one text
+    // token in path, the other in title, must match.
+    const q2 = parseTagQuery('#java redis cache')
+    expect(
+      matchesTagQuery(
+        doc({ path: 'redis.md', title: 'Cache notes', tags: ['java'] }),
+        q2,
+      ),
+    ).toBe(true)
+  })
+
+  it('a bare `#` is treated as no tag at all (no AND-must-have-tag crash)', () => {
+    // `parseTagQuery('#')` produces no includeAll entries and no
+    // text tokens; the matcher should match everything.
+    const q = parseTagQuery('#')
+    expect(matchesTagQuery(doc({ path: 'a.md', title: 'A', tags: [] }), q)).toBe(true)
   })
 })
 
@@ -299,6 +437,7 @@ describe('buildTagIndex', () => {
     expect(idx.tags.get('java')?.count).toBe(2)
     expect(idx.tags.get('spring')?.count).toBe(1)
     expect(idx.tags.get('redis')?.count).toBe(2)
+    expectTagIndexConsistent(idx)
   })
 
   it('preserves the first-seen display form', () => {
@@ -310,6 +449,19 @@ describe('buildTagIndex', () => {
     expect(idx.tags.size).toBe(1)
     expect(idx.tags.get('java')?.displayName).toBe('Java')
     expect(idx.tags.get('java')?.count).toBe(3)
+  })
+
+  it('strips a leading `#` from the display form but preserves the casing (P2)', () => {
+    // A metadata field stored as the literal `#java` should
+    // render as `#java`, NOT `##java`.
+    const idx = buildTagIndex([{ path: 'a.md', tags: ['#java'] }])
+    expect(idx.tags.get('java')?.displayName).toBe('java')
+    expectTagIndexConsistent(idx)
+  })
+
+  it('strips `#` and inner whitespace together in the display form (P2)', () => {
+    const idx = buildTagIndex([{ path: 'a.md', tags: ['# java'] }])
+    expect(idx.tags.get('java')?.displayName).toBe('java')
   })
 
   it('records documentTags per path', () => {
@@ -338,14 +490,14 @@ describe('buildTagIndex', () => {
     ] as unknown as Array<{ path: string; tags?: string[] | undefined }>)
     expect(idx.documentTags.get('a.md')?.size ?? 0).toBe(0)
     expect(idx.tags.size).toBe(1)
+    expectTagIndexConsistent(idx)
   })
 
   it('dedupes repeated tags within one document', () => {
-    const idx = buildTagIndex([
-      { path: 'a.md', tags: ['java', 'java', 'JAVA'] },
-    ])
+    const idx = buildTagIndex([{ path: 'a.md', tags: ['java', 'java', 'JAVA'] }])
     expect(idx.tags.size).toBe(1)
     expect(idx.tags.get('java')?.count).toBe(1)
+    expectTagIndexConsistent(idx)
   })
 
   it('handles an empty posts list', () => {
@@ -353,12 +505,14 @@ describe('buildTagIndex', () => {
     expect(idx.tags.size).toBe(0)
     expect(idx.documentTags.size).toBe(0)
     expect(idx.tagDocuments.size).toBe(0)
+    expectTagIndexConsistent(idx)
   })
 
   it('handles a single tag as both the first-seen display name and the document set', () => {
     const idx = buildTagIndex([{ path: 'a.md', tags: ['人工智能'] }])
     expect(idx.tags.get('人工智能')?.displayName).toBe('人工智能')
     expect(idx.tags.get('人工智能')?.count).toBe(1)
+    expectTagIndexConsistent(idx)
   })
 })
 
@@ -371,23 +525,26 @@ describe('updateDocumentTags', () => {
   ])
 
   it('does not mutate the input index', () => {
-    const out = updateDocumentTags(base, 'a.md', ['java', 'spring'], ['java', 'redis'])
+    const out = updateDocumentTags(base, 'a.md', ['java', 'redis'])
     expect(out.index).not.toBe(base)
     expect(base.documentTags.get('a.md')).toEqual(new Set(['java', 'spring']))
+    expectTagIndexConsistent(base)
   })
 
-  it('adds new tags to the index', () => {
-    const out = updateDocumentTags(base, 'a.md', ['java', 'spring'], ['java', 'spring', 'redis'])
+  it('adds new tags to the index and updates reverse lookups', () => {
+    const out = updateDocumentTags(base, 'a.md', ['java', 'spring', 'redis'])
     expect(out.index.tags.has('redis')).toBe(true)
     expect(out.index.tagDocuments.get('redis')).toEqual(new Set(['a.md']))
     expect(out.delta).toEqual({ added: ['redis'], removed: [] })
+    expectTagIndexConsistent(out.index)
   })
 
-  it('removes tags from the index', () => {
-    const out = updateDocumentTags(base, 'a.md', ['java', 'spring'], ['java'])
+  it('removes tags from the index when a doc no longer carries them', () => {
+    const out = updateDocumentTags(base, 'a.md', ['java'])
     expect(out.index.tags.has('spring')).toBe(false)
     expect(out.index.tagDocuments.has('spring')).toBe(false)
     expect(out.delta).toEqual({ added: [], removed: ['spring'] })
+    expectTagIndexConsistent(out.index)
   })
 
   it('decrements counts when a tag is removed but other docs still have it', () => {
@@ -395,42 +552,95 @@ describe('updateDocumentTags', () => {
       { path: 'a.md', tags: ['java'] },
       { path: 'b.md', tags: ['java'] },
     ])
-    const out = updateDocumentTags(seeded, 'a.md', ['java'], [])
+    const out = updateDocumentTags(seeded, 'a.md', [])
     expect(out.index.tags.get('java')?.count).toBe(1)
     expect(out.index.tagDocuments.get('java')).toEqual(new Set(['b.md']))
+    expectTagIndexConsistent(out.index)
   })
 
-  it('handles a no-op update', () => {
-    const out = updateDocumentTags(base, 'a.md', ['java', 'spring'], ['java', 'spring'])
+  it('handles a no-op update by returning the SAME index reference (no churn)', () => {
+    // Same set in and out — the caller is using the function as a
+    // confirmation step. We must not allocate a new index or
+    // re-emit a delta; identity comparison matters for downstream
+    // computed/effect consumers.
+    const out = updateDocumentTags(base, 'a.md', ['java', 'spring'])
+    expect(out.index).toBe(base)
     expect(out.delta).toEqual({ added: [], removed: [] })
-    expect(out.index.documentTags.get('a.md')).toEqual(new Set(['java', 'spring']))
   })
 
-  it('handles an unknown document path', () => {
-    const out = updateDocumentTags(base, 'new.md', [], ['redis'])
+  it('handles an unknown document path by adding a fresh entry', () => {
+    const out = updateDocumentTags(base, 'new.md', ['redis'])
     expect(out.index.documentTags.get('new.md')).toEqual(new Set(['redis']))
     expect(out.index.tags.has('redis')).toBe(true)
+    expect(out.index.tagDocuments.get('redis')).toEqual(new Set(['new.md']))
     expect(out.delta).toEqual({ added: ['redis'], removed: [] })
+    expectTagIndexConsistent(out.index)
   })
 
-  it('treats undefined oldTags and newTags as empty (no-op when caller has no info)', () => {
+  // P1.1 fix: null / undefined `newTags` means "caller has no
+  // info" — the function must NOT zero out the document's entry in
+  // `documentTags`, because the previous behavior left
+  // `documentTags[path] = []` while `tagDocuments` still pointed
+  // back at the path, breaking the three-way invariant.
+  it('does not corrupt the index when newTags is null (P1.1)', () => {
     const seeded = buildTagIndex([{ path: 'a.md', tags: ['java'] }])
-    const out = updateDocumentTags(seeded, 'a.md', undefined, undefined)
-    // The diff function is honest: if the caller can't tell us the
-    // current tags, both old and new are treated as empty, so
-    // nothing is added or removed. Callers that want to clear a
-    // document's tags should look up oldTags from
-    // `index.documentTags.get(path)` first and pass that explicitly.
+    const out = updateDocumentTags(seeded, 'a.md', null)
+    expect(out.index).toBe(seeded)
     expect(out.delta).toEqual({ added: [], removed: [] })
-    expect(out.index.tags.has('java')).toBe(true)
+    // Crucially: documentTags must still reflect `a.md` having java.
+    expect(out.index.documentTags.get('a.md')).toEqual(new Set(['java']))
+    expect(out.index.tagDocuments.get('java')).toEqual(new Set(['a.md']))
+    expectTagIndexConsistent(out.index)
   })
 
-  it('clears a document when the caller passes the old tags explicitly', () => {
+  it('does not corrupt the index when newTags is undefined (P1.1)', () => {
+    const seeded = buildTagIndex([{ path: 'a.md', tags: ['java', 'spring'] }])
+    const out = updateDocumentTags(seeded, 'a.md', undefined)
+    expect(out.index).toBe(seeded)
+    expect(out.delta).toEqual({ added: [], removed: [] })
+    expect(out.index.documentTags.get('a.md')).toEqual(new Set(['java', 'spring']))
+    expectTagIndexConsistent(out.index)
+  })
+
+  it('treats null entries inside the newTags array as missing (no crash, no add)', () => {
+    const out = updateDocumentTags(base, 'a.md', ['java', null, 'spring', undefined])
+    // The null/undefined entries normalize to nothing — no new tag
+    // appears in the diff.
+    expect(out.delta).toEqual({ added: [], removed: [] })
+    expect(out.index.documentTags.get('a.md')).toEqual(new Set(['java', 'spring']))
+    expectTagIndexConsistent(out.index)
+  })
+
+  it('clears a document when caller passes newTags = []', () => {
     const seeded = buildTagIndex([{ path: 'a.md', tags: ['java'] }])
-    const oldTags = Array.from(seeded.documentTags.get('a.md') ?? [])
-    const out = updateDocumentTags(seeded, 'a.md', oldTags, [])
-    expect(out.delta).toEqual({ added: [], removed: ['java'] })
+    const out = updateDocumentTags(seeded, 'a.md', [])
+    expect(out.index.documentTags.get('a.md')).toEqual(new Set([]))
     expect(out.index.tags.has('java')).toBe(false)
+    expect(out.delta).toEqual({ added: [], removed: ['java'] })
+    expectTagIndexConsistent(out.index)
+  })
+
+  it('uses the FIRST new raw tag as the display name when introducing a new tag (P2)', () => {
+    const seeded = buildTagIndex([])
+    const out = updateDocumentTags(seeded, 'a.md', ['#Spring', '#SPRING', '#spring'])
+    expect(out.index.tags.get('spring')?.displayName).toBe('Spring')
+  })
+
+  // P1.1 + P1.2 round-trip: the function should be usable to model
+  // a "rename #Java → #java" operation without ever observing a
+  // broken intermediate state.
+  it('survives a rename round-trip without breaking the invariant (P1.1)', () => {
+    const seeded = buildTagIndex([
+      { path: 'a.md', tags: ['Java'] },
+      { path: 'b.md', tags: ['Java'] },
+    ])
+    // Rename Java → java: same normalized key, so this is a
+    // no-op as far as the index is concerned. Caller passes the
+    // same canonical set.
+    const out = updateDocumentTags(seeded, 'a.md', ['java'])
+    expect(out.index).toBe(seeded)
+    expect(out.delta).toEqual({ added: [], removed: [] })
+    expectTagIndexConsistent(out.index)
   })
 })
 
@@ -467,5 +677,26 @@ describe('sortTagsByCountDescThenName', () => {
     const sorted = sortTagsByCountDescThenName(input)
     expect(input[0]?.normalizedName).toBe('b')
     expect(sorted[0]?.normalizedName).toBe('a')
+  })
+})
+
+// -------- Re-exposing invariants for downstream callers --------
+//
+// `TagQuery` is constructed by `parseTagQuery` in production code,
+// but third-party callers (Phase 2 batch ops, AI providers, future
+// saved-views persistence) might assemble one by hand. Make sure
+// the contract is what we documented.
+describe('TagQuery contract', () => {
+  it('an empty query built by hand still matches everything', () => {
+    const empty: TagQuery = { text: '', textTokens: [], includeAll: [], includeAny: [], exclude: [] }
+    expect(matchesTagQuery(doc({ path: 'a.md', title: 'A', tags: [] }), empty)).toBe(true)
+  })
+
+  it('textTokens and text are consistent: same set, same order, lowercased', () => {
+    // The matcher relies on textTokens being the lowercased,
+    // AND-tokenized projection of text. If a hand-built query
+    // violates that, matchesTagQuery's contract is undefined.
+    const q = parseTagQuery('Redis CACHE')
+    expect(q.textTokens).toEqual(q.text.toLocaleLowerCase().split(/\s+/).filter(Boolean))
   })
 })

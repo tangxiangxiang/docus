@@ -13,19 +13,44 @@
 //     `#JAVA` and expect them to collide. The display name is what
 //     they see in the UI; the normalized form is what the index
 //     keys on.
+//   * `normalizeTagDisplay` is the UI-facing counterpart: trim and
+//     strip one leading `#`, but preserve the user's casing. The
+//     metadata editor allows typing `#java` verbatim and that should
+//     not render as `##java` in the tag list.
 //   * The parser is intentionally simple in Phase 1 — `#tag` AND
 //     tokens, `-#tag` exclude tokens, plain text for everything
-//     else. `includeAny` (OR) is a typed field but always empty
-//     until a Phase 4 UI exposes a mode toggle; this lets Phase 1
-//     ship the predicate shape without committing to the parser's
-//     full surface area.
+//     else. `textTokens` (always populated, even when `text` is
+//     empty) is the AND-tokenized view of the text channel; both
+//     TagPanel's tag-list filter and FileTree's file filter use it.
+//     `includeAny` (OR) is a typed field but always empty until a
+//     Phase 4 UI exposes a mode toggle; this lets Phase 1 ship the
+//     predicate shape without committing to the parser's full
+//     surface area.
 //   * `matchesTagQuery` excludes take precedence over includeAll, so
-//     `#a -#a` matches nothing (rather than everything).
+//     `#a -#a` matches nothing (rather than everything). Text
+//     tokens use legacy AND semantics (every token must be a
+//     case-insensitive substring of path or title) — and never
+//     searches the body summary, so a mixed query like
+//     `#java redis cache` keeps the "redis AND cache, anywhere in
+//     path/title" semantic the file-tree had before Phase 1.
 //   * `buildTagIndex` is defensive about `tags === undefined` — the
 //     server's rename and tree-builder paths can theoretically emit
 //     `tags: undefined` for documents that exist in YAML but not in
 //     the SQLite metadata table. We coerce to `[]` rather than
 //     crash; the same guard propagates to Phase 2 batch operations.
+//   * `updateDocumentTags` enforces a strict three-way invariant
+//     over the index: `documentTags`, `tagDocuments`, and
+//     `tags.count` must always agree on which paths carry which
+//     normalized tags. The previous signature accepted both
+//     `oldTags` and `newTags` separately and could silently break
+//     the invariant when both were missing (it would zero out
+//     `documentTags` while leaving `tagDocuments` and `tags` alone,
+//     so the index could claim "this doc has no java but java's
+//     reverse index still points to this doc"). The new signature
+//     reads the old tags from the index itself so the invariant
+//     holds by construction. `newTags === null | undefined` means
+//     "caller has no info" and returns the original index
+//     untouched, never zeroing anything.
 
 /**
  * Canonical tag identity. Two tag strings that normalize to the same
@@ -36,7 +61,9 @@
 export interface TagRecord {
   /** Canonical identity key (trimmed, leading `#` stripped, lowercased). */
   normalizedName: string
-  /** First-seen display form. Empty string is invalid; callers should drop. */
+  /** First-seen display form, with any leading `#` stripped but
+   *  original casing preserved. Empty string is invalid; callers
+   *  should drop. */
   displayName: string
   /** Number of distinct posts that carry this tag (post count, not occurrences). */
   count: number
@@ -52,13 +79,20 @@ export interface SearchableDoc {
   summary?: string
 }
 
-/** Parsed tag query. `text` is matched against path/title/summary
- *  (case-insensitive substring). `includeAll` is AND (every tag must
- *  be present). `exclude` is NOT (any matching tag drops the doc).
- *  `includeAny` is OR (at least one tag must be present); reserved
- *  for a future Phase 4 UI toggle — currently always `[]`. */
+/** Parsed tag query. `text` is the raw text-channel string and
+ *  `textTokens` is its whitespace-tokenized, lowercased, AND view
+ *  (every token must match somewhere). `includeAll` is AND (every
+ *  tag must be present). `exclude` is NOT (any matching tag drops
+ *  the doc). `includeAny` is OR (at least one tag must be present);
+ *  reserved for a future Phase 4 UI toggle — currently always `[]`.
+ *
+ *  Text tokens are searched only against `path` + `title` (case-
+ *  insensitive substring) and never against the body summary, so
+ *  the legacy FileTree AND-text semantic is preserved when the
+ *  query is a mix of text and tag tokens. */
 export interface TagQuery {
   text: string
+  textTokens: string[]
   includeAll: string[]
   includeAny: string[]
   exclude: string[]
@@ -69,6 +103,11 @@ export interface TagQuery {
  * reactivity, no caching of the source. Callers re-build on `posts`
  * change and re-build cheaply because the index is O(n) over tag
  * count.
+ *
+ * Invariant: for every `(path, tag)` pair, the three fields agree —
+ * `documentTags.get(path)?.has(tag) === tagDocuments.get(tag)?.has(path)`
+ * and `tags.get(tag)?.count === tagDocuments.get(tag)?.size`.
+ * `updateDocumentTags` maintains this invariant by construction.
  */
 export interface TagIndex {
   /** normalizedName → TagRecord */
@@ -89,29 +128,43 @@ export interface DocumentTagsDelta {
 
 /**
  * Canonical tag identity. Whitespace is trimmed and a single leading
- * `#` is stripped. The result is lowercased so `Java` / `java` /
- * `JAVA` collapse to the same key. Slashes, dashes, underscores and
- * Unicode (including CJK) are preserved. Empty results (input was
- * blank or `#`-only) return `""` — callers should drop these.
+ * `#` is stripped (the result is then re-trimmed so `'# java'`
+ * normalizes to `'java'` cleanly, not `' java'`). The result is
+ * lowercased so `Java` / `java` / `JAVA` collapse to the same key.
+ * Slashes, dashes, underscores and Unicode (including CJK) are
+ * preserved. Empty results (input was blank or `#`-only) return `""`
+ * — callers should drop these.
+ *
+ * We do NOT do NFKC normalization here — that would rewrite `ﬁ` →
+ * `fi` etc. and silently change user-authored tag names.
  */
 export function normalizeTag(raw: string | undefined | null): string {
   if (raw == null) return ''
-  // `.trim()` strips whitespace including the Unicode no-break space
-  // and zero-width spaces we never want in a tag identity. We do NOT
-  // do NFKC normalization here — that would rewrite `ﬁ` → `fi` etc.
-  // and silently change user-authored tag names. Phase 5's hierarchy
-  // support can revisit if a real user reports a duplicate-from-NFKC
-  // case; for now, raw-codepoint preservation is the conservative
-  // choice (no silent rename of user content).
   const trimmed = raw.trim()
   if (!trimmed) return ''
   // Strip at most one leading `#`. Multiple `##java` is preserved
   // verbatim so a user who actually names a tag `##java` doesn't
-  // have it silently turned into `java`. The result is lowercased
-  // so `Java` / `java` / `JAVA` collapse to the same key.
+  // have it silently turned into `java`. The trim after the strip
+  // handles the `# java` → `' java'` → ` java` case (without the
+  // re-trim the function would return a leading-space string that
+  // looks normalized but never matches anything in the index).
   const stripped = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed
-  const out = stripped.toLowerCase()
-  return out.trim() === '' ? '' : out
+  const out = stripped.trim().toLowerCase()
+  return out
+}
+
+/**
+ * Display form for the UI: trim and strip one leading `#`, preserve
+ * original casing. Used by `buildTagIndex` so a metadata field that
+ * contains the literal `#java` shows up in the tag list as `#java`
+ * rather than `##java`.
+ */
+export function normalizeTagDisplay(raw: string | undefined | null): string {
+  if (raw == null) return ''
+  const trimmed = raw.trim()
+  if (!trimmed) return ''
+  const stripped = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed
+  return stripped.trim()
 }
 
 /**
@@ -119,11 +172,11 @@ export function normalizeTag(raw: string | undefined | null): string {
  * separates tokens. Recognized token shapes:
  *   - `#xxx`     → push `xxx` into `includeAll`
  *   - `-#xxx`    → push `xxx` into `exclude`
- *   - anything else → accumulated into `text`
+ *   - anything else → accumulated into `text` and `textTokens`
  *
  * Empty input and input consisting only of `#` / `-#` tokens
- * degenerate to `text === ''` plus whatever include/exclude tokens
- * were extracted.
+ * degenerate to `text === ''` / `textTokens === []` plus whatever
+ * include/exclude tokens were extracted.
  */
 export function parseTagQuery(input: string): TagQuery {
   const includeAll: string[] = []
@@ -162,7 +215,12 @@ export function parseTagQuery(input: string): TagQuery {
   // Collapse multiple whitespace into single spaces in the text
   // channel so downstream substring checks are predictable.
   const text = textParts.join(' ').trim()
-  return { text, includeAll, includeAny, exclude }
+  // `textTokens` is the AND-tokenized view: lowercased, empty-token
+  // filtered. The matcher uses this directly so the FileTree's
+  // legacy "every token must match somewhere" semantic is preserved
+  // when the user types a mix of `#tags` and plain text.
+  const textTokens = text === '' ? [] : text.toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  return { text, textTokens, includeAll, includeAny, exclude }
 }
 
 /**
@@ -172,11 +230,14 @@ export function parseTagQuery(input: string): TagQuery {
  *   1. Exclude: any excluded tag is present → false.
  *   2. Include-all: not every required tag is present → false.
  *   3. Include-any (currently unused): no listed tag is present → false.
- *   4. Text: empty text → skip; otherwise `path/title/summary` must
- *      contain the text (case-insensitive substring).
+ *   4. Text tokens: every token (lowercased) must be a substring of
+ *      `path` or `title` (case-insensitive). The body summary is
+ *      intentionally NOT searched here — the FileTree's legacy
+ *      behavior was a substring of path/title only, and this
+ *      function preserves that semantic exactly.
  *   5. Otherwise → true.
  *
- * An empty query (no text, no includes, no excludes) matches
+ * An empty query (no text tokens, no includes, no excludes) matches
  * everything.
  */
 export function matchesTagQuery(doc: SearchableDoc, query: TagQuery): boolean {
@@ -216,10 +277,15 @@ export function matchesTagQuery(doc: SearchableDoc, query: TagQuery): boolean {
     if (!any) return false
   }
 
-  if (query.text) {
-    const needle = query.text.toLocaleLowerCase()
-    const hay = `${doc.path}\n${doc.title}\n${doc.summary ?? ''}`.toLocaleLowerCase()
-    if (!hay.includes(needle)) return false
+  if (query.textTokens.length > 0) {
+    // Search ONLY path + title (no summary). Matches the FileTree's
+    // pre-Phase-1 behavior byte-for-byte, so the legacy
+    // `"redis cache"` AND-text semantic is preserved when the user
+    // adds a tag token alongside it.
+    const hay = `${doc.path}\n${doc.title}`.toLocaleLowerCase()
+    for (const token of query.textTokens) {
+      if (!hay.includes(token)) return false
+    }
   }
 
   return true
@@ -244,7 +310,14 @@ export function buildTagIndex(
       if (!n) continue
       set.add(n)
       if (!tags.has(n)) {
-        tags.set(n, { normalizedName: n, displayName: raw.trim(), count: 0 })
+        tags.set(n, {
+          normalizedName: n,
+          // Display form strips a single leading `#` but preserves
+          // the user's casing. A metadata field stored as the
+          // literal `#java` renders as `#java`, not `##java`.
+          displayName: normalizeTagDisplay(raw),
+          count: 0,
+        })
       }
     }
     documentTags.set(post.path, set)
@@ -267,28 +340,39 @@ export function buildTagIndex(
 }
 
 /**
- * Diff a single document's tag set and return a new `TagIndex` with
- * the change applied. The input index is NOT mutated; the new index
- * shares as much structure as possible (other documents' Sets are
- * reused by reference). Useful for batch tag operations in Phase 2.
+ * Apply a new tag set to a single document and return a NEW
+ * `TagIndex` reflecting the change. The input index is NOT
+ * mutated.
  *
- * Also returns the `DocumentTagsDelta` so callers can emit change
- * events without re-walking the new index.
+ * Signature: `(index, path, newTags)`. The OLD tags are read from
+ * `index.documentTags.get(path)` internally — the caller does not
+ * pass them. This is what makes the three-way invariant
+ * (`documentTags` / `tagDocuments` / `tags.count` agree on every
+ * `(path, tag)` pair) hold by construction: the function is the
+ * only writer of these three fields for a given path, and it
+ * computes them from the same source.
+ *
+ * `newTags == null` means "caller has no data" — the original
+ * index is returned untouched with an empty delta. The function
+ * does NOT treat null as "clear the document's tags"; clearing
+ * must be explicit (`newTags: []`).
  */
 export function updateDocumentTags(
   index: TagIndex,
   path: string,
-  oldTags: ReadonlyArray<string | undefined | null> | undefined | null,
-  newTags: ReadonlyArray<string | undefined | null> | undefined | null,
+  newTags: ReadonlyArray<string | undefined | null> | null | undefined,
 ): { index: TagIndex; delta: DocumentTagsDelta } {
-  const oldNorm = new Set<string>()
-  for (const t of oldTags ?? []) {
-    if (t == null) continue
-    const n = normalizeTag(t)
-    if (n) oldNorm.add(n)
+  // null / undefined means "no info from the caller" — refuse to
+  // touch the index. Returning the original reference is important
+  // so downstream computed/effects that compare by identity don't
+  // spuriously rerun.
+  if (newTags == null) {
+    return { index, delta: { added: [], removed: [] } }
   }
+
+  const oldNorm = new Set(index.documentTags.get(path) ?? [])
   const newNorm = new Set<string>()
-  for (const t of newTags ?? []) {
+  for (const t of newTags) {
     if (t == null) continue
     const n = normalizeTag(t)
     if (n) newNorm.add(n)
@@ -297,6 +381,11 @@ export function updateDocumentTags(
   const removed: string[] = []
   for (const n of newNorm) if (!oldNorm.has(n)) added.push(n)
   for (const n of oldNorm) if (!newNorm.has(n)) removed.push(n)
+
+  // No-op: same tag set, return the input index untouched.
+  if (added.length === 0 && removed.length === 0) {
+    return { index, delta: { added, removed } }
+  }
 
   // Build new maps. We clone only the structures that change; every
   // other document's entry is reused by reference so the common case
@@ -313,6 +402,7 @@ export function updateDocumentTags(
     const nextPaths = new Set(paths)
     nextPaths.delete(path)
     if (nextPaths.size === 0) {
+      // Last document carrying this tag — drop the tag entirely.
       tagDocuments.delete(n)
       tags.delete(n)
     } else {
@@ -329,10 +419,10 @@ export function updateDocumentTags(
     if (!tags.has(n)) {
       // First time we see this tag — pick a display form. Prefer the
       // first-seen raw tag string from `newTags`.
-      const firstRaw = (newTags ?? []).find((t) => t != null && normalizeTag(t) === n)
+      const firstRaw = newTags.find((t) => t != null && normalizeTag(t) === n)
       tags.set(n, {
         normalizedName: n,
-        displayName: (firstRaw ?? n).trim(),
+        displayName: normalizeTagDisplay(firstRaw ?? n),
         count: nextPaths.size,
       })
     } else {

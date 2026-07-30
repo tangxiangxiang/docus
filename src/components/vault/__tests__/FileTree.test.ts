@@ -247,4 +247,49 @@ describe('Files filter', () => {
     await wrapper.find('.search-input').setValue('redis-note')
     expect(rowByName(wrapper, 'redis-note')).toBeDefined()
   })
+
+  // Phase 1.1 fix: the AND-tokenized text semantic must survive a
+  // `#tag` prefix. `#java redis cache` is interpreted as
+  // "tagged #java AND (path/title contains 'redis') AND (path/
+  // title contains 'cache')" — same AND semantic the legacy
+  // `"redis cache"` query had. The shared-model branch must NOT
+  // collapse the text tokens into one continuous string.
+  it('keeps multi-text-token AND semantics under a `#tag` prefix (P1.3)', async () => {
+    // POSTS only has `inbox/draft` tagged `redis`. There's no
+    // file whose path or title contains BOTH `redis` and `cache`,
+    // so the strict AND across text tokens must drop every file.
+    const wrapper = mountTree()
+    await wrapper.find('.search-input').setValue('#redis cache')
+    expect(rowByName(wrapper, 'draft')).toBeUndefined()
+    // Plain text query without the tag, but with the same AND,
+    // behaves identically — locks the rule across both branches.
+    await wrapper.find('.search-input').setValue('redis cache')
+    expect(rowByName(wrapper, 'draft')).toBeUndefined()
+    // Single-token text AND a single-tag query matches.
+    await wrapper.find('.search-input').setValue('#redis checklist')
+    expect(rowByName(wrapper, 'draft')).toBeDefined()
+  })
+
+  // Phase 1.1 fix: text tokens MUST NOT search the body summary.
+  // POSTS[0].summary is `'secret body phrase'`; without the fix
+  // `#redis secret` would match via the summary.
+  it('does NOT search the body summary (P1.3)', async () => {
+    const wrapper = mountTree()
+    await wrapper.find('.search-input').setValue('#redis secret')
+    expect(rowByName(wrapper, 'draft')).toBeUndefined()
+  })
+
+  // Phase 1.1 fix: a bare `#` is no tag name, no text token, no
+  // exclude. `parseTagQuery('#')` produces an empty query and
+  // `matchesTagQuery` short-circuits to true — the tree stays
+  // intact, the user sees that their input is incomplete rather
+  // than watching every file disappear.
+  it('a bare `#` shows the full tree (no silent literal-`#` filter) (P1.3)', async () => {
+    const wrapper = mountTree()
+    await wrapper.find('.search-input').setValue('#')
+    expect(rowByName(wrapper, 'redis-note')).toBeDefined()
+    expect(rowByName(wrapper, 'draft')).toBeDefined()
+    expect(rowByName(wrapper, 'cache-paper')).toBeDefined()
+    expect(rowByName(wrapper, 'history')).toBeDefined()
+  })
 })

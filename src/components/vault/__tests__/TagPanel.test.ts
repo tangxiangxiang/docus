@@ -190,4 +190,53 @@ describe('Tags filter', () => {
     expect(names).toEqual(['Java'])
     expect(wrapper.findAll('.tag-count').map((n) => n.text())).toEqual(['3'])
   })
+
+  // Phase 1.1 fix: typing `#java` in the tag-list filter must
+  // collapse to a real tag-name filter (the leading `#` is
+  // stripped). The pre-fix behavior parsed the input through
+  // `parseTagQuery` and only consulted `query.text`, which routed
+  // `#java` into `includeAll` and never matched any tag name.
+  it('treats `#tag` in the filter input as a tag-name prefix (P1.2)', async () => {
+    const wrapper = mountPanel()
+    await wrapper.get('.tag-filter-input').setValue('#mat')
+    // `Math` is the only tag whose normalized identity contains `mat`.
+    expect(tagOrder(wrapper)).toEqual(['#Math'])
+    // Sanity check the unprefixed form still works.
+    await wrapper.get('.tag-filter-input').setValue('mat')
+    expect(tagOrder(wrapper)).toEqual(['#Math'])
+  })
+
+  // Phase 1.1 fix: a bare `#` is an incomplete tag-name filter —
+  // no tag can match the empty needle after normalizeTag strips
+  // it, so the panel must show zero entries (and the count badge
+  // must reflect that). Pre-fix the bare `#` silently fell
+  // through to the legacy `parseTagQuery` path with `text: ''`
+  // and showed every tag, which read as "your filter is doing
+  // nothing."
+  it('a bare `#` shows no tags (P1.2)', async () => {
+    const wrapper = mountPanel()
+    await wrapper.get('.tag-filter-input').setValue('#')
+    expect(tagOrder(wrapper)).toEqual([])
+    expect(wrapper.text()).toContain('没有匹配的标签')
+  })
+
+  // Phase 1.1 fix: a selectedTag whose casing differs from the
+  // tag's stored display name still lights up the matching row.
+  // Pre-fix the visual active state compared raw strings, so
+  // selecting `Math` against a tag stored as `math` rendered
+  // results without any row showing the active state.
+  it('selectedTagKey is case-insensitive against displayName (P1.2)', () => {
+    // POSTS carries `Math` (capital M) on `archive/derivation`.
+    // Selecting with the lowercase form must still light up the
+    // row + render the right count.
+    const wrapper = mountPanel({ selectedTag: 'math' })
+    const activeRow = wrapper.findAll('.tag-entry').find((row) =>
+      row.classes().includes('active'),
+    )
+    expect(activeRow).toBeDefined()
+    expect(activeRow!.text()).toContain('#Math')
+    // The normalized-key comparison must also drive aria-selected.
+    expect(activeRow!.attributes('aria-selected')).toBe('true')
+    expect(wrapper.text()).toContain('1 篇笔记')
+  })
 })

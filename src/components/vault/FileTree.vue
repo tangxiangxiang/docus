@@ -83,10 +83,19 @@ const topLevel = computed<TreeNode[]>(() => {
     children = children.filter((c) => c.path === activeScope.value)
   }
   // Rebuild the subtree so non-matching files are hidden while matching
-  // ancestors remain visible. A matching folder keeps its complete subtree.
-  if (filterTokens.value.length > 0) {
+  // ancestors remain visible. A matching folder keeps its complete
+  // subtree. The filter runs through the shared `matchesTagQuery`
+  // predicate, which means an empty query (no text tokens, no
+  // includes, no excludes) matches every file and the tree is
+  // returned unchanged.
+  if (
+    parsedQuery.value.textTokens.length > 0 ||
+    parsedQuery.value.includeAll.length > 0 ||
+    parsedQuery.value.exclude.length > 0 ||
+    parsedQuery.value.includeAny.length > 0
+  ) {
     children = children
-      .map((c) => filterByQuery(c, filterTokens.value))
+      .map((c) => filterByQuery(c))
       .filter((n): n is TreeNode => n !== null)
   }
   return children
@@ -116,90 +125,67 @@ const duplicateTitles = computed<Set<string>>(() => {
 const contentText = defineModel<string>('filter', { default: '' })
 
 const effectiveQuery = computed(() => contentText.value.trim())
-// Plain-text branch: legacy tokenization used by every existing
-// FileTree filter test (e.g. `"CHECKLIST"`, `"redis-note"`, `"redis cache"`).
-// The branch is unchanged byte-for-byte from before Phase 1 — it is
-// preserved so all the existing substring tests stay green, and so a
-// user who never types `#` keeps getting the exact old behavior.
-const filterTokens = computed(() =>
-  effectiveQuery.value
-    .toLocaleLowerCase()
-    .split(/\s+/)
-    .filter(Boolean),
-)
-// Phase 1 of the unified tag plan: when the user types any `#`-shaped
-// token (e.g. `#java`, `-#archive`), the file-tree search now parses
-// the query through the shared `parseTagQuery` model and runs
-// `matchesTagQuery` against the document's tags (plus path/title/
-// summary for the text channel). When there are no `#` tokens, the
-// legacy `filterTokens` branch is used so non-tag queries stay
-// byte-identical to the previous behavior.
+// Phase 1.1 fix: every FileTree search now flows through the shared
+// query model — no separate legacy branch for plain-text queries.
+// This guarantees three things:
+//   (a) The text channel is AND-tokenized (`redis cache` → both
+//       tokens must match) regardless of whether `#tags` are also
+//       present.
+//   (b) Text tokens never search the body summary, matching the
+//       pre-Phase-1 substring scope exactly.
+//   (c) Bare `#` produces an empty query, so the user sees the
+//       full tree while they finish typing — no silent "filter
+//       for literal #" branch that would empty the result list.
 const parsedQuery = computed<TagQuery>(() => parseTagQuery(contentText.value))
-const hasTagTokens = computed(() =>
-  parsedQuery.value.includeAll.length > 0 || parsedQuery.value.exclude.length > 0,
-)
 // Lookup so `filterByQuery` can resolve a tree node's path to its
 // `PostSummary` (and therefore to its tags) without a linear scan.
 const postsByPath = computed<Map<string, PostSummary>>(
   () => new Map(props.posts.map((p) => [p.path, p])),
 )
 
-function filterByQuery(node: TreeNode, tokens: string[]): TreeNode | null {
-  if (hasTagTokens.value) {
-    const query = parsedQuery.value
-    if (node.kind === 'file') {
-      const post = postsByPath.value.get(node.path)
-      const doc = post
-        ? { path: node.path, title: node.title, tags: post.tags, summary: post.summary }
-        // Files we have no `PostSummary` for (e.g. just-created empty
-        // notes still being snapshotted by the server) carry an empty
-        // tag set so an `#xxx` query correctly excludes them. The
-        // text channel still has path/title to match against.
-        : { path: node.path, title: node.title, tags: [] as string[] }
-      return matchesTagQuery(doc, query) ? node : null
-    }
-    // Folder: keep its complete subtree if any descendant file
-    // matches. Mirrors the legacy "folder match keeps subtree"
-    // behavior, just driven by the tag-aware predicate instead of
-    // raw token substring.
-    const kids = node.children
-      .map((c) => filterByQuery(c, tokens))
-      .filter((n): n is TreeNode => n !== null)
-    if (kids.length === 0) return null
-    return { ...node, children: kids }
-  }
-  // Legacy plain-text branch — unchanged.
+function filterByQuery(node: TreeNode): TreeNode | null {
+  const query = parsedQuery.value
   if (node.kind === 'file') {
-    const hay = `${node.path}\n${node.title}`.toLocaleLowerCase()
-    return tokens.every((token) => hay.includes(token)) ? node : null
+    const post = postsByPath.value.get(node.path)
+    const doc = post
+      ? { path: node.path, title: node.title, tags: post.tags, summary: post.summary }
+      // Files we have no `PostSummary` for (e.g. just-created empty
+      // notes still being snapshotted by the server) carry an empty
+      // tag set so an `#xxx` query correctly excludes them. The
+      // text channel still has path/title to match against.
+      : { path: node.path, title: node.title, tags: [] as string[] }
+    return matchesTagQuery(doc, query) ? node : null
   }
-  // Matching a folder path keeps its complete subtree, which makes folder
-  // filtering behave like quick navigation rather than a file-only search.
-  if (tokens.every((needle) => node.path.toLocaleLowerCase().includes(needle))) {
-    return node
-  }
+  // Folder: keep its complete subtree if any descendant file
+  // matches. Mirrors the legacy "folder match keeps subtree"
+  // behavior, just driven by the tag-aware predicate instead of
+  // raw token substring.
   const kids = node.children
-    .map((c) => filterByQuery(c, tokens))
+    .map((c) => filterByQuery(c))
     .filter((n): n is TreeNode => n !== null)
   if (kids.length === 0) return null
   return { ...node, children: kids }
 }
 
 // Per-file match annotation, derived by re-walking the already-filtered
-// tree. Each token is assigned to its first matching field in this order:
-// title, filename, directory path. Folder matches are not annotated — a
-// folder kept because the user typed its name is a scope expansion,
-// not a "match", and adding a tooltip there would be noise. The
-// derived map is empty when the query is empty, so TreeRow's
-// `matchInfo?` prop stays unset and Vue strips the `title` attribute
-// entirely.
+// tree. Each text token is assigned to its first matching field in
+// this order: title, filename, directory path. Tag tokens (`#xxx` /
+// `-#xxx`) are NOT annotated — the tooltip is specifically about
+// text-match fields (title/filename/directory), and a separate
+// "matched in tags" annotation is Phase 3 territory. Folder matches
+// are not annotated — a folder kept because the user typed its name
+// is a scope expansion, not a "match", and adding a tooltip there
+// would be noise. The derived map is empty when there are no text
+// tokens, so TreeRow's `matchInfo?` prop stays unset and Vue strips
+// the `title` attribute entirely.
 export interface MatchInfo {
   name?: boolean
   path?: boolean
   title?: boolean
 }
 const matchedFields = computed<Map<string, MatchInfo>>(() => {
-  if (filterTokens.value.length === 0) return new Map()
+  const tokens = parsedQuery.value.textTokens
+  if (tokens.length === 0) return new Map()
   const m = new Map<string, MatchInfo>()
   const walk = (node: TreeNode) => {
     if (node.kind !== 'file') {
@@ -210,7 +196,7 @@ const matchedFields = computed<Map<string, MatchInfo>>(() => {
     const nameLc = node.name.toLocaleLowerCase()
     const titleLc = node.title.toLocaleLowerCase()
     const directoryLc = node.path.split('/').slice(0, -1).join('/').toLocaleLowerCase()
-    for (const needle of filterTokens.value) {
+    for (const needle of tokens) {
       if (titleLc.includes(needle)) info.title = true
       else if (nameLc.includes(needle)) info.name = true
       else if (directoryLc.includes(needle)) info.path = true

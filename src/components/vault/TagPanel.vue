@@ -4,7 +4,6 @@ import type { PostSummary } from '../../lib/api'
 import {
   buildTagIndex,
   normalizeTag,
-  parseTagQuery,
   sortTagsByCountDescThenName,
   type TagRecord,
 } from '../../lib/tags'
@@ -42,21 +41,36 @@ const allTagsSorted = computed<TagRecord[]>(() =>
   sortTagsByCountDescThenName(Array.from(tagIndex.value.tags.values())),
 )
 
+// Phase 1.1 fix: the tag-list filter normalizes the input via
+// `normalizeTag` (trim + strip leading `#` + lowercase), then
+// substring-matches against the tag's normalized identity. This
+// makes the input a true "tag name filter" rather than a free-text
+// query — typing `#java` matches Java (the prefix is stripped),
+// typing `java` matches Java, and a bare `#` (with nothing after)
+// deliberately returns no tags so the user gets clear feedback
+// that the input is incomplete. The previous shape (parsing
+// through `parseTagQuery` and only reading `query.text`) silently
+// swallowed `#java` and showed every tag, because the parser
+// routes `#xxx` to `includeAll` not to `text`.
 const visibleTags = computed<TagRecord[]>(() => {
-  const query = parseTagQuery(filter.value)
-  // Phase 1 keeps the historical "filter the tag list by tag-name
-  // substring" behavior — only the `text` channel of the parsed
-  // query participates. Tag-shaped tokens (`#xxx` / `-#xxx`) are
-  // honored by the FileTree's file filter (see
-  // FileTree.vue filterByQuery) but not by the list filter itself,
-  // because the user-visible UI is "type a few characters, see
-  // matching tag names" — not "type a structured query".
-  const needle = query.text.toLocaleLowerCase()
-  if (!needle) return allTagsSorted.value
+  const trimmed = filter.value.trim()
+  if (!trimmed) return allTagsSorted.value
+  const needle = normalizeTag(trimmed)
+  if (!needle) return []
   return allTagsSorted.value.filter((tag) =>
-    tag.displayName.toLocaleLowerCase().includes(needle),
+    tag.normalizedName.includes(needle),
   )
 })
+
+// Phase 1.1 fix: case-insensitive active-state comparison. The
+// `filteredPosts` selector already resolves the selected tag via
+// `normalizeTag`, so a user selecting `Math` and a post tagged
+// `math` produce results — but the visual active state on the
+// list row was comparing the raw `selectedTag` (caller-supplied
+// casing) to the tag's `displayName` (first-seen casing). Two
+// different casings would show results without any row lighting
+// up. Normalize once into a key and compare keys.
+const selectedTagKey = computed(() => normalizeTag(props.selectedTag))
 
 const tagCountLabel = computed(() => filter.value.trim()
   ? t('tags.filtered_count', { visible: visibleTags.value.length, total: allTagsSorted.value.length })
@@ -112,7 +126,7 @@ function onFilterKeydown(event: KeyboardEvent) {
     <div class="tag-list-region">
       <ul v-if="visibleTags.length" class="tag-list" role="listbox" :aria-label="t('tags.list_label')">
         <li v-for="tagRecord in visibleTags" :key="tagRecord.normalizedName" role="presentation">
-          <button class="tag-entry" role="option" :class="{ active: selectedTag === tagRecord.displayName }" :aria-selected="selectedTag === tagRecord.displayName" :title="selectedTag === tagRecord.displayName ? t('tags.deselect', { tag: tagRecord.displayName }) : t('tags.browse', { tag: tagRecord.displayName })" @click="emit('select', tagRecord.displayName)">
+          <button class="tag-entry" role="option" :class="{ active: selectedTagKey === tagRecord.normalizedName }" :aria-selected="selectedTagKey === tagRecord.normalizedName" :title="selectedTagKey === tagRecord.normalizedName ? t('tags.deselect', { tag: tagRecord.displayName }) : t('tags.browse', { tag: tagRecord.displayName })" @click="emit('select', tagRecord.displayName)">
             <span class="tag-name"><span class="tag-hash" aria-hidden="true">#</span><span class="tag-label">{{ tagRecord.displayName }}</span></span>
             <span class="tag-count">{{ tagRecord.count }}</span>
           </button>
