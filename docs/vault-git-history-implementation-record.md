@@ -224,7 +224,7 @@ Note that **`log --follow` is deliberately not used**:
 ```
 
 Renames therefore get a fresh `DocumentHistory` entry under the new
-path; the old-path history is not merged in. See Plan §15 H-K9.
+path; the old-path history is not merged in. See Plan §15 H-K8.
 
 ## 6. Create Version Sequence
 
@@ -846,9 +846,11 @@ records the remediation tasks.
 | H-C5 | Restore resolves a mutable ref outside the repository mutation transaction; the route's `raw` carries pre-`restoreFile` source bytes (not a post-restore re-read); the client writes gesture-time `request.historicalRaw` into the editor tab and the file-change event. | Plan History-C5 (server + client) |
 | H-K6 | `isValidCommitSha` accepts 7–40 hex; `HEAD === sha` compares two 40-char SHAs; short SHAs can never match. | Plan History-C6 |
 | H-K7 | Local-calendar bucket for `groupTimelineItems` uses `Date` arithmetic with an 86_400_000 ms window; across a DST transition that window does not match the local-calendar day boundary. | Plan History-C7 (DST fix — real correctness fix, not documentation-only) |
-| H-K9 | Rename lines filtered out of `/status` because path shape fails; rename history not `--follow`-merged. | Spec H-K9 |
+| H-K8 | Rename lines filtered out of `/status` because path shape fails; rename history not `--follow`-merged. | Spec H-K8 |
+| H-K9 | Symlink containment is not applied to History paths. | Spec H-K9 |
 | H-K10 | No pagination on Timeline or Log. | Spec H-K10 |
-| H-K11 | Canonical same-vault Docus marker scheme proposed (Plan History-C4) but not implemented; it is an accidental-withdrawal guard, not cryptographic ownership proof, and requires owner sign-off. | Plan History-C4 |
+| H-K11 | Full-suite CI / Windows / cross-platform verification was not independently re-run during this reconstruction. | Plan History-C8 |
+| H-K12 | Canonical same-vault Docus marker scheme proposed (Plan History-C4) but not implemented; it is an accidental-withdrawal guard, not cryptographic provenance proof, and requires owner sign-off. | Plan History-C4 |
 | H-K13 | SHA-256 vault repositories are not supported; `'0'×40` is hardcoded. Repair validator already accepts 40–64 hex. | Spec H-K13 |
 
 ## 15. Current Open Findings
@@ -863,6 +865,7 @@ records the remediation tasks.
 | H-C4 | Withdraw lacks canonical same-vault Docus commit marker verification | Plan History-C4 |
 | H-C5 | Restore uses a mutable ref + pre-restore `raw` outside the mutex | Plan History-C5 |
 | H-C8 | Three-platform CI verification has not been re-run for this reconstruction | Plan History-C8 |
+| H-C9 | Missing regression tests for repository-operation markers, path shape, multi-vault keying, and Restore race coverage. | Plan History-C9 |
 
 ### 15.2 P2 (Severe UX warts; H-C7 remains a Closure Blocker)
 

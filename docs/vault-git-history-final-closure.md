@@ -193,6 +193,8 @@ accepted** before this document may be flipped to **CLOSED**.
 | H-K8 | Rename history not `--follow`-merged | P2 | Open | No |
 | H-K9 | Symlink containment check missing on History paths | P2 | Open | No |
 | H-K10 | No Timeline / Log pagination | P2 | Open | No |
+| H-K11 | Cross-platform / full-suite verification missing (tracked as H-C8) | P1 (Verification) | Open | **Yes** |
+| H-K12 | Canonical marker scheme awaits implementation and Owner approval (tracked as H-C4) | P1 | Open | **Yes** |
 | H-K13 | SHA-256 vault compatibility (40-zero CAS sentinel) | P2 | Open | No |
 
 The full descriptions for each item live in
@@ -278,7 +280,7 @@ gets explicit owner sign-off.
     - Verified by `pathMutationLock.test.ts` (2 cases).
 13. **Canonical same-vault Docus marker** for commits.
     - **Not yet verified**; the marker is an accidental-withdrawal
-      guard, not cryptographic ownership proof. See H-C4.
+      guard, not cryptographic provenance proof. See H-C4.
 
 Each invariant moves from "Candidate" to "Verified" only after the
 closure verification (Section §7) reproduces it on the Final
@@ -341,7 +343,8 @@ For each command in the verification list, mark the status.
 | `npm test -- --run` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Last local-run evidence is from the Tags closure (`tags-query-index-refactor-final-closure.md`); not re-run for this History reconstruction. |
 | `npm run typecheck` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Same. |
 | `npm run build` | **NOT RUN DURING DOCUMENTATION RECONSTRUCTION** | Same. |
-| `git diff --check` | **PASS on documentation commits** | Ran on `ff2f992` (reconstruction), `adfc4d7` (Round 1), `7b1bb2c` (Round 2), `de85039` (Round 3), and `2d5ce3f` (bookkeeping) — exit 0 each time. This is documentation-only verification and does **not** substitute for the Final Production Baseline `git diff --check` required by the Closure Gate. |
+| `git diff --check` | **PASS on documentation commits** | `ff2f992`, `adfc4d7`, `7b1bb2c`, `de85039`, `2d5ce3f`, `8d6f71a`, `234bbde`, and `856f310`. This documentation-only verification does not substitute for the Final Production Baseline `git diff --check`, tests, build, typecheck, or CI required by the Closure Gate. |
+| Code-fence-aware Markdown relative-link check | **PASS on Round 5 documentation** | README, Spec, Plan, Implementation Record, and Draft Closure were checked after Round 5. This does not substitute for Final Production Baseline verification. |
 
 ### 7.2 Cross-platform CI
 
@@ -375,7 +378,8 @@ and must be resolved as Closure Blockers rather than downgraded:
 
 - Any path that would let Docus overwrite the user's externally
   staged content.
-- Any path that would let Docus withdraw a non-Docus commit.
+- Any path that would let Docus withdraw an unmarked, cross-vault
+  marked, malformed-marker, or ambiguous-marker commit.
 - Any path that would cause a successful commit to be reported as
   a failure.
 - Any path that would let Editor Buffer and disk diverge silently.
@@ -430,8 +434,14 @@ this closure.
    --worktree`.
 7. **Withdraw requires one canonical same-vault Docus marker block**.
    The Docus-Vault trailer scheme (H-C4) — once finalized — must be
-   enforced as an accidental-withdrawal guard, not a security
-   boundary.
+   enforced under this trust boundary:
+
+   The canonical Docus marker is an accidental-withdrawal guard,
+   not cryptographic provenance proof.
+
+   A local actor with write access to Git objects or the Git directory
+   can forge a matching marker and is outside the History feature's
+   trust boundary.
 8. **Withdraw runs at a vault-wide lock**; Create and Restore run
    at per-path locks. Cross-workflow exclusion is required.
 9. **All mutating routes** must continue to:

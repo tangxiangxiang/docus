@@ -378,7 +378,7 @@ dirty in this vault".
   which then fails `isValidHistoryPath` (the `->` is not a `.md`
   kebab). **Renames therefore do not surface in the Changes list.**
   This is a documented boundary — see §11 (Log and Timeline) for the
-  related `--follow` decision and §25 H-K9.
+  related `--follow` decision and §25 H-K8.
 - **Per-entry shape**:
   ```ts
   interface StatusEntry {
@@ -537,16 +537,17 @@ verify against.
    3. read current .git/index bytes into memory
    4. write those bytes into a Temporary Index file via a TempDir
    5. point GIT_INDEX_FILE at the Temporary Index
-   6. apply scoped git reset -q <target> -- <paths> (or
+   6. classify every target path independently: F1 != F0 or
+      F0 != oldHead entry → preservedExternalPaths; F1 == F0
+      and F0 == oldHead entry → pathsToSynchronize
+   7. apply scoped git reset -q <target> -- <pathsToSynchronize> (or
       update-index --force-remove for deleted paths) against the
       Temporary Index
-   7. verify the Temporary Index against the target HEAD using
-      ls-files --stage + fingerprint comparison
-   8. re-check repository-idle, current HEAD, and any required
-      fingerprint / CAS state
-   9. write the Temporary Index bytes into .git/index.lock
-   10. fsync the lock file
-   11. atomically rename .git/index.lock to .git/index
+   8. verify only pathsToSynchronize against target HEAD
+   9. re-check repository-idle and current HEAD
+   10. write the Temporary Index bytes into .git/index.lock
+   11. fsync the lock file
+   12. atomically rename .git/index.lock to .git/index
    ```
    This is the same lock-and-rename pattern the existing Repair
    flow already uses (`repairIndexWithLock`); the closure task
@@ -577,6 +578,17 @@ verify against.
    pending Repair Transaction bound to F0.
    `indexRefreshFailed = failedPaths.length > 0`; preserved paths do
    not set it.
+   A per-path F1 mismatch is not a batch failure: that path remains
+   unchanged while other safe paths continue. Only a global
+   transaction failure (repository operation, changed HEAD, lock or
+   Temporary Index failure, I/O, synchronized-path verification,
+   lock write/fsync, or atomic rename failure) aborts remaining work.
+   Already-preserved paths stay preserved; unfinished safe candidates
+   become `failedPaths`, and only those paths may create a Repair
+   Transaction bound to F0. When `pathsToSynchronize` is empty, do
+   not run reset/update-index and do not write or rename
+   `.git/index.lock`; return informational success with
+   `failedPaths: []` and `indexRefreshFailed: false`.
 5. **Repair Transaction schema (version 2)**:
    ```ts
    {
@@ -642,7 +654,7 @@ GET /api/history/log?path=<opt>&limit=<opt, defaults to nothing ⇒ 200>
   commit, `--follow` falsely attributes earlier commits of unrelated
   files to this path."* Therefore a rename is logged under the new
   path only — earlier history of the old path is **not** pulled in.
-  See §25 H-K9 (Rename history not followed).
+  See §25 H-K8 (Rename history not followed).
 - **CommitRecord shape** (server `parseLog`):
   ```ts
   interface CommitRecord {
@@ -1186,7 +1198,7 @@ Spec deviation):
   does not exist at ref HEAD~1"), which is informational and does
   not disclose anything sensitive.
 - **External staged content protection**: §11.
-- **Non-Docus commit withdraw risk**: §16 / H-C4.
+- **Invalid same-vault marker withdraw risk**: §16 / H-C4.
 
 ## 23. Compatibility
 
@@ -1247,8 +1259,17 @@ following are verified:
       [ ] rejects with 409 'repository changed before commit'
       [ ] rejects with 409 'repository operation in progress'
       [ ] updates HEAD via CAS only
-      [ ] attempts Real-Index sync; degradation surfaces as a
-          repair transaction
+      [ ] routine Real-Index sync returns synchronizedPaths,
+          preservedExternalPaths, and failedPaths
+      [ ] synchronizedPaths are updated to targetHead and old Repair
+          metadata for those paths is settled
+      [ ] preservedExternalPaths keep existing Real Index entries
+          unchanged, create no Repair Transaction or banner, expose
+          no Retry action, and surface as informational success
+      [ ] only failedPaths may create a pending Repair Transaction
+      [ ] every routine-sync Repair Transaction uses pre-HEAD F0
+          as expectedIndex
+      [ ] indexRefreshFailed is true iff failedPaths.length > 0
       [ ] plumbing commit: no hooks, no signing
       [ ] refreshes Status / Log / Comparison for committed paths
 [ ] Restore:
@@ -1262,7 +1283,11 @@ following are verified:
       [ ] only the latest version can be withdrawn
       [ ] does not touch Working Tree
       [ ] preserves unrelated staged entries
-      [ ] rejects non-Docus commits (H-C4 — closure blocker)
+      [ ] rejects an unmarked, cross-vault marked, malformed, or
+          ambiguous-marker HEAD; accepts exactly one valid same-vault
+          Docus marker (H-C4 — closure blocker)
+      [ ] returns synchronizedPaths, preservedExternalPaths, and
+          failedPaths under the same routine-sync contract as Create
       [ ] resolves short SHAs to full SHAs before the HEAD
         comparison (H-K6)
       [ ] refreshes Status / Log / Timeline / Comparison /
@@ -1308,7 +1333,7 @@ maintainers need to be aware of.
 | H-K1 | `getStatus` resolves every non-2xx response as a body-shaped success because `allowNonOkJson: true` is passed unconditionally. This is the right behavior for the `503 { available: false }` graceful-unavailable signal but it also swallows genuine 500 responses without an error path. | P1 | **Yes** (H-C1) |
 | H-K2 | Commit / Withdraw success-state and refresh-error separation depends on every downstream `Promise.all([refreshStatus, refreshLog, …])` not being treated as failure. A network error between `fetch 201` and the refresh round-trip could still surface ambiguously in the toast flavor; the per-workflow tests assert the variants but a tighter contract for "commit succeeded, refresh failed" is not formally written down. | P1 | **Yes** (H-C2) |
 | H-K3 | Routine Real-Index synchronization can overwrite target-path staged intent in two cases: (1) the target path was already staged before Create Version or Withdraw began (deterministic — no concurrency required; the user's `git add -p` entry is replaced when `syncIndexPaths` resets to the new HEAD), and (2) an external `git add <target-path>` lands during the current reset/verify retry window and is cleared by the next retry. Working Tree bytes may remain intact in both cases, but the user's exact staged state can be lost. This is a data-safety and intent-preservation problem and remains a P1 Closure Blocker. The closure task History-C3 must add pre-sync fingerprint CAS (skip paths whose pre-commit Index entry differed from old HEAD) AND move the sync to a Temporary Index seeded from the current Real Index and renamed into place under hand-taken `.git/index.lock`. | P1 | **Yes** (H-C3) |
-| H-K4 | `dropHeadCommit` withdraws any commit currently at HEAD. Intended contract requires exactly one canonical same-vault Docus marker block. The marker is an accidental-withdrawal guard, not cryptographic ownership proof; a local actor with repository and Git-directory write access can forge it and is outside the History feature's trust boundary. | P1 | **Yes** (H-C4) |
+| H-K4 | `dropHeadCommit` withdraws any commit currently at HEAD. Intended contract requires exactly one canonical same-vault Docus marker block. The marker is an accidental-withdrawal guard, not cryptographic provenance proof; a local actor with repository and Git-directory write access can forge it and is outside the History feature's trust boundary. | P1 | **Yes** (H-C4) |
 | H-K5 | Restore resolves and reads a mutable ref outside the repository mutation transaction and never resolves the accepted ref to one immutable full commit SHA. The response carries pre-restore source bytes (read by `rawAt`), not a post-restore Working Tree re-read, so a concurrent writer between `restoreFile` and the response yields an `raw` / `mtime` pair that does not match disk. The current client also writes `request.historicalRaw` (the gesture-time snapshot bytes) into `tab.raw`, `tab.originalRaw`, and the file-change event, which amplifies the divergence. The closure task History-C5 must resolve the accepted ref to one immutable SHA inside `withRepoMutation`, re-read disk after `restoreFile`, and route the post-restore bytes back to the client as `result.raw`. | P1 | **Yes** (H-C5) |
 | H-K6 | `isValidCommitSha` accepts 7-character short SHAs; `head !== sha` compares two 40-character SHAs. A short SHA can never match → user always sees 'only the latest version can be withdrawn' on a short request. | P2 | Yes |
 | H-K7 | fixed-duration day arithmetic does not match local-calendar day boundaries across 23-hour and 25-hour DST days | P2 | **Yes** (H-C7) |

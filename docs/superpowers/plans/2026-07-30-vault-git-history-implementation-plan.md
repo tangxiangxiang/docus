@@ -125,7 +125,7 @@ This document has two parts:
       — args array, no shell.
 - [x] Per-invocation `SIGKILL` timeout (15 s).
 - [x] Output cap (`MAX_CAPTURE_BYTES = 10 * 1024 * 1024`, compared
-      against JS string length — see Spec §21 / H-K15 note).
+      against JS string length — see Spec §21).
 - [x] `GitUnavailableError` is the sole throw (spawn ENOENT etc.).
 - [x] `absoluteGitDir` (internal helper) via `rev-parse --absolute-git-dir`.
 - [x] `REPOSITORY_OPERATION_MARKERS` enumeration
@@ -905,25 +905,29 @@ Concretely:
    EEXIST ⇒ return degraded success with
             indexRefreshFailed: true (NOT an error).
    EAGAIN, EBUSY on Windows ⇒ same degraded-success path.
-3. Read the current Real Index bytes into memory
-   (`fs.readFile(path.join(gitDir, 'index'))`).
-4. Create a Temporary Index under a `mkdtemp` dir and write those
+3. Read the locked Real Index as F1 and classify every target path
+   independently:
+      - F1 != F0 ⇒ `preservedExternalPaths`;
+      - F1 == F0 and the path is a safe candidate ⇒
+        `pathsToSynchronize`;
+      - F0 != oldHead entry ⇒ `preservedExternalPaths`.
+4. Read the current Real Index bytes into memory, create a Temporary
+   Index under a `mkdtemp` dir, and write those
    bytes into it as the seed. If the Real Index does not exist,
    initialize via `git read-tree --empty` (still under the lock).
 5. Set `GIT_INDEX_FILE` to the Temporary Index for the scoped
    command.
 6. Apply the scoped change against the Temporary Index:
       - non-root target:
-            git reset -q <targetSha> -- <paths>
+            git reset -q <targetSha> -- <pathsToSynchronize>
       - path was removed by the commit (root or non-root):
-            git update-index --force-remove -- <paths>
-7. Verify with `git ls-files --stage -- <paths>` against the
-   Temporary Index; compare the entries to the expected commit
-   tree's entries for the same paths (fingerprint match).
-8. Re-check the repository-idle guard, current HEAD, and any
-   Index-Repair fingerprint state. Abort and unlock on any
-   inconsistency — DO NOT rename and DO NOT retry the
-   destructive reset.
+            git update-index --force-remove -- <pathsToSynchronize>
+7. Verify only `pathsToSynchronize` with `git ls-files --stage`
+   against the Temporary Index and target commit tree. Preserved and
+   unrelated paths retain their unchanged seeded entries.
+8. Re-check repository-idle and current HEAD. A global transaction
+   or synchronized-path verification failure aborts remaining work —
+   DO NOT rename and DO NOT retry the destructive reset.
 9. Write the Temporary Index bytes into `.git/index.lock`.
 10. fsync the lock file.
 11. Atomically rename `.git/index.lock` to `.git/index`.
@@ -991,8 +995,14 @@ The closure must therefore add a **pre-sync fingerprint CAS**:
 9. Re-read the locked Index as F1.
 10. Synchronize only paths where F0 equals the oldHead entry AND
     F1 equals F0.
-11. Return synchronizedPaths, preservedExternalPaths, and failedPaths.
-12. Bind any Repair Transaction for failedPaths to F0.
+11. Preserve every F1 != F0 path independently and continue with
+    remaining safe paths; a per-path mismatch is not a batch abort.
+12. Apply reset/update-index and verification only to
+    pathsToSynchronize. Keep unchanged seeded entries for preserved
+    and unrelated paths.
+13. Atomically rename only after synchronized-path verification.
+14. Return synchronizedPaths, preservedExternalPaths, and failedPaths.
+15. Bind any Repair Transaction for failedPaths to F0.
 ```
 
 The rule is:
@@ -1041,6 +1051,16 @@ Rules:
 
 `indexRefreshFailed = failedPaths.length > 0`.
 `preservedExternalPaths` never sets it to `true`.
+
+Only global failures—repository operation, changed HEAD, lock or
+Temporary Index creation failure, I/O, verification of a synchronized
+path, lock write/fsync, or atomic rename failure—fail the remaining
+batch. Already-preserved paths remain preserved; unfinished safe
+candidates become `failedPaths`. If `pathsToSynchronize` is empty,
+do not run reset/update-index and do not write or rename
+`.git/index.lock`; return `failedPaths: []`,
+`indexRefreshFailed: false`, and informational
+`preservedExternalPaths`.
 
 The server, wire types, clients, UI, and tests use one empty-array
 convention and these result contracts:
@@ -1101,11 +1121,11 @@ interface DropCommitResult {
   seed the Real Index with an entry for a non-selected path,
   commit, sync, assert the unrelated entry still resolves via
   `git ls-files --stage -- <unrelated-path>`.
-- new: `'does not retry destructively after an index fingerprint mismatch'` —
-  capture F0, then make the locked F1 differ. Expect zero rename
-  attempts, zero destructive reset attempts, unchanged Real Index
-  bytes and staged OID, classification in
-  `preservedExternalPaths`, and no Repair Transaction.
+- new: `'preserves one F1-mismatched path while synchronizing another safe path'` —
+  capture `a.md` and `b.md` as safe F0, then change locked F1 only
+  for `b.md`. Expect `a.md` synchronized, `b.md` unchanged and in
+  `preservedExternalPaths`, one verified atomic replacement, and no
+  Repair Transaction for `b.md`.
 - new: `'returns degraded success when index.lock is already held'` —
   pre-create `.git/index.lock` from the test; run sync;
   expect `indexRefreshFailed: true` and no destructive Real Index
@@ -1313,8 +1333,9 @@ Withdraw verification:
       AND every changed path is a managed History Markdown path
         (i.e. passes isValidHistoryPath + endsWith('.md'))
       AND commit is NOT a merge commit
-5. mismatch or missing trailer ⇒ 409 'commit is not a Docus
-   version; cannot withdraw'
+5. mismatch, missing, duplicate, malformed, or incomplete marker ⇒
+   409 'commit does not carry a valid same-vault Docus marker;
+   cannot withdraw'
 ```
 
 Short SHAs (`7–40 hex`) are still accepted at the route
@@ -1334,9 +1355,9 @@ under the same fix).
   - new: `'quarantines and refuses to use a malformed id'`.
 
 - `server/__tests__/history-git.test.ts`:
-  - new: `'withdraw rejects a non-Docus commit at HEAD'`.
-  - new: `'withdraw rejects a Docus commit from a different vault'`.
-  - new: `'withdraw accepts a Docus commit whose vault-id matches'`.
+  - new: `'withdraw rejects an unmarked external commit at HEAD'`.
+  - new: `'withdraw rejects a canonical marker from another vault'`.
+  - new: `'withdraw accepts a canonical marker matching the current vault'`.
   - new: `'withdraw rejects a merge commit even with a valid trailer'`.
   - new: `'withdraw rejects a commit whose change set includes a non-Markdown path'`.
   - new: `'withdraw rejects duplicate canonical marker trailers'` —
@@ -1348,8 +1369,8 @@ under the same fix).
     trailers are rejected as ambiguous.
   - new: `'external commit with copied author identity but no canonical trailer is rejected'` —
     commit authored by `docus <docus@localhost>` with no
-    trailer block; withdraw rejects with 409 'not a Docus
-    version'.
+    trailer block; withdraw rejects with the valid-same-vault-marker
+    error.
 
 - `server/__tests__/history-routes.test.ts`:
   - new: `'returns 409 when an external commit is at HEAD'`.
@@ -1363,7 +1384,7 @@ rebrand them. Three migration options are recorded below.
 
 ```text
 Option A (recommended, fail closed):
-   Old unowned commits cannot be withdrawn. Existing Docus
+   Legacy unmarked commits cannot be withdrawn. Existing Docus
    users see the 409 message until they recommit through a
    new Create Version (which lands a trailer). The new
    commit becomes withdrawable.

@@ -121,7 +121,8 @@ Draft Closure §4 for full descriptions):
   timezone regression tests.
 - `H-C8` — Three-platform CI has not been re-run for this
   reconstruction.
-- `H-C9` — Missing regression tests for History invariants.
+- `H-C9` — Missing regression tests for repository-operation markers,
+  path shape, multi-vault keying, and Restore race coverage.
 
 The Draft Closure is the **single source of truth** for what
 must be verified before the feature may be declared CLOSED.
