@@ -102,13 +102,18 @@ Draft Closure §4 for full descriptions):
   graceful-unavailable.
 - `H-C2` — Commit success vs post-success refresh failure
   classification.
-- `H-C3` — Real-Index synchronization race with external
-  `git add`.
+- `H-C3` — Retrying Real-Index synchronization can clear newly
+  staged target-path entries created by an external Git operation.
 - `H-C4` — Withdraw lacks a Docus commit ownership check.
-- `H-C5` — Restore pre-check lives outside `withRepoMutation`
-  and the returned `raw` is the pre-restore bytes.
+- `H-C5` — Restore reads a mutable ref outside the repository
+  mutation transaction, returns pre-restore source bytes, and the
+  current client writes the gesture-time snapshot
+  (`request.historicalRaw`) into the editor tab and the file-change
+  event.
+- `H-C6` — Short SHA at `/drop` never matches full HEAD.
 - `H-C8` — Three-platform CI has not been re-run for this
   reconstruction.
+- `H-C9` — Missing regression tests for History invariants.
 
 The Draft Closure is the **single source of truth** for what
 must be verified before the feature may be declared CLOSED.

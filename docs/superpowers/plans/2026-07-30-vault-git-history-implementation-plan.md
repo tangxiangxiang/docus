@@ -127,8 +127,8 @@ This document has two parts:
 - [x] Output cap (`MAX_CAPTURE_BYTES = 10 * 1024 * 1024`, compared
       against JS string length — see Spec §21 / H-K15 note).
 - [x] `GitUnavailableError` is the sole throw (spawn ENOENT etc.).
-- [x] `getAbsoluteGitDir` via `rev-parse --absolute-git-dir`.
-- [x] `STATUS_OPERATION_MARKERS` enumeration
+- [x] `absoluteGitDir` (internal helper) via `rev-parse --absolute-git-dir`.
+- [x] `REPOSITORY_OPERATION_MARKERS` enumeration
       (Spec §18) — `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`,
       `REBASE_HEAD`, `rebase-merge`, `rebase-apply`, `sequencer`.
 - [x] `assertRepositoryIdle` runs at entry and again before
@@ -469,7 +469,12 @@ intact in `5e735d1` and have not been rewritten.
 
 - [x] `POST /api/history/restore` runs `git restore --source=<ref>
       --worktree -- <path>` with `WORKTREE` explicitly rejected.
-- [x] Returns `{ path, ref, raw: <pre-restore bytes>, mtime }`.
+- [x] Returns `{ path, ref, raw, mtime }`. The route resolves
+      the accepted ref to one full immutable SHA inside the
+      repository mutation section (per Spec §15 / Plan History-C5);
+      `raw` is intended to be the post-restore Working Tree bytes —
+      the current implementation is documented as a Known Divergence
+      that pre-dates this contract (see Spec H-K5 / H-C5).
 - [x] `useHistoryRestore` composable with `pathMutationLock`,
       `DocumentMutationBarrier`, captured-at-confirmation semantics
       (`buildRequest({ ...source })`).
@@ -521,7 +526,8 @@ intact in `5e735d1` and have not been rewritten.
 
 **Known residual risks (closure blockers — see Part B):**
 
-- H-K5 (H-C5) — Restore TOCTOU / pre-restore `raw` reference.
+- H-K3 (H-C3) — Retrying Real-Index synchronization can clear newly staged target-path entries created by an external Git operation; Working Tree bytes may remain but staged intent can be lost.
+- H-K5 (H-C5) — Restore resolves and reads a mutable ref outside the repository mutation transaction; current response carries pre-restore source bytes; current client writes `request.historicalRaw` into editor tabs and the file-change event.
 
 ---
 
@@ -821,36 +827,124 @@ the toast variant is unambiguous.
 
 ### History-C3 — Eliminate Real-Index synchronization race
 
-**Goal:** Close the documented race between an external `git add` and
-the Docus Index Repair fingerprint capture (Spec H-C3).
+**Goal:** Close the documented race between an external `git add`
+and the Docus Index Repair fingerprint capture (Spec §11 / H-K3 /
+H-C3). The current implementation runs `git reset -q <target> --
+<paths>` directly against the Real Index with up to three retries;
+an external `git add <target-path>` that lands during the retry
+window can be silently cleared on the next attempt, losing the
+user's staged intent even though Working Tree bytes may remain.
 
 **Involved files:**
 
-- `server/history/git.ts` — `syncIndexPaths`,
-  `repairIndexWithLock`, `captureIndexFingerprints`.
+- `server/history/git.ts` — introduce `syncIndexAtomic(repoRoot,
+  targetSha, paths)` modeled on the existing `repairIndexWithLock`;
+  rewrite `syncIndexPaths` and `syncDroppedIndexPaths` to delegate
+  to it.
+- `server/__tests__/history-git.test.ts` — new cases listed below.
 
-**Recommended implementation:**
+**Recommended implementation (Temporary Index + atomic replacement):**
 
-- Take `.git/index.lock` **before** the synchronized reset, not just
-  when repair runs. Treat the capture-and-validate sequence as a
-  single mutexed region.
-- Verify fingerprint **after** the reset's verify step. On
-  mismatch, mark the transaction `superseded` and return
-  immediately — do NOT re-attempt.
+The exact shape of this closure is fixed by two facts about Git:
 
-**Tests required:**
+1. Git itself writes `index.lock` while mutating the Real Index.
+   Running `git reset` against the Real Index while Docus already
+   holds `.git/index.lock` is a recipe for `ENOTDIR` / `EBUSY` /
+   silent no-op behavior, depending on platform. **Docus must NOT
+   run `git reset` on the locked Real Index.**
+2. The existing Repair flow already takes `.git/index.lock` by
+   hand, builds a Temporary Index, and renames the result back
+   over `.git/index`. The sync path must adopt the same model.
 
-- `server/__tests__/history-git.test.ts`:
-  - existing tests pass.
-  - new case: `'does not report repair success when an external git add lands during the reset window'`.
+Concretely:
 
-**Definition of Done:** The race window is bounded by the same
-`.git/index.lock` as the rest of Git. No silent external-state
-override.
+```text
+1. Resolve the absolute Git directory via absoluteGitDir(repoRoot).
+2. Acquire `.git/index.lock` exclusively:
+       fs.open(path.join(gitDir, 'index.lock'), 'wx')
+   EEXIST ⇒ return degraded success with
+            indexRefreshFailed: true (NOT an error).
+   EAGAIN, EBUSY on Windows ⇒ same degraded-success path.
+3. Read the current Real Index bytes into memory
+   (`fs.readFile(path.join(gitDir, 'index'))`).
+4. Create a Temporary Index under a `mkdtemp` dir and write those
+   bytes into it as the seed. If the Real Index does not exist,
+   initialize via `git read-tree --empty` (still under the lock).
+5. Set `GIT_INDEX_FILE` to the Temporary Index for the scoped
+   command.
+6. Apply the scoped change against the Temporary Index:
+      - non-root target:
+            git reset -q <targetSha> -- <paths>
+      - path was removed by the commit (root or non-root):
+            git update-index --force-remove -- <paths>
+7. Verify with `git ls-files --stage -- <paths>` against the
+   Temporary Index; compare the entries to the expected commit
+   tree's entries for the same paths (fingerprint match).
+8. Re-check the repository-idle guard, current HEAD, and any
+   Index-Repair fingerprint state. Abort and unlock on any
+   inconsistency — DO NOT rename and DO NOT retry the
+   destructive reset.
+9. Write the Temporary Index bytes into `.git/index.lock`.
+10. fsync the lock file.
+11. Atomically rename `.git/index.lock` to `.git/index`.
+12. In `finally`, close + fsync + atomically release any
+    Temporary Index tempdir.
+```
+
+Properties this preserves (and the current implementation does
+not):
+
+- The Real Index is **never** written while another Git
+  process holds `.git/index.lock`; if the lock is held, the
+  sync degrades cleanly.
+- An external `git add <target-path>` during the sync window
+  either lands **before** the temp-dir build (and is preserved
+  in the seeded Temporary Index) or **after** the rename (and
+  survives the next Git operation). The two paths bracket the
+  destructive reset.
+- There are **no destructive retries**. The current three-attempt
+  retry budget is replaced by: one attempt, one verification, one
+  rename.
+- The pattern is identical to the existing `repairIndexWithLock`
+  critical section, so the single `.git/index.lock` mutex is
+  shared between routine sync, repair, and any future reads
+  that need index consistency.
+
+**Tests required (`server/__tests__/history-git.test.ts`):**
+
+- existing test `'holds index.lock across validation and atomic replacement'` — unchanged.
+- existing test `'discards only repair metadata and preserves newer staged content'` — unchanged.
+- new: `'does not clear externally staged target content during index synchronization'` —
+  start a Create Version flow, land an external `git add
+  <target-path>` between the build-temp-index step and the
+  rename, then assert the Final Index still carries the
+  externally staged entry.
+- new: `'preserves unrelated staged entries while synchronizing selected paths'` —
+  seed the Real Index with an entry for a non-selected path,
+  commit, sync, assert the unrelated entry still resolves via
+  `git ls-files --stage -- <unrelated-path>`.
+- new: `'does not retry destructively after an index fingerprint mismatch'` —
+  construct a Verified fingerprint but introduce a mismatch
+  between verification step and rename; expect a single rename
+  attempt followed by a `superseded` repair, NOT three reset
+  attempts.
+- new: `'returns degraded success when index.lock is already held'` —
+  pre-create `.git/index.lock` from the test; run sync;
+  expect `indexRefreshFailed: true` and no destructive Real Index
+  mutation.
+- new: `'atomically replaces the Real Index only after Temporary Index verification'` —
+  verify the temp index entry set matches the expected commit
+  tree, then assert the rename happens exactly once.
+
+**Definition of Done:** The routine Create / Withdraw Real-Index
+sync uses the temp-index + atomic-rename path described above.
+Destructive retries are removed. The race window is bounded by
+`.git/index.lock` rather than by three independent `git reset`
+invocations.
 
 **Risk:** Medium — touches the Index Repair critical section. The
 existing `holds index.lock across validation and atomic replacement`
-test is the safety floor.
+test remains the safety floor.
 
 **Closure Blocker:** **Yes**.
 
@@ -860,89 +954,342 @@ test is the safety floor.
 
 **Goal:** Withdraw must reject any commit not created by Docus.
 
+This closure has two halves:
+
+1. **Vault metadata initialization** — every vault must carry a
+   `docus-vault-id`, including **already-existing** vault
+   repositories that were initialized before this task lands.
+2. **Withdraw commit ownership check** — the trailer on a
+   candidate commit must be parsed and verified against the
+   vault metadata.
+
+Both halves are required.
+
 **Involved files:**
 
-- `server/history/git.ts` — `addAndCommit` (commit object creation),
-  `dropHeadCommit` (ownership check).
-- `server/history/routes.ts` — `/drop` route, 409 mapping.
+- `server/history/repo.ts` — introduce
+  `ensureDocusHistoryMetadata(repoRoot)`. Do not bury it inside
+  `ensureRepo`: existing vaults that already have `.git/` skip
+  `ensureRepo` entirely, so a separate helper is the only way
+  to land a vault-id on those repos.
+- `server/history/git.ts` — `addAndCommit` (writes the trailer),
+  `dropHeadCommit` (parses the trailer + reads the local
+  vault-id + CAS-mismatch → 409), `ensureAuthorIdentity` is
+  unchanged.
+- `server/history/routes.ts` — every ownership-sensitive handler
+  calls `ensureDocusHistoryMetadata` before work; `/drop` maps
+  the ownership failure to 409.
+- `server/__tests__/history-git.test.ts`,
+  `server/__tests__/history-routes.test.ts` — new cases below.
+- `server/history/__tests__/` (or co-located) — a new suite
+  pinning `ensureDocusHistoryMetadata` behavior on an
+  already-initialized vault.
 
-**Recommended implementation:**
+**Recommended implementation — metadata init:**
 
-Add a commit trailer scheme on Create Version:
+```ts
+// server/history/repo.ts (new export)
+export async function ensureDocusHistoryMetadata(
+  repoRoot: string,
+): Promise<DocusHistoryMetadata> {
+  const gitDir = await git.absoluteGitDir(repoRoot)
+  const docusDir = path.join(gitDir, 'docus')
+  await fs.mkdir(docusDir, { recursive: true })
+  const idPath = path.join(docusDir, 'docus-vault-id')
+
+  try {
+    // exclusive create — fails with EEXIST if it's already there
+    const handle = await fs.open(idPath, 'wx')
+    try {
+      const id = crypto.randomUUID()
+      await handle.writeFile(id, 'utf8')
+      await handle.sync()
+      return { vaultId: id, created: true }
+    } finally {
+      await handle.close()
+    }
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException)?.code === 'EEXIST') {
+      const existing = (await fs.readFile(idPath, 'utf8')).trim()
+      // Malformed or missing vault-id: refuse to mint a new one
+      // implicitly. Quarantine the bad file and reseed on a
+      // subsequent call.
+      if (!isValidVaultId(existing)) {
+        const quarantine = path.join(
+          docusDir,
+          `docus-vault-id.corrupt-${Date.now()}-${crypto.randomUUID()}.txt`,
+        )
+        await fs.rename(idPath, quarantine)
+        throw new Error('docus-vault-id is malformed; quarantined')
+      }
+      return { vaultId: existing, created: false }
+    }
+    throw cause
+  }
+}
+```
+
+Properties:
+
+- **Idempotent on already-initialized vaults.** Existing
+  vaults with a valid `docus-vault-id` get `created: false`
+  and read their id back unchanged.
+- **First-touch on first Create / Withdraw.** New vaults
+  (or vaults whose metadata was never written) get a UUID
+  on the first call.
+- **Quarantine, never delete, on corrupt id.** A malformed
+  file is moved aside with a timestamp + random suffix; the
+  next call reseeds.
+- **Caller decides when to call.** `addAndCommit` and
+  `dropHeadCommit` invoke it before they touch any commit
+  object. The route layer also calls it in case the Git
+  repository is touched by a read that needs an authoritative
+  vault-id.
+
+**Recommended implementation — commit ownership:**
+
+Create Version trailer:
 
 ```text
 Docus-Version: 1
 Docus-Vault-Version: <stable-id>
 ```
 
-`<stable-id>` is a per-vault UUID stored in
-`<git-dir>/docus/docus-vault-id` (a new sibling of the repair file).
-Written once on first EnsureRepo; read by both Create and Withdraw.
+`<stable-id>` is the local `docus-vault-id`.
 
-`dropHeadCommit`:
+Withdraw verification:
 
-1. Read the commit object.
-2. Parse trailers.
-3. Reject if `Docus-Version: 1` is missing or
-   `Docus-Vault-Version` does not match the local
-   `<git-dir>/docus/docus-vault-id`.
+```text
+1. ensureDocusHistoryMetadata → localVaultId
+2. read HEAD's commit object
+3. parse trailers (last paragraph of the commit message that
+   uses the Git convention 'Key: Value')
+4. accept if and only if:
+      trailers["Docus-Version"] === "1"
+      AND trailers["Docus-Vault-Version"] === localVaultId
+      AND commit has exactly one parent OR parent === null
+        (root commit, allowed)
+      AND every changed path is a managed History Markdown path
+        (i.e. passes isValidHistoryPath + endsWith('.md'))
+      AND commit is NOT a merge commit
+5. mismatch or missing trailer ⇒ 409 'commit is not a Docus
+   version; cannot withdraw'
+```
+
+Short SHAs (`7–40 hex`) are still accepted at the route
+boundary; the route resolves them via `rev-parse --verify` to
+a full SHA before applying the trailer check (Plan History-C6
+under the same fix).
 
 **Tests required:**
+
+- `server/history/__tests__/repo.test.ts` (new, for the helper):
+  - new: `'creates docus-vault-id on first call'`.
+  - new: `'returns the same id on subsequent calls'`.
+  - new: `'preserves an already-initialized vault repository'`
+    — seed a real `git init` repo with no `docus/` subdir;
+    assert the helper writes the id without clobbering the
+    vault's existing dotfiles.
+  - new: `'quarantines and refuses to use a malformed id'`.
 
 - `server/__tests__/history-git.test.ts`:
   - new: `'withdraw rejects a non-Docus commit at HEAD'`.
   - new: `'withdraw rejects a Docus commit from a different vault'`.
   - new: `'withdraw accepts a Docus commit whose vault-id matches'`.
+  - new: `'withdraw rejects a merge commit even with a valid trailer'`.
+  - new: `'withdraw rejects a commit whose change set includes a non-Markdown path'`.
+
 - `server/__tests__/history-routes.test.ts`:
   - new: `'returns 409 when an external commit is at HEAD'`.
 
+**Migration (legacy commits without trailer) — Owner Decision:**
+
+The current implementation already shipped Docus commits without
+a vault-id trailer. The closure task cannot unilaterally
+rebrand them. Three migration options are recorded below.
+**Owner must choose before the closure task lands.**
+
+```text
+Option A (recommended, fail closed):
+   Old unowned commits cannot be withdrawn. Existing Docus
+   users see the 409 message until they recommit through a
+   new Create Version (which lands a trailer). The new
+   commit becomes withdrawable.
+
+Option B:
+   One-time migration marks only the current HEAD through
+   an explicit owner-confirmed operation
+   (POST /api/history/legacy-claim-current-head). No batch
+   migration. Every other old commit is refused.
+
+Option C:
+   Legacy ownership is inferred by a strictly documented,
+   fail-closed compatibility rule (e.g. "commits authored
+   by the local docus identity, after a watermark date, are
+   treated as Docus commits"). Rejected by default because
+   it expands the closure scope to migration tooling.
+```
+
+The default in the absence of an Owner choice is **Option A
+— fail closed**. Document this default in the Final
+Closure's Known Risks.
+
 **Definition of Done:** Withdraw is restricted to Docus-created
-commits from the same vault.
+commits from the same vault, AND every active vault has a
+`docus-vault-id` file under `<git-dir>/docus/`.
 
-**Risk:** Medium. Forward-migration is needed: existing Docus
-versions without the trailer cannot be withdrawn. Two options:
-(a) refuse to withdraw old versions; (b) require the user to
-recommit. Owner decision.
+**Risk:** Medium.
 
-**Closure Blocker:** **Yes**.
+**Closure Blocker:** **Yes** (also depends on an Owner choice on
+migration).
 
 ---
 
 ### History-C5 — Make Restore ref resolution atomic
+(server + client)
 
-**Goal:** Close the Restore TOCTOU window (Spec H-K5). The mutable
-ref → SHA resolution must happen inside `withRepoMutation` and
-`rawAt` must be re-read **after** `restoreFile`.
+**Goal:** Close the Restore TOCTOU window so the response bytes
+reflect what was actually written to disk. The route must resolve
+the accepted request ref to one immutable full commit SHA inside
+`withRepoMutation`, use that resolved SHA for both the source
+read and the restore command, and re-read disk bytes after the
+restore. The client must treat the server's post-restore bytes
+(`result.raw`) as authoritative over the gesture-time snapshot
+(`request.historicalRaw`).
 
 **Involved files:**
 
-- `server/history/routes.ts` — POST `/restore`.
-- `server/history/git.ts` — `rawAt` (add a final-ref-resolution
-  helper used only by `/restore`).
+- `server/history/routes.ts` — `POST /restore` (resolves to
+  immutable SHA inside `withRepoMutation`).
+- `server/history/git.ts` — `restoreFile` (route-side invocation
+  already passes `--source=<sha>`; no underlying change).
+- `src/lib/history-api.ts` — `RestoreFileResult` shape gains
+  `requestedRef` and `resolvedRef` fields and renames `ref` →
+  `requestedRef` for callers that want to display the
+  textual ref (the resolved SHA is the authoritative form).
+- `src/composables/vault/useHistoryRestore.ts` — `restore()` uses
+  `result.raw` for `tab.raw`, `tab.originalRaw`, and the
+  `VaultFileChanges.publish({ newRaw })` event, not
+  `request.historicalRaw`. Pass the source view bytes only as
+  the diff/comparison context already lives in `comparison.oldRaw`.
+- `src/composables/vault/__tests__/useHistoryRestore.test.ts` —
+  new cases below.
 
-**Recommended implementation:**
+**Recommended implementation — server:**
 
-- Inside the route handler, inside `withRepoMutation`:
-  1. `rev-parse <ref>^{commit}` to a stable SHA.
-  2. `git show <sha>:<path>` (explicitly passing the SHA, not the ref).
-  3. `git restore --source=<sha> --worktree -- <path>`.
-  4. `fs.readFile(repoRoot/<path>)` for the post-restore raw.
-  5. `fs.stat(repoRoot/<path>)` for mtime.
-- Reject with 400 if `ref === WORKTREE` (already there) and with 404
-  if step 2 returns null.
-- Return `{ path, ref, raw: <post-restore bytes>, mtime }`.
+Inside one `withRepoMutation(repoRoot)` transaction:
+
+```text
+1. Resolve the accepted request ref to a full immutable commit SHA:
+       rev-parse --verify <acceptedRef>^{commit}
+   Failure ⇒ 404 'cannot resolve ref <acceptedRef>'.
+2. Read the source snapshot:
+       git show <resolvedSha>:<path>          → source raw
+   null ⇒ 404 'file does not exist at ref <acceptedRef>'.
+3. Apply the restore:
+       git restore --source=<resolvedSha> --worktree -- <path>
+4. Re-read the post-restore Working Tree bytes:
+       fs.readFile(repoRoot/<path>, 'utf8')   → restored raw
+5. Stat for mtime:
+       fs.stat(repoRoot/<path>).mtimeMs      → restored mtime
+6. Return:
+       {
+         path,
+         requestedRef: acceptedRef,   // textual as the client sent it
+         resolvedRef: resolvedSha,    // full 40-char SHA, authoritative
+         raw: restored raw,           // post-restore Working Tree bytes
+         mtime: restored mtime,
+       }
+```
+
+`source raw` and `restored raw` are both kept in the local scope
+for an optional audit log; only `restored raw` ships in the
+response. The client must read `result.raw` and never look back
+at the gesture-time snapshot.
+
+**Recommended implementation — client:**
+
+`useHistoryRestore.restore(source)`:
+
+```text
+1. Capture the source view (`revisionId`, `historicalRaw`,
+   `revisionTime`, `currentDirty`) into a `HistoryRestoreRequest`
+   at the moment of the user's gesture. This request is **only**
+   used for:
+       - the confirmation dialog payload;
+       - the `useHistoryComparisons` re-derivation if the user
+         later wants the old-vs-now diff (which lives on
+         `comparison.oldRaw`, not in `tab.raw`).
+2. Acquire the path mutation lock, open the editor save
+   barrier, then call `historyApi.restoreFile(path, revisionId)`.
+3. The server returns `RestoreFileResult` as defined above;
+   treat `result.raw` as the authoritative restored bytes.
+4. Update the open editor tab:
+       - If `preparedRevision == null` OR `tab.revision ===
+         preparedRevision`: apply `result.raw` to both
+         `tab.originalRaw` and `tab.raw`, set `savedRevision`,
+         advance `revision`, and reset error / loadError.
+       - Otherwise: apply `result.raw` to `tab.originalRaw`
+         only (the user's typing takes precedence over the
+         restored baseline). Mark `saveStatus: 'dirty'`.
+5. Publish `VaultFileChanges.publish({
+       path,
+       kind: 'write',
+       newMtime: result.mtime,
+       newRaw: result.raw,           ← post-restore bytes
+       source: 'history-restore',
+   })`.
+6. Refresh vault state and comparison. Partial refresh failure
+   reports success with `refreshFailed: true`, never an error.
+```
+
+If the server contract diverges from the gesture-time snapshot
+(server-side normalization, repo re-encoding, etc.), the
+client surfaces the discrepancy via `result.raw` and the
+mtime; it must not silently trust `request.historicalRaw` for
+either the editor tab or the file-change event.
 
 **Tests required:**
 
-- `server/__tests__/history-routes.test.ts`:
-  - existing 9 cases pass.
-  - new case: `'returns the post-restore raw even when rev-parse and show resolve the same SHA'`.
-  - new case: `'returns 404 deterministically when a ref disappears between rev-parse and read'`.
-  - new case: `'raw reflects concurrent writer to disk after restoreFile'` (or just confirm that
-    raw is now post-restore bytes, not pre-restored bytes).
+Server (`server/__tests__/history-routes.test.ts`):
 
-**Definition of Done:** Restore no longer has an off-mutex existence
-check.
+- existing 9 cases pass.
+- new: `'resolves HEAD to one immutable SHA before read and restore'`.
+- new: `'returns post-restore Working Tree bytes'` (assert
+  `result.raw === fs.readFile(repoRoot/path)`).
+- new: `'does not return bytes from a different resolution of a mutable ref'`
+  (mutate HEAD between `rev-parse` and `git restore` and assert
+  the response resolves both to the same SHA).
+- new: `'returns 404 when resolveRev fails'`.
+- new: `'uses the resolved SHA for the restore command, not the textual ref'`.
+
+Client (`src/composables/vault/__tests__/useHistoryRestore.test.ts`):
+
+- existing 12 cases pass.
+- new: `'uses server returned raw as restored editor content'`
+  — `mockRestoreFile` returns a result whose `raw` deliberately
+  differs from `historicalRaw`; expect `tab.raw` /
+  `tab.originalRaw` to reflect the server bytes.
+- new: `'publishes server returned raw in the file-change event'`
+  — `expect(publish).toHaveBeenCalledWith({ newRaw: result.raw })`.
+- new: `'preserves newer editor edits while updating originalRaw from result.raw'`
+  — race a tab edit during pending restore; assert
+  `tab.originalRaw === result.raw`, `tab.saveStatus === 'dirty'`,
+  and `tab.raw` untouched.
+- new: `'reports refresh failure as success without trusting historicalRaw'`
+  — `refreshVault` rejects; expect `onSuccess({ refreshFailed: true })`
+  not `onError`.
+
+**Definition of Done:**
+
+- The route resolves and uses one full immutable SHA for both
+  the read and the write, all inside `withRepoMutation`.
+- The route's `raw` field carries post-restore Working Tree
+  bytes, not pre-restore source bytes.
+- The client writes `result.raw` into the editor tab and the
+  file-change event; `request.historicalRaw` is no longer used
+  for either, only for the comparison pane's old-side view.
+- Newer editor edits are preserved.
 
 **Risk:** Low — net tightening of the contract.
 
@@ -983,37 +1330,109 @@ because it bites every short-SHA withdraw attempt).
 
 ---
 
-### History-C7 — Correct local-calendar timeline grouping
+### History-C7 — Correct DST-safe local-calendar timeline grouping
 
-**Goal:** Document and pin the DST / 86 400 000 ms window behavior.
+**Goal:** The current `useHistoryTimeline.groupTimelineItems` buckets
+items by `Math.floor((todayStart - itemStart) / 86_400_000)`, where
+`todayStart` / `itemStart` are computed via the `Date` constructor
+with local-calendar fields. Across a DST transition those buckets
+do not correspond to local calendar days; a commit timestamped
+00:30 local on a DST forward-fallback day may be classed into the
+wrong bucket. Owner Review observed that pinning this behavior
+with a regression test would lock in a known-wrong display, so
+the closure task is to **fix** the bucketing so it stays
+DST-correct, then pin the correct behavior.
 
 **Involved files:**
 
-- `src/composables/vault/useHistoryTimeline.ts` —
-  `groupTimelineItems`, `startOfDay`.
+- `src/composables/vault/useHistoryTimeline.ts` — replace the
+  ms-window bucket math with a DST-safe local-calendar ordinal.
+  Introduce a single pure helper `localDayOrdinal(timestamp)` and
+  use it for both `now` and the item under comparison.
 
 **Recommended implementation:**
 
-- Add code comment near `startOfDay` (with a link to a regression
-  test) recording that the bucket boundary is local calendar day
-  with `Date` arithmetic, and that a commit timestamped 00:30 local
-  on a DST forward-fallback day may land in the "Yesterday" bucket.
-- Pin this behavior with a single test that constructs a
-  controllable `now` value and a timestamp right at the bucket
-  boundary.
+Replace
 
-**Tests required:**
+```text
+const dayDelta = Math.max(0, Math.floor((today - startOfDay(timestamp)) / 86_400_000))
+```
 
-- `src/composables/vault/__tests__/useHistoryTimeline.test.ts`:
-  - new: `'bucketing at the local-midnight boundary uses local-calendar days'`.
+with a DST-safe comparator:
 
-**Definition of Done:** The behavior is documented and pinned. The
-Plan does **not** attempt to fix the DST edge case (P2, no
-production behavior change).
+```ts
+function localDayOrdinal(timestamp: number): number {
+  const date = new Date(timestamp)
+  return Date.UTC(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+  ) / 86_400_000
+}
 
-**Risk:** Documentation only.
+const todayOrdinal = localDayOrdinal(now)
+const itemOrdinal  = localDayOrdinal(timestamp)
+const dayDelta     = Math.max(0, todayOrdinal - itemOrdinal)
+```
 
-**Closure Blocker:** No.
+The integer ordinal counts local-calendar days from an absolute
+epoch (1970-01-01 local), so two timestamps that fall on the
+same local calendar day have the same ordinal regardless of how
+many real hours lie between them. DST transitions cannot change
+the ordinal difference. Bucket labels remain "Today / Yesterday /
+weekday-name / Last Week / Month / Earlier".
+
+The pure `localDayOrdinal` must be exported (or at least
+re-exported from the test) so that DST cases can be reproduced
+in a deterministic test environment.
+
+**Tests required (`src/composables/vault/__tests__/useHistoryTimeline.test.ts`):**
+
+The default Vitest environment inherits the **host** TZ, so a
+DST regression test runs against whichever TZ the CI container
+is configured with. To make the test deterministic the project
+must allow either of:
+
+- an explicit `process.env.TZ` override per test (e.g.
+  `beforeEach(() => { process.env.TZ = 'America/Los_Angeles' })`
+  with a `vi.resetModules()` plus `vi.useFakeTimers()` around
+  the matrix), or
+- spawning a Node child process via `child_process.spawnSync`
+  with `env: { ...process.env, TZ: 'America/Los_Angeles' }`
+  for the DST cases.
+
+Either approach is acceptable; the closing requirement is
+**that the DST cases are exercised under a known TZ, not skipped**.
+
+Tests:
+
+- existing case `'groups Today, Yesterday, weekdays, and Last
+  Week in display order'` — unchanged.
+- new: `'groups yesterday correctly across DST spring-forward'`
+  — TZ `America/Los_Angeles`, `now` set to 03:30 on the
+  day **after** the 02:00 spring-forward, an item with
+  timestamp at 01:30 on the same day → bucket `'yesterday'`.
+- new: `'groups yesterday correctly across DST fall-back'`
+  — TZ `America/Los_Angeles`, `now` at 01:30 after the
+  02:00 fall-back, item at 23:30 the previous calendar day →
+  bucket `'yesterday'` (not `'today'`).
+- new: `'groups today correctly near local midnight'`
+  — TZ `Europe/Berlin`, `now` at 00:30 local, item at
+  23:30 the previous local day → bucket `'yesterday'`.
+- new: `'does not classify future timestamps as earlier buckets'`
+  — `now` set, item with `timestamp > now + 90_000` —
+  expected bucket key is `'today'` (the cap is `Math.max(0, …)`
+  not future-buckets).
+
+**Definition of Done:** `groupTimelineItems` uses
+`localDayOrdinal` for the bucket delta, the pure helper is
+re-exported for tests, all four new DST cases pass under the
+configured TZ, and no future-bucket key is emitted.
+
+**Risk:** Low — pure-function change isolated to one file.
+
+**Closure Blocker:** No (P2 from the prior review; correctness
+fix rather than a new feature).
 
 ---
 

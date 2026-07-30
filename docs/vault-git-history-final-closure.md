@@ -162,11 +162,11 @@ accepted** before this document may be flipped to **CLOSED**.
 |----|---------|----------|--------|-----------------|
 | H-C1 | `/status` response contract — `getStatus` swallows genuine 5xx because `allowNonOkJson: true` is unconditional | P1 | Open | **Yes** |
 | H-C2 | Commit success vs post-success refresh failure classification | P1 | Open | **Yes** |
-| H-C3 | Real-Index synchronization race with external `git add` | P1 | Open | **Yes** |
-| H-C4 | Withdraw lacks Docus commit ownership verification | P1 | Open | **Yes** |
-| H-C5 | Restore pre-check outside `withRepoMutation` + pre-restore `raw` returned | P1 | Open | **Yes** |
+| H-C3 | Retrying Real-Index synchronization can clear newly staged target-path entries created by an external Git operation. Working Tree bytes may remain, but staged intent can be lost. | P1 | Open | **Yes** |
+| H-C4 | Withdraw lacks Docus commit ownership verification (also depends on Owner choice for legacy-commit migration; default Option A — fail closed) | P1 | Open | **Yes** |
+| H-C5 | Restore reads a mutable ref outside the repository mutation transaction, returns pre-restore source bytes, and the current client writes `request.historicalRaw` into the editor tab and the file-change event. | P1 | Open | **Yes** |
 | H-C6 | Short SHA at `/drop` never matches full HEAD | P2 | Open | Yes (UX) |
-| H-C7 | DST bucket edge in timeline grouping | P2 | Open | No (doc-only) |
+| H-C7 | Timeline date grouping uses an 86_400_000 ms window between local-midnight `startOfDay` timestamps; across a DST transition the bucket does not match the local-calendar day boundary. | P2 | Open | No (DST fix required) |
 | H-C8 | Three-platform CI verification not re-run for this reconstruction | P1 (Verification) | Open | **Yes** |
 | H-C9 | Missing regression tests (markers, path shape, multi-vault keying, Restore race) | P1 | Open | **Yes** |
 | H-K8 | Rename history not `--follow`-merged | P2 | Open | No |
@@ -175,10 +175,10 @@ accepted** before this document may be flipped to **CLOSED**.
 | H-K13 | SHA-256 vault compatibility (40-zero CAS sentinel) | P2 | Open | No |
 
 The full descriptions for each item live in
-[`Implementation Record §14.2`](../vault-git-history-implementation-record.md#142-known-divergences-from-intended-contract)
-and [`Spec §25`](../../superpowers/specs/2026-07-30-vault-git-history-design.md#25-known-risks-and-open-questions).
+[`Implementation Record §14.2`](vault-git-history-implementation-record.md#142-known-divergences-from-intended-contract)
+and [`Spec §25`](superpowers/specs/2026-07-30-vault-git-history-design.md#25-known-risks-and-open-questions).
 The remediation tasks live in
-[`Plan Part B`](../plans/2026-07-30-vault-git-history-implementation-plan.md#part-b--closure-remediation-tasks).
+[`Plan Part B`](superpowers/plans/2026-07-30-vault-git-history-implementation-plan.md#part-b--closure-remediation-tasks).
 
 ## 5. Candidate Final Invariants
 

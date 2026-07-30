@@ -81,7 +81,7 @@ Layering per the source comment in `server/history/git.ts`:
 
 | Module | File | Role |
 |--------|------|------|
-| **L0 git wrapper** | `server/history/git.ts` | Spawn-only module. Encapsulates every `git` invocation, the per-vault mutation mutex (`withRepoMutation`), the repository-idle guard, the temporary-index mechanics for Create Version, the CAS update-ref, the Real-Index synchronization and Repair system, the Index Repair JSON store, the worktree-only Restore, the Withdraw (two-phase), and the WORKTREE sentinel. Also owns `parsePorcelain`, `parseLog`, `findHeaderEnd`, `ensureAuthorIdentity`, `captureExpectedFiles`, `getAbsoluteGitDir`. |
+| **L0 git wrapper** | `server/history/git.ts` | Spawn-only module. Encapsulates every `git` invocation, the per-vault mutation mutex (`withRepoMutation`), the repository-idle guard, the temporary-index mechanics for Create Version, the CAS update-ref, the Real-Index synchronization and Repair system, the Index Repair JSON store, the worktree-only Restore, the Withdraw (two-phase), and the WORKTREE sentinel. Also owns `parsePorcelain`, `parseLog`, `findHeaderEnd`, `ensureAuthorIdentity`, `captureExpectedFiles`, the internal `absoluteGitDir` helper, and `REPOSITORY_OPERATION_MARKERS`. |
 | **Path / Ref / SHA validation** | `server/history/validation.ts` | Defines `isValidHistoryPath`, `isValidHistoryRef`, `isValidCommitSha`, `validateHistoryPaths`, `MANAGED_HISTORY_DOTFILES`, and the SHA regexes (incl. `SHA_ANCESTOR_RE`). |
 | **Repo bootstrap** | `server/history/repo.ts` | `ensureRepo(repoRoot)`. Idempotent first-touch setup of `.gitignore`, `.gitattributes`, `git init`, `core.autocrlf=false`. |
 | **Diff bridge** | `server/history/diff.ts` | Re-exports `computeFileDiff` from `src/lib/file-diff.js`. |
@@ -112,7 +112,7 @@ API base: `/api/history`. All bodies are JSON. Error bodies are
 
 | Method | Path | Request | Success | Failure modes |
 |--------|------|---------|---------|---------------|
-| GET | `/capability` | — | `{ gitAvailable, repoInitialized, initError? }` | never non-200 (always 200; failure surfaces in body) |
+| GET | `/capability` | — | `{ gitAvailable, repoInitialized, initError? }` | never non-200 (always 200; failure surfaces in body via `repoInitialized: false` / `initError`) |
 | GET | `/status` | — | `{ dirty: StatusEntry[], available: true }` | 503 `{ dirty: [], available: false }` (graceful); 5xx (need to add a real-error path; see H-C1) |
 | POST | `/content-hashes` | `{ paths: string[] }` | `{ hashes: Record<path, sha256 | null> }` | 400, 500, 503 |
 | GET | `/log` | `?path=<opt>&limit=<opt, default 200>` | `{ commits: CommitRecord[] }` | 400, 500, 503 |
@@ -127,22 +127,47 @@ API base: `/api/history`. All bodies are JSON. Error bodies are
 
 **Side effects** of note:
 
-- `/commits` may create one commit, may push CAS-updates through
-  `HEAD`, and may persist or clear an Index Repair Transaction.
-- `/restore` mutates the Working Tree only (no `update-ref`, no
-  Real-Index manipulation, no commit creation).
-- `/drop` mutates `HEAD` only (no Working Tree, may emit an Index
-  Repair Transaction).
+- `/commits` may create one Temporary-Index-backed commit, CAS-update
+  `HEAD`, attempt a scoped Real-Index synchronization (degraded
+  success with `indexRefreshFailed` + persisted Repair Transaction
+  on failure), and may persist or settle an Index Repair
+  Transaction.
+- `/restore` resolves the accepted request ref to one immutable
+  full commit SHA, mutates the Working Tree via
+  `git restore --source=<sha> --worktree -- <path>`, and reads
+  the post-restore Working Tree bytes. **No** `update-ref`, no
+  Real-Index manipulation, no commit creation. The current
+  implementation reads the source ref outside `withRepoMutation`
+  and does not yet round-trip the post-restore read through the
+  server response — see Plan History-C5 / Spec H-C5.
+- `/drop` discovers `filesChanged` before moving HEAD, performs a
+  two-phase CAS mutation of `HEAD` (non-root: `update-ref HEAD
+  <parent> <expectedOld>`; root: `update-ref -d HEAD
+  <expectedOld>`), and after HEAD moves attempts a scoped
+  Real-Index synchronization on the affected managed Markdown
+  paths (`syncDroppedIndexPaths`). For a root withdraw, the
+  affected paths are removed from the Real Index; their Working
+  Tree bytes remain on disk and become untracked. Withdraw never
+  edits the Working Tree and may emit or settle an Index Repair
+  Transaction. Withdraw does **not** currently verify commit
+  ownership — see Plan History-C4 / Spec H-C4.
 - `/repair-index` writes to the Real Index by hand via
-  `.git/index.lock` + temp-file + `fs.rename`. Always inside
-  `withRepoMutation`.
+  hand-taken `.git/index.lock` + Temporary Index + `fs.rename`.
+  Always inside `withRepoMutation`.
 - `/repair-index/discard` does **not** touch the Real Index; it
   edits the JSON metadata only.
 
-`ensureRepo` runs in **every** route handler (except
-`/capability`). First-touch side effects include `.gitignore`
-creation (overwriting is forbidden), `.gitattributes` creation
-(also non-overwriting), `git init`, and `core.autocrlf false`.
+`ensureRepo` runs in **every** route handler — `/capability`
+included. `/capability` is special only in its error contract:
+a missing git binary is **not** an error (the route returns
+`{ gitAvailable: false, repoInitialized: false }` with HTTP 200),
+and a failed first-touch `ensureRepo` surfaces as
+`{ gitAvailable: true, repoInitialized: false, initError: <reason> }`
+on HTTP 200 rather than as a non-2xx response.
+
+First-touch side effects include `.gitignore` creation (overwriting
+is forbidden), `.gitattributes` creation (also non-overwriting),
+`git init`, and `core.autocrlf false`.
 
 ## 5. Git Command Inventory
 
@@ -344,14 +369,15 @@ useHistoryWithdraw.withdraw(sha):
    8.    assertRepositoryIdle                         // 409 if mid-merge/cherry-pick/rebase/revert
    9.    HEAD = rev-parse --verify HEAD
    10.   if HEAD !== sha ⇒ 409 'only the latest version can be withdrawn'
-   11.   parent = rev-parse <sha>^                    // null for root
-   12.   assertRepositoryIdle                         // second check, immediately before ref move
-   13.   if parent === null:                          // ROOT
-            update-ref -d HEAD <expectedSha>          // CAS delete
+   11.   filesChanged = show --no-renames --name-only <sha>
+                  ↓ filtered to managed Markdown paths in the route
+   12.   parent = rev-parse <sha>^                    // null for root
+   13.   assertRepositoryIdle                         // second check, immediately before ref move
+   14.   if parent === null:                          // ROOT
+            update-ref -d HEAD <expectedOld>          // CAS delete
          else:
-            update-ref HEAD <parent> <expectedSha>    // CAS move
-   14.   filesChanged = show --no-renames --name-only <sha>  // filtered to .md in route
-   15.   syncDroppedIndexPaths(repoRoot, sha, filesChanged):
+            update-ref HEAD <parent> <expectedOld>    // CAS move
+   15.   syncDroppedIndexPaths(repoRoot, filesChanged):
          - for each .md path: same lock-and-rename Reset + Verify pattern as Create
          - failure: persist Repair transaction
    16.   return { sha, droppedSha, filesChanged, indexRefreshFailed, ... }
@@ -374,43 +400,62 @@ HistorySnapshotPane / HistoryComparisonPane 'Restore this version'
         ▼
 useHistoryRestore.restore(source):
    1. pending = true
-   2. request = buildRequest({ ...source })            // captures revisionA and dirty-state at gesture time
-   3. confirmed = await options.confirm(request)      // Capture every mutable value
-   4. releaseMutation = acquireMutation([path])       // pathMutationLock
+   2. request = buildRequest({ ...source })            // captures revisionId + raw at gesture time;
+                                                       // used for confirm dialog + comparison only
+   3. confirmed = await options.confirm(request)       // Capture every mutable value
+   4. releaseMutation = acquireMutation([path])        // pathMutationLock
    5. editorBarrier = await options.prepareEditorRestore(path)
    6. preparedTab = tabs.find(tab => tab.path === path); preparedRevision = tab?.revision
    7. result = await restoreFile(path, revisionId)     // POST /api/history/restore
         │
-        ▼  server:
+        ▼  server (current behaviour — see "Known divergence" below):
    routes.ts:
    8.  validate { path, ref }
    9.  if ref === WORKTREE ⇒ 400 'cannot restore to the working tree'
    10. ensureRepo + probeGit
-   11. exists = rawAt(repoRoot, ref, path)             // [OUTSIDE withRepoMutation — known H-K5]
+   11. exists = rawAt(repoRoot, ref, path)             // OUTSIDE withRepoMutation — H-K5
    12. if exists === null ⇒ 404 'file does not exist at ref <ref>'
    13. withRepoMutation(repoRoot, async () => {
-   14.   restoreFile(repoRoot, ref, path)             // git restore --source=<ref> --worktree -- <path>
+   14.   restoreFile(repoRoot, ref, path)              // git restore --source=<ref> --worktree -- <path>
    15.   stat(repoRoot/<path>) → mtime
-   16.   return { path, ref, raw: <pre-restore bytes from step 11>, mtime }
+   16.   return { path, ref, raw: sourceBytes from step 11, mtime }
         })
         │
         ▼
    8. tab = tabs.find(tab => tab.path === path)
    9. if preparedRevision != null && tab.revision !== preparedRevision:
-        applyRestoreWithoutOverwritingNewerEdit(...)  // preserve newer edit
+        applyRestoreWithoutOverwritingNewerEdit(
+          tab, request.historicalRaw, result.mtime)    // HISTORICAL RAW — see H-K5
       else:
-        applyRestoredContent(...)                     // overwrite
+        applyRestoredContent(
+          tab, request.historicalRaw, result.mtime)    // HISTORICAL RAW — see H-K5
    10. editorBarrier.commit([path])
-   11. fileChanges.publish({ kind: 'write', newRaw, source: 'history-restore', newMtime })
+   11. fileChanges.publish({
+          kind: 'write',
+          newRaw: request.historicalRaw,               // HISTORICAL RAW — see H-K5
+          newMtime: result.mtime,
+          source: 'history-restore',
+        })
    12. Promise.allSettled([refreshVault, refreshComparison(path)])
    13. onSuccess(request, { refreshFailed })           // partial-failure reports success
 ```
 
-**Known divergence (H-C5 / H-K5)** — the `rawAt` existence check at
-step 8 runs **outside** `withRepoMutation`. The route's returned
-`raw` field carries the **pre-restore** bytes read by `rawAt`
-(step 8), not a post-restore re-read. See Plan §15 History-C5 for
-the required resolution.
+**Known divergence (H-C5 / H-K5)** — the route's `rawAt`
+existence pre-check at step 11 runs **outside** `withRepoMutation`,
+and the route passes its result forward as `result.raw` without
+re-reading the disk after `restoreFile`. For mutable refs such as
+`HEAD` or `HEAD~N`, the source-byte read and the `git restore`
+invocation can resolve to different commits: the response may
+report source bytes from one commit while the Working Tree is
+restored from another. The current client amplifies the divergence
+by writing `request.historicalRaw` (the gesture-time snapshot) into
+`tab.raw`, `tab.originalRaw`, and the file-change event — instead
+of the post-restore Working Tree bytes the server should be
+returning. The closure task Plan History-C5 requires both the
+server (`result.raw` = post-restore Working Tree bytes, resolved
+from one immutable SHA inside `withRepoMutation`) and the client
+(treat `result.raw` as authoritative; reserve
+`request.historicalRaw` for the comparison pane's old-side view).
 
 ## 10. Client State Lifecycles
 
@@ -783,7 +828,7 @@ records the remediation tasks.
 | H-C2 | Commit / Withdraw success state vs post-success refresh error split is per-test verified but not formally written as a contract. | Plan History-C2 |
 | H-C3 | Real-Index sync resets + verifies, with fingerprint capture after the failure — race with external `git add` possible. | Plan History-C3 |
 | H-C4 | Withdraw has no Docus commit ownership check; any commit at HEAD (including external) is withdrawable. | Plan History-C4 |
-| H-C5 | Restore: `rawAt` existence check outside `withRepoMutation`; returned `raw` is pre-restore bytes. | Plan History-C5 |
+| H-C5 | Restore resolves a mutable ref outside the repository mutation transaction; the route's `raw` carries pre-`restoreFile` source bytes (not a post-restore re-read); the client writes gesture-time `request.historicalRaw` into the editor tab and the file-change event. | Plan History-C5 (server + client) |
 | H-K6 | `isValidCommitSha` accepts 7–40 hex; `HEAD === sha` compares two 40-char SHAs; short SHAs can never match. | Plan History-C6 |
 | H-K7 | Local-calendar bucket for `groupTimelineItems` uses `Date` arithmetic; DST forward-day may bucket to "Yesterday". | Plan History-C7 (documentation-only) |
 | H-K9 | Rename lines filtered out of `/status` because path shape fails; rename history not `--follow`-merged. | Spec H-K9 |
@@ -809,12 +854,12 @@ records the remediation tasks.
 | ID | Finding | Closure task |
 |----|---------|--------------|
 | H-K6 | Short SHA at `/drop` never matches full HEAD | Plan History-C6 |
-| H-K7 | DST bucket edge in `groupTimelineItems` | Plan History-C7 (doc-only) |
+| H-K7 | Timeline date grouping uses an 86_400_000 ms window between local-midnight `startOfDay` timestamps; across a DST transition that window does not match the local-calendar day boundary. | Plan History-C7 (DST fix; closure must not pin the current behavior) |
 | H-K8 | Rename history not `--follow`-merged | None planned |
 | H-K9 | Symlink containment not applied to History paths | None planned |
 | H-K10 | No Timeline / Log pagination | None planned |
 
-### 15.3 Accepted / non-blocking
+### 15.3 Accepted / non-blocking / Verified
 
 | ID | Finding | Note |
 |----|---------|------|
@@ -832,7 +877,12 @@ records the remediation tasks.
 | ID | Finding | Verification |
 |----|---------|--------------|
 | H-C8 | Three-platform CI (Windows / macOS / Linux) passing for the current `main` tip | Plan History-C8 |
-| H-K1 | The repository-operation marker list is implemented in `git.ts` but only three of seven markers are exercised by the parametrized test | Plan History-C9 |
+| H-K1 | The repository-operation marker list is implemented in `git.ts` (`REPOSITORY_OPERATION_MARKERS`) but only three of seven markers are exercised by the parametrized test | Plan History-C9 |
 | H-K11 | Whether forward-migration (existing Docus versions without `Docus-Version` trailer) should refuse to withdraw | Owner decision during Plan History-C4 |
 | H-K12 | Whether `MAX_CAPTURE_BYTES` should be measured in bytes not UTF-16 units | Out of scope (Spec §21) |
-| H-K14 | Whether the AI tool-card contract explicitly excludes `history:` / `diff:` tab IDs | Out of scope for this closure |
+
+### 15.5 Verified — implemented protections
+
+| ID | Finding | Evidence |
+|----|---------|----------|
+| H-V1 | AI mutation tools treat live History, Diff, and Recovery workspace contexts as read-only and deny mutation of the protected path. | `server/ai/tool-safety.ts:163-174` — `deriveToolSafetyPolicy` switches on `snapshot.kind` and returns `{ kind: 'deny-protected-path', protectedPath, reason: 'read-only-context' }` for `history`, `diff`, and `recovery`. The exhaustive typecheck of `ClassifiedToolName` makes unclassified AI tools a compile error; `getToolMutationTarget` returns `{ kind: 'unknown' }` for any non-matching tool name (fail-closed). `server/ai/tool-safety.test.ts` and `tools.test` (set-equality with `TOOL_DEFINITIONS`) pin the classification. |
