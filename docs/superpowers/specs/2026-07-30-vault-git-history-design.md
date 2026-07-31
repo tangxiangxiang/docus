@@ -82,7 +82,8 @@ production baseline**
 - F0/F1 path-selective Real-Index synchronization;
 - symlink-safe filesystem containment;
 - fail-closed HEAD/commit/parent resolution;
-- cross-process Repair metadata serialization;
+- whole-Vault cross-process mutation serialization, including Repair
+  metadata lost-update protection;
 - one-transaction Restore with authoritative post-read bytes;
 - machine-safe Git-log framing;
 - DST-safe local-calendar grouping;
@@ -153,16 +154,79 @@ symlinks.
 **Intended closure contract — not implemented on the reviewed
 production baseline**
 
-Every History filesystem read or write uses one shared resolver:
+Every History filesystem read or write uses one shared resolver
+family rooted in:
+
+```ts
+interface VerifiedVaultRoot {
+  logicalRoot: string
+  canonicalRoot: string
+}
+
+interface VerifiedExistingFile {
+  logicalPath: string
+  absolutePath: string
+  canonicalPath: string
+  handle: FileHandle
+  identity: FileIdentity
+}
+
+interface VerifiedMissingLeaf {
+  logicalPath: string
+  parentAbsolutePath: string
+  parentCanonicalPath: string
+  leafName: string
+  parentIdentity: FileIdentity
+}
+
+type VerifiedHistoryPath =
+  | { kind: 'existing-file'; value: VerifiedExistingFile }
+  | { kind: 'missing-leaf'; value: VerifiedMissingLeaf }
+```
+
+The owned operations are
+`resolveExistingHistoryFileForRead`,
+`resolveExistingHistoryFileForWrite`,
+`resolveHistoryPathAllowMissingLeaf`, and
+`resolveDeletedHistoryPath`.
+
+For an existing file:
 
 ```text
-1. Validate logical History path syntax.
-2. Walk path segments with lstat.
-3. Reject every symbolic-link segment and symbolic-link leaf.
-4. Resolve canonical real path.
-5. Verify containment under the canonical Vault root.
-6. Use the verified path or verified file handle for reads and writes.
+validate logical syntax
+→ lstat every directory segment
+→ reject symbolic-link directory segments
+→ open the leaf without following symbolic links
+→ fstat and require a regular file
+→ verify canonical parent/root containment
+→ reopen/lstat the pathname without following links
+→ verify pathname identity equals the opened-handle identity
 ```
+
+For a missing leaf:
+
+```text
+verify and open the existing parent directory
+→ reject symbolic-link parent segments
+→ verify canonical parent containment
+→ capture parent directory identity
+→ require only the final leaf to be absent
+→ return verified parent identity plus leaf name
+```
+
+Immediately before creation or Restore, recheck parent identity and
+the permitted leaf state. Fail closed if a symlink, unexpected file
+type, or different parent appears. A selected deletion remains valid
+when its logical path passes validation, its verified parent is
+contained and non-symlinked, its leaf is absent, and its expected hash
+is `null`; no `realpath` of the absent leaf is required. An untracked
+file and a Restore to an initially absent leaf use the verified
+missing-leaf mode.
+
+POSIX opens use no-follow flags. Windows uses the selected
+platform-specific handle/reparse-point inspection and the same
+pathname/handle identity checks. `realpath` alone is never considered
+race closure.
 
 This applies to `/content-hashes`, Create capture, WORKTREE `/file`,
 WORKTREE `/diff`, Restore read/write/post-read, and future
@@ -185,9 +249,32 @@ The check/write gap can overwrite a file another process creates.
 **Intended closure contract — not implemented on the reviewed
 production baseline**
 
-Use `fs.writeFile(path, content, { flag: 'wx' })`; treat `EEXIST` as
-successful idempotence. Concurrent first-touch callers must never
-overwrite user bytes.
+Repository first touch is one transaction under the authoritative
+cross-process Vault mutation/bootstrap lock defined in §17:
+
+```text
+acquire Vault mutation lock
+→ recheck hasOwnGitDir inside the lock
+→ if a repository exists, validate it and return without rewriting
+→ create .gitignore with flag: 'wx'
+→ create .gitattributes with flag: 'wx'
+→ git init using the existing fallback sequence
+→ verify this Vault owns a valid Git directory/worktree
+→ set core.autocrlf=false
+→ release the lock
+```
+
+Only `EEXIST` during either dotfile creation is idempotent success.
+Every other error propagates. A partial initialization in which
+dotfiles exist but `git init` failed is safely retryable by the next
+lock holder. Different Vaults use different lock anchors and may
+initialize in parallel.
+
+The configuration policy is fixed: `core.autocrlf=false` is set when
+Docus performs first-touch `git init`. A pre-existing Vault repository
+is validated but is not reinitialized, its dotfiles and repository
+identity are not replaced, and its existing `core.autocrlf` setting is
+not rewritten.
 
 ## 9. Status Contract
 
@@ -288,10 +375,37 @@ oldHead entry absent + Real Index entry present
 → preserved external staged intent
 ```
 
-Create appends exactly one canonical marker block. Commit success is
-acknowledged immediately after the success response. Selection and
-message settle at that boundary. Every refresh runs outside the
-commit-failure catch and can only produce a refresh warning.
+Create appends exactly one canonical marker block. Primary success is
+acknowledged immediately when `createCommit(...)` returns a validated
+success body. At that boundary, synchronously settle the server
+result, completion state, `lastCommittedPaths`, selection, message,
+returned Repair state, and success/degraded-success classification.
+
+Everything later is auxiliary: save-barrier release, Status, Log,
+Comparison and Repair-status refresh, toast rendering, and local
+reconciliation. `settleAfterSuccessfulCommit(...)` awaits barrier
+release exactly once outside the primary mutation catch, retains
+structured auxiliary failure fields, and collapses one or more
+auxiliary failures into one informational summary. A barrier-release
+failure has its own message because pending editor-save work may not
+have finalized; it does not restore composer state, permit a duplicate
+retry, or prevent the path mutation lock from being released in
+`finally`.
+
+```ts
+interface CommitAuxiliaryOutcome {
+  barrierReleaseFailed: boolean
+  statusRefreshFailed: boolean
+  logRefreshFailed: boolean
+  comparisonRefreshFailed: boolean
+  repairStatusRefreshFailed: boolean
+}
+```
+
+The same primary-success rule applies to Withdraw and Restore:
+server success cannot become failure because of local cleanup, tab
+cleanup, barrier release, Repair-status refresh, or repository
+refresh.
 
 ## 11. Real Index Safety Contract
 
@@ -342,16 +456,31 @@ interface IndexSyncOutcome {
   synchronizedPaths: string[]
   preservedExternalPaths: string[]
   failedPaths: string[]
+  replacementApplied: boolean
+  finalHead: string | null
+  reconciliationRequired: boolean
 }
 ```
 
 `safeCandidatePaths` is derived inside the server from F0 and old-HEAD
 tree entries. It is not a caller-supplied second authority.
+Duplicate request paths are rejected during normalization. All outcome
+arrays preserve normalized request order and satisfy:
+
+```text
+the three arrays are pairwise disjoint
+
+set(synchronizedPaths)
+∪ set(preservedExternalPaths)
+∪ set(failedPaths)
+= set(request.paths)
+```
 
 Classification:
 
 - `synchronizedPaths` passed F0/old-HEAD and F1/F0 checks and were
-  synchronized and verified.
+  published by the Real-Index rename; Temporary-Index verification
+  alone never qualifies.
 - `preservedExternalPaths` had pre-existing or concurrent staged
   intent. Their Real-Index entries stay unchanged; they create no
   Repair, banner, or Retry and produce one informational toast.
@@ -375,7 +504,9 @@ Acquire .git/index.lock via open(..., 'wx')
 → truncate/write lock file
 → fsync lock handle
 → close lock handle
-→ rename index.lock to index
+→ rename index.lock to index                 // sole commit point
+→ replacementApplied = true
+→ re-read HEAD
 ```
 
 If rename has not committed, close the handle, remove `index.lock`,
@@ -387,13 +518,59 @@ and remove the Temporary Index directory.
   `index.lock`; return informational success; do not write or rename.
 - Mixed paths are classified independently. An F1 mismatch preserves
   that path and does not fail safe siblings.
-- Only a global transaction, lock, I/O, Temporary Index,
-  synchronized-path verification, fsync, close, or rename failure
-  fails remaining safe candidates.
+- Before rename, any global repository-operation, HEAD, lock, I/O,
+  Temporary Index, reset/update-index, verification, lock write,
+  fsync, close, or rename failure leaves
+  `synchronizedPaths: []`, preserves already-preserved paths, and
+  places every `pathsToSynchronize` path in `failedPaths`. All
+  pre-rename failures return `replacementApplied: false`.
 - Routine sync performs no destructive retry.
 - Windows degraded-success normalization is limited to `EEXIST`,
   `EBUSY`, `EAGAIN`, and `EPERM` only when positively classified as
   lock contention. Ordinary permission errors remain failures.
+
+After rename:
+
+- if the re-read HEAD still equals `targetHead`,
+  `pathsToSynchronize` become `synchronizedPaths`,
+  `replacementApplied: true`, and `reconciliationRequired: false`;
+- if the re-read HEAD differs, the published replacement is reported
+  truthfully with `replacementApplied: true`,
+  `finalHead != targetHead`, and `reconciliationRequired: true`.
+  `synchronizedPaths` remains empty. To preserve the partition,
+  `pathsToSynchronize` appear in `failedPaths`, but they must not
+  create an ordinary F0-bound Repair.
+
+The selected post-replacement model is a separate persisted
+reconciliation transaction:
+
+```ts
+interface IndexReconciliationTransaction {
+  kind: 'post-replacement-head-change'
+  token: string
+  status: 'pending' | 'superseded'
+  appliedTargetHead: string | null
+  head: string | null              // finalHead observed after rename
+  paths: string[]
+  expectedIndex:
+    Record<string, IndexEntryFingerprint[]> // applied replacement
+}
+```
+
+It records fingerprints from the replacement that actually landed,
+not F0. The server result carries the transaction and
+`reconciliationRequired: true`. The client shows a distinct
+"Index reconciliation required after concurrent HEAD movement"
+banner and informational toast.
+
+Retry acquires locks in the §17 hierarchy, requires current HEAD to
+equal the recorded `head`, and requires current path fingerprints to
+equal `expectedIndex`. It then builds and atomically publishes a
+Temporary Index synchronized to that recorded HEAD. A HEAD or
+fingerprint mismatch marks the transaction `superseded` without
+touching the Index. Discard removes only reconciliation metadata and
+keeps the currently published Index. Repair-state persistence failure
+remains degraded success and never causes a fallback F0-bound Repair.
 
 ## 12. Log and Timeline Contract
 
@@ -481,19 +658,33 @@ Inside that transaction:
 ```text
 resolve accepted ref once to one immutable full commit SHA
 → use that SHA for source read and restore
-→ resolve and reject symlink-safe destination
+→ resolve existing destination or verified missing leaf
+→ verify parent/path immediately before git restore
 → restore Working Tree only
 → open verified destination handle
 → fstat/read/fstat identity check
-→ bounded retry or conflict
+→ reopen/lstat pathname without following symbolic links
+→ compare pathname identity with opened-handle identity
+→ on identity race, retry the complete post-restore verification once
+→ on a second mismatch, return 409 HISTORY_CONFLICT
 → return the post-restore snapshot observed inside the repository
   mutation transaction
 ```
 
-The contract cannot prevent an external process from changing the
-file immediately after the transaction. It promises only the
-post-restore snapshot observed inside the transaction. `result.raw`
-and `result.mtime` must describe the same file identity/version.
+`git restore --worktree -- <path>` accepts a pathname, not a verified
+file handle. Filesystem validation cannot make an external filesystem
+actor disappear. Holding the Vault mutation lock serializes Docus
+processes, but an untrusted local process with filesystem write access
+can still race pathname replacement. The implementation verifies
+immediately before and after Git, detects observed symlink/identity
+substitution, and fails closed; it cannot provide a kernel-level
+transaction across Git and arbitrary external writers.
+
+The contract promises only the verified post-restore snapshot observed
+inside the repository mutation transaction. `result.raw` and
+`result.mtime` must describe the same opened object, and that object
+must still be reachable at the requested pathname after the final
+identity check.
 The client uses `result.raw` for editor state and file-change events
 while preserving newer editor edits.
 
@@ -525,7 +716,34 @@ isolation tests.
 **Planned remediation / Closure requirement / Not implemented on the
 reviewed production baseline**
 
-1. Resolve a 7–40 hex request to one full immutable commit SHA.
+History-C11 owns the shared fail-closed primitives; History-C6 only
+adapts `/drop` 7–40 hex input to `resolveCommitRef` and owns no second
+resolver implementation:
+
+```ts
+type HeadResolution =
+  | { kind: 'head'; sha: string }
+  | { kind: 'unborn' }
+
+interface CommitResolution {
+  requested: string
+  fullSha: string
+}
+
+type ParentResolution =
+  | { kind: 'root' }
+  | { kind: 'single-parent'; parent: string }
+  | { kind: 'merge'; parents: string[] }
+
+resolveCurrentHead(repoRoot): Promise<HeadResolution>
+resolveCommitRef(repoRoot, requested): Promise<CommitResolution>
+resolveCommitParents(repoRoot, fullSha): Promise<ParentResolution>
+```
+
+The Withdraw flow:
+
+1. Resolve a 7–40 hex request once to one full immutable commit SHA
+   through the shared primitive.
 2. Use that full SHA for HEAD equality, marker check, parent parse,
    changed paths, and CAS update-ref.
 3. Require exactly one valid canonical same-vault marker.
@@ -533,7 +751,7 @@ reviewed production baseline**
    invalid-changed-path candidates.
 5. Legacy unmarked commits fail closed and must be recommitted through
    the new Create Version flow.
-6. Resolve parents with:
+6. Resolve parents through the shared primitive backed by:
 
 ```text
 git rev-list --parents -n 1 <resolvedSha>
@@ -544,16 +762,28 @@ git rev-list --parents -n 1 <resolvedSha>
 command failure / malformed output → abort, do not move HEAD
 ```
 
-HEAD resolution uses:
+Positive unborn detection is exact:
 
-```ts
-type HeadResolution =
-  | { kind: 'head'; sha: string }
-  | { kind: 'unborn' }
+```text
+git rev-parse --verify HEAD
+
+status 0:
+  validate one full object id
+  return { kind: 'head', sha }
+
+non-zero:
+  git symbolic-ref -q HEAD
+  status 0:
+    validate the returned ref
+    git show-ref --verify --quiet <returned-ref>
+    show-ref status 1 → positive unborn branch
+    show-ref status 0 → inconsistent operational failure
+    other status      → operational failure
+  symbolic-ref status 1 → detached/invalid operational failure
+  other status           → operational failure
 ```
 
-Only a positively identified unborn repository returns `unborn`;
-operational errors throw.
+No stderr wording controls classification.
 
 Client conflict UX distinguishes latest-changed, repository operation,
 invalid same-vault marker, cross-vault marker, ambiguous marker,
@@ -583,12 +813,80 @@ process A writes stale state
 **Planned remediation / Closure requirement / Not implemented on the
 reviewed production baseline**
 
-One Docus process per Vault is not an implicit guarantee. Introduce a
-dedicated Repair metadata lock/CAS under `<git-dir>/docus/`.
+One Docus process per Vault is not an implicit guarantee. Introduce
+one authoritative cross-process Vault mutation lock for the complete
+History mutation lifecycle. Its stable anchor is:
 
-- record, settle, discard, migration, and quarantine use the lock;
-- a read-only status request does not trigger an unlocked write;
-- lock cleanup is guaranteed after failure.
+```text
+<canonical-vault-root>/.docus-history/vault-mutation.lock
+```
+
+The Vault-root anchor is selected instead of a Git-dir-only anchor so
+the same lock exists before and after first-touch `git init`.
+
+Every server-side mutating operation enters it exactly once:
+
+```text
+Create Version
+Withdraw
+Restore
+Repair Retry
+Repair Discard
+Repair migration/quarantine when a write is required
+repository first-touch initialization
+```
+
+The lock covers HEAD CAS, post-CAS Real-Index synchronization, and
+Repair/reconciliation metadata settlement. Internal helpers are
+lock-unaware and never reacquire it. Read-only operations remain
+unlocked only if they perform no initialization, migration,
+quarantine, or other write; a required write is redirected into the
+single mutation entry point.
+
+The fixed lock acquisition order is:
+
+```text
+1. Vault mutation lock
+2. Vault-id creation lock, only when identity initialization is needed
+3. Repair metadata lock, only for Repair read-modify-write
+4. Git .git/index.lock, only for Real-Index replacement
+```
+
+No path may hold Repair metadata lock while waiting for the Vault
+mutation lock, hold `index.lock` while waiting for Repair metadata
+lock, or hold the Vault-id lock while waiting for the Vault mutation
+lock.
+
+The selected stale-lock model is an exclusive lock-file record plus an
+atomic recovery claim. The lock record contains schema version,
+process ID, host identity, random nonce, and acquisition timestamp.
+Acquisition uses exclusive creation and bounded backoff/timeout.
+
+On contention:
+
+1. read and validate the record;
+2. if the host differs, liveness cannot be established and the
+   operation fails closed;
+3. on the same host, test process liveness by PID;
+4. never remove a live lock;
+5. PID reuse or indeterminate liveness fails closed;
+6. a positively dead owner may be recovered only after exclusively
+   creating a fixed recovery-claim directory, rereading the record,
+   and verifying the same nonce;
+7. atomically rename the lock to
+   `vault-mutation.lock.stale-<nonce>`, verify the claimed record still
+   has that nonce, then remove the quarantine and retry;
+8. release the recovery claim in `finally`.
+
+Elapsed time by itself is never proof of abandoned ownership.
+Malformed, inaccessible, or host-indeterminate lock records are not
+deleted; they fail closed and remain available for operator diagnosis.
+Ordinary exceptions close and unlink only the lock whose nonce the
+current process owns.
+
+Repair record, settle, discard, migration, and quarantine additionally
+use the Repair metadata lock under the Vault mutation lock. A
+read-only status request never performs an unlocked write.
 
 These properties are distinct:
 
@@ -651,6 +949,49 @@ HEAD and are not described as HEAD-moving operations.
 
 **Planned remediation / Closure requirement / Not implemented on the
 reviewed production baseline**
+
+All History endpoints use one stable machine-readable error schema:
+
+```ts
+type HistoryErrorCode =
+  | 'HISTORY_GIT_UNAVAILABLE'
+  | 'HISTORY_VALIDATION_FAILED'
+  | 'HISTORY_CONTENT_CHANGED'
+  | 'HISTORY_SELECTION_STALE'
+  | 'HISTORY_REPOSITORY_CHANGED'
+  | 'HISTORY_REPOSITORY_OPERATION'
+  | 'HISTORY_LATEST_CHANGED'
+  | 'HISTORY_MARKER_MISSING'
+  | 'HISTORY_MARKER_INVALID'
+  | 'HISTORY_MARKER_CROSS_VAULT'
+  | 'HISTORY_MARKER_AMBIGUOUS'
+  | 'HISTORY_LEGACY_UNMARKED'
+  | 'HISTORY_MERGE_COMMIT'
+  | 'HISTORY_INVALID_CHANGED_PATH'
+  | 'HISTORY_REF_RESOLUTION_FAILED'
+  | 'HISTORY_PARENT_RESOLUTION_FAILED'
+  | 'HISTORY_INDEX_LOCKED'
+  | 'HISTORY_CONFLICT'
+
+interface HistoryErrorBody {
+  error: string
+  code: HistoryErrorCode
+  details?: Record<string, unknown>
+}
+
+class HistoryApiError extends Error {
+  status: number
+  code?: HistoryErrorCode
+  details?: Record<string, unknown>
+}
+```
+
+The server assigns stable codes independent of localized or
+human-readable text. The client selects marker, ref, parent,
+repository-operation, and conflict UX from `error.code`. It never
+infers one of those classes from the prose in `error`. A legacy body
+without `code` still produces `HistoryApiError`, retaining status and
+message, but takes only the generic safe fallback.
 
 | Class | HTTP/result | UI |
 |---|---|---|
@@ -740,6 +1081,8 @@ captures F0 before moving HEAD
 preserves a path staged before Create Version
 preserves a path changed from F0 to F1
 synchronizes one safe path while preserving one mismatched path
+partitions every requested path into exactly one outcome
+preserves request ordering in all outcome arrays
 creates Repair only for failedPaths
 binds failed-path Repair to pre-HEAD F0
 does not acquire index.lock when no safe path exists
@@ -749,6 +1092,17 @@ removes index.lock after verification failure
 closes index.lock before atomic rename
 allows a subsequent external git add after every failure branch
 does not rename after fingerprint mismatch
+marks all pathsToSynchronize failed when a pre-rename global failure
+aborts the batch
+does not report Temporary-Index-only verification as synchronized
+returns synchronized paths only after rename succeeds
+rechecks HEAD after rename
+records replacementApplied when HEAD changes after rename
+does not create an F0-bound ordinary Repair after a published
+replacement
+persists the post-replacement reconciliation transaction
+allows that reconciliation transaction to be safely retried or
+dismissed
 ```
 
 ### Symlink safety
@@ -760,17 +1114,37 @@ does not hash bytes outside the Vault
 does not commit bytes outside the Vault
 does not expose outside bytes through WORKTREE file or diff
 Restore rejects a symlink destination
+commits a selected deleted file without requiring realpath of its leaf
+commits a new untracked file through a verified missing-leaf parent
+restores a file whose leaf is initially absent
+rejects a symlink introduced into a parent segment after initial
+validation
+rejects a symlink leaf introduced before the final operation
+detects pathname replacement after opening the restored file
+does not return bytes from an inode no longer reachable at the target
+path
+fails closed when parent identity changes
 ```
 
 ### Ref and parent resolution
 
 ```text
 distinguishes unborn HEAD from operational failure
+resolveCurrentHead positively identifies an unborn branch
+resolveCurrentHead throws on detached invalid or operational failure
 resolves a short SHA to a full commit SHA
+C6 calls the shared C11 commit resolver
+only one full-SHA resolution occurs per Withdraw request
 classifies root commit only from valid parent output
 rejects merge commits
 does not move HEAD on parent-resolution failure
 does not move HEAD on malformed parser output
+server returns stable marker/ref/parent error codes
+HistoryApiError preserves status, code, message, and details
+Withdraw maps every marker error code to the correct i18n message
+Withdraw does not inspect human-readable server text
+an unknown error code uses a generic safe fallback
+legacy error bodies without code still produce HistoryApiError
 ```
 
 ### Marker and Vault metadata
@@ -800,6 +1174,21 @@ cleans metadata lock after failure
 repair-status does not perform an unlocked write
 ```
 
+### Cross-process Vault mutation serialization
+
+```text
+serializes Create and Withdraw across two server processes
+serializes Create and Restore across two server processes
+prevents an older post-CAS sync from publishing after a newer HEAD move
+allows mutations in different Vaults to proceed in parallel
+uses one fixed lock acquisition order
+does not deadlock when Repair and Index locks are both required
+does not remove a live Vault mutation lock
+recovers a positively identified stale Vault mutation lock
+fails closed when stale-lock ownership cannot be determined
+cleans an acquired lock after an ordinary exception
+```
+
 ### Restore
 
 ```text
@@ -820,8 +1209,16 @@ does not report completed restore as failed when refresh fails
 commit remains successful when refreshStatus rejects
 commit remains successful when refreshLog rejects
 commit remains successful when comparison refresh rejects
+commit remains successful when save-barrier release rejects
 selection and message settle immediately after commit response
+composer settles before save-barrier release
+completion state increments before save-barrier release
+returned Repair state is registered before save-barrier release
+path mutation lock is released after save-barrier release rejection
+barrier release runs exactly once
 retry after refresh failure does not create a duplicate version
+retry after barrier release failure cannot duplicate the version
+multiple auxiliary failures produce one informational warning
 withdraw remains successful when repair-status refresh rejects
 withdraw remains successful when local tab cleanup throws or is isolated
 ```
@@ -836,6 +1233,14 @@ does not create phantom log records from delimiter characters
 round-trips multiline commit bodies and control characters safely
 does not overwrite a dotfile created concurrently
 concurrent ensureRepo calls remain idempotent
+serializes concurrent ensureRepo callers
+only one caller performs git init
+all callers observe one valid repository
+does not overwrite a concurrently created .gitignore
+does not overwrite a concurrently created .gitattributes
+retries safely after partial initialization failure
+rechecks repository existence after acquiring the lock
+different Vaults can initialize in parallel
 ```
 
 The Closure additionally requires typecheck, build, full tests, Long
@@ -859,8 +1264,8 @@ Record, Closure, and README.
 | H-C9 | Required History regression coverage is incomplete | P1 (Verification) | Yes |
 | H-C10 | History filesystem reads/writes lack symlink-safe Vault containment | P1 | Yes |
 | H-C11 | HEAD and Withdraw parent resolution do not fail closed | P1 | Yes |
-| H-C12 | Repair metadata lacks cross-process lost-update protection | P1 | Yes |
-| H-C13 | `ensureRepo` non-overwrite bootstrap has access/write TOCTOU | P2 | Yes |
+| H-C12 | Cross-process History mutation and Repair metadata serialization is incomplete | P1 | Yes |
+| H-C13 | `ensureRepo` bootstrap is not atomically serialized and its non-overwrite check has TOCTOU | P2 | Yes |
 | H-C14 | Textual Git-log separator is injectable through commit messages | P2 | Yes |
 | H-K8 | Rename history is not `--follow`-merged | P2 | No |
 | H-K10 | Timeline and Log have no pagination | P2 | No |

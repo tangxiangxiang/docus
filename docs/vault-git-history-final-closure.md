@@ -52,7 +52,7 @@ handoff rather than written into itself.
 
 | Area | State |
 |---|---|
-| Documentation consolidation | COMPLETE after the correction and bookkeeping commits |
+| Documentation Contract Completion | COMPLETE after the substantive and bookkeeping commits |
 | Production remediation | NOT STARTED |
 | Final production verification | NOT RUN |
 | Owner Approval | PENDING |
@@ -139,8 +139,8 @@ This table is canonical across all five documents.
 | H-C9 | Required History regression coverage is incomplete | P1 (Verification) | Open | Yes |
 | H-C10 | History filesystem reads/writes lack symlink-safe Vault containment | P1 | Open | Yes |
 | H-C11 | HEAD and Withdraw parent resolution do not fail closed | P1 | Open | Yes |
-| H-C12 | Repair metadata lacks cross-process lost-update protection | P1 | Open | Yes |
-| H-C13 | `ensureRepo` non-overwrite bootstrap has access/write TOCTOU | P2 | Open | Yes |
+| H-C12 | Cross-process History mutation and Repair metadata serialization is incomplete | P1 | Open | Yes |
+| H-C13 | `ensureRepo` bootstrap is not atomically serialized and its non-overwrite check has TOCTOU | P2 | Open | Yes |
 | H-C14 | Textual Git-log separator is injectable through commit messages | P2 | Open | Yes |
 | H-K8 | Rename history is not `--follow`-merged | P2 | Open | No |
 | H-K10 | Timeline and Log have no pagination | P2 | Open | No |
@@ -174,8 +174,8 @@ not rerun for this consolidation:
 2. server `withRepoMutation` is keyed by resolved Vault path, but
    same-Vault serialization plus different-Vault parallelism lacks a
    dedicated test;
-3. Repair v1 migration and quarantine branches exist, but no
-   cross-process lost-update test exists;
+3. Repair v1 migration and quarantine branches exist, but there is no
+   cross-process lock or lost-update test;
 4. plumbing commits bypass ordinary commit hooks and signing;
 5. bootstrap intends non-overwrite behavior, but concurrent first
    touch is not protected.
@@ -187,15 +187,24 @@ not rerun for this consolidation:
 3. atomic Vault identity and exactly one valid canonical same-vault
    marker;
 4. F0/F1 path-selective routine Index synchronization;
-5. `synchronizedPaths`, `preservedExternalPaths`, and `failedPaths`;
-6. F0-bound failed-path Repair;
-7. cross-process Repair metadata locking;
-8. one-entry `restoreFileAtomic` and authoritative `result.raw`;
-9. Create success boundary before all refreshes;
-10. marker-specific Withdraw client errors;
-11. machine-safe NUL-framed Log parser;
-12. DST-safe grouping and explicit child-process TZ tests;
-13. three-platform full-suite evidence.
+5. complete, ordered, pairwise-disjoint Index terminal outcomes plus
+   `replacementApplied`, `finalHead`, and `reconciliationRequired`;
+6. F0-bound failed-path Repair and a separate persisted
+   post-replacement HEAD reconciliation transaction;
+7. whole-Vault cross-process mutation locking, fixed lock hierarchy,
+   Repair lost-update protection, and stale-owner recovery;
+8. existing-file, missing-leaf, deleted-path, and pathname-identity
+   resolver modes;
+9. one-entry `restoreFileAtomic` and authoritative `result.raw`;
+10. Create success settlement before save-barrier release and all
+    refreshes;
+11. shared fail-closed ref resolvers and stable structured History
+    errors;
+12. marker-specific Withdraw client errors selected by code;
+13. one serialized `ensureRepo` first-touch transaction;
+14. machine-safe NUL-framed Log parser;
+15. DST-safe grouping and explicit child-process TZ tests;
+16. three-platform full-suite evidence.
 
 The canonical marker is an accidental-withdrawal guard, not
 cryptographic provenance proof.
@@ -221,19 +230,32 @@ Baseline.
 [ ] F0 captured before HEAD move
 [ ] pre-staged and F0→F1 changed paths preserved
 [ ] mixed safe/preserved path classification
+[ ] complete pairwise-disjoint path partition in request order
 [ ] Repair created only for failedPaths and bound to F0
 [ ] no-lock/no-write/all-preserved branches
 [ ] index.lock cleanup after Temporary Index and verification failure
 [ ] close-before-rename and external git add after each failure
 [ ] no rename after fingerprint mismatch
+[ ] no Temporary-Index-only or pre-rename partial synchronized result
+[ ] post-rename HEAD recheck and truthful replacementApplied result
+[ ] persisted post-replacement reconciliation can be retried/discarded
+[ ] no F0-bound Repair after an already-published replacement
 
 [ ] symlink leaf and directory-segment rejection
 [ ] no outside-Vault hash, commit, WORKTREE file/diff, or Restore
+[ ] selected deletion without realpath of an absent leaf
+[ ] verified untracked/missing-leaf Create and initially absent Restore
+[ ] parent and pathname identity rechecked around the final operation
+[ ] replaced pathname never returns unreachable-inode bytes
 
 [ ] unborn HEAD distinguished from operational failure
 [ ] 7–40 hex request resolved to one full immutable SHA
+[ ] C6 adapts to the single shared C11 resolver
 [ ] strict root/one-parent/merge parsing
 [ ] no HEAD move on command failure or malformed output
+[ ] stable marker/ref/parent HistoryErrorCode responses
+[ ] HistoryApiError preserves status, code, message, and details
+[ ] client chooses conflict UX by code with a generic legacy fallback
 
 [ ] atomic Vault-id first touch and locked malformed-ID quarantine
 [ ] exact final canonical marker block
@@ -247,6 +269,13 @@ Baseline.
 [ ] Repair metadata lock cleanup
 [ ] repair-status performs no unlocked mutation
 
+[ ] two-process Create/Withdraw and Create/Restore serialization
+[ ] older post-CAS Index publication cannot follow a newer HEAD move
+[ ] fixed Vault-id/Repair/Index nested lock order and no deadlock
+[ ] live Vault lock retained; positively dead owner safely recovered
+[ ] indeterminate stale-lock ownership fails closed
+[ ] ordinary exception cleanup and different-Vault parallelism
+
 [ ] Restore uses one immutable SHA for read and write
 [ ] post-restore observed raw/mtime identity
 [ ] client uses result.raw in editor and VaultFileChanges
@@ -256,11 +285,17 @@ Baseline.
 
 [ ] Create stays successful on Status, Log, or Comparison refresh failure
 [ ] composer settles before refresh and retry cannot duplicate
+[ ] Create stays successful when save-barrier release rejects
+[ ] result/completion/Repair/composer settle before barrier release
+[ ] barrier release runs once and cannot retain the path mutation lock
+[ ] multiple auxiliary failures produce one informational warning
 [ ] Withdraw stays successful on Repair-status or local cleanup failure
 
 [ ] DST spring/fall cases under explicit child-process TZ
 [ ] Log delimiter/control/multiline cases produce no phantom record
-[ ] bootstrap concurrent no-overwrite and idempotence
+[ ] serialized bootstrap; one git init; all callers see one valid repo
+[ ] bootstrap dotfile non-overwrite and safe partial-init retry
+[ ] in-lock repository recheck and different-Vault init parallelism
 [ ] all seven repository-operation markers
 [ ] direct logical path-shape cases
 [ ] same-Vault serialization and different-Vault parallelism
@@ -281,18 +316,18 @@ Baseline.
 
 ## 7. Verification Evidence
 
-### 7.1 Documentation consolidation
+### 7.1 Documentation Contract Completion
 
 The following evidence is for documentation only and does not satisfy
 the Final Production Baseline gate:
 
 | Check | Result |
 |---|---|
-| source review of the specified server/client/test files | PASS — facts incorporated |
-| only the five authorized Markdown files changed | PASS — `git diff --name-only b33fbfe351bce23d69e76e564e73f4a7dc605800` listed README, Spec, Plan, Implementation Record, and Draft Closure only |
+| source review for the seven affected contracts | PASS — current behavior remains separated from intended remediation |
+| only the five authorized Markdown files changed | PASS in the worktree — `git diff --name-only 7908f3b5c296ac1223bb3ee5df7086d0f44dc9a1` listed README, Spec, Plan, Implementation Record, and Draft Closure only; the required `...HEAD` recheck remains pending until the substantive commit exists |
 | `git diff --check` | PASS — exit 0, no output |
 | code-fence-aware relative Markdown links | PASS — 43 relative links resolved across the five documents; fenced code ignored |
-| prohibited stale terminology scan | PASS — both required grep expressions returned no matches (exit 1) |
+| prohibited stale terminology scan | PASS — the required stale-contract expression set returned no matches (exit 1) |
 | finding-ID/title/severity/blocker consistency | PASS — 17 canonical findings matched in all four finding tables; all 14 blockers matched in README |
 
 ### 7.2 Production verification
@@ -317,7 +352,7 @@ These items may not be accepted or downgraded:
 - symlink escape;
 - staged-intent loss;
 - fail-open HEAD or parent resolution;
-- cross-process Repair lost update;
+- cross-process mutation interleaving or Repair lost update;
 - successful commit reported as failure;
 - invalid-marker withdrawal;
 - silent editor/disk divergence;
@@ -351,22 +386,28 @@ recorded.
 8. Withdraw requires exactly one valid canonical same-vault marker.
 9. The marker remains an accidental-withdrawal guard, not
    cryptographic provenance proof.
-10. All migration, quarantine, and Repair read-modify-write metadata
-    operations hold the dedicated cross-process metadata lock.
-11. Regression tests and the approved verification matrix accompany
+10. Every mutating History operation enters one cross-process Vault
+    mutation lock exactly once.
+11. Nested locks always follow: Vault mutation, Vault-id creation,
+    Repair metadata, then Git `index.lock`.
+12. Live or indeterminate Vault-lock ownership is never removed;
+    recovery requires positive same-host dead-owner proof and nonce
+    comparison.
+13. All migration, quarantine, and Repair read-modify-write metadata
+    operations hold the dedicated metadata lock under the Vault lock.
+14. Regression tests and the approved verification matrix accompany
     every safety-contract change.
 
 ## 10. Final Closure Procedure
 
-1. Implement Plan History-C1 through History-C14 in dependency order.
-2. Complete History-C9 regression coverage.
-3. Run History-C8 and History-C15 on one immutable candidate SHA.
-4. Record exact local, e2e, CI, and platform evidence.
-5. Capture the Final Production Baseline in a later commit that can
-   know the SHA it records.
+1. Implement C1–C7 and C10–C14 in dependency order.
+2. Complete and pass the C9 aggregate regression gate.
+3. Run C15 once on one immutable candidate SHA.
+4. Use C15 evidence to close H-C8.
+5. Capture the Final Production Baseline through C16.
 6. Obtain Owner Approval.
-7. Move findings to Closed or Owner-approved non-blocking risk.
-8. Flip Status to CLOSED and enter Maintenance Mode.
+7. Close or explicitly retain only approved non-blocking H-K risks.
+8. Enter CLOSED / Maintenance Mode through C17.
 
 Until every step is complete:
 

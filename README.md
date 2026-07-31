@@ -60,9 +60,9 @@ before any implementation.
 
 ### Vault Git History
 
-Final documentation consolidation is complete. Production remediation
-has not started, Closure work is still in progress, and the feature is
-**not** in maintenance mode.
+Final documentation Contract Completion is complete. Production
+remediation has not started, Closure work is still in progress, and
+the feature is **not** in maintenance mode.
 
 Documentation Review Baseline (the commit on `main` at the time
 the documentation chain was assembled):
@@ -124,10 +124,10 @@ tests):
   containment — P1, Closure Blocker: Yes.
 - `H-C11` — HEAD and Withdraw parent resolution do not fail closed —
   P1, Closure Blocker: Yes.
-- `H-C12` — Repair metadata lacks cross-process lost-update
-  protection — P1, Closure Blocker: Yes.
-- `H-C13` — `ensureRepo` non-overwrite bootstrap has access/write
-  TOCTOU — P2, Closure Blocker: Yes.
+- `H-C12` — Cross-process History mutation and Repair metadata
+  serialization is incomplete — P1, Closure Blocker: Yes.
+- `H-C13` — `ensureRepo` bootstrap is not atomically serialized and
+  its non-overwrite check has TOCTOU — P2, Closure Blocker: Yes.
 - `H-C14` — Textual Git-log separator is injectable through commit
   messages — P2, Closure Blocker: Yes.
 

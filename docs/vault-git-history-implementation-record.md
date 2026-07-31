@@ -52,7 +52,15 @@ server/history/routes.ts
 The server uses Git CLI argument arrays without a shell. Create builds
 commits through a Temporary Index. Repair and Withdraw synchronization
 have hand-taken Index-lock helpers. Client path mutation barriers are
-separate from the server mutex.
+separate from the server mutex. The mutex is a Promise chain keyed by
+`path.resolve(repoRoot)` inside one Node process; there is no
+cross-process lock spanning a complete Vault mutation.
+
+Consequently, two Docus processes can interleave complete mutation
+lifecycles. For example, process A can move HEAD, process B can observe
+that HEAD and move it again, and then process A can publish an older
+post-CAS Real Index. No reviewed lock serializes that sequence
+(`H-C12`).
 
 ## 3. Module Responsibilities
 
@@ -89,7 +97,14 @@ separate from the server mutex.
 
 `ensureRepo` is called by each route. Its missing-file helper uses
 `fs.access` followed by `fs.writeFile`, which has a non-overwrite
-TOCTOU (`H-C13`).
+TOCTOU. The full `hasOwnGitDir → dotfiles → git init → git config`
+flow is not serialized across processes, and exclusive `wx` dotfile
+creation is not implemented (`H-C13`).
+
+Filesystem routes validate logical syntax but expose no shared
+existing-file/missing-leaf resolver, no verified parent identity for
+an absent leaf, and no pathname/handle identity contract after a file
+is opened (`H-C10`).
 
 ## 5. Git Command and Parser Facts
 
@@ -171,6 +186,10 @@ Factual boundaries:
 - the client does not use `Promise.allSettled` for
   `refreshComparisons`; it awaits `Promise.all(refreshStatus,
   refreshLog)` and then awaits `refreshComparisons`.
+- after `POST /commits` succeeds, the client awaits save-barrier
+  release before composer cleanup. A barrier-release rejection can
+  therefore enter the same overall catch as the primary mutation; the
+  retained callback is then awaited again in `finally`.
 - any of those refresh rejections enters `submit()`'s overall catch,
   can show `commit_failed`, and can prevent composer cleanup
   (`H-C2`).
@@ -191,6 +210,12 @@ Factual boundaries:
 
 This can overwrite target-path staged intent that existed before the
 Create operation or arrived between attempts (`H-C3`).
+
+The current wire result has no complete path partition and no
+`replacementApplied`, `finalHead`, or `reconciliationRequired`
+terminal-state fields. There is no distinct persisted transaction for
+a Real-Index replacement that publishes and is then found to target an
+older HEAD.
 
 Withdraw uses a Temporary Index under a hand-taken lock, so it avoids
 the concurrent unlocked retry window, but it still resets every
@@ -282,7 +307,11 @@ Current gaps:
 - `readCurrentHead` maps every non-zero result to `null`;
 - merge, malformed output, and operational failures are not
   distinguished (`H-C11`);
-- all non-operation 409 errors become latest-changed in the client;
+- HEAD, commit, and parent resolution have no single shared owner;
+- the server error body has no stable `HistoryErrorCode`, and
+  `HistoryApiError` does not preserve a code/details contract;
+- all non-operation 409 errors become latest-changed in the client
+  through human-readable error-text matching;
 - the three principal refreshes are settled, but remaining success
   callbacks have no dedicated regression isolation (`H-C2`).
 
@@ -325,6 +354,8 @@ the two later refreshes.
 - Repair transactions are mirrored in `useHistoryCommit`.
 - server serialization is process-local and keyed by
   `path.resolve(repoRoot)`.
+- no cross-process Vault mutation lock, fixed nested lock hierarchy, or
+  stale-owner recovery protocol exists.
 - `getStatus` recovers every non-2xx JSON body when called with
   `allowNonOkJson: true`, not only the intended graceful 503
   (`H-C1`).
@@ -370,13 +401,19 @@ documentation consolidation.
 Index: F0 before HEAD; pre-staged preservation; F0/F1 mismatch;
 mixed path outcomes; failedPaths-only Repair; F0-bound Repair;
 all no-write/cleanup/close-before-rename branches; external git add
-after each failure; no rename after mismatch.
+after each failure; no rename after mismatch; full terminal partition
+and order; no pre-rename partial synchronized result; post-rename HEAD
+recheck and persisted reconciliation.
 
 Filesystem: symlink leaf; symlink directory segment; no outside-Vault
-hash, commit, WORKTREE read/diff, or Restore destination.
+hash, commit, WORKTREE read/diff, or Restore destination; selected
+deletion and untracked/missing-leaf handling; parent identity;
+post-open pathname replacement.
 
 Resolution: unborn vs operational failure; full-SHA resolution;
-strict root/one-parent/merge parsing; no HEAD move on failures.
+strict root/one-parent/merge parsing; no HEAD move on failures; shared
+resolver ownership; stable structured server codes; client code-based
+mapping and legacy generic fallback.
 
 Marker/Vault metadata: atomic first touch; stable concurrent ID;
 no partial ID; locked malformed-ID quarantine; exact marker;
@@ -386,17 +423,25 @@ Withdraw; marker-specific client UX.
 Repair metadata: concurrent record/settle; migration/quarantine
 lost-update protection; lock cleanup; read-only status behavior.
 
+Vault serialization: two-process Create/Withdraw and Create/Restore;
+older post-CAS sync exclusion; fixed nested lock order; live-owner
+retention; positively dead-owner recovery; indeterminate-owner
+fail-closed behavior; different-Vault parallelism.
+
 Restore: one immutable SHA; same SHA for read/write; post-read
 result.raw; client result.raw authority; no double mutex; symlink;
 refresh-success boundary.
 
-Create/Withdraw success: each refresh rejection; immediate composer
-settlement; no duplicate retry; repair-status and local cleanup
-isolation.
+Create/Withdraw success: each refresh rejection; save-barrier release
+rejection; immediate composer/result/Repair settlement; exactly-once
+barrier release; mutation-lock cleanup; one auxiliary warning; no
+duplicate retry; repair-status and local cleanup isolation.
 
 Timeline/Log/bootstrap: DST spring/fall in explicit child TZ;
 delimiter injection; multiline/control framing; bootstrap concurrent
-non-overwrite and idempotence.
+non-overwrite and idempotence; one serialized first-touch transaction;
+single `git init`; partial-init retry; in-lock repository recheck;
+different-Vault initialization parallelism.
 
 Existing gaps: all seven operation markers; direct backslash,
 absolute, and hidden-path cases; same-Vault serialization and
@@ -436,8 +481,8 @@ Plan Part B.
 | H-C9 | Required History regression coverage is incomplete | P1 (Verification) | Yes |
 | H-C10 | History filesystem reads/writes lack symlink-safe Vault containment | P1 | Yes |
 | H-C11 | HEAD and Withdraw parent resolution do not fail closed | P1 | Yes |
-| H-C12 | Repair metadata lacks cross-process lost-update protection | P1 | Yes |
-| H-C13 | `ensureRepo` non-overwrite bootstrap has access/write TOCTOU | P2 | Yes |
+| H-C12 | Cross-process History mutation and Repair metadata serialization is incomplete | P1 | Yes |
+| H-C13 | `ensureRepo` bootstrap is not atomically serialized and its non-overwrite check has TOCTOU | P2 | Yes |
 | H-C14 | Textual Git-log separator is injectable through commit messages | P2 | Yes |
 | H-K8 | Rename history is not `--follow`-merged | P2 | No |
 | H-K10 | Timeline and Log have no pagination | P2 | No |
