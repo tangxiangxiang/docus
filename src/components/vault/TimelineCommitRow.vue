@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { HistoryCommitItem } from '../../composables/vault/useHistoryTimeline'
-import { ICON_CHEVRON, ICON_HISTORY } from './icons'
+import { ICON_CHEVRON } from './icons'
 
 defineProps<{
   commit: HistoryCommitItem
@@ -43,13 +43,12 @@ function onKeydown(event: KeyboardEvent): void {
     @keydown="onKeydown"
     @contextmenu.prevent="emit('contextmenu', $event)"
   >
-    <span class="history-commit-marker" v-html="ICON_HISTORY" />
+    <span class="history-disclosure" :class="{ expanded }" aria-hidden="true" v-html="ICON_CHEVRON" />
     <span class="history-row-copy">
       <span class="history-row-title">{{ commit.message }}</span>
       <span class="history-row-meta">
         {{ timeLabel }} · <span class="history-commit-sha">{{ commit.shortId }}</span> · {{ fileCountLabel }}
       </span>
     </span>
-    <span class="history-disclosure" :class="{ expanded }" v-html="ICON_CHEVRON" />
   </button>
 </template>

@@ -822,7 +822,7 @@ main.container {
   display: flex;
   align-items: center;
   min-height: 42px;
-  padding: 5px 9px 5px 12px;
+  padding: 5px 12px;
   gap: 7px;
   background: transparent;
 }
@@ -845,14 +845,13 @@ main.container {
   box-shadow: inset 2px 0 var(--vs-accent);
   background: color-mix(in srgb, var(--vs-accent) 5%, var(--vs-bg-1));
 }
-.history-commit-marker {
+.history-file-commit-row .history-commit-marker {
   display: inline-flex;
   flex: 0 0 16px;
   align-items: center;
   justify-content: center;
   color: var(--vs-text-3);
 }
-.history-commit-row.active .history-commit-marker { color: var(--vs-accent); }
 .history-commit-sha { font-family: var(--font-mono, ui-monospace, monospace); }
 .history-file-list {
   position: relative;
