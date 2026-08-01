@@ -15,16 +15,10 @@ export function fallbackAfterClosingWorkspaceTab(
   const path = documentPath(closing)
   const remaining = tabs.filter((tab) => tab.id !== closingId)
   if (closing.kind === 'diff') {
-    const history = remaining.find((tab) => tab.kind === 'history' && documentPath(tab) === path)
-    if (history) return history.id
-  }
-  if (closing.kind === 'diff' || closing.kind === 'history') {
     const current = remaining.find((tab) => tab.kind === 'document' && tab.id === path)
     if (current) return current.id
   }
   if (closing.kind === 'document') {
-    const history = remaining.find((tab) => tab.kind === 'history' && documentPath(tab) === path)
-    if (history) return history.id
     const comparison = remaining.find((tab) => tab.kind === 'diff' && documentPath(tab) === path)
     if (comparison) return comparison.id
   }
@@ -48,16 +42,10 @@ export function fallbackAfterClosingWorkspaceTabs(
   const path = documentPath(active)
 
   if (active.kind === 'diff') {
-    const history = remaining.find((tab) => tab.kind === 'history' && documentPath(tab) === path)
-    if (history) return history.id
-  }
-  if (active.kind === 'diff' || active.kind === 'history') {
     const current = remaining.find((tab) => tab.kind === 'document' && tab.id === path)
     if (current) return current.id
   }
   if (active.kind === 'document') {
-    const history = remaining.find((tab) => tab.kind === 'history' && documentPath(tab) === path)
-    if (history) return history.id
     const comparison = remaining.find((tab) => tab.kind === 'diff' && documentPath(tab) === path)
     if (comparison) return comparison.id
   }

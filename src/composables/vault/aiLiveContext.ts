@@ -45,25 +45,6 @@ export interface AiDocumentContext {
   }
 }
 
-export interface AiHistoryContext {
-  v: 1
-  kind: 'history'
-  capturedAt: number
-  vaultId: string
-  workspaceTabId: string
-  readOnly: true
-
-  identity: {
-    path: string
-    revisionId: string
-    revisionTime: number
-  }
-
-  title: string
-  /** The historical revision's rawMarkdown; only sent when status is ready. */
-  raw: string
-}
-
 export interface AiDiffContext {
   v: 1
   kind: 'diff'
@@ -136,7 +117,6 @@ export interface AiRecoveryContext {
 
 export type AiLiveContextSnapshot =
   | AiDocumentContext
-  | AiHistoryContext
   | AiDiffContext
   | AiRecoveryContext
 
@@ -156,9 +136,9 @@ export type AiLiveContextCapture =
 // ─── Resolver inputs (plain data — no reactive objects) ────────────
 //
 // Each source interface is a structural subset of the corresponding
-// workspace type (Tab, HistorySnapshot, HistoryComparison,
-// DraftRecoveryTab), so Edit-10.2's capture() can pass plain copies
-// straight through without per-field mapping.
+// workspace type (Tab, HistoryComparison, DraftRecoveryTab), so
+// Edit-10.2's capture() can pass plain copies straight through without
+// per-field mapping.
 
 export interface AiDocumentSource {
   path: string
@@ -172,16 +152,6 @@ export interface AiDocumentSource {
   loadError: string | null
   externalKind?: ExternalChangeKind | null
   externalRaw?: string | null
-}
-
-export interface AiHistorySource {
-  tabId: string
-  documentPath: string
-  documentTitle: string
-  revisionId: string
-  revisionTime: number
-  rawMarkdown: string
-  status: 'loading' | 'ready' | 'error'
 }
 
 export interface AiDiffSource {
@@ -222,7 +192,6 @@ export interface AiLiveContextInput {
   vaultId: string | null
   activeWorkspaceTabId: string | null
   documentTabs: readonly AiDocumentSource[]
-  historySnapshots: readonly AiHistorySource[]
   historyComparisons: readonly AiDiffSource[]
   recoveryTabs: readonly AiRecoverySource[]
 }
@@ -243,7 +212,7 @@ export interface AiLiveContextOptions {
  * The resolution order mirrors the workspace activation order exactly
  * (VaultView's `activeWorkspaceTabId`):
  *
- *   active Recovery → active Diff → active History → active Document → none
+ *   active Recovery → active Diff → active Document → none
  *
  * The active tab id is matched against each candidate list; this function
  * never re-derives authority from the route.
@@ -357,34 +326,7 @@ export function captureAiLiveContext(
     return { status: 'ready', context }
   }
 
-  // Priority 3: History snapshot viewer.
-  const snapshot = input.historySnapshots.find((tab) => tab.tabId === activeId)
-  if (snapshot) {
-    if (snapshot.status === 'loading') {
-      return { status: 'unavailable', reason: 'loading' }
-    }
-    if (snapshot.status !== 'ready') {
-      return { status: 'unavailable', reason: 'load-error' }
-    }
-    const context: AiHistoryContext = {
-      v: 1,
-      kind: 'history',
-      capturedAt,
-      vaultId,
-      workspaceTabId: snapshot.tabId,
-      readOnly: true,
-      identity: {
-        path: snapshot.documentPath,
-        revisionId: snapshot.revisionId,
-        revisionTime: snapshot.revisionTime,
-      },
-      title: snapshot.documentTitle,
-      raw: snapshot.rawMarkdown,
-    }
-    return { status: 'ready', context }
-  }
-
-  // Priority 4: Document editor tab (id === path).
+  // Priority 3: Document editor tab (id === path).
   const doc = input.documentTabs.find((tab) => tab.path === activeId)
   if (doc) {
     if (doc.loading) {

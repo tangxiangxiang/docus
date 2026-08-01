@@ -158,8 +158,6 @@ function serializeLiveContextForPrompt(
 const LIVE_CONTEXT_KIND_NOTES: Record<AiLiveContextSnapshot['kind'], string> = {
   document:
     '- kind=document: "raw" is the user\'s live editor buffer. When dirty=true it differs from disk, and read_file(path) would return the older saved text — trust the snapshot\'s raw over read_file for this turn. When "external" is present, both the buffer and the external change state are preserved; do not replace raw with the disk text.',
-  history:
-    '- kind=history: a read-only past revision (identity.revisionId / revisionTime), NOT the current file on disk. read_file(path) would return today\'s version, not this historical body.',
   diff:
     '- kind=diff: two explicit versions of the same path — "before" (a historical revision) and "after" (the live editor buffer, or a comparison snapshot when no editor tab is open).',
   recovery:

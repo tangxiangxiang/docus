@@ -1,7 +1,7 @@
 // Edit-10.3 server-side strict validation of the client's
 // AiLiveContextSnapshot wire contract. parseAiLiveContext is the ONLY
 // gate between the raw request body and the system prompt: it must
-// accept exactly the four sealed snapshot kinds (v: 1) and reject
+// accept exactly the three sealed snapshot kinds (v: 1) and reject
 // everything else — no `as` trust, no kind-only checks, no silent
 // normalization, no silent truncation, and no fallback to a legacy
 // path when the live context is malformed.
@@ -31,21 +31,6 @@ function documentContext(overrides: Record<string, unknown> = {}): Record<string
     savedRevision: 2,
     dirty: true,
     saveStatus: 'dirty',
-    ...overrides,
-  }
-}
-
-function historyContext(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    v: 1,
-    kind: 'history',
-    capturedAt: 1_750_000_000_000,
-    vaultId: 'vault-a',
-    workspaceTabId: 'history:notes/a',
-    readOnly: true,
-    identity: { path: 'notes/a', revisionId: 'rev-7', revisionTime: 111 },
-    title: 'A',
-    raw: 'historical body',
     ...overrides,
   }
 }
@@ -136,19 +121,19 @@ describe('parseAiLiveContext — valid snapshots', () => {
 
   it('accepts an empty Markdown body (empty string is legal)', () => {
     expect(ok(documentContext({ raw: '' })).raw).toBe('')
-    expect(ok(historyContext({ raw: '' })).raw).toBe('')
-  })
-
-  it('accepts a path WITH a single trailing .md (history-style paths)', () => {
-    const value = historyContext({
-      workspaceTabId: 'history:notes/a.md',
-      identity: { path: 'notes/a.md', revisionId: 'rev-7', revisionTime: 111 },
-    })
+    const value = diffContext({ before: { raw: '', source: 'history' } })
     expect(ok(value)).toEqual(value)
   })
 
-  it('accepts a History snapshot', () => {
-    const value = historyContext()
+  it('accepts a path WITH a single trailing .md', () => {
+    const value = diffContext({
+      identity: {
+        path: 'notes/a.md',
+        revisionId: 'rev-7',
+        revisionTime: 111,
+        currentDocumentId: 'doc-a',
+      },
+    })
     expect(ok(value)).toEqual(value)
   })
 
@@ -218,6 +203,20 @@ describe('parseAiLiveContext — structural rejection', () => {
     expect(fail(documentContext({ kind: 'attachment' }))).toBe('invalid-live-context')
   })
 
+  it('rejects the retired History snapshot kind', () => {
+    expect(fail({
+      v: 1,
+      kind: 'history',
+      capturedAt: 1_750_000_000_000,
+      vaultId: 'vault-a',
+      workspaceTabId: 'history:notes/a',
+      readOnly: true,
+      identity: { path: 'notes/a', revisionId: 'rev-7', revisionTime: 111 },
+      title: 'A',
+      raw: 'historical body',
+    })).toBe('invalid-live-context')
+  })
+
   it.each([
     ['NaN', NaN],
     ['Infinity', Infinity],
@@ -275,9 +274,13 @@ describe('parseAiLiveContext — path safety', () => {
   })
 
   it('rejects a mid-path .md segment (only one trailing .md may be stripped)', () => {
-    const value = historyContext({
-      workspaceTabId: 'history:a.md/b',
-      identity: { path: 'a.md/b', revisionId: 'rev-1', revisionTime: 1 },
+    const value = diffContext({
+      identity: {
+        path: 'a.md/b',
+        revisionId: 'rev-1',
+        revisionTime: 1,
+        currentDocumentId: 'doc-a',
+      },
     })
     expect(fail(value)).toBe('invalid-live-context')
   })
@@ -343,27 +346,6 @@ describe('parseAiLiveContext — Document invariants', () => {
     ['external extra key', { external: { kind: 'modified', raw: 'x', mtime: 1 } }],
   ])('rejects external %s', (_label, overrides) => {
     expect(fail(documentContext(overrides))).toBe('invalid-live-context')
-  })
-})
-
-describe('parseAiLiveContext — History invariants', () => {
-  it('rejects readOnly !== true', () => {
-    expect(fail(historyContext({ readOnly: false }))).toBe('invalid-live-context')
-  })
-
-  it('rejects a missing revisionId / revisionTime', () => {
-    expect(fail(historyContext({ identity: { path: 'notes/a', revisionTime: 1 } }))).toBe('invalid-live-context')
-    expect(fail(historyContext({ identity: { path: 'notes/a', revisionId: 'rev-7' } }))).toBe('invalid-live-context')
-  })
-
-  it('rejects a non-finite revisionTime', () => {
-    expect(fail(historyContext({ identity: { path: 'notes/a', revisionId: 'rev-7', revisionTime: NaN } }))).toBe('invalid-live-context')
-    expect(fail(historyContext({ identity: { path: 'notes/a', revisionId: 'rev-7', revisionTime: Infinity } }))).toBe('invalid-live-context')
-  })
-
-  it('rejects document-only fields smuggled into a History snapshot', () => {
-    expect(fail(historyContext({ dirty: true }))).toBe('invalid-live-context')
-    expect(fail(historyContext({ revision: 3 }))).toBe('invalid-live-context')
   })
 })
 

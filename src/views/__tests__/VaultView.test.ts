@@ -28,10 +28,10 @@ describe('VaultView editor tab wiring', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
 
     expect(source).toContain('v-else-if="activePanel === \'history\'"')
-    expect(source).toContain('@open-revision="openHistoryRevision"')
-    expect(source).not.toContain("import DiffView")
-    expect(source).not.toContain('activePanel !== \'history\' && tabs.length > 0')
-    expect(source).not.toContain('activePanel === \'history\'" class="content content-diff"')
+    expect(source).toContain('@open-revision="openHistoryComparison"')
+    expect(source).not.toContain('import DiffView')
+    expect(source).not.toContain("activePanel !== 'history' && tabs.length > 0")
+    expect(source).not.toContain("activePanel === 'history'\" class=\"content content-diff\"")
   })
 
   it('owns a fixed file-history target independently from active editor tabs', () => {
@@ -69,9 +69,8 @@ describe('VaultView editor tab wiring', () => {
     expect(source.match(/acquireMutation: historyMutationLock\.acquire\b/g)).toHaveLength(2)
     expect(source).toContain('canMutate: historyMutationLock.canAcquire')
     expect(source).toContain("toast.info(t('history.document_mutation_in_progress'))")
-    expect(source).toContain('snapshotPaneRef.value?.focusViewer()')
     expect(source).toContain('comparisonPaneRef.value?.focusViewer()')
-    expect(source.match(/:mutation-locked="historyMutationLock\.has/g)).toHaveLength(2)
+    expect(source.match(/:mutation-locked="historyMutationLock\.has/g)).toHaveLength(1)
     expect(source).not.toContain(':save-before-commit=')
   })
 
@@ -83,24 +82,50 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('refreshIndexRepairStatus: historyCommit.refreshIndexRepairStatus')
     expect(source).toContain('registerIndexRepair: historyCommit.registerIndexRepair')
     expect(source).toContain('settleIndexRepairPaths: historyCommit.settleIndexRepairPaths')
-    expect(source).toContain('.filter((snapshot) => snapshot.revisionId === sha)')
     expect(source).toContain('.filter((comparison) => comparison.revisionId === sha)')
     expect(source).toContain(':withdraw="historyWithdraw"')
+  })
+
+  it('opens a single diff tab directly from a HistoryRevisionSelection', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+
+    // The comparison pane replaces both the snapshot viewer and the
+    // old "Open Diff" intermediate button — clicking any history entry
+    // goes straight to the diff tab.
+    expect(source).toContain('<HistoryComparisonPane')
+    expect(source).toContain(':comparison="activeHistoryComparison"')
+    expect(source).not.toContain('<HistorySnapshotPane')
+    expect(source).not.toContain('useHistorySnapshots')
+    expect(source).not.toContain('activeHistorySnapshot')
+    expect(source).not.toContain('snapshotPaneRef')
+    expect(source).not.toContain('history-snapshot-')
+    expect(source).toContain('const historyComparisons = useHistoryComparisons({')
+    expect(source).toContain('getCurrentDocument(path)')
+    expect(source).toContain('return getLoadedEditorDocument(tabs.value, path)')
+    expect(source).toContain('return (await getPost(path)).raw')
+
+    // The Timeline → diff handoff hands the selection straight to
+    // useHistoryComparisons.openComparison, not via a snapshot pane.
+    const openComparison = source.match(/async function openHistoryComparison[\s\S]*?\n}/)?.[0]
+    expect(openComparison).toBeDefined()
+    expect(openComparison).toContain('historyComparisons.openComparison(selection)')
+    expect(openComparison).toContain('comparisonPaneRef.value?.focusViewer()')
+
+    // Close-diff belongs to the workspace tab now; the comparison pane
+    // no longer renders its own close button.
+    expect(source).toContain(':history-read-only="Boolean(activeHistoryComparison || activeDraftRecovery)"')
+    expect(source).not.toContain('@open-diff="openHistoryComparison"')
+    expect(source).not.toContain('@view-historical=')
   })
 
   it('keeps Monaco mounted and isolates shortcuts for read-only history tabs', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const shortcutHandler = source.match(/function onVaultKeydown[\s\S]*?\n}/)?.[0]
 
-    expect(source).toContain('v-show="!activeHistorySnapshot && !activeHistoryComparison && !activeDraftRecovery"')
-    expect(source).toContain('<HistorySnapshotPane')
+    expect(source).toContain('v-show="!activeHistoryComparison && !activeDraftRecovery"')
     expect(source).toContain('<HistoryComparisonPane')
-    expect(source).toContain(':snapshot="activeHistorySnapshot"')
-    expect(source).toContain('const historySnapshots = useHistorySnapshots()')
+    expect(source).toContain(':comparison="activeHistoryComparison"')
     expect(source).toContain('const historyComparisons = useHistoryComparisons({')
-    expect(source).toContain('getCurrentDocument(path)')
-    expect(source).toContain('return getLoadedEditorDocument(tabs.value, path)')
-    expect(source).toContain('return (await getPost(path)).raw')
     expect(source).toContain("meta && event.key.toLowerCase() === 's'")
     expect(source).toContain('void closeWorkspaceTab(activeId)')
     expect(shortcutHandler).toBeDefined()
@@ -206,20 +231,6 @@ describe('VaultView editor tab wiring', () => {
     expect(manualRetry).toContain('warnRecoveryReadFailure(currentVaultId)')
   })
 
-  it('opens one dedicated diff workspace tab from a ready snapshot', () => {
-    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
-
-    expect(source).toContain("id: comparison.tabId")
-    expect(source).toContain("kind: 'diff' as const")
-    expect(source).toContain('@open-diff="openHistoryComparison"')
-    expect(source).toContain('const request = historyComparisons.openComparison(snapshot)')
-    expect(source).toContain('comparisonPaneRef.value?.focusViewer()')
-    expect(source).toContain('historySnapshots.openCachedRevision({')
-    expect(source).toContain(':history-read-only="Boolean(activeHistorySnapshot || activeHistoryComparison || activeDraftRecovery)"')
-    expect(source).toContain('...historyComparisons.comparisons.value.map')
-    expect(source).not.toContain('restoreComparison')
-  })
-
   it('coordinates document restore outside the read-only viewers', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
 
@@ -242,16 +253,13 @@ describe('VaultView editor tab wiring', () => {
     expect(source).not.toContain("await createPost({ path, title })")
   })
 
-  it('focuses loading History viewers before their network requests settle', () => {
+  it('focuses the diff viewer before its network requests settle', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
-    const openRevision = source.match(/async function openHistoryRevision[\s\S]*?\n}/)?.[0]
     const openComparison = source.match(/async function openHistoryComparison[\s\S]*?\n}/)?.[0]
 
-    for (const handler of [openRevision, openComparison]) {
-      expect(handler).toBeDefined()
-      expect(handler).toContain('const request =')
-      expect(handler!.indexOf('focusViewer()')).toBeLessThan(handler!.indexOf('await request'))
-    }
+    expect(openComparison).toBeDefined()
+    expect(openComparison).toContain('const request =')
+    expect(openComparison!.indexOf('focusViewer()')).toBeLessThan(openComparison!.indexOf('await request'))
   })
 
   it('hands focus to the active tab after closing a non-active workspace tab', () => {
@@ -344,7 +352,10 @@ describe('VaultView AI live context capture wiring', () => {
     expect(source).toContain('vaultId: vaultId.value,')
     expect(source).toContain('activeWorkspaceTabId: activeWorkspaceTabId.value,')
     expect(source).toContain('documentTabs: tabs.value,')
-    expect(source).toContain('historySnapshots: historySnapshots.snapshots.value,')
+    // The snapshot workspace is gone — the AI context no longer carries
+    // a historySnapshots field; the comparison viewer covers the same
+    // role via its before/after context.
+    expect(source).not.toContain('historySnapshots:')
     expect(source).toContain('historyComparisons: historyComparisons.comparisons.value,')
     expect(source).toContain('recoveryTabs: recoveryTabs.tabs.value,')
     // Diff after-sides are re-read from the live editor buffer at the

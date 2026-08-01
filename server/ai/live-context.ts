@@ -166,8 +166,6 @@ export function parseAiLiveContext(value: unknown): ParseAiLiveContextResult {
   switch (value.kind) {
     case 'document':
       return parseDocument(value)
-    case 'history':
-      return parseHistory(value)
     case 'diff':
       return parseDiff(value)
     case 'recovery':
@@ -212,22 +210,6 @@ function parseDocument(obj: Record<string, unknown>): ParseAiLiveContextResult {
       return INVALID
     }
   }
-
-  return ok(obj)
-}
-
-function parseHistory(obj: Record<string, unknown>): ParseAiLiveContextResult {
-  if (!hasExactShape(obj, [...COMMON_REQUIRED, 'readOnly', 'identity', 'title', 'raw'])) return INVALID
-  if (obj.readOnly !== true) return INVALID
-
-  const identity = obj.identity
-  if (!isRecord(identity) || !hasExactShape(identity, ['path', 'revisionId', 'revisionTime'])) return INVALID
-  if (!isValidSnapshotPath(identity.path)) return INVALID
-  if (!isNonEmptyCleanString(identity.revisionId, MAX_ID_CHARS)) return INVALID
-  if (!isFiniteNonNegative(identity.revisionTime)) return INVALID
-
-  if (!isCleanString(obj.title, MAX_TITLE_CHARS)) return INVALID
-  if (!isBodyString(obj.raw)) return INVALID
 
   return ok(obj)
 }

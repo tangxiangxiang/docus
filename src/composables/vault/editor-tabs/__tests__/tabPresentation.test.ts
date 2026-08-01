@@ -178,24 +178,16 @@ describe('deriveTabUiPresentation — strip prefers title', () => {
     expect(presentations[2]!.filenameLabel).toBeNull()
   })
 
-  it('history/diff keep their existing label semantics', () => {
-    const h = tab({
-      id: 'history:redis',
-      kind: 'history',
-      label: 'Redis (历史)',
-      title: 'Redis',
-    })
+  it('diff keeps its existing label semantics', () => {
     const d = tab({
       id: 'diff:redis',
       kind: 'diff',
       label: 'Redis (差异)',
       title: 'Redis',
     })
-    expect(deriveTabUiPresentation(h, NO_T).displayTitle).toBe('Redis (历史)')
     expect(deriveTabUiPresentation(d, NO_T).displayTitle).toBe('Redis (差异)')
-    expect(deriveTabUiPresentation(h, NO_T).filenameLabel).toBeNull()
     expect(deriveTabUiPresentation(d, NO_T).filenameLabel).toBeNull()
-    expect(deriveTabUiPresentation(h, NO_T).fullPath).toBeNull()
+    expect(deriveTabUiPresentation(d, NO_T).fullPath).toBeNull()
   })
 
   it('two docs with same title but different paths both keep the title', () => {
@@ -247,14 +239,10 @@ describe('deriveTabUiPresentation — status text', () => {
     expect(deriveTabUiPresentation(saved, NO_T).statusText).not.toBe('空闲')
   })
 
-  it('omits the status text for history and diff tabs', () => {
-    const h = tab({ kind: 'history', save: save() })
+  it('omits the status text for diff tabs', () => {
     const d = tab({ kind: 'diff', save: save() })
-    expect(deriveTabUiPresentation(h, NO_T).statusText).toBeNull()
     expect(deriveTabUiPresentation(d, NO_T).statusText).toBeNull()
-    expect(deriveTabUiPresentation(h, NO_T).statusKind).toBe('none')
     expect(deriveTabUiPresentation(d, NO_T).statusKind).toBe('none')
-    expect(deriveTabUiPresentation(h, NO_T).fullPath).toBeNull()
     expect(deriveTabUiPresentation(d, NO_T).fullPath).toBeNull()
   })
 })
@@ -329,12 +317,12 @@ describe('deriveTabUiPresentation — aria-label', () => {
     expect(p.ariaLabel).toBe('a, Saved')
   })
 
-  it('history / diff aria-label keeps the legacy layout (no filename, no status)', () => {
+  it('diff aria-label keeps the legacy layout (no filename, no status)', () => {
     const h = deriveTabUiPresentation(
-      tab({ kind: 'history', label: 'Redis (历史)', title: 'Redis' }),
+      tab({ kind: 'diff', label: 'Redis (差异)', title: 'Redis' }),
       NO_T,
     )
-    expect(h.ariaLabel).toBe('Redis (历史)')
+    expect(h.ariaLabel).toBe('Redis (差异)')
   })
 
   it('identifies Recovery tabs as local-only without exposing content or a path', () => {

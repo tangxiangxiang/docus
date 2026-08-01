@@ -1,16 +1,14 @@
 // @vitest-environment jsdom
 
 // Edit-10.2 workspace integration. These tests drive the REAL workspace
-// composables (useHistorySnapshots / useHistoryComparisons /
-// useDraftRecoveryTabs) plus a plain Tab ref exactly as VaultView owns
-// them, then capture through the same call VaultView's late-bound
-// delegate makes:
+// composables (useHistoryComparisons / useDraftRecoveryTabs) plus a
+// plain Tab ref exactly as VaultView owns them, then capture through
+// the same call VaultView's late-bound delegate makes:
 //
 //   captureAiLiveContext({
 //     vaultId: vaultId.value,
 //     activeWorkspaceTabId: activeWorkspaceTabId.value,
 //     documentTabs: tabs.value,
-//     historySnapshots: historySnapshots.snapshots.value,
 //     historyComparisons: historyComparisons.comparisons.value,
 //     recoveryTabs: recoveryTabs.tabs.value,
 //   }, { liveDocument: (path) => liveEditorForPath(tabs.value, path) })
@@ -19,14 +17,13 @@
 // wiring matches this shape string-for-string, so behavior proven here
 // holds for the shipped view.
 import { computed, ref } from 'vue'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Tab } from '../../components/vault/tabs'
 import {
   captureAiLiveContext,
   liveEditorForPath,
   type AiDiffContext,
   type AiDocumentContext,
-  type AiHistoryContext,
   type AiLiveContextCapture,
   type AiRecoveryContext,
 } from '../../composables/vault/aiLiveContext'
@@ -34,11 +31,20 @@ import {
   getLoadedEditorDocument,
   useHistoryComparisons,
 } from '../../composables/vault/useHistoryComparisons'
-import { useHistorySnapshots } from '../../composables/vault/useHistorySnapshots'
+import * as historyApi from '../../lib/history-api'
 import { useDraftRecoveryTabs } from '../../composables/vault/draft-recovery/useDraftRecoveryTabs'
 import type { DraftRecoveryItem } from '../../composables/vault/draft-recovery/useUnsavedDraftRecovery'
 import type { DraftRecoveryDecisionKind } from '../../composables/vault/draft-recovery/draftRecoveryDecision'
 import { UNSAVED_DRAFT_VERSION } from '../../composables/vault/draft-recovery/draftTypes'
+
+vi.mock('../../lib/history-api', async () => {
+  const actual = await vi.importActual<typeof historyApi>('../../lib/history-api')
+  return { ...actual, getFileAt: vi.fn() }
+})
+
+beforeEach(() => {
+  vi.mocked(historyApi.getFileAt).mockReset()
+})
 
 function docTab(path: string, raw: string, overrides: Partial<Tab> = {}): Tab {
   return {
@@ -107,7 +113,6 @@ function createWorkspace() {
   const vaultId = ref('vault-a')
   const tabs = ref<Tab[]>([])
   const activePath = ref<string | null>(null)
-  const historySnapshots = useHistorySnapshots()
   const historyComparisons = useHistoryComparisons({
     getCurrentDocument: (path) => getLoadedEditorDocument(tabs.value, path),
     loadCurrentDocument: async () => {
@@ -116,18 +121,16 @@ function createWorkspace() {
   })
   const recoveryTabs = useDraftRecoveryTabs()
   // Mirrors VaultView's activeWorkspaceTabId exactly (pinned by the
-  // source-inspection suite).
+  // source-inspection suite): recovery → diff → document.
   const activeWorkspaceTabId = computed(() => (
     recoveryTabs.activeTab.value?.tabId
     ?? historyComparisons.activeComparison.value?.tabId
-    ?? historySnapshots.activeSnapshot.value?.tabId
     ?? activePath.value
   ))
   const capture = (): AiLiveContextCapture => captureAiLiveContext({
     vaultId: vaultId.value,
     activeWorkspaceTabId: activeWorkspaceTabId.value,
     documentTabs: tabs.value,
-    historySnapshots: historySnapshots.snapshots.value,
     historyComparisons: historyComparisons.comparisons.value,
     recoveryTabs: recoveryTabs.tabs.value,
   }, {
@@ -136,7 +139,6 @@ function createWorkspace() {
   return {
     tabs,
     activePath,
-    historySnapshots,
     historyComparisons,
     recoveryTabs,
     activeWorkspaceTabId,
@@ -147,13 +149,6 @@ function createWorkspace() {
 function readyDocument(capture: AiLiveContextCapture): AiDocumentContext {
   if (capture.status !== 'ready' || capture.context.kind !== 'document') {
     throw new Error(`expected ready document, got ${JSON.stringify(capture)}`)
-  }
-  return capture.context
-}
-
-function readyHistory(capture: AiLiveContextCapture): AiHistoryContext {
-  if (capture.status !== 'ready' || capture.context.kind !== 'history') {
-    throw new Error(`expected ready history, got ${JSON.stringify(capture)}`)
   }
   return capture.context
 }
@@ -208,43 +203,22 @@ describe('VaultView workspace AI capture over real state', () => {
     expect(ws.capture()).toEqual({ status: 'unavailable', reason: 'loading' })
   })
 
-  it('History snapshot wins over the route and the live Document behind it', () => {
-    const ws = createWorkspace()
-    ws.tabs.value = [docTab('notes/a.md', 'live a', {
-      revision: 2,
-      savedRevision: 1,
-      saveStatus: 'dirty',
-    })]
-    ws.activePath.value = 'notes/a.md'
-    ws.historySnapshots.openCachedRevision({
-      documentPath: 'notes/a.md',
-      documentTitle: 'a',
-      revisionId: 'rev-7',
-      revisionTime: 111,
-      summary: 'an old revision',
-    }, 'historical body')
-
-    const context = readyHistory(ws.capture())
-
-    expect(context.readOnly).toBe(true)
-    expect(context.identity).toEqual({ path: 'notes/a.md', revisionId: 'rev-7', revisionTime: 111 })
-    expect(context.raw).toBe('historical body')
-    // The dirty live buffer behind the snapshot must never leak in.
-    expect(JSON.stringify(context)).not.toContain('live a')
-  })
-
-  it('Diff wins and re-reads the freshest live after-side at capture time', async () => {
+  it('Diff re-reads the freshest live after-side at capture time', async () => {
     const ws = createWorkspace()
     ws.tabs.value = [docTab('notes/a.md', 'v1 saved')]
     ws.activePath.value = 'notes/a.md'
-    const snapshot = ws.historySnapshots.openCachedRevision({
+    vi.mocked(historyApi.getFileAt).mockResolvedValue({
+      path: 'notes/a.md',
+      ref: 'rev-3',
+      content: 'historical body',
+    })
+    await ws.historyComparisons.openComparison({
       documentPath: 'notes/a.md',
       documentTitle: 'a',
       revisionId: 'rev-3',
       revisionTime: 222,
       summary: 'before',
-    }, 'old body')
-    await ws.historyComparisons.openComparison(snapshot)
+    })
 
     // The user keeps typing AFTER the diff opened; the comparison's
     // snapshot of the current side is now expired.
@@ -254,7 +228,7 @@ describe('VaultView workspace AI capture over real state', () => {
 
     const context = readyDiff(ws.capture())
 
-    expect(context.before).toEqual({ raw: 'old body', source: 'history' })
+    expect(context.before).toEqual({ raw: 'historical body', source: 'history' })
     expect(context.after.source).toBe('live-editor')
     expect(context.after.raw).toBe('v2 typed after diff opened')
     expect(context.after.raw).not.toBe('v1 saved')
@@ -312,26 +286,31 @@ describe('VaultView workspace AI capture over real state', () => {
     expect(context.decisionKind).toBe('identity-mismatch')
   })
 
-  it('Recovery wins over an active snapshot and document, and releases cleanly', () => {
+  it('Recovery wins over an active diff and document, and releases cleanly', async () => {
     const ws = createWorkspace()
     ws.tabs.value = [docTab('notes/a.md', 'live a')]
     ws.activePath.value = 'notes/a.md'
-    ws.historySnapshots.openCachedRevision({
+    vi.mocked(historyApi.getFileAt).mockResolvedValue({
+      path: 'notes/a.md',
+      ref: 'rev-1',
+      content: 'old body',
+    })
+    await ws.historyComparisons.openComparison({
       documentPath: 'notes/a.md',
       documentTitle: 'a',
       revisionId: 'rev-1',
       revisionTime: 1,
       summary: 's',
-    }, 'historical body')
+    })
     ws.recoveryTabs.open(recoveryItem({ draftRaw: 'draft wins' }), 'content')
 
     expect(readyRecovery(ws.capture()).draft).toEqual({ raw: 'draft wins' })
 
     ws.recoveryTabs.deactivate()
-    expect(readyHistory(ws.capture()).raw).toBe('historical body')
+    expect(readyDiff(ws.capture()).title).toBe('a')
   })
 
-  it('tab switching A → B → History carries no residue', () => {
+  it('tab switching A → B carries no residue', () => {
     const ws = createWorkspace()
     ws.tabs.value = [
       docTab('notes/a.md', 'body A', { revision: 2, savedRevision: 1, saveStatus: 'dirty' }),
@@ -341,23 +320,6 @@ describe('VaultView workspace AI capture over real state', () => {
     expect(readyDocument(ws.capture()).raw).toBe('body A')
 
     ws.activePath.value = 'notes/b.md'
-    expect(readyDocument(ws.capture()).raw).toBe('body B')
-
-    ws.historySnapshots.openCachedRevision({
-      documentPath: 'notes/a.md',
-      documentTitle: 'a',
-      revisionId: 'rev-9',
-      revisionTime: 9,
-      summary: 's',
-    }, 'A revision body')
-    const history = readyHistory(ws.capture())
-    expect(history.identity.path).toBe('notes/a.md')
-    expect(history.raw).toBe('A revision body')
-    expect(JSON.stringify(history)).not.toContain('body B')
-
-    ws.historySnapshots.viewCurrent()
-    // Back to the route document, which is still B — A's dirty body
-    // never resurfaces on the way back.
     expect(readyDocument(ws.capture()).raw).toBe('body B')
   })
 

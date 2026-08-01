@@ -70,9 +70,9 @@ describe('EditorTabs interaction wiring', () => {
   it('renders the menu contract and maps menu intents to component emits', async () => {
     const tabs = [
       makeTab('a'),
-      makeTab('history:b', {
-        kind: 'history',
-        label: 'History B',
+      makeTab('diff:b', {
+        kind: 'diff',
+        label: 'Diff B',
         documentPath: 'notes/b',
       }),
       makeTab('c'),
@@ -82,7 +82,7 @@ describe('EditorTabs interaction wiring', () => {
       attachTo: document.body,
     })
 
-    await openPointerMenu(wrapper, 'history:b')
+    await openPointerMenu(wrapper, 'diff:b')
     expect(menuButtons().map((button) => button.textContent)).toEqual([
       '关闭',
       '关闭其它',
@@ -99,13 +99,13 @@ describe('EditorTabs interaction wiring', () => {
     await flushPromises()
     expect(wrapper.emitted('close-many')).toEqual([[['c']]])
 
-    await openPointerMenu(wrapper, 'history:b')
+    await openPointerMenu(wrapper, 'diff:b')
     menuButtons().find((button) => button.textContent === '复制路径')!.click()
     await flushPromises()
     expect(wrapper.emitted('copy-path')).toEqual([['notes/b']])
     expect(wrapper.emitted('select')).toBeUndefined()
 
-    await openPointerMenu(wrapper, 'history:b')
+    await openPointerMenu(wrapper, 'diff:b')
     menuButtons().find((button) => button.textContent === '在文件树中显示')!.click()
     await flushPromises()
     expect(wrapper.emitted('reveal-in-tree')).toEqual([['notes/b']])

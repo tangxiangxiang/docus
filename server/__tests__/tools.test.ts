@@ -666,20 +666,6 @@ describe('TOOL_DEFINITIONS', () => {
 // derivation, guard table, canonicalization) is unit-tested in
 // tool-safety.test.ts; the runChat loop layer lives in chat.test.ts.
 
-function historySnapshot(path = 'notes/a'): AiLiveContextSnapshot {
-  return {
-    v: 1,
-    kind: 'history',
-    capturedAt: 1,
-    vaultId: 'vault-a',
-    workspaceTabId: `history:${path}`,
-    readOnly: true,
-    identity: { path, revisionId: 'rev-1', revisionTime: 1 },
-    title: 'A',
-    raw: 'HISTORICAL_BODY',
-  } as never
-}
-
 function diffSnapshot(path = 'notes/a'): AiLiveContextSnapshot {
   return {
     v: 1,
@@ -767,11 +753,10 @@ describe('Edit-10.4 tool safety: executeToolCall with safety policy', () => {
     })
   })
 
-  describe('read-only contexts: History / Diff / Recovery content / Recovery diff', () => {
+  describe('read-only contexts: Diff / Recovery content / Recovery diff', () => {
     beforeEach(() => seed('notes/a', DISK_RAW, 'doc-a', 'Original Title'))
 
     const contexts: Array<[string, AiLiveContextSnapshot]> = [
-      ['History', historySnapshot()],
       ['Diff', diffSnapshot()],
       ['Recovery content', recoverySnapshot('content')],
       ['Recovery diff', recoverySnapshot('diff')],

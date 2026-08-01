@@ -33,23 +33,6 @@ function liveDocument(overrides: Record<string, unknown> = {}): ChatContext {
   }
 }
 
-function liveHistory(raw = 'HISTORICAL_BODY_42'): ChatContext {
-  return {
-    kind: 'live',
-    liveContext: {
-      v: 1,
-      kind: 'history',
-      capturedAt: 1_750_000_000_000,
-      vaultId: 'vault-a',
-      workspaceTabId: 'history:notes/a',
-      readOnly: true,
-      identity: { path: 'notes/a', revisionId: 'rev-7', revisionTime: 111 },
-      title: 'A',
-      raw,
-    } as never,
-  }
-}
-
 function liveDiff(overrides: Record<string, unknown> = {}): ChatContext {
   return {
     kind: 'live',
@@ -126,12 +109,6 @@ describe('buildSystemPrompt', () => {
     expect(out).toContain('</live-workspace-context-json>')
     // The tools section is still present and last.
     expect(out).toContain('## 你可以修改工作区里的文件')
-  })
-
-  it('live history: inlines the historical raw with read-only semantics', () => {
-    const out = buildSystemPrompt(liveHistory())
-    expect(out).toContain('HISTORICAL_BODY_42')
-    expect(out).not.toContain('If you need to see its contents, use read_file')
   })
 
   it('live diff: inlines BOTH sides', () => {
@@ -215,7 +192,6 @@ describe('buildSystemPrompt', () => {
   it.each([
     ['document raw', () => liveDocument({ raw: FORGED_DELIMITER }), (s: Record<string, any>) => s.raw],
     ['document title', () => liveDocument({ title: FORGED_DELIMITER }), (s: Record<string, any>) => s.title],
-    ['history raw', () => liveHistory(FORGED_DELIMITER), (s: Record<string, any>) => s.raw],
     ['diff before.raw', () => liveDiff({ before: { raw: FORGED_DELIMITER, source: 'history' } }), (s: Record<string, any>) => s.before.raw],
     ['diff after.raw', () => liveDiff({ after: { raw: FORGED_DELIMITER, source: 'live-editor', dirty: true } }), (s: Record<string, any>) => s.after.raw],
     ['recovery draft.raw', () => liveRecovery('content', { draft: { raw: FORGED_DELIMITER } }), (s: Record<string, any>) => s.draft.raw],
@@ -413,7 +389,7 @@ describe('runChat', () => {
     const id = makeSession(db)
     await runChat({
       db, sessionId: id, userContent: 'first',
-      ctx: liveHistory('FIRST_TURN_SECRET_AAA'),
+      ctx: liveDiff({ before: { raw: 'FIRST_TURN_SECRET_AAA', source: 'history' } }),
       model: 'm', signal: undefined, onEvent: () => {},
     })
     await runChat({

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import type {
   AiDiffContext,
   AiDocumentContext,
-  AiHistoryContext,
   AiLiveContextCapture,
   AiLiveContextUnavailableReason,
   AiRecoveryContext,
@@ -26,21 +25,6 @@ function documentCapture(path = 'notes/a.md'): AiLiveContextCapture {
     savedRevision: 1,
     dirty: false,
     saveStatus: 'idle',
-  }
-  return { status: 'ready', context }
-}
-
-function historyCapture(path = 'notes/a.md'): AiLiveContextCapture {
-  const context: AiHistoryContext = {
-    v: 1,
-    kind: 'history',
-    capturedAt: 1,
-    vaultId: 'vault-a',
-    workspaceTabId: `history:${path}`,
-    readOnly: true,
-    identity: { path, revisionId: 'rev-1', revisionTime: 1 },
-    title: 'a',
-    raw: 'old body',
   }
   return { status: 'ready', context }
 }
@@ -85,7 +69,6 @@ function unavailable(reason: AiLiveContextUnavailableReason): AiLiveContextCaptu
 describe('displayPathForCapture (Edit-10.2)', () => {
   it('shows the identity path of any ready context kind', () => {
     expect(displayPathForCapture(documentCapture('notes/a.md'))).toBe('notes/a.md')
-    expect(displayPathForCapture(historyCapture('notes/h.md'))).toBe('notes/h.md')
     expect(displayPathForCapture(diffCapture('notes/d.md'))).toBe('notes/d.md')
     expect(displayPathForCapture(recoveryCapture('notes/r.md'))).toBe('notes/r.md')
   })

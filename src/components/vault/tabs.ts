@@ -27,13 +27,14 @@ export interface Tab {
   serverMtime: number
 }
 
-/** Navigation-only tab shape. Editable documents and read-only history
- * snapshots map into this at the workspace boundary without sharing state. */
+/** Navigation-only tab shape. Editable documents and read-only diff /
+ * recovery viewers map into this at the workspace boundary without sharing
+ * state. */
 export interface WorkspaceTab {
   id: string
   label: string
   title: string
   save: DocumentSavePresentation
-  kind: 'document' | 'history' | 'diff' | 'recovery'
+  kind: 'document' | 'diff' | 'recovery'
   documentPath?: string | null
 }

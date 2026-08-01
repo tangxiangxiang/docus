@@ -9,7 +9,7 @@ import {
   type HistoryCommitItem,
   type HistoryFileItem,
 } from '../../composables/vault/useHistoryTimeline'
-import type { HistoryRevisionSelection } from '../../composables/vault/useHistorySnapshots'
+import type { HistoryRevisionSelection } from '../../composables/vault/useHistoryComparisons'
 import type {
   FileHistoryCommitItem,
   FileHistoryState,

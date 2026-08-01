@@ -25,7 +25,6 @@ import { useHistoryCommit } from '../composables/vault/useHistoryCommit'
 import { useHistoryWithdraw } from '../composables/vault/useHistoryWithdraw'
 import { resolveFileHistoryTarget, useFileHistory } from '../composables/vault/useFileHistory'
 import { createPathMutationLock } from '../composables/vault/pathMutationLock'
-import { useHistorySnapshots, type HistoryRevisionSelection } from '../composables/vault/useHistorySnapshots'
 import {
   useHistoryRestore,
   type HistoryRestoreRequest,
@@ -35,6 +34,7 @@ import {
   getLoadedEditorDocument,
   useHistoryComparisons,
   type HistoryComparison,
+  type HistoryRevisionSelection,
 } from '../composables/vault/useHistoryComparisons'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
@@ -62,7 +62,6 @@ import ActivityBar from '../components/vault/ActivityBar.vue'
 import SettingsModal from '../components/vault/SettingsModal.vue'
 import DocumentMetadataModal from '../components/vault/DocumentMetadataModal.vue'
 import HistoryPanel from '../components/vault/HistoryPanel.vue'
-import HistorySnapshotPane from '../components/vault/HistorySnapshotPane.vue'
 import HistoryComparisonPane from '../components/vault/HistoryComparisonPane.vue'
 import DraftRecoveryPrompt from '../components/vault/DraftRecoveryPrompt.vue'
 import DraftRecoveryPane from '../components/vault/DraftRecoveryPane.vue'
@@ -169,7 +168,6 @@ const vaultRef = shallowRef<HTMLElement | null>(null)
 const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
 const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
-const snapshotPaneRef = ref<InstanceType<typeof HistorySnapshotPane> | null>(null)
 const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>(null)
 const recoveryPaneRef = ref<InstanceType<typeof DraftRecoveryPane> | null>(null)
 const workspaceTabOrder = ref<string[]>([])
@@ -473,8 +471,6 @@ const vaultContext = createVaultContext({
 })
 provideVaultContext(vaultContext)
 onBeforeUnmount(() => { vaultContext.dispose() })
-const historySnapshots = useHistorySnapshots()
-const activeHistorySnapshot = historySnapshots.activeSnapshot
 const historyComparisons = useHistoryComparisons({
   getCurrentDocument(path) {
     return getLoadedEditorDocument(tabs.value, path)
@@ -523,7 +519,6 @@ async function openRecoveryView(
     const item = recoveryItem(recoveryId)
     if (!item || item.status !== 'ready') return
     historyComparisons.deactivate()
-    historySnapshots.viewCurrent()
     recoveryTabs.open(item, view)
     draftRecovery.dismissForSession(recoveryId)
   })
@@ -595,7 +590,6 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
 
     recoveryTabs.deactivate()
     historyComparisons.deactivate()
-    historySnapshots.viewCurrent()
     // Open WITHOUT a workspace refresh: Recovery has already certified
     // this record through its stable identity and the current-document
     // interface, and the reclassification right below re-verifies it
@@ -858,11 +852,6 @@ const historyWithdraw = useHistoryWithdraw({
     )))
   },
   closeDroppedRevision(sha) {
-    historySnapshots.closeSnapshots(
-      historySnapshots.snapshots.value
-        .filter((snapshot) => snapshot.revisionId === sha)
-        .map((snapshot) => snapshot.tabId),
-    )
     historyComparisons.closeComparisons(
       historyComparisons.comparisons.value
         .filter((comparison) => comparison.revisionId === sha)
@@ -871,14 +860,14 @@ const historyWithdraw = useHistoryWithdraw({
   },
 })
 
-function restoreSource(source: typeof activeHistorySnapshot.value | HistoryComparison): HistoryRestoreSource | null {
+function restoreSource(source: HistoryComparison): HistoryRestoreSource | null {
   if (!source || source.status !== 'ready') return null
   return {
     documentPath: source.documentPath,
     documentTitle: source.documentTitle,
     revisionId: source.revisionId,
     revisionTime: source.revisionTime,
-    historicalRaw: 'rawMarkdown' in source ? source.rawMarkdown : source.oldRaw,
+    historicalRaw: source.oldRaw,
   }
 }
 
@@ -913,9 +902,7 @@ const historyRestore = useHistoryRestore({
   onConflict(request) {
     toast.info(t('history.document_mutation_in_progress'))
     void nextTick(() => {
-      if (activeHistorySnapshot.value?.documentPath === request.documentPath) {
-        snapshotPaneRef.value?.focusViewer()
-      } else if (activeHistoryComparison.value?.documentPath === request.documentPath) {
+      if (activeHistoryComparison.value?.documentPath === request.documentPath) {
         comparisonPaneRef.value?.focusViewer()
       }
     })
@@ -935,7 +922,7 @@ const historyRestore = useHistoryRestore({
   },
 })
 
-function restoreHistoricalVersion(source: typeof activeHistorySnapshot.value | HistoryComparison): void {
+function restoreHistoricalVersion(source: HistoryComparison): void {
   const captured = restoreSource(source)
   if (captured) void historyRestore.restore(captured)
 }
@@ -953,14 +940,6 @@ const naturalWorkspaceTabs = computed<WorkspaceTab[]>(() => [
     save: deriveDocumentSavePresentation(tab),
     kind: 'document' as const,
     documentPath: tab.path,
-  })),
-  ...historySnapshots.snapshots.value.map((snapshot) => ({
-    id: snapshot.tabId,
-    label: `${snapshot.documentTitle} (${t('history.snapshot_tab_suffix')})`,
-    title: snapshot.documentTitle,
-    save: deriveDocumentSavePresentation(null),
-    kind: 'history' as const,
-    documentPath: snapshot.documentPath,
   })),
   ...historyComparisons.comparisons.value.map((comparison) => ({
     id: comparison.tabId,
@@ -995,14 +974,13 @@ const workspaceTabs = computed<WorkspaceTab[]>(() => {
     .filter((tab): tab is WorkspaceTab => Boolean(tab))
 })
 const activeSavePresentation = computed(() => (
-  activeHistorySnapshot.value || activeHistoryComparison.value || activeDraftRecovery.value
+  activeHistoryComparison.value || activeDraftRecovery.value
     ? deriveDocumentSavePresentation(null)
     : deriveDocumentSavePresentation(activeTab.value)
 ))
 const activeWorkspaceTabId = computed(() => (
   activeDraftRecovery.value?.tabId
   ?? activeHistoryComparison.value?.tabId
-  ?? activeHistorySnapshot.value?.tabId
   ?? activePath.value
 ))
 // Bind the AI capture delegate now that every workspace authority exists.
@@ -1013,7 +991,6 @@ captureWorkspaceAiContext = () => captureAiLiveContext({
   vaultId: vaultId.value,
   activeWorkspaceTabId: activeWorkspaceTabId.value,
   documentTabs: tabs.value,
-  historySnapshots: historySnapshots.snapshots.value,
   historyComparisons: historyComparisons.comparisons.value,
   recoveryTabs: recoveryTabs.tabs.value,
 }, {
@@ -1054,14 +1031,12 @@ async function reorderWorkspaceTabs(request: WorkspaceTabReorderRequest): Promis
 async function openPost(path: string, options: { refresh?: boolean } = {}): Promise<void> {
   recoveryTabs.deactivate()
   historyComparisons.deactivate()
-  historySnapshots.viewCurrent()
   await openEditorPost(path, options)
 }
 
 async function selectWorkspaceTab(id: string, focusViewer = true): Promise<void> {
   if (recoveryTabs.tabs.value.some((recovery) => recovery.tabId === id)) {
     historyComparisons.deactivate()
-    historySnapshots.viewCurrent()
     recoveryTabs.select(id)
     if (focusViewer) {
       await nextTick()
@@ -1069,24 +1044,14 @@ async function selectWorkspaceTab(id: string, focusViewer = true): Promise<void>
     }
   } else if (historyComparisons.comparisons.value.some((comparison) => comparison.tabId === id)) {
     recoveryTabs.deactivate()
-    historySnapshots.viewCurrent()
     historyComparisons.selectComparison(id)
     if (focusViewer) {
       await nextTick()
       comparisonPaneRef.value?.focusViewer()
     }
-  } else if (historySnapshots.snapshots.value.some((snapshot) => snapshot.tabId === id)) {
-    recoveryTabs.deactivate()
-    historyComparisons.deactivate()
-    historySnapshots.selectSnapshot(id)
-    if (focusViewer) {
-      await nextTick()
-      snapshotPaneRef.value?.focusViewer()
-    }
   } else {
     recoveryTabs.deactivate()
     historyComparisons.deactivate()
-    historySnapshots.viewCurrent()
     selectEditorTab(id)
     if (focusViewer) {
       await nextTick()
@@ -1100,10 +1065,8 @@ async function closeWorkspaceTab(id: string): Promise<void> {
     workspaceTabs: workspaceTabs.value,
     activeId: activeWorkspaceTabId.value,
     comparisons: historyComparisons.comparisons.value,
-    snapshotTabIds: historySnapshots.snapshots.value.map((snapshot) => snapshot.tabId),
     closeEditorTab,
     closeComparison: historyComparisons.closeComparison,
-    closeSnapshot: historySnapshots.closeSnapshot,
     closeRecovery: recoveryTabs.close,
     refreshDocumentComparison: historyComparisons.refreshDocumentComparison,
   })
@@ -1133,7 +1096,6 @@ async function closeManyWorkspaceTabs(ids: string[]): Promise<void> {
     comparisons: () => historyComparisons.comparisons.value,
     confirmEditorTabs: confirmCloseEditorTabs,
     closeEditorTabsConfirmed: closeManyEditorTabsConfirmed,
-    closeSnapshots: historySnapshots.closeSnapshots,
     closeComparisons: historyComparisons.closeComparisons,
     closeRecoveries: recoveryTabs.closeMany,
     refreshDocumentComparison: historyComparisons.refreshDocumentComparison,
@@ -1179,7 +1141,6 @@ async function revealWorkspaceTabInTree(path: string): Promise<void> {
 function onVaultKeydown(event: KeyboardEvent): void {
   const readOnlyTab = activeDraftRecovery.value
     ?? activeHistoryComparison.value
-    ?? activeHistorySnapshot.value
   const meta = event.metaKey || event.ctrlKey
   const activeId = activeWorkspaceTabId.value
   if (meta && event.key.toLowerCase() === 'w' && activeId) {
@@ -1210,27 +1171,17 @@ function onVaultKeydown(event: KeyboardEvent): void {
     event.preventDefault()
     return
   }
-  // A history snapshot keeps Monaco mounted only to preserve its model,
-  // undo stack, and view state. Never forward snapshot key events to that
+  // A history comparison keeps Monaco mounted only to preserve its model,
+  // undo stack, and view state. Never forward comparison key events to that
   // hidden editable document; unhandled keys belong to the read-only viewer.
 }
 
-async function openHistoryRevision(selection: HistoryRevisionSelection): Promise<void> {
+async function openHistoryComparison(selection: HistoryRevisionSelection): Promise<void> {
   recoveryTabs.deactivate()
-  historyComparisons.deactivate()
-  const request = historySnapshots.openRevision(selection)
+  const request = historyComparisons.openComparison(selection)
   await nextTick()
-  snapshotPaneRef.value?.focusViewer()
+  comparisonPaneRef.value?.focusViewer()
   await request
-}
-
-async function viewCurrentDocument(path: string): Promise<void> {
-  recoveryTabs.deactivate()
-  historyComparisons.deactivate()
-  historySnapshots.viewCurrent()
-  await openEditorPost(path)
-  await nextTick()
-  editorTabsRef.value?.focusTab(path)
 }
 
 async function viewCurrentRecoveryDocument(recoveryId: string): Promise<void> {
@@ -1246,7 +1197,6 @@ async function viewCurrentRecoveryDocument(recoveryId: string): Promise<void> {
   }
   recoveryTabs.deactivate()
   historyComparisons.deactivate()
-  historySnapshots.viewCurrent()
   await openEditorPost(disk.documentPath)
   // Opening by path crosses a network boundary during which that path may be
   // reused by another stable document identity. Reclassify after the open and
@@ -1286,30 +1236,6 @@ async function viewCurrentRecoveryDocument(recoveryId: string): Promise<void> {
   editorTabsRef.value?.focusTab(refreshedDisk.documentPath)
 }
 
-async function openHistoryComparison(snapshot: typeof activeHistorySnapshot.value): Promise<void> {
-  if (!snapshot || snapshot.status !== 'ready') return
-  recoveryTabs.deactivate()
-  historySnapshots.viewCurrent()
-  const request = historyComparisons.openComparison(snapshot)
-  await nextTick()
-  comparisonPaneRef.value?.focusViewer()
-  await request
-}
-
-async function viewHistoricalComparison(comparison: HistoryComparison): Promise<void> {
-  recoveryTabs.deactivate()
-  historyComparisons.deactivate()
-  historySnapshots.openCachedRevision({
-    documentPath: comparison.documentPath,
-    documentTitle: comparison.documentTitle,
-    revisionId: comparison.revisionId,
-    revisionTime: comparison.revisionTime,
-    summary: comparison.summary,
-  }, comparison.oldRaw)
-  await nextTick()
-  snapshotPaneRef.value?.focusViewer()
-}
-
 const editorLinkTargets = computed(() => posts.value.map((post) => ({ path: post.path, title: post.title })))
 
 async function onMetadataSaved(metadata: DocumentMetadata) {
@@ -1346,7 +1272,6 @@ async function createMissingWikiNote(ref: string) {
 async function copyActiveContent() {
   const raw = activeDraftRecovery.value?.draftRaw
     ?? activeHistoryComparison.value?.newRaw
-    ?? activeHistorySnapshot.value?.rawMarkdown
     ?? activeTab.value?.raw
   if (raw === undefined) return
   try {
@@ -1391,17 +1316,6 @@ const wikiResolver = (ref: string, _anchor?: string) => {
     alias: ref,
   }
 }
-const historyWikiResolver = (ref: string, _anchor?: string) => {
-  const allPaths = Array.from(linkIndex.value.paths)
-  return {
-    target: resolveWikiTarget(ref, activeHistorySnapshot.value?.documentPath ?? '', allPaths),
-    alias: ref,
-  }
-}
-
-watch(activeHistorySnapshot, (snapshot) => {
-  if (snapshot && rightRailTab.value === 'ai') rightRailTab.value = 'toc'
-})
 watch(activeHistoryComparison, (comparison) => {
   if (comparison && rightRailTab.value === 'ai') rightRailTab.value = 'toc'
 })
@@ -1498,7 +1412,7 @@ watch(isReadMode, async (reading) => {
       :file-history="fileHistory"
       :posts="posts"
       @show-all-history="showAllHistory"
-      @open-revision="openHistoryRevision"
+      @open-revision="openHistoryComparison"
     />
     <DraftRecoveryCenter
       v-else-if="activePanel === 'recovery'"
@@ -1547,7 +1461,7 @@ watch(isReadMode, async (reading) => {
       <!-- Edit mode: single Monaco editor surface. -->
       <div
         v-if="!isReadMode"
-        v-show="!activeHistorySnapshot && !activeHistoryComparison && !activeDraftRecovery"
+        v-show="!activeHistoryComparison && !activeDraftRecovery"
         class="content"
       >
         <div
@@ -1584,7 +1498,7 @@ watch(isReadMode, async (reading) => {
            panel, tabs, and status bar above/below stay untouched so
            navigation still works while reading. -->
       <div
-        v-else-if="!activeHistorySnapshot && !activeHistoryComparison && !activeDraftRecovery"
+        v-else-if="!activeHistoryComparison && !activeDraftRecovery"
         class="content reading-content"
       >
         <!-- Only the active tab is mounted. Mounting one ReadingPane
@@ -1611,36 +1525,18 @@ watch(isReadMode, async (reading) => {
         </div>
       </div>
 
-      <div v-if="activeHistorySnapshot" class="content history-snapshot-content">
-        <HistorySnapshotPane
-          ref="snapshotPaneRef"
-          :snapshot="activeHistorySnapshot"
-          :resolver="historyWikiResolver"
-          :restoring="historyRestore.restoring.value && historyRestore.restoringPath.value === activeHistorySnapshot.documentPath"
-          :mutation-locked="historyMutationLock.has(`${activeHistorySnapshot.documentPath}.md`)"
-          @view-current="viewCurrentDocument"
-          @open-diff="openHistoryComparison"
-          @restore="restoreHistoricalVersion"
-          @retry="historySnapshots.retrySnapshot"
-          @close="closeWorkspaceTab"
-        />
-      </div>
-
-      <div v-if="activeHistoryComparison" class="content history-snapshot-content">
+      <div v-if="activeHistoryComparison" class="content">
         <HistoryComparisonPane
           ref="comparisonPaneRef"
           :comparison="activeHistoryComparison"
           :restoring="historyRestore.restoring.value && historyRestore.restoringPath.value === activeHistoryComparison.documentPath"
           :mutation-locked="historyMutationLock.has(`${activeHistoryComparison.documentPath}.md`)"
-          @view-historical="viewHistoricalComparison"
-          @view-current="viewCurrentDocument"
           @restore="restoreHistoricalVersion"
           @retry="historyComparisons.refreshComparison"
-          @close="closeWorkspaceTab"
         />
       </div>
 
-      <div v-if="activeDraftRecovery" class="content history-snapshot-content">
+      <div v-if="activeDraftRecovery" class="content">
         <DraftRecoveryPane
           ref="recoveryPaneRef"
           :recovery="activeDraftRecovery"
@@ -1663,22 +1559,22 @@ watch(isReadMode, async (reading) => {
     <TocPanel
       v-if="rightRailVisible"
       class="toc-panel-slot"
-      :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activeHistorySnapshot?.documentPath ?? activePath"
+      :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activePath"
       :posts="posts"
       :active-tab="rightRailTab"
-      :history-read-only="Boolean(activeHistorySnapshot || activeHistoryComparison || activeDraftRecovery)"
+      :history-read-only="Boolean(activeHistoryComparison || activeDraftRecovery)"
       @update:active-tab="rightRailTab = $event"
       @link-navigate="openPost"
     />
 
     <StatusBar
       class="status-bar-row"
-      :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activeHistorySnapshot?.documentPath ?? activePath"
+      :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activePath"
       :save="activeSavePresentation"
-      :error="activeHistorySnapshot || activeHistoryComparison || activeDraftRecovery ? null : (activeTab?.error ?? null)"
-      :size="activeDraftRecovery ? activeDraftRecovery.draftRaw.length : (activeHistoryComparison ? activeHistoryComparison.newRaw.length : (activeHistorySnapshot ? activeHistorySnapshot.rawMarkdown.length : activeSize))"
+      :error="activeHistoryComparison || activeDraftRecovery ? null : (activeTab?.error ?? null)"
+      :size="activeDraftRecovery ? activeDraftRecovery.draftRaw.length : (activeHistoryComparison ? activeHistoryComparison.newRaw.length : activeSize)"
       :focus-width="editorFocusWidth"
-      :external-kind="activeHistorySnapshot || activeHistoryComparison || activeDraftRecovery ? null : (activeTab?.externalKind ?? null)"
+      :external-kind="activeHistoryComparison || activeDraftRecovery ? null : (activeTab?.externalKind ?? null)"
       @toggle-focus-width="editorFocusWidth = !editorFocusWidth"
       @retry-save="doSaveNow"
       @copy-content="copyActiveContent"

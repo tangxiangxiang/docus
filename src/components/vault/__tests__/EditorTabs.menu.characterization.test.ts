@@ -29,8 +29,8 @@ const TABS = [
   makeTab('a'),
   makeTab('b'),
   makeTab('c'),
-  makeTab('history:c', {
-    kind: 'history',
+  makeTab('diff:c', {
+    kind: 'diff',
     documentPath: 'c',
   }),
 ]
@@ -92,7 +92,7 @@ describe('EditorTabs menu behavior characterization', () => {
       key: 'Escape',
       bubbles: true,
     }))
-    const source = wrapper.get<HTMLElement>('[data-tab-id="history:c"]')
+    const source = wrapper.get<HTMLElement>('[data-tab-id="diff:c"]')
     source.element.focus()
     await source.trigger('keydown', { key: 'ContextMenu' })
     await flushPromises()
@@ -215,7 +215,7 @@ describe('EditorTabs menu behavior characterization', () => {
     void wrapper.setProps({ tabs: [TABS[0]!, TABS[1]!, TABS[3]!] })
     await flushPromises()
 
-    expect(wrapper.emitted('close-many')).toEqual([[['c', 'history:c']]])
+    expect(wrapper.emitted('close-many')).toEqual([[['c', 'diff:c']]])
   })
 
   it('clamps using the rendered menu size and an 8px viewport margin', async () => {

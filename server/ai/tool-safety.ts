@@ -161,7 +161,6 @@ export function deriveToolSafetyPolicy(ctx: ChatContext): ToolSafetyPolicy {
   }
   const snapshot = ctx.liveContext
   switch (snapshot.kind) {
-    case 'history':
     case 'diff':
     case 'recovery':
       // Read-only workspace views. Even a Diff whose after-side is

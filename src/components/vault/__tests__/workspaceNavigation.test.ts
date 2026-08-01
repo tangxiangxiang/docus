@@ -11,53 +11,48 @@ function tab(id: string, kind: WorkspaceTab['kind'], documentPath?: string): Wor
 }
 
 describe('workspace History navigation', () => {
+  // The History workspace is gone — Diff is the only read-only revision
+  // tab. Closing a Diff falls back to its matching Current document.
   const tabs = [
     tab('inbox/a', 'document'),
     tab('inbox/b', 'document'),
-    tab('history:inbox/a', 'history', 'inbox/a'),
     tab('diff:inbox/a', 'diff', 'inbox/a'),
-    tab('history:inbox/b', 'history', 'inbox/b'),
     tab('diff:inbox/b', 'diff', 'inbox/b'),
   ]
 
-  it('closes Diff to its matching History tab', () => {
-    expect(fallbackAfterClosingWorkspaceTab(tabs, 'diff:inbox/a')).toBe('history:inbox/a')
+  it('closes Diff to its matching Current document', () => {
+    expect(fallbackAfterClosingWorkspaceTab(tabs, 'diff:inbox/a')).toBe('inbox/a')
   })
 
-  it('closes Diff to Current when matching History is absent', () => {
-    const withoutHistory = tabs.filter((item) => item.id !== 'history:inbox/a')
-    expect(fallbackAfterClosingWorkspaceTab(withoutHistory, 'diff:inbox/a')).toBe('inbox/a')
-  })
-
-  it('closes History to its matching Current document', () => {
-    expect(fallbackAfterClosingWorkspaceTab(tabs, 'history:inbox/b')).toBe('inbox/b')
+  it('falls back to the nearest remaining tab when no matching document is open', () => {
+    const withoutDocument = tabs.filter((item) => item.kind !== 'document')
+    expect(fallbackAfterClosingWorkspaceTab(withoutDocument, 'diff:inbox/a')).toBe('diff:inbox/b')
   })
 
   it('uses a nearest remaining tab without leaving a blank workspace', () => {
-    const onlySpecial = [tab('history:gone', 'history'), tab('inbox/next', 'document')]
-    expect(fallbackAfterClosingWorkspaceTab(onlySpecial, 'history:gone')).toBe('inbox/next')
+    const onlySpecial = [tab('diff:gone', 'diff'), tab('inbox/next', 'document')]
+    expect(fallbackAfterClosingWorkspaceTab(onlySpecial, 'diff:gone')).toBe('inbox/next')
   })
 
-  it('never crosses documents while a matching fallback exists', () => {
-    expect(fallbackAfterClosingWorkspaceTab(tabs, 'diff:inbox/b')).toBe('history:inbox/b')
+  it('activates the matching Diff when a Current document closes', () => {
+    expect(fallbackAfterClosingWorkspaceTab(tabs, 'inbox/b')).toBe('diff:inbox/b')
   })
 
-  it('activates History when the last Current document closes', () => {
+  it('activates a retained Diff after Close Others removes the current document', () => {
     const oneDocument = [
       tab('inbox/a', 'document'),
-      tab('history:inbox/a', 'history', 'inbox/a'),
       tab('diff:inbox/a', 'diff', 'inbox/a'),
     ]
     expect(fallbackAfterClosingWorkspaceTabs(oneDocument, ['inbox/a'], 'inbox/a'))
-      .toBe('history:inbox/a')
+      .toBe('diff:inbox/a')
   })
 
   it('activates the only retained special tab after Close Others', () => {
     expect(fallbackAfterClosingWorkspaceTabs(
       tabs,
-      tabs.filter((item) => item.id !== 'history:inbox/b').map((item) => item.id),
+      tabs.filter((item) => item.id !== 'diff:inbox/b').map((item) => item.id),
       'diff:inbox/a',
-    )).toBe('history:inbox/b')
+    )).toBe('diff:inbox/b')
   })
 
   it('returns null only when a batch leaves no workspace tabs', () => {

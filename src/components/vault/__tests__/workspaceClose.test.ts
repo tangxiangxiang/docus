@@ -8,7 +8,6 @@ import {
 
 const tabs: WorkspaceTab[] = [
   { id: 'a.md', label: 'A', title: 'A', save: deriveDocumentSavePresentation(null), kind: 'document' },
-  { id: 'history:a.md:r1', label: 'A History', title: 'A History', save: deriveDocumentSavePresentation(null), kind: 'history' },
   { id: 'diff:a.md', label: 'A Diff', title: 'A Diff', save: deriveDocumentSavePresentation(null), kind: 'diff' },
   { id: 'b.md', label: 'B', title: 'B', save: deriveDocumentSavePresentation(null), kind: 'document' },
 ]
@@ -17,25 +16,22 @@ describe('Workspace close coordination', () => {
   it('classifies mixed tabs by kind and confirms all documents once before any mutation', async () => {
     const calls: string[] = []
     const mixed: WorkspaceTab[] = [
-      { ...tabs[0]!, id: 'history-looking-document', kind: 'document', documentPath: 'a.md' },
-      { ...tabs[1]!, id: 'opaque-history', kind: 'history', documentPath: 'a.md' },
-      { ...tabs[2]!, id: 'opaque-diff', kind: 'diff', documentPath: 'b.md' },
+      { ...tabs[0]!, id: 'document-a', kind: 'document', documentPath: 'a.md' },
+      { ...tabs[1]!, id: 'opaque-diff', kind: 'diff', documentPath: 'b.md' },
     ]
     const result = await closeManyWorkspaceTabState(mixed.map((tab) => tab.id), {
       workspaceTabs: mixed,
-      activeId: 'opaque-history',
+      activeId: 'opaque-diff',
       comparisons: () => [],
       confirmEditorTabs: async (ids) => { calls.push(`confirm:${ids.join(',')}`); return true },
       closeEditorTabsConfirmed: (ids) => calls.push(`documents:${ids.join(',')}`),
-      closeSnapshots: (ids) => calls.push(`history:${ids.join(',')}`),
       closeComparisons: (ids) => calls.push(`diff:${ids.join(',')}`),
       refreshDocumentComparison: vi.fn().mockResolvedValue(true),
     })
 
     expect(calls).toEqual([
-      'confirm:history-looking-document',
-      'documents:history-looking-document',
-      'history:opaque-history',
+      'confirm:document-a',
+      'documents:document-a',
       'diff:opaque-diff',
     ])
     expect(result.closed).toBe(true)
@@ -58,10 +54,8 @@ describe('Workspace close coordination', () => {
       workspaceTabs: [tabs[0]!, recovery],
       activeId: recovery.id,
       comparisons: [],
-      snapshotTabIds: [],
       closeEditorTab,
       closeComparison: vi.fn(),
-      closeSnapshot: vi.fn(),
       closeRecovery,
       refreshDocumentComparison: vi.fn(),
     })
@@ -88,7 +82,6 @@ describe('Workspace close coordination', () => {
       comparisons: () => [],
       confirmEditorTabs,
       closeEditorTabsConfirmed: vi.fn(),
-      closeSnapshots: vi.fn(),
       closeComparisons: vi.fn(),
       closeRecoveries,
       refreshDocumentComparison: vi.fn(),
@@ -104,10 +97,8 @@ describe('Workspace close coordination', () => {
       workspaceTabs: tabs,
       activeId: 'diff:a.md',
       comparisons: [{ tabId: 'diff:a.md', documentPath: 'a.md' }],
-      snapshotTabIds: ['history:a.md:r1'],
       closeEditorTab: async () => { calls.push('close-current'); return true },
       closeComparison: vi.fn(),
-      closeSnapshot: vi.fn(),
       refreshDocumentComparison: async () => { calls.push('refresh-diff'); return true },
     })
 
@@ -117,7 +108,6 @@ describe('Workspace close coordination', () => {
 
   it('does not mutate any Workspace state when batch confirmation is cancelled', async () => {
     const closeEditorTabsConfirmed = vi.fn()
-    const closeSnapshots = vi.fn()
     const closeComparisons = vi.fn()
     const refreshDocumentComparison = vi.fn()
 
@@ -127,14 +117,12 @@ describe('Workspace close coordination', () => {
       comparisons: () => [{ tabId: 'diff:a.md', documentPath: 'a.md' }],
       confirmEditorTabs: async () => false,
       closeEditorTabsConfirmed,
-      closeSnapshots,
       closeComparisons,
       refreshDocumentComparison,
     })
 
     expect(result.closed).toBe(false)
     expect(closeEditorTabsConfirmed).not.toHaveBeenCalled()
-    expect(closeSnapshots).not.toHaveBeenCalled()
     expect(closeComparisons).not.toHaveBeenCalled()
     expect(refreshDocumentComparison).not.toHaveBeenCalled()
   })
@@ -155,7 +143,6 @@ describe('Workspace close coordination', () => {
       comparisons: () => remaining,
       confirmEditorTabs: async () => true,
       closeEditorTabsConfirmed: vi.fn(),
-      closeSnapshots: vi.fn(),
       closeComparisons: (ids) => {
         remaining = remaining.filter((comparison) => !ids.includes(comparison.tabId))
       },

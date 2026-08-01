@@ -40,20 +40,6 @@ function docSnapshot(overrides: Record<string, unknown> = {}): AiLiveContextSnap
   } as never
 }
 
-function historySnapshot(path = 'notes/a'): AiLiveContextSnapshot {
-  return {
-    v: 1,
-    kind: 'history',
-    capturedAt: 1,
-    vaultId: 'vault-a',
-    workspaceTabId: `history:${path}`,
-    readOnly: true,
-    identity: { path, revisionId: 'rev-1', revisionTime: 1 },
-    title: 'A',
-    raw: 'HISTORICAL_BODY',
-  } as never
-}
-
 function diffSnapshot(path = 'notes/a'): AiLiveContextSnapshot {
   return {
     v: 1,
@@ -190,7 +176,6 @@ describe('deriveToolSafetyPolicy', () => {
   })
 
   it.each([
-    ['History', () => live(historySnapshot())],
     ['Diff', () => live(diffSnapshot())],
     ['Recovery content', () => live(recoverySnapshot('content'))],
     ['Recovery diff', () => live(recoverySnapshot('diff'))],

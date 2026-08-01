@@ -18,7 +18,7 @@ function tab(id: string, kind: WorkspaceTab['kind'] = 'document'): WorkspaceTab 
   }
 }
 
-const tabs = [tab('a'), tab('history:a', 'history'), tab('diff:b', 'diff'), tab('c')]
+const tabs = [tab('a'), tab('recovery:a', 'recovery'), tab('diff:b', 'diff'), tab('c')]
 
 class TestDataTransfer {
   effectAllowed = 'uninitialized'
@@ -90,17 +90,17 @@ describe('EditorTabs reorder characterization', () => {
 
   it('emits a complete keyboard request without selecting the focused tab', async () => {
     const wrapper = mount(EditorTabs, { props: { tabs, activePath: 'a' } })
-    const history = wrapper.get('[data-tab-id="history:a"]')
+    const recovery = wrapper.get('[data-tab-id="recovery:a"]')
 
-    await history.trigger('keydown', {
+    await recovery.trigger('keydown', {
       key: 'ArrowRight',
       altKey: true,
       shiftKey: true,
     })
 
     expect(wrapper.emitted('reorder')).toEqual([[{
-      orderedIds: ['a', 'diff:b', 'history:a', 'c'],
-      movedId: 'history:a',
+      orderedIds: ['a', 'diff:b', 'recovery:a', 'c'],
+      movedId: 'recovery:a',
       input: 'keyboard',
     }]])
     expect(wrapper.emitted('select')).toBeUndefined()

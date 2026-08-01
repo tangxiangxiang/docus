@@ -1,7 +1,7 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import type { CommitRecord } from '../../lib/history-api'
-import type { HistoryRevisionSelection } from './useHistorySnapshots'
+import type { HistoryRevisionSelection } from './useHistoryComparisons'
 
 export interface HistoryFileItem {
   path: string

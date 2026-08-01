@@ -17,8 +17,8 @@ export interface VaultEditorContext {
  * AI live workspace context access (Edit-10.2).
  *
  * The AI context belongs to the WHOLE workspace, not the editor alone:
- * the active workspace tab may be a Document, a History snapshot, a
- * History comparison (diff), or a draft Recovery viewer, and only the
+ * the active workspace tab may be a Document, a History comparison
+ * (diff), or a draft Recovery viewer, and only the
  * workspace knows which. `capture()` returns one immutable snapshot of
  * exactly what that tab is showing right now.
  *

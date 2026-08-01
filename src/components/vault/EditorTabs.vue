@@ -270,7 +270,6 @@ function onContextMenu(e: MouseEvent, path: string) {
       class="tab"
       :class="{
         active: t.id === activePath,
-        history: t.kind === 'history',
         diff: t.kind === 'diff',
         'save-in-flight': t.kind === 'document' && t.save.inFlight,
         'save-attention': t.kind === 'document' && t.save.attention,

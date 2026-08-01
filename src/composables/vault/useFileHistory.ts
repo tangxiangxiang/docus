@@ -2,7 +2,7 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import * as api from '../../lib/history-api'
 import type { CommitRecord } from '../../lib/history-api'
 import type { PostSummary } from '../../lib/api'
-import type { HistoryRevisionSelection } from './useHistorySnapshots'
+import type { HistoryRevisionSelection } from './useHistoryComparisons'
 import { fallbackDocumentTitle } from './useHistoryTimeline'
 
 export interface FileHistoryTarget {

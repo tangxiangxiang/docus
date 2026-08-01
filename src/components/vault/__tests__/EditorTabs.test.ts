@@ -58,18 +58,18 @@ describe('EditorTabs (existing behavior)', () => {
     w.unmount()
   })
 
-  it('renders a read-only history presentation tab without a dirty marker', () => {
-    const historyTab = makeTab('history:inbox/redis', {
-      label: 'Redis Notes (History)',
+  it('renders a read-only diff presentation tab without a dirty marker', () => {
+    const historyTab = makeTab('diff:inbox/redis', {
+      label: 'Redis Notes (Diff)',
       title: 'Redis Notes',
-      kind: 'history',
+      kind: 'diff',
     })
     const w = mount(EditorTabs, {
       props: { tabs: [historyTab], activePath: historyTab.id },
     })
 
-    expect(w.get('.tab').classes()).toContain('history')
-    expect(w.get('.tab-title').text()).toBe('Redis Notes (History)')
+    expect(w.get('.tab').classes()).toContain('diff')
+    expect(w.get('.tab-title').text()).toBe('Redis Notes (Diff)')
     expect(w.find('.tab-dirty-indicator').exists()).toBe(false)
     expect(w.find('.tab-status-indicator').exists()).toBe(false)
   })
@@ -143,8 +143,8 @@ describe('EditorTabs (existing behavior)', () => {
       makeTab('a.md', { save: save({ status: 'saving', dirty: true, inFlight: true }) }),
       makeTab('b.md', { save: save({ status: 'dirty', dirty: true }) }),
       makeTab('c.md', { save: save({ status: 'error', dirty: true, retryable: true, attention: true }) }),
-      makeTab('history:a', { kind: 'history', save: save() }),
       makeTab('diff:a', { kind: 'diff', save: save() }),
+      makeTab('recovery:a', { kind: 'recovery', save: save() }),
     ]
     const wrapper = mount(EditorTabs, { props: { tabs, activePath: 'a.md' } })
     const rendered = wrapper.findAll('.tab')
@@ -224,14 +224,8 @@ describe('EditorTabs ARIA', () => {
     w.unmount()
   })
 
-  it('history and diff tabs do not include save status in their aria-label', () => {
+  it('diff tabs do not include save status in their aria-label', () => {
     const tabs = [
-      makeTab('history:a', {
-        kind: 'history',
-        label: 'Redis (History)',
-        title: 'Redis (History)',
-        save: save(),
-      }),
       makeTab('diff:a', {
         kind: 'diff',
         label: 'Redis (Diff)',
@@ -243,20 +237,18 @@ describe('EditorTabs ARIA', () => {
       props: { tabs, activePath: tabs[0]!.id },
     })
     const rendered = w.findAll('.tab')
-    expect(rendered[0]!.attributes('aria-label')).toBe('Redis (History)')
-    expect(rendered[1]!.attributes('aria-label')).toBe('Redis (Diff)')
-    // Save-status words must NOT appear in the history/diff aria-label.
+    expect(rendered[0]!.attributes('aria-label')).toBe('Redis (Diff)')
+    // Save-status words must NOT appear in the diff aria-label.
     expect(rendered[0]!.attributes('aria-label')).not.toContain('已保存')
-    expect(rendered[1]!.attributes('aria-label')).not.toContain('已保存')
   })
 
-  it('history and diff tabs do not display a save status in the tooltip', async () => {
+  it('diff tabs do not display a save status in the tooltip', async () => {
     useI18n().setLocale('zh')
     const tabs = [
-      makeTab('history:a', {
-        kind: 'history',
-        label: 'Redis (History)',
-        title: 'Redis (History)',
+      makeTab('diff:a', {
+        kind: 'diff',
+        label: 'Redis (Diff)',
+        title: 'Redis (Diff)',
       }),
     ]
     const w = mount(EditorTabs, {
@@ -267,7 +259,7 @@ describe('EditorTabs ARIA', () => {
     await tab.trigger('mouseenter')
     await flushPromises()
     const tooltip = document.querySelector('.tab-tooltip')!
-    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('Redis (History)')
+    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('Redis (Diff)')
     expect(tooltip.querySelector('.tab-tooltip-status')).toBeNull()
     w.unmount()
   })
@@ -461,18 +453,16 @@ describe('EditorTabs — round-2 regression tests', () => {
     w.unmount()
   })
 
-  // --- history/diff keep the original title semantics; the change to
+  // --- diff tabs keep the original title semantics; the change to
   // VaultView must not strip the document title from their aria-label.
-  it('history and diff tabs continue to surface their document title', () => {
+  it('diff tabs continue to surface their document title', () => {
     useI18n().setLocale('zh')
     const tabs = [
-      makeTab('history:redis', { kind: 'history', label: 'Redis (历史)', title: 'Redis' }),
       makeTab('diff:redis', { kind: 'diff', label: 'Redis (差异)', title: 'Redis' }),
     ]
     const w = mount(EditorTabs, { props: { tabs, activePath: tabs[0]!.id } })
     const rendered = w.findAll('.tab')
-    expect(rendered[0]!.attributes('aria-label')).toBe('Redis (历史)')
-    expect(rendered[1]!.attributes('aria-label')).toBe('Redis (差异)')
+    expect(rendered[0]!.attributes('aria-label')).toBe('Redis (差异)')
     expect(rendered[0]!.find('.tab-dirty-indicator').exists()).toBe(false)
     expect(rendered[0]!.find('.tab-status-indicator').exists()).toBe(false)
   })
@@ -612,21 +602,20 @@ describe('EditorTabs — round-4 regression (title is primary; basename fallback
   })
 
   // 6. History / Diff keep their existing label-based semantics.
-  it('scenario 6 — history/diff still use label and never expose filename/path/status', async () => {
+  it('scenario 6 — diff still uses label and never exposes filename/path/status', async () => {
     useI18n().setLocale('zh')
     const tabs = [
-      makeTab('history:redis', { kind: 'history', label: 'Redis (历史)', title: 'Redis' }),
       makeTab('diff:redis', { kind: 'diff', label: 'Redis (差异)', title: 'Redis' }),
     ]
     const w = mount(EditorTabs, {
       props: { tabs, activePath: tabs[0]!.id },
       attachTo: document.body,
     })
-    expect(w.findAll('.tab-title').map((el) => el.text())).toEqual(['Redis (历史)', 'Redis (差异)'])
+    expect(w.findAll('.tab-title').map((el) => el.text())).toEqual(['Redis (差异)'])
     await w.findAll('.tab')[0]!.trigger('mouseenter')
     await flushPromises()
     const tooltip = document.querySelector('.tab-tooltip')!
-    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('Redis (历史)')
+    expect(tooltip.querySelector('.tab-tooltip-title')!.textContent).toBe('Redis (差异)')
     expect(tooltip.querySelector('.tab-tooltip-filename')).toBeNull()
     expect(tooltip.querySelector('.tab-tooltip-path')).toBeNull()
     expect(tooltip.querySelector('.tab-tooltip-status')).toBeNull()

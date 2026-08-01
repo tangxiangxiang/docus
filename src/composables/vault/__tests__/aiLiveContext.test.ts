@@ -6,8 +6,6 @@ import {
   type AiDiffSource,
   type AiDocumentContext,
   type AiDocumentSource,
-  type AiHistoryContext,
-  type AiHistorySource,
   type AiLiveContextCapture,
   type AiLiveContextInput,
   type AiRecoveryContext,
@@ -17,7 +15,7 @@ import {
 function documentTab(overrides: Partial<AiDocumentSource> = {}): AiDocumentSource {
   return {
     path: 'inbox/ideas',
-    documentId: 'doc-a',
+    documentId: 'doc:inbox/ideas',
     title: 'Ideas',
     raw: '# Ideas\n\nlive body',
     revision: 5,
@@ -27,19 +25,6 @@ function documentTab(overrides: Partial<AiDocumentSource> = {}): AiDocumentSourc
     loadError: null,
     externalKind: null,
     externalRaw: null,
-    ...overrides,
-  }
-}
-
-function historySnapshot(overrides: Partial<AiHistorySource> = {}): AiHistorySource {
-  return {
-    tabId: 'history:inbox/redis',
-    documentPath: 'inbox/redis',
-    documentTitle: 'Redis Notes',
-    revisionId: 'rev-9',
-    revisionTime: 1752566260000,
-    rawMarkdown: '# Redis\n\nhistorical body',
-    status: 'ready',
     ...overrides,
   }
 }
@@ -83,7 +68,6 @@ function input(overrides: Partial<AiLiveContextInput> = {}): AiLiveContextInput 
     vaultId: 'vault',
     activeWorkspaceTabId: null,
     documentTabs: [],
-    historySnapshots: [],
     historyComparisons: [],
     recoveryTabs: [],
     ...overrides,
@@ -100,13 +84,6 @@ function readyDocument(capture: AiLiveContextCapture): AiDocumentContext {
   const context = readyContext(capture)
   expect(context.kind).toBe('document')
   if (context.kind !== 'document') throw new Error(`expected document context, got ${context.kind}`)
-  return context
-}
-
-function readyHistory(capture: AiLiveContextCapture): AiHistoryContext {
-  const context = readyContext(capture)
-  expect(context.kind).toBe('history')
-  if (context.kind !== 'history') throw new Error(`expected history context, got ${context.kind}`)
   return context
 }
 
@@ -128,164 +105,64 @@ const NOW = 1753084800000
 
 describe('captureAiLiveContext', () => {
   describe('document context', () => {
-    it('captures the latest tab.raw of a dirty document', () => {
-      const tab = documentTab({ raw: '# Ideas\n\nlatest keystroke' })
-      const capture = captureAiLiveContext(
-        input({ activeWorkspaceTabId: 'inbox/ideas', documentTabs: [tab] }),
-        { now: () => NOW },
-      )
-
-      expect(capture).toEqual({
-        status: 'ready',
-        context: {
-          v: 1,
-          kind: 'document',
-          capturedAt: NOW,
-          vaultId: 'vault',
-          workspaceTabId: 'inbox/ideas',
-          identity: { documentId: 'doc-a', path: 'inbox/ideas' },
-          title: 'Ideas',
-          raw: '# Ideas\n\nlatest keystroke',
-          revision: 5,
-          savedRevision: 4,
-          dirty: true,
-          saveStatus: 'dirty',
-        },
-      })
-    })
-
-    it('sends an empty body verbatim instead of falling back', () => {
+    it('sends the dirty active Document from the same live tab', () => {
       const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'inbox/ideas',
-        documentTabs: [documentTab({ raw: '', revision: 3, savedRevision: 3, saveStatus: 'saved' })],
-      }))
+        documentTabs: [documentTab({
+          revision: 3, savedRevision: 2, saveStatus: 'dirty',
+        })],
+      }), { now: () => NOW })
 
       const context = readyDocument(capture)
-      expect(context.raw).toBe('')
-      expect(context.dirty).toBe(false)
+
+      expect(context.identity).toEqual({ documentId: 'doc:inbox/ideas', path: 'inbox/ideas' })
+      expect(context.raw).toBe('# Ideas\n\nlive body')
+      expect(context.dirty).toBe(true)
+      expect(context.revision).toBe(3)
+      expect(context.savedRevision).toBe(2)
+      expect(context.saveStatus).toBe('dirty')
+      expect(context.workspaceTabId).toBe('inbox/ideas')
+      expect(context.capturedAt).toBe(NOW)
+      expect(context.vaultId).toBe('vault')
     })
 
-    it('only sends the active tab when two document tabs are open', () => {
-      const dirtyA = documentTab({ path: 'inbox/a', documentId: 'doc-a', raw: 'A body', saveStatus: 'dirty' })
-      const cleanB = documentTab({
-        path: 'inbox/b',
-        documentId: 'doc-b',
-        title: 'B',
-        raw: 'B body',
-        revision: 2,
-        savedRevision: 2,
-        saveStatus: 'saved',
-      })
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'inbox/b',
-        documentTabs: [dirtyA, cleanB],
-      }))
-
-      const context = readyDocument(capture)
-      expect(context.identity).toEqual({ documentId: 'doc-b', path: 'inbox/b' })
-      expect(context.raw).toBe('B body')
-      expect(JSON.stringify(context)).not.toContain('A body')
+    it('captures none when no tab is active', () => {
+      expect(captureAiLiveContext(input())).toEqual({ status: 'none' })
     })
 
-    it('never sends an inactive dirty tab while a clean tab is active', () => {
-      const dirtyA = documentTab({ path: 'inbox/a', raw: 'unsaved A', saveStatus: 'dirty' })
-      const cleanB = documentTab({
-        path: 'inbox/b',
-        documentId: 'doc-b',
-        raw: 'saved B',
-        revision: 1,
-        savedRevision: 1,
-        saveStatus: 'saved',
-      })
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'inbox/b',
-        documentTabs: [dirtyA, cleanB],
-      }))
-
-      const context = readyDocument(capture)
-      expect(context.raw).toBe('saved B')
-      expect(JSON.stringify(context)).not.toContain('unsaved A')
+    it('captures none when the vault id is missing', () => {
+      expect(captureAiLiveContext(input({
+        vaultId: null,
+        activeWorkspaceTabId: 'inbox/ideas',
+        documentTabs: [documentTab()],
+      }))).toEqual({ status: 'none' })
     })
 
-    it('reports loading instead of returning stale content', () => {
+    it('reports loading while a document is still loading', () => {
       const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'inbox/ideas',
-        documentTabs: [documentTab({ loading: true, raw: 'stale' })],
+        documentTabs: [documentTab({ loading: true })],
       }))
-
       expect(capture).toEqual({ status: 'unavailable', reason: 'loading' })
     })
 
-    it('reports load-error instead of returning stale content', () => {
+    it('reports load-error when a document failed to load', () => {
       const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'inbox/ideas',
-        documentTabs: [documentTab({ loadError: 'fetch failed', raw: 'stale' })],
+        documentTabs: [documentTab({ loadError: 'HTTP 500' })],
       }))
-
       expect(capture).toEqual({ status: 'unavailable', reason: 'load-error' })
     })
 
-    it('reports missing-identity when documentId is null', () => {
+    it('reports missing-identity when the document lacks a stable documentId', () => {
       const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'inbox/ideas',
         documentTabs: [documentTab({ documentId: null })],
       }))
-
       expect(capture).toEqual({ status: 'unavailable', reason: 'missing-identity' })
     })
 
-    it('reports missing-identity when documentId is undefined', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'inbox/ideas',
-        documentTabs: [documentTab({ documentId: undefined })],
-      }))
-
-      expect(capture).toEqual({ status: 'unavailable', reason: 'missing-identity' })
-    })
-
-    it('captures normally while saveStatus is offline', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'inbox/ideas',
-        documentTabs: [documentTab({ saveStatus: 'offline' })],
-      }))
-
-      const context = readyDocument(capture)
-      expect(context.saveStatus).toBe('offline')
-      expect(context.raw).toBe('# Ideas\n\nlive body')
-    })
-
-    it('uses the buffer revision, not the in-flight savingRevision', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'inbox/ideas',
-        // Mid-save: revision 7 is on screen, revision 6 is in flight.
-        documentTabs: [documentTab({ revision: 7, savedRevision: 5, saveStatus: 'saving' })],
-      }))
-
-      const context = readyDocument(capture)
-      expect(context.revision).toBe(7)
-      expect(context.savedRevision).toBe(5)
-      expect(context.dirty).toBe(true)
-    })
-
-    it('carries an external modified conflict with its raw', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'inbox/ideas',
-        documentTabs: [documentTab({
-          saveStatus: 'external',
-          externalKind: 'modified',
-          externalRaw: '# Ideas\n\nexternal version',
-        })],
-      }))
-
-      const context = readyDocument(capture)
-      expect(context.external).toEqual({
-        kind: 'modified',
-        raw: '# Ideas\n\nexternal version',
-      })
-      expect(context.raw).toBe('# Ideas\n\nlive body')
-    })
-
-    it('carries an external delete with a null raw', () => {
+    it('carries the external change conflict when present', () => {
       const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'inbox/ideas',
         documentTabs: [documentTab({
@@ -300,49 +177,33 @@ describe('captureAiLiveContext', () => {
     })
   })
 
-  describe('history context', () => {
-    it('sends the ready snapshot raw with its revision identity', () => {
+  describe('diff context', () => {
+    it('sends the ready diff with its historical and live after-sides', () => {
       const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'history:inbox/redis',
-        historySnapshots: [historySnapshot()],
+        activeWorkspaceTabId: 'diff:inbox/redis',
+        historyComparisons: [historyComparison()],
       }), { now: () => NOW })
 
-      expect(capture).toEqual({
-        status: 'ready',
-        context: {
-          v: 1,
-          kind: 'history',
-          capturedAt: NOW,
-          vaultId: 'vault',
-          workspaceTabId: 'history:inbox/redis',
-          readOnly: true,
-          identity: { path: 'inbox/redis', revisionId: 'rev-9', revisionTime: 1752566260000 },
-          title: 'Redis Notes',
-          raw: '# Redis\n\nhistorical body',
-        },
+      const context = readyDiff(capture)
+      expect(context.readOnly).toBe(true)
+      expect(context.identity).toEqual({
+        path: 'inbox/redis',
+        revisionId: 'rev-9',
+        revisionTime: 1752566260000,
+        currentDocumentId: null,
       })
+      expect(context.title).toBe('Redis Notes')
+      expect(context.before).toEqual({ raw: '# Redis\n\nold side', source: 'history' })
+      expect(context.after).toEqual({
+        raw: '# Redis\n\nsnapshot side',
+        source: 'comparison-snapshot',
+        dirty: false,
+      })
+      expect(context.workspaceTabId).toBe('diff:inbox/redis')
+      expect(context.capturedAt).toBe(NOW)
+      expect(context.vaultId).toBe('vault')
     })
 
-    it('reports loading before the snapshot is ready', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'history:inbox/redis',
-        historySnapshots: [historySnapshot({ status: 'loading', rawMarkdown: 'partial' })],
-      }))
-
-      expect(capture).toEqual({ status: 'unavailable', reason: 'loading' })
-    })
-
-    it('reports load-error even when a stale body is still held', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'history:inbox/redis',
-        historySnapshots: [historySnapshot({ status: 'error', rawMarkdown: '# stale' })],
-      }))
-
-      expect(capture).toEqual({ status: 'unavailable', reason: 'load-error' })
-    })
-  })
-
-  describe('diff context', () => {
     it('re-reads the after side from the live editor at capture time', () => {
       const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'diff:inbox/redis',
@@ -371,220 +232,38 @@ describe('captureAiLiveContext', () => {
       })
 
       const context = readyDiff(capture)
-      expect(context.after.raw).toBe('fresh buffer')
-      expect(context.after.source).toBe('live-editor')
-      expect(JSON.stringify(context)).not.toContain('stale snapshot')
+      expect(context.after).toEqual({ raw: 'fresh buffer', source: 'live-editor', dirty: true })
     })
 
-    it('falls back to the comparison snapshot when no editor is loaded', () => {
+    it('reports loading before the diff is ready', () => {
       const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'diff:inbox/redis',
-        historyComparisons: [historyComparison({ newRaw: '# Redis\n\nsnapshot side', currentDirty: true })],
-      }), { liveDocument: () => null })
-
-      const context = readyDiff(capture)
-      expect(context.after).toEqual({
-        raw: '# Redis\n\nsnapshot side',
-        source: 'comparison-snapshot',
-        dirty: true,
-      })
-      expect(context.identity.currentDocumentId).toBeNull()
-    })
-
-    it('defaults the live lookup to null when not injected', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'diff:inbox/redis',
-        historyComparisons: [historyComparison()],
-      }))
-
-      const context = readyDiff(capture)
-      expect(context.after.source).toBe('comparison-snapshot')
-      expect(context.identity.currentDocumentId).toBeNull()
-    })
-
-    it('reports missing-identity when the live editor lacks a documentId', () => {
-      // A loaded buffer with no stable identity (metadata missing, stale
-      // tab restore, path reuse in flight) must NOT be sent as the
-      // after side — and must NOT silently fall back to the comparison's
-      // stale newRaw either.
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'diff:inbox/redis',
-        historyComparisons: [historyComparison({ newRaw: '# Redis\n\nstale snapshot body' })],
-      }), {
-        liveDocument: () => ({ raw: '# Redis\n\nidentity-less buffer', dirty: true, documentId: null }),
-      })
-
-      expect(capture).toEqual({ status: 'unavailable', reason: 'missing-identity' })
-      expect(JSON.stringify(capture)).not.toContain('identity-less buffer')
-      expect(JSON.stringify(capture)).not.toContain('stale snapshot body')
-    })
-
-    it('reports loading and load-error for a non-ready comparison', () => {
-      const loading = captureAiLiveContext(input({
         activeWorkspaceTabId: 'diff:inbox/redis',
         historyComparisons: [historyComparison({ status: 'loading' })],
       }))
-      const errored = captureAiLiveContext(input({
+      expect(capture).toEqual({ status: 'unavailable', reason: 'loading' })
+    })
+
+    it('reports load-error when the diff is in error state', () => {
+      const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'diff:inbox/redis',
         historyComparisons: [historyComparison({ status: 'error' })],
       }))
-
-      expect(loading).toEqual({ status: 'unavailable', reason: 'loading' })
-      expect(errored).toEqual({ status: 'unavailable', reason: 'load-error' })
-    })
-  })
-
-  describe('recovery context', () => {
-    it('sends only the draft in content view, never the hidden disk body', () => {
-      // The tab's disk side IS readable here — content view must still
-      // not carry it, because the user is only looking at the draft.
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'recovery:vault:doc-a',
-        recoveryTabs: [recoveryTab({ view: 'content' })],
-      }), { now: () => NOW })
-
-      expect(capture).toEqual({
-        status: 'ready',
-        context: {
-          v: 1,
-          kind: 'recovery',
-          capturedAt: NOW,
-          vaultId: 'vault',
-          workspaceTabId: 'recovery:vault:doc-a',
-          readOnly: true,
-          identity: {
-            recoveryId: 'rec-1',
-            documentId: 'doc-a',
-            path: 'inbox/ideas',
-            source: 'primary',
-          },
-          title: 'Ideas',
-          decisionKind: 'divergent',
-          view: 'content',
-          draft: { raw: '# Ideas\n\ndraft body' },
-        },
-      })
-      if (capture.status !== 'ready') return
-      const context = readyRecovery(capture)
-      expect(context.disk).toBeUndefined()
-      expect(JSON.stringify(context)).not.toContain('disk body')
-    })
-
-    it('sends both sides in diff view', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'recovery:vault:doc-a',
-        recoveryTabs: [recoveryTab({ view: 'diff' })],
-      }))
-
-      const context = readyRecovery(capture)
-      expect(context.view).toBe('diff')
-      expect(context.draft.raw).toBe('# Ideas\n\ndraft body')
-      expect(context.disk).toEqual({ documentId: 'doc-a', raw: '# Ideas\n\ndisk body' })
-    })
-
-    it('preserves both documentIds on identity mismatch in diff view', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'recovery:vault:doc-a',
-        recoveryTabs: [recoveryTab({
-          decisionKind: 'identity-mismatch',
-          documentId: 'doc-a',
-          diskDocumentId: 'doc-b',
-          view: 'diff',
-        })],
-      }))
-
-      const context = readyRecovery(capture)
-      expect(context.identity.documentId).toBe('doc-a')
-      expect(context.disk?.documentId).toBe('doc-b')
-    })
-
-    it('downgrades diff view to content when the disk is readable but its raw is null', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'recovery:vault:doc-a',
-        recoveryTabs: [recoveryTab({
-          view: 'diff',
-          diskStatus: 'ready',
-          diskRaw: null,
-          diskDocumentId: null,
-        })],
-      }))
-
-      const context = readyRecovery(capture)
-      expect(context.view).toBe('content')
-      expect(context.draft.raw).toBe('# Ideas\n\ndraft body')
-      expect(context.disk).toBeUndefined()
-    })
-
-    it('carries a conflict source through the identity', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'recovery:vault:doc-a:rec-1',
-        recoveryTabs: [recoveryTab({ tabId: 'recovery:vault:doc-a:rec-1', source: 'conflict' })],
-      }))
-
-      const context = readyRecovery(capture)
-      expect(context.identity.source).toBe('conflict')
-    })
-
-    it('omits the disk block and downgrades the view when the disk is missing', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'recovery:vault:doc-a',
-        recoveryTabs: [recoveryTab({
-          view: 'diff',
-          diskStatus: 'missing',
-          diskRaw: null,
-          diskDocumentId: null,
-          decisionKind: 'missing-source',
-        })],
-      }))
-
-      const context = readyRecovery(capture)
-      expect(context.view).toBe('content')
-      expect(context.draft.raw).toBe('# Ideas\n\ndraft body')
-      expect(context.disk).toBeUndefined()
-    })
-
-    it('reports load-error for an errored recovery tab', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'recovery:vault:doc-a',
-        recoveryTabs: [recoveryTab({ status: 'error', draftRaw: 'stale' })],
-      }))
-
       expect(capture).toEqual({ status: 'unavailable', reason: 'load-error' })
     })
-  })
 
-  describe('resolution priority and workspace state', () => {
-    it('returns none when there is no active workspace tab', () => {
+    it('reports missing-identity when the live after-side has no documentId', () => {
       const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: null,
-        documentTabs: [documentTab()],
-      }))
+        activeWorkspaceTabId: 'diff:inbox/redis',
+        documentTabs: [documentTab({ path: 'inbox/redis', documentId: 'doc-r' })],
+        historyComparisons: [historyComparison()],
+      }), {
+        liveDocument: () => ({ raw: 'live', dirty: false, documentId: null }),
+      })
 
-      expect(capture).toEqual({ status: 'none' })
+      expect(capture).toEqual({ status: 'unavailable', reason: 'missing-identity' })
     })
 
-    it('returns none when there is no vault', () => {
-      const capture = captureAiLiveContext(input({
-        vaultId: null,
-        activeWorkspaceTabId: 'inbox/ideas',
-        documentTabs: [documentTab()],
-      }))
-
-      expect(capture).toEqual({ status: 'none' })
-    })
-
-    it('lets an active recovery win over loaded document tabs', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'recovery:vault:doc-a',
-        documentTabs: [documentTab({ raw: 'behind-the-dialog document' })],
-        recoveryTabs: [recoveryTab()],
-      }))
-
-      const context = readyRecovery(capture)
-      expect(JSON.stringify(context)).not.toContain('behind-the-dialog document')
-    })
-
-    it('lets an active diff win over the document tab for the same path', () => {
+    it('certifies the live after-side by the documentId that owns the open tab', () => {
       const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'diff:inbox/redis',
         documentTabs: [documentTab({ path: 'inbox/redis', documentId: 'doc-r' })],
@@ -594,26 +273,6 @@ describe('captureAiLiveContext', () => {
       })
 
       readyDiff(capture)
-    })
-
-    it('lets an active history snapshot win over document tabs', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'history:inbox/redis',
-        documentTabs: [documentTab({ path: 'inbox/redis', documentId: 'doc-r', raw: 'live buffer' })],
-        historySnapshots: [historySnapshot()],
-      }))
-
-      const context = readyHistory(capture)
-      expect(context.raw).toBe('# Redis\n\nhistorical body')
-    })
-
-    it('reports stale-workspace when the active id matches nothing', () => {
-      const capture = captureAiLiveContext(input({
-        activeWorkspaceTabId: 'inbox/closed-meanwhile',
-        documentTabs: [documentTab()],
-      }))
-
-      expect(capture).toEqual({ status: 'unavailable', reason: 'stale-workspace' })
     })
   })
 
@@ -643,6 +302,77 @@ describe('captureAiLiveContext', () => {
       const context = readyContext(capture)
       expect(context.capturedAt).toBe(1234567890)
     })
+
+    it('reports stale-workspace when the active id matches nothing', () => {
+      const capture = captureAiLiveContext(input({
+        activeWorkspaceTabId: 'inbox/closed-meanwhile',
+        documentTabs: [documentTab()],
+      }))
+
+      expect(capture).toEqual({ status: 'unavailable', reason: 'stale-workspace' })
+    })
+  })
+
+  describe('recovery context', () => {
+    it('sends the ready recovery in content view without the disk body', () => {
+      const capture = captureAiLiveContext(input({
+        activeWorkspaceTabId: 'recovery:vault:doc-a',
+        recoveryTabs: [recoveryTab({ view: 'content', draftRaw: 'draft body', diskRaw: 'disk body' })],
+      }))
+
+      const context = readyRecovery(capture)
+      expect(context.readOnly).toBe(true)
+      expect(context.view).toBe('content')
+      expect(context.draft).toEqual({ raw: 'draft body' })
+      expect(context.disk).toBeUndefined()
+    })
+
+    it('sends the ready recovery in diff view with the disk body when readable', () => {
+      const capture = captureAiLiveContext(input({
+        activeWorkspaceTabId: 'recovery:vault:doc-a',
+        recoveryTabs: [recoveryTab({ view: 'diff', draftRaw: 'draft side', diskRaw: 'disk side', diskDocumentId: 'doc-disk' })],
+      }))
+
+      const context = readyRecovery(capture)
+      expect(context.view).toBe('diff')
+      expect(context.draft).toEqual({ raw: 'draft side' })
+      expect(context.disk).toEqual({ documentId: 'doc-disk', raw: 'disk side' })
+    })
+
+    it('reports load-error when the recovery viewer is not ready', () => {
+      const capture = captureAiLiveContext(input({
+        activeWorkspaceTabId: 'recovery:vault:doc-a',
+        recoveryTabs: [recoveryTab({ status: 'error' })],
+      }))
+      expect(capture).toEqual({ status: 'unavailable', reason: 'load-error' })
+    })
+  })
+
+  describe('priority order', () => {
+    it('recovery wins over the diff when both tabs are active', () => {
+      const capture = captureAiLiveContext(input({
+        activeWorkspaceTabId: 'recovery:vault:doc-a',
+        historyComparisons: [historyComparison({ tabId: 'recovery:vault:doc-a' })],
+        recoveryTabs: [recoveryTab()],
+      }))
+
+      const context = readyRecovery(capture)
+      expect(context.draft).toEqual({ raw: '# Ideas\n\ndraft body' })
+    })
+
+    it('diff wins over the route document', () => {
+      const capture = captureAiLiveContext(input({
+        activeWorkspaceTabId: 'diff:inbox/redis',
+        documentTabs: [documentTab({ path: 'inbox/redis', documentId: 'doc-r' })],
+        historyComparisons: [historyComparison()],
+      }), {
+        liveDocument: () => ({ raw: 'live', dirty: false, documentId: 'doc-r' }),
+      })
+
+      const context = readyDiff(capture)
+      expect(context.title).toBe('Redis Notes')
+      expect(context.identity.path).toBe('inbox/redis')
+    })
   })
 })
 
@@ -670,16 +400,6 @@ describe('liveEditorForPath', () => {
   })
 
   it('returns null for a tab that failed to load', () => {
-    expect(liveEditorForPath(
-      [documentTab({ loadError: 'fetch failed' })],
-      'inbox/ideas',
-    )).toBeNull()
-  })
-
-  it('normalizes a missing documentId to null', () => {
-    expect(liveEditorForPath(
-      [documentTab({ documentId: undefined })],
-      'inbox/ideas',
-    )?.documentId).toBeNull()
+    expect(liveEditorForPath([documentTab({ loadError: 'HTTP 500' })], 'inbox/ideas')).toBeNull()
   })
 })

@@ -32,6 +32,7 @@ function comparison(overrides: Partial<HistoryComparison> = {}): HistoryComparis
 function mountPane(value: HistoryComparison) {
   return mount(HistoryComparisonPane, {
     props: { comparison: value },
+    attachTo: document.body,
     global: {
       stubs: {
         HistoryUnifiedDiff: {
@@ -43,47 +44,76 @@ function mountPane(value: HistoryComparison) {
   })
 }
 
-describe('HistoryComparisonPane', () => {
-  it('disables Restore while Create Version owns the document mutation lock', () => {
-    const wrapper = mount(HistoryComparisonPane, {
-      props: { comparison: comparison(), mutationLocked: true },
-    })
-    expect(wrapper.get('.history-restore-button').attributes('disabled')).toBeDefined()
-  })
+function teleportedMenu(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('.history-pane-menu')
+}
 
-  it('renders a directional read-only comparison and exposes navigation actions', async () => {
+describe('HistoryComparisonPane', () => {
+  it('renders a compact diff header with direction, stats, and ⋯ menu trigger', async () => {
     const wrapper = mountPane(comparison())
 
     expect(wrapper.get('h2').text()).toBe('Redis Notes')
-    expect(wrapper.text()).toContain('Comparing with current')
-    expect(wrapper.text()).toContain('Unsaved changes')
-    expect(wrapper.get('.unified-diff-stub').text()).toBe('inbox/redis\0revision-a / +1 −1')
-    expect(wrapper.text()).toContain('Older revision · revisio')
-    expect(wrapper.text()).toContain('Working tree')
     expect(wrapper.get('.history-diff-stats').text()).toContain('+1')
     expect(wrapper.get('.history-diff-stats').text()).toContain('−1')
-    expect(wrapper.get('.history-restore-button').text()).toBe('Restore this version')
+    expect(wrapper.get('.unified-diff-stub').text()).toBe('inbox/redis\0revision-a / +1 −1')
+    expect(wrapper.text()).toContain('revisio')
+    expect(wrapper.text()).toContain('Working tree')
 
-    const buttons = wrapper.findAll('.history-snapshot-toolbar button')
-    await buttons[0]!.trigger('click')
-    await buttons[1]!.trigger('click')
-    await buttons[2]!.trigger('click')
-    await buttons[3]!.trigger('click')
-    expect(wrapper.emitted('restore')?.[0]?.[0]).toMatchObject({ revisionId: 'revision-a' })
-    expect(wrapper.emitted('view-historical')?.[0]?.[0]).toMatchObject({ revisionId: 'revision-a' })
-    expect(wrapper.emitted('view-current')).toEqual([['inbox/redis']])
-    expect(wrapper.emitted('close')).toEqual([['diff:inbox/redis']])
+    // No prominent Restore button until the menu is opened.
+    expect(wrapper.find('.history-restore-button').exists()).toBe(false)
+    expect(wrapper.find('.history-pane-menu-trigger').exists()).toBe(true)
+
+    // The toolbar of multi-button actions that used to live on the
+    // comparison pane (View Historical / View Current / Close Diff) is
+    // gone — closing now belongs to the workspace tab, viewing the
+    // current version belongs to the document tab.
+    expect(wrapper.find('[role="toolbar"]').exists()).toBe(false)
   })
 
-  it('disables restore and announces the busy state while restoring', () => {
-    const wrapper = mountPane(comparison())
-    void wrapper.setProps({ restoring: true })
-
-    return wrapper.vm.$nextTick().then(() => {
-      expect(wrapper.get('section').attributes('aria-busy')).toBe('true')
-      expect(wrapper.get('.history-restore-button').attributes('disabled')).toBeDefined()
-      expect(wrapper.get('.history-restore-button').text()).toBe('Restoring...')
+  it('exposes a focus target on the diff heading', () => {
+    const wrapper = mount(HistoryComparisonPane, {
+      props: { comparison: comparison() },
+      attachTo: document.body,
+      global: { stubs: { HistoryUnifiedDiff: true } },
     })
+    wrapper.vm.focusViewer()
+    expect(document.activeElement).toBe(wrapper.get('h2').element)
+    wrapper.unmount()
+  })
+
+  it('opens a ⋯ menu with Restore that is disabled until the comparison is ready', async () => {
+    const wrapper = mountPane(comparison({ status: 'loading', diff: null }))
+    expect(teleportedMenu()).toBeNull()
+    expect(wrapper.find('.history-pane-menu-trigger').exists()).toBe(false)
+
+    await wrapper.setProps({ comparison: comparison() })
+    await wrapper.get('.history-pane-menu-trigger').trigger('click')
+    const menu = teleportedMenu()!
+    expect(menu).not.toBeNull()
+    expect(wrapper.get('.history-diff-header-meta').element.contains(menu)).toBe(true)
+    const menuItem = menu.querySelector('button')!
+    expect(menuItem.textContent).toContain('Restore')
+    menuItem.click()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('restore')?.[0]?.[0]).toMatchObject({ revisionId: 'revision-a' })
+  })
+
+  it('disables Restore while Create Version owns the document mutation lock', async () => {
+    const wrapper = mountPane(comparison({ status: 'ready', diff: comparison().diff }))
+    await wrapper.setProps({ mutationLocked: true })
+    await wrapper.get('.history-pane-menu-trigger').trigger('click')
+    const menuItem = teleportedMenu()!.querySelector('button')!
+    expect(menuItem.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('disables Restore and announces the busy state while restoring', async () => {
+    const wrapper = mountPane(comparison())
+    await wrapper.setProps({ restoring: true })
+
+    expect(wrapper.get('section').attributes('aria-busy')).toBe('true')
+    await wrapper.get('.history-pane-menu-trigger').trigger('click')
+    const menuItem = teleportedMenu()!.querySelector('button')!
+    expect(menuItem.hasAttribute('disabled')).toBe(true)
   })
 
   it('renders loading, error, retry, and identical states inline', async () => {
@@ -91,7 +121,7 @@ describe('HistoryComparisonPane', () => {
     expect(wrapper.get('[role="status"]').text()).toContain('Comparing versions')
 
     await wrapper.setProps({ comparison: comparison({ status: 'error', diff: null, error: null }) })
-    expect(wrapper.get('[role="alert"]').text()).toContain('Failed to load the current version')
+    expect(wrapper.get('[role="alert"]').text()).toContain('Failed to load the version comparison')
     await wrapper.get('[role="alert"] button').trigger('click')
     expect(wrapper.emitted('retry')).toEqual([['diff:inbox/redis']])
 
@@ -103,7 +133,6 @@ describe('HistoryComparisonPane', () => {
       }),
     })
     expect(wrapper.text()).toContain('identical')
-    expect(wrapper.text()).toContain('Latest version')
   })
 
   it('formats the revision date with the application locale', () => {
@@ -112,22 +141,8 @@ describe('HistoryComparisonPane', () => {
     try {
       const wrapper = mountPane(comparison())
       expect(wrapper.text()).toContain('2026年7月15日')
-      expect(wrapper.text()).toContain('历史版本')
-      expect(wrapper.text()).toContain('当前版本')
     } finally {
       setLocale('en')
     }
-  })
-
-  it('exposes a focus target for the comparison viewer', () => {
-    const wrapper = mount(HistoryComparisonPane, {
-      props: { comparison: comparison(), mutationLocked: true },
-      attachTo: document.body,
-      global: { stubs: { HistoryUnifiedDiff: true } },
-    })
-    wrapper.vm.focusViewer()
-    expect(document.activeElement).toBe(wrapper.get('h2').element)
-    expect(document.activeElement).not.toBe(wrapper.get('.history-restore-button').element)
-    wrapper.unmount()
   })
 })

@@ -1,6 +1,6 @@
 // Vault-scoped, read-only Git state used by the commit-first History timeline
 // and ActivityBar badge. Mutation workflows live in their focused composables
-// (snapshots, comparisons, and restore), so this service only owns shared log,
+// (comparisons and restore), so this service only owns shared log,
 // capability, and status hydration.
 
 import { computed, ref, watch, type Ref } from 'vue'

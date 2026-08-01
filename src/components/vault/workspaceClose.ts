@@ -13,10 +13,8 @@ export interface WorkspaceCloseDependencies {
   workspaceTabs: readonly WorkspaceTab[]
   activeId: string | null
   comparisons: readonly ComparisonRef[]
-  snapshotTabIds: readonly string[]
   closeEditorTab: (id: string) => Promise<boolean>
   closeComparison: (id: string) => void
-  closeSnapshot: (id: string) => void
   closeRecovery?: (id: string) => void
   refreshDocumentComparison: (path: string) => Promise<boolean>
 }
@@ -28,7 +26,6 @@ export interface WorkspaceCloseManyDependencies {
   confirmEditorTabs: (ids: string[]) => Promise<boolean>
   closeEditorTabsConfirmed: (ids: string[]) => void
   closeComparisons: (ids: string[]) => void
-  closeSnapshots: (ids: string[]) => void
   closeRecoveries?: (ids: string[]) => void
   refreshDocumentComparison: (path: string) => Promise<boolean>
 }
@@ -53,9 +50,6 @@ export async function closeWorkspaceTabState(
   switch (tab.kind) {
     case 'diff':
       deps.closeComparison(id)
-      break
-    case 'history':
-      deps.closeSnapshot(id)
       break
     case 'recovery':
       deps.closeRecovery?.(id)
@@ -90,7 +84,6 @@ export async function closeManyWorkspaceTabState(
     deps.activeId,
   )
   const closingTabs = deps.workspaceTabs.filter((tab) => closingIds.includes(tab.id))
-  const historyIds = closingTabs.filter((tab) => tab.kind === 'history').map((tab) => tab.id)
   const comparisonIds = closingTabs.filter((tab) => tab.kind === 'diff').map((tab) => tab.id)
   const documentIds = closingTabs.filter((tab) => tab.kind === 'document').map((tab) => tab.id)
   const recoveryIds = closingTabs.filter((tab) => tab.kind === 'recovery').map((tab) => tab.id)
@@ -101,7 +94,6 @@ export async function closeManyWorkspaceTabState(
   }
 
   deps.closeEditorTabsConfirmed(documentIds)
-  deps.closeSnapshots(historyIds)
   deps.closeComparisons(comparisonIds)
   deps.closeRecoveries?.(recoveryIds)
 

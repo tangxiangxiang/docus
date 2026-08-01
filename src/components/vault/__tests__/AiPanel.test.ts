@@ -12,7 +12,6 @@ import type { Tab } from '../../../components/vault/tabs'
 import type {
   AiDiffContext,
   AiDocumentContext,
-  AiHistoryContext,
   AiLiveContextCapture,
   AiLiveContextSnapshot,
   AiRecoveryContext,
@@ -70,19 +69,13 @@ function documentCapture(path = 'notes/a.md'): AiLiveContextCapture {
   return { status: 'ready', context }
 }
 
+// The history workspace is gone — "a read-only snapshot of a past
+// revision" is now expressed via the Diff context (which preserves
+// the same identity.path semantics from the panel's point of view).
+// historyCapture() aliases diffCapture() so the test suite that
+// exercises the read-only revision path still reads naturally.
 function historyCapture(path = 'notes/h.md'): AiLiveContextCapture {
-  const context: AiHistoryContext = {
-    v: 1,
-    kind: 'history',
-    capturedAt: 1,
-    vaultId: 'vault-a',
-    workspaceTabId: `history:${path}`,
-    readOnly: true,
-    identity: { path, revisionId: 'rev-1', revisionTime: 1 },
-    title: 'h',
-    raw: 'old body',
-  }
-  return { status: 'ready', context }
+  return diffCapture(path)
 }
 
 function diffCapture(path = 'notes/d.md'): AiLiveContextCapture {

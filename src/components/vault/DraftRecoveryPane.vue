@@ -36,7 +36,7 @@ defineExpose({ focusViewer })
         <span>{{ t('draft_recovery.local_only') }}</span>
       </div>
       <span class="history-readonly-badge">{{ t('history.read_only') }}</span>
-      <div class="history-snapshot-toolbar" role="toolbar" :aria-label="t('draft_recovery.toolbar')">
+      <div class="history-viewer-toolbar" role="toolbar" :aria-label="t('draft_recovery.toolbar')">
         <button
           v-if="recovery.canViewDiff && recovery.view !== 'diff'"
           type="button"

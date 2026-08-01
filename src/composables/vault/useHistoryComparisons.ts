@@ -1,9 +1,25 @@
 import { computed, ref } from 'vue'
-import type { HistorySnapshot } from './useHistorySnapshots'
+import * as historyApi from '../../lib/history-api'
 import { computeFileDiff } from '../../lib/file-diff'
 import type { FileDiff } from '../../lib/history-api'
 
 export type HistoryComparisonStatus = 'loading' | 'ready' | 'error'
+
+/**
+ * A user's choice of "this document, this revision".
+ *
+ * Produced by the timeline components (`useHistoryTimeline`,
+ * `useFileHistory`) and consumed by `useHistoryComparisons.openComparison`.
+ * Kept here — instead of in a deleted snapshot module — because the
+ * direct diff path is its only remaining consumer.
+ */
+export interface HistoryRevisionSelection {
+  documentPath: string
+  documentTitle: string
+  revisionId: string
+  revisionTime: number
+  summary: string
+}
 
 export interface CurrentDocumentContent {
   raw: string
@@ -55,6 +71,10 @@ function comparisonTabId(path: string): string {
   return `diff:${path}`
 }
 
+function historyPath(path: string): string {
+  return path.endsWith('.md') ? path : `${path}.md`
+}
+
 export function useHistoryComparisons(options: HistoryComparisonOptions) {
   const comparisons = ref<HistoryComparison[]>([])
   const activeComparisonId = ref<string | null>(null)
@@ -70,48 +90,25 @@ export function useHistoryComparisons(options: HistoryComparisonOptions) {
     return requestId
   }
 
-  async function refreshComparison(tabId: string): Promise<HistoryComparison | null> {
-    const comparison = comparisons.value.find((item) => item.tabId === tabId)
-    if (!comparison) return null
-
-    comparison.status = 'loading'
-    comparison.error = null
-    const requestId = nextRequestId(tabId)
-
-    try {
-      const openDocument = options.getCurrentDocument(comparison.documentPath)
-      const current = openDocument ?? {
-        raw: await options.loadCurrentDocument(comparison.documentPath),
-        dirty: false,
-      }
-      if (requestIds.get(tabId) !== requestId) return comparison
-
-      comparison.newRaw = current.raw
-      comparison.currentDirty = current.dirty
-      comparison.diff = computeFileDiff(comparison.oldRaw, current.raw)
-      comparison.status = 'ready'
-    } catch (error) {
-      if (requestIds.get(tabId) !== requestId) return comparison
-      comparison.status = 'error'
-      comparison.error = error instanceof Error && error.message ? error.message : null
-    }
-    return comparison
-  }
-
-  async function openComparison(snapshot: HistorySnapshot): Promise<HistoryComparison | null> {
-    if (snapshot.status !== 'ready') return null
-
-    const tabId = comparisonTabId(snapshot.documentPath)
+  /**
+   * Open a comparison for the given selection. Loads the historical
+   * revision and the current document in parallel; both sides must
+   * resolve (or fail) before status flips to ready/error. The reactive
+   * comparison is created before the first await so the caller can render
+   * loading immediately and use `refreshComparison(tabId)` for retry.
+   */
+  async function openComparison(selection: HistoryRevisionSelection): Promise<HistoryComparison> {
+    const tabId = comparisonTabId(selection.documentPath)
     let comparison = comparisons.value.find((item) => item.tabId === tabId)
     if (!comparison) {
       comparisons.value.push({
         tabId,
-        documentPath: snapshot.documentPath,
-        documentTitle: snapshot.documentTitle,
-        revisionId: snapshot.revisionId,
-        revisionTime: snapshot.revisionTime,
-        summary: snapshot.summary,
-        oldRaw: snapshot.rawMarkdown,
+        documentPath: selection.documentPath,
+        documentTitle: selection.documentTitle,
+        revisionId: selection.revisionId,
+        revisionTime: selection.revisionTime,
+        summary: selection.summary,
+        oldRaw: '',
         newRaw: '',
         currentDirty: false,
         diff: null,
@@ -119,21 +116,82 @@ export function useHistoryComparisons(options: HistoryComparisonOptions) {
         error: null,
       })
       // Keep the local reference reactive so loading/error/ready changes
-      // render immediately while asynchronous current content resolves.
+      // render immediately while asynchronous loads resolve.
       comparison = comparisons.value.find((item) => item.tabId === tabId)!
     } else {
       Object.assign(comparison, {
-        documentTitle: snapshot.documentTitle,
-        revisionId: snapshot.revisionId,
-        revisionTime: snapshot.revisionTime,
-        summary: snapshot.summary,
-        oldRaw: snapshot.rawMarkdown,
+        documentTitle: selection.documentTitle,
+        revisionId: selection.revisionId,
+        revisionTime: selection.revisionTime,
+        summary: selection.summary,
+        oldRaw: '',
+        newRaw: '',
+        currentDirty: false,
         diff: null,
+        status: 'loading' as const,
+        error: null,
       })
     }
 
     activeComparisonId.value = tabId
-    return refreshComparison(tabId)
+    await loadComparisonContent(comparison, nextRequestId(tabId))
+    return comparison
+  }
+
+  /**
+   * Resolve a comparison's historical + current sides in parallel.
+   * Honors the request-id guard so a slower obsolete load cannot
+   * overwrite a newer one, and a tab close during flight cancels the
+   * result write.
+   */
+  async function loadComparisonContent(
+    comparison: HistoryComparison,
+    requestId: number,
+  ): Promise<void> {
+    const tabId = comparison.tabId
+    const documentPath = comparison.documentPath
+    const revisionId = comparison.revisionId
+    try {
+      const currentPromise = Promise.resolve(options.getCurrentDocument(documentPath))
+        .then(async (openDocument): Promise<CurrentDocumentContent> => {
+          if (openDocument) return openDocument
+          return {
+            raw: await options.loadCurrentDocument(documentPath),
+            dirty: false,
+          }
+        })
+      const [historical, current] = await Promise.all([
+        historyApi.getFileAt(
+          historyPath(documentPath),
+          revisionId,
+        ),
+        currentPromise,
+      ])
+      if (requestIds.get(tabId) !== requestId) return
+
+      comparison.oldRaw = historical.content
+      comparison.newRaw = current.raw
+      comparison.currentDirty = current.dirty
+      comparison.diff = computeFileDiff(historical.content, current.raw)
+      comparison.status = 'ready'
+      comparison.error = null
+    } catch (error) {
+      if (requestIds.get(tabId) !== requestId) return
+      comparison.status = 'error'
+      comparison.error = error instanceof Error && error.message
+        ? error.message
+        : null
+    }
+  }
+
+  async function refreshComparison(tabId: string): Promise<HistoryComparison | null> {
+    const comparison = comparisons.value.find((item) => item.tabId === tabId)
+    if (!comparison) return null
+
+    comparison.status = 'loading'
+    comparison.error = null
+    await loadComparisonContent(comparison, nextRequestId(tabId))
+    return comparison
   }
 
   function selectComparison(tabId: string): void {

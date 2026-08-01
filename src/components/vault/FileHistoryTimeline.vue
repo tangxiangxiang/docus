@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { FileHistoryCommitItem, FileHistoryState } from '../../composables/vault/useFileHistory'
-import type { HistoryRevisionSelection } from '../../composables/vault/useHistorySnapshots'
+import type { HistoryRevisionSelection } from '../../composables/vault/useHistoryComparisons'
 import { useI18n } from '../../composables/useI18n'
 import TimelineFileCommitRow from './TimelineFileCommitRow.vue'
 import TimelineGroup from './TimelineGroup.vue'
