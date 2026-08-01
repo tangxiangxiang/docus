@@ -605,7 +605,7 @@ main.container {
   max-height: 180px;
   min-width: 0;
   margin: 0;
-  padding: 2px 0 6px;
+  padding: 0;
   border-top: 1px solid color-mix(in srgb, var(--vs-border) 50%, transparent);
   overflow-y: auto;
   list-style: none;
