@@ -821,7 +821,7 @@ main.container {
   display: flex;
   align-items: center;
   min-height: 30px;
-  padding: 3px 8px;
+  padding: 3px 8px 3px 19px;
   gap: 5px;
   background: transparent;
   transition: background 100ms, color 100ms;
@@ -864,18 +864,22 @@ main.container {
 }
 .history-commit-sha { font-family: var(--font-mono, ui-monospace, monospace); }
 .history-file-list {
-  position: relative;
   padding: 0;
   background: transparent;
 }
-.history-file-list::before {
+.history-file-row::after {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  z-index: 1;
+  top: 3px;
+  bottom: 3px;
   left: 19px;
   width: 1px;
-  background: color-mix(in srgb, var(--vs-border) 78%, transparent);
+  background: transparent;
   content: '';
+  pointer-events: none;
+}
+.history-file-row:hover::after {
+  background: color-mix(in srgb, var(--vs-text-3) 32%, transparent);
 }
 .history-file-row {
   position: relative;
