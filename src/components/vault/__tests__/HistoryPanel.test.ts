@@ -316,8 +316,8 @@ describe('HistoryPanel commit-first timeline', () => {
     await flushPromises()
     await expandFirstCommit(wrapper)
     expect(wrapper.findAll('.history-file-row').map((row) => row.text())).toEqual([
-      'Readmeinbox',
-      'Readmearchive',
+      'Readmeinbox/',
+      'Readmearchive/',
     ])
   })
 

@@ -736,15 +736,20 @@ main.container {
   outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
   outline-offset: -1px;
 }
-.history-row-icon {
+.history-file-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
   color: var(--vs-text-2);
 }
-.history-row-icon { margin-top: 0; }
-.history-row-icon svg { display: block; }
+.history-file-icon :where(svg) {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
 .history-timeline-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -851,13 +856,13 @@ main.container {
 .history-commit-sha { font-family: var(--font-mono, ui-monospace, monospace); }
 .history-file-list {
   position: relative;
-  padding: 0 0 4px 27px;
+  padding: 0;
   background: transparent;
 }
 .history-file-list::before {
   position: absolute;
   top: 0;
-  bottom: 5px;
+  bottom: 0;
   left: 19px;
   width: 1px;
   background: color-mix(in srgb, var(--vs-border) 78%, transparent);
@@ -867,64 +872,69 @@ main.container {
   position: relative;
   display: flex;
   align-items: center;
+  width: 100%;
   min-height: 30px;
-  padding: 3px 8px 3px 6px;
+  padding: 0 8px 0 33px;
   gap: 5px;
   background: transparent;
   font-size: 0.84rem;
   line-height: 1.35;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
   transition: background 100ms, color 100ms;
 }
-/* Hover/active background painted on ::before (not directly on the
-   row) so children at z-index: 1 sit above it — same pattern as
-   file-tree .row-line. */
-.history-file-row::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: transparent;
-  pointer-events: none;
-  z-index: 0;
+.history-file-row:hover { background: var(--vs-hover-bg); }
+.history-file-row.active { background: var(--vs-active-bg); }
+.history-file-row.active .history-file-icon { color: var(--vs-text-1); }
+.history-file-chevron-spacer {
+  display: inline-flex;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
 }
-.history-file-row > * { position: relative; z-index: 1; }
-.history-file-row:hover::before { background: var(--vs-hover-bg); }
-.history-file-row.active::before { background: var(--vs-active-bg); }
-.history-file-copy {
+.history-file-label {
   display: flex;
   flex: 1 1 auto;
-  flex-direction: column;
-  align-items: stretch;
+  align-items: baseline;
   min-width: 0;
-  gap: 1px;
+  overflow: hidden;
+  gap: 6px;
 }
-.history-file-copy .history-row-title {
+.history-file-title {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
   font-size: 0.84rem;
   font-weight: 450;
   line-height: 1.35;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.history-file-copy .history-row-meta {
+.history-file-path {
+  flex: 0 1 42%;
+  min-width: 0;
   overflow: hidden;
   color: var(--vs-text-3);
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-size: 0.66rem;
+  font-weight: 400;
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-top: 0;
 }
 .history-timeline-group-header:focus-visible,
 .history-commit-row:focus-visible,
-.history-file-commit-row:focus-visible,
-.history-file-row:focus-visible {
+.history-file-commit-row:focus-visible {
   position: relative;
   z-index: 1;
   outline: 2px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
   outline-offset: -2px;
+}
+.history-file-row:focus-visible {
+  position: relative;
+  z-index: 2;
+  outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
+  outline-offset: -1px;
 }
 .history-row-copy {
   display: flex;

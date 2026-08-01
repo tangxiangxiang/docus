@@ -30,10 +30,11 @@ function onKeydown(event: KeyboardEvent): void {
     @click="emit('select')"
     @keydown="onKeydown"
   >
-    <span class="history-row-icon" v-html="ICON_FILE_MD" />
-    <span class="history-file-copy">
-      <span class="history-row-title">{{ file.title }}</span>
-      <span v-if="showParent && file.parentPath" class="history-row-meta">{{ file.parentPath }}</span>
+    <span class="history-file-chevron-spacer" aria-hidden="true" />
+    <span class="history-file-icon" aria-hidden="true" v-html="ICON_FILE_MD" />
+    <span class="history-file-label">
+      <span class="history-file-title">{{ file.title }}</span>
+      <span v-if="showParent && file.parentPath" class="history-file-path">{{ file.parentPath }}/</span>
     </span>
   </button>
 </template>
