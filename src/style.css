@@ -743,7 +743,7 @@ main.container {
   flex: 0 0 16px;
   color: var(--vs-text-2);
 }
-.history-row-icon { align-self: flex-start; margin-top: 1px; }
+.history-row-icon { align-self: center; }
 .history-row-icon svg { display: block; }
 .history-timeline-scroll {
   flex: 1 1 auto;
