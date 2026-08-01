@@ -629,12 +629,16 @@ export const ICON_NAV_THEME_DARK = `
   <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
 </svg>`
 
-// ICON_AB_GIT_HISTORY — Git branch graph used by the History activity
-// button. The path follows the supplied filled glyph, normalized to
-// the shared 24×24 surface canvas.
+// ICON_AB_GIT_HISTORY — light Git branch graph used by the History
+// activity button. The three outlined nodes keep the icon readable
+// beside the separate dirty-count badge.
 export const ICON_AB_GIT_HISTORY = `
 <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <path transform="scale(0.0234375)" d="M768 597.333333c-76.8 0-145.066667 55.466667-162.133333 128-157.866667-17.066667-285.866667-145.066667-302.933334-302.933333 72.533333-21.333333 128-85.333333 128-162.133333 0-93.866667-76.8-170.666667-170.666666-170.666667S85.333333 162.133333 85.333333 256c0 81.066667 55.466667 145.066667 128 166.4V896c0 25.6 17.066667 42.666667 42.666667 42.666667s42.666667-17.066667 42.666667-42.666667v-256c72.533333 93.866667 179.2 157.866667 302.933333 170.666667 17.066667 72.533333 85.333333 132.266667 166.4 132.266666 93.866667 0 170.666667-76.8 170.666667-170.666666S861.866667 597.333333 768 597.333333zM170.666667 256c0-46.933333 38.4-85.333333 85.333333-85.333333s85.333333 38.4 85.333333 85.333333-38.4 85.333333-85.333333 85.333333-85.333333-38.4-85.333333-85.333333z m597.333333 597.333333c-46.933333 0-85.333333-38.4-85.333333-85.333333s38.4-85.333333 85.333333-85.333333 85.333333 38.4 85.333333 85.333333-38.4 85.333333-85.333333 85.333333z" fill="currentColor" stroke="none"/>
+  <path d="M6 8.25v7.5"/>
+  <path d="M6 12.25c0-3.3 1.45-5.75 4.75-5.75h1"/>
+  <circle cx="6" cy="5.5" r="2.25"/>
+  <circle cx="6" cy="18.5" r="2.25"/>
+  <circle cx="14.25" cy="6.5" r="2.25"/>
 </svg>`
 
 // ICON_AB_SETTINGS — activity-bar button that opens the settings modal.
