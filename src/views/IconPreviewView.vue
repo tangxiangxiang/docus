@@ -56,7 +56,6 @@ const fileTypeSet = new Set([
 const surfaceSet = new Set([
   'ICON_NAV_THEME_LIGHT',
   'ICON_NAV_THEME_DARK',
-  'ICON_AB_GIT_HISTORY',
   'ICON_AB_SETTINGS',
 ])
 
