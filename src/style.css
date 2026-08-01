@@ -743,7 +743,7 @@ main.container {
   flex: 0 0 16px;
   color: var(--vs-text-2);
 }
-.history-row-icon { align-self: center; }
+.history-row-icon { margin-top: 0; }
 .history-row-icon svg { display: block; }
 .history-timeline-scroll {
   flex: 1 1 auto;
@@ -873,10 +873,24 @@ main.container {
   background: transparent;
   font-size: 0.84rem;
   line-height: 1.35;
+  cursor: default;
+  user-select: none;
   transition: background 100ms, color 100ms;
 }
-.history-file-row:hover { background: var(--vs-hover-bg); }
-.history-file-row.active { background: var(--vs-active-bg); }
+/* Hover/active background painted on ::before (not directly on the
+   row) so children at z-index: 1 sit above it — same pattern as
+   file-tree .row-line. */
+.history-file-row::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 0;
+}
+.history-file-row > * { position: relative; z-index: 1; }
+.history-file-row:hover::before { background: var(--vs-hover-bg); }
+.history-file-row.active::before { background: var(--vs-active-bg); }
 .history-file-copy {
   display: flex;
   flex: 1 1 auto;
@@ -889,6 +903,9 @@ main.container {
   font-size: 0.84rem;
   font-weight: 450;
   line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .history-file-copy .history-row-meta {
   overflow: hidden;
@@ -898,6 +915,7 @@ main.container {
   line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin-top: 0;
 }
 .history-timeline-group-header:focus-visible,
 .history-commit-row:focus-visible,
