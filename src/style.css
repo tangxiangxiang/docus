@@ -891,7 +891,6 @@ main.container {
   justify-content: center;
   color: var(--vs-text-3);
 }
-.history-commit-sha { font-family: var(--font-mono, ui-monospace, monospace); }
 .history-file-list {
   padding: 0;
   background: transparent;

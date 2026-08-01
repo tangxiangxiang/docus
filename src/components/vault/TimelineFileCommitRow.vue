@@ -50,7 +50,7 @@ function onKeydown(event: KeyboardEvent): void {
     <span class="history-row-copy">
       <span class="history-row-title">{{ commit.message }}</span>
       <span class="history-row-meta">
-        {{ timeLabel }} · <span class="history-commit-sha">{{ commit.shortId }}</span>
+        {{ timeLabel }}
       </span>
     </span>
   </button>

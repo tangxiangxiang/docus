@@ -65,12 +65,14 @@ describe('FileHistoryTimeline', () => {
     expect(wrapper.find('.history-file-row').exists()).toBe(false)
     expect(wrapper.find('.history-disclosure').exists()).toBe(true)
     expect(wrapper.find('.history-file-commit-row').attributes('aria-expanded')).toBeUndefined()
+    expect(wrapper.find('.history-commit-sha').exists()).toBe(false)
   })
 
   it('opens a commit with click and Enter using HistoryRevisionSelection and marks it selected', async () => {
     const { wrapper } = await mountTimeline({ commits: [record('abcdef123', 0, 'Update AGENTS')] })
     const row = wrapper.get('.history-file-commit-row')
 
+    expect(row.text()).not.toContain('abcdef1')
     await row.trigger('click')
     expect(wrapper.emitted('open-revision')).toEqual([[{
       documentPath: 'inbox/agents',

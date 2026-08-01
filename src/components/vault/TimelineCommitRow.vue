@@ -45,7 +45,7 @@ function onKeydown(event: KeyboardEvent): void {
     <span class="history-disclosure" :class="{ expanded }" aria-hidden="true" v-html="ICON_CHEVRON" />
     <span class="history-row-title" :title="commit.message">{{ commit.message }}</span>
     <span class="history-row-meta">
-      {{ timeLabel }} · <span class="history-commit-sha">{{ commit.shortId }}</span> · {{ fileCountLabel }}
+      {{ timeLabel }} · {{ fileCountLabel }}
     </span>
   </button>
 </template>
