@@ -726,7 +726,7 @@ main.container {
 .history-commit-error { color: #ef4444; font-size: 0.7rem; line-height: 1.35; }
 .history-timeline-section { display: flex; width: 100%; min-height: 0; min-width: 0; overflow: hidden; flex-direction: column; }
 .history-timeline-heading {
-  min-height: 36px;
+  min-height: 32px;
   padding: 0 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 55%, transparent);
   background: var(--vs-bg-1);
@@ -778,13 +778,13 @@ main.container {
 .history-timeline-group-header {
   display: flex;
   align-items: center;
-  min-height: 34px;
-  padding: 4px 9px;
+  min-height: 31px;
+  padding: 3px 9px;
   gap: 5px;
-  background: color-mix(in srgb, var(--vs-bg-2) 72%, var(--vs-bg-1));
+  background: color-mix(in srgb, var(--vs-bg-2) 46%, var(--vs-bg-1));
   border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 65%, transparent);
 }
-.history-timeline-group-header:hover { background: color-mix(in srgb, var(--vs-hover-bg) 72%, var(--vs-bg-2)); }
+.history-timeline-group-header:hover { background: color-mix(in srgb, var(--vs-hover-bg) 62%, var(--vs-bg-2)); }
 .history-timeline-group-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -792,13 +792,13 @@ main.container {
   padding: 0;
   overflow: hidden;
   color: var(--vs-text-2);
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 600;
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.history-timeline-count { flex: 0 0 auto; color: var(--vs-text-3); font-size: 0.64rem; font-weight: 500; }
+.history-timeline-count { flex: 0 0 auto; color: var(--vs-text-3); font-size: 0.62rem; font-weight: 500; }
 .history-disclosure {
   display: inline-flex;
   flex: 0 0 14px;
@@ -816,16 +816,16 @@ main.container {
 .history-commit-row {
   display: flex;
   align-items: center;
-  min-height: 46px;
-  padding: 6px 9px 6px 12px;
+  min-height: 42px;
+  padding: 5px 9px 5px 12px;
   gap: 7px;
   background: transparent;
 }
 .history-file-commit-row {
   display: flex;
   align-items: center;
-  min-height: 44px;
-  padding: 6px 12px;
+  min-height: 40px;
+  padding: 5px 12px;
   gap: 7px;
   background: transparent;
 }
@@ -836,7 +836,10 @@ main.container {
 }
 .history-file-commit-row.selected .history-commit-marker { color: var(--vs-accent); }
 .history-commit-row:hover { background: var(--vs-hover-bg); }
-.history-commit-row.active { background: color-mix(in srgb, var(--vs-accent) 8%, var(--vs-bg-1)); }
+.history-commit-row.active {
+  box-shadow: inset 2px 0 var(--vs-accent);
+  background: color-mix(in srgb, var(--vs-accent) 5%, var(--vs-bg-1));
+}
 .history-commit-marker {
   display: inline-flex;
   flex: 0 0 16px;
@@ -846,7 +849,11 @@ main.container {
 }
 .history-commit-row.active .history-commit-marker { color: var(--vs-accent); }
 .history-commit-sha { font-family: var(--font-mono, ui-monospace, monospace); }
-.history-file-list { position: relative; padding: 1px 0 3px 27px; }
+.history-file-list {
+  position: relative;
+  padding: 0 0 4px 27px;
+  background: transparent;
+}
 .history-file-list::before {
   position: absolute;
   top: 0;
@@ -860,22 +867,38 @@ main.container {
   position: relative;
   display: flex;
   align-items: center;
-  min-height: 34px;
-  padding: 4px 9px 4px 8px;
-  gap: 6px;
+  min-height: 30px;
+  padding: 3px 8px 3px 6px;
+  gap: 5px;
   background: transparent;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  transition: background 100ms, color 100ms;
 }
-.history-file-row:hover,
-.history-file-row.active { background: color-mix(in srgb, var(--vs-hover-bg) 86%, transparent); }
+.history-file-row:hover { background: var(--vs-hover-bg); }
+.history-file-row.active { background: var(--vs-active-bg); }
 .history-file-copy {
   display: flex;
   flex: 1 1 auto;
-  align-items: baseline;
+  flex-direction: column;
+  align-items: stretch;
   min-width: 0;
-  gap: 6px;
+  gap: 1px;
 }
-.history-file-copy .history-row-title { font-size: 0.76rem; font-weight: 450; }
-.history-file-copy .history-row-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-file-copy .history-row-title {
+  font-size: 0.84rem;
+  font-weight: 450;
+  line-height: 1.35;
+}
+.history-file-copy .history-row-meta {
+  overflow: hidden;
+  color: var(--vs-text-3);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.66rem;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .history-timeline-group-header:focus-visible,
 .history-commit-row:focus-visible,
 .history-file-commit-row:focus-visible,
@@ -1098,16 +1121,16 @@ main.container {
 .history-diff-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 46px;
+  gap: 6px;
+  min-height: 32px;
   box-sizing: border-box;
-  padding: 7px 18px;
+  padding: 3px 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 72%, transparent);
 }
 .history-diff-title {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -1116,8 +1139,9 @@ main.container {
   overflow: hidden;
   margin: 0;
   color: var(--vs-text-1);
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 600;
+  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1129,21 +1153,21 @@ main.container {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   margin-left: auto;
 }
 .history-pane-menu-trigger {
   display: inline-grid;
   place-items: center;
-  min-width: 28px;
-  min-height: 28px;
-  padding: 0 8px;
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0 4px;
   border: 1px solid color-mix(in srgb, var(--vs-border) 82%, transparent);
   border-radius: 5px;
   background: transparent;
   color: var(--vs-text-2);
   font: inherit;
-  font-size: 1rem;
+  font-size: 0.9rem;
   line-height: 1;
   cursor: pointer;
 }
@@ -1224,6 +1248,11 @@ main.container {
   flex: 0 0 auto;
   gap: 5px;
 }
+.history-comparison-direction {
+  color: var(--vs-text-2);
+  font-size: 0.72rem;
+  line-height: 1.1;
+}
 .history-revision-chip {
   padding: 2px 6px;
   border: 1px solid color-mix(in srgb, var(--vs-border) 76%, transparent);
@@ -1231,7 +1260,20 @@ main.container {
   background: color-mix(in srgb, var(--vs-bg-2) 72%, transparent);
   color: var(--vs-text-2);
 }
-.history-diff-stats { margin-left: auto; font-family: var(--mono); font-weight: 600; }
+.history-diff-header .history-revision-chip {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: transparent;
+  font-size: inherit;
+  line-height: inherit;
+}
+.history-diff-stats {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
 .history-diff-stats .is-added { color: color-mix(in srgb, var(--vs-success, #16a34a) 82%, var(--vs-text-1)); }
 .history-diff-stats .is-removed { color: color-mix(in srgb, var(--vs-danger, #dc2626) 82%, var(--vs-text-1)); }
 @media (max-width: 720px) {
