@@ -605,7 +605,7 @@ main.container {
   max-height: 180px;
   min-width: 0;
   margin: 0;
-  padding: 2px 8px 6px;
+  padding: 2px 0 6px;
   border-top: 1px solid color-mix(in srgb, var(--vs-border) 50%, transparent);
   overflow-y: auto;
   list-style: none;
@@ -635,7 +635,7 @@ main.container {
   pointer-events: none;
 }
 .history-change-row:hover::before { background: var(--vs-hover-bg); }
-.history-change-row:has(.history-change-open.active)::before { background: var(--vs-active-bg); }
+.history-change-row.active::before { background: var(--vs-active-bg); }
 .history-change-row > * { position: relative; z-index: 1; }
 .history-change-row input { flex: 0 0 auto; margin: 0; accent-color: var(--vs-accent); }
 .history-change-open {

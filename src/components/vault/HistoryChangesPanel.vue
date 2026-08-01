@@ -89,7 +89,12 @@ function toggleAll(): void {
         {{ t('history.no_changed_documents') }}
       </div>
       <ul v-else class="history-changes-list" :aria-label="t('history.changed_document_list')">
-        <li v-for="entry in entries" :key="entry.path" class="history-change-row">
+        <li
+          v-for="entry in entries"
+          :key="entry.path"
+          class="history-change-row"
+          :class="{ active: activeDiffPath === entry.path }"
+        >
           <input
             type="checkbox"
             :checked="selectedPaths.has(entry.path)"

@@ -55,6 +55,7 @@ describe('HistoryChangesPanel', () => {
     expect(wrapper.emitted('open-diff')).toHaveLength(1)
 
     await wrapper.setProps({ activeDiffPath: 'inbox/modified.md' })
+    expect(wrapper.get('.history-change-row').classes()).toContain('active')
     expect(wrapper.get('.history-change-open').classes()).toContain('active')
   })
 
