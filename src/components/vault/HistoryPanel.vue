@@ -10,9 +10,14 @@ import {
   type HistoryFileItem,
 } from '../../composables/vault/useHistoryTimeline'
 import type { HistoryRevisionSelection } from '../../composables/vault/useHistorySnapshots'
+import type {
+  FileHistoryCommitItem,
+  FileHistoryState,
+} from '../../composables/vault/useFileHistory'
 import { useI18n } from '../../composables/useI18n'
 import EmptyState from './EmptyState.vue'
 import HistoryChangesPanel from './HistoryChangesPanel.vue'
+import FileHistoryTimeline from './FileHistoryTimeline.vue'
 import TimelineCommitRow from './TimelineCommitRow.vue'
 import TimelineFileRow from './TimelineFileRow.vue'
 import TimelineGroup from './TimelineGroup.vue'
@@ -21,12 +26,14 @@ const props = withDefaults(defineProps<{
   history: HistoryState
   commit: HistoryCommitState
   withdraw: HistoryWithdrawState
+  fileHistory?: FileHistoryState
   posts?: PostSummary[]
 }>(), {
   posts: () => [],
 })
 const emit = defineEmits<{
   'open-revision': [selection: HistoryRevisionSelection]
+  'show-all-history': []
 }>()
 
 const h = props.history
@@ -38,11 +45,11 @@ const commitMenu = ref<HTMLElement | null>(null)
 const commitMenuOpen = ref(false)
 const commitMenuX = ref(0)
 const commitMenuY = ref(0)
-const commitMenuCommit = ref<HistoryCommitItem | null>(null)
+const commitMenuCommit = ref<HistoryCommitItem | FileHistoryCommitItem | null>(null)
 let commitMenuOrigin: HTMLElement | null = null
 
 const logErrorLabel = computed(() => h.logError.value?.message || t('history.load_failed'))
-const latestCommitId = computed(() => h.log.value[0]?.sha ?? null)
+const repositoryHeadId = computed(() => h.log.value[0]?.sha ?? null)
 const ambiguousTitles = computed(() => {
   const pathsByTitle = new Map<string, Set<string>>()
   for (const commitItem of timeline.commits.value) {
@@ -91,8 +98,8 @@ function isSelected(file: HistoryFileItem, item: HistoryCommitItem): boolean {
   return timeline.selectedRevisionKey.value === `${item.id}\0${file.path}`
 }
 
-function isLatestCommit(item: HistoryCommitItem): boolean {
-  return item.id === latestCommitId.value
+function isLatestCommit(item: { id: string }): boolean {
+  return item.id === repositoryHeadId.value
 }
 
 function closeCommitMenu(restoreFocus = false): void {
@@ -114,7 +121,7 @@ function onCommitMenuEscape(event: KeyboardEvent): void {
   closeCommitMenu(true)
 }
 
-async function showCommitMenu(item: HistoryCommitItem, origin: HTMLElement, x: number, y: number): Promise<void> {
+async function showCommitMenu(item: HistoryCommitItem | FileHistoryCommitItem, origin: HTMLElement, x: number, y: number): Promise<void> {
   closeCommitMenu()
   if (!isLatestCommit(item) || !props.withdraw.canWithdraw.value || props.withdraw.busy.value) return
   commitMenuCommit.value = item
@@ -143,6 +150,23 @@ function onCommitMenuKeydown(event: KeyboardEvent, item: HistoryCommitItem): voi
   void showCommitMenu(item, origin, rect.left + Math.min(24, rect.width / 2), rect.bottom)
 }
 
+function onFileCommitContextMenu(event: MouseEvent, item: FileHistoryCommitItem): void {
+  void showCommitMenu(item, event.currentTarget as HTMLElement, event.clientX, event.clientY)
+}
+
+function onFileCommitMenuKeydown(event: KeyboardEvent, item: FileHistoryCommitItem): void {
+  const origin = event.currentTarget as HTMLElement
+  const rect = origin.getBoundingClientRect()
+  void showCommitMenu(item, origin, rect.left + Math.min(24, rect.width / 2), rect.bottom)
+}
+
+async function showAllHistory(): Promise<void> {
+  closeCommitMenu()
+  emit('show-all-history')
+  await nextTick()
+  timelineHeading.value?.focus()
+}
+
 function withdrawCommit(): void {
   const item = commitMenuCommit.value
   closeCommitMenu()
@@ -167,15 +191,22 @@ function onTreeKeydown(event: KeyboardEvent): void {
 }
 
 watch(commit.completionId, async () => {
+  const targetPath = props.fileHistory?.target.value?.documentPath
+  if (targetPath && commit.lastCommittedPaths.value.includes(`${targetPath}.md`)) {
+    await props.fileHistory?.refresh()
+    props.fileHistory?.expandNewestDay()
+  }
   await nextTick()
   timeline.expandNewestDay()
 })
 watch(props.withdraw.completionId, async () => {
   closeCommitMenu()
+  await props.fileHistory?.refresh()
   await nextTick()
   timelineHeading.value?.focus()
 })
 watch(() => h.log.value, () => closeCommitMenu())
+watch(() => props.fileHistory?.target.value?.documentPath, () => closeCommitMenu())
 watch(props.withdraw.busy, (busy) => {
   if (busy) closeCommitMenu()
 })
@@ -216,7 +247,17 @@ onBeforeUnmount(closeCommitMenu)
         @repair-index="commit.retryIndexRepair"
         @discard-index-repair="commit.discardConflictingIndexRepair"
       />
-      <section class="history-timeline-section" aria-labelledby="history-timeline-title">
+      <FileHistoryTimeline
+        v-if="props.fileHistory?.target.value"
+        :file-history="props.fileHistory"
+        :repository-head-id="repositoryHeadId"
+        :withdraw-available="props.withdraw.canWithdraw.value && !props.withdraw.busy.value"
+        @show-all="showAllHistory"
+        @open-revision="emit('open-revision', $event)"
+        @contextmenu="onFileCommitContextMenu"
+        @menukey="onFileCommitMenuKeydown"
+      />
+      <section v-else class="history-timeline-section" aria-labelledby="history-timeline-title">
         <div ref="timelineHeading" class="history-timeline-heading" tabindex="-1">
           <h2 id="history-timeline-title">{{ t('history.timeline') }}</h2>
         </div>
@@ -278,7 +319,7 @@ onBeforeUnmount(closeCommitMenu)
           ref="commitMenu"
           class="history-context-menu"
           role="menu"
-          :aria-label="t('history.latest_commit_actions')"
+          :aria-label="t(props.fileHistory?.target.value ? 'history.latest_version_actions' : 'history.latest_commit_actions')"
           :style="{ left: commitMenuX + 'px', top: commitMenuY + 'px' }"
         >
           <button type="button" role="menuitem" class="danger" @click="withdrawCommit">

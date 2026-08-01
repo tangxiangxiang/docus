@@ -82,9 +82,18 @@ describe('FileTree context menu', () => {
     const menu = document.querySelector('.tree-context-menu')
     expect(menu).not.toBeNull()
     expect(menu!.textContent).toContain('重命名')
+    expect(menu!.textContent).toContain('查看文件历史')
     expect(menu!.textContent).toContain('文档属性…')
     expect(menu!.textContent).toContain('删除')
-    const properties = Array.from(menu!.querySelectorAll('button'))
+    const history = Array.from(menu!.querySelectorAll('button'))
+      .find((button) => button.textContent?.includes('查看文件历史')) as HTMLButtonElement
+    history.click()
+    await flushPromises()
+    expect(w.emitted('open-history')).toEqual([['inbox/hello']])
+
+    await helloRow.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    await flushPromises()
+    const properties = Array.from(document.querySelector('.tree-context-menu')!.querySelectorAll('button'))
       .find((button) => button.textContent?.includes('文档属性')) as HTMLButtonElement
     properties.click()
     await flushPromises()
@@ -115,6 +124,21 @@ describe('FileTree context menu', () => {
     // Name-modifying ops remain blocked — the folder name is pinned.
     expect(menu!.textContent).not.toContain('重命名')
     expect(menu!.textContent).not.toContain('删除')
+    expect(menu!.textContent).not.toContain('查看文件历史')
+    w.unmount()
+  })
+
+  it('closes the file context menu with Escape', async () => {
+    const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
+    const inboxRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'inbox')!
+    await inboxRow.find('.chevron').trigger('click')
+    const helloRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'hello')!
+    await helloRow.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    expect(document.querySelector('.tree-context-menu')).not.toBeNull()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(document.querySelector('.tree-context-menu')).toBeNull()
     w.unmount()
   })
 

@@ -34,6 +34,31 @@ describe('VaultView editor tab wiring', () => {
     expect(source).not.toContain('activePanel === \'history\'" class="content content-diff"')
   })
 
+  it('owns a fixed file-history target independently from active editor tabs', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const openHandler = source.match(/function openFileHistory[\s\S]*?\n}/)?.[0]
+
+    expect(source).toContain('const fileHistory = useFileHistory(locale)')
+    expect(source).toContain('resolveFileHistoryTarget(path, posts.value)')
+    expect(openHandler).toContain('fileHistory.open(resolveFileHistoryTarget(path, posts.value))')
+    expect(openHandler).toContain("selectPanel('history')")
+    expect(source).toContain('@open-history="openFileHistory"')
+    expect(source).toContain(':file-history="fileHistory"')
+    expect(source).toContain('@show-all-history="showAllHistory"')
+    expect(source).toContain('function showAllHistory(): void {\n  fileHistory.clear()')
+    expect(source).toContain('watch(vaultId, () => fileHistory.clear())')
+    expect(source).not.toMatch(/watch\(activePath[\s\S]{0,200}fileHistory/)
+  })
+
+  it('keeps Activity Bar History as the explicit global-history entry point', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const handler = source.match(/function selectActivityPanel[\s\S]*?\n}/)?.[0]
+
+    expect(handler).toContain("if (panel === 'history') fileHistory.clear()")
+    expect(handler).toContain('selectPanel(panel)')
+    expect(source).toContain('@select-panel="selectActivityPanel"')
+  })
+
   it('owns Create Version coordination at Vault scope across sidebar remounts', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
 

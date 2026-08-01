@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ref } from 'vue'
 import HistoryPanel from '../HistoryPanel.vue'
 import { __resetHistoryStateForTesting, useHistory } from '../../../composables/vault/useHistory'
 import { useHistoryCommit } from '../../../composables/vault/useHistoryCommit'
 import { useHistoryWithdraw } from '../../../composables/vault/useHistoryWithdraw'
+import { useFileHistory, type FileHistoryState } from '../../../composables/vault/useFileHistory'
 import { useI18n } from '../../../composables/useI18n'
 import type { PostSummary } from '../../../lib/api'
 import * as api from '../../../lib/history-api'
@@ -64,6 +66,7 @@ function mountPanel(options: {
   posts?: PostSummary[]
   attachTo?: HTMLElement | string
   saveBeforeCommit?: (paths: string[]) => Promise<void>
+  fileHistory?: FileHistoryState
 } = {}) {
   const history = useHistory()
   const historyCommit = useHistoryCommit({
@@ -73,7 +76,13 @@ function mountPanel(options: {
   const withdraw = createWithdraw(history, historyCommit)
   const wrapper = mount(HistoryPanel, {
     attachTo: options.attachTo,
-    props: { history, commit: historyCommit, withdraw, posts: options.posts ?? [] },
+    props: {
+      history,
+      commit: historyCommit,
+      withdraw,
+      posts: options.posts ?? [],
+      fileHistory: options.fileHistory,
+    },
   })
   return { wrapper, history, historyCommit, withdraw }
 }
@@ -111,6 +120,92 @@ afterEach(() => {
 })
 
 describe('HistoryPanel commit-first timeline', () => {
+  it('keeps the global log intact while rendering and leaving independent file history', async () => {
+    vi.mocked(api.getLog).mockImplementation(async (options = {}) => ({
+      commits: options.path
+        ? [commit('file-version', NOW - 1_000, 'File version', ['inbox/agents.md'])]
+        : [commit('repository-head', NOW, 'Repository head', ['inbox/readme.md'])],
+    }))
+    const fileHistory = useFileHistory(ref('en-US'))
+    await fileHistory.open({ documentPath: 'inbox/agents', documentTitle: 'AGENTS' })
+    const { wrapper, history } = mountPanel({ fileHistory })
+    await flushPromises()
+
+    expect(wrapper.findAll('.history-file-commit-row')).toHaveLength(1)
+    expect(wrapper.find('.history-file-row').exists()).toBe(false)
+    expect(history.log.value.map((item) => item.sha)).toEqual(['repository-head'])
+    expect(api.getLog).toHaveBeenCalledWith({ path: 'inbox/agents.md', limit: 200 })
+    expect(api.getLog).toHaveBeenCalledWith({ path: undefined, limit: 200 })
+
+    await wrapper.get('.history-back-button').trigger('click')
+    expect(wrapper.emitted('show-all-history')).toHaveLength(1)
+    fileHistory.clear()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.history-commit-row')).toHaveLength(1)
+    expect(wrapper.get('.history-commit-row').text()).toContain('Repository head')
+  })
+
+  it('opens a file-history commit through the existing revision selection contract', async () => {
+    vi.mocked(api.getLog).mockImplementation(async (options = {}) => ({
+      commits: options.path
+        ? [commit('file-sha', NOW, 'File version', ['inbox/agents.md'])]
+        : [commit('file-sha', NOW, 'File version', ['inbox/agents.md'])],
+    }))
+    const fileHistory = useFileHistory(ref('en-US'))
+    await fileHistory.open({ documentPath: 'inbox/agents', documentTitle: 'AGENTS' })
+    const { wrapper } = mountPanel({ fileHistory })
+    await flushPromises()
+
+    await wrapper.get('.history-file-commit-row').trigger('click')
+    expect(wrapper.emitted('open-revision')).toEqual([[{
+      documentPath: 'inbox/agents',
+      documentTitle: 'AGENTS',
+      revisionId: 'file-sha',
+      revisionTime: NOW,
+      summary: 'File version',
+    }]])
+  })
+
+  it('refreshes the fixed file timeline after a commit includes that file', async () => {
+    vi.mocked(api.getLog).mockImplementation(async (options = {}) => ({
+      commits: options.path
+        ? [commit('file-sha', NOW, 'File version', ['inbox/agents.md'])]
+        : [commit('file-sha', NOW, 'File version', ['inbox/agents.md'])],
+    }))
+    const fileHistory = useFileHistory(ref('en-US'))
+    await fileHistory.open({ documentPath: 'inbox/agents', documentTitle: 'AGENTS' })
+    const refreshFile = vi.spyOn(fileHistory, 'refresh')
+    const { historyCommit } = mountPanel({ fileHistory })
+    await flushPromises()
+    refreshFile.mockClear()
+
+    historyCommit.lastCommittedPaths.value = ['inbox/agents.md']
+    historyCommit.completionId.value += 1
+    await flushPromises()
+
+    expect(refreshFile).toHaveBeenCalledTimes(1)
+    expect(fileHistory.selectedCommitId.value).toBeNull()
+  })
+
+  it('refreshes active file history after Withdraw completion', async () => {
+    vi.mocked(api.getLog).mockImplementation(async (options = {}) => ({
+      commits: options.path
+        ? [commit('repository-head', NOW, 'File head', ['inbox/agents.md'])]
+        : [commit('repository-head', NOW, 'Repository head', ['inbox/agents.md'])],
+    }))
+    const fileHistory = useFileHistory(ref('en-US'))
+    await fileHistory.open({ documentPath: 'inbox/agents', documentTitle: 'AGENTS' })
+    const refreshFile = vi.spyOn(fileHistory, 'refresh')
+    const { withdraw } = mountPanel({ fileHistory })
+    await flushPromises()
+    refreshFile.mockClear()
+
+    withdraw.completionId.value += 1
+    await flushPromises()
+
+    expect(refreshFile).toHaveBeenCalledTimes(1)
+  })
+
   it('renders one multi-file commit once and expands its file children without another log request', async () => {
     vi.mocked(api.getLog).mockResolvedValue({
       commits: [commit('abcdef123456', NOW, 'Improve History timeline', [

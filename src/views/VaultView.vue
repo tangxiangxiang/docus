@@ -23,6 +23,7 @@ import { deriveDocumentSavePresentation } from '../composables/vault/editor-tabs
 import { useHistory } from '../composables/vault/useHistory'
 import { useHistoryCommit } from '../composables/vault/useHistoryCommit'
 import { useHistoryWithdraw } from '../composables/vault/useHistoryWithdraw'
+import { resolveFileHistoryTarget, useFileHistory } from '../composables/vault/useFileHistory'
 import { createPathMutationLock } from '../composables/vault/pathMutationLock'
 import { useHistorySnapshots, type HistoryRevisionSelection } from '../composables/vault/useHistorySnapshots'
 import {
@@ -803,6 +804,24 @@ async function deleteSelectedRecovery(): Promise<void> {
 }
 
 const history = useHistory(vaultContext)
+const fileHistory = useFileHistory(locale)
+
+function openFileHistory(path: string): void {
+  void fileHistory.open(resolveFileHistoryTarget(path, posts.value))
+  selectPanel('history')
+}
+
+function showAllHistory(): void {
+  fileHistory.clear()
+}
+
+function selectActivityPanel(panel: Parameters<typeof selectPanel>[0]): void {
+  if (panel === 'history') fileHistory.clear()
+  selectPanel(panel)
+}
+
+watch(vaultId, () => fileHistory.clear())
+
 const historyCommit = useHistoryCommit({
   history,
   saveSelected: prepareHistoryCommit,
@@ -1421,7 +1440,7 @@ watch(isReadMode, async (reading) => {
   >
     <ActivityBar
       :active-panel="activePanel"
-      @select-panel="selectPanel"
+      @select-panel="selectActivityPanel"
       @open-settings="settingsOpen = true"
     />
 
@@ -1459,6 +1478,7 @@ watch(isReadMode, async (reading) => {
       :current-path="activePath"
       @select="openPost"
       @refresh="refresh"
+      @open-history="openFileHistory"
       @open-properties="openDocumentProperties"
     />
     <TagPanel
@@ -1475,7 +1495,9 @@ watch(isReadMode, async (reading) => {
       :history="history"
       :commit="historyCommit"
       :withdraw="historyWithdraw"
+      :file-history="fileHistory"
       :posts="posts"
+      @show-all-history="showAllHistory"
       @open-revision="openHistoryRevision"
     />
     <DraftRecoveryCenter

@@ -48,8 +48,9 @@ function normalizeMarkdownPath(path: string): string | null {
   return normalized
 }
 
-function fallbackTitle(path: string): string {
-  const filename = path.split('/').pop()?.slice(0, -3) ?? path
+export function fallbackDocumentTitle(path: string): string {
+  const documentPath = path.endsWith('.md') ? path.slice(0, -3) : path
+  const filename = documentPath.split('/').pop() ?? documentPath
   return filename
     .replace(/^\d+[-_]/, '')
     .replace(/[-_]+/g, ' ')
@@ -89,7 +90,7 @@ export function buildHistoryDayGroups(
       return [{
         path,
         documentPath,
-        title: titles.get(documentPath) ?? fallbackTitle(path),
+        title: titles.get(documentPath) ?? fallbackDocumentTitle(path),
         parentPath,
       }]
     })

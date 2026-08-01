@@ -748,6 +748,7 @@ main.container {
 .history-timeline-group + .history-timeline-group { border-top: 1px solid color-mix(in srgb, var(--vs-border) 60%, transparent); }
 .history-timeline-group-header,
 .history-commit-row,
+.history-file-commit-row,
 .history-file-row {
   box-sizing: border-box;
   width: 100%;
@@ -803,6 +804,20 @@ main.container {
   gap: 7px;
   background: transparent;
 }
+.history-file-commit-row {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 6px 12px;
+  gap: 7px;
+  background: transparent;
+}
+.history-file-commit-row:hover { background: var(--vs-hover-bg); }
+.history-file-commit-row.selected {
+  box-shadow: inset 2px 0 var(--vs-accent);
+  background: color-mix(in srgb, var(--vs-accent) 10%, var(--vs-bg-1));
+}
+.history-file-commit-row.selected .history-commit-marker { color: var(--vs-accent); }
 .history-commit-row:hover { background: var(--vs-hover-bg); }
 .history-commit-row.active { background: color-mix(in srgb, var(--vs-accent) 8%, var(--vs-bg-1)); }
 .history-commit-marker {
@@ -846,6 +861,7 @@ main.container {
 .history-file-copy .history-row-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-timeline-group-header:focus-visible,
 .history-commit-row:focus-visible,
+.history-file-commit-row:focus-visible,
 .history-file-row:focus-visible {
   position: relative;
   z-index: 1;
@@ -877,6 +893,52 @@ main.container {
   padding: 18px 10px;
   background: transparent;
   font-style: normal;
+}
+.history-file-heading {
+  display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  gap: 5px;
+  padding: 8px 10px 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 65%, transparent);
+  background: var(--vs-bg-1);
+}
+.history-back-button {
+  justify-self: start;
+  min-height: 24px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vs-accent);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.history-back-button:hover { background: var(--vs-hover-bg); }
+.history-back-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
+  outline-offset: 1px;
+}
+.history-file-heading > div { display: flex; align-items: baseline; min-width: 0; gap: 7px; }
+.history-file-heading h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--vs-text-1);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-file-heading > div > span { flex: 0 0 auto; color: var(--vs-text-3); font-size: 0.68rem; }
+.history-file-path {
+  overflow: hidden;
+  color: var(--vs-text-3);
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .history-skeleton {
   display: flex;
