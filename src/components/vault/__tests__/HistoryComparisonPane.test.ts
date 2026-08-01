@@ -39,6 +39,10 @@ function mountPane(value: HistoryComparison) {
           props: ['diff', 'comparisonKey'],
           template: '<div class="unified-diff-stub">{{ comparisonKey }} / +{{ diff.stats.added }} −{{ diff.stats.removed }}</div>',
         },
+        HistoryUnchangedContent: {
+          props: ['raw', 'comparisonKey'],
+          template: '<div class="unchanged-content-stub">{{ comparisonKey }} / {{ raw }}</div>',
+        },
       },
     },
   })
@@ -116,7 +120,7 @@ describe('HistoryComparisonPane', () => {
     expect(menuItem.hasAttribute('disabled')).toBe(true)
   })
 
-  it('renders loading, error, retry, and identical states inline', async () => {
+  it('renders loading, error, retry, and identical content states inline', async () => {
     const wrapper = mountPane(comparison({ status: 'loading', diff: null }))
     expect(wrapper.get('[role="status"]').text()).toContain('Comparing versions')
 
@@ -129,10 +133,24 @@ describe('HistoryComparisonPane', () => {
       comparison: comparison({
         status: 'ready',
         currentDirty: false,
+        oldRaw: '# Same document\n\nContent',
+        newRaw: '# Same document\n\nContent',
         diff: { ops: [], stats: { added: 0, removed: 0, equal: 0 } },
       }),
     })
     expect(wrapper.text()).toContain('identical')
+    expect(wrapper.find('.unchanged-content-stub').text()).toContain('# Same document')
+  })
+
+  it('shows an empty state when identical versions are both empty', async () => {
+    const wrapper = mountPane(comparison({
+      oldRaw: '',
+      newRaw: '',
+      diff: { ops: [], stats: { added: 0, removed: 0, equal: 0 } },
+    }))
+
+    expect(wrapper.text()).toContain('Both the historical and current versions are empty')
+    expect(wrapper.find('.unchanged-content-stub').exists()).toBe(false)
   })
 
   it('formats the revision date with the application locale', () => {

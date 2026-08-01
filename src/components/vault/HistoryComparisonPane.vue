@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { HistoryComparison } from '../../composables/vault/useHistoryComparisons'
 import { useI18n } from '../../composables/useI18n'
 import HistoryUnifiedDiff from './HistoryUnifiedDiff.vue'
+import HistoryUnchangedContent from './HistoryUnchangedContent.vue'
 import { formatHistoryDate } from '../../lib/history-date'
 
 const props = defineProps<{
@@ -95,7 +96,12 @@ onBeforeUnmount(() => {
 <template>
   <section
     class="history-comparison-pane"
-    :class="{ 'has-summary': Boolean(comparison.summary) }"
+    :class="{
+      'has-summary': Boolean(comparison.summary),
+      'has-unchanged-content': comparison.status === 'ready'
+        && comparison.diff?.ops.length === 0
+        && comparison.oldRaw.length > 0,
+    }"
     :aria-label="t('history.comparison_viewer')"
     :aria-busy="restoring || undefined"
   >
@@ -163,15 +169,28 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div
-      v-else-if="!comparison.diff || comparison.diff.ops.length === 0"
-      class="history-diff-state"
+      v-else-if="comparison.diff && comparison.diff.ops.length === 0"
+      class="history-unchanged-view"
     >
-      {{ t('history.no_comparison_changes') }}
+      <div class="history-unchanged-notice" role="status">
+        {{ t('history.no_comparison_changes') }}
+      </div>
+      <HistoryUnchangedContent
+        v-if="comparison.oldRaw.length > 0"
+        :raw="comparison.oldRaw"
+        :comparison-key="comparisonKey"
+      />
+      <div v-else class="history-diff-state">
+        {{ t('history.both_versions_empty') }}
+      </div>
     </div>
     <HistoryUnifiedDiff
-      v-else
+      v-else-if="comparison.diff && comparison.diff.ops.length > 0"
       :diff="comparison.diff"
       :comparison-key="comparisonKey"
     />
+    <div v-else class="history-diff-state">
+      {{ t('history.no_comparison_changes') }}
+    </div>
   </section>
 </template>

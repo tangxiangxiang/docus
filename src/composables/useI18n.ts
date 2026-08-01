@@ -360,6 +360,8 @@ const STRINGS: Strings = {
   'history.diff_stats': { zh: '新增 {added} 行，删除 {removed} 行', en: '{added} added lines, {removed} removed lines' },
   'history.retry': { zh: '重试', en: 'Retry' },
   'history.no_comparison_changes': { zh: '历史版本与当前版本内容相同。', en: 'The historical and current versions are identical.' },
+  'history.both_versions_empty': { zh: '历史版本与当前版本均为空。', en: 'Both the historical and current versions are empty.' },
+  'history.unchanged_content': { zh: '内容相同的 Markdown 源文档', en: 'Unchanged Markdown source document' },
   'history.working_tree_diff_load_failed': { zh: '无法加载工作区差异。', en: 'Failed to load the working tree diff.' },
   'history.no_working_tree_changes': { zh: 'HEAD 与当前工作区内容相同。', en: 'HEAD and the working tree are identical.' },
   'history.restore_version_ellipsis': { zh: '恢复到这个版本…', en: 'Restore to this version…' },
