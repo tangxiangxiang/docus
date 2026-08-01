@@ -821,9 +821,9 @@ main.container {
 .history-commit-row {
   display: flex;
   align-items: center;
-  min-height: 42px;
-  padding: 5px 12px;
-  gap: 7px;
+  min-height: 31px;
+  padding: 3px 9px;
+  gap: 5px;
   background: transparent;
 }
 .history-file-commit-row {
@@ -844,6 +844,17 @@ main.container {
 .history-commit-row.active {
   box-shadow: inset 2px 0 var(--vs-accent);
   background: color-mix(in srgb, var(--vs-accent) 5%, var(--vs-bg-1));
+}
+.history-commit-row .history-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.history-commit-row .history-row-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .history-file-commit-row .history-commit-marker {
   display: inline-flex;

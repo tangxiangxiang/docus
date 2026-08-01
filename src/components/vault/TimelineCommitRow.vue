@@ -44,11 +44,9 @@ function onKeydown(event: KeyboardEvent): void {
     @contextmenu.prevent="emit('contextmenu', $event)"
   >
     <span class="history-disclosure" :class="{ expanded }" aria-hidden="true" v-html="ICON_CHEVRON" />
-    <span class="history-row-copy">
-      <span class="history-row-title">{{ commit.message }}</span>
-      <span class="history-row-meta">
-        {{ timeLabel }} · <span class="history-commit-sha">{{ commit.shortId }}</span> · {{ fileCountLabel }}
-      </span>
+    <span class="history-row-title">{{ commit.message }}</span>
+    <span class="history-row-meta">
+      {{ timeLabel }} · <span class="history-commit-sha">{{ commit.shortId }}</span> · {{ fileCountLabel }}
     </span>
   </button>
 </template>
