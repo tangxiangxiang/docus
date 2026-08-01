@@ -612,36 +612,50 @@ main.container {
 }
 .history-change-row {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 7px;
+  position: relative;
+  box-sizing: border-box;
+  gap: 5px;
+  width: 100%;
   min-height: 30px;
-  padding: 2px 7px;
-  border-radius: 5px;
+  padding: 3px 8px;
+  color: var(--vs-text-1);
+  font: inherit;
+  line-height: 1.35;
   overflow: hidden;
 }
-.history-change-row:has(.history-change-open.active) { background: color-mix(in srgb, var(--vs-accent) 13%, transparent); }
+.history-change-row::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background: transparent;
+  content: '';
+  pointer-events: none;
+}
+.history-change-row:hover::before { background: var(--vs-hover-bg); }
+.history-change-row:has(.history-change-open.active)::before { background: var(--vs-active-bg); }
+.history-change-row > * { position: relative; z-index: 1; }
 .history-change-row input { flex: 0 0 auto; margin: 0; accent-color: var(--vs-accent); }
 .history-change-open {
   display: flex;
   align-items: center;
   flex: 1 1 auto;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
-  min-height: 26px;
-  padding: 2px 0;
+  min-height: 24px;
+  padding: 0;
   border: 0;
-  border-radius: 4px;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-.history-change-open:hover { background: color-mix(in srgb, var(--vs-hover-bg) 82%, transparent); }
 .history-change-open:focus-visible { outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent); outline-offset: 2px; }
 .history-change-copy { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; }
 .history-change-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.history-change-copy strong { color: var(--vs-text-1); font-size: 0.78rem; font-weight: 500; }
+.history-change-copy strong { color: var(--vs-text-1); font-size: inherit; font-weight: 450; }
 .history-change-status {
   flex: 0 0 auto;
   padding: 2px 6px;
