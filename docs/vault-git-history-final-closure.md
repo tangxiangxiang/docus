@@ -8,10 +8,12 @@ Maintenance Mode: NOT ENTERED
 ```
 
 This document is a live Closure record, not a closure declaration.
-Production remediation has not started. Future contracts in the
+Focused production remediation has started, but the complete Closure
+program has not finished. Future contracts in the
 [Spec](superpowers/specs/2026-07-30-vault-git-history-design.md) and
 [Plan](superpowers/plans/2026-07-30-vault-git-history-implementation-plan.md)
-are **not implemented on the reviewed production baseline**.
+remain unimplemented except where the 2026-08-01 correction overlay in
+§11 says otherwise.
 
 ## 1. Current Baseline and Audit Chain
 
@@ -53,8 +55,8 @@ handoff rather than written into itself.
 | Area | State |
 |---|---|
 | Documentation Contract Completion | COMPLETE after the substantive and bookkeeping commits |
-| Production remediation | NOT STARTED |
-| Final production verification | NOT RUN |
+| Production remediation | IN PROGRESS — focused H-C5/H-C12 correction implemented |
+| Final production verification | LOCAL ONLY — cross-platform CI not run |
 | Owner Approval | PENDING |
 | Closure | DRAFT |
 | Maintenance Mode | NOT ENTERED |
@@ -416,4 +418,68 @@ Status: DRAFT — CLOSURE IN PROGRESS
 Owner Approval: PENDING / BLOCKED
 Final Production Baseline: NOT YET CAPTURED
 Maintenance Mode: NOT ENTERED
+```
+
+## 11. 2026-08-01 Cross-Feature Correction Overlay
+
+This overlay records a narrow remediation against production commit
+`1a065bb0c2517f8a1fe1886b806e6945c2830538`. It does not declare the
+History feature closed and does not convert the remaining canonical
+findings into accepted risks.
+
+RED commit `36fed44dbf0276ee876f1d2a1f8d6c51c6bc7be9`
+demonstrated eight deterministic failures: six History mutation types
+entered while a folder transaction owned the Vault, History Restore
+entered while startup recovery held its seam, and a second process
+served mutations for the same Vault.
+
+For this correction slice:
+
+| Finding | Correction status | Remaining closure qualification |
+|---|---|---|
+| H-C5 | REMEDIATED IN CODE | Restore now resolves one immutable SHA, reads its blob, and commits through locked CAS/create-only document writes with authoritative post-read verification. Broader H-C10 filesystem-containment closure remains open. |
+| H-C12 | REMEDIATED IN CODE | One lifetime writer owns the canonical Vault; all covered mutations and recovery share `withVaultMutation`. Cross-platform production verification remains open. |
+| H-C10 | OPEN | Restore rejects observed leaf symlinks and validates missing parents, but this focused change does not claim the full all-History symlink-safe resolver contract. |
+
+The selected lock order is:
+
+```text
+process-lifetime Vault writer ownership
+→ process-local withVaultMutation
+→ withVaultStructureLock when membership changes
+→ sorted document write locks
+→ withRepoMutation
+→ Git index.lock
+→ atomic file write/link/rename commit point
+```
+
+Restore no longer invokes `git restore --worktree`. Existing files use
+`atomicReplaceTextIfUnchanged`; missing files use
+`prepareAtomicTextCreate`; metadata identity is preserved and rolled
+back on failed settlement. Retained valid or malformed journal
+ownership blocks the write before any content commit.
+
+Local evidence bound to the production SHA:
+
+```text
+focused History/coordination: 4 files, 145 passed
+complete npm test -- --run:    156 files, 2476 passed, 2 skipped
+npm run typecheck:             PASS
+npm run build:                 PASS (dependency/chunk-size warnings only)
+git diff --check:              PASS
+direct restore search:         no production matches
+v4 executor/metadata diff:     empty
+```
+
+The Ubuntu, macOS CI, Windows, and Visual jobs have not been dispatched
+for this production SHA. Local execution was on macOS only. Therefore:
+
+```text
+Cross-feature concurrency bug: REMEDIATED IN CODE
+Folder-move v4 protocol semantics: UNCHANGED
+History Restore direct git overwrite: REMOVED
+Single active Vault writer: ENFORCED
+History production verification: IN PROGRESS
+History Closure: DRAFT — CLOSURE IN PROGRESS
+Owner Approval: PENDING / BLOCKED
 ```

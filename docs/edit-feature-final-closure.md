@@ -211,3 +211,45 @@ In-scope by default:
 - Security vulnerability fixes.
 - Performance issue fixes.
 - Approved new feature requirements.
+
+---
+
+## 9. 2026-08-01 Focused Maintenance Reopening Addendum
+
+The History/folder-move cross-feature audit demonstrated a real
+maintenance regression against the closed protocol boundary. At RED
+commit `36fed44dbf0276ee876f1d2a1f8d6c51c6bc7be9`, deterministic tests
+showed that Restore, Withdraw, Create Version, Index Repair, and startup
+recovery could enter independently of a durable folder-move
+transaction. A two-process test also showed that two Vite mutation
+servers could become active for one canonical Vault.
+
+The affected invariant was not a folder-move v4 journal transition. It
+was the absence of one outer Vault mutation boundary: an unrelated
+History writer could touch a source or destination generation owned by
+the journal and thereby risk an overwrite, an impossible old/new Index
+Repair snapshot, or false parity quarantine.
+
+Production correction `1a065bb0c2517f8a1fe1886b806e6945c2830538`
+adds process-lifetime single-writer ownership, a shared process-local
+Vault mutation coordinator, and an atomic/CAS History Restore writer.
+It does not change `folderMoveV4Executor`, `folderMoveV4Metadata`, the
+journal schema, phases, generation rules, quarantine rules, or durable
+SQLite footprint. Therefore the closed v4 invariants remain unchanged:
+
+- external generation always wins;
+- unknown ownership fails closed;
+- the journal is removed last;
+- replay remains idempotent;
+- create-only destination ownership is preserved; and
+- SQLite mutation remains inside the durable ownership footprint.
+
+Local verification on that production SHA passed the focused History
+coordination suites (4 files, 145 tests), the complete suite (156 files,
+2,476 passed, 2 skipped), typecheck, build, and `git diff --check`.
+Ubuntu, Windows, and Visual CI have not yet run on this SHA; macOS has
+only the local evidence above. Accordingly this is a focused
+maintenance correction, and Edit maintenance closure is temporarily
+reopened for cross-platform verification. The historical closure and
+its evidence remain valid for their recorded SHA and are not rewritten
+by this addendum.

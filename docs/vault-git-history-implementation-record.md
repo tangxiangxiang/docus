@@ -507,3 +507,47 @@ above:
 These are source-reviewed facts. Full final verification remains
 unrun, Owner Approval is pending, and no Final Production Baseline is
 recorded.
+
+## 16. 2026-08-01 Focused Production Correction
+
+This is an implementation overlay, not a rewrite of the reviewed
+baseline above. RED commit
+`36fed44dbf0276ee876f1d2a1f8d6c51c6bc7be9` proved that the History
+repository queue, folder structure/document locks, and startup recovery
+sequencing were independent lock domains. It also proved that two Docus
+processes could serve one canonical Vault.
+
+Production commit `1a065bb0c2517f8a1fe1886b806e6945c2830538`
+selects these corrections:
+
+- one process-lifetime writer record at `.docus/vault-writer.json`,
+  acquired before recovery, migration, and route mounting;
+- one canonical-root process-local `withVaultMutation` boundary shared
+  by History, folder lifecycle, and recovery;
+- lock order: lifetime owner, Vault mutation, structure lock, sorted
+  document locks, History repository queue, Git `index.lock`, then the
+  atomic filesystem commit point;
+- complete Create Version, Withdraw, Repair Retry/Discard/status-write,
+  and repository-bootstrap transactions inside that boundary; and
+- Restore implemented as immutable-ref blob read plus locked
+  CAS/create-only document commit, metadata settlement, and
+  authoritative post-read. Production no longer uses
+  `git restore --worktree`.
+
+The writer record uses exclusive creation and includes version, nonce,
+host, PID, and start time. Malformed, cross-host, live, and indeterminate
+owners fail closed. A same-host positively dead record is eligible for
+takeover only under an exclusive recovery claim after nonce and PID
+liveness are rechecked. Release requires the caller's nonce.
+
+This focused change remediates H-C5 and the active-writer/whole-Vault
+portion of H-C12 in code. H-C10 remains open for the broader all-History
+filesystem-containment contract, and no other canonical finding is
+declared closed here. Folder-move v4 executor, metadata state machine,
+journal schema/phases, external-incumbent precedence, and durable
+SQLite ownership footprint are unchanged.
+
+Evidence on the production SHA: focused suites 145/145; complete suite
+2,476 passed and 2 skipped across 156 files; typecheck, build, and diff
+check passed. Cross-platform CI was not run, so Final Production
+Baseline and Owner Approval remain pending.

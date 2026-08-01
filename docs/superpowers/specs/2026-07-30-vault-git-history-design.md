@@ -1273,3 +1273,46 @@ Record, Closure, and README.
 
 No Closure Blocker in this table is an Accepted Risk. Owner Approval
 remains pending; no Final Production Baseline has been captured.
+
+## 26. 2026-08-01 H-C5/H-C12 Correction Overlay
+
+The retrospective baseline and intended contracts above remain useful
+history, but the following implemented correction supersedes their
+direct-`git restore` and per-operation lock assumptions for H-C5/H-C12.
+
+One active Docus writer owns a canonical Vault for the server lifetime.
+The `.docus/vault-writer.json` record is acquired by exclusive creation
+before recovery, metadata migration, or mutation-route mounting. A
+malformed, cross-host, live, or indeterminate owner fails closed; only a
+complete same-host record with a positively dead PID can be taken over,
+after an exclusive recovery claim and immediate nonce/liveness recheck.
+
+Within the active process, one canonical-root `withVaultMutation`
+coordinator is the outer boundary for folder lifecycle, folder-move v4
+recovery, Create Version, Withdraw, Restore, Index Repair state changes,
+and repository bootstrap. The order is lifetime ownership, Vault
+mutation, structure lock, sorted document locks, repository queue, Git
+`index.lock`, then the atomic filesystem commit point. Recursive
+same-Vault acquisition fails structurally, preventing the inverse
+`withRepoMutation → withVaultMutation` order.
+
+The implemented Restore contract is now:
+
+```text
+withVaultMutation
+→ structure and document lock
+→ retained journal ownership check
+→ resolve requested ref once to an immutable commit SHA
+→ read that commit's blob
+→ capture current file and metadata generation
+→ CAS replace an existing document or create-only commit a missing one
+→ preserve/settle document identity metadata
+→ read and verify the committed generation
+→ return the authoritative committed bytes
+```
+
+This removes production `git restore --worktree` use. It remediates the
+cross-feature H-C5 race and the active-writer/whole-Vault H-C12 race in
+code at `1a065bb0c2517f8a1fe1886b806e6945c2830538`. It does not close the
+broader H-C10 all-History containment finding, other History findings,
+cross-platform verification, Owner Approval, or History Closure.

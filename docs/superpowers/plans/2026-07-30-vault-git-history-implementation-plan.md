@@ -1288,3 +1288,33 @@ Phase 7
 C3, C4, C6, C10, C11, and C12 touch shared server core. The phase
 order is mandatory; parallel implementation against the same
 functions is not authorized by this Plan.
+
+## 2026-08-01 Focused Correction Execution Record
+
+This record supersedes the direct-`git restore` implementation proposed
+in History-C5 and the per-operation cross-process mutex proposed in
+History-C12. It does not mark the rest of the Closure plan complete.
+
+RED commit `36fed44dbf0276ee876f1d2a1f8d6c51c6bc7be9`
+added deterministic folder-move/History and two-process failures before
+the production correction. Production commit
+`1a065bb0c2517f8a1fe1886b806e6945c2830538` then implemented:
+
+1. process-lifetime single-writer ownership for the canonical Vault,
+   before recovery, migration, or serving mutation routes;
+2. process-local `withVaultMutation` shared by folder lifecycle,
+   recovery, all persisted History mutations, and bootstrap;
+3. the order lifetime owner → Vault mutation → structure → sorted
+   documents → repository queue → `index.lock` → atomic commit;
+4. Restore by immutable blob read plus document-protocol CAS or
+   create-only commit, metadata settlement, and authoritative post-read;
+   and
+5. complete Withdraw/Create/Repair transactions retained inside the
+   shared boundary through HEAD, Real Index, and Repair settlement.
+
+No folder-move v4 phase, journal schema, executor, metadata state
+machine, generation rule, quarantine rule, or SQLite ownership
+footprint changed. Local verification passed 145 focused tests, the
+complete 2,478-test run (2,476 passed, 2 skipped), typecheck, build, and
+diff check. Cross-platform CI and Owner Approval remain pending, so the
+History Closure status remains `DRAFT — CLOSURE IN PROGRESS`.
