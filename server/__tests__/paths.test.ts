@@ -10,6 +10,8 @@ import {
   isValidSegment,
   readSafeRelativeFile,
   resolveSafeRelativePath,
+  resolveSafeRelativePathDetailed,
+  verifySafePathResolution,
 } from '../paths.js'
 
 describe('isValidPathSyntax', () => {
@@ -138,6 +140,23 @@ describe('symlink-safe filesystem paths', () => {
 
       await fs.symlink(path.join(outside, 'secret.md'), path.join(root, 'note.md'), 'file')
       await expect(readSafeRelativeFile(root, 'note.md', 'utf8')).rejects.toThrow(/symbolic links/)
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('detects an intermediate directory replacement after resolution', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-safe-path-race-'))
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-safe-outside-race-'))
+    try {
+      await fs.mkdir(path.join(root, 'folder'), { recursive: true })
+      await fs.writeFile(path.join(root, 'folder', 'note.md'), 'safe', 'utf8')
+      const resolution = await resolveSafeRelativePathDetailed(root, 'folder/note.md')
+      await fs.rename(path.join(root, 'folder'), path.join(root, 'old-folder'))
+      await fs.symlink(outside, path.join(root, 'folder'), 'dir')
+      await expect(verifySafePathResolution(resolution)).rejects.toThrow(/path changed|symbolic/i)
+      await expect(readSafeRelativeFile(root, 'folder/note.md', 'utf8')).rejects.toThrow(/symbolic links/)
     } finally {
       await fs.rm(root, { recursive: true, force: true })
       await fs.rm(outside, { recursive: true, force: true })

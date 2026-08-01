@@ -84,11 +84,15 @@ export interface FileDiff {
    remain errors. */
 export class HistoryApiError extends Error {
   readonly status: number
+  readonly code?: string
+  readonly details?: unknown
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string, details?: unknown) {
     super(message)
     this.name = 'HistoryApiError'
     this.status = status
+    this.code = code
+    this.details = details
   }
 }
 
@@ -96,9 +100,18 @@ async function readJson<T>(r: Response, fallback: string): Promise<T> {
   if (r.ok) {
     return r.json() as Promise<T>
   }
-  const body = (await r.json().catch(() => ({}))) as { error?: unknown }
+  const body = (await r.json().catch(() => ({}))) as {
+    error?: unknown
+    code?: unknown
+    details?: unknown
+  }
   const message = typeof body.error === 'string' ? body.error : `${fallback}: ${r.status}`
-  throw new HistoryApiError(message, r.status)
+  throw new HistoryApiError(
+    message,
+    r.status,
+    typeof body.code === 'string' ? body.code : undefined,
+    body.details,
+  )
 }
 
 export async function getCapability(): Promise<Capability> {
@@ -116,17 +129,33 @@ export async function getStatus(): Promise<{ dirty: StatusEntry[]; available: bo
      "getStatus failed: 503" in the History panel's error slot and
      hide the actual reason from the user. */
   const r = await fetch('/api/history/status')
-  const body = await r.json().catch(() => null) as { dirty?: unknown; available?: unknown; error?: unknown } | null
+  const body = await r.json().catch(() => null) as {
+    dirty?: unknown
+    available?: unknown
+    error?: unknown
+    code?: unknown
+    details?: unknown
+  } | null
   const unavailable = r.status === 503
     && Array.isArray(body?.dirty)
     && body?.available === false
   if (unavailable) return body as { dirty: StatusEntry[]; available: boolean }
   if (!r.ok) {
     const message = typeof body?.error === 'string' ? body.error : `getStatus failed: ${r.status}`
-    throw new HistoryApiError(message, r.status)
+    throw new HistoryApiError(
+      message,
+      r.status,
+      typeof body?.code === 'string' ? body.code : undefined,
+      body?.details,
+    )
   }
   if (!Array.isArray(body?.dirty) || typeof body?.available !== 'boolean') {
-    throw new HistoryApiError('getStatus failed: invalid response', r.status)
+    throw new HistoryApiError(
+      'getStatus failed: invalid response',
+      r.status,
+      typeof body?.code === 'string' ? body.code : undefined,
+      body?.details,
+    )
   }
   return body as { dirty: StatusEntry[]; available: boolean }
 }

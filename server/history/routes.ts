@@ -94,8 +94,24 @@ function repoRoot(): string {
   return _repoRoot
 }
 
-function bad(c: any, msg: string, code = 400) {
-  return c.json({ error: msg }, code)
+function bad(c: any, msg: string, status = 400, errorCode?: string, details?: unknown) {
+  return c.json({ error: msg, ...(errorCode ? { code: errorCode } : {}), ...(details !== undefined ? { details } : {}) }, status)
+}
+
+const STABLE_HISTORY_ERROR_CODES = new Set([
+  'HISTORY_CONTENT_CHANGED',
+  'HISTORY_PATH_MOVED',
+  'HISTORY_VAULT_WRITER_ACTIVE',
+  'HISTORY_REPOSITORY_CHANGED',
+  'HISTORY_REPOSITORY_OPERATION',
+  'HISTORY_INDEX_REPAIR_CONFLICT',
+  'HISTORY_NOT_DOCUS_VERSION',
+  'HISTORY_RESOURCE_LIMIT',
+])
+
+function stableErrorCode(error: unknown): string | undefined {
+  const code = (error as any)?.code
+  return typeof code === 'string' && STABLE_HISTORY_ERROR_CODES.has(code) ? code : undefined
 }
 
 function validPathParam(c: any, value: string | undefined): string | Response {
@@ -180,7 +196,7 @@ history.get('/status', async (c) => {
       .filter((entry) => !isManagedHistoryPath(entry.path) && isValidHistoryPath(entry.path))
     return c.json({ dirty, available: true })
   } catch (e: any) {
-    return bad(c, e.message ?? 'status failed', 500)
+    return bad(c, e.message ?? 'status failed', 500, stableErrorCode(e))
   }
 })
 
@@ -210,7 +226,7 @@ history.post('/content-hashes', async (c) => {
     )))
     return c.json({ hashes: Object.fromEntries(entries) })
   } catch (e: any) {
-    return bad(c, e.message ?? 'content hash failed', 500)
+    return bad(c, e.message ?? 'content hash failed', 500, stableErrorCode(e))
   }
 })
 
@@ -228,7 +244,7 @@ history.get('/log', async (c) => {
     const commits = await git.log(repoRoot(), { path, limit })
     return c.json({ commits })
   } catch (e: any) {
-    return bad(c, e.message ?? 'log failed', 500)
+    return bad(c, e.message ?? 'log failed', 500, stableErrorCode(e))
   }
 })
 
@@ -250,7 +266,7 @@ history.get('/file', async (c) => {
     if (content === null) return bad(c, 'not found at ref', 404)
     return c.json({ path: validPath, ref: validRef, content })
   } catch (e: any) {
-    return bad(c, e.message ?? 'file failed', 500)
+    return bad(c, e.message ?? 'file failed', 500, stableErrorCode(e))
   }
 })
 
@@ -289,7 +305,7 @@ history.get('/diff', async (c) => {
     const diff = computeFileDiff(oldContent, newContent)
     return c.json({ path: validPath, oldRef: validOldRef, newRef: validNewRef, diff })
   } catch (e: any) {
-    return bad(c, e.message ?? 'diff failed', 500)
+    return bad(c, e.message ?? 'diff failed', 500, stableErrorCode(e))
   }
 })
 
@@ -345,9 +361,11 @@ history.post('/commits', async (c) => {
   } catch (e: any) {
     const msg = e.message ?? 'commit failed'
     if (/nothing to commit|selection is stale|content changed before commit|repository changed before commit|repository operation in progress/i.test(msg)) {
-      return bad(c, msg, 409)
+      return bad(c, msg, 409, /repository operation in progress/i.test(msg)
+        ? 'HISTORY_REPOSITORY_OPERATION'
+        : 'HISTORY_REPOSITORY_CHANGED')
     }
-    return bad(c, msg, 500)
+    return bad(c, msg, 500, stableErrorCode(e))
   }
 })
 
@@ -363,7 +381,7 @@ history.get('/repair-status', async (c) => {
       return c.json({ transactions: await git.getIndexRepairStatus(repoRoot()) })
     })
   } catch (e: any) {
-    return bad(c, e.message ?? 'index repair status failed', 500)
+    return bad(c, e.message ?? 'index repair status failed', 500, stableErrorCode(e))
   }
 })
 
@@ -385,9 +403,11 @@ history.post('/repair-index', async (c) => {
   } catch (e: any) {
     const msg = e.message ?? 'index repair failed'
     if (/repository operation in progress|transaction not found|repository changed|index changed after repair|git index is locked/i.test(msg)) {
-      return bad(c, msg, 409)
+      return bad(c, msg, 409, /index changed after repair/i.test(msg)
+        ? 'HISTORY_INDEX_REPAIR_CONFLICT'
+        : 'HISTORY_REPOSITORY_CHANGED')
     }
-    return bad(c, msg, 500)
+    return bad(c, msg, 500, stableErrorCode(e))
   }
 })
 
@@ -407,7 +427,7 @@ history.post('/repair-index/discard', async (c) => {
       return c.json({ discarded: true })
     })
   } catch (e: any) {
-    return bad(c, e.message ?? 'discard index repair failed', 500)
+    return bad(c, e.message ?? 'discard index repair failed', 500, stableErrorCode(e))
   }
 })
 
@@ -434,10 +454,15 @@ history.post('/drop', async (c) => {
   } catch (e: any) {
     const msg = e.message ?? 'drop failed'
     if (/only the latest version|repository changed before withdrawal|repository operation in progress|not a Docus version|merge commits cannot be withdrawn/i.test(msg)) {
-      return bad(c, msg, 409)
+      return bad(c, msg, 409, /not a Docus version/i.test(msg)
+        ? 'HISTORY_NOT_DOCUS_VERSION'
+        : /repository operation in progress/i.test(msg)
+          ? 'HISTORY_REPOSITORY_OPERATION'
+          : 'HISTORY_REPOSITORY_CHANGED')
     }
     if (/bad revision|unknown revision|not a valid object name|invalid withdrawal reference/i.test(msg)) return bad(c, msg, 404)
-    return bad(c, msg, 500)
+    if (e?.code === 'HISTORY_VAULT_WRITER_ACTIVE') return bad(c, msg, 409, e.code)
+    return bad(c, msg, 500, stableErrorCode(e))
   }
 })
 
@@ -499,7 +524,7 @@ history.post('/restore', async (c) => {
     if (e instanceof HistoryRestoreNotFoundError) {
       return bad(c, msg, 404)
     }
-    return bad(c, msg, 500)
+    return bad(c, msg, 500, stableErrorCode(e))
   }
 })
 

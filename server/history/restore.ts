@@ -20,7 +20,11 @@ import { withDocumentWriteLock, withVaultStructureLock } from '../documentWriteL
 import { isPhysicallyContained } from '../documentFileLifecycle.js'
 import { assertPathNotOwnedByFolderMove, FolderMovePathOwnedError } from '../folderMoveJournalOwnership.js'
 import { withVaultMutation } from '../vaultMutation.js'
-import { resolveSafeRelativePath } from '../paths.js'
+import {
+  resolveSafeRelativePathDetailed,
+  verifySafePathResolution,
+  type SafePathResolution,
+} from '../paths.js'
 import * as git from './git.js'
 import { ensureRepoWithinVaultMutation } from './repo.js'
 
@@ -72,24 +76,30 @@ export async function restoreHistoricalDocument(input: {
   afterCommit?: () => void | Promise<void>
 }): Promise<HistoryRestoreResult> {
   const logicalPath = input.path.slice(0, -'.md'.length)
-  let target: string
-  try {
-    target = await resolveSafeRelativePath(input.repoRoot, input.path, { allowMissingFinal: true })
-  } catch (error: any) {
-    if (error?.code === 'ENOENT') {
-      throw new HistoryRestoreConflictError(
-        `document path moved before restore: ${logicalPath}`,
-        'HISTORY_PATH_MOVED',
-        { cause: error },
-      )
-    }
-    throw error
-  }
-
   return withVaultMutation(input.repoRoot, async () => {
     await ensureRepoWithinVaultMutation(input.repoRoot)
     return withVaultStructureLock(() => withDocumentWriteLock(logicalPath, async () => {
       await assertPathNotOwnedByFolderMove(input.repoRoot, input.path)
+
+      let target: string
+      let targetResolution: SafePathResolution
+      try {
+        targetResolution = await resolveSafeRelativePathDetailed(
+          input.repoRoot,
+          input.path,
+          { allowMissingFinal: true },
+        )
+        target = targetResolution.absolute
+      } catch (error: any) {
+        if (error?.code === 'ENOENT') {
+          throw new HistoryRestoreConflictError(
+            `document path moved before restore: ${logicalPath}`,
+            'HISTORY_PATH_MOVED',
+            { cause: error },
+          )
+        }
+        throw error
+      }
 
       const resolvedRef = await git.resolveCommit(input.repoRoot, input.ref)
       if (!resolvedRef) {
@@ -103,6 +113,24 @@ export async function restoreHistoricalDocument(input: {
       }
 
       await input.beforeMutation?.()
+      try {
+        targetResolution = await resolveSafeRelativePathDetailed(
+          input.repoRoot,
+          input.path,
+          { allowMissingFinal: true },
+        )
+      } catch (error: any) {
+        if (error?.code === 'ENOENT' || /symbolic links|path segment|path root/i.test(error?.message ?? '')) {
+          throw new HistoryRestoreConflictError(
+            `document path moved before restore: ${logicalPath}`,
+            'HISTORY_PATH_MOVED',
+            { cause: error },
+          )
+        }
+        throw error
+      }
+      target = targetResolution.absolute
+      await verifySafePathResolution(targetResolution)
       const leaf = await fs.lstat(target).catch(() => null)
       if (leaf && (!leaf.isFile() || leaf.isSymbolicLink())) {
         throw new HistoryRestoreConflictError(
@@ -124,6 +152,7 @@ export async function restoreHistoricalDocument(input: {
           )
           if (before.raw !== historicalRaw) {
             await input.beforeCommit?.()
+            await verifySafePathResolution(targetResolution)
             await atomicReplaceTextIfUnchanged(
               target,
               before.raw,
@@ -148,6 +177,7 @@ export async function restoreHistoricalDocument(input: {
           const prepared = await prepareAtomicTextCreate(target, historicalRaw)
           try {
             await input.beforeCommit?.()
+            await verifySafePathResolution(targetResolution)
             await prepared.commit()
             committed = true
             created = true
@@ -165,8 +195,10 @@ export async function restoreHistoricalDocument(input: {
           }
         }
 
-        await resolveSafeRelativePath(input.repoRoot, input.path)
-        const observed = await readStableTextSnapshot(target)
+        const postResolution = await resolveSafeRelativePathDetailed(input.repoRoot, input.path)
+        await verifySafePathResolution(postResolution)
+        const observed = await readStableTextSnapshot(postResolution.absolute)
+        await verifySafePathResolution(postResolution)
         if (observed.raw !== historicalRaw) {
           throw new HistoryRestoreConflictError(
             `document content changed before restore completed: ${logicalPath}`,
@@ -191,10 +223,15 @@ export async function restoreHistoricalDocument(input: {
         const rollbackFailures: unknown[] = []
         if (committed) {
           try {
-            if (created) await atomicRemoveTextIfUnchanged(target, historicalRaw)
+            const rollbackResolution = await resolveSafeRelativePathDetailed(
+              input.repoRoot,
+              input.path,
+            )
+            await verifySafePathResolution(rollbackResolution)
+            if (created) await atomicRemoveTextIfUnchanged(rollbackResolution.absolute, historicalRaw)
             else if (before) {
               await atomicReplaceTextIfUnchanged(
-                target,
+                rollbackResolution.absolute,
                 historicalRaw,
                 before.raw,
                 { mode: before.stat.mode },
@@ -229,6 +266,13 @@ export async function restoreHistoricalDocument(input: {
           throw new HistoryRestoreConflictError(
             `document content changed before restore: ${logicalPath}`,
             'HISTORY_CONTENT_CHANGED',
+            { cause: error },
+          )
+        }
+        if (error instanceof Error && /symbolic links|path changed while accessing|path segment|path root/i.test(error.message)) {
+          throw new HistoryRestoreConflictError(
+            `document path moved before restore completed: ${logicalPath}`,
+            'HISTORY_PATH_MOVED',
             { cause: error },
           )
         }

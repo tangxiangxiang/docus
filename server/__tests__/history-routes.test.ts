@@ -802,6 +802,55 @@ describe('POST /api/history/restore', () => {
     expect(await read('note.md')).toBe('external after commit\n')
   })
 
+  it('rejects a parent-directory symlink replacement before Restore writes', async () => {
+    await write('folder/note.md', 'historical\n')
+    const historical = await call('POST', '/commits', { paths: ['folder/note.md'], message: 'old' })
+    const ref = (await historical.json() as { sha: string }).sha
+    await write('folder/note.md', 'current\n')
+    await call('POST', '/commits', { paths: ['folder/note.md'], message: 'current' })
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-restore-outside-'))
+    try {
+      __setHistoryMutationHooksForTesting({
+        beforeRestoreCommit: async () => {
+          await fs.rename(path.join(root, 'folder'), path.join(root, 'old-folder'))
+          await fs.symlink(outside, path.join(root, 'folder'), 'dir')
+        },
+      })
+
+      const response = await call('POST', '/restore', { path: 'folder/note.md', ref })
+
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({ code: 'HISTORY_PATH_MOVED' })
+      await expect(fs.stat(path.join(outside, 'note.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed if a parent-directory symlink appears after Restore writes', async () => {
+    await write('folder/note.md', 'historical\n')
+    const historical = await call('POST', '/commits', { paths: ['folder/note.md'], message: 'old' })
+    const ref = (await historical.json() as { sha: string }).sha
+    await write('folder/note.md', 'current\n')
+    await call('POST', '/commits', { paths: ['folder/note.md'], message: 'current' })
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-restore-outside-post-'))
+    try {
+      __setHistoryMutationHooksForTesting({
+        afterRestoreCommit: async () => {
+          await fs.rename(path.join(root, 'folder'), path.join(root, 'old-folder'))
+          await fs.symlink(outside, path.join(root, 'folder'), 'dir')
+        },
+      })
+
+      const response = await call('POST', '/restore', { path: 'folder/note.md', ref })
+
+      expect(response.status).toBeGreaterThanOrEqual(409)
+      await expect(fs.stat(path.join(outside, 'note.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+
   it('uses create-only semantics when the target is missing', async () => {
     await write('folder/note.md', 'historical\n')
     const historical = await call('POST', '/commits', { paths: ['folder/note.md'], message: 'old' })

@@ -104,6 +104,22 @@ export function folderPathFor(p: string): string {
 
 export type SafePathOptions = {
   allowMissingFinal?: boolean
+  maxBytes?: number
+  signal?: AbortSignal
+}
+
+export class SafePathResourceLimitError extends Error {
+  readonly code = 'SAFE_PATH_RESOURCE_LIMIT'
+
+  constructor(relativePath: string, maxBytes: number) {
+    super(`file exceeds the ${maxBytes}-byte limit: ${relativePath}`)
+    this.name = 'SafePathResourceLimitError'
+  }
+}
+
+export type SafePathResolution = {
+  absolute: string
+  identities: Array<{ path: string; dev: number; ino: number; isFinal: boolean }>
 }
 
 /**
@@ -118,6 +134,14 @@ export async function resolveSafeRelativePath(
   relativePath: string,
   options: SafePathOptions = {},
 ): Promise<string> {
+  return (await resolveSafeRelativePathDetailed(root, relativePath, options)).absolute
+}
+
+export async function resolveSafeRelativePathDetailed(
+  root: string,
+  relativePath: string,
+  options: SafePathOptions = {},
+): Promise<SafePathResolution> {
   if (
     !relativePath
     || relativePath.includes('\0')
@@ -137,25 +161,60 @@ export async function resolveSafeRelativePath(
 
   let current = rootAbs
   const segments = relativePath.split('/')
+  const identities: SafePathResolution['identities'] = [{
+    path: rootAbs,
+    dev: rootStat.dev,
+    ino: rootStat.ino,
+    isFinal: false,
+  }]
   for (let index = 0; index < segments.length; index += 1) {
+    if (options.signal?.aborted) throw new Error('operation aborted')
     const segment = segments[index]!
     current = path.join(current, segment)
+    let segmentStat: Awaited<ReturnType<typeof fs.lstat>>
     try {
-      const stat = await fs.lstat(current)
-      if (stat.isSymbolicLink()) {
+      segmentStat = await fs.lstat(current)
+      if (segmentStat.isSymbolicLink()) {
         throw new Error(`symbolic links are not allowed: ${relativePath}`)
       }
-      if (index < segments.length - 1 && !stat.isDirectory()) {
+      if (index < segments.length - 1 && !segmentStat.isDirectory()) {
         throw new Error(`path segment is not a directory: ${relativePath}`)
       }
     } catch (error: any) {
       if (error?.code === 'ENOENT' && index === segments.length - 1 && options.allowMissingFinal) {
-        return current
+        return { absolute: current, identities }
       }
       throw error
     }
+    identities.push({
+      path: current,
+      dev: segmentStat.dev,
+      ino: segmentStat.ino,
+      isFinal: index === segments.length - 1,
+    })
   }
-  return current
+  return { absolute: current, identities }
+}
+
+export async function verifySafePathResolution(
+  resolution: SafePathResolution,
+): Promise<void> {
+  for (const identity of resolution.identities) {
+    let stat
+    try {
+      stat = await fs.lstat(identity.path)
+    } catch (error: any) {
+      throw new Error(`path changed while accessing ${identity.path}`, { cause: error })
+    }
+    if (
+      stat.isSymbolicLink()
+      || stat.dev !== identity.dev
+      || stat.ino !== identity.ino
+      || (identity.isFinal && !stat.isFile())
+    ) {
+      throw new Error(`path changed while accessing ${identity.path}`)
+    }
+  }
 }
 
 /** Read one existing worktree file after validating its physical path. */
@@ -163,8 +222,11 @@ export async function readSafeRelativeFile(
   root: string,
   relativePath: string,
   encoding?: BufferEncoding,
+  options: SafePathOptions = {},
 ): Promise<Buffer | string | null> {
-  const absolute = await resolveSafeRelativePath(root, relativePath, { allowMissingFinal: true })
+  if (options.signal?.aborted) throw new Error('operation aborted')
+  const resolution = await resolveSafeRelativePathDetailed(root, relativePath, { allowMissingFinal: true })
+  const absolute = resolution.absolute
   let before: Awaited<ReturnType<typeof fs.lstat>>
   try {
     before = await fs.lstat(absolute)
@@ -179,8 +241,19 @@ export async function readSafeRelativeFile(
   const noFollow = (fs.constants as typeof fs.constants & { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0
   const handle = await fs.open(absolute, fs.constants.O_RDONLY | noFollow)
   try {
-    const value = encoding ? await handle.readFile({ encoding }) : await handle.readFile()
+    const maxBytes = options.maxBytes
+    let value: Buffer | string
+    if (maxBytes === undefined) {
+      value = encoding ? await handle.readFile({ encoding }) : await handle.readFile()
+    } else {
+      const buffer = Buffer.allocUnsafe(maxBytes + 1)
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
+      if (bytesRead > maxBytes) throw new SafePathResourceLimitError(relativePath, maxBytes)
+      value = encoding ? buffer.subarray(0, bytesRead).toString(encoding) : buffer.subarray(0, bytesRead)
+    }
+    if (options.signal?.aborted) throw new Error('operation aborted')
     const afterHandle = await handle.stat()
+    await verifySafePathResolution(resolution)
     const afterPath = await fs.lstat(absolute)
     if (
       afterPath.isSymbolicLink()

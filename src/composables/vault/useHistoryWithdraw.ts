@@ -90,7 +90,7 @@ export function useHistoryWithdraw(options: HistoryWithdrawOptions) {
       } catch (cause) {
         const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
         if (cause instanceof HistoryApiError && cause.status === 409) {
-          if (/repository operation in progress/i.test(detail)) {
+          if (cause.code === 'HISTORY_REPOSITORY_OPERATION' || /repository operation in progress/i.test(detail)) {
             error.value = t('history.withdraw_repository_operation')
           } else {
             await Promise.all([options.history.refreshStatus(), options.history.refreshLog()])

@@ -65,9 +65,16 @@ describe('getStatus', () => {
 
 describe('getDiff', () => {
   it('throws the server error message on a 4xx', async () => {
-    responses.push({ status: 404, body: { error: 'file does not exist at ref HEAD~1' } })
-    await expect(api.getDiff('inbox/a.md', 'HEAD~1', 'HEAD'))
-      .rejects.toThrow('file does not exist at ref HEAD~1')
+    responses.push({
+      status: 404,
+      body: { error: 'file does not exist at ref HEAD~1', code: 'HISTORY_NOT_FOUND', details: { ref: 'HEAD~1' } },
+    })
+    const error = await api.getDiff('inbox/a.md', 'HEAD~1', 'HEAD').catch((cause) => cause)
+    expect(error).toMatchObject({
+      message: 'file does not exist at ref HEAD~1',
+      code: 'HISTORY_NOT_FOUND',
+      details: { ref: 'HEAD~1' },
+    })
   })
 
   it('falls back to "<endpoint> failed: <status>" when the body has no error field', async () => {
@@ -172,12 +179,13 @@ describe('restoreFile', () => {
   it('posts one document path and revision and returns restored bytes', async () => {
     responses.push({
       status: 200,
-      body: { path: 'a.md', ref: 'abc1234', raw: '# Historical', mtime: 100 },
+      body: { path: 'a.md', ref: 'abc1234', resolvedRef: 'a'.repeat(40), raw: '# Historical', mtime: 100 },
     })
 
     await expect(api.restoreFile('a.md', 'abc1234')).resolves.toEqual({
       path: 'a.md',
       ref: 'abc1234',
+      resolvedRef: 'a'.repeat(40),
       raw: '# Historical',
       mtime: 100,
     })

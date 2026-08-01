@@ -14,15 +14,20 @@
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { getDb } from '../db.js'
-import { CONTENT_DIR } from '../paths.js'
+import {
+  CONTENT_DIR,
+  resolveSafeRelativePath,
+  SafePathResourceLimitError,
+} from '../paths.js'
 import * as historyGit from '../history/git.js'
 import { computeFileDiff } from '../history/diff.js'
+import { validateHistoryPaths } from '../history/validation.js'
 import * as sessions from './sessions.js'
 import * as messages from './messages.js'
 import { runChat, type ChatContext, type ChatEvent } from './chat.js'
 import { parseAiLiveContext } from './live-context.js'
 import { generateSlug } from './slug.js'
-import { generateCommitMessage } from './commitMessage.js'
+import { CommitMessagePromptLimitError, generateCommitMessage } from './commitMessage.js'
 import { ChatError } from './errors.js'
 import { resolveAiRuntimeConfig } from './llm.js'
 import {
@@ -54,8 +59,19 @@ function isValidModelName(value: string): boolean {
   return /^[A-Za-z0-9._:-]+$/.test(value)
 }
 
-const MAX_COMMIT_MESSAGE_PATHS = 20
-const MAX_COMMIT_DIFF_CHARS = 8_000
+export const MAX_COMMIT_MESSAGE_PATHS = 20
+export const MAX_AI_DIFF_FILE_BYTES = 256 * 1024
+export const MAX_AI_DIFF_TOTAL_BYTES = 1024 * 1024
+export const MAX_AI_DIFF_LINES = 10_000
+export const MAX_COMMIT_DIFF_CHARS = 8_000
+export const MAX_TOTAL_COMMIT_DIFF_CHARS = 20_000
+
+class CommitMessageResourceLimitError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CommitMessageResourceLimitError'
+  }
+}
 
 type CommitChange = {
   path: string
@@ -63,31 +79,65 @@ type CommitChange = {
   diff: string
 }
 
-function formatCommitDiff(before: string | null, after: string | null): string {
+function formatCommitDiff(before: string | null, after: string | null, filePath: string): string {
   const diff = computeFileDiff(before, after)
-  return diff.ops.map((op) => {
+  let output = ''
+  for (const op of diff.ops) {
     const prefix = op.op === 'add' ? '+' : op.op === 'remove' ? '-' : ' '
-    return `${prefix}${op.text}`
-  }).join('\n').slice(0, MAX_COMMIT_DIFF_CHARS)
+    const next = `${prefix}${op.text}${output ? '\n' : ''}`
+    if (output.length + next.length > MAX_COMMIT_DIFF_CHARS) {
+      throw new CommitMessageResourceLimitError(
+        `AI diff exceeds the per-file prompt limit: ${filePath}`,
+      )
+    }
+    output += next
+  }
+  return output
 }
 
-async function collectCommitChanges(paths: readonly string[]): Promise<CommitChange[]> {
-  return Promise.all(paths.map(async (filePath) => {
+async function collectCommitChanges(
+  paths: readonly string[],
+  signal?: AbortSignal,
+): Promise<CommitChange[]> {
+  const changes: CommitChange[] = []
+  let totalBytes = 0
+  let totalLines = 0
+  let totalDiffChars = 0
+  for (const filePath of paths) {
+    if (signal?.aborted) throw new ChatError('aborted')
     const [before, after] = await Promise.all([
-      historyGit.rawAt(CONTENT_DIR, 'HEAD', filePath),
-      historyGit.rawAt(CONTENT_DIR, historyGit.WORKTREE_REF, filePath),
+      historyGit.rawAt(CONTENT_DIR, 'HEAD', filePath, { maxBytes: MAX_AI_DIFF_FILE_BYTES, signal }),
+      historyGit.rawAt(CONTENT_DIR, historyGit.WORKTREE_REF, filePath, { maxBytes: MAX_AI_DIFF_FILE_BYTES, signal }),
     ])
+    const beforeBytes = before === null ? 0 : Buffer.byteLength(before, 'utf8')
+    const afterBytes = after === null ? 0 : Buffer.byteLength(after, 'utf8')
+    totalBytes += beforeBytes + afterBytes
+    if (totalBytes > MAX_AI_DIFF_TOTAL_BYTES) {
+      throw new CommitMessageResourceLimitError('AI diff exceeds the total input byte limit')
+    }
+    const beforeLines = before === null || before.length === 0 ? 0 : before.split(/\r?\n/).length
+    const afterLines = after === null || after.length === 0 ? 0 : after.split(/\r?\n/).length
+    totalLines += beforeLines + afterLines
+    if (totalLines > MAX_AI_DIFF_LINES) {
+      throw new CommitMessageResourceLimitError('AI diff exceeds the total line limit')
+    }
     const changeKind = before === null
       ? 'added'
       : after === null
         ? 'deleted'
         : 'modified'
-    return {
+    const diff = formatCommitDiff(before, after, filePath)
+    totalDiffChars += diff.length
+    if (totalDiffChars > MAX_TOTAL_COMMIT_DIFF_CHARS) {
+      throw new CommitMessageResourceLimitError('AI diff exceeds the total prompt limit')
+    }
+    changes.push({
       path: filePath,
       changeKind,
-      diff: formatCommitDiff(before, after),
-    }
-  }))
+      diff,
+    })
+  }
+  return changes
 }
 
 // Edit-10.3: old clients still send the path-only hint. Its
@@ -274,11 +324,28 @@ ai.post('/commit-message', async (c) => {
     | { paths?: unknown; selectedPath?: unknown; diffText?: unknown; language?: unknown }
     | null
   if (!body || !Array.isArray(body.paths)) return bad(c, 'paths array required')
-  const paths = body.paths
-    .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
-    .map((p) => p.trim())
-    .slice(0, MAX_COMMIT_MESSAGE_PATHS)
+  const paths = validateHistoryPaths(body.paths)
+  if (!paths) return bad(c, 'invalid paths')
+  if (paths.length > MAX_COMMIT_MESSAGE_PATHS) return bad(c, 'too many paths', 413)
+  if (new Set(paths).size !== paths.length) return bad(c, 'duplicate paths')
   if (paths.length === 0) return bad(c, 'at least one path required')
+  let dirtyPaths: Set<string>
+  try {
+    dirtyPaths = new Set(
+      (await historyGit.status(CONTENT_DIR))
+        .filter((entry) => validateHistoryPaths([entry.path]) !== null)
+        .map((entry) => entry.path),
+    )
+    if (paths.some((filePath) => !dirtyPaths.has(filePath))) {
+      return bad(c, 'path is not changed', 409)
+    }
+    for (const filePath of paths) {
+      await resolveSafeRelativePath(CONTENT_DIR, filePath, { allowMissingFinal: true })
+    }
+  } catch (error: any) {
+    if (error instanceof SafePathResourceLimitError) return bad(c, error.message, 413)
+    return bad(c, error?.message || 'invalid paths')
+  }
   const selectedPath = typeof body.selectedPath === 'string'
     && paths.includes(body.selectedPath.trim())
     ? body.selectedPath.trim()
@@ -288,7 +355,7 @@ ai.post('/commit-message', async (c) => {
   try {
     // Keep this endpoint a diff summarizer. The model receives only the
     // server-observed HEAD/WORKTREE delta, never the full current document.
-    const changes = await collectCommitChanges(paths)
+    const changes = await collectCommitChanges(paths, c.req.raw.signal)
     const message = await generateCommitMessage({
       paths,
       selectedPath,
@@ -298,6 +365,13 @@ ai.post('/commit-message', async (c) => {
     })
     return c.json({ message })
   } catch (err) {
+    if (c.req.raw.signal.aborted) return c.json({ error: 'aborted' }, 499 as any)
+    if (err instanceof CommitMessageResourceLimitError
+      || err instanceof CommitMessagePromptLimitError
+      || err instanceof historyGit.HistoryResourceLimitError
+      || err instanceof SafePathResourceLimitError) {
+      return bad(c, err.message, 413)
+    }
     if (err instanceof ChatError) {
       if (err.reason === 'no-api-key') return bad(c, 'AI not configured', 503)
       if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499 as any)

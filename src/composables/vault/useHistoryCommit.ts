@@ -220,11 +220,11 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
       if (cause instanceof HistoryApiError && cause.status === 409) {
-        if (/repository changed before commit/i.test(detail)) {
+        if (cause.code === 'HISTORY_REPOSITORY_CHANGED' || /repository changed before commit/i.test(detail)) {
           await Promise.all([options.history.refreshStatus(), options.history.refreshLog()])
           repositoryChangeId.value += 1
           error.value = t('history.commit_repository_changed')
-        } else if (/repository operation in progress/i.test(detail)) {
+        } else if (cause.code === 'HISTORY_REPOSITORY_OPERATION' || /repository operation in progress/i.test(detail)) {
           await options.history.refreshStatus()
           error.value = t('history.repository_operation_in_progress')
         } else {
@@ -272,12 +272,12 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
       const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
       error.value = cause instanceof HistoryApiError
         && cause.status === 409
-        && /index changed after repair/i.test(detail)
+        && (cause.code === 'HISTORY_INDEX_REPAIR_CONFLICT' || /index changed after repair/i.test(detail))
         ? t('history.index_repair_conflict')
         : t('history.index_repair_failed', { error: detail })
       if (cause instanceof HistoryApiError
         && cause.status === 409
-        && /index changed after repair/i.test(detail)) {
+        && (cause.code === 'HISTORY_INDEX_REPAIR_CONFLICT' || /index changed after repair/i.test(detail))) {
         indexRepairConflictToken.value = repairingToken
       }
       toast.error(error.value)

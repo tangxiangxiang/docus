@@ -100,6 +100,40 @@ describe('ensureRepo', () => {
     expect(gi).toBe('# my custom rule\n')
   })
 
+  it('creates one persistent UUID Vault ID and keeps it across repeated opens', async () => {
+    await ensureRepo(root)
+    const first = await git.ensureDocusVaultId(root)
+    const stored = JSON.parse(await fs.readFile(path.join(root, '.docus', 'vault-id'), 'utf8')) as {
+      version: number
+      id: string
+    }
+    expect(stored).toEqual({ version: 1, id: first })
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(await git.ensureDocusVaultId(root)).toBe(first)
+  })
+
+  it('uses one UUID when first-open callers race', async () => {
+    await ensureRepo(root)
+    const ids = await Promise.all(Array.from({ length: 8 }, () => git.ensureDocusVaultId(root)))
+    expect(new Set(ids).size).toBe(1)
+  })
+
+  it('keeps the same UUID after the Vault directory is moved', async () => {
+    await ensureRepo(root)
+    const id = await git.ensureDocusVaultId(root)
+    const moved = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-history-moved-'))
+    await fs.rm(moved, { recursive: true, force: true })
+    await fs.rename(root, moved)
+    root = moved
+    expect(await git.ensureDocusVaultId(moved)).toBe(id)
+  })
+
+  it('fails closed when the persistent Vault ID is malformed', async () => {
+    await ensureRepo(root)
+    await fs.writeFile(path.join(root, '.docus', 'vault-id'), '{"version":1,"id":"not-an-id"}\n', 'utf8')
+    await expect(git.ensureDocusVaultId(root)).rejects.toThrow(/invalid Docus Vault ID/)
+  })
+
   it('is a no-op on an existing repo', async () => {
     await git.initRepo(root)
     await setUser()
@@ -288,6 +322,28 @@ describe('addAndCommit + log', () => {
     expect(await git.rawAt(root, 'HEAD', 'selected.md')).toBeNull()
   })
 
+  it('rejects a HEAD change after staged-intent classification before temporary-index init', async () => {
+    await write('a.md', 'one')
+    const first = await git.addAndCommit(root, ['a.md'], 'one')
+    await write('a.md', 'two')
+    const second = await git.addAndCommit(root, ['a.md'], 'two')
+    await write('a.md', 'three')
+    const expected = { 'a.md': createHash('sha256').update('three').digest('hex') }
+
+    await expect(git.addAndCommit(root, ['a.md'], 'must not commit', {
+      expected,
+      beforeTemporaryIndexForTesting: async () => {
+        expect((await git.run(root, ['reset', '--soft', first.sha])).status).toBe(0)
+      },
+    })).rejects.toThrow('repository changed before commit')
+
+    expect((await git.run(root, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(first.sha)
+    expect((await git.run(root, ['diff', '--cached', '--quiet', first.sha, '--', 'a.md'])).status).toBe(1)
+    expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('two')
+    expect(await git.getIndexRepairStatus(root)).toEqual([])
+    expect(second.sha).not.toBe(first.sha)
+  })
+
   it('reports index refresh degradation after a successful CAS commit', async () => {
     await write('a.md', 'snapshot')
     const syncIndexForTesting = vi.fn().mockResolvedValue({
@@ -312,6 +368,34 @@ describe('addAndCommit + log', () => {
     await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toEqual({ repaired: true })
     expect((await git.status(root)).find((entry) => entry.path === 'a.md')).toBeUndefined()
     expect(await git.getIndexRepairStatus(root)).toEqual([])
+  })
+
+  it('does not let a staged write enter Create Version Repair metadata', async () => {
+    await write('a.md', 'snapshot')
+    let externalAdd: git.RunResult | undefined
+    const result = await git.addAndCommit(root, ['a.md'], 'committed', {
+      expected: { 'a.md': createHash('sha256').update('snapshot').digest('hex') },
+      syncIndexForTesting: vi.fn().mockResolvedValue({ status: 1, stdout: '', stderr: 'locked' }),
+      beforeRepairMetadataWriteForTesting: async () => {
+        await write('a.md', 'new staged intent')
+        externalAdd = await git.run(root, ['add', '--', 'a.md'])
+      },
+    })
+
+    expect(externalAdd?.status).not.toBe(0)
+    expect(result.repairStatePersistenceFailed).toBe(false)
+    expect(result.indexRepair).toMatchObject({
+      paths: ['a.md'],
+      expectedIndex: { 'a.md': [] },
+    })
+    expect(await git.getIndexRepairStatus(root)).toEqual([
+      expect.objectContaining({ token: result.indexRepair!.token, expectedIndex: { 'a.md': [] } }),
+    ])
+    await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toEqual({ repaired: true })
+    expect((await git.status(root)).find((entry) => entry.path === 'a.md')).toMatchObject({
+      index: ' ',
+      worktree: 'M',
+    })
   })
 
   it('keeps earlier repair transactions across later commits and accumulates failures', async () => {
@@ -822,6 +906,43 @@ describe('dropHeadCommit', () => {
     expect(await git.getIndexRepairStatus(root)).toEqual([
       expect.objectContaining({ token: result.indexRepair!.token, paths: ['a.md'] }),
     ])
+  }, 15_000)
+
+  it('does not let a staged write enter Withdraw Repair metadata', async () => {
+    await write('a.md', 'v1')
+    await git.addAndCommit(root, ['a.md'], 'v1')
+    await write('a.md', 'v2')
+    const latest = await git.addAndCommit(root, ['a.md'], 'v2')
+    const originalIndexOid = (await git.run(root, ['rev-parse', `${latest.sha}:a.md`])).stdout.trim()
+    let externalAdd: git.RunResult | undefined
+
+    const result = await git.dropHeadCommit(root, latest.sha, {
+      syncIndexForTesting: vi.fn().mockResolvedValue(false),
+      beforeRepairMetadataWriteForTesting: async () => {
+        await write('a.md', 'withdraw staged intent')
+        externalAdd = await git.run(root, ['add', '--', 'a.md'])
+      },
+    })
+
+    expect(externalAdd?.status).not.toBe(0)
+    expect(result.repairStatePersistenceFailed).toBe(false)
+    expect(result.indexRepair).toMatchObject({
+      paths: ['a.md'],
+      expectedIndex: {
+        'a.md': [{ mode: '100644', oid: originalIndexOid, stage: 0 }],
+      },
+    })
+    expect(await git.getIndexRepairStatus(root)).toEqual([
+      expect.objectContaining({
+        token: result.indexRepair!.token,
+        expectedIndex: { 'a.md': [{ mode: '100644', oid: originalIndexOid, stage: 0 }] },
+      }),
+    ])
+    await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toEqual({ repaired: true })
+    expect((await git.status(root)).find((entry) => entry.path === 'a.md')).toMatchObject({
+      index: ' ',
+      worktree: 'M',
+    })
   }, 15_000)
 
   it('repairs a failed Index synchronization after withdrawing the first version', async () => {

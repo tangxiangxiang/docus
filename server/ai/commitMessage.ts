@@ -4,8 +4,15 @@ import { ChatError } from './errors.js'
 import { getDb } from '../db.js'
 
 const MAX_TOKENS = 80
-const MAX_CONTEXT_CHARS = 10_000
+const MAX_CONTEXT_CHARS = 20_000
 const MAX_MESSAGE_CHARS = 120
+
+export class CommitMessagePromptLimitError extends Error {
+  constructor() {
+    super(`AI commit-message prompt exceeds the ${MAX_CONTEXT_CHARS}-character limit`)
+    this.name = 'CommitMessagePromptLimitError'
+  }
+}
 
 function cleanCommitMessage(raw: string): string {
   return raw
@@ -45,7 +52,8 @@ export async function generateCommitMessage(opts: {
           `--- ${change.path} (${change.changeKind}) ---\n${change.diff}`
         )).join('\n\n')}`
       : '',
-  ].filter(Boolean).join('\n\n').slice(0, MAX_CONTEXT_CHARS)
+  ].filter(Boolean).join('\n\n')
+  if (context.length > MAX_CONTEXT_CHARS) throw new CommitMessagePromptLimitError()
 
   let response
   try {

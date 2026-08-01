@@ -46,16 +46,118 @@ export type RunResult = {
 export const WORKTREE_REF = 'WORKTREE'
 
 const DOCUS_VERSION_TRAILER = 'Docus-Version: 1'
+const DOCUS_VAULT_ID_VERSION = 1
+const DOCUS_VAULT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
-function docusVaultId(repoRoot: string): string {
-  return createHash('sha256').update(path.resolve(repoRoot)).digest('hex').slice(0, 12)
+export class HistoryResourceLimitError extends Error {
+  readonly code = 'HISTORY_RESOURCE_LIMIT'
+
+  constructor(message: string) {
+    super(message)
+    this.name = 'HistoryResourceLimitError'
+  }
 }
 
-function docusCommitMessage(repoRoot: string, message: string): string {
+function vaultIdPath(repoRoot: string): string {
+  return path.join(repoRoot, '.docus', 'vault-id')
+}
+
+function parseVaultId(raw: string, filePath: string): string {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error(`invalid Docus Vault ID: ${filePath}`)
+  }
+  if (
+    !parsed
+    || typeof parsed !== 'object'
+    || (parsed as any).version !== DOCUS_VAULT_ID_VERSION
+    || typeof (parsed as any).id !== 'string'
+    || !DOCUS_VAULT_ID_RE.test((parsed as any).id)
+    || Object.keys(parsed).some((key) => !['version', 'id'].includes(key))
+  ) {
+    throw new Error(`invalid Docus Vault ID: ${filePath}`)
+  }
+  return (parsed as any).id.toLowerCase()
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  try {
+    const handle = await fs.open(directory, 'r')
+    try { await handle.sync() } finally { await handle.close() }
+  } catch {
+    // Directory fsync is not portable (notably on Windows). The file itself
+    // is already fsynced; platforms that support directory handles get the
+    // stronger durability guarantee.
+  }
+}
+
+async function readVaultIdFile(filePath: string): Promise<string> {
+  const before = await fs.lstat(filePath)
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw new Error(`invalid Docus Vault ID: ${filePath}`)
+  }
+  const noFollow = (fs.constants as typeof fs.constants & { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0
+  const handle = await fs.open(filePath, fs.constants.O_RDONLY | noFollow)
+  try {
+    const raw = await handle.readFile('utf8')
+    const afterHandle = await handle.stat()
+    const afterPath = await fs.lstat(filePath)
+    if (
+      afterPath.isSymbolicLink()
+      || afterHandle.dev !== before.dev
+      || afterHandle.ino !== before.ino
+      || afterPath.dev !== before.dev
+      || afterPath.ino !== before.ino
+    ) throw new Error(`Docus Vault ID changed while reading: ${filePath}`)
+    return parseVaultId(raw, filePath)
+  } finally {
+    await handle.close()
+  }
+}
+
+export async function ensureDocusVaultId(repoRoot: string): Promise<string> {
+  const filePath = vaultIdPath(repoRoot)
+  const directory = path.dirname(filePath)
+  try {
+    const directoryStat = await fs.lstat(directory)
+    if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) {
+      throw new Error(`invalid Docus Vault ID directory: ${directory}`)
+    }
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') throw error
+  }
+  await fs.mkdir(directory, { recursive: true })
+  try {
+    return await readVaultIdFile(filePath)
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') throw error
+  }
+
+  const id = randomUUID()
+  const handle = await fs.open(filePath, 'wx').catch(async (error: any) => {
+    if (error?.code !== 'EEXIST') throw error
+    return null
+  })
+  if (handle) {
+    try {
+      await handle.writeFile(`${JSON.stringify({ version: DOCUS_VAULT_ID_VERSION, id })}\n`, 'utf8')
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await syncDirectory(directory)
+    return id
+  }
+  return readVaultIdFile(filePath)
+}
+
+async function docusCommitMessage(repoRoot: string, message: string): Promise<string> {
   if (/^Docus-(?:Version|Vault):/im.test(message)) {
     throw new Error('commit message uses reserved Docus trailers')
   }
-  return `${message.trim()}\n\n${DOCUS_VERSION_TRAILER}\nDocus-Vault: ${docusVaultId(repoRoot)}`
+  return `${message.trim()}\n\n${DOCUS_VERSION_TRAILER}\nDocus-Vault: ${await ensureDocusVaultId(repoRoot)}`
 }
 
 /**
@@ -68,6 +170,13 @@ export class GitUnavailableError extends Error {
     super('git binary not available on PATH')
     this.name = 'GitUnavailableError'
     this.cause = cause
+  }
+}
+
+export class GitOperationAbortedError extends Error {
+  constructor() {
+    super('git operation aborted')
+    this.name = 'GitOperationAbortedError'
   }
 }
 
@@ -85,9 +194,13 @@ function appendCapped(current: string, chunk: string): string {
 export function run(
   repoRoot: string,
   args: string[],
-  options: { env?: NodeJS.ProcessEnv; input?: Buffer | string } = {},
+  options: { env?: NodeJS.ProcessEnv; input?: Buffer | string; signal?: AbortSignal } = {},
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(new GitOperationAbortedError())
+      return
+    }
     const child = spawn('git', args, {
       cwd: repoRoot,
       windowsHide: true,
@@ -98,6 +211,14 @@ export function run(
     let settled = false
     let timedOut = false
     let capped = false
+    const abort = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.kill('SIGKILL')
+      reject(new GitOperationAbortedError())
+    }
+    options.signal?.addEventListener('abort', abort, { once: true })
     const timer = setTimeout(() => {
       timedOut = true
       child.kill('SIGKILL')
@@ -121,12 +242,14 @@ export function run(
       if (settled) return
       settled = true
       clearTimeout(timer)
+      options.signal?.removeEventListener('abort', abort)
       reject(new GitUnavailableError(err))
     })
     child.on('close', (code) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      options.signal?.removeEventListener('abort', abort)
       const suffix = timedOut
         ? `git command timed out after ${DEFAULT_GIT_TIMEOUT_MS}ms`
         : capped
@@ -355,6 +478,7 @@ export async function rawAt(
   repoRoot: string,
   ref: string,
   filePath: string,
+  options: { maxBytes?: number; signal?: AbortSignal } = {},
 ): Promise<string | null> {
   // "WORKTREE" is a sentinel meaning "the file as it sits on disk
   // right now, before staging or committing". It's not a real git
@@ -363,13 +487,30 @@ export async function rawAt(
   // without having to stage + commit first.
   if (ref === WORKTREE_REF) {
     try {
-      return await readSafeRelativeFile(repoRoot, filePath, 'utf8') as string | null
+      return await readSafeRelativeFile(repoRoot, filePath, 'utf8', {
+        maxBytes: options.maxBytes,
+        signal: options.signal,
+      }) as string | null
     } catch (e: any) {
       if (e?.code === 'ENOENT') return null
       throw e
     }
   }
-  const r = await run(repoRoot, ['show', `${ref}:${filePath}`])
+  if (options.maxBytes !== undefined) {
+    const size = await run(repoRoot, ['cat-file', '-s', `${ref}:${filePath}`], { signal: options.signal })
+    if (size.status === 0) {
+      const bytes = Number(size.stdout.trim())
+      if (!Number.isSafeInteger(bytes) || bytes < 0) {
+        throw new Error(`git cat-file returned an invalid size for ${filePath}`)
+      }
+      if (bytes > options.maxBytes) {
+        throw new HistoryResourceLimitError(
+          `history file exceeds the ${options.maxBytes}-byte AI diff limit: ${filePath}`,
+        )
+      }
+    }
+  }
+  const r = await run(repoRoot, ['show', `${ref}:${filePath}`], { signal: options.signal })
   if (r.status === 0) return r.stdout
   // Six error patterns all mean "no such (ref, path) tuple" — or in the
   // empty-repo case, "no such ref at all". We treat all of them as null
@@ -753,31 +894,61 @@ async function recordIndexRepair(
   repoRoot: string,
   head: string | null,
   paths: readonly string[],
+  expectedIndex: Record<string, IndexEntryFingerprint[]>,
+  options: { beforeMetadataWriteForTesting?: () => Promise<void> } = {},
 ): Promise<IndexRepairTransaction> {
-  const state = await readIndexRepairFile(repoRoot)
-  const replaced = new Set(paths)
-  const retained = state.transactions.map((transaction) => {
-    const remaining = transaction.paths.filter((filePath) => !replaced.has(filePath))
-    return {
-      ...transaction,
-      paths: remaining,
-      expectedIndex: Object.fromEntries(remaining.map((filePath) => (
-        [filePath, transaction.expectedIndex[filePath] ?? []]
+  const gitDir = await absoluteGitDir(repoRoot)
+  const lockPath = path.join(gitDir, 'index.lock')
+  let lockHandle: Awaited<ReturnType<typeof fs.open>> | undefined
+  try {
+    lockHandle = await fs.open(lockPath, 'wx')
+  } catch (error: any) {
+    if (error?.code === 'EEXIST') throw new Error('git index is locked')
+    throw error
+  }
+  try {
+    // The expected state is captured before the commit/withdraw operation.
+    // Re-capturing here would trust a staged change that arrived after the
+    // synchronization check and could later authorize clearing it.
+    for (const filePath of paths) {
+      if (!sameIndexEntries(
+        await indexFingerprint(repoRoot, filePath),
+        expectedIndex[filePath] ?? [],
+      )) {
+        throw new Error(`index changed before repair metadata was persisted: ${filePath}`)
+      }
+    }
+    const state = await readIndexRepairFile(repoRoot)
+    const replaced = new Set(paths)
+    const retained = state.transactions.map((transaction) => {
+      const remaining = transaction.paths.filter((filePath) => !replaced.has(filePath))
+      return {
+        ...transaction,
+        paths: remaining,
+        expectedIndex: Object.fromEntries(remaining.map((filePath) => (
+          [filePath, transaction.expectedIndex[filePath] ?? []]
+        ))),
+      }
+    }).filter((transaction) => transaction.paths.length > 0)
+    const transaction: IndexRepairTransaction = {
+      token: randomUUID().replaceAll('-', ''),
+      status: 'pending',
+      head,
+      paths: [...paths],
+      expectedIndex: Object.fromEntries(paths.map((filePath) => (
+        [filePath, expectedIndex[filePath] ?? []]
       ))),
     }
-  }).filter((transaction) => transaction.paths.length > 0)
-  const transaction: IndexRepairTransaction = {
-    token: randomUUID().replaceAll('-', ''),
-    status: 'pending',
-    head,
-    paths: [...paths],
-    expectedIndex: await captureIndexFingerprints(repoRoot, paths),
+    await options.beforeMetadataWriteForTesting?.()
+    await writeIndexRepairFile(repoRoot, {
+      version: 2,
+      transactions: [...retained, transaction],
+    })
+    return transaction
+  } finally {
+    await lockHandle?.close().catch(() => {})
+    await fs.rm(lockPath, { force: true })
   }
-  await writeIndexRepairFile(repoRoot, {
-    version: 2,
-    transactions: [...retained, transaction],
-  })
-  return transaction
 }
 
 export async function getIndexRepairStatus(repoRoot: string): Promise<IndexRepairTransaction[]> {
@@ -1091,10 +1262,12 @@ export async function addAndCommit(
   options: {
     expected?: ExpectedContentHashes
     beforeStageForTesting?: () => Promise<void>
+    beforeTemporaryIndexForTesting?: () => Promise<void>
     beforeUpdateRefForTesting?: () => Promise<void>
     syncIndexForTesting?: (commitSha: string) => Promise<RunResult>
     beforeIndexResetForTesting?: (commitSha: string, attempt: number) => Promise<void>
     beforeRepairStatePersistenceForTesting?: () => Promise<void>
+    beforeRepairMetadataWriteForTesting?: () => Promise<void>
   } = {},
 ): Promise<CommitResult> {
   if (paths.length === 0) {
@@ -1134,11 +1307,22 @@ export async function addAndCommit(
   await ensureAuthorIdentity(repoRoot)
   await options.beforeStageForTesting?.()
 
+  // stagedIntentPaths() was derived from headAtStart. Do not rebuild the
+  // temporary index from a later HEAD: a concurrent soft reset could turn
+  // previously unstaged paths into user-owned staged intent.
+  await options.beforeTemporaryIndexForTesting?.()
+  const currentHeadBeforeTemporaryIndex = await readCurrentHead(repoRoot)
+  if (currentHeadBeforeTemporaryIndex !== headAtStart) {
+    throw new Error('repository changed before commit')
+  }
+
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-history-index-'))
   const indexPath = path.join(tempDir, 'index')
   const indexEnv = { GIT_INDEX_FILE: indexPath }
   try {
-    const headBefore = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
+    const headBefore: RunResult = headAtStart === null
+      ? { status: 1, stdout: '', stderr: '' }
+      : { status: 0, stdout: `${headAtStart}\n`, stderr: '' }
     const initialize = headBefore.status === 0
       ? await run(repoRoot, ['read-tree', headBefore.stdout.trim()], { env: indexEnv })
       : await run(repoRoot, ['read-tree', '--empty'], { env: indexEnv })
@@ -1194,7 +1378,7 @@ export async function addAndCommit(
   // guarantees below.
   const commitArgs = ['commit-tree', treeSha]
   if (headBefore.status === 0) commitArgs.push('-p', headBefore.stdout.trim())
-  commitArgs.push('-m', docusCommitMessage(repoRoot, message))
+  commitArgs.push('-m', await docusCommitMessage(repoRoot, message))
   const commit = await run(repoRoot, commitArgs)
   if (commit.status !== 0) {
     throw new Error(`git commit-tree failed: ${commit.stderr.trim() || commit.stdout.trim()}`)
@@ -1232,7 +1416,13 @@ export async function addAndCommit(
       ? await pathsUnchangedSinceIndexCapture(repoRoot, resetPaths, indexBefore)
       : resetPaths
     if (indexRefreshFailed && repairPaths.length > 0) {
-      indexRepair = await recordIndexRepair(repoRoot, commitSha, repairPaths)
+      indexRepair = await recordIndexRepair(
+        repoRoot,
+        commitSha,
+        repairPaths,
+        Object.fromEntries(repairPaths.map((filePath) => [filePath, indexBefore[filePath] ?? []])),
+        { beforeMetadataWriteForTesting: options.beforeRepairMetadataWriteForTesting },
+      )
     } else if (!indexRefreshFailed) {
       await settleIndexRepairPaths(repoRoot, resetPaths)
     }
@@ -1353,6 +1543,7 @@ export async function dropHeadCommit(
     afterIndexLockForTesting?: () => Promise<void>
     beforeIndexReplaceForTesting?: () => Promise<void>
     beforeRepairStatePersistenceForTesting?: () => Promise<void>
+    beforeRepairMetadataWriteForTesting?: () => Promise<void>
   } = {},
 ): Promise<DropCommitResult> {
   return withRepoMutation(repoRoot, async () => {
@@ -1375,12 +1566,13 @@ export async function dropHeadCommit(
     if (messageResult.status !== 0) {
       throw new Error(`cannot inspect withdrawal commit: ${messageResult.stderr.trim()}`)
     }
+    const vaultId = await ensureDocusVaultId(repoRoot)
     const versionMarkers = messageResult.stdout
       .split(/\r?\n/)
       .filter((line) => line.trim() === DOCUS_VERSION_TRAILER)
     const vaultMarkers = messageResult.stdout
       .split(/\r?\n/)
-      .filter((line) => line.trim() === `Docus-Vault: ${docusVaultId(repoRoot)}`)
+      .filter((line) => line.trim() === `Docus-Vault: ${vaultId}`)
     const versionLines = messageResult.stdout
       .split(/\r?\n/)
       .filter((line) => /^Docus-Version:/i.test(line.trim()))
@@ -1438,7 +1630,13 @@ export async function dropHeadCommit(
         ? await pathsUnchangedSinceIndexCapture(repoRoot, resetPaths, indexBefore)
         : resetPaths
       if (indexRefreshFailed && repairPaths.length > 0) {
-        indexRepair = await recordIndexRepair(repoRoot, finalHead, repairPaths)
+        indexRepair = await recordIndexRepair(
+          repoRoot,
+          finalHead,
+          repairPaths,
+          Object.fromEntries(repairPaths.map((filePath) => [filePath, indexBefore[filePath] ?? []])),
+          { beforeMetadataWriteForTesting: options.beforeRepairMetadataWriteForTesting },
+        )
       } else if (!indexRefreshFailed) {
         await settleIndexRepairPaths(repoRoot, resetPaths)
       }

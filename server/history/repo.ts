@@ -126,7 +126,10 @@ export async function ensureRepoWithinVaultMutation(repoRoot: string): Promise<v
   // Tight "this directory has its own .git/" check rather than
   // git.isRepo (which uses rev-parse --is-inside-work-tree and
   // returns true for any nested directory of an outer repo).
-  if (await hasOwnGitDir(repoRoot)) return
+  if (await hasOwnGitDir(repoRoot)) {
+    await git.ensureDocusVaultId(repoRoot)
+    return
+  }
   const outer = await outerRepoRoot(repoRoot)
   if (outer) {
     // eslint-disable-next-line no-console
@@ -139,6 +142,7 @@ export async function ensureRepoWithinVaultMutation(repoRoot: string): Promise<v
   await writeIfMissing(path.join(repoRoot, '.gitignore'), GITIGNORE_LINES.join('\n'))
   await writeIfMissing(path.join(repoRoot, '.gitattributes'), GITATTRIBUTES)
   await git.initRepo(repoRoot)
+  await git.ensureDocusVaultId(repoRoot)
 }
 
 /** Bootstrap is itself a Vault mutation. Existing repositories take the
