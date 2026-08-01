@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DiffOp, FileDiff } from '../history-api'
-import { buildUnifiedDiffRows, unifiedHunkLabel } from '../unified-diff'
+import { buildUnifiedDiffRows } from '../unified-diff'
 
 function equal(line: number, text = `line ${line}`): DiffOp {
   return { op: 'equal', oldLine: line, newLine: line, text }
@@ -34,41 +34,12 @@ describe('buildUnifiedDiffRows', () => {
     ])
   })
 
-  it('merges nearby change blocks when their context overlaps', () => {
-    const ops = Array.from({ length: 16 }, (_, index) => equal(index + 1))
-    ops[4] = { op: 'remove', oldLine: 5, newLine: null, text: 'old A' }
-    ops[9] = { op: 'add', oldLine: null, newLine: 10, text: 'new B' }
-    const rows = buildUnifiedDiffRows(file(ops))
-
-    expect(rows.filter((row) => row.kind === 'hunk')).toHaveLength(0)
-  })
-
-  it('collapses distant unchanged sections with accurate hunk counts', () => {
+  it('renders every operation, including distant unchanged sections', () => {
     const ops = Array.from({ length: 25 }, (_, index) => equal(index + 1))
     ops[1] = { op: 'remove', oldLine: 2, newLine: null, text: 'old A' }
     ops[19] = { op: 'add', oldLine: null, newLine: 20, text: 'new B' }
-    const rows = buildUnifiedDiffRows(file(ops))
-    const hunk = rows.find((row) => row.kind === 'hunk')
 
-    expect(hunk).toMatchObject({
-      kind: 'hunk',
-      oldStart: 6,
-      oldCount: 11,
-      newStart: 6,
-      newCount: 11,
-      hiddenCount: 11,
-      expandable: true,
-    })
-    if (hunk?.kind === 'hunk') expect(unifiedHunkLabel(hunk)).toBe('@@ -6,11 +6,11 @@')
-  })
-
-  it('does not collapse a small unchanged section', () => {
-    const ops = [
-      { op: 'remove', oldLine: 1, newLine: null, text: 'old' } as DiffOp,
-      equal(2), equal(3), equal(4),
-      { op: 'add', oldLine: null, newLine: 5, text: 'new' } as DiffOp,
-    ]
-    expect(buildUnifiedDiffRows(file(ops), { contextLines: 0, minimumHiddenLines: 4 }))
-      .toHaveLength(5)
+    expect(buildUnifiedDiffRows(file(ops))).toHaveLength(25)
+    expect(buildUnifiedDiffRows(file(ops)).every((row) => row.kind === 'line')).toBe(true)
   })
 })

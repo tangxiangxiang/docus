@@ -65,17 +65,17 @@ function onTreeKeydown(event: KeyboardEvent): void {
 
 <template>
   <section class="history-timeline-section history-file-timeline" aria-labelledby="file-history-title">
-    <header class="history-file-heading">
-      <button type="button" class="history-back-button" @click="emit('show-all')">
-        ‹ {{ t('history.back_to_all') }}
+    <header class="history-timeline-heading history-file-heading">
+      <button
+        type="button"
+        class="history-back-button"
+        :aria-label="t('history.back_to_all')"
+        :title="t('history.back_to_all')"
+        @click="emit('show-all')"
+      >
+        ‹
       </button>
-      <div>
-        <h2 id="file-history-title">{{ fileHistory.target.value?.documentTitle }}</h2>
-        <span>{{ t('history.file_history') }}</span>
-      </div>
-      <span class="history-file-path" :title="fileHistory.target.value?.documentPath">
-        {{ fileHistory.target.value?.documentPath }}
-      </span>
+      <h2 id="file-history-title">{{ fileHistory.target.value?.documentTitle }}</h2>
     </header>
 
     <div v-if="fileHistory.error.value" class="history-error" role="alert">

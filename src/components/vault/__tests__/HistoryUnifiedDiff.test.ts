@@ -82,38 +82,14 @@ describe('HistoryUnifiedDiff', () => {
     expect(wrapper.findAll('.unified-diff-word-add')).toHaveLength(1)
   })
 
-  it('expands hunks by click, Enter, and Space', async () => {
+  it('renders all unchanged lines without collapsible hunk controls', () => {
     const ops = Array.from({ length: 20 }, (_, index) => equal(index + 1))
     ops[0] = { op: 'remove', oldLine: 1, newLine: null, text: 'old' }
     ops[19] = { op: 'add', oldLine: null, newLine: 20, text: 'new' }
     const wrapper = mount(HistoryUnifiedDiff, { props: { comparisonKey: 'a', diff: diff(ops) } })
-    const hunk = wrapper.get('.unified-diff-hunk')
-    expect(hunk.attributes('aria-expanded')).toBe('false')
-    expect(hunk.text()).toContain('Show 12 unchanged lines')
 
-    await hunk.trigger('click')
     expect(wrapper.findAll('.unified-diff-line')).toHaveLength(20)
-    expect(hunk.attributes('aria-expanded')).toBe('true')
-    await hunk.trigger('keydown', { key: 'Enter' })
-    expect(wrapper.findAll('.unified-diff-line')).toHaveLength(8)
-    await hunk.trigger('keydown', { key: ' ' })
-    expect(wrapper.findAll('.unified-diff-line')).toHaveLength(20)
-  })
-
-  it('expands multiple hunks independently and resets them for another comparison', async () => {
-    const ops = Array.from({ length: 50 }, (_, index) => equal(index + 1))
-    ops[2] = { op: 'remove', oldLine: 3, newLine: null, text: 'A' }
-    ops[24] = { op: 'add', oldLine: null, newLine: 25, text: 'B' }
-    ops[47] = { op: 'remove', oldLine: 48, newLine: null, text: 'C' }
-    const wrapper = mount(HistoryUnifiedDiff, { props: { comparisonKey: 'a', diff: diff(ops) } })
-    const hunks = wrapper.findAll('.unified-diff-hunk')
-    expect(hunks).toHaveLength(2)
-
-    await hunks[0]!.trigger('click')
-    await hunks[1]!.trigger('click')
-    expect(wrapper.findAll('.unified-diff-hunk[aria-expanded="true"]')).toHaveLength(2)
-    await wrapper.setProps({ comparisonKey: 'b' })
-    expect(wrapper.findAll('.unified-diff-hunk[aria-expanded="true"]')).toHaveLength(0)
+    expect(wrapper.find('.unified-diff-hunk').exists()).toBe(false)
   })
 
   it('uses one focusable vertical scroll surface and no split panes', () => {

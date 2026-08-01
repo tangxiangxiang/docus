@@ -352,8 +352,6 @@ const STRINGS: Strings = {
   'history.unchanged_line': { zh: '未更改行', en: 'Unchanged line' },
   'history.added_lines': { zh: '新增 {count} 行', en: '{count} added lines' },
   'history.removed_lines': { zh: '删除 {count} 行', en: '{count} removed lines' },
-  'history.show_unchanged_lines': { zh: '显示 {count} 行未更改内容', en: 'Show {count} unchanged lines' },
-  'history.hide_unchanged_lines': { zh: '隐藏 {count} 行未更改内容', en: 'Hide {count} unchanged lines' },
   'history.previous_change': { zh: '上一个更改', en: 'Previous change' },
   'history.next_change': { zh: '下一个更改', en: 'Next change' },
   'history.working_tree': { zh: '工作区', en: 'Working tree' },

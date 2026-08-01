@@ -48,7 +48,7 @@ async function mountTimeline(options: {
 }
 
 describe('FileHistoryTimeline', () => {
-  it('renders Date → Commit without file children and displays the fixed title and path', async () => {
+  it('renders Date → Commit without file children and displays the fixed title', async () => {
     const { wrapper } = await mountTimeline({
       commits: [
         record('latest', 0, 'Latest version'),
@@ -56,8 +56,10 @@ describe('FileHistoryTimeline', () => {
       ],
     })
 
+    expect(wrapper.get('.history-file-heading').classes()).toContain('history-timeline-heading')
+    expect(wrapper.find('.history-file-heading > div').exists()).toBe(false)
     expect(wrapper.get('h2').text()).toBe('AGENTS')
-    expect(wrapper.get('.history-file-path').text()).toBe('inbox/agents')
+    expect(wrapper.find('.history-file-heading .history-file-path').exists()).toBe(false)
     expect(wrapper.findAll('.history-timeline-group')).toHaveLength(1)
     expect(wrapper.findAll('.history-file-commit-row')).toHaveLength(2)
     expect(wrapper.find('.history-file-row').exists()).toBe(false)
