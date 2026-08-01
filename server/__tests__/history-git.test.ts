@@ -632,6 +632,23 @@ describe('addAndCommit + log', () => {
     await expect(git.addAndCommit(root, ['a.md'], 'second')).rejects.toThrow(/nothing to commit/i)
   })
 
+  it('preserves same-path staged intent after Create Version', async () => {
+    await write('a.md', 'base')
+    await git.addAndCommit(root, ['a.md'], 'base')
+    await write('a.md', 'terminal staged content')
+    expect((await git.run(root, ['add', '--', 'a.md'])).status).toBe(0)
+    await write('a.md', 'docus version content')
+
+    const result = await git.addAndCommit(root, ['a.md'], 'docus version')
+
+    expect(await git.rawAt(root, result.sha, 'a.md')).toBe('docus version content')
+    expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('terminal staged content')
+    expect((await git.status(root)).find((entry) => entry.path === 'a.md')).toMatchObject({
+      index: 'M',
+      worktree: 'M',
+    })
+  })
+
   it('returns commits newest-first', async () => {
     await write('a.md', '1')
     const r1 = await git.addAndCommit(root, ['a.md'], 'one')
@@ -716,6 +733,34 @@ describe('dropHeadCommit', () => {
       expect.objectContaining({ path: 'a.md', index: ' ', worktree: 'M' }),
       expect.objectContaining({ path: 'unrelated.md', index: 'A', worktree: ' ' }),
     ]))
+  }, 15_000)
+
+  it('preserves same-path staged intent while withdrawing', async () => {
+    await write('a.md', 'v1\n')
+    const first = await git.addAndCommit(root, ['a.md'], 'v1')
+    await write('a.md', 'v2\n')
+    const latest = await git.addAndCommit(root, ['a.md'], 'v2')
+    await write('a.md', 'terminal staged content\n')
+    expect((await git.run(root, ['add', '--', 'a.md'])).status).toBe(0)
+    await write('a.md', 'worktree after staged content\n')
+
+    const result = await git.dropHeadCommit(root, latest.sha.slice(0, 12))
+
+    expect(result.sha).toBe(first.sha)
+    expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('terminal staged content\n')
+  }, 15_000)
+
+  it('rejects a foreign commit even when it is the current HEAD', async () => {
+    await write('a.md', 'v1\n')
+    const first = await git.addAndCommit(root, ['a.md'], 'v1')
+    const tree = (await git.run(root, ['rev-parse', `${first.sha}^{tree}`])).stdout.trim()
+    const foreign = await git.run(root, ['commit-tree', tree, '-p', first.sha, '-m', 'manual commit'])
+    expect(foreign.status).toBe(0)
+    expect((await git.run(root, ['update-ref', 'HEAD', foreign.stdout.trim(), first.sha])).status).toBe(0)
+
+    await expect(git.dropHeadCommit(root, foreign.stdout.trim())).rejects.toThrow(
+      'not a Docus version for this vault',
+    )
   }, 15_000)
 
   it('withdraws the first version without deleting files or unrelated staged entries', async () => {

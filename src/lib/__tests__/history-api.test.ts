@@ -48,6 +48,19 @@ describe('getStatus', () => {
     const out = await api.getStatus()
     expect(out).toEqual({ dirty: [], available: false })
   })
+
+  it('throws on a real 500 instead of accepting an invalid status body', async () => {
+    responses.push({ status: 500, body: { error: 'status failed' } })
+    await expect(api.getStatus()).rejects.toMatchObject({
+      message: 'status failed',
+      status: 500,
+    })
+  })
+
+  it('rejects a malformed 503 unavailable body', async () => {
+    responses.push({ status: 503, body: { error: 'status failed' } })
+    await expect(api.getStatus()).rejects.toMatchObject({ status: 503 })
+  })
 })
 
 describe('getDiff', () => {

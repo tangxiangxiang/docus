@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { promises as fs } from 'node:fs'
 
 // Where the user's vault lives. In dev this defaults to
 // `<project>/src/content`; in production it can be overridden via
@@ -99,6 +100,101 @@ export function filePathFor(p: string): string {
 
 export function folderPathFor(p: string): string {
   return path.join(assertSafePath(p))
+}
+
+export type SafePathOptions = {
+  allowMissingFinal?: boolean
+}
+
+/**
+ * Resolve a vault-relative filesystem path without following symlinks.
+ *
+ * The synchronous helpers above are retained for callers that only need a
+ * lexical path. Security-sensitive readers must use this async resolver so
+ * every existing path segment is checked with lstat before it is opened.
+ */
+export async function resolveSafeRelativePath(
+  root: string,
+  relativePath: string,
+  options: SafePathOptions = {},
+): Promise<string> {
+  if (
+    !relativePath
+    || relativePath.includes('\0')
+    || relativePath.includes('\\')
+    || path.isAbsolute(relativePath)
+    || path.posix.normalize(relativePath) !== relativePath
+    || relativePath.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+  ) {
+    throw new Error(`invalid relative path: ${relativePath}`)
+  }
+
+  const rootAbs = path.resolve(root)
+  const rootStat = await fs.lstat(rootAbs)
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error('path root is not a directory')
+  }
+
+  let current = rootAbs
+  const segments = relativePath.split('/')
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]!
+    current = path.join(current, segment)
+    try {
+      const stat = await fs.lstat(current)
+      if (stat.isSymbolicLink()) {
+        throw new Error(`symbolic links are not allowed: ${relativePath}`)
+      }
+      if (index < segments.length - 1 && !stat.isDirectory()) {
+        throw new Error(`path segment is not a directory: ${relativePath}`)
+      }
+    } catch (error: any) {
+      if (error?.code === 'ENOENT' && index === segments.length - 1 && options.allowMissingFinal) {
+        return current
+      }
+      throw error
+    }
+  }
+  return current
+}
+
+/** Read one existing worktree file after validating its physical path. */
+export async function readSafeRelativeFile(
+  root: string,
+  relativePath: string,
+  encoding?: BufferEncoding,
+): Promise<Buffer | string | null> {
+  const absolute = await resolveSafeRelativePath(root, relativePath, { allowMissingFinal: true })
+  let before: Awaited<ReturnType<typeof fs.lstat>>
+  try {
+    before = await fs.lstat(absolute)
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return null
+    throw error
+  }
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw new Error(`path is not a regular file: ${relativePath}`)
+  }
+
+  const noFollow = (fs.constants as typeof fs.constants & { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0
+  const handle = await fs.open(absolute, fs.constants.O_RDONLY | noFollow)
+  try {
+    const value = encoding ? await handle.readFile({ encoding }) : await handle.readFile()
+    const afterHandle = await handle.stat()
+    const afterPath = await fs.lstat(absolute)
+    if (
+      afterPath.isSymbolicLink()
+      || afterHandle.dev !== before.dev
+      || afterHandle.ino !== before.ino
+      || afterPath.dev !== before.dev
+      || afterPath.ino !== before.ino
+    ) {
+      throw new Error(`path changed while reading: ${relativePath}`)
+    }
+    return value
+  } finally {
+    await handle.close()
+  }
 }
 
 export { SEGMENT_RE }

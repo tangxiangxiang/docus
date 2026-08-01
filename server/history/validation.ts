@@ -2,10 +2,9 @@ import path from 'node:path'
 import { SEGMENT_RE } from '../paths.js'
 
 const FILE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.md$/
-// Git object ids are SHA-1 today. If the vault repo switches to SHA-256,
-// raise the upper bound from 40 to 64.
-const SHA_RE = /^[0-9a-f]{7,40}$/i
-const SHA_ANCESTOR_RE = /^[0-9a-f]{7,40}~[1-9][0-9]*$/i
+// Accept abbreviated SHA-1 and full SHA-1/SHA-256 object ids.
+const SHA_RE = /^[0-9a-f]{7,64}$/i
+const SHA_ANCESTOR_RE = /^[0-9a-f]{7,64}~[1-9][0-9]*$/i
 const HEAD_RE = /^HEAD(?:~[1-9][0-9]*)?$/
 
 export const MANAGED_HISTORY_DOTFILES = new Set(['.gitattributes', '.gitignore'])

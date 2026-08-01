@@ -20,6 +20,7 @@ import { withDocumentWriteLock, withVaultStructureLock } from '../documentWriteL
 import { isPhysicallyContained } from '../documentFileLifecycle.js'
 import { assertPathNotOwnedByFolderMove, FolderMovePathOwnedError } from '../folderMoveJournalOwnership.js'
 import { withVaultMutation } from '../vaultMutation.js'
+import { resolveSafeRelativePath } from '../paths.js'
 import * as git from './git.js'
 import { ensureRepoWithinVaultMutation } from './repo.js'
 
@@ -71,7 +72,19 @@ export async function restoreHistoricalDocument(input: {
   afterCommit?: () => void | Promise<void>
 }): Promise<HistoryRestoreResult> {
   const logicalPath = input.path.slice(0, -'.md'.length)
-  const target = path.resolve(input.repoRoot, input.path)
+  let target: string
+  try {
+    target = await resolveSafeRelativePath(input.repoRoot, input.path, { allowMissingFinal: true })
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') {
+      throw new HistoryRestoreConflictError(
+        `document path moved before restore: ${logicalPath}`,
+        'HISTORY_PATH_MOVED',
+        { cause: error },
+      )
+    }
+    throw error
+  }
 
   return withVaultMutation(input.repoRoot, async () => {
     await ensureRepoWithinVaultMutation(input.repoRoot)
@@ -152,6 +165,7 @@ export async function restoreHistoricalDocument(input: {
           }
         }
 
+        await resolveSafeRelativePath(input.repoRoot, input.path)
         const observed = await readStableTextSnapshot(target)
         if (observed.raw !== historicalRaw) {
           throw new HistoryRestoreConflictError(

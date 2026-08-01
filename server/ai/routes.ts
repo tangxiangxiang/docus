@@ -13,9 +13,8 @@
 //     to the helper in ../index.ts.
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
-import { promises as fs } from 'node:fs'
 import { getDb } from '../db.js'
-import { filePathFor } from '../paths.js'
+import { CONTENT_DIR, readSafeRelativeFile } from '../paths.js'
 import * as sessions from './sessions.js'
 import * as messages from './messages.js'
 import { runChat, type ChatContext, type ChatEvent } from './chat.js'
@@ -258,9 +257,9 @@ ai.post('/commit-message', async (c) => {
 
   try {
     const noteContext = await Promise.all(paths.map(async (p) => {
-      const abs = filePathFor(contentPathForHistoryPath(p))
-      const raw = await fs.readFile(abs, 'utf8').catch(() => '')
-      return { path: p, raw: raw.slice(0, MAX_COMMIT_NOTE_CHARS) }
+      const contentPath = `${contentPathForHistoryPath(p)}.md`
+      const raw = await readSafeRelativeFile(CONTENT_DIR, contentPath, 'utf8')
+      return { path: p, raw: typeof raw === 'string' ? raw.slice(0, MAX_COMMIT_NOTE_CHARS) : '' }
     }))
     const message = await generateCommitMessage({
       paths,

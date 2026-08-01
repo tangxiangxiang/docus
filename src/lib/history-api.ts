@@ -79,12 +79,9 @@ export interface FileDiff {
    body has no `error` field (older routes, partial responses), we fall
    back to "<endpoint> failed: <status>".
 
-   Most routes use this contract. /status is the exception: a missing
-   git binary returns 503 + `{ dirty: [], available: false }` as a
-   graceful "unavailable" signal that the caller is expected to read
-   from the body, NOT an error. Pass `allowNonOkJson: true` for that
-   case so the body comes through and refreshStatus can flip
-   `_available` itself. */
+   Most routes use this contract. /status has one narrowly validated
+   503 response for a missing git binary; all other non-2xx responses
+   remain errors. */
 export class HistoryApiError extends Error {
   readonly status: number
 
@@ -95,8 +92,8 @@ export class HistoryApiError extends Error {
   }
 }
 
-async function readJson<T>(r: Response, fallback: string, opts: { allowNonOkJson?: boolean } = {}): Promise<T> {
-  if (r.ok || opts.allowNonOkJson) {
+async function readJson<T>(r: Response, fallback: string): Promise<T> {
+  if (r.ok) {
     return r.json() as Promise<T>
   }
   const body = (await r.json().catch(() => ({}))) as { error?: unknown }
@@ -119,7 +116,19 @@ export async function getStatus(): Promise<{ dirty: StatusEntry[]; available: bo
      "getStatus failed: 503" in the History panel's error slot and
      hide the actual reason from the user. */
   const r = await fetch('/api/history/status')
-  return readJson(r, 'getStatus failed', { allowNonOkJson: true })
+  const body = await r.json().catch(() => null) as { dirty?: unknown; available?: unknown; error?: unknown } | null
+  const unavailable = r.status === 503
+    && Array.isArray(body?.dirty)
+    && body?.available === false
+  if (unavailable) return body as { dirty: StatusEntry[]; available: boolean }
+  if (!r.ok) {
+    const message = typeof body?.error === 'string' ? body.error : `getStatus failed: ${r.status}`
+    throw new HistoryApiError(message, r.status)
+  }
+  if (!Array.isArray(body?.dirty) || typeof body?.available !== 'boolean') {
+    throw new HistoryApiError('getStatus failed: invalid response', r.status)
+  }
+  return body as { dirty: StatusEntry[]; available: boolean }
 }
 
 // --- Log -------------------------------------------------------------------
@@ -261,6 +270,7 @@ export async function dropCommit(sha: string): Promise<DropCommitResult> {
 export interface RestoreFileResult {
   path: string
   ref: string
+  resolvedRef: string
   raw: string
   mtime: number
 }

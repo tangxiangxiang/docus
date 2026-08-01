@@ -16,13 +16,11 @@
 // ../paths.ts.
 
 import { Hono } from 'hono'
-import fs from 'node:fs/promises'
-import path from 'node:path'
 import { createHash } from 'node:crypto'
 import * as git from './git.js'
 import { ensureRepo, ensureRepoWithinVaultMutation } from './repo.js'
 import { computeFileDiff } from './diff.js'
-import { CONTENT_DIR } from '../paths.js'
+import { CONTENT_DIR, readSafeRelativeFile } from '../paths.js'
 import { metadataDb } from '../routes/shared.js'
 import { withVaultMutation } from '../vaultMutation.js'
 import {
@@ -188,7 +186,8 @@ history.get('/status', async (c) => {
 
 async function worktreeContentHash(filePath: string): Promise<string | null> {
   try {
-    const bytes = await fs.readFile(path.join(repoRoot(), filePath))
+    const bytes = await readSafeRelativeFile(repoRoot(), filePath)
+    if (bytes === null) return null
     return createHash('sha256').update(bytes).digest('hex')
   } catch (error: any) {
     if (error?.code === 'ENOENT') return null
@@ -434,10 +433,10 @@ history.post('/drop', async (c) => {
     })
   } catch (e: any) {
     const msg = e.message ?? 'drop failed'
-    if (/only the latest version|repository changed before withdrawal|repository operation in progress/i.test(msg)) {
+    if (/only the latest version|repository changed before withdrawal|repository operation in progress|not a Docus version|merge commits cannot be withdrawn/i.test(msg)) {
       return bad(c, msg, 409)
     }
-    if (/bad revision|unknown revision|not a valid object name/i.test(msg)) return bad(c, msg, 404)
+    if (/bad revision|unknown revision|not a valid object name|invalid withdrawal reference/i.test(msg)) return bad(c, msg, 404)
     return bad(c, msg, 500)
   }
 })

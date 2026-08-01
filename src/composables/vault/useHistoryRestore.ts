@@ -127,9 +127,9 @@ export function useHistoryRestore(options: HistoryRestoreOptions) {
       const tab = options.tabs.value.find((item) => item.path === request.documentPath)
       if (tab) {
         if (preparedRevision != null && tab.revision !== preparedRevision) {
-          applyRestoreWithoutOverwritingNewerEdit(tab, request.historicalRaw, result.mtime)
+          applyRestoreWithoutOverwritingNewerEdit(tab, result.raw, result.mtime)
         } else {
-          applyRestoredContent(tab, request.historicalRaw, result.mtime)
+          applyRestoredContent(tab, result.raw, result.mtime)
         }
       }
       editorBarrier.commit([request.documentPath])
@@ -138,7 +138,7 @@ export function useHistoryRestore(options: HistoryRestoreOptions) {
         path: request.documentPath,
         kind: 'write',
         newMtime: result.mtime,
-        newRaw: request.historicalRaw,
+        newRaw: result.raw,
         source: 'history-restore',
       })
       const refreshResults = await Promise.allSettled([

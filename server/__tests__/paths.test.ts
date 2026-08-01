@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest'
-import { assertSafePath, filePathFor, folderPathFor, isValidPathSyntax, isValidSegment } from '../paths.js'
+import { promises as fs } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import {
+  assertSafePath,
+  filePathFor,
+  folderPathFor,
+  isValidPathSyntax,
+  isValidSegment,
+  readSafeRelativeFile,
+  resolveSafeRelativePath,
+} from '../paths.js'
 
 describe('isValidPathSyntax', () => {
   it('accepts top-level post', () => {
@@ -114,4 +125,22 @@ describe('isValidSegment', () => {
   it('rejects segment containing `/`', () => expect(isValidSegment('foo/bar')).toBe(false))
   it('rejects empty segment', () => expect(isValidSegment('')).toBe(false))
   it('rejects underscore', () => expect(isValidSegment('draft_v2')).toBe(false))
+})
+
+describe('symlink-safe filesystem paths', () => {
+  it('rejects symlinked directories and files before reading them', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-safe-path-'))
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-safe-outside-'))
+    try {
+      await fs.writeFile(path.join(outside, 'secret.md'), 'secret', 'utf8')
+      await fs.symlink(outside, path.join(root, 'linked-folder'), 'dir')
+      await expect(resolveSafeRelativePath(root, 'linked-folder/secret.md')).rejects.toThrow(/symbolic links/)
+
+      await fs.symlink(path.join(outside, 'secret.md'), path.join(root, 'note.md'), 'file')
+      await expect(readSafeRelativeFile(root, 'note.md', 'utf8')).rejects.toThrow(/symbolic links/)
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
 })
