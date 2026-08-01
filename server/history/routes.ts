@@ -52,6 +52,25 @@ import {
  */
 let _repoRoot: string = CONTENT_DIR
 
+export type HistoryMutationKind =
+  | 'create-version'
+  | 'repair-index'
+  | 'discard-repair'
+  | 'withdraw'
+  | 'restore'
+
+export type HistoryMutationHooks = {
+  beforeMutation?: (kind: HistoryMutationKind) => void | Promise<void>
+}
+
+let historyMutationHooks: HistoryMutationHooks | null = null
+
+export function __setHistoryMutationHooksForTesting(
+  hooks: HistoryMutationHooks | null,
+): void {
+  historyMutationHooks = hooks
+}
+
 export function setRepoRootForTesting(dir: string): void {
   _repoRoot = dir
 }
@@ -308,6 +327,7 @@ history.post('/commits', async (c) => {
   const expected = record as Record<string, string | null>
   try {
     await ensureRepo(repoRoot())
+    await historyMutationHooks?.beforeMutation?.('create-version')
     const r = await git.addAndCommit(repoRoot(), paths, body.message, { expected })
     return c.json(r, 201)
   } catch (e: any) {
@@ -341,6 +361,7 @@ history.post('/repair-index', async (c) => {
   }
   try {
     await ensureRepo(repoRoot())
+    await historyMutationHooks?.beforeMutation?.('repair-index')
     const result = await git.repairIndex(repoRoot(), body.token)
     if (!result.repaired) return bad(c, 'index repair could not be verified', 409)
     return c.json(result)
@@ -361,6 +382,7 @@ history.post('/repair-index/discard', async (c) => {
   }
   try {
     await ensureRepo(repoRoot())
+    await historyMutationHooks?.beforeMutation?.('discard-repair')
     const discarded = await git.discardIndexRepair(repoRoot(), body.token)
     if (!discarded) return bad(c, 'index repair transaction not found', 409)
     return c.json({ discarded: true })
@@ -383,6 +405,7 @@ history.post('/drop', async (c) => {
   if (!isValidCommitSha(body.sha)) return bad(c, 'invalid sha')
   try {
     await ensureRepo(repoRoot())
+    await historyMutationHooks?.beforeMutation?.('withdraw')
     const r = await git.dropHeadCommit(repoRoot(), body.sha)
     return c.json(r)
   } catch (e: any) {
@@ -440,6 +463,7 @@ history.post('/restore', async (c) => {
     if (exists === null) {
       return bad(c, `file does not exist at ref ${body.ref}`, 404)
     }
+    await historyMutationHooks?.beforeMutation?.('restore')
     await git.restoreFile(repoRoot(), body.ref, validPath)
     const stat = await fs.stat(path.join(repoRoot(), validPath))
     return c.json({ path: validPath, ref: body.ref, raw: exists, mtime: stat.mtimeMs })

@@ -159,6 +159,18 @@ export interface RecoveryReport {
   readonly actions: readonly RecoveryAction[]
 }
 
+export type CrashRecoveryHooks = {
+  afterRecoveryStarted?: () => void | Promise<void>
+}
+
+let crashRecoveryHooks: CrashRecoveryHooks | null = null
+
+export function __setCrashRecoveryHooksForTesting(
+  hooks: CrashRecoveryHooks | null,
+): void {
+  crashRecoveryHooks = hooks
+}
+
 interface ReplaceJournal {
   version: 1
   op: 'replace'
@@ -3089,6 +3101,7 @@ export async function recoverInterruptedOperations(
   contentDir: string,
   db: DatabaseT,
 ): Promise<RecoveryReport> {
+  await crashRecoveryHooks?.afterRecoveryStarted?.()
   const actions: RecoveryAction[] = []
   const terminalArtifacts = new Set<string>()
   const terminalActionKeys = new Set<string>()
