@@ -12,6 +12,8 @@ export interface HistoryFileItem {
 
 export interface HistoryCommitItem {
   id: string
+  /** First parent; merge commits intentionally use deterministic first-parent semantics. */
+  parentId: string | null
   shortId: string
   message: string
   body: string
@@ -97,6 +99,7 @@ export function buildHistoryDayGroups(
     if (files.length === 0) continue
     commits.push({
       id: record.sha,
+      parentId: record.parents[0] ?? null,
       shortId: record.sha.slice(0, 7),
       message: record.subject,
       body: record.body,
@@ -128,6 +131,7 @@ export function toHistoryRevisionSelection(
     documentPath: file.documentPath,
     documentTitle: file.title,
     revisionId: commit.id,
+    parentRevisionId: commit.parentId,
     revisionTime: commit.modifiedAt,
     summary: commit.message,
   }

@@ -108,13 +108,13 @@ onMounted(scrollToFirstChange)
         <span class="unified-diff-gutter unified-diff-old" aria-hidden="true" :data-line="row.oldLine ?? ''" />
         <span class="unified-diff-gutter unified-diff-new" aria-hidden="true" :data-line="row.newLine ?? ''" />
         <span class="unified-diff-marker" aria-hidden="true" :data-marker="marker(row.operation)" />
-        <code class="unified-diff-content">
+        <span class="unified-diff-content">
           <template v-if="row.words"><span
             v-for="(word, index) in row.words"
             :key="index"
             :class="wordClass(word)"
           >{{ word.text }}</span></template><template v-else>{{ row.text }}</template>
-        </code>
+        </span>
       </div>
     </template>
   </div>

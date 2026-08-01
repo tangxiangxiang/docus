@@ -34,10 +34,11 @@ function historyComparison(overrides: Partial<AiDiffSource> = {}): AiDiffSource 
     tabId: 'diff:inbox/redis',
     documentPath: 'inbox/redis',
     documentTitle: 'Redis Notes',
+    mode: 'revision-to-worktree',
     revisionId: 'rev-9',
     revisionTime: 1752566260000,
-    oldRaw: '# Redis\n\nold side',
-    newRaw: '# Redis\n\nsnapshot side',
+    beforeRaw: '# Redis\n\nold side',
+    afterRaw: '# Redis\n\nsnapshot side',
     currentDirty: false,
     status: 'ready',
     ...overrides,
@@ -207,7 +208,7 @@ describe('captureAiLiveContext', () => {
     it('re-reads the after side from the live editor at capture time', () => {
       const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'diff:inbox/redis',
-        historyComparisons: [historyComparison({ newRaw: '# Redis\n\nsnapshot side', currentDirty: false })],
+        historyComparisons: [historyComparison({ afterRaw: '# Redis\n\nsnapshot side', currentDirty: false })],
       }), {
         now: () => NOW,
         liveDocument: () => ({ raw: '# Redis\n\ntyped after the diff opened', dirty: true, documentId: 'doc-r' }),
@@ -226,7 +227,7 @@ describe('captureAiLiveContext', () => {
     it('prefers the live editor over a stale comparison snapshot', () => {
       const capture = captureAiLiveContext(input({
         activeWorkspaceTabId: 'diff:inbox/redis',
-        historyComparisons: [historyComparison({ newRaw: 'stale snapshot', currentDirty: false })],
+        historyComparisons: [historyComparison({ afterRaw: 'stale snapshot', currentDirty: false })],
       }), {
         liveDocument: () => ({ raw: 'fresh buffer', dirty: true, documentId: 'doc-r' }),
       })

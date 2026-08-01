@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { watch } from 'vue'
 import {
   getLoadedEditorDocument,
   useHistoryComparisons,
@@ -17,10 +16,15 @@ function selection(overrides: Partial<HistoryRevisionSelection> = {}): HistoryRe
     documentPath: 'inbox/redis',
     documentTitle: 'Redis Notes',
     revisionId: 'revision-a',
+    parentRevisionId: 'parent-a',
     revisionTime: 1_752_566_260_000,
     summary: 'Update cache section',
     ...overrides,
   }
+}
+
+function file(ref: string, content: string) {
+  return { path: 'inbox/redis.md', ref, content }
 }
 
 beforeEach(() => {
@@ -28,362 +32,213 @@ beforeEach(() => {
 })
 
 describe('useHistoryComparisons', () => {
-  it('opens a diff directly from a selection — no snapshot intermediate', async () => {
-    vi.mocked(api.getFileAt).mockResolvedValue({
-      path: 'inbox/redis.md',
-      ref: 'revision-a',
-      content: '# Redis\n\nHistorical.',
-    })
-    const loadCurrentDocument = vi.fn().mockResolvedValue('# Redis\n\nSaved current.')
+  it('opens a normal commit as parent revision → selected revision without loading the worktree', async () => {
+    vi.mocked(api.getFileAt)
+      .mockResolvedValueOnce(file('parent-a', '# Before'))
+      .mockResolvedValueOnce(file('revision-a', '# After'))
+    const loadCurrentDocument = vi.fn().mockResolvedValue('# Unsaved/current')
+    const getCurrentDocument = vi.fn().mockReturnValue({ raw: '# Editor', dirty: true })
     const history = useHistoryComparisons({
-      getCurrentDocument: () => null,
-      loadCurrentDocument,
-    })
-    const statuses: Array<string | undefined> = []
-    const stop = watch(
-      () => history.activeComparison.value?.status,
-      (status) => statuses.push(status),
-      { immediate: true },
-    )
-
-    // Status must be 'loading' from the very first reactive read — the
-    // user must see a loading indicator the instant the diff opens,
-    // before any network request settles.
-    const request = history.openComparison(selection())
-    expect(history.activeComparison.value?.status).toBe('loading')
-    expect(history.activeComparison.value?.oldRaw).toBe('')
-    expect(history.activeComparison.value?.newRaw).toBe('')
-    expect(history.activeComparison.value?.diff).toBeNull()
-
-    await request
-
-    expect(api.getFileAt).toHaveBeenCalledWith('inbox/redis.md', 'revision-a')
-    expect(loadCurrentDocument).toHaveBeenCalledWith('inbox/redis')
-    expect(history.activeComparison.value?.tabId).toBe('diff:inbox/redis')
-    expect(history.activeComparison.value?.oldRaw).toContain('Historical')
-    expect(history.activeComparison.value?.newRaw).toContain('Saved current')
-    expect(history.activeComparison.value?.currentDirty).toBe(false)
-    expect(history.activeComparison.value?.diff?.stats).toMatchObject({ added: 1, removed: 1 })
-    expect(statuses).toEqual(expect.arrayContaining(['loading', 'ready']))
-    stop()
-  })
-
-  it('compares the Git revision against unsaved in-memory editor content', async () => {
-    vi.mocked(api.getFileAt).mockResolvedValue({
-      path: 'inbox/redis.md',
-      ref: 'revision-a',
-      content: '# Redis\n\nHistorical.',
-    })
-    const loadCurrentDocument = vi.fn()
-    const editorDocument = { raw: '# Redis\n\nUnsaved current.', dirty: true }
-    const history = useHistoryComparisons({
-      getCurrentDocument: () => editorDocument,
+      getCurrentDocument,
       loadCurrentDocument,
     })
 
     await history.openComparison(selection())
+
+    expect(api.getFileAt).toHaveBeenNthCalledWith(1, 'inbox/redis.md', 'parent-a')
+    expect(api.getFileAt).toHaveBeenNthCalledWith(2, 'inbox/redis.md', 'revision-a')
+    expect(loadCurrentDocument).not.toHaveBeenCalled()
+    expect(getCurrentDocument).not.toHaveBeenCalled()
+    expect(history.activeComparison.value).toMatchObject({
+      mode: 'commit-change',
+      beforeRef: 'parent-a',
+      afterRef: 'revision-a',
+      beforeRaw: '# Before',
+      afterRaw: '# After',
+      beforeExists: true,
+      afterExists: true,
+      currentDirty: false,
+      status: 'ready',
+    })
+  })
+
+  it('loads root commits as empty → selected revision', async () => {
+    vi.mocked(api.getFileAt).mockResolvedValue(file('root-sha', '# First'))
+    const history = useHistoryComparisons({
+      getCurrentDocument: () => null,
+      loadCurrentDocument: vi.fn(),
+    })
+
+    await history.openComparison(selection({ revisionId: 'root-sha', parentRevisionId: null }))
+
+    expect(api.getFileAt).toHaveBeenCalledOnce()
+    expect(api.getFileAt).toHaveBeenCalledWith('inbox/redis.md', 'root-sha')
+    expect(history.activeComparison.value).toMatchObject({
+      beforeRef: null,
+      afterRef: 'root-sha',
+      beforeRaw: '',
+      beforeExists: false,
+      afterRaw: '# First',
+      afterExists: true,
+    })
+  })
+
+  it('treats a missing parent file as an empty side for a later file creation', async () => {
+    vi.mocked(api.getFileAt)
+      .mockRejectedValueOnce(new api.HistoryApiError('not found', 404))
+      .mockResolvedValueOnce(file('revision-a', 'created'))
+    const history = useHistoryComparisons({
+      getCurrentDocument: () => null,
+      loadCurrentDocument: vi.fn(),
+    })
+
+    await history.openComparison(selection())
+
+    expect(history.activeComparison.value).toMatchObject({
+      beforeRaw: '',
+      beforeExists: false,
+      afterRaw: 'created',
+      afterExists: true,
+      status: 'ready',
+    })
+    expect(history.activeComparison.value?.diff?.stats).toMatchObject({ added: 1, removed: 0 })
+  })
+
+  it('treats a missing selected file as an empty side for a deletion commit', async () => {
+    vi.mocked(api.getFileAt)
+      .mockResolvedValueOnce(file('parent-a', 'deleted content'))
+      .mockRejectedValueOnce(new api.HistoryApiError('not found', 404))
+    const history = useHistoryComparisons({
+      getCurrentDocument: () => null,
+      loadCurrentDocument: vi.fn(),
+    })
+
+    await history.openComparison(selection())
+
+    expect(history.activeComparison.value).toMatchObject({
+      beforeRaw: 'deleted content',
+      beforeExists: true,
+      afterRaw: '',
+      afterExists: false,
+      status: 'ready',
+    })
+    expect(history.activeComparison.value?.diff?.stats).toMatchObject({ added: 0, removed: 1 })
+  })
+
+  it('loads historical sides in parallel', async () => {
+    let resolveParent!: (value: Awaited<ReturnType<typeof api.getFileAt>>) => void
+    let resolveSelected!: (value: Awaited<ReturnType<typeof api.getFileAt>>) => void
+    vi.mocked(api.getFileAt)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveParent = resolve }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSelected = resolve }))
+    const history = useHistoryComparisons({
+      getCurrentDocument: () => null,
+      loadCurrentDocument: vi.fn(),
+    })
+
+    const request = history.openComparison(selection())
+    expect(api.getFileAt).toHaveBeenCalledTimes(2)
+    expect(history.activeComparison.value?.status).toBe('loading')
+    resolveParent(file('parent-a', 'before'))
+    resolveSelected(file('revision-a', 'after'))
+    await request
+    expect(history.activeComparison.value?.status).toBe('ready')
+  })
+
+  it('switches to selected revision → working tree and preserves unsaved editor content', async () => {
+    vi.mocked(api.getFileAt).mockResolvedValue(file('revision-a', 'historical'))
+    const loadCurrentDocument = vi.fn()
+    const history = useHistoryComparisons({
+      getCurrentDocument: () => ({ raw: 'unsaved current', dirty: true }),
+      loadCurrentDocument,
+    })
+
+    await history.openComparison(selection())
+    await history.compareWithWorkingTree('diff:inbox/redis')
 
     expect(loadCurrentDocument).not.toHaveBeenCalled()
-    expect(history.activeComparison.value?.oldRaw).toContain('Historical')
-    expect(history.activeComparison.value?.newRaw).toContain('Unsaved current')
-    expect(history.activeComparison.value?.currentDirty).toBe(true)
-    expect(history.activeComparison.value?.diff?.stats).toMatchObject({ added: 1, removed: 1 })
-  })
-
-  it('falls back to the saved document API when the document is not open', async () => {
-    vi.mocked(api.getFileAt).mockResolvedValue({
-      path: 'inbox/redis.md',
-      ref: 'revision-a',
-      content: '# Redis\n\nHistorical.',
-    })
-    const loadCurrentDocument = vi.fn().mockResolvedValue('# Redis\n\nSaved current.')
-    const history = useHistoryComparisons({
-      getCurrentDocument: () => null,
-      loadCurrentDocument,
-    })
-
-    await history.openComparison(selection())
-
-    expect(loadCurrentDocument).toHaveBeenCalledWith('inbox/redis')
-    expect(history.activeComparison.value?.newRaw).toContain('Saved current')
-    expect(history.activeComparison.value?.currentDirty).toBe(false)
-  })
-
-  it('starts loading historical and current content in parallel', async () => {
-    let resolveHistorical!: (value: Awaited<ReturnType<typeof api.getFileAt>>) => void
-    vi.mocked(api.getFileAt).mockReturnValue(new Promise((resolve) => {
-      resolveHistorical = resolve
-    }))
-    const loadCurrentDocument = vi.fn().mockResolvedValue('current')
-    const history = useHistoryComparisons({
-      getCurrentDocument: () => null,
-      loadCurrentDocument,
-    })
-
-    const request = history.openComparison(selection())
-    await vi.waitFor(() => expect(loadCurrentDocument).toHaveBeenCalledWith('inbox/redis'))
-    expect(history.activeComparison.value?.status).toBe('loading')
-
-    resolveHistorical({
-      path: 'inbox/redis.md',
-      ref: 'revision-a',
-      content: 'historical',
-    })
-    await request
     expect(history.activeComparison.value).toMatchObject({
-      status: 'ready',
-      oldRaw: 'historical',
-      newRaw: 'current',
-    })
-  })
-
-  it('replaces discarded editor content with saved content after the Current tab closes', async () => {
-    vi.mocked(api.getFileAt).mockResolvedValue({
-      path: 'inbox/redis.md',
-      ref: 'revision-a',
-      content: '# Redis\n\nHistorical.',
-    })
-    const tabs = [{
-      path: 'inbox/redis',
-      raw: '# Redis\n\nDiscarded unsaved current.',
-      originalRaw: '# Redis\n\nSaved current.',
-      loading: false,
-      loadError: null,
-    }]
-    const loadCurrentDocument = vi.fn().mockResolvedValue('# Redis\n\nSaved current.')
-    const history = useHistoryComparisons({
-      getCurrentDocument: (path) => getLoadedEditorDocument(tabs, path),
-      loadCurrentDocument,
-    })
-    await history.openComparison(selection())
-    expect(history.activeComparison.value).toMatchObject({
-      newRaw: '# Redis\n\nDiscarded unsaved current.',
+      mode: 'revision-to-worktree',
+      beforeRef: 'revision-a',
+      afterRef: api.WORKTREE_REF,
+      beforeRaw: 'historical',
+      afterRaw: 'unsaved current',
       currentDirty: true,
     })
-
-    tabs.splice(0, 1)
-    await history.refreshDocumentComparison('inbox/redis')
-
-    expect(loadCurrentDocument).toHaveBeenCalledWith('inbox/redis')
-    expect(history.activeComparison.value).toMatchObject({
-      newRaw: '# Redis\n\nSaved current.',
-      currentDirty: false,
-      status: 'ready',
-    })
   })
 
-  it('falls back to the saved document API while the editor tab is still loading', async () => {
-    vi.mocked(api.getFileAt).mockResolvedValue({
-      path: 'inbox/redis.md',
-      ref: 'revision-a',
-      content: '# Redis\n\nHistorical.',
-    })
-    const tabs = [{
-      path: 'inbox/redis',
-      raw: '',
-      originalRaw: '',
-      loading: true,
-      loadError: null,
-    }]
-    const loadCurrentDocument = vi.fn().mockResolvedValue('# Redis\n\nSaved current.')
-    const history = useHistoryComparisons({
-      getCurrentDocument: (path) => getLoadedEditorDocument(tabs, path),
-      loadCurrentDocument,
-    })
+  it('switches back to commit-change mode and retry follows the active mode', async () => {
+    vi.mocked(api.getFileAt)
+      .mockResolvedValueOnce(file('parent-a', 'before'))
+      .mockResolvedValueOnce(file('revision-a', 'after'))
+      .mockResolvedValueOnce(file('revision-a', 'historical'))
+      .mockResolvedValueOnce(file('parent-a', 'before retry'))
+      .mockResolvedValueOnce(file('revision-a', 'after retry'))
+    const loadCurrentDocument = vi.fn().mockResolvedValue('current')
+    const history = useHistoryComparisons({ getCurrentDocument: () => null, loadCurrentDocument })
 
     await history.openComparison(selection())
+    await history.compareWithWorkingTree('diff:inbox/redis')
+    await history.viewCommitChanges('diff:inbox/redis')
 
-    expect(loadCurrentDocument).toHaveBeenCalledWith('inbox/redis')
+    expect(loadCurrentDocument).toHaveBeenCalledOnce()
     expect(history.activeComparison.value).toMatchObject({
-      newRaw: '# Redis\n\nSaved current.',
-      currentDirty: false,
-      status: 'ready',
+      mode: 'commit-change',
+      beforeRaw: 'before retry',
+      afterRaw: 'after retry',
     })
   })
 
-  it('does not trust an editor tab whose initial load failed', () => {
-    const tabs = [{
-      path: 'inbox/redis',
-      raw: '',
-      originalRaw: '',
-      loading: false,
-      loadError: 'HTTP 500',
-    }]
+  it('ignores a 500 historical failure instead of treating it as an empty file', async () => {
+    vi.mocked(api.getFileAt).mockRejectedValueOnce(new api.HistoryApiError('server failed', 500))
+    const history = useHistoryComparisons({ getCurrentDocument: () => null, loadCurrentDocument: vi.fn() })
 
-    expect(getLoadedEditorDocument(tabs, 'inbox/redis')).toBeNull()
+    await history.openComparison(selection({ parentRevisionId: null }))
+
+    expect(history.activeComparison.value).toMatchObject({ status: 'error', error: 'server failed' })
   })
 
-  it('reuses one comparison tab and ignores a slower obsolete request', async () => {
-    function deferred<T>() {
-      let resolve!: (value: T) => void
-      let reject!: (reason?: unknown) => void
-      const promise = new Promise<T>((onResolve, onReject) => {
-        resolve = onResolve
-        reject = onReject
-      })
-      return { promise, resolve, reject }
-    }
-
-    // Both sides begin concurrently. The second openComparison wins;
-    // resolving the first request later must not overwrite it.
-    const winnerCurrent = deferred<string>()
-    const obsoleteCurrent = deferred<string>()
+  it('does not let a slower obsolete selection overwrite the newer selection', async () => {
+    let resolveOld!: (value: Awaited<ReturnType<typeof api.getFileAt>>) => void
     vi.mocked(api.getFileAt)
-      .mockResolvedValueOnce({ path: 'inbox/redis.md', ref: 'revision-a', content: 'old A' })
-      .mockResolvedValueOnce({ path: 'inbox/redis.md', ref: 'revision-b', content: 'old B' })
-    const history = useHistoryComparisons({
-      getCurrentDocument: () => null,
-      loadCurrentDocument: vi.fn()
-        .mockReturnValueOnce(obsoleteCurrent.promise)
-        .mockReturnValueOnce(winnerCurrent.promise),
-    })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve }))
+      .mockResolvedValueOnce(file('revision-b', 'newer'))
+    const history = useHistoryComparisons({ getCurrentDocument: () => null, loadCurrentDocument: vi.fn() })
 
-    const requestA = history.openComparison(selection())
-    const requestB = history.openComparison(selection({
-      revisionId: 'revision-b',
-      summary: 'Revision B',
-    }))
-    winnerCurrent.resolve('current B')
-    await requestB
-    obsoleteCurrent.resolve('current A')
-    await requestA
+    const oldRequest = history.openComparison(selection({ parentRevisionId: null }))
+    const newRequest = history.openComparison(selection({ revisionId: 'revision-b', parentRevisionId: null }))
+    await newRequest
+    resolveOld(file('revision-a', 'older'))
+    await oldRequest
 
-    expect(history.comparisons.value).toHaveLength(1)
-    expect(history.activeComparison.value).toMatchObject({
-      revisionId: 'revision-b',
-      oldRaw: 'old B',
-      newRaw: 'current B',
-      status: 'ready',
-    })
+    expect(history.activeComparison.value).toMatchObject({ revisionId: 'revision-b', afterRaw: 'newer' })
   })
 
-  it('invalidates an in-flight request when its tab closes', async () => {
-    function deferred<T>() {
-      let resolve!: (value: T) => void
-      let reject!: (reason?: unknown) => void
-      const promise = new Promise<T>((onResolve, onReject) => {
-        resolve = onResolve
-        reject = onReject
-      })
-      return { promise, resolve, reject }
-    }
+  it('invalidates a pending request when the comparison tab closes', async () => {
+    let resolveSelected!: (value: Awaited<ReturnType<typeof api.getFileAt>>) => void
+    vi.mocked(api.getFileAt).mockReturnValueOnce(new Promise((resolve) => { resolveSelected = resolve }))
+    const history = useHistoryComparisons({ getCurrentDocument: () => null, loadCurrentDocument: vi.fn() })
 
-    vi.mocked(api.getFileAt).mockResolvedValue({
-      path: 'inbox/redis.md',
-      ref: 'revision-a',
-      content: 'historical',
-    })
-    const current = deferred<string>()
-    const history = useHistoryComparisons({
-      getCurrentDocument: () => null,
-      loadCurrentDocument: () => current.promise,
-    })
-
-    const request = history.openComparison(selection())
+    const request = history.openComparison(selection({ parentRevisionId: null }))
     history.closeComparison('diff:inbox/redis')
-    current.resolve('late current')
+    resolveSelected(file('revision-a', 'late'))
     await request
 
     expect(history.comparisons.value).toHaveLength(0)
-    expect(history.activeComparison.value).toBeNull()
   })
 
-  it('refreshes the current side when a comparison tab is selected again', async () => {
-    let currentRaw = 'current one'
-    vi.mocked(api.getFileAt).mockResolvedValue({
-      path: 'inbox/redis.md',
-      ref: 'revision-a',
-      content: '# Redis\n\nHistorical.',
-    })
-    const history = useHistoryComparisons({
-      getCurrentDocument: () => ({ raw: currentRaw, dirty: false }),
-      loadCurrentDocument: vi.fn(),
-    })
-    await history.openComparison(selection())
-    history.deactivate()
-    currentRaw = 'current two with unsaved edits'
+  it('rejects only non-404 historical errors from the state loader', async () => {
+    vi.mocked(api.getFileAt).mockRejectedValueOnce(new Error('network down'))
+    const history = useHistoryComparisons({ getCurrentDocument: () => null, loadCurrentDocument: vi.fn() })
 
-    history.selectComparison('diff:inbox/redis')
-    await vi.waitFor(() => {
-      expect(history.activeComparison.value?.newRaw).toBe('current two with unsaved edits')
-    })
-    expect(history.activeComparison.value?.oldRaw).toBe('# Redis\n\nHistorical.')
+    await history.openComparison(selection({ parentRevisionId: null }))
+
+    expect(history.activeComparison.value).toMatchObject({ status: 'error', error: 'network down' })
   })
 
-  it('keeps comparison tabs isolated by document path', async () => {
-    vi.mocked(api.getFileAt)
-      .mockResolvedValueOnce({ path: 'inbox/redis.md', ref: 'revision-a', content: 'historical redis' })
-      .mockResolvedValueOnce({ path: 'inbox/sqlite.md', ref: 'revision-a', content: 'historical sqlite' })
-    const history = useHistoryComparisons({
-      getCurrentDocument: (path) => ({ raw: `current ${path}`, dirty: false }),
-      loadCurrentDocument: vi.fn(),
-    })
-    await history.openComparison(selection())
-    await history.openComparison(selection({
-      documentPath: 'inbox/sqlite',
-      documentTitle: 'SQLite Notes',
-    }))
-
-    expect(history.comparisons.value).toHaveLength(2)
-    expect(history.comparisons.value.find((item) => item.documentPath === 'inbox/redis')?.oldRaw)
-      .toBe('historical redis')
-    expect(history.activeComparison.value).toMatchObject({
-      documentPath: 'inbox/sqlite',
-      newRaw: 'current inbox/sqlite',
-    })
-  })
-
-  it('surfaces a historical load failure on the diff tab with retry', async () => {
-    vi.mocked(api.getFileAt).mockRejectedValueOnce(new Error('history offline'))
-    const history = useHistoryComparisons({
-      getCurrentDocument: () => null,
-      loadCurrentDocument: vi.fn().mockResolvedValue('current'),
-    })
-
-    await history.openComparison(selection())
-    expect(history.activeComparison.value).toMatchObject({
-      status: 'error',
-      error: 'history offline',
-    })
-
-    vi.mocked(api.getFileAt).mockResolvedValueOnce({
-      path: 'inbox/redis.md',
-      ref: 'revision-a',
-      content: 'recovered historical',
-    })
-    await history.refreshComparison('diff:inbox/redis')
-    expect(history.activeComparison.value).toMatchObject({
-      status: 'ready',
-      oldRaw: 'recovered historical',
-      error: null,
-    })
-  })
-
-  it('surfaces a current-document load failure on the diff tab with retry', async () => {
-    vi.mocked(api.getFileAt).mockResolvedValue({
-      path: 'inbox/redis.md',
-      ref: 'revision-a',
-      content: 'historical',
-    })
-    const loadCurrentDocument = vi.fn()
-      .mockRejectedValueOnce(new Error('disk unavailable'))
-      .mockResolvedValueOnce('current after retry')
-    const history = useHistoryComparisons({
-      getCurrentDocument: () => null,
-      loadCurrentDocument,
-    })
-
-    await history.openComparison(selection())
-    expect(history.activeComparison.value).toMatchObject({
-      status: 'error',
-      error: 'disk unavailable',
-    })
-
-    await history.refreshComparison('diff:inbox/redis')
-    expect(history.activeComparison.value).toMatchObject({
-      status: 'ready',
-      newRaw: 'current after retry',
-      error: null,
-    })
+  it('recognizes loaded editor documents and their dirty state', () => {
+    expect(getLoadedEditorDocument([
+      { path: 'inbox/redis', raw: 'current', originalRaw: 'saved', loading: false, loadError: null },
+    ], 'inbox/redis')).toEqual({ raw: 'current', dirty: true, exists: true })
   })
 })

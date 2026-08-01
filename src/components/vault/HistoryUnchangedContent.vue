@@ -15,7 +15,7 @@ const lineDigits = computed(() => String(Math.max(1, lines.value.length)).length
 <template>
   <div
     class="history-unchanged-content"
-    role="table"
+    role="region"
     :aria-label="t('history.unchanged_content')"
     :style="{ '--diff-line-digits': lineDigits }"
     tabindex="0"
@@ -23,11 +23,24 @@ const lineDigits = computed(() => String(Math.max(1, lines.value.length)).length
     <div
       v-for="(text, index) in lines"
       :key="`${comparisonKey}:${index}`"
-      class="history-unchanged-line"
-      role="row"
+      class="unified-diff-line is-equal history-unchanged-line"
     >
-      <span class="history-unchanged-line-number" aria-hidden="true">{{ index + 1 }}</span>
-      <code class="history-unchanged-line-content">{{ text }}</code>
+      <span
+        class="unified-diff-gutter unified-diff-old history-unchanged-gutter history-unchanged-old"
+        aria-hidden="true"
+        :data-line="index + 1"
+      />
+      <span
+        class="unified-diff-gutter unified-diff-new history-unchanged-gutter history-unchanged-new"
+        aria-hidden="true"
+        :data-line="index + 1"
+      />
+      <span
+        class="unified-diff-marker history-unchanged-marker"
+        aria-hidden="true"
+        data-marker=""
+      />
+      <span class="unified-diff-content history-unchanged-line-content">{{ text }}</span>
     </div>
   </div>
 </template>

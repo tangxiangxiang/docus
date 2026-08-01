@@ -216,9 +216,11 @@ describe('VaultView workspace AI capture over real state', () => {
       documentPath: 'notes/a.md',
       documentTitle: 'a',
       revisionId: 'rev-3',
+      parentRevisionId: null,
       revisionTime: 222,
       summary: 'before',
     })
+    await ws.historyComparisons.compareWithWorkingTree('diff:notes/a.md')
 
     // The user keeps typing AFTER the diff opened; the comparison's
     // snapshot of the current side is now expired.
@@ -299,6 +301,7 @@ describe('VaultView workspace AI capture over real state', () => {
       documentPath: 'notes/a.md',
       documentTitle: 'a',
       revisionId: 'rev-1',
+      parentRevisionId: null,
       revisionTime: 1,
       summary: 's',
     })

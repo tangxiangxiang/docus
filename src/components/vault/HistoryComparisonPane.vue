@@ -15,6 +15,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   restore: [comparison: HistoryComparison]
   retry: [tabId: string]
+  compareWithWorkingTree: [tabId: string]
+  viewCommitChanges: [tabId: string]
 }>()
 
 const { locale, t } = useI18n()
@@ -24,11 +26,38 @@ const menuButtonRef = ref<HTMLElement | null>(null)
 const menuOpen = ref(false)
 
 const revisionTimeLabel = computed(() => formatHistoryDate(props.comparison.revisionTime, locale.value))
-const revisionLabel = computed(() => props.comparison.revisionId.slice(0, 7))
+const beforeLabel = computed(() => (
+  props.comparison.mode === 'commit-change'
+    ? (props.comparison.parentRevisionId?.slice(0, 7) ?? '∅')
+    : props.comparison.revisionId.slice(0, 7)
+))
+const beforeAccessibleLabel = computed(() => (
+    props.comparison.mode === 'commit-change'
+    ? (props.comparison.parentRevisionId
+      ? t('history.revision_label', { sha: props.comparison.parentRevisionId })
+      : t('history.empty_content'))
+    : t('history.revision_label', { sha: props.comparison.revisionId })
+))
+const afterLabel = computed(() => (
+  props.comparison.mode === 'revision-to-worktree'
+    ? t('history.working_tree')
+    : props.comparison.revisionId.slice(0, 7)
+))
+const afterAccessibleLabel = computed(() => (
+  props.comparison.mode === 'revision-to-worktree'
+    ? t('history.working_tree')
+    : t('history.revision_label', { sha: props.comparison.revisionId })
+))
 const comparisonKey = computed(() => `${props.comparison.documentPath}\0${props.comparison.revisionId}`)
 const stats = computed(() => props.comparison.diff?.stats ?? null)
+const restoreTargetExists = computed(() => (
+  props.comparison.mode === 'commit-change'
+    ? props.comparison.afterExists
+    : props.comparison.beforeExists
+))
 const canRestore = computed(() => (
   props.comparison.status === 'ready'
+  && restoreTargetExists.value
   && !props.restoring
   && !props.mutationLocked
 ))
@@ -79,6 +108,16 @@ function restore(): void {
   emit('restore', props.comparison)
 }
 
+function compareWithWorkingTree(): void {
+  closeMenu()
+  emit('compareWithWorkingTree', props.comparison.tabId)
+}
+
+function viewCommitChanges(): void {
+  closeMenu()
+  emit('viewCommitChanges', props.comparison.tabId)
+}
+
 function retry(): void {
   emit('retry', props.comparison.tabId)
 }
@@ -98,9 +137,6 @@ onBeforeUnmount(() => {
     class="history-comparison-pane"
     :class="{
       'has-summary': Boolean(comparison.summary),
-      'has-unchanged-content': comparison.status === 'ready'
-        && comparison.diff?.ops.length === 0
-        && comparison.oldRaw.length > 0,
     }"
     :aria-label="t('history.comparison_viewer')"
     :aria-busy="restoring || undefined"
@@ -109,9 +145,17 @@ onBeforeUnmount(() => {
       <div class="history-diff-title">
         <h2 ref="headingRef" tabindex="-1">{{ comparison.documentTitle }}</h2>
         <span class="history-comparison-direction">
-          <span class="history-revision-chip">{{ revisionLabel }}</span>
+          <span
+            class="history-revision-chip"
+            :aria-label="beforeAccessibleLabel"
+            :title="beforeAccessibleLabel"
+          >{{ beforeLabel }}</span>
           <span aria-hidden="true">→</span>
-          <span class="history-revision-chip">{{ t('history.working_tree') }}</span>
+          <span
+            class="history-revision-chip"
+            :aria-label="afterAccessibleLabel"
+            :title="afterAccessibleLabel"
+          >{{ afterLabel }}</span>
         </span>
       </div>
       <div class="history-diff-header-meta">
@@ -139,12 +183,38 @@ onBeforeUnmount(() => {
           :aria-label="t('history.version_actions')"
         >
           <button
+            v-if="comparison.mode === 'commit-change'"
+            type="button"
+            role="menuitem"
+            @click="compareWithWorkingTree"
+          >
+            {{ t('history.compare_with_working_tree') }}
+          </button>
+          <button
+            v-else
+            type="button"
+            role="menuitem"
+            @click="viewCommitChanges"
+          >
+            {{ t('history.view_commit_changes') }}
+          </button>
+          <button
+            v-if="restoreTargetExists"
             type="button"
             role="menuitem"
             :disabled="!canRestore"
             @click="restore"
           >
             {{ t('history.restore_version_ellipsis') }}
+          </button>
+          <button
+            v-else
+            type="button"
+            role="menuitem"
+            disabled
+            class="history-pane-menu-disabled"
+          >
+            {{ t('history.version_deletes_file') }}
           </button>
         </div>
       </div>
@@ -172,12 +242,13 @@ onBeforeUnmount(() => {
       v-else-if="comparison.diff && comparison.diff.ops.length === 0"
       class="history-unchanged-view"
     >
-      <div class="history-unchanged-notice" role="status">
-        {{ t('history.no_comparison_changes') }}
+      <div v-if="comparison.beforeRaw.length > 0" class="history-unchanged-notice" role="status">
+        <span class="history-unchanged-notice-icon" aria-hidden="true">✓</span>
+        <span>{{ t('history.comparison_identical') }}</span>
       </div>
       <HistoryUnchangedContent
-        v-if="comparison.oldRaw.length > 0"
-        :raw="comparison.oldRaw"
+        v-if="comparison.beforeRaw.length > 0"
+        :raw="comparison.beforeRaw"
         :comparison-key="comparisonKey"
       />
       <div v-else class="history-diff-state">

@@ -228,6 +228,8 @@ export async function status(repoRoot: string): Promise<StatusEntry[]> {
 
 export type CommitRecord = {
   sha: string
+  /** First-parent history semantics are used by the comparison UI. */
+  parents: string[]
   author: string
   /** ISO-8601, local repo time (committer date). */
   date: string
@@ -246,6 +248,7 @@ export const LOG_SEPARATOR = '\x1e__DOCUS_LOG__\x1e'
 
 const LOG_FORMAT = [
   `${LOG_SEPARATOR}%H`, // sha
+  '%P', // parent commit SHAs, space-separated
   '%an', // author name
   '%aI', // author date, strict ISO
   '%s', // subject (first line)
@@ -320,16 +323,17 @@ export function parseLog(text: string): CommitRecord[] {
     const header = headerEnd === -1 ? block : block.slice(0, headerEnd)
     const tail = headerEnd === -1 ? '' : block.slice(headerEnd + 1)
     const parts = header.split('\x00')
-    // parts: [sha, author, date, subject, body, '']
+    // parts: [sha, parents, author, date, subject, body, '']
     // body may itself contain NULs only if the commit message did,
     // which doesn't happen in normal use — collapse trailing empties.
     while (parts.length > 5 && parts[parts.length - 1] === '' && parts[parts.length - 2] === '') {
       parts.pop()
     }
-    const [sha, author, date, subject, body = ''] = parts
+    const [sha, parentField, author, date, subject, body = ''] = parts
     if (!sha) continue
+    const parents = parentField ? parentField.split(' ').filter(Boolean) : []
     const files = tail.split('\n').map((s) => s.trim()).filter(Boolean)
-    records.push({ sha, author, date, subject, body, files })
+    records.push({ sha, parents, author, date, subject, body, files })
   }
   return records
 }

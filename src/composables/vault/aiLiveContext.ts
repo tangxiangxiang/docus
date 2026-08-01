@@ -158,10 +158,11 @@ export interface AiDiffSource {
   tabId: string
   documentPath: string
   documentTitle: string
+  mode: 'commit-change' | 'revision-to-worktree'
   revisionId: string
   revisionTime: number
-  oldRaw: string
-  newRaw: string
+  beforeRaw: string
+  afterRaw: string
   currentDirty: boolean
   status: 'loading' | 'ready' | 'error'
 }
@@ -201,7 +202,7 @@ export interface AiLiveContextOptions {
   /**
    * Synchronous live-editor lookup for a diff's path. When a document tab
    * for that path is loaded, the diff's after-side must be re-read from it
-   * at capture time instead of the comparison's possibly stale `newRaw`.
+   * at capture time instead of the comparison's possibly stale `afterRaw`.
    */
   liveDocument?: (path: string) => AiLiveEditorDocument | null
 }
@@ -290,11 +291,16 @@ export function captureAiLiveContext(
     if (comparison.status !== 'ready') {
       return { status: 'unavailable', reason: 'load-error' }
     }
-    const live = options.liveDocument?.(comparison.documentPath) ?? null
+    // Only a revision → working-tree comparison has a live editor as its
+    // after side. Commit-change mode must remain a historical snapshot so
+    // unsaved editor content cannot alter the meaning of the selected commit.
+    const live = comparison.mode === 'revision-to-worktree'
+      ? options.liveDocument?.(comparison.documentPath) ?? null
+      : null
     // A live buffer without a stable documentId cannot be certified as
     // belonging to this path's document (metadata missing, stale tab
     // restore, path reuse in flight). Fail closed — never fall back to
-    // the comparison's possibly stale newRaw, which would re-introduce
+    // the comparison's possibly stale afterRaw, which would re-introduce
     // exactly the expired body this contract forbids.
     if (live && !live.documentId) {
       return { status: 'unavailable', reason: 'missing-identity' }
@@ -302,7 +308,7 @@ export function captureAiLiveContext(
     const after = live
       ? { raw: live.raw, source: 'live-editor' as const, dirty: live.dirty }
       : {
-          raw: comparison.newRaw,
+          raw: comparison.afterRaw,
           source: 'comparison-snapshot' as const,
           dirty: comparison.currentDirty,
         }
@@ -320,7 +326,7 @@ export function captureAiLiveContext(
         currentDocumentId: live?.documentId ?? null,
       },
       title: comparison.documentTitle,
-      before: { raw: comparison.oldRaw, source: 'history' },
+      before: { raw: comparison.beforeRaw, source: 'history' },
       after,
     }
     return { status: 'ready', context }

@@ -12,6 +12,8 @@ export interface FileHistoryTarget {
 
 export interface FileHistoryCommitItem {
   id: string
+  /** First parent; merge commits intentionally use deterministic first-parent semantics. */
+  parentId: string | null
   shortId: string
   message: string
   body: string
@@ -90,6 +92,7 @@ export function normalizeFileHistoryCommits(
     if (!record.files.some((path) => path.trim() === requestedPath)) continue
     commits.push({
       id: record.sha,
+      parentId: record.parents[0] ?? null,
       shortId: record.sha.slice(0, 7),
       message: record.subject,
       body: record.body,
@@ -223,6 +226,7 @@ export function useFileHistory(locale: Ref<string>): FileHistoryState {
       documentPath: currentTarget.documentPath,
       documentTitle: currentTarget.documentTitle,
       revisionId: commit.id,
+      parentRevisionId: commit.parentId,
       revisionTime: commit.modifiedAt,
       summary: commit.message,
     }

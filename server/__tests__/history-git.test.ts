@@ -224,6 +224,7 @@ describe('addAndCommit + log', () => {
     expect(log).toHaveLength(1)
     expect(log[0].sha).toBe(r.sha)
     expect(log[0].subject).toBe('first commit')
+    expect(log[0].parents).toEqual([])
     expect(log[0].author).toBe('Test User')
     expect(log[0].date).toMatch(/^\d{4}-\d{2}-\d{2}T/)
     expect(log[0].files.sort()).toEqual(['inbox/a.md', 'inbox/b.md'])
@@ -645,6 +646,7 @@ describe('addAndCommit + log', () => {
     expect(log.map((c) => c.subject)).toEqual(['two', 'one'])
     expect(log[0].sha).toBe(r2.sha)
     expect(log[1].sha).toBe(r1.sha)
+    expect(log[0].parents).toEqual([r1.sha])
     // No seed commit, no orphan history entries.
   })
 
@@ -946,8 +948,8 @@ describe('addAndCommit author identity', () => {
 // rest of the body and `files[0]` would be a body line, not a path.
 describe('parseLog (synthetic input)', () => {
   // The format the L0 wrapper produces:
-  //   <LOG_SEP><sha>\x00<author>\x00<date>\x00<subject>\x00<body>\x00\n<file1>\n<file2>...
-  // Five NUL-separated header fields, plus a trailing NUL terminator,
+  //   <LOG_SEP><sha>\x00<parents>\x00<author>\x00<date>\x00<subject>\x00<body>\x00\n<file1>\n<file2>...
+  // Six NUL-separated header fields, plus a trailing NUL terminator,
   // then a newline, then the name-only file list.
   function makeBlock(header: string[], body: string, files: string[]): string {
     return [...header, body].join('\x00') + '\x00\n' + files.join('\n')
@@ -957,6 +959,7 @@ describe('parseLog (synthetic input)', () => {
     const block = makeBlock(
       [
         'a'.repeat(40),
+        '',
         'txx',
         '2026-06-25T09:02:20+08:00',
         'fix(history): auto-pick a file when clicking a commit with none selected',
@@ -986,7 +989,7 @@ describe('parseLog (synthetic input)', () => {
 
   it('still parses correctly when the body is a single line', () => {
     const block = makeBlock(
-      ['b'.repeat(40), 'txx', '2026-06-24T20:13:19+08:00', 'single-line body commit'],
+      ['b'.repeat(40), 'parent-b', 'txx', '2026-06-24T20:13:19+08:00', 'single-line body commit'],
       'Adds a single-file restore action that overwrites a files',
       ['src/components/vault/DiffView.vue'],
     )
@@ -997,7 +1000,7 @@ describe('parseLog (synthetic input)', () => {
 
   it('parses an empty body and a multi-file change set', () => {
     const block = makeBlock(
-      ['c'.repeat(40), 'txx', '2026-06-25T09:00:00+08:00', 'multi-file commit'],
+      ['c'.repeat(40), 'parent-c', 'txx', '2026-06-25T09:00:00+08:00', 'multi-file commit'],
       '',
       ['server/history/git.ts', 'server/history/routes.ts', 'src/style.css'],
     )
@@ -1007,12 +1010,13 @@ describe('parseLog (synthetic input)', () => {
   })
 
   it('returns multiple records when the input has more than one LOG_SEPARATOR block', () => {
-    const a = makeBlock(['a'.repeat(40), 'txx', '2026-06-25T09:00:00+08:00', 'first'], '', ['a.md'])
-    const b = makeBlock(['b'.repeat(40), 'txx', '2026-06-25T09:01:00+08:00', 'second'], 'body', ['b.md'])
+    const a = makeBlock(['a'.repeat(40), '', 'txx', '2026-06-25T09:00:00+08:00', 'first'], '', ['a.md'])
+    const b = makeBlock(['b'.repeat(40), 'parent-b', 'txx', '2026-06-25T09:01:00+08:00', 'second'], 'body', ['b.md'])
     const text = git.LOG_SEPARATOR + a + git.LOG_SEPARATOR + b
     const records = git.parseLog(text)
     expect(records.map((r) => r.subject)).toEqual(['first', 'second'])
     expect(records.map((r) => r.files)).toEqual([['a.md'], ['b.md']])
+    expect(records.map((r) => r.parents)).toEqual([[], ['parent-b']])
   })
 })
 

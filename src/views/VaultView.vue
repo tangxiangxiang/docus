@@ -480,7 +480,15 @@ const historyComparisons = useHistoryComparisons({
     return getLoadedEditorDocument(tabs.value, path)
   },
   async loadCurrentDocument(path) {
-    return (await getPost(path)).raw
+    try {
+      return (await getPost(path)).raw
+    } catch (error: any) {
+      // A deleted working-tree file is an expected empty side for the
+      // secondary revision → working-tree comparison. Other failures must
+      // remain visible in the comparison error state.
+      if (error?.status === 404) return { raw: '', dirty: false, exists: false }
+      throw error
+    }
   },
 })
 const activeHistoryComparison = historyComparisons.activeComparison
@@ -876,12 +884,16 @@ const historyWithdraw = useHistoryWithdraw({
 
 function restoreSource(source: HistoryComparison): HistoryRestoreSource | null {
   if (!source || source.status !== 'ready') return null
+  const selectedExists = source.mode === 'commit-change'
+    ? source.afterExists
+    : source.beforeExists
+  if (!selectedExists) return null
   return {
     documentPath: source.documentPath,
     documentTitle: source.documentTitle,
     revisionId: source.revisionId,
     revisionTime: source.revisionTime,
-    historicalRaw: source.oldRaw,
+    historicalRaw: source.mode === 'commit-change' ? source.afterRaw : source.beforeRaw,
   }
 }
 
@@ -1230,6 +1242,20 @@ async function openHistoryComparison(selection: HistoryRevisionSelection): Promi
   await request
 }
 
+async function compareHistoryWithWorkingTree(tabId: string): Promise<void> {
+  const request = historyComparisons.compareWithWorkingTree(tabId)
+  await nextTick()
+  comparisonPaneRef.value?.focusViewer()
+  await request
+}
+
+async function viewHistoryCommitChanges(tabId: string): Promise<void> {
+  const request = historyComparisons.viewCommitChanges(tabId)
+  await nextTick()
+  comparisonPaneRef.value?.focusViewer()
+  await request
+}
+
 async function openWorkingTreeDiff(entry: StatusEntry): Promise<void> {
   recoveryTabs.deactivate()
   historyComparisons.deactivate()
@@ -1326,7 +1352,7 @@ async function createMissingWikiNote(ref: string) {
 
 async function copyActiveContent() {
   const raw = activeDraftRecovery.value?.draftRaw
-    ?? activeHistoryComparison.value?.newRaw
+    ?? activeHistoryComparison.value?.afterRaw
     ?? activeTab.value?.raw
   if (raw === undefined) return
   try {
@@ -1589,6 +1615,8 @@ watch(isReadMode, async (reading) => {
           :restoring="historyRestore.restoring.value && historyRestore.restoringPath.value === activeHistoryComparison.documentPath"
           :mutation-locked="historyMutationLock.has(`${activeHistoryComparison.documentPath}.md`)"
           @restore="restoreHistoricalVersion"
+          @compare-with-working-tree="compareHistoryWithWorkingTree"
+          @view-commit-changes="viewHistoryCommitChanges"
           @retry="historyComparisons.refreshComparison"
         />
       </div>
@@ -1637,7 +1665,7 @@ watch(isReadMode, async (reading) => {
       :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activeWorkingTreeDiff?.documentPath ?? activePath"
       :save="activeSavePresentation"
       :error="activeHistoryComparison || activeWorkingTreeDiff || activeDraftRecovery ? null : (activeTab?.error ?? null)"
-      :size="activeDraftRecovery ? activeDraftRecovery.draftRaw.length : (activeHistoryComparison ? activeHistoryComparison.newRaw.length : activeSize)"
+      :size="activeDraftRecovery ? activeDraftRecovery.draftRaw.length : (activeHistoryComparison ? activeHistoryComparison.afterRaw.length : activeSize)"
       :focus-width="editorFocusWidth"
       :external-kind="activeHistoryComparison || activeWorkingTreeDiff || activeDraftRecovery ? null : (activeTab?.externalKind ?? null)"
       @toggle-focus-width="editorFocusWidth = !editorFocusWidth"

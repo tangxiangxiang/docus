@@ -30,6 +30,7 @@ vi.mock('../../../lib/history-api', async () => {
 const NOW = new Date(2026, 6, 15, 12).getTime()
 const commit = (sha: string, date: number, subject: string, files: string[]): api.CommitRecord => ({
   sha,
+  parents: [],
   author: 'A',
   date: new Date(date).toISOString(),
   subject,
@@ -161,6 +162,7 @@ describe('HistoryPanel commit-first timeline', () => {
       documentPath: 'inbox/agents',
       documentTitle: 'AGENTS',
       revisionId: 'file-sha',
+      parentRevisionId: null,
       revisionTime: NOW,
       summary: 'File version',
     }]])
@@ -291,17 +293,19 @@ describe('HistoryPanel commit-first timeline', () => {
     await files[1]!.trigger('keydown', { key: 'Enter' })
     expect(wrapper.emitted('open-revision')).toEqual([
       [{
-        documentPath: 'inbox/known',
-        documentTitle: 'Known Title',
-        revisionId: 'historical-sha',
-        revisionTime: NOW,
+          documentPath: 'inbox/known',
+          documentTitle: 'Known Title',
+          revisionId: 'historical-sha',
+          parentRevisionId: null,
+          revisionTime: NOW,
         summary: 'Update two notes',
       }],
       [{
-        documentPath: 'archive/deleted-note',
-        documentTitle: 'Deleted Note',
-        revisionId: 'historical-sha',
-        revisionTime: NOW,
+          documentPath: 'archive/deleted-note',
+          documentTitle: 'Deleted Note',
+          revisionId: 'historical-sha',
+          parentRevisionId: null,
+          revisionTime: NOW,
         summary: 'Update two notes',
       }],
     ])

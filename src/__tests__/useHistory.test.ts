@@ -42,7 +42,7 @@ describe('useHistory document timeline state', () => {
       available: true,
     })
     const newest = {
-      sha: 'new', author: 'A', date: new Date().toISOString(), subject: 'New', body: '', files: ['new.md'],
+      sha: 'new', parents: [], author: 'A', date: new Date().toISOString(), subject: 'New', body: '', files: ['new.md'],
     }
     vi.mocked(api.getLog).mockResolvedValueOnce({ commits: [newest] })
     await Promise.all([history.refreshStatus(), history.refreshLog()])
@@ -114,6 +114,7 @@ describe('useHistory document timeline state', () => {
     await flushPromises()
     history.log.value = [{
       sha: 'a'.repeat(40),
+      parents: [],
       author: 'A',
       date: new Date().toISOString(),
       subject: 'Existing history',

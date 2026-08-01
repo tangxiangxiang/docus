@@ -13,7 +13,8 @@ const record = (
   date: Date,
   subject: string,
   files: string[],
-): CommitRecord => ({ sha, date: date.toISOString(), subject, body: `${subject} body`, files, author: 'A' })
+  parents: string[] = [],
+): CommitRecord => ({ sha, parents, date: date.toISOString(), subject, body: `${subject} body`, files, author: 'A' })
 
 const post = (path: string, title: string): PostSummary => ({
   path,
@@ -87,7 +88,7 @@ describe('buildHistoryDayGroups', () => {
 
 describe('useHistoryTimeline', () => {
   it('opens a historical file with the parent commit selection contract', async () => {
-    const log = ref([record('revision-sha', new Date(2026, 7, 1, 14, 26), 'Update note', ['inbox/a.md'])])
+    const log = ref([record('revision-sha', new Date(2026, 7, 1, 14, 26), 'Update note', ['inbox/a.md'], ['parent-sha'])])
     const timeline = useHistoryTimeline(
       { log, logLoaded: ref(true) },
       ref([post('inbox/a', 'Document A')]),
@@ -101,10 +102,19 @@ describe('useHistoryTimeline', () => {
       documentPath: 'inbox/a',
       documentTitle: 'Document A',
       revisionId: 'revision-sha',
+      parentRevisionId: 'parent-sha',
       revisionTime: commit.modifiedAt,
       summary: 'Update note',
     })
     expect(toHistoryRevisionSelection(file, commit).revisionId).toBe('revision-sha')
+  })
+
+  it('uses the first parent for merge commits instead of filtered-log ordering', () => {
+    const groups = buildHistoryDayGroups([
+      record('merge-sha', new Date(2026, 7, 1, 14), 'Merge', ['inbox/a.md'], ['first-parent', 'second-parent']),
+    ], [], 'en-US')
+    const commit = groups[0]!.commits[0]!
+    expect(commit.parentId).toBe('first-parent')
   })
 
   it('expands the newest date by default, retains expansion on refresh, and cleans removed commits', async () => {

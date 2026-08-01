@@ -30,6 +30,7 @@ export interface StatusEntry {
 
 export interface CommitRecord {
   sha: string
+  parents: string[]
   author: string
   /** ISO-8601 strict format (committer date). */
   date: string

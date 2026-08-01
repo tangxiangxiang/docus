@@ -24,8 +24,10 @@ const record = (
   date: Date | string,
   files: string[],
   subject = sha,
+  parents: string[] = [],
 ): api.CommitRecord => ({
   sha,
+  parents,
   author: 'A',
   date: typeof date === 'string' ? date : date.toISOString(),
   subject,
@@ -67,8 +69,23 @@ describe('useFileHistory', () => {
       documentPath: 'inbox/agents',
       documentTitle: 'AGENTS',
       revisionId: 'abcdef123',
+      parentRevisionId: null,
       revisionTime: new Date(2026, 7, 1, 15).getTime(),
       summary: 'Update agents',
+    })
+  })
+
+  it('carries the actual first parent through a path-filtered file history', async () => {
+    const state = useFileHistory(ref('en-US'))
+    vi.mocked(api.getLog).mockResolvedValue({
+      commits: [record('merge-sha', new Date(2026, 7, 1, 15), ['inbox/agents.md'], 'Merge', ['first-parent', 'second-parent'])],
+    })
+
+    await state.open(target('inbox/agents', 'AGENTS'))
+
+    expect(state.selectCommit(state.commits.value[0]!)).toMatchObject({
+      revisionId: 'merge-sha',
+      parentRevisionId: 'first-parent',
     })
   })
 

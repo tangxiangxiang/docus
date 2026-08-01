@@ -1261,8 +1261,7 @@ main.container {
   overflow: hidden;
   background: var(--vs-bg-1);
 }
-.history-comparison-pane.has-summary,
-.history-comparison-pane.has-unchanged-content {
+.history-comparison-pane.has-summary {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 .history-comparison-pane > .unified-diff-scroll,
@@ -1278,15 +1277,28 @@ main.container {
   overflow: hidden;
 }
 .history-unchanged-notice {
-  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
   box-sizing: border-box;
-  padding: 7px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 48%, transparent);
+  padding: 4px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 42%, transparent);
+  background: color-mix(in srgb, var(--vs-bg-2) 36%, var(--vs-bg-1));
   color: var(--vs-text-2);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
 }
+.history-unchanged-notice-icon {
+  color: color-mix(in srgb, var(--vs-success, #16a34a) 75%, var(--vs-text-1));
+  font-weight: 650;
+}
+
+.unified-diff-scroll,
 .history-unchanged-content {
   --diff-gutter-width: calc(var(--diff-line-digits, 1) * 1ch + 16px);
+  box-sizing: border-box;
+  width: 100%;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -1295,32 +1307,26 @@ main.container {
   font-family: var(--mono);
   font-size: 0.78rem;
   line-height: 1.5;
-  outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) transparent;
 }
+.unified-diff-scroll {
+  --diff-add-color: var(--vs-success, #16a34a);
+  --diff-remove-color: var(--vs-danger, #dc2626);
+}
+.unified-diff-scroll:focus-visible,
 .history-unchanged-content:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
-  outline-offset: -1px;
+  outline: 2px solid color-mix(in srgb, var(--vs-accent) 68%, transparent);
+  outline-offset: -2px;
 }
+.unified-diff-line,
 .history-unchanged-line {
   display: grid;
-  grid-template-columns: var(--diff-gutter-width) minmax(0, 1fr);
+  grid-template-columns: var(--diff-gutter-width) var(--diff-gutter-width) 24px minmax(0, 1fr);
+  align-items: stretch;
+  width: 100%;
   min-width: 100%;
-  min-height: 1.5em;
-}
-.history-unchanged-line-number {
-  box-sizing: border-box;
-  padding: 0 8px;
-  border-right: 1px solid color-mix(in srgb, var(--vs-border) 52%, transparent);
-  color: var(--vs-text-3);
-  text-align: right;
-  user-select: none;
-}
-.history-unchanged-line-content {
-  box-sizing: border-box;
-  min-width: 0;
-  padding: 0 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  background: var(--vs-bg-1);
 }
 .history-comparison-direction,
 .history-diff-stats {
@@ -1364,34 +1370,6 @@ main.container {
   .history-diff-stats { margin-left: 0; }
 }
 
-.unified-diff-scroll {
-  --diff-add-color: var(--vs-success, #16a34a);
-  --diff-remove-color: var(--vs-danger, #dc2626);
-  --diff-gutter-width: calc(var(--diff-line-digits, 1) * 1ch + 16px);
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 0;
-  overflow: auto;
-  background: var(--vs-bg-1);
-  color: var(--vs-text-1);
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  line-height: 1.5;
-  scrollbar-width: thin;
-  scrollbar-color: var(--sb-thumb) transparent;
-}
-.unified-diff-scroll:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--vs-accent) 68%, transparent);
-  outline-offset: -2px;
-}
-.unified-diff-line {
-  display: grid;
-  grid-template-columns: var(--diff-gutter-width) var(--diff-gutter-width) 24px minmax(0, 1fr);
-  align-items: stretch;
-  width: 100%;
-  min-width: 100%;
-  background: var(--vs-bg-1);
-}
 .unified-diff-line.is-add {
   background: color-mix(in srgb, var(--diff-add-color) 12%, var(--vs-bg-1));
 }
@@ -1427,13 +1405,16 @@ main.container {
   color: color-mix(in srgb, var(--diff-remove-color) 82%, var(--vs-text-1));
   background: color-mix(in srgb, var(--diff-remove-color) 16%, var(--vs-bg-2));
 }
-.unified-diff-content {
+.unified-diff-content,
+.history-unchanged-line-content {
   box-sizing: border-box;
   display: block;
   min-width: 0;
   min-height: 1.5em;
+  margin: 0;
   padding: 0 10px 0 7px;
   overflow-wrap: anywhere;
+  border: 0;
   border-radius: 0;
   background: transparent;
   color: inherit;
@@ -1478,11 +1459,14 @@ main.container {
 }
 .unified-diff-hunk-label { color: var(--vs-accent); font-weight: 600; }
 @media (max-width: 560px) {
-  .unified-diff-scroll { --diff-gutter-width: calc(var(--diff-line-digits, 1) * 1ch + 10px); }
+  .unified-diff-scroll,
+  .history-unchanged-content { --diff-gutter-width: calc(var(--diff-line-digits, 1) * 1ch + 10px); }
   .unified-diff-gutter { padding: 0 4px; }
-  .unified-diff-line { grid-template-columns: var(--diff-gutter-width) var(--diff-gutter-width) 18px minmax(0, 1fr); }
+  .unified-diff-line,
+  .history-unchanged-line { grid-template-columns: var(--diff-gutter-width) var(--diff-gutter-width) 18px minmax(0, 1fr); }
   .unified-diff-marker { padding: 0 2px; }
-  .unified-diff-content { padding-right: 6px; }
+  .unified-diff-content,
+  .history-unchanged-line-content { padding-right: 6px; }
 }
 
 .ab-btn {

@@ -15,6 +15,7 @@ vi.mock('../../../lib/history-api', async () => {
 const NOW = new Date(2026, 7, 1, 15, 33).getTime()
 const record = (sha: string, offset: number, subject: string): api.CommitRecord => ({
   sha,
+  parents: [],
   author: 'A',
   date: new Date(NOW - offset).toISOString(),
   subject,
@@ -73,6 +74,7 @@ describe('FileHistoryTimeline', () => {
       documentPath: 'inbox/agents',
       documentTitle: 'AGENTS',
       revisionId: 'abcdef123',
+      parentRevisionId: null,
       revisionTime: NOW,
       summary: 'Update AGENTS',
     }]])
