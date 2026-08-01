@@ -1316,3 +1316,19 @@ cross-feature H-C5 race and the active-writer/whole-Vault H-C12 race in
 code at `1a065bb0c2517f8a1fe1886b806e6945c2830538`. It does not close the
 broader H-C10 all-History containment finding, other History findings,
 cross-platform verification, Owner Approval, or History Closure.
+
+## 27. 2026-08-02 Current Production Overlay
+
+The current production-code baseline is `b08627b`. Since the historical
+review tables above were written, the implementation has added the shared
+symlink-safe reader, staged-intent-preserving Index synchronization,
+canonical same-Vault Withdraw markers and strict parent handling, strict
+`/status` response validation, authoritative Restore client reconciliation,
+server-generated HEAD/WORKTREE AI diffs with request cancellation, and
+NUL-framed Git log parsing. The calendar-date timeline grouping remains
+local-date based rather than fixed-duration arithmetic.
+
+Verification: `npm test` reports 162 files with 2499 passing tests and 2
+skipped; both client/server typechecks and `git diff --check` pass. The
+feature remains in draft closure pending cross-platform evidence and Owner
+Approval.

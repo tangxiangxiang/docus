@@ -551,3 +551,39 @@ Evidence on the production SHA: focused suites 145/145; complete suite
 2,476 passed and 2 skipped across 156 files; typecheck, build, and diff
 check passed. Cross-platform CI was not run, so Final Production
 Baseline and Owner Approval remain pending.
+
+## 17. 2026-08-02 Remediation Overlay
+
+The current production-code baseline is `b08627b` on `main`. The earlier
+sections remain a retrospective record of older code and must not be read
+as the current implementation state.
+
+This baseline now includes:
+
+- strict `/status` response-shape handling, including the narrow 503
+  unavailable contract;
+- a shared lstat/open/fstat safe-path reader for History WORKTREE reads,
+  content hashes, Create capture, AI context, and Restore targets;
+- Create/Withdraw Index fingerprints and preservation of pre-existing
+  same-path staged intent;
+- immutable Withdraw ref resolution, strict root/one-parent validation,
+  merge rejection, and canonical same-Vault Docus trailers;
+- Restore client reconciliation from authoritative server `raw` and
+  `resolvedRef`;
+- AI commit-message generation from server-observed HEAD/WORKTREE diffs
+  with explicit `added`, `modified`, and `deleted` kinds, plus request
+  cancellation and stale-response guards;
+- NUL-framed Git log parsing and short-SHA tooltip/accessibility context
+  without restoring the removed visual SHA column.
+
+Verification from this baseline:
+
+```text
+npm test:             162 files, 2499 passed, 2 skipped
+npm run typecheck:    PASS
+git diff --check:     PASS
+```
+
+The History Closure remains `DRAFT — CLOSURE IN PROGRESS`. Cross-platform
+evidence, Owner Approval, and the remaining bootstrap/rename/pagination/
+SHA-256 follow-up items are still outstanding.

@@ -483,3 +483,27 @@ History production verification: IN PROGRESS
 History Closure: DRAFT — CLOSURE IN PROGRESS
 Owner Approval: PENDING / BLOCKED
 ```
+
+## 12. 2026-08-02 Current Baseline Overlay
+
+Current production baseline: `b08627b` on `main`.
+
+The following review findings are now remediated in code: strict `/status`
+error handling, symlink-safe History readers, staged-Index intent
+preservation, canonical same-Vault Withdraw validation, strict parent
+resolution, short-SHA Withdraw resolution, authoritative Restore client
+reconciliation, server-observed AI diffs with stale-request cancellation,
+and NUL-framed Git log parsing. Timeline rows retain short SHA only in
+tooltip and accessible context.
+
+Local verification on this baseline:
+
+```text
+npm test:          162 files, 2499 passed, 2 skipped
+npm run typecheck: PASS
+git diff --check:  PASS
+```
+
+This overlay does not close the feature. Cross-platform verification,
+Owner Approval, and remaining non-blocking design follow-ups are still
+required before entering Maintenance Mode.
