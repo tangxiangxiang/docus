@@ -113,8 +113,8 @@ describe('VaultView editor tab wiring', () => {
 
     // Close-diff belongs to the workspace tab now; the comparison pane
     // no longer renders its own close button.
-    expect(source).toContain(':history-read-only="Boolean(activeHistoryComparison || activeDraftRecovery)"')
-    expect(source).not.toContain('@open-diff="openHistoryComparison"')
+    expect(source).toContain(':history-read-only="Boolean(activeHistoryComparison || activeWorkingTreeDiff || activeDraftRecovery)"')
+    expect(source).toContain('@open-diff="openWorkingTreeDiff"')
     expect(source).not.toContain('@view-historical=')
   })
 
@@ -122,7 +122,7 @@ describe('VaultView editor tab wiring', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const shortcutHandler = source.match(/function onVaultKeydown[\s\S]*?\n}/)?.[0]
 
-    expect(source).toContain('v-show="!activeHistoryComparison && !activeDraftRecovery"')
+    expect(source).toContain('v-show="!activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"')
     expect(source).toContain('<HistoryComparisonPane')
     expect(source).toContain(':comparison="activeHistoryComparison"')
     expect(source).toContain('const historyComparisons = useHistoryComparisons({')

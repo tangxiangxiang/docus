@@ -15,6 +15,8 @@ export interface WorkspaceCloseDependencies {
   comparisons: readonly ComparisonRef[]
   closeEditorTab: (id: string) => Promise<boolean>
   closeComparison: (id: string) => void
+  workingTreeDiffs?: readonly ComparisonRef[]
+  closeWorkingTreeDiff?: (id: string) => void
   closeRecovery?: (id: string) => void
   refreshDocumentComparison: (path: string) => Promise<boolean>
 }
@@ -26,6 +28,8 @@ export interface WorkspaceCloseManyDependencies {
   confirmEditorTabs: (ids: string[]) => Promise<boolean>
   closeEditorTabsConfirmed: (ids: string[]) => void
   closeComparisons: (ids: string[]) => void
+  workingTreeDiffs?: () => readonly ComparisonRef[]
+  closeWorkingTreeDiffs?: (ids: string[]) => void
   closeRecoveries?: (ids: string[]) => void
   refreshDocumentComparison: (path: string) => Promise<boolean>
 }
@@ -49,7 +53,11 @@ export async function closeWorkspaceTabState(
   if (!tab) return { closed: false, activeWillClose, fallbackId }
   switch (tab.kind) {
     case 'diff':
-      deps.closeComparison(id)
+      if (deps.workingTreeDiffs?.some((diff) => diff.tabId === id)) {
+        deps.closeWorkingTreeDiff?.(id)
+      } else {
+        deps.closeComparison(id)
+      }
       break
     case 'recovery':
       deps.closeRecovery?.(id)
@@ -85,6 +93,9 @@ export async function closeManyWorkspaceTabState(
   )
   const closingTabs = deps.workspaceTabs.filter((tab) => closingIds.includes(tab.id))
   const comparisonIds = closingTabs.filter((tab) => tab.kind === 'diff').map((tab) => tab.id)
+  const workingTreeDiffIds = new Set(
+    comparisonIds.filter((id) => deps.workingTreeDiffs?.().some((diff) => diff.tabId === id)),
+  )
   const documentIds = closingTabs.filter((tab) => tab.kind === 'document').map((tab) => tab.id)
   const recoveryIds = closingTabs.filter((tab) => tab.kind === 'recovery').map((tab) => tab.id)
 
@@ -94,7 +105,8 @@ export async function closeManyWorkspaceTabState(
   }
 
   deps.closeEditorTabsConfirmed(documentIds)
-  deps.closeComparisons(comparisonIds)
+  deps.closeComparisons(comparisonIds.filter((id) => !workingTreeDiffIds.has(id)))
+  deps.closeWorkingTreeDiffs?.(comparisonIds.filter((id) => workingTreeDiffIds.has(id)))
   deps.closeRecoveries?.(recoveryIds)
 
   const remainingComparisonPaths = documentIds.filter((path) =>

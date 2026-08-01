@@ -36,6 +36,8 @@ import {
   type HistoryComparison,
   type HistoryRevisionSelection,
 } from '../composables/vault/useHistoryComparisons'
+import { useWorkingTreeDiffs } from '../composables/vault/useWorkingTreeDiffs'
+import type { StatusEntry } from '../lib/history-api'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
 import { getPost, type DocumentMetadata } from '../lib/api'
@@ -63,6 +65,7 @@ import SettingsModal from '../components/vault/SettingsModal.vue'
 import DocumentMetadataModal from '../components/vault/DocumentMetadataModal.vue'
 import HistoryPanel from '../components/vault/HistoryPanel.vue'
 import HistoryComparisonPane from '../components/vault/HistoryComparisonPane.vue'
+import WorkingTreeDiffPane from '../components/vault/WorkingTreeDiffPane.vue'
 import DraftRecoveryPrompt from '../components/vault/DraftRecoveryPrompt.vue'
 import DraftRecoveryPane from '../components/vault/DraftRecoveryPane.vue'
 import DraftRecoveryCenter from '../components/vault/DraftRecoveryCenter.vue'
@@ -169,6 +172,7 @@ const paletteRef = ref<InstanceType<typeof CommandPalette> | null>(null)
 const editorTabsRef = ref<InstanceType<typeof EditorTabs> | null>(null)
 const fileTreeRef = ref<InstanceType<typeof FileTree> | null>(null)
 const comparisonPaneRef = ref<InstanceType<typeof HistoryComparisonPane> | null>(null)
+const workingTreeDiffPaneRef = ref<InstanceType<typeof WorkingTreeDiffPane> | null>(null)
 const recoveryPaneRef = ref<InstanceType<typeof DraftRecoveryPane> | null>(null)
 const workspaceTabOrder = ref<string[]>([])
 function openSearch() { paletteRef.value?.show() }
@@ -480,6 +484,8 @@ const historyComparisons = useHistoryComparisons({
   },
 })
 const activeHistoryComparison = historyComparisons.activeComparison
+const workingTreeDiffs = useWorkingTreeDiffs()
+const activeWorkingTreeDiff = workingTreeDiffs.activeDiff
 const draftRecovery = createUnsavedDraftRecovery({ store: draftStore })
 const recoveryTabs = useDraftRecoveryTabs()
 const activeDraftRecovery = recoveryTabs.activeTab
@@ -519,6 +525,7 @@ async function openRecoveryView(
     const item = recoveryItem(recoveryId)
     if (!item || item.status !== 'ready') return
     historyComparisons.deactivate()
+    workingTreeDiffs.deactivate()
     recoveryTabs.open(item, view)
     draftRecovery.dismissForSession(recoveryId)
   })
@@ -590,6 +597,7 @@ async function restoreRecoveryDraft(recoveryId: string): Promise<void> {
 
     recoveryTabs.deactivate()
     historyComparisons.deactivate()
+    workingTreeDiffs.deactivate()
     // Open WITHOUT a workspace refresh: Recovery has already certified
     // this record through its stable identity and the current-document
     // interface, and the reclassification right below re-verifies it
@@ -822,9 +830,13 @@ const historyCommit = useHistoryCommit({
   acquireMutation: historyMutationLock.acquire,
   canMutate: historyMutationLock.canAcquire,
   async refreshComparisons(committedPaths) {
-    await Promise.all(committedPaths.map((path) => (
-      historyComparisons.refreshDocumentComparison(path.endsWith('.md') ? path.slice(0, -3) : path)
-    )))
+    await Promise.all(committedPaths.flatMap((path) => {
+      const normalized = path.endsWith('.md') ? path.slice(0, -3) : path
+      return [
+        historyComparisons.refreshDocumentComparison(normalized),
+        workingTreeDiffs.refreshDocumentDiff(normalized),
+      ]
+    }))
   },
 })
 
@@ -845,11 +857,13 @@ const historyWithdraw = useHistoryWithdraw({
   registerIndexRepair: historyCommit.registerIndexRepair,
   settleIndexRepairPaths: historyCommit.settleIndexRepairPaths,
   async refreshComparisons(paths) {
-    await Promise.all(paths.map((filePath) => (
-      historyComparisons.refreshDocumentComparison(
-        filePath.endsWith('.md') ? filePath.slice(0, -3) : filePath,
-      )
-    )))
+    await Promise.all(paths.flatMap((filePath) => {
+      const normalized = filePath.endsWith('.md') ? filePath.slice(0, -3) : filePath
+      return [
+        historyComparisons.refreshDocumentComparison(normalized),
+        workingTreeDiffs.refreshDocumentDiff(normalized),
+      ]
+    }))
   },
   closeDroppedRevision(sha) {
     historyComparisons.closeComparisons(
@@ -932,6 +946,11 @@ function basename(path: string): string {
   return name.endsWith('.md') ? name.slice(0, -3) : name
 }
 
+function documentTitleForPath(path: string): string {
+  const normalized = path.endsWith('.md') ? path.slice(0, -3) : path
+  return posts.value.find((post) => post.path === normalized)?.title || basename(normalized)
+}
+
 const naturalWorkspaceTabs = computed<WorkspaceTab[]>(() => [
   ...tabs.value.map((tab) => ({
     id: tab.path,
@@ -948,6 +967,14 @@ const naturalWorkspaceTabs = computed<WorkspaceTab[]>(() => [
     save: deriveDocumentSavePresentation(null),
     kind: 'diff' as const,
     documentPath: comparison.documentPath,
+  })),
+  ...workingTreeDiffs.diffs.value.map((diff) => ({
+    id: diff.tabId,
+    label: `${diff.documentTitle} (${t('history.changes_diff_tab_suffix')})`,
+    title: diff.documentTitle,
+    save: deriveDocumentSavePresentation(null),
+    kind: 'diff' as const,
+    documentPath: diff.documentPath,
   })),
   ...recoveryTabs.tabs.value.map((recovery) => ({
     id: recovery.tabId,
@@ -974,13 +1001,14 @@ const workspaceTabs = computed<WorkspaceTab[]>(() => {
     .filter((tab): tab is WorkspaceTab => Boolean(tab))
 })
 const activeSavePresentation = computed(() => (
-  activeHistoryComparison.value || activeDraftRecovery.value
+  activeHistoryComparison.value || activeWorkingTreeDiff.value || activeDraftRecovery.value
     ? deriveDocumentSavePresentation(null)
     : deriveDocumentSavePresentation(activeTab.value)
 ))
 const activeWorkspaceTabId = computed(() => (
   activeDraftRecovery.value?.tabId
   ?? activeHistoryComparison.value?.tabId
+  ?? activeWorkingTreeDiff.value?.tabId
   ?? activePath.value
 ))
 // Bind the AI capture delegate now that every workspace authority exists.
@@ -1031,12 +1059,14 @@ async function reorderWorkspaceTabs(request: WorkspaceTabReorderRequest): Promis
 async function openPost(path: string, options: { refresh?: boolean } = {}): Promise<void> {
   recoveryTabs.deactivate()
   historyComparisons.deactivate()
+  workingTreeDiffs.deactivate()
   await openEditorPost(path, options)
 }
 
 async function selectWorkspaceTab(id: string, focusViewer = true): Promise<void> {
   if (recoveryTabs.tabs.value.some((recovery) => recovery.tabId === id)) {
     historyComparisons.deactivate()
+    workingTreeDiffs.deactivate()
     recoveryTabs.select(id)
     if (focusViewer) {
       await nextTick()
@@ -1044,14 +1074,24 @@ async function selectWorkspaceTab(id: string, focusViewer = true): Promise<void>
     }
   } else if (historyComparisons.comparisons.value.some((comparison) => comparison.tabId === id)) {
     recoveryTabs.deactivate()
+    workingTreeDiffs.deactivate()
     historyComparisons.selectComparison(id)
     if (focusViewer) {
       await nextTick()
       comparisonPaneRef.value?.focusViewer()
     }
+  } else if (workingTreeDiffs.diffs.value.some((diff) => diff.tabId === id)) {
+    recoveryTabs.deactivate()
+    historyComparisons.deactivate()
+    workingTreeDiffs.selectDiff(id)
+    if (focusViewer) {
+      await nextTick()
+      workingTreeDiffPaneRef.value?.focusViewer()
+    }
   } else {
     recoveryTabs.deactivate()
     historyComparisons.deactivate()
+    workingTreeDiffs.deactivate()
     selectEditorTab(id)
     if (focusViewer) {
       await nextTick()
@@ -1065,8 +1105,10 @@ async function closeWorkspaceTab(id: string): Promise<void> {
     workspaceTabs: workspaceTabs.value,
     activeId: activeWorkspaceTabId.value,
     comparisons: historyComparisons.comparisons.value,
+    workingTreeDiffs: workingTreeDiffs.diffs.value,
     closeEditorTab,
     closeComparison: historyComparisons.closeComparison,
+    closeWorkingTreeDiff: workingTreeDiffs.closeDiff,
     closeRecovery: recoveryTabs.close,
     refreshDocumentComparison: historyComparisons.refreshDocumentComparison,
   })
@@ -1094,9 +1136,11 @@ async function closeManyWorkspaceTabs(ids: string[]): Promise<void> {
     workspaceTabs: workspaceTabs.value,
     activeId: activeWorkspaceTabId.value,
     comparisons: () => historyComparisons.comparisons.value,
+    workingTreeDiffs: () => workingTreeDiffs.diffs.value,
     confirmEditorTabs: confirmCloseEditorTabs,
     closeEditorTabsConfirmed: closeManyEditorTabsConfirmed,
     closeComparisons: historyComparisons.closeComparisons,
+    closeWorkingTreeDiffs: workingTreeDiffs.closeDiffs,
     closeRecoveries: recoveryTabs.closeMany,
     refreshDocumentComparison: historyComparisons.refreshDocumentComparison,
   })
@@ -1141,6 +1185,7 @@ async function revealWorkspaceTabInTree(path: string): Promise<void> {
 function onVaultKeydown(event: KeyboardEvent): void {
   const readOnlyTab = activeDraftRecovery.value
     ?? activeHistoryComparison.value
+    ?? activeWorkingTreeDiff.value
   const meta = event.metaKey || event.ctrlKey
   const activeId = activeWorkspaceTabId.value
   if (meta && event.key.toLowerCase() === 'w' && activeId) {
@@ -1178,9 +1223,19 @@ function onVaultKeydown(event: KeyboardEvent): void {
 
 async function openHistoryComparison(selection: HistoryRevisionSelection): Promise<void> {
   recoveryTabs.deactivate()
+  workingTreeDiffs.deactivate()
   const request = historyComparisons.openComparison(selection)
   await nextTick()
   comparisonPaneRef.value?.focusViewer()
+  await request
+}
+
+async function openWorkingTreeDiff(entry: StatusEntry): Promise<void> {
+  recoveryTabs.deactivate()
+  historyComparisons.deactivate()
+  const request = workingTreeDiffs.openDiff(entry, documentTitleForPath(entry.path))
+  await nextTick()
+  workingTreeDiffPaneRef.value?.focusViewer()
   await request
 }
 
@@ -1411,8 +1466,10 @@ watch(isReadMode, async (reading) => {
       :withdraw="historyWithdraw"
       :file-history="fileHistory"
       :posts="posts"
+      :active-diff-path="activeWorkingTreeDiff?.documentPath ? `${activeWorkingTreeDiff.documentPath}.md` : null"
       @show-all-history="showAllHistory"
       @open-revision="openHistoryComparison"
+      @open-diff="openWorkingTreeDiff"
     />
     <DraftRecoveryCenter
       v-else-if="activePanel === 'recovery'"
@@ -1461,7 +1518,7 @@ watch(isReadMode, async (reading) => {
       <!-- Edit mode: single Monaco editor surface. -->
       <div
         v-if="!isReadMode"
-        v-show="!activeHistoryComparison && !activeDraftRecovery"
+        v-show="!activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
         class="content"
       >
         <div
@@ -1498,7 +1555,7 @@ watch(isReadMode, async (reading) => {
            panel, tabs, and status bar above/below stay untouched so
            navigation still works while reading. -->
       <div
-        v-else-if="!activeHistoryComparison && !activeDraftRecovery"
+        v-else-if="!activeHistoryComparison && !activeWorkingTreeDiff && !activeDraftRecovery"
         class="content reading-content"
       >
         <!-- Only the active tab is mounted. Mounting one ReadingPane
@@ -1536,6 +1593,14 @@ watch(isReadMode, async (reading) => {
         />
       </div>
 
+      <div v-if="activeWorkingTreeDiff" class="content">
+        <WorkingTreeDiffPane
+          ref="workingTreeDiffPaneRef"
+          :diff="activeWorkingTreeDiff"
+          @retry="workingTreeDiffs.refreshDiff"
+        />
+      </div>
+
       <div v-if="activeDraftRecovery" class="content">
         <DraftRecoveryPane
           ref="recoveryPaneRef"
@@ -1559,22 +1624,22 @@ watch(isReadMode, async (reading) => {
     <TocPanel
       v-if="rightRailVisible"
       class="toc-panel-slot"
-      :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activePath"
+      :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activeWorkingTreeDiff?.documentPath ?? activePath"
       :posts="posts"
       :active-tab="rightRailTab"
-      :history-read-only="Boolean(activeHistoryComparison || activeDraftRecovery)"
+      :history-read-only="Boolean(activeHistoryComparison || activeWorkingTreeDiff || activeDraftRecovery)"
       @update:active-tab="rightRailTab = $event"
       @link-navigate="openPost"
     />
 
     <StatusBar
       class="status-bar-row"
-      :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activePath"
+      :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activeWorkingTreeDiff?.documentPath ?? activePath"
       :save="activeSavePresentation"
-      :error="activeHistoryComparison || activeDraftRecovery ? null : (activeTab?.error ?? null)"
+      :error="activeHistoryComparison || activeWorkingTreeDiff || activeDraftRecovery ? null : (activeTab?.error ?? null)"
       :size="activeDraftRecovery ? activeDraftRecovery.draftRaw.length : (activeHistoryComparison ? activeHistoryComparison.newRaw.length : activeSize)"
       :focus-width="editorFocusWidth"
-      :external-kind="activeHistoryComparison || activeDraftRecovery ? null : (activeTab?.externalKind ?? null)"
+      :external-kind="activeHistoryComparison || activeWorkingTreeDiff || activeDraftRecovery ? null : (activeTab?.externalKind ?? null)"
       @toggle-focus-width="editorFocusWidth = !editorFocusWidth"
       @retry-save="doSaveNow"
       @copy-content="copyActiveContent"

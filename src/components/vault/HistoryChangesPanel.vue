@@ -13,6 +13,7 @@ const props = withDefaults(defineProps<{
   canCommit: boolean
   error: string | null
   posts?: PostSummary[]
+  activeDiffPath?: string | null
   indexRepairPending?: boolean
   indexRepairBusy?: boolean
   indexRepairConflict?: boolean
@@ -22,9 +23,11 @@ const props = withDefaults(defineProps<{
   indexRepairConflict: false,
   mutationLocked: false,
   posts: () => [],
+  activeDiffPath: null,
 })
 const emit = defineEmits<{
   toggle: [path: string]
+  'open-diff': [entry: StatusEntry]
   'select-all': []
   'clear-selection': []
   'update:message': [value: string]
@@ -87,20 +90,26 @@ function toggleAll(): void {
       </div>
       <ul v-else class="history-changes-list" :aria-label="t('history.changed_document_list')">
         <li v-for="entry in entries" :key="entry.path" class="history-change-row">
-          <label>
-            <input
-              type="checkbox"
-              :checked="selectedPaths.has(entry.path)"
-              :disabled="busy || mutationLocked"
-              :aria-label="t('history.include_document', { path: entry.path })"
-              @change="emit('toggle', entry.path)"
-            >
+          <input
+            type="checkbox"
+            :checked="selectedPaths.has(entry.path)"
+            :disabled="busy || mutationLocked"
+            :aria-label="t('history.include_document', { path: entry.path })"
+            @change="emit('toggle', entry.path)"
+          >
+          <button
+            type="button"
+            class="history-change-open"
+            :class="{ active: activeDiffPath === entry.path }"
+            :aria-current="activeDiffPath === entry.path ? 'true' : undefined"
+            @click="emit('open-diff', entry)"
+          >
             <span class="history-change-copy">
               <strong>{{ displayTitle(entry.path) }}</strong>
               <span :title="entry.path">{{ entry.path }}</span>
             </span>
             <span class="history-change-status" :class="`is-${statusTone(entry)}`">{{ t(statusKey(entry)) }}</span>
-          </label>
+          </button>
         </li>
       </ul>
     </section>

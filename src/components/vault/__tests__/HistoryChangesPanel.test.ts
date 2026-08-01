@@ -35,6 +35,29 @@ describe('HistoryChangesPanel', () => {
     expect(wrapper.emitted('toggle')?.[0]).toEqual(['inbox/new.md'])
   })
 
+  it('keeps selection on the checkbox and opens a diff from the document button', async () => {
+    const wrapper = mount(HistoryChangesPanel, {
+      props: {
+        entries,
+        selectedPaths: new Set<string>(),
+        message: '',
+        busy: false,
+        canCommit: false,
+        error: null,
+      },
+    })
+
+    await wrapper.get('.history-change-open').trigger('click')
+    expect(wrapper.emitted('open-diff')?.[0]).toEqual([entries[0]])
+
+    await wrapper.find('input[type="checkbox"]').trigger('change')
+    expect(wrapper.emitted('toggle')?.[0]).toEqual(['inbox/modified.md'])
+    expect(wrapper.emitted('open-diff')).toHaveLength(1)
+
+    await wrapper.setProps({ activeDiffPath: 'inbox/modified.md' })
+    expect(wrapper.get('.history-change-open').classes()).toContain('active')
+  })
+
   it('shows document titles and falls back to file names', () => {
     const wrapper = mount(HistoryChangesPanel, {
       props: {

@@ -14,6 +14,7 @@ import type {
   FileHistoryCommitItem,
   FileHistoryState,
 } from '../../composables/vault/useFileHistory'
+import type { StatusEntry } from '../../lib/history-api'
 import { useI18n } from '../../composables/useI18n'
 import EmptyState from './EmptyState.vue'
 import HistoryChangesPanel from './HistoryChangesPanel.vue'
@@ -28,11 +29,14 @@ const props = withDefaults(defineProps<{
   withdraw: HistoryWithdrawState
   fileHistory?: FileHistoryState
   posts?: PostSummary[]
+  activeDiffPath?: string | null
 }>(), {
   posts: () => [],
+  activeDiffPath: null,
 })
 const emit = defineEmits<{
   'open-revision': [selection: HistoryRevisionSelection]
+  'open-diff': [entry: StatusEntry]
   'show-all-history': []
 }>()
 
@@ -236,10 +240,12 @@ onBeforeUnmount(closeCommitMenu)
         :can-commit="commit.canCommit.value"
         :error="commit.error.value"
         :posts="props.posts"
+        :active-diff-path="props.activeDiffPath"
         :index-repair-pending="commit.indexRepairPaths.value.length > 0"
         :index-repair-busy="commit.indexRepairBusy.value"
         :index-repair-conflict="commit.indexRepairConflictToken.value !== null"
         @toggle="commit.toggle"
+        @open-diff="emit('open-diff', $event)"
         @select-all="commit.selectAll"
         @clear-selection="commit.clearSelection"
         @update:message="commit.message.value = $event"
