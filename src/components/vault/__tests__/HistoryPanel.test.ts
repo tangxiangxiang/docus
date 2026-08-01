@@ -88,7 +88,13 @@ function mountPanel(options: {
   return { wrapper, history, historyCommit, withdraw }
 }
 
+async function expandFirstDate(wrapper: VueWrapper): Promise<void> {
+  const date = wrapper.get('.history-timeline-group-header')
+  if (date.attributes('aria-expanded') !== 'true') await date.trigger('click')
+}
+
 async function expandFirstCommit(wrapper: VueWrapper): Promise<void> {
+  await expandFirstDate(wrapper)
   await wrapper.get('.history-commit-row').trigger('click')
 }
 
@@ -142,6 +148,7 @@ describe('HistoryPanel commit-first timeline', () => {
     expect(wrapper.emitted('show-all-history')).toHaveLength(1)
     fileHistory.clear()
     await wrapper.vm.$nextTick()
+    await expandFirstDate(wrapper)
     expect(wrapper.findAll('.history-commit-row')).toHaveLength(1)
     expect(wrapper.get('.history-commit-row').text()).toContain('Repository head')
   })
@@ -222,14 +229,15 @@ describe('HistoryPanel commit-first timeline', () => {
     await flushPromises()
 
     expect(wrapper.findAll('.history-timeline-group')).toHaveLength(1)
-    expect(wrapper.findAll('.history-commit-row')).toHaveLength(1)
-    expect(wrapper.get('.history-timeline-group-header').attributes('aria-expanded')).toBe('true')
-    expect(wrapper.get('.history-commit-row').attributes('aria-expanded')).toBe('false')
+    expect(wrapper.findAll('.history-commit-row')).toHaveLength(0)
+    expect(wrapper.get('.history-timeline-group-header').attributes('aria-expanded')).toBe('false')
     expect(wrapper.find('.history-file-row').exists()).toBe(false)
+
+    await expandFirstDate(wrapper)
+    expect(wrapper.get('.history-commit-row').attributes('aria-expanded')).toBe('false')
     expect(wrapper.get('.history-commit-row').text()).toContain('abcdef1')
     expect(wrapper.get('.history-commit-row').text()).toContain('2 files')
     expect(wrapper.get('.history-row-title').attributes('title')).toBe('Improve History timeline')
-
     await expandFirstCommit(wrapper)
     expect(wrapper.findAll('.history-file-row')).toHaveLength(2)
     expect(wrapper.findAll('.history-file-row').map((row) => row.text())).toEqual([
@@ -250,15 +258,15 @@ describe('HistoryPanel commit-first timeline', () => {
     const { wrapper } = mountPanel()
     await flushPromises()
     const headers = wrapper.findAll('.history-timeline-group-header')
-    expect(headers.map((row) => row.attributes('aria-expanded'))).toEqual(['true', 'false'])
-    expect(wrapper.findAll('.history-commit-row')).toHaveLength(1)
+    expect(headers.map((row) => row.attributes('aria-expanded'))).toEqual(['false', 'false'])
+    expect(wrapper.findAll('.history-commit-row')).toHaveLength(0)
 
     await headers[0]!.trigger('click')
-    expect(wrapper.findAll('.history-commit-row')).toHaveLength(0)
-    await headers[0]!.trigger('keydown', { key: 'Enter' })
     expect(wrapper.findAll('.history-commit-row')).toHaveLength(1)
-    await headers[0]!.trigger('keydown', { key: ' ' })
+    await headers[0]!.trigger('keydown', { key: 'Enter' })
     expect(wrapper.findAll('.history-commit-row')).toHaveLength(0)
+    await headers[0]!.trigger('keydown', { key: ' ' })
+    expect(wrapper.findAll('.history-commit-row')).toHaveLength(1)
   })
 
   it('toggles a commit from the whole row with click, Enter, and Space', async () => {
@@ -267,6 +275,7 @@ describe('HistoryPanel commit-first timeline', () => {
     })
     const { wrapper } = mountPanel()
     await flushPromises()
+    await expandFirstDate(wrapper)
     const row = wrapper.get('.history-commit-row')
 
     await row.trigger('click')
@@ -333,7 +342,7 @@ describe('HistoryPanel commit-first timeline', () => {
     const { wrapper, history } = mountPanel()
     await flushPromises()
     await wrapper.findAll('.history-timeline-group-header')[1]!.trigger('click')
-    await wrapper.findAll('.history-commit-row')[1]!.trigger('click')
+    await wrapper.findAll('.history-commit-row')[0]!.trigger('click')
 
     vi.mocked(api.getLog).mockResolvedValue({
       commits: [commit('new', NOW + 60_000, 'New', ['inbox/c.md']), first, older],
@@ -380,6 +389,7 @@ describe('HistoryPanel commit-first timeline', () => {
     }))
     const { wrapper } = mountPanel({ attachTo: document.body })
     await flushPromises()
+    await expandFirstDate(wrapper)
     const rows = wrapper.findAll('.history-commit-row')
 
     await rows[1]!.trigger('contextmenu', { clientX: 20, clientY: 30 })
@@ -406,6 +416,7 @@ describe('HistoryPanel commit-first timeline', () => {
     })
     const { wrapper } = mountPanel({ attachTo: document.body })
     await flushPromises()
+    await expandFirstDate(wrapper)
     await wrapper.get('.history-commit-row').trigger('contextmenu', { clientX: 20, clientY: 30 })
     await flushPromises()
     expect(document.querySelector('.history-context-menu')).toBeNull()
@@ -417,6 +428,7 @@ describe('HistoryPanel commit-first timeline', () => {
     })
     const { wrapper } = mountPanel({ attachTo: document.body })
     await flushPromises()
+    await expandFirstDate(wrapper)
     const row = wrapper.get<HTMLElement>('.history-commit-row')
     row.element.focus()
     await row.trigger('keydown', { key: 'ContextMenu' })
@@ -503,6 +515,7 @@ describe('HistoryPanel commit-first timeline', () => {
     })
     const { wrapper } = mountPanel()
     await flushPromises()
+    await expandFirstDate(wrapper)
     expect(wrapper.get('.history-timeline-heading').text()).toContain('时间线')
     expect(wrapper.get('.history-timeline-group-header').text()).toContain('1 个提交')
     expect(wrapper.get('.history-commit-row').text()).toContain('1 个文件')

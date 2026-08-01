@@ -137,12 +137,6 @@ export function toHistoryRevisionSelection(
   }
 }
 
-function adjacentLocalDateKey(offset: number, now = Date.now()): string {
-  const date = new Date(now)
-  date.setDate(date.getDate() + offset)
-  return localDateKey(date.getTime())
-}
-
 export function useHistoryTimeline(
   source: HistoryTimelineSource,
   posts: Ref<PostSummary[]>,
@@ -165,13 +159,7 @@ export function useHistoryTimeline(
     }
 
     if (!initializedDefaults.value && source.logLoaded.value) {
-      const defaults = new Set<string>()
-      const today = adjacentLocalDateKey(0)
-      const yesterday = adjacentLocalDateKey(-1)
-      for (const group of groups) {
-        if (group === groups[0] || group.key === today || group.key === yesterday) defaults.add(group.key)
-      }
-      expandedDays.value = defaults
+      expandedDays.value = new Set()
       expandedCommits.value = new Set()
       initializedDefaults.value = true
     }
