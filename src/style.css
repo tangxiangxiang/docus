@@ -818,6 +818,7 @@ main.container {
   flex-direction: column;
 }
 .history-commit-row {
+  position: relative;
   display: flex;
   align-items: center;
   min-height: 30px;
@@ -825,6 +826,20 @@ main.container {
   gap: 5px;
   background: transparent;
   transition: background 100ms, color 100ms;
+}
+.history-commit-row::after {
+  position: absolute;
+  z-index: 1;
+  top: 3px;
+  bottom: 3px;
+  left: 8px;
+  width: 1px;
+  background: transparent;
+  content: '';
+  pointer-events: none;
+}
+.history-commit-row:hover::after {
+  background: color-mix(in srgb, var(--vs-text-3) 32%, transparent);
 }
 .history-file-commit-row {
   display: flex;
