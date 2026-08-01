@@ -50,6 +50,7 @@ import {
   verifyMetadataSnapshotGraphExact,
 } from '../folderMoveV4Metadata.js'
 import { withDocumentWriteLock, withDocumentWriteLocks, withVaultStructureLock } from '../documentWriteLock.js'
+import { withVaultMutation } from '../vaultMutation.js'
 import { getIndex as getLinkIndex } from '../linkIndex.js'
 import {
   prepareRenameReferenceJournal,
@@ -227,11 +228,11 @@ folderRoutes.post('/api/folders', async (c) => {
   try { abs = folderPathFor(body.path) } catch (e: any) { return bad(c, e.message) }
   // Creating a folder changes tree membership: structure lock first.
   const createdPath = body.path
-  return withVaultStructureLock(() => withDocumentWriteLock(createdPath, async () => {
+  return withVaultMutation(CONTENT_DIR, () => withVaultStructureLock(() => withDocumentWriteLock(createdPath, async () => {
     if (await exists(abs)) return bad(c, 'folder exists', 409)
     await fs.mkdir(abs, { recursive: true })
     return c.json({ path: createdPath }, 201)
-  }))
+  })))
 })
 
 // Rename a folder (single-segment rename, cascades on disk).
@@ -259,7 +260,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
   // world — a concurrent create/delete/rename on any path waits for
   // the whole transaction instead of slipping a new child in between
   // the enumeration and the lock acquisition.
-  return withVaultStructureLock(async () => {
+  return withVaultMutation(CONTENT_DIR, () => withVaultStructureLock(async () => {
   const plannedOldPaths = await listSubtreePaths(CONTENT_DIR, srcPath)
   const plannedReferencePaths = body.updateReferences
     ? Object.entries((await getLinkIndex()).snapshot().outgoing)
@@ -1048,7 +1049,7 @@ folderRoutes.patch('/api/folders/*', async (c) => {
     })),
   })
   })
-  })
+  }))
 })
 
 // Delete a folder recursively. Requires ?recursive=true if non-empty.
@@ -1063,7 +1064,7 @@ folderRoutes.delete('/api/folders/*', async (c) => {
   // Tree membership changes serialize behind the vault structure lock;
   // the subtree is planned under it so the lock footprint covers a
   // membership-stable world (see the rename route for the full note).
-  return withVaultStructureLock(async () => {
+  return withVaultMutation(CONTENT_DIR, () => withVaultStructureLock(async () => {
   const planned = await listSubtreePaths(CONTENT_DIR, folderP)
   const plannedDatabasePaths = snapshotDocumentMetadataPrefixMutation(metadataDb(), [folderP], planned).paths
   return withDocumentWriteLocks([folderP, ...planned, ...plannedDatabasePaths], async () => {
@@ -1269,7 +1270,7 @@ folderRoutes.delete('/api/folders/*', async (c) => {
   } catch { /* ignore */ }
   return c.json({ deleted: all })
   })
-  })
+  }))
 })
 
 export default folderRoutes

@@ -421,6 +421,14 @@ export async function rawAt(
   throw new Error(`git show failed: ${r.stderr.trim()}`)
 }
 
+/** Resolve a caller-supplied History ref once to an immutable commit SHA. */
+export async function resolveCommit(repoRoot: string, ref: string): Promise<string | null> {
+  const result = await run(repoRoot, ['rev-parse', '--verify', `${ref}^{commit}`])
+  if (result.status !== 0) return null
+  const sha = result.stdout.trim()
+  return /^[0-9a-f]{40,64}$/i.test(sha) ? sha : null
+}
+
 // --- Commit ----------------------------------------------------------------
 
 /**
@@ -794,7 +802,9 @@ async function recordIndexRepair(
 }
 
 export async function getIndexRepairStatus(repoRoot: string): Promise<IndexRepairTransaction[]> {
-  return (await readIndexRepairFile(repoRoot)).transactions
+  return withRepoMutation(repoRoot, async () => (
+    (await readIndexRepairFile(repoRoot)).transactions
+  ))
 }
 
 async function repairIndexWithLock(
@@ -1339,35 +1349,6 @@ export async function dropHeadCommit(
       indexRefreshFailed,
       indexRepair,
       repairStatePersistenceFailed,
-    }
-  })
-}
-
-// --- Restore --------------------------------------------------------------
-
-/**
- * Restore a single file to its content at `ref`. `--worktree` is
- * intentional: checkout-style restoration also updates the index,
- * which would silently stage a destructive restore.
- *
- * The caller is expected to validate `path` and `ref`. We pass them
- * through to git verbatim, separated by `--` so a path that starts
- * with `-` is safe.
- *
- * Throws if git refuses (e.g. the ref is bad or the file does not
- * exist at that ref). The caller maps that to 4xx.
- */
-export async function restoreFile(
-  repoRoot: string,
-  ref: string,
-  path: string,
-): Promise<void> {
-  return withRepoMutation(repoRoot, async () => {
-    const r = await run(repoRoot, ['restore', `--source=${ref}`, '--worktree', '--', path])
-    if (r.status !== 0) {
-    // Missing paths and invalid revisions both end up here. Surface the
-    // raw stderr — the route maps it to a 4xx.
-      throw new Error(r.stderr.trim() || `git restore failed (exit ${r.status})`)
     }
   })
 }

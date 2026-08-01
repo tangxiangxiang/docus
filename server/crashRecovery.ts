@@ -146,6 +146,7 @@ import {
   finalizeFolderMoveV4Cleanup as finalizeFolderMoveV4CleanupShared,
   validateDurableSnapshotRestoreDisposition,
 } from './folderMoveV4Metadata.js'
+import { withVaultMutation } from './vaultMutation.js'
 
 export interface RecoveryAction {
   /** Vault-relative path of the affected file/folder (or artifact). */
@@ -3101,6 +3102,7 @@ export async function recoverInterruptedOperations(
   contentDir: string,
   db: DatabaseT,
 ): Promise<RecoveryReport> {
+  return withVaultMutation(contentDir, async () => {
   await crashRecoveryHooks?.afterRecoveryStarted?.()
   const actions: RecoveryAction[] = []
   const terminalArtifacts = new Set<string>()
@@ -3221,4 +3223,5 @@ export async function recoverInterruptedOperations(
     note(contentDir, 'failed', (error as Error).message)
   }
   return { actions }
+  })
 }

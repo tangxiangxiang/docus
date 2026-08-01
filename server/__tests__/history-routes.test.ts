@@ -10,15 +10,21 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import Database from 'better-sqlite3'
 import * as historyGit from '../history/git.js'
+import { applyMigrations } from '../db.js'
+import { __setMetadataDbForTesting } from '../routes/shared.js'
 import historyRoutes, {
   setRepoRootForTesting,
   __resetRepoRootForTesting,
   __resetGitCapabilityForTesting,
+  __setHistoryMutationHooksForTesting,
 } from '../history/routes.js'
+import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata.js'
 
 let root: string
+let metadataDb: Database.Database
 
 async function write(rel: string, body: string) {
   const abs = path.join(root, rel)
@@ -32,6 +38,10 @@ async function read(rel: string) {
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-history-routes-'))
+  metadataDb = new Database(':memory:')
+  metadataDb.pragma('foreign_keys = ON')
+  applyMigrations(metadataDb)
+  __setMetadataDbForTesting(metadataDb)
   setRepoRootForTesting(root)
   __resetGitCapabilityForTesting()
   // /capability calls ensureRepo, which would create a real git repo
@@ -47,6 +57,9 @@ beforeEach(async () => {
 afterEach(async () => {
   __resetRepoRootForTesting()
   __resetGitCapabilityForTesting()
+  __setHistoryMutationHooksForTesting(null)
+  __setMetadataDbForTesting(null)
+  metadataDb.close()
   await fs.rm(root, { recursive: true, force: true })
 })
 
@@ -730,6 +743,154 @@ describe('POST /api/history/restore', () => {
     expect(await status.json()).toMatchObject({
       dirty: [expect.objectContaining({ path: 'note.md', index: ' ', worktree: 'M' })],
     })
+  })
+
+  it('preserves the existing document identity', async () => {
+    await write('note.md', 'v1\n')
+    const c1 = await call('POST', '/commits', { paths: ['note.md'], message: 'v1' })
+    const sha1 = (await c1.json() as { sha: string }).sha
+    await write('note.md', 'v2\n')
+    await call('POST', '/commits', { paths: ['note.md'], message: 'v2' })
+    saveDocumentMetadata(metadataDb, {
+      id: 'preserved-document-id',
+      path: 'note',
+      title: 'Note',
+      updatedAt: 1,
+    })
+
+    const response = await call('POST', '/restore', { path: 'note.md', ref: sha1 })
+
+    expect(response.status).toBe(200)
+    expect(getDocumentMetadata(metadataDb, 'note')?.id).toBe('preserved-document-id')
+  })
+
+  it('returns 409 and preserves an external edit that wins the CAS', async () => {
+    await write('note.md', 'historical\n')
+    const historical = await call('POST', '/commits', { paths: ['note.md'], message: 'old' })
+    const ref = (await historical.json() as { sha: string }).sha
+    await write('note.md', 'current\n')
+    await call('POST', '/commits', { paths: ['note.md'], message: 'current' })
+    __setHistoryMutationHooksForTesting({
+      beforeRestoreCommit: async () => {
+        await write('note.md', 'external editor wins\n')
+      },
+    })
+
+    const response = await call('POST', '/restore', { path: 'note.md', ref })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'HISTORY_CONTENT_CHANGED' })
+    expect(await read('note.md')).toBe('external editor wins\n')
+  })
+
+  it('returns 409 when an external generation replaces the committed Restore before post-read', async () => {
+    await write('note.md', 'historical\n')
+    const historical = await call('POST', '/commits', { paths: ['note.md'], message: 'old' })
+    const ref = (await historical.json() as { sha: string }).sha
+    await write('note.md', 'current\n')
+    await call('POST', '/commits', { paths: ['note.md'], message: 'current' })
+    __setHistoryMutationHooksForTesting({
+      afterRestoreCommit: async () => {
+        await write('note.md', 'external after commit\n')
+      },
+    })
+
+    const response = await call('POST', '/restore', { path: 'note.md', ref })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'HISTORY_CONTENT_CHANGED' })
+    expect(await read('note.md')).toBe('external after commit\n')
+  })
+
+  it('uses create-only semantics when the target is missing', async () => {
+    await write('folder/note.md', 'historical\n')
+    const historical = await call('POST', '/commits', { paths: ['folder/note.md'], message: 'old' })
+    const ref = (await historical.json() as { sha: string }).sha
+    saveDocumentMetadata(metadataDb, {
+      id: 'missing-target-id',
+      path: 'folder/note',
+      title: 'Note',
+      updatedAt: 1,
+    })
+    await fs.unlink(path.join(root, 'folder/note.md'))
+
+    const response = await call('POST', '/restore', { path: 'folder/note.md', ref })
+
+    expect(response.status).toBe(200)
+    expect(await read('folder/note.md')).toBe('historical\n')
+    expect(getDocumentMetadata(metadataDb, 'folder/note')?.id).toBe('missing-target-id')
+  })
+
+  it('returns 409 without replacing a create-only incumbent', async () => {
+    await write('folder/note.md', 'historical\n')
+    const historical = await call('POST', '/commits', { paths: ['folder/note.md'], message: 'old' })
+    const ref = (await historical.json() as { sha: string }).sha
+    await fs.unlink(path.join(root, 'folder/note.md'))
+    __setHistoryMutationHooksForTesting({
+      beforeRestoreCommit: async () => {
+        await write('folder/note.md', 'incumbent\n')
+      },
+    })
+
+    const response = await call('POST', '/restore', { path: 'folder/note.md', ref })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'HISTORY_CONTENT_CHANGED' })
+    expect(await read('folder/note.md')).toBe('incumbent\n')
+  })
+
+  it('returns a stable path-moved conflict when the parent disappeared', async () => {
+    await write('folder/note.md', 'historical\n')
+    const historical = await call('POST', '/commits', { paths: ['folder/note.md'], message: 'old' })
+    const ref = (await historical.json() as { sha: string }).sha
+    await fs.rm(path.join(root, 'folder'), { recursive: true })
+
+    const response = await call('POST', '/restore', { path: 'folder/note.md', ref })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'HISTORY_PATH_MOVED' })
+    await expect(fs.stat(path.join(root, 'folder'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('fails closed before writing when a retained folder journal has unknown ownership', async () => {
+    await write('folder/note.md', 'historical\n')
+    const historical = await call('POST', '/commits', { paths: ['folder/note.md'], message: 'old' })
+    const ref = (await historical.json() as { sha: string }).sha
+    await write('folder/note.md', 'current\n')
+    await fs.writeFile(
+      path.join(root, `.folder.docus-journal-${randomUUID()}`),
+      '{malformed folder ownership',
+      'utf8',
+    )
+
+    const response = await call('POST', '/restore', { path: 'folder/note.md', ref })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'HISTORY_PATH_MOVED' })
+    expect(await read('folder/note.md')).toBe('current\n')
+  })
+
+  it('freezes a mutable ref to one immutable commit before writing', async () => {
+    await write('note.md', 'v1\n')
+    const first = await call('POST', '/commits', { paths: ['note.md'], message: 'v1' })
+    const firstSha = (await first.json() as { sha: string }).sha
+    await write('note.md', 'v2\n')
+    const second = await call('POST', '/commits', { paths: ['note.md'], message: 'v2' })
+    const secondSha = (await second.json() as { sha: string }).sha
+    await write('note.md', 'uncommitted\n')
+    __setHistoryMutationHooksForTesting({
+      beforeRestoreCommit: async () => {
+        expect((await historyGit.run(root, ['update-ref', 'HEAD', firstSha, secondSha])).status).toBe(0)
+      },
+    })
+
+    const response = await call('POST', '/restore', { path: 'note.md', ref: 'HEAD' })
+    const body = await response.json() as { raw: string; resolvedRef: string }
+
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({ raw: 'v2\n', resolvedRef: secondSha })
+    expect(await read('note.md')).toBe('v2\n')
+    expect((await historyGit.run(root, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(firstSha)
   })
 
   it('returns 400 when path is missing', async () => {

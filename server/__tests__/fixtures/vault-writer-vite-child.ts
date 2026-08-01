@@ -16,4 +16,5 @@ await plugin.configureServer({
 } as never)
 
 process.stdout.write('READY:VITE_MUTATION_SERVER\n')
+setInterval(() => {}, 60_000)
 await new Promise<void>(() => {})

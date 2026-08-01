@@ -16,6 +16,10 @@ import { ensureInitialFolders } from './seed.ts'
 import { getDb } from './db.ts'
 import { migrateVaultMetadata } from './metadataMigration.ts'
 import { recoverInterruptedOperations } from './crashRecovery.ts'
+import {
+  acquireVaultWriterOwnership,
+  installVaultWriterShutdownHandlers,
+} from './vaultWriterOwnership.ts'
 
 const PORT = Number(process.env.PORT ?? 3000)
 const HOST = process.env.HOST ?? '0.0.0.0'
@@ -46,30 +50,45 @@ app.get('*', async (c) => {
   return c.html(html)
 })
 
-// Seed the three vault root folders (inbox / literature / archive)
-// before the HTTP server starts accepting requests. Idempotent — existing
-// folders and files are left alone; only missing roots are created.
-// See server/seed.ts for the rationale.
-await ensureInitialFolders(CONTENT_DIR)
-console.log(`[docus] content dir: ${CONTENT_DIR}`)
+// Lifetime ownership is acquired before any startup mutation or listener.
+const writerOwnership = await acquireVaultWriterOwnership(CONTENT_DIR)
+try {
+  // Seed the three vault root folders (inbox / literature / archive)
+  // before the HTTP server starts accepting requests. Idempotent — existing
+  // folders and files are left alone; only missing roots are created.
+  // See server/seed.ts for the rationale.
+  await ensureInitialFolders(CONTENT_DIR)
+  console.log(`[docus] content dir: ${CONTENT_DIR}`)
 
-// Reconcile operations interrupted by a previous crash (kill -9, power
-// loss, container stop) BEFORE the server accepts a single request —
-// a note left missing between the takeover and the commit of an atomic
-// save must reappear before any client can observe it. Never throws.
-const recovery = await recoverInterruptedOperations(CONTENT_DIR, getDb())
-if (recovery.actions.length > 0) {
-  console.log(`[docus] crash recovery: resolved ${recovery.actions.length} interrupted operation(s)`)
-  for (const action of recovery.actions) {
-    console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
+  // Reconcile operations interrupted by a previous crash (kill -9, power
+  // loss, container stop) BEFORE the server accepts a single request.
+  const recovery = await recoverInterruptedOperations(CONTENT_DIR, getDb())
+  if (recovery.actions.length > 0) {
+    console.log(`[docus] crash recovery: resolved ${recovery.actions.length} interrupted operation(s)`)
+    for (const action of recovery.actions) {
+      console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
+    }
   }
-}
-// Only scan live vault metadata after crash recovery has restored every
-// formal path. Otherwise an interrupted takeover can be misclassified
-// as an orphan during this very startup.
-const metadataReport = await migrateVaultMetadata(getDb(), CONTENT_DIR)
-console.log(`[docus] metadata migration: ${JSON.stringify(metadataReport)}`)
+  // Only scan live vault metadata after crash recovery has restored every
+  // formal path. Otherwise an interrupted takeover can be misclassified
+  // as an orphan during this very startup.
+  const metadataReport = await migrateVaultMetadata(getDb(), CONTENT_DIR)
+  console.log(`[docus] metadata migration: ${JSON.stringify(metadataReport)}`)
 
-serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
-  console.log(`[docus] listening on http://${info.address}:${info.port}`)
-})
+  const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
+    console.log(`[docus] listening on http://${info.address}:${info.port}`)
+  })
+  const removeSignalHandlers = installVaultWriterShutdownHandlers(
+    writerOwnership,
+    () => new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve())
+    }),
+  )
+  server.once('close', () => {
+    removeSignalHandlers()
+    void writerOwnership.release()
+  })
+} catch (error) {
+  await writerOwnership.release()
+  throw error
+}

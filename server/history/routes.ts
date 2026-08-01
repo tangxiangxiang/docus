@@ -20,9 +20,17 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import * as git from './git.js'
-import { ensureRepo } from './repo.js'
+import { ensureRepo, ensureRepoWithinVaultMutation } from './repo.js'
 import { computeFileDiff } from './diff.js'
 import { CONTENT_DIR } from '../paths.js'
+import { metadataDb } from '../routes/shared.js'
+import { withVaultMutation } from '../vaultMutation.js'
+import {
+  HistoryRestoreConflictError,
+  HistoryRestoreNotFoundError,
+  restoreHistoricalDocument,
+} from './restore.js'
+import { FolderMovePathOwnedError } from '../folderMoveJournalOwnership.js'
 import {
   isManagedHistoryPath,
   isValidCommitSha,
@@ -61,6 +69,8 @@ export type HistoryMutationKind =
 
 export type HistoryMutationHooks = {
   beforeMutation?: (kind: HistoryMutationKind) => void | Promise<void>
+  beforeRestoreCommit?: () => void | Promise<void>
+  afterRestoreCommit?: () => void | Promise<void>
 }
 
 let historyMutationHooks: HistoryMutationHooks | null = null
@@ -325,11 +335,14 @@ history.post('/commits', async (c) => {
     return bad(c, 'invalid expected content hashes')
   }
   const expected = record as Record<string, string | null>
+  const message = body.message
   try {
-    await ensureRepo(repoRoot())
-    await historyMutationHooks?.beforeMutation?.('create-version')
-    const r = await git.addAndCommit(repoRoot(), paths, body.message, { expected })
-    return c.json(r, 201)
+    return await withVaultMutation(repoRoot(), async () => {
+      await ensureRepoWithinVaultMutation(repoRoot())
+      await historyMutationHooks?.beforeMutation?.('create-version')
+      const r = await git.addAndCommit(repoRoot(), paths, message, { expected })
+      return c.json(r, 201)
+    })
   } catch (e: any) {
     const msg = e.message ?? 'commit failed'
     if (/nothing to commit|selection is stale|content changed before commit|repository changed before commit|repository operation in progress/i.test(msg)) {
@@ -346,8 +359,10 @@ history.post('/commits', async (c) => {
 history.get('/repair-status', async (c) => {
   if (!(await probeGit())) return bad(c, 'git not available', 503)
   try {
-    await ensureRepo(repoRoot())
-    return c.json({ transactions: await git.getIndexRepairStatus(repoRoot()) })
+    return await withVaultMutation(repoRoot(), async () => {
+      await ensureRepoWithinVaultMutation(repoRoot())
+      return c.json({ transactions: await git.getIndexRepairStatus(repoRoot()) })
+    })
   } catch (e: any) {
     return bad(c, e.message ?? 'index repair status failed', 500)
   }
@@ -359,12 +374,15 @@ history.post('/repair-index', async (c) => {
   if (typeof body?.token !== 'string' || !/^[0-9a-f]{32}$/.test(body.token)) {
     return bad(c, 'invalid index repair token')
   }
+  const token = body.token
   try {
-    await ensureRepo(repoRoot())
-    await historyMutationHooks?.beforeMutation?.('repair-index')
-    const result = await git.repairIndex(repoRoot(), body.token)
-    if (!result.repaired) return bad(c, 'index repair could not be verified', 409)
-    return c.json(result)
+    return await withVaultMutation(repoRoot(), async () => {
+      await ensureRepoWithinVaultMutation(repoRoot())
+      await historyMutationHooks?.beforeMutation?.('repair-index')
+      const result = await git.repairIndex(repoRoot(), token)
+      if (!result.repaired) return bad(c, 'index repair could not be verified', 409)
+      return c.json(result)
+    })
   } catch (e: any) {
     const msg = e.message ?? 'index repair failed'
     if (/repository operation in progress|transaction not found|repository changed|index changed after repair|git index is locked/i.test(msg)) {
@@ -380,12 +398,15 @@ history.post('/repair-index/discard', async (c) => {
   if (typeof body?.token !== 'string' || !/^[0-9a-f]{32}$/.test(body.token)) {
     return bad(c, 'invalid index repair token')
   }
+  const token = body.token
   try {
-    await ensureRepo(repoRoot())
-    await historyMutationHooks?.beforeMutation?.('discard-repair')
-    const discarded = await git.discardIndexRepair(repoRoot(), body.token)
-    if (!discarded) return bad(c, 'index repair transaction not found', 409)
-    return c.json({ discarded: true })
+    return await withVaultMutation(repoRoot(), async () => {
+      await ensureRepoWithinVaultMutation(repoRoot())
+      await historyMutationHooks?.beforeMutation?.('discard-repair')
+      const discarded = await git.discardIndexRepair(repoRoot(), token)
+      if (!discarded) return bad(c, 'index repair transaction not found', 409)
+      return c.json({ discarded: true })
+    })
   } catch (e: any) {
     return bad(c, e.message ?? 'discard index repair failed', 500)
   }
@@ -403,11 +424,14 @@ history.post('/drop', async (c) => {
   if (!body) return bad(c, 'body required')
   if (typeof body.sha !== 'string' || body.sha.length === 0) return bad(c, 'sha required')
   if (!isValidCommitSha(body.sha)) return bad(c, 'invalid sha')
+  const sha = body.sha
   try {
-    await ensureRepo(repoRoot())
-    await historyMutationHooks?.beforeMutation?.('withdraw')
-    const r = await git.dropHeadCommit(repoRoot(), body.sha)
-    return c.json(r)
+    return await withVaultMutation(repoRoot(), async () => {
+      await ensureRepoWithinVaultMutation(repoRoot())
+      await historyMutationHooks?.beforeMutation?.('withdraw')
+      const r = await git.dropHeadCommit(repoRoot(), sha)
+      return c.json(r)
+    })
   } catch (e: any) {
     const msg = e.message ?? 'drop failed'
     if (/only the latest version|repository changed before withdrawal|repository operation in progress/i.test(msg)) {
@@ -448,7 +472,6 @@ history.post('/restore', async (c) => {
   if (validPath instanceof Response) return validPath
   if (body.ref !== git.WORKTREE_REF && !isValidHistoryRef(body.ref)) return bad(c, 'invalid ref')
   try {
-    await ensureRepo(repoRoot())
     // WORKTREE is a sentinel meaning "the file as it sits on disk".
     // Restoring TO the working tree is a no-op (you can't restore to
     // the thing you're overwriting). Reject explicitly so the caller
@@ -456,26 +479,25 @@ history.post('/restore', async (c) => {
     if (body.ref === git.WORKTREE_REF) {
       return bad(c, 'cannot restore to the working tree', 400)
     }
-    // Pre-check: confirm the file exists at that ref so we can return
-    // a clean 404 instead of a generic git error. Cheaper than parsing
-    // git checkout's stderr in every error path.
-    const exists = await git.rawAt(repoRoot(), body.ref, validPath)
-    if (exists === null) {
-      return bad(c, `file does not exist at ref ${body.ref}`, 404)
-    }
-    await historyMutationHooks?.beforeMutation?.('restore')
-    await git.restoreFile(repoRoot(), body.ref, validPath)
-    const stat = await fs.stat(path.join(repoRoot(), validPath))
-    return c.json({ path: validPath, ref: body.ref, raw: exists, mtime: stat.mtimeMs })
+    const result = await restoreHistoricalDocument({
+      repoRoot: repoRoot(),
+      path: validPath,
+      ref: body.ref,
+      db: metadataDb(),
+      beforeMutation: () => historyMutationHooks?.beforeMutation?.('restore'),
+      beforeCommit: () => historyMutationHooks?.beforeRestoreCommit?.(),
+      afterCommit: () => historyMutationHooks?.afterRestoreCommit?.(),
+    })
+    return c.json(result)
   } catch (e: any) {
     const msg = e.message ?? 'restore failed'
-    // git restore's missing-path / invalid-reference errors
-    // both surface here as git stderr. The pre-check above catches
-    // most not-found cases, but a race between rawAt and checkout
-    // can still slip through (e.g. someone ran `git rm` in another
-    // shell). Treat "did not match" / "invalid" as 4xx rather than
-    // 500 — they're user-recoverable, not server faults.
-    if (/did not match/i.test(msg) || /invalid reference/i.test(msg) || /bad revision/i.test(msg)) {
+    if (e instanceof HistoryRestoreConflictError) {
+      return c.json({ error: msg, code: e.code }, 409)
+    }
+    if (e instanceof FolderMovePathOwnedError) {
+      return c.json({ error: msg, code: 'HISTORY_PATH_MOVED' }, 409)
+    }
+    if (e instanceof HistoryRestoreNotFoundError) {
       return bad(c, msg, 404)
     }
     return bad(c, msg, 500)

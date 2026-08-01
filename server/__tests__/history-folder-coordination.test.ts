@@ -139,7 +139,7 @@ async function expectHistoryQueuesBehindFolder(input: {
   ])
   releaseFolder.resolve()
   const [folderResponse, historyResponse] = await Promise.all([moving, history])
-  expect(first).toEqual({ state: 'queued', root: path.resolve(vault) })
+  expect(first).toEqual({ state: 'queued', root: await fs.realpath(vault) })
   await input.after?.(folderResponse, historyResponse)
 }
 
@@ -343,7 +343,7 @@ describe('History mutations × folder-move v4', () => {
     releaseRecovery.resolve()
     await expect(recovery).resolves.toEqual({ actions: [] })
     expect((await restore).status).toBe(200)
-    expect(first).toEqual({ state: 'queued', root: path.resolve(vault) })
+    expect(first).toEqual({ state: 'queued', root: await fs.realpath(vault) })
   })
 })
 

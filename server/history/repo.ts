@@ -25,6 +25,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import * as git from './git.js'
+import { withVaultMutation } from '../vaultMutation.js'
 
 /**
  * Does `dir` have its OWN `.git/` (or `.git` file, for worktrees
@@ -70,6 +71,7 @@ async function outerRepoRoot(dir: string): Promise<string | null> {
 const GITIGNORE_LINES = [
   '# docus runtime',
   'data/',
+  '.docus/',
   '',
   '# Node / build',
   'node_modules/',
@@ -120,7 +122,7 @@ const GITATTRIBUTES = ''
  * commit the user makes doesn't accidentally stage the OS junk we
  * were trying to ignore.
  */
-export async function ensureRepo(repoRoot: string): Promise<void> {
+export async function ensureRepoWithinVaultMutation(repoRoot: string): Promise<void> {
   // Tight "this directory has its own .git/" check rather than
   // git.isRepo (which uses rev-parse --is-inside-work-tree and
   // returns true for any nested directory of an outer repo).
@@ -137,6 +139,13 @@ export async function ensureRepo(repoRoot: string): Promise<void> {
   await writeIfMissing(path.join(repoRoot, '.gitignore'), GITIGNORE_LINES.join('\n'))
   await writeIfMissing(path.join(repoRoot, '.gitattributes'), GITATTRIBUTES)
   await git.initRepo(repoRoot)
+}
+
+/** Bootstrap is itself a Vault mutation. Existing repositories take the
+ * read-only fast path; first initialization joins the global mutation order. */
+export async function ensureRepo(repoRoot: string): Promise<void> {
+  if (await hasOwnGitDir(repoRoot)) return
+  return withVaultMutation(repoRoot, () => ensureRepoWithinVaultMutation(repoRoot))
 }
 
 async function writeIfMissing(p: string, content: string): Promise<void> {

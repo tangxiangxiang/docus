@@ -9,52 +9,73 @@ import { CONTENT_DIR } from './paths.ts'
 import { getDb } from './db.ts'
 import { migrateVaultMetadata } from './metadataMigration.ts'
 import { recoverInterruptedOperations } from './crashRecovery.ts'
+import {
+  acquireVaultWriterOwnership,
+  installVaultWriterShutdownHandlers,
+} from './vaultWriterOwnership.ts'
 
 export function serverPlugin(): Plugin {
   return {
     name: 'docus-server',
     async configureServer(server) {
-      // Reconcile operations interrupted by a previous crash BEFORE any
-      // /api request is served (see server/crashRecovery.ts). Never throws.
-      const recovery = await recoverInterruptedOperations(CONTENT_DIR, getDb())
-      if (recovery.actions.length > 0) {
-        console.log(`[docus] crash recovery: resolved ${recovery.actions.length} interrupted operation(s)`)
-        for (const action of recovery.actions) {
-          console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
+      const writerOwnership = await acquireVaultWriterOwnership(CONTENT_DIR)
+      try {
+        // Reconcile operations interrupted by a previous crash BEFORE any
+        // /api request is served (see server/crashRecovery.ts). Never throws.
+        const recovery = await recoverInterruptedOperations(CONTENT_DIR, getDb())
+        if (recovery.actions.length > 0) {
+          console.log(`[docus] crash recovery: resolved ${recovery.actions.length} interrupted operation(s)`)
+          for (const action of recovery.actions) {
+            console.log(`[docus] crash recovery: ${action.action} ${action.file}${action.detail ? ` (${action.detail})` : ''}`)
+          }
         }
-      }
-      const report = await migrateVaultMetadata(getDb(), CONTENT_DIR)
-      console.log(`[docus] metadata migration: ${JSON.stringify(report)}`)
-      server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith('/api/')) return next()
-        const url = `http://localhost${req.url}`
-        const headers = new Headers()
-        for (const [k, v] of Object.entries(req.headers)) {
-          if (Array.isArray(v)) v.forEach((vv) => headers.append(k, vv))
-          else if (v != null) headers.set(k, String(v))
-        }
-        const method = req.method ?? 'GET'
-        let body: Buffer | undefined
-        if (method !== 'GET' && method !== 'HEAD' && req.readable) {
-          const chunks: Buffer[] = []
-          for await (const chunk of req) chunks.push(chunk as Buffer)
-          body = Buffer.concat(chunks)
-        }
-        const fetchReq = new Request(url, {
-          method,
-          headers,
-          body: body as any,
+        const report = await migrateVaultMetadata(getDb(), CONTENT_DIR)
+        console.log(`[docus] metadata migration: ${JSON.stringify(report)}`)
+        server.middlewares.use(async (req, res, next) => {
+          if (!req.url?.startsWith('/api/')) return next()
+          const url = `http://localhost${req.url}`
+          const headers = new Headers()
+          for (const [k, v] of Object.entries(req.headers)) {
+            if (Array.isArray(v)) v.forEach((vv) => headers.append(k, vv))
+            else if (v != null) headers.set(k, String(v))
+          }
+          const method = req.method ?? 'GET'
+          let body: Buffer | undefined
+          if (method !== 'GET' && method !== 'HEAD' && req.readable) {
+            const chunks: Buffer[] = []
+            for await (const chunk of req) chunks.push(chunk as Buffer)
+            body = Buffer.concat(chunks)
+          }
+          const fetchReq = new Request(url, {
+            method,
+            headers,
+            body: body as any,
+          })
+          const fetchRes = await app.fetch(fetchReq)
+          res.statusCode = fetchRes.status
+          fetchRes.headers.forEach((v, k) => res.setHeader(k, v))
+          if (fetchRes.body) {
+            const buf = Buffer.from(await fetchRes.arrayBuffer())
+            res.end(buf)
+          } else {
+            res.end()
+          }
         })
-        const fetchRes = await app.fetch(fetchReq)
-        res.statusCode = fetchRes.status
-        fetchRes.headers.forEach((v, k) => res.setHeader(k, v))
-        if (fetchRes.body) {
-          const buf = Buffer.from(await fetchRes.arrayBuffer())
-          res.end(buf)
-        } else {
-          res.end()
-        }
-      })
+        const stopServing = typeof server.close === 'function'
+          ? () => Promise.resolve(server.close()).then(() => {})
+          : async () => {}
+        const removeSignalHandlers = installVaultWriterShutdownHandlers(
+          writerOwnership,
+          stopServing,
+        )
+        server.httpServer?.once('close', () => {
+          removeSignalHandlers()
+          void writerOwnership.release()
+        })
+      } catch (error) {
+        await writerOwnership.release()
+        throw error
+      }
     },
   }
 }
