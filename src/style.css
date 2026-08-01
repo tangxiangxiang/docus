@@ -842,7 +842,6 @@ main.container {
 .history-file-commit-row.selected .history-commit-marker { color: var(--vs-accent); }
 .history-commit-row:hover { background: var(--vs-hover-bg); }
 .history-commit-row.active {
-  box-shadow: inset 2px 0 var(--vs-accent);
   background: color-mix(in srgb, var(--vs-accent) 5%, var(--vs-bg-1));
 }
 .history-commit-row .history-row-title {
