@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import HistoryChangesPanel from '../HistoryChangesPanel.vue'
 import { useI18n } from '../../../composables/useI18n'
 
@@ -11,6 +11,7 @@ const entries = [
 ]
 
 beforeEach(() => useI18n().setLocale('en'))
+afterEach(() => vi.restoreAllMocks())
 
 describe('HistoryChangesPanel', () => {
   it('renders understandable statuses and accessible selection controls', async () => {
@@ -109,6 +110,32 @@ describe('HistoryChangesPanel', () => {
     expect(wrapper.emitted('clear-selection')).toHaveLength(1)
     expect(wrapper.emitted('update:message')?.at(-1)).toEqual(['Next version'])
     expect(wrapper.emitted('submit')).toHaveLength(1)
+  })
+
+  it('generates a commit message from the selected paths and fills the editor', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ message: 'Refresh selected documents' }),
+    } as Response)
+    const wrapper = mount(HistoryChangesPanel, {
+      props: {
+        entries,
+        selectedPaths: new Set(['inbox/modified.md', 'inbox/new.md']),
+        message: '',
+        busy: false,
+        canCommit: false,
+        error: null,
+      },
+    })
+
+    await wrapper.get('.history-generate-message').trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/ai/commit-message', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ paths: ['inbox/modified.md', 'inbox/new.md'] }),
+    }))
+    expect(wrapper.emitted('update:message')).toEqual([['Refresh selected documents']])
   })
 
   it('exposes localized busy and error states and disables mutation controls', () => {

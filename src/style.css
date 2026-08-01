@@ -692,6 +692,10 @@ main.container {
   border-top: 1px solid color-mix(in srgb, var(--vs-border) 62%, transparent);
   background: color-mix(in srgb, var(--vs-bg-2) 22%, var(--vs-bg-1));
 }
+.history-version-message-field {
+  position: relative;
+  min-width: 0;
+}
 .history-version-composer textarea {
   box-sizing: border-box;
   width: 100%;
@@ -708,12 +712,36 @@ main.container {
   line-height: 1.4;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
+.history-version-composer textarea:has(+ .history-generate-message) { padding-right: 76px; }
 .history-version-composer textarea::placeholder { color: var(--vs-text-3); opacity: 0.75; }
 .history-version-composer textarea:focus {
   border-color: color-mix(in srgb, var(--vs-accent) 72%, var(--vs-border));
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-accent) 14%, transparent);
 }
+.history-generate-message {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 24px;
+  max-width: calc(100% - 10px);
+  padding: 0 5px;
+  border: 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vs-bg-2) 72%, transparent);
+  color: var(--vs-text-2);
+  font: inherit;
+  font-size: 0.66rem;
+  cursor: pointer;
+}
+.history-generate-message > span:first-child { display: inline-flex; flex: 0 0 14px; }
+.history-generate-message > span:first-child :where(svg) { display: block; width: 14px; height: 14px; }
+.history-generate-message:hover:not(:disabled) { background: var(--vs-hover-bg); color: var(--vs-accent); }
+.history-generate-message:focus-visible { outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent); outline-offset: 1px; }
+.history-generate-message:disabled { cursor: default; opacity: 0.5; }
 .history-create-version {
   box-sizing: border-box;
   width: 100%;

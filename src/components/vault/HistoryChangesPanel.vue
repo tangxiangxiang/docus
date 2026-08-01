@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import type { StatusEntry } from '../../lib/history-api'
+import { suggestCommitMessage } from '../../lib/ai-api'
 import { useI18n } from '../../composables/useI18n'
+import { useToast } from '../../composables/useToast'
+import { ICON_AI } from './icons'
 
 const props = withDefaults(defineProps<{
   entries: StatusEntry[]
@@ -36,6 +39,8 @@ const emit = defineEmits<{
   'discard-index-repair': []
 }>()
 const { t } = useI18n()
+const toast = useToast()
+const generatingMessage = ref(false)
 const allSelected = computed(() => (
   props.entries.length > 0 && props.entries.every((entry) => props.selectedPaths.has(entry.path))
 ))
@@ -69,6 +74,25 @@ function onMessage(event: Event): void {
 function toggleAll(): void {
   if (allSelected.value) emit('clear-selection')
   else emit('select-all')
+}
+
+async function generateMessage(): Promise<void> {
+  if (generatingMessage.value || props.busy || props.mutationLocked || props.selectedPaths.size === 0) return
+  generatingMessage.value = true
+  try {
+    const result = await suggestCommitMessage({ paths: [...props.selectedPaths] })
+    const suggestion = result.message.trim()
+    if (!suggestion) {
+      toast.error(t('history.ai_commit_message_empty'))
+      return
+    }
+    emit('update:message', suggestion)
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
+    toast.error(t('history.ai_commit_message_failed', { error: detail }))
+  } finally {
+    generatingMessage.value = false
+  }
 }
 </script>
 
@@ -120,17 +144,30 @@ function toggleAll(): void {
     </section>
 
     <section class="history-version-composer" :aria-label="t('history.version_message')">
-      <textarea
-        id="history-version-message"
-        :aria-label="t('history.version_message')"
-        :value="message"
-        rows="2"
-        :disabled="busy || mutationLocked"
-        :placeholder="t('history.version_message_placeholder')"
-        @input="onMessage"
-        @keydown.ctrl.enter.prevent="emit('submit')"
-        @keydown.meta.enter.prevent="emit('submit')"
-      />
+      <div class="history-version-message-field">
+        <textarea
+          id="history-version-message"
+          :aria-label="t('history.version_message')"
+          :value="message"
+          rows="2"
+          :disabled="busy || mutationLocked"
+          :placeholder="t('history.version_message_placeholder')"
+          @input="onMessage"
+          @keydown.ctrl.enter.prevent="emit('submit')"
+          @keydown.meta.enter.prevent="emit('submit')"
+        />
+        <button
+          type="button"
+          class="history-generate-message"
+          :disabled="busy || mutationLocked || generatingMessage || selectedPaths.size === 0"
+          :aria-label="t(generatingMessage ? 'history.generating_message' : 'history.generate_message')"
+          :title="t(generatingMessage ? 'history.generating_message' : 'history.generate_message')"
+          @click="generateMessage"
+        >
+          <span v-html="ICON_AI" aria-hidden="true" />
+          <span>{{ t(generatingMessage ? 'history.generating_message' : 'history.generate_message') }}</span>
+        </button>
+      </div>
       <div v-if="error" class="history-commit-error" role="alert">{{ error }}</div>
       <button
         type="button"
