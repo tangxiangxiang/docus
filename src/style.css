@@ -622,6 +622,7 @@ main.container {
   padding: 3px 8px;
   color: var(--vs-text-1);
   font: inherit;
+  font-size: 0.84rem;
   line-height: 1.35;
   overflow: hidden;
 }
