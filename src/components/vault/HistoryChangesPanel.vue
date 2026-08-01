@@ -102,11 +102,11 @@ function toggleAll(): void {
             class="history-change-open"
             :class="{ active: activeDiffPath === entry.path }"
             :aria-current="activeDiffPath === entry.path ? 'true' : undefined"
+            :title="entry.path"
             @click="emit('open-diff', entry)"
           >
             <span class="history-change-copy">
               <strong>{{ displayTitle(entry.path) }}</strong>
-              <span :title="entry.path">{{ entry.path }}</span>
             </span>
             <span class="history-change-status" :class="`is-${statusTone(entry)}`">{{ t(statusKey(entry)) }}</span>
           </button>

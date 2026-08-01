@@ -78,6 +78,11 @@ describe('HistoryChangesPanel', () => {
       'English Object',
       'no-title',
     ])
+    expect(wrapper.findAll('.history-change-open').map((item) => item.attributes('title'))).toEqual([
+      'inbox/english-object.md',
+      'inbox/no-title.md',
+    ])
+    expect(wrapper.findAll('.history-change-copy span')).toHaveLength(0)
   })
 
   it('toggles the single selection action and emits message and keyboard submission intents', async () => {

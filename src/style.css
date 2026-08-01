@@ -614,8 +614,8 @@ main.container {
   display: flex;
   align-items: center;
   gap: 7px;
-  min-height: 36px;
-  padding: 3px 7px;
+  min-height: 30px;
+  padding: 2px 7px;
   border-radius: 5px;
   overflow: hidden;
 }
@@ -627,8 +627,8 @@ main.container {
   flex: 1 1 auto;
   gap: 7px;
   min-width: 0;
-  min-height: 30px;
-  padding: 3px 0;
+  min-height: 26px;
+  padding: 2px 0;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -639,11 +639,9 @@ main.container {
 }
 .history-change-open:hover { background: color-mix(in srgb, var(--vs-hover-bg) 82%, transparent); }
 .history-change-open:focus-visible { outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent); outline-offset: 2px; }
-.history-change-copy { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; }
-.history-change-copy strong,
-.history-change-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-change-copy { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; }
+.history-change-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-change-copy strong { color: var(--vs-text-1); font-size: 0.78rem; font-weight: 500; }
-.history-change-copy span { color: var(--vs-text-3); font-size: 0.64rem; }
 .history-change-status {
   flex: 0 0 auto;
   padding: 2px 6px;
