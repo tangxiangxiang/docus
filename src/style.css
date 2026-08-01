@@ -838,7 +838,8 @@ main.container {
   content: '';
   pointer-events: none;
 }
-.history-commit-row:hover::after {
+.history-commit-row:hover::after,
+.history-commit-row:has(+ .history-file-list:hover)::after {
   background: color-mix(in srgb, var(--vs-text-3) 32%, transparent);
 }
 .history-file-commit-row {
