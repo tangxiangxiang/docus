@@ -767,7 +767,6 @@ main.container {
 }
 .history-timeline-scroll:hover::-webkit-scrollbar-thumb { background: var(--sb-thumb); }
 .history-timeline-scroll::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
-.history-timeline-group + .history-timeline-group { border-top: 1px solid color-mix(in srgb, var(--vs-border) 60%, transparent); }
 .history-timeline-group-header,
 .history-commit-row,
 .history-file-commit-row,
@@ -783,23 +782,23 @@ main.container {
 .history-timeline-group-header {
   display: flex;
   align-items: center;
-  min-height: 31px;
-  padding: 3px 9px;
+  min-height: 30px;
+  padding: 3px 8px;
   gap: 5px;
-  background: color-mix(in srgb, var(--vs-bg-2) 46%, var(--vs-bg-1));
-  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 65%, transparent);
+  background: transparent;
+  transition: background 100ms, color 100ms;
 }
-.history-timeline-group-header:hover { background: color-mix(in srgb, var(--vs-hover-bg) 62%, var(--vs-bg-2)); }
+.history-timeline-group-header:hover { background: var(--vs-hover-bg); }
 .history-timeline-group-title {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   padding: 0;
   overflow: hidden;
-  color: var(--vs-text-2);
-  font-size: 0.68rem;
-  font-weight: 600;
-  line-height: 1.3;
+  color: var(--vs-text-1);
+  font-size: 0.84rem;
+  font-weight: 550;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -821,10 +820,11 @@ main.container {
 .history-commit-row {
   display: flex;
   align-items: center;
-  min-height: 31px;
-  padding: 3px 9px;
+  min-height: 30px;
+  padding: 3px 8px;
   gap: 5px;
   background: transparent;
+  transition: background 100ms, color 100ms;
 }
 .history-file-commit-row {
   display: flex;
@@ -844,6 +844,9 @@ main.container {
 .history-commit-row .history-row-title {
   flex: 1 1 auto;
   min-width: 0;
+  font-size: 0.84rem;
+  font-weight: 550;
+  line-height: 1.35;
 }
 .history-commit-row .history-row-meta {
   flex: 0 1 auto;
@@ -880,7 +883,7 @@ main.container {
   align-items: center;
   width: 100%;
   min-height: 30px;
-  padding: 0 8px 0 33px;
+  padding: 3px 8px 3px 33px;
   gap: 5px;
   background: transparent;
   font-size: 0.84rem;
