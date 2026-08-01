@@ -36,7 +36,7 @@ function toolbarLabels(tab: DraftRecoveryTab): string[] {
     global: {
       stubs: {
         ReadingPane: true,
-        SideBySideDiff: true,
+        HistoryUnifiedDiff: true,
       },
     },
   })
@@ -47,7 +47,7 @@ describe('DraftRecoveryPane', () => {
   it('emits the recovery identity when viewing the current document', async () => {
     const wrapper = mount(DraftRecoveryPane, {
       props: { recovery: recovery() },
-      global: { stubs: { ReadingPane: true, SideBySideDiff: true } },
+      global: { stubs: { ReadingPane: true, HistoryUnifiedDiff: true } },
     })
 
     await wrapper.findAll('[role="toolbar"] button')

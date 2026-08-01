@@ -4,7 +4,7 @@ import type { DraftRecoveryTab } from '../../composables/vault/draft-recovery/us
 import { computeFileDiff } from '../../lib/file-diff'
 import { useI18n } from '../../composables/useI18n'
 import ReadingPane from './ReadingPane.vue'
-import SideBySideDiff from './SideBySideDiff.vue'
+import HistoryUnifiedDiff from './HistoryUnifiedDiff.vue'
 
 const props = defineProps<{ recovery: DraftRecoveryTab }>()
 const emit = defineEmits<{
@@ -69,13 +69,17 @@ defineExpose({ focusViewer })
       </div>
     </header>
     <div class="history-viewer-meta">
+      <span class="history-comparison-direction">
+        <span class="history-revision-chip">{{ t('draft_recovery.disk_version') }}</span>
+        <span aria-hidden="true">→</span>
+        <span class="history-revision-chip">{{ t('draft_recovery.unsaved_draft') }}</span>
+      </span>
       {{ recovery.documentPath }} · {{ t('draft_recovery.read_only') }}
     </div>
-    <SideBySideDiff
+    <HistoryUnifiedDiff
       v-if="recovery.view === 'diff' && diff"
       :diff="diff"
-      :old-label="t('draft_recovery.disk_version')"
-      :new-label="t('draft_recovery.unsaved_draft')"
+      :comparison-key="`${recovery.recoveryId}\0${recovery.diskDocumentId ?? 'missing'}`"
     />
     <ReadingPane v-else :raw="recovery.draftRaw" />
   </section>

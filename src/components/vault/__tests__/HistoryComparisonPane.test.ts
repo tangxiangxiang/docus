@@ -34,9 +34,9 @@ function mountPane(value: HistoryComparison) {
     props: { comparison: value },
     global: {
       stubs: {
-        SideBySideDiff: {
-          props: ['diff', 'oldLabel', 'newLabel'],
-          template: '<div class="side-by-side-stub">{{ oldLabel }} / {{ newLabel }}</div>',
+        HistoryUnifiedDiff: {
+          props: ['diff', 'comparisonKey'],
+          template: '<div class="unified-diff-stub">{{ comparisonKey }} / +{{ diff.stats.added }} −{{ diff.stats.removed }}</div>',
         },
       },
     },
@@ -54,9 +54,14 @@ describe('HistoryComparisonPane', () => {
   it('renders a directional read-only comparison and exposes navigation actions', async () => {
     const wrapper = mountPane(comparison())
 
+    expect(wrapper.get('h2').text()).toBe('Redis Notes')
     expect(wrapper.text()).toContain('Comparing with current')
     expect(wrapper.text()).toContain('Unsaved changes')
-    expect(wrapper.get('.side-by-side-stub').text()).toBe('Historical Version / Current Version')
+    expect(wrapper.get('.unified-diff-stub').text()).toBe('inbox/redis\0revision-a / +1 −1')
+    expect(wrapper.text()).toContain('Older revision · revisio')
+    expect(wrapper.text()).toContain('Working tree')
+    expect(wrapper.get('.history-diff-stats').text()).toContain('+1')
+    expect(wrapper.get('.history-diff-stats').text()).toContain('−1')
     expect(wrapper.get('.history-restore-button').text()).toBe('Restore this version')
 
     const buttons = wrapper.findAll('.history-snapshot-toolbar button')
@@ -118,7 +123,7 @@ describe('HistoryComparisonPane', () => {
     const wrapper = mount(HistoryComparisonPane, {
       props: { comparison: comparison(), mutationLocked: true },
       attachTo: document.body,
-      global: { stubs: { SideBySideDiff: true } },
+      global: { stubs: { HistoryUnifiedDiff: true } },
     })
     wrapper.vm.focusViewer()
     expect(document.activeElement).toBe(wrapper.get('h2').element)

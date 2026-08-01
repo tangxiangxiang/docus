@@ -5,19 +5,17 @@ import type { HistoryState } from '../../composables/vault/useHistory'
 import type { HistoryCommitState } from '../../composables/vault/useHistoryCommit'
 import type { HistoryWithdrawState } from '../../composables/vault/useHistoryWithdraw'
 import {
-  toHistoryRevisionSelection,
   useHistoryTimeline,
-  type DocumentHistory,
-  type TimelineRevision,
+  type HistoryCommitItem,
+  type HistoryFileItem,
 } from '../../composables/vault/useHistoryTimeline'
 import type { HistoryRevisionSelection } from '../../composables/vault/useHistorySnapshots'
 import { useI18n } from '../../composables/useI18n'
-import { ICON_CHEVRON } from './icons'
 import EmptyState from './EmptyState.vue'
 import HistoryChangesPanel from './HistoryChangesPanel.vue'
-import TimelineDocumentRow from './TimelineDocumentRow.vue'
+import TimelineCommitRow from './TimelineCommitRow.vue'
+import TimelineFileRow from './TimelineFileRow.vue'
 import TimelineGroup from './TimelineGroup.vue'
-import TimelineRevisionRow from './TimelineRevisionRow.vue'
 
 const props = withDefaults(defineProps<{
   history: HistoryState
@@ -34,63 +32,31 @@ const emit = defineEmits<{
 const h = props.history
 const commit = props.commit
 const { locale, t } = useI18n()
-const listbox = ref<HTMLElement | null>(null)
+const timeline = useHistoryTimeline(h, toRef(props, 'posts'), locale)
 const timelineHeading = ref<HTMLElement | null>(null)
-const revisionMenu = ref<HTMLElement | null>(null)
-const revisionMenuOpen = ref(false)
-const revisionMenuX = ref(0)
-const revisionMenuY = ref(0)
-const revisionMenuRevision = ref<TimelineRevision | null>(null)
-let revisionMenuOrigin: HTMLElement | null = null
+const commitMenu = ref<HTMLElement | null>(null)
+const commitMenuOpen = ref(false)
+const commitMenuX = ref(0)
+const commitMenuY = ref(0)
+const commitMenuCommit = ref<HistoryCommitItem | null>(null)
+let commitMenuOrigin: HTMLElement | null = null
 
-const timelineLabels = computed(() => ({
-  today: t('history.today'),
-  yesterday: t('history.yesterday'),
-  lastWeek: t('history.last_week'),
-  earlier: t('history.earlier'),
-}))
-
-const timeline = useHistoryTimeline(h, toRef(props, 'posts'), locale, timelineLabels)
-watch(commit.completionId, async () => {
-  const document = timeline.selectedDocument.value
-  if (!document || !commit.lastCommittedPaths.value.includes(`${document.path}.md`)) return
-  await timeline.selectDocument(document)
-})
-watch(commit.repositoryChangeId, async () => {
-  const document = timeline.selectedDocument.value
-  if (document) await timeline.selectDocument(document)
-})
-watch(props.withdraw.completionId, async () => {
-  closeRevisionMenu()
-  const document = timeline.selectedDocument.value
-  if (document) {
-    await timeline.selectDocument(document)
-    if (timeline.selectedDocument.value?.revisions.length === 0) timeline.showDocuments()
-  }
-  await nextTick()
-  timelineHeading.value?.focus()
-})
-watch(() => timeline.selectedDocument.value?.path, () => closeRevisionMenu())
-watch(timeline.revisionsLoading, () => closeRevisionMenu())
-watch(() => h.log.value, () => closeRevisionMenu())
-watch(props.withdraw.busy, (busy) => {
-  if (busy) closeRevisionMenu()
-})
-const revisionsErrorLabel = computed(() => (
-  timeline.revisionsError.value?.message || t('history.load_failed')
-))
 const logErrorLabel = computed(() => h.logError.value?.message || t('history.load_failed'))
+const latestCommitId = computed(() => h.log.value[0]?.sha ?? null)
+const ambiguousTitles = computed(() => {
+  const pathsByTitle = new Map<string, Set<string>>()
+  for (const commitItem of timeline.commits.value) {
+    for (const file of commitItem.files) {
+      const paths = pathsByTitle.get(file.title) ?? new Set<string>()
+      paths.add(file.documentPath)
+      pathsByTitle.set(file.title, paths)
+    }
+  }
+  return new Set([...pathsByTitle].filter(([, paths]) => paths.size > 1).map(([title]) => title))
+})
 
 function localeCode(): string {
   return locale.value === 'zh' ? 'zh-CN' : 'en-US'
-}
-
-function isSameDay(left: number, right: number): boolean {
-  const a = new Date(left)
-  const b = new Date(right)
-  return a.getFullYear() === b.getFullYear()
-    && a.getMonth() === b.getMonth()
-    && a.getDate() === b.getDate()
 }
 
 function clockLabel(timestamp: number): string {
@@ -100,136 +66,120 @@ function clockLabel(timestamp: number): string {
   }).format(timestamp)
 }
 
-function documentTimeLabel(timestamp: number): string {
-  const now = Date.now()
-  if (isSameDay(timestamp, now)) return clockLabel(timestamp)
-  if (isSameDay(timestamp, now - 86_400_000)) {
-    return `${t('history.yesterday')} ${clockLabel(timestamp)}`
-  }
-  return new Intl.DateTimeFormat(localeCode(), {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(timestamp)
+function commitCountLabel(count: number): string {
+  return t(count === 1 ? 'history.commit_count_one' : 'history.commit_count_many', { count })
 }
 
-function revisionSummary(revision: TimelineRevision): string {
-  if (timeline.selectedDocument.value?.revisionCount === 1) return t('history.created')
-  return revision.summary || t('history.updated')
+function fileCountLabel(count: number): string {
+  return t(count === 1 ? 'history.file_count_one' : 'history.file_count_many', { count })
 }
 
-function openRevision(revision: TimelineRevision): void {
-  closeRevisionMenu()
-  const document = timeline.selectedDocument.value
-  if (!document) return
-  timeline.selectRevision(revision)
-  emit('open-revision', toHistoryRevisionSelection(document, revision))
+function dayToggleLabel(label: string, expanded: boolean): string {
+  return t(expanded ? 'history.collapse_date' : 'history.expand_date', { date: label })
 }
 
-function isLatestRevision(revision: TimelineRevision): boolean {
-  return revision.id === h.log.value[0]?.sha
+function commitToggleLabel(item: HistoryCommitItem, expanded: boolean): string {
+  return t(expanded ? 'history.collapse_commit_files' : 'history.expand_commit_files', { message: item.message })
 }
 
-function closeRevisionMenu(restoreFocus = false): void {
-  revisionMenuOpen.value = false
-  revisionMenuRevision.value = null
-  document.removeEventListener('pointerdown', onRevisionMenuOutside)
-  document.removeEventListener('keydown', onRevisionMenuEscape)
-  if (restoreFocus) revisionMenuOrigin?.focus()
-  if (!restoreFocus) revisionMenuOrigin = null
+function openFile(file: HistoryFileItem, item: HistoryCommitItem): void {
+  closeCommitMenu()
+  emit('open-revision', timeline.selectFile(file, item))
 }
 
-function onRevisionMenuOutside(event: PointerEvent): void {
-  if (!revisionMenu.value?.contains(event.target as Node)) closeRevisionMenu()
+function isSelected(file: HistoryFileItem, item: HistoryCommitItem): boolean {
+  return timeline.selectedRevisionKey.value === `${item.id}\0${file.path}`
 }
 
-function onRevisionMenuEscape(event: KeyboardEvent): void {
+function isLatestCommit(item: HistoryCommitItem): boolean {
+  return item.id === latestCommitId.value
+}
+
+function closeCommitMenu(restoreFocus = false): void {
+  commitMenuOpen.value = false
+  commitMenuCommit.value = null
+  document.removeEventListener('pointerdown', onCommitMenuOutside)
+  document.removeEventListener('keydown', onCommitMenuEscape)
+  if (restoreFocus) commitMenuOrigin?.focus()
+  if (!restoreFocus) commitMenuOrigin = null
+}
+
+function onCommitMenuOutside(event: PointerEvent): void {
+  if (!commitMenu.value?.contains(event.target as Node)) closeCommitMenu()
+}
+
+function onCommitMenuEscape(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
   event.preventDefault()
-  closeRevisionMenu(true)
+  closeCommitMenu(true)
 }
 
-async function showRevisionMenu(
-  revision: TimelineRevision,
-  origin: HTMLElement,
-  x: number,
-  y: number,
-): Promise<void> {
-  closeRevisionMenu()
-  if (!isLatestRevision(revision) || !props.withdraw.canWithdraw.value || props.withdraw.busy.value) return
-  revisionMenuRevision.value = revision
-  revisionMenuOrigin = origin
-  revisionMenuX.value = x
-  revisionMenuY.value = y
-  revisionMenuOpen.value = true
+async function showCommitMenu(item: HistoryCommitItem, origin: HTMLElement, x: number, y: number): Promise<void> {
+  closeCommitMenu()
+  if (!isLatestCommit(item) || !props.withdraw.canWithdraw.value || props.withdraw.busy.value) return
+  commitMenuCommit.value = item
+  commitMenuOrigin = origin
+  commitMenuX.value = x
+  commitMenuY.value = y
+  commitMenuOpen.value = true
   await nextTick()
-  const menu = revisionMenu.value
+  const menu = commitMenu.value
   if (!menu) return
   const gutter = 8
-  revisionMenuX.value = Math.max(gutter, Math.min(x, window.innerWidth - menu.offsetWidth - gutter))
-  revisionMenuY.value = Math.max(gutter, Math.min(y, window.innerHeight - menu.offsetHeight - gutter))
+  commitMenuX.value = Math.max(gutter, Math.min(x, window.innerWidth - menu.offsetWidth - gutter))
+  commitMenuY.value = Math.max(gutter, Math.min(y, window.innerHeight - menu.offsetHeight - gutter))
   menu.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
-  document.addEventListener('pointerdown', onRevisionMenuOutside)
-  document.addEventListener('keydown', onRevisionMenuEscape)
+  document.addEventListener('pointerdown', onCommitMenuOutside)
+  document.addEventListener('keydown', onCommitMenuEscape)
 }
 
-function onRevisionContextMenu(event: MouseEvent, revision: TimelineRevision): void {
-  event.preventDefault()
-  void showRevisionMenu(revision, event.currentTarget as HTMLElement, event.clientX, event.clientY)
+function onCommitContextMenu(event: MouseEvent, item: HistoryCommitItem): void {
+  void showCommitMenu(item, event.currentTarget as HTMLElement, event.clientX, event.clientY)
 }
 
-function onRevisionMenuKeydown(event: KeyboardEvent, revision: TimelineRevision): void {
-  if (!(event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey))) return
-  event.preventDefault()
+function onCommitMenuKeydown(event: KeyboardEvent, item: HistoryCommitItem): void {
   const origin = event.currentTarget as HTMLElement
   const rect = origin.getBoundingClientRect()
-  void showRevisionMenu(revision, origin, rect.left + Math.min(24, rect.width / 2), rect.bottom)
+  void showCommitMenu(item, origin, rect.left + Math.min(24, rect.width / 2), rect.bottom)
 }
 
-function withdrawRevision(): void {
-  const revision = revisionMenuRevision.value
-  closeRevisionMenu()
-  if (!revision || !isLatestRevision(revision) || !props.withdraw.canWithdraw.value || props.withdraw.busy.value) return
-  void props.withdraw.withdraw(revision.id)
+function withdrawCommit(): void {
+  const item = commitMenuCommit.value
+  closeCommitMenu()
+  if (!item || !isLatestCommit(item) || !props.withdraw.canWithdraw.value || props.withdraw.busy.value) return
+  void props.withdraw.withdraw(item.id)
 }
 
-onBeforeUnmount(closeRevisionMenu)
-
-async function selectDocument(document: DocumentHistory): Promise<void> {
-  await timeline.selectDocument(document)
-  if (timeline.selectedDocument.value?.path !== document.path) return
-  await nextTick()
-  focusFirstOption()
-}
-
-function showDocuments(): void {
-  timeline.showDocuments()
-  void nextTick(focusFirstOption)
-}
-
-function focusFirstOption(): void {
-  listbox.value?.querySelector<HTMLElement>('[role="option"]')?.focus()
-}
-
-function onListKeydown(event: KeyboardEvent): void {
+function onTreeKeydown(event: KeyboardEvent): void {
   if (event.key === 'Escape') {
-    event.preventDefault()
-    if (timeline.selectedDocument.value) showDocuments()
-    else (document.activeElement as HTMLElement | null)?.blur()
+    ;(document.activeElement as HTMLElement | null)?.blur()
     return
   }
   if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-
-  const options = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[role="option"]')]
-  if (options.length === 0) return
+  const rows = [...(event.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('[data-history-row]')]
+  if (rows.length === 0) return
   event.preventDefault()
-  const current = options.indexOf(document.activeElement as HTMLElement)
+  const current = rows.indexOf(document.activeElement as HTMLElement)
   const next = event.key === 'ArrowDown'
-    ? Math.min(current + 1, options.length - 1)
-    : Math.max(current < 0 ? options.length - 1 : current - 1, 0)
-  options[next]?.focus()
+    ? Math.min(current + 1, rows.length - 1)
+    : Math.max(current < 0 ? rows.length - 1 : current - 1, 0)
+  rows[next]?.focus()
 }
+
+watch(commit.completionId, async () => {
+  await nextTick()
+  timeline.expandNewestDay()
+})
+watch(props.withdraw.completionId, async () => {
+  closeCommitMenu()
+  await nextTick()
+  timelineHeading.value?.focus()
+})
+watch(() => h.log.value, () => closeCommitMenu())
+watch(props.withdraw.busy, (busy) => {
+  if (busy) closeCommitMenu()
+})
+onBeforeUnmount(closeCommitMenu)
 </script>
 
 <template>
@@ -266,120 +216,72 @@ function onListKeydown(event: KeyboardEvent): void {
         @repair-index="commit.retryIndexRepair"
         @discard-index-repair="commit.discardConflictingIndexRepair"
       />
-      <section class="history-timeline-section" :aria-labelledby="'history-timeline-title'">
-      <div ref="timelineHeading" class="history-timeline-heading" tabindex="-1">
-        <template v-if="timeline.selectedDocument.value">
-          <button
-            type="button"
-            class="history-back-button"
-            :title="t('history.back_to_documents')"
-            :aria-label="t('history.back_to_documents')"
-            @click="showDocuments"
-          >
-            <span v-html="ICON_CHEVRON" />
-          </button>
-          <span class="history-document-header">
-            <span class="history-document-header-copy">
-              <strong id="history-timeline-title">{{ timeline.selectedDocument.value.title }}</strong>
-              <span>{{ t('history.revisions', { count: timeline.selectedDocument.value.revisionCount }) }}</span>
-            </span>
-          </span>
-        </template>
-        <h2 v-else id="history-timeline-title">{{ t('history.timeline') }}</h2>
-      </div>
-      <div v-if="h.logError.value && !timeline.selectedDocument.value" class="history-error" role="alert">
-        <span>{{ logErrorLabel }}</span>
-        <button type="button" @click="h.refreshLog()">
-          {{ t('history.retry') }}
-        </button>
-      </div>
-      <div
-        ref="listbox"
-        class="history-timeline-scroll"
-        role="listbox"
-        :aria-label="timeline.selectedDocument.value ? t('history.revision_list') : t('history.document_list')"
-        @keydown="onListKeydown"
-      >
-        <template v-if="timeline.selectedDocument.value">
-          <div v-if="timeline.revisionsLoading.value" class="history-skeleton" role="status" :aria-label="t('history.loading')">
-            <span v-for="index in 5" :key="index" class="history-skeleton-row" />
+      <section class="history-timeline-section" aria-labelledby="history-timeline-title">
+        <div ref="timelineHeading" class="history-timeline-heading" tabindex="-1">
+          <h2 id="history-timeline-title">{{ t('history.timeline') }}</h2>
+        </div>
+        <div v-if="h.logError.value" class="history-error" role="alert">
+          <span>{{ logErrorLabel }}</span>
+          <button type="button" @click="h.refreshLog()">{{ t('history.retry') }}</button>
+        </div>
+        <div
+          class="history-timeline-scroll"
+          role="tree"
+          :aria-label="t('history.timeline_tree')"
+          @keydown="onTreeKeydown"
+        >
+          <div v-if="timeline.loading.value || (h.logLoading.value && timeline.commits.value.length === 0)" class="history-skeleton" role="status" :aria-label="t('history.loading')">
+            <span v-for="index in 7" :key="index" class="history-skeleton-row" />
           </div>
-          <div v-else-if="timeline.revisionsError.value" class="history-error" role="alert">
-            <span>{{ revisionsErrorLabel }}</span>
-            <button type="button" @click="timeline.retrySelectedDocument">
-              {{ t('history.retry') }}
-            </button>
-          </div>
-          <div
-            v-else-if="timeline.selectedDocument.value.revisions.length === 0"
-            class="history-empty-inline"
-          >
-            {{ t('history.no_revisions') }}
+          <div v-else-if="timeline.commits.value.length === 0 && !h.logError.value" class="history-empty-inline">
+            {{ t('history.no_history') }}
           </div>
           <template v-else>
             <TimelineGroup
-              v-for="group in timeline.revisionGroups.value"
+              v-for="group in timeline.dayGroups.value"
               :key="group.key"
               :label="group.label"
+              :count-label="commitCountLabel(group.commits.length)"
+              :expanded="timeline.expandedDays.value.has(group.key)"
+              :toggle-label="dayToggleLabel(group.label, timeline.expandedDays.value.has(group.key))"
+              @toggle="timeline.toggleDay(group.key)"
             >
-              <template v-for="revision in group.items" :key="revision.id">
-                <TimelineRevisionRow
-                  :revision="revision"
-                  :summary="revisionSummary(revision)"
-                  :time-label="clockLabel(revision.modifiedAt)"
-                  :selected="timeline.selectedRevisionId.value === revision.id"
-                  @select="openRevision"
-                  @contextmenu="onRevisionContextMenu($event, revision)"
-                  @keydown="onRevisionMenuKeydown($event, revision)"
+              <template v-for="item in group.commits" :key="item.id">
+                <TimelineCommitRow
+                  :commit="item"
+                  :time-label="clockLabel(item.modifiedAt)"
+                  :file-count-label="fileCountLabel(item.files.length)"
+                  :expanded="timeline.expandedCommits.value.has(item.id)"
+                  :toggle-label="commitToggleLabel(item, timeline.expandedCommits.value.has(item.id))"
+                  @toggle="timeline.toggleCommit(item.id)"
+                  @contextmenu="onCommitContextMenu($event, item)"
+                  @menukey="onCommitMenuKeydown($event, item)"
                 />
+                <div v-if="timeline.expandedCommits.value.has(item.id)" class="history-file-list" role="group">
+                  <TimelineFileRow
+                    v-for="file in item.files"
+                    :key="file.path"
+                    :file="file"
+                    :selected="isSelected(file, item)"
+                    :show-parent="ambiguousTitles.has(file.title)"
+                    @select="openFile(file, item)"
+                  />
+                </div>
               </template>
             </TimelineGroup>
           </template>
-        </template>
-
-        <template v-else-if="timeline.loading.value">
-          <div class="history-skeleton" role="status" :aria-label="t('history.loading')">
-            <span v-for="index in 7" :key="index" class="history-skeleton-row" />
-          </div>
-        </template>
-        <template v-else-if="h.logLoading.value && timeline.documents.value.length === 0">
-          <div class="history-skeleton" role="status" :aria-label="t('history.loading')">
-            <span v-for="index in 7" :key="index" class="history-skeleton-row" />
-          </div>
-        </template>
-        <div
-          v-else-if="timeline.documents.value.length === 0 && !h.logError.value"
-          class="history-empty-inline"
-        >
-          {{ t('history.no_history') }}
         </div>
-        <template v-else>
-          <TimelineGroup
-            v-for="group in timeline.documentGroups.value"
-            :key="group.key"
-            :label="group.label"
-          >
-            <TimelineDocumentRow
-              v-for="document in group.items"
-              :key="document.path"
-              :document="document"
-              :time-label="documentTimeLabel(document.modifiedAt)"
-              @select="selectDocument"
-            />
-          </TimelineGroup>
-        </template>
-      </div>
       </section>
       <Teleport to="body">
         <div
-          v-if="revisionMenuOpen"
-          ref="revisionMenu"
+          v-if="commitMenuOpen"
+          ref="commitMenu"
           class="history-context-menu"
           role="menu"
-          :aria-label="t('history.version_actions')"
-          :style="{ left: revisionMenuX + 'px', top: revisionMenuY + 'px' }"
+          :aria-label="t('history.latest_commit_actions')"
+          :style="{ left: commitMenuX + 'px', top: commitMenuY + 'px' }"
         >
-          <button type="button" role="menuitem" class="danger" @click="withdrawRevision">
+          <button type="button" role="menuitem" class="danger" @click="withdrawCommit">
             {{ t('history.withdraw_latest') }}
           </button>
         </div>

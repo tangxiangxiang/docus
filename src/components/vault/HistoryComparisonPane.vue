@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { HistoryComparison } from '../../composables/vault/useHistoryComparisons'
 import { useI18n } from '../../composables/useI18n'
-import SideBySideDiff from './SideBySideDiff.vue'
+import HistoryUnifiedDiff from './HistoryUnifiedDiff.vue'
 import { formatHistoryDate } from '../../lib/history-date'
 
 const props = defineProps<{
@@ -23,6 +23,8 @@ const { locale, t } = useI18n()
 const headingRef = ref<HTMLElement | null>(null)
 
 const revisionTimeLabel = computed(() => formatHistoryDate(props.comparison.revisionTime, locale.value))
+const revisionLabel = computed(() => props.comparison.revisionId.slice(0, 7))
+const comparisonKey = computed(() => `${props.comparison.documentPath}\0${props.comparison.revisionId}`)
 
 const errorLabel = computed(() => (
   props.comparison.error || t('history.comparison_load_failed')
@@ -43,8 +45,8 @@ defineExpose({ focusViewer })
   >
     <header class="history-viewer-header history-comparison-header">
       <div class="history-viewer-heading history-comparison-heading">
-        <h2 ref="headingRef" tabindex="-1">{{ t('history.comparing_current') }}</h2>
-        <span>{{ comparison.documentTitle }}</span>
+        <h2 ref="headingRef" tabindex="-1">{{ comparison.documentTitle }}</h2>
+        <span>{{ t('history.comparing_current') }}</span>
       </div>
       <span class="history-readonly-badge">{{ t('history.read_only') }}</span>
       <div class="history-snapshot-toolbar" role="toolbar" :aria-label="t('history.comparison_toolbar')">
@@ -69,8 +71,17 @@ defineExpose({ focusViewer })
     </header>
 
     <div class="history-viewer-meta history-comparison-meta">
-      <span>{{ t('history.historical_version') }} · {{ revisionTimeLabel }}</span>
+      <span class="history-comparison-direction">
+        <span class="history-revision-chip">{{ t('history.older_revision') }} · {{ revisionLabel }}</span>
+        <span aria-hidden="true">→</span>
+        <span class="history-revision-chip">{{ t('history.working_tree') }}</span>
+      </span>
+      <span>{{ revisionTimeLabel }}</span>
       <span v-if="comparison.summary" class="history-snapshot-summary">{{ comparison.summary }}</span>
+      <span v-if="comparison.diff" class="history-diff-stats" :aria-label="t('history.diff_stats', { added: comparison.diff.stats.added, removed: comparison.diff.stats.removed })">
+        <span class="is-added">+{{ comparison.diff.stats.added }}</span>
+        <span class="is-removed">−{{ comparison.diff.stats.removed }}</span>
+      </span>
       <span class="history-comparison-current" :class="{ 'is-dirty': comparison.currentDirty }">
         {{ t('history.current_version') }} ·
         {{ comparison.currentDirty ? t('history.current_unsaved') : t('history.current_saved') }}
@@ -96,11 +107,10 @@ defineExpose({ focusViewer })
     >
       {{ t('history.no_comparison_changes') }}
     </div>
-    <SideBySideDiff
+    <HistoryUnifiedDiff
       v-else
       :diff="comparison.diff"
-      :old-label="t('history.historical_version')"
-      :new-label="t('history.current_version')"
+      :comparison-key="comparisonKey"
     />
   </section>
 </template>

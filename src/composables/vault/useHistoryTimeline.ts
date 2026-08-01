@@ -1,254 +1,211 @@
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import type { PostSummary } from '../../lib/api'
-import * as historyApi from '../../lib/history-api'
 import type { CommitRecord } from '../../lib/history-api'
 import type { HistoryRevisionSelection } from './useHistorySnapshots'
 
-export interface TimelineRevision {
-  id: string
+export interface HistoryFileItem {
   path: string
-  modifiedAt: number
-  summary: string
-}
-
-export interface DocumentHistory {
-  path: string
+  documentPath: string
   title: string
-  modifiedAt: number
-  revisionCount: number
-  revisions: TimelineRevision[]
+  parentPath: string | null
 }
 
-export interface TimelineGroup<T> {
+export interface HistoryCommitItem {
+  id: string
+  shortId: string
+  message: string
+  body: string
+  modifiedAt: number
+  files: HistoryFileItem[]
+}
+
+export interface HistoryDayGroup {
   key: string
   label: string
-  items: T[]
-}
-
-export interface TimelineLoadError {
-  message: string | null
-}
-
-export function toHistoryRevisionSelection(
-  document: DocumentHistory,
-  revision: TimelineRevision,
-): HistoryRevisionSelection {
-  return {
-    documentPath: document.path,
-    documentTitle: document.title,
-    revisionId: revision.id,
-    revisionTime: revision.modifiedAt,
-    summary: revision.summary,
-  }
+  commits: HistoryCommitItem[]
 }
 
 interface HistoryTimelineSource {
   log: Ref<CommitRecord[]>
-  logLoading: Ref<boolean>
   logLoaded: Ref<boolean>
 }
 
-interface TimelineLabels {
-  today: string
-  yesterday: string
-  lastWeek: string
-  earlier: string
+function localDateKey(timestamp: number): string {
+  const date = new Date(timestamp)
+  const year = String(date.getFullYear()).padStart(4, '0')
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
-function appPath(path: string): string {
-  return path.endsWith('.md') ? path.slice(0, -3) : path
-}
-
-function historyPath(path: string): string {
-  return path.endsWith('.md') ? path : `${path}.md`
+function normalizeMarkdownPath(path: string): string | null {
+  const normalized = path.trim()
+  if (!normalized.endsWith('.md') || normalized.startsWith('/') || normalized.includes('\\') || normalized.includes('\0')) {
+    return null
+  }
+  const segments = normalized.split('/')
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) return null
+  return normalized
 }
 
 function fallbackTitle(path: string): string {
-  const name = appPath(path).split('/').pop() ?? path
-  return name
+  const filename = path.split('/').pop()?.slice(0, -3) ?? path
+  return filename
     .replace(/^\d+[-_]/, '')
     .replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
-function startOfDay(timestamp: number): number {
-  const date = new Date(timestamp)
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+function dateLabel(timestamp: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'long',
+  }).format(timestamp)
 }
 
-export function groupTimelineItems<T>(
-  items: T[],
-  getTimestamp: (item: T) => number,
+/** Pure projection from the Git-native log into Date -> Commit -> Files. */
+export function buildHistoryDayGroups(
+  records: readonly CommitRecord[],
+  posts: readonly PostSummary[],
   locale: string,
-  labels: TimelineLabels,
-  now = Date.now(),
-): TimelineGroup<T>[] {
-  const today = startOfDay(now)
-  const groups = new Map<string, TimelineGroup<T>>()
+): HistoryDayGroup[] {
+  const titles = new Map(posts.map((post) => [post.path, post.title]))
+  const commits: HistoryCommitItem[] = []
 
-  for (const item of items) {
-    const timestamp = getTimestamp(item)
-    const date = new Date(timestamp)
-    const dayDelta = Math.max(0, Math.floor((today - startOfDay(timestamp)) / 86_400_000))
-    let key: string
-    let label: string
-
-    if (dayDelta === 0) {
-      key = 'today'
-      label = labels.today
-    } else if (dayDelta === 1) {
-      key = 'yesterday'
-      label = labels.yesterday
-    } else if (dayDelta <= 6) {
-      key = `weekday-${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
-      label = new Intl.DateTimeFormat(locale, { weekday: 'long' }).format(date)
-    } else if (dayDelta <= 13) {
-      key = 'last-week'
-      label = labels.lastWeek
-    } else if (date.getFullYear() === new Date(now).getFullYear()) {
-      key = `month-${date.getMonth()}`
-      label = new Intl.DateTimeFormat(locale, { month: 'long' }).format(date)
-    } else {
-      key = 'earlier'
-      label = labels.earlier
-    }
-
-    const group = groups.get(key) ?? { key, label, items: [] }
-    group.items.push(item)
-    groups.set(key, group)
+  for (const record of records) {
+    const modifiedAt = Date.parse(record.date)
+    if (!record.sha || !Number.isFinite(modifiedAt)) continue
+    const seen = new Set<string>()
+    const files = record.files.flatMap((rawPath): HistoryFileItem[] => {
+      const path = normalizeMarkdownPath(rawPath)
+      if (!path || seen.has(path)) return []
+      seen.add(path)
+      const documentPath = path.slice(0, -3)
+      const parentPath = documentPath.includes('/')
+        ? documentPath.slice(0, documentPath.lastIndexOf('/'))
+        : null
+      return [{
+        path,
+        documentPath,
+        title: titles.get(documentPath) ?? fallbackTitle(path),
+        parentPath,
+      }]
+    })
+    if (files.length === 0) continue
+    commits.push({
+      id: record.sha,
+      shortId: record.sha.slice(0, 7),
+      message: record.subject,
+      body: record.body,
+      modifiedAt,
+      files,
+    })
   }
 
-  return [...groups.values()]
+  commits.sort((left, right) => right.modifiedAt - left.modifiedAt)
+  const groups = new Map<string, HistoryDayGroup>()
+  for (const commit of commits) {
+    const key = localDateKey(commit.modifiedAt)
+    const group = groups.get(key) ?? {
+      key,
+      label: dateLabel(commit.modifiedAt, locale),
+      commits: [],
+    }
+    group.commits.push(commit)
+    groups.set(key, group)
+  }
+  return [...groups.values()].sort((left, right) => right.key.localeCompare(left.key))
 }
 
-function toRevisions(commits: CommitRecord[], path: string): TimelineRevision[] {
-  const target = historyPath(path)
-  return commits
-    .filter((commit) => commit.files.includes(target))
-    .map((commit) => ({
-      id: commit.sha,
-      path: appPath(target),
-      modifiedAt: Date.parse(commit.date),
-      summary: commit.subject,
-    }))
-    .filter((revision) => Number.isFinite(revision.modifiedAt))
+export function toHistoryRevisionSelection(
+  file: HistoryFileItem,
+  commit: HistoryCommitItem,
+): HistoryRevisionSelection {
+  return {
+    documentPath: file.documentPath,
+    documentTitle: file.title,
+    revisionId: commit.id,
+    revisionTime: commit.modifiedAt,
+    summary: commit.message,
+  }
+}
+
+function adjacentLocalDateKey(offset: number, now = Date.now()): string {
+  const date = new Date(now)
+  date.setDate(date.getDate() + offset)
+  return localDateKey(date.getTime())
 }
 
 export function useHistoryTimeline(
   source: HistoryTimelineSource,
   posts: Ref<PostSummary[]>,
   locale: Ref<string>,
-  labels: ComputedRef<TimelineLabels>,
 ) {
-  const selectedDocument = ref<DocumentHistory | null>(null)
-  const selectedRevisionId = ref<string | null>(null)
-  const revisionsLoading = ref(false)
-  const revisionsError = ref<TimelineLoadError | null>(null)
-  let revisionRequestId = 0
+  const expandedDays = ref<Set<string>>(new Set())
+  const expandedCommits = ref<Set<string>>(new Set())
+  const selectedRevisionKey = ref<string | null>(null)
+  const initializedDefaults = ref(false)
 
-  const documents = computed<DocumentHistory[]>(() => {
-    const titles = new Map(posts.value.map((post) => [post.path, post.title]))
-    const revisionsByPath = new Map<string, TimelineRevision[]>()
+  const dayGroups = computed(() => buildHistoryDayGroups(source.log.value, posts.value, locale.value))
+  const commits = computed(() => dayGroups.value.flatMap((group) => group.commits))
 
-    for (const commit of source.log.value) {
-      const modifiedAt = Date.parse(commit.date)
-      if (!Number.isFinite(modifiedAt)) continue
-      for (const rawPath of commit.files) {
-        if (!rawPath.endsWith('.md')) continue
-        const path = appPath(rawPath)
-        const revision: TimelineRevision = {
-          id: commit.sha,
-          path,
-          modifiedAt,
-          summary: commit.subject,
-        }
-        const revisions = revisionsByPath.get(path) ?? []
-        revisions.push(revision)
-        revisionsByPath.set(path, revisions)
-      }
+  watch([dayGroups, source.logLoaded], ([groups]) => {
+    const commitIds = new Set(groups.flatMap((group) => group.commits.map((commit) => commit.id)))
+    expandedCommits.value = new Set([...expandedCommits.value].filter((id) => commitIds.has(id)))
+    if (selectedRevisionKey.value) {
+      const commitId = selectedRevisionKey.value.split('\0', 1)[0]!
+      if (!commitIds.has(commitId)) selectedRevisionKey.value = null
     }
 
-    return [...revisionsByPath.entries()]
-      .map(([path, revisions]) => ({
-        path,
-        title: titles.get(path) ?? fallbackTitle(path),
-        modifiedAt: revisions[0]?.modifiedAt ?? 0,
-        revisionCount: revisions.length,
-        revisions,
-      }))
-      .sort((a, b) => b.modifiedAt - a.modifiedAt)
-  })
-
-  const documentGroups = computed(() => groupTimelineItems(
-    documents.value,
-    (document) => document.modifiedAt,
-    locale.value,
-    labels.value,
-  ))
-
-  const revisionGroups = computed(() => groupTimelineItems(
-    selectedDocument.value?.revisions ?? [],
-    (revision) => revision.modifiedAt,
-    locale.value,
-    labels.value,
-  ))
-
-  async function selectDocument(document: DocumentHistory): Promise<void> {
-    const requestId = ++revisionRequestId
-    selectedDocument.value = { ...document, revisions: [...document.revisions] }
-    selectedRevisionId.value = null
-    revisionsLoading.value = true
-    revisionsError.value = null
-    try {
-      const response = await historyApi.getLog({ path: historyPath(document.path), limit: 200 })
-      if (requestId !== revisionRequestId) return
-      const revisions = toRevisions(response.commits ?? [], document.path)
-      selectedDocument.value = {
-        ...document,
-        revisionCount: revisions.length,
-        revisions,
+    if (!initializedDefaults.value && source.logLoaded.value) {
+      const defaults = new Set<string>()
+      const today = adjacentLocalDateKey(0)
+      const yesterday = adjacentLocalDateKey(-1)
+      for (const group of groups) {
+        if (group === groups[0] || group.key === today || group.key === yesterday) defaults.add(group.key)
       }
-    } catch (error) {
-      if (requestId !== revisionRequestId) return
-      revisionsError.value = {
-        message: error instanceof Error && error.message ? error.message : null,
-      }
-    } finally {
-      if (requestId === revisionRequestId) revisionsLoading.value = false
+      expandedDays.value = defaults
+      initializedDefaults.value = true
     }
+  }, { immediate: true })
+
+  function toggleDay(key: string): void {
+    const next = new Set(expandedDays.value)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    expandedDays.value = next
   }
 
-  function selectRevision(revision: TimelineRevision): void {
-    selectedRevisionId.value = revision.id
+  function toggleCommit(id: string): void {
+    const next = new Set(expandedCommits.value)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    expandedCommits.value = next
   }
 
-  async function retrySelectedDocument(): Promise<void> {
-    const document = selectedDocument.value
-    if (document) await selectDocument(document)
+  function expandNewestDay(): void {
+    const key = dayGroups.value[0]?.key
+    if (!key || expandedDays.value.has(key)) return
+    expandedDays.value = new Set([...expandedDays.value, key])
   }
 
-  function showDocuments(): void {
-    revisionRequestId++
-    selectedDocument.value = null
-    selectedRevisionId.value = null
-    revisionsLoading.value = false
-    revisionsError.value = null
+  function selectFile(file: HistoryFileItem, commit: HistoryCommitItem): HistoryRevisionSelection {
+    selectedRevisionKey.value = `${commit.id}\0${file.path}`
+    return toHistoryRevisionSelection(file, commit)
   }
 
   return {
-    documents,
-    documentGroups,
-    selectedDocument,
-    selectedRevisionId,
-    revisionGroups,
-    // Keep an existing Timeline visible during background refreshes. Only the
-    // first load owns the full skeleton state.
+    dayGroups,
+    commits,
+    expandedDays,
+    expandedCommits,
+    selectedRevisionKey,
     loading: computed(() => !source.logLoaded.value),
-    revisionsLoading,
-    revisionsError,
-    selectDocument,
-    selectRevision,
-    retrySelectedDocument,
-    showDocuments,
+    toggleDay,
+    toggleCommit,
+    expandNewestDay,
+    selectFile,
   }
 }

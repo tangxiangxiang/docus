@@ -468,7 +468,7 @@ main.container {
   flex: 1 1 auto;
 }
 
-/* History is a document-first timeline in the standard side-panel column. */
+/* History is a commit-first timeline in the standard side-panel column. */
 .vault .side-panel-history {
   display: flex;
   flex-direction: column;
@@ -545,7 +545,7 @@ main.container {
 }
 .history-error button:hover { background: var(--vs-hover-bg); }
 
-/* Phase 1 document timeline. History remains one quiet, continuous sidebar. */
+/* Commit-first History timeline. History remains one quiet, continuous sidebar. */
 .history-create-section {
   box-sizing: border-box;
   width: 100%;
@@ -714,43 +714,11 @@ main.container {
   border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 55%, transparent);
   background: var(--vs-bg-1);
 }
-.history-timeline-heading:has(.history-document-header) {
-  min-height: 36px;
-  gap: 5px;
-}
 .history-timeline-heading h2 { margin: 0; font: inherit; }
 .history-timeline-heading:focus-visible {
   outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
   outline-offset: -1px;
 }
-.history-back-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--vs-text-2);
-  cursor: pointer;
-}
-.history-back-button:hover { background: var(--vs-hover-bg); color: var(--vs-text-1); }
-.history-back-button:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
-  outline-offset: -1px;
-}
-.history-back-button svg { display: block; transform: rotate(180deg); }
-.history-document-header {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  min-width: 0;
-  color: var(--vs-text-1);
-}
-.history-document-header-icon,
 .history-row-icon {
   display: inline-flex;
   align-items: center;
@@ -759,36 +727,12 @@ main.container {
   color: var(--vs-text-2);
 }
 .history-row-icon { align-self: flex-start; margin-top: 1px; }
-.history-document-header-icon svg,
 .history-row-icon svg { display: block; }
-.history-document-header-copy {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: row;
-  align-items: baseline;
-  min-width: 0;
-  gap: 6px;
-}
-.history-document-header-copy strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--vs-text-1);
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.history-document-header-copy span {
-  flex: 0 0 auto;
-  color: var(--vs-text-3);
-  font-size: 0.68rem;
-  font-variant-numeric: tabular-nums;
-}
 .history-timeline-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px 4px 12px;
+  padding: 0 0 12px;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
@@ -801,27 +745,112 @@ main.container {
 }
 .history-timeline-scroll:hover::-webkit-scrollbar-thumb { background: var(--sb-thumb); }
 .history-timeline-scroll::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
-.history-timeline-group + .history-timeline-group { margin-top: 12px; }
+.history-timeline-group + .history-timeline-group { border-top: 1px solid color-mix(in srgb, var(--vs-border) 60%, transparent); }
+.history-timeline-group-header,
+.history-commit-row,
+.history-file-row {
+  box-sizing: border-box;
+  width: 100%;
+  border: 0;
+  color: var(--vs-text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.history-timeline-group-header {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 4px 9px;
+  gap: 5px;
+  background: color-mix(in srgb, var(--vs-bg-2) 72%, var(--vs-bg-1));
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 65%, transparent);
+}
+.history-timeline-group-header:hover { background: color-mix(in srgb, var(--vs-hover-bg) 72%, var(--vs-bg-2)); }
 .history-timeline-group-title {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
-  padding: 5px 8px 4px;
-  color: var(--vs-text-3);
-  font-size: 0.68rem;
+  padding: 0;
+  overflow: hidden;
+  color: var(--vs-text-2);
+  font-size: 0.7rem;
   font-weight: 600;
   line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.history-timeline-count { flex: 0 0 auto; color: var(--vs-text-3); font-size: 0.64rem; font-weight: 500; }
+.history-disclosure {
+  display: inline-flex;
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
+  color: var(--vs-text-3);
+  transition: transform 120ms ease;
+}
+.history-disclosure.expanded { transform: rotate(90deg); }
+.history-disclosure svg { display: block; }
 .history-timeline-group-items {
   display: flex;
   flex-direction: column;
 }
-.history-panel .history-document-row,
-.history-panel .history-revision-row {
-  min-height: 42px;
-  padding: 5px 7px;
+.history-commit-row {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 6px 9px 6px 12px;
   gap: 7px;
-  border-radius: 5px;
-  text-align: left;
-  cursor: pointer;
+  background: transparent;
+}
+.history-commit-row:hover { background: var(--vs-hover-bg); }
+.history-commit-row.active { background: color-mix(in srgb, var(--vs-accent) 8%, var(--vs-bg-1)); }
+.history-commit-marker {
+  display: inline-flex;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  color: var(--vs-text-3);
+}
+.history-commit-row.active .history-commit-marker { color: var(--vs-accent); }
+.history-commit-sha { font-family: var(--font-mono, ui-monospace, monospace); }
+.history-file-list { position: relative; padding: 1px 0 3px 27px; }
+.history-file-list::before {
+  position: absolute;
+  top: 0;
+  bottom: 5px;
+  left: 19px;
+  width: 1px;
+  background: color-mix(in srgb, var(--vs-border) 78%, transparent);
+  content: '';
+}
+.history-file-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 4px 9px 4px 8px;
+  gap: 6px;
+  background: transparent;
+}
+.history-file-row:hover,
+.history-file-row.active { background: color-mix(in srgb, var(--vs-hover-bg) 86%, transparent); }
+.history-file-copy {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  min-width: 0;
+  gap: 6px;
+}
+.history-file-copy .history-row-title { font-size: 0.76rem; font-weight: 450; }
+.history-file-copy .history-row-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-timeline-group-header:focus-visible,
+.history-commit-row:focus-visible,
+.history-file-row:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid color-mix(in srgb, var(--vs-accent) 72%, transparent);
+  outline-offset: -2px;
 }
 .history-row-copy {
   display: flex;
@@ -843,27 +872,6 @@ main.container {
   font-size: 0.66rem;
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
-}
-.history-revision-marker {
-  position: relative;
-  align-self: stretch;
-  flex: 0 0 16px;
-}
-.history-revision-marker::before {
-  position: absolute;
-  top: 50%;
-  left: 6px;
-  width: 5px;
-  height: 5px;
-  border: 1px solid var(--vs-text-3);
-  border-radius: 50%;
-  background: var(--vs-bg-1);
-  content: '';
-  transform: translateY(-50%);
-}
-.history-revision-row.active .history-revision-marker::before {
-  border-color: var(--vs-accent);
-  background: var(--vs-accent);
 }
 .history-panel .history-empty-inline {
   padding: 18px 10px;
@@ -1053,140 +1061,157 @@ main.container {
   margin-left: auto;
 }
 .history-comparison-current.is-dirty { color: var(--vs-accent); }
-.history-comparison-pane > .diff-table {
+.history-comparison-pane > .unified-diff-scroll,
+.draft-recovery-pane > .unified-diff-scroll {
   width: 100%;
   min-height: 0;
 }
+.history-comparison-direction,
+.history-diff-stats {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+.history-revision-chip {
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--vs-border) 76%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vs-bg-2) 72%, transparent);
+  color: var(--vs-text-2);
+}
+.history-diff-stats { margin-left: auto; font-family: var(--mono); font-weight: 600; }
+.history-diff-stats .is-added { color: color-mix(in srgb, var(--vs-success, #16a34a) 82%, var(--vs-text-1)); }
+.history-diff-stats .is-removed { color: color-mix(in srgb, var(--vs-danger, #dc2626) 82%, var(--vs-text-1)); }
 @media (max-width: 720px) {
   .history-viewer-header,
   .history-viewer-meta { padding-left: 12px; padding-right: 12px; }
   .history-snapshot-summary { display: none; }
   .history-comparison-current { display: none; }
+  .history-comparison-meta { flex-wrap: wrap; }
+  .history-diff-stats { margin-left: 0; }
 }
 
-.diff-table {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  /* VSCode uses ~1.45-1.5; the old 1.55 was a touch too airy and
-     made paired rows look stretched on long diffs. */
-  line-height: 1.5;
-  background: var(--vs-bg-1);
-  overflow: hidden;
-}
-.diff-pane {
-  min-width: 0;
+.unified-diff-scroll {
+  --diff-add-color: var(--vs-success, #16a34a);
+  --diff-remove-color: var(--vs-danger, #dc2626);
+  --diff-gutter-width: calc(var(--diff-line-digits, 1) * 1ch + 16px);
+  box-sizing: border-box;
+  width: 100%;
   min-height: 0;
   overflow: auto;
   background: var(--vs-bg-1);
-  /* Vertical scroll is synchronized between panes, so both sides must
-     keep the same text metrics or paired rows will drift apart. */
-  font-size: inherit;
-  line-height: inherit;
-}
-.diff-pane + .diff-pane {
-  border-left: 1px solid var(--vs-border);
-}
-.diff-pane-title {
-  position: sticky;
-  top: 0;
-  left: 0;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 28px;
-  box-sizing: border-box;
-  padding: 0 10px;
-  width: 100%;
-  background: var(--vs-bg-2);
-  border-bottom: 1px solid var(--vs-border);
-  color: var(--vs-text-2);
-  font-family: var(--sans);
-  font-size: 0.76rem;
-}
-.diff-pane-label {
-  color: var(--vs-text-3);
-}
-.diff-pane-ref {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--vs-text-1);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) transparent;
 }
-.diff-row {
+.unified-diff-scroll:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--vs-accent) 68%, transparent);
+  outline-offset: -2px;
+}
+.unified-diff-line {
   display: grid;
-  grid-template-columns: 56px max-content;
+  grid-template-columns: var(--diff-gutter-width) var(--diff-gutter-width) 24px minmax(0, 1fr);
   align-items: stretch;
-  width: max-content;
+  width: 100%;
   min-width: 100%;
+  background: var(--vs-bg-1);
 }
-.diff-cell {
-  padding: 0 10px;
-  white-space: pre;
-  overflow: visible;
+.unified-diff-line.is-add {
+  background: color-mix(in srgb, var(--diff-add-color) 12%, var(--vs-bg-1));
 }
-.diff-cell-text {
-  min-width: 0;
+.unified-diff-line.is-remove {
+  background: color-mix(in srgb, var(--diff-remove-color) 12%, var(--vs-bg-1));
+}
+.unified-diff-gutter,
+.unified-diff-marker {
+  display: block;
+  box-sizing: border-box;
   min-height: 1.5em;
-}
-.diff-cell-num {
-  position: sticky;
-  left: 0;
-  z-index: 1;
+  padding: 0 7px;
   text-align: right;
   color: var(--vs-text-3);
   user-select: none;
-  background: var(--vs-bg-2);
-  border-right: 1px solid var(--vs-border);
-  /* Stacking context for the left-edge indicator ::before. Also keeps
-     the gutter fixed during horizontal scrolling inside each pane. */
+  font-variant-numeric: tabular-nums;
 }
-/* VSCode-style left-edge indicator on changed rows. A 3px colored
-   bar pinned to the very left of the gutter cell — the line number
-   text stays right-aligned, untouched. The bar is the strongest
-   "this row changed" signal in VSCode's diff view, more so than
-   the background tint. */
-.diff-pane-old .diff-row.is-del .diff-cell-num::before,
-.diff-pane-new .diff-row.is-add .diff-cell-num::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
+.unified-diff-gutter::before { content: attr(data-line); }
+.unified-diff-old { background: color-mix(in srgb, var(--vs-bg-2) 72%, transparent); }
+.unified-diff-new {
+  background: color-mix(in srgb, var(--vs-bg-2) 48%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--vs-border) 68%, transparent);
 }
-.diff-pane-old .diff-row.is-del .diff-cell-num::before { background: #dc2626; }
-.diff-pane-new .diff-row.is-add .diff-cell-num::before { background: #16a34a; }
-/* In VSCode, the gutter on a changed row is tinted too — not just
-   the text cell. We mix a touch of the row color into the gutter's
-   bg-2 base so the line-number cell participates in the change
-   signal. Tinting the gutter text with the same color keeps the
-   number legible against the new background. */
-.diff-pane-old .diff-row.is-del .diff-cell-num {
-  color: #dc2626;
-  background: color-mix(in srgb, #dc2626 18%, var(--vs-bg-2));
+.unified-diff-marker { padding: 0 5px; text-align: center; font-weight: 700; }
+.unified-diff-marker::before { content: attr(data-marker); }
+.unified-diff-line.is-add .unified-diff-marker { color: var(--diff-add-color); }
+.unified-diff-line.is-remove .unified-diff-marker { color: var(--diff-remove-color); }
+.unified-diff-line.is-add .unified-diff-new {
+  color: color-mix(in srgb, var(--diff-add-color) 82%, var(--vs-text-1));
+  background: color-mix(in srgb, var(--diff-add-color) 16%, var(--vs-bg-2));
 }
-.diff-pane-new .diff-row.is-add .diff-cell-num {
-  color: #16a34a;
-  background: color-mix(in srgb, #16a34a 18%, var(--vs-bg-2));
+.unified-diff-line.is-remove .unified-diff-old {
+  color: color-mix(in srgb, var(--diff-remove-color) 82%, var(--vs-text-1));
+  background: color-mix(in srgb, var(--diff-remove-color) 16%, var(--vs-bg-2));
 }
-.diff-pane-new .diff-row.is-add .diff-cell-text { background: color-mix(in srgb, #16a34a 14%, transparent); }
-.diff-pane-old .diff-row.is-del .diff-cell-text { background: color-mix(in srgb, #dc2626 14%, transparent); }
-.diff-pane-old .diff-row.is-edit .diff-cell-text { background: color-mix(in srgb, #dc2626 10%, transparent); }
-.diff-pane-new .diff-row.is-edit .diff-cell-text { background: color-mix(in srgb, #16a34a 10%, transparent); }
-
-.diff-word { padding: 0; }
-/* VSCode's word-level highlight is more visible than the 28% we
-   used — bumped to 38% so the actually-changed words stand out
-   from the surrounding row tint. The radius stays at 2px. */
-.diff-word-add { background: color-mix(in srgb, #16a34a 38%, transparent); border-radius: 2px; }
-.diff-word-remove { background: color-mix(in srgb, #dc2626 38%, transparent); border-radius: 2px; }
-.diff-word-equal { background: transparent; }
+.unified-diff-content {
+  box-sizing: border-box;
+  display: block;
+  min-width: 0;
+  min-height: 1.5em;
+  padding: 0 10px 0 7px;
+  overflow-wrap: anywhere;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: pre-wrap;
+  user-select: text;
+}
+.unified-diff-word { padding: 0; }
+.unified-diff-word-add {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--diff-add-color) 38%, transparent);
+}
+.unified-diff-word-remove {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--diff-remove-color) 38%, transparent);
+}
+.unified-diff-word-equal { background: transparent; }
+.unified-diff-hunk {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 10px;
+  gap: 10px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--vs-accent) 22%, var(--vs-border));
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-accent) 22%, var(--vs-border));
+  background: color-mix(in srgb, var(--vs-accent) 9%, var(--vs-bg-1));
+  color: var(--vs-text-2);
+  font: inherit;
+  font-size: 0.72rem;
+  text-align: left;
+  cursor: pointer;
+}
+.unified-diff-hunk:hover { background: color-mix(in srgb, var(--vs-accent) 14%, var(--vs-bg-1)); }
+.unified-diff-hunk:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid color-mix(in srgb, var(--vs-accent) 68%, transparent);
+  outline-offset: -2px;
+}
+.unified-diff-hunk-label { color: var(--vs-accent); font-weight: 600; }
+@media (max-width: 560px) {
+  .unified-diff-scroll { --diff-gutter-width: calc(var(--diff-line-digits, 1) * 1ch + 10px); }
+  .unified-diff-gutter { padding: 0 4px; }
+  .unified-diff-line { grid-template-columns: var(--diff-gutter-width) var(--diff-gutter-width) 18px minmax(0, 1fr); }
+  .unified-diff-marker { padding: 0 2px; }
+  .unified-diff-content { padding-right: 6px; }
+}
 
 .ab-btn {
   width: 100%;

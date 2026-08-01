@@ -1,7 +1,7 @@
-// Vault-scoped, read-only Git state used by the document-first History
-// timeline and ActivityBar badge. Mutation workflows live in their focused
-// composables (snapshots, comparisons, and restore), so this service does not
-// expose the obsolete commit-first selection or legacy diff-view state.
+// Vault-scoped, read-only Git state used by the commit-first History timeline
+// and ActivityBar badge. Mutation workflows live in their focused composables
+// (snapshots, comparisons, and restore), so this service only owns shared log,
+// capability, and status hydration.
 
 import { computed, ref, watch, type Ref } from 'vue'
 import * as api from '../../lib/history-api.js'
