@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { PostSummary } from '../../lib/api'
 import type { StatusEntry } from '../../lib/history-api'
 import { suggestCommitMessage } from '../../lib/ai-api'
@@ -41,6 +41,8 @@ const emit = defineEmits<{
 const { locale, t } = useI18n()
 const toast = useToast()
 const generatingMessage = ref(false)
+let generationId = 0
+let generationController: AbortController | null = null
 const allSelected = computed(() => (
   props.entries.length > 0 && props.entries.every((entry) => props.selectedPaths.has(entry.path))
 ))
@@ -78,12 +80,26 @@ function toggleAll(): void {
 
 async function generateMessage(): Promise<void> {
   if (generatingMessage.value || props.busy || props.mutationLocked || props.selectedPaths.size === 0) return
+  const currentGeneration = ++generationId
+  const selectedSnapshot = [...props.selectedPaths].sort()
+  const messageSnapshot = props.message
+  generationController?.abort()
+  const controller = new AbortController()
+  generationController = controller
   generatingMessage.value = true
   try {
     const result = await suggestCommitMessage({
-      paths: [...props.selectedPaths],
+      paths: selectedSnapshot,
       language: locale.value,
-    })
+    }, controller.signal)
+    if (
+      currentGeneration !== generationId
+      || controller.signal.aborted
+      || props.busy
+      || props.mutationLocked
+      || props.message !== messageSnapshot
+      || JSON.stringify([...props.selectedPaths].sort()) !== JSON.stringify(selectedSnapshot)
+    ) return
     const suggestion = result.message.trim()
     if (!suggestion) {
       toast.error(t('history.ai_commit_message_empty'))
@@ -91,12 +107,34 @@ async function generateMessage(): Promise<void> {
     }
     emit('update:message', suggestion)
   } catch (cause) {
+    if (controller.signal.aborted || currentGeneration !== generationId) return
     const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
     toast.error(t('history.ai_commit_message_failed', { error: detail }))
   } finally {
-    generatingMessage.value = false
+    if (currentGeneration === generationId) {
+      generatingMessage.value = false
+      generationController = null
+    }
   }
 }
+
+function cancelGeneration(): void {
+  generationId += 1
+  generationController?.abort()
+  generationController = null
+  generatingMessage.value = false
+}
+
+function submit(): void {
+  cancelGeneration()
+  emit('submit')
+}
+
+watch(() => props.busy || props.mutationLocked, (locked) => {
+  if (locked) cancelGeneration()
+})
+
+onBeforeUnmount(cancelGeneration)
 </script>
 
 <template>
@@ -156,8 +194,8 @@ async function generateMessage(): Promise<void> {
           :disabled="busy || mutationLocked"
           :placeholder="t('history.version_message_placeholder')"
           @input="onMessage"
-          @keydown.ctrl.enter.prevent="emit('submit')"
-          @keydown.meta.enter.prevent="emit('submit')"
+          @keydown.ctrl.enter.prevent="submit"
+          @keydown.meta.enter.prevent="submit"
         />
         <button
           type="button"
@@ -175,8 +213,8 @@ async function generateMessage(): Promise<void> {
       <button
         type="button"
         class="history-create-version"
-        :disabled="!canCommit"
-        @click="emit('submit')"
+        :disabled="!canCommit || generatingMessage"
+        @click="submit"
       >
         {{ busy ? t('history.creating_version') : t('history.create_version') }}
       </button>

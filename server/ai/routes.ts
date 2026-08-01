@@ -14,7 +14,9 @@
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { getDb } from '../db.js'
-import { CONTENT_DIR, readSafeRelativeFile } from '../paths.js'
+import { CONTENT_DIR } from '../paths.js'
+import * as historyGit from '../history/git.js'
+import { computeFileDiff } from '../history/diff.js'
 import * as sessions from './sessions.js'
 import * as messages from './messages.js'
 import { runChat, type ChatContext, type ChatEvent } from './chat.js'
@@ -53,11 +55,39 @@ function isValidModelName(value: string): boolean {
 }
 
 const MAX_COMMIT_MESSAGE_PATHS = 20
-const MAX_COMMIT_NOTE_CHARS = 2_000
 const MAX_COMMIT_DIFF_CHARS = 8_000
 
-function contentPathForHistoryPath(p: string): string {
-  return p.endsWith('.md') ? p.slice(0, -3) : p
+type CommitChange = {
+  path: string
+  changeKind: 'added' | 'modified' | 'deleted'
+  diff: string
+}
+
+function formatCommitDiff(before: string | null, after: string | null): string {
+  const diff = computeFileDiff(before, after)
+  return diff.ops.map((op) => {
+    const prefix = op.op === 'add' ? '+' : op.op === 'remove' ? '-' : ' '
+    return `${prefix}${op.text}`
+  }).join('\n').slice(0, MAX_COMMIT_DIFF_CHARS)
+}
+
+async function collectCommitChanges(paths: readonly string[]): Promise<CommitChange[]> {
+  return Promise.all(paths.map(async (filePath) => {
+    const [before, after] = await Promise.all([
+      historyGit.rawAt(CONTENT_DIR, 'HEAD', filePath),
+      historyGit.rawAt(CONTENT_DIR, historyGit.WORKTREE_REF, filePath),
+    ])
+    const changeKind = before === null
+      ? 'added'
+      : after === null
+        ? 'deleted'
+        : 'modified'
+    return {
+      path: filePath,
+      changeKind,
+      diff: formatCommitDiff(before, after),
+    }
+  }))
 }
 
 // Edit-10.3: old clients still send the path-only hint. Its
@@ -249,24 +279,21 @@ ai.post('/commit-message', async (c) => {
     .map((p) => p.trim())
     .slice(0, MAX_COMMIT_MESSAGE_PATHS)
   if (paths.length === 0) return bad(c, 'at least one path required')
-  const selectedPath = typeof body.selectedPath === 'string' ? body.selectedPath.trim() : undefined
-  const diffText = typeof body.diffText === 'string'
-    ? body.diffText.slice(0, MAX_COMMIT_DIFF_CHARS)
+  const selectedPath = typeof body.selectedPath === 'string'
+    && paths.includes(body.selectedPath.trim())
+    ? body.selectedPath.trim()
     : undefined
   const language = body.language === 'zh' ? 'zh' : 'en'
 
   try {
-    const noteContext = await Promise.all(paths.map(async (p) => {
-      const contentPath = `${contentPathForHistoryPath(p)}.md`
-      const raw = await readSafeRelativeFile(CONTENT_DIR, contentPath, 'utf8')
-      return { path: p, raw: typeof raw === 'string' ? raw.slice(0, MAX_COMMIT_NOTE_CHARS) : '' }
-    }))
+    // Keep this endpoint a diff summarizer. The model receives only the
+    // server-observed HEAD/WORKTREE delta, never the full current document.
+    const changes = await collectCommitChanges(paths)
     const message = await generateCommitMessage({
       paths,
       selectedPath,
-      diffText,
       language,
-      noteContext,
+      changes,
       signal: c.req.raw.signal,
     })
     return c.json({ message })

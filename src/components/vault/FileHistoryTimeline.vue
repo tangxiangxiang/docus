@@ -120,7 +120,7 @@ function onTreeKeydown(event: KeyboardEvent): void {
             :time-label="clockLabel(item.modifiedAt)"
             :selected="fileHistory.selectedCommitId.value === item.id"
             :can-withdraw="canWithdraw(item)"
-            :open-label="t('history.open_file_version', { message: item.message })"
+            :open-label="`${t('history.open_file_version', { message: item.message })} (${item.shortId})`"
             @select="selectCommit(item)"
             @contextmenu="emit('contextmenu', $event, item)"
             @menukey="emit('menukey', $event, item)"

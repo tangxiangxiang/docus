@@ -993,11 +993,11 @@ describe('addAndCommit author identity', () => {
 // rest of the body and `files[0]` would be a body line, not a path.
 describe('parseLog (synthetic input)', () => {
   // The format the L0 wrapper produces:
-  //   <LOG_SEP><sha>\x00<parents>\x00<author>\x00<date>\x00<subject>\x00<body>\x00\n<file1>\n<file2>...
-  // Six NUL-separated header fields, plus a trailing NUL terminator,
-  // then a newline, then the name-only file list.
+  //   NUL<sha>\x00<parents>\x00<author>\x00<date>\x00<subject>\x00<body>\x00\n<file1>\x00<file2>...
+  // The whole stream is NUL-framed; commit messages cannot inject a
+  // NUL, and names are emitted by Git with -z.
   function makeBlock(header: string[], body: string, files: string[]): string {
-    return [...header, body].join('\x00') + '\x00\n' + files.join('\n')
+    return `\x00${[...header, body].join('\x00')}\x00\n${files.join('\x00')}\x00`
   }
 
   it('extracts the full multi-line body and only the file paths in files[]', () => {
@@ -1054,10 +1054,10 @@ describe('parseLog (synthetic input)', () => {
     expect(records[0].files).toEqual(['server/history/git.ts', 'server/history/routes.ts', 'src/style.css'])
   })
 
-  it('returns multiple records when the input has more than one LOG_SEPARATOR block', () => {
+  it('returns multiple records when the input has more than one NUL-framed block', () => {
     const a = makeBlock(['a'.repeat(40), '', 'txx', '2026-06-25T09:00:00+08:00', 'first'], '', ['a.md'])
     const b = makeBlock(['b'.repeat(40), 'parent-b', 'txx', '2026-06-25T09:01:00+08:00', 'second'], 'body', ['b.md'])
-    const text = git.LOG_SEPARATOR + a + git.LOG_SEPARATOR + b
+    const text = a + b
     const records = git.parseLog(text)
     expect(records.map((r) => r.subject)).toEqual(['first', 'second'])
     expect(records.map((r) => r.files)).toEqual([['a.md'], ['b.md']])

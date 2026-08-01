@@ -41,7 +41,7 @@ function onKeydown(event: KeyboardEvent): void {
     :aria-selected="selected"
     :aria-label="openLabel"
     :aria-haspopup="canWithdraw ? 'menu' : undefined"
-    :title="commit.message"
+    :title="`${commit.message} · ${commit.shortId}`"
     @click="emit('select')"
     @keydown="onKeydown"
     @contextmenu.prevent="canWithdraw && emit('contextmenu', $event)"

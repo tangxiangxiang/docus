@@ -164,6 +164,67 @@ describe('HistoryChangesPanel', () => {
     expect(wrapper.emitted('update:message')).toEqual([['更新选中的文档']])
   })
 
+  it('does not apply a stale AI response after the composer changes', async () => {
+    let resolveResponse!: (response: Response) => void
+    let requestSignal: AbortSignal | undefined
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      requestSignal = init?.signal as AbortSignal | undefined
+      return await new Promise<Response>((resolve) => {
+        resolveResponse = resolve
+      })
+    })
+    const wrapper = mount(HistoryChangesPanel, {
+      props: {
+        entries,
+        selectedPaths: new Set(['inbox/modified.md']),
+        message: '',
+        busy: false,
+        canCommit: false,
+        error: null,
+      },
+    })
+
+    await wrapper.get('.history-generate-message').trigger('click')
+    await wrapper.setProps({ message: 'Manual message' })
+    resolveResponse({
+      ok: true,
+      json: async () => ({ message: 'Stale suggestion' }),
+    } as Response)
+    await flushPromises()
+
+    expect(requestSignal?.aborted).toBe(false)
+    expect(wrapper.emitted('update:message')).toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('aborts generation when a commit starts', async () => {
+    let resolveResponse!: (response: Response) => void
+    let requestSignal: AbortSignal | undefined
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+      requestSignal = init?.signal as AbortSignal | undefined
+      return await new Promise<Response>((resolve) => {
+        resolveResponse = resolve
+      })
+    })
+    const wrapper = mount(HistoryChangesPanel, {
+      props: {
+        entries,
+        selectedPaths: new Set(['inbox/modified.md']),
+        message: '',
+        busy: false,
+        canCommit: false,
+        error: null,
+      },
+    })
+
+    await wrapper.get('.history-generate-message').trigger('click')
+    await wrapper.setProps({ busy: true })
+    expect(requestSignal?.aborted).toBe(true)
+    resolveResponse({ ok: true, json: async () => ({ message: 'Ignored' }) } as Response)
+    await flushPromises()
+    expect(wrapper.emitted('update:message')).toBeUndefined()
+  })
+
   it('exposes localized busy and error states and disables mutation controls', () => {
     useI18n().setLocale('zh')
     const wrapper = mount(HistoryChangesPanel, {

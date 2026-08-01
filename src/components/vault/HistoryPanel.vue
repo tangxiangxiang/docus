@@ -90,7 +90,7 @@ function dayToggleLabel(label: string, expanded: boolean): string {
 }
 
 function commitToggleLabel(item: HistoryCommitItem, expanded: boolean): string {
-  return t(expanded ? 'history.collapse_commit_files' : 'history.expand_commit_files', { message: item.message })
+  return `${t(expanded ? 'history.collapse_commit_files' : 'history.expand_commit_files', { message: item.message })} (${item.shortId})`
 }
 
 function openFile(file: HistoryFileItem, item: HistoryCommitItem): void {

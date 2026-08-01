@@ -25,7 +25,11 @@ export async function generateCommitMessage(opts: {
   selectedPath?: string
   diffText?: string
   language?: 'zh' | 'en'
-  noteContext: Array<{ path: string; raw: string }>
+  changes: Array<{
+    path: string
+    changeKind: 'added' | 'modified' | 'deleted'
+    diff: string
+  }>
   signal?: AbortSignal
 }): Promise<string> {
   const cfg = resolveAiRuntimeConfig(getDb())
@@ -36,8 +40,10 @@ export async function generateCommitMessage(opts: {
     `Selected files:\n${opts.paths.map((p) => `- ${p}`).join('\n')}`,
     opts.selectedPath ? `Focused diff file:\n${opts.selectedPath}` : '',
     opts.diffText ? `Focused diff:\n${opts.diffText}` : '',
-    opts.noteContext.length
-      ? `Current file contents:\n${opts.noteContext.map((n) => `--- ${n.path} ---\n${n.raw}`).join('\n\n')}`
+    opts.changes.length
+      ? `Actual working-tree changes:\n${opts.changes.map((change) => (
+          `--- ${change.path} (${change.changeKind}) ---\n${change.diff}`
+        )).join('\n\n')}`
       : '',
   ].filter(Boolean).join('\n\n').slice(0, MAX_CONTEXT_CHARS)
 

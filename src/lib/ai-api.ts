@@ -190,10 +190,11 @@ export async function suggestCommitMessage(input: {
   selectedPath?: string
   diffText?: string
   language?: 'zh' | 'en'
-}): Promise<{ message: string }> {
+}, signal?: AbortSignal): Promise<{ message: string }> {
   return jsonOrThrow<{ message: string }>(await fetch('/api/ai/commit-message', {
     method: 'POST',
     ...jsonBody(input),
+    signal,
   }))
 }
 
