@@ -38,13 +38,12 @@ function onKeydown(event: KeyboardEvent): void {
     aria-level="2"
     :aria-expanded="expanded"
     :aria-label="toggleLabel"
-    :title="commit.message"
     @click="emit('toggle')"
     @keydown="onKeydown"
     @contextmenu.prevent="emit('contextmenu', $event)"
   >
     <span class="history-disclosure" :class="{ expanded }" aria-hidden="true" v-html="ICON_CHEVRON" />
-    <span class="history-row-title">{{ commit.message }}</span>
+    <span class="history-row-title" :title="commit.message">{{ commit.message }}</span>
     <span class="history-row-meta">
       {{ timeLabel }} · <span class="history-commit-sha">{{ commit.shortId }}</span> · {{ fileCountLabel }}
     </span>

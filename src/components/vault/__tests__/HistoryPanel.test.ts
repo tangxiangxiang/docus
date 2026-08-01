@@ -228,6 +228,7 @@ describe('HistoryPanel commit-first timeline', () => {
     expect(wrapper.find('.history-file-row').exists()).toBe(false)
     expect(wrapper.get('.history-commit-row').text()).toContain('abcdef1')
     expect(wrapper.get('.history-commit-row').text()).toContain('2 files')
+    expect(wrapper.get('.history-row-title').attributes('title')).toBe('Improve History timeline')
 
     await expandFirstCommit(wrapper)
     expect(wrapper.findAll('.history-file-row')).toHaveLength(2)
