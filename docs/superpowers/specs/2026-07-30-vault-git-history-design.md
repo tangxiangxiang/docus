@@ -1319,16 +1319,30 @@ cross-platform verification, Owner Approval, or History Closure.
 
 ## 27. 2026-08-02 Current Production Overlay
 
-The current production-code baseline is `b08627b`. Since the historical
-review tables above were written, the implementation has added the shared
-symlink-safe reader, staged-intent-preserving Index synchronization,
-canonical same-Vault Withdraw markers and strict parent handling, strict
-`/status` response validation, authoritative Restore client reconciliation,
-server-generated HEAD/WORKTREE AI diffs with request cancellation, and
-NUL-framed Git log parsing. The calendar-date timeline grouping remains
-local-date based rather than fixed-duration arithmetic.
+The current production-code baseline is
+`5df3ad9b50aebfc0d368a1d2865ec85de06afc98`. It supersedes the earlier
+`b08627b` overlay. The current implementation now has strict AI History
+path/status validation, bounded server-generated diffs, request abort
+propagation, Create HEAD-change detection, original-fingerprint Repair
+metadata persistence under `index.lock`, persistent UUID Vault markers,
+locked Restore path resolution with segment identity checks, and structured
+History API error codes/details. Existing History layout and interactions are
+unchanged.
 
-Verification: `npm test` reports 162 files with 2499 passing tests and 2
-skipped; both client/server typechecks and `git diff --check` pass. The
-feature remains in draft closure pending cross-platform evidence and Owner
-Approval.
+The current status is explicit:
+
+| Area | Current status |
+|---|---|
+| AI path/data/resource boundary | Remediated and covered by route tests, including symlink and deleted-blob limits |
+| Create/Withdraw/Repair consistency | Remediated for the deterministic HEAD/Index races; staged intent is fail-closed |
+| Restore containment | Static and tested replacement symlink cases are fail-closed; portable directory-handle `openat` semantics remain unavailable |
+| Cross-platform closure | Not complete: current evidence is macOS only |
+| H-C13/H-K8/H-K10/H-K13 | Still open follow-up findings |
+| Owner Approval | Pending |
+
+Verification on macOS: `npm test -- --run` passed 163 files with 2522
+passing tests and 2 skipped; `npm run typecheck` passed; `npm run build`
+passed with existing dependency annotation/chunk-size warnings; and
+`git diff --check` passed. History Closure remains
+`DRAFT — CLOSURE IN PROGRESS` until cross-platform evidence and Owner Approval
+are complete.

@@ -484,26 +484,45 @@ History Closure: DRAFT — CLOSURE IN PROGRESS
 Owner Approval: PENDING / BLOCKED
 ```
 
-## 12. 2026-08-02 Current Baseline Overlay
+## 12. 2026-08-02 Current Production Baseline
 
-Current production baseline: `b08627b` on `main`.
+Current production-code baseline: `5df3ad9b50aebfc0d368a1d2865ec85de06afc98`.
+This section supersedes the earlier current-baseline overlays above.
 
-The following review findings are now remediated in code: strict `/status`
-error handling, symlink-safe History readers, staged-Index intent
-preservation, canonical same-Vault Withdraw validation, strict parent
-resolution, short-SHA Withdraw resolution, authoritative Restore client
-reconciliation, server-observed AI diffs with stale-request cancellation,
-and NUL-framed Git log parsing. Timeline rows retain short SHA only in
-tooltip and accessible context.
+Closed or remediated in this baseline:
 
-Local verification on this baseline:
+| Finding / area | Status and evidence |
+|---|---|
+| AI path overreach | Strict `validateHistoryPaths`, changed-status recheck, duplicate rejection, symlink rejection, and 20-path cap. Invalid/mixed/unchanged/symlink inputs are covered by route tests. |
+| AI resource exhaustion | 256 KiB/file, 1 MiB total input, 10,000 total lines, 8,000 chars/file, 20,000 chars total; oversized added and deleted blobs return 413 before provider invocation. |
+| Create HEAD race | `addAndCommit` compares the HEAD captured before staged-intent classification with the HEAD immediately before temporary-index initialization; deterministic soft-reset coverage proves no Docus commit, Index Repair, or staged-content loss. |
+| Repair metadata race | Repair records use the operation-start fingerprint, revalidate it while holding `.git/index.lock`, and persist metadata before releasing the lock. Create and Withdraw races are covered. |
+| Vault marker identity | `.docus/vault-id` is an exclusive, fsynced, strict UUID record; malformed, symlinked, duplicate-trailer, foreign, root, and merge cases fail closed. Directory moves retain the marker. |
+| Restore containment | Restore target resolution is inside Vault/structure/document locks; path-segment identities are rechecked before write, after write, before post-read, and during rollback. Deterministic parent-symlink tests prove no outside write. |
+| Structured client errors | `HistoryApiError` now preserves `status`, `code`, and `details`; History composables prefer stable repository/repair codes with message fallback. |
+
+Still open or qualification-required:
+
+| Area | Remaining status |
+|---|---|
+| H-C10 filesystem TOCTOU | The shared lstat/open/fstat resolver closes static symlink and tested replacement windows, but Node does not provide a portable directory-handle `openat` protocol here. A narrow check/use window remains, so this finding is not declared fully closed. |
+| H-C7 / DST evidence | Timeline code uses local calendar dates; explicit child-process DST spring/fall tests are still missing. |
+| H-C8 | Full verification was run on macOS only; Linux and Windows CI were not run. |
+| H-C13 and H-K8/H-K10/H-K13 | Bootstrap cross-process TOCTOU, rename-follow history, pagination, and SHA-256 zero-sentinel follow-ups remain open. |
+| Closure governance | Owner Approval is pending. |
+
+Final local evidence on macOS:
 
 ```text
-npm test:          162 files, 2499 passed, 2 skipped
+npm test -- --run: 163 test files passed; 2522 passed, 2 skipped
 npm run typecheck: PASS
-git diff --check:  PASS
+npm run build: PASS (existing dependency pure-annotation/chunk-size warnings only)
+git diff --check: PASS
 ```
 
-This overlay does not close the feature. Cross-platform verification,
-Owner Approval, and remaining non-blocking design follow-ups are still
-required before entering Maintenance Mode.
+Because cross-platform evidence and Owner Approval are incomplete, the
+History feature remains:
+
+```text
+DRAFT — CLOSURE IN PROGRESS
+```

@@ -552,38 +552,50 @@ Evidence on the production SHA: focused suites 145/145; complete suite
 check passed. Cross-platform CI was not run, so Final Production
 Baseline and Owner Approval remain pending.
 
-## 17. 2026-08-02 Remediation Overlay
+## 17. 2026-08-02 Current Production-Code Baseline
 
-The current production-code baseline is `b08627b` on `main`. The earlier
-sections remain a retrospective record of older code and must not be read
-as the current implementation state.
+Current production-code commit: `5df3ad9b50aebfc0d368a1d2865ec85de06afc98`.
+Earlier sections are historical records; this section is the authoritative
+implementation summary for the current review.
 
-This baseline now includes:
+Implemented in this commit:
 
-- strict `/status` response-shape handling, including the narrow 503
-  unavailable contract;
-- a shared lstat/open/fstat safe-path reader for History WORKTREE reads,
-  content hashes, Create capture, AI context, and Restore targets;
-- Create/Withdraw Index fingerprints and preservation of pre-existing
-  same-path staged intent;
-- immutable Withdraw ref resolution, strict root/one-parent validation,
-  merge rejection, and canonical same-Vault Docus trailers;
-- Restore client reconciliation from authoritative server `raw` and
-  `resolvedRef`;
-- AI commit-message generation from server-observed HEAD/WORKTREE diffs
-  with explicit `added`, `modified`, and `deleted` kinds, plus request
-  cancellation and stale-response guards;
-- NUL-framed Git log parsing and short-SHA tooltip/accessibility context
-  without restoring the removed visual SHA column.
+1. `/api/ai/commit-message` now validates every client path with the
+   History Markdown whitelist, rejects duplicates and unchanged files,
+   rejects symlinks, and enforces a 20-path limit without filter-then-truncate
+   behavior.
+2. AI context is server-generated from actual HEAD/WORKTREE changes. Added,
+   modified, and deleted files are distinguished; bounded reads and bounded
+   line/byte/prompt budgets prevent a full large-file diff from reaching the
+   provider. Git subprocesses and provider requests observe the request abort
+   signal.
+3. Create Version stops if HEAD changes after staged-intent classification
+   and before temporary-index initialization. The real Index is not touched
+   on that conflict and the route returns 409.
+4. Repair metadata receives the original operation-start Index fingerprint,
+   verifies it while holding `.git/index.lock`, and writes the transaction
+   before releasing that lock. It never re-captures unknown staged intent.
+5. `.docus/vault-id` is a persistent, exclusive-created, fsynced UUID record.
+   Marker parsing is strict and Withdraw rejects foreign, malformed, duplicate,
+   root, and merge commits.
+6. Restore resolves and rechecks every path segment inside the mutation and
+   document locks, including post-write and rollback checks. The shared safe
+   reader is used by History worktree reads, hashes, capture, and AI diffs.
+7. `HistoryApiError` preserves stable `code` and `details`; UI handling uses
+   stable codes where available. Existing History layout and interactions are
+   unchanged.
 
-Verification from this baseline:
+Regression evidence:
 
 ```text
-npm test:             162 files, 2499 passed, 2 skipped
-npm run typecheck:    PASS
-git diff --check:     PASS
+npm test -- --run: 163 test files passed; 2522 passed, 2 skipped
+npm run typecheck: PASS
+npm run build: PASS (existing dependency pure-annotation/chunk-size warnings only)
+git diff --check: PASS
 ```
 
-The History Closure remains `DRAFT — CLOSURE IN PROGRESS`. Cross-platform
-evidence, Owner Approval, and the remaining bootstrap/rename/pagination/
-SHA-256 follow-up items are still outstanding.
+Not closed by this commit: the residual non-portable directory-handle TOCTOU
+window in H-C10, explicit DST subprocess coverage, Linux/Windows execution,
+H-C13 bootstrap serialization, rename-follow history, pagination, SHA-256
+sentinel support, and Owner Approval. Closure therefore remains
+`DRAFT — CLOSURE IN PROGRESS`.
