@@ -24,6 +24,7 @@ export async function generateCommitMessage(opts: {
   paths: string[]
   selectedPath?: string
   diffText?: string
+  language?: 'zh' | 'en'
   noteContext: Array<{ path: string; raw: string }>
   signal?: AbortSignal
 }): Promise<string> {
@@ -48,7 +49,9 @@ export async function generateCommitMessage(opts: {
       temperature: 0,
       system: [
         'Generate exactly one git commit message subject line.',
-        'Use concise English in imperative mood, like "Update history diff layout".',
+        opts.language === 'zh'
+          ? 'Write the subject line in concise Simplified Chinese.'
+          : 'Write the subject line in concise English, in imperative mood, like "Update history diff layout".',
         'Do not use quotes, markdown, bullet points, trailing period, or explanations.',
         'Keep it under 72 characters when possible.',
         'Prefer the focused diff when it is available; otherwise summarize the selected files.',

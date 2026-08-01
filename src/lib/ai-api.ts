@@ -189,6 +189,7 @@ export async function suggestCommitMessage(input: {
   paths: string[]
   selectedPath?: string
   diffText?: string
+  language?: 'zh' | 'en'
 }): Promise<{ message: string }> {
   return jsonOrThrow<{ message: string }>(await fetch('/api/ai/commit-message', {
     method: 'POST',

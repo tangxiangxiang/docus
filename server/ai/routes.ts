@@ -242,7 +242,7 @@ ai.post('/slug', async (c) => {
 // session; it reads the selected notes and returns a single subject line.
 ai.post('/commit-message', async (c) => {
   const body = await c.req.json().catch(() => null) as
-    | { paths?: unknown; selectedPath?: unknown; diffText?: unknown }
+    | { paths?: unknown; selectedPath?: unknown; diffText?: unknown; language?: unknown }
     | null
   if (!body || !Array.isArray(body.paths)) return bad(c, 'paths array required')
   const paths = body.paths
@@ -254,6 +254,7 @@ ai.post('/commit-message', async (c) => {
   const diffText = typeof body.diffText === 'string'
     ? body.diffText.slice(0, MAX_COMMIT_DIFF_CHARS)
     : undefined
+  const language = body.language === 'zh' ? 'zh' : 'en'
 
   try {
     const noteContext = await Promise.all(paths.map(async (p) => {
@@ -265,6 +266,7 @@ ai.post('/commit-message', async (c) => {
       paths,
       selectedPath,
       diffText,
+      language,
       noteContext,
       signal: c.req.raw.signal,
     })

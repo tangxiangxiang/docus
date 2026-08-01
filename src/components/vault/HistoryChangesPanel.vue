@@ -38,7 +38,7 @@ const emit = defineEmits<{
   'repair-index': []
   'discard-index-repair': []
 }>()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 const toast = useToast()
 const generatingMessage = ref(false)
 const allSelected = computed(() => (
@@ -80,7 +80,10 @@ async function generateMessage(): Promise<void> {
   if (generatingMessage.value || props.busy || props.mutationLocked || props.selectedPaths.size === 0) return
   generatingMessage.value = true
   try {
-    const result = await suggestCommitMessage({ paths: [...props.selectedPaths] })
+    const result = await suggestCommitMessage({
+      paths: [...props.selectedPaths],
+      language: locale.value,
+    })
     const suggestion = result.message.trim()
     if (!suggestion) {
       toast.error(t('history.ai_commit_message_empty'))

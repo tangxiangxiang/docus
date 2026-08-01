@@ -133,9 +133,35 @@ describe('HistoryChangesPanel', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/ai/commit-message', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ paths: ['inbox/modified.md', 'inbox/new.md'] }),
+      body: JSON.stringify({ paths: ['inbox/modified.md', 'inbox/new.md'], language: 'en' }),
     }))
     expect(wrapper.emitted('update:message')).toEqual([['Refresh selected documents']])
+  })
+
+  it('sends Chinese as the generation language in a Chinese environment', async () => {
+    useI18n().setLocale('zh')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ message: '更新选中的文档' }),
+    } as Response)
+    const wrapper = mount(HistoryChangesPanel, {
+      props: {
+        entries,
+        selectedPaths: new Set(['inbox/modified.md']),
+        message: '',
+        busy: false,
+        canCommit: false,
+        error: null,
+      },
+    })
+
+    await wrapper.get('.history-generate-message').trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/ai/commit-message', expect.objectContaining({
+      body: JSON.stringify({ paths: ['inbox/modified.md'], language: 'zh' }),
+    }))
+    expect(wrapper.emitted('update:message')).toEqual([['更新选中的文档']])
   })
 
   it('exposes localized busy and error states and disables mutation controls', () => {
