@@ -172,6 +172,7 @@ export function useHistoryTimeline(
         if (group === groups[0] || group.key === today || group.key === yesterday) defaults.add(group.key)
       }
       expandedDays.value = defaults
+      expandedCommits.value = new Set()
       initializedDefaults.value = true
     }
   }, { immediate: true })

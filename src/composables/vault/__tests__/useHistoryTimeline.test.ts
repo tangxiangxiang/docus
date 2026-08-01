@@ -117,11 +117,14 @@ describe('useHistoryTimeline', () => {
     expect(commit.parentId).toBe('first-parent')
   })
 
-  it('expands the newest date by default, retains expansion on refresh, and cleans removed commits', async () => {
+  it('expands only the newest date by default, retains expansion on refresh, and cleans removed commits', async () => {
     const first = record('first', new Date(2026, 7, 1, 12), 'First', ['inbox/a.md'])
     const second = record('second', new Date(2026, 6, 30, 12), 'Second', ['inbox/b.md'])
     const log = ref([first, second])
-    const timeline = useHistoryTimeline({ log, logLoaded: ref(true) }, ref([]), ref('en-US'))
+    const logLoaded = ref(false)
+    const timeline = useHistoryTimeline({ log, logLoaded }, ref([]), ref('en-US'))
+    timeline.toggleCommit('first')
+    logLoaded.value = true
     await nextTick()
 
     expect(timeline.expandedDays.value.has('2026-08-01')).toBe(true)
