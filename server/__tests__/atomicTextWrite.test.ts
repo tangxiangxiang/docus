@@ -4,9 +4,11 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AtomicTextWriteConflictError,
+  AtomicTextWritePostCommitExternalMutationError,
   AtomicTextWriteTargetMissingError,
   UnstableTextSnapshotError,
   __setAtomicWriteTestHooksForTesting,
+  __setAtomicDurableJournalTestHooksForTesting,
   atomicRemoveTextIfUnchanged,
   atomicReplaceText,
   atomicReplaceTextIfUnchanged,
@@ -14,8 +16,10 @@ import {
   prepareAtomicTextWrite,
   readStableTextSnapshot,
   removeDurableJournal,
+  rewriteDurableJournal,
   writeDurableJournal,
 } from '../atomicTextWrite'
+import { __setDurableArtifactTestHooksForTesting } from '../durableCreateOnlyFile'
 
 let directory = ''
 let target = ''
@@ -33,6 +37,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   __setAtomicWriteTestHooksForTesting(null)
+  __setAtomicDurableJournalTestHooksForTesting(null)
+  __setDurableArtifactTestHooksForTesting(null)
   vi.restoreAllMocks()
   await fs.rm(directory, { recursive: true, force: true })
 })
@@ -331,6 +337,29 @@ describe('ownership-verified commit (no check-to-rename window)', () => {
     }
   })
 
+  it('quarantines same-inode old-FD writes after replacement is linked', async () => {
+    const externalHandle = await fs.open(target, 'r+')
+    let stagedPath = ''
+    __setAtomicWriteTestHooksForTesting({
+      beforeReplacementStagedCleanup: async (staged) => {
+        stagedPath = staged
+        await externalHandle.truncate(0)
+        await externalHandle.writeFile('external through old fd', 'utf8')
+        await externalHandle.sync()
+      },
+    })
+
+    try {
+      await expect(atomicReplaceTextIfUnchanged(target, 'original', 'replacement'))
+        .rejects.toBeInstanceOf(AtomicTextWritePostCommitExternalMutationError)
+      expect(await fs.readFile(target, 'utf8')).toBe('replacement')
+      expect(await fs.readFile(stagedPath, 'utf8')).toBe('external through old fd')
+      expect((await fs.readdir(directory)).some((name) => name.includes('.docus-journal-'))).toBe(true)
+    } finally {
+      await externalHandle.close()
+    }
+  })
+
   it('reports a missing target instead of recreating it from stale expectations', async () => {
     const prepared = await prepareAtomicTextWrite(target, 'docus B')
     await fs.rm(target)
@@ -417,5 +446,95 @@ describe('ownership-verified commit (no check-to-rename window)', () => {
     } finally {
       __setAtomicWriteTestHooksForTesting(null)
     }
+  })
+
+  it('restores the formal path when an old FD changes the staged inode before remove', async () => {
+    const externalHandle = await fs.open(target, 'r+')
+    __setAtomicWriteTestHooksForTesting({
+      beforeAtomicRemoveUnlink: async () => {
+        await externalHandle.truncate(0)
+        await externalHandle.writeFile('external through old fd', 'utf8')
+        await externalHandle.sync()
+      },
+    })
+
+    try {
+      await expect(atomicRemoveTextIfUnchanged(target, 'original'))
+        .rejects.toBeInstanceOf(AtomicTextWritePostCommitExternalMutationError)
+      expect(await fs.readFile(target, 'utf8')).toBe('external through old fd')
+      expect((await fs.readdir(directory)).some((name) => name.includes('.docus-remove-'))).toBe(false)
+    } finally {
+      await externalHandle.close()
+    }
+  })
+
+  it('does not overwrite a target claimed while restoring a changed remove generation', async () => {
+    const externalHandle = await fs.open(target, 'r+')
+    let stagedPath = ''
+    __setAtomicWriteTestHooksForTesting({
+      beforeAtomicRemoveUnlink: async (staged) => {
+        stagedPath = staged
+        await externalHandle.truncate(0)
+        await externalHandle.writeFile('external through old fd', 'utf8')
+        await externalHandle.sync()
+        await fs.writeFile(target, 'new external target', 'utf8')
+      },
+    })
+
+    try {
+      await expect(atomicRemoveTextIfUnchanged(target, 'original'))
+        .rejects.toBeInstanceOf(AtomicTextWritePostCommitExternalMutationError)
+      expect(await fs.readFile(target, 'utf8')).toBe('new external target')
+      expect(await fs.readFile(stagedPath, 'utf8')).toBe('external through old fd')
+    } finally {
+      await externalHandle.close()
+    }
+  })
+})
+
+describe('durable artifact proof cleanup', () => {
+  it('does not rename a journal temporary through a replaced parent', async () => {
+    const folder = path.join(directory, 'journal-race')
+    const movedFolder = path.join(directory, 'journal-race-original')
+    const journal = path.join(folder, '.note.md.docus-journal-proof')
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-journal-outside-'))
+    await fs.mkdir(folder)
+    await writeDurableJournal(journal, { phase: 'old' })
+    __setAtomicDurableJournalTestHooksForTesting({
+      beforeDurableJournalRename: async () => {
+        await fs.rename(folder, movedFolder)
+        await fs.symlink(outside, folder)
+        await fs.writeFile(path.join(outside, path.basename(journal)), 'external occupant', 'utf8')
+      },
+    })
+
+    try {
+      await expect(rewriteDurableJournal(journal, { phase: 'new' })).rejects.toMatchObject({
+        code: 'HISTORY_PATH_MOVED',
+      })
+      expect(await fs.readFile(path.join(outside, path.basename(journal)), 'utf8'))
+        .toBe('external occupant')
+      expect(JSON.parse(await fs.readFile(path.join(movedFolder, path.basename(journal)), 'utf8')))
+        .toEqual({ phase: 'old' })
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('does not unlink a journal occupant changed after the first proof', async () => {
+    const journal = path.join(directory, '.note.md.docus-journal-proof')
+    await writeDurableJournal(journal, { phase: 'old' })
+    let moved = ''
+    __setDurableArtifactTestHooksForTesting({
+      beforeDurableArtifactUnlink: async (artifactPath) => {
+        moved = `${artifactPath}.quarantine`
+        await fs.rename(artifactPath, moved)
+        await fs.writeFile(artifactPath, 'external occupant', 'utf8')
+      },
+    })
+
+    await expect(removeDurableJournal(journal)).rejects.toThrow()
+    expect(await fs.readFile(journal, 'utf8')).toBe('external occupant')
+    expect(await fs.readFile(moved, 'utf8')).toContain('old')
   })
 })

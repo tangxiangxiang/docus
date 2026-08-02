@@ -193,6 +193,35 @@ describe('createCommit', () => {
   })
 })
 
+describe('repairIndex', () => {
+  it('preserves the structured persistence-failure response on the repair endpoint', async () => {
+    const token = 'a'.repeat(32)
+    responses.push({
+      status: 409,
+      body: {
+        error: 'Git Index changed, but the repair record could not be saved',
+        code: 'HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED',
+        details: { replacementApplied: true, finalHead: 'b'.repeat(40) },
+      },
+    })
+
+    const error = await api.repairIndex(token).catch((cause) => cause)
+    expect(error).toBeInstanceOf(api.HistoryApiError)
+    expect(error).toMatchObject({
+      status: 409,
+      code: 'HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED',
+      details: { replacementApplied: true, finalHead: 'b'.repeat(40) },
+    })
+    expect(calls[0]).toEqual(expect.objectContaining({
+      url: '/api/history/repair-index',
+      init: expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ token }),
+      }),
+    }))
+  })
+})
+
 describe('restoreFile', () => {
   it('posts one document path and revision and returns restored bytes', async () => {
     responses.push({

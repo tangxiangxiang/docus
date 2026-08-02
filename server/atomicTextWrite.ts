@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { constants, promises as fs } from 'node:fs'
 import path from 'node:path'
 import {
+  captureDurableFile,
+  removeCreatedDurableFile,
   writeCreateOnlyDurableFile,
   type CreatedDurableFile,
 } from './durableCreateOnlyFile.js'
@@ -87,28 +89,54 @@ export async function writeDurableJournal(
 /** Remove a journal and durably persist disappearance of its directory
  * entry. This prevents a completed operation's journal from reappearing
  * after power loss and being replayed on the next startup. */
-export async function removeDurableJournal(journalPath: string): Promise<void> {
-  await fs.rm(journalPath, { force: true })
-  await syncParentDirectoryBestEffort(journalPath)
+export async function removeDurableJournal(
+  journal: string | CreatedDurableFile,
+): Promise<void> {
+  const owned = typeof journal === 'string'
+    ? await captureDurableFile(journal)
+    : journal
+  if (!owned) return
+  await removeCreatedDurableFile(owned)
 }
 
 /** Atomically replace an owned journal with a new durable recovery
  * phase. The temporary entry and the final rename are both directory
  * synced, so repeated startup recovery observes either complete state. */
-export async function rewriteDurableJournal(journalPath: string, entry: unknown): Promise<void> {
+export type AtomicDurableJournalTestHooks = {
+  beforeDurableJournalRename?: (temporaryPath: string, journalPath: string) => void | Promise<void>
+}
+let __atomicDurableJournalTestHooks: AtomicDurableJournalTestHooks | null = null
+export function __setAtomicDurableJournalTestHooksForTesting(
+  hooks: AtomicDurableJournalTestHooks | null,
+): void {
+  __atomicDurableJournalTestHooks = hooks
+}
+
+export async function rewriteDurableJournal(
+  journalPath: string,
+  entry: unknown,
+): Promise<CreatedDurableFile> {
   const temporaryPath = `${journalPath}.rewrite-${randomUUID()}`
+  const existingJournal = await captureDurableFile(journalPath)
   const ownedTemporary = await writeDurableJournal(temporaryPath, entry)
   try {
+    await __atomicDurableJournalTestHooks?.beforeDurableJournalRename?.(temporaryPath, journalPath)
+    await verifyOwnedDurableArtifact(ownedTemporary, journalPath)
+    if (existingJournal) await verifyOwnedDurableArtifact(existingJournal, journalPath)
+    else if (await captureDurableFile(journalPath)) {
+      throw new AtomicTextWriteOwnershipError(journalPath)
+    }
     await fs.rename(temporaryPath, journalPath)
+    const rewritten = await captureDurableFile(journalPath)
+    if (!rewritten
+      || rewritten.fileIdentity.dev !== ownedTemporary.fileIdentity.dev
+      || rewritten.fileIdentity.ino !== ownedTemporary.fileIdentity.ino) {
+      throw new AtomicTextWriteOwnershipError(journalPath)
+    }
     await syncParentDirectoryBestEffort(journalPath)
+    return rewritten
   } catch (error) {
-    await removeOwnedTemporaryPath(
-      ownedTemporary.path,
-      ownedTemporary.parentPath,
-      ownedTemporary.fileIdentity,
-      ownedTemporary.parentIdentity,
-      journalPath,
-    ).catch(() => {})
+    await removeCreatedDurableFile(ownedTemporary).catch(() => {})
     throw error
   }
 }
@@ -120,9 +148,14 @@ export async function writeDurableRecoveryPayload(
   return writeCreateOnlyDurableFile(payloadPath, raw)
 }
 
-export async function removeDurableRecoveryPayload(payloadPath: string): Promise<void> {
-  await fs.rm(payloadPath, { force: true })
-  await syncParentDirectoryBestEffort(payloadPath)
+export async function removeDurableRecoveryPayload(
+  payload: string | CreatedDurableFile,
+): Promise<void> {
+  const owned = typeof payload === 'string'
+    ? await captureDurableFile(payload)
+    : payload
+  if (!owned) return
+  await removeCreatedDurableFile(owned)
 }
 
 /** Test-only hooks for real crash tests: a child process installs a
@@ -143,6 +176,7 @@ export type AtomicWriteTestHooks = {
   beforeUnconditionalReplaceRename?: (temporaryPath: string) => void | Promise<void>
   beforeAtomicRemoveRename?: (targetPath: string, stagedPath: string) => void | Promise<void>
   beforeAtomicRemoveUnlink?: (stagedPath: string) => void | Promise<void>
+  beforeReplacementStagedCleanup?: (stagedPath: string, targetPath: string) => void | Promise<void>
 }
 let __atomicWriteTestHooks: AtomicWriteTestHooks | null = null
 export function __setAtomicWriteTestHooksForTesting(hooks: AtomicWriteTestHooks | null): void {
@@ -176,6 +210,58 @@ export class AtomicTextWriteOwnershipError extends Error {
   constructor(targetPath: string) {
     super(`atomic write path ownership changed: ${targetPath}`)
     this.name = 'AtomicTextWriteOwnershipError'
+  }
+}
+
+export class AtomicTextWritePostCommitExternalMutationError extends Error {
+  readonly code = 'HISTORY_POST_COMMIT_EXTERNAL_MUTATION'
+  readonly replacementApplied: boolean
+  readonly restored: boolean
+  readonly quarantined: boolean
+
+  constructor(options: {
+    replacementApplied: boolean
+    restored: boolean
+    quarantined: boolean
+  }) {
+    super(
+      options.replacementApplied
+        ? 'replacement committed, but the previous generation changed externally and was quarantined'
+        : 'external content changed during removal and was restored or quarantined',
+    )
+    this.name = 'AtomicTextWritePostCommitExternalMutationError'
+    this.replacementApplied = options.replacementApplied
+    this.restored = options.restored
+    this.quarantined = options.quarantined
+  }
+}
+
+export class AtomicTextWriteCleanupError extends Error {
+  readonly code = 'HISTORY_ATOMIC_CLEANUP_FAILED'
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'AtomicTextWriteCleanupError'
+  }
+}
+
+async function verifyOwnedDurableArtifact(
+  artifact: CreatedDurableFile,
+  targetPath: string,
+): Promise<void> {
+  let current: CreatedDurableFile | null
+  try {
+    current = await captureDurableFile(artifact.path)
+  } catch {
+    throw new AtomicTextWriteOwnershipError(targetPath)
+  }
+  if (!current
+    || current.fileIdentity.dev !== artifact.fileIdentity.dev
+    || current.fileIdentity.ino !== artifact.fileIdentity.ino
+    || current.parentIdentity.dev !== artifact.parentIdentity.dev
+    || current.parentIdentity.ino !== artifact.parentIdentity.ino
+    || (artifact.contentHash !== undefined && current.contentHash !== artifact.contentHash)) {
+    throw new AtomicTextWriteOwnershipError(targetPath)
   }
 }
 
@@ -253,8 +339,9 @@ async function captureOwnedTextArtifact(
   const parentIdentity = await captureOwnedDirectoryIdentity(parentPath, targetPath)
   const before = await captureOwnedFileIdentity(filePath, targetPath)
   const raw = await fs.readFile(filePath, 'utf8')
+  const secondRaw = await fs.readFile(filePath, 'utf8')
   const after = await captureOwnedFileIdentity(filePath, targetPath)
-  if (before.dev !== after.dev || before.ino !== after.ino) {
+  if (before.dev !== after.dev || before.ino !== after.ino || raw !== secondRaw) {
     throw new AtomicTextWriteOwnershipError(targetPath)
   }
   const stat = await fs.lstat(filePath)
@@ -266,7 +353,7 @@ async function captureOwnedTextArtifact(
       parentIdentity,
     },
     snapshot: {
-      raw,
+      raw: secondRaw,
       stat: {
         mtimeMs: Number(stat.mtimeMs),
         size: Number(stat.size),
@@ -645,9 +732,61 @@ export async function prepareAtomicTextWrite(
         `.${path.basename(targetPath)}.docus-journal-${randomUUID()}`,
       )
       let stagedArtifact: OwnedArtifact | null = null
-      let journalArtifact: OwnedArtifact | null = null
+      let journalArtifact: CreatedDurableFile | null = null
       const fail = async (error: unknown): Promise<never> => {
         settled = true
+        const cleanupErrors: unknown[] = []
+        try {
+          await removeOwnedTemporaryPath(
+            temporaryPath,
+            parentPath,
+            temporaryIdentity,
+            parentIdentity,
+            targetPath,
+          )
+        } catch (cleanupError) {
+          // Never infer ownership from a changed pathname.
+          cleanupErrors.push(cleanupError)
+        }
+        if (journalArtifact) {
+          try {
+            await removeDurableJournal(journalArtifact)
+          } catch (cleanupError) {
+            cleanupErrors.push(cleanupError)
+          }
+        }
+        if (cleanupErrors.length > 0) {
+          throw new AggregateError(
+            [error, ...cleanupErrors],
+            'atomic operation failed and cleanup was incomplete',
+          )
+        }
+        throw error
+      }
+      const failAfterCommitExternalMutation = async (
+        observedRaw?: string,
+      ): Promise<never> => {
+        const observedHash = observedRaw === undefined ? undefined : sha256Hex(observedRaw)
+        // The replacement is already linked at the formal path. Preserve the
+        // changed old generation and make recovery treat this as a manual
+        // quarantine set, never as ordinary stale staging.
+        try {
+          await rewriteDurableJournal(journalPath, {
+            version: 1,
+            op: 'replace',
+            staged: path.basename(stagedPath),
+            replacement: path.basename(temporaryPath),
+            expectedHash: sha256Hex(expectedRaw),
+            replacementHash,
+            phase: 'post-commit-external-mutation',
+            ...(observedHash ? { observedStagedHash: observedHash } : {}),
+          })
+        } catch {
+          // Keep the original journal if the phase rewrite cannot be
+          // persisted. Crash recovery also compares staged bytes with the
+          // expected hash before removing them, so a changed generation is
+          // still retained rather than silently deleted.
+        }
         try {
           await removeOwnedTemporaryPath(
             temporaryPath,
@@ -657,18 +796,15 @@ export async function prepareAtomicTextWrite(
             targetPath,
           )
         } catch {
-          // Never infer ownership from a changed pathname.
+          // The replacement is already committed; an unproven save temp is
+          // safer as a quarantine artifact than as a pathname deletion.
         }
-        if (journalArtifact) {
-          await removeOwnedTemporaryPath(
-            journalArtifact.path,
-            journalArtifact.parentPath,
-            journalArtifact.fileIdentity,
-            journalArtifact.parentIdentity,
-            targetPath,
-          ).catch(() => {})
-        }
-        throw error
+        settled = true
+        throw new AtomicTextWritePostCommitExternalMutationError({
+          replacementApplied: true,
+          restored: false,
+          quarantined: true,
+        })
       }
       // 0. JOURNAL: a durable record of this commit's intent and both
       //    generations' hashes, fsync'd BEFORE the takeover. If this
@@ -797,32 +933,63 @@ export async function prepareAtomicTextWrite(
         return fail(error)
       }
       settled = true
-      await removeOwnedTemporaryPath(
-        temporaryPath,
-        parentPath,
-        temporaryIdentity,
-        parentIdentity,
-        targetPath,
-      ).catch(() => {})
-      if (stagedArtifact) {
+      await __atomicWriteTestHooks?.beforeReplacementStagedCleanup?.(stagedPath, targetPath)
+      let finalStaged: { artifact: OwnedArtifact; snapshot: StableTextSnapshot }
+      try {
+        if (!stagedArtifact) throw new AtomicTextWriteOwnershipError(targetPath)
+        finalStaged = await captureOwnedTextArtifact(stagedPath, targetPath)
+        if (
+          finalStaged.artifact.fileIdentity.dev !== stagedArtifact.fileIdentity.dev
+          || finalStaged.artifact.fileIdentity.ino !== stagedArtifact.fileIdentity.ino
+          || finalStaged.artifact.parentIdentity.dev !== stagedArtifact.parentIdentity.dev
+          || finalStaged.artifact.parentIdentity.ino !== stagedArtifact.parentIdentity.ino
+        ) throw new AtomicTextWriteOwnershipError(targetPath)
+        if (finalStaged.snapshot.raw !== expectedRaw) {
+          return failAfterCommitExternalMutation(finalStaged.snapshot.raw)
+        }
+      } catch (error) {
+        if (error instanceof AtomicTextWritePostCommitExternalMutationError) throw error
+        return failAfterCommitExternalMutation()
+      }
+      try {
+        await removeOwnedTemporaryPath(
+          temporaryPath,
+          parentPath,
+          temporaryIdentity,
+          parentIdentity,
+          targetPath,
+        )
+      } catch (error) {
+        throw new AtomicTextWriteCleanupError(
+          'replacement committed but its temporary artifact could not be safely removed',
+          { cause: error },
+        )
+      }
+      try {
         await removeOwnedTemporaryPath(
           stagedPath,
           parentPath,
-          stagedArtifact.fileIdentity,
-          stagedArtifact.parentIdentity,
+          finalStaged.artifact.fileIdentity,
+          finalStaged.artifact.parentIdentity,
           targetPath,
-        ).catch(() => {})
+        )
+      } catch (error) {
+        throw new AtomicTextWriteCleanupError(
+          'replacement committed but its staged generation could not be safely removed',
+          { cause: error },
+        )
       }
       // The journal goes LAST: while it exists, recovery still knows
       // this commit was in flight and can finish or undo it.
       if (journalArtifact) {
-        await removeOwnedTemporaryPath(
-          journalArtifact.path,
-          journalArtifact.parentPath,
-          journalArtifact.fileIdentity,
-          journalArtifact.parentIdentity,
-          targetPath,
-        ).catch(() => {})
+        try {
+          await removeDurableJournal(journalArtifact)
+        } catch (error) {
+          throw new AtomicTextWriteCleanupError(
+            'replacement committed but its journal could not be safely removed',
+            { cause: error },
+          )
+        }
       }
       await syncParentDirectoryBestEffort(targetPath)
     },
@@ -904,22 +1071,25 @@ export async function atomicReplaceTextIfUnchanged(
  * caller's write. Renaming first means a writer that changes the same inode
  * before cleanup is detected on the staged file and restored create-only
  * (a recreated path wins), rather than being silently deleted. If the
- * bytes changed, the removal is a no-op: the caller's write is already
- * gone and the external bytes stay. A missing target is likewise a
- * no-op — there is nothing left to remove.
+ * bytes change after takeover, the formal path is restored when safe and a
+ * structured post-commit conflict is thrown; a missing target is a no-op.
  */
 export async function atomicRemoveTextIfUnchanged(
   targetPath: string,
   expectedRaw: string,
-): Promise<void> {
+): Promise<AtomicRemoveResult> {
   let target: { artifact: OwnedArtifact; snapshot: StableTextSnapshot }
   try {
     target = await captureOwnedTextArtifact(targetPath, targetPath)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { removed: false, restored: false, externalMutationDetected: false, quarantined: false }
+    }
     throw error
   }
-  if (target.snapshot.raw !== expectedRaw) return
+  if (target.snapshot.raw !== expectedRaw) {
+    return { removed: false, restored: false, externalMutationDetected: false, quarantined: false }
+  }
 
   const stagedPath = path.join(
     path.dirname(targetPath),
@@ -930,8 +1100,25 @@ export async function atomicRemoveTextIfUnchanged(
   try {
     await renameWithTransientWindowsRetry(targetPath, stagedPath)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { removed: false, restored: false, externalMutationDetected: false, quarantined: false }
+    }
     throw error
+  }
+  const restoreKnownStaged = async (): Promise<{ restored: boolean; quarantined: boolean }> => {
+    try {
+      const current = await captureOwnedTextArtifact(stagedPath, targetPath)
+      if (
+        current.artifact.fileIdentity.dev !== target.artifact.fileIdentity.dev
+        || current.artifact.fileIdentity.ino !== target.artifact.fileIdentity.ino
+        || current.artifact.parentIdentity.dev !== target.artifact.parentIdentity.dev
+        || current.artifact.parentIdentity.ino !== target.artifact.parentIdentity.ino
+      ) return { restored: false, quarantined: true }
+      const result = await restoreStagedGeneration(stagedPath, targetPath)
+      return { restored: !result.quarantined, quarantined: result.quarantined }
+    } catch {
+      return { restored: false, quarantined: true }
+    }
   }
   let staged: { artifact: OwnedArtifact; snapshot: StableTextSnapshot }
   try {
@@ -945,12 +1132,17 @@ export async function atomicRemoveTextIfUnchanged(
       throw new AtomicTextWriteOwnershipError(targetPath)
     }
   } catch (error) {
-    await restoreStagedGeneration(stagedPath, targetPath)
-    throw error
+    // No stable artifact was captured, so the pathname may now belong to a
+    // different generation. Never try to restore through it.
+    throw new AtomicTextWriteOwnershipError(targetPath)
   }
   if (staged.snapshot.raw !== expectedRaw) {
-    await restoreStagedGeneration(stagedPath, targetPath)
-    return
+    const restored = await restoreKnownStaged()
+    throw new AtomicTextWritePostCommitExternalMutationError({
+      replacementApplied: false,
+      restored: restored.restored,
+      quarantined: restored.quarantined,
+    })
   }
 
   // This final verification is the strongest portable pathname-based check
@@ -958,18 +1150,34 @@ export async function atomicRemoveTextIfUnchanged(
   // eliminate the remaining check/use window; keep the artifact instead if
   // its ownership cannot be re-established.
   await __atomicWriteTestHooks?.beforeAtomicRemoveUnlink?.(stagedPath)
-  await verifyOwnedArtifact(staged.artifact, targetPath)
-  const final = await captureOwnedTextArtifact(stagedPath, targetPath)
-  if (final.snapshot.raw !== expectedRaw
-    || final.artifact.fileIdentity.dev !== staged.artifact.fileIdentity.dev
+  let final: { artifact: OwnedArtifact; snapshot: StableTextSnapshot }
+  try {
+    final = await captureOwnedTextArtifact(stagedPath, targetPath)
+  } catch {
+    throw new AtomicTextWriteOwnershipError(targetPath)
+  }
+  if (final.artifact.fileIdentity.dev !== staged.artifact.fileIdentity.dev
     || final.artifact.fileIdentity.ino !== staged.artifact.fileIdentity.ino
     || final.artifact.parentIdentity.dev !== staged.artifact.parentIdentity.dev
     || final.artifact.parentIdentity.ino !== staged.artifact.parentIdentity.ino) {
     throw new AtomicTextWriteOwnershipError(targetPath)
   }
+  if (final.snapshot.raw !== expectedRaw) {
+    const restored = await restoreKnownStaged()
+    throw new AtomicTextWritePostCommitExternalMutationError({
+      replacementApplied: false,
+      restored: restored.restored,
+      quarantined: restored.quarantined,
+    })
+  }
   await fs.unlink(stagedPath)
   await syncParentDirectoryBestEffort(targetPath)
+  return { removed: true, restored: false, externalMutationDetected: false, quarantined: false }
 }
+
+export type AtomicRemoveResult =
+  | { removed: true; restored: false; externalMutationDetected: false; quarantined: false }
+  | { removed: false; restored: boolean; externalMutationDetected: boolean; quarantined: boolean }
 
 /**
  * Unconditional replacement: prepare + rename. Callers that need

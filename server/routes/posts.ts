@@ -21,6 +21,8 @@ import {
 import {
   AtomicTextWriteConflictError,
   AtomicTextWriteTargetMissingError,
+  AtomicTextWritePostCommitExternalMutationError,
+  AtomicTextWriteCleanupError,
   atomicReplaceTextIfUnchanged,
   atomicRemoveTextIfUnchanged,
   prepareAtomicTextCreate,
@@ -276,6 +278,10 @@ postRoutes.put('/api/posts/*', async (c) => {
       }
       if (error instanceof AtomicTextWriteTargetMissingError) {
         return bad(c, 'not found', 404)
+      }
+      if (error instanceof AtomicTextWritePostCommitExternalMutationError
+        || error instanceof AtomicTextWriteCleanupError) {
+        return c.json({ error: error.message, code: error.code }, 409)
       }
       throw error
     }

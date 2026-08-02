@@ -222,6 +222,33 @@ describe('recoverInterruptedOperations (journaled replace)', () => {
     expect(await namesIn()).toContain('note.md')
   })
 
+  it('never deletes a changed staged generation after a replacement commit', async () => {
+    await seed({
+      'note.md': '# replacement\n',
+      '.note.md.docus-staged-bbbb': 'external through old fd\n',
+      '.note.md.docus-save-cccc': '# replacement\n',
+      '.note.md.docus-journal-dddd': JSON.stringify({
+        version: 1,
+        op: 'replace',
+        staged: '.note.md.docus-staged-bbbb',
+        replacement: '.note.md.docus-save-cccc',
+        expectedHash: sha256Hex('# base\n'),
+        replacementHash: sha256Hex('# replacement\n'),
+        observedStagedHash: sha256Hex('external through old fd\n'),
+        phase: 'post-commit-external-mutation',
+      }),
+    })
+
+    const report = await runRecovery()
+
+    expect(await fs.readFile(path.join(vault, 'note.md'), 'utf8')).toBe('# replacement\n')
+    expect(await fs.readFile(path.join(vault, '.note.md.docus-staged-bbbb'), 'utf8'))
+      .toBe('external through old fd\n')
+    expect(await fs.readFile(path.join(vault, '.note.md.docus-journal-dddd'), 'utf8'))
+      .toContain('post-commit-external-mutation')
+    expect(report.actions).toContainEqual(expect.objectContaining({ action: 'quarantined' }))
+  })
+
   it('removes a stale journal whose takeover never happened', async () => {
     await seed({
       'note.md': '# untouched\n',

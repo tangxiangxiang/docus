@@ -1,4 +1,5 @@
 import { constants, promises as fs } from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 
 export interface CreatedDurableFile {
@@ -6,6 +7,19 @@ export interface CreatedDurableFile {
   parentPath: string
   fileIdentity: { dev: string; ino: string }
   parentIdentity: { dev: string; ino: string }
+  contentHash?: string
+}
+
+export type DurableArtifactTestHooks = {
+  beforeDurableArtifactUnlink?: (artifactPath: string) => void | Promise<void>
+}
+
+let durableArtifactTestHooks: DurableArtifactTestHooks | null = null
+
+export function __setDurableArtifactTestHooksForTesting(
+  hooks: DurableArtifactTestHooks | null,
+): void {
+  durableArtifactTestHooks = hooks
 }
 
 async function captureDirectoryIdentity(directoryPath: string): Promise<{ dev: string; ino: string }> {
@@ -29,12 +43,53 @@ async function verifyCreatedDurableFile(owned: CreatedDurableFile): Promise<void
     || parent.dev !== owned.parentIdentity.dev || parent.ino !== owned.parentIdentity.ino) {
     throw new Error(`durable file ownership changed: ${owned.path}`)
   }
+  if (owned.contentHash !== undefined) {
+    const raw = await fs.readFile(owned.path)
+    const observed = createHash('sha256').update(raw).digest('hex')
+    if (observed !== owned.contentHash) throw new Error(`durable file content changed: ${owned.path}`)
+  }
 }
 
-async function removeCreatedDurableFile(owned: CreatedDurableFile): Promise<void> {
+export async function removeCreatedDurableFile(owned: CreatedDurableFile): Promise<void> {
+  await verifyCreatedDurableFile(owned)
+  await durableArtifactTestHooks?.beforeDurableArtifactUnlink?.(owned.path)
+  // The hook models an external writer between the first proof and unlink.
+  // A second proof prevents the deterministic race from deleting its
+  // replacement; the remaining portable check/use window is documented.
   await verifyCreatedDurableFile(owned)
   await fs.unlink(owned.path)
   await syncParentDirectoryBestEffort(owned.path)
+}
+
+/** Capture a recovery-discovered artifact. A missing path is not an error;
+ * any other inability to prove the current generation is fail-closed. */
+export async function captureDurableFile(
+  filePath: string,
+): Promise<CreatedDurableFile | null> {
+  const parentPath = path.dirname(filePath)
+  let parentIdentity: { dev: string; ino: string }
+  try {
+    parentIdentity = await captureDirectoryIdentity(parentPath)
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return null
+    throw error
+  }
+  try {
+    const fileIdentity = await captureFileIdentity(filePath)
+    const raw = await fs.readFile(filePath)
+    const owned: CreatedDurableFile = {
+      path: filePath,
+      parentPath,
+      fileIdentity,
+      parentIdentity,
+      contentHash: createHash('sha256').update(raw).digest('hex'),
+    }
+    await verifyCreatedDurableFile(owned)
+    return owned
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return null
+    throw error
+  }
 }
 
 async function syncParentDirectoryBestEffort(filePath: string): Promise<void> {
@@ -88,6 +143,9 @@ export async function writeCreateOnlyDurableFile(
       await handle.writeFile(data)
     }
     await handle.sync()
+    owned.contentHash = createHash('sha256')
+      .update(typeof data === 'string' ? Buffer.from(data, options.encoding ?? 'utf8') : data)
+      .digest('hex')
     await handle.close()
     handle = null
     if (!owned) throw new Error(`durable file ownership was not established: ${filePath}`)

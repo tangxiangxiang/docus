@@ -5,6 +5,7 @@ import type { Database as DatabaseT } from 'better-sqlite3'
 import {
   AtomicTextWriteConflictError,
   AtomicTextWriteOwnershipError,
+  AtomicTextWritePostCommitExternalMutationError,
   AtomicTextWriteTargetMissingError,
   atomicRemoveTextIfUnchanged,
   atomicReplaceTextIfUnchanged,
@@ -319,6 +320,13 @@ export async function restoreHistoricalDocument(input: {
           throw new HistoryRestoreConflictError(
             `document path moved before restore completed: ${logicalPath}`,
             'HISTORY_PATH_MOVED',
+            { cause: error },
+          )
+        }
+        if (error instanceof AtomicTextWritePostCommitExternalMutationError) {
+          throw new HistoryRestoreConflictError(
+            `document content changed during restore and was preserved: ${logicalPath}`,
+            'HISTORY_CONTENT_CHANGED',
             { cause: error },
           )
         }

@@ -179,8 +179,9 @@ interface ReplaceJournal {
   replacement: string
   expectedHash: string
   replacementHash: string
-  phase?: 'quarantine-save-pending' | 'manual-recovery-required'
+  phase?: 'quarantine-save-pending' | 'manual-recovery-required' | 'post-commit-external-mutation'
   pendingReplacement?: string
+  observedStagedHash?: string
 }
 
 /** The unified in-memory shape of every folder-move journal. Schema
@@ -323,12 +324,23 @@ async function hashMatches(absPath: string, expectedHash: string): Promise<boole
   }
 }
 
+async function readHash(absPath: string): Promise<string | undefined> {
+  try {
+    return sha256Hex(await fs.readFile(absPath, 'utf8'))
+  } catch {
+    return undefined
+  }
+}
+
 /** link(2) is create-only: a path claimed externally wins; the staged
  * bytes then stay on disk under their staging name (quarantined). */
 async function restoreCreateOnly(stagedAbs: string, targetAbs: string): Promise<{ restored: boolean }> {
   try {
     await fs.link(stagedAbs, targetAbs)
-    await rm(stagedAbs)
+    // The link is create-only. Remove the staging entry only through the
+    // recovery artifact proof; if its generation changed, retain the extra
+    // hard-link as quarantine instead of deleting an occupant.
+    await removeDurableRecoveryPayload(stagedAbs)
     return { restored: true }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') return { restored: false }
@@ -348,8 +360,12 @@ function parseReplaceJournal(raw: string): ReplaceJournal | null {
       && typeof entry.replacementHash === 'string'
       && SHA256_RE.test(entry.expectedHash)
       && SHA256_RE.test(entry.replacementHash)
-      && (entry.phase === undefined || entry.phase === 'quarantine-save-pending' || entry.phase === 'manual-recovery-required')
+      && (entry.phase === undefined
+        || entry.phase === 'quarantine-save-pending'
+        || entry.phase === 'manual-recovery-required'
+        || entry.phase === 'post-commit-external-mutation')
       && (entry.pendingReplacement === undefined || typeof entry.pendingReplacement === 'string')
+      && (entry.observedStagedHash === undefined || SHA256_RE.test(entry.observedStagedHash))
     ) {
       return entry as ReplaceJournal
     }
@@ -710,6 +726,14 @@ async function recoverReplaceJournal(
     note(journalAbs, 'quarantined', 'manual recovery set retained; no generation was touched')
     return
   }
+  if (journal.phase === 'post-commit-external-mutation') {
+    note(
+      journalAbs,
+      'quarantined',
+      'post-commit external mutation retained; no generation was touched',
+    )
+    return
+  }
   const stagedAbs = path.join(dir, journal.staged)
   const saveAbs = path.join(dir, journal.replacement)
   const quarantineReplacement = async (): Promise<string> => {
@@ -736,7 +760,7 @@ async function recoverReplaceJournal(
     // the hidden temp stays and is reported.
     if (await exists(saveAbs)) {
       if (targetExists) {
-        await rm(saveAbs)
+        await removeDurableRecoveryPayload(saveAbs)
         note(saveAbs, 'cleaned', 'uncommitted save temp')
       } else {
         note(saveAbs, 'quarantined', 'save temp without a target; kept for inspection')
@@ -751,8 +775,20 @@ async function recoverReplaceJournal(
     const targetIsReplacement = await hashMatches(targetAbs, journal.replacementHash)
     const targetIsExpected = await hashMatches(targetAbs, journal.expectedHash)
     if (targetIsReplacement) {
-      await rm(stagedAbs)
-      await rm(saveAbs)
+      // A completed replacement must not make a changed old generation
+      // disappear. This also protects the case where the phase rewrite was
+      // interrupted after an external old-FD write.
+      if (!await hashMatches(stagedAbs, journal.expectedHash)) {
+        note(journalAbs, 'quarantined', 'staged generation changed after replacement; retained for inspection')
+        await rewriteDurableJournal(journalAbs, {
+          ...journal,
+          phase: 'post-commit-external-mutation',
+          observedStagedHash: await readHash(stagedAbs),
+        }).catch(() => {})
+        return
+      }
+      await removeDurableRecoveryPayload(stagedAbs)
+      await removeDurableRecoveryPayload(saveAbs)
       await removeDurableJournal(journalAbs).catch(() => {})
       note(targetAbs, 'cleaned', 'staging from a completed save')
     } else {
@@ -779,8 +815,8 @@ async function recoverReplaceJournal(
   ) {
     try {
       await fs.link(saveAbs, targetAbs)
-      await rm(saveAbs)
-      await rm(stagedAbs)
+    await removeDurableRecoveryPayload(saveAbs)
+    await removeDurableRecoveryPayload(stagedAbs)
       await removeDurableJournal(journalAbs).catch(() => {})
       note(targetAbs, 'completed-save', 'interrupted save completed from journal')
       return
