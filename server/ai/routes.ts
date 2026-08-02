@@ -269,12 +269,16 @@ ai.delete('/settings/key', (c) => {
 })
 
 // ---- /active ----
-ai.get('/active', (c) =>
-  c.json({
-    activeId: sessions.getActiveSessionId(getDb()),
-    configured: Boolean(resolveAiRuntimeConfig().apiKey),
+ai.get('/active', (c) => {
+  const db = getDb()
+  const storedActiveId = sessions.getActiveSessionId(db)
+  const activeSession = storedActiveId === null ? null : sessions.getSession(db, storedActiveId)
+  return c.json({
+    activeId: activeSession?.id ?? null,
+    activeSession,
+    configured: Boolean(resolveAiRuntimeConfig(db).apiKey),
   })
-)
+})
 
 ai.put('/active', async (c) => {
   const body = await c.req.json().catch(() => null) as { sessionId?: unknown } | null

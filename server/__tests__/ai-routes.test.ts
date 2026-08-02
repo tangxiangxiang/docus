@@ -397,8 +397,9 @@ describe('PUT /api/ai/active', () => {
     expect(await r.json()).toEqual({ sessionId: created.id })
 
     const get = await call('GET', '/active')
-    const getBody = await get.json() as { activeId: number | null; configured: boolean }
+    const getBody = await get.json() as { activeId: number | null; configured: boolean; activeSession?: { id: number; title: string } }
     expect(getBody.activeId).toEqual(created.id)
+    expect(getBody.activeSession).toMatchObject({ id: created.id, title: '' })
   })
 
   it('clears the active session when sessionId is null', async () => {

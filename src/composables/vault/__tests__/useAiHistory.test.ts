@@ -62,11 +62,15 @@ describe('useAiHistory', () => {
     })
 
     it('with an active session, populates activeSession and messages', async () => {
-      queue.push({ status: 200, body: { activeId: 42, configured: true } })
+      queue.push({ status: 200, body: {
+        activeId: 42,
+        activeSession: { id: 42, title: 'Existing conversation', createdAt: 10, updatedAt: 20 },
+        configured: true,
+      } })
       queue.push({ status: 200, body: [{ id: 1, sessionId: 42, role: 'user', content: 'hi', createdAt: 100 }] })
       const h = setup()
       await h.api.loadActive()
-      expect(h.activeSession.value).toEqual({ id: 42, title: '', createdAt: expect.any(Number), updatedAt: expect.any(Number) })
+      expect(h.activeSession.value).toEqual({ id: 42, title: 'Existing conversation', createdAt: 10, updatedAt: 20 })
       expect(h.messages.value[0].content).toBe('hi')
     })
   })
@@ -80,12 +84,13 @@ describe('useAiHistory', () => {
       // setActiveSessionId (called inside createSession)
       queue.push({ status: 200, body: { sessionId: 1 } })
       // refreshSessions after done
-      queue.push({ status: 200, body: [] })
+      queue.push({ status: 200, body: [{ id: 1, title: 'x', createdAt: 1, updatedAt: 2 }] })
 
       const h = setup()
       await h.api.loadActive()
       await h.api.sendMessage('x')
       expect(h.activeSession.value?.id).toBe(1)
+      expect(h.activeSession.value?.title).toBe('x')
       expect(h.messages.value).toHaveLength(2)
       expect(h.messages.value[0]).toMatchObject({ id: 7, role: 'user', content: 'x' })
       expect(h.messages.value[1]).toMatchObject({ id: 8, role: 'assistant' })

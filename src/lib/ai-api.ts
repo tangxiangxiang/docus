@@ -45,6 +45,8 @@ export interface ToolCallRecord {
 export interface ActiveSession {
   activeId: number | null
   configured: boolean
+  /** Full active session metadata when an active session exists. */
+  activeSession?: Session | null
 }
 
 export interface AiSettings {

@@ -95,7 +95,9 @@ function createAiHistory(publishChange: (event: FileChangeEvent) => void): AiHis
         messages.value = []
         return
       }
-      activeSession.value = { id: out.activeId, title: '', createdAt: 0, updatedAt: 0 }
+      activeSession.value = out.activeSession?.id === out.activeId
+        ? out.activeSession
+        : { id: out.activeId, title: '', createdAt: 0, updatedAt: 0 }
       messages.value = await api.listMessages(out.activeId)
     } finally {
       isLoading.value = false
@@ -103,7 +105,13 @@ function createAiHistory(publishChange: (event: FileChangeEvent) => void): AiHis
   }
 
   async function refreshSessions() {
-    sessions.value = await api.listSessions()
+    const nextSessions = await api.listSessions()
+    if (!Array.isArray(nextSessions)) return
+    sessions.value = nextSessions
+    const activeId = activeSession.value?.id
+    if (activeId === undefined) return
+    const refreshedActive = nextSessions.find((session) => session.id === activeId)
+    if (refreshedActive) activeSession.value = refreshedActive
   }
 
   async function createSession(): Promise<Session> {
