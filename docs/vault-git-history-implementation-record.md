@@ -12,6 +12,13 @@ Consolidated: 2026-07-31
 Closure: DRAFT — CLOSURE IN PROGRESS
 ```
 
+> **History Feature State: TEMPORARILY FROZEN**
+>
+> Normal Personal Use: SUPPORTED<br>
+> Final Closure: NOT COMPLETE<br>
+> Owner Approval: PENDING<br>
+> Maintenance Mode: NOT ENTERED
+
 This document records only behavior observed in production and test
 source at the baseline above. `git diff` confirms that later
 documentation commits through the consolidation starting point did
@@ -741,3 +748,91 @@ passed and 2 skipped; typecheck PASS; build PASS with existing dependency
 pure-annotation/chunk-size warnings; and `git diff --check` PASS. Linux,
 Windows, DST subprocess evidence, H-C13 bootstrap serialization, and Owner
 Approval remain open. Closure remains `DRAFT — CLOSURE IN PROGRESS`.
+
+## 2026-08-02 History Feature Freeze
+
+History is temporarily frozen for maintenance prioritization. Normal
+single-user personal use is supported, while remaining work is concentrated
+in extreme filesystem concurrency races. Fully addressing those races would
+require a directory-handle protocol, native filesystem interfaces, delayed
+quarantine, or a broader file-transaction layer. Continuing to add patches
+now has a lower expected benefit than the risk of regressions in ordinary
+paths.
+
+This freeze is not final security acceptance, does not close all Closure
+findings, and does not enter formal Closure maintenance mode.
+
+### Supported Usage
+
+- one user and one active Docus instance;
+- a local-disk Vault;
+- ordinary editing, saving, restoring, version creation, and withdrawal;
+- occasional non-adversarial external-editor edits;
+- a personally managed Vault with regular backups.
+
+### Unsupported / High-Risk Usage
+
+Do not treat the current implementation as suitable for multiple Docus
+instances on one Vault, several editors repeatedly writing the same file,
+unstable or network filesystems, multiple sync tools writing the same Vault,
+hostile inode/pathname race generation, or security-boundary,
+multi-user, or multi-tenant isolation.
+
+### User Guidance
+
+Back up the Vault regularly. Avoid several programs saving the same document
+at high frequency. If an anomaly occurs, do not manually delete `.docus-*`
+hidden artifacts. Preserve quarantine files and journals for analysis or
+recovery, and let external synchronization finish before reopening Docus.
+
+### Deferred Findings and Risk Acceptance
+
+The detailed backlog is recorded in
+[vault-git-history-freeze-backlog.md](vault-git-history-freeze-backlog.md).
+H-FREEZE-1 through H-FREEZE-5 remain `DEFERRED`; this freeze does not
+declare them closed.
+
+The project temporarily accepts these risks only for local personal use, one
+active Docus instance, ordinary filesystem behavior, and a non-adversarial
+environment. It does not accept them for hostile local processes,
+multi-writer coordination, network filesystems, security-boundary guarantees,
+or multi-user/multi-tenant use. This is a reversible maintenance decision,
+not a security proof.
+
+### Reopening and Contribution Rules
+
+Reopen History hardening after quarantine or journal residue, any user-data
+loss report, a plan for multi-instance or network-filesystem support, strong
+external-editor concurrency support, native dirfd/openat support, Final
+Closure or cross-platform certification work, an Owner request to close
+H-C10, or reuse of the History atomic layer by another module.
+
+During the freeze, do not accept new History enhancements, pure refactors, or
+complexity-only atomic protocol changes. Only deterministic normal-path bugs,
+user-data-loss fixes, security vulnerabilities, compile failures, test
+stability fixes, platform compatibility fixes, or necessary documentation
+corrections may bypass it. Each bypassing production-code PR must state:
+
+```text
+Why this change must bypass History Feature Freeze:
+User-visible impact:
+```
+
+### Freeze Baseline and Current Status
+
+```text
+History Freeze Production Baseline: e5e20c5ed3950e625003a443184fe8131cd20369
+History Freeze Client-Test Baseline: ba90ce51dca07606e0feaa300ef7826f1b52cf22
+History Freeze Documentation Baseline: 4fb35776e47befc01ae9029a714a041ae7eb8078
+Freeze documentation commit: recorded by the follow-up bookkeeping commit
+
+History Feature State: TEMPORARILY FROZEN
+Normal Personal Use: SUPPORTED
+Final Closure: DRAFT — CLOSURE IN PROGRESS
+Owner Approval: PENDING
+Maintenance Mode: NOT ENTERED
+```
+
+The freeze-only changes do not modify History production code, UI,
+interaction, or the atomic file protocol. Verification is recorded by the
+follow-up bookkeeping commit.

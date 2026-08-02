@@ -7,6 +7,13 @@
 **Production-code review baseline:** `00b17359d151bbdbe56115ed992700ecbb5e1ca1`
 **Repository:** `tangxiangxiang/docus`
 
+> **History Feature State: TEMPORARILY FROZEN**
+>
+> Normal Personal Use: SUPPORTED<br>
+> Final Closure: NOT COMPLETE<br>
+> Owner Approval: PENDING<br>
+> Maintenance Mode: NOT ENTERED
+
 This retrospective specification is the design authority for Vault Git
 History. It must be read with the
 [Implementation Plan](../plans/2026-07-30-vault-git-history-implementation-plan.md),
@@ -1470,3 +1477,75 @@ Verification on the macOS development host for this commit: 163 test files,
 with existing dependency pure-annotation/chunk-size warnings; and
 `git diff --check` passed. No Linux or Windows run and no Owner Approval are
 claimed.
+
+## 2026-08-02 History Feature Freeze
+
+The design is temporarily frozen for maintenance prioritization. Normal
+single-user personal use is supported, while remaining work is concentrated
+in extreme filesystem concurrency races. Fully addressing those races would
+require a directory-handle protocol, native filesystem interfaces, delayed
+quarantine, or a broader file-transaction layer. This freeze avoids adding
+complexity whose regression risk exceeds its current user benefit.
+
+This is not final security acceptance, does not close all Closure findings,
+and does not enter formal Closure maintenance mode.
+
+### Supported Usage
+
+- one user and one active Docus instance;
+- a local-disk Vault;
+- ordinary editing, saving, restoring, version creation, and withdrawal;
+- occasional non-adversarial external-editor edits;
+- a personally managed Vault with regular backups.
+
+### Unsupported / High-Risk Usage
+
+Multiple Docus instances on one Vault, high-frequency multi-editor writes,
+unstable or network filesystems, multiple sync tools writing the same Vault,
+hostile inode/pathname race generation, and security-boundary,
+multi-user, or multi-tenant isolation are outside this temporary support
+envelope.
+
+### Deferred Findings
+
+See [vault-git-history-freeze-backlog.md](../../vault-git-history-freeze-backlog.md)
+for H-FREEZE-1 through H-FREEZE-5. They remain `DEFERRED`, not closed.
+The accepted risk is limited to local personal use, one active Docus instance,
+ordinary filesystem behavior, and a non-adversarial environment. It is not a
+security proof and may be revoked.
+
+### Reopening Conditions and Contribution Rules
+
+Reopen hardening after quarantine or journal residue, user-data loss, plans
+for multi-instance/network-filesystem/strong external-editor support, native
+dirfd/openat support, Final Closure or cross-platform certification work, an
+Owner request to close H-C10, or reuse of the atomic layer by another module.
+
+During the freeze, only deterministic normal-path bugs, user-data-loss fixes,
+security vulnerabilities, compile failures, test stability fixes, platform
+compatibility fixes, or necessary documentation corrections may bypass it.
+Every bypassing production-code PR must state:
+
+```text
+Why this change must bypass History Feature Freeze:
+User-visible impact:
+```
+
+### Freeze Baseline and Current Status
+
+```text
+History Freeze Production Baseline: e5e20c5ed3950e625003a443184fe8131cd20369
+History Freeze Client-Test Baseline: ba90ce51dca07606e0feaa300ef7826f1b52cf22
+History Freeze Documentation Baseline: 4fb35776e47befc01ae9029a714a041ae7eb8078
+Freeze documentation commit: recorded by the follow-up bookkeeping commit
+
+History Feature State: TEMPORARILY FROZEN
+Normal Personal Use: SUPPORTED
+Final Closure: DRAFT — CLOSURE IN PROGRESS
+Owner Approval: PENDING
+Maintenance Mode: NOT ENTERED
+```
+
+The freeze-only changes do not modify History production code, UI,
+interaction, or the atomic file protocol. Verification is recorded by the
+follow-up bookkeeping commit.
