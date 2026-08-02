@@ -137,7 +137,6 @@ function onLinkNavigate(p: string) {
     </section>
     <section v-show="activeTab === 'properties'" class="metadata-slot" role="tabpanel" :aria-label="t('metadata.title')">
       <header class="metadata-panel-header">
-        <strong>{{ t('metadata.title') }}</strong>
         <span v-if="path" :title="path">{{ path }}</span>
       </header>
       <DocumentMetadataForm
@@ -233,23 +232,22 @@ function onLinkNavigate(p: string) {
   padding-top: 0;
   padding-bottom: 0;
 }
-.metadata-slot { padding-bottom: 24px; }
+.metadata-slot {
+  padding-top: 0;
+  padding-bottom: 24px;
+}
 .history-slot {
   padding: 0;
   overflow: hidden;
 }
 .history-slot :deep(.right-rail-history) { height: 100%; }
 .metadata-panel-header {
-  display: grid;
-  gap: 4px;
-  padding: 0 18px 12px;
+  display: block;
+  padding: 9px 18px;
   border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 60%, transparent);
 }
-.metadata-panel-header strong {
-  color: var(--vs-text-1, var(--text));
-  font-size: 0.82rem;
-}
 .metadata-panel-header span {
+  display: block;
   overflow: hidden;
   color: var(--vs-text-3, var(--text-muted));
   font: 0.7rem var(--mono);
