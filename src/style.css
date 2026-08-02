@@ -315,10 +315,6 @@ hr {
   fill: var(--accent);
   filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 80%, transparent));
 }
-.brand-network-label {
-  fill: var(--text-h);
-  font: 600 24px var(--sans);
-}
 .brand-network-particle {
   fill: var(--accent-hover);
   filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent-hover) 90%, transparent));

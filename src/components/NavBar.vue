@@ -57,15 +57,14 @@ let brandHoverTimer: ReturnType<typeof setTimeout> | undefined
 
 const BRAND_NODES = [
   { x: 500, y: 145 },
-  { x: 665, y: 235 },
-  { x: 765, y: 382 },
-  { x: 765, y: 618 },
-  { x: 665, y: 765 },
-  { x: 500, y: 855 },
-  { x: 335, y: 765 },
-  { x: 235, y: 618 },
-  { x: 235, y: 382 },
-  { x: 335, y: 235 },
+  { x: 728, y: 228 },
+  { x: 849, y: 438 },
+  { x: 808, y: 678 },
+  { x: 621, y: 834 },
+  { x: 379, y: 834 },
+  { x: 192, y: 678 },
+  { x: 151, y: 438 },
+  { x: 272, y: 228 },
 ]
 
 function clearBrandHoverTimer() {
@@ -195,9 +194,6 @@ const SCOPE_ICONS: Record<string, string> = {
             <line class="brand-network-link" :x1="node.x" :y1="node.y" x2="500" y2="500" />
             <circle class="brand-network-dot" :cx="node.x" :cy="node.y" r="34" />
             <circle class="brand-network-dot-core" :cx="node.x" :cy="node.y" r="8" />
-            <text class="brand-network-label" :x="node.x" :y="node.y + 5" text-anchor="middle">
-              {{ index + 1 }}
-            </text>
             <circle class="brand-network-particle" cx="0" cy="0" r="8">
               <animateMotion
                 :begin="`${index * 140}ms`"

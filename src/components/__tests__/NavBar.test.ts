@@ -86,7 +86,7 @@ describe('NavBar — brand constellation', () => {
     vi.advanceTimersByTime(1)
     await nextTick()
     expect(wrapper.find('.brand-constellation').exists()).toBe(true)
-    expect(wrapper.findAll('.brand-network-node')).toHaveLength(10)
+    expect(wrapper.findAll('.brand-network-node')).toHaveLength(9)
   })
 
   it('closes when the pointer leaves the brand', async () => {
