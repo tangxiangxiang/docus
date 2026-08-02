@@ -639,3 +639,32 @@ The initial sandbox attempt was blocked by `tsx` child-process IPC `EPERM`; a
 controlled-permission rerun passed. Linux/Windows validation, explicit DST
 subprocess evidence, H-C13 bootstrap follow-up, and Owner Approval remain
 open. Closure remains `DRAFT — CLOSURE IN PROGRESS`.
+
+## 19. 2026-08-02 Temporary Ownership and Repair Persistence Follow-up
+
+Production-code commit: `bece8228227c5018339336c6ce00448b57192a6e`.
+
+The atomic text writer now returns an immutable creation proof containing
+the temporary file's `dev/ino` captured from its open `FileHandle`, plus the
+parent directory identity captured before creation. Closing the handle is
+followed by a deterministic test seam and parent/path identity verification;
+identity failure quarantines the artifact and never removes the replacement
+pathname. Both create-only and replacement preparation consume this proof,
+so they cannot re-claim a file by a later pathname `lstat`.
+
+`repairIndex` now distinguishes a normal unverifiable repair from the case
+where the real Index was already replaced but the transaction update could
+not be persisted. That case returns `replacementApplied`, `finalHead`, and
+`repairStatePersistenceFailed`; `/api/history/repair-index` emits HTTP 409
+with `HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED`, and the composable
+shows a manual Git-status warning. Legacy 12-hex markers remain blocked, but
+are described as unverified (`reason: unverified-legacy-marker`) rather than
+as authenticated historical Docus versions.
+
+Focused evidence: `atomicTextWrite`, `history-git`, `history-routes`, and
+`useHistoryWithdraw` passed 175 tests on macOS; client/server typecheck
+passed. Final evidence on macOS is 163 test files with 2537 passed and 2
+skipped, typecheck PASS, build PASS with existing dependency/chunk-size
+warnings, and `git diff --check` PASS. H-C10's portable
+directory-handle/openat gap, Linux/Windows validation, DST subprocess tests,
+H-C13 bootstrap serialization, and Owner Approval remain open.

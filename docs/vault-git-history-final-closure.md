@@ -527,6 +527,38 @@ History feature remains:
 DRAFT — CLOSURE IN PROGRESS
 ```
 
+## 14. 2026-08-02 Temporary Ownership and Repair Persistence Follow-up
+
+Current production-code commit:
+`bece8228227c5018339336c6ce00448b57192a6e`.
+
+This follow-up closes the reviewed P1/P2/P3 defects without changing the
+History layout or interaction:
+
+| Finding | Result |
+|---|---|
+| Temporary-file re-claim race | Temporary-file `dev/ino` is captured from the still-open `FileHandle.stat({ bigint: true })`; the parent identity is captured before creation and revalidated after close. `prepareAtomicTextCreate` and `prepareAtomicTextWrite` no longer recapture ownership from a pathname. A deterministic post-close parent replacement test proves the outside occupant is not removed or linked. |
+| Repair metadata after Index replacement | When a HEAD move wins after the real Index replacement and the replacement transaction cannot be persisted, Repair returns `repairStatePersistenceFailed` with `replacementApplied` and `finalHead`; the route returns `HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED` (409), and the UI tells the user to inspect Git manually. |
+| Unverifiable legacy marker | Arbitrary 12-hex markers are no longer described as confirmed old Docus versions; the stable legacy code now carries `reason: unverified-legacy-marker` and user-facing text explicitly says Vault ownership cannot be confirmed. |
+
+Focused evidence on macOS: 4 test files, 175 tests passed; client and
+server typecheck passed. Final required command evidence on macOS is:
+
+```text
+npm test -- --run: 163 test files passed; 2537 passed, 2 skipped
+npm run typecheck: PASS
+npm run build: PASS (existing dependency annotation/chunk-size warnings only)
+git diff --check: PASS
+```
+
+The portable directory-handle/openat
+TOCTOU window in H-C10, Linux/Windows execution, DST subprocess evidence,
+H-C13 bootstrap serialization, and Owner Approval remain open. Closure stays:
+
+```text
+DRAFT — CLOSURE IN PROGRESS
+```
+
 ## 13. 2026-08-02 Restore/Index/Error-Code Follow-up
 
 The production-code commit for this follow-up is

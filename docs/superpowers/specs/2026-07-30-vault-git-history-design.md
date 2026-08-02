@@ -1382,3 +1382,33 @@ permissions. Linux and Windows have not been run. The remaining portable
 directory-handle/openat TOCTOU window in H-C10, explicit DST subprocess
 coverage, H-C13 bootstrap serialization, and Owner Approval remain open.
 History Closure is therefore still `DRAFT — CLOSURE IN PROGRESS`.
+
+## 29. 2026-08-02 Temporary Ownership and Repair Persistence Follow-up
+
+Production-code baseline: `bece8228227c5018339336c6ce00448b57192a6e`.
+
+The atomic write contract requires creation-time ownership proof: capture
+the parent directory identity before opening the exclusive temporary file,
+capture the file identity from the open handle with bigint `stat`, close the
+handle, then revalidate the parent and pathname identity before returning a
+prepared operation. Commit and rollback continue to fail closed on any
+mismatch. This closes the reviewed post-close re-claim race; it does not
+claim portable `openat` semantics, so H-C10's residual check/use window stays
+open pending a cross-platform directory-handle design.
+
+Repair metadata has a separate degraded-conflict contract when a real Index
+replacement has already happened but the replacement transaction cannot be
+persisted. The result exposes `replacementApplied`, `finalHead`, and
+`repairStatePersistenceFailed`; the route returns
+`HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED` with non-sensitive details,
+and the UI instructs manual Git inspection. Arbitrary legacy-looking marker
+values are reported only as unverified legacy markers, never as confirmed
+Vault ownership.
+
+The deterministic test seams cover the temporary close-to-identity window
+and replacement-time Repair metadata failure. Final macOS evidence is 163
+test files with 2537 passed and 2 skipped; typecheck, build, and
+`git diff --check` all passed, with only existing build warnings. Linux/Windows
+validation, DST subprocess evidence, H-C13 bootstrap serialization, and
+Owner Approval are still required; Closure remains
+`DRAFT — CLOSURE IN PROGRESS`.
