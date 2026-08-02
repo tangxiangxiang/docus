@@ -1,1 +1,17 @@
-<?xml version="1.0" standalone="no"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg t="1780397589017" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="36507" xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="200"><path d="M895.914667 467.157333H1024v132.352h-128v129.194667h-63.445333V853.333333H768v-124.629333h-63.445333V853.333333H640v-124.629333H384V853.333333H319.488v-124.629333H256V853.333333H191.445333v-124.629333H128V599.466667H0v-132.266667h128V213.333333h767.914667v253.824zM256 467.157333h63.488V345.685333H256v121.472z m448.426667 0H768V345.685333h-63.573333v121.472z" fill="#D97757" p-id="36508"></path></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Docus</title>
+  <desc id="desc">A knowledge crest with connected nodes</desc>
+  <defs>
+    <linearGradient id="knowledge-gradient" x1="116" y1="112" x2="872" y2="906" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A78BFA"/>
+      <stop offset="1" stop-color="#5B6EE1"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#knowledge-gradient)" shape-rendering="geometricPrecision">
+    <circle cx="377" cy="506" r="57"/>
+    <path d="M512 960a448 448 0 1 1 174-861 448 448 0 0 1-174 861Zm0-876C276 84 84 276 84 512s192 428 428 428 428-192 428-428S748 84 512 84Z"/>
+    <path d="M512 910a397 397 0 1 1 155-31 396 396 0 0 1-155 31Zm0-787c-214 0-388 174-388 389s174 388 388 388 388-174 388-388-174-389-388-389Z"/>
+    <path d="M377 376a130 130 0 1 1-92 38 130 130 0 0 1 92-38Zm0-69c-110 0-199 89-199 199s89 199 199 199 199-89 199-199-89-199-199-199Zm380 156a54 54 0 1 1-54 54 54 54 0 0 1 54-54Zm0-49a103 103 0 1 0 103 103 103 103 0 0 0-103-103Z"/>
+    <path d="M659 520a17 17 0 0 1-10-3c-5-3-21-13-33-13-13 0-32 10-38 13a17 17 0 1 1-17-30c3-2 31-18 55-18 26 0 51 18 54 20a17 17 0 0 1-10 31Z"/>
+  </g>
+</svg>

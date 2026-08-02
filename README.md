@@ -25,6 +25,18 @@ The vault is split into three zones, and docus treats them differently:
 
 Notes flow one way: Literature feeds Inbox, where AI helps you think; what earns its place then moves to Archive, where AI helps you connect the dots. docus is built around that flow.
 
+## The Docus mark
+
+The Docus logo is a knowledge crest built from two circles of different sizes,
+connected at the center. The larger circle represents the personal knowledge
+space; the smaller circle represents an idea, note, or newly discovered piece
+of information. Their connection represents the links formed through reading,
+thinking, and AI-assisted discovery.
+
+Together, the two connected circles express Docus as a **second brain**: not
+just a place to store notes, but a living network that helps ideas find one
+another and become durable knowledge.
+
 ## Feature Status
 
 ### Edit Feature
