@@ -602,7 +602,7 @@ sentinel support, and Owner Approval. Closure therefore remains
 
 ## 30. 2026-08-02 Filesystem Pathname Race Follow-up
 
-Production-code commit: `dab1e12c1c7b55ce3c47242bf65d5cdecc7ff244`.
+Production-code commit: `dab1e12119c9f7f84316fe419a6d41b2e2fb3b63`.
 
 The atomic text path now captures durable create-only artifacts from the
 exclusive open handle, records file and parent `dev/ino`, and verifies that

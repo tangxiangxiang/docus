@@ -596,7 +596,7 @@ DRAFT — CLOSURE IN PROGRESS
 ## 15. 2026-08-02 Filesystem Pathname Race Follow-up
 
 Current production-code commit:
-`dab1e12c1c7b55ce3c47242bf65d5cdecc7ff244`.
+`dab1e12119c9f7f84316fe419a6d41b2e2fb3b63`.
 
 This follow-up narrows the remaining portable pathname races without
 claiming a directory-handle protocol:
@@ -623,6 +623,15 @@ server/__tests__/atomicTextWrite.test.ts: 22 passed
 server/__tests__/createOnlyMove.test.ts: 22 passed
 src/composables/vault/__tests__/useHistoryCommit.test.ts: passed
 src/lib/__tests__/history-api.test.ts: passed
+
+Full required macOS verification:
+
+```text
+npm test -- --run: 163 test files passed; 2543 passed, 2 skipped
+npm run typecheck: PASS
+npm run build: PASS (existing dependency annotation/chunk-size warnings only)
+git diff --check: PASS
+```
 ```
 
 Linux/Windows validation, DST subprocess evidence, H-C13 bootstrap

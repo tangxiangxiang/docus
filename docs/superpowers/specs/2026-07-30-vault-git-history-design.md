@@ -1415,7 +1415,7 @@ Owner Approval are still required; Closure remains
 
 ## 30. 2026-08-02 Pathname Race Reduction
 
-Production code: `dab1e12c1c7b55ce3c47242bf65d5cdecc7ff244`.
+Production code: `dab1e12119c9f7f84316fe419a6d41b2e2fb3b63`.
 
 The atomic writer now treats every temporary/staged artifact used by the
 History document path as an owned generation (`dev`, `ino`, and parent
