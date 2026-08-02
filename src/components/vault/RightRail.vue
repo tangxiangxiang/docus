@@ -335,12 +335,20 @@ function onLinkNavigate(p: string) {
 
 .toc-panel-link:hover {
   color: var(--vs-text-1, var(--text));
+  background: transparent;
+}
+
+.toc-panel-item:hover {
   background: var(--vs-hover-bg, var(--bg-soft));
 }
 
 .toc-panel-item.active .toc-panel-link {
   color: var(--vs-text-1, var(--text));
   font-weight: 600;
+  background: transparent;
+}
+
+.toc-panel-item.active {
   background: var(--vs-hover-bg, var(--bg-soft));
 }
 
