@@ -245,8 +245,10 @@ export async function getIndexRepairStatus(): Promise<IndexRepairTransaction[]> 
 }
 
 export interface RepairIndexResult {
-  repaired: true
+  repaired: boolean
   repairStatePersistenceFailed?: boolean
+  replacementApplied?: boolean
+  finalHead?: string | null
 }
 
 export async function repairIndex(token: string): Promise<RepairIndexResult> {

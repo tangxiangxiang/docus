@@ -106,6 +106,7 @@ const STABLE_HISTORY_ERROR_CODES = new Set([
   'HISTORY_REPOSITORY_CHANGED',
   'HISTORY_REPOSITORY_OPERATION',
   'HISTORY_INDEX_REPAIR_CONFLICT',
+  'HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED',
   'HISTORY_NOT_DOCUS_VERSION',
   'HISTORY_LEGACY_DOCUS_VERSION',
   'HISTORY_RESOURCE_LIMIT',
@@ -399,6 +400,18 @@ history.post('/repair-index', async (c) => {
       await ensureRepoWithinVaultMutation(repoRoot())
       await historyMutationHooks?.beforeMutation?.('repair-index')
       const result = await git.repairIndex(repoRoot(), token)
+      if (!result.repaired && result.repairStatePersistenceFailed) {
+        return bad(
+          c,
+          'Git Index changed, but the repair record could not be saved; inspect Git status manually',
+          409,
+          'HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED',
+          {
+            replacementApplied: result.replacementApplied === true,
+            finalHead: result.finalHead ?? null,
+          },
+        )
+      }
       if (!result.repaired) {
         return bad(c, 'index repair could not be verified', 409, 'HISTORY_INDEX_REPAIR_CONFLICT')
       }

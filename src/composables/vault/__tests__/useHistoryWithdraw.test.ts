@@ -168,7 +168,7 @@ describe('useHistoryWithdraw', () => {
 
   it.each([
     ['HISTORY_NOT_DOCUS_VERSION', 'This commit is not a Docus version created by this Vault, so it cannot be withdrawn.'],
-    ['HISTORY_LEGACY_DOCUS_VERSION', 'This version was created with an older Docus identity format. It can still be viewed or restored, but it cannot be withdrawn.'],
+    ['HISTORY_LEGACY_DOCUS_VERSION', 'This commit contains an unverifiable legacy Docus marker. It cannot be confirmed as belonging to this Vault, so it cannot be withdrawn; it can still be viewed or restored.'],
   ] as const)('shows a specific marker message for %s', async (code, expected) => {
     const h = history()
     const withdraw = useHistoryWithdraw({

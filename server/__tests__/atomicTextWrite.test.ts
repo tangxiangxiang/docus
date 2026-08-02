@@ -6,6 +6,7 @@ import {
   AtomicTextWriteConflictError,
   AtomicTextWriteTargetMissingError,
   UnstableTextSnapshotError,
+  __setAtomicWriteTestHooksForTesting,
   atomicRemoveTextIfUnchanged,
   atomicReplaceText,
   atomicReplaceTextIfUnchanged,
@@ -31,6 +32,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  __setAtomicWriteTestHooksForTesting(null)
   vi.restoreAllMocks()
   await fs.rm(directory, { recursive: true, force: true })
 })
@@ -121,6 +123,37 @@ describe('atomic text writes', () => {
     })
     await expect(fs.stat(missing)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await fs.readFile(prepared.temporaryPath, 'utf8')).toBe('external occupant')
+  })
+
+  it('does not adopt an external file when the parent is replaced after close', async () => {
+    const folder = path.join(directory, 'folder')
+    const movedFolder = path.join(directory, 'folder-original')
+    const missing = path.join(folder, 'note.md')
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-atomic-outside-'))
+    let outsideTemp = ''
+    await fs.mkdir(folder)
+
+    __setAtomicWriteTestHooksForTesting({
+      afterTemporaryCloseBeforeIdentity: async (temporaryPath) => {
+        outsideTemp = path.join(outside, path.basename(temporaryPath))
+        await fs.rename(folder, movedFolder)
+        await fs.symlink(outside, folder)
+        await fs.writeFile(outsideTemp, 'external occupant', 'utf8')
+      },
+    })
+
+    try {
+      await expect(prepareAtomicTextCreate(missing, 'created')).rejects.toMatchObject({
+        code: 'HISTORY_PATH_MOVED',
+      })
+      expect(await fs.readFile(outsideTemp, 'utf8')).toBe('external occupant')
+      const movedEntries = await fs.readdir(movedFolder)
+      expect(movedEntries).toHaveLength(1)
+      expect(movedEntries[0]).toMatch(/^\.note\.md\.docus-save-/)
+    } finally {
+      __setAtomicWriteTestHooksForTesting(null)
+      await fs.rm(outside, { recursive: true, force: true })
+    }
   })
 
   it('retries a snapshot when content changes between read and stat', async () => {

@@ -123,15 +123,31 @@ export function __setAtomicWriteCrashHooksForTesting(hooks: AtomicWriteCrashHook
   __atomicWriteCrashHooks = hooks
 }
 
-export interface PreparedAtomicTextWrite {
-  readonly temporaryPath: string
-  commit(): Promise<void>
-  rollback(): Promise<void>
+export type AtomicWriteTestHooks = {
+  afterTemporaryCloseBeforeIdentity?: (temporaryPath: string) => void | Promise<void>
+}
+let __atomicWriteTestHooks: AtomicWriteTestHooks | null = null
+export function __setAtomicWriteTestHooksForTesting(hooks: AtomicWriteTestHooks | null): void {
+  __atomicWriteTestHooks = hooks
 }
 
 type OwnedPathIdentity = {
   dev: string
   ino: string
+}
+
+type OwnedTemporaryFile = {
+  path: string
+  parentPath: string
+  fileIdentity: OwnedPathIdentity
+  parentIdentity: OwnedPathIdentity
+}
+
+export interface PreparedAtomicTextWrite {
+  readonly temporaryPath: string
+  readonly ownership: OwnedTemporaryFile
+  commit(): Promise<void>
+  rollback(): Promise<void>
 }
 
 export class AtomicTextWriteOwnershipError extends Error {
@@ -209,6 +225,7 @@ async function removeOwnedTemporaryPath(
  */
 export interface PreparedAtomicTextReplace {
   readonly temporaryPath: string
+  readonly ownership: OwnedTemporaryFile
   /**
    * Commit the replacement with an external-writer-safe protocol:
    *
@@ -239,12 +256,11 @@ export async function prepareAtomicTextCreate(
   options: { mode?: number } = {},
 ): Promise<PreparedAtomicTextWrite> {
   const prepared = await prepareAtomicTextWrite(targetPath, raw, options)
-  const parentPath = path.dirname(targetPath)
-  const temporaryIdentity = await captureOwnedFileIdentity(prepared.temporaryPath, targetPath)
-  const parentIdentity = await captureOwnedDirectoryIdentity(parentPath, targetPath)
+  const { parentPath, fileIdentity: temporaryIdentity, parentIdentity } = prepared.ownership
   let settled = false
   return {
     temporaryPath: prepared.temporaryPath,
+    ownership: prepared.ownership,
     async commit() {
       if (settled) return
       try {
@@ -445,32 +461,58 @@ async function writeTemporaryTextFile(
   targetPath: string,
   raw: string,
   options: { mode?: number },
-): Promise<string> {
+): Promise<OwnedTemporaryFile> {
   const directory = path.dirname(targetPath)
   const temporaryPath = path.join(
     directory,
     `.${path.basename(targetPath)}.docus-save-${randomUUID()}`,
   )
+  const parentIdentity = await captureOwnedDirectoryIdentity(directory, targetPath)
   let handle: Awaited<ReturnType<typeof fs.open>> | null = null
+  let fileIdentity: OwnedPathIdentity | null = null
   try {
     handle = await fs.open(
       temporaryPath,
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
       options.mode,
     )
+    const stat = await handle.stat({ bigint: true })
+    if (!stat.isFile()) throw new AtomicTextWriteOwnershipError(targetPath)
+    // The open handle is the creation proof. Never infer this identity by
+    // lstat'ing a pathname after an attacker has had a chance to replace it.
+    fileIdentity = { dev: stat.dev.toString(), ino: stat.ino.toString() }
     await handle.writeFile(raw, { encoding: 'utf8' })
+    if (options.mode !== undefined) await handle.chmod(options.mode)
     await handle.sync()
     await handle.close()
     handle = null
-    if (options.mode !== undefined) {
-      await fs.chmod(temporaryPath, options.mode)
+    await __atomicWriteTestHooks?.afterTemporaryCloseBeforeIdentity?.(temporaryPath)
+    await verifyOwnedTemporaryPath(
+      temporaryPath,
+      directory,
+      fileIdentity,
+      parentIdentity,
+      targetPath,
+    )
+    return {
+      path: temporaryPath,
+      parentPath: directory,
+      fileIdentity,
+      parentIdentity,
     }
   } catch (error) {
     await handle?.close().catch(() => {})
-    await fs.rm(temporaryPath, { force: true }).catch(() => {})
+    if (fileIdentity) {
+      await removeOwnedTemporaryPath(
+        temporaryPath,
+        directory,
+        fileIdentity,
+        parentIdentity,
+        targetPath,
+      ).catch(() => {})
+    }
     throw error
   }
-  return temporaryPath
 }
 
 export async function prepareAtomicTextWrite(
@@ -478,15 +520,15 @@ export async function prepareAtomicTextWrite(
   raw: string,
   options: { mode?: number } = {},
 ): Promise<PreparedAtomicTextReplace> {
-  const temporaryPath = await writeTemporaryTextFile(targetPath, raw, options)
-  const parentPath = path.dirname(targetPath)
-  const temporaryIdentity = await captureOwnedFileIdentity(temporaryPath, targetPath)
-  const parentIdentity = await captureOwnedDirectoryIdentity(parentPath, targetPath)
+  const ownedTemporary = await writeTemporaryTextFile(targetPath, raw, options)
+  const temporaryPath = ownedTemporary.path
+  const { parentPath, fileIdentity: temporaryIdentity, parentIdentity } = ownedTemporary
   const replacementHash = sha256Hex(raw)
   let settled = false
 
   return {
     temporaryPath,
+    ownership: ownedTemporary,
     async commit(expectedRaw: string) {
       if (settled) return
       await verifyOwnedTemporaryPath(
@@ -723,12 +765,18 @@ export async function atomicReplaceText(
   raw: string,
   options: { mode?: number } = {},
 ): Promise<void> {
-  const temporaryPath = await writeTemporaryTextFile(targetPath, raw, options)
+  const ownedTemporary = await writeTemporaryTextFile(targetPath, raw, options)
   try {
-    await renameWithTransientWindowsRetry(temporaryPath, targetPath)
+    await renameWithTransientWindowsRetry(ownedTemporary.path, targetPath)
     await syncParentDirectoryBestEffort(targetPath)
   } catch (error) {
-    await fs.rm(temporaryPath, { force: true }).catch(() => {})
+    await removeOwnedTemporaryPath(
+      ownedTemporary.path,
+      ownedTemporary.parentPath,
+      ownedTemporary.fileIdentity,
+      ownedTemporary.parentIdentity,
+      targetPath,
+    ).catch(() => {})
     throw error
   }
 }

@@ -561,6 +561,27 @@ describe('POST /api/history/repair-index', () => {
     }
   })
 
+  it('returns a structured degradation when a replaced Index repair record cannot be saved', async () => {
+    await call('GET', '/capability')
+    const repair = vi.spyOn(historyGit, 'repairIndex').mockResolvedValueOnce({
+      repaired: false,
+      replacementApplied: true,
+      repairStatePersistenceFailed: true,
+      finalHead: 'b'.repeat(40),
+    })
+    try {
+      const response = await call('POST', '/repair-index', { token: 'a'.repeat(32) })
+      expect(response.status).toBe(409)
+      expect(await response.json()).toEqual({
+        error: 'Git Index changed, but the repair record could not be saved; inspect Git status manually',
+        code: 'HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED',
+        details: { replacementApplied: true, finalHead: 'b'.repeat(40) },
+      })
+    } finally {
+      repair.mockRestore()
+    }
+  })
+
   it('returns 409 instead of clearing index content staged after the failure', async () => {
     await write('a.md', 'committed')
     const git = await import('../history/git.js')
@@ -691,7 +712,7 @@ describe('POST /api/history/drop', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({
       code: 'HISTORY_LEGACY_DOCUS_VERSION',
-      details: { reason: 'legacy-marker' },
+      details: { reason: 'unverified-legacy-marker' },
     })
   }, 15_000)
 

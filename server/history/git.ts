@@ -1176,7 +1176,12 @@ export async function repairIndex(
     beforeIndexReplaceForTesting?: () => Promise<void>
     beforeRepairStatePersistenceForTesting?: () => Promise<void>
   } = {},
-): Promise<{ repaired: boolean; repairStatePersistenceFailed?: boolean }> {
+): Promise<{
+  repaired: boolean
+  repairStatePersistenceFailed?: boolean
+  replacementApplied?: boolean
+  finalHead?: string | null
+}> {
   return withRepoMutation(repoRoot, async () => {
     await assertRepositoryIdle(repoRoot)
     const state = await readIndexRepairFile(repoRoot)
@@ -1223,9 +1228,31 @@ export async function repairIndex(
               }
             : item
         ))
-        await writeIndexRepairFile(repoRoot, { version: 2, transactions })
+        try {
+          await options.beforeRepairStatePersistenceForTesting?.()
+          await writeIndexRepairFile(repoRoot, { version: 2, transactions })
+        } catch {
+          // The real Index was already replaced, but the old transaction is
+          // no longer a valid proof for it. Never report a normal conflict
+          // while hiding that the replacement's repair record was not saved.
+          return {
+            repaired: false,
+            replacementApplied: true,
+            repairStatePersistenceFailed: true,
+            finalHead: replacementHead,
+          }
+        }
+        return {
+          repaired: false,
+          replacementApplied: true,
+          finalHead: replacementHead,
+        }
       }
-      return { repaired: false }
+      return {
+        repaired: false,
+        replacementApplied: attempt.replacementApplied,
+        finalHead: attempt.finalHead,
+      }
     }
     const next = state.transactions.filter((item) => item.token !== token)
     try {
@@ -1676,10 +1703,10 @@ export async function dropHeadCommit(
       const legacyVault = /^Docus-Vault:\s*([0-9a-f]{12})$/i.exec(vaultLines[0]?.trim() ?? '')
       if (versionMarkers.length === 1 && vaultLines.length === 1 && legacyVault) {
         throw Object.assign(
-          new Error('this version uses the legacy Docus identity format and cannot be withdrawn'),
+          new Error('this commit contains an unverifiable legacy Docus marker and cannot be withdrawn'),
           {
             code: 'HISTORY_LEGACY_DOCUS_VERSION',
-            details: { reason: 'legacy-marker' },
+            details: { reason: 'unverified-legacy-marker' },
           },
         )
       }

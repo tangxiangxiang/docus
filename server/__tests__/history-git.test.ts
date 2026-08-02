@@ -511,7 +511,7 @@ describe('addAndCommit + log', () => {
         movedHead = commit.stdout.trim()
         expect((await git.run(root, ['update-ref', 'HEAD', movedHead, oldHead])).status).toBe(0)
       },
-    })).resolves.toEqual({ repaired: false })
+    })).resolves.toMatchObject({ repaired: false, replacementApplied: true, finalHead: expect.any(String) })
 
     expect(movedHead).toBeTruthy()
     expect(await git.getIndexRepairStatus(root)).toEqual([
@@ -523,6 +523,39 @@ describe('addAndCommit + log', () => {
     ])
     await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toEqual({ repaired: true })
     expect(await git.getIndexRepairStatus(root)).toEqual([])
+  }, 10_000)
+
+  it('reports degraded conflict when a replaced Index cannot persist its new repair record', async () => {
+    await write('a.md', 'snapshot')
+    const result = await git.addAndCommit(root, ['a.md'], 'committed', {
+      expected: { 'a.md': createHash('sha256').update('snapshot').digest('hex') },
+      syncIndexForTesting: vi.fn().mockResolvedValue({ status: 1, stdout: '', stderr: 'locked' }),
+    })
+    let movedHead = ''
+
+    const repaired = await git.repairIndex(root, result.indexRepair!.token, {
+      beforeIndexReplaceForTesting: async () => {
+        const oldHead = (await git.run(root, ['rev-parse', 'HEAD'])).stdout.trim()
+        const tree = (await git.run(root, ['rev-parse', 'HEAD^{tree}'])).stdout.trim()
+        const commit = await git.run(root, ['commit-tree', tree, '-p', oldHead, '-m', 'external ref move'])
+        movedHead = commit.stdout.trim()
+        expect((await git.run(root, ['update-ref', 'HEAD', movedHead, oldHead])).status).toBe(0)
+      },
+      beforeRepairStatePersistenceForTesting: async () => {
+        throw new Error('disk full')
+      },
+    })
+    expect(repaired).toEqual({
+      repaired: false,
+      replacementApplied: true,
+      repairStatePersistenceFailed: true,
+      finalHead: movedHead,
+    })
+
+    expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('snapshot')
+    expect(await git.getIndexRepairStatus(root)).toEqual([
+      expect.objectContaining({ token: result.indexRepair!.token, head: result.sha }),
+    ])
   }, 10_000)
 
   it('reports degraded success when repaired Index metadata cannot be cleared', async () => {

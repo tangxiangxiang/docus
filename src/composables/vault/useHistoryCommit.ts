@@ -270,7 +270,12 @@ export function useHistoryCommit(options: HistoryCommitOptions) {
     } catch (cause) {
       await refreshIndexRepairStatus()
       const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
-      error.value = cause instanceof HistoryApiError
+      const repairStatePersistenceFailed = cause instanceof HistoryApiError
+        && cause.status === 409
+        && cause.code === 'HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED'
+      error.value = repairStatePersistenceFailed
+        ? t('history.index_repair_replacement_state_failed')
+        : cause instanceof HistoryApiError
         && cause.status === 409
         && (cause.code === 'HISTORY_INDEX_REPAIR_CONFLICT' || /index changed after repair/i.test(detail))
         ? t('history.index_repair_conflict')
