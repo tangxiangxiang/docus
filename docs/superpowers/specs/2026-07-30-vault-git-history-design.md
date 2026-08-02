@@ -1412,3 +1412,27 @@ test files with 2537 passed and 2 skipped; typecheck, build, and
 validation, DST subprocess evidence, H-C13 bootstrap serialization, and
 Owner Approval are still required; Closure remains
 `DRAFT — CLOSURE IN PROGRESS`.
+
+## 30. 2026-08-02 Pathname Race Reduction
+
+Production code: `dab1e12c1c7b55ce3c47242bf65d5cdecc7ff244`.
+
+The atomic writer now treats every temporary/staged artifact used by the
+History document path as an owned generation (`dev`, `ino`, and parent
+directory `dev`, `ino`). Durable create-only files obtain the file identity
+from the still-open handle. The writer checks the parent again after opening
+and before writing document bytes, and `atomicReplaceText` checks again before
+rename. Conditional removal checks the target before takeover, the staged
+generation after takeover, and the artifact/content immediately before unlink.
+Unknown ownership is quarantined rather than removed. Deterministic test
+hooks prove that outside files are not overwritten, deleted, or populated with
+document bytes in the covered replacement windows.
+
+This is deliberately documented as a partial portable mitigation. No
+directory-handle-relative `openat`/`renameat`/`unlinkat` equivalent was added,
+so the final pathname check/use TOCTOU window remains H-C10. The design must
+not claim “fully safe”, “ownership guaranteed”, or “no external file can ever
+be created” until that protocol or an equivalent cross-platform primitive is
+implemented and verified. Closure remains `DRAFT — CLOSURE IN PROGRESS` until
+H-C10 treatment, Linux/Windows validation, DST subprocess evidence, H-C13
+bootstrap serialization, and Owner Approval are complete.

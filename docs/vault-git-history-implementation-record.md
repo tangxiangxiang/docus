@@ -600,6 +600,38 @@ H-C13 bootstrap serialization, rename-follow history, pagination, SHA-256
 sentinel support, and Owner Approval. Closure therefore remains
 `DRAFT — CLOSURE IN PROGRESS`.
 
+## 30. 2026-08-02 Filesystem Pathname Race Follow-up
+
+Production-code commit: `dab1e12c1c7b55ce3c47242bf65d5cdecc7ff244`.
+
+The atomic text path now captures durable create-only artifacts from the
+exclusive open handle, records file and parent `dev/ino`, and verifies that
+proof before cleanup. The temporary writer invokes a deterministic seam after
+parent identity capture and before open; after open it validates the parent
+generation before writing raw document bytes. This is a fail-closed leak
+reduction, not an `openat` implementation: on unsupported platforms a stale
+empty artifact may remain quarantined, but the secret document bytes are not
+written in that pre-write replacement case.
+
+`atomicReplaceText` verifies the prepared temporary artifact before its final
+rename. `atomicRemoveTextIfUnchanged` captures the target generation, checks
+the staged generation after takeover, and performs another ownership/content
+check before unlink. If the staged pathname is replaced, the operation throws
+`HISTORY_PATH_MOVED` and leaves both the original quarantine and the external
+occupant untouched. The atomic commit's temporary, staged, and journal cleanup
+paths use the same proof-based cleanup where the operation owns the artifact.
+
+New deterministic hooks cover parent-before-open, replace-before-rename,
+remove-before-takeover, and staged-path replacement. The composable test now
+covers the repair-metadata persistence error branch directly, and the History
+API test confirms structured `code` and `details` survive the fetch wrapper.
+
+This does not close H-C10. Node's portable API surface here still lacks a
+directory-handle-relative `openat`/`renameat`/`unlinkat` protocol, so a final
+pathname check/use window remains. Linux/Windows execution, DST subprocess
+evidence, H-C13 bootstrap serialization, and Owner Approval remain open.
+Closure stays `DRAFT — CLOSURE IN PROGRESS`.
+
 ## 18. 2026-08-02 Restore/Index/Error-Code Follow-up
 
 Production commit: `b60630d2cd8fd840827aed15967a92b918e91a32`.

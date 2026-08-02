@@ -592,3 +592,42 @@ in H-C10 remains open. Therefore Closure remains:
 ```text
 DRAFT — CLOSURE IN PROGRESS
 ```
+
+## 15. 2026-08-02 Filesystem Pathname Race Follow-up
+
+Current production-code commit:
+`dab1e12c1c7b55ce3c47242bf65d5cdecc7ff244`.
+
+This follow-up narrows the remaining portable pathname races without
+claiming a directory-handle protocol:
+
+| Finding | Result |
+|---|---|
+| Parent replacement before temporary open | A deterministic hook now replaces the parent after identity capture. The writer revalidates the opened file and parent before writing document bytes; the outside case can leave only an empty quarantine file and cannot receive the document content. |
+| Unconditional replacement rename | `atomicReplaceText` revalidates the temporary artifact and parent generation immediately before rename. A replaced parent returns `HISTORY_PATH_MOVED` and leaves the original artifact isolated. |
+| Conditional removal | `atomicRemoveTextIfUnchanged` captures target and staged `dev/ino` plus parent identity, revalidates before takeover and before unlink, and preserves a replaced staged pathname instead of deleting its occupant. |
+| Intermediate cleanup | Temporary, staged, and operation journal cleanup in the atomic writer uses creation-time identity proofs. Durable create-only files now capture identity from the still-open handle and fail closed during cleanup. |
+| Repair client coverage | The client directly tests `HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED`; it retains the transaction, avoids a discardable conflict token, refreshes status, and shows the manual Git inspection warning. API tests preserve code/details. |
+
+The implementation does not provide portable `openat`/`renameat`/`unlinkat`
+semantics. The remaining check/use window therefore remains H-C10: an
+attacker capable of replacing a directory at that exact point can still affect
+a pathname operation. The code and tests do not claim that external empty
+artifacts are impossible on unsupported platforms; they prove that the
+pre-write window does not leak document bytes. H-C10 is not declared closed.
+
+Focused macOS evidence after this follow-up:
+
+```text
+server/__tests__/atomicTextWrite.test.ts: 22 passed
+server/__tests__/createOnlyMove.test.ts: 22 passed
+src/composables/vault/__tests__/useHistoryCommit.test.ts: passed
+src/lib/__tests__/history-api.test.ts: passed
+```
+
+Linux/Windows validation, DST subprocess evidence, H-C13 bootstrap
+serialization, and Owner Approval remain open. Closure remains:
+
+```text
+DRAFT — CLOSURE IN PROGRESS
+```
