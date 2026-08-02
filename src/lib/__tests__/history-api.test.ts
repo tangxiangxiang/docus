@@ -77,6 +77,24 @@ describe('getDiff', () => {
     })
   })
 
+  it('preserves structured repair failure code and details', async () => {
+    responses.push({
+      status: 409,
+      body: {
+        error: 'Git Index changed, but the repair record could not be saved',
+        code: 'HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED',
+        details: { replacementApplied: true, finalHead: 'b'.repeat(40) },
+      },
+    })
+    const error = await api.getDiff('inbox/a.md', 'HEAD~1', 'HEAD').catch((cause) => cause)
+    expect(error).toBeInstanceOf(api.HistoryApiError)
+    expect(error).toMatchObject({
+      status: 409,
+      code: 'HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED',
+      details: { replacementApplied: true, finalHead: 'b'.repeat(40) },
+    })
+  })
+
   it('falls back to "<endpoint> failed: <status>" when the body has no error field', async () => {
     responses.push({ status: 500, body: {} })
     await expect(api.getDiff('inbox/a.md', 'HEAD~1', 'HEAD'))

@@ -156,6 +156,64 @@ describe('atomic text writes', () => {
     }
   })
 
+  it('does not write document bytes when the parent is replaced before temporary open', async () => {
+    const folder = path.join(directory, 'open-race')
+    const movedFolder = path.join(directory, 'open-race-original')
+    const missing = path.join(folder, 'note.md')
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-atomic-open-outside-'))
+    let outsideTemp = ''
+    await fs.mkdir(folder)
+
+    __setAtomicWriteTestHooksForTesting({
+      afterParentIdentityBeforeTemporaryOpen: async (temporaryPath) => {
+        outsideTemp = path.join(outside, path.basename(temporaryPath))
+        await fs.rename(folder, movedFolder)
+        await fs.symlink(outside, folder)
+      },
+    })
+
+    try {
+      await expect(prepareAtomicTextCreate(missing, 'secret document bytes')).rejects.toMatchObject({
+        code: 'HISTORY_PATH_MOVED',
+      })
+      await expect(fs.readFile(outsideTemp, 'utf8')).resolves.toBe('')
+      expect(await fs.readdir(outside)).toEqual([path.basename(outsideTemp)])
+      expect(await fs.readdir(movedFolder)).toEqual([])
+    } finally {
+      __setAtomicWriteTestHooksForTesting(null)
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('does not rename a prepared temporary file through a replaced parent', async () => {
+    const folder = path.join(directory, 'replace-race')
+    const movedFolder = path.join(directory, 'replace-race-original')
+    const note = path.join(folder, 'note.md')
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-atomic-replace-outside-'))
+    await fs.mkdir(folder)
+    await fs.writeFile(note, 'original', 'utf8')
+
+    __setAtomicWriteTestHooksForTesting({
+      beforeUnconditionalReplaceRename: async () => {
+        await fs.rename(folder, movedFolder)
+        await fs.symlink(outside, folder)
+        await fs.writeFile(path.join(outside, 'note.md'), 'external', 'utf8')
+      },
+    })
+
+    try {
+      await expect(atomicReplaceText(note, 'secret replacement')).rejects.toMatchObject({
+        code: 'HISTORY_PATH_MOVED',
+      })
+      expect(await fs.readFile(path.join(outside, 'note.md'), 'utf8')).toBe('external')
+      expect(await fs.readFile(path.join(movedFolder, 'note.md'), 'utf8')).toBe('original')
+      expect(await fs.readdir(movedFolder)).toHaveLength(2)
+    } finally {
+      __setAtomicWriteTestHooksForTesting(null)
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+
   it('retries a snapshot when content changes between read and stat', async () => {
     const readFile = vi.spyOn(fs, 'readFile')
       .mockResolvedValueOnce('B')
@@ -309,5 +367,55 @@ describe('ownership-verified commit (no check-to-rename window)', () => {
 
     await expect(fs.stat(target)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await intermediateFiles()).toEqual([])
+  })
+
+  it('fails closed when the remove target parent is replaced before takeover', async () => {
+    const folder = path.join(directory, 'remove-race')
+    const movedFolder = path.join(directory, 'remove-race-original')
+    const note = path.join(folder, 'note.md')
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-atomic-remove-outside-'))
+    await fs.mkdir(folder)
+    await fs.writeFile(note, 'original', 'utf8')
+
+    __setAtomicWriteTestHooksForTesting({
+      beforeAtomicRemoveRename: async () => {
+        await fs.rename(folder, movedFolder)
+        await fs.symlink(outside, folder)
+        await fs.writeFile(path.join(outside, 'note.md'), 'external', 'utf8')
+      },
+    })
+
+    try {
+      await expect(atomicRemoveTextIfUnchanged(note, 'original')).rejects.toMatchObject({
+        code: 'HISTORY_PATH_MOVED',
+      })
+      expect(await fs.readFile(path.join(outside, 'note.md'), 'utf8')).toBe('external')
+      expect(await fs.readFile(path.join(movedFolder, 'note.md'), 'utf8')).toBe('original')
+    } finally {
+      __setAtomicWriteTestHooksForTesting(null)
+      await fs.rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps a replaced staged pathname instead of deleting its external occupant', async () => {
+    let moved = ''
+    __setAtomicWriteTestHooksForTesting({
+      beforeAtomicRemoveUnlink: async (stagedPath) => {
+        moved = `${stagedPath}.quarantined`
+        await fs.rename(stagedPath, moved)
+        await fs.writeFile(stagedPath, 'external occupant', 'utf8')
+      },
+    })
+
+    try {
+      await expect(atomicRemoveTextIfUnchanged(target, 'original')).rejects.toMatchObject({
+        code: 'HISTORY_PATH_MOVED',
+      })
+      expect(await fs.readFile(moved, 'utf8')).toBe('original')
+      expect(await fs.readFile(moved.replace(/\.quarantined$/, ''), 'utf8'))
+        .toBe('external occupant')
+    } finally {
+      __setAtomicWriteTestHooksForTesting(null)
+    }
   })
 })

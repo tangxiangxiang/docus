@@ -264,6 +264,33 @@ describe('useHistoryCommit', () => {
     )
   })
 
+  it('reports repair metadata persistence failure without turning it into a discardable conflict', async () => {
+    vi.mocked(api.getIndexRepairStatus).mockResolvedValue([repairTransaction])
+    vi.mocked(api.repairIndex).mockRejectedValue(
+      new api.HistoryApiError(
+        'Git Index changed, but the repair record could not be saved',
+        409,
+        'HISTORY_INDEX_REPAIR_STATE_PERSISTENCE_FAILED',
+        { replacementApplied: true, finalHead: 'b'.repeat(40) },
+      ),
+    )
+    const commit = useHistoryCommit({ history: history(), saveSelected: vi.fn() })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await expect(commit.retryIndexRepair()).resolves.toBe(false)
+
+    expect(commit.error.value).toBe(
+      'The Git index changed, but the new repair record could not be saved. Check Git status manually.',
+    )
+    expect(commit.indexRepairConflictToken.value).toBeNull()
+    expect(commit.indexRepairTransactions.value).toEqual([repairTransaction])
+    expect(api.getIndexRepairStatus).toHaveBeenCalledTimes(2)
+    expect(toast.error).toHaveBeenCalledWith(commit.error.value)
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.info).not.toHaveBeenCalled()
+  })
+
   it('removes a discarded transaction locally when the status refresh fails', async () => {
     const superseded = { ...repairTransaction, status: 'superseded' as const }
     vi.mocked(api.getIndexRepairStatus)

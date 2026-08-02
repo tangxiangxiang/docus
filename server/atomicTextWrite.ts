@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, promises as fs } from 'node:fs'
 import path from 'node:path'
-import { writeCreateOnlyDurableFile } from './durableCreateOnlyFile.js'
+import {
+  writeCreateOnlyDurableFile,
+  type CreatedDurableFile,
+} from './durableCreateOnlyFile.js'
 import {
   captureDurableDirectoryIdentity,
   matchesDurableDirectoryIdentity,
@@ -74,8 +77,11 @@ export async function verifyDirectoryGeneration(
  * recovery (server/crashRecovery.ts) uses it to tell an interrupted
  * commit from an orphaned temp and to verify both generations by hash.
  */
-export async function writeDurableJournal(journalPath: string, entry: unknown): Promise<void> {
-  await writeCreateOnlyDurableFile(journalPath, JSON.stringify(entry))
+export async function writeDurableJournal(
+  journalPath: string,
+  entry: unknown,
+): Promise<CreatedDurableFile> {
+  return writeCreateOnlyDurableFile(journalPath, JSON.stringify(entry))
 }
 
 /** Remove a journal and durably persist disappearance of its directory
@@ -91,19 +97,27 @@ export async function removeDurableJournal(journalPath: string): Promise<void> {
  * synced, so repeated startup recovery observes either complete state. */
 export async function rewriteDurableJournal(journalPath: string, entry: unknown): Promise<void> {
   const temporaryPath = `${journalPath}.rewrite-${randomUUID()}`
-  await writeDurableJournal(temporaryPath, entry)
+  const ownedTemporary = await writeDurableJournal(temporaryPath, entry)
   try {
     await fs.rename(temporaryPath, journalPath)
     await syncParentDirectoryBestEffort(journalPath)
   } catch (error) {
-    await fs.rm(temporaryPath, { force: true }).catch(() => {})
-    await syncParentDirectoryBestEffort(temporaryPath)
+    await removeOwnedTemporaryPath(
+      ownedTemporary.path,
+      ownedTemporary.parentPath,
+      ownedTemporary.fileIdentity,
+      ownedTemporary.parentIdentity,
+      journalPath,
+    ).catch(() => {})
     throw error
   }
 }
 
-export async function writeDurableRecoveryPayload(payloadPath: string, raw: string): Promise<void> {
-  await writeCreateOnlyDurableFile(payloadPath, raw)
+export async function writeDurableRecoveryPayload(
+  payloadPath: string,
+  raw: string,
+): Promise<CreatedDurableFile> {
+  return writeCreateOnlyDurableFile(payloadPath, raw)
 }
 
 export async function removeDurableRecoveryPayload(payloadPath: string): Promise<void> {
@@ -124,7 +138,11 @@ export function __setAtomicWriteCrashHooksForTesting(hooks: AtomicWriteCrashHook
 }
 
 export type AtomicWriteTestHooks = {
+  afterParentIdentityBeforeTemporaryOpen?: (temporaryPath: string) => void | Promise<void>
   afterTemporaryCloseBeforeIdentity?: (temporaryPath: string) => void | Promise<void>
+  beforeUnconditionalReplaceRename?: (temporaryPath: string) => void | Promise<void>
+  beforeAtomicRemoveRename?: (targetPath: string, stagedPath: string) => void | Promise<void>
+  beforeAtomicRemoveUnlink?: (stagedPath: string) => void | Promise<void>
 }
 let __atomicWriteTestHooks: AtomicWriteTestHooks | null = null
 export function __setAtomicWriteTestHooksForTesting(hooks: AtomicWriteTestHooks | null): void {
@@ -142,6 +160,8 @@ type OwnedTemporaryFile = {
   fileIdentity: OwnedPathIdentity
   parentIdentity: OwnedPathIdentity
 }
+
+type OwnedArtifact = OwnedTemporaryFile
 
 export interface PreparedAtomicTextWrite {
   readonly temporaryPath: string
@@ -188,10 +208,16 @@ async function verifyOwnedTemporaryPath(
   parentIdentity: OwnedPathIdentity,
   targetPath: string,
 ): Promise<void> {
-  const [currentTemporary, currentParent] = await Promise.all([
-    captureOwnedFileIdentity(temporaryPath, targetPath),
-    captureOwnedDirectoryIdentity(parentPath, targetPath),
-  ])
+  let currentTemporary: OwnedPathIdentity
+  let currentParent: OwnedPathIdentity
+  try {
+    [currentTemporary, currentParent] = await Promise.all([
+      captureOwnedFileIdentity(temporaryPath, targetPath),
+      captureOwnedDirectoryIdentity(parentPath, targetPath),
+    ])
+  } catch {
+    throw new AtomicTextWriteOwnershipError(targetPath)
+  }
   if (
     currentTemporary.dev !== temporaryIdentity.dev
     || currentTemporary.ino !== temporaryIdentity.ino
@@ -217,6 +243,50 @@ async function removeOwnedTemporaryPath(
     targetPath,
   )
   await fs.unlink(temporaryPath)
+}
+
+async function captureOwnedTextArtifact(
+  filePath: string,
+  targetPath: string,
+): Promise<{ artifact: OwnedArtifact; snapshot: StableTextSnapshot }> {
+  const parentPath = path.dirname(filePath)
+  const parentIdentity = await captureOwnedDirectoryIdentity(parentPath, targetPath)
+  const before = await captureOwnedFileIdentity(filePath, targetPath)
+  const raw = await fs.readFile(filePath, 'utf8')
+  const after = await captureOwnedFileIdentity(filePath, targetPath)
+  if (before.dev !== after.dev || before.ino !== after.ino) {
+    throw new AtomicTextWriteOwnershipError(targetPath)
+  }
+  const stat = await fs.lstat(filePath)
+  return {
+    artifact: {
+      path: filePath,
+      parentPath,
+      fileIdentity: after,
+      parentIdentity,
+    },
+    snapshot: {
+      raw,
+      stat: {
+        mtimeMs: Number(stat.mtimeMs),
+        size: Number(stat.size),
+        mode: Number(stat.mode),
+      },
+    },
+  }
+}
+
+async function verifyOwnedArtifact(
+  artifact: OwnedArtifact,
+  targetPath: string,
+): Promise<void> {
+  await verifyOwnedTemporaryPath(
+    artifact.path,
+    artifact.parentPath,
+    artifact.fileIdentity,
+    artifact.parentIdentity,
+    targetPath,
+  )
 }
 
 /**
@@ -433,9 +503,23 @@ export async function restoreStagedGeneration(
   stagedPath: string,
   targetPath: string,
 ): Promise<{ quarantined: boolean }> {
+  let stagedArtifact: OwnedArtifact
+  try {
+    stagedArtifact = (await captureOwnedTextArtifact(stagedPath, targetPath)).artifact
+    await verifyOwnedArtifact(stagedArtifact, targetPath)
+    await captureOwnedDirectoryIdentity(path.dirname(targetPath), targetPath)
+  } catch {
+    return { quarantined: true }
+  }
   try {
     await fs.link(stagedPath, targetPath)
-    await fs.rm(stagedPath, { force: true }).catch(() => {})
+    await removeOwnedTemporaryPath(
+      stagedArtifact.path,
+      stagedArtifact.parentPath,
+      stagedArtifact.fileIdentity,
+      stagedArtifact.parentIdentity,
+      targetPath,
+    )
     return { quarantined: false }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
@@ -447,6 +531,7 @@ export async function restoreStagedGeneration(
     const targetExists = await fs.stat(targetPath).then(() => true, () => false)
     if (!targetExists) {
       try {
+        await verifyOwnedArtifact(stagedArtifact, targetPath)
         await renameWithTransientWindowsRetry(stagedPath, targetPath)
         return { quarantined: false }
       } catch {
@@ -468,6 +553,7 @@ async function writeTemporaryTextFile(
     `.${path.basename(targetPath)}.docus-save-${randomUUID()}`,
   )
   const parentIdentity = await captureOwnedDirectoryIdentity(directory, targetPath)
+  await __atomicWriteTestHooks?.afterParentIdentityBeforeTemporaryOpen?.(temporaryPath)
   let handle: Awaited<ReturnType<typeof fs.open>> | null = null
   let fileIdentity: OwnedPathIdentity | null = null
   try {
@@ -481,6 +567,18 @@ async function writeTemporaryTextFile(
     // The open handle is the creation proof. Never infer this identity by
     // lstat'ing a pathname after an attacker has had a chance to replace it.
     fileIdentity = { dev: stat.dev.toString(), ino: stat.ino.toString() }
+    // The pathname open may have followed a replaced intermediate directory
+    // on platforms without openat. Revalidate before writing any document
+    // bytes. If this fails, the only possible artifact is an empty file; the
+    // cleanup below is ownership-verified and deliberately leaves it behind
+    // when the parent generation cannot be proved.
+    await verifyOwnedTemporaryPath(
+      temporaryPath,
+      directory,
+      fileIdentity,
+      parentIdentity,
+      targetPath,
+    )
     await handle.writeFile(raw, { encoding: 'utf8' })
     if (options.mode !== undefined) await handle.chmod(options.mode)
     await handle.sync()
@@ -546,6 +644,8 @@ export async function prepareAtomicTextWrite(
         parentPath,
         `.${path.basename(targetPath)}.docus-journal-${randomUUID()}`,
       )
+      let stagedArtifact: OwnedArtifact | null = null
+      let journalArtifact: OwnedArtifact | null = null
       const fail = async (error: unknown): Promise<never> => {
         settled = true
         try {
@@ -559,7 +659,15 @@ export async function prepareAtomicTextWrite(
         } catch {
           // Never infer ownership from a changed pathname.
         }
-        await removeDurableJournal(journalPath).catch(() => {})
+        if (journalArtifact) {
+          await removeOwnedTemporaryPath(
+            journalArtifact.path,
+            journalArtifact.parentPath,
+            journalArtifact.fileIdentity,
+            journalArtifact.parentIdentity,
+            targetPath,
+          ).catch(() => {})
+        }
         throw error
       }
       // 0. JOURNAL: a durable record of this commit's intent and both
@@ -574,7 +682,7 @@ export async function prepareAtomicTextWrite(
       //    the HTTP server accepts a single request. The journal is
       //    removed LAST; a failed commit removes it in fail().
       try {
-        await writeDurableJournal(journalPath, {
+        journalArtifact = await writeDurableJournal(journalPath, {
           version: 1,
           op: 'replace',
           staged: path.basename(stagedPath),
@@ -591,12 +699,32 @@ export async function prepareAtomicTextWrite(
       //    the bytes to staging and is detected at verification; one
       //    that recreates the path afterwards loses to the create-only
       //    link below. Either way it is never silently overwritten.
+      let targetArtifact: OwnedArtifact
+      try {
+        targetArtifact = (await captureOwnedTextArtifact(targetPath, targetPath)).artifact
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return fail(new AtomicTextWriteTargetMissingError(targetPath))
+        }
+        return fail(error)
+      }
       try {
         await renameWithTransientWindowsRetry(targetPath, stagedPath)
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           return fail(new AtomicTextWriteTargetMissingError(targetPath))
         }
+        return fail(error)
+      }
+      stagedArtifact = {
+        path: stagedPath,
+        parentPath,
+        fileIdentity: targetArtifact.fileIdentity,
+        parentIdentity: targetArtifact.parentIdentity,
+      }
+      try {
+        await verifyOwnedArtifact(stagedArtifact, targetPath)
+      } catch (error) {
         return fail(error)
       }
       // Publish the takeover durably before continuing: a crash after
@@ -606,13 +734,30 @@ export async function prepareAtomicTextWrite(
       // 2. VERIFY the owned generation.
       let stagedSnapshot: StableTextSnapshot
       try {
-        stagedSnapshot = await readStableTextSnapshot(stagedPath)
+        const owned = await captureOwnedTextArtifact(stagedPath, targetPath)
+        if (
+          owned.artifact.fileIdentity.dev !== stagedArtifact.fileIdentity.dev
+          || owned.artifact.fileIdentity.ino !== stagedArtifact.fileIdentity.ino
+          || owned.artifact.parentIdentity.dev !== stagedArtifact.parentIdentity.dev
+          || owned.artifact.parentIdentity.ino !== stagedArtifact.parentIdentity.ino
+        ) throw new AtomicTextWriteOwnershipError(targetPath)
+        stagedSnapshot = owned.snapshot
       } catch (error) {
-        await restoreStagedGeneration(stagedPath, targetPath)
+        if (stagedArtifact) {
+          await verifyOwnedArtifact(stagedArtifact, targetPath).then(
+            () => restoreStagedGeneration(stagedPath, targetPath),
+            () => undefined,
+          )
+        }
         return fail(error)
       }
       if (stagedSnapshot.raw !== expectedRaw) {
-        await restoreStagedGeneration(stagedPath, targetPath)
+        if (stagedArtifact) {
+          await verifyOwnedArtifact(stagedArtifact, targetPath).then(
+            () => restoreStagedGeneration(stagedPath, targetPath),
+            () => undefined,
+          )
+        }
         return fail(new AtomicTextWriteConflictError(stagedSnapshot))
       }
       // 3. COMMIT create-only: link(2) never replaces. EEXIST means a
@@ -624,7 +769,17 @@ export async function prepareAtomicTextWrite(
         await fs.link(temporaryPath, targetPath)
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-          await fs.rm(stagedPath, { force: true }).catch(() => {})
+          if (stagedArtifact) {
+            await verifyOwnedArtifact(stagedArtifact, targetPath)
+              .then(() => removeOwnedTemporaryPath(
+                stagedPath,
+                parentPath,
+                stagedArtifact.fileIdentity,
+                stagedArtifact.parentIdentity,
+                targetPath,
+              ))
+              .catch(() => {})
+          }
           let current: StableTextSnapshot
           try {
             current = await readStableTextSnapshot(targetPath)
@@ -633,15 +788,42 @@ export async function prepareAtomicTextWrite(
           }
           return fail(new AtomicTextWriteConflictError(current))
         }
-        await restoreStagedGeneration(stagedPath, targetPath)
+        if (stagedArtifact) {
+          await verifyOwnedArtifact(stagedArtifact, targetPath).then(
+            () => restoreStagedGeneration(stagedPath, targetPath),
+            () => undefined,
+          )
+        }
         return fail(error)
       }
       settled = true
-      await fs.rm(temporaryPath, { force: true }).catch(() => {})
-      await fs.rm(stagedPath, { force: true }).catch(() => {})
+      await removeOwnedTemporaryPath(
+        temporaryPath,
+        parentPath,
+        temporaryIdentity,
+        parentIdentity,
+        targetPath,
+      ).catch(() => {})
+      if (stagedArtifact) {
+        await removeOwnedTemporaryPath(
+          stagedPath,
+          parentPath,
+          stagedArtifact.fileIdentity,
+          stagedArtifact.parentIdentity,
+          targetPath,
+        ).catch(() => {})
+      }
       // The journal goes LAST: while it exists, recovery still knows
       // this commit was in flight and can finish or undo it.
-      await removeDurableJournal(journalPath).catch(() => {})
+      if (journalArtifact) {
+        await removeOwnedTemporaryPath(
+          journalArtifact.path,
+          journalArtifact.parentPath,
+          journalArtifact.fileIdentity,
+          journalArtifact.parentIdentity,
+          targetPath,
+        ).catch(() => {})
+      }
       await syncParentDirectoryBestEffort(targetPath)
     },
     async rollback() {
@@ -730,28 +912,62 @@ export async function atomicRemoveTextIfUnchanged(
   targetPath: string,
   expectedRaw: string,
 ): Promise<void> {
+  let target: { artifact: OwnedArtifact; snapshot: StableTextSnapshot }
+  try {
+    target = await captureOwnedTextArtifact(targetPath, targetPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  if (target.snapshot.raw !== expectedRaw) return
+
   const stagedPath = path.join(
     path.dirname(targetPath),
     `.${path.basename(targetPath)}.docus-remove-${randomUUID()}`,
   )
+  await __atomicWriteTestHooks?.beforeAtomicRemoveRename?.(targetPath, stagedPath)
+  await verifyOwnedArtifact(target.artifact, targetPath)
   try {
     await renameWithTransientWindowsRetry(targetPath, stagedPath)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
     throw error
   }
-  let staged: StableTextSnapshot
+  let staged: { artifact: OwnedArtifact; snapshot: StableTextSnapshot }
   try {
-    staged = await readStableTextSnapshot(stagedPath)
+    staged = await captureOwnedTextArtifact(stagedPath, targetPath)
+    if (
+      staged.artifact.fileIdentity.dev !== target.artifact.fileIdentity.dev
+      || staged.artifact.fileIdentity.ino !== target.artifact.fileIdentity.ino
+      || staged.artifact.parentIdentity.dev !== target.artifact.parentIdentity.dev
+      || staged.artifact.parentIdentity.ino !== target.artifact.parentIdentity.ino
+    ) {
+      throw new AtomicTextWriteOwnershipError(targetPath)
+    }
   } catch (error) {
     await restoreStagedGeneration(stagedPath, targetPath)
     throw error
   }
-  if (staged.raw !== expectedRaw) {
+  if (staged.snapshot.raw !== expectedRaw) {
     await restoreStagedGeneration(stagedPath, targetPath)
     return
   }
-  await fs.rm(stagedPath)
+
+  // This final verification is the strongest portable pathname-based check
+  // available here. A directory-handle-relative unlink would be required to
+  // eliminate the remaining check/use window; keep the artifact instead if
+  // its ownership cannot be re-established.
+  await __atomicWriteTestHooks?.beforeAtomicRemoveUnlink?.(stagedPath)
+  await verifyOwnedArtifact(staged.artifact, targetPath)
+  const final = await captureOwnedTextArtifact(stagedPath, targetPath)
+  if (final.snapshot.raw !== expectedRaw
+    || final.artifact.fileIdentity.dev !== staged.artifact.fileIdentity.dev
+    || final.artifact.fileIdentity.ino !== staged.artifact.fileIdentity.ino
+    || final.artifact.parentIdentity.dev !== staged.artifact.parentIdentity.dev
+    || final.artifact.parentIdentity.ino !== staged.artifact.parentIdentity.ino) {
+    throw new AtomicTextWriteOwnershipError(targetPath)
+  }
+  await fs.unlink(stagedPath)
   await syncParentDirectoryBestEffort(targetPath)
 }
 
@@ -767,6 +983,8 @@ export async function atomicReplaceText(
 ): Promise<void> {
   const ownedTemporary = await writeTemporaryTextFile(targetPath, raw, options)
   try {
+    await __atomicWriteTestHooks?.beforeUnconditionalReplaceRename?.(ownedTemporary.path)
+    await verifyOwnedArtifact(ownedTemporary, targetPath)
     await renameWithTransientWindowsRetry(ownedTemporary.path, targetPath)
     await syncParentDirectoryBestEffort(targetPath)
   } catch (error) {
