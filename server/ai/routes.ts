@@ -13,9 +13,12 @@
 //     to the helper in ../index.ts.
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
+import matter from 'gray-matter'
 import { getDb } from '../db.js'
 import {
   CONTENT_DIR,
+  isValidPathSyntax,
+  readSafeRelativeFile,
   resolveSafeRelativePath,
   SafePathResourceLimitError,
 } from '../paths.js'
@@ -28,6 +31,7 @@ import { runChat, type ChatContext, type ChatEvent } from './chat.js'
 import { parseAiLiveContext } from './live-context.js'
 import { generateSlug } from './slug.js'
 import { CommitMessagePromptLimitError, generateCommitMessage } from './commitMessage.js'
+import { generateSummary, SummaryPromptLimitError } from './summary.js'
 import { ChatError } from './errors.js'
 import { resolveAiRuntimeConfig } from './llm.js'
 import {
@@ -65,6 +69,7 @@ export const MAX_AI_DIFF_TOTAL_BYTES = 1024 * 1024
 export const MAX_AI_DIFF_LINES = 10_000
 export const MAX_COMMIT_DIFF_CHARS = 8_000
 export const MAX_TOTAL_COMMIT_DIFF_CHARS = 20_000
+export const MAX_SUMMARY_FILE_BYTES = 24 * 1024
 
 class CommitMessageResourceLimitError extends Error {
   constructor(message: string) {
@@ -316,6 +321,47 @@ ai.post('/slug', async (c) => {
       return bad(c, err.message || 'llm-error', 502)
     }
     return bad(c, 'unknown', 500)
+  }
+})
+
+// ---- /summary ----
+// Generate a document summary from the current Markdown body. This is
+// deliberately independent from Git so it also works for clean documents.
+ai.post('/summary', async (c) => {
+  const body = await c.req.json().catch(() => null) as
+    | { path?: unknown; language?: unknown }
+    | null
+  if (!body || typeof body.path !== 'string' || !isValidPathSyntax(body.path)) {
+    return bad(c, 'valid path required')
+  }
+  const language = body.language === 'zh' ? 'zh' : 'en'
+  try {
+    const raw = await readSafeRelativeFile(CONTENT_DIR, `${body.path}.md`, 'utf8', {
+      maxBytes: MAX_SUMMARY_FILE_BYTES,
+      signal: c.req.raw.signal,
+    })
+    if (raw === null) return bad(c, 'not found', 404)
+    const content = matter(String(raw)).content.trim()
+    const summary = await generateSummary({
+      path: body.path,
+      content,
+      language,
+      signal: c.req.raw.signal,
+    })
+    return c.json({ summary })
+  } catch (err) {
+    if (c.req.raw.signal.aborted) return c.json({ error: 'aborted' }, 499 as any)
+    if (err instanceof SummaryPromptLimitError || err instanceof SafePathResourceLimitError) {
+      return bad(c, err.message, 413)
+    }
+    if (err instanceof ChatError) {
+      if (err.reason === 'no-api-key') return bad(c, 'AI not configured', 503)
+      if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499 as any)
+      if (err.reason === 'parse-failed') return bad(c, err.message, 502)
+      return bad(c, err.message || 'llm-error', 502)
+    }
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return bad(c, 'not found', 404)
+    return bad(c, (err as Error).message || 'unknown', 500)
   }
 })
 

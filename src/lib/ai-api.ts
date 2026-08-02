@@ -198,6 +198,17 @@ export async function suggestCommitMessage(input: {
   }))
 }
 
+export async function suggestSummary(input: {
+  path: string
+  language?: 'zh' | 'en'
+}, signal?: AbortSignal): Promise<{ summary: string }> {
+  return jsonOrThrow<{ summary: string }>(await fetch('/api/ai/summary', {
+    method: 'POST',
+    ...jsonBody(input),
+    signal,
+  }))
+}
+
 /**
  * Open a streaming chat request and yield typed ChatEvent objects.
  * Yields exactly one {type: 'error'} event and returns on any HTTP

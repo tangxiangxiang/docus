@@ -215,6 +215,18 @@ function onLinkNavigate(p: string) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.metadata-slot :deep(.document-metadata-actions) {
+  justify-content: stretch;
+  padding: 10px 18px;
+}
+.metadata-slot :deep(.document-metadata-actions .btn-primary) {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 10px;
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
 .toc-panel-empty {
   padding: 0 22px;
   font-size: 0.78rem;
