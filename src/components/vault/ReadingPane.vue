@@ -4,10 +4,10 @@
 // and render errors stay consistent), presented in a centered single
 // column with reading-friendly typography.
 //
-// Page navigation (TOC) has been extracted to TocPanel.vue — a separate
+// Page navigation (TOC) has been extracted to RightRail.vue — a separate
 // vault grid column on the left. This component still owns the
 // IntersectionObserver scroll-spy and publishes heading state via
-// useTocState so TocPanel can render the active-highlighted list.
+// useTocState so RightRail can render the active-highlighted list.
 
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import RenderedMarkdown from './RenderedMarkdown.vue'
@@ -29,7 +29,7 @@ const headings = ref<Heading[]>([])
    of a blank centered pane. */
 const isEmpty = computed(() => !props.raw || !props.raw.trim())
 
-/* ----- Scroll-spy for TocPanel ----------
+/* ----- Scroll-spy for RightRail ----------
    We observe the article's h2/h3/h4 elements with IntersectionObserver.
    The observer's root is the .reading-pane scroll container, and we
    shrink its effective rect with a negative bottom rootMargin so a
@@ -43,7 +43,7 @@ const isEmpty = computed(() => !props.raw || !props.raw.trim())
    highlighted, not the next one.
 
    The active-id and heading list are published to useTocState so the
-   TocPanel (a sibling in the vault grid) renders them. */
+   RightRail (a sibling in the vault grid) renders them. */
 
 const articleEl = ref<HTMLElement | null>(null)
 const readingPaneEl = ref<HTMLElement | null>(null)
@@ -121,7 +121,7 @@ function onReadingPaneScroll() {
 
 /* Build the observer once the article is in the DOM and the headings
    have been resolved. Publishes the active heading id to the shared
-   tocActiveId ref so TocPanel can highlight it. */
+   tocActiveId ref so RightRail can highlight it. */
 function attachObserver() {
   disconnectObserver()
   if (!articleEl.value || !readingPaneEl.value || headings.value.length === 0) return
@@ -147,7 +147,7 @@ function cssEscape(id: string): string {
   return id.replace(/([!"#$%&'()*+,./:;<=>?@\[\\\]^`{|}~])/g, '\\$1')
 }
 
-/* Scroll-to handler published to TocPanel via tocScrollTo. Smooth-scrolls
+/* Scroll-to handler published to RightRail via tocScrollTo. Smooth-scrolls
    the target heading into view inside the .reading-pane scroll container. */
 function scrollToHeading(id: string) {
   if (!articleEl.value) return
@@ -167,7 +167,7 @@ function scrollToHeading(id: string) {
   if (history.replaceState) history.replaceState(null, '', `#${id}`)
 }
 
-/* Publish heading state to the shared module. TocPanel reads these
+/* Publish heading state to the shared module. RightRail reads these
    refs to render the navigation list. We publish immediately on each
    render and reset on unmount so a stale document's TOC doesn't linger
    when switching away from read mode. */
@@ -183,7 +183,7 @@ onBeforeUnmount(() => {
 
 watch([articleEl, readingPaneEl, headings], () => attachObserver(), { flush: 'post' })
 watch(() => props.raw, () => {
-  /* Reset published state so the TocPanel doesn't keep rendering the
+  /* Reset published state so the RightRail doesn't keep rendering the
      previous document's heading list during the brief render window
      of the new one. useMarkdownRender's onWatcherCleanup also guards
      against an in-flight render clobbering the new result. */

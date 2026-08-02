@@ -1,17 +1,17 @@
 <script setup lang="ts">
-// Unified document sidebar. Lightweight tabs switch one shared content
+// Unified right rail. Lightweight tabs switch one shared content
 // region between the TOC, bi-directional links, and AI assistant.
 //
 // Components:
 //   - The TOC list comes from ReadingPane via Vault-scoped useTocState
 //     (ReadingPane owns the IntersectionObserver scroll-
-//     spy, TocPanel only renders the active-highlighted list).
+//     spy, RightRail only renders the active-highlighted list).
 //   - The Links panel is a full embed of <LinksPanel>. It needs
 //     `path` and `posts` props, which VaultView passes through.
 //     We forward `navigate` to VaultView as `link-navigate` so the
 //     parent can route through openPost.
 
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useVaultTocState } from '../../composables/vault/useTocState'
 import { useI18n } from '../../composables/useI18n'
 import type { PostSummary } from '../../lib/api'
@@ -28,21 +28,26 @@ const props = defineProps<{
   /** All posts (title resolution for link rows). Forwarded to <LinksPanel>. */
   posts: PostSummary[]
   activeTab: RightRailTab
-  /**
-   * Kept for VaultView compatibility, no longer gating anything:
-   * Edit-10.3 lifted the read-only AI gate so History/Diff/Recovery
-   * views can send their own live context.
-   */
-  historyReadOnly?: boolean
+  /** True when the vault is showing the reading surface. */
+  isReadMode?: boolean
 }>()
 
 const emit = defineEmits<{
   /** Emitted when the user clicks a row in the Links panel. */
   'link-navigate': [path: string]
   'update:activeTab': [tab: RightRailTab]
+  'switch-to-read': []
 }>()
 
 const hasHeadings = computed(() => tocHeadings.value.length > 0)
+const aiHasOpened = ref(props.activeTab === 'ai')
+
+// Mount AI only when the user first visits it, then keep it mounted while
+// switching tabs so its conversation, draft, picker, and scroll position
+// remain intact.
+watch(() => props.activeTab, (tab) => {
+  if (tab === 'ai') aiHasOpened.value = true
+})
 
 function onTocClick(id: string) {
   tocScrollTo.value?.(id)
@@ -72,7 +77,13 @@ function onLinkNavigate(p: string) {
     <section v-show="activeTab === 'toc'" class="toc-panel" role="tabpanel" :aria-label="t('rail.toc')">
 
       <div v-if="!hasHeadings" class="toc-panel-empty">
-        {{ t('rail.toc_empty') }}
+        <p>{{ props.isReadMode ? t('rail.toc_empty') : t('rail.toc_empty_edit') }}</p>
+        <button
+          v-if="!props.isReadMode"
+          type="button"
+          class="toc-panel-empty-action"
+          @click="emit('switch-to-read')"
+        >{{ t('rail.switch_to_read') }}</button>
       </div>
       <ul v-else class="toc-panel-list">
         <li
@@ -99,7 +110,7 @@ function onLinkNavigate(p: string) {
         @navigate="onLinkNavigate"
       />
     </section>
-    <section v-show="activeTab === 'ai'" class="ai-slot" role="tabpanel" :aria-label="t('rail.ai')">
+    <section v-if="aiHasOpened" v-show="activeTab === 'ai'" class="ai-slot" role="tabpanel" :aria-label="t('rail.ai')">
       <AiPanel />
     </section>
   </div>
@@ -111,8 +122,7 @@ function onLinkNavigate(p: string) {
   min-height: 0;
   background: var(--vs-side-bg, var(--vs-bg-1));
   overflow-x: hidden;
-  overflow-y: auto;
-  scrollbar-width: thin;
+  overflow-y: hidden;
 }
 
 /* Right-rail tab nav. Modeled on Figma / Linear / Notion / Cursor
@@ -160,14 +170,41 @@ function onLinkNavigate(p: string) {
 }
 
 .toc-panel,
-.links-slot { display: block; padding-top: 14px; padding-bottom: 24px; }
+.links-slot {
+  display: block;
+  height: calc(100% - 36px);
+  box-sizing: border-box;
+  padding-top: 14px;
+  padding-bottom: 24px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
 .ai-slot { height: calc(100% - 36px); min-height: 0; }
 .ai-slot :deep(.ai-panel) { height: 100%; }
 .toc-panel-empty {
   padding: 0 22px;
   font-size: 0.78rem;
   color: var(--vs-text-2, var(--text-muted));
+}
+.toc-panel-empty p {
+  margin: 0;
   font-style: italic;
+}
+.toc-panel-empty-action {
+  margin-top: 10px;
+  padding: 4px 8px;
+  border: 1px solid var(--vs-border, var(--border));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vs-text-2, var(--text-muted));
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.toc-panel-empty-action:hover {
+  color: var(--vs-text-1, var(--text));
+  border-color: var(--vs-accent, var(--accent));
+  background: var(--vs-hover-bg, var(--bg-soft));
 }
 
 .toc-panel-list {

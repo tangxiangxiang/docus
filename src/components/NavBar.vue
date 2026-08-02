@@ -46,11 +46,11 @@ const isReadMode = computed(() => viewModeApi?.mode.value === 'read')
    Counts are pushed in by VaultView whenever the tree changes. */
 const { activeScope, toggleScope } = useScopeFilter()
 
-/* AI panel toggle. Lives here (not in VaultView) because the button
-   is a sibling of the existing nav-search / view-toggle, and the
-   useVaultLayout singleton makes this safe. */
-const { rightRailTab, rightRailCollapsed, toggleAi } = useVaultLayout()
-const aiRailOpen = computed(() => !rightRailCollapsed.value && rightRailTab.value === 'ai')
+/* Right-rail toggle. This button owns only the rail's expanded/collapsed
+   state; the three tabs inside the rail own tab selection. Keeping those
+   responsibilities separate means collapsing the rail never changes the
+   user's selected tab. */
+const { rightRailCollapsed, toggleRightRail } = useVaultLayout()
 
 const SCOPE_ICONS: Record<string, string> = {
   inbox: ICON_SCOPE_INBOX,
@@ -123,14 +123,14 @@ const SCOPE_ICONS: Record<string, string> = {
       </button>
         <button
           v-if="isVault"
-          class="ai-toggle"
+          class="right-rail-toggle"
           type="button"
-          :title="t(aiRailOpen ? 'nav.ai_panel_close' : 'nav.ai_panel')"
-          :aria-label="t(aiRailOpen ? 'nav.ai_panel_close' : 'nav.ai_panel')"
-          :aria-pressed="aiRailOpen"
-          @click="toggleAi"
+          :title="t(rightRailCollapsed ? 'nav.right_rail_open' : 'nav.right_rail_close')"
+          :aria-label="t(rightRailCollapsed ? 'nav.right_rail_open' : 'nav.right_rail_close')"
+          :aria-pressed="!rightRailCollapsed"
+          @click="toggleRightRail"
         >
-          <span class="ai-toggle-icon" aria-hidden="true" v-html="aiRailOpen ? ICON_PANEL_RIGHT_OPEN : ICON_PANEL_RIGHT_CLOSE" />
+          <span class="right-rail-toggle-icon" aria-hidden="true" v-html="rightRailCollapsed ? ICON_PANEL_RIGHT_CLOSE : ICON_PANEL_RIGHT_OPEN" />
         </button>
       </div>
     </div>

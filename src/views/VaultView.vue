@@ -58,7 +58,7 @@ import type { DocumentLifecycle } from '../composables/vault/useDocumentLifecycl
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
-import TocPanel from '../components/vault/TocPanel.vue'
+import RightRail from '../components/vault/RightRail.vue'
 import EmptyState from '../components/vault/EmptyState.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
 import SettingsModal from '../components/vault/SettingsModal.vue'
@@ -176,6 +176,7 @@ const workingTreeDiffPaneRef = ref<InstanceType<typeof WorkingTreeDiffPane> | nu
 const recoveryPaneRef = ref<InstanceType<typeof DraftRecoveryPane> | null>(null)
 const workspaceTabOrder = ref<string[]>([])
 function openSearch() { paletteRef.value?.show() }
+function switchToReadMode() { viewModeApi?.set('read') }
 
 /* ---------- Tabs / save / route sync ---------- */
 const fileChanges = createVaultFileChanges()
@@ -1397,10 +1398,6 @@ const wikiResolver = (ref: string, _anchor?: string) => {
     alias: ref,
   }
 }
-watch(activeHistoryComparison, (comparison) => {
-  if (comparison && rightRailTab.value === 'ai') rightRailTab.value = 'toc'
-})
-
 watch(() => navSearch?.tick.value, () => openSearch())
 
 /* After the Monaco addAction emits toggle-view-mode and isReadMode
@@ -1649,15 +1646,16 @@ watch(isReadMode, async (reading) => {
       :title="t('vault.resize_right_rail')"
       @pointerdown="startDrag(vaultRef!, 'rightRail', $event)"
     />
-    <TocPanel
-      v-if="rightRailVisible"
-      class="toc-panel-slot"
+    <RightRail
+      v-show="rightRailVisible"
+      class="right-rail-slot"
       :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activeWorkingTreeDiff?.documentPath ?? activePath"
       :posts="posts"
       :active-tab="rightRailTab"
-      :history-read-only="Boolean(activeHistoryComparison || activeWorkingTreeDiff || activeDraftRecovery)"
+      :is-read-mode="isReadMode"
       @update:active-tab="rightRailTab = $event"
       @link-navigate="openPost"
+      @switch-to-read="switchToReadMode"
     />
 
     <StatusBar

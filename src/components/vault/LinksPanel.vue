@@ -152,7 +152,7 @@ const isEmpty = computed(() =>
   (backlinks.value.length === 0 && outgoingDisplay.value.length === 0),
 )
 
-/* Publish the empty state to the right-rail state module so TocPanel
+/* Publish the empty state to the right-rail state module so RightRail
    (a sibling, not a parent) can drive the rail's collapse. A
    watchEffect re-runs whenever `isEmpty` flips, which is what
    keeps the published ref in lockstep. The `isEmpty` computed

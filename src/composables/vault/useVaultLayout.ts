@@ -41,7 +41,7 @@ const DEFAULTS: VaultLayout = {
   activePanel: 'files',
   sidePanelWidth: 260,
   rightRailTab: 'toc',
-  rightRailWidth: 360,
+  rightRailWidth: 380,
   rightRailCollapsed: false,
 }
 
@@ -51,7 +51,7 @@ const DEFAULTS: VaultLayout = {
    create its own layout refs, and the two would only stay
    in sync via the round-trip through localStorage. That round-trip is
    async (useStorage's writer is next-tick), which is fine for the
-   first mount but breaks reactivity: when NavBar.toggleAi() mutates
+   first mount but breaks reactivity: when NavBar.toggleRightRail() mutates
    its local state, VaultView's watcher doesn't see
    the change — only the localStorage-sync watcher does, and only on
    the next tick. That was the original bug: closing the AI panel in
@@ -128,9 +128,9 @@ export function useVaultLayout() {
             activePanel: active,
             sidePanelWidth: w,
             rightRailTab,
-            rightRailWidth: Math.max(320, Math.min(520, rightRailWidth)),
-            // Missing means expanded. The AI toolbar toggle is now the
-            // only control that collapses the unified rail.
+            rightRailWidth: Math.max(280, Math.min(560, rightRailWidth)),
+            // Missing means expanded. The navbar right-rail toggle is the
+            // control that collapses the unified rail.
             rightRailCollapsed: legacyAiOpen ? false : typeof d.rightRailCollapsed === 'boolean' ? d.rightRailCollapsed : DEFAULTS.rightRailCollapsed,
           } satisfies VaultLayout
         } catch {
@@ -181,39 +181,34 @@ export function useVaultLayout() {
 
   const vaultStyle = computed(() => {
     // Rows: editor-area (fills), then a 24px status-bar that spans the
-    // full width. Columns vary depending on whether the left side panel,
-    // the TOC panel, and/or the right AI panel are open. The splitter
+    // full width. Columns vary depending on whether the left side panel
+    // and/or the unified right rail are open. The splitter
     // grid track is 1px (matches .vault .splitter { width: 1px }); the
     // actual grabbable area is wider (7px) but that lives on a
     // transparent ::before that overflows the layout box.
     //
     // The left side panel is the file tree, tag panel, or history panel.
     //
-    // The right-rail panel sits on the right (between editor-area and
-    // AI panel) when the external gate says it would render —
-    // VaultView passes `isReadMode` so the rail tracks read mode,
-    // not whether the document has headings (the TOC half inside the
-    // rail gates on headings itself; the Links half does not). Hidden
-    // when the AI panel opens (only one auxiliary panel at a time
-    // on the right). Side panel and rail coexist — the user routinely
+    // The right-rail panel sits on the right of the editor when expanded —
+    // VaultView keeps the rail available in edit, read, History, Diff,
+    // and Recovery views. The TOC tab gates on headings itself; the
+    // Links tab does not. Side panel and rail coexist — the user routinely
     // reads with the file tree open on the left, and the side+rail
     // combined width (~580px) leaves plenty of room for the editor
     // area.
     //
-    // Column tracks (TOC+AI combination is elided — toc goes off when
-    // ai opens):
-    //   side=off toc=off ai=off → 48px 1fr
-    //   side=on  toc=off ai=off → 48px {side}px 1px 1fr
-    //   side=off toc=on  ai=off → 48px 1fr 1px {toc}px
-    //   side=on  toc=on  ai=off → 48px {side}px 1px 1fr 1px {toc}px
-    //   side=off toc=off ai=on  → 48px 1fr 1px {ai}px
-    //   side=on  toc=off ai=on  → 48px {side}px 1px 1fr 1px {ai}px
+    // The right rail is one track regardless of which tab is active.
     // Trailing space on `left` and leading space on `right`/`toc`
     // are load-bearing — they separate the splitter tracks from
     // `1fr` in the template literal below. Don't normalize the
     // whitespace.
     const left = sidePanelOpen.value ? `${sidePanelWidth.value}px 1px ` : ''
-    const right = !rightRailCollapsed.value ? ` 1px ${rightRailWidth.value}px` : ''
+    // Keep the stored width stable while allowing the rendered track to
+    // yield space on compact Vault windows. The 38vw cap only becomes
+    // meaningful below the normal desktop range; max(280px, ...) keeps
+    // the rail usable on very narrow screens.
+    const railTrack = `minmax(280px, max(280px, min(${rightRailWidth.value}px, 560px, 38vw)))`
+    const right = !rightRailCollapsed.value ? ` 1px ${railTrack}` : ''
     return {
       gridTemplateColumns: `48px ${left}1fr${right}`,
       gridTemplateRows: '1fr 24px',
@@ -228,12 +223,8 @@ export function useVaultLayout() {
     activePanel.value = activePanel.value === panel ? null : panel
   }
 
-  function toggleAi() {
-    if (!rightRailCollapsed.value && rightRailTab.value === 'ai') rightRailCollapsed.value = true
-    else {
-      rightRailTab.value = 'ai'
-      rightRailCollapsed.value = false
-    }
+  function toggleRightRail() {
+    rightRailCollapsed.value = !rightRailCollapsed.value
   }
 
   return {
@@ -245,6 +236,6 @@ export function useVaultLayout() {
     rightRailCollapsed,
     vaultStyle,
     selectPanel,
-    toggleAi,
+    toggleRightRail,
   }
 }

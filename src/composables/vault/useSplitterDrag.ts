@@ -48,8 +48,9 @@ export function useSplitterDrag(targets: SplitterTargets) {
            the right edge is the vault's right border — fixed.
            Dragging right (positive dx) moves the left edge right →
            column shrinks. So we SUBTRACT dx. */
-        const max = Math.min(520, rect.width - 480)
-        targets.rightRailWidth.value = clamp(startRightRail - dx, 320, max)
+        const compactMax = rect.width < 1100 ? rect.width * 0.38 : rect.width - 480
+        const max = Math.min(560, Math.max(280, compactMax))
+        targets.rightRailWidth.value = clamp(startRightRail - dx, 280, max)
       }
     }
     const onUp = () => {

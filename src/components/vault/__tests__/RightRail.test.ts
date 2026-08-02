@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import TocPanel from '../TocPanel.vue'
+import RightRail from '../RightRail.vue'
 import { tocActiveId, tocHeadings, tocScrollTo } from '../../../composables/vault/useTocState'
 import type { RightRailTab } from '../../../composables/vault/useVaultLayout'
 import { useI18n } from '../../../composables/useI18n'
@@ -11,9 +11,9 @@ const posts = [{
   tags: [], size: 0, mtime: 0,
 }]
 
-function mountPanel(activeTab: RightRailTab = 'toc', historyReadOnly = false) {
-  return mount(TocPanel, {
-    props: { path: 'inbox/english/subject', posts, activeTab, historyReadOnly },
+function mountPanel(activeTab: RightRailTab = 'toc', isReadMode = true) {
+  return mount(RightRail, {
+    props: { path: 'inbox/english/subject', posts, activeTab, isReadMode },
     global: {
       stubs: {
         LinksPanel: {
@@ -73,25 +73,27 @@ describe('unified document sidebar', () => {
     expect(wrapper.get('[role="tab"]:nth-of-type(3)').classes()).toContain('active')
   })
 
-  it('keeps all three views mounted while showing only the active one', () => {
+  it('mounts AI on first selection and keeps it mounted across later tab switches', async () => {
     const wrapper = mountPanel('ai')
     expect(wrapper.find('.toc-panel').exists()).toBe(true)
     expect(wrapper.find('.links-slot').exists()).toBe(true)
     expect(wrapper.find('.stub-ai').exists()).toBe(true)
     expect(wrapper.get('.ai-slot').isVisible()).toBe(true)
     expect(wrapper.get('.toc-panel').attributes('style')).toContain('display: none')
+
+    await wrapper.setProps({ activeTab: 'links' })
+    expect(wrapper.find('.stub-ai').exists()).toBe(true)
   })
 
-  it('keeps the AI tab enabled and mounted for a read-only history snapshot (Edit-10.3 gate lift)', () => {
-    // Read-only views (History/Diff/Recovery) transport their own
-    // read-only live context since Edit-10.3, so the old "no AI in
-    // read-only views" gate is gone: the tab stays clickable and the
-    // panel stays mounted.
+  it('keeps AI available in read-only views but defers its mount until selected', async () => {
     const wrapper = mountPanel('toc', true)
     const aiTab = wrapper.findAll('[role="tab"]')[0]!
 
     expect(aiTab.attributes('disabled')).toBeUndefined()
     expect(aiTab.attributes('aria-disabled')).toBeUndefined()
+    expect(wrapper.find('.stub-ai').exists()).toBe(false)
+    await aiTab.trigger('click')
+    await wrapper.setProps({ activeTab: 'ai' })
     expect(wrapper.find('.stub-ai').exists()).toBe(true)
   })
 
@@ -109,6 +111,14 @@ describe('unified document sidebar', () => {
     const wrapper = mountPanel()
     expect(wrapper.text()).toContain('暂无目录')
     expect(wrapper.find('.links-slot').exists()).toBe(true)
-    expect(wrapper.find('.ai-slot').exists()).toBe(true)
+    expect(wrapper.find('.ai-slot').exists()).toBe(false)
+  })
+
+  it('offers a reading-mode action for an empty edit-mode outline', async () => {
+    tocHeadings.value = []
+    const wrapper = mountPanel('toc', false)
+    expect(wrapper.text()).toContain('编辑模式下暂不生成目录')
+    await wrapper.get('.toc-panel-empty-action').trigger('click')
+    expect(wrapper.emitted('switch-to-read')).toEqual([[]])
   })
 })

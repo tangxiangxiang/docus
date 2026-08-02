@@ -25,12 +25,12 @@ describe('useVaultLayout', () => {
 
   afterEach(() => localStorage.clear())
 
-  it('starts with one visible 360px right rail on the TOC tab', () => {
+  it('starts with one visible 380px right rail on the TOC tab', () => {
     const { layout } = setup()
     expect(layout.rightRailTab.value).toBe('toc')
-    expect(layout.rightRailWidth.value).toBe(360)
+    expect(layout.rightRailWidth.value).toBe(380)
     expect(layout.rightRailCollapsed.value).toBe(false)
-    expect(layout.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr 1px 360px')
+    expect(layout.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr 1px minmax(280px, max(280px, min(380px, 560px, 38vw)))')
   })
 
   it('migrates legacy file tree and TOC width fields', () => {
@@ -61,23 +61,23 @@ describe('useVaultLayout', () => {
 
   it('clamps migrated right rail width to the supported range', () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ rightRailWidth: 999 }))
-    expect(setup().layout.rightRailWidth.value).toBe(520)
+    expect(setup().layout.rightRailWidth.value).toBe(560)
   })
 
-  it('AI toggle opens, switches, and collapses the unified rail', () => {
+  it('right-rail toggle only opens and collapses without changing the selected tab', () => {
     const { layout } = setup()
     layout.rightRailCollapsed.value = true
-    layout.toggleAi()
+    layout.toggleRightRail()
     expect(layout.rightRailCollapsed.value).toBe(false)
-    expect(layout.rightRailTab.value).toBe('ai')
+    expect(layout.rightRailTab.value).toBe('toc')
 
     layout.rightRailTab.value = 'links'
-    layout.toggleAi()
-    expect(layout.rightRailTab.value).toBe('ai')
-    expect(layout.rightRailCollapsed.value).toBe(false)
-
-    layout.toggleAi()
+    layout.toggleRightRail()
+    expect(layout.rightRailTab.value).toBe('links')
     expect(layout.rightRailCollapsed.value).toBe(true)
+
+    layout.toggleRightRail()
+    expect(layout.rightRailCollapsed.value).toBe(false)
   })
 
   it('removes the right rail tracks when collapsed', () => {
@@ -116,7 +116,7 @@ describe('useVaultLayout', () => {
   it('drops unknown fields from persisted layout (forward-compat with old previewOpen)', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       rightRailTab: 'toc',
-      rightRailWidth: 360,
+      rightRailWidth: 380,
       rightRailCollapsed: false,
       previewOpen: true, // legacy field from before Preview was removed
     }))
@@ -124,7 +124,7 @@ describe('useVaultLayout', () => {
     const { layout } = setup()
     // No crash; the legacy field is simply ignored.
     expect(layout.rightRailTab.value).toBe('toc')
-    expect(layout.rightRailWidth.value).toBe(360)
+    expect(layout.rightRailWidth.value).toBe(380)
     // And it never re-emerges when the layout is rewritten. The
     // persistence watcher only fires on real mutations, so toggle a tab
     // and await a tick to flush the rewrite.

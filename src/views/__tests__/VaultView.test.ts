@@ -113,7 +113,10 @@ describe('VaultView editor tab wiring', () => {
 
     // Close-diff belongs to the workspace tab now; the comparison pane
     // no longer renders its own close button.
-    expect(source).toContain(':history-read-only="Boolean(activeHistoryComparison || activeWorkingTreeDiff || activeDraftRecovery)"')
+    expect(source).not.toContain(':history-read-only=')
+    expect(source).toContain("import RightRail from '../components/vault/RightRail.vue'")
+    expect(source).toContain('class="right-rail-slot"')
+    expect(source).toContain('@switch-to-read="switchToReadMode"')
     expect(source).toContain('@open-diff="openWorkingTreeDiff"')
     expect(source).not.toContain('@view-historical=')
   })

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // AI panel — chat UI + session persistence + LLM streaming. The
 // close button emits `close` so the parent (VaultView) can decide
-// what to do (typically toggleAi). The composer sends a user
+// what to do (typically toggleRightRail). The composer sends a user
 // message to the active session via useAiHistory.sendAndStream;
 // the server streams back tokens that fill the assistant bubble
 // in real time.

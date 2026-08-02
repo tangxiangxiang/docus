@@ -281,7 +281,7 @@ hr {
   border-color: var(--border);
   background: var(--bg-soft);
 }
-.nav-actions :where(.nav-search, .theme-toggle, .ai-toggle, .view-toggle) svg {
+.nav-actions :where(.nav-search, .theme-toggle, .right-rail-toggle, .view-toggle) svg {
   display: block;
   width: 18px;
   height: 18px;
@@ -3156,7 +3156,7 @@ main.container {
   box-sizing: border-box;
 }
 /* Single-column centered article. The page-nav (TOC) is now a
-   separate left-side vault grid column (TocPanel.vue), not an
+   separate right-side vault grid column (RightRail.vue), not an
    inline child of the reading layout. */
 .vault .reading-layout {
   display: flex;
@@ -4237,7 +4237,7 @@ main.container {
 
 /* NavBar AI toggle — matches the read-mode toggle look (soft-filled
    accent on pressed). */
-.ai-toggle {
+.right-rail-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4251,12 +4251,12 @@ main.container {
   cursor: pointer;
   transition: background 0.1s, color 0.1s;
 }
-.ai-toggle:hover { background: var(--bg-soft); border-color: var(--border); color: var(--text-h); }
-.ai-toggle[aria-pressed='true'] {
+.right-rail-toggle:hover { background: var(--bg-soft); border-color: var(--border); color: var(--text-h); }
+.right-rail-toggle[aria-pressed='true'] {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
 }
-.ai-toggle .ai-toggle-icon { display: inline-flex; line-height: 0; }
+.right-rail-toggle .right-rail-toggle-icon { display: inline-flex; line-height: 0; }
 
 /* NavBar view-mode toggle — single button that switches between
    edit and read. Matches the AI / theme toggles next to it
