@@ -20,13 +20,16 @@ describe('AiToolCallCard', () => {
     const wrapper = mount(AiToolCallCard, { props: { call: call() } })
 
     expect(wrapper.get('.ai-tool-summary').text()).toBe('archive/example · 240 chars')
-    expect(wrapper.get('.ai-tool-result').classes()).toContain('ai-tool-collapsed')
-    expect(wrapper.get('code').text()).toHaveLength(201)
+    expect(wrapper.findAll('.ai-tool-result')).toHaveLength(0)
+    expect(wrapper.get('.ai-tool-card').classes()).not.toContain('ai-tool-expanded')
 
     await wrapper.get('.ai-tool-toggle').trigger('click')
-    expect(wrapper.get('.ai-tool-result').classes()).not.toContain('ai-tool-collapsed')
+    expect(wrapper.findAll('.ai-tool-result')).toHaveLength(1)
     expect(wrapper.get('code').text()).toHaveLength(240)
     expect(wrapper.get('.ai-tool-toggle').attributes('aria-expanded')).toBe('true')
+
+    await wrapper.get('.ai-tool-toggle').trigger('click')
+    expect(wrapper.findAll('.ai-tool-result')).toHaveLength(0)
   })
 
   it('shows list counts and error state without leaking presentation logic to AiPanel', () => {
