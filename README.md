@@ -37,6 +37,12 @@ Together, the two connected circles express Docus as a **second brain**: not
 just a place to store notes, but a living network that helps ideas find one
 another and become durable knowledge.
 
+The expanded logo keeps one large circle at the center and places nine smaller
+nodes around it. Nine is traditionally regarded as the highest single digit in
+Chinese culture, symbolizing completeness and culmination. The nine nodes
+represent ideas arriving from different directions and converging into Docus,
+turning scattered thoughts into an organized knowledge network.
+
 ## Feature Status
 
 ### Edit Feature

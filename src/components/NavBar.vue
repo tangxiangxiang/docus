@@ -189,7 +189,7 @@ const SCOPE_ICONS: Record<string, string> = {
             v-for="(node, index) in BRAND_NODES"
             :key="`${node.x}-${node.y}`"
             class="brand-network-node"
-            :style="{ '--node-delay': `${index * 90}ms` }"
+            :style="{ '--node-delay': `${index * 140}ms` }"
           >
             <line class="brand-network-link" :x1="node.x" :y1="node.y" x2="500" y2="500" />
             <circle class="brand-network-dot" :cx="node.x" :cy="node.y" r="34" />
