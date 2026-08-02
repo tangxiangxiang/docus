@@ -291,6 +291,26 @@ describe('useHistoryCommit', () => {
     expect(toast.info).not.toHaveBeenCalled()
   })
 
+  it('does not report success when a post-commit external mutation is returned', async () => {
+    const h = history(['a.md'])
+    vi.mocked(api.createCommit).mockRejectedValue(
+      new api.HistoryApiError(
+        'replacement committed, but the previous generation changed externally and was quarantined',
+        409,
+        'HISTORY_POST_COMMIT_EXTERNAL_MUTATION',
+        { replacementApplied: true, quarantined: true },
+      ),
+    )
+    const commit = useHistoryCommit({ history: h, saveSelected: vi.fn() })
+    commit.message.value = 'Version'
+
+    await expect(commit.submit()).resolves.toBeNull()
+
+    expect(commit.error.value).toContain('previous generation changed externally')
+    expect(toast.error).toHaveBeenCalledWith(commit.error.value)
+    expect(toast.success).not.toHaveBeenCalled()
+  })
+
   it('removes a discarded transaction locally when the status refresh fails', async () => {
     const superseded = { ...repairTransaction, status: 'superseded' as const }
     vi.mocked(api.getIndexRepairStatus)
