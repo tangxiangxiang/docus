@@ -39,6 +39,16 @@ describe('NavBar — view-toggle button', () => {
     expect(wrapper.find('[data-testid="view-toggle"]').exists()).toBe(true)
   })
 
+  it('places the theme toggle before the view toggle', () => {
+    const { wrapper } = mountNavBar()
+    expect(wrapper.findAll('.nav-actions > button').map((button) => button.classes())).toEqual([
+      ['nav-search'],
+      ['theme-toggle'],
+      ['view-toggle'],
+      ['right-rail-toggle'],
+    ])
+  })
+
   it('clicking the button calls viewModeApi.toggle()', async () => {
     const { wrapper, api } = mountNavBar()
     await wrapper.find('[data-testid="view-toggle"]').trigger('click')

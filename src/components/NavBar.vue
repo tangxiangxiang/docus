@@ -97,18 +97,6 @@ const SCOPE_ICONS: Record<string, string> = {
           <span class="nav-search-icon" v-html="ICON_SEARCH" aria-hidden="true" />
         </button>
         <button
-          v-if="isVault && viewModeApi"
-          class="view-toggle"
-          :class="{ 'is-read': isReadMode }"
-          type="button"
-          :aria-label="t(isReadMode ? 'nav.switch_edit' : 'nav.switch_read')"
-          :title="t(isReadMode ? 'nav.switch_edit_hint' : 'nav.switch_read_hint')"
-          data-testid="view-toggle"
-          @click="viewModeApi.toggle()"
-        >
-          <span class="view-toggle-icon" aria-hidden="true" v-html="isReadMode ? ICON_EDIT : ICON_EYE" />
-        </button>
-        <button
           class="theme-toggle"
           type="button"
           :title="themeTitle"
@@ -121,6 +109,18 @@ const SCOPE_ICONS: Record<string, string> = {
           aria-hidden="true"
         />
       </button>
+        <button
+          v-if="isVault && viewModeApi"
+          class="view-toggle"
+          :class="{ 'is-read': isReadMode }"
+          type="button"
+          :aria-label="t(isReadMode ? 'nav.switch_edit' : 'nav.switch_read')"
+          :title="t(isReadMode ? 'nav.switch_edit_hint' : 'nav.switch_read_hint')"
+          data-testid="view-toggle"
+          @click="viewModeApi.toggle()"
+        >
+          <span class="view-toggle-icon" aria-hidden="true" v-html="isReadMode ? ICON_EDIT : ICON_EYE" />
+        </button>
         <button
           v-if="isVault"
           class="right-rail-toggle"
