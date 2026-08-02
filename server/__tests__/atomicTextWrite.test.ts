@@ -96,6 +96,33 @@ describe('atomic text writes', () => {
     expect(await temporaryFiles()).toEqual([])
   })
 
+  it('does not remove a replacement at the temporary pathname after ownership changes', async () => {
+    const missing = path.join(directory, 'missing.md')
+    const prepared = await prepareAtomicTextCreate(missing, 'created')
+    const moved = `${prepared.temporaryPath}.quarantined`
+    await fs.rename(prepared.temporaryPath, moved)
+    await fs.writeFile(prepared.temporaryPath, 'external occupant', 'utf8')
+
+    await expect(prepared.rollback()).rejects.toMatchObject({
+      name: 'AtomicTextWriteOwnershipError',
+    })
+    expect(await fs.readFile(prepared.temporaryPath, 'utf8')).toBe('external occupant')
+    expect(await fs.readFile(moved, 'utf8')).toBe('created')
+  })
+
+  it('does not link a replacement when the temporary pathname is replaced', async () => {
+    const missing = path.join(directory, 'missing-commit.md')
+    const prepared = await prepareAtomicTextCreate(missing, 'created')
+    await fs.rename(prepared.temporaryPath, `${prepared.temporaryPath}.quarantined`)
+    await fs.writeFile(prepared.temporaryPath, 'external occupant', 'utf8')
+
+    await expect(prepared.commit()).rejects.toMatchObject({
+      name: 'AtomicTextWriteOwnershipError',
+    })
+    await expect(fs.stat(missing)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await fs.readFile(prepared.temporaryPath, 'utf8')).toBe('external occupant')
+  })
+
   it('retries a snapshot when content changes between read and stat', async () => {
     const readFile = vi.spyOn(fs, 'readFile')
       .mockResolvedValueOnce('B')

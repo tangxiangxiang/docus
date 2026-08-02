@@ -129,6 +129,80 @@ export interface PreparedAtomicTextWrite {
   rollback(): Promise<void>
 }
 
+type OwnedPathIdentity = {
+  dev: string
+  ino: string
+}
+
+export class AtomicTextWriteOwnershipError extends Error {
+  readonly code = 'HISTORY_PATH_MOVED'
+
+  constructor(targetPath: string) {
+    super(`atomic write path ownership changed: ${targetPath}`)
+    this.name = 'AtomicTextWriteOwnershipError'
+  }
+}
+
+async function captureOwnedFileIdentity(
+  filePath: string,
+  targetPath: string,
+): Promise<OwnedPathIdentity> {
+  const stat = await fs.lstat(filePath, { bigint: true })
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new AtomicTextWriteOwnershipError(targetPath)
+  }
+  return { dev: stat.dev.toString(), ino: stat.ino.toString() }
+}
+
+async function captureOwnedDirectoryIdentity(
+  directoryPath: string,
+  targetPath: string,
+): Promise<OwnedPathIdentity> {
+  const stat = await fs.lstat(directoryPath, { bigint: true })
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new AtomicTextWriteOwnershipError(targetPath)
+  }
+  return { dev: stat.dev.toString(), ino: stat.ino.toString() }
+}
+
+async function verifyOwnedTemporaryPath(
+  temporaryPath: string,
+  parentPath: string,
+  temporaryIdentity: OwnedPathIdentity,
+  parentIdentity: OwnedPathIdentity,
+  targetPath: string,
+): Promise<void> {
+  const [currentTemporary, currentParent] = await Promise.all([
+    captureOwnedFileIdentity(temporaryPath, targetPath),
+    captureOwnedDirectoryIdentity(parentPath, targetPath),
+  ])
+  if (
+    currentTemporary.dev !== temporaryIdentity.dev
+    || currentTemporary.ino !== temporaryIdentity.ino
+    || currentParent.dev !== parentIdentity.dev
+    || currentParent.ino !== parentIdentity.ino
+  ) {
+    throw new AtomicTextWriteOwnershipError(targetPath)
+  }
+}
+
+async function removeOwnedTemporaryPath(
+  temporaryPath: string,
+  parentPath: string,
+  temporaryIdentity: OwnedPathIdentity,
+  parentIdentity: OwnedPathIdentity,
+  targetPath: string,
+): Promise<void> {
+  await verifyOwnedTemporaryPath(
+    temporaryPath,
+    parentPath,
+    temporaryIdentity,
+    parentIdentity,
+    targetPath,
+  )
+  await fs.unlink(temporaryPath)
+}
+
 /**
  * A prepared replacement whose commit is ownership-verified: it never
  * overwrites a generation it did not verify. See commit() below.
@@ -165,28 +239,63 @@ export async function prepareAtomicTextCreate(
   options: { mode?: number } = {},
 ): Promise<PreparedAtomicTextWrite> {
   const prepared = await prepareAtomicTextWrite(targetPath, raw, options)
+  const parentPath = path.dirname(targetPath)
+  const temporaryIdentity = await captureOwnedFileIdentity(prepared.temporaryPath, targetPath)
+  const parentIdentity = await captureOwnedDirectoryIdentity(parentPath, targetPath)
   let settled = false
   return {
     temporaryPath: prepared.temporaryPath,
     async commit() {
       if (settled) return
       try {
+        await verifyOwnedTemporaryPath(
+          prepared.temporaryPath,
+          parentPath,
+          temporaryIdentity,
+          parentIdentity,
+          targetPath,
+        )
         // link(2) is the create-only counterpart to rename: it atomically
         // fails with EEXIST and never replaces a newer generation.
         await fs.link(prepared.temporaryPath, targetPath)
         settled = true
-        await fs.rm(prepared.temporaryPath, { force: true }).catch(() => {})
+        await removeOwnedTemporaryPath(
+          prepared.temporaryPath,
+          parentPath,
+          temporaryIdentity,
+          parentIdentity,
+          targetPath,
+        )
         await syncParentDirectoryBestEffort(targetPath)
       } catch (error) {
+        if (!(error instanceof AtomicTextWriteOwnershipError)) {
+          try {
+            await removeOwnedTemporaryPath(
+              prepared.temporaryPath,
+              parentPath,
+              temporaryIdentity,
+              parentIdentity,
+              targetPath,
+            )
+          } catch {
+            // The temporary path is deliberately quarantined when its
+            // ownership cannot be proved. Never clean by string path alone.
+          }
+        }
         settled = true
-        await fs.rm(prepared.temporaryPath, { force: true }).catch(() => {})
         throw error
       }
     },
     async rollback() {
       if (settled) return
+      await removeOwnedTemporaryPath(
+        prepared.temporaryPath,
+        parentPath,
+        temporaryIdentity,
+        parentIdentity,
+        targetPath,
+      )
       settled = true
-      await fs.rm(prepared.temporaryPath, { force: true }).catch(() => {})
     },
   }
 }
@@ -370,6 +479,9 @@ export async function prepareAtomicTextWrite(
   options: { mode?: number } = {},
 ): Promise<PreparedAtomicTextReplace> {
   const temporaryPath = await writeTemporaryTextFile(targetPath, raw, options)
+  const parentPath = path.dirname(targetPath)
+  const temporaryIdentity = await captureOwnedFileIdentity(temporaryPath, targetPath)
+  const parentIdentity = await captureOwnedDirectoryIdentity(parentPath, targetPath)
   const replacementHash = sha256Hex(raw)
   let settled = false
 
@@ -377,17 +489,34 @@ export async function prepareAtomicTextWrite(
     temporaryPath,
     async commit(expectedRaw: string) {
       if (settled) return
+      await verifyOwnedTemporaryPath(
+        temporaryPath,
+        parentPath,
+        temporaryIdentity,
+        parentIdentity,
+        targetPath,
+      )
       const stagedPath = path.join(
-        path.dirname(targetPath),
+        parentPath,
         `.${path.basename(targetPath)}.docus-staged-${randomUUID()}`,
       )
       const journalPath = path.join(
-        path.dirname(targetPath),
+        parentPath,
         `.${path.basename(targetPath)}.docus-journal-${randomUUID()}`,
       )
       const fail = async (error: unknown): Promise<never> => {
         settled = true
-        await fs.rm(temporaryPath, { force: true }).catch(() => {})
+        try {
+          await removeOwnedTemporaryPath(
+            temporaryPath,
+            parentPath,
+            temporaryIdentity,
+            parentIdentity,
+            targetPath,
+          )
+        } catch {
+          // Never infer ownership from a changed pathname.
+        }
         await removeDurableJournal(journalPath).catch(() => {})
         throw error
       }
@@ -475,8 +604,14 @@ export async function prepareAtomicTextWrite(
     },
     async rollback() {
       if (settled) return
+      await removeOwnedTemporaryPath(
+        temporaryPath,
+        parentPath,
+        temporaryIdentity,
+        parentIdentity,
+        targetPath,
+      )
       settled = true
-      await fs.rm(temporaryPath, { force: true }).catch(() => {})
     },
   }
 }

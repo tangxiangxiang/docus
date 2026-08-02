@@ -92,6 +92,31 @@ describe('POST /api/ai/commit-message History boundary', () => {
     }))
   })
 
+  it('sends line-oriented unified Diff text for modified, added, and deleted files', async () => {
+    await write('modified.md', 'first\nold\nlast\n')
+    await write('deleted.md', 'line1\nline2\n')
+    await historyGit.addAndCommit(root, ['modified.md', 'deleted.md'], 'initial')
+    await write('modified.md', 'first\nnew\nlast\n')
+    await write('added.md', 'line1\nline2\n')
+    await fs.rm(path.join(root, 'deleted.md'))
+
+    const response = await call({
+      paths: ['modified.md', 'added.md', 'deleted.md'],
+      language: 'en',
+    })
+
+    expect(response.status).toBe(200)
+    const request = commitMessageMock.mock.calls[0]?.[0] as {
+      changes: Array<{ path: string; changeKind: string; diff: string }>
+    }
+    expect(request.changes).toEqual([
+      { path: 'modified.md', changeKind: 'modified', diff: ' first\n-old\n+new\n last' },
+      { path: 'added.md', changeKind: 'added', diff: '+line1\n+line2' },
+      { path: 'deleted.md', changeKind: 'deleted', diff: '-line1\n-line2' },
+    ])
+    expect(request.changes.every((change) => !change.diff.startsWith('\n') && !change.diff.endsWith('\n'))).toBe(true)
+  })
+
   it('rejects a changed symlink Markdown path without reading or sending its target', async () => {
     if (process.platform === 'win32') return
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-ai-outside-'))

@@ -546,6 +546,21 @@ describe('POST /api/history/repair-index', () => {
     }
   })
 
+  it('returns a structured conflict code when Index Repair cannot be verified', async () => {
+    await call('GET', '/capability')
+    const repair = vi.spyOn(historyGit, 'repairIndex').mockResolvedValueOnce({ repaired: false })
+    try {
+      const response = await call('POST', '/repair-index', { token: 'a'.repeat(32) })
+      expect(response.status).toBe(409)
+      expect(await response.json()).toEqual({
+        error: 'index repair could not be verified',
+        code: 'HISTORY_INDEX_REPAIR_CONFLICT',
+      })
+    } finally {
+      repair.mockRestore()
+    }
+  })
+
   it('returns 409 instead of clearing index content staged after the failure', async () => {
     await write('a.md', 'committed')
     const git = await import('../history/git.js')
@@ -643,6 +658,42 @@ describe('POST /api/history/drop', () => {
     const r = await call('POST', '/drop', { sha: 'HEAD' })
     expect(r.status).toBe(400)
   })
+
+  it('distinguishes an external commit from a Docus version', async () => {
+    await write('note.md', 'content\n')
+    const committed = (await (await call('POST', '/commits', { paths: ['note.md'], message: 'version' })).json()) as { sha: string }
+    const tree = (await historyGit.run(root, ['rev-parse', `${committed.sha}^{tree}`])).stdout.trim()
+    const external = await historyGit.run(root, ['commit-tree', tree, '-p', committed.sha, '-m', 'external commit'])
+    const externalSha = external.stdout.trim()
+    expect((await historyGit.run(root, ['update-ref', 'HEAD', externalSha, committed.sha])).status).toBe(0)
+
+    const response = await call('POST', '/drop', { sha: externalSha })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'HISTORY_NOT_DOCUS_VERSION' })
+  }, 15_000)
+
+  it('identifies legacy path-hash markers without treating them as external commits', async () => {
+    await write('note.md', 'legacy\n')
+    await historyGit.run(root, ['add', '--', 'note.md'])
+    const tree = (await historyGit.run(root, ['write-tree'])).stdout.trim()
+    const legacy = await historyGit.run(root, [
+      'commit-tree',
+      tree,
+      '-m',
+      'legacy version\n\nDocus-Version: 1\nDocus-Vault: abcdef123456',
+    ])
+    const legacySha = legacy.stdout.trim()
+    expect((await historyGit.run(root, ['update-ref', 'HEAD', legacySha])).status).toBe(0)
+
+    const response = await call('POST', '/drop', { sha: legacySha })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({
+      code: 'HISTORY_LEGACY_DOCUS_VERSION',
+      details: { reason: 'legacy-marker' },
+    })
+  }, 15_000)
 
   it('maps a CAS conflict and repository operation state to 409', async () => {
     const drop = vi.spyOn(historyGit, 'dropHeadCommit')
@@ -886,6 +937,41 @@ describe('POST /api/history/restore', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({ code: 'HISTORY_CONTENT_CHANGED' })
     expect(await read('folder/note.md')).toBe('incumbent\n')
+  })
+
+  it('fails closed when the prepared missing-file temporary is isolated by a moved parent', async () => {
+    await write('folder/note.md', 'historical\n')
+    const historical = await call('POST', '/commits', { paths: ['folder/note.md'], message: 'old' })
+    const ref = (await historical.json() as { sha: string }).sha
+    await fs.unlink(path.join(root, 'folder/note.md'))
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-restore-outside-temp-'))
+    const movedFolder = path.join(root, 'original-folder')
+    try {
+      __setHistoryMutationHooksForTesting({
+        afterRestorePrepare: async () => {
+          const originalFolder = path.join(root, 'folder')
+          await fs.rename(originalFolder, movedFolder)
+          const temporaryName = (await fs.readdir(movedFolder)).find((name) => name.includes('.docus-save-'))
+          expect(temporaryName).toBeTruthy()
+          await fs.writeFile(path.join(outside, temporaryName!), 'outside occupant', 'utf8')
+          await fs.symlink(outside, originalFolder, 'dir')
+        },
+      })
+
+      const response = await call('POST', '/restore', { path: 'folder/note.md', ref })
+
+      expect(response.status).toBe(409)
+      expect(await response.json()).toMatchObject({ code: 'HISTORY_PATH_MOVED' })
+      expect(await fs.readFile(path.join(outside, '.note.md.docus-save-placeholder'), 'utf8').catch(() => null)).toBeNull()
+      const outsideFiles = await fs.readdir(outside)
+      const outsideTemporary = outsideFiles.find((name) => name.includes('.docus-save-'))
+      expect(outsideTemporary).toBeTruthy()
+      expect(await fs.readFile(path.join(outside, outsideTemporary!), 'utf8')).toBe('outside occupant')
+      expect((await fs.readdir(movedFolder)).some((name) => name.includes('.docus-save-'))).toBe(true)
+      await expect(fs.stat(path.join(outside, 'note.md'))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true })
+    }
   })
 
   it('returns a stable path-moved conflict when the parent disappeared', async () => {

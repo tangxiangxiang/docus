@@ -4,6 +4,7 @@ import type { Database as DatabaseT } from 'better-sqlite3'
 
 import {
   AtomicTextWriteConflictError,
+  AtomicTextWriteOwnershipError,
   AtomicTextWriteTargetMissingError,
   atomicRemoveTextIfUnchanged,
   atomicReplaceTextIfUnchanged,
@@ -73,6 +74,7 @@ export async function restoreHistoricalDocument(input: {
   db: DatabaseT
   beforeMutation?: () => void | Promise<void>
   beforeCommit?: () => void | Promise<void>
+  afterPrepare?: () => void | Promise<void>
   afterCommit?: () => void | Promise<void>
 }): Promise<HistoryRestoreResult> {
   const logicalPath = input.path.slice(0, -'.md'.length)
@@ -163,32 +165,76 @@ export async function restoreHistoricalDocument(input: {
             await input.afterCommit?.()
           }
         } else {
+          // For a create-only Restore, the last caller-controlled hook must
+          // run before Docus creates any hidden temporary file. Re-resolve
+          // the parent after the hook so a moved/replaced directory cannot
+          // cause cleanup to follow a later symlink.
+          await input.beforeCommit?.()
+          let createResolution: SafePathResolution
+          try {
+            createResolution = await resolveSafeRelativePathDetailed(
+              input.repoRoot,
+              input.path,
+              { allowMissingFinal: true },
+            )
+            await verifySafePathResolution(createResolution)
+          } catch (error: any) {
+            if (error?.code === 'ENOENT' || /symbolic links|path segment|path root/i.test(error?.message ?? '')) {
+              throw new HistoryRestoreConflictError(
+                `document path moved before restore: ${logicalPath}`,
+                'HISTORY_PATH_MOVED',
+                { cause: error },
+              )
+            }
+            throw error
+          }
+          targetResolution = createResolution
+          target = createResolution.absolute
           const parent = path.dirname(target)
           const parentStat = await fs.lstat(parent).catch(() => null)
+          const targetStat = await fs.lstat(target).catch((error: any) => {
+            if (error?.code === 'ENOENT') return null
+            throw error
+          })
           if (!parentStat
             || !parentStat.isDirectory()
             || parentStat.isSymbolicLink()
-            || !await isPhysicallyContained(input.repoRoot, parent)) {
+            || !await isPhysicallyContained(input.repoRoot, parent)
+            || targetStat !== null) {
             throw new HistoryRestoreConflictError(
-              `document path moved before restore: ${logicalPath}`,
-              'HISTORY_PATH_MOVED',
+              targetStat !== null
+                ? `document content changed before restore: ${logicalPath}`
+                : `document path moved before restore: ${logicalPath}`,
+              targetStat !== null ? 'HISTORY_CONTENT_CHANGED' : 'HISTORY_PATH_MOVED',
             )
           }
           const prepared = await prepareAtomicTextCreate(target, historicalRaw)
           try {
-            await input.beforeCommit?.()
+            await input.afterPrepare?.()
             await verifySafePathResolution(targetResolution)
             await prepared.commit()
             committed = true
             created = true
             await input.afterCommit?.()
           } catch (error) {
-            await prepared.rollback().catch(() => {})
+            let cleanupError: unknown
+            try {
+              await prepared.rollback()
+            } catch (rollbackError) {
+              cleanupError = rollbackError
+            }
             if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
               throw new HistoryRestoreConflictError(
                 `document content changed before restore: ${logicalPath}`,
                 'HISTORY_CONTENT_CHANGED',
-                { cause: error },
+                { cause: cleanupError ? new AggregateError([error, cleanupError]) : error },
+              )
+            }
+            if (cleanupError) {
+              throw new HistoryRestoreConflictError(
+                `document path moved before restore: ${logicalPath}`,
+                'HISTORY_PATH_MOVED',
+                { cause: new AggregateError([error, cleanupError]) },
               )
             }
             throw error
@@ -266,6 +312,13 @@ export async function restoreHistoricalDocument(input: {
           throw new HistoryRestoreConflictError(
             `document content changed before restore: ${logicalPath}`,
             'HISTORY_CONTENT_CHANGED',
+            { cause: error },
+          )
+        }
+        if (error instanceof AtomicTextWriteOwnershipError) {
+          throw new HistoryRestoreConflictError(
+            `document path moved before restore completed: ${logicalPath}`,
+            'HISTORY_PATH_MOVED',
             { cause: error },
           )
         }

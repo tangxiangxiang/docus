@@ -81,18 +81,21 @@ type CommitChange = {
 
 function formatCommitDiff(before: string | null, after: string | null, filePath: string): string {
   const diff = computeFileDiff(before, after)
-  let output = ''
+  const lines: string[] = []
+  let outputLength = 0
   for (const op of diff.ops) {
     const prefix = op.op === 'add' ? '+' : op.op === 'remove' ? '-' : ' '
-    const next = `${prefix}${op.text}${output ? '\n' : ''}`
-    if (output.length + next.length > MAX_COMMIT_DIFF_CHARS) {
+    const next = `${prefix}${op.text}`
+    const nextLength = outputLength + (lines.length === 0 ? 0 : 1) + next.length
+    if (nextLength > MAX_COMMIT_DIFF_CHARS) {
       throw new CommitMessageResourceLimitError(
         `AI diff exceeds the per-file prompt limit: ${filePath}`,
       )
     }
-    output += next
+    lines.push(next)
+    outputLength = nextLength
   }
-  return output
+  return lines.join('\n')
 }
 
 async function collectCommitChanges(

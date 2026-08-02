@@ -68,6 +68,7 @@ export type HistoryMutationKind =
 export type HistoryMutationHooks = {
   beforeMutation?: (kind: HistoryMutationKind) => void | Promise<void>
   beforeRestoreCommit?: () => void | Promise<void>
+  afterRestorePrepare?: () => void | Promise<void>
   afterRestoreCommit?: () => void | Promise<void>
 }
 
@@ -106,6 +107,7 @@ const STABLE_HISTORY_ERROR_CODES = new Set([
   'HISTORY_REPOSITORY_OPERATION',
   'HISTORY_INDEX_REPAIR_CONFLICT',
   'HISTORY_NOT_DOCUS_VERSION',
+  'HISTORY_LEGACY_DOCUS_VERSION',
   'HISTORY_RESOURCE_LIMIT',
 ])
 
@@ -397,7 +399,9 @@ history.post('/repair-index', async (c) => {
       await ensureRepoWithinVaultMutation(repoRoot())
       await historyMutationHooks?.beforeMutation?.('repair-index')
       const result = await git.repairIndex(repoRoot(), token)
-      if (!result.repaired) return bad(c, 'index repair could not be verified', 409)
+      if (!result.repaired) {
+        return bad(c, 'index repair could not be verified', 409, 'HISTORY_INDEX_REPAIR_CONFLICT')
+      }
       return c.json(result)
     })
   } catch (e: any) {
@@ -453,6 +457,13 @@ history.post('/drop', async (c) => {
     })
   } catch (e: any) {
     const msg = e.message ?? 'drop failed'
+    const code = stableErrorCode(e)
+    if (code === 'HISTORY_LEGACY_DOCUS_VERSION') {
+      return bad(c, msg, 409, code, e.details)
+    }
+    if (code === 'HISTORY_NOT_DOCUS_VERSION') {
+      return bad(c, msg, 409, code, e.details)
+    }
     if (/only the latest version|repository changed before withdrawal|repository operation in progress|not a Docus version|merge commits cannot be withdrawn/i.test(msg)) {
       return bad(c, msg, 409, /not a Docus version/i.test(msg)
         ? 'HISTORY_NOT_DOCUS_VERSION'
@@ -510,6 +521,7 @@ history.post('/restore', async (c) => {
       db: metadataDb(),
       beforeMutation: () => historyMutationHooks?.beforeMutation?.('restore'),
       beforeCommit: () => historyMutationHooks?.beforeRestoreCommit?.(),
+      afterPrepare: () => historyMutationHooks?.afterRestorePrepare?.(),
       afterCommit: () => historyMutationHooks?.afterRestoreCommit?.(),
     })
     return c.json(result)

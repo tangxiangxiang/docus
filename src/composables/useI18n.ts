@@ -337,6 +337,8 @@ const STRINGS: Strings = {
   'history.withdraw_index_refresh_failed': { zh: '最新版本已撤回，但 Git 状态需要修复。文档内容没有丢失。', en: 'The latest version was withdrawn, but Git status needs repair. No document content was lost.' },
   'history.withdraw_repair_state_persistence_failed': { zh: '最新版本已撤回，但 Git 状态修复记录未能保存。请检查 Git 状态。', en: 'The latest version was withdrawn, but its Git repair record could not be saved. Check Git status.' },
   'history.withdraw_latest_changed': { zh: '最新版本已经发生变化，请刷新后重试。', en: 'The latest version has changed. Refresh and try again.' },
+  'history.withdraw_not_docus_version': { zh: '当前提交不是由此 Vault 创建的 Docus 版本，无法撤回。', en: 'This commit is not a Docus version created by this Vault, so it cannot be withdrawn.' },
+  'history.withdraw_legacy_version': { zh: '此版本使用旧版 Docus 身份格式创建，仍可查看和恢复，但无法撤回。', en: 'This version was created with an older Docus identity format. It can still be viewed or restored, but it cannot be withdrawn.' },
   'history.withdraw_repository_operation': { zh: '仓库正在执行其他操作，请先完成或取消该操作。', en: 'Another repository operation is in progress. Complete or cancel it first.' },
   'history.withdraw_failed': { zh: '撤回最新版本失败：{error}', en: 'Could not withdraw the latest version: {error}' },
   'history.history_mutation_in_progress': { zh: '另一项历史操作正在进行，请稍后重试。', en: 'Another History action is in progress. Try again shortly.' },

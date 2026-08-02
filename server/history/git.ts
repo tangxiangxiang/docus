@@ -632,6 +632,13 @@ export type IndexRepairTransaction = {
   expectedIndex: Record<string, IndexEntryFingerprint[]>
 }
 
+export type IndexSyncResult = {
+  synchronized: boolean
+  replacementApplied: boolean
+  finalHead: string | null
+  replacementExpectedIndex?: Record<string, IndexEntryFingerprint[]>
+}
+
 type IndexRepairFile = {
   version: 2
   transactions: IndexRepairTransaction[]
@@ -1078,32 +1085,54 @@ async function syncIndexPaths(
   paths: readonly string[],
   fixedHead?: string,
   options: {
-    syncIndexForTesting?: (commitSha: string) => Promise<RunResult>
+    syncIndexForTesting?: (commitSha: string) => Promise<IndexSyncResult | RunResult>
     beforeIndexResetForTesting?: (commitSha: string, attempt: number) => Promise<void>
+    afterIndexLockForTesting?: () => Promise<void>
+    beforeIndexReplaceForTesting?: () => Promise<void>
     preservePaths?: readonly string[]
     expectedIndex?: Record<string, IndexEntryFingerprint[]>
   } = {},
-): Promise<boolean> {
+): Promise<IndexSyncResult> {
+  let last: IndexSyncResult = {
+    synchronized: false,
+    replacementApplied: false,
+    finalHead: await readCurrentHead(repoRoot),
+  }
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    if (await repositoryOperationInProgress(repoRoot)) return false
+    if (await repositoryOperationInProgress(repoRoot)) {
+      return { ...last, finalHead: await readCurrentHead(repoRoot) }
+    }
     const before = await run(repoRoot, ['rev-parse', '--verify', 'HEAD'])
-    if (before.status !== 0) return false
+    if (before.status !== 0) {
+      return { ...last, finalHead: await readCurrentHead(repoRoot) }
+    }
     const target = fixedHead ?? before.stdout.trim()
-    if (before.stdout.trim() !== target) return false
+    if (before.stdout.trim() !== target) {
+      return { ...last, finalHead: await readCurrentHead(repoRoot) }
+    }
     await options.beforeIndexResetForTesting?.(target, attempt)
     if (options.syncIndexForTesting) {
       const reset = await options.syncIndexForTesting(target)
-      if (reset.status === 0 && !(await repositoryOperationInProgress(repoRoot))) return true
+      last = 'synchronized' in reset
+        ? reset
+        : {
+            synchronized: reset.status === 0 && !(await repositoryOperationInProgress(repoRoot)),
+            replacementApplied: false,
+            finalHead: await readCurrentHead(repoRoot),
+          }
+      if (last.synchronized || last.replacementApplied) return last
     } else {
-      const synchronized = await syncDroppedIndexPaths(repoRoot, paths, target, {
+      last = await syncDroppedIndexPaths(repoRoot, paths, target, {
+        afterIndexLockForTesting: options.afterIndexLockForTesting,
+        beforeIndexReplaceForTesting: options.beforeIndexReplaceForTesting,
         preservePaths: options.preservePaths,
         expectedIndex: options.expectedIndex,
       })
-      if (synchronized) return true
+      if (last.synchronized || last.replacementApplied) return last
     }
     if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)))
   }
-  return false
+  return last
 }
 
 async function stagedIntentPaths(
@@ -1264,8 +1293,10 @@ export async function addAndCommit(
     beforeStageForTesting?: () => Promise<void>
     beforeTemporaryIndexForTesting?: () => Promise<void>
     beforeUpdateRefForTesting?: () => Promise<void>
-    syncIndexForTesting?: (commitSha: string) => Promise<RunResult>
+    syncIndexForTesting?: (commitSha: string) => Promise<IndexSyncResult | RunResult>
     beforeIndexResetForTesting?: (commitSha: string, attempt: number) => Promise<void>
+    afterIndexLockForTesting?: () => Promise<void>
+    beforeIndexReplaceForTesting?: () => Promise<void>
     beforeRepairStatePersistenceForTesting?: () => Promise<void>
     beforeRepairMetadataWriteForTesting?: () => Promise<void>
   } = {},
@@ -1400,27 +1431,43 @@ export async function addAndCommit(
   // HEAD is already committed. Index repair is auxiliary and must never turn
   // a successful version into an API failure. Retry transient index.lock
   // contention, bind reset to our immutable SHA, and report degradation.
-  const indexRefreshFailed = resetPaths.length > 0
-    && !(await syncIndexPaths(repoRoot, resetPaths, commitSha, {
-      ...options,
-      preservePaths: [],
-      expectedIndex: Object.fromEntries(
-        resetPaths.map((filePath) => [filePath, indexBefore[filePath] ?? []]),
-      ),
-    }))
+  const indexSync = resetPaths.length === 0
+    ? {
+        synchronized: true,
+        replacementApplied: false,
+        finalHead: await readCurrentHead(repoRoot),
+      }
+    : await syncIndexPaths(repoRoot, resetPaths, commitSha, {
+        ...options,
+        preservePaths: [],
+        expectedIndex: Object.fromEntries(
+          resetPaths.map((filePath) => [filePath, indexBefore[filePath] ?? []]),
+        ),
+      })
+  const indexRefreshFailed = resetPaths.length > 0 && !indexSync.synchronized
   let indexRepair: IndexRepairTransaction | undefined
   let repairStatePersistenceFailed = false
   try {
     await options.beforeRepairStatePersistenceForTesting?.()
+    const replacementExpectedIndex = indexSync.replacementApplied
+      ? indexSync.replacementExpectedIndex
+      : undefined
     const repairPaths = indexRefreshFailed
-      ? await pathsUnchangedSinceIndexCapture(repoRoot, resetPaths, indexBefore)
+      ? replacementExpectedIndex
+        ? resetPaths
+        : await pathsUnchangedSinceIndexCapture(repoRoot, resetPaths, indexBefore)
       : resetPaths
     if (indexRefreshFailed && repairPaths.length > 0) {
       indexRepair = await recordIndexRepair(
         repoRoot,
-        commitSha,
+        indexSync.finalHead,
         repairPaths,
-        Object.fromEntries(repairPaths.map((filePath) => [filePath, indexBefore[filePath] ?? []])),
+        replacementExpectedIndex
+          ? Object.fromEntries(repairPaths.map((filePath) => [
+              filePath,
+              replacementExpectedIndex[filePath] ?? [],
+            ]))
+          : Object.fromEntries(repairPaths.map((filePath) => [filePath, indexBefore[filePath] ?? []])),
         { beforeMetadataWriteForTesting: options.beforeRepairMetadataWriteForTesting },
       )
     } else if (!indexRefreshFailed) {
@@ -1452,7 +1499,7 @@ async function syncDroppedIndexPaths(
     preservePaths?: readonly string[]
     expectedIndex?: Record<string, IndexEntryFingerprint[]>
   } = {},
-): Promise<boolean> {
+): Promise<IndexSyncResult> {
   const gitDir = await absoluteGitDir(repoRoot)
   const indexPath = path.join(gitDir, 'index')
   const lockPath = path.join(gitDir, 'index.lock')
@@ -1460,7 +1507,13 @@ async function syncDroppedIndexPaths(
   try {
     lockHandle = await fs.open(lockPath, 'wx')
   } catch (error: any) {
-    if (error?.code === 'EEXIST') return false
+    if (error?.code === 'EEXIST') {
+      return {
+        synchronized: false,
+        replacementApplied: false,
+        finalHead: await readCurrentHead(repoRoot),
+      }
+    }
     throw error
   }
 
@@ -1483,7 +1536,13 @@ async function syncDroppedIndexPaths(
         if (!sameIndexEntries(
           await indexFingerprint(repoRoot, filePath),
           options.expectedIndex[filePath] ?? [],
-        )) return false
+        )) {
+          return {
+            synchronized: false,
+            replacementApplied: false,
+            finalHead: await readCurrentHead(repoRoot),
+          }
+        }
       }
     }
     const preserve = new Set(options.preservePaths ?? [])
@@ -1493,8 +1552,20 @@ async function syncDroppedIndexPaths(
       : targetHead === null
         ? await run(repoRoot, ['update-index', '--force-remove', '--', ...resetPaths], { env: indexEnv })
         : await run(repoRoot, ['reset', '-q', targetHead, '--', ...resetPaths], { env: indexEnv })
-    if (update.status !== 0 || await repositoryOperationInProgress(repoRoot)) return false
-    if (await readCurrentHead(repoRoot) !== targetHead) return false
+    if (update.status !== 0 || await repositoryOperationInProgress(repoRoot)) {
+      return {
+        synchronized: false,
+        replacementApplied: false,
+        finalHead: await readCurrentHead(repoRoot),
+      }
+    }
+    if (await readCurrentHead(repoRoot) !== targetHead) {
+      return {
+        synchronized: false,
+        replacementApplied: false,
+        finalHead: await readCurrentHead(repoRoot),
+      }
+    }
 
     const verified = targetHead === null
       ? Object.values(await captureIndexFingerprints(repoRoot, resetPaths, indexEnv))
@@ -1514,8 +1585,19 @@ async function syncDroppedIndexPaths(
       )
     )))
     const preserved = preservedEntries.every(Boolean)
-    if (!verified) return false
-    if (preserve.size > 0 && (!options.expectedIndex || !preserved)) return false
+    if (!verified || (preserve.size > 0 && (!options.expectedIndex || !preserved))) {
+      return {
+        synchronized: false,
+        replacementApplied: false,
+        finalHead: await readCurrentHead(repoRoot),
+      }
+    }
+
+    const replacementExpectedIndex = await captureIndexFingerprints(
+      repoRoot,
+      resetPaths,
+      indexEnv,
+    )
 
     const replacement = await fs.readFile(tempIndex)
     await lockHandle.truncate(0)
@@ -1526,7 +1608,13 @@ async function syncDroppedIndexPaths(
     await options.beforeIndexReplaceForTesting?.()
     await fs.rename(lockPath, indexPath)
     committedLock = true
-    return await readCurrentHead(repoRoot) === targetHead
+    const finalHead = await readCurrentHead(repoRoot)
+    return {
+      synchronized: finalHead === targetHead,
+      replacementApplied: true,
+      finalHead,
+      replacementExpectedIndex,
+    }
   } finally {
     await lockHandle?.close().catch(() => {})
     if (!committedLock) await fs.rm(lockPath, { force: true })
@@ -1539,7 +1627,7 @@ export async function dropHeadCommit(
   sha: string,
   options: {
     beforeUpdateRefForTesting?: () => Promise<void>
-    syncIndexForTesting?: (targetHead: string | null, paths: readonly string[]) => Promise<boolean>
+    syncIndexForTesting?: (targetHead: string | null, paths: readonly string[]) => Promise<IndexSyncResult | boolean>
     afterIndexLockForTesting?: () => Promise<void>
     beforeIndexReplaceForTesting?: () => Promise<void>
     beforeRepairStatePersistenceForTesting?: () => Promise<void>
@@ -1585,7 +1673,20 @@ export async function dropHeadCommit(
       || versionLines.length !== 1
       || vaultLines.length !== 1
     ) {
-      throw new Error('commit is not a Docus version for this vault')
+      const legacyVault = /^Docus-Vault:\s*([0-9a-f]{12})$/i.exec(vaultLines[0]?.trim() ?? '')
+      if (versionMarkers.length === 1 && vaultLines.length === 1 && legacyVault) {
+        throw Object.assign(
+          new Error('this version uses the legacy Docus identity format and cannot be withdrawn'),
+          {
+            code: 'HISTORY_LEGACY_DOCUS_VERSION',
+            details: { reason: 'legacy-marker' },
+          },
+        )
+      }
+      throw Object.assign(
+        new Error('commit is not a Docus version for this vault'),
+        { code: 'HISTORY_NOT_DOCUS_VERSION' },
+      )
     }
 
     const show = await run(repoRoot, ['show', '--no-renames', '--name-only', '--pretty=', resolvedSha])
@@ -1605,36 +1706,63 @@ export async function dropHeadCommit(
       : await run(repoRoot, ['update-ref', 'HEAD', parent, sha])
     if (update.status !== 0) throw new Error('repository changed before withdrawal')
 
-    let indexRefreshFailed = false
+    let indexSync: IndexSyncResult
     try {
-      const synchronized = filesChanged.length === 0
-        ? true
+      indexSync = filesChanged.length === 0
+        ? {
+            synchronized: true,
+            replacementApplied: false,
+            finalHead: await readCurrentHead(repoRoot),
+          }
         : options.syncIndexForTesting
-          ? await options.syncIndexForTesting(parent, filesChanged)
+          ? await (async () => {
+              const result = await options.syncIndexForTesting!(parent, filesChanged)
+              return typeof result === 'boolean'
+                ? {
+                    synchronized: result,
+                    replacementApplied: false,
+                    finalHead: await readCurrentHead(repoRoot),
+                  }
+                : result
+            })()
           : await syncDroppedIndexPaths(repoRoot, filesChanged, parent, {
               ...options,
               preservePaths,
               expectedIndex: indexBefore,
             })
-      indexRefreshFailed = !synchronized
     } catch {
-      indexRefreshFailed = true
+      indexSync = {
+        synchronized: false,
+        replacementApplied: false,
+        finalHead: await readCurrentHead(repoRoot),
+      }
     }
+    const indexRefreshFailed = !indexSync.synchronized
 
     const finalHead = await readCurrentHead(repoRoot)
     let indexRepair: IndexRepairTransaction | undefined
     let repairStatePersistenceFailed = false
     try {
       await options.beforeRepairStatePersistenceForTesting?.()
+      const replacementExpectedIndex = indexSync.replacementApplied
+        ? indexSync.replacementExpectedIndex
+        : undefined
       const repairPaths = indexRefreshFailed
-        ? await pathsUnchangedSinceIndexCapture(repoRoot, resetPaths, indexBefore)
+        ? replacementExpectedIndex
+          ? resetPaths
+          : await pathsUnchangedSinceIndexCapture(repoRoot, resetPaths, indexBefore)
         : resetPaths
       if (indexRefreshFailed && repairPaths.length > 0) {
         indexRepair = await recordIndexRepair(
           repoRoot,
-          finalHead,
+          indexSync.finalHead,
           repairPaths,
-          Object.fromEntries(repairPaths.map((filePath) => [filePath, indexBefore[filePath] ?? []])),
+          replacementExpectedIndex
+            ? Object.fromEntries(repairPaths.map((filePath) => [
+                filePath,
+                replacementExpectedIndex[filePath] ?? [],
+              ]))
+            : Object.fromEntries(repairPaths.map((filePath) => [filePath, indexBefore[filePath] ?? []])),
           { beforeMetadataWriteForTesting: options.beforeRepairMetadataWriteForTesting },
         )
       } else if (!indexRefreshFailed) {

@@ -90,11 +90,19 @@ export function useHistoryWithdraw(options: HistoryWithdrawOptions) {
       } catch (cause) {
         const detail = cause instanceof Error ? cause.message : t('common.unknown_error')
         if (cause instanceof HistoryApiError && cause.status === 409) {
-          if (cause.code === 'HISTORY_REPOSITORY_OPERATION' || /repository operation in progress/i.test(detail)) {
+          if (cause.code === 'HISTORY_LEGACY_DOCUS_VERSION') {
+            error.value = t('history.withdraw_legacy_version')
+          } else if (cause.code === 'HISTORY_NOT_DOCUS_VERSION') {
+            error.value = t('history.withdraw_not_docus_version')
+          } else if (cause.code === 'HISTORY_REPOSITORY_OPERATION' || /repository operation in progress/i.test(detail)) {
             error.value = t('history.withdraw_repository_operation')
-          } else {
+          } else if (cause.code === 'HISTORY_REPOSITORY_CHANGED' || /only the latest version|repository changed before withdrawal/i.test(detail)) {
             await Promise.all([options.history.refreshStatus(), options.history.refreshLog()])
             error.value = t('history.withdraw_latest_changed')
+          } else if (cause.code === 'HISTORY_VAULT_WRITER_ACTIVE') {
+            error.value = t('history.history_mutation_in_progress')
+          } else {
+            error.value = t('history.withdraw_failed', { error: detail })
           }
         } else {
           error.value = t('history.withdraw_failed', { error: detail })

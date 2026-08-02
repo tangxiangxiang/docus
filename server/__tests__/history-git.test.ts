@@ -667,6 +667,45 @@ describe('addAndCommit + log', () => {
     expect(await git.rawAt(root, 'HEAD', 'a.md')).toBe('snapshot')
   })
 
+  it('records the installed Index generation and final HEAD when Create Version loses a HEAD race at rename', async () => {
+    await write('a.md', 'snapshot')
+    let externalHead = ''
+    const result = await git.addAndCommit(root, ['a.md'], 'committed', {
+      beforeIndexResetForTesting: async (_sha, attempt) => {
+        if (attempt !== 0) return
+        await write('unrelated.md', 'staged separately')
+        expect((await git.run(root, ['add', '--', 'unrelated.md'])).status).toBe(0)
+      },
+      beforeIndexReplaceForTesting: async () => {
+        const oldHead = (await git.run(root, ['rev-parse', 'HEAD'])).stdout.trim()
+        const tree = (await git.run(root, ['rev-parse', 'HEAD^{tree}'])).stdout.trim()
+        const commit = await git.run(root, ['commit-tree', tree, '-p', oldHead, '-m', 'external ref move'])
+        externalHead = commit.stdout.trim()
+        expect((await git.run(root, ['update-ref', 'HEAD', externalHead, oldHead])).status).toBe(0)
+      },
+    })
+
+    expect(result).toMatchObject({
+      indexRefreshFailed: true,
+      repairStatePersistenceFailed: false,
+      indexRepair: expect.objectContaining({ head: externalHead, paths: ['a.md'] }),
+    })
+    expect(externalHead).toBeTruthy()
+    expect((await git.run(root, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(externalHead)
+    expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('snapshot')
+    expect((await git.status(root)).find((entry) => entry.path === 'unrelated.md')).toMatchObject({
+      index: 'A',
+      worktree: ' ',
+    })
+
+    await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toEqual({ repaired: true })
+    expect((await git.run(root, ['show', ':a.md'])).stdout).toBe('snapshot')
+    expect((await git.status(root)).find((entry) => entry.path === 'unrelated.md')).toMatchObject({
+      index: 'A',
+      worktree: ' ',
+    })
+  }, 15_000)
+
   for (const marker of ['MERGE_HEAD', 'CHERRY_PICK_HEAD']) {
     it(`rejects Create Version while ${marker} is present`, async () => {
       await write('blocked.md', 'snapshot')
@@ -906,6 +945,44 @@ describe('dropHeadCommit', () => {
     expect(await git.getIndexRepairStatus(root)).toEqual([
       expect.objectContaining({ token: result.indexRepair!.token, paths: ['a.md'] }),
     ])
+  }, 15_000)
+
+  it('records the installed Index generation and final HEAD when Withdraw loses a HEAD race at rename', async () => {
+    await write('a.md', 'v1')
+    await git.addAndCommit(root, ['a.md'], 'v1')
+    await write('a.md', 'v2')
+    const latest = await git.addAndCommit(root, ['a.md'], 'v2')
+    let externalHead = ''
+
+    const result = await git.dropHeadCommit(root, latest.sha, {
+      beforeUpdateRefForTesting: async () => {
+        await write('unrelated.md', 'staged separately')
+        expect((await git.run(root, ['add', '--', 'unrelated.md'])).status).toBe(0)
+      },
+      beforeIndexReplaceForTesting: async () => {
+        const oldHead = (await git.run(root, ['rev-parse', 'HEAD'])).stdout.trim()
+        const tree = (await git.run(root, ['rev-parse', 'HEAD^{tree}'])).stdout.trim()
+        const commit = await git.run(root, ['commit-tree', tree, '-p', oldHead, '-m', 'external ref move'])
+        externalHead = commit.stdout.trim()
+        expect((await git.run(root, ['update-ref', 'HEAD', externalHead, oldHead])).status).toBe(0)
+      },
+    })
+
+    expect(result).toMatchObject({
+      indexRefreshFailed: true,
+      repairStatePersistenceFailed: false,
+      indexRepair: expect.objectContaining({ head: externalHead, paths: ['a.md'] }),
+    })
+    expect((await git.run(root, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(externalHead)
+    expect((await git.status(root)).find((entry) => entry.path === 'unrelated.md')).toMatchObject({
+      index: 'A',
+      worktree: ' ',
+    })
+    await expect(git.repairIndex(root, result.indexRepair!.token)).resolves.toEqual({ repaired: true })
+    expect((await git.status(root)).find((entry) => entry.path === 'unrelated.md')).toMatchObject({
+      index: 'A',
+      worktree: ' ',
+    })
   }, 15_000)
 
   it('does not let a staged write enter Withdraw Repair metadata', async () => {

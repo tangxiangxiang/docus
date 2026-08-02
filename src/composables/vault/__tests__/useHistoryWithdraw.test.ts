@@ -166,6 +166,48 @@ describe('useHistoryWithdraw', () => {
     expect(withdraw.error.value).toBe('The latest version has changed. Refresh and try again.')
   })
 
+  it.each([
+    ['HISTORY_NOT_DOCUS_VERSION', 'This commit is not a Docus version created by this Vault, so it cannot be withdrawn.'],
+    ['HISTORY_LEGACY_DOCUS_VERSION', 'This version was created with an older Docus identity format. It can still be viewed or restored, but it cannot be withdrawn.'],
+  ] as const)('shows a specific marker message for %s', async (code, expected) => {
+    const h = history()
+    const withdraw = useHistoryWithdraw({
+      history: h,
+      confirm: vi.fn().mockResolvedValue(true),
+      acquireMutation: () => () => {},
+      refreshComparisons: vi.fn(),
+      refreshIndexRepairStatus: vi.fn(),
+      registerIndexRepair: vi.fn(),
+      settleIndexRepairPaths: vi.fn(),
+      closeDroppedRevision: vi.fn(),
+      drop: vi.fn().mockRejectedValue(new HistoryApiError('marker rejected', 409, code)),
+    })
+
+    await withdraw.withdraw('b'.repeat(40))
+
+    expect(withdraw.error.value).toBe(expected)
+    expect(h.refreshStatus).not.toHaveBeenCalled()
+    expect(h.refreshLog).not.toHaveBeenCalled()
+  })
+
+  it('does not turn an unrecognized 409 into a latest-version message', async () => {
+    const withdraw = useHistoryWithdraw({
+      history: history(),
+      confirm: vi.fn().mockResolvedValue(true),
+      acquireMutation: () => () => {},
+      refreshComparisons: vi.fn(),
+      refreshIndexRepairStatus: vi.fn(),
+      registerIndexRepair: vi.fn(),
+      settleIndexRepairPaths: vi.fn(),
+      closeDroppedRevision: vi.fn(),
+      drop: vi.fn().mockRejectedValue(new HistoryApiError('unsafe transition', 409)),
+    })
+
+    await withdraw.withdraw('b'.repeat(40))
+
+    expect(withdraw.error.value).toBe('Could not withdraw the latest version: unsafe transition')
+  })
+
   it('reports Index and repair-record degradation as successful withdrawals', async () => {
     const h = history()
     const drop = vi.fn()
