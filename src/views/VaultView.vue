@@ -1655,6 +1655,7 @@ watch(isReadMode, async (reading) => {
       :is-read-mode="isReadMode"
       @update:active-tab="rightRailTab = $event"
       @link-navigate="openPost"
+      @metadata-saved="onMetadataSaved"
       @switch-to-read="switchToReadMode"
     />
 

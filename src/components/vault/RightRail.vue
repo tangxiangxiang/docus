@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Unified right rail. Lightweight tabs switch one shared content
-// region between the TOC, bi-directional links, and AI assistant.
+// region between the TOC, bi-directional links, document properties, and AI assistant.
 //
 // Components:
 //   - The TOC list comes from ReadingPane via Vault-scoped useTocState
@@ -14,9 +14,10 @@
 import { computed, ref, watch } from 'vue'
 import { useVaultTocState } from '../../composables/vault/useTocState'
 import { useI18n } from '../../composables/useI18n'
-import type { PostSummary } from '../../lib/api'
+import type { DocumentMetadata, PostSummary } from '../../lib/api'
 import LinksPanel from './LinksPanel.vue'
 import AiPanel from './AiPanel.vue'
+import DocumentMetadataForm from './DocumentMetadataForm.vue'
 import type { RightRailTab } from '../../composables/vault/useVaultLayout'
 
 const { tocHeadings, tocActiveId, tocScrollTo } = useVaultTocState()
@@ -35,6 +36,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** Emitted when the user clicks a row in the Links panel. */
   'link-navigate': [path: string]
+  'metadata-saved': [metadata: DocumentMetadata]
   'update:activeTab': [tab: RightRailTab]
   'switch-to-read': []
 }>()
@@ -72,6 +74,7 @@ function onLinkNavigate(p: string) {
       >{{ t('rail.ai') }}</button>
       <button role="tab" :aria-selected="activeTab === 'toc'" :class="{ active: activeTab === 'toc' }" @click="emit('update:activeTab', 'toc')">{{ t('rail.toc') }}</button>
       <button role="tab" :aria-selected="activeTab === 'links'" :class="{ active: activeTab === 'links' }" @click="emit('update:activeTab', 'links')">{{ t('rail.links') }}</button>
+      <button role="tab" :aria-selected="activeTab === 'properties'" :class="{ active: activeTab === 'properties' }" @click="emit('update:activeTab', 'properties')">{{ t('rail.properties') }}</button>
     </nav>
 
     <section v-show="activeTab === 'toc'" class="toc-panel" role="tabpanel" :aria-label="t('rail.toc')">
@@ -108,6 +111,18 @@ function onLinkNavigate(p: string) {
         :path="path"
         :posts="posts"
         @navigate="onLinkNavigate"
+      />
+    </section>
+    <section v-show="activeTab === 'properties'" class="metadata-slot" role="tabpanel" :aria-label="t('metadata.title')">
+      <header class="metadata-panel-header">
+        <strong>{{ t('metadata.title') }}</strong>
+        <span v-if="path" :title="path">{{ path }}</span>
+      </header>
+      <DocumentMetadataForm
+        :path="path"
+        :enabled="activeTab === 'properties'"
+        :show-cancel="false"
+        @saved="emit('metadata-saved', $event)"
       />
     </section>
     <section v-if="aiHasOpened" v-show="activeTab === 'ai'" class="ai-slot" role="tabpanel" :aria-label="t('rail.ai')">
@@ -170,7 +185,8 @@ function onLinkNavigate(p: string) {
 }
 
 .toc-panel,
-.links-slot {
+.links-slot,
+.metadata-slot {
   display: block;
   height: calc(100% - 36px);
   box-sizing: border-box;
@@ -181,6 +197,24 @@ function onLinkNavigate(p: string) {
 }
 .ai-slot { height: calc(100% - 36px); min-height: 0; }
 .ai-slot :deep(.ai-panel) { height: 100%; }
+.metadata-slot { padding-bottom: 24px; }
+.metadata-panel-header {
+  display: grid;
+  gap: 4px;
+  padding: 0 18px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 60%, transparent);
+}
+.metadata-panel-header strong {
+  color: var(--vs-text-1, var(--text));
+  font-size: 0.82rem;
+}
+.metadata-panel-header span {
+  overflow: hidden;
+  color: var(--vs-text-3, var(--text-muted));
+  font: 0.7rem var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .toc-panel-empty {
   padding: 0 22px;
   font-size: 0.78rem;

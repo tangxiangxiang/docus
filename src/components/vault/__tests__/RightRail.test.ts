@@ -21,6 +21,10 @@ function mountPanel(activeTab: RightRailTab = 'toc', isReadMode = true) {
           template: '<button class="stub-link" @click="$emit(\'navigate\', \'archive/target\')">引用</button>',
         },
         AiPanel: { template: '<div class="stub-ai"><input value="draft"></div>' },
+        DocumentMetadataForm: {
+          emits: ['saved'],
+          template: '<div class="stub-metadata-form">属性表单</div>',
+        },
       },
     },
   })
@@ -47,7 +51,7 @@ describe('unified document sidebar', () => {
   it('renders tabs in AI → 目录 → 引用 order', () => {
     const wrapper = mountPanel()
     const labels = wrapper.findAll('[role="tab"]').map((tab) => tab.text())
-    expect(labels).toEqual(['AI', '目录', '引用'])
+    expect(labels).toEqual(['AI', '目录', '引用', '属性'])
   })
 
   it('emits update:activeTab with the matching key for each tab', async () => {
@@ -56,7 +60,8 @@ describe('unified document sidebar', () => {
     await tabs[0].trigger('click')
     await tabs[1].trigger('click')
     await tabs[2].trigger('click')
-    expect(wrapper.emitted('update:activeTab')).toEqual([['ai'], ['toc'], ['links']])
+    await tabs[3].trigger('click')
+    expect(wrapper.emitted('update:activeTab')).toEqual([['ai'], ['toc'], ['links'], ['properties']])
   })
 
   it('reflects the controlled activeTab via aria-selected and the .active class', async () => {
@@ -104,6 +109,13 @@ describe('unified document sidebar', () => {
     await wrapper.setProps({ activeTab: 'links' })
     await wrapper.find('.stub-link').trigger('click')
     expect(wrapper.emitted('link-navigate')).toEqual([['archive/target']])
+  })
+
+  it('renders the shared metadata form in the fourth tab', async () => {
+    const wrapper = mountPanel('properties')
+    expect(wrapper.find('.metadata-slot').exists()).toBe(true)
+    expect(wrapper.find('.stub-metadata-form').exists()).toBe(true)
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('属性')
   })
 
   it('renders empty TOC without affecting the other tabs', () => {
