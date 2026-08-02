@@ -620,7 +620,8 @@ User-visible impact:
 History Freeze Production Baseline: e5e20c5ed3950e625003a443184fe8131cd20369
 History Freeze Client-Test Baseline: ba90ce51dca07606e0feaa300ef7826f1b52cf22
 History Freeze Documentation Baseline: 4fb35776e47befc01ae9029a714a041ae7eb8078
-Freeze documentation commit: recorded by the follow-up bookkeeping commit
+Freeze content commit: 1fd777074761bc8fc63c47f76645c198594367b5
+Freeze verification bookkeeping commit: this commit, SHA reported at handoff
 
 History Feature State: TEMPORARILY FROZEN
 Normal Personal Use: SUPPORTED
@@ -632,6 +633,23 @@ Maintenance Mode: NOT ENTERED
 The freeze-only changes do not modify History production code, UI,
 interaction, or the atomic file protocol. Verification is recorded by the
 follow-up bookkeeping commit.
+
+### Verification Evidence
+
+```text
+npm test -- --run: 163 test files passed; 2551 passed; 2 skipped; 0 failed
+npm run typecheck: PASS
+npm run build: PASS; existing dependency pure-annotation and chunk-size warnings only
+git diff --check: PASS
+Markdown fences: PASS; all four freeze-related documents have balanced fences
+Relative Markdown links: PASS; all checked local targets exist
+Production code changed in this freeze: NO
+```
+
+Validation was performed on macOS only. Linux and Windows were not run.
+GitHub Actions/CI was not run because this freeze was not pushed. Owner
+Approval remains pending. The tag status and final bookkeeping SHA are
+reported at handoff.
 
 ## 31. 2026-08-02 Post-Commit Artifact and Conditional-Remove Follow-up
 
