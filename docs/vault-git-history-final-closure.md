@@ -527,6 +527,48 @@ History feature remains:
 DRAFT — CLOSURE IN PROGRESS
 ```
 
+## 31. 2026-08-02 Post-Commit Artifact and Conditional-Remove Follow-up
+
+Production-code commit: `e5e20c5ed3950e625003a443184fe8131cd20369`.
+
+This follow-up closes the reviewed data-loss paths without changing History
+layout or interaction:
+
+| Finding | Result and evidence |
+|---|---|
+| Replacement old-FD mutation | After the replacement is linked, staged content is captured again with stable reads and compared with the expected generation. Same-inode external writes raise `HISTORY_POST_COMMIT_EXTERNAL_MUTATION`; staged bytes remain quarantined and the journal enters `post-commit-external-mutation`. |
+| Conditional remove formal-path loss | Final staged validation failures restore the still-proven generation with create-only semantics. A target claimed by an external writer is never overwritten; staged bytes remain quarantined and the operation returns a structured conflict. |
+| Durable artifact cleanup | Journal and recovery-payload removal accepts creation proofs or captures identity/content hash before recovery cleanup. A second proof after the deterministic replacement hook prevents deleting a changed occupant. Journal rewrites verify the old generation and the new temporary before rename. |
+| Crash recovery | The post-commit quarantine journal phase is parsed and retained without touching either generation. Recovery also refuses to remove a staged generation whose content no longer matches the expected hash. |
+| Repair API test semantics | `repairIndex()` now has an endpoint-specific 409 test asserting URL, method, token, status, code, and details. |
+| Markdown fences | Focused and full verification evidence are separate balanced code blocks. All three History documents have balanced fenced blocks. |
+
+Focused macOS evidence:
+
+```text
+focused total: 4 test files, 208 passed, 0 failed
+```
+
+Full required macOS verification for this commit:
+
+```text
+npm test -- --run: 163 test files passed; 2550 passed, 2 skipped
+npm run typecheck: PASS
+npm run build: PASS (existing dependency pure-annotation/chunk-size warnings only)
+git diff --check: PASS
+```
+
+The portable pathname check/use window remains open: no dirfd/openat,
+renameat, or unlinkat-equivalent protocol was added. A replaced parent can
+still produce an empty outside temporary on unsupported platforms, although
+the pre-write check prevents document bytes from being written there. Linux,
+Windows, DST subprocess evidence, H-C13 bootstrap serialization, and Owner
+Approval remain open. Closure remains:
+
+```text
+DRAFT — CLOSURE IN PROGRESS
+```
+
 ## 14. 2026-08-02 Temporary Ownership and Repair Persistence Follow-up
 
 Current production-code commit:
@@ -623,6 +665,7 @@ server/__tests__/atomicTextWrite.test.ts: 22 passed
 server/__tests__/createOnlyMove.test.ts: 22 passed
 src/composables/vault/__tests__/useHistoryCommit.test.ts: passed
 src/lib/__tests__/history-api.test.ts: passed
+```
 
 Full required macOS verification:
 
@@ -631,7 +674,6 @@ npm test -- --run: 163 test files passed; 2543 passed, 2 skipped
 npm run typecheck: PASS
 npm run build: PASS (existing dependency annotation/chunk-size warnings only)
 git diff --check: PASS
-```
 ```
 
 Linux/Windows validation, DST subprocess evidence, H-C13 bootstrap

@@ -1436,3 +1436,36 @@ be created” until that protocol or an equivalent cross-platform primitive is
 implemented and verified. Closure remains `DRAFT — CLOSURE IN PROGRESS` until
 H-C10 treatment, Linux/Windows validation, DST subprocess evidence, H-C13
 bootstrap serialization, and Owner Approval are complete.
+
+## 2026-08-02 Atomic Artifact Follow-up
+
+Production commit: `e5e20c5ed3950e625003a443184fe8131cd20369`.
+
+The History atomic text protocol now treats the old generation as mutable
+even after takeover: replacement commit re-reads staged content after the
+new target link and before cleanup. A same-inode external FileHandle write
+therefore produces `HISTORY_POST_COMMIT_EXTERNAL_MUTATION`, retains the
+changed staged generation, and records a `post-commit-external-mutation`
+journal phase that recovery preserves.
+
+Conditional remove no longer leaves the formal path absent when final staged
+validation detects a same-inode change. It restores only a generation whose
+identity is still proven, using create-only link; an externally re-created
+target wins and the staged generation is quarantined. Durable journal and
+recovery-payload cleanup uses creation or capture proofs with identity and
+content-hash checks. Journal rewrite uses an incumbent-generation check and
+post-rename inode verification.
+
+This is not an H-C10 closure. The implementation still lacks a portable
+dirfd/openat/renameat/unlinkat-equivalent protocol, so pathname check/use
+windows remain. Empty outside temporary artifacts are still possible in the
+unsupported-parent-replacement window, but document bytes are not written
+there by the pre-write revalidation. Linux/Windows validation, DST subprocess
+evidence, H-C13 bootstrap serialization, and Owner Approval remain pending.
+Closure stays `DRAFT — CLOSURE IN PROGRESS`.
+
+Verification on the macOS development host for this commit: 163 test files,
+2550 passed, 2 skipped; `npm run typecheck` passed; `npm run build` passed
+with existing dependency pure-annotation/chunk-size warnings; and
+`git diff --check` passed. No Linux or Windows run and no Owner Approval are
+claimed.

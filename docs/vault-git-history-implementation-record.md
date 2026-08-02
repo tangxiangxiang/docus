@@ -700,3 +700,41 @@ skipped, typecheck PASS, build PASS with existing dependency/chunk-size
 warnings, and `git diff --check` PASS. H-C10's portable
 directory-handle/openat gap, Linux/Windows validation, DST subprocess tests,
 H-C13 bootstrap serialization, and Owner Approval remain open.
+
+## 31. 2026-08-02 Post-Commit Artifact and Conditional-Remove Follow-up
+
+Production commit: `e5e20c5ed3950e625003a443184fe8131cd20369`.
+
+The replacement protocol now performs a stable final read of the staged
+generation after linking the new target and before staged cleanup. A changed
+same-inode old FileHandle therefore cannot be silently unlinked. The target
+replacement remains authoritative, the changed old generation remains under
+the staged quarantine name, and the durable journal records
+`post-commit-external-mutation`; startup recovery treats that phase as
+manual/quarantined and does not delete either generation.
+
+`atomicRemoveTextIfUnchanged` now restores the staged generation before
+returning a post-commit conflict. It uses create-only linking, so an external
+target is preserved. If the staged pathname no longer proves the original
+generation, no restore or cleanup is attempted and `HISTORY_PATH_MOVED` is
+returned. The result type records removed/restored/quarantined state for
+callers that need it.
+
+Durable journals and recovery payloads now carry optional content hashes in
+their creation proof. String-based startup cleanup first captures the current
+artifact and then performs identity/content verification again before unlink.
+Journal rewrites capture the incumbent before creating the rewrite temporary,
+verify both generations before rename, and verify the installed inode after
+rename. The final portable check/use window remains an H-C10 limitation.
+
+New deterministic coverage includes same-inode replacement and remove races,
+target reoccupation during remove recovery, staged-path replacement,
+journal-parent replacement, journal occupant replacement, crash-recovery
+retention of post-commit mutation, and direct `repairIndex()` 409 wire shape.
+
+macOS focused evidence for this commit: 4 test files, 208 passed, 0 failed.
+Full required macOS verification for this commit is 163 test files with 2550
+passed and 2 skipped; typecheck PASS; build PASS with existing dependency
+pure-annotation/chunk-size warnings; and `git diff --check` PASS. Linux,
+Windows, DST subprocess evidence, H-C13 bootstrap serialization, and Owner
+Approval remain open. Closure remains `DRAFT — CLOSURE IN PROGRESS`.
