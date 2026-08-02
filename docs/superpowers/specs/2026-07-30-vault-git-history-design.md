@@ -1440,6 +1440,7 @@ bootstrap serialization, and Owner Approval are complete.
 ## 2026-08-02 Atomic Artifact Follow-up
 
 Production commit: `e5e20c5ed3950e625003a443184fe8131cd20369`.
+Client regression-test commit: `ba90ce51dca07606e0feaa300ef7826f1b52cf22`.
 
 The History atomic text protocol now treats the old generation as mutable
 even after takeover: replacement commit re-reads staged content after the
@@ -1465,7 +1466,7 @@ evidence, H-C13 bootstrap serialization, and Owner Approval remain pending.
 Closure stays `DRAFT — CLOSURE IN PROGRESS`.
 
 Verification on the macOS development host for this commit: 163 test files,
-2550 passed, 2 skipped; `npm run typecheck` passed; `npm run build` passed
+2551 passed, 2 skipped; `npm run typecheck` passed; `npm run build` passed
 with existing dependency pure-annotation/chunk-size warnings; and
 `git diff --check` passed. No Linux or Windows run and no Owner Approval are
 claimed.

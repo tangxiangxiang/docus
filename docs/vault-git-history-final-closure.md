@@ -530,6 +530,7 @@ DRAFT — CLOSURE IN PROGRESS
 ## 31. 2026-08-02 Post-Commit Artifact and Conditional-Remove Follow-up
 
 Production-code commit: `e5e20c5ed3950e625003a443184fe8131cd20369`.
+Client regression-test commit: `ba90ce51dca07606e0feaa300ef7826f1b52cf22`.
 
 This follow-up closes the reviewed data-loss paths without changing History
 layout or interaction:
@@ -552,7 +553,7 @@ focused total: 4 test files, 208 passed, 0 failed
 Full required macOS verification for this commit:
 
 ```text
-npm test -- --run: 163 test files passed; 2550 passed, 2 skipped
+npm test -- --run: 163 test files passed; 2551 passed, 2 skipped
 npm run typecheck: PASS
 npm run build: PASS (existing dependency pure-annotation/chunk-size warnings only)
 git diff --check: PASS
