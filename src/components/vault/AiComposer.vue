@@ -63,8 +63,8 @@ defineExpose({ focus })
         :value="modelValue"
         class="ai-input"
         rows="1"
-        :placeholder="t('ai.ask_claude')"
-        :aria-label="t('ai.ask_claude')"
+        :placeholder="t('ai.input_placeholder')"
+        :aria-label="t('ai.input_placeholder')"
         @keydown="onKeydown"
         @input="onInput"
       />

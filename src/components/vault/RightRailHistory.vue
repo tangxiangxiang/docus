@@ -54,9 +54,8 @@ function onTreeKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <section class="right-rail-history" aria-labelledby="right-rail-history-title">
+  <section class="right-rail-history" :aria-label="t('rail.history')">
     <header class="right-rail-history-header">
-      <strong id="right-rail-history-title">{{ t('rail.history') }}</strong>
       <span v-if="path" :title="path">{{ path }}</span>
     </header>
 
@@ -117,17 +116,13 @@ function onTreeKeydown(event: KeyboardEvent): void {
   overflow: hidden;
 }
 .right-rail-history-header {
-  display: grid;
-  gap: 4px;
+  display: block;
   flex: 0 0 auto;
-  padding: 14px 18px 12px;
+  padding: 9px 18px 9px;
   border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 60%, transparent);
 }
-.right-rail-history-header strong {
-  color: var(--vs-text-1, var(--text));
-  font-size: 0.82rem;
-}
 .right-rail-history-header span {
+  display: block;
   overflow: hidden;
   color: var(--vs-text-3, var(--text-muted));
   font: 0.7rem var(--mono);

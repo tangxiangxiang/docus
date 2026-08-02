@@ -23,6 +23,7 @@ describe('AiComposer', () => {
   it('owns input updates and Enter/Shift+Enter behavior', async () => {
     const wrapper = mountComposer({ modelValue: 'hello' })
     const input = wrapper.get('textarea')
+    expect(input.attributes('placeholder')).toBe('Type a message…')
 
     await input.setValue('updated')
     expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['updated'])
@@ -31,6 +32,12 @@ describe('AiComposer', () => {
     expect(wrapper.emitted('send')).toBeUndefined()
     await input.trigger('keydown', { key: 'Enter', shiftKey: false })
     expect(wrapper.emitted('send')).toHaveLength(1)
+  })
+
+  it('uses a provider-neutral Chinese input placeholder', () => {
+    useI18n().setLocale('zh')
+    const wrapper = mountComposer()
+    expect(wrapper.get('textarea').attributes('placeholder')).toBe('输入消息…')
   })
 
   it('switches the primary action from send to stop while busy', async () => {

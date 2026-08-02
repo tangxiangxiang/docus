@@ -96,7 +96,7 @@ const STRINGS: Strings = {
   'ai.open_history': { zh: '打开对话历史', en: 'Open conversation history' },
   'ai.close_history': { zh: '关闭对话历史', en: 'Close conversation history' },
   'ai.not_configured': { zh: 'AI 尚未配置，请从活动栏打开设置。', en: 'AI is not configured. Open Settings from the activity bar.' },
-  'ai.ask_claude': { zh: '询问 Claude…', en: 'Ask Claude…' },
+  'ai.input_placeholder': { zh: '输入消息…', en: 'Type a message…' },
   'ai.no_document': { zh: '未选择文档', en: 'No document selected' },
   'ai.stop': { zh: '停止', en: 'Stop' },
   'ai.send': { zh: '发送', en: 'Send' },
