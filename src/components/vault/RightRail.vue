@@ -48,7 +48,11 @@ const emit = defineEmits<{
   'open-history-revision': [selection: HistoryRevisionSelection]
 }>()
 
-const hasHeadings = computed(() => tocHeadings.value.length > 0)
+// Keep the rail outline compact: the first three heading levels provide
+// enough document structure without flooding the narrow sidebar with
+// deeply nested details.
+const visibleHeadings = computed(() => tocHeadings.value.filter((heading) => heading.level <= 3))
+const hasHeadings = computed(() => visibleHeadings.value.length > 0)
 const aiHasOpened = ref(props.activeTab === 'ai')
 
 // Mount AI only when the user first visits it, then keep it mounted while
@@ -108,7 +112,7 @@ function onLinkNavigate(p: string) {
       </div>
       <ul v-else class="toc-panel-list">
         <li
-          v-for="h in tocHeadings"
+          v-for="h in visibleHeadings"
           :key="h.id"
           :class="['toc-panel-item', `lvl-${h.level}`, { active: tocActiveId === h.id }]"
         >
@@ -225,6 +229,10 @@ function onLinkNavigate(p: string) {
 }
 .ai-slot { height: calc(100% - 36px); min-height: 0; }
 .ai-slot :deep(.ai-panel) { height: 100%; }
+.toc-panel {
+  padding-top: 0;
+  padding-bottom: 0;
+}
 .metadata-slot { padding-bottom: 24px; }
 .history-slot {
   padding: 0;

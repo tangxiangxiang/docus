@@ -48,6 +48,18 @@ describe('unified document sidebar', () => {
     expect(wrapper.find('.toc-panel-item.active').text()).toBe('例句')
   })
 
+  it('only renders the first three heading levels', () => {
+    tocHeadings.value = [
+      { id: 'intro', text: '介绍', level: 1 },
+      { id: 'details', text: '详情', level: 2 },
+      { id: 'example', text: '例句', level: 3 },
+      { id: 'note', text: '补充说明', level: 4 },
+    ]
+    const wrapper = mountPanel()
+    expect(wrapper.findAll('.toc-panel-item').map((item) => item.text())).toEqual(['介绍', '详情', '例句'])
+    expect(wrapper.text()).not.toContain('补充说明')
+  })
+
   it('renders tabs in AI → 目录 → 引用 → 属性 → 历史 order', () => {
     const wrapper = mountPanel()
     const labels = wrapper.findAll('[role="tab"]').map((tab) => tab.text())
