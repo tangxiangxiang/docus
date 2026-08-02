@@ -255,6 +255,134 @@ hr {
 .navbar.is-vault .brand-logo { width: 24px; height: 24px; }
 .navbar.is-vault .brand-wordmark { font-size: 0.9rem; }
 
+/* Brand constellation — a delayed, non-interactive knowledge-network
+   animation that expands from the small navbar mark. */
+.brand-constellation {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.brand-constellation-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 15, 28, 0.74);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.brand-constellation-stage {
+  position: relative;
+  z-index: 1;
+  width: min(78vw, 680px);
+  aspect-ratio: 1;
+  filter: drop-shadow(0 22px 60px rgba(79, 70, 229, 0.2));
+}
+.brand-network {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.brand-network-halo {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 30%, transparent);
+  stroke-width: 2;
+  stroke-dasharray: 2 18;
+  animation: brand-network-orbit 18s linear infinite;
+  transform-origin: 500px 500px;
+}
+.brand-network-node {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: brand-network-node-in 560ms cubic-bezier(0.2, 0.8, 0.2, 1) var(--node-delay) forwards;
+}
+.brand-network-link {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 46%, transparent);
+  stroke-width: 3;
+  stroke-dasharray: 9 16;
+  animation: brand-network-transfer 1.8s linear infinite;
+}
+.brand-network-dot {
+  fill: color-mix(in srgb, var(--accent) 20%, var(--bg-soft));
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+.brand-network-dot-core {
+  fill: var(--accent);
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 80%, transparent));
+}
+.brand-network-label {
+  fill: var(--text-h);
+  font: 600 24px var(--sans);
+}
+.brand-network-particle {
+  fill: var(--accent-hover);
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent-hover) 90%, transparent));
+}
+.brand-network-core {
+  fill: color-mix(in srgb, var(--bg-soft) 88%, var(--accent));
+  stroke: var(--accent);
+  stroke-width: 5;
+  filter: drop-shadow(0 0 28px color-mix(in srgb, var(--accent) 35%, transparent));
+  animation: brand-network-core-pulse 3.2s ease-in-out infinite;
+}
+.brand-network image {
+  animation: brand-network-logo-pulse 3.2s ease-in-out infinite;
+}
+
+@keyframes brand-network-node-in {
+  from { opacity: 0; transform: scale(0.45); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes brand-network-transfer {
+  to { stroke-dashoffset: -50; }
+}
+@keyframes brand-network-orbit {
+  to { transform: rotate(360deg); }
+}
+@keyframes brand-network-core-pulse {
+  0%, 100% { opacity: 0.82; }
+  50% { opacity: 1; }
+}
+@keyframes brand-network-logo-pulse {
+  0%, 100% { transform: scale(0.96); transform-origin: center; }
+  50% { transform: scale(1.02); transform-origin: center; }
+}
+.brand-constellation-enter-active {
+  transition: opacity 420ms ease;
+}
+.brand-constellation-enter-active .brand-constellation-stage {
+  transition: transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 420ms ease;
+}
+.brand-constellation-enter-from {
+  opacity: 0;
+}
+.brand-constellation-enter-from .brand-constellation-stage {
+  opacity: 0;
+  transform: scale(0.72);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand-network-halo,
+  .brand-network-link,
+  .brand-network-core,
+  .brand-network image {
+    animation: none;
+  }
+  .brand-network-node {
+    animation: none;
+    opacity: 1;
+  }
+  .brand-constellation-enter-active,
+  .brand-constellation-enter-active .brand-constellation-stage {
+    transition: none;
+  }
+}
+
 /* (VS Code-style top menu bar removed — buttons were decorative and
    non-functional. The vault's real navigation lives in the activity
    bar, command palette (⌘P), and keyboard shortcuts.) */

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { mount, RouterLinkStub } from '@vue/test-utils'
 import NavBar from '../NavBar.vue'
 import { VaultViewModeKey, type VaultViewMode } from '../../composables/vault/viewMode'
@@ -63,5 +63,41 @@ describe('NavBar — view-toggle button', () => {
   it('shows ICON_EDIT in read mode (offering "switch to edit")', () => {
     const { wrapper } = mountNavBar('read')
     expect(wrapper.find('[data-testid="view-toggle"]').attributes('aria-label')).toBe('Switch to edit')
+  })
+})
+
+describe('NavBar — brand constellation', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('opens after hovering the brand for three seconds', async () => {
+    const { wrapper } = mountNavBar()
+    const brand = wrapper.find('.brand')
+
+    await brand.trigger('mouseenter')
+    vi.advanceTimersByTime(2999)
+    await nextTick()
+    expect(wrapper.find('.brand-constellation').exists()).toBe(false)
+
+    vi.advanceTimersByTime(1)
+    await nextTick()
+    expect(wrapper.find('.brand-constellation').exists()).toBe(true)
+    expect(wrapper.findAll('.brand-network-node')).toHaveLength(10)
+  })
+
+  it('closes when the pointer leaves the brand', async () => {
+    const { wrapper } = mountNavBar()
+    const brand = wrapper.find('.brand')
+
+    await brand.trigger('mouseenter')
+    vi.advanceTimersByTime(3000)
+    await nextTick()
+    await brand.trigger('mouseleave')
+
+    expect(wrapper.find('.brand-constellation').exists()).toBe(false)
   })
 })

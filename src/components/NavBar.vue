@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject } from 'vue'
+import { computed, inject, onBeforeUnmount, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
@@ -52,6 +52,43 @@ const { activeScope, toggleScope } = useScopeFilter()
    user's selected tab. */
 const { rightRailCollapsed, toggleRightRail } = useVaultLayout()
 
+const showBrandConstellation = ref(false)
+let brandHoverTimer: ReturnType<typeof setTimeout> | undefined
+
+const BRAND_NODES = [
+  { x: 500, y: 145 },
+  { x: 665, y: 235 },
+  { x: 765, y: 382 },
+  { x: 765, y: 618 },
+  { x: 665, y: 765 },
+  { x: 500, y: 855 },
+  { x: 335, y: 765 },
+  { x: 235, y: 618 },
+  { x: 235, y: 382 },
+  { x: 335, y: 235 },
+]
+
+function clearBrandHoverTimer() {
+  if (brandHoverTimer) {
+    clearTimeout(brandHoverTimer)
+    brandHoverTimer = undefined
+  }
+}
+
+function startBrandConstellation() {
+  clearBrandHoverTimer()
+  brandHoverTimer = setTimeout(() => {
+    showBrandConstellation.value = true
+  }, 3000)
+}
+
+function stopBrandConstellation() {
+  clearBrandHoverTimer()
+  showBrandConstellation.value = false
+}
+
+onBeforeUnmount(stopBrandConstellation)
+
 const SCOPE_ICONS: Record<string, string> = {
   inbox: ICON_SCOPE_INBOX,
   literature: ICON_SCOPE_LITERATURE,
@@ -62,7 +99,13 @@ const SCOPE_ICONS: Record<string, string> = {
 <template>
   <header :class="['navbar', { 'is-vault': isVault }]">
     <div :class="['navbar-inner', { container: !isVault, 'full-width': isVault }]">
-      <RouterLink to="/" class="brand" :aria-label="t('nav.home')">
+      <RouterLink
+        to="/"
+        class="brand"
+        :aria-label="t('nav.home')"
+        @mouseenter="startBrandConstellation"
+        @mouseleave="stopBrandConstellation"
+      >
         <img class="brand-logo" :src="'/logo.svg'" :alt="t('nav.logo_alt')" width="24" height="24" />
         <span class="brand-wordmark">Docus</span>
       </RouterLink>
@@ -135,4 +178,40 @@ const SCOPE_ICONS: Record<string, string> = {
       </div>
     </div>
   </header>
+
+  <Transition name="brand-constellation">
+    <div v-if="showBrandConstellation" class="brand-constellation" aria-hidden="true">
+      <div class="brand-constellation-backdrop" />
+      <div class="brand-constellation-stage">
+        <svg class="brand-network" viewBox="0 0 1000 1000" focusable="false">
+          <circle class="brand-network-halo" cx="500" cy="500" r="205" />
+
+          <g
+            v-for="(node, index) in BRAND_NODES"
+            :key="`${node.x}-${node.y}`"
+            class="brand-network-node"
+            :style="{ '--node-delay': `${index * 90}ms` }"
+          >
+            <line class="brand-network-link" :x1="node.x" :y1="node.y" x2="500" y2="500" />
+            <circle class="brand-network-dot" :cx="node.x" :cy="node.y" r="34" />
+            <circle class="brand-network-dot-core" :cx="node.x" :cy="node.y" r="8" />
+            <text class="brand-network-label" :x="node.x" :y="node.y + 5" text-anchor="middle">
+              {{ index + 1 }}
+            </text>
+            <circle class="brand-network-particle" cx="0" cy="0" r="8">
+              <animateMotion
+                :begin="`${index * 140}ms`"
+                dur="1.8s"
+                repeatCount="indefinite"
+                :path="`M ${node.x} ${node.y} L 500 500`"
+              />
+            </circle>
+          </g>
+
+          <circle class="brand-network-core" cx="500" cy="500" r="178" />
+          <image href="/logo.svg" x="365" y="365" width="270" height="270" />
+        </svg>
+      </div>
+    </div>
+  </Transition>
 </template>
