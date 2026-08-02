@@ -56,4 +56,22 @@ describe('AiChatMessages', () => {
     expect(wrapper.get('.ai-message.assistant').text()).toContain('done')
     expect(wrapper.get('.ai-tool-card').text()).toContain('read_file')
   })
+
+  it('renders assistant Markdown while keeping user content as text', () => {
+    const wrapper = mount(AiChatMessages, {
+      props: {
+        currentPath: null,
+        quickPrompts: [],
+        messages: [
+          { id: 1, sessionId: 1, role: 'user', content: '**question**', createdAt: 1 },
+          { id: 2, sessionId: 1, role: 'assistant', content: '## Core\n\n**bold**\n\n- item', createdAt: 2 },
+        ],
+      },
+    })
+
+    expect(wrapper.get('.ai-message.user .ai-text').text()).toBe('**question**')
+    expect(wrapper.get('.ai-markdown h2').text()).toBe('Core')
+    expect(wrapper.get('.ai-markdown strong').text()).toBe('bold')
+    expect(wrapper.get('.ai-markdown li').text()).toBe('item')
+  })
 })

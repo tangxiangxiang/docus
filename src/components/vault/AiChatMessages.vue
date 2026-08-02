@@ -2,6 +2,7 @@
 import type { Message } from '../../lib/ai-api'
 import { ICON_AI } from './icons'
 import AiToolCallCard from './AiToolCallCard.vue'
+import AiMarkdown from './AiMarkdown.vue'
 import { useI18n } from '../../composables/useI18n'
 
 defineProps<{
@@ -55,7 +56,8 @@ const { t } = useI18n()
         aria-hidden="true"
       />
       <div class="ai-bubble">
-        <div v-if="message.content" class="ai-text">{{ message.content }}</div>
+        <AiMarkdown v-if="message.role === 'assistant' && message.content" :content="message.content" />
+        <div v-else-if="message.content" class="ai-text">{{ message.content }}</div>
         <AiToolCallCard
           v-for="call in message.blocks?.toolCalls ?? []"
           :key="call.id"
