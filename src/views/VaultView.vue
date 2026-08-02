@@ -1653,10 +1653,12 @@ watch(isReadMode, async (reading) => {
       :posts="posts"
       :active-tab="rightRailTab"
       :is-read-mode="isReadMode"
+      :file-history="fileHistory"
       @update:active-tab="rightRailTab = $event"
       @link-navigate="openPost"
       @metadata-saved="onMetadataSaved"
       @switch-to-read="switchToReadMode"
+      @open-history-revision="openHistoryComparison"
     />
 
     <StatusBar

@@ -99,6 +99,12 @@ describe('useVaultLayout', () => {
     expect(stored).not.toHaveProperty('tocPanelWidth')
   })
 
+  it('restores the single-file history tab from persisted layout', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ rightRailTab: 'history' }))
+    const { layout } = setup()
+    expect(layout.rightRailTab.value).toBe('history')
+  })
+
   it('hides the retired persistent recovery panel while retaining old layouts', async () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ activePanel: 'recovery' }))
     const { layout } = setup()

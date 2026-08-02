@@ -48,10 +48,10 @@ describe('unified document sidebar', () => {
     expect(wrapper.find('.toc-panel-item.active').text()).toBe('例句')
   })
 
-  it('renders tabs in AI → 目录 → 引用 order', () => {
+  it('renders tabs in AI → 目录 → 引用 → 属性 → 历史 order', () => {
     const wrapper = mountPanel()
     const labels = wrapper.findAll('[role="tab"]').map((tab) => tab.text())
-    expect(labels).toEqual(['AI', '目录', '引用', '属性'])
+    expect(labels).toEqual(['AI', '目录', '引用', '属性', '历史'])
   })
 
   it('emits update:activeTab with the matching key for each tab', async () => {
@@ -61,7 +61,8 @@ describe('unified document sidebar', () => {
     await tabs[1].trigger('click')
     await tabs[2].trigger('click')
     await tabs[3].trigger('click')
-    expect(wrapper.emitted('update:activeTab')).toEqual([['ai'], ['toc'], ['links'], ['properties']])
+    await tabs[4].trigger('click')
+    expect(wrapper.emitted('update:activeTab')).toEqual([['ai'], ['toc'], ['links'], ['properties'], ['history']])
   })
 
   it('reflects the controlled activeTab via aria-selected and the .active class', async () => {
@@ -116,6 +117,13 @@ describe('unified document sidebar', () => {
     expect(wrapper.find('.metadata-slot').exists()).toBe(true)
     expect(wrapper.find('.stub-metadata-form').exists()).toBe(true)
     expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('属性')
+  })
+
+  it('renders the single-file history view in the fifth tab', () => {
+    const wrapper = mountPanel('history')
+    expect(wrapper.find('.history-slot').exists()).toBe(true)
+    expect(wrapper.text()).toContain('选择文档后查看历史记录')
+    expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('历史')
   })
 
   it('renders empty TOC without affecting the other tabs', () => {

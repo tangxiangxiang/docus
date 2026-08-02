@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // Unified right rail. Lightweight tabs switch one shared content
-// region between the TOC, bi-directional links, document properties, and AI assistant.
+// region between the TOC, bi-directional links, document properties,
+// single-file history, and AI assistant.
 //
 // Components:
 //   - The TOC list comes from ReadingPane via Vault-scoped useTocState
@@ -18,6 +19,9 @@ import type { DocumentMetadata, PostSummary } from '../../lib/api'
 import LinksPanel from './LinksPanel.vue'
 import AiPanel from './AiPanel.vue'
 import DocumentMetadataForm from './DocumentMetadataForm.vue'
+import RightRailHistory from './RightRailHistory.vue'
+import { resolveFileHistoryTarget, type FileHistoryState } from '../../composables/vault/useFileHistory'
+import type { HistoryRevisionSelection } from '../../composables/vault/useHistoryComparisons'
 import type { RightRailTab } from '../../composables/vault/useVaultLayout'
 
 const { tocHeadings, tocActiveId, tocScrollTo } = useVaultTocState()
@@ -31,6 +35,8 @@ const props = defineProps<{
   activeTab: RightRailTab
   /** True when the vault is showing the reading surface. */
   isReadMode?: boolean
+  /** Shared single-file history state owned by VaultView. */
+  fileHistory?: FileHistoryState
 }>()
 
 const emit = defineEmits<{
@@ -39,6 +45,7 @@ const emit = defineEmits<{
   'metadata-saved': [metadata: DocumentMetadata]
   'update:activeTab': [tab: RightRailTab]
   'switch-to-read': []
+  'open-history-revision': [selection: HistoryRevisionSelection]
 }>()
 
 const hasHeadings = computed(() => tocHeadings.value.length > 0)
@@ -50,6 +57,16 @@ const aiHasOpened = ref(props.activeTab === 'ai')
 watch(() => props.activeTab, (tab) => {
   if (tab === 'ai') aiHasOpened.value = true
 })
+
+watch(
+  () => [props.activeTab, props.path, props.fileHistory?.target.value?.documentPath] as const,
+  ([tab, path, loadedPath]) => {
+    if (tab !== 'history' || !props.fileHistory || !path) return
+    if (loadedPath === path) return
+    void props.fileHistory.open(resolveFileHistoryTarget(path, props.posts))
+  },
+  { immediate: true },
+)
 
 function onTocClick(id: string) {
   tocScrollTo.value?.(id)
@@ -75,6 +92,7 @@ function onLinkNavigate(p: string) {
       <button role="tab" :aria-selected="activeTab === 'toc'" :class="{ active: activeTab === 'toc' }" @click="emit('update:activeTab', 'toc')">{{ t('rail.toc') }}</button>
       <button role="tab" :aria-selected="activeTab === 'links'" :class="{ active: activeTab === 'links' }" @click="emit('update:activeTab', 'links')">{{ t('rail.links') }}</button>
       <button role="tab" :aria-selected="activeTab === 'properties'" :class="{ active: activeTab === 'properties' }" @click="emit('update:activeTab', 'properties')">{{ t('rail.properties') }}</button>
+      <button role="tab" :aria-selected="activeTab === 'history'" :class="{ active: activeTab === 'history' }" @click="emit('update:activeTab', 'history')">{{ t('rail.history') }}</button>
     </nav>
 
     <section v-show="activeTab === 'toc'" class="toc-panel" role="tabpanel" :aria-label="t('rail.toc')">
@@ -124,6 +142,15 @@ function onLinkNavigate(p: string) {
         :show-cancel="false"
         @saved="emit('metadata-saved', $event)"
       />
+    </section>
+    <section v-show="activeTab === 'history'" class="history-slot" role="tabpanel" :aria-label="t('rail.history')">
+      <RightRailHistory
+        v-if="fileHistory"
+        :file-history="fileHistory"
+        :path="path"
+        @open-revision="emit('open-history-revision', $event)"
+      />
+      <div v-else class="right-rail-history-empty">{{ t('rail.history_empty') }}</div>
     </section>
     <section v-if="aiHasOpened" v-show="activeTab === 'ai'" class="ai-slot" role="tabpanel" :aria-label="t('rail.ai')">
       <AiPanel />
@@ -186,7 +213,8 @@ function onLinkNavigate(p: string) {
 
 .toc-panel,
 .links-slot,
-.metadata-slot {
+.metadata-slot,
+.history-slot {
   display: block;
   height: calc(100% - 36px);
   box-sizing: border-box;
@@ -198,6 +226,11 @@ function onLinkNavigate(p: string) {
 .ai-slot { height: calc(100% - 36px); min-height: 0; }
 .ai-slot :deep(.ai-panel) { height: 100%; }
 .metadata-slot { padding-bottom: 24px; }
+.history-slot {
+  padding: 0;
+  overflow: hidden;
+}
+.history-slot :deep(.right-rail-history) { height: 100%; }
 .metadata-panel-header {
   display: grid;
   gap: 4px;

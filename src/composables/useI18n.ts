@@ -78,6 +78,8 @@ const STRINGS: Strings = {
   'rail.toc': { zh: '目录', en: 'Outline' },
   'rail.links': { zh: '引用', en: 'Links' },
   'rail.properties': { zh: '属性', en: 'Properties' },
+  'rail.history': { zh: '历史', en: 'History' },
+  'rail.history_empty': { zh: '选择文档后查看历史记录', en: 'Select a document to view its history' },
   'rail.toc_empty': { zh: '暂无目录', en: 'No outline yet' },
   'rail.toc_empty_edit': { zh: '编辑模式下暂不生成目录', en: 'The outline is available in reading mode' },
   'rail.switch_to_read': { zh: '切换到阅读模式', en: 'Switch to reading mode' },

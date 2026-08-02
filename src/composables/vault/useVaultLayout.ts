@@ -25,7 +25,7 @@ import { useStorage } from '@vueuse/core'
 import type { SidePanel } from '../../components/vault/ActivityBar.vue'
 
 export type ActivePanel = SidePanel | null
-export type RightRailTab = 'toc' | 'links' | 'ai' | 'properties'
+export type RightRailTab = 'toc' | 'links' | 'ai' | 'properties' | 'history'
 
 export interface VaultLayout {
   activePanel: ActivePanel
@@ -118,7 +118,7 @@ export function useVaultLayout() {
           const storedTab = d.rightRailTab
           const rightRailTab: RightRailTab = legacyAiOpen
             ? 'ai'
-            : storedTab === 'links' || storedTab === 'ai' || storedTab === 'properties' ? storedTab : 'toc'
+            : storedTab === 'links' || storedTab === 'ai' || storedTab === 'properties' || storedTab === 'history' ? storedTab : 'toc'
           const rightRailWidth = typeof d.rightRailWidth === 'number'
             ? d.rightRailWidth
             : typeof d.aiPanelWidth === 'number' ? d.aiPanelWidth

@@ -5,7 +5,7 @@ import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { PROTECTED_ROOTS } from '../composables/archiveProtocol'
-import { ICON_EDIT, ICON_EYE, ICON_PANEL_RIGHT_CLOSE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ARCHIVE, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
+import { ICON_EDIT, ICON_EYE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_INBOX, ICON_SCOPE_LITERATURE, ICON_SCOPE_ARCHIVE, ICON_SEARCH, ICON_NAV_THEME_LIGHT, ICON_NAV_THEME_DARK } from './vault/icons'
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useI18n } from '../composables/useI18n'
 
@@ -130,7 +130,7 @@ const SCOPE_ICONS: Record<string, string> = {
           :aria-pressed="!rightRailCollapsed"
           @click="toggleRightRail"
         >
-          <span class="right-rail-toggle-icon" aria-hidden="true" v-html="rightRailCollapsed ? ICON_PANEL_RIGHT_CLOSE : ICON_PANEL_RIGHT_OPEN" />
+          <span class="right-rail-toggle-icon" aria-hidden="true" v-html="ICON_PANEL_RIGHT_OPEN" />
         </button>
       </div>
     </div>
