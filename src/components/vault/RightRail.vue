@@ -256,15 +256,79 @@ function onLinkNavigate(p: string) {
 }
 .metadata-slot :deep(.document-metadata-actions) {
   justify-content: stretch;
-  padding: 10px 18px;
+  padding: 8px 14px;
 }
 .metadata-slot :deep(.document-metadata-actions .btn-primary) {
   flex: 1 1 auto;
   width: 100%;
-  min-height: 32px;
-  padding: 5px 10px;
-  font-size: 0.82rem;
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 0.76rem;
   line-height: 1.2;
+}
+.metadata-slot :deep(.document-metadata-body) {
+  gap: 11px;
+  padding: 14px;
+}
+.metadata-slot :deep(.document-metadata-field) {
+  gap: 4px;
+}
+.metadata-slot :deep(.document-metadata-field > span) {
+  font-size: 0.7rem;
+}
+.metadata-slot :deep(.document-metadata-field input),
+.metadata-slot :deep(.document-metadata-field textarea) {
+  padding: 6px 8px;
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+.metadata-slot :deep(.document-metadata-textarea-wrap textarea) {
+  padding-right: 72px;
+  padding-bottom: 24px;
+}
+.metadata-slot :deep(.document-metadata-field textarea) {
+  min-height: 76px;
+}
+.metadata-slot :deep(.document-metadata-field small) {
+  right: 7px;
+  bottom: 6px;
+  font-size: 0.62rem;
+}
+.metadata-slot :deep(.metadata-generate-summary) {
+  top: 4px;
+  right: 4px;
+  min-height: 22px;
+  font-size: 0.62rem;
+}
+.metadata-slot :deep(.metadata-generate-summary > span:first-child) {
+  flex-basis: 13px;
+}
+.metadata-slot :deep(.metadata-generate-summary > span:first-child svg) {
+  width: 13px;
+  height: 13px;
+}
+.metadata-slot :deep(.document-metadata-readonly) {
+  margin-top: 1px;
+}
+.metadata-slot :deep(.document-metadata-readonly > div) {
+  gap: 3px;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+.metadata-slot :deep(.document-metadata-readonly > div:nth-child(odd)) {
+  padding-right: 12px;
+}
+.metadata-slot :deep(.document-metadata-readonly > div:nth-child(even)) {
+  padding-left: 12px;
+}
+.metadata-slot :deep(.document-metadata-readonly span) {
+  font-size: 0.64rem;
+}
+.metadata-slot :deep(.document-metadata-readonly output) {
+  font-size: 0.7rem;
+}
+.metadata-slot :deep(.document-metadata-readonly output.is-mono) {
+  font-size: 0.64rem;
 }
 .toc-panel-empty {
   padding: 0 22px;
