@@ -60,10 +60,10 @@ describe('unified document sidebar', () => {
     expect(wrapper.text()).not.toContain('补充说明')
   })
 
-  it('renders tabs in AI → 目录 → 引用 → 属性 → 历史 order', () => {
+  it('renders tabs in 助手 → 目录 → 引用 → 属性 → 历史 order', () => {
     const wrapper = mountPanel()
     const labels = wrapper.findAll('[role="tab"]').map((tab) => tab.text())
-    expect(labels).toEqual(['AI', '目录', '引用', '属性', '历史'])
+    expect(labels).toEqual(['助手', '目录', '引用', '属性', '历史'])
   })
 
   it('emits update:activeTab with the matching key for each tab', async () => {

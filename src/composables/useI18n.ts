@@ -74,7 +74,7 @@ const STRINGS: Strings = {
   'status.focus_width': { zh: '使用专注宽度', en: 'Use focus width' },
   'status.markdown': { zh: 'Markdown', en: 'Markdown' },
   'rail.navigation': { zh: '文档导航', en: 'Document navigation' },
-  'rail.ai': { zh: 'AI', en: 'AI' },
+  'rail.ai': { zh: '助手', en: 'AI' },
   'rail.toc': { zh: '目录', en: 'Outline' },
   'rail.links': { zh: '引用', en: 'Links' },
   'rail.properties': { zh: '属性', en: 'Properties' },
