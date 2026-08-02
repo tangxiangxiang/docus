@@ -144,8 +144,22 @@ function onTreeKeydown(event: KeyboardEvent): void {
   padding-right: 18px;
 }
 .right-rail-history :deep(.history-file-commit-row) {
+  min-height: 32px;
   padding-left: 28px;
   padding-right: 18px;
+}
+.right-rail-history :deep(.history-row-copy) {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+}
+.right-rail-history :deep(.history-row-title) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.right-rail-history :deep(.history-row-meta) {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .right-rail-history .history-error,
 .right-rail-history .history-empty-inline,
