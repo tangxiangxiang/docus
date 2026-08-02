@@ -599,3 +599,43 @@ window in H-C10, explicit DST subprocess coverage, Linux/Windows execution,
 H-C13 bootstrap serialization, rename-follow history, pagination, SHA-256
 sentinel support, and Owner Approval. Closure therefore remains
 `DRAFT — CLOSURE IN PROGRESS`.
+
+## 18. 2026-08-02 Restore/Index/Error-Code Follow-up
+
+Production commit: `b60630d2cd8fd840827aed15967a92b918e91a32`.
+
+Implementation details:
+
+1. `prepareAtomicTextCreate` and `prepareAtomicTextWrite` capture the
+   temporary file and parent directory identities. `commit` and `rollback`
+   verify those identities immediately before linking or unlinking. An
+   identity mismatch produces a `HISTORY_PATH_MOVED` ownership error and
+   leaves the pathname quarantined rather than cleaning by string path.
+2. Restore's missing-target flow invokes `beforeRestoreCommit`, resolves and
+   verifies the parent again, confirms the target is still absent, then
+   creates the temporary file. `afterRestorePrepare` is test-only coverage for
+   the post-create replacement window. Restore rollback continues to resolve
+   and verify the target under the existing mutation/structure/document locks.
+3. `IndexSyncResult` records `synchronized`, `replacementApplied`, `finalHead`,
+   and the expected fingerprints actually installed in the real Index.
+   Create and Withdraw use those fingerprints and the final observed HEAD for
+   Repair metadata when a HEAD move wins after Index replacement.
+4. AI History diffs use array accumulation and newline joining. Route tests
+   assert exact modified, added, and deleted diff strings.
+5. Repair false results and Withdraw marker failures now preserve stable error
+   codes through the route and `HistoryApiError`; the Withdraw composable uses
+   codes first and only retains regexes as compatibility fallback.
+
+Regression evidence on macOS:
+
+```text
+npm test -- --run: 163 test files passed; 2534 passed, 2 skipped
+npm run typecheck: PASS
+npm run build: PASS (existing dependency annotation/chunk-size warnings only)
+git diff --check: PASS
+```
+
+The initial sandbox attempt was blocked by `tsx` child-process IPC `EPERM`; a
+controlled-permission rerun passed. Linux/Windows validation, explicit DST
+subprocess evidence, H-C13 bootstrap follow-up, and Owner Approval remain
+open. Closure remains `DRAFT — CLOSURE IN PROGRESS`.

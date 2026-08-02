@@ -526,3 +526,37 @@ History feature remains:
 ```text
 DRAFT — CLOSURE IN PROGRESS
 ```
+
+## 13. 2026-08-02 Restore/Index/Error-Code Follow-up
+
+The production-code commit for this follow-up is
+`b60630d2cd8fd840827aed15967a92b918e91a32`.
+
+This commit closes the specifically reviewed follow-up defects:
+
+| Area | Result and evidence |
+|---|---|
+| Missing-file Restore rollback | The pre-commit hook now runs before temporary-file creation. Prepared files record temporary-file and parent-directory `dev/ino`; commit and rollback verify both identities and never remove an unproven pathname. Deterministic tests cover parent isolation and temporary pathname replacement. |
+| Create/Withdraw Index rename race | Index synchronization returns structured replacement state. If HEAD changes after the real Index replacement, Repair binds to the observed final HEAD and the fingerprints actually installed by Docus. Create and Withdraw tests verify Repair execution and unrelated staged entries. |
+| AI Diff formatting | Diff lines are accumulated and joined with `\\n`, producing exact line-oriented modified/added/deleted text without leading/trailing or concatenated newlines. |
+| Structured History errors | Repair verification failure returns `HISTORY_INDEX_REPAIR_CONFLICT`; Withdraw distinguishes external, legacy-marker, repository-operation, writer-active, and HEAD-changed cases. Legacy path-hash versions remain viewable/restorable but cannot be withdrawn. |
+
+Final local verification on macOS, with the crash-recovery subprocess suite
+run under the required controlled process/IPC permission:
+
+```text
+npm test -- --run: 163 test files passed; 2534 passed, 2 skipped
+npm run typecheck: PASS
+npm run build: PASS (existing dependency annotation/chunk-size warnings only)
+git diff --check: PASS
+```
+
+The first sandbox-only test attempt could not create the existing `tsx` IPC
+pipe and reported `EPERM`; the same required command passed under controlled
+permissions. No Linux or Windows execution was performed, and Owner Approval
+is still pending. The residual portable directory-handle/openat TOCTOU window
+in H-C10 remains open. Therefore Closure remains:
+
+```text
+DRAFT — CLOSURE IN PROGRESS
+```

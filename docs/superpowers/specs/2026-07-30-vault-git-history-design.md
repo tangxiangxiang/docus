@@ -1346,3 +1346,39 @@ passed with existing dependency annotation/chunk-size warnings; and
 `git diff --check` passed. History Closure remains
 `DRAFT — CLOSURE IN PROGRESS` until cross-platform evidence and Owner Approval
 are complete.
+
+## 28. 2026-08-02 Follow-up Baseline
+
+The current production-code baseline is
+`b60630d2cd8fd840827aed15967a92b918e91a32`.
+
+This baseline adds the following contract proofs without changing History
+layout or interaction:
+
+- missing-file Restore creates no temporary artifact until its final
+  pre-create path/parent verification completes;
+- prepared temporary files are owned by `dev/ino` plus parent-directory
+  `dev/ino`, and unknown ownership fails closed for both commit and rollback;
+- Index replacement reports whether it happened and which fingerprints were
+  installed, allowing Repair to bind to the final observed HEAD after a
+  deterministic rename-time HEAD race;
+- AI commit-message diffs are line-oriented and budgeted by the final joined
+  string; and
+- History Repair/Withdraw responses preserve stable conflict and marker codes
+  through route, API client, and composable layers.
+
+Required local evidence:
+
+```text
+npm test -- --run: 163 test files passed; 2534 passed, 2 skipped
+npm run typecheck: PASS
+npm run build: PASS (existing dependency annotation/chunk-size warnings only)
+git diff --check: PASS
+```
+
+The first sandbox-only full-suite attempt could not create `tsx` IPC pipes
+(`EPERM`); the identical command passed with controlled process/IPC
+permissions. Linux and Windows have not been run. The remaining portable
+directory-handle/openat TOCTOU window in H-C10, explicit DST subprocess
+coverage, H-C13 bootstrap serialization, and Owner Approval remain open.
+History Closure is therefore still `DRAFT — CLOSURE IN PROGRESS`.
