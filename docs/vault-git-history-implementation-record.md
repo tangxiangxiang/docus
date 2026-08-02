@@ -733,7 +733,9 @@ target reoccupation during remove recovery, staged-path replacement,
 journal-parent replacement, journal occupant replacement, crash-recovery
 retention of post-commit mutation, and direct `repairIndex()` 409 wire shape.
 
-macOS focused evidence for this commit: 4 test files, 208 passed, 0 failed.
+macOS requested focused evidence for this commit: 4 test files, 95 passed,
+0 failed. The additional crash-recovery focused run also passed under
+controlled IPC permissions.
 Full required macOS verification for this commit is 163 test files with 2551
 passed and 2 skipped; typecheck PASS; build PASS with existing dependency
 pure-annotation/chunk-size warnings; and `git diff --check` PASS. Linux,

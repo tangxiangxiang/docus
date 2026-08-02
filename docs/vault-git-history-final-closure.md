@@ -547,7 +547,7 @@ layout or interaction:
 Focused macOS evidence:
 
 ```text
-focused total: 4 test files, 208 passed, 0 failed
+requested focused total: 4 test files, 95 passed, 0 failed
 ```
 
 Full required macOS verification for this commit:
