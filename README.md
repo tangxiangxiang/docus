@@ -55,6 +55,9 @@ The central figure is rendered in white on dark surfaces and black on light
 surfaces. The contrast changes with the theme, while the symbol and its meaning
 remain unchanged.
 
+See the [Logo Design Final Closure](docs/logo-design-final-closure.md) for the
+complete design baseline and motion rules.
+
 ## Feature Status
 
 ### Edit Feature
