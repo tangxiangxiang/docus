@@ -87,6 +87,8 @@ describe('NavBar — brand constellation', () => {
     await nextTick()
     expect(wrapper.find('.brand-constellation').exists()).toBe(true)
     expect(wrapper.findAll('.brand-network-node')).toHaveLength(9)
+    expect(wrapper.find('.brand').element.tagName).toBe('A')
+    expect(wrapper.findComponent(RouterLinkStub).props('to')).toBe('/')
   })
 
   it('closes when the pointer leaves the brand', async () => {
@@ -99,5 +101,25 @@ describe('NavBar — brand constellation', () => {
     await brand.trigger('mouseleave')
 
     expect(wrapper.find('.brand-constellation').exists()).toBe(false)
+  })
+
+  it.each(['Escape', 'blur'])('cleans the body cursor class on %s', async (event) => {
+    const { wrapper } = mountNavBar()
+    await wrapper.find('.brand').trigger('mouseenter')
+    vi.advanceTimersByTime(3000)
+    await nextTick()
+    expect(document.body.classList.contains('brand-constellation-active')).toBe(true)
+    if (event === 'Escape') window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    else window.dispatchEvent(new Event('blur'))
+    expect(document.body.classList.contains('brand-constellation-active')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('cleans the body cursor class on unmount and before the delay fires', async () => {
+    const { wrapper } = mountNavBar()
+    await wrapper.find('.brand').trigger('mouseenter')
+    wrapper.unmount()
+    vi.advanceTimersByTime(3000)
+    expect(document.body.classList.contains('brand-constellation-active')).toBe(false)
   })
 })

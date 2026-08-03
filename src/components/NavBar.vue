@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useTheme } from '../composables/useTheme'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
@@ -16,7 +16,7 @@ const emit = defineEmits<{
 
 const { theme, toggle } = useTheme()
 const { t } = useI18n()
-const router = useRouter()
+const route = useRoute()
 
 /* Sun when current theme is dark (click to lighten),
    moon when current theme is light (click to darken). */
@@ -93,7 +93,28 @@ function stopBrandConstellation() {
   setBrandCursorHidden(false)
 }
 
-onBeforeUnmount(stopBrandConstellation)
+function onWindowBlur() { stopBrandConstellation() }
+function onVisibilityChange() {
+  if (document.hidden) stopBrandConstellation()
+}
+function onEscape(event: KeyboardEvent) {
+  if (event.key === 'Escape') stopBrandConstellation()
+}
+
+watch(() => route?.fullPath, stopBrandConstellation)
+
+onMounted(() => {
+  window.addEventListener('blur', onWindowBlur)
+  window.addEventListener('keydown', onEscape)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+})
+
+onBeforeUnmount(() => {
+  stopBrandConstellation()
+  window.removeEventListener('blur', onWindowBlur)
+  window.removeEventListener('keydown', onEscape)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
 
 const SCOPE_ICONS: Record<string, string> = {
   inbox: ICON_SCOPE_INBOX,
@@ -105,17 +126,16 @@ const SCOPE_ICONS: Record<string, string> = {
 <template>
   <header :class="['navbar', { 'is-vault': isVault }]">
     <div :class="['navbar-inner', { container: !isVault, 'full-width': isVault }]">
-      <button
-        type="button"
+      <RouterLink
+        to="/"
         class="brand"
         :aria-label="t('nav.home')"
         @mouseenter="startBrandConstellation"
         @mouseleave="stopBrandConstellation"
-        @click="router.push('/')"
       >
         <img class="brand-logo" :src="'/logo.svg'" :alt="t('nav.logo_alt')" width="24" height="24" />
         <span class="brand-wordmark">Docus</span>
-      </button>
+      </RouterLink>
       <!-- Scope filter: lives in the navbar (the file tree header is too
            narrow on 150px sidebars). Hidden outside the vault since the
            rest of the app doesn't have a file tree to filter. -->
