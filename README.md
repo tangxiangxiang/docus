@@ -43,6 +43,18 @@ Chinese culture, symbolizing completeness and culmination. The nine nodes
 represent ideas arriving from different directions and converging into Docus,
 turning scattered thoughts into an organized knowledge network.
 
+At the center is a stylized seated figure, formed from a flame and lotus-like
+curves. It represents the person who remains attentive and grounded while
+working with knowledge. This is the idea of **定中宫** — keeping a calm center
+while information flows in from every direction. The moving particles along the
+nine links visualize reading, thinking, practice, and AI-assisted discovery
+being gathered into one place, rather than knowledge remaining as disconnected
+fragments.
+
+The central figure is rendered in white on dark surfaces and black on light
+surfaces. The contrast changes with the theme, while the symbol and its meaning
+remain unchanged.
+
 ## Feature Status
 
 ### Edit Feature
