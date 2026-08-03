@@ -12,13 +12,14 @@
 //     We forward `navigate` to VaultView as `link-navigate` so the
 //     parent can route through openPost.
 
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useVaultTocState } from '../../composables/vault/useTocState'
 import { useI18n } from '../../composables/useI18n'
 import type { DocumentMetadata, PostSummary } from '../../lib/api'
 import LinksPanel from './LinksPanel.vue'
 import AiPanel from './AiPanel.vue'
 import DocumentMetadataForm from './DocumentMetadataForm.vue'
+import type { MetadataContext } from './metadataDraftStore'
 import RightRailHistory from './RightRailHistory.vue'
 import { resolveFileHistoryTarget, type FileHistoryState } from '../../composables/vault/useFileHistory'
 import type { HistoryRevisionSelection } from '../../composables/vault/useHistoryComparisons'
@@ -37,6 +38,9 @@ const props = defineProps<{
   isReadMode?: boolean
   /** Shared single-file history state owned by VaultView. */
   fileHistory?: FileHistoryState
+  metadataContext?: MetadataContext
+  metadataReadonly?: boolean
+  summarySource?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -54,12 +58,18 @@ const emit = defineEmits<{
 const visibleHeadings = computed(() => tocHeadings.value.filter((heading) => heading.level <= 3))
 const hasHeadings = computed(() => visibleHeadings.value.length > 0)
 const aiHasOpened = ref(props.activeTab === 'ai')
+const tabsRef = ref<HTMLElement | null>(null)
+const metadataDirty = ref(false)
 
 // Mount AI only when the user first visits it, then keep it mounted while
 // switching tabs so its conversation, draft, picker, and scroll position
 // remain intact.
 watch(() => props.activeTab, (tab) => {
   if (tab === 'ai') aiHasOpened.value = true
+  void nextTick(() => {
+    const active = tabsRef.value?.querySelector<HTMLElement>(`[data-tab="${tab}"]`)
+    active?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  })
 })
 
 watch(
@@ -83,20 +93,28 @@ function onLinkNavigate(p: string) {
 
 <template>
   <div class="right-rail">
-    <nav class="sidebar-tabs" role="tablist" :aria-label="t('rail.navigation')">
+    <nav ref="tabsRef" class="sidebar-tabs" role="tablist" :aria-label="t('rail.navigation')">
       <!-- Edit-10.3: the old "no AI in read-only views" gate is lifted —
            History/Diff/Recovery views now transport their own live
            context (readOnly snapshots) instead of being cut off. -->
       <button
         role="tab"
+        data-tab="ai"
         :aria-selected="activeTab === 'ai'"
         :class="{ active: activeTab === 'ai' }"
         @click="emit('update:activeTab', 'ai')"
       >{{ t('rail.ai') }}</button>
-      <button role="tab" :aria-selected="activeTab === 'toc'" :class="{ active: activeTab === 'toc' }" @click="emit('update:activeTab', 'toc')">{{ t('rail.toc') }}</button>
-      <button role="tab" :aria-selected="activeTab === 'links'" :class="{ active: activeTab === 'links' }" @click="emit('update:activeTab', 'links')">{{ t('rail.links') }}</button>
-      <button role="tab" :aria-selected="activeTab === 'properties'" :class="{ active: activeTab === 'properties' }" @click="emit('update:activeTab', 'properties')">{{ t('rail.properties') }}</button>
-      <button role="tab" :aria-selected="activeTab === 'history'" :class="{ active: activeTab === 'history' }" @click="emit('update:activeTab', 'history')">{{ t('rail.history') }}</button>
+      <button role="tab" data-tab="toc" :aria-selected="activeTab === 'toc'" :class="{ active: activeTab === 'toc' }" @click="emit('update:activeTab', 'toc')">{{ t('rail.toc') }}</button>
+      <button role="tab" data-tab="links" :aria-selected="activeTab === 'links'" :class="{ active: activeTab === 'links' }" @click="emit('update:activeTab', 'links')">{{ t('rail.links') }}</button>
+      <button
+        role="tab"
+        data-tab="properties"
+        :aria-selected="activeTab === 'properties'"
+        :aria-label="metadataDirty ? `${t('rail.properties')}，${t('metadata.unsaved')}` : t('rail.properties')"
+        :class="{ active: activeTab === 'properties' }"
+        @click="emit('update:activeTab', 'properties')"
+      >{{ t('rail.properties') }}<span v-if="metadataDirty" class="metadata-dirty-mark" aria-hidden="true">●</span></button>
+      <button role="tab" data-tab="history" :aria-selected="activeTab === 'history'" :class="{ active: activeTab === 'history' }" @click="emit('update:activeTab', 'history')">{{ t('rail.history') }}</button>
     </nav>
 
     <section v-show="activeTab === 'toc'" class="toc-panel" role="tabpanel" :aria-label="t('rail.toc')">
@@ -143,7 +161,11 @@ function onLinkNavigate(p: string) {
         :path="path"
         :enabled="activeTab === 'properties'"
         :show-cancel="false"
+        :readonly="metadataReadonly ?? false"
+        :context="metadataContext ?? 'document'"
+        :summary-source="summarySource"
         @saved="emit('metadata-saved', $event)"
+        @dirty-change="metadataDirty = $event"
       />
     </section>
     <section v-show="activeTab === 'history'" class="history-slot" role="tabpanel" :aria-label="t('rail.history')">
@@ -186,12 +208,16 @@ function onLinkNavigate(p: string) {
 .sidebar-tabs {
   display: flex;
   align-items: stretch;
-  gap: 20px;
+  gap: clamp(8px, 2vw, 20px);
   height: 36px;
   box-sizing: border-box;
   padding: 0 14px;
   border-bottom: 1px solid var(--vs-border, var(--border));
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
+.sidebar-tabs::-webkit-scrollbar { display: none; }
 .sidebar-tabs button {
   display: inline-flex;
   align-items: center;
@@ -205,6 +231,8 @@ function onLinkNavigate(p: string) {
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .sidebar-tabs button:hover { color: var(--vs-text-1, var(--text)); }
 .sidebar-tabs button:disabled { cursor: not-allowed; opacity: 0.45; }
@@ -213,6 +241,7 @@ function onLinkNavigate(p: string) {
   font-weight: 600;
   border-bottom-color: var(--vs-accent, var(--accent));
 }
+.metadata-dirty-mark { margin-left: 4px; color: var(--vs-accent, var(--accent)); font-size: 0.7em; }
 
 .toc-panel,
 .links-slot,

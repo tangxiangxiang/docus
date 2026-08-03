@@ -38,15 +38,17 @@ describe('VaultView editor tab wiring', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const openHandler = source.match(/function openFileHistory[\s\S]*?\n}/)?.[0]
 
-    expect(source).toContain('const fileHistory = useFileHistory(locale)')
+    expect(source).toContain('const sidebarFileHistory = useFileHistory(locale)')
+    expect(source).toContain('const rightRailFileHistory = useFileHistory(locale)')
     expect(source).toContain('resolveFileHistoryTarget(path, posts.value)')
-    expect(openHandler).toContain('fileHistory.open(resolveFileHistoryTarget(path, posts.value))')
+    expect(openHandler).toContain('sidebarFileHistory.open(resolveFileHistoryTarget(path, posts.value))')
     expect(openHandler).toContain("selectPanel('history')")
     expect(source).toContain('@open-history="openFileHistory"')
-    expect(source).toContain(':file-history="fileHistory"')
+    expect(source).toContain(':file-history="sidebarFileHistory"')
+    expect(source).toContain(':file-history="rightRailFileHistory"')
     expect(source).toContain('@show-all-history="showAllHistory"')
-    expect(source).toContain('function showAllHistory(): void {\n  fileHistory.clear()')
-    expect(source).toContain('watch(vaultId, () => fileHistory.clear())')
+    expect(source).toContain('function showAllHistory(): void {\n  sidebarFileHistory.clear()')
+    expect(source).toContain('sidebarFileHistory.clear()\n  rightRailFileHistory.clear()')
     expect(source).not.toMatch(/watch\(activePath[\s\S]{0,200}fileHistory/)
   })
 
@@ -54,7 +56,7 @@ describe('VaultView editor tab wiring', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
     const handler = source.match(/function selectActivityPanel[\s\S]*?\n}/)?.[0]
 
-    expect(handler).toContain("if (panel === 'history') fileHistory.clear()")
+    expect(handler).toContain("if (panel === 'history') sidebarFileHistory.clear()")
     expect(handler).toContain('selectPanel(panel)')
     expect(source).toContain('@select-panel="selectActivityPanel"')
   })

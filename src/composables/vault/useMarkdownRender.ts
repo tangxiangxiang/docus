@@ -6,7 +6,7 @@
 // ReadingPane and any future renderer stay in lockstep (no drift
 // between title handling / render errors).
 //
-// Also extracts a flat list of headings (h2/h3/h4) with their slug
+// Also extracts a flat list of headings (h1..h4) with their slug
 // `id`, plain text, and level — this powers the right-side page-nav
 // (à la VitePress) shown in the vault's read mode. We re-parse the
 // rendered HTML rather than running a second pass over the markdown
@@ -27,7 +27,7 @@ import type { Resolver as WikiResolver } from '../../lib/wikiLinks'
 export interface Heading {
   id: string
   text: string
-  level: 2 | 3 | 4
+  level: 1 | 2 | 3 | 4
 }
 
 export interface MarkdownRender {

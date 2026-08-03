@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import RightRail from '../RightRail.vue'
 import { tocActiveId, tocHeadings, tocScrollTo } from '../../../composables/vault/useTocState'
 import type { RightRailTab } from '../../../composables/vault/useVaultLayout'
@@ -23,7 +24,8 @@ function mountPanel(activeTab: RightRailTab = 'toc', isReadMode = true) {
         AiPanel: { template: '<div class="stub-ai"><input value="draft"></div>' },
         DocumentMetadataForm: {
           emits: ['saved'],
-          template: '<div class="stub-metadata-form">属性表单</div>',
+          props: ['readonly', 'context', 'summarySource'],
+          template: '<div class="stub-metadata-form" :data-readonly="readonly" :data-context="context" :data-summary-source="summarySource">属性表单</div>',
         },
       },
     },
@@ -129,6 +131,30 @@ describe('unified document sidebar', () => {
     expect(wrapper.find('.metadata-slot').exists()).toBe(true)
     expect(wrapper.find('.stub-metadata-form').exists()).toBe(true)
     expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('属性')
+  })
+
+  it('passes read-only history context to the metadata form', () => {
+    const wrapper = mount(RightRail, {
+      props: { path: 'inbox/english/subject', posts, activeTab: 'properties', metadataReadonly: true, metadataContext: 'history' },
+      global: { stubs: {
+        AiPanel: { template: '<div />' },
+        LinksPanel: { template: '<div />' },
+        RightRailHistory: { template: '<div />' },
+        DocumentMetadataForm: { props: ['readonly', 'context'], template: '<div class="stub-metadata-form" :data-readonly="readonly" :data-context="context" />' },
+      } },
+    })
+    expect(wrapper.get('.stub-metadata-form').attributes('data-readonly')).toBe('true')
+    expect(wrapper.get('.stub-metadata-form').attributes('data-context')).toBe('history')
+  })
+
+  it('scrolls the active tab into the tab strip after switching', async () => {
+    const scrollIntoView = vi.fn()
+    HTMLElement.prototype.scrollIntoView = scrollIntoView
+    const wrapper = mountPanel()
+    await wrapper.setProps({ activeTab: 'history' })
+    await nextTick()
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
+    wrapper.unmount()
   })
 
   it('renders the single-file history view in the fifth tab', () => {

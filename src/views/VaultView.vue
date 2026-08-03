@@ -62,7 +62,7 @@ import RightRail from '../components/vault/RightRail.vue'
 import EmptyState from '../components/vault/EmptyState.vue'
 import ActivityBar from '../components/vault/ActivityBar.vue'
 import SettingsModal from '../components/vault/SettingsModal.vue'
-import DocumentMetadataModal from '../components/vault/DocumentMetadataModal.vue'
+import type { MetadataContext } from '../components/vault/metadataDraftStore'
 import HistoryPanel from '../components/vault/HistoryPanel.vue'
 import HistoryComparisonPane from '../components/vault/HistoryComparisonPane.vue'
 import WorkingTreeDiffPane from '../components/vault/WorkingTreeDiffPane.vue'
@@ -102,8 +102,6 @@ const EditorPane = defineAsyncComponent(() => import('../components/vault/Editor
    CommandPalette. We watch the tick and call show() each time. */
 const navSearch = inject<{ tick: ReturnType<typeof ref<number>>; trigger: () => void } | null>('openSearch', null)
 const settingsOpen = ref(false)
-const metadataOpen = ref(false)
-const metadataPath = ref<string | null>(null)
 const editorFocusWidth = useStorage('docus.editor.focus-width', true)
 
 /* Platform-aware shortcut display for the empty-state hint chips.
@@ -498,6 +496,24 @@ const activeWorkingTreeDiff = workingTreeDiffs.activeDiff
 const draftRecovery = createUnsavedDraftRecovery({ store: draftStore })
 const recoveryTabs = useDraftRecoveryTabs()
 const activeDraftRecovery = recoveryTabs.activeTab
+const metadataContext = computed<MetadataContext>(() => {
+  if (activeDraftRecovery.value) return 'recovery'
+  if (activeHistoryComparison.value) return 'history'
+  if (activeWorkingTreeDiff.value) return 'diff'
+  return 'document'
+})
+const metadataReadonly = computed(() => metadataContext.value !== 'document')
+const metadataPath = computed(() => (
+  activeDraftRecovery.value?.documentPath
+  ?? activeHistoryComparison.value?.documentPath
+  ?? activeWorkingTreeDiff.value?.documentPath
+  ?? activePath.value
+))
+const metadataSummaryContent = computed<string | null>(() => {
+  if (metadataReadonly.value) return null
+  const tab = activeTab.value
+  return tab && tab.path === activePath.value ? tab.raw : null
+})
 const recoveryBusy = ref(false)
 const recoveryOperationProtection = createDraftRecoveryOperationProtection()
 const recoveryManagement = createDraftRecoveryManagement({
@@ -815,23 +831,27 @@ async function deleteSelectedRecovery(): Promise<void> {
 }
 
 const history = useHistory(vaultContext)
-const fileHistory = useFileHistory(locale)
+const sidebarFileHistory = useFileHistory(locale)
+const rightRailFileHistory = useFileHistory(locale)
 
 function openFileHistory(path: string): void {
-  void fileHistory.open(resolveFileHistoryTarget(path, posts.value))
+  void sidebarFileHistory.open(resolveFileHistoryTarget(path, posts.value))
   selectPanel('history')
 }
 
 function showAllHistory(): void {
-  fileHistory.clear()
+  sidebarFileHistory.clear()
 }
 
 function selectActivityPanel(panel: Parameters<typeof selectPanel>[0]): void {
-  if (panel === 'history') fileHistory.clear()
+  if (panel === 'history') sidebarFileHistory.clear()
   selectPanel(panel)
 }
 
-watch(vaultId, () => fileHistory.clear())
+watch(vaultId, () => {
+  sidebarFileHistory.clear()
+  rightRailFileHistory.clear()
+})
 
 const historyCommit = useHistoryCommit({
   history,
@@ -1323,13 +1343,18 @@ const editorLinkTargets = computed(() => posts.value.map((post) => ({ path: post
 async function onMetadataSaved(metadata: DocumentMetadata) {
   const tab = tabs.value.find((item) => item.path === metadata.path)
   if (tab) tab.title = metadata.title
-  metadataOpen.value = false
   await Promise.all([refresh(), refreshLinkIndex(fileChanges)])
 }
 
-function openDocumentProperties(path: string) {
-  metadataPath.value = path
-  metadataOpen.value = true
+async function openDocumentProperties(path: string): Promise<void> {
+  rightRailTab.value = 'toc'
+  try {
+    await openPost(path)
+    rightRailTab.value = 'properties'
+    rightRailCollapsed.value = false
+  } catch (cause) {
+    toast.error(t('metadata.load_failed', { error: cause instanceof Error ? cause.message : String(cause) }))
+  }
 }
 
 async function createMissingWikiNote(ref: string) {
@@ -1454,13 +1479,6 @@ watch(isReadMode, async (reading) => {
       @manage="selectPanel('recovery')"
     />
 
-    <DocumentMetadataModal
-      :open="metadataOpen"
-      :path="metadataPath"
-      @close="metadataOpen = false"
-      @saved="onMetadataSaved"
-    />
-
     <FileTree
       v-if="activePanel === 'files'"
       ref="fileTreeRef"
@@ -1487,7 +1505,7 @@ watch(isReadMode, async (reading) => {
       :history="history"
       :commit="historyCommit"
       :withdraw="historyWithdraw"
-      :file-history="fileHistory"
+      :file-history="sidebarFileHistory"
       :posts="posts"
       :active-diff-path="activeWorkingTreeDiff?.documentPath ? `${activeWorkingTreeDiff.documentPath}.md` : null"
       @show-all-history="showAllHistory"
@@ -1649,11 +1667,14 @@ watch(isReadMode, async (reading) => {
     <RightRail
       v-show="rightRailVisible"
       class="right-rail-slot"
-      :path="activeDraftRecovery?.documentPath ?? activeHistoryComparison?.documentPath ?? activeWorkingTreeDiff?.documentPath ?? activePath"
+      :path="metadataPath"
       :posts="posts"
       :active-tab="rightRailTab"
       :is-read-mode="isReadMode"
-      :file-history="fileHistory"
+      :file-history="rightRailFileHistory"
+      :metadata-context="metadataContext"
+      :metadata-readonly="metadataReadonly"
+      :summary-source="metadataSummaryContent"
       @update:active-tab="rightRailTab = $event"
       @link-navigate="openPost"
       @metadata-saved="onMetadataSaved"
