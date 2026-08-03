@@ -270,6 +270,10 @@ hr {
   place-items: center;
   pointer-events: none;
 }
+body.brand-constellation-active,
+body.brand-constellation-active * {
+  cursor: none !important;
+}
 .brand-constellation-backdrop {
   position: absolute;
   inset: 0;

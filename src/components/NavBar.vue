@@ -75,16 +75,22 @@ function clearBrandHoverTimer() {
   }
 }
 
+function setBrandCursorHidden(hidden: boolean) {
+  document.body.classList.toggle('brand-constellation-active', hidden)
+}
+
 function startBrandConstellation() {
   clearBrandHoverTimer()
   brandHoverTimer = setTimeout(() => {
     showBrandConstellation.value = true
+    setBrandCursorHidden(true)
   }, 3000)
 }
 
 function stopBrandConstellation() {
   clearBrandHoverTimer()
   showBrandConstellation.value = false
+  setBrandCursorHidden(false)
 }
 
 onBeforeUnmount(stopBrandConstellation)
