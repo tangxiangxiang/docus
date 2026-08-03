@@ -2,7 +2,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import DocumentMetadataForm from '../DocumentMetadataForm.vue'
-import { draftsByDocumentId } from '../metadataDraftStore'
+import { draftsByDocumentId, metadataDrafts } from '../metadataDraftStore'
 import { useI18n } from '../../../composables/useI18n'
 
 const getPost = vi.fn()
@@ -94,7 +94,7 @@ describe('DocumentMetadataForm', () => {
     await wrapper.setProps({ path: 'a', enabled: true })
     await flushPromises()
     expect(wrapper.get('input').element.value).toBe('A draft')
-    expect(draftsByDocumentId.get('id-b')?.title).toBe('B draft')
+    expect(draftsByDocumentId.get('id:id-b')?.title).toBe('B draft')
   })
 
   it('resets to the last successful base and saves updated base/updatedAt', async () => {
@@ -122,7 +122,108 @@ describe('DocumentMetadataForm', () => {
     resolveSave({ ...post('a', 'id-a', 'A changed').metadata, title: 'A saved', updatedAt: 100 })
     await flushPromises()
     expect(wrapper.get('input').element.value).toBe('b')
-    expect(draftsByDocumentId.has('id-b')).toBe(false)
+    expect(draftsByDocumentId.has('id:id-b')).toBe(false)
+  })
+
+  it('saves a legacy document without a document id and upgrades its identity', async () => {
+    getPost.mockReset().mockResolvedValue({
+      path: 'legacy', raw: '# Legacy', content: '# Legacy',
+      frontmatter: { title: 'Legacy title', summary: '', tags: [] },
+      metadata: undefined, size: 1, mtime: 2,
+    })
+    updateDocumentMetadata.mockResolvedValue({
+      id: 'legacy-id', path: 'legacy', title: 'Updated legacy', summary: '', tags: [],
+      createdAt: 1, updatedAt: 99,
+    })
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'legacy' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('Updated legacy')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(updateDocumentMetadata).toHaveBeenCalledWith('legacy', expect.objectContaining({ title: 'Updated legacy' }))
+    expect(wrapper.emitted('saved')).toEqual([[expect.objectContaining({ id: 'legacy-id', updatedAt: 99 })]])
+    expect(metadataDrafts.has('path:legacy')).toBe(false)
+    expect(metadataDrafts.has('id:legacy-id')).toBe(false)
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('restores a dirty legacy draft by path after switching away and back', async () => {
+    getPost.mockReset().mockImplementation(async (path: string) => path === 'legacy'
+      ? {
+          path, raw: '# Legacy', content: '# Legacy',
+          frontmatter: { title: 'Legacy title', summary: '', tags: [] },
+          metadata: undefined, size: 1, mtime: 2,
+        }
+      : post(path, 'id-other', 'Other'))
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'legacy' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('Legacy draft')
+    await wrapper.setProps({ enabled: false })
+    await wrapper.setProps({ path: 'other', enabled: true })
+    await flushPromises()
+    await wrapper.setProps({ enabled: false })
+    await wrapper.setProps({ path: 'legacy', enabled: true })
+    await flushPromises()
+    expect(wrapper.get('input').element.value).toBe('Legacy draft')
+    expect(metadataDrafts.get('path:legacy')?.documentId).toBeNull()
+  })
+
+  it('keeps newer legacy edits when the first save returns a document id', async () => {
+    let resolveSave!: (value: any) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve }))
+    getPost.mockReset().mockResolvedValue({
+      path: 'legacy', raw: '# Legacy', content: '# Legacy',
+      frontmatter: { title: 'Legacy title', summary: '', tags: [] },
+      metadata: undefined, size: 1, mtime: 2,
+    })
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'legacy' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('Revision one')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('input').setValue('Revision two')
+    resolveSave({ id: 'legacy-id', path: 'legacy', title: 'Revision one', summary: '', tags: [], createdAt: 1, updatedAt: 88 })
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('Revision two')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    expect(metadataDrafts.get('id:legacy-id')).toEqual(expect.objectContaining({
+      title: 'Revision two',
+      base: expect.objectContaining({ title: 'Revision one', updatedAt: 88 }),
+      dirty: true,
+    }))
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+  })
+
+  it('emits A saved globally when the form has switched to B', async () => {
+    let resolveSave!: (value: any) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve }))
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('A changed')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.setProps({ path: 'b' })
+    await flushPromises()
+    const savedA = { ...post('a', 'id-a', 'A changed').metadata, title: 'A saved', updatedAt: 100 }
+    resolveSave(savedA)
+    await flushPromises()
+
+    expect(wrapper.emitted('saved')).toEqual([[savedA]])
+    expect(wrapper.get('input').element.value).toBe('b')
+  })
+
+  it('fails closed on a mismatched save identity and keeps the draft', async () => {
+    updateDocumentMetadata.mockResolvedValueOnce({
+      ...post('a', 'foreign-id', 'Foreign').metadata,
+      path: 'other-path',
+    })
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('A changed')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.emitted('saved')).toBeUndefined()
+    expect(metadataDrafts.get('id:id-a')?.title).toBe('A changed')
   })
 
   it('uses the live summary source and ignores a response after the user edits the field', async () => {

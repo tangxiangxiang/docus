@@ -142,6 +142,7 @@ const STRINGS: Strings = {
   'metadata.load_failed': { zh: '加载文档属性失败：{error}', en: 'Failed to load document properties: {error}' },
   'metadata.save_failed': { zh: '保存文档属性失败：{error}', en: 'Failed to save document properties: {error}' },
   'metadata.saved': { zh: '文档属性已保存', en: 'Document properties saved' },
+  'metadata.sync_failed': { zh: '属性已保存，但部分界面同步稍后重试', en: 'Properties saved, but some views will retry syncing' },
   'settings.title': { zh: '设置', en: 'Settings' },
   'settings.close': { zh: '关闭', en: 'Close' },
   'settings.ai': { zh: 'AI', en: 'AI' },

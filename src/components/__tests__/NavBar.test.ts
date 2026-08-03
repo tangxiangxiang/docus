@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
 import { mount, RouterLinkStub } from '@vue/test-utils'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import NavBar from '../NavBar.vue'
 import { VaultViewModeKey, type VaultViewMode } from '../../composables/vault/viewMode'
 import { useI18n } from '../../composables/useI18n'
@@ -111,6 +112,51 @@ describe('NavBar — brand constellation', () => {
     expect(document.body.classList.contains('brand-constellation-active')).toBe(true)
     if (event === 'Escape') window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     else window.dispatchEvent(new Event('blur'))
+    expect(document.body.classList.contains('brand-constellation-active')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('cleans the body cursor class when the document becomes hidden', async () => {
+    const { wrapper } = mountNavBar()
+    await wrapper.find('.brand').trigger('mouseenter')
+    vi.advanceTimersByTime(3000)
+    await nextTick()
+    expect(document.body.classList.contains('brand-constellation-active')).toBe(true)
+
+    const originalHidden = document.hidden
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(document.body.classList.contains('brand-constellation-active')).toBe(false)
+    Object.defineProperty(document, 'hidden', { configurable: true, value: originalHidden })
+    wrapper.unmount()
+  })
+
+  it('cleans the body cursor class when the route changes', async () => {
+    const api = makeViewModeApi()
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: { template: '<div />' } },
+        { path: '/vault', component: { template: '<div />' } },
+      ],
+    })
+    const wrapper = mount(NavBar, {
+      props: { isVault: true },
+      global: {
+        plugins: [router],
+        provide: { [VaultViewModeKey as symbol]: api },
+        stubs: { RouterLink: RouterLinkStub },
+      },
+    })
+    await router.push('/')
+    await router.isReady()
+    await wrapper.find('.brand').trigger('mouseenter')
+    vi.advanceTimersByTime(3000)
+    await nextTick()
+    expect(document.body.classList.contains('brand-constellation-active')).toBe(true)
+
+    await router.push('/vault')
+    await nextTick()
     expect(document.body.classList.contains('brand-constellation-active')).toBe(false)
     wrapper.unmount()
   })

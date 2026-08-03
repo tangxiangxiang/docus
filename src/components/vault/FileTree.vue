@@ -416,6 +416,7 @@ async function onRootDrop(e: DragEvent) {
     const moved = lifecycle
       ? await lifecycle.renameFile(src, { targetPath })
       : await patchPost(src, { targetPath })
+    updateMetadataDraftPath(src, moved.path)
     if (!lifecycle) emit('refresh')
     if (props.currentPath === src && !lifecycle) emit('select', moved.path)
     toast.info(t('file_tree.moved_root'))

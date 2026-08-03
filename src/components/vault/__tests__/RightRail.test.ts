@@ -157,6 +157,15 @@ describe('unified document sidebar', () => {
     wrapper.unmount()
   })
 
+  it.each(['properties', 'history'] as RightRailTab[])('scrolls a restored %s tab on initial mount', async (activeTab) => {
+    const scrollIntoView = vi.fn()
+    HTMLElement.prototype.scrollIntoView = scrollIntoView
+    const wrapper = mountPanel(activeTab)
+    await nextTick()
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
+    wrapper.unmount()
+  })
+
   it('renders the single-file history view in the fifth tab', () => {
     const wrapper = mountPanel('history')
     expect(wrapper.find('.history-slot').exists()).toBe(true)

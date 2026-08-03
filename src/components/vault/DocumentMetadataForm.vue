@@ -6,7 +6,13 @@ import { useToast } from '../../composables/useToast'
 import { useI18n } from '../../composables/useI18n'
 import { ICON_AI } from './icons'
 import type { MetadataBase, MetadataContext } from './metadataDraftStore'
-import { draftsByDocumentId } from './metadataDraftStore'
+import {
+  getMetadataDraft,
+  metadataDraftKey,
+  metadataDrafts,
+  migrateMetadataDraft,
+  setMetadataDraft,
+} from './metadataDraftStore'
 
 const props = withDefaults(defineProps<{
   path: string | null
@@ -122,14 +128,16 @@ function setFields(next: { title: string; summary: string; tags: string[] }): vo
 function applyLoadedPost(path: string, post: PostDetail): void {
   const loaded = fieldsFromPost(post, path)
   metadata.value = loaded.metadata
-  loadedBase.value = loaded.base
-  loadedIdentity.value = { path, documentId: loaded.metadata?.id ?? null }
-  const draft = loaded.metadata?.id ? draftsByDocumentId.get(loaded.metadata.id) : undefined
+  const identity = { path, documentId: loaded.metadata?.id ?? null }
+  loadedIdentity.value = identity
+  const draft = getMetadataDraft(identity)
   if (!isReadonly.value && draft?.dirty) {
     draft.path = path
-    draftsByDocumentId.set(draft.documentId, draft)
+    loadedBase.value = draft.base
+    setMetadataDraft(draft)
     setFields({ title: draft.title, summary: draft.summary, tags: split(draft.tagsText) })
   } else {
+    loadedBase.value = loaded.base
     setFields(loaded.base)
   }
   draftRevision.value = draft?.revision ?? 0
@@ -185,14 +193,15 @@ async function load(): Promise<void> {
 function syncDraft(): void {
   const identity = loadedIdentity.value
   const base = loadedBase.value
-  if (applyingFields || loading.value || isReadonly.value || !identity?.documentId || !base || identity.path !== props.path) return
+  if (applyingFields || loading.value || isReadonly.value || !identity || !base || identity.path !== props.path) return
   const nextRevision = draftRevision.value + 1
   draftRevision.value = nextRevision
+  const key = metadataDraftKey(identity)
   if (!dirty.value) {
-    draftsByDocumentId.delete(identity.documentId)
+    metadataDrafts.delete(key)
     return
   }
-  draftsByDocumentId.set(identity.documentId, {
+  setMetadataDraft({
     documentId: identity.documentId,
     path: identity.path,
     title: title.value,
@@ -212,38 +221,93 @@ function snapshotCurrentFields() {
   }
 }
 
+const canSave = computed(() => {
+  const identity = loadedIdentity.value
+  return Boolean(
+    props.path
+    && identity
+    && identity.path === props.path
+    && loadedBase.value
+    && dirty.value
+    && normalizeTitle(title.value)
+    && !loadError.value
+    && !loading.value
+    && !saving.value
+    && !generatingSummary.value
+    && !isReadonly.value,
+  )
+})
+
 async function save(): Promise<void> {
   const identity = loadedIdentity.value
-  if (
-    !props.path || !identity?.documentId || identity.path !== props.path
-    || !dirty.value || !title.value.trim() || saving.value || generatingSummary.value || isReadonly.value
-  ) return
+  if (!canSave.value || !identity) return
   const savingPath = identity.path
   const savingDocumentId = identity.documentId
+  const savingKey = metadataDraftKey(identity)
   const savingRevision = draftRevision.value
   const payload = snapshotCurrentFields()
   saving.value = true
   try {
     const saved = await updateDocumentMetadata(savingPath, payload)
-    const savedMatchesRequest = saved.id === savingDocumentId && saved.path === savingPath
-    const currentDraft = draftsByDocumentId.get(savingDocumentId)
-    if (savedMatchesRequest && currentDraft?.revision === savingRevision) {
-      const savedBase: MetadataBase = {
-        title: normalizeTitle(saved.title),
-        summary: normalizeSummary(saved.summary),
-        tags: split(join(saved.tags)),
-        updatedAt: saved.updatedAt,
-      }
-      draftsByDocumentId.delete(savingDocumentId)
-      if (loadedIdentity.value?.documentId === savingDocumentId && props.path === savingPath) {
+    const savedMatchesPath = saved.path === savingPath
+    const savedMatchesDocument = savingDocumentId ? saved.id === savingDocumentId : true
+    if (!savedMatchesPath || !savedMatchesDocument) {
+      const message = `metadata response identity mismatch for ${savingPath}`
+      console.warn(message, { savingDocumentId, savedId: saved.id, savedPath: saved.path })
+      toast.error(t('metadata.save_failed', { error: message }))
+      return
+    }
+
+    const savedBase: MetadataBase = {
+      title: normalizeTitle(saved.title),
+      summary: normalizeSummary(saved.summary),
+      tags: split(join(saved.tags)),
+      updatedAt: saved.updatedAt,
+    }
+    // The server result is a global fact even when the form has since
+    // switched to another document. Let the Vault update all consumers;
+    // only the matching form instance is allowed to update its fields.
+    emit('saved', saved)
+
+    const currentFormMatchesRequest = loadedIdentity.value?.path === savingPath
+      && (
+        loadedIdentity.value.documentId === savingDocumentId
+        || (!savingDocumentId && loadedIdentity.value.documentId === null)
+        || loadedIdentity.value.documentId === saved.id
+      )
+    const currentDraft = metadataDrafts.get(savingKey)
+    const visibleDraft = currentFormMatchesRequest && loadedIdentity.value
+      ? getMetadataDraft(loadedIdentity.value)
+      : undefined
+    const newerDraft = [visibleDraft, currentDraft].find(
+      (draft) => draft && draft.revision !== savingRevision,
+    )
+    if (newerDraft) {
+      const draftSource = visibleDraft === newerDraft && loadedIdentity.value
+        ? loadedIdentity.value
+        : { path: savingPath, documentId: savingDocumentId }
+      migrateMetadataDraft(
+        draftSource,
+        { path: saved.path, documentId: saved.id },
+        { ...newerDraft, base: savedBase },
+      )
+      if (currentFormMatchesRequest) {
         metadata.value = saved
         loadedBase.value = savedBase
+        loadedIdentity.value = { path: saved.path, documentId: saved.id }
+        draftRevision.value = newerDraft.revision
+      }
+    } else {
+      metadataDrafts.delete(savingKey)
+      if (currentFormMatchesRequest) {
+        metadata.value = saved
+        loadedBase.value = savedBase
+        loadedIdentity.value = { path: saved.path, documentId: saved.id }
         setFields(savedBase)
         draftRevision.value = savingRevision
-        emit('saved', saved)
       }
     }
-    if (savedMatchesRequest) toast.success(t('metadata.saved'))
+    toast.success(t('metadata.saved'))
   } catch (cause) {
     toast.error(t('metadata.save_failed', { error: normalizeError(cause) }))
   } finally {
@@ -254,7 +318,7 @@ async function save(): Promise<void> {
 async function generateSummary(): Promise<void> {
   const identity = loadedIdentity.value
   if (
-    !props.path || !identity?.documentId || loading.value || saving.value
+    !props.path || !identity || loading.value || saving.value
     || generatingSummary.value || isReadonly.value || !loadedBase.value
   ) return
   const currentGeneration = ++summaryGenerationId
@@ -298,8 +362,8 @@ async function generateSummary(): Promise<void> {
 function reset(): void {
   const identity = loadedIdentity.value
   const base = loadedBase.value
-  if (isReadonly.value || !identity?.documentId || !base) return
-  draftsByDocumentId.delete(identity.documentId)
+  if (isReadonly.value || !identity || !base) return
+  metadataDrafts.delete(metadataDraftKey(identity))
   setFields(base)
   draftRevision.value++
 }
@@ -354,12 +418,12 @@ onBeforeUnmount(cancelSummaryGeneration)
         </p>
         <label class="document-metadata-field">
           <span>{{ t('metadata.field_title') }}</span>
-          <input ref="titleInput" v-model="title" maxlength="200" :disabled="loading || saving || isReadonly || !path" required />
+          <input ref="titleInput" v-model="title" maxlength="200" :disabled="loading || isReadonly || !path" required />
         </label>
         <label class="document-metadata-field">
           <span>{{ t('metadata.summary') }}</span>
           <div class="document-metadata-textarea-wrap">
-            <textarea v-model="summary" maxlength="2000" rows="4" :disabled="loading || saving || isReadonly || !path" />
+            <textarea v-model="summary" maxlength="2000" rows="4" :disabled="loading || isReadonly || !path" />
             <button
               v-if="!isReadonly"
               type="button"
@@ -377,7 +441,7 @@ onBeforeUnmount(cancelSummaryGeneration)
         </label>
         <label class="document-metadata-field">
           <span>{{ t('metadata.tags') }}</span>
-          <input v-model="tags" placeholder="rag, notes" :disabled="loading || saving || isReadonly || !path" />
+          <input v-model="tags" placeholder="rag, notes" :disabled="loading || isReadonly || !path" />
         </label>
         <section class="document-metadata-readonly" :aria-label="t('metadata.readonly')">
           <div><span>{{ t('metadata.created_at') }}</span><output>{{ formatDate(metadata?.createdAt) }}</output></div>
@@ -392,7 +456,7 @@ onBeforeUnmount(cancelSummaryGeneration)
     <footer v-if="showActions && path && !isReadonly && !loadError" class="document-metadata-actions">
       <button v-if="showCancel" type="button" class="btn" @click="emit('cancel')">{{ t('metadata.cancel') }}</button>
       <button type="button" class="btn" :disabled="loading || saving || generatingSummary || !dirty" @click="reset">{{ t('metadata.reset') }}</button>
-      <button type="submit" class="btn btn-primary" :disabled="loading || saving || generatingSummary || !dirty || !title.trim()">
+      <button type="submit" class="btn btn-primary" :disabled="!canSave">
         {{ t(saving ? 'metadata.saving' : 'metadata.save') }}
       </button>
     </footer>

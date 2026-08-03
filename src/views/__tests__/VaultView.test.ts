@@ -61,6 +61,22 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain('@select-panel="selectActivityPanel"')
   })
 
+  it('syncs metadata saves globally and keeps properties navigation fail-closed', () => {
+    const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
+    const savedHandler = source.match(/async function onMetadataSaved[\s\S]*?\n}/)?.[0]
+    const propertiesHandler = source.match(/async function openDocumentProperties[\s\S]*?\n}/)?.[0]
+
+    expect(savedHandler).toBeDefined()
+    expect(savedHandler).toContain('applyPostSummary(updated)')
+    expect(savedHandler).toContain('await Promise.all([refresh(), refreshLinkIndex(fileChanges)])')
+    expect(savedHandler).toContain('metadata.sync_failed')
+    expect(propertiesHandler).toBeDefined()
+    expect(propertiesHandler).toContain('const previousTab = rightRailTab.value')
+    expect(propertiesHandler).toContain('opened?.loadError')
+    expect(propertiesHandler).toContain('rightRailTab.value = previousTab')
+    expect(propertiesHandler).toContain("rightRailTab.value = 'properties'")
+  })
+
   it('owns Create Version coordination at Vault scope across sidebar remounts', () => {
     const source = readFileSync(fileURLToPath(new URL('../VaultView.vue', import.meta.url)), 'utf8')
 

@@ -40,7 +40,7 @@ import { useWorkingTreeDiffs } from '../composables/vault/useWorkingTreeDiffs'
 import type { StatusEntry } from '../lib/history-api'
 import { useScopeFilter } from '../composables/vault/useScopeFilter'
 import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../composables/vault/useLinkIndex'
-import { getPost, type DocumentMetadata } from '../lib/api'
+import { getPost, type DocumentMetadata, type PostSummary } from '../lib/api'
 import { formatHistoryDate } from '../lib/history-date'
 import { isSlugSegment } from '../lib/slug'
 import { resolveWikiTarget } from '../lib/linkResolve'
@@ -247,7 +247,7 @@ const draftPersistence = createUnsavedDraftPersistence({
 let lifecycleCreateFile: DocumentLifecycle['createFile'] | null = null
 const {
   tree, vaultId, posts, tabs, activePath, activeTab, activeSize,
-  refresh, openPost: openEditorPost, closeTab: closeEditorTab,
+  refresh, applyPostSummary, openPost: openEditorPost, closeTab: closeEditorTab,
   confirmCloseMany: confirmCloseEditorTabs,
   closeManyConfirmed: closeManyEditorTabsConfirmed,
   selectTab: selectEditorTab, onEditorChange, applyRecoveredDraft, doSaveNow, resolveExternal,
@@ -1341,19 +1341,57 @@ async function viewCurrentRecoveryDocument(recoveryId: string): Promise<void> {
 const editorLinkTargets = computed(() => posts.value.map((post) => ({ path: post.path, title: post.title })))
 
 async function onMetadataSaved(metadata: DocumentMetadata) {
-  const tab = tabs.value.find((item) => item.path === metadata.path)
-  if (tab) tab.title = metadata.title
-  await Promise.all([refresh(), refreshLinkIndex(fileChanges)])
+  const post = posts.value.find((item) => item.path === metadata.path)
+  if (post) {
+    const updated: PostSummary = {
+      ...post,
+      title: metadata.title,
+      summary: metadata.summary,
+      tags: [...metadata.tags],
+      updated: new Date(metadata.updatedAt).toISOString().slice(0, 10),
+      mtime: metadata.updatedAt,
+    }
+    // Apply the successful server result synchronously so open tabs, the
+    // file tree, and Posts do not wait for the background refresh.
+    applyPostSummary(updated)
+  } else {
+    const tab = tabs.value.find((item) => item.path === metadata.path)
+    if (tab) tab.title = metadata.title
+  }
+  try {
+    await Promise.all([refresh(), refreshLinkIndex(fileChanges)])
+  } catch (cause) {
+    // Metadata is already saved and the local patch is authoritative for
+    // this session. A refresh hiccup must not turn that success into a
+    // save failure or roll the title back.
+    console.warn('metadata global refresh failed', cause)
+    toast.info(t('metadata.sync_failed'))
+  }
 }
 
 async function openDocumentProperties(path: string): Promise<void> {
-  rightRailTab.value = 'toc'
+  const previousTab = rightRailTab.value
+  const previousCollapsed = rightRailCollapsed.value
+
   try {
     await openPost(path)
+    const opened = tabs.value.find((tab) => tab.path === path)
+    if (!opened || opened.loading || opened.loadError || activePath.value !== path) {
+      rightRailTab.value = previousTab
+      rightRailCollapsed.value = previousCollapsed
+      toast.error(t('metadata.load_failed', {
+        error: opened?.loadError ?? t('common.unknown_error'),
+      }))
+      return
+    }
     rightRailTab.value = 'properties'
     rightRailCollapsed.value = false
   } catch (cause) {
-    toast.error(t('metadata.load_failed', { error: cause instanceof Error ? cause.message : String(cause) }))
+    rightRailTab.value = previousTab
+    rightRailCollapsed.value = previousCollapsed
+    toast.error(t('metadata.load_failed', {
+      error: cause instanceof Error ? cause.message : String(cause),
+    }))
   }
 }
 

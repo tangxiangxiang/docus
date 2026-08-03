@@ -6,11 +6,15 @@ import FileTree from '../FileTree.vue'
 import type { PostSummary, TreeNode } from '../../../lib/api'
 import { installDialogMocks } from '../../../__test-helpers__/dialogs'
 import { useI18n } from '../../../composables/useI18n'
+import { VaultContextKey } from '../../../composables/vault/context/vaultContext'
+import { getFallbackVaultFileChanges } from '../../../composables/vault/context/fileChanges'
+import { metadataDrafts } from '../metadataDraftStore'
 
 installDialogMocks()
 
 beforeEach(() => {
   localStorage.clear()
+  metadataDrafts.clear()
   useI18n().setLocale('zh')
 })
 
@@ -50,6 +54,42 @@ function rowByName(wrapper: any, name: string): any {
 }
 
 describe('FileTree', () => {
+  it('moves a legacy metadata draft when a file is dropped at the vault root', async () => {
+    metadataDrafts.set('path:inbox/draft', {
+      documentId: null,
+      path: 'inbox/draft',
+      title: 'Draft title',
+      summary: '',
+      tagsText: '',
+      base: { title: 'Draft title', summary: '', tags: [], updatedAt: 1 },
+      dirty: true,
+      revision: 1,
+    })
+    const renameFile = vi.fn().mockResolvedValue({ path: 'draft' })
+    const wrapper = mount(FileTree, {
+      props: { tree: TREE, currentPath: null },
+      global: {
+        provide: {
+          [VaultContextKey as symbol]: {
+            fileChanges: getFallbackVaultFileChanges(),
+            lifecycle: { renameFile },
+          },
+        },
+      },
+    })
+
+    await wrapper.find('.file-tree').trigger('drop', {
+      dataTransfer: {
+        getData: (key: string) => key === 'text/x-docus-path' ? 'inbox/draft' : 'file',
+      },
+    })
+
+    expect(renameFile).toHaveBeenCalledWith('inbox/draft', { targetPath: 'draft' })
+    expect(metadataDrafts.has('path:inbox/draft')).toBe(false)
+    expect(metadataDrafts.get('path:draft')?.path).toBe('draft')
+    wrapper.unmount()
+  })
+
   it('reveals a path by expanding ancestors and focusing without selecting', async () => {
     const scrollIntoView = vi.fn()
     HTMLElement.prototype.scrollIntoView = scrollIntoView

@@ -61,16 +61,20 @@ const aiHasOpened = ref(props.activeTab === 'ai')
 const tabsRef = ref<HTMLElement | null>(null)
 const metadataDirty = ref(false)
 
+async function scrollActiveTabIntoView(tab: RightRailTab): Promise<void> {
+  await nextTick()
+  const active = tabsRef.value?.querySelector<HTMLElement>(`[data-tab="${tab}"]`)
+  active?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+}
+
 // Mount AI only when the user first visits it, then keep it mounted while
 // switching tabs so its conversation, draft, picker, and scroll position
-// remain intact.
+// remain intact. The immediate run also handles a tab restored from
+// localStorage before the rail first paints.
 watch(() => props.activeTab, (tab) => {
   if (tab === 'ai') aiHasOpened.value = true
-  void nextTick(() => {
-    const active = tabsRef.value?.querySelector<HTMLElement>(`[data-tab="${tab}"]`)
-    active?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
-  })
-})
+  void scrollActiveTabIntoView(tab)
+}, { immediate: true })
 
 watch(
   () => [props.activeTab, props.path, props.fileHistory?.target.value?.documentPath] as const,
