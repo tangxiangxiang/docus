@@ -227,11 +227,16 @@ hr {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
   font-weight: 700;
   font-size: 1.05rem;
   color: var(--text-h);
   letter-spacing: 0.2px;
   text-decoration: none;
+  cursor: pointer;
 }
 .brand:hover { text-decoration: none; color: var(--accent); }
 .brand-logo {
