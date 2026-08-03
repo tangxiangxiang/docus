@@ -17,6 +17,7 @@ import { useOptionalVaultContext } from '../../composables/vault/context/useVaul
 import { ICON_SEARCH } from './icons'
 import { useI18n } from '../../composables/useI18n'
 import { useFileTreePreferences } from '../../composables/vault/useFileTreePreferences'
+import { clearMetadataDraftForPath, updateMetadataDraftPath } from './metadataDraftStore'
 
 const props = withDefaults(defineProps<{
   tree: TreeNode[]
@@ -501,7 +502,13 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
         }
       }
       toast.success(t('file_tree.renamed_count', { count: res.moved.length }))
-    } else {
+      for (const oldFilePath of filePaths(node)) {
+        const nextFilePath = oldFilePath === oldPath
+          ? newPath
+          : `${newPath}/${oldFilePath.slice(oldPath.length + 1)}`
+        updateMetadataDraftPath(oldFilePath, nextFilePath)
+      }
+      } else {
       let updateReferences = false
       let referencePaths: string[] = []
       try {
@@ -520,6 +527,7 @@ async function onRename(oldPath: string, newName: string, kind: 'file' | 'folder
           if (updated.path !== renamed.path) publishChange({ path: updated.path, kind: 'write', newRaw: updated.raw })
         }
       }
+      updateMetadataDraftPath(oldPath, node.kind === 'file' ? renamed.path : oldPath)
     }
     if (!lifecycle) emit('refresh')
   } catch (e: any) {
@@ -586,6 +594,9 @@ async function onDelete(p: string, kind: 'file' | 'folder') {
       })
     }
     else await deletePost(p)
+    for (const deletedPath of node.kind === 'folder' ? filePaths(node) : [p]) {
+      clearMetadataDraftForPath(deletedPath)
+    }
     if (!lifecycle) emit('refresh')
   } catch (e: any) { toast.error(t('file_tree.delete_failed', { error: e.message })) }
 }
@@ -626,6 +637,7 @@ async function onMove(srcPath: string, targetFolder: string, srcKind: 'file' | '
     const moved = lifecycle
       ? await lifecycle.renameFile(srcPath, { targetPath: newPath })
       : await patchPost(srcPath, { targetPath: newPath })
+    updateMetadataDraftPath(srcPath, moved.path)
     if (!lifecycle) emit('refresh')
     if (props.currentPath === srcPath && !lifecycle) emit('select', moved.path)
   } catch (e: any) {
@@ -645,6 +657,7 @@ async function onArchiveNote(path: string) {
     emit('refresh')
     if (props.currentPath === path) emit('select', movedPath)
   }
+  updateMetadataDraftPath(path, movedPath)
 }
 
 async function onCreateIn(folder: string, kind: 'file' | 'folder') {
