@@ -70,6 +70,7 @@ export const MAX_AI_DIFF_LINES = 10_000
 export const MAX_COMMIT_DIFF_CHARS = 8_000
 export const MAX_TOTAL_COMMIT_DIFF_CHARS = 20_000
 export const MAX_SUMMARY_FILE_BYTES = 24 * 1024
+export const MAX_SUMMARY_CONTENT_CHARS = 20_000
 
 class CommitMessageResourceLimitError extends Error {
   constructor(message: string) {
@@ -333,19 +334,37 @@ ai.post('/slug', async (c) => {
 // deliberately independent from Git so it also works for clean documents.
 ai.post('/summary', async (c) => {
   const body = await c.req.json().catch(() => null) as
-    | { path?: unknown; language?: unknown }
+    | { path?: unknown; content?: unknown; documentId?: unknown; language?: unknown }
     | null
   if (!body || typeof body.path !== 'string' || !isValidPathSyntax(body.path)) {
     return bad(c, 'valid path required')
   }
+  if (body.content !== undefined && typeof body.content !== 'string') {
+    return bad(c, 'content must be a string')
+  }
+  if (body.documentId !== undefined && typeof body.documentId !== 'string') {
+    return bad(c, 'documentId must be a string')
+  }
   const language = body.language === 'zh' ? 'zh' : 'en'
   try {
-    const raw = await readSafeRelativeFile(CONTENT_DIR, `${body.path}.md`, 'utf8', {
-      maxBytes: MAX_SUMMARY_FILE_BYTES,
-      signal: c.req.raw.signal,
-    })
-    if (raw === null) return bad(c, 'not found', 404)
-    const content = matter(String(raw)).content.trim()
+    let content: string
+    if (typeof body.content === 'string') {
+      if (Buffer.byteLength(body.content, 'utf8') > MAX_SUMMARY_FILE_BYTES) {
+        return bad(c, `AI summary content exceeds the ${MAX_SUMMARY_FILE_BYTES}-byte limit`, 413)
+      }
+      if (body.content.length > MAX_SUMMARY_CONTENT_CHARS) {
+        return bad(c, `AI summary content exceeds the ${MAX_SUMMARY_CONTENT_CHARS}-character limit`, 413)
+      }
+      content = body.content.trim()
+    } else {
+      const raw = await readSafeRelativeFile(CONTENT_DIR, `${body.path}.md`, 'utf8', {
+        maxBytes: MAX_SUMMARY_FILE_BYTES,
+        signal: c.req.raw.signal,
+      })
+      if (raw === null) return bad(c, 'not found', 404)
+      content = matter(String(raw)).content.trim()
+    }
+    if (!content) return bad(c, 'document content is empty')
     const summary = await generateSummary({
       path: body.path,
       content,

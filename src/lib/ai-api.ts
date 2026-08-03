@@ -202,7 +202,9 @@ export async function suggestCommitMessage(input: {
 
 export async function suggestSummary(input: {
   path: string
+  content?: string
   language?: 'zh' | 'en'
+  documentId?: string
 }, signal?: AbortSignal): Promise<{ summary: string }> {
   return jsonOrThrow<{ summary: string }>(await fetch('/api/ai/summary', {
     method: 'POST',

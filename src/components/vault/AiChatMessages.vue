@@ -47,7 +47,7 @@ const { t } = useI18n()
       v-else
       :key="message.id || `${message.sessionId}-${message.createdAt}`"
       class="ai-message"
-      :class="[message.role, { 'ai-streaming': message.id === 0 || message.id === -1 }]"
+      :class="[message.role, { 'ai-streaming': message.id === 0 }]"
     >
       <div
         v-if="message.role === 'assistant'"
@@ -56,8 +56,13 @@ const { t } = useI18n()
         aria-hidden="true"
       />
       <div class="ai-bubble">
-        <AiMarkdown v-if="message.role === 'assistant' && message.content" :content="message.content" />
-        <div v-else-if="message.content" class="ai-text">{{ message.content }}</div>
+        <AiMarkdown
+          v-if="message.role === 'assistant' && message.content && message.id !== 0"
+          :content="message.content"
+        />
+        <div v-else-if="message.content" class="ai-text" :class="{ 'ai-streaming-text': message.role === 'assistant' && message.id === 0 }">
+          {{ message.content }}
+        </div>
         <AiToolCallCard
           v-for="call in message.blocks?.toolCalls ?? []"
           :key="call.id"

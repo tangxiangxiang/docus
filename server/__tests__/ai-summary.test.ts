@@ -65,4 +65,19 @@ describe('POST /api/ai/summary', () => {
     expect(response.status).toBe(404)
     expect(summaryMock).not.toHaveBeenCalled()
   })
+
+  it('uses client-provided editor content without reading the file', async () => {
+    const response = await call({ path: 'inbox-note', language: 'en', content: '# Unsaved editor body' })
+    expect(response.status).toBe(200)
+    expect(summaryMock).toHaveBeenCalledWith(expect.objectContaining({
+      path: 'inbox-note',
+      content: '# Unsaved editor body',
+    }))
+  })
+
+  it('rejects non-string and empty client content', async () => {
+    expect((await call({ path: 'note', content: 42 })).status).toBe(400)
+    expect((await call({ path: 'note', content: '   ' })).status).toBe(400)
+    expect(summaryMock).not.toHaveBeenCalled()
+  })
 })

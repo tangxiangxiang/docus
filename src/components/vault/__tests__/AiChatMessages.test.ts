@@ -74,4 +74,21 @@ describe('AiChatMessages', () => {
     expect(wrapper.get('.ai-markdown strong').text()).toBe('bold')
     expect(wrapper.get('.ai-markdown li').text()).toBe('item')
   })
+
+  it('keeps streaming assistant content as text and renders completed/error content as Markdown', () => {
+    const wrapper = mount(AiChatMessages, {
+      props: {
+        currentPath: null,
+        quickPrompts: [],
+        messages: [
+          { id: 0, sessionId: 1, role: 'assistant', content: '**streaming**', createdAt: 1 },
+          { id: -1, sessionId: 1, role: 'assistant', content: '**error**', createdAt: 2 },
+          { id: 3, sessionId: 1, role: 'assistant', content: '**done**', createdAt: 3 },
+        ],
+      },
+    })
+    expect(wrapper.findAll('.ai-markdown')).toHaveLength(2)
+    expect(wrapper.get('.ai-message.assistant .ai-streaming-text').text()).toBe('**streaming**')
+    expect(wrapper.find('.ai-message.assistant:nth-child(2) strong').text()).toBe('error')
+  })
 })
