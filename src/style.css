@@ -321,11 +321,22 @@ hr {
 }
 .brand-network-core {
   /* Keep the central workspace opaque so links and particles stay behind it. */
-  fill: #fff;
+  fill: var(--bg-soft);
   stroke: var(--accent);
   stroke-width: 5;
   filter: drop-shadow(0 0 28px color-mix(in srgb, var(--accent) 35%, transparent));
   animation: brand-network-core-pulse 3.2s ease-in-out infinite;
+}
+.brand-network-logo {
+  filter: none;
+}
+:root[data-theme='dark'] .brand-network-logo {
+  filter: brightness(0) invert(1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .brand-network-logo {
+    filter: brightness(0) invert(1);
+  }
 }
 
 @keyframes brand-network-node-in {
