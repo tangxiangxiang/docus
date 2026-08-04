@@ -8,6 +8,8 @@ import { useI18n } from '../../../composables/useI18n'
 const getPost = vi.fn()
 const updateDocumentMetadata = vi.fn()
 const suggestSummary = vi.fn()
+const toastErrors = vi.fn()
+const toastSuccesses = vi.fn()
 
 vi.mock('../../../lib/api', () => ({
   getPost: (...args: unknown[]) => getPost(...args),
@@ -17,7 +19,7 @@ vi.mock('../../../lib/ai-api', () => ({
   suggestSummary: (...args: unknown[]) => suggestSummary(...args),
 }))
 vi.mock('../../../composables/useToast', () => ({
-  useToast: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }),
+  useToast: () => ({ success: toastSuccesses, error: toastErrors, info: vi.fn() }),
 }))
 
 const post = (path: string, id: string, title: string) => ({
@@ -33,6 +35,8 @@ const post = (path: string, id: string, title: string) => ({
 beforeEach(() => {
   draftsByDocumentId.clear()
   useI18n().setLocale('en')
+  toastErrors.mockReset()
+  toastSuccesses.mockReset()
   getPost.mockReset().mockImplementation((path: string) => Promise.resolve(post(path, `id-${path}`, path)))
   updateDocumentMetadata.mockReset().mockImplementation(async (path: string, input: any) => ({
     ...post(path, `id-${path}`, input.title).metadata,
@@ -318,6 +322,157 @@ describe('DocumentMetadataForm', () => {
 
     expect(wrapper.get('input').element.value).toBe('Other')
     expect(wrapper.emitted('saved')).toEqual([[savedLegacy]])
+    expect(metadataDrafts.has('path:legacy')).toBe(false)
+    expect(metadataDrafts.get('id:legacy-id')).toEqual(expect.objectContaining({
+      title: 'Legacy title',
+      base: expect.objectContaining({ title: 'Saved title' }),
+      dirty: true,
+    }))
+  })
+
+  it('reconciles a lost save response after the server has saved while staying on the document', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    let readsA = 0
+    getPost.mockReset().mockImplementation(async (path: string) => {
+      if (path === 'a') {
+        readsA++
+        return readsA === 1 ? post('a', 'id-a', 'a') : { ...post('a', 'id-a', 'a'), metadata: { ...post('a', 'id-a', 'a').metadata, title: 'B' } }
+      }
+      return post(path, `id-${path}`, path)
+    })
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('input').setValue('a')
+    rejectSave(new Error('response lost'))
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('a')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    expect(metadataDrafts.get('id:id-a')).toEqual(expect.objectContaining({
+      title: 'a',
+      base: expect.objectContaining({ title: 'B' }),
+      dirty: true,
+    }))
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+    expect(toastErrors).not.toHaveBeenCalled()
+  })
+
+  it('reconciles a lost save response after switching to another document', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    let readsA = 0
+    getPost.mockReset().mockImplementation(async (path: string) => {
+      if (path === 'a') {
+        readsA++
+        return readsA === 1 ? post('a', 'id-a', 'a') : { ...post('a', 'id-a', 'a'), metadata: { ...post('a', 'id-a', 'a').metadata, title: 'B' } }
+      }
+      return post(path, `id-${path}`, path)
+    })
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('input').setValue('a')
+    await wrapper.setProps({ path: 'b' })
+    await flushPromises()
+    rejectSave(new Error('response lost'))
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('b')
+    expect(metadataDrafts.get('id:id-a')).toEqual(expect.objectContaining({
+      title: 'a',
+      base: expect.objectContaining({ title: 'B' }),
+      dirty: true,
+    }))
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+    expect(toastErrors).not.toHaveBeenCalled()
+  })
+
+  it('clears the temporary clean snapshot when reread proves the save did not land', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    let readsA = 0
+    getPost.mockReset().mockImplementation(async (path: string) => {
+      if (path === 'a') {
+        readsA++
+        return post('a', 'id-a', 'a')
+      }
+      return post(path, `id-${path}`, path)
+    })
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('input').setValue('a')
+    rejectSave(new Error('request failed'))
+    await flushPromises()
+
+    expect(readsA).toBe(2)
+    expect(wrapper.get('input').element.value).toBe('a')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+    expect(metadataDrafts.has('id:id-a')).toBe(false)
+    expect(toastErrors).toHaveBeenCalledWith(expect.stringContaining('Failed to save document properties'))
+  })
+
+  it('keeps the latest fields dirty when the save result and reread are both unknown', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    getPost.mockReset()
+      .mockResolvedValueOnce(post('a', 'id-a', 'a'))
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('input').setValue('a')
+    rejectSave(new Error('response lost'))
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('a')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    expect(metadataDrafts.get('id:id-a')).toEqual(expect.objectContaining({
+      title: 'a',
+      base: expect.objectContaining({ title: 'B' }),
+      dirty: true,
+    }))
+    expect(toastErrors).toHaveBeenCalledWith(expect.stringContaining('Could not confirm the save result'))
+  })
+
+  it('reconciles a lost legacy save response after switching documents', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    let readsLegacy = 0
+    getPost.mockReset().mockImplementation(async (path: string) => {
+      if (path === 'legacy') {
+        readsLegacy++
+        if (readsLegacy === 1) {
+          return {
+            path, raw: '# Legacy', content: '# Legacy',
+            frontmatter: { title: 'Legacy title', summary: '', tags: [] },
+            metadata: undefined, size: 1, mtime: 2,
+          }
+        }
+        return {
+          ...post('legacy', 'legacy-id', 'Legacy title'),
+          metadata: { ...post('legacy', 'legacy-id', 'Legacy title').metadata, title: 'Saved title', summary: '', tags: [] },
+        }
+      }
+      return post(path, `id-${path}`, path)
+    })
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'legacy' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('Saved title')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('input').setValue('Legacy title')
+    await wrapper.setProps({ path: 'other' })
+    await flushPromises()
+    rejectSave(new Error('response lost'))
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('other')
     expect(metadataDrafts.has('path:legacy')).toBe(false)
     expect(metadataDrafts.get('id:legacy-id')).toEqual(expect.objectContaining({
       title: 'Legacy title',
