@@ -195,6 +195,43 @@ describe('DocumentMetadataForm', () => {
     expect(wrapper.emitted('saved')).toHaveLength(1)
   })
 
+  it('preserves an edit back to the old base while the save is in flight', async () => {
+    let resolveSave!: (value: any) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve }))
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('input').setValue('a')
+    resolveSave({ ...post('a', 'id-a', 'B').metadata, title: 'B', updatedAt: 101 })
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('a')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    expect(metadataDrafts.get('id:id-a')).toEqual(expect.objectContaining({
+      title: 'a',
+      base: expect.objectContaining({ title: 'B' }),
+      dirty: true,
+    }))
+  })
+
+  it('removes a newer draft when its fields end at the saved base', async () => {
+    let resolveSave!: (value: any) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve }))
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('input').setValue('C')
+    await wrapper.get('input').setValue('B')
+    resolveSave({ ...post('a', 'id-a', 'a').metadata, title: 'B', updatedAt: 102 })
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('B')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+    expect(metadataDrafts.has('id:id-a')).toBe(false)
+  })
+
   it('emits A saved globally when the form has switched to B', async () => {
     let resolveSave!: (value: any) => void
     updateDocumentMetadata.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve }))

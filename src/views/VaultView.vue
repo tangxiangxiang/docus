@@ -1349,7 +1349,9 @@ async function onMetadataSaved(metadata: DocumentMetadata) {
       summary: metadata.summary,
       tags: [...metadata.tags],
       updated: new Date(metadata.updatedAt).toISOString().slice(0, 10),
-      mtime: metadata.updatedAt,
+      // Metadata timestamps are database timestamps, not Markdown file
+      // mtimes. Keep the disk timestamp stable until the file itself changes.
+      mtime: post.mtime,
     }
     // Apply the successful server result synchronously so open tabs, the
     // file tree, and Posts do not wait for the background refresh.
@@ -1372,11 +1374,17 @@ async function onMetadataSaved(metadata: DocumentMetadata) {
 async function openDocumentProperties(path: string): Promise<void> {
   const previousTab = rightRailTab.value
   const previousCollapsed = rightRailCollapsed.value
+  const previousActivePath = activePath.value
+  const wasAlreadyOpen = tabs.value.some((tab) => tab.path === path)
 
   try {
     await openPost(path)
     const opened = tabs.value.find((tab) => tab.path === path)
     if (!opened || opened.loading || opened.loadError || activePath.value !== path) {
+      if (!wasAlreadyOpen && opened) await closeEditorTab(path)
+      if (previousActivePath && tabs.value.some((tab) => tab.path === previousActivePath)) {
+        selectEditorTab(previousActivePath)
+      }
       rightRailTab.value = previousTab
       rightRailCollapsed.value = previousCollapsed
       toast.error(t('metadata.load_failed', {
@@ -1387,6 +1395,11 @@ async function openDocumentProperties(path: string): Promise<void> {
     rightRailTab.value = 'properties'
     rightRailCollapsed.value = false
   } catch (cause) {
+    const opened = tabs.value.find((tab) => tab.path === path)
+    if (!wasAlreadyOpen && opened?.loadError) await closeEditorTab(path)
+    if (previousActivePath && tabs.value.some((tab) => tab.path === previousActivePath)) {
+      selectEditorTab(previousActivePath)
+    }
     rightRailTab.value = previousTab
     rightRailCollapsed.value = previousCollapsed
     toast.error(t('metadata.load_failed', {

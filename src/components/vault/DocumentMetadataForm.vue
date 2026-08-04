@@ -221,6 +221,12 @@ function snapshotCurrentFields() {
   }
 }
 
+function fieldsAreDirty(fields: { title: string; summary: string; tagsText: string }, base: MetadataBase): boolean {
+  return normalizeTitle(fields.title) !== base.title
+    || normalizeSummary(fields.summary) !== base.summary
+    || JSON.stringify(split(fields.tagsText)) !== JSON.stringify(base.tags)
+}
+
 const canSave = computed(() => {
   const identity = loadedIdentity.value
   return Boolean(
@@ -279,6 +285,42 @@ async function save(): Promise<void> {
     const visibleDraft = currentFormMatchesRequest && loadedIdentity.value
       ? getMetadataDraft(loadedIdentity.value)
       : undefined
+    // A user can make another edit and return exactly to the old base while
+    // the request is in flight. syncDraft() quite correctly removes a clean
+    // draft, so the revision is the only remaining evidence that the form
+    // changed after the request started. Reconcile the live fields directly
+    // before looking at the draft map.
+    if (currentFormMatchesRequest && draftRevision.value !== savingRevision) {
+      const latest = {
+        title: title.value,
+        summary: summary.value,
+        tagsText: tags.value,
+      }
+      const stillDirty = fieldsAreDirty(latest, savedBase)
+      const reconciledRevision = Math.max(draftRevision.value, savingRevision)
+      metadata.value = saved
+      loadedBase.value = savedBase
+      loadedIdentity.value = { path: saved.path, documentId: saved.id }
+      draftRevision.value = reconciledRevision
+      if (stillDirty) {
+        setMetadataDraft({
+          documentId: saved.id,
+          path: saved.path,
+          title: latest.title,
+          summary: latest.summary,
+          tagsText: latest.tagsText,
+          base: savedBase,
+          dirty: true,
+          revision: reconciledRevision,
+        })
+      } else {
+        metadataDrafts.delete(savingKey)
+        metadataDrafts.delete(metadataDraftKey({ path: saved.path, documentId: saved.id }))
+        setFields(savedBase)
+      }
+      toast.success(t('metadata.saved'))
+      return
+    }
     const newerDraft = [visibleDraft, currentDraft].find(
       (draft) => draft && draft.revision !== savingRevision,
     )
@@ -286,16 +328,26 @@ async function save(): Promise<void> {
       const draftSource = visibleDraft === newerDraft && loadedIdentity.value
         ? loadedIdentity.value
         : { path: savingPath, documentId: savingDocumentId }
-      migrateMetadataDraft(
-        draftSource,
-        { path: saved.path, documentId: saved.id },
-        { ...newerDraft, base: savedBase },
-      )
-      if (currentFormMatchesRequest) {
-        metadata.value = saved
-        loadedBase.value = savedBase
-        loadedIdentity.value = { path: saved.path, documentId: saved.id }
-        draftRevision.value = newerDraft.revision
+      const reconciledDraft = {
+        ...newerDraft,
+        base: savedBase,
+        dirty: fieldsAreDirty(newerDraft, savedBase),
+      }
+      if (reconciledDraft.dirty) {
+        migrateMetadataDraft(
+          draftSource,
+          { path: saved.path, documentId: saved.id },
+          reconciledDraft,
+        )
+        if (currentFormMatchesRequest) {
+          metadata.value = saved
+          loadedBase.value = savedBase
+          loadedIdentity.value = { path: saved.path, documentId: saved.id }
+          draftRevision.value = newerDraft.revision
+        }
+      } else {
+        metadataDrafts.delete(metadataDraftKey(draftSource))
+        metadataDrafts.delete(metadataDraftKey({ path: saved.path, documentId: saved.id }))
       }
     } else {
       metadataDrafts.delete(savingKey)

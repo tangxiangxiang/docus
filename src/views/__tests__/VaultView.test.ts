@@ -68,12 +68,17 @@ describe('VaultView editor tab wiring', () => {
 
     expect(savedHandler).toBeDefined()
     expect(savedHandler).toContain('applyPostSummary(updated)')
+    expect(savedHandler).toContain('mtime: post.mtime')
+    expect(savedHandler).not.toContain('mtime: metadata.updatedAt')
     expect(savedHandler).toContain('await Promise.all([refresh(), refreshLinkIndex(fileChanges)])')
     expect(savedHandler).toContain('metadata.sync_failed')
     expect(propertiesHandler).toBeDefined()
     expect(propertiesHandler).toContain('const previousTab = rightRailTab.value')
     expect(propertiesHandler).toContain('opened?.loadError')
     expect(propertiesHandler).toContain('rightRailTab.value = previousTab')
+    expect(propertiesHandler).toContain('const previousActivePath = activePath.value')
+    expect(propertiesHandler).toContain('await closeEditorTab(path)')
+    expect(propertiesHandler).toContain('selectEditorTab(previousActivePath)')
     expect(propertiesHandler).toContain("rightRailTab.value = 'properties'")
   })
 
