@@ -218,6 +218,33 @@ describe('DocumentMetadataForm', () => {
     expect(wrapper.emitted('saved')).toHaveLength(1)
   })
 
+  it('preserves an edit back to the old base after switching documents', async () => {
+    let resolveSave!: (value: any) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve }))
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    const savingRevision = 1
+    await wrapper.get('input').setValue('a')
+    await wrapper.setProps({ path: 'b' })
+    await flushPromises()
+
+    const savedA = { ...post('a', 'id-a', 'B').metadata, title: 'B', updatedAt: 101 }
+    resolveSave(savedA)
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('b')
+    expect(wrapper.emitted('saved')).toEqual([[savedA]])
+    expect(metadataDrafts.has('path:a')).toBe(false)
+    expect(metadataDrafts.get('id:id-a')).toEqual(expect.objectContaining({
+      title: 'a',
+      base: expect.objectContaining({ title: 'B' }),
+      dirty: true,
+    }))
+    expect(metadataDrafts.get('id:id-a')?.revision).toBeGreaterThan(savingRevision)
+  })
+
   it('removes a newer draft when its fields end at the saved base', async () => {
     let resolveSave!: (value: any) => void
     updateDocumentMetadata.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve }))
@@ -262,6 +289,41 @@ describe('DocumentMetadataForm', () => {
       dirty: true,
     }))
     expect(wrapper.emitted('saved')).toHaveLength(1)
+  })
+
+  it('preserves a legacy edit back to the old base after switching documents', async () => {
+    let resolveSave!: (value: any) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve }))
+    getPost.mockReset().mockImplementation(async (path: string) => path === 'legacy'
+      ? {
+          path, raw: '# Legacy', content: '# Legacy',
+          frontmatter: { title: 'Legacy title', summary: '', tags: [] },
+          metadata: undefined, size: 1, mtime: 2,
+        }
+      : post(path, 'id-other', 'Other'))
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'legacy' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('Saved title')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('input').setValue('Legacy title')
+    await wrapper.setProps({ path: 'other' })
+    await flushPromises()
+
+    const savedLegacy = {
+      id: 'legacy-id', path: 'legacy', title: 'Saved title', summary: '', tags: [],
+      createdAt: 1, updatedAt: 88,
+    }
+    resolveSave(savedLegacy)
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('Other')
+    expect(wrapper.emitted('saved')).toEqual([[savedLegacy]])
+    expect(metadataDrafts.has('path:legacy')).toBe(false)
+    expect(metadataDrafts.get('id:legacy-id')).toEqual(expect.objectContaining({
+      title: 'Legacy title',
+      base: expect.objectContaining({ title: 'Saved title' }),
+      dirty: true,
+    }))
   })
 
   it('emits A saved globally when the form has switched to B', async () => {

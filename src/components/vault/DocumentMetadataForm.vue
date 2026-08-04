@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { getPost, updateDocumentMetadata, type DocumentMetadata, type PostDetail } from '../../lib/api'
+import {
+  getPost,
+  updateDocumentMetadata,
+  type DocumentMetadata,
+  type PostDetail,
+  type UpdateDocumentMetadata,
+} from '../../lib/api'
 import { suggestSummary } from '../../lib/ai-api'
 import { useToast } from '../../composables/useToast'
 import { useI18n } from '../../composables/useI18n'
 import { ICON_AI } from './icons'
-import type { MetadataBase, MetadataContext } from './metadataDraftStore'
+import type { MetadataBase, MetadataContext, MetadataDraftKey } from './metadataDraftStore'
 import {
   getMetadataDraft,
   metadataDraftKey,
@@ -58,6 +64,10 @@ let summaryGenerationId = 0
 let summaryGenerationController: AbortController | null = null
 let loadSequence = 0
 let applyingFields = false
+const activeSaveByKey = new Map<MetadataDraftKey, {
+  revision: number
+  payload: UpdateDocumentMetadata
+}>()
 
 const directory = computed(() => {
   if (!props.path) return '—'
@@ -198,7 +208,20 @@ function syncDraft(): void {
   draftRevision.value = nextRevision
   const key = metadataDraftKey(identity)
   if (!dirty.value) {
-    metadataDrafts.delete(key)
+    if (activeSaveByKey.has(key)) {
+      setMetadataDraft({
+        documentId: identity.documentId,
+        path: identity.path,
+        title: title.value,
+        summary: summary.value,
+        tagsText: tags.value,
+        base,
+        dirty: false,
+        revision: nextRevision,
+      })
+    } else {
+      metadataDrafts.delete(key)
+    }
     return
   }
   setMetadataDraft({
@@ -266,6 +289,7 @@ async function save(): Promise<void> {
   const savingKey = metadataDraftKey(identity)
   const savingRevision = draftRevision.value
   const payload = snapshotCurrentFields()
+  activeSaveByKey.set(savingKey, { revision: savingRevision, payload })
   saving.value = true
   try {
     const saved = await updateDocumentMetadata(savingPath, payload)
@@ -381,6 +405,7 @@ async function save(): Promise<void> {
   } catch (cause) {
     toast.error(t('metadata.save_failed', { error: normalizeError(cause) }))
   } finally {
+    activeSaveByKey.delete(savingKey)
     saving.value = false
   }
 }
