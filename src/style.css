@@ -44,6 +44,25 @@ body.vault-mode {
 }
 body.vault-mode #app { height: 100%; }
 
+/* Shared document path header for the properties and history tabs. Keep
+   these two lightweight context strips identical in typography and rhythm. */
+.right-rail-path-header {
+  display: block;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  min-height: 31px;
+  padding: 8px 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 60%, transparent);
+}
+.right-rail-path-header span {
+  display: block;
+  overflow: hidden;
+  color: var(--vs-text-3, var(--text-muted));
+  font: 0.7rem/1.2 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Global focus-visible ring. The vault and the command palette both
    set `outline: none` on their containers / inputs (those inputs then
    draw their own custom focus state via border-color + box-shadow), so

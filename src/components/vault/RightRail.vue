@@ -158,8 +158,8 @@ function onLinkNavigate(p: string) {
       />
     </section>
     <section v-show="activeTab === 'properties'" class="metadata-slot" role="tabpanel" :aria-label="t('metadata.title')">
-      <header class="metadata-panel-header">
-        <span v-if="path" :title="path">{{ path }}</span>
+      <header v-if="path" class="right-rail-path-header">
+        <span :title="path">{{ path }}</span>
       </header>
       <DocumentMetadataForm
         :path="path"
@@ -274,19 +274,6 @@ function onLinkNavigate(p: string) {
   overflow: hidden;
 }
 .history-slot :deep(.right-rail-history) { height: 100%; }
-.metadata-panel-header {
-  display: block;
-  padding: 9px 18px;
-  border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 60%, transparent);
-}
-.metadata-panel-header span {
-  display: block;
-  overflow: hidden;
-  color: var(--vs-text-3, var(--text-muted));
-  font: 0.7rem var(--mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .metadata-slot :deep(.document-metadata-actions) {
   justify-content: stretch;
   padding: 8px 14px;
