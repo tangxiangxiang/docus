@@ -212,7 +212,10 @@ describe('DocumentMetadataForm', () => {
       title: 'a',
       base: expect.objectContaining({ title: 'B' }),
       dirty: true,
+      revision: expect.any(Number),
     }))
+    expect(metadataDrafts.get('id:id-a')?.revision).toBeGreaterThan(1)
+    expect(wrapper.emitted('saved')).toHaveLength(1)
   })
 
   it('removes a newer draft when its fields end at the saved base', async () => {
@@ -230,6 +233,35 @@ describe('DocumentMetadataForm', () => {
     expect(wrapper.get('input').element.value).toBe('B')
     expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
     expect(metadataDrafts.has('id:id-a')).toBe(false)
+  })
+
+  it('migrates a legacy edit back to its old base when the first save returns an id', async () => {
+    let resolveSave!: (value: any) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((resolve) => { resolveSave = resolve }))
+    getPost.mockReset().mockResolvedValue({
+      path: 'legacy', raw: '# Legacy', content: '# Legacy',
+      frontmatter: { title: 'Legacy title', summary: '', tags: [] },
+      metadata: undefined, size: 1, mtime: 2,
+    })
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'legacy' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('Saved title')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.get('input').setValue('Legacy title')
+    resolveSave({
+      id: 'legacy-id', path: 'legacy', title: 'Saved title', summary: '', tags: [],
+      createdAt: 1, updatedAt: 88,
+    })
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('Legacy title')
+    expect(metadataDrafts.has('path:legacy')).toBe(false)
+    expect(metadataDrafts.get('id:legacy-id')).toEqual(expect.objectContaining({
+      title: 'Legacy title',
+      base: expect.objectContaining({ title: 'Saved title' }),
+      dirty: true,
+    }))
+    expect(wrapper.emitted('saved')).toHaveLength(1)
   })
 
   it('emits A saved globally when the form has switched to B', async () => {

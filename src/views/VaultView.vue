@@ -55,6 +55,7 @@ import { provideVaultContext } from '../composables/vault/context/useVaultContex
 import { createVaultFileChanges } from '../composables/vault/context/fileChanges'
 import { useDocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
 import type { DocumentLifecycle } from '../composables/vault/useDocumentLifecycle'
+import { applyMetadataToPostSummary } from './metadataPostSummary'
 import FileTree from '../components/vault/FileTree.vue'
 import TagPanel from '../components/vault/TagPanel.vue'
 import ReadingPane from '../components/vault/ReadingPane.vue'
@@ -1343,16 +1344,7 @@ const editorLinkTargets = computed(() => posts.value.map((post) => ({ path: post
 async function onMetadataSaved(metadata: DocumentMetadata) {
   const post = posts.value.find((item) => item.path === metadata.path)
   if (post) {
-    const updated: PostSummary = {
-      ...post,
-      title: metadata.title,
-      summary: metadata.summary,
-      tags: [...metadata.tags],
-      updated: new Date(metadata.updatedAt).toISOString().slice(0, 10),
-      // Metadata timestamps are database timestamps, not Markdown file
-      // mtimes. Keep the disk timestamp stable until the file itself changes.
-      mtime: post.mtime,
-    }
+    const updated: PostSummary = applyMetadataToPostSummary(post, metadata)
     // Apply the successful server result synchronously so open tabs, the
     // file tree, and Posts do not wait for the background refresh.
     applyPostSummary(updated)

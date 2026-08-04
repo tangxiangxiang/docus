@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { applyMetadataToPostSummary } from '../metadataPostSummary'
 
 describe('VaultView editor tab wiring', () => {
   it('derives one save presentation per document and shares the active result with StatusBar', () => {
@@ -68,8 +69,7 @@ describe('VaultView editor tab wiring', () => {
 
     expect(savedHandler).toBeDefined()
     expect(savedHandler).toContain('applyPostSummary(updated)')
-    expect(savedHandler).toContain('mtime: post.mtime')
-    expect(savedHandler).not.toContain('mtime: metadata.updatedAt')
+    expect(savedHandler).toContain('applyMetadataToPostSummary(post, metadata)')
     expect(savedHandler).toContain('await Promise.all([refresh(), refreshLinkIndex(fileChanges)])')
     expect(savedHandler).toContain('metadata.sync_failed')
     expect(propertiesHandler).toBeDefined()
@@ -80,6 +80,36 @@ describe('VaultView editor tab wiring', () => {
     expect(propertiesHandler).toContain('await closeEditorTab(path)')
     expect(propertiesHandler).toContain('selectEditorTab(previousActivePath)')
     expect(propertiesHandler).toContain("rightRailTab.value = 'properties'")
+  })
+
+  it('updates metadata fields without changing the Markdown mtime', () => {
+    const post = {
+      path: 'note',
+      title: 'Old title',
+      created: '2026-08-01',
+      updated: '2026-08-01',
+      tags: ['old'],
+      summary: 'Old summary',
+      size: 10,
+      mtime: 100,
+    }
+    const updated = applyMetadataToPostSummary(post, {
+      id: 'id-note',
+      path: 'note',
+      title: 'New title',
+      summary: 'New summary',
+      tags: ['new'],
+      createdAt: 1,
+      updatedAt: 999,
+    })
+
+    expect(updated).toMatchObject({
+      title: 'New title',
+      summary: 'New summary',
+      tags: ['new'],
+      updated: '1970-01-01',
+      mtime: 100,
+    })
   })
 
   it('owns Create Version coordination at Vault scope across sidebar remounts', () => {

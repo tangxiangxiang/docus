@@ -221,7 +221,21 @@ function snapshotCurrentFields() {
   }
 }
 
-function fieldsAreDirty(fields: { title: string; summary: string; tagsText: string }, base: MetadataBase): boolean {
+type MetadataFieldSnapshot = {
+  title: string
+  summary: string
+  tagsText: string
+}
+
+function snapshotVisibleFields(): MetadataFieldSnapshot {
+  return {
+    title: title.value,
+    summary: summary.value,
+    tagsText: tags.value,
+  }
+}
+
+function fieldsAreDirty(fields: MetadataFieldSnapshot, base: MetadataBase): boolean {
   return normalizeTitle(fields.title) !== base.title
     || normalizeSummary(fields.summary) !== base.summary
     || JSON.stringify(split(fields.tagsText)) !== JSON.stringify(base.tags)
@@ -291,11 +305,7 @@ async function save(): Promise<void> {
     // changed after the request started. Reconcile the live fields directly
     // before looking at the draft map.
     if (currentFormMatchesRequest && draftRevision.value !== savingRevision) {
-      const latest = {
-        title: title.value,
-        summary: summary.value,
-        tagsText: tags.value,
-      }
+      const latest = snapshotVisibleFields()
       const stillDirty = fieldsAreDirty(latest, savedBase)
       const reconciledRevision = Math.max(draftRevision.value, savingRevision)
       metadata.value = saved
@@ -303,16 +313,20 @@ async function save(): Promise<void> {
       loadedIdentity.value = { path: saved.path, documentId: saved.id }
       draftRevision.value = reconciledRevision
       if (stillDirty) {
-        setMetadataDraft({
-          documentId: saved.id,
-          path: saved.path,
-          title: latest.title,
-          summary: latest.summary,
-          tagsText: latest.tagsText,
-          base: savedBase,
-          dirty: true,
-          revision: reconciledRevision,
-        })
+        migrateMetadataDraft(
+          { path: savingPath, documentId: savingDocumentId },
+          { path: saved.path, documentId: saved.id },
+          {
+            documentId: saved.id,
+            path: saved.path,
+            title: latest.title,
+            summary: latest.summary,
+            tagsText: latest.tagsText,
+            base: savedBase,
+            dirty: true,
+            revision: reconciledRevision,
+          },
+        )
       } else {
         metadataDrafts.delete(savingKey)
         metadataDrafts.delete(metadataDraftKey({ path: saved.path, documentId: saved.id }))
@@ -321,9 +335,9 @@ async function save(): Promise<void> {
       toast.success(t('metadata.saved'))
       return
     }
-    const newerDraft = [visibleDraft, currentDraft].find(
-      (draft) => draft && draft.revision !== savingRevision,
-    )
+    const newerDraft = [visibleDraft, currentDraft]
+      .filter((draft) => draft && draft.revision !== savingRevision)
+      .sort((left, right) => (right?.revision ?? 0) - (left?.revision ?? 0))[0]
     if (newerDraft) {
       const draftSource = visibleDraft === newerDraft && loadedIdentity.value
         ? loadedIdentity.value
@@ -343,7 +357,11 @@ async function save(): Promise<void> {
           metadata.value = saved
           loadedBase.value = savedBase
           loadedIdentity.value = { path: saved.path, documentId: saved.id }
-          draftRevision.value = newerDraft.revision
+          draftRevision.value = Math.max(
+            draftRevision.value,
+            savingRevision,
+            newerDraft.revision,
+          )
         }
       } else {
         metadataDrafts.delete(metadataDraftKey(draftSource))
@@ -356,7 +374,7 @@ async function save(): Promise<void> {
         loadedBase.value = savedBase
         loadedIdentity.value = { path: saved.path, documentId: saved.id }
         setFields(savedBase)
-        draftRevision.value = savingRevision
+        draftRevision.value = Math.max(draftRevision.value, savingRevision)
       }
     }
     toast.success(t('metadata.saved'))
