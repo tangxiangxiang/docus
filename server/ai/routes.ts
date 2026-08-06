@@ -21,6 +21,7 @@ import {
   readSafeRelativeFile,
   resolveSafeRelativePath,
   SafePathResourceLimitError,
+  normalizeLogicalContentPath,
 } from '../paths.js'
 import * as historyGit from '../history/git.js'
 import { computeFileDiff } from '../history/diff.js'
@@ -71,6 +72,7 @@ export const MAX_COMMIT_DIFF_CHARS = 8_000
 export const MAX_TOTAL_COMMIT_DIFF_CHARS = 20_000
 export const MAX_SUMMARY_FILE_BYTES = 24 * 1024
 export const MAX_SUMMARY_CONTENT_CHARS = 20_000
+export const MAX_CHAT_CONTEXT_PATHS = 12
 
 class CommitMessageResourceLimitError extends Error {
   constructor(message: string) {
@@ -161,6 +163,19 @@ function isValidLegacyNotePath(value: unknown): value is string {
     !value.includes(String.fromCharCode(0)) &&
     !/[\r\n]/.test(value)
   )
+}
+
+function parseChatContextPaths(value: unknown): string[] | null {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.length > MAX_CHAT_CONTEXT_PATHS) return null
+  const paths: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') return null
+    const normalized = normalizeLogicalContentPath(item)
+    if (!normalized || paths.includes(normalized)) return null
+    paths.push(normalized)
+  }
+  return paths
 }
 
 // Tool-using assistant turns persist as a JSON envelope in the
@@ -465,6 +480,7 @@ ai.post('/chat', async (c) => {
         content?: unknown
         liveContext?: unknown
         currentNotePath?: unknown
+        contextPaths?: unknown
       }
     | null
   if (
@@ -477,6 +493,10 @@ ai.post('/chat', async (c) => {
   // Bind to locals so the narrowed types survive into runChat().
   const sessionId = body.sessionId
   const userContent = body.content
+  const contextPaths = parseChatContextPaths(body.contextPaths)
+  if (contextPaths === null) {
+    return c.json({ ok: false, reason: 'invalid-context-paths' }, 400)
+  }
 
   // Edit-10.3: normalize the ONE ChatContext authority BEFORE the
   // SSE stream starts, so validation failures land as plain JSON
@@ -487,17 +507,18 @@ ai.post('/chat', async (c) => {
   //   absent + valid currentNotePath → legacy-path (old clients).
   //   neither → none.
   let ctx: ChatContext
+  const contextOptions = contextPaths.length ? { contextPaths } : {}
   if (body.liveContext !== undefined) {
     const parsed = parseAiLiveContext(body.liveContext)
     if (!parsed.ok) {
       const status = parsed.reason === 'context-too-large' ? 413 : 400
       return c.json({ ok: false, reason: parsed.reason }, status)
     }
-    ctx = { kind: 'live', liveContext: parsed.value }
+    ctx = { kind: 'live', liveContext: parsed.value, ...contextOptions }
   } else if (isValidLegacyNotePath(body.currentNotePath)) {
-    ctx = { kind: 'legacy-path', currentNotePath: body.currentNotePath }
+    ctx = { kind: 'legacy-path', currentNotePath: body.currentNotePath, ...contextOptions }
   } else {
-    ctx = { kind: 'none' }
+    ctx = { kind: 'none', ...contextOptions }
   }
 
   // We don't pre-validate the session here — runChat throws

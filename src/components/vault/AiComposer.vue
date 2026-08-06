@@ -1,22 +1,33 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue'
-import { ICON_FILE_MD, ICON_SEND, ICON_STOP } from './icons'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { ICON_SEND, ICON_STOP } from './icons'
 import { useI18n } from '../../composables/useI18n'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string
   busy: boolean
   configured: boolean
-  currentPath: string | null
-}>()
+  contextPaths: string[]
+  canAddContext: boolean
+  contextPickerOpen: boolean
+}>(), {
+  contextPaths: () => [],
+  canAddContext: true,
+  contextPickerOpen: false,
+})
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   send: []
   stop: []
+  'remove-context': [path: string]
+  'toggle-context-picker': []
 }>()
 const { t } = useI18n()
 
+const inputPlaceholder = computed(
+  () => `${t('ai.input_placeholder')} · ${t('ai.keyboard_hint')}`,
+)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 const INPUT_MAX_H = 160
 
@@ -58,25 +69,46 @@ defineExpose({ focus })
 <template>
   <form class="ai-composer" @submit.prevent="emit('send')">
     <div class="ai-composer-card">
+      <div v-if="contextPaths.length" class="ai-context-paths" :aria-label="t('ai.attached_context')">
+        <span v-for="path in contextPaths" :key="path" class="ai-context-chip" :title="path">
+          <span class="ai-context-chip-path">{{ path }}</span>
+          <button
+            class="ai-context-chip-remove"
+            type="button"
+            :aria-label="t('ai.remove_context')"
+            @click="emit('remove-context', path)"
+          >×</button>
+        </span>
+      </div>
       <textarea
         ref="inputEl"
         :value="modelValue"
         class="ai-input"
         rows="1"
-        :placeholder="t('ai.input_placeholder')"
+        :placeholder="inputPlaceholder"
         :aria-label="t('ai.input_placeholder')"
         @keydown="onKeydown"
         @input="onInput"
       />
       <div class="ai-toolbar">
         <div class="ai-toolbar-left">
-          <span v-if="currentPath" class="ai-context" :title="currentPath">
-            <span class="ai-context-icon" v-html="ICON_FILE_MD" aria-hidden="true" />
-            <span class="ai-context-path">{{ currentPath }}</span>
+          <button
+            class="ai-tool-button"
+            type="button"
+            :title="t('ai.add_context')"
+            :aria-label="t('ai.add_context')"
+            :disabled="!canAddContext"
+            :aria-expanded="contextPickerOpen"
+            aria-haspopup="listbox"
+            @click="emit('toggle-context-picker')"
+          >
+            <span class="ai-tool-plus">+</span>
+          </button>
+          <span class="ai-mode-badge" aria-hidden="true">
+            <span class="ai-mode-dot" />
+            Auto
           </span>
-          <span v-else class="ai-context ai-context-empty">{{ t('ai.no_document') }}</span>
         </div>
-        <span v-if="!modelValue" class="ai-keyboard-hint" aria-hidden="true">{{ t('ai.keyboard_hint') }}</span>
         <div class="ai-toolbar-right">
           <button
             class="ai-send"

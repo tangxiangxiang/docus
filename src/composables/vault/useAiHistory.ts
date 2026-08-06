@@ -34,6 +34,7 @@ import type { VaultContext } from './context/types.js'
 // or added to message state here.
 export interface SendAndStreamOptions {
   liveContext?: AiLiveContextSnapshot
+  contextPaths?: readonly string[]
 }
 
 export interface AiHistory {
@@ -205,6 +206,9 @@ function createAiHistory(publishChange: (event: FileChangeEvent) => void): AiHis
           // only). Absent → the key is omitted from the JSON body
           // entirely: never null, never a legacy path fallback.
           ...(options?.liveContext ? { liveContext: options.liveContext } : {}),
+          ...(options?.contextPaths?.length
+            ? { contextPaths: [...options.contextPaths] }
+            : {}),
         },
         ac.signal,
       )) {

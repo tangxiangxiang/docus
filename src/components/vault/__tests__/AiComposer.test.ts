@@ -11,9 +11,8 @@ function mountComposer(props: Partial<InstanceType<typeof AiComposer>['$props']>
       modelValue: '',
       busy: false,
       configured: true,
-      currentPath: null,
       ...props,
-    },
+    } as any,
   })
 }
 
@@ -23,7 +22,7 @@ describe('AiComposer', () => {
   it('owns input updates and Enter/Shift+Enter behavior', async () => {
     const wrapper = mountComposer({ modelValue: 'hello' })
     const input = wrapper.get('textarea')
-    expect(input.attributes('placeholder')).toBe('Type a message…')
+    expect(input.attributes('placeholder')).toBe('Type a message… · Enter to send · Shift+Enter for newline')
 
     await input.setValue('updated')
     expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['updated'])
@@ -37,7 +36,7 @@ describe('AiComposer', () => {
   it('uses a provider-neutral Chinese input placeholder', () => {
     useI18n().setLocale('zh')
     const wrapper = mountComposer()
-    expect(wrapper.get('textarea').attributes('placeholder')).toBe('输入消息…')
+    expect(wrapper.get('textarea').attributes('placeholder')).toBe('输入消息… · Enter 发送 · Shift+Enter 换行')
   })
 
   it('switches the primary action from send to stop while busy', async () => {
@@ -52,13 +51,30 @@ describe('AiComposer', () => {
     expect(busy.emitted('stop')).toHaveLength(1)
   })
 
-  it('shows the current-note context and disables send without configuration', () => {
+  it('shows the composer mode and disables send without configuration', () => {
     const wrapper = mountComposer({
       modelValue: 'hello',
       configured: false,
-      currentPath: 'archive/example.md',
     })
-    expect(wrapper.get('.ai-context-path').text()).toBe('archive/example.md')
+    expect(wrapper.get('.ai-mode-badge').text()).toContain('Auto')
     expect(wrapper.get('.ai-send').attributes('disabled')).toBeDefined()
+  })
+
+  it('keeps the decorative add control on the left side of the toolbar', () => {
+    const wrapper = mountComposer()
+    expect(wrapper.find('.ai-toolbar-left > .ai-tool-button').exists()).toBe(true)
+    expect(wrapper.find('.ai-toolbar-right > .ai-tool-button').exists()).toBe(false)
+  })
+
+  it('emits context actions from the add and remove controls', async () => {
+    const wrapper = mountComposer({
+      contextPaths: ['notes/reference'],
+      canAddContext: true,
+    })
+    await wrapper.get('.ai-tool-button').trigger('click')
+    expect(wrapper.emitted('toggle-context-picker')).toHaveLength(1)
+
+    await wrapper.get('.ai-context-chip-remove').trigger('click')
+    expect(wrapper.emitted('remove-context')).toEqual([['notes/reference']])
   })
 })

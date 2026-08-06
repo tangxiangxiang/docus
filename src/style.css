@@ -8,6 +8,8 @@
   --code-bg: #f3f4f6;
   --accent: #6366f1;
   --accent-hover: #4f46e5;
+  --navbar-vault-bg: #f4f6fa;
+  --navbar-vault-border: #dbe2ea;
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
@@ -32,6 +34,8 @@
     --code-bg: #1f2937;
     --accent: #818cf8;
     --accent-hover: #a5b4fc;
+    --navbar-vault-bg: #181818;
+    --navbar-vault-border: #2b2b2b;
   }
 }
 
@@ -268,6 +272,10 @@ hr {
   -webkit-backdrop-filter: saturate(180%) blur(18px);
   backdrop-filter: saturate(180%) blur(18px);
   border-bottom: 1px solid var(--border);
+}
+.navbar.is-vault {
+  background: var(--navbar-vault-bg);
+  border-bottom-color: var(--navbar-vault-border);
 }
 .navbar-inner {
   display: flex;
@@ -3985,6 +3993,8 @@ main.container {
   --code-bg: #f3f4f6;
   --accent: #6366f1;
   --accent-hover: #4f46e5;
+  --navbar-vault-bg: #f4f6fa;
+  --navbar-vault-border: #dbe2ea;
 }
 
 :root[data-theme='dark'] {
@@ -3997,6 +4007,8 @@ main.container {
   --code-bg: #1f2937;
   --accent: #818cf8;
   --accent-hover: #a5b4fc;
+  --navbar-vault-bg: #181818;
+  --navbar-vault-border: #2b2b2b;
 }
 
 /* Vault: same idea, but the vault overrides live on .vault with its
@@ -4257,29 +4269,68 @@ main.container {
    focus-within via the same accent ring used by other vault inputs. */
 .ai-panel .ai-composer {
   flex: 0 0 auto;
-  padding: 8px 10px 10px;
-  background: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--vs-bg-1) 86%, transparent),
-    var(--vs-bg-1)
-  );
+  padding: 7px 8px 8px;
+  background: transparent;
 }
 
 .ai-panel .ai-composer-card {
   display: flex;
   flex-direction: column;
-  background: color-mix(in srgb, var(--vs-bg-1) 88%, white);
-  border: 1px solid color-mix(in srgb, var(--vs-border) 82%, white);
-  border-radius: 7px;
+  background: var(--vs-bg-2);
+  border: 1px solid color-mix(in srgb, var(--vs-border) 22%, transparent);
+  border-radius: 8px;
   overflow: hidden;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--vs-border) 35%, transparent);
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 .ai-panel .ai-composer-card:focus-within {
-  background: color-mix(in srgb, var(--vs-bg-1) 92%, white);
+  background: color-mix(in srgb, var(--vs-bg-2) 88%, var(--vs-bg-1));
   border-color: color-mix(in srgb, var(--vs-accent) 62%, var(--vs-border));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vs-accent) 16%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vs-accent) 13%, transparent),
+    0 5px 14px color-mix(in srgb, var(--vs-border) 42%, transparent);
 }
-
+.ai-panel .ai-context-paths {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px 0;
+}
+.ai-panel .ai-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 4px 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--vs-accent) 9%, transparent);
+  color: var(--vs-text-2);
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  line-height: 1.3;
+}
+.ai-panel .ai-context-chip-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-panel .ai-context-chip-remove {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vs-text-3);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.ai-panel .ai-context-chip-remove:hover {
+  background: color-mix(in srgb, var(--vs-accent) 14%, transparent);
+  color: var(--vs-text-1);
+}
 .ai-panel .ai-input {
   display: block;
   width: 100%;
@@ -4299,13 +4350,13 @@ main.container {
   /* Padding is asymmetric — extra horizontal so long words have
      breathing room from the card edges, generous vertical so the
      placeholder sits centered with breathing room. */
-  padding: 9px 10px 7px;
+  padding: 9px 10px 8px;
   font-family: var(--sans);
   font-size: 0.85rem;
   color: var(--vs-text-1);
   line-height: 1.4;
   outline: none;
-  min-height: 36px;
+  min-height: 46px;
   overflow-y: hidden;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -4323,15 +4374,15 @@ main.container {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 3px 4px 4px 9px;
-  border-top: 1px solid color-mix(in srgb, var(--vs-border) 72%, transparent);
-  height: 34px;
+  padding: 4px 5px 5px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--vs-border) 58%, transparent);
+  min-height: 32px;
   box-sizing: border-box;
 }
 .ai-panel .ai-toolbar-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
@@ -4339,73 +4390,62 @@ main.container {
 .ai-panel .ai-toolbar-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   flex: 0 0 auto;
 }
 
-/* Keyboard hint tucked between the context chip and the send button.
-   Only visible when the input is empty — once the user starts typing
-   the hint fades (template removes it) so it stops competing for the
-   tiny toolbar row. Uses the VS-Code-style "Enter to send" microcopy
-   with a middle dot separator. */
-.ai-panel .ai-keyboard-hint {
-  flex: 0 0 auto;
-  color: var(--vs-text-3);
-  font-size: 0.62rem;
-  letter-spacing: 0.02em;
-  user-select: none;
-  white-space: nowrap;
-}
-
-/* Current-note context chip. File icon + path, ellipsized with
-   the full path on hover via the title attribute. Mono font
-   reads better for paths than the body sans (separators and
-   hyphens are visually distinct). The empty-state copy is
-   italic so the user can tell at a glance that no note is
-   open vs. an open one they didn't notice. */
-.ai-panel .ai-context {
+.ai-panel .ai-mode-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  min-width: 0;
-  color: color-mix(in srgb, var(--vs-text-2) 88%, var(--vs-text-1));
-  font-family: var(--mono);
-  font-size: 0.72rem;
+  gap: 5px;
+  color: var(--vs-text-3);
+  font-size: 0.64rem;
   line-height: 1;
-  background: color-mix(in srgb, var(--vs-bg-2) 72%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vs-border) 55%, transparent);
-  border-radius: 5px;
-  padding: 3px 6px;
-}
-.ai-panel .ai-context-icon {
-  display: inline-flex;
-  width: 14px;
-  height: 14px;
-  color: var(--vs-text-3);
-  flex-shrink: 0;
-}
-.ai-panel .ai-context-icon :where(svg) {
-  display: block;
-  width: 14px;
-  height: 14px;
-}
-.ai-panel .ai-context-path {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 180px;
 }
-.ai-panel .ai-context-empty {
-  color: var(--vs-text-3);
-  font-family: var(--sans);
-  font-size: 0.72rem;
+.ai-panel .ai-mode-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #51b87a;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #51b87a 14%, transparent);
 }
 
+/* The add-context control keeps the toolbar compact while remaining quiet
+   until the user opens the document picker. */
+.ai-panel .ai-tool-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--vs-text-3);
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0.8;
+  cursor: pointer;
+}
+.ai-panel .ai-tool-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--vs-accent) 10%, transparent);
+  color: var(--vs-text-1);
+}
+.ai-panel .ai-tool-button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+.ai-panel .ai-tool-plus {
+  margin-top: -1px;
+  font-weight: 300;
+}
 .ai-panel .ai-send {
   flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
   border: 0;
   background: var(--vs-accent);
   color: #fff;

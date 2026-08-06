@@ -154,7 +154,7 @@ const { t } = useI18n()
 .ai-quick-prompts { display: flex; flex-wrap: wrap; gap: 6px; }
 .ai-quick-prompt {
   padding: 4px 7px;
-  border: 1px solid color-mix(in srgb, var(--vs-border, #3c3c3c) 74%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vs-border, #3c3c3c) 22%, transparent);
   border-radius: 6px;
   background: color-mix(in srgb, var(--vs-bg-2, #252526) 72%, transparent);
   color: var(--vs-text-2, #858585);

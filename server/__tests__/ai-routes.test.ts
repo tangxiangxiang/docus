@@ -591,6 +591,37 @@ describe('POST /api/ai/chat', () => {
       expect(opts.ctx).toEqual({ kind: 'none' })
     })
 
+    it('passes validated attached document paths to runChat', async () => {
+      const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+      await call('POST', '/chat', {
+        sessionId: created.id,
+        content: 'hi',
+        contextPaths: ['notes/reference.md', 'archive/example'],
+      })
+      const opts = vi.mocked(chatModule.runChat).mock.calls[0][0]
+      expect(opts.ctx).toEqual({
+        kind: 'none',
+        contextPaths: ['notes/reference', 'archive/example'],
+      })
+    })
+
+    it.each([
+      ['absolute', '/etc/passwd'],
+      ['parent traversal', '../secret'],
+      ['hidden path', '.docus/vault-id'],
+      ['duplicate', ['notes/a', 'notes/a']],
+    ])('rejects invalid attached context paths: %s', async (_label, contextPaths) => {
+      const created = (await (await call('POST', '/sessions')).json()) as { id: number }
+      const r = await call('POST', '/chat', {
+        sessionId: created.id,
+        content: 'hi',
+        contextPaths: Array.isArray(contextPaths) ? contextPaths : [contextPaths],
+      })
+      expect(r.status).toBe(400)
+      expect(await r.json()).toEqual({ ok: false, reason: 'invalid-context-paths' })
+      expect(chatModule.runChat).not.toHaveBeenCalled()
+    })
+
     it('never echoes the live context back over SSE', async () => {
       const created = (await (await call('POST', '/sessions')).json()) as { id: number }
       const r = await call('POST', '/chat', {

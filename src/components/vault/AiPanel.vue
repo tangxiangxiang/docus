@@ -41,8 +41,17 @@ import { displayPathForCapture } from './aiContextPaths'
 import AiSessionPicker from './AiSessionPicker.vue'
 import AiChatMessages from './AiChatMessages.vue'
 import AiComposer from './AiComposer.vue'
+import AiContextPicker from './AiContextPicker.vue'
+
+const props = withDefaults(defineProps<{
+  documentPaths?: string[]
+}>(), {
+  documentPaths: () => [],
+})
 
 const draft = ref('')
+const contextPaths = ref<string[]>([])
+const contextPickerOpen = ref(false)
 const pickerOpen = ref(false)
 const history = useAiHistory()
 const liveContext = useAiLiveContext()
@@ -53,6 +62,9 @@ const composer = ref<InstanceType<typeof AiComposer> | null>(null)
 // uses. The computed re-runs capture() on every workspace change —
 // there is no cache, and the send path never reads this value.
 const displayPath = computed(() => displayPathForCapture(liveContext.capture()))
+const availableContextPaths = computed(() => props.documentPaths.filter(
+  (path) => path !== displayPath.value && !contextPaths.value.includes(path),
+))
 
 onMounted(async () => {
   await history.loadActive()
@@ -73,7 +85,23 @@ async function onSend() {
   // none / unavailable → no liveContext at all (fail closed).
   const snapshot = capture.status === 'ready' ? capture.context : undefined
 
-  await history.sendAndStream(text, { liveContext: snapshot })
+  await history.sendAndStream(text, {
+    liveContext: snapshot,
+    ...(contextPaths.value.length ? { contextPaths: [...contextPaths.value] } : {}),
+  })
+}
+
+function toggleContextPicker() {
+  contextPickerOpen.value = !contextPickerOpen.value
+}
+
+function addContextPath(path: string) {
+  if (contextPaths.value.includes(path)) return
+  contextPaths.value = [...contextPaths.value, path]
+}
+
+function removeContextPath(path: string) {
+  contextPaths.value = contextPaths.value.filter((item) => item !== path)
 }
 
 function togglePicker() {
@@ -149,14 +177,25 @@ async function useQuickPrompt(text: string) {
       @prompt="useQuickPrompt"
     />
 
+    <AiContextPicker
+      v-if="contextPickerOpen"
+      :paths="availableContextPaths"
+      @select="addContextPath"
+      @close="contextPickerOpen = false"
+    />
+
     <AiComposer
       ref="composer"
       v-model="draft"
       :busy="history.busy.value"
       :configured="history.configured.value"
-      :current-path="displayPath"
+      :context-paths="contextPaths"
+      :can-add-context="availableContextPaths.length > 0"
+      :context-picker-open="contextPickerOpen"
       @send="onSend"
       @stop="history.stop"
+      @remove-context="removeContextPath"
+      @toggle-context-picker="toggleContextPicker"
     />
 
     <AiSessionPicker v-if="pickerOpen" @close="pickerOpen = false" />

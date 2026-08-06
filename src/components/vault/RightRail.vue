@@ -57,6 +57,7 @@ const emit = defineEmits<{
 // deeply nested details.
 const visibleHeadings = computed(() => tocHeadings.value.filter((heading) => heading.level <= 3))
 const hasHeadings = computed(() => visibleHeadings.value.length > 0)
+const documentPaths = computed(() => props.posts.map((post) => post.path))
 const aiHasOpened = ref(props.activeTab === 'ai')
 const tabsRef = ref<HTMLElement | null>(null)
 const metadataDirty = ref(false)
@@ -206,7 +207,7 @@ function onHistoryTabClick(): void {
       <div v-else class="right-rail-history-empty right-rail-empty-state">{{ t('rail.history_empty') }}</div>
     </section>
     <section v-if="aiHasOpened" v-show="activeTab === 'ai'" class="ai-slot" role="tabpanel" :aria-label="t('rail.ai')">
-      <AiPanel />
+      <AiPanel :document-paths="documentPaths" />
     </section>
   </div>
 </template>

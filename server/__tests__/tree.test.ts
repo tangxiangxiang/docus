@@ -235,12 +235,10 @@ describe('listSubtreePaths', () => {
   })
 })
 
-// The vault's own .git/ is docus's history-feature bookkeeping
-// (server/history/git.ts), not user content. It must not surface in the
-// file tree, and the tree builders must not recurse through .git/objects/.
-// These tests lay a real .git/ in the sandbox and assert the public
-// helpers ignore it entirely.
-describe('vault .git/ is excluded from tree listings', () => {
+// The vault's own .git/ and .docus/ are Docus bookkeeping, not user content.
+// They must not surface in the file tree, and the tree builders must not
+// recurse through their contents.
+describe('vault internal directories are excluded from tree listings', () => {
   let sandboxWithGit: string
 
   beforeEach(async () => {
@@ -257,6 +255,11 @@ describe('vault .git/ is excluded from tree listings', () => {
     await fs.writeFile(
       path.join(sandboxWithGit, '.git', 'objects', 'abc123'),
       'fake-blob',
+    )
+    await fs.mkdir(path.join(sandboxWithGit, '.docus', 'nested'), { recursive: true })
+    await fs.writeFile(
+      path.join(sandboxWithGit, '.docus', 'nested', 'internal.md'),
+      '# internal',
     )
     // .gitignore and .gitattributes that initRepo() also creates in real vaults
     await fs.writeFile(path.join(sandboxWithGit, '.gitignore'), '')
@@ -288,6 +291,18 @@ describe('vault .git/ is excluded from tree listings', () => {
     // Walking the root should mirror what /api/tree would render for
     // a brand-new vault with .git/ in place — no .git/ descendants leak.
     const all = await listSubtreePaths(sandboxWithGit, '')
+    expect(all).toEqual(['visible'])
+  })
+
+  it('does not expose .docus/ or its descendants', async () => {
+    const posts = await listPostsFlat(sandboxWithGit)
+    const tree = await buildTree(sandboxWithGit)
+    const all = await listSubtreePaths(sandboxWithGit, '')
+    const root = tree[0]!
+    if (root.kind !== 'folder') return
+
+    expect(posts.map((p) => p.path)).toEqual(['visible'])
+    expect(root.children.map((child) => child.name)).toEqual(['visible'])
     expect(all).toEqual(['visible'])
   })
 })

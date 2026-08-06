@@ -24,6 +24,7 @@ import { useI18n } from '../../../composables/useI18n'
 import AiPanel from '../AiPanel.vue'
 import AiChatMessages from '../AiChatMessages.vue'
 import AiComposer from '../AiComposer.vue'
+import AiContextPicker from '../AiContextPicker.vue'
 
 // The network layer is not part of this stage: the whole transport
 // (session creation, streaming) is stubbed so only the capture/send
@@ -116,7 +117,10 @@ function readyContext(capture: AiLiveContextCapture): AiLiveContextSnapshot {
   return capture.context
 }
 
-function mountPanel(captureAiContext: () => AiLiveContextCapture): VueWrapper {
+function mountPanel(
+  captureAiContext: () => AiLiveContextCapture,
+  documentPaths: string[] = [],
+): VueWrapper {
   const context = createVaultContext({
     vaultId: ref('vault-a'),
     fileChanges: createVaultFileChanges(),
@@ -129,7 +133,7 @@ function mountPanel(captureAiContext: () => AiLiveContextCapture): VueWrapper {
   return mount(defineComponent({
     setup() {
       provideVaultContext(context)
-      return () => h(AiPanel)
+      return () => h(AiPanel, { documentPaths })
     },
   }))
 }
@@ -263,18 +267,16 @@ describe('AiPanel live context capture and transport (Edit-10.3)', () => {
     ['history', () => historyCapture('notes/h.md'), 'notes/h.md'],
     ['diff', () => diffCapture('notes/d.md'), 'notes/d.md'],
     ['recovery', () => recoveryCapture('notes/r.md'), 'notes/r.md'],
-  ])('shows the %s context path in the composer and chat header', (_label, makeCapture, path) => {
+  ])('shows the %s context path in the chat header', (_label, makeCapture, path) => {
     const wrapper = mountPanel(makeCapture)
-    expect(wrapper.findComponent(AiComposer).props('currentPath')).toBe(path)
     expect(wrapper.findComponent(AiChatMessages).props('currentPath')).toBe(path)
   })
 
   it.each([
     ['unavailable', () => ({ status: 'unavailable', reason: 'loading' }) as AiLiveContextCapture],
     ['none', () => ({ status: 'none' }) as AiLiveContextCapture],
-  ])('shows no path for %s context', (_label, makeCapture) => {
+  ])('shows no path in the chat header for %s context', (_label, makeCapture) => {
     const wrapper = mountPanel(makeCapture)
-    expect(wrapper.findComponent(AiComposer).props('currentPath')).toBeNull()
     expect(wrapper.findComponent(AiChatMessages).props('currentPath')).toBeNull()
   })
 
@@ -308,14 +310,49 @@ describe('AiPanel live context capture and transport (Edit-10.3)', () => {
       ])
   })
 
-  it('tracks the live workspace in the display path without caching', async () => {
+  it('tracks the live workspace in the chat display path without caching', async () => {
     const path = ref('notes/a.md')
     const wrapper = mountPanel(() => documentCapture(path.value))
-    expect(wrapper.findComponent(AiComposer).props('currentPath')).toBe('notes/a.md')
+    expect(wrapper.findComponent(AiChatMessages).props('currentPath')).toBe('notes/a.md')
 
     path.value = 'notes/b.md'
     await nextTick()
 
-    expect(wrapper.findComponent(AiComposer).props('currentPath')).toBe('notes/b.md')
+    expect(wrapper.findComponent(AiChatMessages).props('currentPath')).toBe('notes/b.md')
+  })
+
+  it('adds the active document path to the next AI request context', async () => {
+    const sendSpy = vi.spyOn(history, 'sendAndStream').mockImplementation(async () => {})
+    const wrapper = mountPanel(() => documentCapture('notes/current.md'), [
+      'notes/current.md',
+      'notes/reference.md',
+      'archive/example.md',
+    ])
+    const composer = wrapper.findComponent(AiComposer)
+
+    expect(composer.props('canAddContext')).toBe(true)
+    await composer.get('.ai-tool-button').trigger('click')
+    const picker = wrapper.findComponent(AiContextPicker)
+    expect(picker.props('paths')).toEqual(['notes/reference.md', 'archive/example.md'])
+    await picker.find('.ai-context-option').trigger('click')
+    expect(composer.find('.ai-context-chip').text()).toContain('notes/reference.md')
+
+    await typeAndSend(wrapper, 'compare this')
+    expect(sendSpy).toHaveBeenCalledWith('compare this', {
+      liveContext: readyContext(documentCapture('notes/current.md')),
+      contextPaths: ['notes/reference.md'],
+    })
+  })
+
+  it('does not add the same document path twice', async () => {
+    const wrapper = mountPanel(() => documentCapture('notes/current.md'), ['notes/current.md', 'notes/reference.md'])
+    const composer = wrapper.findComponent(AiComposer)
+
+    await composer.get('.ai-tool-button').trigger('click')
+    const picker = wrapper.findComponent(AiContextPicker)
+    expect(picker.findAll('.ai-context-option')).toHaveLength(1)
+    await picker.get('.ai-context-option').trigger('click')
+    expect(composer.findAll('.ai-context-chip')).toHaveLength(1)
+    expect(composer.props('canAddContext')).toBe(false)
   })
 })
