@@ -15,6 +15,7 @@ export interface MetadataDraft {
   tagsText: string
   base: MetadataBase
   dirty: boolean
+  uncertain?: boolean
   revision: number
 }
 

@@ -11,7 +11,7 @@ import { suggestSummary } from '../../lib/ai-api'
 import { useToast } from '../../composables/useToast'
 import { useI18n } from '../../composables/useI18n'
 import { ICON_AI } from './icons'
-import type { MetadataBase, MetadataContext, MetadataDraftKey } from './metadataDraftStore'
+import type { MetadataBase, MetadataContext, MetadataDraft, MetadataDraftKey } from './metadataDraftStore'
 import {
   getMetadataDraft,
   metadataDraftKey,
@@ -58,17 +58,19 @@ const metadata = ref<DocumentMetadata | null>(null)
 const loadedBase = ref<MetadataBase | null>(null)
 const loadedIdentity = ref<{ path: string; documentId: string | null } | null>(null)
 const draftRevision = ref(0)
+const uncertainSaveKey = ref<MetadataDraftKey | null>(null)
 const generatingSummary = ref(false)
 const isReadonly = computed(() => props.readonly || props.context !== 'document')
 let summaryGenerationId = 0
 let summaryGenerationController: AbortController | null = null
 let loadSequence = 0
 let applyingFields = false
-const activeSaveByKey = new Map<MetadataDraftKey, {
+type ActiveMetadataSave = {
   revision: number
   payload: UpdateDocumentMetadata
   base: MetadataBase
-}>()
+}
+const activeSaveByKey = new Map<MetadataDraftKey, ActiveMetadataSave>()
 
 const directory = computed(() => {
   if (!props.path) return '—'
@@ -80,6 +82,7 @@ const dirty = computed(() => {
   const base = loadedBase.value
   const identity = loadedIdentity.value
   if (isReadonly.value || !base || !identity || !props.path || identity.path !== props.path) return false
+  if (uncertainSaveKey.value === metadataDraftKey(identity)) return true
   return normalizeTitle(title.value) !== base.title
     || normalizeSummary(summary.value) !== base.summary
     || JSON.stringify(split(tags.value)) !== JSON.stringify(base.tags)
@@ -142,6 +145,8 @@ function applyLoadedPost(path: string, post: PostDetail): void {
   const identity = { path, documentId: loaded.metadata?.id ?? null }
   loadedIdentity.value = identity
   const draft = getMetadataDraft(identity)
+  if (draft?.uncertain) uncertainSaveKey.value = metadataDraftKey(identity)
+  else if (uncertainSaveKey.value === metadataDraftKey(identity)) uncertainSaveKey.value = null
   if (!isReadonly.value && draft?.dirty) {
     draft.path = path
     loadedBase.value = draft.base
@@ -208,6 +213,7 @@ function syncDraft(): void {
   const nextRevision = draftRevision.value + 1
   draftRevision.value = nextRevision
   const key = metadataDraftKey(identity)
+  if (uncertainSaveKey.value === key) uncertainSaveKey.value = null
   if (!dirty.value) {
     if (activeSaveByKey.has(key)) {
       setMetadataDraft({
@@ -218,6 +224,7 @@ function syncDraft(): void {
         tagsText: tags.value,
         base,
         dirty: false,
+        uncertain: false,
         revision: nextRevision,
       })
     } else {
@@ -233,6 +240,7 @@ function syncDraft(): void {
     tagsText: tags.value,
     base,
     dirty: true,
+    uncertain: false,
     revision: nextRevision,
   })
 }
@@ -249,28 +257,54 @@ type MetadataFieldSnapshot = {
   title: string
   summary: string
   tagsText: string
+  revision: number
 }
 
-function snapshotVisibleFields(): MetadataFieldSnapshot {
+function snapshotVisibleFieldsWithRevision(): MetadataFieldSnapshot {
   return {
     title: title.value,
     summary: summary.value,
     tagsText: tags.value,
+    revision: draftRevision.value,
   }
 }
 
-function fieldsAreDirty(fields: MetadataFieldSnapshot, base: MetadataBase): boolean {
+function fieldsFromSavePayload(
+  payload: UpdateDocumentMetadata,
+  revision: number,
+): MetadataFieldSnapshot {
+  return {
+    title: payload.title,
+    summary: payload.summary,
+    tagsText: join(payload.tags),
+    revision,
+  }
+}
+
+function fieldsDifferFromBase(fields: MetadataFieldSnapshot, base: MetadataBase): boolean {
   return normalizeTitle(fields.title) !== base.title
     || normalizeSummary(fields.summary) !== base.summary
     || JSON.stringify(split(fields.tagsText)) !== JSON.stringify(base.tags)
+}
+
+function metadataMatchesPayload(
+  metadata: DocumentMetadata,
+  payload: UpdateDocumentMetadata,
+): boolean {
+  return normalizeTitle(metadata.title) === payload.title
+    && normalizeSummary(metadata.summary) === payload.summary
+    && JSON.stringify(split(join(metadata.tags))) === JSON.stringify(payload.tags)
 }
 
 type SaveContext = {
   savingPath: string
   savingDocumentId: string | null
   savingKey: MetadataDraftKey
-  savingRevision: number
+  activeSave: ActiveMetadataSave
+  outcome: SaveOutcome
 }
+
+type SaveOutcome = 'confirmed-saved' | 'confirmed-not-saved' | 'unknown'
 
 function formMatchesSave(context: SaveContext, savedId: string | null): boolean {
   return loadedIdentity.value?.path === context.savingPath
@@ -295,37 +329,57 @@ function reconcileMetadataAgainstBase(
   const visibleDraft = currentFormMatchesRequest && loadedIdentity.value
     ? getMetadataDraft(loadedIdentity.value)
     : undefined
-  const liveFields = currentFormMatchesRequest && draftRevision.value !== context.savingRevision
-    ? snapshotVisibleFields()
+  const liveFields = currentFormMatchesRequest && draftRevision.value > context.activeSave.revision
+    ? snapshotVisibleFieldsWithRevision()
     : null
-  const newerDraft = liveFields
-    ? {
-        ...liveFields,
-        revision: draftRevision.value,
-      }
-    : [visibleDraft, currentDraft]
-        .filter((draft) => draft && draft.revision !== context.savingRevision)
-        .sort((left, right) => (right?.revision ?? 0) - (left?.revision ?? 0))[0]
+  const newerDraft = liveFields ?? [visibleDraft, currentDraft]
+        .filter((draft): draft is MetadataDraft => draft !== undefined && draft.revision > context.activeSave.revision)
+        .sort((left, right) => right.revision - left.revision)[0] ?? null
+  const candidate = newerDraft ?? (
+    context.outcome === 'confirmed-saved'
+      ? null
+      : fieldsFromSavePayload(context.activeSave.payload, context.activeSave.revision)
+  )
+  const hasNewerFields = candidate !== null && candidate.revision > context.activeSave.revision
+  const provisionalBase: MetadataBase = {
+    title: context.activeSave.payload.title,
+    summary: context.activeSave.payload.summary,
+    tags: [...context.activeSave.payload.tags],
+    updatedAt: context.activeSave.base.updatedAt,
+  }
+  const reconciliationBase = context.outcome === 'unknown' && hasNewerFields
+    ? provisionalBase
+    : savedBase
+  const preserveUnknownPayload = context.outcome === 'unknown' && !hasNewerFields
+  if (preserveUnknownPayload) {
+    uncertainSaveKey.value = metadataDraftKey(savedIdentity)
+  } else if (
+    uncertainSaveKey.value === context.savingKey
+    || uncertainSaveKey.value === metadataDraftKey(savedIdentity)
+  ) {
+    uncertainSaveKey.value = null
+  }
   const nextRevision = Math.max(
     draftRevision.value,
-    context.savingRevision,
-    newerDraft?.revision ?? context.savingRevision,
+    context.activeSave.revision,
+    candidate?.revision ?? context.activeSave.revision,
   )
 
-  if (newerDraft) {
+  if (candidate) {
     const draftSource = liveFields && loadedIdentity.value
       ? loadedIdentity.value
-      : visibleDraft === newerDraft && loadedIdentity.value
+      : visibleDraft === candidate && loadedIdentity.value
         ? loadedIdentity.value
         : { path: context.savingPath, documentId: context.savingDocumentId }
     const reconciledDraft = {
       documentId: savedIdentity.documentId,
       path: savedIdentity.path,
-      title: newerDraft.title,
-      summary: newerDraft.summary,
-      tagsText: newerDraft.tagsText,
-      base: savedBase,
-      dirty: fieldsAreDirty(newerDraft, savedBase),
+      title: candidate.title,
+      summary: candidate.summary,
+      tagsText: candidate.tagsText,
+      base: reconciliationBase,
+      dirty: preserveUnknownPayload || fieldsDifferFromBase(candidate, reconciliationBase),
+      uncertain: preserveUnknownPayload,
       revision: nextRevision,
     }
     if (reconciledDraft.dirty) {
@@ -352,9 +406,13 @@ function reconcileMetadataAgainstBase(
     metadata.value = saved
     loadedIdentity.value = savedIdentity
   }
-  loadedBase.value = savedBase
+  loadedBase.value = reconciliationBase
   draftRevision.value = nextRevision
-  if (!newerDraft || !fieldsAreDirty(newerDraft, savedBase)) setFields(savedBase)
+  if (candidate) {
+    setFields({ title: candidate.title, summary: candidate.summary, tags: split(candidate.tagsText) })
+  } else {
+    setFields(savedBase)
+  }
 }
 
 const canSave = computed(() => {
@@ -384,7 +442,8 @@ async function save(): Promise<void> {
   const payload = snapshotCurrentFields()
   const savingBase = loadedBase.value
   if (!savingBase) return
-  activeSaveByKey.set(savingKey, { revision: savingRevision, payload, base: savingBase })
+  const saveSnapshot: ActiveMetadataSave = { revision: savingRevision, payload, base: savingBase }
+  activeSaveByKey.set(savingKey, saveSnapshot)
   saving.value = true
   try {
     const saved = await updateDocumentMetadata(savingPath, payload)
@@ -409,13 +468,19 @@ async function save(): Promise<void> {
     emit('saved', saved)
 
     reconcileMetadataAgainstBase(
-      { savingPath, savingDocumentId, savingKey, savingRevision },
+      {
+        savingPath,
+        savingDocumentId,
+        savingKey,
+        activeSave: saveSnapshot,
+        outcome: 'confirmed-saved',
+      },
       saved,
       savedBase,
     )
     toast.success(t('metadata.saved'))
   } catch (cause) {
-    const activeSave = activeSaveByKey.get(savingKey)
+    const activeSave = activeSaveByKey.get(savingKey) ?? saveSnapshot
     let confirmedServerState = false
     let refreshFailed = false
     try {
@@ -429,13 +494,17 @@ async function save(): Promise<void> {
         throw new Error(`metadata refresh path mismatch for ${savingPath}`)
       }
       const rereadMetadata = reread.metadata
-      const rereadMatchesPayload = rereadMetadata && activeSave
-        ? normalizeTitle(rereadMetadata.title) === activeSave?.payload.title
-          && normalizeSummary(rereadMetadata.summary) === activeSave?.payload.summary
-          && JSON.stringify(split(join(rereadMetadata.tags))) === JSON.stringify(activeSave.payload.tags)
+      const rereadMatchesPayload = rereadMetadata
+        ? metadataMatchesPayload(rereadMetadata, activeSave.payload)
         : false
       reconcileMetadataAgainstBase(
-        { savingPath, savingDocumentId, savingKey, savingRevision },
+        {
+          savingPath,
+          savingDocumentId,
+          savingKey,
+          activeSave,
+          outcome: rereadMatchesPayload ? 'confirmed-saved' : 'confirmed-not-saved',
+        },
         rereadMetadata,
         reread.base,
       )
@@ -446,18 +515,17 @@ async function save(): Promise<void> {
       }
     } catch {
       refreshFailed = true
-      const provisionalPayload = activeSave?.payload
-      if (provisionalPayload) {
-        const provisionalBase: MetadataBase = {
-          title: provisionalPayload.title,
-          summary: provisionalPayload.summary,
-          tags: provisionalPayload.tags,
-          updatedAt: activeSave.base.updatedAt,
-        }
+      if (activeSave) {
         reconcileMetadataAgainstBase(
-          { savingPath, savingDocumentId, savingKey, savingRevision },
+          {
+            savingPath,
+            savingDocumentId,
+            savingKey,
+            activeSave,
+            outcome: 'unknown',
+          },
           null,
-          provisionalBase,
+          activeSave.base,
         )
       }
       toast.error(t('metadata.save_unknown'))
@@ -520,6 +588,7 @@ function reset(): void {
   const base = loadedBase.value
   if (isReadonly.value || !identity || !base) return
   metadataDrafts.delete(metadataDraftKey(identity))
+  if (uncertainSaveKey.value === metadataDraftKey(identity)) uncertainSaveKey.value = null
   setFields(base)
   draftRevision.value++
 }

@@ -417,6 +417,153 @@ describe('DocumentMetadataForm', () => {
     expect(toastErrors).toHaveBeenCalledWith(expect.stringContaining('Failed to save document properties'))
   })
 
+  it('preserves the save payload when reread confirms the save did not land', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    getPost.mockReset().mockResolvedValue(post('a', 'id-a', 'a'))
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    rejectSave(new Error('request failed'))
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('B')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    expect(metadataDrafts.get('id:id-a')).toEqual(expect.objectContaining({
+      title: 'B',
+      base: expect.objectContaining({ title: 'a' }),
+      dirty: true,
+    }))
+    expect(wrapper.emitted('saved')).toBeUndefined()
+    expect(toastErrors).toHaveBeenCalledWith(expect.stringContaining('Failed to save document properties'))
+  })
+
+  it('preserves a failed save payload after switching documents', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    getPost.mockReset().mockImplementation(async (path: string) => post(path, `id-${path}`, path))
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.setProps({ path: 'c' })
+    await flushPromises()
+    rejectSave(new Error('request failed'))
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('c')
+    expect(metadataDrafts.get('id:id-a')).toEqual(expect.objectContaining({
+      title: 'B',
+      base: expect.objectContaining({ title: 'a' }),
+      dirty: true,
+    }))
+    expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+
+  it('keeps the save payload dirty when both save and reread results are unknown', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    getPost.mockReset()
+      .mockResolvedValueOnce(post('a', 'id-a', 'a'))
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    rejectSave(new Error('response lost'))
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('B')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+    expect(metadataDrafts.get('id:id-a')).toEqual(expect.objectContaining({
+      title: 'B',
+      base: expect.objectContaining({ title: 'a' }),
+      dirty: true,
+    }))
+    expect(toastErrors).toHaveBeenCalledWith(expect.stringContaining('Could not confirm the save result'))
+  })
+
+  it('preserves an unknown save draft after switching documents', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    let readsA = 0
+    getPost.mockReset().mockImplementation(async (path: string) => {
+      if (path === 'a') {
+        readsA++
+        if (readsA === 1) return post('a', 'id-a', 'a')
+        throw new Error('refresh failed')
+      }
+      return post('c', 'id-c', 'c')
+    })
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    await wrapper.setProps({ path: 'c' })
+    await flushPromises()
+    rejectSave(new Error('response lost'))
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('c')
+    expect(metadataDrafts.get('id:id-a')).toEqual(expect.objectContaining({
+      title: 'B',
+      base: expect.objectContaining({ title: 'a' }),
+      dirty: true,
+    }))
+    expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+
+  it('preserves a failed legacy save under its path identity', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    const legacyPost = {
+      path: 'legacy', raw: '# Legacy', content: '# Legacy',
+      frontmatter: { title: 'Legacy title', summary: '', tags: [] },
+      metadata: undefined, size: 1, mtime: 2,
+    }
+    getPost.mockReset().mockResolvedValue(legacyPost)
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'legacy' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('Saved title')
+    await wrapper.get('form').trigger('submit')
+    rejectSave(new Error('request failed'))
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('Saved title')
+    expect(metadataDrafts.get('path:legacy')).toEqual(expect.objectContaining({
+      title: 'Saved title',
+      base: expect.objectContaining({ title: 'Legacy title' }),
+      dirty: true,
+    }))
+  })
+
+  it('preserves an unknown legacy save under its path identity', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    const legacyPost = {
+      path: 'legacy', raw: '# Legacy', content: '# Legacy',
+      frontmatter: { title: 'Legacy title', summary: '', tags: [] },
+      metadata: undefined, size: 1, mtime: 2,
+    }
+    getPost.mockReset().mockResolvedValueOnce(legacyPost).mockRejectedValueOnce(new Error('refresh failed'))
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'legacy' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('Saved title')
+    await wrapper.get('form').trigger('submit')
+    rejectSave(new Error('response lost'))
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('Saved title')
+    expect(metadataDrafts.get('path:legacy')).toEqual(expect.objectContaining({
+      title: 'Saved title',
+      base: expect.objectContaining({ title: 'Legacy title' }),
+      dirty: true,
+    }))
+    expect(metadataDrafts.has('id:legacy-id')).toBe(false)
+    expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+
   it('keeps the latest fields dirty when the save result and reread are both unknown', async () => {
     let rejectSave!: (cause: unknown) => void
     updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
@@ -439,6 +586,30 @@ describe('DocumentMetadataForm', () => {
       dirty: true,
     }))
     expect(toastErrors).toHaveBeenCalledWith(expect.stringContaining('Could not confirm the save result'))
+  })
+
+  it('confirms a lost save without keeping a draft when reread matches the payload', async () => {
+    let rejectSave!: (cause: unknown) => void
+    updateDocumentMetadata.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectSave = reject }))
+    getPost.mockReset()
+      .mockResolvedValueOnce(post('a', 'id-a', 'a'))
+      .mockResolvedValueOnce({
+        ...post('a', 'id-a', 'a'),
+        metadata: { ...post('a', 'id-a', 'a').metadata, title: 'B' },
+      })
+    const wrapper = mount(DocumentMetadataForm, { props: { path: 'a' } })
+    await flushPromises()
+    await wrapper.get('input').setValue('B')
+    await wrapper.get('form').trigger('submit')
+    rejectSave(new Error('response lost'))
+    await flushPromises()
+
+    expect(wrapper.get('input').element.value).toBe('B')
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+    expect(metadataDrafts.has('id:id-a')).toBe(false)
+    expect(wrapper.emitted('saved')).toHaveLength(1)
+    expect(toastSuccesses).toHaveBeenCalledTimes(1)
+    expect(toastErrors).not.toHaveBeenCalled()
   })
 
   it('reconciles a lost legacy save response after switching documents', async () => {
