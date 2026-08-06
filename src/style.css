@@ -605,6 +605,7 @@ main.container {
   --vs-bg-2: #252526;
   --vs-bg-3: #333333;
   --vs-bg-4: #2d2d2d;
+  --vs-tabs-bg: #1a1a1a;
   --vs-border: #3c3c3c;
   --vs-text-1: #d4d4d4;
   --vs-text-2: #858585;
@@ -629,6 +630,7 @@ main.container {
     --vs-bg-2: #f3f3f3;
     --vs-bg-3: #dddddd;
     --vs-bg-4: #ececec;
+    --vs-tabs-bg: #f7f7f7;
     --vs-border: #e0e0e0;
     --vs-text-1: #1f1f1f;
     --vs-text-2: #6f6f6f;
@@ -2878,7 +2880,7 @@ main.container {
 /* Tabs */
 .tabs {
   display: flex;
-  background: var(--vs-bg-3);
+  background: var(--vs-tabs-bg, var(--vs-bg-3));
   border-bottom: 1px solid var(--vs-border);
   overflow-x: auto;
   overflow-y: hidden;
@@ -4020,6 +4022,7 @@ main.container {
   --vs-bg-2: #f3f3f3;
   --vs-bg-3: #dddddd;
   --vs-bg-4: #ececec;
+  --vs-tabs-bg: #f7f7f7;
   --vs-border: #e0e0e0;
   --vs-table-border: #d8d8d8;
   --vs-text-1: #1f1f1f;
@@ -4051,6 +4054,7 @@ main.container {
   --vs-bg-2: #252526;
   --vs-bg-3: #333333;
   --vs-bg-4: #2d2d2d;
+  --vs-tabs-bg: #1a1a1a;
   --vs-border: #3c3c3c;
   --vs-table-border: #2e2e2e;
   --vs-text-1: #d4d4d4;
