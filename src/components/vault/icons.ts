@@ -83,16 +83,6 @@ export const ICON_ARCHIVE = `
   <path d="M6.5 8.5h3"/>
 </svg>`
 
-// "Document properties" — file outline with three lines inside.
-// Matches the file-tree file icon family and reads as "metadata list".
-export const ICON_PROPERTIES = `
-<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <path d="M3.5 2.5h5L12 6V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1z"/>
-  <path d="M8.5 2.5v3.5H12"/>
-  <path d="M5 8.5h6"/>
-  <path d="M5 11h6"/>
-</svg>`
-
 // Search — magnifier. Visual centroid at (8, 8).
 export const ICON_SEARCH = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">

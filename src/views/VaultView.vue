@@ -1363,43 +1363,6 @@ async function onMetadataSaved(metadata: DocumentMetadata) {
   }
 }
 
-async function openDocumentProperties(path: string): Promise<void> {
-  const previousTab = rightRailTab.value
-  const previousCollapsed = rightRailCollapsed.value
-  const previousActivePath = activePath.value
-  const wasAlreadyOpen = tabs.value.some((tab) => tab.path === path)
-
-  try {
-    await openPost(path)
-    const opened = tabs.value.find((tab) => tab.path === path)
-    if (!opened || opened.loading || opened.loadError || activePath.value !== path) {
-      if (!wasAlreadyOpen && opened) await closeEditorTab(path)
-      if (previousActivePath && tabs.value.some((tab) => tab.path === previousActivePath)) {
-        selectEditorTab(previousActivePath)
-      }
-      rightRailTab.value = previousTab
-      rightRailCollapsed.value = previousCollapsed
-      toast.error(t('metadata.load_failed', {
-        error: opened?.loadError ?? t('common.unknown_error'),
-      }))
-      return
-    }
-    rightRailTab.value = 'properties'
-    rightRailCollapsed.value = false
-  } catch (cause) {
-    const opened = tabs.value.find((tab) => tab.path === path)
-    if (!wasAlreadyOpen && opened?.loadError) await closeEditorTab(path)
-    if (previousActivePath && tabs.value.some((tab) => tab.path === previousActivePath)) {
-      selectEditorTab(previousActivePath)
-    }
-    rightRailTab.value = previousTab
-    rightRailCollapsed.value = previousCollapsed
-    toast.error(t('metadata.load_failed', {
-      error: cause instanceof Error ? cause.message : String(cause),
-    }))
-  }
-}
-
 async function createMissingWikiNote(ref: string) {
   const clean = ref.replace(/\.md$/i, '').trim()
   const segments = clean.split('/')
@@ -1532,7 +1495,6 @@ watch(isReadMode, async (reading) => {
       @select="openPost"
       @refresh="refresh"
       @open-history="openFileHistory"
-      @open-properties="openDocumentProperties"
     />
     <TagPanel
       v-else-if="activePanel === 'tags'"

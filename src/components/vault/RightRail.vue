@@ -266,89 +266,201 @@ function onLinkNavigate(p: string) {
   padding-bottom: 0;
 }
 .metadata-slot {
+  display: flex;
+  flex-direction: column;
   padding-top: 0;
-  padding-bottom: 24px;
+  padding-bottom: 0;
+  overflow: hidden;
 }
 .history-slot {
   padding: 0;
   overflow: hidden;
 }
 .history-slot :deep(.right-rail-history) { height: 100%; }
-.metadata-slot :deep(.document-metadata-actions) {
-  justify-content: stretch;
-  padding: 8px 14px;
-}
-.metadata-slot :deep(.document-metadata-actions .btn-primary) {
+.metadata-slot :deep(.document-metadata-form) {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
-  width: 100%;
-  min-height: 28px;
-  padding: 4px 8px;
-  font-size: 0.76rem;
-  line-height: 1.2;
+  min-height: 0;
+}
+.metadata-slot :deep(.document-metadata-body),
+.metadata-slot :deep(.document-metadata-empty) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 .metadata-slot :deep(.document-metadata-body) {
-  gap: 11px;
-  padding: 14px;
+  gap: 9px;
+  padding: 11px 12px 12px;
 }
+
+/* Labels: uppercase letter-spaced micro labels (VS Code form section style).
+   text-transform is a no-op on CJK glyphs but harmless and keeps EN parity.
+
+   The field's CSS-grid gap is forced to 0 (with !important as a defensive
+   override of DocumentMetadataForm.vue's scoped `gap: 6px`). The label itself
+   uses line-height: 1 so the box collapses to the actual glyph height, and
+   the visual gap to the input is controlled by the input's own margin-top
+   instead of the label's margin-bottom — that way the spacing rule lives
+   next to the element it affects. */
 .metadata-slot :deep(.document-metadata-field) {
-  gap: 4px;
+  gap: 0 !important;
 }
 .metadata-slot :deep(.document-metadata-field > span) {
-  font-size: 0.7rem;
+  font-size: 0.58rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
+.metadata-slot :deep(.document-metadata-field > input),
+.metadata-slot :deep(.document-metadata-field > textarea) {
+  margin-top: 2px;
+}
+
+/* Inputs: invisible border by default — only show on hover/focus, like inline
+   editing. Cursor/VS Code settings UI uses this pattern to keep the form from
+   feeling like a stack of "form fields" and more like a labeled document. */
 .metadata-slot :deep(.document-metadata-field input),
 .metadata-slot :deep(.document-metadata-field textarea) {
-  padding: 6px 8px;
-  font-size: 0.86rem;
+  padding: 4px 7px;
+  font-size: 0.8rem;
   line-height: 1.35;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: var(--bg-soft);
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.metadata-slot :deep(.document-metadata-field input:hover:not(:disabled)),
+.metadata-slot :deep(.document-metadata-field textarea:hover:not(:disabled)) {
+  border-color: var(--border);
+}
+.metadata-slot :deep(.document-metadata-field input:focus),
+.metadata-slot :deep(.document-metadata-field textarea:focus) {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+.metadata-slot :deep(.document-metadata-field input) {
+  height: 26px;
+  min-height: 26px;
 }
 .metadata-slot :deep(.document-metadata-textarea-wrap textarea) {
-  padding-right: 72px;
-  padding-bottom: 24px;
+  padding-right: 64px;
+  padding-bottom: 20px;
 }
 .metadata-slot :deep(.document-metadata-field textarea) {
-  min-height: 76px;
+  min-height: 60px;
+  resize: vertical;
 }
+
+/* Char counter — tabular numerals, sits inside the textarea's bottom-right. */
 .metadata-slot :deep(.document-metadata-field small) {
-  right: 7px;
-  bottom: 6px;
-  font-size: 0.62rem;
+  right: 6px;
+  bottom: 5px;
+  font-size: 0.58rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
+
+/* AI generate — ghost button inside the textarea. */
 .metadata-slot :deep(.metadata-generate-summary) {
-  top: 4px;
-  right: 4px;
-  min-height: 22px;
-  font-size: 0.62rem;
+  top: 3px;
+  right: 3px;
+  min-height: 18px;
+  padding: 0 4px;
+  font-size: 0.58rem;
+  border-radius: 3px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+}
+.metadata-slot :deep(.metadata-generate-summary:hover:not(:disabled)) {
+  color: var(--accent);
+  background: var(--code-bg);
 }
 .metadata-slot :deep(.metadata-generate-summary > span:first-child) {
-  flex-basis: 13px;
+  flex-basis: 11px;
 }
 .metadata-slot :deep(.metadata-generate-summary > span:first-child svg) {
-  width: 13px;
-  height: 13px;
+  width: 11px;
+  height: 11px;
 }
+
+/* Readonly section — vertical key-value list (VS Code info panel).
+   Label on the left in tiny uppercase, value on the right with tabular
+   numerals (mono where it's an ID or path). Hairline dividers separate
+   the rows; the section is capped by a top border so it reads as its
+   own block. */
 .metadata-slot :deep(.document-metadata-readonly) {
-  margin-top: 1px;
+  display: grid;
+  grid-template-columns: 1fr;
+  margin: 4px 0 0;
+  border-top: 1px solid var(--border);
 }
 .metadata-slot :deep(.document-metadata-readonly > div) {
-  gap: 3px;
-  padding-top: 9px;
-  padding-bottom: 9px;
+  display: grid;
+  grid-template-columns: minmax(72px, max-content) 1fr;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
 }
-.metadata-slot :deep(.document-metadata-readonly > div:nth-child(odd)) {
-  padding-right: 12px;
-}
+.metadata-slot :deep(.document-metadata-readonly > div:nth-child(odd)),
 .metadata-slot :deep(.document-metadata-readonly > div:nth-child(even)) {
   padding-left: 12px;
+  padding-right: 12px;
+  border-left: 0;
 }
 .metadata-slot :deep(.document-metadata-readonly span) {
-  font-size: 0.64rem;
+  font-size: 0.58rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 .metadata-slot :deep(.document-metadata-readonly output) {
-  font-size: 0.7rem;
+  font-size: 0.72rem;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .metadata-slot :deep(.document-metadata-readonly output.is-mono) {
-  font-size: 0.64rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+}
+
+/* Action footer — ghost text buttons. Save uses accent text on hover tint. */
+.metadata-slot :deep(.document-metadata-actions) {
+  justify-content: flex-end;
+  padding: 7px 10px;
+  gap: 4px;
+  background: transparent;
+  border-top: 1px solid var(--border);
+}
+.metadata-slot :deep(.document-metadata-actions .btn) {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 2px 9px;
+  font-size: 0.72rem;
+  line-height: 1.3;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+}
+.metadata-slot :deep(.document-metadata-actions .btn:hover:not(:disabled)) {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+.metadata-slot :deep(.document-metadata-actions .btn-primary) {
+  color: var(--accent);
+}
+.metadata-slot :deep(.document-metadata-actions .btn-primary:hover:not(:disabled)) {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: transparent;
 }
 .toc-panel-empty {
   padding: 0 22px;

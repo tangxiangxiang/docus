@@ -36,7 +36,6 @@ const emit = defineEmits<{
   // bypasses that block.
   'archive-note': [path: string]
   'open-history': [path: string]
-  'open-properties': [path: string]
 }>()
 
 const { confirm } = useConfirm()
@@ -761,7 +760,6 @@ async function onCreateIn(folder: string, kind: 'file' | 'folder') {
         @create-in="onCreateIn"
         @archive-note="onArchiveNote"
         @open-history="(path) => emit('open-history', path)"
-        @open-properties="(path) => emit('open-properties', path)"
         @focus="setFocused"
       />
     </ul>

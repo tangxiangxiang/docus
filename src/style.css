@@ -47,11 +47,12 @@ body.vault-mode #app { height: 100%; }
 /* Shared document path header for the properties and history tabs. Keep
    these two lightweight context strips identical in typography and rhythm. */
 .right-rail-path-header {
-  display: block;
+  display: flex;
   flex: 0 0 auto;
+  align-items: center;
   box-sizing: border-box;
-  min-height: 31px;
-  padding: 8px 18px;
+  height: 32px;
+  padding: 0 18px;
   border-bottom: 1px solid color-mix(in srgb, var(--vs-border) 60%, transparent);
 }
 .right-rail-path-header span {

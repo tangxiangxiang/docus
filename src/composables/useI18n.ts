@@ -47,7 +47,6 @@ const STRINGS: Strings = {
   'activity.settings': { zh: '设置', en: 'Settings' },
   'file_tree.document': { zh: '文档', en: 'Document' },
   'file_tree.view_history': { zh: '查看文件历史', en: 'View File History' },
-  'file_tree.document_properties': { zh: '文档属性…', en: 'Document Properties…' },
   'vault.resize_sidebar': { zh: '拖动调整侧栏宽度', en: 'Drag to resize sidebar' },
   'vault.resize_right_rail': { zh: '拖动调整右侧栏宽度', en: 'Drag to resize right rail' },
   'vault.loading_document': { zh: '正在加载 {path}…', en: 'Loading {path}…' },

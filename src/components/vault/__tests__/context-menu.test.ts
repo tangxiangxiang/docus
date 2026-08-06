@@ -65,7 +65,7 @@ describe('FileTree context menu', () => {
     w.unmount()
   })
 
-  it('right-click on a file inside inbox shows full menu', async () => {
+  it('right-click on a file inside inbox shows file actions without properties', async () => {
     const w = mount(FileTree, { props: { tree: TREE, currentPath: null }, attachTo: document.body })
     await w.vm.$nextTick()
     const inboxRow = w.findAll('li.tree-row').find((r: any) => r.find('.row-name')?.text() === 'inbox')!
@@ -83,7 +83,7 @@ describe('FileTree context menu', () => {
     expect(menu).not.toBeNull()
     expect(menu!.textContent).toContain('重命名')
     expect(menu!.textContent).toContain('查看文件历史')
-    expect(menu!.textContent).toContain('文档属性…')
+    expect(menu!.textContent).not.toContain('文档属性')
     expect(menu!.textContent).toContain('删除')
     const history = Array.from(menu!.querySelectorAll('button'))
       .find((button) => button.textContent?.includes('查看文件历史')) as HTMLButtonElement
@@ -91,13 +91,6 @@ describe('FileTree context menu', () => {
     await flushPromises()
     expect(w.emitted('open-history')).toEqual([['inbox/hello']])
 
-    await helloRow.trigger('contextmenu', { clientX: 100, clientY: 100 })
-    await flushPromises()
-    const properties = Array.from(document.querySelector('.tree-context-menu')!.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('文档属性')) as HTMLButtonElement
-    properties.click()
-    await flushPromises()
-    expect(w.emitted('open-properties')).toEqual([['inbox/hello']])
     w.unmount()
   })
 
@@ -236,11 +229,11 @@ describe('FileTree context menu — archive-note visibility', () => {
     w.unmount()
   })
 
-  it('shows properties but hides 归档 for a file inside archive/', async () => {
+  it('hides 归档 for a file inside archive/', async () => {
     const w = await rightClickRow('permanent')
     const menu = document.querySelector('.tree-context-menu')
     expect(menu).not.toBeNull()
-    expect(menu!.textContent).toContain('文档属性…')
+    expect(menu!.textContent).not.toContain('文档属性')
     expect(menu!.textContent).not.toContain('归档')
     w.unmount()
   })
