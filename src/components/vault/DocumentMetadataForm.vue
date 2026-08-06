@@ -645,10 +645,9 @@ onBeforeUnmount(cancelSummaryGeneration)
           <span>{{ t('metadata.field_title') }}</span>
           <input ref="titleInput" v-model="title" maxlength="200" :disabled="loading || isReadonly || !path" required />
         </label>
-        <label class="document-metadata-field">
-          <span>{{ t('metadata.summary') }}</span>
-          <div class="document-metadata-textarea-wrap">
-            <textarea v-model="summary" maxlength="2000" rows="4" :disabled="loading || isReadonly || !path" />
+        <div class="document-metadata-field">
+          <div class="document-metadata-field-head">
+            <span>{{ t('metadata.summary') }}</span>
             <button
               v-if="!isReadonly"
               type="button"
@@ -661,9 +660,18 @@ onBeforeUnmount(cancelSummaryGeneration)
               <span v-html="ICON_AI" aria-hidden="true" />
               <span>{{ t(generatingSummary ? 'metadata.ai_generating_summary' : 'metadata.ai_generate_summary') }}</span>
             </button>
+          </div>
+          <div class="document-metadata-textarea-wrap">
+            <textarea
+              v-model="summary"
+              :aria-label="t('metadata.summary')"
+              maxlength="2000"
+              rows="4"
+              :disabled="loading || isReadonly || !path"
+            />
             <small>{{ summary.length }} / 2000</small>
           </div>
-        </label>
+        </div>
         <label class="document-metadata-field">
           <span>{{ t('metadata.tags') }}</span>
           <input v-model="tags" placeholder="rag, notes" :disabled="loading || isReadonly || !path" />
@@ -697,14 +705,21 @@ onBeforeUnmount(cancelSummaryGeneration)
 .document-metadata-readonly-hint { margin: 0; color: var(--text-muted); font-size: 0.76rem; line-height: 1.5; }
 .document-metadata-field { position: relative; display: grid; gap: 6px; }
 .document-metadata-field > span { color: var(--text-muted); font-size: 0.76rem; font-weight: 600; }
+/* Field head: label + optional field-level action (e.g. AI summary). The head
+   is only present when a field has an inline action; otherwise the label sits
+   directly inside the field as before. */
+.document-metadata-field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 0; }
+.document-metadata-field-head > span { color: var(--text-muted); font-size: 0.76rem; font-weight: 600; }
 .document-metadata-field input, .document-metadata-field textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; background: var(--bg-soft); color: var(--text); font: inherit; letter-spacing: 0; outline: none; }
 .document-metadata-textarea-wrap { position: relative; min-width: 0; }
-.document-metadata-textarea-wrap textarea { padding-right: 82px; padding-bottom: 29px; }
+.document-metadata-textarea-wrap textarea { padding-right: 10px; padding-bottom: 29px; }
 .document-metadata-field textarea { resize: vertical; min-height: 92px; line-height: 1.5; }
 .document-metadata-field input:focus, .document-metadata-field textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.metadata-generate-summary { position: absolute; top: 5px; right: 5px; display: inline-flex; align-items: center; gap: 3px; min-height: 24px; max-width: calc(100% - 10px); padding: 0 5px; border: 0; border-radius: 4px; background: color-mix(in srgb, var(--bg) 72%, transparent); color: var(--text-muted); font: inherit; font-size: 0.66rem; cursor: pointer; }
-.metadata-generate-summary > span:first-child { display: inline-flex; flex: 0 0 14px; }
-.metadata-generate-summary > span:first-child :deep(svg) { display: block; width: 14px; height: 14px; }
+/* AI generate: ghost button sitting on the label row, no longer absolute over
+   the textarea. Sizing baseline matches the other ghost buttons in the panel. */
+.metadata-generate-summary { display: inline-flex; align-items: center; gap: 3px; min-height: 18px; padding: 0 5px; border: 0; border-radius: 3px; background: transparent; color: var(--text-muted); font: inherit; font-size: 0.66rem; cursor: pointer; transition: color 0.12s ease, background 0.12s ease; }
+.metadata-generate-summary > span:first-child { display: inline-flex; flex: 0 0 12px; }
+.metadata-generate-summary > span:first-child :deep(svg) { display: block; width: 12px; height: 12px; }
 .metadata-generate-summary:hover:not(:disabled) { background: var(--code-bg); color: var(--accent); }
 .metadata-generate-summary:focus-visible { outline: 1px solid color-mix(in srgb, var(--accent) 72%, transparent); outline-offset: 1px; }
 .metadata-generate-summary:disabled { cursor: default; opacity: 0.5; }

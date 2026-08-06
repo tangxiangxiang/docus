@@ -306,7 +306,12 @@ function onLinkNavigate(p: string) {
 .metadata-slot :deep(.document-metadata-field) {
   gap: 0 !important;
 }
-.metadata-slot :deep(.document-metadata-field > span) {
+.metadata-slot :deep(.document-metadata-field > span),
+/* The summary field's label sits inside .document-metadata-field-head (a flex
+   row that also hosts the AI-generate button), so the direct-child selector
+   above doesn't match it. Mirror the same rules for the head's span so the
+   three field labels stay visually identical. */
+.metadata-slot :deep(.document-metadata-field-head > span) {
   font-size: 0.58rem;
   font-weight: 600;
   line-height: 1;
@@ -324,6 +329,7 @@ function onLinkNavigate(p: string) {
    feeling like a stack of "form fields" and more like a labeled document. */
 .metadata-slot :deep(.document-metadata-field input),
 .metadata-slot :deep(.document-metadata-field textarea) {
+  font-family: inherit;
   padding: 4px 7px;
   font-size: 0.8rem;
   line-height: 1.35;
@@ -346,7 +352,7 @@ function onLinkNavigate(p: string) {
   min-height: 26px;
 }
 .metadata-slot :deep(.document-metadata-textarea-wrap textarea) {
-  padding-right: 64px;
+  padding-right: 8px;
   padding-bottom: 20px;
 }
 .metadata-slot :deep(.document-metadata-field textarea) {
@@ -363,16 +369,15 @@ function onLinkNavigate(p: string) {
   font-variant-numeric: tabular-nums;
 }
 
-/* AI generate — ghost button inside the textarea. */
+/* AI generate — ghost button on the field-head row, label left, action right.
+   No positioning needed; the head is a flex row with space-between. */
 .metadata-slot :deep(.metadata-generate-summary) {
-  top: 3px;
-  right: 3px;
   min-height: 18px;
-  padding: 0 4px;
+  padding: 0 5px;
   font-size: 0.58rem;
   border-radius: 3px;
   color: var(--text-muted);
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  background: transparent;
 }
 .metadata-slot :deep(.metadata-generate-summary:hover:not(:disabled)) {
   color: var(--accent);
@@ -400,10 +405,13 @@ function onLinkNavigate(p: string) {
 .metadata-slot :deep(.document-metadata-readonly > div) {
   display: grid;
   grid-template-columns: minmax(72px, max-content) 1fr;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--border);
+}
+.metadata-slot :deep(.document-metadata-readonly > div:last-child) {
+  border-bottom: 0;
 }
 .metadata-slot :deep(.document-metadata-readonly > div:nth-child(odd)),
 .metadata-slot :deep(.document-metadata-readonly > div:nth-child(even)) {
