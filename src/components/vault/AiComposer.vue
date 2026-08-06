@@ -104,6 +104,7 @@ defineExpose({ focus })
           >
             <span class="ai-tool-plus">+</span>
           </button>
+          <!-- Reserved for a future AI mode selector; currently display-only. -->
           <span class="ai-mode-badge" aria-hidden="true">
             <span class="ai-mode-dot" />
             Auto
