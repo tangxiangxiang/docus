@@ -76,12 +76,25 @@ watch(() => props.activeTab, (tab) => {
   void scrollActiveTabIntoView(tab)
 }, { immediate: true })
 
+function openHistoryForCurrentPath(force = false): void {
+  const fileHistory = props.fileHistory
+  const path = props.path
+  if (!fileHistory || !path || fileHistory.loading.value) return
+
+  const targetMatches = fileHistory.target.value?.documentPath === path
+  if (targetMatches && fileHistory.loaded.value && !(force && fileHistory.error.value)) return
+  if (targetMatches && fileHistory.error.value && force) {
+    void fileHistory.refresh()
+    return
+  }
+  void fileHistory.open(resolveFileHistoryTarget(path, props.posts))
+}
+
 watch(
   () => [props.activeTab, props.path, props.fileHistory?.target.value?.documentPath] as const,
-  ([tab, path, loadedPath]) => {
-    if (tab !== 'history' || !props.fileHistory || !path) return
-    if (loadedPath === path) return
-    void props.fileHistory.open(resolveFileHistoryTarget(path, props.posts))
+  ([tab]) => {
+    if (tab !== 'history') return
+    openHistoryForCurrentPath()
   },
   { immediate: true },
 )
@@ -92,6 +105,11 @@ function onTocClick(id: string) {
 
 function onLinkNavigate(p: string) {
   emit('link-navigate', p)
+}
+
+function onHistoryTabClick(): void {
+  emit('update:activeTab', 'history')
+  openHistoryForCurrentPath(true)
 }
 </script>
 
@@ -118,10 +136,13 @@ function onLinkNavigate(p: string) {
         :class="{ active: activeTab === 'properties' }"
         @click="emit('update:activeTab', 'properties')"
       >{{ t('rail.properties') }}<span v-if="metadataDirty" class="metadata-dirty-mark" aria-hidden="true">●</span></button>
-      <button role="tab" data-tab="history" :aria-selected="activeTab === 'history'" :class="{ active: activeTab === 'history' }" @click="emit('update:activeTab', 'history')">{{ t('rail.history') }}</button>
+      <button role="tab" data-tab="history" :aria-selected="activeTab === 'history'" :class="{ active: activeTab === 'history' }" @click="onHistoryTabClick">{{ t('rail.history') }}</button>
     </nav>
 
     <section v-show="activeTab === 'toc'" class="toc-panel" role="tabpanel" :aria-label="t('rail.toc')">
+      <header v-if="path" class="right-rail-path-header">
+        <span :title="path">{{ path }}</span>
+      </header>
 
       <div v-if="!hasHeadings" class="right-rail-empty-state">
         <p>{{ props.isReadMode ? t('rail.toc_empty') : t('rail.toc_empty_edit') }}</p>
@@ -151,6 +172,9 @@ function onLinkNavigate(p: string) {
     </section>
 
     <section v-show="activeTab === 'links'" class="links-slot" role="tabpanel" :aria-label="t('rail.links_panel')">
+      <header v-if="path" class="right-rail-path-header">
+        <span :title="path">{{ path }}</span>
+      </header>
       <LinksPanel
         :path="path"
         :posts="posts"

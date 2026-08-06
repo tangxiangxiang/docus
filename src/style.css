@@ -52,14 +52,14 @@ body.vault-mode #app { height: 100%; }
   min-height: 112px;
   box-sizing: border-box;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   justify-content: flex-start;
   gap: 10px;
   padding: 32px 18px 24px;
   color: var(--vs-text-2, var(--text-muted));
   font-size: 0.78rem;
   line-height: 1.5;
-  text-align: center;
+  text-align: left;
 }
 .right-rail-empty-state p {
   margin: 0;

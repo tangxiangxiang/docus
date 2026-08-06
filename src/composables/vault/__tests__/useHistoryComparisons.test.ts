@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { watch } from 'vue'
 import {
   getLoadedEditorDocument,
   useHistoryComparisons,
@@ -143,6 +144,22 @@ describe('useHistoryComparisons', () => {
     resolveSelected(file('revision-a', 'after'))
     await request
     expect(history.activeComparison.value?.status).toBe('ready')
+  })
+
+  it('publishes the first comparison transition from loading to ready', async () => {
+    vi.mocked(api.getFileAt).mockResolvedValueOnce(file('parent-a', 'before')).mockResolvedValueOnce(file('revision-a', 'after'))
+    const history = useHistoryComparisons({ getCurrentDocument: () => null, loadCurrentDocument: vi.fn() })
+    const statuses: Array<'loading' | 'ready' | 'error' | undefined> = []
+    const stop = watch(
+      () => history.activeComparison.value?.status,
+      (status) => statuses.push(status),
+      { immediate: true },
+    )
+
+    await history.openComparison(selection())
+    stop()
+
+    expect(statuses).toEqual([undefined, 'loading', 'ready'])
   })
 
   it('switches to selected revision → working tree and preserves unsaved editor content', async () => {

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, ref } from 'vue'
 import RightRail from '../RightRail.vue'
 import { tocActiveId, tocHeadings, tocScrollTo } from '../../../composables/vault/useTocState'
 import type { RightRailTab } from '../../../composables/vault/useVaultLayout'
 import { useI18n } from '../../../composables/useI18n'
+import type { FileHistoryState } from '../../../composables/vault/useFileHistory'
 
 const posts = [{
   path: 'inbox/english/subject', title: '英语-主语', created: '', updated: '',
@@ -177,6 +178,45 @@ describe('unified document sidebar', () => {
     expect(wrapper.find('.history-slot').exists()).toBe(true)
     expect(wrapper.text()).toContain('选择文档后查看历史记录')
     expect(wrapper.get('[role="tab"][aria-selected="true"]').text()).toBe('历史')
+  })
+
+  it('loads history on the first click when the target exists but is not loaded yet', async () => {
+    const open = vi.fn().mockResolvedValue(undefined)
+    const fileHistory = {
+      target: ref({ documentPath: 'inbox/english/subject', documentTitle: '英语-主语' }),
+      commits: ref([]),
+      dayGroups: ref([]),
+      loading: ref(false),
+      loaded: ref(false),
+      error: ref(null),
+      expandedDays: ref(new Set<string>()),
+      selectedCommitId: ref(null),
+      open,
+      refresh: vi.fn().mockResolvedValue(undefined),
+      clear: vi.fn(),
+      toggleDay: vi.fn(),
+      expandNewestDay: vi.fn(),
+      selectCommit: vi.fn(),
+    } as unknown as FileHistoryState
+    const wrapper = mount(RightRail, {
+      props: { path: 'inbox/english/subject', posts, activeTab: 'toc', fileHistory },
+      global: {
+        stubs: {
+          LinksPanel: { template: '<div />' },
+          AiPanel: { template: '<div />' },
+          DocumentMetadataForm: { template: '<div />' },
+          RightRailHistory: { template: '<div />' },
+        },
+      },
+    })
+
+    await wrapper.get('[data-tab="history"]').trigger('click')
+
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(open).toHaveBeenCalledWith({
+      documentPath: 'inbox/english/subject',
+      documentTitle: '英语-主语',
+    })
   })
 
   it('renders empty TOC without affecting the other tabs', () => {

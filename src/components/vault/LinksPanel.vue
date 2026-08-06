@@ -235,7 +235,7 @@ watchEffect(() => {
   overflow: visible;
 }
 .links-content {
-  padding-top: 0;
+  padding-top: 8px;
 }
 
 .section {

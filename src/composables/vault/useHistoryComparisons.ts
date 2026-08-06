@@ -163,7 +163,7 @@ export function useHistoryComparisons(options: HistoryComparisonOptions) {
     const tabId = comparisonTabId(selection.documentPath)
     let comparison = comparisons.value.find((item) => item.tabId === tabId)
     if (!comparison) {
-      comparison = {
+      const created: HistoryComparison = {
         tabId,
         documentPath: selection.documentPath,
         documentTitle: selection.documentTitle,
@@ -183,7 +183,13 @@ export function useHistoryComparisons(options: HistoryComparisonOptions) {
         status: 'loading',
         error: null,
       }
-      comparisons.value.push(comparison)
+      comparisons.value.push(created)
+      // `ref([])` wraps array entries in reactive proxies. Continue with the
+      // proxied entry so the first load updates the pane from loading to
+      // ready; mutating `created` after push would bypass Vue's dependency
+      // tracking and leave the first comparison visibly stuck on loading.
+      comparison = comparisons.value.find((item) => item.tabId === tabId)
+      if (!comparison) throw new Error('comparison tab was not created')
     } else {
       resetComparison(comparison, selection)
     }
