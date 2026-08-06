@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
-import { mount, RouterLinkStub } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import NavBar from '../NavBar.vue'
 import { VaultViewModeKey, type VaultViewMode } from '../../composables/vault/viewMode'
@@ -22,7 +22,6 @@ function mountNavBar(initial: VaultViewMode = 'edit') {
     props: { isVault: true },
     global: {
       provide: { [VaultViewModeKey as symbol]: api },
-      stubs: { RouterLink: RouterLinkStub },
     },
   })
   return { wrapper, api }
@@ -88,8 +87,7 @@ describe('NavBar — brand constellation', () => {
     await nextTick()
     expect(wrapper.find('.brand-constellation').exists()).toBe(true)
     expect(wrapper.findAll('.brand-network-node')).toHaveLength(9)
-    expect(wrapper.find('.brand').element.tagName).toBe('A')
-    expect(wrapper.findComponent(RouterLinkStub).props('to')).toBe('/')
+    expect(wrapper.find('.brand').element.tagName).toBe('BUTTON')
   })
 
   it('closes when the pointer leaves the brand', async () => {
@@ -145,7 +143,6 @@ describe('NavBar — brand constellation', () => {
       global: {
         plugins: [router],
         provide: { [VaultViewModeKey as symbol]: api },
-        stubs: { RouterLink: RouterLinkStub },
       },
     })
     await router.push('/')
