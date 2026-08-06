@@ -63,6 +63,12 @@ const { t } = useI18n()
         <div v-else-if="message.content" class="ai-text" :class="{ 'ai-streaming-text': message.role === 'assistant' && message.id === 0 }">
           {{ message.content }}
         </div>
+        <span
+          v-else-if="message.role === 'assistant' && message.id === 0"
+          class="ai-typing"
+          role="status"
+          :aria-label="t('ai.generating')"
+        ><span /><span /><span /></span>
         <AiToolCallCard
           v-for="call in message.blocks?.toolCalls ?? []"
           :key="call.id"
@@ -77,6 +83,37 @@ const { t } = useI18n()
 .ai-text {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Typing indicator — three small dots that pulse in sequence. Shown
+   when an assistant message exists (id === 0 sentinel for the in-flight
+   placeholder) but has no content yet, so the user gets immediate
+   feedback after pressing send instead of staring at an empty bubble. */
+.ai-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 14px;
+  padding: 0 2px;
+}
+.ai-typing > span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--vs-text-2, var(--text-muted)) 70%, transparent);
+  animation: ai-typing-bounce 1.2s infinite ease-in-out;
+}
+.ai-typing > span:nth-child(2) { animation-delay: 0.15s; }
+.ai-typing > span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes ai-typing-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
 }
 .ai-empty-chat {
   display: flex;

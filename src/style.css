@@ -4202,11 +4202,11 @@ main.container {
   padding: 1px 0;
 }
 .ai-panel .ai-message.user .ai-bubble {
-  background: color-mix(in srgb, var(--vs-bg-2) 88%, var(--vs-bg-3));
-  padding: 6px 9px;
-  border-radius: 8px;
-  border-bottom-right-radius: 3px;
-  border: 1px solid color-mix(in srgb, var(--vs-border) 72%, transparent);
+  background: color-mix(in srgb, var(--vs-accent, var(--accent)) 9%, transparent);
+  padding: 5px 9px;
+  border-radius: 6px;
+  border-bottom-right-radius: 2px;
+  border: 0;
   max-width: 88%;
 }
 
@@ -4303,6 +4303,20 @@ main.container {
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
+}
+
+/* Keyboard hint tucked between the context chip and the send button.
+   Only visible when the input is empty — once the user starts typing
+   the hint fades (template removes it) so it stops competing for the
+   tiny toolbar row. Uses the VS-Code-style "Enter to send" microcopy
+   with a middle dot separator. */
+.ai-panel .ai-keyboard-hint {
+  flex: 0 0 auto;
+  color: var(--vs-text-3);
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  user-select: none;
+  white-space: nowrap;
 }
 
 /* Current-note context chip. File icon + path, ellipsized with

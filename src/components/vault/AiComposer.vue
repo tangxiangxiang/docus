@@ -76,6 +76,7 @@ defineExpose({ focus })
           </span>
           <span v-else class="ai-context ai-context-empty">{{ t('ai.no_document') }}</span>
         </div>
+        <span v-if="!modelValue" class="ai-keyboard-hint" aria-hidden="true">{{ t('ai.keyboard_hint') }}</span>
         <div class="ai-toolbar-right">
           <button
             class="ai-send"

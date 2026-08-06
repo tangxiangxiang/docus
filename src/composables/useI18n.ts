@@ -100,6 +100,8 @@ const STRINGS: Strings = {
   'ai.stop': { zh: '停止', en: 'Stop' },
   'ai.send': { zh: '发送', en: 'Send' },
   'ai.send_hint': { zh: '发送（Enter）', en: 'Send (Enter)' },
+  'ai.keyboard_hint': { zh: 'Enter 发送 · Shift+Enter 换行', en: 'Enter to send · Shift+Enter for newline' },
+  'ai.generating': { zh: '正在生成…', en: 'Generating…' },
   'ai.ask_note': { zh: '询问当前笔记', en: 'Ask about current note' },
   'ai.ask_vault': { zh: '询问知识库', en: 'Ask about your vault' },
   'ai.quick_prompts': { zh: '快捷提示', en: 'Quick prompts' },

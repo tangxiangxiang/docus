@@ -155,23 +155,29 @@ export const ICON_PANEL_RIGHT_CLOSE = `
   <path d="M11.25 6.5l1.25 1.5-1.25 1.5"/>
 </svg>`
 
-// History — counter-clockwise circle with a return arrow at the gap
-// and clock hands inside. Lucide-style line history, kept on the
-// 16×16 grid so it lines up with the rest of the icon family.
+// History — three rows of list items (filled dot + horizontal line).
+// Reads as "session list" and lines up with VS Code / Linear / Notion's
+// history-picker convention. Lighter than the previous clock-with-
+// counter-arrow, which compounded two metaphors and read as visual noise.
 export const ICON_HISTORY = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <path d="M2.5 8a5.5 5.5 0 1 0 1.65-3.9L2.5 5.5"/>
-  <path d="M2.5 2.5v3h3"/>
-  <path d="M8 5v3l2 1"/>
+  <circle cx="3" cy="4" r="0.85" fill="currentColor" stroke="none"/>
+  <line x1="6" y1="4" x2="14" y2="4"/>
+  <circle cx="3" cy="8" r="0.85" fill="currentColor" stroke="none"/>
+  <line x1="6" y1="8" x2="14" y2="8"/>
+  <circle cx="3" cy="12" r="0.85" fill="currentColor" stroke="none"/>
+  <line x1="6" y1="12" x2="11" y2="12"/>
 </svg>`
 
-// New chat — message bubble with a plus inside. Reads as "start a
-// new conversation" without confusion with "add generic item".
+// New chat — single centered 4-point sparkle. Pairs visually with
+// ICON_HISTORY (which has three "rows") so the two header buttons read
+// as a balanced pair: list on the left, spark on the right. Distinct
+// from ICON_AI (avatar) by being a single star instead of the two-
+// star "big + accent" composition, so the button isn't mistaken for
+// the message avatar at a glance.
 export const ICON_NEW_CHAT = `
 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-  <path d="M14 9.5a1.5 1.5 0 0 1-1.5 1.5H4.5L2 13.5V3.5A1.5 1.5 0 0 1 3.5 2h9A1.5 1.5 0 0 1 14 3.5z"/>
-  <path d="M5.5 6.5h5"/>
-  <path d="M8 4v5"/>
+  <path d="M8 2 L9 7 L14 8 L9 9 L8 14 L7 9 L2 8 L7 7 Z"/>
 </svg>`
 
 // Link — two interlocked chain rings at 45°. Pure outline, matches
