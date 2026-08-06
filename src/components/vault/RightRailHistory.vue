@@ -59,7 +59,7 @@ function onTreeKeydown(event: KeyboardEvent): void {
       <span :title="path">{{ path }}</span>
     </header>
 
-    <div v-if="!path" class="right-rail-history-empty">
+    <div v-if="!path" class="right-rail-history-empty right-rail-empty-state">
       {{ t('rail.history_empty') }}
     </div>
 
@@ -119,11 +119,6 @@ function onTreeKeydown(event: KeyboardEvent): void {
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
-}
-.right-rail-history-empty {
-  padding: 18px;
-  color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.78rem;
 }
 .right-rail-history :deep(.history-timeline-group-header) {
   padding-left: 18px;

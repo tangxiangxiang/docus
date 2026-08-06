@@ -191,7 +191,7 @@ describe('unified document sidebar', () => {
     tocHeadings.value = []
     const wrapper = mountPanel('toc', false)
     expect(wrapper.text()).toContain('编辑模式下暂不生成目录')
-    await wrapper.get('.toc-panel-empty-action').trigger('click')
+    await wrapper.get('.right-rail-empty-action').trigger('click')
     expect(wrapper.emitted('switch-to-read')).toEqual([[]])
   })
 })

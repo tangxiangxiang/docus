@@ -684,7 +684,7 @@ onBeforeUnmount(cancelSummaryGeneration)
         </section>
       </template>
     </div>
-    <div v-else class="document-metadata-empty">{{ t('metadata.no_document') }}</div>
+    <div v-else class="document-metadata-empty right-rail-empty-state">{{ t('metadata.no_document') }}</div>
 
     <footer v-if="showActions && path && !isReadonly && !loadError" class="document-metadata-actions">
       <button v-if="showCancel" type="button" class="btn" @click="emit('cancel')">{{ t('metadata.cancel') }}</button>
@@ -698,7 +698,6 @@ onBeforeUnmount(cancelSummaryGeneration)
 
 <style scoped>
 .document-metadata-body { display: grid; gap: 15px; padding: 18px; }
-.document-metadata-empty { padding: 24px 18px; color: var(--text-muted); font-size: 0.78rem; font-style: italic; }
 .document-metadata-status { color: var(--text-muted); font-size: 0.78rem; }
 .document-metadata-error { display: grid; gap: 9px; color: var(--danger, #d14); font-size: 0.78rem; }
 .document-metadata-error .btn { justify-self: start; }

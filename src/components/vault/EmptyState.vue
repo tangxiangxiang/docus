@@ -11,7 +11,7 @@
 // `<style>` block — see the css comment near the matching rules.
 //
 // Inline list-level empties (FileTree `.empty`, TagPanel `.empty`,
-// LinksPanel `.empty`, RightRail `.toc-panel-empty`, AiSessionPicker
+// AiSessionPicker
 // `.ai-sp-empty`, ReadingPane `.reading-empty`) are intentionally NOT
 // migrated — they're 1-line italic stubs inside an already-mounted
 // list, semantically different from "the whole surface is empty".

@@ -123,12 +123,12 @@ function onLinkNavigate(p: string) {
 
     <section v-show="activeTab === 'toc'" class="toc-panel" role="tabpanel" :aria-label="t('rail.toc')">
 
-      <div v-if="!hasHeadings" class="toc-panel-empty">
+      <div v-if="!hasHeadings" class="right-rail-empty-state">
         <p>{{ props.isReadMode ? t('rail.toc_empty') : t('rail.toc_empty_edit') }}</p>
         <button
           v-if="!props.isReadMode"
           type="button"
-          class="toc-panel-empty-action"
+          class="right-rail-empty-action"
           @click="emit('switch-to-read')"
         >{{ t('rail.switch_to_read') }}</button>
       </div>
@@ -179,7 +179,7 @@ function onLinkNavigate(p: string) {
         :path="path"
         @open-revision="emit('open-history-revision', $event)"
       />
-      <div v-else class="right-rail-history-empty">{{ t('rail.history_empty') }}</div>
+      <div v-else class="right-rail-history-empty right-rail-empty-state">{{ t('rail.history_empty') }}</div>
     </section>
     <section v-if="aiHasOpened" v-show="activeTab === 'ai'" class="ai-slot" role="tabpanel" :aria-label="t('rail.ai')">
       <AiPanel />
@@ -262,6 +262,10 @@ function onLinkNavigate(p: string) {
 .ai-slot { height: calc(100% - 36px); min-height: 0; }
 .ai-slot :deep(.ai-panel) { height: 100%; }
 .toc-panel {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.links-slot {
   padding-top: 0;
   padding-bottom: 0;
 }
@@ -470,32 +474,6 @@ function onLinkNavigate(p: string) {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-color: transparent;
 }
-.toc-panel-empty {
-  padding: 0 22px;
-  font-size: 0.78rem;
-  color: var(--vs-text-2, var(--text-muted));
-}
-.toc-panel-empty p {
-  margin: 0;
-  font-style: italic;
-}
-.toc-panel-empty-action {
-  margin-top: 10px;
-  padding: 4px 8px;
-  border: 1px solid var(--vs-border, var(--border));
-  border-radius: 4px;
-  background: transparent;
-  color: var(--vs-text-2, var(--text-muted));
-  font: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-.toc-panel-empty-action:hover {
-  color: var(--vs-text-1, var(--text));
-  border-color: var(--vs-accent, var(--accent));
-  background: var(--vs-hover-bg, var(--bg-soft));
-}
-
 .toc-panel-list {
   list-style: none;
   margin: 0;

@@ -165,10 +165,10 @@ watchEffect(() => {
 
 <template>
   <aside class="links-panel" :aria-label="t('links.panel')">
-    <div v-if="!activePath" class="empty">
+    <div v-if="!activePath" class="right-rail-empty-state">
       {{ t('links.open_document') }}
     </div>
-    <div v-else-if="isEmpty" class="empty">
+    <div v-else-if="isEmpty" class="right-rail-empty-state">
       {{ t('links.empty') }}
     </div>
 
@@ -233,12 +233,6 @@ watchEffect(() => {
   color: var(--vs-text, var(--text));
   height: auto;
   overflow: visible;
-}
-.empty {
-  padding: 0 22px;
-  font-size: 0.78rem;
-  color: var(--vs-text-2, var(--text-muted));
-  font-style: italic;
 }
 .links-content {
   padding-top: 0;

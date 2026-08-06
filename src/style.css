@@ -44,6 +44,44 @@ body.vault-mode {
 }
 body.vault-mode #app { height: 100%; }
 
+/* Shared empty state for the document sidebar tabs. Each tab keeps its own
+   content, but an unselected document should produce the same calm, compact
+   surface everywhere. */
+.right-rail-empty-state {
+  display: flex;
+  min-height: 112px;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 32px 18px 24px;
+  color: var(--vs-text-2, var(--text-muted));
+  font-size: 0.78rem;
+  line-height: 1.5;
+  text-align: center;
+}
+.right-rail-empty-state p {
+  margin: 0;
+}
+.right-rail-empty-action {
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--vs-border, var(--border));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vs-text-2, var(--text-muted));
+  font: inherit;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.right-rail-empty-action:hover {
+  color: var(--vs-text-1, var(--text));
+  border-color: var(--vs-accent, var(--accent));
+  background: var(--vs-hover-bg, var(--bg-soft));
+}
+
 /* Shared document path header for the properties and history tabs. Keep
    these two lightweight context strips identical in typography and rhythm. */
 .right-rail-path-header {
