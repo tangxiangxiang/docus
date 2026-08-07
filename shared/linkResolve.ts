@@ -1,6 +1,5 @@
-// Isomorphic Obsidian-style wiki link resolution. Used by the server
-// (server/linkIndex.ts) and the client (useMarkdownRender's resolver
-// callback). Keep this file Node-free: no `node:*` imports, no `fs`.
+// Isomorphic Obsidian-style wiki link resolution. Used by the server and the
+// client. Keep this file Node-free: no `node:*` imports, no `fs`.
 //
 // The resolution algorithm matches Obsidian's behavior:
 //   1. Same-dir: if the source is `notes/a` and the ref is `b`, try `notes/b`
@@ -9,9 +8,9 @@
 //      known path (returns the first hit)
 //
 // A `ref` may include a trailing `.md` — it is stripped before matching.
-// Any ref that smells like an escape attempt (`..`, `\`, leading `/`) is
-// rejected outright; the resolver only ever returns paths from
-// `allPaths`, so it cannot leak anything outside the vault.
+// Any ref that smells like an escape attempt (`..`, `\\`, leading `/`) is
+// rejected outright; the resolver only ever returns paths from `allPaths`, so
+// it cannot leak anything outside the vault.
 
 /** Returns the directory containing `p`, or '' for a top-level path. */
 export function dirname(p: string): string {

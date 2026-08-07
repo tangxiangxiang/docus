@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { DraftRecoveryTab } from '../../composables/vault/draft-recovery/useDraftRecoveryTabs'
-import { computeFileDiff } from '../../lib/file-diff'
+import { computeFileDiff } from '../../../shared/file-diff'
 import { useI18n } from '../../composables/useI18n'
 import ReadingPane from './ReadingPane.vue'
 import HistoryUnifiedDiff from './HistoryUnifiedDiff.vue'

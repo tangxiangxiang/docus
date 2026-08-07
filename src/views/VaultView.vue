@@ -43,7 +43,7 @@ import { getLinkIndex, refreshLinkIndex, useLinkIndexSubscription } from '../com
 import { getPost, type DocumentMetadata, type PostSummary } from '../lib/api'
 import { formatHistoryDate } from '../lib/history-date'
 import { isSlugSegment } from '../lib/slug'
-import { resolveWikiTarget } from '../lib/linkResolve'
+import { resolveWikiTarget } from '../../shared/linkResolve'
 import { VaultViewModeKey } from '../composables/vault/viewMode'
 import {
   captureAiLiveContext,

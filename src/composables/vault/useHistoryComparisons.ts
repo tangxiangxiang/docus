@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import * as historyApi from '../../lib/history-api'
-import { computeFileDiff } from '../../lib/file-diff'
+import { computeFileDiff } from '../../../shared/file-diff'
 import type { FileDiff } from '../../lib/history-api'
 
 export type HistoryComparisonStatus = 'loading' | 'ready' | 'error'

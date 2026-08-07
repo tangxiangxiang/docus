@@ -5,7 +5,7 @@ import 'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import { acquireMarkdownModel } from './monacoModels'
 import { bindMarkdownProviderContext, unbindMarkdownProviderContext } from './monacoMarkdownProviders'
-import { resolveWikiTarget } from '../../lib/linkResolve'
+import { resolveWikiTarget } from '../../../shared/linkResolve'
 import { getPost } from '../../lib/api'
 import { useEditorPreferences } from '../../composables/vault/useEditorPreferences'
 import {

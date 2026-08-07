@@ -22,7 +22,7 @@ import { promises as fs } from 'node:fs'
 import matter from 'gray-matter'
 import { listPostsFlat } from './tree.js'
 import { CONTENT_DIR, filePathFor } from './paths.js'
-import { resolveWikiTarget } from './linkResolve.ts'
+import { resolveWikiTarget } from '../shared/linkResolve.js'
 import { getDb } from './db.js'
 
 export interface Link {

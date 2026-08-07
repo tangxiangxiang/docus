@@ -1,5 +1,5 @@
 import { diffLines, diffWordsWithSpace, type Change } from 'diff'
-import type { DiffOp, DiffOpKind, FileDiff } from './history-api'
+import type { DiffOp, DiffOpKind, FileDiff } from '../src/lib/history-api'
 
 function changeToOp(
   change: Change,

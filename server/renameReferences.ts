@@ -1,4 +1,4 @@
-import { resolveWikiTarget } from '../src/lib/linkResolve.js'
+import { resolveWikiTarget } from '../shared/linkResolve.js'
 
 export function rewriteDocumentReferences(raw: string, sourcePath: string, oldPath: string, newPath: string, allPaths: string[]): string {
   return raw.split(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g).map((segment, index) =>
