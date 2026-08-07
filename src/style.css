@@ -1753,6 +1753,14 @@ main.container {
   pointer-events: none;
 }
 
+/* === Settings modal ===
+   Two-column layout: a fixed left nav (3 sections) + a scrollable
+   right detail. Each section owns its own action header (Save / Reset
+   / Check), so there is no global footer — closing lives in the
+   modal header. The modal is teleported to <body>, so --vs-* tokens
+   are not set; the `, var(--…)` fallbacks keep it readable if it ever
+   happens to render inside a vault (defensive, currently unused). */
+
 .settings-backdrop {
   position: fixed;
   inset: 0;
@@ -1763,142 +1771,285 @@ main.container {
   background: rgba(0, 0, 0, 0.36);
 }
 .settings-modal {
-  width: min(520px, calc(100vw - 32px));
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(80vh, 640px);
+  display: flex;
+  flex-direction: column;
   color: var(--vs-text-1, var(--text-h));
   background: var(--vs-bg-1, var(--bg));
   border: 1px solid var(--vs-border, var(--border));
-  border-radius: 8px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  border-radius: 6px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.32);
+  overflow: hidden;
 }
 .settings-header {
-  height: 44px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 14px 0 16px;
+  height: 38px;
+  padding: 0 10px 0 14px;
   border-bottom: 1px solid var(--vs-border, var(--border));
 }
 .settings-header h2 {
   margin: 0;
-  font-size: 0.98rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 .settings-icon-btn {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border: 0;
   border-radius: 4px;
   color: var(--vs-text-2, var(--text-muted));
   background: transparent;
   cursor: pointer;
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
+  transition: color 0.12s, background 0.12s;
 }
 .settings-icon-btn:hover {
   color: var(--vs-text-1, var(--text-h));
   background: var(--vs-hover-bg, var(--bg-soft));
 }
 .settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+}
+/* Left nav. Mirrors the activity-bar visual language (2px left border
+   on the active item) so the modal feels native to the vault, not like
+   an alien panel. Background is the soft token, so the nav reads as a
+   subtle sidebar rail rather than competing with the detail for
+   attention. */
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px;
+  border-right: 1px solid var(--vs-border, var(--border));
+  background: var(--vs-bg-2, var(--bg-soft));
+  overflow-y: auto;
+}
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0 4px 4px 0;
+  background: transparent;
+  color: var(--vs-text-2, var(--text-muted));
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.settings-nav-item:hover {
+  color: var(--vs-text-1, var(--text-h));
+  background: var(--vs-hover-bg, var(--bg-soft));
+}
+.settings-nav-item.active {
+  color: var(--vs-text-1, var(--text-h));
+  border-left-color: var(--vs-accent, var(--accent));
+  background: var(--vs-active-bg, var(--bg-soft));
+  font-weight: 500;
+}
+.settings-nav-item:focus-visible {
+  outline: 1px solid var(--vs-accent, var(--accent));
+  outline-offset: -1px;
+}
+/* Right detail. Body scrolls vertically inside this column while the
+   left nav stays anchored, so the user never loses their place even
+   if a metadata list grows long. Padding is asymmetric — generous
+   vertical so each section breathes, modest horizontal so the field
+   grid still has room for two columns at the modal's 720px width. */
+.settings-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px 16px;
+  display: flex;
+  flex-direction: column;
+}
+.settings-section {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  padding: 16px;
-  max-height: min(620px, calc(100vh - 150px));
-  overflow: auto;
+  min-width: 0;
+}
+/* Section header: title + subtitle on the left, section-level actions
+   on the right. The bottom border separates the header from the form
+   without adding a second visual surface. Title is sized between the
+   modal title and the field labels so the eye finds the section
+   before the inputs without the heading competing with the modal
+   title above it. */
+.settings-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--vs-border, var(--border));
+}
+.settings-section-header h3 {
+  margin: 0;
+  color: var(--vs-text-1, var(--text-h));
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.settings-section-header p {
+  margin: 3px 0 0;
+  color: var(--vs-text-2, var(--text-muted));
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+.settings-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+/* Tighten the shared .btn inside section headers + metadata actions
+   so they match the modal's compact rhythm. The base .btn is used
+   across the app and stays untouched; this override is scoped to
+   the settings modal only. */
+.settings-section-actions .btn,
+.settings-metadata-actions .btn {
+  min-height: 26px;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  border-radius: 3px;
+}
+.settings-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* Env-override banner. Lives at the top of the AI section body so the
+   user sees it before they start editing disabled fields. Left-edge
+   accent gives it a small banner weight without competing with the
+   section heading. */
+.settings-note {
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--vs-border, var(--border));
+  border-left: 2px solid var(--vs-accent, var(--accent));
+  border-radius: 4px;
+  background: var(--vs-accent-bg, var(--bg-soft));
+  color: var(--vs-text-2, var(--text-muted));
+  font-size: 0.74rem;
+  line-height: 1.45;
 }
 .settings-row {
   display: flex;
   align-items: center;
+  gap: 8px;
+  color: var(--vs-text-2, var(--text-muted));
+  font-size: 0.8rem;
+}
+/* Single-column field stack for both AI and Editor sections. Each
+   field gets its own row, so the form reads top-to-bottom without
+   the eye having to compare two parallel columns. Wider inputs also
+   leave room for long placeholder / masked values to display in
+   full instead of truncating. */
+.settings-field-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
-  color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.85rem;
 }
-.settings-status strong {
-  color: var(--vs-text-1, var(--text-h));
-  font-weight: 600;
-}
-.settings-status code {
-  margin-left: auto;
-  color: var(--vs-text-2, var(--text-muted));
-  background: var(--vs-bg-2, var(--bg-soft));
+@media (max-width: 560px) {
+  .settings-body { grid-template-columns: 1fr; }
+  .settings-nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--vs-border, var(--border));
+    flex-direction: row;
+  }
 }
 .settings-field {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
-.settings-field span {
+.settings-field > span {
   color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.82rem;
+  font-size: 0.74rem;
 }
-.settings-field input {
-  min-height: 32px;
+.settings-field input,
+.settings-field select {
+  min-height: 28px;
   box-sizing: border-box;
   border: 1px solid var(--vs-border, var(--border));
   border-radius: 4px;
-  padding: 6px 8px;
+  padding: 4px 8px;
   color: var(--vs-text-1, var(--text-h));
   background: var(--vs-bg-2, var(--bg-soft));
   font: inherit;
-}
-.settings-field input:disabled {
-  opacity: 0.72;
-}
-.settings-note {
-  margin: 0;
-  color: var(--vs-text-2, var(--text-muted));
   font-size: 0.82rem;
 }
-.settings-metadata {
-  display: grid;
-  gap: 10px;
-  margin-top: 4px;
-  padding-top: 14px;
-  border-top: 1px solid var(--vs-border, var(--border));
+.settings-field input:disabled,
+.settings-field select:disabled {
+  opacity: 0.72;
 }
-.settings-section-heading {
+.settings-field input[type='checkbox'] {
+  /* Override the generic input rules — checkboxes are not 32px tall. */
+  min-height: 0;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin: 0;
+  justify-self: start;
+  accent-color: var(--vs-accent, var(--accent));
+}
+/* Checkbox variant: render as a single horizontal row (checkbox on
+   the left, label on the right). Flex is the right tool here — the
+   earlier grid layout put the span into a 14px column because the
+   DOM order was span-first, and CJK text then wrapped to one
+   character per line. The template renders the checkbox first so
+   flex default order puts it on the left. */
+.settings-field-checkbox {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
-.settings-section-heading h3 {
-  margin: 0;
+.settings-field-checkbox > span {
+  /* Drop the muted color on the label so the checkbox row reads as a
+     proper option, not a form field label. The checkbox itself is the
+     visual anchor. */
   color: var(--vs-text-1, var(--text-h));
-  font-size: 0.86rem;
-  letter-spacing: 0;
-}
-.settings-section-heading p {
-  margin: 3px 0 0;
-  color: var(--vs-text-3, var(--text-muted));
-  font-size: 0.72rem;
+  font-size: 0.82rem;
+  line-height: 1.3;
 }
 .settings-metadata-stats,
 .settings-cleanup-result {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 16px;
+  gap: 6px 14px;
+  padding: 7px 10px;
+  border: 1px solid var(--vs-border, var(--border));
+  border-radius: 4px;
+  background: var(--vs-bg-2, var(--bg-soft));
   color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.76rem;
+  font-size: 0.74rem;
 }
 .settings-metadata-stats strong,
-.settings-cleanup-result strong { color: var(--vs-text-1, var(--text-h)); }
+.settings-cleanup-result strong {
+  color: var(--vs-text-1, var(--text-h));
+  font-weight: 600;
+}
 .settings-metadata-stats .danger,
-.settings-metadata-stats .danger strong { color: var(--vs-danger, #dc2626); }
+.settings-metadata-stats .danger strong {
+  color: var(--vs-danger, #dc2626);
+}
 .settings-metadata-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.settings-editor-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 14px;
-}
-.settings-editor-grid input[type="checkbox"] { width: 16px; height: 16px; }
-@media (max-width: 600px) { .settings-editor-grid { grid-template-columns: 1fr; } }
-.settings-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 16px 16px;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 4px;
   border-top: 1px solid var(--vs-border, var(--border));
 }
 

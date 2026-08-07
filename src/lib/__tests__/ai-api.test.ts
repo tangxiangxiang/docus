@@ -92,7 +92,6 @@ describe('ai-api', () => {
         maskedKey: 'sk-a...1234',
         baseURL: '',
         model: 'claude-test',
-        envOverride: false,
       },
     })
     const settings = await api.getAiSettings()
@@ -102,7 +101,7 @@ describe('ai-api', () => {
   })
 
   it('saveAiSettings PUTs the editable fields', async () => {
-    responses.push({ status: 200, body: { provider: 'anthropic', configured: true, source: 'db', maskedKey: 'sk-a...1234', baseURL: 'https://x', model: 'm', envOverride: false } })
+    responses.push({ status: 200, body: { provider: 'anthropic', configured: true, source: 'db', maskedKey: 'sk-a...1234', baseURL: 'https://x', model: 'm' } })
     await api.saveAiSettings({ apiKey: 'secret', baseURL: 'https://x', model: 'm' })
     expect(calls[0].url).toBe('/api/ai/settings')
     expect(calls[0].init.method).toBe('PUT')
@@ -110,7 +109,7 @@ describe('ai-api', () => {
   })
 
   it('clearAiApiKey DELETEs the stored key', async () => {
-    responses.push({ status: 200, body: { provider: 'anthropic', configured: false, source: 'none', maskedKey: '', baseURL: '', model: 'm', envOverride: false } })
+    responses.push({ status: 200, body: { provider: 'anthropic', configured: false, source: 'none', maskedKey: '', baseURL: '', model: 'm' } })
     await api.clearAiApiKey()
     expect(calls[0].url).toBe('/api/ai/settings/key')
     expect(calls[0].init.method).toBe('DELETE')

@@ -59,9 +59,20 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
+/* Model name allowlist. Permissive enough for the common naming
+   conventions across providers:
+     - alphanumerics, dot, underscore, hyphen, colon: standard
+     - slash: provider/model paths (e.g. `anthropic/claude-3`)
+     - brackets: version tags in some providers
+       (e.g. `MiniMax-M3[1m]`, legacy `gpt-4-0314`-style tags)
+   Explicitly rejected: whitespace, quotes, semicolons, angle
+   brackets, backticks — anything that could be misused as a shell
+   metacharacter or break CLI quoting. The check is character-class
+   rather than deny-list so a new provider's naming convention
+   doesn't get blocked by a missing exception. */
 function isValidModelName(value: string): boolean {
   if (!value) return true
-  return /^[A-Za-z0-9._:-]+$/.test(value)
+  return /^[A-Za-z0-9._:/[\]-]+$/.test(value)
 }
 
 export const MAX_COMMIT_MESSAGE_PATHS = 20

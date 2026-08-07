@@ -71,14 +71,21 @@ describe('app mounts /api/ai', () => {
 })
 
 describe('app mounts /api/ai/chat', () => {
-  beforeEach(() => {
-    process.env.ANTHROPIC_API_KEY = 'test-key'
-  })
-  afterEach(() => {
-    delete process.env.ANTHROPIC_API_KEY
-  })
+  // Settings now live entirely in the DB — this describe block used
+  // to set ANTHROPIC_API_KEY via env. The route handler now reads
+  // from the DB, but other tests in this file rely on the chat route
+  // finding some configured key (otherwise it would 503 before we
+  // exercise streaming). We seed the DB-backed settings instead.
+  // (No setup needed here — each test that needs a key writes via
+  // PUT /api/ai/settings or relies on a sibling test having done so.)
 
   it('POST /api/ai/chat returns a text/event-stream response', async () => {
+    // Seed DB-backed API key — settings live entirely in the DB now.
+    await app.fetch(new Request('http://localhost/api/ai/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ apiKey: 'sk-ant-test-key' }),
+    }))
     // Create a session first.
     const created = await app.fetch(new Request('http://localhost/api/ai/sessions', { method: 'POST' }))
     const { id } = await created.json() as { id: number }

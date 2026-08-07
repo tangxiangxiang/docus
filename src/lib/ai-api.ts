@@ -52,11 +52,10 @@ export interface ActiveSession {
 export interface AiSettings {
   provider: 'anthropic'
   configured: boolean
-  source: 'env' | 'db' | 'none'
+  source: 'db' | 'none'
   maskedKey: string
   baseURL: string
   model: string
-  envOverride: boolean
 }
 
 export interface ChatRequest {

@@ -253,44 +253,13 @@ describe('GET/PUT /api/ai/settings', () => {
     }
     expect(body.configured).toBe(true)
     expect(body.source).toBe('db')
-    expect(body.maskedKey).toBe('sk-a...3456')
+    // maskKey() shows first 8 + '...' + last 8 — input is
+    // `sk-ant-test-123456` (18 chars), so the mask is
+    // `sk-ant-t...t-123456`. The middle two chars stay hidden.
+    expect(body.maskedKey).toBe('sk-ant-t...t-123456')
     expect(body.baseURL).toBe('https://proxy.example.com')
     expect(body.model).toBe('claude-test')
     expect(body.apiKey).toBeUndefined()
-  })
-
-  it('lets environment configuration override DB settings in the view', async () => {
-    await call('PUT', '/settings', {
-      apiKey: 'sk-ant-db-123456',
-      baseURL: 'https://db.example.com',
-      model: 'db-model',
-    })
-    const prevKey = process.env.ANTHROPIC_API_KEY
-    const prevToken = process.env.ANTHROPIC_AUTH_TOKEN
-    const prevBase = process.env.ANTHROPIC_BASE_URL
-    const prevModel = process.env.ANTHROPIC_MODEL
-    delete process.env.ANTHROPIC_AUTH_TOKEN
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-env-abcdef'
-    process.env.ANTHROPIC_BASE_URL = 'https://env.example.com'
-    process.env.ANTHROPIC_MODEL = 'env-model'
-    try {
-      const r = await call('GET', '/settings')
-      const body = await r.json() as { source: string; envOverride: boolean; maskedKey: string; baseURL: string; model: string }
-      expect(body.source).toBe('env')
-      expect(body.envOverride).toBe(true)
-      expect(body.maskedKey).toBe('sk-a...cdef')
-      expect(body.baseURL).toBe('https://env.example.com')
-      expect(body.model).toBe('env-model')
-    } finally {
-      if (prevKey === undefined) delete process.env.ANTHROPIC_API_KEY
-      else process.env.ANTHROPIC_API_KEY = prevKey
-      if (prevToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN
-      else process.env.ANTHROPIC_AUTH_TOKEN = prevToken
-      if (prevBase === undefined) delete process.env.ANTHROPIC_BASE_URL
-      else process.env.ANTHROPIC_BASE_URL = prevBase
-      if (prevModel === undefined) delete process.env.ANTHROPIC_MODEL
-      else process.env.ANTHROPIC_MODEL = prevModel
-    }
   })
 
   it('clears only the stored API key', async () => {
@@ -321,71 +290,55 @@ describe('GET/PUT /api/ai/settings', () => {
 
     const badModel = await call('PUT', '/settings', { model: 'claude test' })
     expect(badModel.status).toBe(400)
+
+    const shellMeta = await call('PUT', '/settings', { model: 'claude;rm -rf /' })
+    expect(shellMeta.status).toBe(400)
+  })
+
+  it('accepts model names with brackets, slashes, and version tags', async () => {
+    // Regression for the `MiniMax-M3[1m]` case (and similar version-tag
+    // naming conventions). The character allow-list must permit
+    // brackets and slashes while still rejecting shell metacharacters.
+    const bracket = await call('PUT', '/settings', { model: 'MiniMax-M3[1m]' })
+    expect(bracket.status).toBe(200)
+
+    const slashed = await call('PUT', '/settings', { model: 'anthropic/claude-3' })
+    expect(slashed.status).toBe(200)
+
+    const coloned = await call('PUT', '/settings', { model: 'claude-3.5:onnet' })
+    expect(coloned.status).toBe(200)
   })
 })
 
 describe('GET /api/ai/active', () => {
-  it('returns { activeId: null, configured: <bool> } when no active session', async () => {
-    const prev = process.env.ANTHROPIC_API_KEY
-    process.env.ANTHROPIC_API_KEY = 'test-key'
-    try {
-      const r = await call('GET', '/active')
-      expect(r.status).toBe(200)
-      const body = await r.json() as { activeId: number | null; configured: boolean }
-      expect(body.activeId).toBeNull()
-      expect(body.configured).toBe(true)
-    } finally {
-      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY
-      else process.env.ANTHROPIC_API_KEY = prev
-    }
+  it('returns { activeId: null, configured: true } when DB API key is set and no active session', async () => {
+    await call('PUT', '/settings', { apiKey: 'sk-ant-test-key' })
+    const r = await call('GET', '/active')
+    expect(r.status).toBe(200)
+    const body = await r.json() as { activeId: number | null; configured: boolean }
+    expect(body.activeId).toBeNull()
+    expect(body.configured).toBe(true)
   })
 
-  it('reports configured: false when neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN is set', async () => {
-    const prevKey = process.env.ANTHROPIC_API_KEY
-    const prevToken = process.env.ANTHROPIC_AUTH_TOKEN
-    delete process.env.ANTHROPIC_API_KEY
-    delete process.env.ANTHROPIC_AUTH_TOKEN
-    try {
-      const r = await call('GET', '/active')
-      const body = await r.json() as { configured: boolean }
-      expect(body.configured).toBe(false)
-    } finally {
-      if (prevKey !== undefined) process.env.ANTHROPIC_API_KEY = prevKey
-      if (prevToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = prevToken
-    }
+  it('reports configured: false when no DB API key is set', async () => {
+    const r = await call('GET', '/active')
+    const body = await r.json() as { configured: boolean }
+    expect(body.configured).toBe(false)
   })
 
-  it('reports configured: true when only the DB API key is set', async () => {
-    const prevKey = process.env.ANTHROPIC_API_KEY
-    const prevToken = process.env.ANTHROPIC_AUTH_TOKEN
-    delete process.env.ANTHROPIC_API_KEY
-    delete process.env.ANTHROPIC_AUTH_TOKEN
-    try {
-      await call('PUT', '/settings', { apiKey: 'sk-ant-db-123456' })
-      const r = await call('GET', '/active')
-      const body = await r.json() as { configured: boolean }
-      expect(body.configured).toBe(true)
-    } finally {
-      if (prevKey !== undefined) process.env.ANTHROPIC_API_KEY = prevKey
-      if (prevToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = prevToken
-    }
+  it('reports configured: true when the DB API key is set', async () => {
+    await call('PUT', '/settings', { apiKey: 'sk-ant-db-123456' })
+    const r = await call('GET', '/active')
+    const body = await r.json() as { configured: boolean }
+    expect(body.configured).toBe(true)
   })
 
-  it('reports configured: true when only ANTHROPIC_AUTH_TOKEN is set', async () => {
-    const prevKey = process.env.ANTHROPIC_API_KEY
-    const prevToken = process.env.ANTHROPIC_AUTH_TOKEN
-    delete process.env.ANTHROPIC_API_KEY
-    process.env.ANTHROPIC_AUTH_TOKEN = 'test-token'
-    try {
-      const r = await call('GET', '/active')
-      const body = await r.json() as { configured: boolean }
-      expect(body.configured).toBe(true)
-    } finally {
-      if (prevKey !== undefined) process.env.ANTHROPIC_API_KEY = prevKey
-      else delete process.env.ANTHROPIC_API_KEY
-      if (prevToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = prevToken
-      else delete process.env.ANTHROPIC_AUTH_TOKEN
-    }
+  it('reports configured: false after clearing the DB API key', async () => {
+    await call('PUT', '/settings', { apiKey: 'sk-ant-db-123456' })
+    await call('DELETE', '/settings/key')
+    const r = await call('GET', '/active')
+    const body = await r.json() as { configured: boolean }
+    expect(body.configured).toBe(false)
   })
 })
 
@@ -455,17 +408,19 @@ function parseEvent(block: string): { event: string; data: string } {
 }
 
 describe('POST /api/ai/chat', () => {
+  // Settings are DB-backed only. The chat route 503s before reading
+  // the body if no DB key is set, so we seed a plaintext key per test
+  // (readStoredAiSettings detects legacy plaintext and migrates it to
+  // encrypted on first read — see settings.ts).
   beforeEach(() => {
-    process.env.ANTHROPIC_API_KEY = 'test-key'
-  })
-  afterEach(() => {
-    delete process.env.ANTHROPIC_API_KEY
-    delete process.env.ANTHROPIC_AUTH_TOKEN
+    testDbRef.value!.prepare(`
+      INSERT INTO settings (key, value) VALUES ('ai.anthropic.apiKey', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run('sk-ant-test-key')
   })
 
-  it('returns 503 when no auth env var is set', async () => {
-    delete process.env.ANTHROPIC_API_KEY
-    delete process.env.ANTHROPIC_AUTH_TOKEN
+  it('returns 503 when no DB API key is configured', async () => {
+    testDbRef.value!.prepare('DELETE FROM settings WHERE key = ?').run('ai.anthropic.apiKey')
     const r = await call('POST', '/chat', { sessionId: 1, content: 'hi' })
     expect(r.status).toBe(503)
     expect(await r.json()).toEqual({ ok: false, reason: 'no-api-key' })

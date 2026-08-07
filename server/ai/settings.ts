@@ -1,6 +1,37 @@
+// AI settings storage and retrieval.
+//
+// Resolution order: SQLite only. There is no env-var override path —
+// configuration lives entirely in the `settings` table so a single
+// DB backup captures everything.
+//
+// At-rest encryption:
+//   - The Anthropic API key is encrypted with AES-256-GCM before
+//     writing to `settings.key = 'ai.anthropic.apiKey'`.
+//   - The 32-byte encryption key itself is stored at
+//     `settings.key = 'ai.encryption.key'` (base64).
+//     Putting the key in the same DB is a deliberate trade-off —
+//     see keyEncryption.ts for the rationale.
+//   - baseURL and model stay plaintext. They are not sensitive.
+//
+// Legacy migration:
+//   - Before encryption, the API key was stored as plaintext. On the
+//     first read after this change, any plaintext value is detected
+//     via isEncryptedFormat() and re-encrypted in place. One-time,
+//     automatic, transparent.
+//
+// Failure modes:
+//   - Decryption error → treat as empty (user can re-enter). We do
+//     NOT throw, because the only way to recover is for the user to
+//     type a new key and save.
 import type { Database as DatabaseT } from 'better-sqlite3'
+import {
+  decryptApiKey,
+  encryptApiKey,
+  generateApiKeyEncryptionKey,
+  isEncryptedFormat,
+} from './keyEncryption.js'
 
-export type AiSettingsSource = 'env' | 'db' | 'none'
+export type AiSettingsSource = 'db' | 'none'
 
 export interface StoredAiSettings {
   apiKey: string
@@ -22,12 +53,12 @@ export interface AiSettingsView {
   maskedKey: string
   baseURL: string
   model: string
-  envOverride: boolean
 }
 
 const KEY_API_KEY = 'ai.anthropic.apiKey'
 const KEY_BASE_URL = 'ai.anthropic.baseURL'
 const KEY_MODEL = 'ai.anthropic.model'
+const KEY_ENCRYPTION_KEY = 'ai.encryption.key'
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6'
 export const MAX_AI_API_KEY_LENGTH = 256
 export const MAX_AI_BASE_URL_LENGTH = 2048
@@ -51,9 +82,46 @@ function deleteSetting(db: DatabaseT, key: string): void {
   db.prepare('DELETE FROM settings WHERE key = ?').run(key)
 }
 
+/* Get the encryption key from the DB, creating it on first use. The
+   encryption key is generated once and persisted; rotating it would
+   invalidate every previously-saved API key, so we don't expose a
+   rotate path here. */
+function getOrCreateEncryptionKey(db: DatabaseT): Buffer {
+  const stored = getSetting(db, KEY_ENCRYPTION_KEY)
+  if (stored) {
+    return Buffer.from(stored, 'base64')
+  }
+  const key = generateApiKeyEncryptionKey()
+  setSetting(db, KEY_ENCRYPTION_KEY, key.toString('base64'))
+  return key
+}
+
+/* Read the stored API key, handling both encrypted and legacy
+   plaintext formats. Legacy plaintext is migrated to encrypted on
+   first read so the DB converges to encrypted-only after the first
+   settings load. */
+function readApiKey(db: DatabaseT, encryptionKey: Buffer): string {
+  const blob = getSetting(db, KEY_API_KEY)
+  if (!blob) return ''
+  if (isEncryptedFormat(blob)) {
+    try {
+      return decryptApiKey(blob, encryptionKey)
+    } catch {
+      // Decryption failed (corrupt blob or rotated key). Treat as
+      // empty — the only recovery is for the user to re-enter.
+      return ''
+    }
+  }
+  // Legacy plaintext: migrate to encrypted in place, then return.
+  const plaintext = blob
+  setSetting(db, KEY_API_KEY, encryptApiKey(plaintext, encryptionKey))
+  return plaintext
+}
+
 export function readStoredAiSettings(db: DatabaseT): StoredAiSettings {
+  const encryptionKey = getOrCreateEncryptionKey(db)
   return {
-    apiKey: getSetting(db, KEY_API_KEY),
+    apiKey: readApiKey(db, encryptionKey),
     baseURL: getSetting(db, KEY_BASE_URL),
     model: getSetting(db, KEY_MODEL) || DEFAULT_ANTHROPIC_MODEL,
   }
@@ -72,8 +140,9 @@ export function saveAiSettings(
   const apiKey = input.apiKey?.trim()
   const baseURL = input.baseURL?.trim()
   const model = input.model?.trim()
+  const encryptionKey = getOrCreateEncryptionKey(db)
   if (apiKey !== undefined) {
-    if (apiKey) setSetting(db, KEY_API_KEY, apiKey)
+    if (apiKey) setSetting(db, KEY_API_KEY, encryptApiKey(apiKey, encryptionKey))
     else deleteSetting(db, KEY_API_KEY)
   }
   if (baseURL !== undefined) {
@@ -92,25 +161,17 @@ export function clearAiApiKey(db: DatabaseT): StoredAiSettings {
   return readStoredAiSettings(db)
 }
 
+/* Show 8 leading + 8 trailing chars so the user can verify the right
+   key is loaded without exposing the full secret. Keys shorter than
+   16 chars collapse to bullets — we don't have enough head + tail
+   to safely reveal either end without effectively printing the key. */
 export function maskKey(key: string): string {
   if (!key) return ''
-  if (key.length <= 8) return '••••'
-  return `${key.slice(0, 4)}...${key.slice(-4)}`
+  if (key.length <= 16) return '••••••••'
+  return `${key.slice(0, 8)}...${key.slice(-8)}`
 }
 
 export function getAiRuntimeConfig(db?: DatabaseT): AiRuntimeConfig {
-  const envKey = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY
-  const envBaseURL = process.env.ANTHROPIC_BASE_URL
-  const envModel = process.env.ANTHROPIC_MODEL
-  if (envKey) {
-    return {
-      apiKey: envKey,
-      baseURL: envBaseURL,
-      model: envModel || DEFAULT_ANTHROPIC_MODEL,
-      source: 'env',
-    }
-  }
-
   const stored = db ? readStoredAiSettings(db) : null
   if (stored?.apiKey) {
     return {
@@ -120,26 +181,21 @@ export function getAiRuntimeConfig(db?: DatabaseT): AiRuntimeConfig {
       source: 'db',
     }
   }
-
   return {
-    baseURL: stored?.baseURL || envBaseURL || undefined,
-    model: stored?.model || envModel || DEFAULT_ANTHROPIC_MODEL,
+    baseURL: stored?.baseURL || undefined,
+    model: stored?.model || DEFAULT_ANTHROPIC_MODEL,
     source: 'none',
   }
 }
 
 export function getAiSettingsView(db: DatabaseT): AiSettingsView {
   const stored = readStoredAiSettings(db)
-  const runtime = getAiRuntimeConfig(db)
-  const envOverride = runtime.source === 'env'
-  const displayKey = envOverride ? runtime.apiKey ?? '' : stored.apiKey
   return {
     provider: 'anthropic',
-    configured: Boolean(runtime.apiKey),
-    source: runtime.source,
-    maskedKey: maskKey(displayKey),
-    baseURL: envOverride ? (runtime.baseURL ?? '') : stored.baseURL,
-    model: envOverride ? runtime.model : stored.model,
-    envOverride,
+    configured: Boolean(stored.apiKey),
+    source: stored.apiKey ? 'db' : 'none',
+    maskedKey: maskKey(stored.apiKey),
+    baseURL: stored.baseURL,
+    model: stored.model,
   }
 }

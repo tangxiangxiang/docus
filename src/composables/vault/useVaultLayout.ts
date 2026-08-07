@@ -210,7 +210,7 @@ export function useVaultLayout() {
     const railTrack = `minmax(280px, max(280px, min(${rightRailWidth.value}px, 560px, 38vw)))`
     const right = !rightRailCollapsed.value ? ` 1px ${railTrack}` : ''
     return {
-      gridTemplateColumns: `48px ${left}1fr${right}`,
+      gridTemplateColumns: `40px ${left}1fr${right}`,
       gridTemplateRows: '1fr 24px',
     }
   })

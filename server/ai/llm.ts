@@ -6,15 +6,15 @@
 //     caller can inspect content blocks (incl. tool_use) and
 //     stop_reason after the stream ends.
 //   - streamClaude(opts): high-level. Reads auth + base URL from
-//     process.env, opens a `client.messages.stream`, delegates to
-//     pumpStream. Forwards `tools` and `toolChoice` if the caller
-//     passes them.
+//     the DB-backed settings store, opens a `client.messages.stream`,
+//     delegates to pumpStream. Forwards `tools` and `toolChoice` if
+//     the caller passes them.
 //
-// Auth resolution order: environment > DB settings. Environment
-// covers deployment/admin overrides (`ANTHROPIC_AUTH_TOKEN`, then
-// `ANTHROPIC_API_KEY`, plus optional `ANTHROPIC_BASE_URL` /
-// `ANTHROPIC_MODEL`). DB settings power the in-app Settings dialog
-// for desktop/personal use.
+// Auth + base URL + model all come from the SQLite `settings` table
+// (see settings.ts). The API key is stored encrypted at rest
+// (AES-256-GCM, keyEncryption.ts) and decrypted transparently on
+// read. There is no env-var override path — everything goes through
+// the in-app Settings dialog.
 //
 // The SDK type is opaque (we don't import Anthropic's TS types
 // beyond the constructor), so any object with `on` and

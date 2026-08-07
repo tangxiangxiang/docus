@@ -30,7 +30,7 @@ describe('useVaultLayout', () => {
     expect(layout.rightRailTab.value).toBe('toc')
     expect(layout.rightRailWidth.value).toBe(380)
     expect(layout.rightRailCollapsed.value).toBe(false)
-    expect(layout.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr 1px minmax(280px, max(280px, min(380px, 560px, 38vw)))')
+    expect(layout.vaultStyle.value.gridTemplateColumns).toBe('40px 260px 1px 1fr 1px minmax(280px, max(280px, min(380px, 560px, 38vw)))')
   })
 
   it('migrates legacy file tree and TOC width fields', () => {
@@ -83,7 +83,7 @@ describe('useVaultLayout', () => {
   it('removes the right rail tracks when collapsed', () => {
     const { layout } = setup()
     layout.rightRailCollapsed.value = true
-    expect(layout.vaultStyle.value.gridTemplateColumns).toBe('48px 260px 1px 1fr')
+    expect(layout.vaultStyle.value.gridTemplateColumns).toBe('40px 260px 1px 1fr')
   })
 
   it('persists only the unified right rail fields', async () => {

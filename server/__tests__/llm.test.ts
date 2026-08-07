@@ -1,6 +1,29 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import Database from 'better-sqlite3'
 import { pumpStream } from '../ai/llm'
 import { ChatError } from '../ai/errors'
+import { applyMigrations } from '../db'
+
+// Settings are DB-backed only, so streamClaude's no-api-key check now
+// reads from the DB. Mock getDb() to a fresh in-memory instance per
+// test so the result depends on what we seed — not on whatever the
+// dev machine's ./data/docus.db happens to contain.
+const { testDbRef } = vi.hoisted(() => ({
+  testDbRef: { value: null as Database.Database | null },
+}))
+
+vi.mock('../db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../db')>()
+  return {
+    ...actual,
+    getDb: () => testDbRef.value!,
+  }
+})
+
+beforeEach(() => {
+  testDbRef.value = new Database(':memory:')
+  applyMigrations(testDbRef.value)
+})
 
 // A minimal MessageStream-shaped object: on(event, cb) registers
 // handlers, finalMessage() returns a promise that resolves on demand.
@@ -62,18 +85,9 @@ describe('pumpStream', () => {
 import { streamClaude } from '../ai/llm'
 
 describe('streamClaude', () => {
-  it('throws ChatError(no-api-key) when no auth env var is set', async () => {
-    const prevKey = process.env.ANTHROPIC_API_KEY
-    const prevToken = process.env.ANTHROPIC_AUTH_TOKEN
-    delete process.env.ANTHROPIC_API_KEY
-    delete process.env.ANTHROPIC_AUTH_TOKEN
-    try {
-      await expect(
-        streamClaude({ system: 's', messages: [], model: 'm', onToken: () => {} })
-      ).rejects.toMatchObject({ reason: 'no-api-key' })
-    } finally {
-      if (prevKey !== undefined) process.env.ANTHROPIC_API_KEY = prevKey
-      if (prevToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = prevToken
-    }
+  it('throws ChatError(no-api-key) when no DB API key is set', async () => {
+    await expect(
+      streamClaude({ system: 's', messages: [], model: 'm', onToken: () => {} })
+    ).rejects.toMatchObject({ reason: 'no-api-key' })
   })
 })

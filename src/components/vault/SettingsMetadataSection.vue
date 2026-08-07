@@ -1,0 +1,75 @@
+<script setup lang="ts">
+import { useI18n } from '../../composables/useI18n'
+import type { FrontmatterCleanupPreview, MetadataMigrationSummary } from '../../lib/api'
+
+/* The metadata section is presentational — async side effects
+   (confirm dialogs, toasts, change publishing) live in the parent so
+   this component stays unaware of the toast / confirm / vault-context
+   machinery. The parent hands down the callbacks and the section
+   only decides when to fire them. */
+
+defineProps<{
+  migrationSummary: MetadataMigrationSummary | null
+  cleanupPreview: FrontmatterCleanupPreview | null
+  cleanedPaths: string[]
+  previewing: boolean
+  mutatingMetadata: boolean
+}>()
+
+const emit = defineEmits<{
+  preview: []
+  restore: []
+  remove: []
+}>()
+
+const { t } = useI18n()
+</script>
+
+<template>
+  <section class="settings-section" aria-labelledby="settings-metadata-title">
+    <header class="settings-section-header">
+      <div>
+        <h3 id="settings-metadata-title">{{ t('settings.metadata') }}</h3>
+        <p>{{ t('settings.metadata_subtitle') }}</p>
+      </div>
+      <div class="settings-section-actions">
+        <button type="button" class="btn" :disabled="previewing" @click="emit('preview')">
+          {{ t(previewing ? 'settings.checking' : 'settings.check_cleanup') }}
+        </button>
+      </div>
+    </header>
+    <div class="settings-section-body">
+      <div v-if="migrationSummary" class="settings-metadata-stats">
+        <span><strong>{{ migrationSummary.verified }}</strong> {{ t('settings.verified') }}</span>
+        <span><strong>{{ migrationSummary.cleaned }}</strong> {{ t('settings.cleaned') }}</span>
+        <span :class="{ danger: migrationSummary.failed > 0 }">
+          <strong>{{ migrationSummary.failed }}</strong> {{ t('settings.failed') }}
+        </span>
+      </div>
+      <div v-if="cleanupPreview" class="settings-cleanup-result" aria-live="polite">
+        <span><strong>{{ cleanupPreview.candidates.length }}</strong> {{ t('settings.ready') }}</span>
+        <span><strong>{{ cleanupPreview.blocked.length }}</strong> {{ t('settings.blocked') }}</span>
+        <span>
+          <strong>{{ cleanupPreview.candidates.filter((item) => item.customFields.length).length }}</strong>
+          {{ t('settings.custom_fields') }}
+        </span>
+      </div>
+      <div v-if="cleanupPreview" class="settings-metadata-actions">
+        <button
+          v-if="cleanedPaths.length"
+          type="button"
+          class="btn"
+          :disabled="mutatingMetadata"
+          @click="emit('restore')"
+        >{{ t('settings.restore_original', { count: cleanedPaths.length }) }}</button>
+        <button
+          v-if="cleanupPreview.candidates.length"
+          type="button"
+          class="btn btn-danger"
+          :disabled="mutatingMetadata || cleanupPreview.blocked.length > 0"
+          @click="emit('remove')"
+        >{{ t('settings.remove_frontmatter', { count: cleanupPreview.candidates.length }) }}</button>
+      </div>
+    </div>
+  </section>
+</template>

@@ -40,4 +40,5 @@ src/content/
 .env
 .env.local
 .env.*.local
+.env-bak
 *.tsbuildinfo
