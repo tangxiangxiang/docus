@@ -17,7 +17,7 @@ Production code baseline for the Tags Query & Index Refactor:
 
 `8a5b452b9e48c97d52065c30204ff57b898d4a1a`
 
-See [`docs/tags-query-index-refactor-final-closure.md`](docs/tags-query-index-refactor-final-closure.md)
+See [`docs/archive/closures/tags-query-index-refactor-final-closure.md`](docs/archive/closures/tags-query-index-refactor-final-closure.md)
 for the complete closure record.
 
 ## Edit Feature Closure — 2026-07-30
@@ -37,5 +37,5 @@ Final production code baseline:
 
 `83abbf336785290a667321a8817ff6898176a678`
 
-See [`docs/edit-feature-final-closure.md`](docs/edit-feature-final-closure.md)
+See [`docs/archive/closures/edit-feature-final-closure.md`](docs/archive/closures/edit-feature-final-closure.md)
 for the complete closure record.

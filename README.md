@@ -1,555 +1,134 @@
-# docus
+# Docus
 
-> **Write in Inbox. Keep in Archive. Let AI connect the dots.**
+[简体中文](README.zh-CN.md) · [Documentation](docs/README.md) · [Deployment](docs/deployment/overview.md)
 
-A Vue 3 + TypeScript personal knowledge base. The vault lives as plain `.md` files under
-`src/content/` and is served by an in-process Hono backend. The editor
-is Monaco; the file tree and the right pane (editor + live preview)
-share a VS-Code-style layout. A right-side AI chat panel rounds out
-the surface — its history is persisted to a small SQLite database that
-the Hono server opens on startup.
+Docus is a self-hosted Markdown knowledge workspace for writing, organizing, versioning, linking, and optionally working with AI. Your notes remain ordinary files; Docus adds a Vue interface, safe server-side mutations, SQLite metadata, explicit Git versions, and browser draft recovery.
 
-> **The vault is your data, not project code.** Files under `src/content/`
-> are **not** tracked by the docus git repository — they belong to your
-> notes, not to this tool. The vault has its own git history
-> (`src/content/.git/`) managed by `server/history/`. docus's git repo
-> only tracks the tool: source, configs, docs.
+![Docus logo](public/logo.svg)
 
-## Philosophy
+## Highlights
 
-The vault is split into three zones, and docus treats them differently:
+- **File-based Markdown vault** — keep readable `.md` files under `inbox`, `literature`, and `archive`.
+- **Focused editor and reader** — Monaco editing, sanitized Markdown rendering, task lists, footnotes, Mermaid, Markmap, and Wiki links.
+- **Resilient saves** — autosave, compare-and-swap conflict detection, atomic writes, lifecycle locks, and startup crash recovery.
+- **Draft recovery** — bounded unsaved-buffer recovery in browser IndexedDB.
+- **Metadata and search** — SQLite-backed titles, summaries, tags, stable document IDs, file-tree filters, and a command palette.
+- **Links and backlinks** — resolve Wiki and relative Markdown links and keep references coordinated across supported renames and moves.
+- **Explicit history** — create, compare, restore, and withdraw versions in the vault's own Git repository.
+- **Optional AI** — Anthropic or OpenAI chat with live workspace context and validated file/metadata tools.
+- **Self-hosted runtime** — one production process serves the Vue application and Hono API; Docker Compose is included.
 
-- **`literature/`** holds your reading notes — excerpts, annotations, and follow-up thinking tied to long-form sources (books, papers, articles). The originals live elsewhere; this is what you wrote while working through them.
-- **`inbox/`** holds what you are still thinking through — loose notes, half-formed ideas, anything that has not yet earned its place.
-- **`archive/`** holds what has settled into knowledge — refined notes you return to, structured by topic, meant to last.
+## Quick Start
 
-Notes flow one way: Literature feeds Inbox, where AI helps you think; what earns its place then moves to Archive, where AI helps you connect the dots. docus is built around that flow.
-
-## The Docus mark
-
-The Docus logo is a knowledge crest built from two circles of different sizes,
-connected at the center. The larger circle represents the personal knowledge
-space; the smaller circle represents an idea, note, or newly discovered piece
-of information. Their connection represents the links formed through reading,
-thinking, and AI-assisted discovery.
-
-Together, the two connected circles express Docus as a **second brain**: not
-just a place to store notes, but a living network that helps ideas find one
-another and become durable knowledge.
-
-The expanded logo keeps one large circle at the center and places nine smaller
-nodes around it. Nine is traditionally regarded as the highest single digit in
-Chinese culture, symbolizing completeness and culmination. The nine nodes
-represent ideas arriving from different directions and converging into Docus,
-turning scattered thoughts into an organized knowledge network.
-
-At the center is a stylized seated figure, formed from a flame and lotus-like
-curves. It represents the person who remains attentive and grounded while
-working with knowledge. This is the idea of **定中宫** — keeping a calm center
-while information flows in from every direction. The moving particles along the
-nine links visualize reading, thinking, practice, and AI-assisted discovery
-being gathered into one place, rather than knowledge remaining as disconnected
-fragments.
-
-The central figure is rendered in white on dark surfaces and black on light
-surfaces. The contrast changes with the theme, while the symbol and its meaning
-remain unchanged.
-
-See the [Logo Design Final Closure](docs/logo-design-final-closure.md) for the
-complete design baseline and motion rules.
-
-## Feature Status
-
-### Edit Feature
-
-The Edit feature development program is complete and is now in maintenance mode.
-
-Final production code baseline:
-
-`83abbf336785290a667321a8817ff6898176a678`
-
-See [`docs/edit-feature-final-closure.md`](docs/edit-feature-final-closure.md)
-for the full closure record.
-
-### Tags Query & Index Refactor
-
-The Tags Query & Index Refactor (Phase 1 + Phase 1.1 review fixes) is
-closed and in maintenance mode.
-
-Final production code baseline:
-
-`8a5b452b9e48c97d52065c30204ff57b898d4a1a`
-
-| Document | Link |
-|----------|------|
-| Spec | [`docs/superpowers/specs/2026-07-30-tags-query-index-refactor-design.md`](docs/superpowers/specs/2026-07-30-tags-query-index-refactor-design.md) |
-| Plan | [`docs/superpowers/plans/2026-07-30-tags-query-index-refactor-implementation-plan.md`](docs/superpowers/plans/2026-07-30-tags-query-index-refactor-implementation-plan.md) |
-| Implementation Record | [`docs/tags-query-index-refactor-implementation-record.md`](docs/tags-query-index-refactor-implementation-record.md) |
-| Closure | [`docs/tags-query-index-refactor-final-closure.md`](docs/tags-query-index-refactor-final-closure.md) |
-
-**Tag Management (Rename / Merge / Remove) is NOT STARTED.**
-These are separate features that require new Spec and Owner Approval
-before any implementation.
-
-### Vault Git History
-
-Final documentation Contract Completion is complete. Production
-remediation has not started, Closure work is still in progress, and
-the feature is **not** in maintenance mode.
-
-Documentation Review Baseline (the commit on `main` at the time
-the documentation chain was assembled):
-
-`00b17359d151bbdbe56115ed992700ecbb5e1ca1`
-
-This is **not** the Final Production Code Baseline — the final
-baseline is recorded only after the Closure Gate in
-`docs/vault-git-history-final-closure.md` §6 is satisfied.
-
-| Document | Link |
-|----------|------|
-| Spec | [`docs/superpowers/specs/2026-07-30-vault-git-history-design.md`](docs/superpowers/specs/2026-07-30-vault-git-history-design.md) |
-| Plan | [`docs/superpowers/plans/2026-07-30-vault-git-history-implementation-plan.md`](docs/superpowers/plans/2026-07-30-vault-git-history-implementation-plan.md) |
-| Implementation Record | [`docs/vault-git-history-implementation-record.md`](docs/vault-git-history-implementation-record.md) |
-| Draft Closure | [`docs/vault-git-history-final-closure.md`](docs/vault-git-history-final-closure.md) |
-
-The feature currently exposes, on `main`:
-
-- `GET /api/history/{capability,status,log,file,diff}`,
-  `POST /api/history/{commits,drop,restore,repair-index,
-  repair-index/discard,content-hashes}`,
-  `GET /api/history/repair-status`.
-- Client composables: `useHistory`, `useHistoryCommit`,
-  `useHistoryTimeline`, `useHistorySnapshots`,
-  `useHistoryComparisons`, `useHistoryRestore`,
-  `useHistoryWithdraw`, plus the per-vault
-  `pathMutationLock`.
-- Vue components: `HistoryPanel`, `HistoryChangesPanel`,
-  `HistorySnapshotPane`, `HistoryComparisonPane`, the three
-  `Timeline*` rows, and `SideBySideDiff`.
-
-**Closure blockers currently open** (see the Spec §25 and Draft
-Closure §4 for the authoritative titles, severities, and required
-tests):
-
-- `H-C1` — `/status` genuine server failures are swallowed as
-  graceful unavailable — P1, Closure Blocker: Yes.
-- `H-C2` — Create Version can report a successful commit as failure
-  after refresh — P1, Closure Blocker: Yes. Withdraw already settles
-  its three principal refreshes, but remaining success callbacks need
-  isolation tests.
-- `H-C3` — Routine Real-Index sync can overwrite target-path staged
-  intent — P1, Closure Blocker: Yes.
-- `H-C4` — Withdraw lacks valid canonical same-vault marker
-  enforcement — P1, Closure Blocker: Yes. The marker is an
-  accidental-withdrawal guard, not cryptographic provenance proof.
-- `H-C5` — Restore ref/read/write/result are not one atomic observed
-  snapshot — P1, Closure Blocker: Yes.
-- `H-C6` — Short Withdraw SHA is accepted but never equals full HEAD
-  — P2, Closure Blocker: Yes.
-- `H-C7` — Timeline grouping uses fixed-duration day arithmetic
-  across DST — P2, Closure Blocker: Yes.
-- `H-C8` — Three-platform full-suite verification is missing — P1
-  (Verification), Closure Blocker: Yes.
-- `H-C9` — Required History regression coverage is incomplete — P1
-  (Verification), Closure Blocker: Yes.
-- `H-C10` — History filesystem reads/writes lack symlink-safe Vault
-  containment — P1, Closure Blocker: Yes.
-- `H-C11` — HEAD and Withdraw parent resolution do not fail closed —
-  P1, Closure Blocker: Yes.
-- `H-C12` — Cross-process History mutation and Repair metadata
-  serialization is incomplete — P1, Closure Blocker: Yes.
-- `H-C13` — `ensureRepo` bootstrap is not atomically serialized and
-  its non-overwrite check has TOCTOU — P2, Closure Blocker: Yes.
-- `H-C14` — Textual Git-log separator is injectable through commit
-  messages — P2, Closure Blocker: Yes.
-
-All behavior required to close these findings is an **Intended
-contract / Planned remediation / Closure requirement** and is **not
-implemented on the reviewed production baseline**.
-
-The Draft Closure is the **single source of truth** for what
-must be verified before the feature may be declared CLOSED.
-
-## Quick start
+Requirements: Node.js 22 or 24, npm, and Git.
 
 ```bash
-npm install
-npm run dev          # vite + Hono middleware, http://localhost:5173
-npm test             # run Vitest and print the current totals
-npm run build        # vue-tsc -b && vite build
+npm ci
+mkdir -p src/content/inbox src/content/literature src/content/archive
+npm run dev
 ```
 
-The Hono backend (`server/`) is mounted as Vite middleware in dev, so
-no separate process is required. On first run the server creates
-`data/docus.db` (gitignored) and applies any pending SQL migrations
-from `server/migrations/`. Endpoints are namespaced under `/api/...`
-and documented inline in [server/index.ts](server/index.ts).
+Open the URL printed by Vite, normally `http://localhost:5173`.
 
-The AI panel uses the provider configured in Settings. API keys are
-stored encrypted in SQLite and the browser never sees them. An explicit
-`DOCUS_MASTER_KEY` or `DOCUS_MASTER_KEY_FILE` is optional: when neither
-is set, Docus creates `data/.docus-master-key` outside SQLite on the first
-API-key save. When no API key is configured, the panel shows a banner and
-disables sending.
+The source development path requires the three vault roots to exist. The production server creates missing initial roots automatically. See [Installation](docs/getting-started/installation.md) and [Quick Start](docs/getting-started/quick-start.md) for details.
 
-## Repository layout
+## How It Fits Together
 
-```
-src/
-  views/                 One component per route (Vault, Tags, Article, TagDetail)
-  components/
-    vault/               FileTree, TreeRow, EditorPane, PreviewPane, EditorTabs,
-                         Breadcrumb, CommandPalette, StatusBar, TagPanel,
-                         ActivityBar, AiPanel, AiSessionPicker
-  composables/           useToast / useConfirm / usePrompt / useTheme
-                         (UI singletons)
-    archiveProtocol.ts   Pure functions: which paths are protected
-                         and the user-facing error messages
-    vault/               useVaultLayout, useEditorTabs, useTagFilter,
-                         useAiHistory, useCurrentNote — the state and
-                         side-effects split out of VaultView.vue and
-                         AiPanel.vue. (useTagFilter is currently
-                         un-referenced; see
-                         docs/tags-query-index-refactor-final-closure.md §7.)
-  lib/
-    api.ts               Typed fetch wrappers for /api/posts, /api/tree, …
-    ai-api.ts            Typed fetch wrappers for /api/ai/*, including
-                         the streamChat SSE parser for /api/ai/chat
-    search.ts            MiniSearch full-text index, built client-side
-    markdown.ts, frontmatter.ts
-  content/               The vault itself — three top-level folders
-                         (inbox / literature / archive) plus everything
-                         the user writes. NOT tracked by docus's git
-                         repo; vault's own history lives in
-                         src/content/.git/
-  router/                vue-router setup (vault uses a splat param)
-
-server/
-  index.ts               Top-level Hono app; mounts the sub-routers
-  db.ts                  better-sqlite3 singleton + applyMigrations runner
-  migrations/            Numbered .sql files, applied transactionally on
-                         startup against data/docus.db
-  ai/                    AI sub-app
-    errors.ts            Tagged ChatError union (no-api-key / not-found /
-                         empty / aborted / llm-error)
-    llm.ts               streamClaude(): thin wrapper around
-                         @anthropic-ai/sdk, the only file that knows
-                         about the SDK
-    chat.ts              runChat() orchestrator + buildSystemPrompt();
-                         pure business logic, no HTTP knowledge
-    messages.ts          Append/list messages; validates role ∈ {user, assistant}
-    sessions.ts          Sessions CRUD
-    routes.ts            Hono sub-router; the only place that knows HTTP
-  tree.ts                Filesystem walker -> PostSummary[] / TreeNode[]
-  paths.ts               Path validation + filesystem <-> URL mapping
-  vite-plugin.ts         Mounts the Hono app as Vite middleware
-  __tests__/             vitest in node mode; tests call app.fetch(req)
-                         directly, with :memory: databases for the AI suite
-
-docs/superpowers/
-  specs/                 Design docs (per feature)
-  plans/                 Implementation plans (per feature)
+```mermaid
+flowchart LR
+  Browser["Vue browser app"] -->|/api| Server["Hono server"]
+  Server --> Vault["Markdown vault + vault Git"]
+  Server --> DB["SQLite metadata and AI state"]
+  Browser --> Drafts["IndexedDB recovery drafts"]
+  Server --> AI["Anthropic or OpenAI"]
 ```
 
-## The Archive protocol
+The browser never writes vault files directly. The server owns path validation, archive rules, filesystem transactions, SQLite coordination, history, and provider credentials. The stores have different backup semantics; read [Architecture](docs/architecture/overview.md) and [Storage](docs/architecture/storage.md) before operating a production instance.
 
-The three top-level folders are part of the spec, not user-editable
-choices:
+## Vault Model
 
-- **`inbox/`** — capture bucket. Anything new lands here.
-- **`literature/`** — long-form reference material.
-- **`archive/`** — archived notes. The structure is protected: folders may be created and items may be moved inside archive for organization, but archived notes are not created there directly — they enter through explicit archive flows.
+The default vault is `src/content/`. Set `VAULT_DIR` for another location.
 
-Rename, delete, and re-parenting of these roots are rejected by the
-client and the server. The rules live in
-[src/composables/archiveProtocol.ts](src/composables/archiveProtocol.ts)
-as a flat module of pure functions. The same rules gate both the
-context-menu UI (protected rows show only allowed actions) and the
-filesystem writes (a blocked op shows a Chinese toast and returns
-early).
-
-Adding a fourth protected root, or changing the user-facing messages,
-means editing one file.
-
-## The vault
-
-The vault lives at `/vault` and accepts a path splat: `/vault/<path>`.
-Open via the file tree, ⌘P / Ctrl+P command palette, or by deep-linking
-to a path.
-
-Editor tabs hold unsaved state per file. Edits auto-save 800ms after
-the last keystroke; the debounce lives in `useEditorTabs`. ⌘S saves
-immediately, ⌘W closes the active tab (with a confirm if dirty), ⌘B
-toggles the Files panel, the AI button in the NavBar toggles the AI
-panel.
-
-Layout state — which side panel is open, side-panel widths, the
-editor/preview split ratio — is persisted to `localStorage` under
-`docus.vault.layout`. The serializer is a custom one because the
-schema used to be `{ fileTreeOpen, fileTreeWidth }` and old installs
-still have that shape; reads translate it forward. AI-specific
-layout keys (`aiOpen`, `aiPanelWidth`) follow the same pattern.
-
-## AI panel
-
-The right rail of the vault hosts a chat panel styled after the
-Claude Code panel in VS Code. Open it from the NavBar button
-between Search and the view-mode toggle; the splitter on the panel's
-right edge resizes it in the same `[220, 600]px` range as the left
-side panel.
-
-The panel is **multi-session**. Each session has an auto-derived
-title (trimmed to 30 code points from the first user message) and
-can be renamed, switched, or deleted from the popover opened by
-clicking the title. The active session id is stored server-side and
-restored on reload. Messages append optimistically: pressing Enter
-inserts the user message immediately and the server's echo replaces
-it once the HTTP response lands.
-
-The composer calls Anthropic via the server. Pressing Enter opens
-`POST /api/ai/chat`; the server streams tokens back over SSE and the
-panel fills the assistant bubble as they arrive. The user message is
-appended optimistically; the optimistic user id is replaced in place
-once the server echoes its real id, and tokens append to the assistant
-bubble character by character. A blinking caret sits at the end of
-the in-flight bubble and disappears on `done`. Errors during the
-stream finalize the bubble with the partial text plus a
-`[error: <reason>]` marker; the user message is never lost.
-
-The currently open note is sent as system context: the panel header
-shows a `📎 <title>` chip when a note is open (hidden on `/tags` and
-similar), and the next send includes the note's saved content. The
-note is fetched once per path change by
-`useCurrentNote` (module-level singleton in
-[src/composables/vault/useCurrentNote.ts](src/composables/vault/useCurrentNote.ts)),
-which derives the path from the `/vault/<path>` splat and caches
-the server-saved body. The cached content lags the editor's unsaved
-buffer by the 800ms auto-save debounce — acceptable for v1; closing
-that gap is a separate spec.
-
-When no AI API key is configured, the panel shows a persistent
-banner above the composer and the send button is disabled. The
-configured state is read from the `/active` response on mount, so
-the banner is visible before the first send.
-
-The composable is `useAiHistory` (module-level singleton in
-[src/composables/vault/useAiHistory.ts](src/composables/vault/useAiHistory.ts)).
-Session and message state live in a `ref`-based store; the HTTP wire
-format (including the typed `ChatEvent` SSE parser) is defined in
-[src/lib/ai-api.ts](src/lib/ai-api.ts). Both are the only consumers
-of the `/api/ai/*` sub-router.
-
-## Backend
-
-The backend is a small Hono app. Most endpoints are stateless and
-read or write files under `src/content/`; the AI sub-router reads
-and writes to a SQLite database.
-
-### Persistence
-
-The server opens `data/docus.db` via `better-sqlite3` on startup
-([server/db.ts](server/db.ts)). The first run applies
-`server/migrations/0001_ai_history.sql`, which creates `sessions`,
-`messages`, and a single-row `settings` table (currently used for
-the active session id). Migrations are tracked by a `schema_version`
-table and applied transactionally; new migrations are numbered files
-dropped into `server/migrations/`. WAL mode is on by default;
-foreign keys are enforced.
-
-### HTTP endpoints
-
-**Vault / filesystem**
-
-| Method | Path                       | Purpose                                     |
-| ------ | -------------------------- | ------------------------------------------- |
-| GET    | `/api/tree`                | `TreeNode[]` (folders + files, sorted)      |
-| GET    | `/api/posts`               | `PostSummary[]` (flat post metadata)        |
-| GET    | `/api/posts/<path>`        | Raw markdown + parsed frontmatter           |
-| POST   | `/api/posts`               | Create a new post                           |
-| PUT    | `/api/posts/<path>`        | Save raw content                            |
-| PATCH  | `/api/posts/<path>`        | Rename within folder (`name`) or move (`targetPath`) |
-| DELETE | `/api/posts/<path>`        | Delete a file                               |
-| POST   | `/api/folders`             | Create an empty folder                      |
-| PATCH  | `/api/folders/<path>`      | Single-segment folder rename                |
-| DELETE | `/api/folders/<path>`      | Recursive folder delete (requires `?recursive=true`) |
-| GET    | `/api/health`              | `{ ok: true }`                              |
-
-**AI / SQLite**
-
-| Method | Path                                | Purpose                                     |
-| ------ | ----------------------------------- | ------------------------------------------- |
-| GET    | `/api/ai/sessions`                  | `Session[]` (most-recent first)             |
-| GET    | `/api/ai/sessions/<id>/messages`    | `Message[]` (chronological)                 |
-| POST   | `/api/ai/sessions`                  | Create a session (`{ title? }`)             |
-| PATCH  | `/api/ai/sessions/<id>`             | Rename (`{ title }`)                        |
-| DELETE | `/api/ai/sessions/<id>`             | Delete (cascades messages; clears active if needed) |
-| POST   | `/api/ai/sessions/<id>/messages`    | Append a message (validates role)           |
-| GET    | `/api/ai/active`                    | `{ activeId, configured }` — `configured` is `false` when no API key is stored in SQLite |
-| PUT    | `/api/ai/active`                    | Set active session id (or `null`)           |
-| POST   | `/api/ai/chat`                      | Streaming chat; body is `{ sessionId, content, currentNotePath?, currentNoteContent? }`, response is SSE (`user` / `token` / `done` / `error` events). Returns 503 with `{ reason: 'no-api-key' }` when no API key is stored in SQLite. |
-
-Path validation for the filesystem routes is in
-[server/paths.ts](server/paths.ts). The AI sub-router has no
-filesystem involvement; its request bodies are JSON-validated by
-the handlers, and SQL row mappers translate snake_case columns to
-the camelCase wire format declared in `src/lib/ai-api.ts`.
-
-### Environment variables
-
-| Var | Required | Default | Purpose |
-| --- | --- | --- | --- |
-| `DOCUS_MASTER_KEY` | no | auto-managed `data/.docus-master-key` | Optional external 32-byte AES-256-GCM master key, encoded as 64 hex characters or base64. Never stored in SQLite. |
-| `DOCUS_MASTER_KEY_FILE` | optional alternative | — | File containing the same master key; the environment value takes precedence when both are set. |
-
-AI provider, API key, model, and base URL are configured only in the Settings
-panel and read from SQLite; they are not read from `.env`. If you do not
-provide a master key, protect and back up `data/.docus-master-key` separately
-from SQLite. A template is at
-[`.env.example`](.env.example); `.env` is gitignored.
-
-## Testing
-
-```bash
-npm test
+```text
+src/content/
+├── inbox/       active notes and new material
+├── literature/  reading and source notes
+└── archive/     retained, intentionally constrained notes
 ```
 
-The test suite includes:
+The three roots cannot be renamed or deleted. Notes move from active roots into `archive`; archived notes cannot be renamed, deleted, or moved back out through Docus. See [Vault and Archive Protocol](docs/user-guide/vault.md).
 
-- **Component tests** under `src/components/**/__tests__/` —
-  cover the file tree, context menu, drag-and-drop, inline rename,
-  the kind-aware lookup that prevents a same-name file/folder
-  collision from misrouting renames, and the tag panel. The
-  composables `useConfirm` / `usePrompt` / `useToast` are
-  `vi.mock`-ed; tree fixtures are inline literals.
-- **Composable tests** under `src/composables/**/__tests__/` —
-  cover the editor tabs state machine, the tag filter, the vault
-  layout persistence, the markdown render, the `useAiHistory`
-  singleton (including the new `sendAndStream` happy / error /
-  busy-guard paths), and the `useCurrentNote` singleton. The AI
-  singletons expose `__resetForTesting` exports to isolate state
-  between tests.
-- **Library tests** under `src/lib/__tests__/` — cover the full-text
-  search index, the AI HTTP wire format (including the `streamChat`
-  SSE parser), and the AI typed fetch wrappers (`fetch` is
-  `vi.mock`-ed).
-- **View tests** under `src/views/__tests__/` — cover VaultView and
-  the Tags view.
-- **Server tests** under `server/__tests__/` — exercise the path
-  validation, the PUT handler, the tree builder, the SQLite
-  migration runner, the AI sessions and messages services, the AI
-  HTTP sub-router (with `vi.mock` of the DB module), the LLM SDK
-  wrapper, the `runChat` / `buildSystemPrompt` orchestrator, and a
-  smoke test that mounts the full Hono app (including a streaming
-  `POST /api/ai/chat` round-trip). The AI suite uses `:memory:`
-  databases via `vi.hoisted` to inject a fresh DB per test, and
-  `streamClaude` is `vi.mock`-ed at the module boundary so the
-  tests don't hit the network.
+## Production Deployment
 
-Run `npm test` to see the current test-file and test-case totals.
-Manual smoke testing remains useful for browser-specific editor behavior.
-
-## Conventions
-
-- **Composables** in `src/composables/` follow the singleton-factory
-  pattern when they hold cross-component state (toasts, confirm
-  queue, prompt queue, theme, AI history), and the pure-function-
-  module pattern when they are stateless rules (`archiveProtocol.ts`).
-- **The vault composables** (`useVaultLayout`, `useEditorTabs`)
-  are per-component factories. Cross-composable
-  dependencies are taken as constructor arguments — `useEditorTabs({ selectPanel })`
-  — so the coupling is typed and
-  intention-revealing.
-- **The AI service layer** in `server/ai/` is a flat module of
-  pure functions: each function takes the open `Database` as its
-  first argument and returns plain JS values. The Hono handlers in
-  `server/ai/routes.ts` are the only callers; the service layer
-  has no knowledge of HTTP. The LLM wrapper (`server/ai/llm.ts`)
-  is the only file that imports `@anthropic-ai/sdk`; the rest of
-  the module talks to it through the `streamClaude` callback
-  signature, so the SDK can be `vi.mock`-ed at the module
-  boundary in tests. The tagged `ChatError` union (in
-  `server/ai/errors.ts`) is the only error type the service layer
-  throws — every failure has a `reason` string that the route
-  maps to a status code or an SSE `error` event.
-- **Streaming chat wire format.** `POST /api/ai/chat` is
-  server-sent events (`Content-Type: text/event-stream`) with four
-  event types: `user` (saved user row id), `token` (incremental
-  text), `done` (final user + assistant row ids), `error` (a
-  reason string). The server uses Hono's built-in `streamSSE`;
-  the client parser lives in `streamChat` (in
-  [src/lib/ai-api.ts](src/lib/ai-api.ts)) and yields typed
-  `ChatEvent` objects as an `AsyncGenerator`. The composable
-  iterates it and updates the optimistic messages by object
-  identity — that's how in-flight bubbles are distinguished from
-  persisted ones.
-- **Server types** (`PostSummary`, `TreeNode`, `PostDetail`) live
-  in [src/lib/api.ts](src/lib/api.ts); the AI wire types (`Session`,
-  `Message`) live in [src/lib/ai-api.ts](src/lib/ai-api.ts). Both
-  are imported by the client and the server. The server is
-  intentionally not in the `tsc` include graph (no
-  `tsconfig.server.json`), but the import direction is
-  `server/ -> src/lib/*` to keep one source of truth for each wire
-  format.
-- **Migrations** are forward-only SQL files. Each one must be
-  idempotent on its own (use `CREATE TABLE IF NOT EXISTS`,
-  `CREATE INDEX IF NOT EXISTS`, etc.) and is wrapped in a
-  transaction by the runner. To roll back, write a forward fix —
-  never edit a committed migration.
-
-## Deployment
-
-Production runs in a single Docker container that hosts both the
-prebuilt SPA (`dist/`) and the Hono `/api/*` backend on one port
-(3000), backed by SQLite via `better-sqlite3` and an
-Anthropic-compatible LLM proxy.
+The recommended deployment is Docker Compose:
 
 ```bash
 docker compose up -d --build
-open http://localhost:3000
+curl --fail http://127.0.0.1:3000/api/health
 ```
 
-AI configuration does not require a `.env` file: enter the provider,
-API key, model, and base URL in Settings. If no explicit master key is
-provided, the container creates `/app/data/.docus-master-key` in the
-persistent data volume. Protect and back up that file separately from
-SQLite; `.env` remains optional for other deployment overrides.
+By default, Compose binds only to `127.0.0.1:3000`, mounts `./src/content` as the vault, and stores SQLite plus the managed AI master key in the `docus-data` volume.
 
-The Dockerfile is a three-stage build: `deps` installs everything
-and compiles the `better-sqlite3` native module against the
-in-container toolchain (avoids host-ABI prebuilds); `build` runs
-`vue-tsc -b` and `vite build`; `runtime` copies just the
-production `node_modules`, `dist/`, and `server/` into a
-`node:22-bookworm-slim` with `tini` for proper SIGTERM and a
-non-root user. SQLite plus WAL persist settings, encrypted AI
-credentials, chat history, and application metadata; the markdown
-vault is bind-mounted from `src/content`. Back up SQLite consistently
-and keep the master key separate. `/api/health` is wired into the Docker `HEALTHCHECK` and
-into `docker-compose.yml`'s `healthcheck:`. `apt` is mirrored to
-`mirrors.aliyun.com` and `/var/{cache,lib}/apt` plus `/root/.npm`
-are BuildKit cache mounts, so the second build skips the download
-and only re-runs the `better-sqlite3` native compile.
+Docus does **not** provide authentication or TLS. Keep it on loopback or a private network, or put an authenticated TLS reverse proxy in front of it. Back up both the vault—including its hidden `.git`—and `data/`.
 
-Full operator runbook — env vars, the `read_only` / non-root /
-`no-new-privileges` hardening, port configuration, troubleshooting
-(ABI mismatches, "AI not configured" banner, SPA 404, port
-collisions), and switching the vault to a host bind-mount for live
-editing — is in [DEPLOY.md](DEPLOY.md).
+- [Deployment overview](docs/deployment/overview.md)
+- [Docker guide](docs/deployment/docker.md)
+- [Runtime configuration](docs/deployment/configuration.md)
+- [Security checklist](docs/deployment/security.md)
+- [Backup and restore](docs/deployment/backup-and-restore.md)
 
-## Project history
+## Configuration
 
-The detailed design and plan documents for each feature live under
-[docs/superpowers/](docs/superpowers/):
+Server settings include:
 
-- [specs/](docs/superpowers/specs/) — design intent before code
-  - [`2026-06-02-vault-tag-filter-design.md`](docs/superpowers/specs/2026-06-02-vault-tag-filter-design.md) — in-vault single-tag FileTree filter
-  - [`2026-06-06-ai-panel-design.md`](docs/superpowers/specs/2026-06-06-ai-panel-design.md) — right-rail AI panel skeleton
-  - [`2026-06-07-sqlite-ai-history.md`](docs/superpowers/specs/2026-06-07-sqlite-ai-history.md) — SQLite-backed multi-session chat history
-  - [`2026-06-07-llm-integration.md`](docs/superpowers/specs/2026-06-07-llm-integration.md) — server-proxied Anthropic streaming, note context, no-key banner
-  - [`2026-07-30-tags-query-index-refactor-design.md`](docs/superpowers/specs/2026-07-30-tags-query-index-refactor-design.md) — unified tag identity, query, index; retrospective reconstruction
-- [plans/](docs/superpowers/plans/) — step-by-step implementation
-  plans, often with the commit sequence already chosen
-  - [`2026-06-02-vault-tag-filter.md`](docs/superpowers/plans/2026-06-02-vault-tag-filter.md)
-  - [`2026-06-07-sqlite-ai-history.md`](docs/superpowers/plans/2026-06-07-sqlite-ai-history.md)
-  - [`2026-06-07-llm-integration.md`](docs/superpowers/plans/2026-06-07-llm-integration.md)
-  - [`2026-07-30-tags-query-index-refactor-implementation-plan.md`](docs/superpowers/plans/2026-07-30-tags-query-index-refactor-implementation-plan.md) — retrospective reconstruction
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VAULT_DIR` | `<cwd>/src/content` | Vault root |
+| `HOST` | `127.0.0.1` | Bare-metal listener address |
+| `PORT` | `3000` | Bare-metal listener port |
+| `DOCUS_MASTER_KEY` | unset | Explicit 32-byte AI credential master key |
+| `DOCUS_MASTER_KEY_FILE` | unset | File containing the master key |
+
+AI provider, API key, model, and optional base URL are configured in application Settings, not through provider-specific environment variables. If no explicit master key is supplied, Docus creates `data/.docus-master-key` when an API key is first saved.
+
+See [Configuration](docs/getting-started/configuration.md) for the complete precedence and Docker-specific variables.
+
+## Documentation
+
+The [Documentation Hub](docs/README.md) is the canonical index.
+
+- [User guide](docs/user-guide/overview.md)
+- [Architecture](docs/architecture/overview.md)
+- [Development setup](docs/development/setup.md)
+- [Testing](docs/development/testing.md)
+- [Design system](docs/design/icon-system.md)
+- [Metadata migration](docs/migrations/document-metadata.md)
+- [Historical archive](docs/archive/README.md)
+
+Current behavior is documented outside `docs/archive/`. Dated plans, specifications, closure evidence, and implementation records are retained in the archive for traceability only.
+
+## Development and Verification
+
+```bash
+npm run typecheck
+npm run build
+npm test
+npm run lint:icons
+```
+
+Browser suites are available with:
+
+```bash
+npm run test:e2e
+npm run test:e2e:draft-store
+```
+
+CI verifies Node.js 22 and 24 across Linux, macOS, and Windows, repeats critical crash-recovery tests, runs browser suites, builds the Docker image, and checks macOS visual baselines.
+
+## Project Status
+
+`package.json` currently reports version `0.0.0`. Docus is an actively developed application rather than a published stable compatibility contract. Back up real vaults before upgrading, review the [changelog](CHANGELOG.md), and validate deployment changes in a copy of your data.
+
+## License
+
+This repository does not currently include a license file. Do not assume rights to redistribute or reuse the project until the maintainers add explicit license terms.

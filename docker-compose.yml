@@ -9,8 +9,9 @@
 #     和应用元数据,以及 SQLite 外的 .docus-master-key,必须一起保护和备份。需要时 docker volume
 #     backup 一次性导出即可,不需要绑定到宿主机路径。
 #
-# AI API key 在应用 Settings 面板中配置并写入 SQLite；加密主密钥只从
-# DOCUS_MASTER_KEY 或 DOCUS_MASTER_KEY_FILE 注入,绝不写入 SQLite。
+# AI API key 在应用 Settings 面板中配置并写入 SQLite；加密主密钥从
+# DOCUS_MASTER_KEY、DOCUS_MASTER_KEY_FILE 或 data/.docus-master-key 解析,
+# 绝不写入 SQLite。
 
 services:
   docus:
@@ -100,9 +101,9 @@ volumes:
 #     mkdir -p ./src/content
 #     chown -R 1000:1000 ./src/content
 #
-# 现有的 ./src/content 里已经有 inbox / literature / archive + 一个 .git/(vault
-# 的本地 history),直接保留即可。如果从一个空仓库部署,初始化可以走
-# `server/seed.ts`(开发期的种子脚本,生产环境不会自动跑)。
+# 现有的 ./src/content 里如果已经有 inbox / literature / archive + 一个
+# .git/(vault 的本地 history),直接保留即可。如果从空目录部署,生产服务会通过
+# `server/seed.ts` 补齐三个根目录；vault Git 则在首次使用 History 时延迟初始化。
 #
 # 注意:src/content/ **不**在 docus 的 git 仓库里 —— 它是用户的笔记
 # 资产,工具仓库只跟踪源码 / 配置 / 文档。clone docus 仓库后看到的

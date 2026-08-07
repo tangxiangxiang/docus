@@ -1,371 +1,134 @@
-# docus
+# Docus
 
-> **在 Inbox 中思考，在 Archive 中沉淀，让 AI 帮你建立联系。**
+[English](README.md) · [文档中心](docs/README.md) · [部署指南](docs/deployment/overview.md)
 
-一个基于 Vue 3 + TypeScript 的个人知识库。资料库本体是 `src/content/` 下的纯 `.md` 文件，由一个
-进程内的 Hono 后台服务支撑。编辑器使用 Monaco；文件树与右侧
-面板（编辑器 + 实时预览）采用类 VS Code 的布局。最右侧还有一面
-AI 对话面板 —— 它的对话历史持久化在 Hono 启动时打开的一小块
-SQLite 数据库里。
+Docus 是一个可自托管的 Markdown 知识工作区，用于写作、整理、链接、版本管理，以及按需使用 AI。笔记始终是普通文件；Docus 在此基础上提供 Vue 界面、安全的服务端文件操作、SQLite 元数据、显式 Git 版本和浏览器草稿恢复。
 
-> **资料库是你的数据，不是项目代码。** `src/content/` 下的文件
-> **不**被 docus 的 git 仓库跟踪 —— 它们属于你的笔记，不属于这个
-> 工具。资料库有自己的 git 历史（`src/content/.git/`，由
-> `server/history/` 维护）。docus 仓库只跟踪工具本身：源码、配置、
-> 文档。
+![Docus 标志](public/logo.svg)
 
-## 产品理念
+## 主要能力
 
-资料库被划分为三个区域，docus 对它们区别对待：
-
-- **`literature/`** 保存你的阅读笔记 —— 针对书籍、论文、长文的摘录、批注与延伸思考。原文放在别处,这里记的是你读它们时写下的东西。
-- **`inbox/`** 保存正在思考的内容 —— 零散的笔记、尚未成形的想法，所有还未真正"立住"的东西。
-- **`archive/`** 保存已经沉淀的知识 —— 经过整理、你会反复回来翻看的笔记，按主题组织，期望长期留存。
-
-笔记只往一个方向流动：Literature 给 Inbox 提供素材，在那里 AI 帮你思考；真正"立住"的内容再流向 Archive，由 AI 帮你建立联系。docus 整个工具围绕这条流来构建。
-
-## Docus Logo 的寓意
-
-Docus 的 Logo 是一个知识徽章，由两个大小不同、彼此连接的圆组成。较大的圆代表个人知识空间，较小的圆代表一个想法、一篇笔记，或刚刚发现的信息；两者之间的连接，代表阅读、思考以及 AI 辅助探索后形成的知识关联。
-
-两个连接起来的圆共同表达了 Docus 作为**第二大脑**的定位：它不只是存放笔记的地方，更是一个帮助想法彼此连接、逐渐沉淀为长期知识的活网络。
-
-展开后的 Logo 以一个中心大圆配合周围九个小节点构成。在中国传统文化中，九常被视为个位数中的极数，象征圆满与极致。九个节点代表从不同方向而来的想法，最终汇聚到 Docus，将零散思绪整理成有联系的知识网络。
-
-中心图标是一个由火焰与莲花般曲线构成的抽象打坐者，代表人在知识面前保持专注、安定与觉察。这就是 Logo 所表达的**定中宫**：外部信息可以从各个方向流入，但中心始终保持稳定。九条连接线上持续移动的数据粒子，象征阅读、思考、实践以及 AI 辅助探索，最终汇聚成一个整体，而不是停留为互不相连的碎片。
-
-在暗色主题下，中心图标使用白色线稿；在亮色主题下，使用黑色线稿。颜色会随主题变化，但图标本身的形状与寓意保持不变。
-
-完整的设计基线与动画规则见：[Logo 设计封板文档](docs/logo-design-final-closure.md)。
+- **文件式 Markdown 笔记库**：在 `inbox`、`literature` 和 `archive` 中保留可独立读取的 `.md` 文件。
+- **专注的编辑与阅读体验**：Monaco 编辑器、安全过滤的 Markdown、任务列表、脚注、Mermaid、Markmap 与 Wiki 链接。
+- **可靠保存**：自动保存、比较基线冲突检测、原子写入、生命周期锁与启动时崩溃恢复。
+- **草稿恢复**：使用浏览器 IndexedDB 保存有容量上限的未保存缓冲区。
+- **元数据与搜索**：SQLite 管理标题、摘要、标签和稳定文档 ID，并提供文件树筛选和命令面板。
+- **链接与反向链接**：解析 Wiki 链接和相对 Markdown 链接，在支持的重命名与移动中协调引用。
+- **显式历史版本**：在笔记库自身的 Git 仓库中创建、比较、恢复和撤回版本。
+- **可选 AI**：支持 Anthropic 或 OpenAI，提供实时工作区上下文以及受校验的文件/元数据工具。
+- **自托管运行时**：一个生产进程同时提供 Vue 应用与 Hono API，并附带 Docker Compose。
 
 ## 快速开始
 
-```bash
-npm install
-npm run dev          # vite + Hono 中间件, http://localhost:5173
-npm test             # 运行 Vitest，并输出当前测试总数
-npm run build        # vue-tsc -b && vite build
-```
-
-Hono 后台（`server/`）在 dev 模式下作为 Vite 中间件挂载，无需单独
-启动进程。首次启动时服务会创建 `data/docus.db`（已 gitignore），
-并按序应用 `server/migrations/` 下的 SQL 迁移。所有端点都在
-`/api/...` 命名空间下，路由表内联在
-[server/index.ts](server/index.ts) 中。
-
-AI 面板使用 Settings 中配置的 provider。API key 加密存入 SQLite，浏览器
-永远拿不到 key；`DOCUS_MASTER_KEY` 或 `DOCUS_MASTER_KEY_FILE` 都是可选的。
-如果没有显式提供，第一次保存 API key 时 Docus 会在 SQLite 外创建
-`data/.docus-master-key`。未配置 API key 时面板显示常驻 banner，发送按钮被禁用。
-
-## 目录结构
-
-```
-src/
-  views/                 一个组件对应一个路由（Vault / Tags / Article / TagDetail）
-  components/
-    vault/               FileTree, TreeRow, EditorPane, PreviewPane, EditorTabs,
-                         Breadcrumb, CommandPalette, StatusBar, TagPanel,
-                         ActivityBar, AiPanel, AiSessionPicker
-  composables/           useToast / useConfirm / usePrompt / useTheme
-                         （UI 单例）
-    archiveProtocol.ts   纯函数：哪些路径受保护，及其对应的
-                         用户提示文案
-    vault/               useVaultLayout, useEditorTabs, useTagFilter,
-                         useAiHistory, useCurrentNote —— 从 VaultView.vue
-                         和 AiPanel.vue 拆分出来的状态与副作用
-  lib/
-    api.ts               /api/posts、/api/tree 等的带类型的 fetch 封装
-    ai-api.ts            /api/ai/* 的带类型的 fetch 封装，包含
-                         streamChat 的 SSE 解析器
-    search.ts            客户端构建的 MiniSearch 全文索引
-    markdown.ts, frontmatter.ts
-  content/               资料库本体 —— 三个顶层目录
-                         (inbox / literature / archive) 以及用户写下的所有内容。
-                         不被 docus 的 git 仓库跟踪；资料库自己的历史在
-                         src/content/.git/
-  router/                vue-router 配置（vault 使用 splat 参数）
-
-server/
-  index.ts               顶层 Hono app，挂载各子路由
-  db.ts                  better-sqlite3 单例 + applyMigrations 迁移执行器
-  migrations/            按编号命名的 .sql 文件，启动时按事务顺序应用，
-                         目标库为 data/docus.db
-  ai/                    AI 子应用
-    errors.ts            ChatError tagged union（no-api-key / not-found /
-                         empty / aborted / llm-error）
-    llm.ts               streamClaude()：@anthropic-ai/sdk 的薄封装，
-                         整个仓库里唯一 import SDK 的文件
-    chat.ts              runChat() 协调器 + buildSystemPrompt()；
-                         纯业务逻辑，不感知 HTTP
-    messages.ts          追加 / 列出消息；校验 role ∈ {user, assistant}
-    sessions.ts          Sessions 的 CRUD
-    routes.ts            Hono 子路由；唯一感知 HTTP 的层
-  tree.ts                文件系统遍历 -> PostSummary[] / TreeNode[]
-  paths.ts               路径校验 + 文件系统 <-> URL 映射
-  linkIndex.ts           笔记间双向链接的反向索引，文件变动时更新
-  linkResolve.ts         解析 markdown 里的 [[wiki]] 与 [t](path.md) 链接
-  seed.ts                首次启动时向空 vault 写入几条示例笔记
-  vite-plugin.ts         将 Hono app 挂载为 Vite 中间件
-  prod.ts                生产入口：tsx 跑这个，把 dist/ 和 /api/* 同时挂上
-  __tests__/             vitest（node 模式），测试直接调用 app.fetch(req)；
-                         AI 套件用 :memory: 数据库
-
-docs/superpowers/
-  specs/                 设计文档（按特性划分）
-  plans/                 实施计划（按特性划分）
-```
-
-## Archive 协议
-
-三个顶层目录是协议的一部分，不是用户可编辑的选择：
-
-- **`inbox/`** —— 收件桶，新内容先落在这里
-- **`literature/`** —— 长篇参考资料
-- **`archive/`** —— 归档笔记，目录结构受保护；可新建文件夹并在内部移动整理，不能直接新建归档笔记，需通过明确的归档流程进入
-
-对这三个根目录的重命名、删除、重新挂载都会被客户端和服务端拒绝。
-规则集中在 [src/composables/archiveProtocol.ts](src/composables/archiveProtocol.ts)
-这个纯函数模块里。同一套规则同时约束两件事：右键菜单 UI（受保护行
-只显示允许的操作）和文件系统写入（被阻止的操作会弹中文 toast 并
-提前 return）。
-
-要新增第四个受保护的根目录，或修改提示文案，只需改这一个文件。
-
-## 资料库
-
-资料库位于 `/vault`，支持路径 splat：`/vault/<path>`。可通过文件
-树、`⌘P` / `Ctrl+P` 命令面板，或直接深链到某个路径打开。
-
-编辑器标签页为每个文件保留未保存状态。编辑停止 800ms 后自动保存；
-debounce 逻辑位于 `useEditorTabs`。`⌘S` 立即保存，`⌘W` 关闭当前
-标签页（有未保存修改时会确认），`⌘B` 切换 Files 面板，NavBar
-上的 AI 按钮切换 AI 面板。
-
-布局状态 —— 当前打开的侧栏、侧栏宽度、编辑器/预览分割比例、
-AI 面板的开关和宽度 —— 持久化到 `localStorage` 的
-`docus.vault.layout` 键。序列化器是自定义的，因为早期 schema 是
-`{ fileTreeOpen, fileTreeWidth }`，老用户可能仍是这个形态；读取
-时会前向翻译到新 schema。AI 相关的键（`aiOpen`、`aiPanelWidth`）
-沿用同一套模式。
-
-## AI 面板
-
-资料库最右边的栏位是 AI 对话面板，样式参考 VS Code 中的 Claude
-Code。从 NavBar 上 Search 按钮和视图切换按钮之间的 AI 按钮打开；
-面板右边缘的 splitter 调整宽度，范围与左侧栏一致（220–600px）。
-
-面板**支持多会话**。每个会话都有自动派生的标题（取首条用户消息
-的前 30 个码点），可以通过点标题弹出的 popover 重命名、切换、
-删除。活跃会话 id 由服务端持久化，刷新后自动恢复。消息采用乐观
-更新：按下 Enter 立即插入用户消息，服务端响应回来后用真实记录
-替换原占位。
-
-composer 走服务端调用 Anthropic。按 Enter 触发 `POST /api/ai/chat`；
-服务端用 SSE 把 token 推回来，面板在气泡里逐字渲染。用户消息先
-乐观插入，服务端 echo 真实 id 回来后原位替换；assistant 气泡按
-字符追加，末尾有闪烁光标，`done` 事件后光标消失。流式过程中出
-错会让气泡以当前已收到的部分文本收尾，并附 `[error: <reason>]`
-标记 —— 用户消息不会丢。
-
-当前打开的笔记会作为 system context 一起送给模型：面板顶部在
-有笔记打开时显示一个 `📎 <标题>` 小芯片（`/tags` 等路径下隐藏），
-下一次 send 会带上笔记的已保存内容。笔记内容由
-`useCurrentNote`（[src/composables/vault/useCurrentNote.ts](src/composables/vault/useCurrentNote.ts)
-里的模块级 singleton）按路径变化拉取一次，缓存的是服务端已保存
-的 body —— 与编辑器里的未保存 buffer 之间差 800ms 自动保存的
-debounce，v1 接受这个延迟，缩小差距是另一个 spec 的事。
-
-未配置 AI API key 时，composer 上方会显示一条常驻 banner，
-发送按钮被禁用。配置状态在挂载时通过 `/active` 响应读取，banner
-在第一次 send 之前就可见。
-
-状态层是 [src/composables/vault/useAiHistory.ts](src/composables/vault/useAiHistory.ts)
-里的模块级 singleton。HTTP 线缆格式（含带类型的 `ChatEvent` SSE
-解析器）定义在 [src/lib/ai-api.ts](src/lib/ai-api.ts)。两者是
-`/api/ai/*` 子路由唯一的消费方。
-
-## 后台
-
-后台是一个小型 Hono app。大部分端点是无状态的，读取或写入
-`src/content/` 下的文件；AI 子路由读写 SQLite 数据库。
-
-### 持久化
-
-服务启动时通过 `better-sqlite3` 打开 `data/docus.db`
-（[server/db.ts](server/db.ts)）。首次运行会应用
-`server/migrations/0001_ai_history.sql`，建立 `sessions`、
-`messages` 和一个单行 `settings` 表（目前用于存活跃会话 id）。
-迁移通过 `schema_version` 表追踪，每个文件由执行器按事务应用；
-新增迁移只需把编号更大的 .sql 文件放进 `server/migrations/`。
-默认开启 WAL 模式，并启用外键约束。
-
-### HTTP 端点
-
-**资料库 / 文件系统**
-
-| Method | Path                       | 说明                                       |
-| ------ | -------------------------- | ------------------------------------------ |
-| GET    | `/api/tree`                | `TreeNode[]`（目录 + 文件，已排序）        |
-| GET    | `/api/posts`               | `PostSummary[]`（扁平的 post 元数据）      |
-| GET    | `/api/posts/<path>`        | 原始 markdown + 解析后的 frontmatter       |
-| POST   | `/api/posts`               | 新建 post                                  |
-| PUT    | `/api/posts/<path>`        | 保存原始内容                               |
-| PATCH  | `/api/posts/<path>`        | 目录内重命名（`name`）或移动（`targetPath`）|
-| DELETE | `/api/posts/<path>`        | 删除文件                                   |
-| POST   | `/api/folders`             | 新建空目录                                 |
-| PATCH  | `/api/folders/<path>`      | 单段目录重命名                             |
-| DELETE | `/api/folders/<path>`      | 递归删除目录（需 `?recursive=true`）       |
-| GET    | `/api/health`              | `{ ok: true }`                             |
-
-**AI / SQLite**
-
-| Method | Path                                | 说明                                       |
-| ------ | ----------------------------------- | ------------------------------------------ |
-| GET    | `/api/ai/sessions`                  | `Session[]`（按更新时间倒序）              |
-| GET    | `/api/ai/sessions/<id>/messages`    | `Message[]`（按时间正序）                  |
-| POST   | `/api/ai/sessions`                  | 新建会话（`{ title? }`）                   |
-| PATCH  | `/api/ai/sessions/<id>`             | 重命名（`{ title }`）                      |
-| DELETE | `/api/ai/sessions/<id>`             | 删除（级联删除消息；若被删的是活跃会话则清空活跃 id）|
-| POST   | `/api/ai/sessions/<id>/messages`    | 追加消息（校验 role）                      |
-| GET    | `/api/ai/active`                    | `{ activeId, configured }` —— SQLite 中没有 API key 时 `configured` 为 `false` |
-| PUT    | `/api/ai/active`                    | 设置活跃会话 id（或 `null`）               |
-| POST   | `/api/ai/chat`                      | 流式对话：请求体 `{ sessionId, content, currentNotePath?, currentNoteContent? }`，响应是 SSE（`user` / `token` / `done` / `error` 事件）。SQLite 中没有 API key 时返回 503 + `{ reason: 'no-api-key' }` |
-
-文件系统路由的路径校验在
-[server/paths.ts](server/paths.ts)。AI 子路由不涉及文件系统；
-请求体由 handler 校验 JSON 形状，SQL 行的 snake_case 列由 mapper
-翻译为 `src/lib/ai-api.ts` 中声明的 camelCase 线缆格式。
-
-### 环境变量
-
-| 变量 | 必填 | 默认 | 说明 |
-| --- | --- | --- | --- |
-| `DOCUS_MASTER_KEY` | 否 | 自动管理 `data/.docus-master-key` | 可选的 32 字节 AES-256-GCM 主密钥，以 64 位 hex 或 base64 表示；不会写入 SQLite。 |
-| `DOCUS_MASTER_KEY_FILE` | 可选替代项 | — | 包含同一主密钥的文件；同时设置时环境变量优先。 |
-
-AI provider、API key、model 和 base URL 只在 Settings 面板配置并存入
-SQLite，不再从 `.env` 读取。没有显式 master key 时，请单独保护并备份
-`data/.docus-master-key`。[.env.example](.env.example) 是模板，`.env` 已 gitignore。
-
-## 测试
+需要 Node.js 22 或 24、npm 和 Git。
 
 ```bash
-npm test
+npm ci
+mkdir -p src/content/inbox src/content/literature src/content/archive
+npm run dev
 ```
 
-测试套件包括：
+打开 Vite 输出的地址，通常为 `http://localhost:5173`。
 
-- **组件测试**（`src/components/**/__tests__/`）—— 覆盖文件
-  树、右键菜单、拖放、内联重命名、防止"同名文件/目录"重命名串扰
-  的 kind 感知查找，以及 TagPanel。`useConfirm` / `usePrompt` /
-  `useToast` 三个 composable 用 `vi.mock` 替换；树结构 fixture 是
-  内联的字面量。
-- **composable 测试**（`src/composables/**/__tests__/`）——
-  覆盖编辑器标签页状态机、tag filter、vault layout 持久化、markdown
-  渲染、`useAiHistory` singleton（含新增的 `sendAndStream` 正常
-  / 异常 / 忙时拦截分支），以及 `useCurrentNote` singleton。AI
-  singleton 暴露 `__resetForTesting` 导出，用来在测试间隔离状态。
-- **lib 测试**（`src/lib/__tests__/`）—— 覆盖全文搜索索引、
-  AI 线缆格式（含 `streamChat` 的 SSE 解析器），以及 AI 的带类型
-  fetch 封装（`fetch` 用 `vi.mock` 替换）。
-- **视图测试**（`src/views/__tests__/`）—— 覆盖 VaultView 和 Tags 视图。
-- **后台测试**（`server/__tests__/`）—— 覆盖路径校验、PUT
-  handler、tree builder、SQLite 迁移执行器、AI sessions/messages
-  service、AI HTTP 子路由（用 `vi.mock` 替换 DB 模块）、LLM SDK
-  封装、`runChat` / `buildSystemPrompt` 协调器，以及一个挂载完整
-  Hono app 的 smoke 测试（含一次 `POST /api/ai/chat` 流式往返）。
-  AI 套件通过 `vi.hoisted` 注入 `:memory:` 数据库，每个测试拿到一份
-  干净的 DB；`streamClaude` 在模块边界用 `vi.mock` 替换，测试不会
-  触达真实网络。
+源码开发模式要求先创建三个笔记库根目录；生产服务会自动补齐缺失的初始根目录。详细说明见[安装](docs/getting-started/installation.md)和[快速开始](docs/getting-started/quick-start.md)。
 
-运行 `npm test` 可查看当前测试文件和测试用例总数。
-浏览器特有的编辑器行为仍建议配合 dev server 做手动 smoke test。
+## 系统组成
 
-## 约定
+```mermaid
+flowchart LR
+  Browser["Vue 浏览器应用"] -->|/api| Server["Hono 服务端"]
+  Server --> Vault["Markdown 笔记库 + 笔记库 Git"]
+  Server --> DB["SQLite 元数据与 AI 状态"]
+  Browser --> Drafts["IndexedDB 恢复草稿"]
+  Server --> AI["Anthropic 或 OpenAI"]
+```
 
-- `src/composables/` 下的 composable 遵循两种模式：跨组件状态用
-  singleton-factory（toast、confirm queue、prompt queue、theme、
-  AI history），无状态规则用 pure-function-module
-  （`archiveProtocol.ts`）。
-- 资料库相关的 composable（`useVaultLayout` / `useEditorTabs` /
-  `useTagFilter`）是 per-component factory。跨 composable 的依赖
-  通过构造器参数显式传入 —— `useTagFilter({ activePanel })`、
-  `useEditorTabs({ selectPanel })` —— 这种耦合是带类型的、意图
-  自明的。
-- `server/ai/` 下的 AI service 层是纯函数模块：每个函数把打开的
-  `Database` 作为第一个参数，返回普通 JS 值。Hono handler 是
-  唯一的调用方；service 层对 HTTP 一无所知。LLM 封装
-  （`server/ai/llm.ts`）是整个仓库里唯一 import `@anthropic-ai/sdk`
-  的文件，其余通过 `streamClaude` 回调签名与之通信 —— 测试时
-  SDK 可以在模块边界被 `vi.mock` 替换。tagged `ChatError` union
-  （在 `server/ai/errors.ts`）是 service 层唯一抛出的错误类型，每
-  个失败都带一个 `reason` 字符串，由路由映射成状态码或 SSE
-  `error` 事件。
-- **流式对话的线缆格式。** `POST /api/ai/chat` 是 server-sent events
-  （`Content-Type: text/event-stream`），四种事件类型：`user`（用户
-  消息落库后的真实 id）、`token`（增量文本）、`done`（最终用户 +
-  assistant 行 id）、`error`（reason 字符串）。服务端用 Hono 内置
-  的 `streamSSE`；客户端解析器是 [src/lib/ai-api.ts](src/lib/ai-api.ts)
-  里的 `streamChat`，以 `AsyncGenerator<ChatEvent>` 的形式逐个
-  yield 出来。composable 迭代它，按对象身份（identity）识别乐观
-  插入的消息并就地更新 —— 这就是进行中的气泡与已落库气泡的区分
-  依据。
-- 后台类型（`PostSummary` / `TreeNode` / `PostDetail`）定义在
-  [src/lib/api.ts](src/lib/api.ts)，AI 线缆类型（`Session` /
-  `Message`）定义在 [src/lib/ai-api.ts](src/lib/ai-api.ts)，
-  客户端和服务端都从这里 import。服务端目前故意不在 `tsc` include
-  图中（没有 `tsconfig.server.json`），但 import 方向是
-  `server/ -> src/lib/*`，让每种 JSON 线缆格式只有一个真相来源。
-- **迁移** 是只进不退的 SQL 文件。每个文件自身必须幂等（用
-  `CREATE TABLE IF NOT EXISTS`、`CREATE INDEX IF NOT EXISTS` 等），
-  并由执行器包在事务里。要回滚，写一个向前的 fix —— 不要修改
-  已提交的迁移。
+浏览器不会直接写笔记文件。服务端统一负责路径校验、归档规则、文件事务、SQLite 协调、历史版本和 provider 凭据。不同存储的备份语义并不相同；生产使用前请阅读[架构概览](docs/architecture/overview.md)和[存储架构](docs/architecture/storage.md)。
 
-## 部署
+## 笔记库模型
 
-生产部署走 Docker：单个容器同时托管 Vue SPA（`dist/`）和 Hono
-`/api/*` 后端，统一在 3000 端口监听（由 `@hono/node-server` 提供），
-SQLite 由 `better-sqlite3` 支撑，AI 走 Anthropic 兼容的 LLM 代理。
+默认笔记库是 `src/content/`，也可通过 `VAULT_DIR` 指向其他路径。
+
+```text
+src/content/
+├── inbox/       活跃笔记与新材料
+├── literature/  阅读与来源笔记
+└── archive/     需要保留且受到约束的归档笔记
+```
+
+三个根目录不能重命名或删除。笔记可从活跃目录移入 `archive`；归档笔记不能通过 Docus 重命名、删除或移回活跃区。详见[笔记库与归档协议](docs/user-guide/vault.md)。
+
+## 生产部署
+
+推荐使用 Docker Compose：
 
 ```bash
 docker compose up -d --build
-open http://localhost:3000
+curl --fail http://127.0.0.1:3000/api/health
 ```
 
-AI 配置不需要 `.env`：在 Settings 中填写 provider、API key、model 和
-base URL。若没有显式注入 master key，容器会在持久化数据卷中创建
-`/app/data/.docus-master-key`；请将它与 SQLite 分开保护和备份。`.env` 仅在
-需要覆盖其它部署变量时可选使用。
+Compose 默认只绑定 `127.0.0.1:3000`，将 `./src/content` 挂载为笔记库，并把 SQLite 与托管的 AI 主密钥保存在 `docus-data` 卷中。
 
-`Dockerfile` 是三阶段构建：`deps` 装全依赖并编译 `better-sqlite3`
-的原生模块（用容器内的 toolchain，绕开宿主机 ABI 的 prebuilds）；
-`build` 跑 `vue-tsc -b` 加 `vite build`；`runtime` 只把产线
-`node_modules`、`dist/`、`server/` 拷进一个最小化的
-`node:22-bookworm-slim`，加 `tini` 处理 SIGTERM、用非 root 用户。
-持久化数据包括 `docus-data`（SQLite + WAL —— settings、加密 AI 凭据、
-聊天历史和应用元数据）以及绑定到宿主机的 `src/content`（markdown 笔记库）。
-SQLite 需要一致性备份，`DOCUS_MASTER_KEY` 需要独立备份。`/api/health` 接入
-Docker `HEALTHCHECK` 和 `docker-compose.yml` 的 `healthcheck:`。
-apt 源切到了 `mirrors.aliyun.com`（国内构建 905s → 65s），`/var/{cache,lib}/apt`
-和 `/root/.npm` 都是 BuildKit cache mount，第二次构建会跳过下载
-只重跑 `better-sqlite3` 的原生编译。
+Docus **不提供**身份认证或 TLS。请保持回环地址或私有网络访问；如需远程访问，应在前方配置带认证的 TLS 反向代理。备份必须同时包含笔记库（包括隐藏的 `.git`）和 `data/`。
 
-完整运维手册 —— 环境变量、端口配置、`read_only` / 非 root /
-`no-new-privileges` 加固、故障排查（ABI 不匹配、"AI not configured"
-banner、SPA 404、端口冲突）、以及把笔记库改成宿主机 bind mount
-以便本地编辑器直接改 —— 在 [DEPLOY.md](DEPLOY.md)。
+- [部署概览](docs/deployment/overview.md)
+- [Docker 指南](docs/deployment/docker.md)
+- [运行时配置](docs/deployment/configuration.md)
+- [安全清单](docs/deployment/security.md)
+- [备份与恢复](docs/deployment/backup-and-restore.md)
 
-## 项目历史
+## 配置
 
-每个特性的详细设计和实施计划位于
-[docs/superpowers/](docs/superpowers/)：
+主要服务端设置：
 
-- [specs/](docs/superpowers/specs/) —— 编码前的设计意图
-  - [`2026-06-06-ai-panel-design.md`](docs/superpowers/specs/2026-06-06-ai-panel-design.md) —— 右栏 AI 面板骨架
-  - [`2026-06-07-sqlite-ai-history.md`](docs/superpowers/specs/2026-06-07-sqlite-ai-history.md) —— SQLite 持久化的多会话聊天历史
-  - [`2026-06-07-llm-integration.md`](docs/superpowers/specs/2026-06-07-llm-integration.md) —— 服务端代理的 Anthropic 流式、笔记上下文、缺 key banner
-- [plans/](docs/superpowers/plans/) —— 逐步实施计划，通常连 commit
-  顺序都已选好
-  - [`2026-06-07-sqlite-ai-history.md`](docs/superpowers/plans/2026-06-07-sqlite-ai-history.md)
-  - [`2026-06-07-llm-integration.md`](docs/superpowers/plans/2026-06-07-llm-integration.md)
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `VAULT_DIR` | `<cwd>/src/content` | 笔记库根目录 |
+| `HOST` | `127.0.0.1` | 裸机监听地址 |
+| `PORT` | `3000` | 裸机监听端口 |
+| `DOCUS_MASTER_KEY` | 未设置 | 显式的 32 字节 AI 凭据主密钥 |
+| `DOCUS_MASTER_KEY_FILE` | 未设置 | 存放主密钥的文件 |
+
+AI provider、API key、模型和可选 base URL 在应用 Settings 中配置，而不是使用 provider 专用环境变量。未提供显式主密钥时，Docus 会在首次保存 API key 时创建 `data/.docus-master-key`。
+
+完整优先级和 Docker 专用变量见[配置说明](docs/getting-started/configuration.md)。
+
+## 文档导航
+
+[文档中心](docs/README.md)是规范入口。
+
+- [用户指南](docs/user-guide/overview.md)
+- [架构文档](docs/architecture/overview.md)
+- [开发环境](docs/development/setup.md)
+- [测试说明](docs/development/testing.md)
+- [设计系统](docs/design/icon-system.md)
+- [元数据迁移](docs/migrations/document-metadata.md)
+- [历史文档归档](docs/archive/README.md)
+
+当前行为均记录在 `docs/archive/` 之外。带日期的计划、规格、验收证据和实现记录仅为追溯而保留，不代表当前规范。
+
+## 开发与验证
+
+```bash
+npm run typecheck
+npm run build
+npm test
+npm run lint:icons
+```
+
+浏览器测试：
+
+```bash
+npm run test:e2e
+npm run test:e2e:draft-store
+```
+
+CI 会在 Linux、macOS、Windows 上验证 Node.js 22/24，重复关键崩溃恢复测试，运行浏览器套件，构建 Docker 镜像，并校验 macOS 视觉基线。
+
+## 项目状态
+
+`package.json` 当前版本为 `0.0.0`。Docus 仍是持续开发中的应用，而不是已经发布稳定兼容性承诺的产品。升级前请备份真实笔记库，阅读[变更日志](CHANGELOG.md)，并使用数据副本验证部署变更。
+
+## 许可证
+
+仓库当前没有许可证文件。在维护者补充明确许可条款之前，请不要默认拥有再分发或复用本项目的权利。

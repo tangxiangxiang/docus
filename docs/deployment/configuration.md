@@ -1,0 +1,39 @@
+# Runtime Configuration
+
+Copy `.env.example` to `.env` only when an override is needed. `.env` files are excluded from both Git and the Docker build context.
+
+## Bare-Metal Server
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `HOST` | `127.0.0.1` | Set an explicit interface only when remote exposure is intentional. |
+| `PORT` | `3000` | HTTP port for `npm run start`. |
+| `VAULT_DIR` | `<cwd>/src/content` | Absolute or working-directory-relative vault path. |
+| `GIT_AUTHOR_NAME` | `docus` if the vault lacks `user.name` | Existing vault-local Git configuration is preserved. |
+| `GIT_AUTHOR_EMAIL` | `docus@localhost` if the vault lacks `user.email` | Existing vault-local Git configuration is preserved. |
+
+## Docker Compose Host Mapping
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `DOCUS_BIND_ADDRESS` | `127.0.0.1` | Host interface used by the Compose `ports` mapping. |
+| `DOCS_PORT` | `3000` | Host port mapped to container port 3000. |
+
+Compose sets the container's `HOST=0.0.0.0` and `PORT=3000`. Do not use those container values to infer host exposure; the `ports` mapping is the boundary that defaults to loopback.
+
+The supplied Compose file does not expose `VAULT_DIR` because it always mounts the vault at the default `/app/src/content`. Change the volume mapping, not the in-container path, unless you also update the service configuration coherently.
+
+## AI Master Key
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `DOCUS_MASTER_KEY` | none | 32 bytes encoded as 64 hex characters or canonical base64. Highest precedence. |
+| `DOCUS_MASTER_KEY_FILE` | none | Path to a readable file containing the same encoded key. |
+
+If neither is set, Docus creates `data/.docus-master-key` on the first API-key save with restrictive file permissions. The key is outside SQLite but, in Docker, inside the same persistent `docus-data` volume.
+
+Changing the master-key source does not re-encrypt existing credentials automatically to an unrelated key. Preserve the original key until all stored provider credentials have been cleared or successfully read and re-saved.
+
+## AI Provider Configuration
+
+Provider, API key, model, and base URL belong in the Settings UI and SQLite. The current server does not read `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, or OpenAI equivalents from the environment.
