@@ -153,8 +153,31 @@ async function onSave() {
     })
     settings.value = next
     apiKey.value = ''
+    baseURL.value = next.baseURL
+    model.value = next.model
     await aiHistory.loadActive()
     toast.success(t('settings.saved'))
+  } catch (e: any) {
+    toast.error(t('settings.save_failed', { error: e.message ?? t('common.unknown_error') }))
+  } finally {
+    saving.value = false
+  }
+}
+
+/* Provider switch — saves { provider } only (no apiKey/baseURL/model),
+   which on the server side updates the active provider and returns the
+   new view. We then refresh local refs from the response so the form
+   fields show the new provider's saved config. The local input values
+   (apiKey/baseURL/model) get overwritten by the response so the user
+   sees what is now active. */
+async function onSwitchProvider(provider: 'anthropic' | 'openai') {
+  saving.value = true
+  try {
+    const next = await saveAiSettings({ provider })
+    settings.value = next
+    apiKey.value = ''
+    baseURL.value = next.baseURL
+    model.value = next.model
   } catch (e: any) {
     toast.error(t('settings.save_failed', { error: e.message ?? t('common.unknown_error') }))
   } finally {
@@ -262,6 +285,7 @@ onBeforeUnmount(() => {
               @update:model="model = $event"
               @save="onSave"
               @clearKey="onClearKey"
+              @switch-provider="onSwitchProvider"
             />
             <SettingsEditorSection v-else-if="active === 'editor'" />
             <SettingsMetadataSection

@@ -1,5 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk'
-import { resolveAiRuntimeConfig } from './llm.js'
+import { generateText, resolveAiRuntimeConfig } from './llm.js'
 import { ChatError } from './errors.js'
 import { getDb } from '../db.js'
 
@@ -41,7 +40,6 @@ export async function generateCommitMessage(opts: {
 }): Promise<string> {
   const cfg = resolveAiRuntimeConfig(getDb())
   if (!cfg.apiKey) throw new ChatError('no-api-key')
-  const client = new Anthropic(cfg.baseURL ? { apiKey: cfg.apiKey, baseURL: cfg.baseURL } : { apiKey: cfg.apiKey })
 
   const context = [
     `Selected files:\n${opts.paths.map((p) => `- ${p}`).join('\n')}`,
@@ -55,12 +53,13 @@ export async function generateCommitMessage(opts: {
   ].filter(Boolean).join('\n\n')
   if (context.length > MAX_CONTEXT_CHARS) throw new CommitMessagePromptLimitError()
 
-  let response
+  let result
   try {
-    response = await client.messages.create({
+    result = await generateText({
       model: cfg.model,
-      max_tokens: MAX_TOKENS,
+      maxTokens: MAX_TOKENS,
       temperature: 0,
+      signal: opts.signal,
       system: [
         'Generate exactly one git commit message subject line.',
         opts.language === 'zh'
@@ -70,18 +69,15 @@ export async function generateCommitMessage(opts: {
         'Keep it under 72 characters when possible.',
         'Prefer the focused diff when it is available; otherwise summarize the selected files.',
       ].join('\n'),
-      messages: [{ role: 'user', content: context }],
-    }, { signal: opts.signal })
+      user: context,
+    })
   } catch (err) {
+    if (err instanceof ChatError) throw err
     if (opts.signal?.aborted) throw new ChatError('aborted')
     throw new ChatError('llm-error', (err as Error).message)
   }
 
-  const raw = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-  const message = cleanCommitMessage(raw)
+  const message = cleanCommitMessage(result.text)
   if (!message) throw new ChatError('parse-failed', 'empty commit message from model')
   return message
 }

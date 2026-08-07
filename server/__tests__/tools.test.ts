@@ -654,7 +654,7 @@ describe('TOOL_DEFINITIONS', () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name).sort()
     expect(names).toEqual(['create_file', 'delete_file', 'list_files', 'patch_file', 'read_file', 'rename_file', 'update_metadata', 'write_file'])
     for (const t of TOOL_DEFINITIONS) {
-      expect(t.input_schema.type).toBe('object')
+      expect(t.parameters.type).toBe('object')
       expect(typeof t.description).toBe('string')
     }
   })

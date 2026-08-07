@@ -42,6 +42,8 @@ import {
   MAX_AI_BASE_URL_LENGTH,
   MAX_AI_MODEL_LENGTH,
   saveAiSettings,
+  SUPPORTED_PROVIDERS,
+  type Provider,
 } from './settings.js'
 import type { Message, AssistantBlocks } from '../../src/lib/ai-api.js'
 
@@ -268,12 +270,20 @@ ai.get('/settings', (c) => c.json(getAiSettingsView(getDb())))
 
 ai.put('/settings', async (c) => {
   const body = await c.req.json().catch(() => null) as
-    | { apiKey?: unknown; baseURL?: unknown; model?: unknown }
+    | { provider?: unknown; apiKey?: unknown; baseURL?: unknown; model?: unknown }
     | null
   if (!body) return bad(c, 'body required')
+  if (body.provider !== undefined && typeof body.provider !== 'string') return bad(c, 'provider must be a string')
   if (body.apiKey !== undefined && typeof body.apiKey !== 'string') return bad(c, 'apiKey must be a string')
   if (body.baseURL !== undefined && typeof body.baseURL !== 'string') return bad(c, 'baseURL must be a string')
   if (body.model !== undefined && typeof body.model !== 'string') return bad(c, 'model must be a string')
+  let provider: Provider | undefined
+  if (body.provider !== undefined) {
+    if (!(SUPPORTED_PROVIDERS as readonly string[]).includes(body.provider)) {
+      return bad(c, `provider must be one of: ${SUPPORTED_PROVIDERS.join(', ')}`)
+    }
+    provider = body.provider as Provider
+  }
   const apiKey = body.apiKey?.trim()
   const baseURL = body.baseURL?.trim()
   const model = body.model?.trim()
@@ -283,6 +293,7 @@ ai.put('/settings', async (c) => {
   if (baseURL && !isValidHttpUrl(baseURL)) return bad(c, 'baseURL must be an http(s) URL')
   if (model && !isValidModelName(model)) return bad(c, 'model contains unsupported characters')
   saveAiSettings(getDb(), {
+    provider,
     apiKey,
     baseURL,
     model,

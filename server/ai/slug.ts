@@ -1,6 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
 import { SLUG_RE } from '../paths.js'
-import { resolveAiRuntimeConfig } from './llm.js'
+import { generateText, resolveAiRuntimeConfig } from './llm.js'
 import { ChatError } from './errors.js'
 import { getDb } from '../db.js'
 
@@ -29,37 +28,31 @@ export async function generateSlug(opts: {
   if (!text) throw new ChatError('parse-failed', 'empty input')
   const cfg = resolveAiRuntimeConfig(getDb())
   if (!cfg.apiKey) throw new ChatError('no-api-key')
-  const client = new Anthropic(cfg.baseURL ? { apiKey: cfg.apiKey, baseURL: cfg.baseURL } : { apiKey: cfg.apiKey })
 
-  let response
+  let result
   try {
-    response = await client.messages.create({
+    result = await generateText({
       model: cfg.model,
-      max_tokens: MAX_TOKENS,
+      maxTokens: MAX_TOKENS,
       temperature: 0,
+      signal: opts.signal,
       system: [
         'Convert the user input into one concise English lowercase-kebab-case filename slug.',
         'Return only the slug, no prose, no quotes, no markdown.',
         'Allowed characters: a-z, 0-9, hyphen.',
         'Length: 3-60 characters. Do not end with .md.',
       ].join('\n'),
-      messages: [{
-        role: 'user',
-        content: `Kind: ${opts.kind}\nInput: ${text}`,
-      }],
-    }, { signal: opts.signal })
+      user: `Kind: ${opts.kind}\nInput: ${text}`,
+    })
   } catch (err) {
+    if (err instanceof ChatError) throw err
     if (opts.signal?.aborted) throw new ChatError('aborted')
     throw new ChatError('llm-error', (err as Error).message)
   }
 
-  const raw = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-  const slug = cleanModelSlug(raw)
+  const slug = cleanModelSlug(result.text)
   if (!SLUG_RE.test(slug)) {
-    throw new ChatError('parse-failed', 'bad slug from model: ' + raw.slice(0, 120))
+    throw new ChatError('parse-failed', 'bad slug from model: ' + result.text.slice(0, 120))
   }
   return slug
 }

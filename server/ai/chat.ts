@@ -6,32 +6,43 @@
 // runChat drives a multi-round conversation:
 //
 //   1. Persist the user message.
-//   2. Build the SDK convo from history (rehydrating JSON envelopes
-//      for past tool-using assistant turns and synthesizing the
-//      matching tool_results user turn).
-//   3. Loop: streamClaude → if stop_reason === 'tool_use', execute
-//      each tool, append tool_results, stream again. Emit
-//      `tool_use` / `tool_result` / `file_changed` events to the
-//      caller's onEvent callback so the route can SSE them.
-//   4. Persist the final assistant turn (as a JSON envelope if it
-//      used tools, plain text otherwise) and emit `done`.
+//   2. Build the convo from history — assistant envelope rounds
+//      (tool_use blocks) get rehydrated into a NormalizedMessage
+//      turn, and the matching tool_results turn is synthesized.
+//   3. Loop: backend.streamRound() → if finishReason === 'tool_calls',
+//      execute each tool, append tool results as NormalizedMessage
+//      entries, stream again. Emit `tool_use` / `tool_result` /
+//      `file_changed` events to the caller's onEvent callback so
+//      the route can SSE them.
+//   4. Persist the final assistant turn as a v: 2 envelope if it
+//      used tools, plain text otherwise. Emit `done`.
+//
+// Provider dispatch happens inside the ChatBackend implementation
+// (see llm.ts). The orchestrator is provider-neutral: it works in
+// NormalizedMessage / NormalizedRound / NormalizedTool shapes and
+// only hands them to the backend on the way out.
 //
 // buildSystemPrompt is a free function so the tests can exercise
 // it without standing up an SDK mock.
 import type { Database as DatabaseT } from 'better-sqlite3'
-import type {
-  ContentBlockParam,
-  MessageParam,
-  ToolUseBlock,
-} from '@anthropic-ai/sdk/resources/messages/messages'
 import type { AiLiveContextSnapshot } from '../../src/composables/vault/aiLiveContext.js'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { ChatError } from './errors.js'
-import { streamClaude } from './llm.js'
+import {
+  clearChatBackendCache,
+  getChatBackend,
+  type NormalizedBlock,
+  type NormalizedMessage,
+  type NormalizedToolCall,
+} from './llm.js'
 import { TOOL_DEFINITIONS, executeToolCall } from './tools.js'
 import { deriveToolSafetyPolicy } from './tool-safety.js'
-import { parseStoredContent, type ToolCallRecord } from './messages.js'
+import {
+  parseStoredContent,
+  type NormalizedRound,
+  type ToolCallRecord,
+} from './messages.js'
 import * as messages from './messages.js'
 import * as sessions from './sessions.js'
 
@@ -244,14 +255,21 @@ export async function runChat(opts: RunChatOpts): Promise<{
   // results. `none` / legacy-path contexts derive `unrestricted`, so
   // old clients keep their exact current tool behavior.
   const toolSafety = deriveToolSafetyPolicy(opts.ctx)
-  let convo: MessageParam[] = buildConvoFromHistory(history, opts.userContent)
+
+  let convo: NormalizedMessage[] = buildConvoFromHistory(history, opts.userContent)
+  // Backend may be cached from a previous run with a different
+  // provider. Clear so getChatBackend() re-evaluates against the
+  // current settings (the backend factory reads getAiRuntimeConfig
+  // fresh on miss).
+  clearChatBackendCache()
+  const backend = getChatBackend()
 
   let fullText = ''
-  // Each round's content blocks (text + tool_use) is stored
-  // separately so rehydration can rebuild the multi-turn convo:
-  // assistant: round[0], user: synth-tool-results, assistant:
-  // round[1], user: synth-tool-results, ...
-  const rounds: unknown[][] = []
+  // Each round's NormalizedRound is accumulated here so the final
+  // assistant turn can be persisted as a v: 2 envelope. v: 2 envelope
+  // is provider-neutral, so the same shape works regardless of which
+  // backend produced it.
+  const rounds: NormalizedRound[] = []
   const toolCallRecords: ToolCallRecord[] = []
 
   // Reusable abort signal default for tool execution: when the
@@ -265,51 +283,62 @@ export async function runChat(opts: RunChatOpts): Promise<{
         throw new ChatError('aborted')
       }
 
-      const result = await streamClaude({
-        system,
-        // `convo` is built from MessageParam[] but only ever receives
-        // 'user' | 'assistant' pushes (see buildConvoFromHistory +
-        // the synth-tool-results turn above), so the widened role
-        // union is safe to narrow here for streamClaude's signature.
-        messages: convo as { role: 'user' | 'assistant'; content: string | unknown[] }[],
+      const result = await backend.streamRound({
         model: opts.model,
+        system,
+        messages: convo,
+        tools: TOOL_DEFINITIONS,
+        signal: opts.signal,
         onToken: async (text) => {
           fullText += text
           await emit(opts.onEvent, { type: 'token', text })
         },
-        signal: opts.signal,
-        tools: TOOL_DEFINITIONS,
-        toolChoice: { type: 'auto' },
       })
 
-      rounds.push(result.finalMessage.content as unknown[])
-      convo.push({ role: 'assistant', content: result.finalMessage.content })
+      // Capture this round for persistence. Text + any tool_use calls.
+      const roundText = result.text
+      const roundToolCalls = result.toolCalls.map((tc) => ({
+        id: tc.id,
+        name: tc.name,
+        input: tc.input,
+      }))
+      rounds.push({ text: roundText, toolCalls: roundToolCalls })
 
-      if (result.finalMessage.stop_reason !== 'tool_use') {
+      // Push the assistant turn back into the convo as a
+      // NormalizedMessage so the next round (or a rehydration) sees
+      // it. tool_calls live alongside text in the same message
+      // content array (per NormalizedBlock[]).
+      if (roundToolCalls.length > 0) {
+        const blocks: NormalizedBlock[] = []
+        if (roundText) blocks.push({ type: 'text', text: roundText })
+        for (const tc of roundToolCalls) {
+          blocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input })
+        }
+        convo.push({ role: 'assistant', content: blocks })
+      } else if (roundText) {
+        convo.push({ role: 'assistant', content: roundText })
+      }
+
+      if (result.finishReason !== 'tool_calls') {
         break
       }
 
-      const toolUseBlocks = result.finalMessage.content.filter(
-        (b): b is ToolUseBlock => b.type === 'tool_use',
-      )
-      if (toolUseBlocks.length === 0) break
-
       const results: { tool_use_id: string; content: string; is_error: boolean }[] = []
-      for (const tb of toolUseBlocks) {
+      for (const tc of result.toolCalls) {
         await emit(opts.onEvent, {
           type: 'tool_use',
-          id: tb.id,
-          name: tb.name,
-          input: tb.input as Record<string, unknown>,
+          id: tc.id,
+          name: tc.name,
+          input: tc.input,
         })
         const r = await executeToolCall(
-          tb.name,
-          tb.input as Record<string, unknown>,
+          tc.name,
+          tc.input,
           { signal: toolCtxSignal, db: opts.db, safety: toolSafety },
         )
         await emit(opts.onEvent, {
           type: 'tool_result',
-          tool_use_id: tb.id,
+          tool_use_id: tc.id,
           content: r.content,
           is_error: r.isError,
         })
@@ -330,27 +359,30 @@ export async function runChat(opts: RunChatOpts): Promise<{
           })
         }
         results.push({
-          tool_use_id: tb.id,
+          tool_use_id: tc.id,
           content: r.content,
           is_error: r.isError,
         })
         toolCallRecords.push({
-          id: tb.id,
-          name: tb.name,
-          input: tb.input as Record<string, unknown>,
+          id: tc.id,
+          name: tc.name,
+          input: tc.input,
           result: { content: r.content, is_error: r.isError },
         })
       }
 
-      convo.push({
-        role: 'user',
-        content: results.map((r) => ({
-          type: 'tool_result' as const,
-          tool_use_id: r.tool_use_id,
+      // Append each tool result as its own NormalizedMessage with
+      // role: 'tool'. The backend translates role:'tool' to whatever
+      // shape its provider requires (Anthropic folds them into one
+      // user turn with tool_result blocks; OpenAI keeps them as
+      // separate role:'tool' messages).
+      for (const r of results) {
+        convo.push({
+          role: 'tool',
+          tool_call_id: r.tool_use_id,
           content: r.content,
-          is_error: r.is_error,
-        })),
-      })
+        })
+      }
     }
   } catch (err) {
     // Persist whatever streamed so far (typically '' or a few tokens)
@@ -369,14 +401,12 @@ export async function runChat(opts: RunChatOpts): Promise<{
     throw new ChatError('llm-error', (err as Error).message, assistantId)
   }
 
-  // Persist the final assistant turn. Tool-using turns go in as a
-  // JSON envelope (no schema change) so a follow-up turn can
-  // rehydrate the conversation including the tool_use / tool_result
-  // content blocks.
+  // Persist the final assistant turn. Tool-using turns go in as a v: 2
+  // envelope (provider-neutral); plain-text turns stay as plain text.
   const persistedText =
     toolCallRecords.length > 0
       ? JSON.stringify({
-          v: 1,
+          v: 2,
           text: fullText,
           rounds,
           toolCalls: toolCallRecords,
@@ -404,45 +434,42 @@ async function emit(
   await onEvent(e)
 }
 
-// Build the SDK convo from a chat history. Plain-text messages go
-// in as-is. Past tool-using assistant turns are rehydrated into
-// content blocks per round; the matching tool_results user turn is
-// synthesized for each round that had tool_use (we don't persist
-// those user turns separately).
+// Build the convo from chat history in NormalizedMessage[] shape.
+// Plain-text messages go in as-is. Tool-using assistant turns come
+// from the stored v: 2 envelope: each round becomes one assistant
+// NormalizedMessage (text + tool_use blocks), and the matching tool
+// results are synthesized as role:'tool' messages (one per tool
+// call — this is what OpenAI requires; Anthropic's backend will
+// fold them back into a single user turn with tool_result blocks).
 function buildConvoFromHistory(
   history: { id: number; role: 'user' | 'assistant'; content: string }[],
   newUserContent: string,
-): MessageParam[] {
-  const convo: MessageParam[] = []
+): NormalizedMessage[] {
+  const convo: NormalizedMessage[] = []
   for (const m of history) {
     const parsed = parseStoredContent(m.content)
     if (parsed.kind === 'envelope' && m.role === 'assistant') {
       const { rounds, toolCalls } = parsed.envelope
-      for (let i = 0; i < rounds.length; i++) {
-        const content = rounds[i] as ContentBlockParam[]
-        convo.push({ role: 'assistant', content })
-        // If this round had any tool_use blocks, synthesize the
-        // matching tool_results user turn.
-        const toolUseIds = content
-          .filter((b) => b.type === 'tool_use')
-          .map((b) => (b as { id: string }).id)
-        if (toolUseIds.length > 0) {
+      for (const round of rounds) {
+        const blocks: NormalizedBlock[] = []
+        if (round.text) blocks.push({ type: 'text', text: round.text })
+        for (const tc of round.toolCalls) {
+          blocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input })
+        }
+        convo.push({ role: 'assistant', content: blocks })
+        // Synthesize the tool_results turn that the model originally
+        // saw, one role:'tool' message per tool call.
+        for (const tc of round.toolCalls) {
+          const result = toolCalls.find((t) => t.id === tc.id)?.result
           convo.push({
-            role: 'user',
-            content: toolUseIds.map((id) => {
-              const tc = toolCalls.find((t) => t.id === id)
-              return {
-                type: 'tool_result' as const,
-                tool_use_id: id,
-                content: tc?.result.content ?? '',
-                is_error: tc?.result.is_error ?? false,
-              }
-            }),
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: result?.content ?? '',
           })
         }
       }
     } else {
-      convo.push({ role: m.role, content: m.content })
+      convo.push({ role: m.role, content: parsed.kind === 'plain' ? parsed.text : m.content })
     }
   }
   convo.push({ role: 'user', content: newUserContent })

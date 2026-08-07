@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from '../../composables/useI18n'
 import type { AiSettings } from '../../lib/ai-api'
 
-defineProps<{
+const props = defineProps<{
   settings: AiSettings | null
   apiKey: string
   baseURL: string
@@ -17,15 +18,33 @@ const emit = defineEmits<{
   'update:model': [value: string]
   save: []
   'clear-key': []
+  'switch-provider': [provider: 'anthropic' | 'openai']
 }>()
 
 const { t } = useI18n()
+
+/* Per-provider placeholder defaults. The active provider's saved
+   value wins when present (rendered in the parent as maskedKey /
+   baseURL / model); these only fill in for an unconfigured provider. */
+const MODEL_PLACEHOLDER = computed(() =>
+  props.settings?.provider === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-6',
+)
+const API_KEY_PLACEHOLDER = computed(() =>
+  props.settings?.provider === 'openai' ? 'sk-...' : 'sk-ant-...',
+)
 
 function onInput(field: 'apiKey' | 'baseURL' | 'model', event: Event) {
   const value = (event.target as HTMLInputElement).value
   if (field === 'apiKey') emit('update:apiKey', value)
   else if (field === 'baseURL') emit('update:baseURL', value)
   else emit('update:model', value)
+}
+
+function onProviderChange(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  if (value === 'anthropic' || value === 'openai') {
+    emit('switch-provider', value)
+  }
 }
 </script>
 
@@ -53,14 +72,21 @@ function onInput(field: 'apiKey' | 'baseURL' | 'model', event: Event) {
     </header>
     <div class="settings-section-body">
       <div class="settings-field-grid">
-        <!-- Provider is rendered as a disabled select with one option
-             ("Anthropic"). The dropdown chrome is preserved so the
-             field reads as a real form control and future providers
-             can be added without changing the layout. -->
+        <!-- Provider is now a functional select — switching it
+             triggers an immediate switch of the active provider
+             server-side, which refreshes the masked key + model
+             shown below. The UI doesn't pre-load inactive provider
+             configs to keep the surface area small; the user
+             switches back to see them. -->
         <label class="settings-field">
           <span>{{ t('settings.provider') }}</span>
-          <select disabled>
+          <select
+            :value="settings?.provider ?? 'anthropic'"
+            :disabled="loading || saving"
+            @change="onProviderChange"
+          >
             <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI</option>
           </select>
         </label>
         <label class="settings-field">
@@ -69,7 +95,7 @@ function onInput(field: 'apiKey' | 'baseURL' | 'model', event: Event) {
             :value="apiKey"
             type="password"
             autocomplete="off"
-            :placeholder="settings?.maskedKey || 'sk-ant-...'"
+            :placeholder="settings?.maskedKey || API_KEY_PLACEHOLDER"
             :disabled="loading || saving"
             @input="onInput('apiKey', $event)"
           />
@@ -89,7 +115,7 @@ function onInput(field: 'apiKey' | 'baseURL' | 'model', event: Event) {
           <input
             :value="model"
             type="text"
-            placeholder="claude-sonnet-4-6"
+            :placeholder="MODEL_PLACEHOLDER"
             :disabled="loading || saving"
             @input="onInput('model', $event)"
           />

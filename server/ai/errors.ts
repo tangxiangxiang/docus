@@ -9,6 +9,7 @@ export type ChatErrorReason =
   | 'aborted'
   | 'llm-error'
   | 'parse-failed'
+  | 'unsupported-provider'
 
 export class ChatError extends Error {
   readonly reason: ChatErrorReason

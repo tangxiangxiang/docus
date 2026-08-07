@@ -250,16 +250,44 @@ describe('buildSystemPrompt', () => {
   })
 })
 
-// Mock the SDK wrapper so tests don't hit the network. The default
-// mock resolves with the new {text, finalMessage} shape that
-// runChat expects.
-vi.mock('../ai/llm', () => ({
-  streamClaude: vi.fn(async ({ onToken }: { onToken: (t: string) => void }) => {
+// Mock the SDK wrapper so tests don't hit the network. runChat now
+// dispatches through ChatBackend, so we wrap streamClaude in a tiny
+// stub backend. The streamClaude mock must be created via vi.hoisted
+// so the factory closure can reference it after vi.mock hoists.
+const { mockStreamClaude } = vi.hoisted(() => ({
+  mockStreamClaude: vi.fn(async ({ onToken }: { onToken: (t: string) => void }) => {
     onToken('hi ')
     onToken('there')
     const finalMessage = { content: [{ type: 'text', text: 'hi there' }], stop_reason: 'end_turn' }
     return { text: 'hi there', finalMessage }
   }),
+}))
+vi.mock('../ai/llm', () => ({
+  streamClaude: mockStreamClaude,
+  clearChatBackendCache: vi.fn(),
+  getChatBackend: vi.fn(() => ({
+    name: 'anthropic' as const,
+    streamRound: vi.fn(async ({ system, messages, model, onToken, signal, tools }: {
+      system: string; messages: unknown[]; model: string; onToken: (t: string) => void; signal?: AbortSignal; tools?: unknown[]
+    }) => {
+      const r = await mockStreamClaude({ system, messages, model, onToken, signal, tools })
+      const toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
+      let text = ''
+      for (const b of r.finalMessage.content as Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>) {
+        if (b.type === 'text' && b.text) text += b.text
+        else if (b.type === 'tool_use' && b.id && b.name) {
+          toolCalls.push({ id: b.id, name: b.name, input: b.input ?? {} })
+        }
+      }
+      return {
+        text,
+        toolCalls,
+        finishReason: r.finalMessage.stop_reason === 'tool_use' ? 'tool_calls' as const
+          : r.finalMessage.stop_reason === 'max_tokens' ? 'length' as const
+          : 'stop' as const,
+      }
+    }),
+  })),
 }))
 
 function freshDb() {
@@ -413,19 +441,23 @@ describe('runChat', () => {
     expect(secondSystem).not.toContain('Live workspace context')
   })
 
-  it('forwards tools and tool_choice to streamClaude', async () => {
+  it('forwards tools to the backend', async () => {
     const db = freshDb()
     const id = makeSession(db)
     await runChat({
       db, sessionId: id, userContent: 'hi', ctx: { kind: 'none' }, model: 'm',
       signal: undefined, onEvent: () => {},
     })
+    // runChat now goes through ChatBackend.streamRound, which forwards
+    // `tools` as the NormalizedTool[] from TOOL_DEFINITIONS. The
+    // AnthropicBackend (or any backend) then translates to its native
+    // wire format; tool_choice is hardcoded to `auto` inside the
+    // backend since the chat route never offers a manual override.
     const call = vi.mocked(streamClaude).mock.calls[0][0]
     expect(call.tools).toBeDefined()
     expect(call.tools!.map((t) => t.name).sort()).toEqual(
       ['create_file', 'delete_file', 'list_files', 'patch_file', 'read_file', 'rename_file', 'update_metadata', 'write_file'],
     )
-    expect(call.toolChoice).toEqual({ type: 'auto' })
   })
 
   it('persists partial assistant text and re-throws ChatError(aborted) with assistantId', async () => {
@@ -553,23 +585,17 @@ describe('runChat', () => {
     // streamClaude was called twice
     expect(vi.mocked(streamClaude)).toHaveBeenCalledTimes(2)
 
-    // Second call's messages include a tool_result block. Note:
-    // `secondCall.messages` is a live reference to the orchestrator's
-    // `convo` array — by the time we assert, the orchestrator has
-    // already pushed a second assistant turn. Find the tool_result
-    // user turn by content, not by index.
+    // Second call's messages include the synthesized tool result. With
+    // the v: 2 envelope + NormalizedMessage plumbing, the result is
+    // its own role:'tool' turn (not a user turn with tool_result
+    // blocks — that was the v: 1 / Anthropic-native shape). Find the
+    // tool turn by role + tool_call_id, not by content-block shape.
     const secondCall = vi.mocked(streamClaude).mock.calls[1][0]
     const toolResultTurn = secondCall.messages.find(
-      (m) =>
-        m.role === 'user' &&
-        Array.isArray(m.content) &&
-        (m.content as { type: string }[]).some((b) => b.type === 'tool_result'),
+      (m) => m.role === 'tool' && (m as { tool_call_id?: string }).tool_call_id === 'toolu_01',
     )
     expect(toolResultTurn).toBeDefined()
-    const blocks = toolResultTurn!.content as { type: string; tool_use_id: string; is_error: boolean }[]
-    expect(blocks).toHaveLength(1)
-    expect(blocks[0].type).toBe('tool_result')
-    expect(blocks[0].tool_use_id).toBe('toolu_01')
+    expect((toolResultTurn as { content: string }).content).toContain('not found')
     expect(blocks[0].is_error).toBe(true) // nope/missing is missing
 
     // Persisted assistant turn is a JSON envelope
@@ -628,15 +654,14 @@ describe('runChat', () => {
       (m) => m.role === 'assistant' && Array.isArray(m.content),
     )
     expect(assistantToolTurn).toBeDefined()
-    // The very next message should be a user turn with tool_result blocks
+    // The very next message should be a role:'tool' turn (one per
+    // tool call) carrying the result. v: 2 persistence rehydrates
+    // tool results this way; AnthropicBackend folds them back into
+    // a single user turn with tool_result blocks on the wire.
     const idx = firstCall.messages.indexOf(assistantToolTurn!)
-    const nextUser = firstCall.messages[idx + 1]
-    expect(nextUser.role).toBe('user')
-    expect(Array.isArray(nextUser.content)).toBe(true)
-    const toolResults = nextUser.content as { type: string; tool_use_id: string }[]
-    expect(toolResults).toHaveLength(1)
-    expect(toolResults[0].type).toBe('tool_result')
-    expect(toolResults[0].tool_use_id).toBe('toolu_99')
+    const nextTool = firstCall.messages[idx + 1]
+    expect(nextTool.role).toBe('tool')
+    expect((nextTool as { tool_call_id: string }).tool_call_id).toBe('toolu_99')
   })
 
   // Edit-10.4: the runChat layer derives ONE policy per run and

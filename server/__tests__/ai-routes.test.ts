@@ -278,6 +278,51 @@ describe('GET/PUT /api/ai/settings', () => {
     expect(body.model).toBe('claude-test')
   })
 
+  it('saves OpenAI config independently of Anthropic config', async () => {
+    // Seed both providers. Keys need to be >16 chars to exercise the
+    // head+tail mask branch (maskKey returns bullets for short keys).
+    await call('PUT', '/settings', { provider: 'anthropic', apiKey: 'sk-ant-api03-aaaaaaaaaaaa', model: 'claude-x' })
+    await call('PUT', '/settings', { provider: 'openai', apiKey: 'sk-openai-bbbbbbbbbbbbbbb', baseURL: 'https://api.openai.com/v1', model: 'gpt-4o' })
+
+    // Switch back to anthropic and verify only its config is exposed.
+    await call('PUT', '/settings', { provider: 'anthropic' })
+    const antBody = await (await call('GET', '/settings')).json() as { provider: string; maskedKey: string; baseURL: string; model: string }
+    expect(antBody.provider).toBe('anthropic')
+    // maskKey uses first 8 + ... + last 8 of 'sk-ant-api03-aaaaaaaaaaaa'
+    // (24 chars): 'sk-ant-a' + ... + 'aaaaaaaa'
+    expect(antBody.maskedKey).toBe('sk-ant-a...aaaaaaaa')
+    expect(antBody.baseURL).toBe('')
+    expect(antBody.model).toBe('claude-x')
+
+    // Switch to openai and verify its config is intact.
+    await call('PUT', '/settings', { provider: 'openai' })
+    const oaBody = await (await call('GET', '/settings')).json() as { provider: string; maskedKey: string; baseURL: string; model: string }
+    expect(oaBody.provider).toBe('openai')
+    // maskKey of 'sk-openai-bbbbbbbbbbbbbbb' (24 chars):
+    // first 8 = 'sk-opena', last 8 = 'bbbbbbbb'
+    expect(oaBody.maskedKey).toBe('sk-opena...bbbbbbbb')
+    expect(oaBody.baseURL).toBe('https://api.openai.com/v1')
+    expect(oaBody.model).toBe('gpt-4o')
+  })
+
+  it('rejects an unknown provider value', async () => {
+    const r = await call('PUT', '/settings', { provider: 'gemini' })
+    expect(r.status).toBe(400)
+  })
+
+  it('switches active provider without touching other fields', async () => {
+    await call('PUT', '/settings', { provider: 'anthropic', apiKey: 'sk-ant-pp', model: 'claude-pp' })
+    const r = await call('PUT', '/settings', { provider: 'openai' })
+    expect(r.status).toBe(200)
+    const body = await r.json() as { provider: string; configured: boolean; maskedKey: string; model: string }
+    expect(body.provider).toBe('openai')
+    // OpenAI had no key saved yet → configured: false, maskedKey empty.
+    expect(body.configured).toBe(false)
+    expect(body.maskedKey).toBe('')
+    // Anthropic's saved config stays intact server-side.
+    expect(body.model).toBe('gpt-4o')  // openai default
+  })
+
   it('rejects unreasonable AI settings input', async () => {
     const longKey = await call('PUT', '/settings', { apiKey: 'x'.repeat(257) })
     expect(longKey.status).toBe(400)

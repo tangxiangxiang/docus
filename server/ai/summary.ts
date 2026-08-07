@@ -1,5 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk'
-import { resolveAiRuntimeConfig } from './llm.js'
+import { generateText, resolveAiRuntimeConfig } from './llm.js'
 import { ChatError } from './errors.js'
 import { getDb } from '../db.js'
 
@@ -38,14 +37,14 @@ export async function generateSummary(opts: {
 
   const cfg = resolveAiRuntimeConfig(getDb())
   if (!cfg.apiKey) throw new ChatError('no-api-key')
-  const client = new Anthropic(cfg.baseURL ? { apiKey: cfg.apiKey, baseURL: cfg.baseURL } : { apiKey: cfg.apiKey })
 
-  let response
+  let result
   try {
-    response = await client.messages.create({
+    result = await generateText({
       model: cfg.model,
-      max_tokens: MAX_TOKENS,
+      maxTokens: MAX_TOKENS,
       temperature: 0,
+      signal: opts.signal,
       system: [
         'Summarize the Markdown document in one to three concise sentences.',
         opts.language === 'zh'
@@ -55,21 +54,15 @@ export async function generateSummary(opts: {
         'Focus on the document\'s main topic, purpose, and useful conclusions.',
         'Do not invent details that are not present in the document.',
       ].join('\n'),
-      messages: [{
-        role: 'user',
-        content: `Document path: ${opts.path}\n\nDocument content:\n${content}`,
-      }],
-    }, { signal: opts.signal })
+      user: `Document path: ${opts.path}\n\nDocument content:\n${content}`,
+    })
   } catch (err) {
+    if (err instanceof ChatError) throw err
     if (opts.signal?.aborted) throw new ChatError('aborted')
     throw new ChatError('llm-error', (err as Error).message)
   }
 
-  const raw = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-  const summary = cleanSummary(raw)
+  const summary = cleanSummary(result.text)
   if (!summary) throw new ChatError('parse-failed', 'empty summary from model')
   return summary
 }

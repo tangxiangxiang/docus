@@ -10,7 +10,7 @@
 // orchestrator forwards it as a `file_changed` SSE event so the
 // client's editor can refresh any open tab on that path.
 
-import Anthropic from '@anthropic-ai/sdk'
+import type { NormalizedTool } from './llm.js'
 import type { Database as DatabaseT } from 'better-sqlite3'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -133,14 +133,21 @@ function truncate(s: string, max: number, marker: string): string {
   return s.slice(0, max) + marker
 }
 
-// ---- tool definitions (sent to Claude as `tools`) ----
+// ---- tool definitions (sent to the LLM as `tools`) ----
 
-export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
+/* Tools are defined in a provider-neutral shape (NormalizedTool). Each
+   ChatBackend maps to its native wire format: Anthropic keeps the
+   JSON Schema object as `input_schema`, OpenAI wraps it inside a
+   `type: 'function'` envelope. Keeping the canonical definitions
+   here in one place means tool descriptions + JSON Schemas are not
+   duplicated per provider. */
+
+export const TOOL_DEFINITIONS: NormalizedTool[] = [
   {
     name: 'read_file',
     description:
       'Read a note. Returns Markdown body and database-owned metadata separately, plus size and mtime. Use this before patching so `old_string` matches the body.',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         path: {
@@ -155,7 +162,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: 'update_metadata',
     description: 'Update database-owned note metadata. Omitted fields remain unchanged. Never write metadata as YAML Frontmatter.',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Workspace-relative path WITHOUT the .md suffix.' },
@@ -170,7 +177,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: 'list_files',
     description:
       'List top-level entries in a directory. No recursion. Each entry has path, size, mtime, and isDir. Omit scope to list the workspace root.',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         scope: {
@@ -185,7 +192,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: 'create_file',
     description:
       'Create a new file. Fails if the file already exists — use write_file to overwrite. Creates parent directories as needed.',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Workspace-relative path WITHOUT the .md suffix.' },
@@ -198,7 +205,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: 'write_file',
     description:
       'Overwrite an existing file or create a new one with the given content. Same primitive the editor\'s save action uses. Creates parent directories as needed.',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Workspace-relative path WITHOUT the .md suffix.' },
@@ -211,7 +218,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: 'patch_file',
     description:
       'Find-and-replace inside a file. The server validates that `old_string` matches exactly once (or exactly N times if `replace_all=true`). If 0 or >1 matches, the call fails with enough context to disambiguate. Use this for small edits; use write_file for full rewrites.',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Workspace-relative path WITHOUT the .md suffix.' },
@@ -233,7 +240,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
   {
     name: 'delete_file',
     description: 'Delete a file from the workspace. Fails if the file does not exist.',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Workspace-relative path WITHOUT the .md suffix.' },
@@ -245,7 +252,7 @@ export const TOOL_DEFINITIONS: Anthropic.Tool[] = [
     name: 'rename_file',
     description:
       'Move or rename a file. Both paths are workspace-relative. Fails if the source does not exist, the target already exists, or source equals target. Use delete_file + create_file if you need to overwrite a target.',
-    input_schema: {
+    parameters: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Current workspace-relative path WITHOUT .md.' },

@@ -46,12 +46,44 @@ const CLEAN_RAW = `closure note\n${SENTINEL}\n`
 
 const ORIGINAL_CONTENT_DIR = CONTENT_DIR
 
-vi.mock('../ai/llm', () => ({
-  streamClaude: vi.fn(async ({ onToken }: { onToken: (t: string) => void }) => {
+// runChat now dispatches through ChatBackend. Tests don't need the
+// real AnthropicBackend — a stub that re-implements the small
+// translation in streamRound keeps the test surface minimal. The
+// mock function must be created via vi.hoisted so the factory
+// closure can reference it after vi.mock hoists.
+const { mockStreamClaude } = vi.hoisted(() => ({
+  mockStreamClaude: vi.fn(async ({ onToken }: { onToken: (t: string) => void }) => {
     onToken('ok')
     const finalMessage = { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' }
     return { text: 'ok', finalMessage }
   }),
+}))
+vi.mock('../ai/llm', () => ({
+  streamClaude: mockStreamClaude,
+  clearChatBackendCache: vi.fn(),
+  getChatBackend: vi.fn(() => ({
+    name: 'anthropic' as const,
+    streamRound: vi.fn(async ({ system, messages, model, onToken, signal, tools }: {
+      system: string; messages: unknown[]; model: string; onToken: (t: string) => void; signal?: AbortSignal; tools?: unknown[]
+    }) => {
+      const r = await mockStreamClaude({ system, messages, model, onToken, signal, tools })
+      const toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
+      let text = ''
+      for (const b of r.finalMessage.content as Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>) {
+        if (b.type === 'text' && b.text) text += b.text
+        else if (b.type === 'tool_use' && b.id && b.name) {
+          toolCalls.push({ id: b.id, name: b.name, input: b.input ?? {} })
+        }
+      }
+      return {
+        text,
+        toolCalls,
+        finishReason: r.finalMessage.stop_reason === 'tool_use' ? 'tool_calls' as const
+          : r.finalMessage.stop_reason === 'max_tokens' ? 'length' as const
+          : 'stop' as const,
+      }
+    }),
+  })),
 }))
 
 function freshDb() {

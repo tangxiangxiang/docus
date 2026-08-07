@@ -50,7 +50,7 @@ export interface ActiveSession {
 }
 
 export interface AiSettings {
-  provider: 'anthropic'
+  provider: 'anthropic' | 'openai'
   configured: boolean
   source: 'db' | 'none'
   maskedKey: string
@@ -164,6 +164,7 @@ export async function getAiSettings(): Promise<AiSettings> {
 }
 
 export async function saveAiSettings(input: {
+  provider?: 'anthropic' | 'openai'
   apiKey?: string
   baseURL?: string
   model?: string

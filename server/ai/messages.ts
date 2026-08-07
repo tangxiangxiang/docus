@@ -11,6 +11,18 @@
 // envelope is detected by `parseStoredContent` when the history is
 // rehydrated for a follow-up turn — the matching tool_results user
 // turn is synthesized from the envelope (no need to persist it).
+//
+// Envelope versions:
+//   v: 1 — `rounds` is `unknown[][]`, each entry is a provider-native
+//          content block array (Anthropic-shaped: text + tool_use).
+//          Reads transparently convert to NormalizedRound on the fly.
+//   v: 2 — `rounds` is `NormalizedRound[]`, provider-neutral shape
+//          `({ text, toolCalls: [{id, name, input}] })`. This is what
+//          every backend writes now.
+//
+// v: 2 was introduced alongside multi-provider support; legacy v: 1
+// envelopes are still readable but new turns always write v: 2 so the
+// on-disk shape converges after a few turns.
 import type { Database as DatabaseT } from 'better-sqlite3'
 import type { Message } from '../../src/lib/ai-api.js'
 
@@ -33,39 +45,109 @@ export type ToolCallRecord = {
   result: { content: string; is_error: boolean }
 }
 
-export type AssistantEnvelope = {
+/* Provider-neutral shape for a single LLM round within an assistant
+   turn. Captures the assistant's text + tool calls for that round;
+   tool results live in the top-level `toolCalls` list (paired by
+   id), so rehydration can rebuild the multi-turn convo without
+   re-running the tool side effects. */
+export type NormalizedRound = {
+  text: string
+  toolCalls: Array<{
+    id: string
+    name: string
+    input: Record<string, unknown>
+  }>
+}
+
+/* v: 2 envelope — what new turns are written as. */
+export type AssistantEnvelopeV2 = {
+  v: 2
+  text: string
+  rounds: NormalizedRound[]
+  toolCalls: ToolCallRecord[]
+}
+
+/* v: 1 envelope — legacy. `rounds[i]` is `unknown[]` of Anthropic-
+   shaped content blocks (text + tool_use). Still readable for
+   history loaded from old sessions; on read we convert to v: 2
+   shape in memory so the rest of the pipeline stays simple. */
+export type AssistantEnvelopeV1 = {
   v: 1
   text: string
-  // One entry per LLM round in this assistant turn. Each entry is
-  // the assistant's content blocks for that round (text + tool_use).
-  // Typed as `unknown` to avoid dragging the SDK types into the
-  // persistence layer; the orchestrator casts.
   rounds: unknown[][]
   toolCalls: ToolCallRecord[]
 }
+
+export type AssistantEnvelope = AssistantEnvelopeV2
 
 export type StoredContent =
   | { kind: 'envelope'; envelope: AssistantEnvelope }
   | { kind: 'plain'; text: string }
 
+/* Lift an Anthropic-shaped `content: ContentBlockParam[]` into a
+   NormalizedRound. Anything that isn't a recognized text / tool_use
+   block is silently dropped (the model could in theory return
+   other block types we don't use). */
+function anthropicBlocksToRound(blocks: unknown[]): NormalizedRound {
+  let text = ''
+  const toolCalls: NormalizedRound['toolCalls'] = []
+  for (const b of blocks as Array<Record<string, unknown>>) {
+    if (b.type === 'text' && typeof b.text === 'string') {
+      text += b.text
+    } else if (b.type === 'tool_use') {
+      toolCalls.push({
+        id: String(b.id ?? ''),
+        name: String(b.name ?? ''),
+        input: (b.input as Record<string, unknown>) ?? {},
+      })
+    }
+  }
+  return { text, toolCalls }
+}
+
+function convertV1ToV2(envelopeV1: AssistantEnvelopeV1): AssistantEnvelopeV2 {
+  return {
+    v: 2,
+    text: envelopeV1.text,
+    rounds: envelopeV1.rounds.map((blocks) => anthropicBlocksToRound(blocks)),
+    toolCalls: envelopeV1.toolCalls,
+  }
+}
+
 /**
- * Try to parse a DB row's `content` as the assistant-envelope shape
- * `{v:1, text, rounds, toolCalls}`. Returns the envelope if it
- * matches; otherwise returns the raw text. Safe to call on any
- * string — never throws.
+ * Try to parse a DB row's `content` as an assistant envelope. Detects
+ * both v: 1 (Anthropic-shaped rounds) and v: 2 (NormalizedRound[]).
+ * Returns the envelope in its v: 2 shape; legacy v: 1 is converted
+ * in memory. Safe to call on any string — never throws.
  */
 export function parseStoredContent(raw: string): StoredContent {
   try {
     const j = JSON.parse(raw)
     if (
       j &&
-      j.v === 1 &&
-      typeof j.text === 'string' &&
-      Array.isArray(j.rounds) &&
-      j.rounds.every((r: unknown) => Array.isArray(r)) &&
+      typeof j === 'object' &&
       Array.isArray(j.toolCalls)
     ) {
-      return { kind: 'envelope', envelope: j as AssistantEnvelope }
+      if (j.v === 2 && typeof j.text === 'string' && Array.isArray(j.rounds)) {
+        // Sanity-check the shape of each round; fall back to plain
+        // text if anything looks off (defensive — should never fire
+        // for well-formed writes).
+        const rounds: NormalizedRound[] = []
+        for (const r of j.rounds) {
+          if (
+            r &&
+            typeof r === 'object' &&
+            typeof r.text === 'string' &&
+            Array.isArray(r.toolCalls)
+          ) {
+            rounds.push(r as NormalizedRound)
+          }
+        }
+        return { kind: 'envelope', envelope: { v: 2, text: j.text, rounds, toolCalls: j.toolCalls } }
+      }
+      if (j.v === 1 && typeof j.text === 'string' && Array.isArray(j.rounds)) {
+        return { kind: 'envelope', envelope: convertV1ToV2(j as AssistantEnvelopeV1) }
+      }
     }
   } catch {
     // not JSON — fall through
