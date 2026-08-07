@@ -186,11 +186,12 @@ no separate process is required. On first run the server creates
 from `server/migrations/`. Endpoints are namespaced under `/api/...`
 and documented inline in [server/index.ts](server/index.ts).
 
-The AI panel calls Anthropic's Messages API. The browser never sees
-the key; set `ANTHROPIC_API_KEY` in the server's environment before
-starting `npm run dev`. `ANTHROPIC_MODEL` overrides the default
-(`claude-sonnet-4-6`). When the key is unset, the panel shows a
-banner and the send button is disabled.
+The AI panel uses the provider configured in Settings. API keys are
+stored encrypted in SQLite and the browser never sees them. An explicit
+`DOCUS_MASTER_KEY` or `DOCUS_MASTER_KEY_FILE` is optional: when neither
+is set, Docus creates `data/.docus-master-key` outside SQLite on the first
+API-key save. When no API key is configured, the panel shows a banner and
+disables sending.
 
 ## Repository layout
 
@@ -327,7 +328,7 @@ the server-saved body. The cached content lags the editor's unsaved
 buffer by the 800ms auto-save debounce — acceptable for v1; closing
 that gap is a separate spec.
 
-When `ANTHROPIC_API_KEY` is unset, the panel shows a persistent
+When no AI API key is configured, the panel shows a persistent
 banner above the composer and the send button is disabled. The
 configured state is read from the `/active` response on mount, so
 the banner is visible before the first send.
@@ -384,9 +385,9 @@ foreign keys are enforced.
 | PATCH  | `/api/ai/sessions/<id>`             | Rename (`{ title }`)                        |
 | DELETE | `/api/ai/sessions/<id>`             | Delete (cascades messages; clears active if needed) |
 | POST   | `/api/ai/sessions/<id>/messages`    | Append a message (validates role)           |
-| GET    | `/api/ai/active`                    | `{ activeId, configured }` — `configured` is `false` when no auth env var is set |
+| GET    | `/api/ai/active`                    | `{ activeId, configured }` — `configured` is `false` when no API key is stored in SQLite |
 | PUT    | `/api/ai/active`                    | Set active session id (or `null`)           |
-| POST   | `/api/ai/chat`                      | Streaming chat; body is `{ sessionId, content, currentNotePath?, currentNoteContent? }`, response is SSE (`user` / `token` / `done` / `error` events). Returns 503 with `{ reason: 'no-api-key' }` when no auth env var is set. |
+| POST   | `/api/ai/chat`                      | Streaming chat; body is `{ sessionId, content, currentNotePath?, currentNoteContent? }`, response is SSE (`user` / `token` / `done` / `error` events). Returns 503 with `{ reason: 'no-api-key' }` when no API key is stored in SQLite. |
 
 Path validation for the filesystem routes is in
 [server/paths.ts](server/paths.ts). The AI sub-router has no
@@ -398,15 +399,14 @@ the camelCase wire format declared in `src/lib/ai-api.ts`.
 
 | Var | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | one of these is required for chat | — | The official Anthropic SDK auth-token env var. Held server-side; the browser never sees it. When neither this nor `ANTHROPIC_AUTH_TOKEN` is set, `/api/ai/chat` returns 503 and the panel's banner + disabled send button are visible. |
-| `ANTHROPIC_AUTH_TOKEN` | alternative to `ANTHROPIC_API_KEY` | — | Alt env-var name used by some Anthropic-compatible proxies. The server picks the first non-empty value, so set this instead of (or in addition to) `ANTHROPIC_API_KEY` when using a proxy. |
-| `ANTHROPIC_BASE_URL` | no | `https://api.anthropic.com` | Override the API endpoint. Set when using a proxy that exposes an Anthropic-compatible API. |
-| `ANTHROPIC_MODEL`   | no  | `claude-sonnet-4-6` | Model id passed to the Messages API. Override when the proxy exposes different model names. |
+| `DOCUS_MASTER_KEY` | no | auto-managed `data/.docus-master-key` | Optional external 32-byte AES-256-GCM master key, encoded as 64 hex characters or base64. Never stored in SQLite. |
+| `DOCUS_MASTER_KEY_FILE` | optional alternative | — | File containing the same master key; the environment value takes precedence when both are set. |
 
-Set them in the shell that runs `npm run dev` (e.g. in a
-`.env.local` loaded by your shell, or via `export ...` in the same
-terminal). A template is at [`.env.example`](.env.example) — copy
-it to `.env` and fill in real values. `.env` is gitignored.
+AI provider, API key, model, and base URL are configured only in the Settings
+panel and read from SQLite; they are not read from `.env`. If you do not
+provide a master key, protect and back up `data/.docus-master-key` separately
+from SQLite. A template is at
+[`.env.example`](.env.example); `.env` is gitignored.
 
 ## Testing
 
@@ -505,11 +505,15 @@ prebuilt SPA (`dist/`) and the Hono `/api/*` backend on one port
 Anthropic-compatible LLM proxy.
 
 ```bash
-cp .env.example .env
-$EDITOR .env
 docker compose up -d --build
 open http://localhost:3000
 ```
+
+AI configuration does not require a `.env` file: enter the provider,
+API key, model, and base URL in Settings. If no explicit master key is
+provided, the container creates `/app/data/.docus-master-key` in the
+persistent data volume. Protect and back up that file separately from
+SQLite; `.env` remains optional for other deployment overrides.
 
 The Dockerfile is a three-stage build: `deps` installs everything
 and compiles the `better-sqlite3` native module against the
@@ -517,9 +521,10 @@ in-container toolchain (avoids host-ABI prebuilds); `build` runs
 `vue-tsc -b` and `vite build`; `runtime` copies just the
 production `node_modules`, `dist/`, and `server/` into a
 `node:22-bookworm-slim` with `tini` for proper SIGTERM and a
-non-root user. Two named volumes persist state: `docus-data`
-(SQLite + WAL — chat history) and `docus-content` (the markdown
-vault). `/api/health` is wired into the Docker `HEALTHCHECK` and
+non-root user. SQLite plus WAL persist settings, encrypted AI
+credentials, chat history, and application metadata; the markdown
+vault is bind-mounted from `src/content`. Back up SQLite consistently
+and keep the master key separate. `/api/health` is wired into the Docker `HEALTHCHECK` and
 into `docker-compose.yml`'s `healthcheck:`. `apt` is mirrored to
 `mirrors.aliyun.com` and `/var/{cache,lib}/apt` plus `/root/.npm`
 are BuildKit cache mounts, so the second build skips the download

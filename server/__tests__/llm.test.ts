@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Database from 'better-sqlite3'
-import { pumpStream } from '../ai/llm'
+import { pumpStream, resolveAiRuntimeConfig } from '../ai/llm'
 import { ChatError } from '../ai/errors'
+import { saveAiSettings } from '../ai/settings'
 import { applyMigrations } from '../db'
 
 // Settings are DB-backed only, so streamClaude's no-api-key check now
@@ -89,5 +90,45 @@ describe('streamClaude', () => {
     await expect(
       streamClaude({ system: 's', messages: [], model: 'm', onToken: () => {} })
     ).rejects.toMatchObject({ reason: 'no-api-key' })
+  })
+})
+
+describe('AI runtime configuration', () => {
+  it('reads provider, credentials, model, and base URL only from SQLite settings', () => {
+    const previous = {
+      masterKey: process.env.DOCUS_MASTER_KEY,
+      anthropicKey: process.env.ANTHROPIC_API_KEY,
+      anthropicModel: process.env.ANTHROPIC_MODEL,
+      anthropicBaseURL: process.env.ANTHROPIC_BASE_URL,
+    }
+    process.env.DOCUS_MASTER_KEY = '11'.repeat(32)
+    process.env.ANTHROPIC_API_KEY = 'env-key-must-be-ignored'
+    process.env.ANTHROPIC_MODEL = 'env-model-must-be-ignored'
+    process.env.ANTHROPIC_BASE_URL = 'https://env.example.invalid'
+
+    try {
+      saveAiSettings(testDbRef.value!, {
+        provider: 'openai',
+        apiKey: 'db-key',
+        model: 'db-model',
+        baseURL: 'https://db.example.invalid/v1',
+      })
+      expect(resolveAiRuntimeConfig(testDbRef.value!)).toEqual({
+        apiKey: 'db-key',
+        provider: 'openai',
+        model: 'db-model',
+        baseURL: 'https://db.example.invalid/v1',
+        source: 'db',
+      })
+    } finally {
+      if (previous.masterKey === undefined) delete process.env.DOCUS_MASTER_KEY
+      else process.env.DOCUS_MASTER_KEY = previous.masterKey
+      if (previous.anthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = previous.anthropicKey
+      if (previous.anthropicModel === undefined) delete process.env.ANTHROPIC_MODEL
+      else process.env.ANTHROPIC_MODEL = previous.anthropicModel
+      if (previous.anthropicBaseURL === undefined) delete process.env.ANTHROPIC_BASE_URL
+      else process.env.ANTHROPIC_BASE_URL = previous.anthropicBaseURL
+    }
   })
 })

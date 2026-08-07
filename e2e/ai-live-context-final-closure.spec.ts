@@ -36,11 +36,9 @@
 // unsaved input not lost — all asserted below.
 //
 // Interlocking evidence (§6.3 split, used because the sealed vite
-// plugin runs `dotenv.config({ override: true })`, so a host .env
-// carrying real ANTHROPIC_* credentials always overrides any
-// spawn-env blanking inside the webServer process — the server-side
-// provider cannot be pointed at a fake endpoint in this environment
-// without a production change, which is forbidden):
+// plugin loads host environment settings before the webServer process —
+// the server-side provider cannot be pointed at a fake endpoint in this
+// environment without a production change, which is forbidden):
 //
 //   A. SERVER INTEGRATION — server/__tests__/edit10-final-closure.test.ts:
 //      the real chain parseAiLiveContext → buildSystemPrompt → runChat

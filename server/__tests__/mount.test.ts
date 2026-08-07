@@ -34,7 +34,11 @@ vi.mock('../ai/chat', async (importOriginal) => {
 import app from '../index'
 import { applyMigrations } from '../db'
 
+const originalMasterKey = process.env.DOCUS_MASTER_KEY
+process.env.DOCUS_MASTER_KEY = '11'.repeat(32)
+
 beforeEach(() => {
+  process.env.DOCUS_MASTER_KEY = '11'.repeat(32)
   const db = new Database(':memory:')
   applyMigrations(db)
   testDbRef.value = db
@@ -43,6 +47,8 @@ beforeEach(() => {
 afterEach(() => {
   testDbRef.value?.close()
   testDbRef.value = null
+  if (originalMasterKey === undefined) delete process.env.DOCUS_MASTER_KEY
+  else process.env.DOCUS_MASTER_KEY = originalMasterKey
 })
 
 describe('app mounts /api/ai', () => {
@@ -71,8 +77,8 @@ describe('app mounts /api/ai', () => {
 })
 
 describe('app mounts /api/ai/chat', () => {
-  // Settings now live entirely in the DB — this describe block used
-  // to set ANTHROPIC_API_KEY via env. The route handler now reads
+  // Settings live in the DB — this describe block seeds the
+  // out-of-band master key and the route reads the API key from SQLite.
   // from the DB, but other tests in this file rely on the chat route
   // finding some configured key (otherwise it would 503 before we
   // exercise streaming). We seed the DB-backed settings instead.

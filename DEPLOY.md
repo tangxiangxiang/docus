@@ -1,13 +1,13 @@
 # 部署 / Deployment
 
-本项目用 Docker 部署。单一容器同时托管 Vue SPA 静态资源和 Hono `/api/*` 后端（SQLite + Anthropic 兼容的 LLM 代理）。
+本项目用 Docker 部署。单一容器同时托管 Vue SPA 静态资源和 Hono `/api/*` 后端（SQLite + 可配置的 AI provider）。
 
 ## 一分钟上手
 
 ```bash
-# 1. 填好密钥（参考 .env.example）
-cp .env.example .env
-$EDITOR .env
+# 1. AI 配置只在应用 Settings 中填写；master key 可选
+#    （未显式注入时会自动创建 /app/data/.docus-master-key）
+# export DOCUS_MASTER_KEY=...
 
 # 2. 构建并启动
 docker compose up -d --build
@@ -23,7 +23,7 @@ open http://localhost:3000          # 或者你设置的 DOCS_PORT
 | 文件 | 作用 |
 | --- | --- |
 | [Dockerfile](Dockerfile) | 多阶段构建。`deps` 装全依赖并编译 `better-sqlite3` 原生模块；`build` 跑 `vue-tsc -b && vite build`；`runtime` 只携带产物体积（Node 22-slim + tini，非 root 用户）。构建加速点见下方"构建性能"。 |
-| [docker-compose.yml](docker-compose.yml) | 单服务编排，挂载 `docus-data`（SQLite）和 `docus-content`（笔记库）两个命名卷，开启 `read_only` + 非 root + 健康检查。 |
+| [docker-compose.yml](docker-compose.yml) | 单服务编排，挂载 SQLite 数据卷和笔记库 bind mount，默认只把宿主机端口绑定到 localhost，并开启 `read_only` + 非 root + 健康检查。 |
 | [.dockerignore](.dockerignore) | 排除 `node_modules` / `dist` / `.env` / `data` / `.git` 等，减少构建上下文。 |
 | [server/prod.ts](server/prod.ts) | 生产环境入口。用 `tsx` 直接跑（`npm run start`），无需编译步骤。 |
 | `package.json` 新增 `start` 脚本 | `tsx server/prod.ts` |
@@ -52,25 +52,25 @@ open http://localhost:3000          # 或者你设置的 DOCS_PORT
 
 ## 环境变量
 
-所有变量在容器启动时由 `.env` 文件注入，Hono 服务在打开数据库前就通过 `dotenv/config` 加载。
+非敏感部署变量可通过 shell 环境变量或可选的 `.env` 文件注入。AI provider、API key、model 和 base URL 只在 Settings 面板写入 SQLite；加密主密钥可通过环境变量、secret file 注入，也可由 Docus 自动保存在 `/app/data/.docus-master-key`（SQLite 之外）。
 
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | 走官方时必填 | Anthropic 官方 SDK 默认变量名 |
-| `ANTHROPIC_AUTH_TOKEN` | 走代理时必填 | 一些国内代理使用的别名 |
-| `ANTHROPIC_BASE_URL` | 否 | 留空走官方 `https://api.anthropic.com`；用代理时填代理地址 |
-| `ANTHROPIC_MODEL` | 否 | 默认 `claude-sonnet-4-6` |
+| `DOCUS_MASTER_KEY` | 否 | 外部 32 字节 AES-256-GCM 主密钥；未设置时自动使用 `/app/data/.docus-master-key` |
+| `DOCUS_MASTER_KEY_FILE` | 可选替代项 | 容器内可读的 secret file；同时设置时 `DOCUS_MASTER_KEY` 优先 |
+| `DOCUS_BIND_ADDRESS` | 否 | 宿主机绑定地址，默认 `127.0.0.1`；明确需要 LAN/公网时才改为 `0.0.0.0` 或指定地址 |
 | `DOCS_PORT` | 否 | 宿主机端口，默认 `3000`（容器内端口固定 3000） |
 | `PORT` / `HOST` | 否 | 容器内监听端口 / 地址，由 Dockerfile 设为 `3000` / `0.0.0.0` |
 
-两个 auth 变量同时存在时，`ANTHROPIC_AUTH_TOKEN` 优先。详见 `server/ai/llm.ts`。
+裸机运行时 `HOST` 未设置则只监听 `127.0.0.1`；只有显式设置才会监听 LAN/公网地址。
 
 ## 持久化数据
 
 容器无状态。所有改动都落在两个命名卷里：
 
-- `docus-data` → `/app/data`，里面是 `docus.db`（SQLite）+ WAL/SHM 文件。**聊天历史在这里**。
-- `docus-content` → `/app/src/content`，里面是 vault 的 `inbox/` / `literature/` / `archive/`。**笔记在这里**。
+- `docus-data` → `/app/data`，里面是 `docus.db`（SQLite）+ WAL/SHM 文件。这里包含 settings、AI 配置、加密 API 凭据、会话历史和应用元数据，**不是只有聊天历史**。
+- `./src/content` → `/app/src/content`，里面是 vault 的 `inbox/` / `literature/` / `archive/`。**笔记在这里**。
+- `/app/data/.docus-master-key`（或显式配置的 secret）必须独立保护和备份；丢失它会使已存储的 API key 无法解密，SQLite 中的其它数据仍可恢复。
 
 > **vault 不在 docus 仓库里。** `src/content/` 下的笔记文件（以及
 > `src/content/.git/` 这个 vault 自己的版本历史仓库）**不**被 docus
@@ -84,22 +84,12 @@ open http://localhost:3000          # 或者你设置的 DOCS_PORT
 
 ```bash
 docker volume inspect docus_docus-data
-docker volume inspect docus_docus-content
+ls -la ./src/content
 ```
 
-要在宿主机上直接编辑笔记，把 `docker-compose.yml` 里这行：
+笔记库已经通过 `./src/content:/app/src/content:rw` 绑定到宿主机，便于本地编辑和独立备份。
 
-```yaml
-- docus-content:/app/src/content
-```
-
-换成：
-
-```yaml
-- ./src/content:/app/src/content:rw
-```
-
-文件末尾的注释块已经写好这个开关。
+备份 SQLite 时应先停止容器，或使用 SQLite 感知的备份工具，确保 `docus.db` 与 WAL/SHM 状态一致；同时单独备份 `.docus-master-key` 或显式配置的 master key。
 
 ## 常用命令
 
@@ -140,7 +130,7 @@ docker inspect --format '{{.State.Health.Status}}' docus
 | **sed 报 `unknown option to 's'`** | 用了 `|` 作为 `sed s-`命令的分隔符，且正则里有 `(deb|security)` 之类的 alternation。GNU sed 的 `s-`命令会把 `(...)` 里的 `|` 当成结束分隔符，导致模式被截断、后半段被当成 flag 解析。换成 `#` 或 `@` 等不在模式里出现的字符。 |
 | **apt 报 `Certificate verification failed` / `No system certificates available`** | 把 apt 源改成了 HTTPS，但 `bookworm-slim` 不带 `ca-certificates`，且这一步在装它之前。本项目 Dockerfile 用 HTTP 解决（包有 GPG 签名，apt 验签不靠 TLS）。 |
 | 启动报 `better-sqlite3` 找不到 / ABI 不匹配 | 多半是宿主机直接跑 `npm i` 留下了错误平台的预编译包。`docker compose build --no-cache` 重新拉一遍，容器内 `node:22-bookworm-slim` 装的是源生 build 然后用 prebuilds。 |
-| AI 面板提示 "AI not configured" | 容器日志里 `dotenv` 没读到 key，常见原因：`.env` 写成 `ANTHROPIC_API_KEY = xxx`（变量名前后多了空格）；或者只设了 `ANTHROPIC_API_KEY` 但代理要 `ANTHROPIC_AUTH_TOKEN`。 |
+| AI 面板提示未配置或主密钥错误 | 在 Settings 中填写 provider、API key、model/base URL。没有显式 master key 时检查 `/app/data/.docus-master-key` 是否可读；主密钥错误时不要删除 SQLite，先恢复正确主密钥；迁移失败会保留旧数据。 |
 | 刷新 `/vault/inbox/foo` 报 404 | Hono 入口里 SPA fallback 没生效。检查 `server/prod.ts` 是否被改过，确保 `app.get('*', ...)` 在 `serveStatic` 之后。 |
 | `docker compose up` 起不来报 "bind: address already in use" | 改 `DOCS_PORT=8080`（或别的），再起。容器内 3000 是写死的，宿主机侧可调。 |
 | 想换 Node 版本 | 改 [Dockerfile](Dockerfile) 顶部的 `node:22-bookworm-slim` tag 即可（Vite 8 / vue-tsc 3 / better-sqlite3 11 都跟 Node 20 LTS+ 兼容）。**注意**：换 Node 大版本后第一次构建要 `docker compose build --no-cache`，把 apt 缓存（带旧 Node 的）和 npm 缓存都清掉。 |

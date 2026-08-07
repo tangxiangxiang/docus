@@ -32,6 +32,16 @@ interface MountedDiagram {
 
 const SELECTOR = '.mermaid-mount:not([data-mermaid-mounted])'
 
+function decodeMountContent(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    // Keep a malformed hand-written placeholder renderable instead of
+    // turning a bad data attribute into an uncaught mount error.
+    return value
+  }
+}
+
 export function useMermaidMount(articleEl: Ref<HTMLElement | null>) {
   const widgets = new Map<HTMLDivElement, MountedDiagram>()
 
@@ -42,7 +52,7 @@ export function useMermaidMount(articleEl: Ref<HTMLElement | null>) {
        live HTMLCollection. */
     const placeholders = Array.from(root.querySelectorAll<HTMLDivElement>(SELECTOR))
     for (const ph of placeholders) {
-      const code = ph.dataset.content ?? ''
+      const code = decodeMountContent(ph.dataset.content ?? '')
       const host = document.createElement('div')
       host.className = 'mermaid-widget-host'
       ph.replaceWith(host)

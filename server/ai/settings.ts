@@ -1,42 +1,18 @@
-// AI settings storage and retrieval.
+// AI provider settings stored in SQLite.
 //
-// Resolution order: SQLite only. There is no env-var override path —
-// configuration lives entirely in the `settings` table so a single
-// DB backup captures everything.
-//
-// Per-provider storage layout:
-//
-//   ai.active.provider          = 'anthropic' | 'openai'   (which is active)
-//   ai.anthropic.apiKey         = encrypted blob | legacy plaintext
-//   ai.anthropic.baseURL        = plaintext
-//   ai.anthropic.model          = plaintext
-//   ai.openai.apiKey            = encrypted blob | legacy plaintext
-//   ai.openai.baseURL           = plaintext
-//   ai.openai.model             = plaintext
-//   ai.encryption.key           = base64 32-byte AES-256-GCM key (shared)
-//
-// Putting the encryption key in the same DB is a deliberate trade-off
-// — see keyEncryption.ts for the rationale.
-//
-// At-rest encryption:
-//   - Each provider's API key is encrypted with AES-256-GCM before
-//     writing. The encryption key is generated once on first use and
-//     persisted to ai.encryption.key.
-//
-// Legacy migration:
-//   - Pre-multi-provider, the apiKey lived at ai.anthropic.apiKey
-//     (plaintext). readStoredAiSettings() detects this via
-//     isEncryptedFormat() and re-encrypts in place on first read.
-//
-// Failure modes:
-//   - Decryption error → treat as empty (user can re-enter). We do
-//     NOT throw, because the only way to recover is for the user to
-//     type a new key and save.
+// API keys are encrypted with AES-256-GCM. SQLite only stores the ciphertext,
+// IV and auth tag. An explicitly supplied DOCUS_MASTER_KEY or
+// DOCUS_MASTER_KEY_FILE takes precedence; otherwise Docus creates a separate
+// local secret file next to the database. The master key is never stored in
+// SQLite. Existing databases that contain ai.encryption.key are migrated
+// transactionally on first access.
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import { randomBytes } from 'node:crypto'
 import type { Database as DatabaseT } from 'better-sqlite3'
 import {
   decryptApiKey,
   encryptApiKey,
-  generateApiKeyEncryptionKey,
   isEncryptedFormat,
 } from './keyEncryption.js'
 
@@ -73,9 +49,26 @@ export interface AiSettingsView {
   model: string
 }
 
+export type AiKeyConfigurationCode =
+  | 'master-key-required'
+  | 'master-key-invalid'
+  | 'master-key-file-unreadable'
+  | 'master-key-file-unwritable'
+  | 'stored-key-invalid'
+
+/** Safe-to-display configuration errors. Never include key material here. */
+export class AiKeyConfigurationError extends Error {
+  readonly code: AiKeyConfigurationCode
+
+  constructor(code: AiKeyConfigurationCode, message: string) {
+    super(message)
+    this.name = 'AiKeyConfigurationError'
+    this.code = code
+  }
+}
+
 /* Default models per provider. baseURL is intentionally not defaulted
-   here — the SDK applies its own sane default (Anthropic: api.anthropic.com,
-   OpenAI: api.openai.com/v1) when no override is set. */
+   here — the SDK applies its own sane default when no override is set. */
 export const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6'
 export const DEFAULT_OPENAI_MODEL = 'gpt-4o'
 export const MAX_AI_API_KEY_LENGTH = 256
@@ -84,6 +77,12 @@ export const MAX_AI_MODEL_LENGTH = 100
 
 const KEY_ACTIVE_PROVIDER = 'ai.active.provider'
 const KEY_ENCRYPTION_KEY = 'ai.encryption.key'
+const KEY_MASTER_ENV = 'DOCUS_MASTER_KEY'
+const KEY_MASTER_FILE_ENV = 'DOCUS_MASTER_KEY_FILE'
+function defaultMasterKeyFile(): string {
+  return path.resolve(process.cwd(), 'data', '.docus-master-key')
+}
+
 function keyApiKey(provider: Provider): string { return `ai.${provider}.apiKey` }
 function keyBaseURL(provider: Provider): string { return `ai.${provider}.baseURL` }
 function keyModel(provider: Provider): string { return `ai.${provider}.model` }
@@ -110,118 +109,231 @@ function deleteSetting(db: DatabaseT, key: string): void {
   db.prepare('DELETE FROM settings WHERE key = ?').run(key)
 }
 
-/* Get the encryption key from the DB, creating it on first use. The
-   encryption key is generated once and persisted; rotating it would
-   invalidate every previously-saved API key, so we don't expose a
-   rotate path here. */
-function getOrCreateEncryptionKey(db: DatabaseT): Buffer {
-  const stored = getSetting(db, KEY_ENCRYPTION_KEY)
-  if (stored) {
-    return Buffer.from(stored, 'base64')
-  }
-  const key = generateApiKeyEncryptionKey()
-  setSetting(db, KEY_ENCRYPTION_KEY, key.toString('base64'))
-  return key
+function decodeKeyMaterial(raw: string, source: string, kind: 'master' | 'stored'): Buffer {
+  const value = raw.trim()
+  const invalid = () => new AiKeyConfigurationError(
+    kind === 'master' ? 'master-key-invalid' : 'stored-key-invalid',
+    `${source} must encode exactly 32 bytes as 64 hex characters or base64`,
+  )
+  if (/^[0-9a-f]{64}$/i.test(value)) return Buffer.from(value, 'hex')
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw invalid()
+  const decoded = Buffer.from(value, 'base64')
+  if (decoded.length !== 32 || decoded.toString('base64') !== value) throw invalid()
+  return decoded
 }
 
-/* Read a single provider's API key, handling both encrypted and legacy
-   plaintext formats. Legacy plaintext is migrated to encrypted on
-   first read so the DB converges to encrypted-only after the first
-   settings load. */
-function readProviderApiKey(db: DatabaseT, provider: Provider, encryptionKey: Buffer): string {
-  const blob = getSetting(db, keyApiKey(provider))
-  if (!blob) return ''
-  if (isEncryptedFormat(blob)) {
-    try {
-      return decryptApiKey(blob, encryptionKey)
-    } catch {
-      // Decryption failed (corrupt blob or rotated key). Treat as
-      // empty — the only recovery is for the user to re-enter.
-      return ''
-    }
+function readMasterKeyFile(filePath: string, code: 'master-key-file-unreadable' | 'master-key-file-unwritable'): Buffer {
+  let fileValue: string
+  try {
+    fileValue = readFileSync(filePath, 'utf8')
+  } catch {
+    throw new AiKeyConfigurationError(code, 'The Docus master key file could not be read')
   }
-  // Legacy plaintext: migrate to encrypted in place, then return.
-  const plaintext = blob
-  setSetting(db, keyApiKey(provider), encryptApiKey(plaintext, encryptionKey))
+  return decodeKeyMaterial(fileValue, filePath, 'master')
+}
+
+function createDefaultMasterKey(filePath: string): Buffer {
+  const generated = randomBytes(32)
+  try {
+    mkdirSync(path.dirname(filePath), { recursive: true })
+    writeFileSync(filePath, `${generated.toString('base64')}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx',
+    })
+    return generated
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      return readMasterKeyFile(filePath, 'master-key-file-unreadable')
+    }
+    throw new AiKeyConfigurationError(
+      'master-key-file-unwritable',
+      'The Docus master key file could not be created; check the data directory permissions',
+    )
+  }
+}
+
+/**
+ * Read the external master key. Environment value takes precedence. When no
+ * value is supplied, use a separate local file so a first Settings save does
+ * not require a .env file. The file is deliberately outside SQLite.
+ */
+export function resolveMasterKey(
+  env: NodeJS.ProcessEnv = process.env,
+  fallbackFile = defaultMasterKeyFile(),
+): Buffer {
+  const configured = env[KEY_MASTER_ENV]?.trim()
+  if (configured) return decodeKeyMaterial(configured, KEY_MASTER_ENV, 'master')
+
+  const filePath = env[KEY_MASTER_FILE_ENV]?.trim()
+  if (filePath) return readMasterKeyFile(filePath, 'master-key-file-unreadable')
+
+  try {
+    return readMasterKeyFile(fallbackFile, 'master-key-file-unreadable')
+  } catch (error) {
+    if (error instanceof AiKeyConfigurationError && !readFileExists(fallbackFile)) {
+      return createDefaultMasterKey(fallbackFile)
+    }
+    throw error
+  }
+}
+
+function readFileExists(filePath: string): boolean {
+  try {
+    readFileSync(filePath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function requireMasterKey(masterKey: Buffer | undefined): Buffer {
+  if (!masterKey) {
+    throw new AiKeyConfigurationError(
+      'master-key-required',
+      'The Docus master key is unavailable; check the data directory or configure DOCUS_MASTER_KEY_FILE',
+    )
+  }
+  return masterKey
+}
+
+function decodeStoredEncryptionKey(value: string): Buffer {
+  try {
+    return decodeKeyMaterial(value, KEY_ENCRYPTION_KEY, 'stored')
+  } catch {
+    throw new AiKeyConfigurationError(
+      'stored-key-invalid',
+      'The legacy database encryption key is invalid; no AI credentials were changed',
+    )
+  }
+}
+
+function storedApiKeyRows(db: DatabaseT): Map<Provider, string> {
+  return new Map(SUPPORTED_PROVIDERS.map((provider) => [provider, getSetting(db, keyApiKey(provider))]))
+}
+
+/**
+ * Resolve and, if needed, migrate every provider key before any settings are
+ * exposed. All plaintext/decryption work happens before the write transaction;
+ * a failed migration therefore leaves the old rows untouched.
+ */
+function loadAndMigrateApiKeys(db: DatabaseT): Map<Provider, string> {
+  const rows = storedApiKeyRows(db)
+  const legacyKeyValue = getSetting(db, KEY_ENCRYPTION_KEY)
+  const hasStoredMaterial = Boolean(legacyKeyValue) || [...rows.values()].some(Boolean)
+  if (!hasStoredMaterial) return new Map(SUPPORTED_PROVIDERS.map((provider) => [provider, '']))
+
+  const masterKey = resolveMasterKey()
+  const legacyKey = legacyKeyValue ? decodeStoredEncryptionKey(legacyKeyValue) : undefined
+  const plaintext = new Map<Provider, string>()
+
+  for (const provider of SUPPORTED_PROVIDERS) {
+    const blob = rows.get(provider) ?? ''
+    if (!blob) {
+      plaintext.set(provider, '')
+      continue
+    }
+    if (!isEncryptedFormat(blob)) {
+      plaintext.set(provider, blob)
+      continue
+    }
+
+    let decrypted: string | undefined
+    const candidates = legacyKey ? [legacyKey, masterKey] : [masterKey]
+    for (const candidate of candidates) {
+      try {
+        decrypted = decryptApiKey(blob, candidate)
+        break
+      } catch {
+        // Try the next known key. No error details contain key material.
+      }
+    }
+    if (decrypted === undefined) {
+      throw new AiKeyConfigurationError(
+        'master-key-invalid',
+        'DOCUS_MASTER_KEY does not match the encrypted AI API key',
+      )
+    }
+    plaintext.set(provider, decrypted)
+  }
+
+  const migrate = db.transaction(() => {
+    for (const provider of SUPPORTED_PROVIDERS) {
+      const value = plaintext.get(provider) ?? ''
+      if (value) setSetting(db, keyApiKey(provider), encryptApiKey(value, masterKey))
+    }
+    if (legacyKeyValue) deleteSetting(db, KEY_ENCRYPTION_KEY)
+  })
+  migrate()
   return plaintext
 }
 
-function readProviderConfig(db: DatabaseT, provider: Provider, encryptionKey: Buffer): StoredProviderConfig {
+function readActiveProvider(db: DatabaseT): Provider {
+  return getSetting(db, KEY_ACTIVE_PROVIDER) === 'openai' ? 'openai' : 'anthropic'
+}
+
+function readProviderConfig(
+  db: DatabaseT,
+  provider: Provider,
+  apiKeys: Map<Provider, string>,
+): StoredProviderConfig {
   return {
-    apiKey: readProviderApiKey(db, provider, encryptionKey),
+    apiKey: apiKeys.get(provider) ?? '',
     baseURL: getSetting(db, keyBaseURL(provider)),
     model: getSetting(db, keyModel(provider)) || defaultModelFor(provider),
   }
 }
 
-function readActiveProvider(db: DatabaseT): Provider {
-  const stored = getSetting(db, KEY_ACTIVE_PROVIDER)
-  if (stored === 'openai') return 'openai'
-  // Legacy default + unknown values fall through to Anthropic. This
-  // means existing single-provider DBs automatically come up on
-  // Anthropic without any migration step.
-  return 'anthropic'
-}
-
 export function readStoredAiSettings(db: DatabaseT): StoredAiSettings {
-  const encryptionKey = getOrCreateEncryptionKey(db)
+  const apiKeys = loadAndMigrateApiKeys(db)
   return {
     provider: readActiveProvider(db),
-    anthropic: readProviderConfig(db, 'anthropic', encryptionKey),
-    openai: readProviderConfig(db, 'openai', encryptionKey),
+    anthropic: readProviderConfig(db, 'anthropic', apiKeys),
+    openai: readProviderConfig(db, 'openai', apiKeys),
   }
 }
 
 export interface SaveAiSettingsInput {
-  /* Optional provider switch. If set and different from current,
-     the active provider is updated and subsequent apiKey/baseURL/
-     model writes land on that provider's slot. If omitted, the
-     current active provider is preserved. */
   provider?: Provider
   apiKey?: string
   baseURL?: string
   model?: string
 }
 
-export function saveAiSettings(
-  db: DatabaseT,
-  input: SaveAiSettingsInput,
-): StoredAiSettings {
-  // Resolve the target provider: switch if the caller asked, otherwise
-  // keep what's already active. Reads happen before writes so a
-  // single PUT can both switch provider and update its config.
-  const target: Provider = input.provider ?? readActiveProvider(db)
-  if (input.provider !== undefined) {
-    setSetting(db, KEY_ACTIVE_PROVIDER, input.provider)
-  }
-  // Three-state write contract (per field):
-  //   undefined -> leave the existing DB value unchanged
-  //   ''        -> delete that setting
-  //   nonempty  -> trim and save the new value
-  // This lets the Settings modal save model/baseURL without clearing
-  // an existing API key whose password field is intentionally blank.
+export function saveAiSettings(db: DatabaseT, input: SaveAiSettingsInput): StoredAiSettings {
+  // Read/migrate before changing the active provider, so a bad master key
+  // cannot leave a partially applied settings update behind.
+  const current = readStoredAiSettings(db)
+  const target = input.provider ?? current.provider
   const apiKey = input.apiKey?.trim()
   const baseURL = input.baseURL?.trim()
   const model = input.model?.trim()
-  const encryptionKey = getOrCreateEncryptionKey(db)
-  if (apiKey !== undefined) {
-    if (apiKey) setSetting(db, keyApiKey(target), encryptApiKey(apiKey, encryptionKey))
-    else deleteSetting(db, keyApiKey(target))
-  }
-  if (baseURL !== undefined) {
-    if (baseURL) setSetting(db, keyBaseURL(target), baseURL)
-    else deleteSetting(db, keyBaseURL(target))
-  }
-  if (model !== undefined) {
-    if (model) setSetting(db, keyModel(target), model)
-    else deleteSetting(db, keyModel(target))
-  }
+  const masterKey = apiKey ? resolveMasterKey() : undefined
+
+  const save = db.transaction(() => {
+    if (input.provider !== undefined) setSetting(db, KEY_ACTIVE_PROVIDER, input.provider)
+    if (apiKey !== undefined) {
+      if (apiKey) setSetting(db, keyApiKey(target), encryptApiKey(apiKey, requireMasterKey(masterKey)))
+      else deleteSetting(db, keyApiKey(target))
+    }
+    if (baseURL !== undefined) {
+      if (baseURL) setSetting(db, keyBaseURL(target), baseURL)
+      else deleteSetting(db, keyBaseURL(target))
+    }
+    if (model !== undefined) {
+      if (model) setSetting(db, keyModel(target), model)
+      else deleteSetting(db, keyModel(target))
+    }
+  })
+  save()
   return readStoredAiSettings(db)
 }
 
 export function clearAiApiKey(db: DatabaseT, provider?: Provider): StoredAiSettings {
-  const target = provider ?? readActiveProvider(db)
-  deleteSetting(db, keyApiKey(target))
+  const current = readStoredAiSettings(db)
+  const target = provider ?? current.provider
+  const clear = db.transaction(() => deleteSetting(db, keyApiKey(target)))
+  clear()
   return readStoredAiSettings(db)
 }
 
@@ -231,12 +343,10 @@ export function maskKey(key: string): string {
   return `${key.slice(0, 8)}...${key.slice(-8)}`
 }
 
-/* Resolve the active provider's runtime config. Used by llm.ts and
-   the other AI helpers — they don't care about inactive providers. */
-export function getAiRuntimeConfig(db?: DatabaseT): AiRuntimeConfig {
-  const stored = db ? readStoredAiSettings(db) : null
-  const provider = stored?.provider ?? 'anthropic'
-  const active = stored?.[provider]
+export function getAiRuntimeConfig(db: DatabaseT): AiRuntimeConfig {
+  const stored = readStoredAiSettings(db)
+  const provider = stored.provider
+  const active = stored[provider]
   if (active?.apiKey) {
     return {
       apiKey: active.apiKey,
@@ -254,9 +364,6 @@ export function getAiRuntimeConfig(db?: DatabaseT): AiRuntimeConfig {
   }
 }
 
-/* View returned to the UI exposes only the active provider's config.
-   The inactive provider's state stays server-side; the UI can switch
-   providers via a subsequent PUT that carries { provider: 'openai' }. */
 export function getAiSettingsView(db: DatabaseT): AiSettingsView {
   const stored = readStoredAiSettings(db)
   const active = stored[stored.provider]

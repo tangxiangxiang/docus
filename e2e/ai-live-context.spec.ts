@@ -121,27 +121,33 @@ test('E2E-3 history snapshot: read-only revision raw, not the disk version', asy
   await openDoc(page, slug)
 
   await page.locator('button.ab-btn[aria-label="History"]').click()
-  const docRow = page.locator('.history-document-row', { hasText: name })
-  await expect(docRow).toBeVisible({ timeout: 10000 })
-  await docRow.click()
-  const revRow = page.locator('.history-revision-row').first()
-  await expect(revRow).toBeVisible({ timeout: 10000 })
-  await revRow.click()
-  await expect(page.locator('.history-snapshot-pane')).toBeVisible({ timeout: 10000 })
+  const dayRow = page.locator('.history-timeline-group-header').first()
+  await expect(dayRow).toBeVisible({ timeout: 10000 })
+  await dayRow.click()
+  await page.locator('.history-commit-row').first().click()
+  await page.locator('.history-file-row', { hasText: name }).click()
+  await expect(page.locator('.history-comparison-pane')).toBeVisible({ timeout: 10000 })
 
   await openAiRail(page)
   await sendAi(page, 'summarize this revision')
   const body = await waitForChat(chatBodies, 1)
 
   const ctx = expectLiveOnly(body)
-  expect(ctx.kind).toBe('history')
+  // The current history UI opens a read-only commit comparison directly;
+  // its selected revision is the comparison's after side in commit-change
+  // mode, rather than a separate history snapshot workspace.
+  expect(ctx.kind).toBe('diff')
   expect(ctx.readOnly).toBe(true)
-  expect(ctx.raw).toBe(revisionRaw)
-  expect(ctx.identity).toEqual({ path: slug, revisionId: sha, revisionTime: expect.any(Number) })
-  expect(ctx.workspaceTabId).toContain('history:')
-  for (const key of ['revision', 'savedRevision', 'dirty', 'saveStatus', 'external', 'before', 'after', 'draft', 'disk']) {
-    expect(key in ctx, `history snapshot must not carry ${key}`).toBe(false)
-  }
+  expect(ctx.before.source).toBe('history')
+  expect(ctx.after.source).toBe('comparison-snapshot')
+  expect(ctx.after.raw).toBe(revisionRaw)
+  expect(ctx.after.dirty).toBe(false)
+  expect(ctx.identity).toEqual({
+    path: slug,
+    revisionId: sha,
+    revisionTime: expect.any(Number),
+    currentDocumentId: null,
+  })
 })
 
 test('E2E-4 history diff: before is the revision, after is the live buffer', async ({ page, request }) => {
@@ -155,12 +161,14 @@ test('E2E-4 history diff: before is the revision, after is the live buffer', asy
   await openDoc(page, slug) // the document editor stays open behind the diff
 
   await page.locator('button.ab-btn[aria-label="History"]').click()
-  const docRow = page.locator('.history-document-row', { hasText: name })
-  await expect(docRow).toBeVisible({ timeout: 10000 })
-  await docRow.click()
-  await page.locator('.history-revision-row').first().click()
-  await expect(page.locator('.history-snapshot-pane')).toBeVisible({ timeout: 10000 })
-  await page.locator('.history-snapshot-toolbar button', { hasText: 'Open Diff' }).click()
+  const dayRow = page.locator('.history-timeline-group-header').first()
+  await expect(dayRow).toBeVisible({ timeout: 10000 })
+  await dayRow.click()
+  await page.locator('.history-commit-row').first().click()
+  await page.locator('.history-file-row', { hasText: name }).click()
+  await expect(page.locator('.history-comparison-pane')).toBeVisible({ timeout: 10000 })
+  await page.locator('.history-pane-menu-trigger').click()
+  await page.getByRole('menuitem', { name: 'Compare with Working Tree' }).click()
   await expect(page.locator('.history-comparison-pane')).toBeVisible({ timeout: 10000 })
 
   await openAiRail(page)

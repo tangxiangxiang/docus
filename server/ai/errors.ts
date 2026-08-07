@@ -4,6 +4,7 @@
 // or SSE event type; nothing else inspects the class.
 export type ChatErrorReason =
   | 'no-api-key'
+  | 'key-error'
   | 'not-found'
   | 'empty'
   | 'aborted'

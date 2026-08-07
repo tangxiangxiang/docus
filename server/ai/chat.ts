@@ -34,7 +34,6 @@ import {
   getChatBackend,
   type NormalizedBlock,
   type NormalizedMessage,
-  type NormalizedToolCall,
 } from './llm.js'
 import { TOOL_DEFINITIONS, executeToolCall } from './tools.js'
 import { deriveToolSafetyPolicy } from './tool-safety.js'
@@ -259,10 +258,10 @@ export async function runChat(opts: RunChatOpts): Promise<{
   let convo: NormalizedMessage[] = buildConvoFromHistory(history, opts.userContent)
   // Backend may be cached from a previous run with a different
   // provider. Clear so getChatBackend() re-evaluates against the
-  // current settings (the backend factory reads getAiRuntimeConfig
+  // current settings (the backend factory reads the SQLite settings
   // fresh on miss).
   clearChatBackendCache()
-  const backend = getChatBackend()
+  const backend = getChatBackend(opts.db)
 
   let fullText = ''
   // Each round's NormalizedRound is accumulated here so the final
@@ -284,6 +283,7 @@ export async function runChat(opts: RunChatOpts): Promise<{
       }
 
       const result = await backend.streamRound({
+        db: opts.db,
         model: opts.model,
         system,
         messages: convo,

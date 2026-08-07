@@ -49,15 +49,13 @@ const ORIGINAL_CONTENT_DIR = CONTENT_DIR
 // runChat now dispatches through ChatBackend. Tests don't need the
 // real AnthropicBackend — a stub that re-implements the small
 // translation in streamRound keeps the test surface minimal. The
-// mock function must be created via vi.hoisted so the factory
-// closure can reference it after vi.mock hoists.
-const { mockStreamClaude } = vi.hoisted(() => ({
-  mockStreamClaude: vi.fn(async ({ onToken }: { onToken: (t: string) => void }) => {
+// mock function is created in the hoisted scope so the factory can
+// reference the initialized value after vi.mock hoists.
+const mockStreamClaude = vi.hoisted(() => vi.fn(async ({ onToken }: { onToken: (t: string) => void }) => {
     onToken('ok')
     const finalMessage = { content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' }
     return { text: 'ok', finalMessage }
-  }),
-}))
+  }))
 vi.mock('../ai/llm', () => ({
   streamClaude: mockStreamClaude,
   clearChatBackendCache: vi.fn(),

@@ -252,16 +252,14 @@ describe('buildSystemPrompt', () => {
 
 // Mock the SDK wrapper so tests don't hit the network. runChat now
 // dispatches through ChatBackend, so we wrap streamClaude in a tiny
-// stub backend. The streamClaude mock must be created via vi.hoisted
-// so the factory closure can reference it after vi.mock hoists.
-const { mockStreamClaude } = vi.hoisted(() => ({
-  mockStreamClaude: vi.fn(async ({ onToken }: { onToken: (t: string) => void }) => {
+// stub backend. The mock function is created in the hoisted scope so
+// the factory can reference the initialized value after vi.mock hoists.
+const mockStreamClaude = vi.hoisted(() => vi.fn(async ({ onToken }: { onToken: (t: string) => void }) => {
     onToken('hi ')
     onToken('there')
     const finalMessage = { content: [{ type: 'text', text: 'hi there' }], stop_reason: 'end_turn' }
     return { text: 'hi there', finalMessage }
-  }),
-}))
+  }))
 vi.mock('../ai/llm', () => ({
   streamClaude: mockStreamClaude,
   clearChatBackendCache: vi.fn(),
@@ -595,19 +593,20 @@ describe('runChat', () => {
       (m) => m.role === 'tool' && (m as { tool_call_id?: string }).tool_call_id === 'toolu_01',
     )
     expect(toolResultTurn).toBeDefined()
-    expect((toolResultTurn as { content: string }).content).toContain('not found')
-    expect(blocks[0].is_error).toBe(true) // nope/missing is missing
+    expect((toolResultTurn as { content: string }).content).toContain('does not exist')
 
     // Persisted assistant turn is a JSON envelope
     const rows = db.prepare('SELECT role, content FROM messages WHERE session_id = ? ORDER BY id').all(id) as { role: string; content: string }[]
     const assistantRow = rows.find((r) => r.role === 'assistant')!
     const envelope = JSON.parse(assistantRow.content)
-    expect(envelope.v).toBe(1)
+    expect(envelope.v).toBe(2)
     expect(envelope.text).toBe('我先看下文件 ok done')
-    // Two rounds: round 1 had [text, tool_use], round 2 had [text].
+    // Two normalized rounds: round 1 had text + one tool call, round 2 had text.
     expect(envelope.rounds).toHaveLength(2)
-    expect(envelope.rounds[0]).toHaveLength(2)
-    expect(envelope.rounds[1]).toHaveLength(1)
+    expect(envelope.rounds[0].text).toBe('我先看下文件 ')
+    expect(envelope.rounds[0].toolCalls).toHaveLength(1)
+    expect(envelope.rounds[1].text).toBe('ok done')
+    expect(envelope.rounds[1].toolCalls).toHaveLength(0)
     expect(envelope.toolCalls).toHaveLength(1)
     expect(envelope.toolCalls[0].id).toBe('toolu_01')
     expect(envelope.toolCalls[0].name).toBe('read_file')
@@ -733,15 +732,10 @@ describe('runChat', () => {
 
       // Round 2's conversation carries the is_error tool_result.
       const secondCall = vi.mocked(streamClaude).mock.calls[1][0]
-      const toolTurn = secondCall.messages.find(
-        (m) => m.role === 'user' && Array.isArray(m.content)
-          && (m.content as { type: string }[]).some((b) => b.type === 'tool_result'),
-      )
-      expect(toolTurn).toBeDefined()
-      const blocks = toolTurn!.content as { type: string; is_error: boolean; content: string }[]
-      expect(blocks).toHaveLength(1)
-      expect(blocks[0].is_error).toBe(true)
-      expect(blocks[0].content).toContain('active-context-unsaved')
+      const toolTurns = secondCall.messages.filter((m) => m.role === 'tool')
+      expect(toolTurns).toHaveLength(1)
+      expect(toolTurns[0]).toMatchObject({ tool_call_id: 'toolu_block' })
+      expect((toolTurns[0] as { content: string }).content).toContain('active-context-unsaved')
 
       // The envelope persists the blocked call (persistable — it is
       // the model-visible error text) — without the editor raw.
@@ -813,15 +807,11 @@ describe('runChat', () => {
       // Both tool_results in round 2's convo, in call order:
       // first blocked (is_error), second allowed.
       const secondCall = vi.mocked(streamClaude).mock.calls[1][0]
-      const toolTurn = secondCall.messages.find(
-        (m) => m.role === 'user' && Array.isArray(m.content)
-          && (m.content as { type: string }[]).some((b) => b.type === 'tool_result'),
-      )
-      const blocks = toolTurn!.content as { type: string; tool_use_id: string; is_error: boolean; content: string }[]
-      expect(blocks).toHaveLength(2)
-      expect(blocks[0]).toMatchObject({ tool_use_id: 'toolu_blocked', is_error: true })
-      expect(blocks[0].content).toContain('active-context-unsaved')
-      expect(blocks[1]).toMatchObject({ tool_use_id: 'toolu_ok', is_error: false })
+      const toolTurns = secondCall.messages.filter((m) => m.role === 'tool')
+      expect(toolTurns).toHaveLength(2)
+      expect(toolTurns[0]).toMatchObject({ tool_call_id: 'toolu_blocked' })
+      expect((toolTurns[0] as { content: string }).content).toContain('active-context-unsaved')
+      expect(toolTurns[1]).toMatchObject({ tool_call_id: 'toolu_ok' })
 
       // The assistant turn still completed normally.
       const rows = db.prepare('SELECT role, content FROM messages WHERE session_id = ? ORDER BY id').all(id) as { role: string; content: string }[]
@@ -868,12 +858,9 @@ describe('runChat', () => {
       expect(events.filter((e) => e.type === 'file_changed')).toHaveLength(1)
       expect(fs.readFileSync(path.join(contentDir, 'content/notes/a.md'), 'utf8')).toBe('legacy write')
       const secondCall = vi.mocked(streamClaude).mock.calls[1][0]
-      const toolTurn = secondCall.messages.find(
-        (m) => m.role === 'user' && Array.isArray(m.content)
-          && (m.content as { type: string }[]).some((b) => b.type === 'tool_result'),
-      )
-      const blocks = toolTurn!.content as { type: string; is_error: boolean }[]
-      expect(blocks[0].is_error).toBe(false)
+      const toolTurns = secondCall.messages.filter((m) => m.role === 'tool')
+      expect(toolTurns).toHaveLength(1)
+      expect(toolTurns[0]).toMatchObject({ tool_call_id: 'toolu_legacy' })
     })
   })
 })

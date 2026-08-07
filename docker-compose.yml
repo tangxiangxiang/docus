@@ -5,12 +5,12 @@
 # 持久化策略按数据本质拆开：
 #   - 笔记库 (./src/content) 走 bind mount —— 它是你的第二大脑,是独立于 docus
 #     的资产,需要用本地编辑器直读直写,需要随 rsync/Syncthing/rclone 备份。
-#   - SQLite (聊天历史) 走命名卷 docus-data —— 它是 docus 的内部状态,丢了
-#     只是丢一些对话记录,重启容器 docus 会自建 schema。需要时 docker volume
+#   - SQLite 走命名卷 docus-data —— 它包含 settings、加密后的 AI 凭据、会话历史
+#     和应用元数据,以及 SQLite 外的 .docus-master-key,必须一起保护和备份。需要时 docker volume
 #     backup 一次性导出即可,不需要绑定到宿主机路径。
 #
-# 密钥（ANTHROPIC_*）从宿主机的 .env 文件读 —— 可配置的变量见 .env.example，
-# 启动前把它的副本改名为 .env。
+# AI API key 在应用 Settings 面板中配置并写入 SQLite；加密主密钥只从
+# DOCUS_MASTER_KEY 或 DOCUS_MASTER_KEY_FILE 注入,绝不写入 SQLite。
 
 services:
   docus:
@@ -24,20 +24,15 @@ services:
     # SPA 和 /api/* 走同一个端口。Hono 产线入口（server/prod.ts）把 /api/* 路由到 app，
     # 其它路径回落到 index.html（SPA history 模式需要）。
     ports:
-      - "${DOCS_PORT:-3000}:3000"
-
-    env_file:
-      - .env
+      - "${DOCUS_BIND_ADDRESS:-127.0.0.1}:${DOCS_PORT:-3000}:3000"
 
     environment:
       NODE_ENV: production
       PORT: "3000"
       HOST: "0.0.0.0"
-      # 透传 LLM 配置：.env 里其实已经把这些值注入进程了，这里再列一遍是把契约写明确。
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      # 容器内部需要监听所有接口,但宿主机端口默认只绑定 localhost。
+      DOCUS_MASTER_KEY: ${DOCUS_MASTER_KEY:-}
+      DOCUS_MASTER_KEY_FILE: ${DOCUS_MASTER_KEY_FILE:-}
       # Git author identity used by the vault history feature when the
       # vault repo has no user.name / user.email set yet (typical for
       # a fresh `git init` in a brand-new vault). Both default to
@@ -53,8 +48,7 @@ services:
 
     volumes:
       # SQLite 数据库 + WAL/SHM 走命名卷。Docker 自动管理权限,容器以 uid 1000
-      # 跑也能写。丢了只是丢聊天记录 —— docus 的 schema 在 server/migrations/
-      # 里,容器重启会自检并补齐。
+      # 跑也能写。这里不只是聊天记录,还包含 settings、加密凭据和应用元数据。
       - docus-data:/app/data
       # 笔记库 bind mount 到宿主机 ./src/content —— 这是用户的核心资产,需要
       # 走宿主机的备份管道(rsync / rclone / Btrfs snapshot 都能直接吃到)。

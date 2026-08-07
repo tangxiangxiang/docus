@@ -74,7 +74,7 @@ RUN npm prune --omit=dev
 FROM node:22-bookworm-slim AS runtime
 
 # tini 提供正确的 SIGTERM/SIGINT 处理，这样 `docker stop` 时 Node 进程不会被半路截断。
-# ca-certificates 让 Node 调用 Anthropic API 时能正常校验 TLS 证书。
+# ca-certificates 让 Node 调用已配置的 AI API 时能正常校验 TLS 证书。
 # git 是 server/history/* 功能的运行时依赖 —— vault 的本地 history 面板通过
 # `spawn('git', ...)` 调 git 子命令(rev-parse / log / show / add / commit /
 # checkout),不在 runtime 装 git 的话 history 路由会全部 503 (`GitUnavailableError`)。
@@ -110,8 +110,8 @@ COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/server ./server
 COPY --from=build --chown=node:node /app/package.json ./package.json
 
-# data/ 放 SQLite 的 WAL；src/content/ 是 markdown 笔记库 —— 两者在 docker-compose
-# 里都挂成了卷，这样重建容器时笔记和聊天记录都不会丢。
+# data/ 放 SQLite 的 WAL；它包含 settings、加密 AI 凭据、会话历史和应用元数据。
+# src/content/ 是 markdown 笔记库 —— 两者在 docker-compose 里都挂成了卷。
 RUN mkdir -p /app/data /app/src/content && chown -R node:node /app/data /app/src/content
 
 USER node

@@ -27,7 +27,7 @@ import type { Message } from '@anthropic-ai/sdk/resources/messages/messages'
 import OpenAI from 'openai'
 import { ChatError } from './errors.js'
 import { getDb } from '../db.js'
-import { getAiRuntimeConfig, type Provider } from './settings.js'
+import { AiKeyConfigurationError, getAiRuntimeConfig, type Provider } from './settings.js'
 import type { Database as DatabaseT } from 'better-sqlite3'
 
 const MAX_TOKENS = 4096
@@ -81,6 +81,7 @@ export interface NormalizedToolCall {
 }
 
 export interface StreamRoundOpts {
+  db: DatabaseT
   model: string
   system: string
   messages: NormalizedMessage[]
@@ -111,7 +112,7 @@ class AnthropicBackend implements ChatBackend {
   readonly name = 'anthropic' as const
 
   async streamRound(opts: StreamRoundOpts): Promise<StreamRoundResult> {
-    const cfg = getAiRuntimeConfig()
+    const cfg = resolveAiRuntimeConfig(opts.db)
     if (!cfg.apiKey) throw new ChatError('no-api-key')
     const client = new Anthropic(cfg.baseURL ? { apiKey: cfg.apiKey, baseURL: cfg.baseURL } : { apiKey: cfg.apiKey })
 
@@ -189,7 +190,7 @@ class OpenAIBackend implements ChatBackend {
   readonly name = 'openai' as const
 
   async streamRound(opts: StreamRoundOpts): Promise<StreamRoundResult> {
-    const cfg = getAiRuntimeConfig()
+    const cfg = resolveAiRuntimeConfig(opts.db)
     if (!cfg.apiKey) throw new ChatError('no-api-key')
     const client = new OpenAI({
       apiKey: cfg.apiKey,
@@ -320,8 +321,8 @@ class OpenAIBackend implements ChatBackend {
 let cachedBackend: ChatBackend | null = null
 let cachedProvider: Provider | null = null
 
-export function getChatBackend(provider?: Provider): ChatBackend {
-  const target = provider ?? getAiRuntimeConfig().provider
+export function getChatBackend(db: DatabaseT, provider?: Provider): ChatBackend {
+  const target = provider ?? getAiRuntimeConfig(db).provider
   if (cachedBackend && cachedProvider === target) return cachedBackend
   cachedBackend = target === 'openai' ? new OpenAIBackend() : new AnthropicBackend()
   cachedProvider = target
@@ -424,7 +425,14 @@ export function resolveApiKey(): string | undefined {
 }
 
 export function resolveAiRuntimeConfig(db: DatabaseT = getDb()) {
-  return getAiRuntimeConfig(db)
+  try {
+    return getAiRuntimeConfig(db)
+  } catch (error) {
+    if (error instanceof AiKeyConfigurationError) {
+      throw new ChatError('key-error', error.message)
+    }
+    throw error
+  }
 }
 
 /* ------------------------------------------------------------------ *

@@ -176,23 +176,17 @@ test('Long Flow A — Recovery → History/Diff → Rename across one document l
   })
 
   await page.locator('button.ab-btn[aria-label="History"]').click()
-  const docRow = page.locator('.history-document-row', { hasText: name })
-  await expect(docRow).toBeVisible({ timeout: 10000 })
-  await docRow.click()
-  const revRow = page.locator('.history-revision-row').first()
-  await expect(revRow).toBeVisible({ timeout: 10000 })
-  await revRow.click()
-  const snapshotPane = page.locator('.history-snapshot-pane')
-  await expect(snapshotPane).toBeVisible({ timeout: 10000 })
-  await expect(snapshotPane).toContainText(bodyA.trim()) // the revision raw, read-only
-
-  await snapshotPane.locator('.history-snapshot-toolbar button', { hasText: 'Open Diff' }).click()
+  const dayRow = page.locator('.history-timeline-group-header').first()
+  await expect(dayRow).toBeVisible({ timeout: 10000 })
+  await dayRow.click()
+  await page.locator('.history-commit-row').first().click()
+  await page.locator('.history-file-row', { hasText: name }).click()
   const comparison = page.locator('.history-comparison-pane')
   await expect(comparison).toBeVisible({ timeout: 10000 })
+  await comparison.getByRole('button', { name: 'More actions' }).click()
+  await page.getByRole('menuitem', { name: 'Compare with Working Tree' }).click()
   await expect(comparison).toContainText(bodyA.trim()) // before = rev A
   await expect(comparison).toContainText(markerX) // after = the live buffer
-  await comparison.getByRole('button', { name: 'Close Diff' }).click()
-  await expect(comparison).toHaveCount(0)
 
   expect(putCount).toBe(0) // History/Diff never autosaved the document
   await expect(page.locator('.confirm-dialog')).toHaveCount(0)
@@ -260,21 +254,18 @@ test('Long Flow A — Recovery → History/Diff → Rename across one document l
   expect(await draftRowCount(page, markerD)).toBe(0)
 
   await page.locator('button.ab-btn[aria-label="History"]').click()
-  // The timeline labels documents by their metadata title, which
-  // survives the rename (it comes from the content, not the filename
-  // — the tab aria "title <old>, file <new>" confirms it). The fake
-  // timeline carries exactly one commit, so exactly one document row:
-  // the renamed document. Drilling in must show the DISTINCT
-  // post-rename pin subject — proof the timeline refreshed with the
-  // renamed document rather than replaying the pre-rename pin.
-  const renamedRow = page.locator('.history-document-row').first()
-  await expect(renamedRow).toBeVisible({ timeout: 10000 })
-  await expect(page.locator('.history-document-row')).toHaveCount(1)
-  await renamedRow.click()
-  const renamedRev = page.locator('.history-revision-row').first()
-  await expect(renamedRev).toBeVisible({ timeout: 10000 })
-  await renamedRev.click()
-  await expect(page.locator('.history-snapshot-pane')).toContainText('E2E pinned after rename', { timeout: 10000 })
+  // The fake timeline carries exactly one commit. Expand the current
+  // date, then its commit and file, and verify the post-rename subject.
+  const renamedDay = page.locator('.history-timeline-group-header').first()
+  await expect(renamedDay).toBeVisible({ timeout: 10000 })
+  await renamedDay.click()
+  const renamedCommit = page.locator('.history-commit-row').first()
+  await expect(renamedCommit).toContainText('E2E pinned after rename')
+  await renamedCommit.click()
+  // The display title remains the document's content title across rename;
+  // the commit row itself proves that this is the post-rename pin.
+  await page.locator('.history-file-row', { hasText: name }).click()
+  await expect(page.locator('.history-comparison-pane')).toBeVisible({ timeout: 10000 })
 })
 
 test('Long Flow B — AI live context, external conflict, and multi-tab authority in one chain', async ({ page, request }) => {

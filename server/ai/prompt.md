@@ -54,7 +54,7 @@ All four are classified as wiki links and routed to `/vault/<target>`. Avoid `[t
 | lang | zh<br>en             |
 ```
 
-GFM tables don't allow newlines inside cells. Trailing two-spaces and backslash line-breaks both split the row instead of continuing the cell (this is markdown-it-table behavior, not specific to docus). The renderer is configured with `html: true`, so `<br>` is the only way.
+GFM tables don't allow newlines inside cells. Trailing two-spaces and backslash line-breaks both split the row instead of continuing the cell (this is markdown-it-table behavior, not specific to docus). The renderer accepts semantic HTML through a strict sanitizer, so use `<br>` for a safe line break inside a table cell.
 
 ### Two fenced-code languages have built-in rendering
 
@@ -69,9 +69,9 @@ Any other language identifier (`js`, `py`, `ts`, …) renders as a normal highli
 - `[^id]` reference + `[^id]: definition` block → footnotes; ids are numbered sequentially regardless of the label.
 - `Term\n: definition` (colon at line start, indented body) → definition list.
 
-### Don't introduce raw-HTML surface
+### Don't introduce unsafe HTML
 
-The renderer accepts raw HTML, which is what makes `<br>` in tables work. But this also means a `<script>` tag or `<img onerror=…>` will execute. When generating notes, don't write inline scripts, event handlers, or external `<img>` / `<iframe>` tags — prefer prose, code fences, or the `markmap` / `mermaid` fences for diagrams.
+The Markdown renderer permits semantic HTML through a strict sanitizer. Safe elements such as `<br>`, formatting tags, tables, and links may be preserved, while scripts, event handlers, iframes, objects, embeds, styles, and `javascript:` URLs are removed. Do not rely on unsafe HTML; prefer prose, code fences, or the `markmap` / `mermaid` fences for diagrams.
 
 ## Archive — preserved knowledge
 

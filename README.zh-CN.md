@@ -53,10 +53,10 @@ Hono 后台（`server/`）在 dev 模式下作为 Vite 中间件挂载，无需�
 `/api/...` 命名空间下，路由表内联在
 [server/index.ts](server/index.ts) 中。
 
-AI 面板调用 Anthropic 的 Messages API。浏览器永远拿不到 key —— 启动
-`npm run dev` 之前在服务端环境里设好 `ANTHROPIC_API_KEY`。
-`ANTHROPIC_MODEL` 覆盖默认模型（`claude-sonnet-4-6`）。key 未设时
-面板顶部显示一条常驻 banner，发送按钮被禁用。
+AI 面板使用 Settings 中配置的 provider。API key 加密存入 SQLite，浏览器
+永远拿不到 key；`DOCUS_MASTER_KEY` 或 `DOCUS_MASTER_KEY_FILE` 都是可选的。
+如果没有显式提供，第一次保存 API key 时 Docus 会在 SQLite 外创建
+`data/.docus-master-key`。未配置 API key 时面板显示常驻 banner，发送按钮被禁用。
 
 ## 目录结构
 
@@ -176,7 +176,7 @@ composer 走服务端调用 Anthropic。按 Enter 触发 `POST /api/ai/chat`；
 的 body —— 与编辑器里的未保存 buffer 之间差 800ms 自动保存的
 debounce，v1 接受这个延迟，缩小差距是另一个 spec 的事。
 
-未设 `ANTHROPIC_API_KEY` 时，composer 上方会显示一条常驻 banner，
+未配置 AI API key 时，composer 上方会显示一条常驻 banner，
 发送按钮被禁用。配置状态在挂载时通过 `/active` 响应读取，banner
 在第一次 send 之前就可见。
 
@@ -228,9 +228,9 @@ debounce，v1 接受这个延迟，缩小差距是另一个 spec 的事。
 | PATCH  | `/api/ai/sessions/<id>`             | 重命名（`{ title }`）                      |
 | DELETE | `/api/ai/sessions/<id>`             | 删除（级联删除消息；若被删的是活跃会话则清空活跃 id）|
 | POST   | `/api/ai/sessions/<id>/messages`    | 追加消息（校验 role）                      |
-| GET    | `/api/ai/active`                    | `{ activeId, configured }` —— 未设任一 auth 环境变量时 `configured` 为 `false` |
+| GET    | `/api/ai/active`                    | `{ activeId, configured }` —— SQLite 中没有 API key 时 `configured` 为 `false` |
 | PUT    | `/api/ai/active`                    | 设置活跃会话 id（或 `null`）               |
-| POST   | `/api/ai/chat`                      | 流式对话：请求体 `{ sessionId, content, currentNotePath?, currentNoteContent? }`，响应是 SSE（`user` / `token` / `done` / `error` 事件）。未设 auth 环境变量时返回 503 + `{ reason: 'no-api-key' }` |
+| POST   | `/api/ai/chat`                      | 流式对话：请求体 `{ sessionId, content, currentNotePath?, currentNoteContent? }`，响应是 SSE（`user` / `token` / `done` / `error` 事件）。SQLite 中没有 API key 时返回 503 + `{ reason: 'no-api-key' }` |
 
 文件系统路由的路径校验在
 [server/paths.ts](server/paths.ts)。AI 子路由不涉及文件系统；
@@ -241,14 +241,12 @@ debounce，v1 接受这个延迟，缩小差距是另一个 spec 的事。
 
 | 变量 | 必填 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | 二选一必填 | — | Anthropic 官方 SDK 的 auth-token 变量名。只在服务端持有，浏览器永远拿不到。两个 auth 变量都没设时，`/api/ai/chat` 返回 503，面板上 banner + 禁用发送按钮同时可见。 |
-| `ANTHROPIC_AUTH_TOKEN` | 与上一个二选一 | — | 部分 Anthropic 兼容代理使用的别名。服务端取第一个非空值，所以走代理时设这个（或同时设）。 |
-| `ANTHROPIC_BASE_URL` | 否 | `https://api.anthropic.com` | 覆盖 API endpoint。代理暴露的是 Anthropic 兼容 API 时填这里。 |
-| `ANTHROPIC_MODEL`   | 否 | `claude-sonnet-4-6` | 传给 Messages API 的 model id。代理暴露的模型名不同时覆盖这里。 |
+| `DOCUS_MASTER_KEY` | 否 | 自动管理 `data/.docus-master-key` | 可选的 32 字节 AES-256-GCM 主密钥，以 64 位 hex 或 base64 表示；不会写入 SQLite。 |
+| `DOCUS_MASTER_KEY_FILE` | 可选替代项 | — | 包含同一主密钥的文件；同时设置时环境变量优先。 |
 
-在跑 `npm run dev` 的 shell 里设（用 shell 加载的 `.env.local`、
-或在同一终端 `export` 都行）。[.env.example](.env.example) 是模板，
-复制成 `.env` 再填实际值。`.env` 已 gitignore。
+AI provider、API key、model 和 base URL 只在 Settings 面板配置并存入
+SQLite，不再从 `.env` 读取。没有显式 master key 时，请单独保护并备份
+`data/.docus-master-key`。[.env.example](.env.example) 是模板，`.env` 已 gitignore。
 
 ## 测试
 
@@ -331,19 +329,23 @@ npm test
 SQLite 由 `better-sqlite3` 支撑，AI 走 Anthropic 兼容的 LLM 代理。
 
 ```bash
-cp .env.example .env
-$EDITOR .env
 docker compose up -d --build
 open http://localhost:3000
 ```
+
+AI 配置不需要 `.env`：在 Settings 中填写 provider、API key、model 和
+base URL。若没有显式注入 master key，容器会在持久化数据卷中创建
+`/app/data/.docus-master-key`；请将它与 SQLite 分开保护和备份。`.env` 仅在
+需要覆盖其它部署变量时可选使用。
 
 `Dockerfile` 是三阶段构建：`deps` 装全依赖并编译 `better-sqlite3`
 的原生模块（用容器内的 toolchain，绕开宿主机 ABI 的 prebuilds）；
 `build` 跑 `vue-tsc -b` 加 `vite build`；`runtime` 只把产线
 `node_modules`、`dist/`、`server/` 拷进一个最小化的
 `node:22-bookworm-slim`，加 `tini` 处理 SIGTERM、用非 root 用户。
-两个命名卷持久化数据：`docus-data`（SQLite + WAL —— 聊天历史
-在这里）和 `docus-content`（markdown 笔记库）。`/api/health` 接入
+持久化数据包括 `docus-data`（SQLite + WAL —— settings、加密 AI 凭据、
+聊天历史和应用元数据）以及绑定到宿主机的 `src/content`（markdown 笔记库）。
+SQLite 需要一致性备份，`DOCUS_MASTER_KEY` 需要独立备份。`/api/health` 接入
 Docker `HEALTHCHECK` 和 `docker-compose.yml` 的 `healthcheck:`。
 apt 源切到了 `mirrors.aliyun.com`（国内构建 905s → 65s），`/var/{cache,lib}/apt`
 和 `/root/.npm` 都是 BuildKit cache mount，第二次构建会跳过下载

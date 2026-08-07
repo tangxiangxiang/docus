@@ -1,4 +1,4 @@
-// AES-256-GCM encryption for the Anthropic API key at rest.
+// AES-256-GCM encryption for provider API keys at rest.
 //
 // Storage format on disk:
 //   iv:authTag:ciphertext   — three base64 segments joined by ':'
@@ -8,16 +8,11 @@
 // The 12-byte IV is generated fresh for every write (never reused),
 // and the auth tag is verified on read.
 //
-// The 32-byte encryption key itself is NOT stored here — it lives in
-// the same SQLite `settings` table under a dedicated key (see
-// settings.ts). The DB therefore contains both the encrypted blob
-// and the key that unlocks it, which does mean a filesystem-level
-// attacker who can read the DB file can also read the key. The
-// protection this buys is narrower than OS-keychain-backed
-// approaches (no protection against full FS read), but for a
-// self-use app it covers the common case (someone copies just the
-// DB, or `cat settings.db` without `cat settings.db | jq .`) and
-// keeps the backup story trivial (one file to copy).
+// The 32-byte encryption key is supplied out-of-band by settings.ts through
+// DOCUS_MASTER_KEY, DOCUS_MASTER_KEY_FILE, or the separate local
+// data/.docus-master-key file. It is never persisted in SQLite. This
+// deliberately keeps the design small and cross-platform; an OS keychain
+// abstraction can be added later.
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 
 const ALGO = 'aes-256-gcm'
@@ -50,6 +45,9 @@ function decryptApiKey(blob: string, key: Buffer): string {
   const ciphertext = Buffer.from(ctB64, 'base64')
   if (iv.length !== IV_LENGTH) {
     throw new Error(`malformed encrypted blob: iv must be ${IV_LENGTH} bytes`)
+  }
+  if (authTag.length !== 16) {
+    throw new Error('malformed encrypted blob: auth tag must be 16 bytes')
   }
   const decipher = createDecipheriv(ALGO, key, iv)
   decipher.setAuthTag(authTag)

@@ -166,7 +166,7 @@ export async function interceptAutosaveAborted(page: Page, slug: string) {
 // BEFORE the next boot.
 export async function interceptHistory(
   page: Page,
-  opts: { files: string[]; raw: string; sha: string; subject?: string },
+  opts: { files: string[]; raw: string; sha: string; subject?: string; parents?: string[] },
 ) {
   await page.route('**/api/history/**', (route) => {
     const url = new URL(route.request().url())
@@ -180,6 +180,7 @@ export async function interceptHistory(
       return route.fulfill(jsonResponse({
         commits: [{
           sha: opts.sha,
+          parents: opts.parents ?? [],
           author: 'E2E',
           date: '2026-07-21T08:00:00.000Z',
           subject: opts.subject ?? 'E2E pinned revision',
@@ -279,12 +280,12 @@ export async function appendEditorText(page: Page, text: string) {
 }
 
 export async function openAiRail(page: Page) {
-  const toggle = page.locator('button.ai-toggle')
+  const toggle = page.locator('button.right-rail-toggle')
   await expect(toggle).toBeVisible()
   if ((await toggle.getAttribute('aria-pressed')) !== 'true') {
     await toggle.click()
   }
-  const aiTab = page.locator('.sidebar-tabs button[role="tab"]', { hasText: 'AI' })
+  const aiTab = page.locator('.sidebar-tabs button[data-tab="ai"]')
   await expect(aiTab).toBeVisible()
   await aiTab.click()
   await expect(page.locator('textarea.ai-input')).toBeVisible()

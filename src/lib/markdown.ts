@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it'
+import DOMPurify from 'dompurify'
 import taskLists from 'markdown-it-task-lists'
 import anchor from 'markdown-it-anchor'
 import footnote from 'markdown-it-footnote'
@@ -19,19 +20,129 @@ interface HighlightFn {
   (str: string, lang: string): string
 }
 
-/* HTML-attribute-encode for the markmap / mermaid placeholders. We
-   can't just JSON.stringify (we'd get literal " around the whole
-   string and have to double-encode), and we can't use the more
-   general escapeHtml (single-quotes inside an unquoted attribute
-   would be fine, but inside `data-content="..."` the only
-   character that NEEDS encoding is the double quote itself). Keep
-   the encoding local to the dynamic-fence rules. */
+/* Markdown documents intentionally support semantic HTML, but the rendered
+   result is inserted with Vue's v-html. Keep this allowlist tight enough for
+   the Markdown renderer's output and existing HTML use cases, then let
+   DOMPurify enforce it on the final HTML string. */
+const MARKDOWN_SANITIZE_CONFIG = {
+  ALLOWED_TAGS: [
+    'a',
+    'abbr',
+    'b',
+    'blockquote',
+    'br',
+    'caption',
+    'code',
+    'col',
+    'colgroup',
+    'dd',
+    'del',
+    'details',
+    'div',
+    'dl',
+    'dt',
+    'em',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'hr',
+    'i',
+    'img',
+    'input',
+    'kbd',
+    'li',
+    'mark',
+    'ol',
+    'p',
+    'pre',
+    'q',
+    's',
+    'samp',
+    'section',
+    'small',
+    'span',
+    'strong',
+    'sub',
+    'summary',
+    'sup',
+    'table',
+    'tbody',
+    'td',
+    'tfoot',
+    'th',
+    'thead',
+    'tr',
+    'u',
+    'ul',
+  ],
+  ALLOWED_ATTR: [
+    'alt',
+    'aria-hidden',
+    'checked',
+    'class',
+    'colspan',
+    'data-anchor',
+    'data-content',
+    'data-missing',
+    'data-target',
+    'disabled',
+    'height',
+    'href',
+    'id',
+    'loading',
+    'rel',
+    'role',
+    'rowspan',
+    'src',
+    'target',
+    'title',
+    'type',
+    'width',
+  ],
+  // The hook below narrows this back down to the four data-* attributes
+  // used by Docus; DOMPurify needs this enabled before the hook can inspect
+  // and retain those explicitly supported attributes.
+  ALLOW_DATA_ATTR: true,
+  FORBID_ATTR: ['style'],
+  FORBID_TAGS: ['base', 'embed', 'form', 'iframe', 'link', 'math', 'meta', 'object', 'script', 'style', 'svg'],
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|#|\/(?!\/)|\.{1,2}\/|[a-z0-9][a-z0-9+.-]*(?:[\/?#]|$))/i,
+}
+
+const ALLOWED_MARKDOWN_DATA_ATTRS = new Set([
+  'data-anchor',
+  'data-content',
+  'data-missing',
+  'data-target',
+])
+
+function sanitizeMarkdownHtml(html: string): string {
+  // DOMPurify's ESM default export is a factory when the module is evaluated
+  // without a DOM (for example, before Vitest installs jsdom). Creating the
+  // instance lazily keeps the same code safe in the browser and test runtime.
+  const purifier = DOMPurify(typeof window === 'undefined' ? undefined : window)
+  purifier.addHook('uponSanitizeAttribute', (_node, data) => {
+    if (data.attrName.startsWith('on')) {
+      data.keepAttr = false
+      return
+    }
+    // Permit only the four attributes used by our mount and wiki-link
+    // features; all other data-* attributes remain blocked.
+    if (data.attrName.startsWith('data-')) {
+      data.keepAttr = ALLOWED_MARKDOWN_DATA_ATTRS.has(data.attrName)
+    }
+  })
+  return purifier.sanitize(html, MARKDOWN_SANITIZE_CONFIG)
+}
+
+/* URL-encode the markmap / mermaid source before putting it in a data
+   attribute. Besides keeping the HTML attribute well-formed, this prevents
+   Mermaid arrows such as `-->` from looking like an HTML comment terminator
+   to DOMPurify's mXSS protections. The mount composables decode it again. */
 function encodeMountAttr(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+  return encodeURIComponent(s)
 }
 
 async function buildHighlight(): Promise<HighlightFn> {
@@ -101,19 +212,8 @@ async function getMd(): Promise<MarkdownIt> {
   mdPromise = (async () => {
     const highlight = await buildHighlight()
     const md = new MarkdownIt({
-      // html: true is an explicit, user-approved trade-off. We accept
-      // raw HTML in markdown source so <br> works inside table cells
-      // (markdown-it's GFM table parser splits on \n — without this,
-      // <br> gets escaped to &lt;br&gt; and there's no way to put a
-      // line break in a cell). The cost is that any <script>,
-      // <iframe>, <img onerror=...> pasted from a hostile source will
-      // render. docus is a single-user local vault — content is the
-      // user's own files, not multi-tenant upload — so the practical
-      // XSS surface is "user attacks themselves." If this assumption
-      // ever changes (multi-user vault, imported web clippings
-      // auto-rendered without review), flip back to html: false and
-      // either pre-process <br> sentinels in tables or switch to a
-      // table plugin that supports multi-line cells natively.
+      // HTML is enabled for Markdown compatibility, then sanitized by
+      // DOMPurify in render() before the result reaches v-html.
       html: true,
       linkify: true,
       typographer: true,
@@ -163,5 +263,5 @@ async function getMd(): Promise<MarkdownIt> {
 
 export async function render(markdown: string): Promise<string> {
   const md = await getMd()
-  return md.render(markdown)
+  return sanitizeMarkdownHtml(md.render(markdown))
 }

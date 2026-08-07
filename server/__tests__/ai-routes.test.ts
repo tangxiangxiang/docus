@@ -26,17 +26,15 @@ vi.mock('../db', async (importOriginal) => {
 // Import AFTER vi.mock so ai/routes.ts picks up the mocked getDb.
 import aiRoutes from '../ai/routes'
 
+const TEST_MASTER_KEY = '11'.repeat(32)
+const originalMasterKey = process.env.DOCUS_MASTER_KEY
+const originalMasterKeyFile = process.env.DOCUS_MASTER_KEY_FILE
+
 beforeEach(() => {
-  // Strip ANTHROPIC_* env vars so the 'source' field reflects the
-  // DB-stored settings. Tests that need an env override (the
-  // 'lets environment configuration override' case) restore them in
-  // their own try/finally. Without this, a parent process with
-  // ANTHROPIC_API_KEY set in the shell would leak into every test
-  // and force source='env' even when the DB has the key.
-  delete process.env.ANTHROPIC_API_KEY
-  delete process.env.ANTHROPIC_AUTH_TOKEN
-  delete process.env.ANTHROPIC_BASE_URL
-  delete process.env.ANTHROPIC_MODEL
+  // The test key is injected out-of-band just like production. It is
+  // deliberately not written into the SQLite settings table.
+  process.env.DOCUS_MASTER_KEY = TEST_MASTER_KEY
+  delete process.env.DOCUS_MASTER_KEY_FILE
   const db = new Database(':memory:')
   applyMigrations(db)
   testDbRef.value = db
@@ -45,6 +43,10 @@ beforeEach(() => {
 afterEach(() => {
   testDbRef.value?.close()
   testDbRef.value = null
+  if (originalMasterKey === undefined) delete process.env.DOCUS_MASTER_KEY
+  else process.env.DOCUS_MASTER_KEY = originalMasterKey
+  if (originalMasterKeyFile === undefined) delete process.env.DOCUS_MASTER_KEY_FILE
+  else process.env.DOCUS_MASTER_KEY_FILE = originalMasterKeyFile
 })
 
 async function call(method: string, urlPath: string, body?: unknown) {
@@ -82,19 +84,8 @@ describe('POST /api/ai/slug', () => {
   })
 
   it('returns 503 when AI auth is not configured', async () => {
-    const oldKey = process.env.ANTHROPIC_API_KEY
-    const oldToken = process.env.ANTHROPIC_AUTH_TOKEN
-    delete process.env.ANTHROPIC_API_KEY
-    delete process.env.ANTHROPIC_AUTH_TOKEN
-    try {
-      const r = await call('POST', '/slug', { input: '第一性原理', kind: 'file' })
-      expect(r.status).toBe(503)
-    } finally {
-      if (oldKey === undefined) delete process.env.ANTHROPIC_API_KEY
-      else process.env.ANTHROPIC_API_KEY = oldKey
-      if (oldToken === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN
-      else process.env.ANTHROPIC_AUTH_TOKEN = oldToken
-    }
+    const r = await call('POST', '/slug', { input: '第一性原理', kind: 'file' })
+    expect(r.status).toBe(503)
   })
 })
 

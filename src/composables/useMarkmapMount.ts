@@ -42,6 +42,16 @@ interface MountedWidget {
    in place. */
 const SELECTOR = '.markmap-mount:not([data-markmap-mounted])'
 
+function decodeMountContent(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    // Keep a malformed hand-written placeholder renderable instead of
+    // turning a bad data attribute into an uncaught mount error.
+    return value
+  }
+}
+
 export function useMarkmapMount(articleEl: Ref<HTMLElement | null>) {
   /* Tracked widgets keyed by their host div. The key lets us
      `app.unmount()` a widget when its host div leaves the DOM
@@ -56,7 +66,7 @@ export function useMarkmapMount(articleEl: Ref<HTMLElement | null>) {
        live HTMLCollection. */
     const placeholders = Array.from(root.querySelectorAll<HTMLDivElement>(SELECTOR))
     for (const ph of placeholders) {
-      const content = ph.dataset.content ?? ''
+      const content = decodeMountContent(ph.dataset.content ?? '')
       const host = document.createElement('div')
       host.className = 'markmap-widget-host'
       ph.replaceWith(host)

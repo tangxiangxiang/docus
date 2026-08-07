@@ -1,7 +1,8 @@
+// @vitest-environment jsdom
 // Tests for the markdown-it pipeline in src/lib/markdown.ts.
 // Specifically: the ```markmap``` fence rule, which emits a
-// placeholder div with the source embedded in `data-content`
-// (HTML-attr-encoded) for useMarkmapMount to upgrade into a live
+// placeholder div with URL-encoded source embedded in `data-content`
+// for useMarkmapMount to upgrade into a live
 // widget. We exercise the real `render()` exported by the module
 // so the test goes through the same path the app uses (including
 // the async hljs init).
@@ -24,8 +25,8 @@ describe('markdown render()', () => {
        markmap fence. */
     expect(html).toContain('class="markmap-mount"')
     expect(html).toContain('data-content="')
-    /* The source is HTML-attr-encoded; angle brackets and quotes
-       must come back escaped so the attribute is well-formed. */
+    /* The source is URL-encoded so angle brackets, quotes, and comment-like
+       sequences cannot affect the HTML attribute or sanitizer. */
     expect(html).not.toMatch(/data-content="[^"]*<[^"]+/)
     /* The text body of the source should still be retrievable after
        decoding the attribute. We assert on a snippet that's safe
@@ -61,9 +62,10 @@ describe('markdown render()', () => {
     ].join('\n'))
     expect(html).toContain('class="mermaid-mount"')
     expect(html).toContain('data-content="')
-    /* Source survives attribute-encoding (sans the leading "graph"
-       line, which is plain ASCII and needs no escaping). */
-    expect(html).toContain('graph TD')
+    /* Source is URL-encoded so Mermaid's `-->` syntax cannot be parsed as
+       an HTML comment terminator by the sanitizer. */
+    expect(html).toContain('data-content="graph%20TD')
+    expect(html).not.toContain('-->')
     /* Must not be confused with the markmap fence. */
     expect(html).not.toContain('class="markmap-mount"')
   })
@@ -275,14 +277,25 @@ describe('markdown render()', () => {
     expect((html.match(/<dd>/g) ?? []).length).toBe(3)
   })
 
-  /* Raw HTML pass-through for table cells. markdown-it's GFM table
-     parser splits cells on \n, so the only way to get a line break
-     inside a cell is a literal <br>. That requires html: true —
-     which the pipeline now opts into (see markdown.ts comment for
-     the XSS rationale). Pin the behavior here so a future flip back
-     to html: false fails loudly with a meaningful test name instead
-     of silently re-escaping <br> to &lt;br&gt; in users' tables. */
-  it('passes raw <br> through inside table cells', async () => {
+  it('preserves safe HTML and sanitizes dangerous raw HTML', async () => {
+    const html = await render([
+      '<strong>safe HTML</strong><br><a href="https://example.com">safe link</a>',
+      '<script>alert(1)</script>',
+      '<img src="https://example.com/image.png" onerror="alert(1)">',
+      '<iframe src="https://evil.example"></iframe>',
+      '<a href="javascript:alert(1)">run</a>',
+    ].join('\n'))
+    expect(html).toContain('<strong>safe HTML</strong>')
+    expect(html).toContain('<br>')
+    expect(html).toContain('<a href="https://example.com">safe link</a>')
+    expect(html).toContain('<img src="https://example.com/image.png">')
+    expect(html).not.toMatch(/<script\b/i)
+    expect(html).not.toMatch(/<iframe\b/i)
+    expect(html).not.toMatch(/\son\w+\s*=/i)
+    expect(html).not.toMatch(/javascript:/i)
+  })
+
+  it('preserves raw <br> inside table cells', async () => {
     const html = await render([
       '| col1 | col2 |',
       '| --- | --- |',
@@ -295,8 +308,8 @@ describe('markdown render()', () => {
   })
 
   /* Highlight (markdown-it-mark). Obsidian / VitePress syntax:
-     ==text== → <mark>text</mark>. Plugin ships as a transitive dep
-     of markmap-lib, so wiring it costs zero new packages. Unmatched
+     ==text== → <mark>text</mark>. The plugin is a direct dependency
+     because the renderer imports it. Unmatched
      == is left as literal text (no error, no half-formed <mark>). */
   it('renders ==text== as <mark>text</mark>', async () => {
     const html = await render('This is ==highlighted== here.')

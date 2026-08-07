@@ -36,6 +36,7 @@ import { generateSummary, SummaryPromptLimitError } from './summary.js'
 import { ChatError } from './errors.js'
 import { resolveAiRuntimeConfig } from './llm.js'
 import {
+  AiKeyConfigurationError,
   clearAiApiKey,
   getAiSettingsView,
   MAX_AI_API_KEY_LENGTH,
@@ -49,6 +50,14 @@ import type { Message, AssistantBlocks } from '../../src/lib/ai-api.js'
 
 function bad(c: any, msg: string, code = 400) {
   return c.json({ error: msg }, code)
+}
+
+function aiKeyErrorResponse(c: any, error: unknown) {
+  if (error instanceof AiKeyConfigurationError
+    || (error instanceof ChatError && error.reason === 'key-error')) {
+    return bad(c, (error as Error).message, 503)
+  }
+  return null
 }
 
 function isValidHttpUrl(value: string): boolean {
@@ -266,7 +275,15 @@ ai.post('/sessions/:id/messages', async (c) => {
 })
 
 // ---- /settings ----
-ai.get('/settings', (c) => c.json(getAiSettingsView(getDb())))
+ai.get('/settings', (c) => {
+  try {
+    return c.json(getAiSettingsView(getDb()))
+  } catch (error) {
+    const response = aiKeyErrorResponse(c, error)
+    if (response) return response
+    throw error
+  }
+})
 
 ai.put('/settings', async (c) => {
   const body = await c.req.json().catch(() => null) as
@@ -292,18 +309,25 @@ ai.put('/settings', async (c) => {
   if (model && model.length > MAX_AI_MODEL_LENGTH) return bad(c, 'model is too long')
   if (baseURL && !isValidHttpUrl(baseURL)) return bad(c, 'baseURL must be an http(s) URL')
   if (model && !isValidModelName(model)) return bad(c, 'model contains unsupported characters')
-  saveAiSettings(getDb(), {
-    provider,
-    apiKey,
-    baseURL,
-    model,
-  })
-  return c.json(getAiSettingsView(getDb()))
+  try {
+    saveAiSettings(getDb(), { provider, apiKey, baseURL, model })
+    return c.json(getAiSettingsView(getDb()))
+  } catch (error) {
+    const response = aiKeyErrorResponse(c, error)
+    if (response) return response
+    throw error
+  }
 })
 
 ai.delete('/settings/key', (c) => {
-  clearAiApiKey(getDb())
-  return c.json(getAiSettingsView(getDb()))
+  try {
+    clearAiApiKey(getDb())
+    return c.json(getAiSettingsView(getDb()))
+  } catch (error) {
+    const response = aiKeyErrorResponse(c, error)
+    if (response) return response
+    throw error
+  }
 })
 
 // ---- /active ----
@@ -311,10 +335,18 @@ ai.get('/active', (c) => {
   const db = getDb()
   const storedActiveId = sessions.getActiveSessionId(db)
   const activeSession = storedActiveId === null ? null : sessions.getSession(db, storedActiveId)
+  let configured: boolean
+  try {
+    configured = Boolean(resolveAiRuntimeConfig(db).apiKey)
+  } catch (error) {
+    const response = aiKeyErrorResponse(c, error)
+    if (response) return response
+    throw error
+  }
   return c.json({
     activeId: activeSession?.id ?? null,
     activeSession,
-    configured: Boolean(resolveAiRuntimeConfig(db).apiKey),
+    configured,
   })
 })
 
@@ -358,6 +390,7 @@ ai.post('/slug', async (c) => {
   } catch (err) {
     if (err instanceof ChatError) {
       if (err.reason === 'no-api-key') return bad(c, 'AI not configured', 503)
+      if (err.reason === 'key-error') return bad(c, err.message, 503)
       if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499 as any)
       if (err.reason === 'parse-failed') return bad(c, err.message, 502)
       return bad(c, err.message || 'llm-error', 502)
@@ -416,6 +449,7 @@ ai.post('/summary', async (c) => {
     }
     if (err instanceof ChatError) {
       if (err.reason === 'no-api-key') return bad(c, 'AI not configured', 503)
+      if (err.reason === 'key-error') return bad(c, err.message, 503)
       if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499 as any)
       if (err.reason === 'parse-failed') return bad(c, err.message, 502)
       return bad(c, err.message || 'llm-error', 502)
@@ -483,6 +517,7 @@ ai.post('/commit-message', async (c) => {
     }
     if (err instanceof ChatError) {
       if (err.reason === 'no-api-key') return bad(c, 'AI not configured', 503)
+      if (err.reason === 'key-error') return bad(c, err.message, 503)
       if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499 as any)
       if (err.reason === 'parse-failed') return bad(c, err.message, 502)
       return bad(c, err.message || 'llm-error', 502)
@@ -493,7 +528,16 @@ ai.post('/commit-message', async (c) => {
 
 // ---- /chat ----
 ai.post('/chat', async (c) => {
-  if (!resolveAiRuntimeConfig().apiKey) {
+  const db = getDb()
+  let runtimeConfig: ReturnType<typeof resolveAiRuntimeConfig>
+  try {
+    runtimeConfig = resolveAiRuntimeConfig(db)
+  } catch (error) {
+    const response = aiKeyErrorResponse(c, error)
+    if (response) return response
+    throw error
+  }
+  if (!runtimeConfig.apiKey) {
     return c.json({ ok: false, reason: 'no-api-key' }, 503)
   }
   const body = (await c.req.json().catch(() => null)) as
@@ -600,11 +644,11 @@ ai.post('/chat', async (c) => {
       }
 
       await runChat({
-        db: getDb(),
+        db,
         sessionId,
         userContent,
         ctx,
-        model: resolveAiRuntimeConfig().model,
+        model: runtimeConfig.model,
         signal: c.req.raw.signal,
         onEvent: writeEvent,
       })

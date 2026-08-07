@@ -20,9 +20,10 @@ import {
   acquireVaultWriterOwnership,
   installVaultWriterShutdownHandlers,
 } from './vaultWriterOwnership.ts'
+import { resolveServerHost } from './prodConfig.ts'
 
 const PORT = Number(process.env.PORT ?? 3000)
-const HOST = process.env.HOST ?? '0.0.0.0'
+const HOST = resolveServerHost()
 const DIST_DIR = path.resolve(process.cwd(), 'dist')
 
 // Cached index.html so the SPA fallback is cheap on every navigation.
