@@ -135,7 +135,7 @@ const SCOPE_ICONS: Record<string, string> = {
         @mouseleave="stopBrandConstellation"
         @click="router.push('/')"
       >
-        <img class="brand-logo" :src="'/logo.svg'" :alt="t('nav.logo_alt')" width="24" height="24" />
+        <img class="brand-logo" :src="'/logo-48.png'" :alt="t('nav.logo_alt')" width="24" height="24" />
         <span class="brand-wordmark">Docus</span>
       </button>
       <!-- Scope filter: lives in the navbar (the file tree header is too
