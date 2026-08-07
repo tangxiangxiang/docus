@@ -3,13 +3,8 @@
 // The archive/ subtree is structurally protected: archived notes cannot be
 // directly created there, but folders may be created and existing archive items
 // may be moved inside the subtree to organize them. These rules are pure — no
-// state, no async — so a module of exported functions is the right shape (not a
-// `useXxx()` factory like useToast/useConfirm).
-//
-// Before this module the rules lived inline in FileTree.vue and TreeRow.vue,
-// with the set `{'inbox','literature','archive'}` duplicated literally across
-// both files. Adding a fourth protected root, or changing the user-facing
-// messages, used to mean editing three places.
+// state, no async — so a shared module is the right shape for both the Vue UI
+// and the Node server.
 
 export const PROTECTED_ROOTS: ReadonlySet<string> = new Set(['inbox', 'literature', 'archive'])
 
@@ -69,6 +64,7 @@ export function canMove(path: string | null | undefined): boolean {
   if (isProtectedRoot(path)) return false
   return true
 }
+
 /** True for folders that may receive directly created notes.
  *
  * Folder creation (organizational subfolders inside archive) is always
@@ -105,7 +101,7 @@ export function blockedMessage(
     const label = path!
     if (op === 'rename') return t('file_tree.protected_rename', { path: label })
     if (op === 'delete') return t('file_tree.protected_delete', { path: label })
-    if (op === 'move')   return t('file_tree.protected_move', { path: label })
+    if (op === 'move') return t('file_tree.protected_move', { path: label })
     // create-file / create-folder on a protected root aren't blocked —
     // you can put files into inbox / literature. Only the create-into-archive
     // path is blocked, and that's the same as `isInArchive(path)` below.
@@ -113,7 +109,7 @@ export function blockedMessage(
   if (isInArchive(path)) {
     if (op === 'rename') return t('file_tree.archive_rename')
     if (op === 'delete') return t('file_tree.archive_delete')
-    if (op === 'move')   return null
+    if (op === 'move') return null
     if (op === 'create-file') return t('file_tree.archive_create')
     if (op === 'create-folder') return null
   }

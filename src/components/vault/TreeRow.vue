@@ -12,7 +12,7 @@ import {
   canModify,
   canMove,
   canCreateFileChild,
-} from '../../composables/archiveProtocol'
+} from '../../../shared/archiveProtocol'
 import type { MatchInfo } from './FileTree.vue'
 
 const props = defineProps<{

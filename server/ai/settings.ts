@@ -226,6 +226,7 @@ function loadAndMigrateApiKeys(db: DatabaseT): Map<Provider, string> {
   const masterKey = resolveMasterKey()
   const legacyKey = legacyKeyValue ? decodeStoredEncryptionKey(legacyKeyValue) : undefined
   const plaintext = new Map<Provider, string>()
+  const providersToMigrate = new Set<Provider>()
 
   for (const provider of SUPPORTED_PROVIDERS) {
     const blob = rows.get(provider) ?? ''
@@ -235,14 +236,19 @@ function loadAndMigrateApiKeys(db: DatabaseT): Map<Provider, string> {
     }
     if (!isEncryptedFormat(blob)) {
       plaintext.set(provider, blob)
+      if (blob) providersToMigrate.add(provider)
       continue
     }
 
     let decrypted: string | undefined
-    const candidates = legacyKey ? [legacyKey, masterKey] : [masterKey]
+    let decryptedWithLegacyKey = false
+    const candidates: Array<{ key: Buffer; legacy: boolean }> = legacyKey
+      ? [{ key: legacyKey, legacy: true }, { key: masterKey, legacy: false }]
+      : [{ key: masterKey, legacy: false }]
     for (const candidate of candidates) {
       try {
-        decrypted = decryptApiKey(blob, candidate)
+        decrypted = decryptApiKey(blob, candidate.key)
+        decryptedWithLegacyKey = candidate.legacy
         break
       } catch {
         // Try the next known key. No error details contain key material.
@@ -255,12 +261,19 @@ function loadAndMigrateApiKeys(db: DatabaseT): Map<Provider, string> {
       )
     }
     plaintext.set(provider, decrypted)
+    if (decryptedWithLegacyKey) providersToMigrate.add(provider)
   }
 
+  // A normal read of a ciphertext encrypted with the active master key is
+  // deliberately read-only. Only legacy plaintext, legacy-key ciphertext,
+  // or the legacy key row itself requires a write transaction.
+  if (providersToMigrate.size === 0 && !legacyKeyValue) return plaintext
+
   const migrate = db.transaction(() => {
-    for (const provider of SUPPORTED_PROVIDERS) {
+    for (const provider of providersToMigrate) {
       const value = plaintext.get(provider) ?? ''
       if (value) setSetting(db, keyApiKey(provider), encryptApiKey(value, masterKey))
+      else deleteSetting(db, keyApiKey(provider))
     }
     if (legacyKeyValue) deleteSetting(db, KEY_ENCRYPTION_KEY)
   })

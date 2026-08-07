@@ -7,7 +7,7 @@
 // in one place instead of two.
 
 import { ref, watch } from 'vue'
-import { PROTECTED_ROOTS } from '../archiveProtocol'
+import { PROTECTED_ROOTS } from '../../../shared/archiveProtocol'
 
 const STORAGE_KEY = 'docus.vault.activeScope'
 

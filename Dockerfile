@@ -6,7 +6,7 @@
 #
 # 阶段 2（build）：在 dist/ 生成静态资源包。
 #
-# 阶段 3（runtime）：只拷入产线 node_modules、预构建好的 dist/、server/ 源码、tsx
+# 阶段 3（runtime）：只拷入产线 node_modules、预构建好的 dist/、server/ 和 shared/ 源码、tsx
 #（用来跑 server/prod.ts）。以非 root 用户身份运行，单端口同时服务 SPA 和
 # Hono 的 /api/* 接口。
 #
@@ -65,6 +65,7 @@ COPY tsconfig*.json vite.config.ts index.html ./
 COPY public ./public
 COPY src ./src
 COPY server ./server
+COPY shared ./shared
 RUN npm run build
 
 # 砍掉 dev 依赖，让 runtime 镜像只带启动 server/prod.ts（通过 tsx）真正需要的包。
@@ -108,6 +109,7 @@ RUN chown -R node:node /app
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/server ./server
+COPY --from=build --chown=node:node /app/shared ./shared
 COPY --from=build --chown=node:node /app/package.json ./package.json
 
 # data/ 放 SQLite 的 WAL；它包含 settings、加密 AI 凭据、会话历史和应用元数据。

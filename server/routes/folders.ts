@@ -3,7 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Database as DatabaseT } from 'better-sqlite3'
 import { Hono } from 'hono'
-import { canModify } from '../../src/composables/archiveProtocol.js'
+import { canModify } from '../../shared/archiveProtocol.js'
 import { AtomicTextWriteConflictError, atomicReplaceTextIfUnchanged, removeDurableJournal, rewriteDurableJournal, sha256Hex, syncParentDirectoryBestEffort, verifyDirectoryGeneration, writeDurableJournal } from '../atomicTextWrite.js'
 import {
   deleteDocumentMetadata,

@@ -494,10 +494,8 @@ async function render() {
       }).catch(() => { /* diagram still renders, just no drag/zoom */ })
     }
   } catch (e) {
-    renderError.value = (e as Error).message
-    if (containerRef.value) {
-      containerRef.value.innerHTML = `<pre class="mermaid-error-pre">${(e as Error).message}</pre>`
-    }
+    renderError.value = e instanceof Error ? e.message : String(e)
+    containerRef.value?.replaceChildren()
   }
 }
 
@@ -944,16 +942,5 @@ watch(isLocked, () => {
   font-size: 0.9em;
   text-align: center;
   padding: 0.5em;
-}
-:deep(.mermaid-error-pre) {
-  color: #b91c1c;
-  background: var(--vs-bg-1);
-  border: 1px solid var(--vs-border);
-  border-radius: 4px;
-  padding: 0.6em 0.8em;
-  font-size: 0.85em;
-  white-space: pre-wrap;
-  text-align: left;
-  margin: 0;
 }
 </style>

@@ -3,7 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import matter from 'gray-matter'
 import { Hono } from 'hono'
-import { isInArchive } from '../../src/composables/archiveProtocol.js'
+import { isInArchive } from '../../shared/archiveProtocol.js'
 import type { PostDetail, PostSummary, SavePostResult } from '../../src/lib/api.js'
 import {
   deleteDocumentMetadata,

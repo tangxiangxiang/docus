@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { isInArchive } from '../src/composables/archiveProtocol.js'
+import { isInArchive } from '../shared/archiveProtocol.js'
 
 export type DocumentMutation =
   | { operation: 'create'; destinationPath: string }

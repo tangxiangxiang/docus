@@ -57,6 +57,21 @@ describe('external AI master key storage', () => {
     db.close()
   })
 
+  it('does not rewrite an API key when reading with the active master key', () => {
+    process.env.DOCUS_MASTER_KEY = MASTER_KEY
+    delete process.env.DOCUS_MASTER_KEY_FILE
+    const db = newDb()
+    saveAiSettings(db, { apiKey: 'sk-read-only-value' })
+    const before = setting(db, 'ai.anthropic.apiKey')
+
+    expect(readStoredAiSettings(db).anthropic.apiKey).toBe('sk-read-only-value')
+    expect(readStoredAiSettings(db).anthropic.apiKey).toBe('sk-read-only-value')
+    expect(getAiSettingsView(db).configured).toBe(true)
+
+    expect(setting(db, 'ai.anthropic.apiKey')).toBe(before)
+    db.close()
+  })
+
   it('supports a secret file when the environment value is absent', () => {
     delete process.env.DOCUS_MASTER_KEY
     const dir = mkdtempSync(path.join(tmpdir(), 'docus-master-key-'))

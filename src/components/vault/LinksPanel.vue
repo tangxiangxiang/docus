@@ -20,7 +20,7 @@ import { getFallbackVaultFileChanges } from '../../composables/vault/context/fil
 import { useOptionalVaultContext } from '../../composables/vault/context/useVaultContext'
 import { useVaultTocState } from '../../composables/vault/useTocState'
 import { ICON_FILE_MD } from './icons'
-import { PROTECTED_ROOTS } from '../../composables/archiveProtocol'
+import { PROTECTED_ROOTS } from '../../../shared/archiveProtocol'
 import { useI18n } from '../../composables/useI18n'
 
 const props = defineProps<{
