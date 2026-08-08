@@ -56,6 +56,15 @@ function bad(c: any, msg: string, status = 400, errorCode?: string) {
   }, status)
 }
 
+// Provider SDK errors are useful for diagnosing an OpenAI-compatible
+// endpoint, but never echo a configured secret back to the browser. Keep
+// the diagnostic bounded so a proxy's verbose error cannot turn into an
+// unbounded SSE frame.
+function safeProviderMessage(message: string, apiKey?: string): string {
+  const redacted = apiKey ? message.split(apiKey).join('[redacted]') : message
+  return redacted.length > 4_000 ? `${redacted.slice(0, 4_000)}…` : redacted
+}
+
 function aiKeyErrorResponse(c: any, error: unknown) {
   if (error instanceof AiKeyConfigurationError
     || (error instanceof ChatError && error.reason === 'key-error')) {
@@ -643,7 +652,10 @@ ai.post('/chat', async (c) => {
           case 'error':
             await stream.writeSSE({
               event: 'error',
-              data: JSON.stringify({ reason: e.reason }),
+              data: JSON.stringify({
+                reason: e.reason,
+                ...(e.message ? { message: safeProviderMessage(e.message, runtimeConfig.apiKey) } : {}),
+              }),
             })
             break
         }
@@ -667,6 +679,9 @@ ai.post('/chat', async (c) => {
           data: JSON.stringify({
             reason,
             ...(err instanceof ChatError && err.code ? { code: err.code } : {}),
+            ...(err instanceof ChatError && (err.reason === 'llm-error' || err.reason === 'key-error') && err.message
+              ? { message: safeProviderMessage(err.message, runtimeConfig.apiKey) }
+              : {}),
           }),
         })
       } catch {

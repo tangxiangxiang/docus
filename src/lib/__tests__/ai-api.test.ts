@@ -194,6 +194,21 @@ describe('streamChat', () => {
     expect(collected).toEqual([{ type: 'error', reason: 'http-503', code: 'master-key-required' }])
   })
 
+  it('preserves an upstream message from a chat SSE error event', async () => {
+    globalThis.fetch = vi.fn(async () => sseResponse([
+      { event: 'error', data: { reason: 'llm-error', message: '400 unsupported parameter: tools' } },
+    ])) as unknown as typeof fetch
+    const collected: unknown[] = []
+    for await (const ev of streamChat({ sessionId: 1, content: 'x' })) {
+      collected.push(ev)
+    }
+    expect(collected).toEqual([{
+      type: 'error',
+      reason: 'llm-error',
+      message: '400 unsupported parameter: tools',
+    }])
+  })
+
   // ── Edit-10.3: the request body carries the ONE live-context
   // authority verbatim; the legacy currentNotePath field is gone from
   // the new client wire contract.

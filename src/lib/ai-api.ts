@@ -117,7 +117,7 @@ export type ChatEvent =
   | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
   | { type: 'file_changed' } & FileChangeEvent
   | { type: 'done'; userId: number; assistantId: number }
-  | { type: 'error'; reason: string; code?: AiKeyErrorCode }
+  | { type: 'error'; reason: string; code?: AiKeyErrorCode; message?: string }
 
 async function jsonOrThrow<T>(r: Response): Promise<T> {
   if (!r.ok) {
@@ -267,11 +267,13 @@ export async function* streamChat(
     const body = await res.json().catch(() => ({ reason: `http-${res.status}` })) as {
       reason?: string
       code?: AiKeyErrorCode
+      message?: string
     }
     yield {
       type: 'error',
       reason: body.reason ?? `http-${res.status}`,
       ...(body.code ? { code: body.code } : {}),
+      ...(body.message ? { message: body.message } : {}),
     }
     return
   }

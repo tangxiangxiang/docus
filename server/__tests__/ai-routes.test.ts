@@ -590,6 +590,20 @@ describe('POST /api/ai/chat', () => {
     expect(JSON.parse(last.data)).toEqual({ reason: 'not-found' })
   })
 
+  it('preserves the safe upstream message for an LLM error', async () => {
+    vi.mocked(chatModule.runChat).mockRejectedValueOnce(
+      new ChatError('llm-error', '404 Not Found: /v1/chat/completions'),
+    )
+    const r = await call('POST', '/chat', { sessionId: 1, content: 'hi' })
+    const blocks = await sseBodyChunks(r)
+    const last = parseEvent(blocks[blocks.length - 1])
+    expect(last.event).toBe('error')
+    expect(JSON.parse(last.data)).toEqual({
+      reason: 'llm-error',
+      message: '404 Not Found: /v1/chat/completions',
+    })
+  })
+
   // ── Edit-10.3: the route normalizes the raw request into the ONE
   // ChatContext authority (live > legacy-path > none) BEFORE any SSE
   // starts, and never falls back to the legacy path when a live

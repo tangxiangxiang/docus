@@ -310,7 +310,7 @@ function createAiHistory(publishChange: (event: FileChangeEvent) => void): AiHis
       )
       optimisticAssistant.id = event.assistantId
     } else if (event.type === 'error') {
-      optimisticAssistant.content += `\n\n[error: ${event.reason}]`
+      optimisticAssistant.content += `\n\n[error: ${event.reason}]${event.message ? ` ${event.message}` : ''}`
       if (optimisticAssistant.blocks) {
         optimisticAssistant.blocks.text = optimisticAssistant.content
       }

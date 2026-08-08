@@ -282,7 +282,15 @@ class OpenAIBackend implements ChatBackend {
       const choice = chunk.choices?.[0]
       if (!choice) continue
       const delta = choice.delta
-      if (delta?.content) text += delta.content
+      if (delta?.content) {
+        text += delta.content
+        // Keep the normalized backend contract identical to Anthropic:
+        // runChat uses onToken both to stream the UI and to build the
+        // assistant text that is persisted after the round. Without this
+        // callback, an otherwise successful OpenAI response ended with an
+        // empty assistant message and failed SQLite persistence.
+        await opts.onToken(delta.content)
+      }
       for (const tcDelta of delta?.tool_calls ?? []) {
         const entry = toolCallAccum.get(tcDelta.index) ?? { arguments: '' }
         if (tcDelta.id) entry.id = tcDelta.id

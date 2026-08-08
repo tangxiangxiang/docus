@@ -199,7 +199,7 @@ export type ChatEvent =
       oldPath?: string
     }
   | { type: 'done'; userId: number; assistantId: number }
-  | { type: 'error'; reason: string }
+  | { type: 'error'; reason: string; message?: string }
 
 export type RunChatDeps = {
   db: DatabaseT
