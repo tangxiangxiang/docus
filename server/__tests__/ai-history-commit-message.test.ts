@@ -1,10 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import * as historyGit from '../history/git.js'
 import { ensureRepo } from '../history/repo.js'
 import { setContentDir, CONTENT_DIR } from '../paths.js'
+import {
+  cleanupHistoryTempRepo,
+  describeHistoryIntegration,
+} from './helpers/historyIntegration.js'
 
 const { commitMessageMock } = vi.hoisted(() => ({
   commitMessageMock: vi.fn(),
@@ -30,12 +34,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   setContentDir(originalContentDir)
-  await fs.rm(root, {
-    recursive: true,
-    force: true,
-    maxRetries: process.platform === 'win32' ? 10 : 3,
-    retryDelay: 100,
-  })
+  await cleanupHistoryTempRepo(root)
 })
 
 async function call(body: unknown): Promise<Response> {
@@ -50,7 +49,7 @@ async function write(filePath: string, content: string): Promise<void> {
   await fs.writeFile(path.join(root, filePath), content, 'utf8')
 }
 
-describe('POST /api/ai/commit-message History boundary', () => {
+describeHistoryIntegration('POST /api/ai/commit-message History boundary', () => {
   it.each([
     ['.git/config'],
     ['.docus/vault-writer.json'],

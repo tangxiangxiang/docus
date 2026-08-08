@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import Database from 'better-sqlite3'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it } from 'vitest'
 
 import { recoverInterruptedOperations, __setCrashRecoveryHooksForTesting } from '../crashRecovery.js'
 import { applyMigrations } from '../db.js'
@@ -31,6 +31,10 @@ import {
   terminateProcessTree,
   waitForChildClose,
 } from './helpers/crashProcessTree.js'
+import {
+  cleanupHistoryTempRepo,
+  describeHistoryIntegration,
+} from './helpers/historyIntegration.js'
 
 type Deferred<T = void> = {
   promise: Promise<T>
@@ -177,15 +181,10 @@ afterEach(async () => {
   __resetLinkIndexForTesting()
   setContentDir(originalContentDir)
   db.close()
-  await fs.rm(vault, {
-    recursive: true,
-    force: true,
-    maxRetries: process.platform === 'win32' ? 10 : 3,
-    retryDelay: 100,
-  })
+  await cleanupHistoryTempRepo(vault)
 })
 
-describe('History mutations × folder-move v4', () => {
+describeHistoryIntegration('History mutations × folder-move v4', () => {
   it('RED-1: Restore cannot enter while the source generation is journal-owned', async () => {
     await write('proj/a.md', 'committed\n')
     const historical = await commit(['proj/a.md'], 'seed source')
@@ -407,7 +406,7 @@ function serverOutcome(child: ChildProcess): Promise<ServerOutcome> {
   })
 }
 
-describe('RED-7: one active writer process per canonical Vault', () => {
+describeHistoryIntegration('RED-7: one active writer process per canonical Vault', () => {
   it('fails the second production process closed before it listens', async () => {
     const fixture = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-writer-process-'))
     const sharedVault = path.join(fixture, 'vault')

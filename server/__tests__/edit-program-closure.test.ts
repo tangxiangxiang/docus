@@ -31,7 +31,7 @@
 // Sentinels are synthetic; no real user bodies anywhere. Console is
 // spied so any sentinel reaching a server log fails the run (§5.8 /
 // §10: sensitive raw never logged).
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { it, expect, vi, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -45,6 +45,11 @@ import { __resetRepoRootForTesting, __resetGitCapabilityForTesting, setRepoRootF
 import { runChat, type ChatContext, type ChatEvent } from '../ai/chat'
 import { parseAiLiveContext } from '../ai/live-context'
 import { streamClaude, type StreamResult } from '../ai/llm'
+import {
+  cleanupHistoryTempRepo,
+  describeHistoryIntegration,
+  HISTORY_GIT_INTEGRATION_TIMEOUT_MS,
+} from './helpers/historyIntegration.js'
 
 // runChat now dispatches through ChatBackend. Tests don't need the
 // real AnthropicBackend — a stub that re-implements the small
@@ -86,9 +91,6 @@ vi.mock('../ai/llm', () => ({
 
 const RUN = String(Date.now())
 const ORIGINAL_CONTENT_DIR = CONTENT_DIR
-const INTEGRATION_TEST_TIMEOUT = 30_000
-const INTEGRATION_HOOK_TIMEOUT = 30_000
-
 // Track every real route request so afterEach can wait for any in-flight
 // requests to settle BEFORE we close the metadata DB, reset globals, or
 // remove the temporary vault. On Windows a leftover request holding a
@@ -254,15 +256,10 @@ afterEach(async () => {
   __resetGitCapabilityForTesting()
   setContentDir(ORIGINAL_CONTENT_DIR)
   db.close()
-  await fs.rm(contentDir, {
-    recursive: true,
-    force: true,
-    maxRetries: 10,
-    retryDelay: 100,
-  })
-}, INTEGRATION_HOOK_TIMEOUT)
+  await cleanupHistoryTempRepo(contentDir)
+}, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
-describe('Docus Edit Program closure: cross-Edit contracts', () => {
+describeHistoryIntegration('Docus Edit Program closure: cross-Edit contracts', () => {
   it('Journey 8 — path reuse never inherits the old identity: stale baseRaw 409s, a stale AI documentId is blocked even at byte-identical raw, the correct identity passes', async () => {
     const slug = `inbox/epc-reuse-${RUN}`
     const abs = path.join(contentDir, `${slug}.md`)
@@ -346,7 +343,7 @@ describe('Docus Edit Program closure: cross-Edit contracts', () => {
         }
       }
     }
-  }, INTEGRATION_TEST_TIMEOUT)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('Journey 5 — rename keeps documentId; the new path serves the same bytes; pre-rename revisions stay retrievable at the old git path; reusing the old path mints a new identity', async () => {
     const slug = `inbox/epc-rename-${RUN}`
@@ -421,5 +418,5 @@ describe('Docus Edit Program closure: cross-Edit contracts', () => {
         }
       }
     }
-  }, INTEGRATION_TEST_TIMEOUT)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 })

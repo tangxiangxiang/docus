@@ -27,25 +27,19 @@ import { createHash } from 'node:crypto'
 import path from 'node:path'
 import * as git from '../history/git.js'
 import { ensureRepo } from '../history/repo.js'
+import {
+  cleanupHistoryTempRepo,
+  describeHistoryIntegration,
+} from './helpers/historyIntegration.js'
 
 let root: string
-
-// These tests exercise the real Git CLI and filesystem rather than a mocked
-// boundary. Give each integration test enough room for slower Windows hosts
-// without changing Vitest's timeout for the rest of the suite.
-const GIT_INTEGRATION_TIMEOUT_MS = 30_000
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-history-'))
 })
 
 afterEach(async () => {
-  await fs.rm(root, {
-    recursive: true,
-    force: true,
-    maxRetries: process.platform === 'win32' ? 10 : 2,
-    retryDelay: 100,
-  })
+  await cleanupHistoryTempRepo(root)
 })
 
 async function write(rel: string, body: string) {
@@ -76,7 +70,7 @@ async function initAndSeed() {
   await setUser()
 }
 
-describe('isRepo / initRepo', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
+describeHistoryIntegration('isRepo / initRepo', () => {
   it('reports false for a fresh directory', async () => {
     expect(await git.isRepo(root)).toBe(false)
   })
@@ -89,7 +83,7 @@ describe('isRepo / initRepo', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
   })
 })
 
-describe('ensureRepo', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
+describeHistoryIntegration('ensureRepo', () => {
   it('writes .gitignore and .gitattributes on first call', async () => {
     await ensureRepo(root)
     expect(await git.isRepo(root)).toBe(true)
@@ -226,7 +220,7 @@ describe('parsePorcelain', () => {
   })
 })
 
-describe('status', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
+describeHistoryIntegration('status', () => {
   beforeEach(initAndSeed)
 
   it('returns [] when the working tree is clean (ignoring the seeded dotfiles)', async () => {
@@ -253,7 +247,7 @@ describe('status', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
   })
 })
 
-describe('addAndCommit + log', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
+describeHistoryIntegration('addAndCommit + log', () => {
   beforeEach(initAndSeed)
 
   it('creates a commit, returns its sha, and log reports it', async () => {
@@ -871,7 +865,7 @@ describe('addAndCommit + log', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
   })
 })
 
-describe('dropHeadCommit', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
+describeHistoryIntegration('dropHeadCommit', () => {
   beforeEach(initAndSeed)
 
   it('withdraws only the latest version, preserves Worktree bytes, and keeps unrelated staged entries', async () => {
@@ -1149,7 +1143,7 @@ describe('dropHeadCommit', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
 // `addAndCommit` tests pre-set the user in beforeEach (setUser()),
 // so the unset path was never exercised. `addAndCommit` should
 // lazily write a default identity before committing.
-describe('addAndCommit author identity', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
+describeHistoryIntegration('addAndCommit author identity', () => {
   // Init the repo but do NOT configure user.name / user.email —
   // mirrors what `git init` looks like in a fresh container, and
   // mirrors what a hand-init'd vault looks like.
@@ -1306,7 +1300,7 @@ describe('parseLog (synthetic input)', () => {
   })
 })
 
-describe('rawAt', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
+describeHistoryIntegration('rawAt', () => {
   beforeEach(initAndSeed)
 
   it('returns the file content at HEAD', async () => {
@@ -1371,7 +1365,7 @@ describe('rawAt', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
   })
 })
 
-describe('CRLF safety', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
+describeHistoryIntegration('CRLF safety', () => {
   // This is the test that justifies the `core.autocrlf=false` config
   // in initRepo. On a Windows machine with `core.autocrlf=true`, a
   // file written with `\r\n` would have its `\r` stripped in the
@@ -1390,7 +1384,7 @@ describe('CRLF safety', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
   })
 })
 
-describe('resolveCommit', { timeout: GIT_INTEGRATION_TIMEOUT_MS }, () => {
+describeHistoryIntegration('resolveCommit', () => {
   // Restore resolves once, then reads by immutable object id. The L0 layer no
   // longer owns a direct working-tree overwrite primitive.
   beforeEach(initAndSeed)

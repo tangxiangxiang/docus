@@ -6,7 +6,7 @@
 // `git --version` probe is cached). We reset it in beforeEach so
 // each test starts fresh.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -22,19 +22,14 @@ import historyRoutes, {
   __setHistoryMutationHooksForTesting,
 } from '../history/routes.js'
 import { getDocumentMetadata, saveDocumentMetadata } from '../documentMetadata.js'
+import {
+  cleanupHistoryTempRepo,
+  describeHistoryIntegration,
+  HISTORY_GIT_INTEGRATION_TIMEOUT_MS,
+} from './helpers/historyIntegration.js'
 
 let root: string
 let metadataDb: Database.Database
-
-// Restore is a real HTTP+Git+filesystem+locking integration: each request
-// bootstraps a fresh git repo (capability probe → `git init`), makes
-// real commits (which spawn the git CLI), then runs the restore pipeline
-// (vault mutation lock, stable snapshot, rawAt, atomicTextWrite, post-write
-// verification, status diff). On Windows GitHub Runners under full-suite
-// load the default 5s budget can be too tight even when nothing is wrong.
-// 30s is a failure ceiling, not an expected runtime — isolated macOS runs
-// of the same flow finish in ~1.1s.
-const HISTORY_GIT_INTEGRATION_TIMEOUT_MS = 30_000
 
 async function write(rel: string, body: string) {
   const abs = path.join(root, rel)
@@ -70,16 +65,7 @@ afterEach(async () => {
   __setHistoryMutationHooksForTesting(null)
   __setMetadataDbForTesting(null)
   metadataDb.close()
-  await fs.rm(root, {
-    recursive: true,
-    force: true,
-    // Windows defense-in-depth: even after every git child has closed
-    // the repository may transiently hold file handles (index lock,
-    // pack tmp). Without retry, a forced teardown races with the OS
-    // releasing those handles and surfaces as EBUSY on the next test.
-    maxRetries: process.platform === 'win32' ? 10 : 3,
-    retryDelay: 100,
-  })
+  await cleanupHistoryTempRepo(root)
 })
 
 async function configureGitUser() {
@@ -122,7 +108,7 @@ async function call(method: string, urlPath: string, body?: unknown, autoExpecte
   return historyRoutes.fetch(req)
 }
 
-describe('GET /api/history/capability', () => {
+describeHistoryIntegration('GET /api/history/capability', () => {
   it('reports gitAvailable=true and repoInitialized=true after first call', async () => {
     const r = await call('GET', '/capability')
     expect(r.status).toBe(200)
@@ -137,7 +123,7 @@ describe('GET /api/history/capability', () => {
   })
 })
 
-describe('GET /api/history/status', () => {
+describeHistoryIntegration('GET /api/history/status', () => {
   beforeEach(async () => {
     await call('GET', '/capability') // bootstraps the repo
     await configureGitUser()
@@ -181,7 +167,7 @@ describe('GET /api/history/status', () => {
   })
 })
 
-describe('GET /api/history/log', () => {
+describeHistoryIntegration('GET /api/history/log', () => {
   beforeEach(async () => {
     await call('GET', '/capability')
     await configureGitUser()
@@ -243,7 +229,7 @@ describe('GET /api/history/log', () => {
   })
 })
 
-describe('GET /api/history/file', () => {
+describeHistoryIntegration('GET /api/history/file', () => {
   beforeEach(async () => {
     await call('GET', '/capability')
     await configureGitUser()
@@ -293,7 +279,7 @@ describe('GET /api/history/file', () => {
   })
 })
 
-describe('GET /api/history/diff', () => {
+describeHistoryIntegration('GET /api/history/diff', () => {
   beforeEach(async () => {
     await call('GET', '/capability')
     await configureGitUser()
@@ -379,7 +365,7 @@ describe('GET /api/history/diff', () => {
   })
 })
 
-describe('POST /api/history/commits', { timeout: HISTORY_GIT_INTEGRATION_TIMEOUT_MS }, () => {
+describeHistoryIntegration('POST /api/history/commits', () => {
   beforeEach(async () => {
     await call('GET', '/capability')
     await configureGitUser()
@@ -511,7 +497,7 @@ describe('POST /api/history/commits', { timeout: HISTORY_GIT_INTEGRATION_TIMEOUT
   })
 })
 
-describe('POST /api/history/repair-index', () => {
+describeHistoryIntegration('POST /api/history/repair-index', () => {
   beforeEach(async () => {
     await call('GET', '/capability')
     await configureGitUser()
@@ -625,7 +611,7 @@ describe('POST /api/history/repair-index', () => {
   }, 15_000)
 })
 
-describe('POST /api/history/drop', () => {
+describeHistoryIntegration('POST /api/history/drop', () => {
   beforeEach(async () => {
     await call('GET', '/capability')
     await configureGitUser()
@@ -775,7 +761,7 @@ describe('POST /api/history/drop', () => {
 
 // Sanity: if git is missing, the whole router should report 503
 // instead of throwing. We mock git.run to simulate ENOENT once.
-describe('graceful degradation when git is unavailable', () => {
+describeHistoryIntegration('graceful degradation when git is unavailable', () => {
   it('returns 503 on /status when git cannot be spawned', async () => {
     const gitMod = await import('../history/git.js')
     const spy = vi.spyOn(gitMod, 'run').mockImplementation(async () => {
@@ -794,7 +780,7 @@ describe('graceful degradation when git is unavailable', () => {
   })
 })
 
-describe('POST /api/history/restore', () => {
+describeHistoryIntegration('POST /api/history/restore', () => {
   // Body: { path, ref }. Returns the restored bytes and mtime on success.
   // - 400 if path or ref missing
   // - 404 if the file does not exist at ref (rawAt pre-check)
