@@ -50,12 +50,37 @@ export interface ActiveSession {
 }
 
 export interface AiSettings {
-  provider: 'anthropic' | 'openai'
+  provider: AiProvider
   configured: boolean
   source: 'db' | 'none'
   maskedKey: string
   baseURL: string
   model: string
+}
+
+export type AiProvider = 'anthropic' | 'openai'
+
+export type AiKeyErrorCode =
+  | 'master-key-required'
+  | 'master-key-invalid'
+  | 'master-key-file-unreadable'
+  | 'master-key-file-unwritable'
+  | 'stored-key-invalid'
+
+export interface AiApiErrorBody {
+  error?: string
+  code?: AiKeyErrorCode
+}
+
+export type AiApiError = Error & {
+  status: number
+  body: AiApiErrorBody
+  code?: AiKeyErrorCode
+}
+
+export interface AiCredentialStatus {
+  provider: AiProvider
+  providers: Record<AiProvider, { stored: boolean }>
 }
 
 export interface ChatRequest {
@@ -92,7 +117,7 @@ export type ChatEvent =
   | { type: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
   | { type: 'file_changed' } & FileChangeEvent
   | { type: 'done'; userId: number; assistantId: number }
-  | { type: 'error'; reason: string }
+  | { type: 'error'; reason: string; code?: AiKeyErrorCode }
 
 async function jsonOrThrow<T>(r: Response): Promise<T> {
   if (!r.ok) {
@@ -100,8 +125,12 @@ async function jsonOrThrow<T>(r: Response): Promise<T> {
     // reads `body.error` from whatever the server returned. We don't
     // have a schema for error bodies, so cast to the loose shape we
     // actually consume.
-    const body = (await r.json().catch(() => ({ error: r.statusText }))) as { error?: string }
-    throw Object.assign(new Error(body.error ?? `HTTP ${r.status}`), { status: r.status, body })
+    const body = (await r.json().catch(() => ({ error: r.statusText }))) as AiApiErrorBody
+    throw Object.assign(new Error(body.error ?? `HTTP ${r.status}`), {
+      status: r.status,
+      body,
+      code: body.code,
+    }) as AiApiError
   }
   return r.json() as Promise<T>
 }
@@ -163,6 +192,10 @@ export async function getAiSettings(): Promise<AiSettings> {
   return jsonOrThrow<AiSettings>(await fetch('/api/ai/settings', { method: 'GET' }))
 }
 
+export async function getAiCredentialStatus(): Promise<AiCredentialStatus> {
+  return jsonOrThrow<AiCredentialStatus>(await fetch('/api/ai/settings/credential-status', { method: 'GET' }))
+}
+
 export async function saveAiSettings(input: {
   provider?: 'anthropic' | 'openai'
   apiKey?: string
@@ -175,8 +208,9 @@ export async function saveAiSettings(input: {
   }))
 }
 
-export async function clearAiApiKey(): Promise<AiSettings> {
-  return jsonOrThrow<AiSettings>(await fetch('/api/ai/settings/key', { method: 'DELETE' }))
+export async function clearAiApiKey(provider?: AiProvider): Promise<{ cleared: true; provider: AiProvider }> {
+  const query = provider ? `?provider=${encodeURIComponent(provider)}` : ''
+  return jsonOrThrow<{ cleared: true; provider: AiProvider }>(await fetch(`/api/ai/settings/key${query}`, { method: 'DELETE' }))
 }
 
 export async function suggestSlug(input: {
@@ -230,8 +264,15 @@ export async function* streamChat(
     signal,
   })
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ reason: `http-${res.status}` }))
-    yield { type: 'error', reason: (body as any).reason ?? `http-${res.status}` }
+    const body = await res.json().catch(() => ({ reason: `http-${res.status}` })) as {
+      reason?: string
+      code?: AiKeyErrorCode
+    }
+    yield {
+      type: 'error',
+      reason: body.reason ?? `http-${res.status}`,
+      ...(body.code ? { code: body.code } : {}),
+    }
     return
   }
   if (!res.body) {

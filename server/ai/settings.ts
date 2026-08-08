@@ -49,6 +49,11 @@ export interface AiSettingsView {
   model: string
 }
 
+export interface AiCredentialStatus {
+  provider: Provider
+  providers: Record<Provider, { stored: boolean }>
+}
+
 export type AiKeyConfigurationCode =
   | 'master-key-required'
   | 'master-key-invalid'
@@ -363,12 +368,34 @@ export function saveAiSettings(db: DatabaseT, input: SaveAiSettingsInput): Store
   return readStoredAiSettings(db)
 }
 
-export function clearAiApiKey(db: DatabaseT, provider?: Provider): StoredAiSettings {
-  const current = readStoredAiSettings(db)
-  const target = provider ?? current.provider
+/**
+ * Explicitly forget exactly one provider credential. This is intentionally a
+ * raw row deletion: recovery must remain possible even when no master key is
+ * available to decrypt another provider's credential (or this one).
+ */
+export function clearAiApiKey(
+  db: DatabaseT,
+  provider?: Provider,
+): { cleared: true; provider: Provider } {
+  const target = provider ?? readActiveProvider(db)
   const clear = db.transaction(() => deleteSetting(db, keyApiKey(target)))
   clear()
-  return readStoredAiSettings(db)
+  return { cleared: true, provider: target }
+}
+
+/**
+ * Read non-sensitive credential metadata without resolving or decrypting a
+ * master key. This lets the settings UI offer a provider-specific recovery
+ * action after a master-key-required response.
+ */
+export function getAiCredentialStatus(db: DatabaseT): AiCredentialStatus {
+  return {
+    provider: readActiveProvider(db),
+    providers: {
+      anthropic: { stored: Boolean(getSetting(db, keyApiKey('anthropic'))) },
+      openai: { stored: Boolean(getSetting(db, keyApiKey('openai'))) },
+    },
+  }
 }
 
 export function maskKey(key: string): string {

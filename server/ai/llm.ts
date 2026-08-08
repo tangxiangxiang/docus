@@ -429,7 +429,7 @@ export function resolveAiRuntimeConfig(db: DatabaseT = getDb()) {
     return getAiRuntimeConfig(db)
   } catch (error) {
     if (error instanceof AiKeyConfigurationError) {
-      throw new ChatError('key-error', error.message)
+      throw new ChatError('key-error', error.message, undefined, error.code)
     }
     throw error
   }

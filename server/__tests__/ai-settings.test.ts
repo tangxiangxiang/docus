@@ -7,7 +7,9 @@ import { applyMigrations } from '../db'
 import { decryptApiKey, encryptApiKey, isEncryptedFormat } from '../ai/keyEncryption'
 import {
   AiKeyConfigurationError,
+  clearAiApiKey,
   getAiRuntimeConfig,
+  getAiCredentialStatus,
   getAiSettingsView,
   readStoredAiSettings,
   saveAiSettings,
@@ -28,6 +30,10 @@ function newDb(): Database.Database {
 function setting(db: Database.Database, key: string): string {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
   return row?.value ?? ''
+}
+
+function hasSetting(db: Database.Database, key: string): boolean {
+  return Boolean(db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key))
 }
 
 function aiSettingsSnapshot(db: Database.Database): Array<{ key: string; value: string }> {
@@ -348,5 +354,58 @@ describe('external AI master key storage', () => {
     } finally {
       db.close()
     }
+  })
+
+  it('clears one unrecoverable provider without resolving or creating a master key', () => {
+    withMissingFallbackCredential(({ db, fallbackFile, snapshot }) => {
+      const result = clearAiApiKey(db, 'anthropic')
+
+      expect(result).toEqual({ cleared: true, provider: 'anthropic' })
+      expect(setting(db, 'ai.anthropic.apiKey')).toBe('')
+      expect(hasSetting(db, 'ai.anthropic.apiKey')).toBe(false)
+      expect(setting(db, 'ai.openai.apiKey')).toBe(snapshot.find((row) => row.key === 'ai.openai.apiKey')?.value)
+      expect(setting(db, 'ai.anthropic.baseURL')).toBe('https://anthropic.example.invalid')
+      expect(setting(db, 'ai.anthropic.model')).toBe('claude-recovery')
+      expect(setting(db, 'ai.active.provider')).toBe('openai')
+      expect(setting(db, 'ai.openai.baseURL')).toBe('https://openai.example.invalid/v1')
+      expect(setting(db, 'ai.openai.model')).toBe('gpt-recovery')
+      expect(existsSync(fallbackFile)).toBe(false)
+    })
+  })
+
+  it('keeps the remaining unrecoverable provider intact after a targeted clear', () => {
+    withMissingFallbackCredential(({ db, snapshot }) => {
+      const openAiCiphertext = snapshot.find((row) => row.key === 'ai.openai.apiKey')?.value
+      clearAiApiKey(db, 'anthropic')
+
+      expect(setting(db, 'ai.openai.apiKey')).toBe(openAiCiphertext)
+      expectAiKeyError(() => readStoredAiSettings(db), 'master-key-required')
+    })
+  })
+
+  it('clears both unrecoverable providers and returns to an unconfigured vault', () => {
+    withMissingFallbackCredential(({ db, fallbackFile }) => {
+      clearAiApiKey(db, 'anthropic')
+      clearAiApiKey(db, 'openai')
+
+      expect(getAiSettingsView(db)).toMatchObject({ configured: false, source: 'none' })
+      expect(existsSync(fallbackFile)).toBe(false)
+      expect(getAiCredentialStatus(db)).toEqual({
+        provider: 'openai',
+        providers: { anthropic: { stored: false }, openai: { stored: false } },
+      })
+    })
+  })
+
+  it('allows a new API key to recreate the fallback after an explicit reset', () => {
+    withMissingFallbackCredential(({ db, fallbackFile }) => {
+      clearAiApiKey(db, 'anthropic')
+      clearAiApiKey(db, 'openai')
+      saveAiSettings(db, { provider: 'anthropic', apiKey: 'sk-new-recovery-secret' })
+
+      expect(existsSync(fallbackFile)).toBe(true)
+      expect(readStoredAiSettings(db).anthropic.apiKey).toBe('sk-new-recovery-secret')
+      expect(isEncryptedFormat(setting(db, 'ai.anthropic.apiKey'))).toBe(true)
+    })
   })
 })

@@ -38,6 +38,7 @@ import { resolveAiRuntimeConfig } from './llm.js'
 import {
   AiKeyConfigurationError,
   clearAiApiKey,
+  getAiCredentialStatus,
   getAiSettingsView,
   MAX_AI_API_KEY_LENGTH,
   MAX_AI_BASE_URL_LENGTH,
@@ -48,14 +49,17 @@ import {
 } from './settings.js'
 import type { Message, AssistantBlocks } from '../../src/lib/ai-api.js'
 
-function bad(c: any, msg: string, code = 400) {
-  return c.json({ error: msg }, code)
+function bad(c: any, msg: string, status = 400, errorCode?: string) {
+  return c.json({
+    error: msg,
+    ...(errorCode ? { code: errorCode } : {}),
+  }, status)
 }
 
 function aiKeyErrorResponse(c: any, error: unknown) {
   if (error instanceof AiKeyConfigurationError
     || (error instanceof ChatError && error.reason === 'key-error')) {
-    return bad(c, (error as Error).message, 503)
+    return bad(c, (error as Error).message, 503, (error as AiKeyConfigurationError | ChatError).code)
   }
   return null
 }
@@ -320,15 +324,17 @@ ai.put('/settings', async (c) => {
 })
 
 ai.delete('/settings/key', (c) => {
-  try {
-    clearAiApiKey(getDb())
-    return c.json(getAiSettingsView(getDb()))
-  } catch (error) {
-    const response = aiKeyErrorResponse(c, error)
-    if (response) return response
-    throw error
+  const requested = c.req.query('provider')
+  if (requested !== undefined && !(SUPPORTED_PROVIDERS as readonly string[]).includes(requested)) {
+    return bad(c, `provider must be one of: ${SUPPORTED_PROVIDERS.join(', ')}`)
   }
+  return c.json(clearAiApiKey(getDb(), requested as Provider | undefined))
 })
+
+// This endpoint intentionally inspects only whether rows are non-empty. It
+// never decrypts credentials and is used solely to render explicit recovery
+// actions when /settings cannot be read.
+ai.get('/settings/credential-status', (c) => c.json(getAiCredentialStatus(getDb())))
 
 // ---- /active ----
 ai.get('/active', (c) => {
@@ -390,7 +396,7 @@ ai.post('/slug', async (c) => {
   } catch (err) {
     if (err instanceof ChatError) {
       if (err.reason === 'no-api-key') return bad(c, 'AI not configured', 503)
-      if (err.reason === 'key-error') return bad(c, err.message, 503)
+      if (err.reason === 'key-error') return bad(c, err.message, 503, err.code)
       if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499 as any)
       if (err.reason === 'parse-failed') return bad(c, err.message, 502)
       return bad(c, err.message || 'llm-error', 502)
@@ -449,7 +455,7 @@ ai.post('/summary', async (c) => {
     }
     if (err instanceof ChatError) {
       if (err.reason === 'no-api-key') return bad(c, 'AI not configured', 503)
-      if (err.reason === 'key-error') return bad(c, err.message, 503)
+      if (err.reason === 'key-error') return bad(c, err.message, 503, err.code)
       if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499 as any)
       if (err.reason === 'parse-failed') return bad(c, err.message, 502)
       return bad(c, err.message || 'llm-error', 502)
@@ -517,7 +523,7 @@ ai.post('/commit-message', async (c) => {
     }
     if (err instanceof ChatError) {
       if (err.reason === 'no-api-key') return bad(c, 'AI not configured', 503)
-      if (err.reason === 'key-error') return bad(c, err.message, 503)
+      if (err.reason === 'key-error') return bad(c, err.message, 503, err.code)
       if (err.reason === 'aborted') return c.json({ error: 'aborted' }, 499 as any)
       if (err.reason === 'parse-failed') return bad(c, err.message, 502)
       return bad(c, err.message || 'llm-error', 502)
@@ -656,7 +662,13 @@ ai.post('/chat', async (c) => {
       if (err instanceof ChatError && err.reason === 'aborted') return
       const reason = err instanceof ChatError ? err.reason : 'unknown'
       try {
-        await stream.writeSSE({ event: 'error', data: JSON.stringify({ reason }) })
+        await stream.writeSSE({
+          event: 'error',
+          data: JSON.stringify({
+            reason,
+            ...(err instanceof ChatError && err.code ? { code: err.code } : {}),
+          }),
+        })
       } catch {
         // The stream may already be closed (client disconnect).
         // Best-effort: ignore.

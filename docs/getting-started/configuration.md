@@ -42,4 +42,9 @@ leaves both the credentials and all other AI settings unchanged. It does not
 create an unrelated replacement key. In fallback mode, back up and restore
 `data/docus.db` and `data/.docus-master-key` together.
 
+If the original key is permanently unavailable, explicitly forget the affected
+provider credential in Settings before configuring a replacement. This is a
+permanent, provider-scoped action; Docus never clears the credential during a
+failed read.
+
 See [Deployment Security](../deployment/security.md) and [Backup and Restore](../deployment/backup-and-restore.md) before changing an existing instance's key.

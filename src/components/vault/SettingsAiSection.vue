@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from '../../composables/useI18n'
-import type { AiSettings } from '../../lib/ai-api'
+import type {
+  AiCredentialStatus,
+  AiKeyErrorCode,
+  AiProvider,
+  AiSettings,
+} from '../../lib/ai-api'
 
 const props = defineProps<{
   settings: AiSettings | null
@@ -10,6 +15,8 @@ const props = defineProps<{
   model: string
   loading: boolean
   saving: boolean
+  recoveryCode?: AiKeyErrorCode
+  credentialStatus?: AiCredentialStatus | null
 }>()
 
 const emit = defineEmits<{
@@ -18,7 +25,8 @@ const emit = defineEmits<{
   'update:model': [value: string]
   save: []
   'clear-key': []
-  'switch-provider': [provider: 'anthropic' | 'openai']
+  'forget-credential': [provider: AiProvider]
+  'switch-provider': [provider: AiProvider]
 }>()
 
 const { t } = useI18n()
@@ -26,12 +34,22 @@ const { t } = useI18n()
 /* Per-provider placeholder defaults. The active provider's saved
    value wins when present (rendered in the parent as maskedKey /
    baseURL / model); these only fill in for an unconfigured provider. */
+const activeProvider = computed<AiProvider>(() =>
+  props.settings?.provider ?? props.credentialStatus?.provider ?? 'anthropic',
+)
 const MODEL_PLACEHOLDER = computed(() =>
-  props.settings?.provider === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-6',
+  activeProvider.value === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-6',
 )
 const API_KEY_PLACEHOLDER = computed(() =>
-  props.settings?.provider === 'openai' ? 'sk-...' : 'sk-ant-...',
+  activeProvider.value === 'openai' ? 'sk-...' : 'sk-ant-...',
 )
+const recoveryProviders = computed<AiProvider[]>(() => {
+  if (props.credentialStatus) {
+    return (['anthropic', 'openai'] as AiProvider[])
+      .filter((provider) => props.credentialStatus?.providers[provider].stored)
+  }
+  return [props.settings?.provider ?? 'anthropic']
+})
 
 function onInput(field: 'apiKey' | 'baseURL' | 'model', event: Event) {
   const value = (event.target as HTMLInputElement).value
@@ -57,6 +75,7 @@ function onProviderChange(event: Event) {
       </div>
       <div class="settings-section-actions">
         <button
+          v-if="settings || recoveryCode === 'master-key-required'"
           type="button"
           class="btn"
           :disabled="saving"
@@ -71,6 +90,21 @@ function onProviderChange(event: Event) {
       </div>
     </header>
     <div class="settings-section-body">
+      <div v-if="recoveryCode === 'master-key-required'" class="settings-ai-recovery" role="alert">
+        <strong>{{ t('settings.master_key_missing') }}</strong>
+        <p>{{ t('settings.master_key_missing_detail') }}</p>
+        <p>{{ t('settings.master_key_forget_warning') }}</p>
+        <div class="settings-section-actions">
+          <button
+            v-for="provider in recoveryProviders"
+            :key="provider"
+            type="button"
+            class="btn"
+            :disabled="saving"
+            @click="emit('forget-credential', provider)"
+          >{{ t('settings.forget_provider_key', { provider }) }}</button>
+        </div>
+      </div>
       <div class="settings-field-grid">
         <!-- Provider is now a functional select — switching it
              triggers an immediate switch of the active provider
@@ -81,7 +115,7 @@ function onProviderChange(event: Event) {
         <label class="settings-field">
           <span>{{ t('settings.provider') }}</span>
           <select
-            :value="settings?.provider ?? 'anthropic'"
+            :value="activeProvider"
             :disabled="loading || saving"
             @change="onProviderChange"
           >

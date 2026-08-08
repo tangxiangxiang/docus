@@ -396,7 +396,7 @@ export async function runChat(opts: RunChatOpts): Promise<{
     )
     const assistantId = assistantResult.ok ? assistantResult.message.id : -1
     if (err instanceof ChatError) {
-      throw new ChatError(err.reason, err.message, assistantId)
+      throw new ChatError(err.reason, err.message, assistantId, err.code)
     }
     throw new ChatError('llm-error', (err as Error).message, assistantId)
   }

@@ -109,10 +109,25 @@ describe('ai-api', () => {
   })
 
   it('clearAiApiKey DELETEs the stored key', async () => {
-    responses.push({ status: 200, body: { provider: 'anthropic', configured: false, source: 'none', maskedKey: '', baseURL: '', model: 'm' } })
+    responses.push({ status: 200, body: { cleared: true, provider: 'anthropic' } })
     await api.clearAiApiKey()
     expect(calls[0].url).toBe('/api/ai/settings/key')
     expect(calls[0].init.method).toBe('DELETE')
+  })
+
+  it('includes a selected provider in the credential clear request', async () => {
+    responses.push({ status: 200, body: { cleared: true, provider: 'openai' } })
+    await api.clearAiApiKey('openai')
+    expect(calls[0].url).toBe('/api/ai/settings/key?provider=openai')
+  })
+
+  it('preserves structured AI error codes on failed requests', async () => {
+    responses.push({ status: 503, body: { error: 'master key required', code: 'master-key-required' } })
+    await expect(api.getAiSettings()).rejects.toMatchObject({
+      status: 503,
+      code: 'master-key-required',
+      body: { code: 'master-key-required' },
+    })
   })
 
   it('throws with the server error message on a 4xx response', async () => {
@@ -163,6 +178,20 @@ describe('streamChat', () => {
       collected.push(ev)
     }
     expect(collected).toEqual([{ type: 'error', reason: 'no-api-key' }])
+  })
+
+  it('preserves a structured key code from a chat preflight response', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ error: 'master key required', code: 'master-key-required' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      })
+    ) as unknown as typeof fetch
+    const collected: unknown[] = []
+    for await (const ev of streamChat({ sessionId: 1, content: 'x' })) {
+      collected.push(ev)
+    }
+    expect(collected).toEqual([{ type: 'error', reason: 'http-503', code: 'master-key-required' }])
   })
 
   // ── Edit-10.3: the request body carries the ONE live-context

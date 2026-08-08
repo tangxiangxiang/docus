@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { clearAiApiKey, getAiSettings, saveAiSettings, type AiSettings } from '../../lib/ai-api'
+import {
+  clearAiApiKey,
+  getAiCredentialStatus,
+  getAiSettings,
+  saveAiSettings,
+  type AiCredentialStatus,
+  type AiKeyErrorCode,
+  type AiProvider,
+  type AiSettings,
+} from '../../lib/ai-api'
 import { useToast } from '../../composables/useToast'
 import { useAiHistory } from '../../composables/vault/useAiHistory'
 import { useFocusTrap } from '../../composables/useFocusTrap'
@@ -33,6 +42,8 @@ const vaultContext = useOptionalVaultContext()
 const loading = ref(false)
 const saving = ref(false)
 const settings = ref<AiSettings | null>(null)
+const aiErrorCode = ref<AiKeyErrorCode | undefined>()
+const credentialStatus = ref<AiCredentialStatus | null>(null)
 const apiKey = ref('')
 const baseURL = ref('')
 const model = ref('claude-sonnet-4-6')
@@ -58,6 +69,8 @@ const active = ref<SectionId>('ai')
 
 async function load() {
   loading.value = true
+  aiErrorCode.value = undefined
+  credentialStatus.value = null
   try {
     const [next, migration] = await Promise.all([
       getAiSettings(),
@@ -70,6 +83,10 @@ async function load() {
     migrationSummary.value = migration?.summary ?? null
     cleanedPaths.value = migration?.cleanedPaths ?? []
   } catch (e: any) {
+    aiErrorCode.value = e.code
+    if (e.code === 'master-key-required') {
+      credentialStatus.value = await getAiCredentialStatus().catch(() => null)
+    }
     toast.error(t('settings.load_failed', { error: e.message ?? t('common.unknown_error') }))
   } finally {
     loading.value = false
@@ -185,12 +202,44 @@ async function onSwitchProvider(provider: 'anthropic' | 'openai') {
   }
 }
 
-async function onClearKey() {
+async function onClearKey(provider?: AiProvider) {
+  const target = provider ?? settings.value?.provider ?? credentialStatus.value?.provider ?? 'anthropic'
+  const ok = await confirm(
+    t('settings.forget_key_confirm', { provider: target }),
+    t('settings.forget_key_detail'),
+    {
+      confirmLabel: t('settings.forget_key_action'),
+      cancelLabel: t('settings.cancel'),
+      destructive: true,
+    },
+  )
+  if (!ok) return
   saving.value = true
   try {
-    settings.value = await clearAiApiKey()
+    await clearAiApiKey(target)
     apiKey.value = ''
-    await aiHistory.loadActive()
+    if (settings.value?.provider === target) {
+      settings.value = {
+        ...settings.value,
+        configured: false,
+        source: 'none',
+        maskedKey: '',
+      }
+    }
+    try {
+      const next = await getAiSettings()
+      settings.value = next
+      baseURL.value = next.baseURL
+      model.value = next.model
+      aiErrorCode.value = undefined
+      credentialStatus.value = null
+      await aiHistory.loadActive()
+    } catch (error: any) {
+      aiErrorCode.value = error.code
+      if (error.code === 'master-key-required') {
+        credentialStatus.value = await getAiCredentialStatus().catch(() => null)
+      }
+    }
     toast.success(t('settings.key_cleared'))
   } catch (e: any) {
     toast.error(t('settings.clear_failed', { error: e.message ?? t('common.unknown_error') }))
@@ -278,13 +327,16 @@ onBeforeUnmount(() => {
               :apiKey="apiKey"
               :baseURL="baseURL"
               :model="model"
+              :recoveryCode="aiErrorCode"
+              :credentialStatus="credentialStatus"
               :loading="loading"
               :saving="saving"
               @update:apiKey="apiKey = $event"
               @update:baseURL="baseURL = $event"
               @update:model="model = $event"
               @save="onSave"
-              @clearKey="onClearKey"
+              @clear-key="onClearKey()"
+              @forget-credential="onClearKey"
               @switch-provider="onSwitchProvider"
             />
             <SettingsEditorSection v-else-if="active === 'editor'" />

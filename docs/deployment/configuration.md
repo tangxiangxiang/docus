@@ -42,6 +42,13 @@ back to the auto-managed path.
 
 Changing the master-key source does not re-encrypt existing credentials automatically to an unrelated key. Preserve the original key until all stored provider credentials have been cleared or successfully read and re-saved.
 
+If the original master key is permanently lost, the encrypted credential is
+not recoverable. Use the Settings recovery action to explicitly forget one
+provider credential at a time; this does not decrypt, rewrite, or delete the
+other provider's row, and it never deletes `data/.docus-master-key`. After the
+unrecoverable rows have been explicitly cleared, save a new API key to create
+and use a new fallback key. The forget action is permanent.
+
 ## AI Provider Configuration
 
 Provider, API key, model, and base URL belong in the Settings UI and SQLite. The current server does not read `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, or OpenAI equivalents from the environment.

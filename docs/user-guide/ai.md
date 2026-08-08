@@ -37,6 +37,6 @@ Review tool-call cards and History changes after an AI-assisted edit. Create a G
 ## Troubleshooting
 
 - **Not configured:** save a key for the active provider in Settings.
-- **Master-key error:** restore the exact key that encrypted the stored credentials. If those credentials are intentionally abandoned, they must be explicitly cleared before a new key is configured; Docus never clears or replaces them automatically.
+- **Master-key error:** restore the exact key that encrypted the stored credentials. If the key is permanently unavailable, use Settings → AI → Forget the affected provider API key and confirm the destructive action. This removes only that provider's encrypted credential; Docus never clears or replaces credentials automatically. After all unrecoverable provider credentials are explicitly cleared, a new API key can be saved and a new fallback key will be created.
 - **Tool rejected:** save or resolve the active workspace state, then ask the model to re-read before retrying.
 - **Provider error:** verify the selected model, base URL, network access, and API account.

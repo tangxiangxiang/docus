@@ -3,6 +3,9 @@
 // ./data/docus.db is never touched. The mock uses vi.mock with a
 // vi.hoisted handle so the factory can close over the test DB
 // reference (vi.mock is hoisted above top-level imports).
+import { existsSync, mkdtempSync, rmSync, unlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db'
@@ -29,6 +32,17 @@ import aiRoutes from '../ai/routes'
 const TEST_MASTER_KEY = '11'.repeat(32)
 const originalMasterKey = process.env.DOCUS_MASTER_KEY
 const originalMasterKeyFile = process.env.DOCUS_MASTER_KEY_FILE
+
+async function withIsolatedCwd(run: (root: string) => Promise<void>): Promise<void> {
+  const root = mkdtempSync(path.join(tmpdir(), 'docus-ai-routes-'))
+  const cwd = vi.spyOn(process, 'cwd').mockReturnValue(root)
+  try {
+    await run(root)
+  } finally {
+    cwd.mockRestore()
+    rmSync(root, { recursive: true, force: true })
+  }
+}
 
 beforeEach(() => {
   // The test key is injected out-of-band just like production. It is
@@ -261,12 +275,95 @@ describe('GET/PUT /api/ai/settings', () => {
     })
     const r = await call('DELETE', '/settings/key')
     expect(r.status).toBe(200)
-    const body = await r.json() as { configured: boolean; source: string; maskedKey: string; baseURL: string; model: string }
-    expect(body.configured).toBe(false)
-    expect(body.source).toBe('none')
-    expect(body.maskedKey).toBe('')
-    expect(body.baseURL).toBe('https://proxy.example.com')
-    expect(body.model).toBe('claude-test')
+    expect(await r.json()).toEqual({ cleared: true, provider: 'anthropic' })
+    const view = await (await call('GET', '/settings')).json() as { configured: boolean; source: string; maskedKey: string; baseURL: string; model: string }
+    expect(view.configured).toBe(false)
+    expect(view.source).toBe('none')
+    expect(view.maskedKey).toBe('')
+    expect(view.baseURL).toBe('https://proxy.example.com')
+    expect(view.model).toBe('claude-test')
+  })
+
+  it('clears a selected provider without decrypting when the fallback key is missing', async () => {
+    await withIsolatedCwd(async (root) => {
+      delete process.env.DOCUS_MASTER_KEY
+      await call('PUT', '/settings', { provider: 'anthropic', apiKey: 'sk-ant-unrecoverable' })
+      await call('PUT', '/settings', { provider: 'openai', apiKey: 'sk-openai-unrecoverable' })
+      const fallbackFile = path.join(root, 'data', '.docus-master-key')
+      const openAiCiphertext = testDbRef.value!.prepare('SELECT value FROM settings WHERE key = ?').get('ai.openai.apiKey') as { value: string }
+      expect(existsSync(fallbackFile)).toBe(true)
+      unlinkSync(fallbackFile)
+
+      const r = await call('DELETE', '/settings/key?provider=anthropic')
+      expect(r.status).toBe(200)
+      expect(await r.json()).toEqual({ cleared: true, provider: 'anthropic' })
+      expect(existsSync(fallbackFile)).toBe(false)
+      expect((testDbRef.value!.prepare('SELECT value FROM settings WHERE key = ?').get('ai.anthropic.apiKey') as { value?: string } | undefined)?.value).toBeUndefined()
+      expect((testDbRef.value!.prepare('SELECT value FROM settings WHERE key = ?').get('ai.openai.apiKey') as { value: string }).value).toBe(openAiCiphertext.value)
+
+      const failed = await call('GET', '/settings')
+      expect(failed.status).toBe(503)
+      expect(await failed.json()).toMatchObject({ code: 'master-key-required' })
+    })
+  })
+
+  it('rejects an invalid provider for credential deletion', async () => {
+    const r = await call('DELETE', '/settings/key?provider=gemini')
+    expect(r.status).toBe(400)
+    expect(await r.json()).toEqual({ error: 'provider must be one of: anthropic, openai' })
+  })
+
+  it('treats clearing an absent provider credential as an idempotent success', async () => {
+    const r = await call('DELETE', '/settings/key?provider=openai')
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ cleared: true, provider: 'openai' })
+  })
+
+  it('returns stable master-key error codes from settings reads', async () => {
+    await call('PUT', '/settings', { apiKey: 'sk-ant-code-test' })
+    delete process.env.DOCUS_MASTER_KEY
+    process.env.DOCUS_MASTER_KEY_FILE = path.join(tmpdir(), 'docus-missing-master-key')
+
+    const r = await call('GET', '/settings')
+    expect(r.status).toBe(503)
+    const body = await r.json() as { error: string; code: string }
+    expect(body.code).toBe('master-key-file-unreadable')
+    expect(body.error).not.toContain('sk-ant-code-test')
+  })
+
+  it('returns master-key-invalid for an explicitly wrong key', async () => {
+    await call('PUT', '/settings', { apiKey: 'sk-ant-wrong-key-test' })
+    process.env.DOCUS_MASTER_KEY = '33'.repeat(32)
+
+    const r = await call('GET', '/settings')
+    expect(r.status).toBe(503)
+    expect(await r.json()).toMatchObject({ code: 'master-key-invalid' })
+  })
+
+  it('keeps the structured code on active and chat preflight failures', async () => {
+    await withIsolatedCwd(async (root) => {
+      delete process.env.DOCUS_MASTER_KEY
+      await call('PUT', '/settings', { apiKey: 'sk-ant-preflight-test' })
+      unlinkSync(path.join(root, 'data', '.docus-master-key'))
+
+      const active = await call('GET', '/active')
+      expect(active.status).toBe(503)
+      expect(await active.json()).toMatchObject({ code: 'master-key-required' })
+
+      const chat = await call('POST', '/chat', { sessionId: 1, content: 'hello' })
+      expect(chat.status).toBe(503)
+      expect(await chat.json()).toMatchObject({ code: 'master-key-required' })
+    })
+  })
+
+  it('reports credential status without requiring a master key', async () => {
+    await call('PUT', '/settings', { provider: 'openai', apiKey: 'sk-openai-status-test' })
+    const r = await call('GET', '/settings/credential-status')
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({
+      provider: 'openai',
+      providers: { anthropic: { stored: false }, openai: { stored: true } },
+    })
   })
 
   it('saves OpenAI config independently of Anthropic config', async () => {

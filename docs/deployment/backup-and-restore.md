@@ -78,5 +78,6 @@ The `--delete` flag makes the restored vault match the backup and removes newer 
 - Markdown without SQLite retains note bodies but loses current database-owned titles, summaries, tags, stable IDs, AI settings, and conversations. Startup will reconstruct fallback metadata, not the missing application state.
 - SQLite without the matching vault contains metadata identities for missing files and is not a useful document restore.
 - SQLite without the matching master key preserves encrypted credentials but cannot decrypt them. Restore the original key. If the credentials are intentionally abandoned, the old credential rows must be explicitly cleared before reconfiguration; Docus does not clear or replace them during the failed read.
+- If the original key cannot be recovered, Settings can explicitly forget one provider credential at a time. This destructive action removes only the selected encrypted row; it does not decrypt, rewrite, or remove the other provider's row or the master-key file. Once all unrecoverable rows are cleared, a new API key can be saved and a new fallback key will be created.
 - Vault files without `.git/` lose History even though current Markdown remains.
 - Clearing browser storage loses unsaved recovery drafts but does not delete server-saved notes.
