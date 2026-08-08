@@ -1754,12 +1754,8 @@ main.container {
 }
 
 /* === Settings modal ===
-   Two-column layout: a fixed left nav (3 sections) + a scrollable
-   right detail. Each section owns its own action header (Save / Reset
-   / Check), so there is no global footer — closing lives in the
-   modal header. The modal is teleported to <body>, so --vs-* tokens
-   are not set; the `, var(--…)` fallbacks keep it readable if it ever
-   happens to render inside a vault (defensive, currently unused). */
+   The modal is teleported to body, so it derives its layered surfaces
+   from the root theme tokens instead of relying on vault-scoped tokens. */
 
 .settings-backdrop {
   position: fixed;
@@ -1768,289 +1764,637 @@ main.container {
   display: flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
+  padding: 12px;
+  overflow: hidden;
   background: rgba(0, 0, 0, 0.36);
 }
 .settings-modal {
-  width: min(640px, calc(100vw - 32px));
-  max-height: min(80vh, 640px);
+  --settings-surface: var(--bg);
+  --settings-sidebar: color-mix(in srgb, var(--bg-soft) 82%, var(--bg));
+  --settings-card: color-mix(in srgb, var(--bg-soft) 48%, var(--bg));
+  --settings-control: var(--bg-soft);
+  --settings-border: color-mix(in srgb, var(--border) 82%, transparent);
+  --settings-border-strong: color-mix(in srgb, var(--border) 94%, var(--text-muted));
+  --settings-text: var(--text-h);
+  --settings-muted: var(--text-muted);
+  --settings-accent: var(--accent);
+  --settings-accent-hover: var(--accent-hover);
+  --settings-danger: #dc4c4c;
+  --settings-success: #15803d;
+  --settings-warning: #d97706;
+  width: min(640px, calc(100vw - 24px));
+  /* Keep every settings section on the same compact canvas. The detail
+     pane owns scrolling, so longer editor/metadata content cannot resize
+     the modal when switching tabs. */
+  height: min(360px, calc(100vh - 24px));
+  min-height: 0;
+  max-height: calc(100vh - 24px);
   display: flex;
   flex-direction: column;
-  color: var(--vs-text-1, var(--text-h));
-  background: var(--vs-bg-1, var(--bg));
-  border: 1px solid var(--vs-border, var(--border));
+  color: var(--settings-text);
+  background: var(--settings-surface);
+  border: 1px solid var(--settings-border-strong);
   border-radius: 6px;
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.32);
   overflow: hidden;
 }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .settings-modal {
+    --settings-danger: #f87171;
+    --settings-success: #4ade80;
+    --settings-warning: #fbbf24;
+  }
+}
+:root[data-theme='dark'] .settings-modal {
+  --settings-danger: #f87171;
+  --settings-success: #4ade80;
+  --settings-warning: #fbbf24;
+}
 .settings-header {
-  flex: 0 0 auto;
+  flex: 0 0 38px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 38px;
-  padding: 0 10px 0 14px;
-  border-bottom: 1px solid var(--vs-border, var(--border));
+  box-sizing: border-box;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--settings-border);
+  background: color-mix(in srgb, var(--settings-surface) 92%, var(--settings-sidebar));
 }
 .settings-header h2 {
   margin: 0;
-  font-size: 0.95rem;
+  color: var(--settings-text);
+  font-size: 0.9rem;
   font-weight: 600;
   letter-spacing: -0.005em;
 }
 .settings-icon-btn {
   width: 24px;
   height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: 0;
   border-radius: 4px;
-  color: var(--vs-text-2, var(--text-muted));
+  color: var(--settings-muted);
   background: transparent;
   cursor: pointer;
-  font-size: 18px;
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 300;
   line-height: 1;
-  transition: color 0.12s, background 0.12s;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 .settings-icon-btn:hover {
-  color: var(--vs-text-1, var(--text-h));
-  background: var(--vs-hover-bg, var(--bg-soft));
+  color: var(--settings-text);
+  background: color-mix(in srgb, var(--settings-muted) 12%, transparent);
+}
+.settings-icon-btn:focus-visible {
+  outline: 2px solid var(--settings-accent);
+  outline-offset: 2px;
 }
 .settings-body {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
   grid-template-columns: 140px minmax(0, 1fr);
+  overflow: hidden;
 }
-/* Left nav. Mirrors the activity-bar visual language (2px left border
-   on the active item) so the modal feels native to the vault, not like
-   an alien panel. Background is the soft token, so the nav reads as a
-   subtle sidebar rail rather than competing with the detail for
-   attention. */
 .settings-nav {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
+  box-sizing: border-box;
   padding: 6px;
-  border-right: 1px solid var(--vs-border, var(--border));
-  background: var(--vs-bg-2, var(--bg-soft));
+  border-right: 1px solid var(--settings-border);
+  background: var(--settings-sidebar);
   overflow-y: auto;
 }
 .settings-nav-item {
+  position: relative;
+  min-width: 0;
+  min-height: 30px;
   display: flex;
   align-items: center;
-  min-height: 26px;
-  padding: 0 10px;
-  border: 0;
-  border-left: 2px solid transparent;
-  border-radius: 0 4px 4px 0;
+  gap: 7px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
   background: transparent;
-  color: var(--vs-text-2, var(--text-muted));
+  color: var(--settings-muted);
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.76rem;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
-  transition: color 0.12s, background 0.12s, border-color 0.12s;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.settings-nav-item::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: -1px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
+  background: transparent;
 }
 .settings-nav-item:hover {
-  color: var(--vs-text-1, var(--text-h));
-  background: var(--vs-hover-bg, var(--bg-soft));
+  color: var(--settings-text);
+  background: color-mix(in srgb, var(--settings-muted) 9%, transparent);
 }
 .settings-nav-item.active {
-  color: var(--vs-text-1, var(--text-h));
-  border-left-color: var(--vs-accent, var(--accent));
-  background: var(--vs-active-bg, var(--bg-soft));
-  font-weight: 500;
+  color: color-mix(in srgb, var(--settings-accent) 68%, var(--settings-text));
+  border-color: color-mix(in srgb, var(--settings-accent) 48%, transparent);
+  background: color-mix(in srgb, var(--settings-accent) 14%, transparent);
+}
+.settings-nav-item.active::before {
+  background: var(--settings-accent);
 }
 .settings-nav-item:focus-visible {
-  outline: 1px solid var(--vs-accent, var(--accent));
-  outline-offset: -1px;
+  outline: 2px solid var(--settings-accent);
+  outline-offset: 2px;
 }
-/* Right detail. Body scrolls vertically inside this column while the
-   left nav stays anchored, so the user never loses their place even
-   if a metadata list grows long. Padding is asymmetric — generous
-   vertical so each section breathes, modest horizontal so the field
-   grid still has room for two columns at the modal's 720px width. */
+.settings-nav-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
+}
+.settings-nav-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
 .settings-detail {
   min-width: 0;
   min-height: 0;
-  overflow-y: auto;
-  padding: 14px 18px 16px;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
+  padding: 14px 18px 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--settings-surface);
+  overscroll-behavior: contain;
 }
 .settings-section {
+  width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  min-width: 0;
+  gap: 10px;
 }
-/* Section header: title + subtitle on the left, section-level actions
-   on the right. The bottom border separates the header from the form
-   without adding a second visual surface. Title is sized between the
-   modal title and the field labels so the eye finds the section
-   before the inputs without the heading competing with the modal
-   title above it. */
 .settings-section-header {
+  min-width: 0;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--vs-border, var(--border));
+  gap: 10px;
 }
 .settings-section-header h3 {
   margin: 0;
-  color: var(--vs-text-1, var(--text-h));
-  font-size: 0.88rem;
+  color: var(--settings-text);
+  font-size: 0.9rem;
   font-weight: 600;
   letter-spacing: -0.005em;
+  line-height: 1.2;
 }
 .settings-section-header p {
-  margin: 3px 0 0;
-  color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.72rem;
+  margin: 2px 0 0;
+  color: var(--settings-muted);
+  font-size: 0.69rem;
   line-height: 1.4;
 }
-.settings-section-actions {
+.settings-section-actions,
+.settings-warning-actions,
+.settings-metadata-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
   flex: 0 0 auto;
+  gap: 5px;
 }
-/* Tighten the shared .btn inside section headers + metadata actions
-   so they match the modal's compact rhythm. The base .btn is used
-   across the app and stays untouched; this override is scoped to
-   the settings modal only. */
 .settings-section-actions .btn,
+.settings-warning-actions .btn,
 .settings-metadata-actions .btn {
   min-height: 26px;
-  padding: 3px 10px;
-  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border: 1px solid var(--settings-border-strong);
   border-radius: 3px;
+  background: var(--settings-card);
+  color: var(--settings-text);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.settings-section-actions .btn:hover:not(:disabled),
+.settings-warning-actions .btn:hover:not(:disabled),
+.settings-metadata-actions .btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--settings-muted) 72%, transparent);
+  background: color-mix(in srgb, var(--settings-muted) 10%, var(--settings-card));
+}
+.settings-section-actions .btn:active:not(:disabled),
+.settings-warning-actions .btn:active:not(:disabled),
+.settings-metadata-actions .btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.settings-section-actions .btn:disabled,
+.settings-warning-actions .btn:disabled,
+.settings-metadata-actions .btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+.settings-section-actions .btn.btn-primary {
+  min-width: 52px;
+  border-color: var(--settings-accent);
+  background: var(--settings-accent);
+  color: #fff;
+  box-shadow: none;
+}
+.settings-section-actions .btn.btn-primary:hover:not(:disabled) {
+  border-color: var(--settings-accent-hover);
+  background: var(--settings-accent-hover);
+}
+.settings-section-actions .settings-clear-key-btn,
+.settings-warning-actions .settings-danger-secondary {
+  border-color: color-mix(in srgb, var(--settings-danger) 72%, transparent);
+  background: transparent;
+  color: var(--settings-danger);
+}
+.settings-section-actions .settings-clear-key-btn:hover:not(:disabled),
+.settings-warning-actions .settings-danger-secondary:hover:not(:disabled) {
+  border-color: var(--settings-danger);
+  background: color-mix(in srgb, var(--settings-danger) 10%, transparent);
 }
 .settings-section-body {
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-/* Env-override banner. Lives at the top of the AI section body so the
-   user sees it before they start editing disabled fields. Left-edge
-   accent gives it a small banner weight without competing with the
-   section heading. */
-.settings-note {
-  margin: 0;
-  padding: 6px 10px;
-  border: 1px solid var(--vs-border, var(--border));
-  border-left: 2px solid var(--vs-accent, var(--accent));
-  border-radius: 4px;
-  background: var(--vs-accent-bg, var(--bg-soft));
-  color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.74rem;
-  line-height: 1.45;
-}
-.settings-row {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.8rem;
 }
-/* Single-column field stack for both AI and Editor sections. Each
-   field gets its own row, so the form reads top-to-bottom without
-   the eye having to compare two parallel columns. Wider inputs also
-   leave room for long placeholder / masked values to display in
-   full instead of truncating. */
+.settings-card,
+.settings-warning-card {
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--settings-border);
+  border-radius: 5px;
+  background: var(--settings-card);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.015);
+}
+.settings-card-title {
+  margin: 0 0 10px;
+  color: var(--settings-text);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
 .settings-field-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-}
-@media (max-width: 560px) {
-  .settings-body { grid-template-columns: 1fr; }
-  .settings-nav {
-    border-right: 0;
-    border-bottom: 1px solid var(--vs-border, var(--border));
-    flex-direction: row;
-  }
+  row-gap: 10px;
 }
 .settings-field {
+  min-width: 0;
   display: grid;
-  gap: 4px;
+  grid-template-columns: 76px minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 4px;
+  align-items: start;
 }
-.settings-field > span {
-  color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.74rem;
+.settings-field-label {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start;
+  padding-top: 5px;
+  color: var(--settings-text);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.5;
 }
-.settings-field input,
-.settings-field select {
-  min-height: 28px;
+.settings-field > input,
+.settings-field > select,
+.settings-input-wrap {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+.settings-field > input,
+.settings-field > select,
+.settings-input-wrap > input {
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
   box-sizing: border-box;
-  border: 1px solid var(--vs-border, var(--border));
+  border: 1px solid var(--settings-border-strong);
   border-radius: 4px;
-  padding: 4px 8px;
-  color: var(--vs-text-1, var(--text-h));
-  background: var(--vs-bg-2, var(--bg-soft));
+  padding: 0 8px;
+  color: var(--settings-text);
+  background: var(--settings-control);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
-.settings-field input:disabled,
-.settings-field select:disabled {
-  opacity: 0.72;
+.settings-field > select {
+  padding-right: 26px;
+  cursor: pointer;
 }
-.settings-field input[type='checkbox'] {
-  /* Override the generic input rules — checkboxes are not 32px tall. */
-  min-height: 0;
+.settings-field > input::placeholder,
+.settings-input-wrap > input::placeholder {
+  color: color-mix(in srgb, var(--settings-muted) 82%, transparent);
+  opacity: 1;
+}
+.settings-field > input:hover:not(:disabled),
+.settings-field > select:hover:not(:disabled),
+.settings-input-wrap > input:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--settings-muted) 76%, transparent);
+}
+.settings-field > input:focus,
+.settings-field > select:focus,
+.settings-input-wrap > input:focus {
+  outline: none;
+  border-color: var(--settings-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--settings-accent) 20%, transparent);
+}
+.settings-field > input:disabled,
+.settings-field > select:disabled,
+.settings-input-wrap > input:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+.settings-input-wrap {
+  position: relative;
+  display: block;
+}
+.settings-input-wrap.is-saved > input {
+  padding-right: 78px;
+}
+.settings-key-status {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--settings-success);
+  font-size: 0.64rem;
+  font-weight: 500;
+  line-height: 1;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.settings-key-status-icon {
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 0.54rem;
+  line-height: 1;
+}
+.settings-field-help {
+  grid-column: 2;
+  grid-row: 2;
+  margin: -1px 0 0;
+  color: var(--settings-muted);
+  font-size: 0.64rem;
+  line-height: 1.4;
+}
+.settings-field > input[type='checkbox'] {
   width: 14px;
+  min-width: 14px;
   height: 14px;
-  padding: 0;
-  margin: 0;
+  min-height: 14px;
   justify-self: start;
-  accent-color: var(--vs-accent, var(--accent));
+  align-self: center;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--settings-accent);
+  cursor: pointer;
 }
-/* Checkbox variant: render as a single horizontal row (checkbox on
-   the left, label on the right). Flex is the right tool here — the
-   earlier grid layout put the span into a 14px column because the
-   DOM order was span-first, and CJK text then wrapped to one
-   character per line. The template renders the checkbox first so
-   flex default order puts it on the left. */
 .settings-field-checkbox {
+  align-items: center;
+}
+.settings-field-checkbox > .settings-field-label {
+  padding-top: 0;
+}
+.settings-field-checkbox > input[type='checkbox'] {
+  grid-column: 2;
+  grid-row: 1;
+}
+.settings-warning-card {
+  border-color: color-mix(in srgb, var(--settings-warning) 42%, var(--settings-border));
+  background: color-mix(in srgb, var(--settings-warning) 8%, var(--settings-card));
+}
+.settings-warning-heading {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
+  color: var(--settings-text);
+  font-size: 0.76rem;
+  line-height: 1.4;
 }
-.settings-field-checkbox > span {
-  /* Drop the muted color on the label so the checkbox row reads as a
-     proper option, not a form field label. The checkbox itself is the
-     visual anchor. */
-  color: var(--vs-text-1, var(--text-h));
-  font-size: 0.82rem;
-  line-height: 1.3;
+.settings-warning-icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
+  color: var(--settings-warning);
+}
+.settings-warning-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.settings-warning-content {
+  margin: 6px 0 0 21px;
+  color: var(--settings-muted);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+.settings-warning-content p {
+  margin: 3px 0 0;
+}
+.settings-warning-actions {
+  margin: 9px 0 0 21px;
+  flex-wrap: wrap;
 }
 .settings-metadata-stats,
 .settings-cleanup-result {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--settings-border);
+  border-radius: 5px;
+  background: var(--settings-control);
+  color: var(--settings-muted);
+  font-size: 0.68rem;
+}
+.settings-metadata-stats > span,
+.settings-cleanup-result > span {
+  min-width: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  padding: 7px 10px;
-  border: 1px solid var(--vs-border, var(--border));
-  border-radius: 4px;
-  background: var(--vs-bg-2, var(--bg-soft));
-  color: var(--vs-text-2, var(--text-muted));
-  font-size: 0.74rem;
+  flex-direction: column;
+  gap: 2px;
 }
 .settings-metadata-stats strong,
 .settings-cleanup-result strong {
-  color: var(--vs-text-1, var(--text-h));
+  color: var(--settings-text);
+  font-size: 0.86rem;
   font-weight: 600;
+  line-height: 1.2;
 }
 .settings-metadata-stats .danger,
 .settings-metadata-stats .danger strong {
-  color: var(--vs-danger, #dc2626);
+  color: var(--settings-danger);
 }
 .settings-metadata-actions {
-  display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding-top: 4px;
-  border-top: 1px solid var(--vs-border, var(--border));
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--settings-border);
+}
+.settings-metadata-actions .btn-danger {
+  border-color: color-mix(in srgb, var(--settings-danger) 72%, transparent);
+  background: var(--settings-danger);
+  color: #fff;
+}
+.settings-metadata-actions .btn-danger:hover:not(:disabled) {
+  border-color: var(--settings-danger);
+  background: color-mix(in srgb, var(--settings-danger) 86%, #000);
+}
+
+@media (max-width: 960px) {
+  .settings-backdrop { padding: 12px; }
+  .settings-modal {
+    width: min(640px, calc(100vw - 24px));
+    height: min(360px, calc(100vh - 24px));
+    max-height: calc(100vh - 24px);
+  }
+  .settings-body { grid-template-columns: 140px minmax(0, 1fr); }
+  .settings-nav { padding: 6px; }
+  .settings-detail { padding: 14px 18px 16px; }
+}
+@media (max-width: 700px) {
+  .settings-body { grid-template-columns: 136px minmax(0, 1fr); }
+  .settings-detail { padding: 14px 16px 16px; }
+  .settings-section-header { gap: 10px; }
+  .settings-card,
+  .settings-warning-card { padding: 12px 13px 13px; }
+  .settings-field {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 5px;
+  }
+  .settings-field-label {
+    grid-column: 1;
+    grid-row: auto;
+    padding-top: 0;
+  }
+  .settings-field > input,
+  .settings-field > select,
+  .settings-input-wrap {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .settings-field-help {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .settings-field-checkbox {
+    grid-template-columns: 22px minmax(0, 1fr);
+    column-gap: 10px;
+  }
+  .settings-field-checkbox > input[type='checkbox'] {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .settings-field-checkbox > .settings-field-label {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+@media (max-width: 600px) {
+  .settings-backdrop { padding: 8px; }
+  .settings-modal {
+    width: calc(100vw - 16px);
+    height: min(360px, calc(100vh - 16px));
+    max-height: calc(100vh - 16px);
+    border-radius: 8px;
+  }
+  .settings-header {
+    flex-basis: 38px;
+    padding: 0 8px 0 13px;
+  }
+  .settings-header h2 { font-size: 0.88rem; }
+  .settings-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .settings-nav {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    padding: 6px;
+    border-right: 0;
+    border-bottom: 1px solid var(--settings-border);
+    overflow: visible;
+  }
+  .settings-nav-item {
+    min-height: 30px;
+    gap: 5px;
+    padding: 0 6px;
+    font-size: 0.7rem;
+    white-space: nowrap;
+  }
+  .settings-nav-item > span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .settings-nav-icon,
+  .settings-nav-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+  .settings-nav-icon { flex-basis: 14px; }
+  .settings-detail { padding: 14px; }
+}
+@media (max-width: 480px) {
+  .settings-section { gap: 10px; }
+  .settings-section-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .settings-section-header h3 { font-size: 0.88rem; }
+  .settings-section-actions { width: 100%; }
+  .settings-section-actions .btn { flex: 1 1 0; }
+  .settings-card,
+  .settings-warning-card { padding: 12px; }
+  .settings-card-title { margin-bottom: 10px; }
+  .settings-field-grid { row-gap: 10px; }
+  .settings-field > input,
+  .settings-field > select,
+  .settings-input-wrap > input { min-height: 30px; }
+  .settings-metadata-stats,
+  .settings-cleanup-result { grid-template-columns: minmax(0, 1fr); }
+  .settings-warning-content,
+  .settings-warning-actions { margin-left: 0; }
 }
 
 /* FileTree: scope token names so it picks up VSCode palette.

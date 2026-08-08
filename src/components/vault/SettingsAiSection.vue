@@ -7,6 +7,7 @@ import type {
   AiProvider,
   AiSettings,
 } from '../../lib/ai-api'
+import { ICON_STATUS_WARNING } from './icons'
 
 const props = defineProps<{
   settings: AiSettings | null
@@ -43,6 +44,11 @@ const MODEL_PLACEHOLDER = computed(() =>
 const API_KEY_PLACEHOLDER = computed(() =>
   activeProvider.value === 'openai' ? 'sk-...' : 'sk-ant-...',
 )
+const hasSavedKey = computed(() => Boolean(
+  props.settings?.configured
+  && props.settings.maskedKey
+  && !props.apiKey.trim(),
+))
 const recoveryProviders = computed<AiProvider[]>(() => {
   if (props.credentialStatus) {
     return (['anthropic', 'openai'] as AiProvider[])
@@ -77,7 +83,7 @@ function onProviderChange(event: Event) {
         <button
           v-if="settings || recoveryCode === 'master-key-required'"
           type="button"
-          class="btn"
+          class="btn settings-clear-key-btn"
           :disabled="saving"
           @click="emit('clear-key')"
         >{{ t('settings.clear_key') }}</button>
@@ -90,73 +96,85 @@ function onProviderChange(event: Event) {
       </div>
     </header>
     <div class="settings-section-body">
-      <div v-if="recoveryCode === 'master-key-required'" class="settings-ai-recovery" role="alert">
-        <strong>{{ t('settings.master_key_missing') }}</strong>
-        <p>{{ t('settings.master_key_missing_detail') }}</p>
-        <p>{{ t('settings.master_key_forget_warning') }}</p>
-        <div class="settings-section-actions">
+      <div v-if="recoveryCode === 'master-key-required'" class="settings-ai-recovery settings-warning-card" role="alert">
+        <div class="settings-warning-heading">
+          <span class="settings-warning-icon" v-html="ICON_STATUS_WARNING" aria-hidden="true" />
+          <strong>{{ t('settings.master_key_missing') }}</strong>
+        </div>
+        <div class="settings-warning-content">
+          <p>{{ t('settings.master_key_missing_detail') }}</p>
+          <p>{{ t('settings.master_key_forget_warning') }}</p>
+        </div>
+        <div class="settings-warning-actions">
           <button
             v-for="provider in recoveryProviders"
             :key="provider"
             type="button"
-            class="btn"
+            class="btn settings-danger-secondary"
             :disabled="saving"
             @click="emit('forget-credential', provider)"
           >{{ t('settings.forget_provider_key', { provider }) }}</button>
         </div>
       </div>
-      <div class="settings-field-grid">
-        <!-- Provider is now a functional select — switching it
-             triggers an immediate switch of the active provider
-             server-side, which refreshes the masked key + model
-             shown below. The UI doesn't pre-load inactive provider
-             configs to keep the surface area small; the user
-             switches back to see them. -->
-        <label class="settings-field">
-          <span>{{ t('settings.provider') }}</span>
-          <select
-            :value="activeProvider"
-            :disabled="loading || saving"
-            @change="onProviderChange"
-          >
-            <option value="anthropic">Anthropic</option>
-            <option value="openai">OpenAI</option>
-          </select>
-        </label>
-        <label class="settings-field">
-          <span>{{ t('settings.api_key') }}</span>
-          <input
-            :value="apiKey"
-            type="password"
-            autocomplete="off"
-            :placeholder="settings?.maskedKey || API_KEY_PLACEHOLDER"
-            :disabled="loading || saving"
-            @input="onInput('apiKey', $event)"
-          />
-        </label>
-        <label class="settings-field">
-          <span>{{ t('settings.base_url') }}</span>
-          <input
-            :value="baseURL"
-            type="url"
-            :placeholder="activeProvider === 'openai' ? 'https://api.openai.com/v1' : t('settings.optional')"
-            :disabled="loading || saving"
-            @input="onInput('baseURL', $event)"
-          />
-          <small v-if="activeProvider === 'openai'" class="settings-field-help">
-            {{ t('settings.openai_base_url_help') }}
-          </small>
-        </label>
-        <label class="settings-field">
-          <span>{{ t('settings.model') }}</span>
-          <input
-            :value="model"
-            type="text"
-            :placeholder="MODEL_PLACEHOLDER"
-            :disabled="loading || saving"
-            @input="onInput('model', $event)"
-          />
-        </label>
+      <div class="settings-card" aria-labelledby="settings-ai-configuration-title">
+        <h4 id="settings-ai-configuration-title" class="settings-card-title">
+          {{ t('settings.configuration') }}
+        </h4>
+        <div class="settings-field-grid">
+          <!-- Provider remains a real server-backed switch. The response
+               refreshes the other fields with that provider's saved view. -->
+          <label class="settings-field">
+            <span class="settings-field-label">{{ t('settings.provider') }}</span>
+            <select
+              :value="activeProvider"
+              :disabled="loading || saving"
+              @change="onProviderChange"
+            >
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </label>
+          <label class="settings-field">
+            <span class="settings-field-label">{{ t('settings.api_key') }}</span>
+            <span class="settings-input-wrap" :class="{ 'is-saved': hasSavedKey }">
+              <input
+                :value="apiKey"
+                type="password"
+                autocomplete="off"
+                :placeholder="settings?.maskedKey || API_KEY_PLACEHOLDER"
+                :disabled="loading || saving"
+                @input="onInput('apiKey', $event)"
+              />
+              <span v-if="hasSavedKey" class="settings-key-status" role="status">
+                <span class="settings-key-status-icon" aria-hidden="true">✓</span>
+                {{ t('settings.key_saved') }}
+              </span>
+            </span>
+          </label>
+          <label class="settings-field">
+            <span class="settings-field-label">{{ t('settings.base_url') }}</span>
+            <input
+              :value="baseURL"
+              type="url"
+              :placeholder="activeProvider === 'openai' ? 'https://api.openai.com/v1' : t('settings.optional')"
+              :disabled="loading || saving"
+              @input="onInput('baseURL', $event)"
+            />
+            <small v-if="activeProvider === 'openai'" class="settings-field-help">
+              {{ t('settings.openai_base_url_help') }}
+            </small>
+          </label>
+          <label class="settings-field">
+            <span class="settings-field-label">{{ t('settings.model') }}</span>
+            <input
+              :value="model"
+              type="text"
+              :placeholder="MODEL_PLACEHOLDER"
+              :disabled="loading || saving"
+              @input="onInput('model', $event)"
+            />
+          </label>
+        </div>
       </div>
     </div>
   </section>

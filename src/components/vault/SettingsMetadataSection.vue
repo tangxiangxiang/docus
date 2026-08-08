@@ -39,36 +39,46 @@ const { t } = useI18n()
       </div>
     </header>
     <div class="settings-section-body">
-      <div v-if="migrationSummary" class="settings-metadata-stats">
-        <span><strong>{{ migrationSummary.verified }}</strong> {{ t('settings.verified') }}</span>
-        <span><strong>{{ migrationSummary.cleaned }}</strong> {{ t('settings.cleaned') }}</span>
-        <span :class="{ danger: migrationSummary.failed > 0 }">
-          <strong>{{ migrationSummary.failed }}</strong> {{ t('settings.failed') }}
-        </span>
+      <div v-if="migrationSummary" class="settings-card" aria-labelledby="settings-migration-status-title">
+        <h4 id="settings-migration-status-title" class="settings-card-title">
+          {{ t('settings.migration_status') }}
+        </h4>
+        <div class="settings-metadata-stats">
+          <span><strong>{{ migrationSummary.verified }}</strong> {{ t('settings.verified') }}</span>
+          <span><strong>{{ migrationSummary.cleaned }}</strong> {{ t('settings.cleaned') }}</span>
+          <span :class="{ danger: migrationSummary.failed > 0 }">
+            <strong>{{ migrationSummary.failed }}</strong> {{ t('settings.failed') }}
+          </span>
+        </div>
       </div>
-      <div v-if="cleanupPreview" class="settings-cleanup-result" aria-live="polite">
-        <span><strong>{{ cleanupPreview.candidates.length }}</strong> {{ t('settings.ready') }}</span>
-        <span><strong>{{ cleanupPreview.blocked.length }}</strong> {{ t('settings.blocked') }}</span>
-        <span>
-          <strong>{{ cleanupPreview.candidates.filter((item) => item.customFields.length).length }}</strong>
-          {{ t('settings.custom_fields') }}
-        </span>
-      </div>
-      <div v-if="cleanupPreview" class="settings-metadata-actions">
-        <button
-          v-if="cleanedPaths.length"
-          type="button"
-          class="btn"
-          :disabled="mutatingMetadata"
-          @click="emit('restore')"
-        >{{ t('settings.restore_original', { count: cleanedPaths.length }) }}</button>
-        <button
-          v-if="cleanupPreview.candidates.length"
-          type="button"
-          class="btn btn-danger"
-          :disabled="mutatingMetadata || cleanupPreview.blocked.length > 0"
-          @click="emit('remove')"
-        >{{ t('settings.remove_frontmatter', { count: cleanupPreview.candidates.length }) }}</button>
+      <div v-if="cleanupPreview" class="settings-card" aria-labelledby="settings-cleanup-preview-title">
+        <h4 id="settings-cleanup-preview-title" class="settings-card-title">
+          {{ t('settings.cleanup_preview') }}
+        </h4>
+        <div class="settings-cleanup-result" aria-live="polite">
+          <span><strong>{{ cleanupPreview.candidates.length }}</strong> {{ t('settings.ready') }}</span>
+          <span><strong>{{ cleanupPreview.blocked.length }}</strong> {{ t('settings.blocked') }}</span>
+          <span>
+            <strong>{{ cleanupPreview.candidates.filter((item) => item.customFields.length).length }}</strong>
+            {{ t('settings.custom_fields') }}
+          </span>
+        </div>
+        <div class="settings-metadata-actions">
+          <button
+            v-if="cleanedPaths.length"
+            type="button"
+            class="btn"
+            :disabled="mutatingMetadata"
+            @click="emit('restore')"
+          >{{ t('settings.restore_original', { count: cleanedPaths.length }) }}</button>
+          <button
+            v-if="cleanupPreview.candidates.length"
+            type="button"
+            class="btn btn-danger"
+            :disabled="mutatingMetadata || cleanupPreview.blocked.length > 0"
+            @click="emit('remove')"
+          >{{ t('settings.remove_frontmatter', { count: cleanupPreview.candidates.length }) }}</button>
+        </div>
       </div>
     </div>
   </section>

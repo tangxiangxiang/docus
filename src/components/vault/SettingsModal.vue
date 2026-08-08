@@ -28,6 +28,7 @@ import {
 import SettingsAiSection from './SettingsAiSection.vue'
 import SettingsEditorSection from './SettingsEditorSection.vue'
 import SettingsMetadataSection from './SettingsMetadataSection.vue'
+import { ICON_AI, ICON_EDIT, ICON_TOC } from './icons'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -60,10 +61,10 @@ const cleanedPaths = ref<string[]>([])
    The active pane resets to AI every time the modal opens so a
    returning user always lands somewhere predictable. */
 type SectionId = 'ai' | 'editor' | 'metadata'
-const SECTIONS: ReadonlyArray<{ id: SectionId; labelKey: string; subtitleKey: string }> = [
-  { id: 'ai', labelKey: 'settings.ai', subtitleKey: 'settings.ai_subtitle' },
-  { id: 'editor', labelKey: 'settings.editor', subtitleKey: 'settings.editor_subtitle' },
-  { id: 'metadata', labelKey: 'settings.metadata', subtitleKey: 'settings.metadata_subtitle' },
+const SECTIONS: ReadonlyArray<{ id: SectionId; labelKey: string; icon: string }> = [
+  { id: 'ai', labelKey: 'settings.ai', icon: ICON_AI },
+  { id: 'editor', labelKey: 'settings.editor', icon: ICON_EDIT },
+  { id: 'metadata', labelKey: 'settings.metadata', icon: ICON_TOC },
 ]
 const active = ref<SectionId>('ai')
 
@@ -304,7 +305,13 @@ onBeforeUnmount(() => {
       >
         <header class="settings-header">
           <h2>{{ t('settings.title') }}</h2>
-          <button type="button" class="settings-icon-btn" :title="t('settings.close')" :aria-label="t('settings.close')" @click="emit('close')">×</button>
+          <button
+            type="button"
+            class="settings-icon-btn"
+            :title="t('settings.close')"
+            :aria-label="t('settings.close')"
+            @click="emit('close')"
+          ><span aria-hidden="true">×</span></button>
         </header>
 
         <div class="settings-body">
@@ -317,7 +324,10 @@ onBeforeUnmount(() => {
               :class="{ active: active === section.id }"
               :aria-current="active === section.id ? 'page' : undefined"
               @click="active = section.id"
-            >{{ t(section.labelKey) }}</button>
+            >
+              <span class="settings-nav-icon" v-html="section.icon" aria-hidden="true" />
+              <span>{{ t(section.labelKey) }}</span>
+            </button>
           </nav>
 
           <div class="settings-detail" role="region" aria-live="polite">
