@@ -21,6 +21,7 @@ import {
   terminateProcessTree,
   waitForChildClose,
 } from './helpers/crashProcessTree'
+import { cleanupRecoveryTempDir } from './helpers/recoveryIntegration'
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 const TSX_CLI = fileURLToPath(import.meta.resolve('tsx/cli'))
@@ -57,12 +58,7 @@ afterEach(async () => {
   )
   activeCrashChildren.clear()
   db.close()
-  await fs.rm(vault, {
-    recursive: true,
-    force: true,
-    maxRetries: process.platform === 'win32' ? 10 : 3,
-    retryDelay: 100,
-  })
+  await cleanupRecoveryTempDir(vault)
 })
 
 async function seed(files: Record<string, string>): Promise<void> {
@@ -3048,7 +3044,7 @@ describe('recoverInterruptedOperations (replayable folder-rename journal)', () =
     // persisted value must parse and recover.
     expect(FOLDER_MOVE_STRATEGIES).toContain(platformDirectoryMoveStrategy)
     for (const strategy of FOLDER_MOVE_STRATEGIES) {
-      await fs.rm(vault, { recursive: true, force: true })
+      await cleanupRecoveryTempDir(vault)
       await fs.mkdir(vault, { recursive: true })
       await seed({ 'ren/a.md': A_RAW, 'ren/nested/b.md': B_RAW })
       await fs.writeFile(path.join(vault, '.proj.docus-journal-cccc'), JSON.stringify({

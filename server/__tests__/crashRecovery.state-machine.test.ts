@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import Database from 'better-sqlite3'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
@@ -13,21 +13,22 @@ import {
 } from '../folderMoveDirectoryOwnership'
 import { writeFolderMoveGateProof } from '../folderMoveGateProof'
 import { captureDurableDirectoryIdentity } from '../durableDirectoryIdentity'
+import {
+  cleanupRecoveryTempDir,
+  RECOVERY_MODEL_TIMEOUT_MS,
+  throwIfRecoveryAborted,
+} from './helpers/recoveryIntegration'
 
-let root: string
-let db: InstanceType<typeof Database>
-
-beforeAll(async () => {
-  root = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-recovery-model-'))
-  db = new Database(':memory:')
+async function createRecoveryModelEnvironment(): Promise<{
+  root: string
+  db: InstanceType<typeof Database>
+}> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'docus-recovery-model-'))
+  const db = new Database(':memory:')
   db.pragma('foreign_keys = ON')
   applyMigrations(db)
-})
-
-afterAll(async () => {
-  db.close()
-  await removeDirRobust(root)
-})
+  return { root, db }
+}
 
 function rngFor(seed: number): () => number {
   let state = seed || 0x9e3779b9
@@ -37,27 +38,14 @@ function rngFor(seed: number): () => number {
   }
 }
 
-/** Windows `fs.rm` can transiently fail with ENOTEMPTY/EBUSY/EPERM
- * while a just-touched file is still being released (or an AV scans
- * it). Test cleanup only — retry briefly so a per-seed teardown race
- * cannot fail an otherwise-correct model run. */
-async function removeDirRobust(dir: string): Promise<void> {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
-      return
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 25))
-    }
-  }
-  await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
-}
-
 describe('deterministic rename-reference recovery model', () => {
-  it('converges and is idempotent for 1000 reproducible seeds', async () => {
-    const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
-    const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 1000 }, (_, index) => index + 1)
-    for (const seed of seeds) {
+  it('converges and is idempotent for 1000 reproducible seeds', async ({ signal }) => {
+    const { root, db } = await createRecoveryModelEnvironment()
+    try {
+      const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
+      const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 1000 }, (_, index) => index + 1)
+      for (const seed of seeds) {
+        throwIfRecoveryAborted(signal)
       const random = rngFor(seed)
       const caseDir = path.join(root, seed.toString(16))
       const prefix = seed.toString(16)
@@ -106,7 +94,7 @@ describe('deterministic rename-reference recovery model', () => {
           })
         }
         if (referenceCount === 0) {
-          await removeDirRobust(caseDir)
+          await cleanupRecoveryTempDir(caseDir)
           db.prepare('DELETE FROM documents WHERE id = ?').run(`id-${seed}`)
           continue
         }
@@ -144,11 +132,15 @@ describe('deterministic rename-reference recovery model', () => {
       } catch (error) {
         throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\ninitial=${JSON.stringify(journal)}\n${(error as Error).stack}`)
       } finally {
-        await removeDirRobust(caseDir)
+        await cleanupRecoveryTempDir(caseDir)
         db.prepare('DELETE FROM documents WHERE id = ?').run(`id-${seed}`)
       }
+      }
+    } finally {
+      db.close()
+      await cleanupRecoveryTempDir(root)
     }
-  }, 240_000)
+  }, RECOVERY_MODEL_TIMEOUT_MS)
 })
 
 /** Every file under a directory, keyed by relative path. */
@@ -170,16 +162,19 @@ async function collectTree(dir: string): Promise<Map<string, string>> {
 }
 
 describe('deterministic replayable folder-move recovery model', () => {
-  it('reconciles every split crash state and never touches external bytes for 1000 Round-9 seeds', async () => {
+  it('reconciles every split crash state and never touches external bytes for 1000 Round-9 seeds', async ({ signal }) => {
     // The Windows protocol can crash with the tree SPLIT between source
     // and destination in every combination; the journal's per-entry
     // hashes must reconcile all of them: complete forward when every
     // entry is replayable, clean the stale gate when the move never
     // started, quarantine on foreign content — never losing our bytes,
     // never touching external ones, idempotent across restarts.
-    const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
-    const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 1000 }, (_, index) => index + 1)
-    for (const seed of seeds) {
+    const { root, db } = await createRecoveryModelEnvironment()
+    try {
+      const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
+      const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 1000 }, (_, index) => index + 1)
+      for (const seed of seeds) {
+        throwIfRecoveryAborted(signal)
       const random = rngFor(seed ^ 0x5eed11)
       const prefix = `fm-${seed.toString(16)}`
       const caseDir = path.join(root, prefix)
@@ -447,24 +442,31 @@ describe('deterministic replayable folder-move recovery model', () => {
       } catch (error) {
         throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\nmodel=${JSON.stringify(model)}\n${(error as Error).stack}`)
       } finally {
-        await removeDirRobust(caseDir)
+        await cleanupRecoveryTempDir(caseDir)
         for (const entry of entries) {
           if (entry.id) db.prepare('DELETE FROM documents WHERE id = ?').run(entry.id)
         }
       }
+      }
+    } finally {
+      db.close()
+      await cleanupRecoveryTempDir(root)
     }
-  }, 240_000)
+  }, RECOVERY_MODEL_TIMEOUT_MS)
 })
 
 describe('deterministic folder-reference content-proof model', () => {
-  it('never completes a reference transaction onto an externally recreated folder for 300 seeds', async () => {
+  it('never completes a reference transaction onto an externally recreated folder for 300 seeds', async ({ signal }) => {
     // Forged journal carrying the destination directory's real dev/ino
     // but files recreated by an external sync: the per-identity content
     // hashes are the only proof that may pass — inode+existence would
     // complete onto foreign bytes.
-    const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
-    const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 300 }, (_, index) => index + 1)
-    for (const seed of seeds) {
+    const { root, db } = await createRecoveryModelEnvironment()
+    try {
+      const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
+      const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 300 }, (_, index) => index + 1)
+      for (const seed of seeds) {
+        throwIfRecoveryAborted(signal)
       const random = rngFor(seed ^ 0xf01dab1e)
       const prefix = `fr-${seed.toString(16)}`
       const caseDir = path.join(root, prefix)
@@ -532,23 +534,30 @@ describe('deterministic folder-reference content-proof model', () => {
       } catch (error) {
         throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\nmodel=${JSON.stringify(model)}\n${(error as Error).stack}`)
       } finally {
-        await removeDirRobust(caseDir)
+        await cleanupRecoveryTempDir(caseDir)
         db.prepare('DELETE FROM documents WHERE id = ?').run(`id-${seed}`)
       }
+      }
+    } finally {
+      db.close()
+      await cleanupRecoveryTempDir(root)
     }
-  }, 240_000)
+  }, RECOVERY_MODEL_TIMEOUT_MS)
 })
 
 describe('deterministic legacy delete-quarantine promotion model', () => {
-  it('promotes legacy artifacts without ever writing an empty manifest for 300 seeds', async () => {
+  it('promotes legacy artifacts without ever writing an empty manifest for 300 seeds', async ({ signal }) => {
     // Timestamp-only delete artifacts are ambiguous after upgrade:
     // always promoted to the permanent quarantine, never auto-deleted;
     // a manifest is written ONLY when there is an identity to persist
     // (an empty one would be unparseable and block the basename
     // forever).
-    const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
-    const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 300 }, (_, index) => index + 1)
-    for (const seed of seeds) {
+    const { root, db } = await createRecoveryModelEnvironment()
+    try {
+      const replaySeed = Number(process.env.DOCUS_RECOVERY_SEED || 0)
+      const seeds = replaySeed > 0 ? [replaySeed] : Array.from({ length: 300 }, (_, index) => index + 1)
+      for (const seed of seeds) {
+        throwIfRecoveryAborted(signal)
       const random = rngFor(seed ^ 0xde1e7e)
       const prefix = `ld-${seed.toString(16)}`
       const caseDir = path.join(root, prefix)
@@ -613,9 +622,13 @@ describe('deterministic legacy delete-quarantine promotion model', () => {
       } catch (error) {
         throw new Error(`replay with DOCUS_RECOVERY_SEED=${seed}\nmodel=${JSON.stringify(model)}\n${(error as Error).stack}`)
       } finally {
-        await removeDirRobust(caseDir)
+        await cleanupRecoveryTempDir(caseDir)
         db.prepare('DELETE FROM documents WHERE id = ?').run(`id-${seed}`)
       }
+      }
+    } finally {
+      db.close()
+      await cleanupRecoveryTempDir(root)
     }
-  }, 240_000)
+  }, RECOVERY_MODEL_TIMEOUT_MS)
 })

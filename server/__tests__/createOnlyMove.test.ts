@@ -20,6 +20,7 @@ import {
   renameDocumentWithMetadata,
   __setCreateOnlyMoveHooksForTesting,
 } from '../documentFileLifecycle'
+import { cleanupRecoveryTempDir } from './helpers/recoveryIntegration'
 
 let dir: string
 let db: InstanceType<typeof Database>
@@ -34,7 +35,7 @@ beforeEach(async () => {
 afterEach(async () => {
   __setCreateOnlyMoveHooksForTesting(null)
   db.close()
-  await fs.rm(dir, { recursive: true, force: true })
+  await cleanupRecoveryTempDir(dir)
 })
 
 async function names(): Promise<string[]> {

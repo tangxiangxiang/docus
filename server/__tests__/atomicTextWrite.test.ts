@@ -20,6 +20,7 @@ import {
   writeDurableJournal,
 } from '../atomicTextWrite'
 import { __setDurableArtifactTestHooksForTesting } from '../durableCreateOnlyFile'
+import { cleanupRecoveryTempDir } from './helpers/recoveryIntegration'
 
 let directory = ''
 let target = ''
@@ -40,7 +41,7 @@ afterEach(async () => {
   __setAtomicDurableJournalTestHooksForTesting(null)
   __setDurableArtifactTestHooksForTesting(null)
   vi.restoreAllMocks()
-  await fs.rm(directory, { recursive: true, force: true })
+  await cleanupRecoveryTempDir(directory)
 })
 
 describe('atomic text writes', () => {
