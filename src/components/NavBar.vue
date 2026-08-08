@@ -235,7 +235,7 @@ const SCOPE_ICONS: Record<string, string> = {
           </g>
 
           <circle class="brand-network-core" cx="500" cy="500" r="178" />
-          <image class="brand-network-logo" href="/brain.svg" x="375" y="375" width="250" height="250" preserveAspectRatio="xMidYMid meet" />
+          <image class="brand-network-logo" :href="'/brain.svg'" x="375" y="375" width="250" height="250" preserveAspectRatio="xMidYMid meet" />
         </svg>
       </div>
     </div>

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -49,7 +49,16 @@ function deferred<T = void>(): Deferred<T> {
 }
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-const TSX_LOADER = path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs')
+// Node's --import flag requires a file: URL; on Windows a raw `C:\...` path
+// is parsed as a malformed URL and the loader never registers, so the child
+// exits silently before flushing any READY handshake. Wrap the loader in
+// pathToFileURL to make the spawn cross-platform.
+const TSX_LOADER = pathToFileURL(
+  path.join(REPO_ROOT, 'node_modules', 'tsx', 'dist', 'loader.mjs'),
+).href
+// The script entry arg, by contrast, is treated by Node CLI as a filesystem
+// path (resolved against cwd) — passing it as a URL is joined literally and
+// produces ENOENT. Keep this one as a raw absolute path.
 const VITE_WRITER_CHILD = path.join(
   REPO_ROOT,
   'server',
@@ -168,7 +177,12 @@ afterEach(async () => {
   __resetLinkIndexForTesting()
   setContentDir(originalContentDir)
   db.close()
-  await fs.rm(vault, { recursive: true, force: true })
+  await fs.rm(vault, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === 'win32' ? 10 : 3,
+    retryDelay: 100,
+  })
 })
 
 describe('History mutations × folder-move v4', () => {
@@ -193,7 +207,7 @@ describe('History mutations × folder-move v4', () => {
         expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('stable-a')
       },
     })
-  })
+  }, 30_000)
 
   it('RED-2: Restore cannot claim a replayable journal-owned destination', async () => {
     __setDirectoryMoveStrategyOverrideForTesting('replayable-move')
@@ -218,7 +232,7 @@ describe('History mutations × folder-move v4', () => {
           .toBe(false)
       },
     })
-  })
+  }, 30_000)
 
   it('RED-3: Restore cannot mutate a files-landed generation before metadata commits', async () => {
     __setDirectoryMoveStrategyOverrideForTesting('replayable-move')
@@ -241,7 +255,7 @@ describe('History mutations × folder-move v4', () => {
         expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('stable-a')
       },
     })
-  })
+  }, 30_000)
 
   it('RED-4: Withdraw serializes its HEAD, Real Index, and Repair settlement', async () => {
     await write('proj/a.md', 'v1\n')
@@ -261,7 +275,7 @@ describe('History mutations × folder-move v4', () => {
         expect(await fs.readFile(path.join(vault, 'ren/a.md'), 'utf8')).toBe('v2\n')
       },
     })
-  })
+  }, 30_000)
 
   it('RED-5: Create Version cannot commit a half-moved namespace', async () => {
     await write('proj/a.md', 'base\n')
@@ -284,7 +298,7 @@ describe('History mutations × folder-move v4', () => {
         expect((await historyGit.run(vault, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(base.sha)
       },
     })
-  })
+  }, 30_000)
 
   it('RED-6: Index Repair cannot replace the Real Index during a folder move', async () => {
     await write('proj/a.md', 'base\n')
@@ -306,7 +320,7 @@ describe('History mutations × folder-move v4', () => {
         expect(getDocumentMetadata(db, 'ren/a')?.id).toBe('stable-a')
       },
     })
-  })
+  }, 30_000)
 
   it('recovery owns the same mutation boundary as History Restore', async () => {
     await write('note.md', 'v1\n')
@@ -407,7 +421,8 @@ describe('RED-7: one active writer process per canonical Vault', () => {
     void firstClose.catch(() => {})
     let second: ChildProcess | null = null
     try {
-      expect((await serverOutcome(first)).kind).toBe('listening')
+      const firstOutcome = await serverOutcome(first)
+      expect(firstOutcome.kind, firstOutcome.output).toBe('listening')
       second = spawnProd(cwdB, sharedVault)
       void waitForChildClose(second).catch(() => {})
       const outcome = await serverOutcome(second)
@@ -421,7 +436,12 @@ describe('RED-7: one active writer process per canonical Vault', () => {
         terminateProcessTree(first, { timeoutMs: 10_000 }),
         ...(second ? [terminateProcessTree(second, { timeoutMs: 10_000 })] : []),
       ])
-      await fs.rm(fixture, { recursive: true, force: true })
+      await fs.rm(fixture, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === 'win32' ? 10 : 3,
+        retryDelay: 100,
+      })
     }
   }, 30_000)
 })

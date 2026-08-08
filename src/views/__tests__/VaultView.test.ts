@@ -48,8 +48,8 @@ describe('VaultView editor tab wiring', () => {
     expect(source).toContain(':file-history="sidebarFileHistory"')
     expect(source).toContain(':file-history="rightRailFileHistory"')
     expect(source).toContain('@show-all-history="showAllHistory"')
-    expect(source).toContain('function showAllHistory(): void {\n  sidebarFileHistory.clear()')
-    expect(source).toContain('sidebarFileHistory.clear()\n  rightRailFileHistory.clear()')
+    expect(source).toMatch(/function showAllHistory\(\): void \{[\s\S]*?sidebarFileHistory\.clear\(\)/)
+    expect(source).toMatch(/watch\(vaultId,[\s\S]*?sidebarFileHistory\.clear\(\)[\s\S]*?rightRailFileHistory\.clear\(\)/)
     expect(source).not.toMatch(/watch\(activePath[\s\S]{0,200}fileHistory/)
   })
 

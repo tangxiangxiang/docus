@@ -30,7 +30,12 @@ beforeEach(async () => {
 
 afterEach(async () => {
   setContentDir(originalContentDir)
-  await fs.rm(root, { recursive: true, force: true })
+  await fs.rm(root, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === 'win32' ? 10 : 3,
+    retryDelay: 100,
+  })
 })
 
 async function call(body: unknown): Promise<Response> {
@@ -127,7 +132,12 @@ describe('POST /api/ai/commit-message History boundary', () => {
       expect(response.status).toBe(400)
       expect(commitMessageMock).not.toHaveBeenCalled()
     } finally {
-      await fs.rm(outside, { recursive: true, force: true })
+      await fs.rm(outside, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === 'win32' ? 10 : 3,
+        retryDelay: 100,
+      })
     }
   })
 
