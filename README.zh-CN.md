@@ -123,7 +123,7 @@ npm run test:e2e
 npm run test:e2e:draft-store
 ```
 
-CI 会在 Linux、macOS、Windows 上验证 Node.js 22/24，重复关键崩溃恢复测试，运行浏览器套件，构建 Docker 镜像，并校验 macOS 视觉基线。
+CI 使用 Node.js 22 在 Ubuntu 上验证生产版本兼容性，并使用 Node.js 24 在 Ubuntu、macOS 和 Windows 上进行跨平台验证，同时运行崩溃恢复、浏览器 E2E、视觉基线和 Docker smoke 测试。
 
 ## 项目状态
 

@@ -123,7 +123,7 @@ npm run test:e2e
 npm run test:e2e:draft-store
 ```
 
-CI verifies Node.js 22 and 24 across Linux, macOS, and Windows, repeats critical crash-recovery tests, runs browser suites, builds the Docker image, and checks macOS visual baselines.
+CI verifies Node.js 22 on Ubuntu for production parity and Node.js 24 on Ubuntu, macOS, and Windows for forward compatibility, along with crash-recovery, browser E2E, visual, and Docker smoke tests.
 
 ## Project Status
 
