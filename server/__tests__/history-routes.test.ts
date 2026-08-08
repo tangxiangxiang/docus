@@ -34,7 +34,7 @@ let metadataDb: Database.Database
 // load the default 5s budget can be too tight even when nothing is wrong.
 // 30s is a failure ceiling, not an expected runtime — isolated macOS runs
 // of the same flow finish in ~1.1s.
-const RESTORE_INTEGRATION_TIMEOUT_MS = 30_000
+const HISTORY_GIT_INTEGRATION_TIMEOUT_MS = 30_000
 
 async function write(rel: string, body: string) {
   const abs = path.join(root, rel)
@@ -379,7 +379,7 @@ describe('GET /api/history/diff', () => {
   })
 })
 
-describe('POST /api/history/commits', () => {
+describe('POST /api/history/commits', { timeout: HISTORY_GIT_INTEGRATION_TIMEOUT_MS }, () => {
   beforeEach(async () => {
     await call('GET', '/capability')
     await configureGitUser()
@@ -834,7 +834,7 @@ describe('POST /api/history/restore', () => {
     expect(await status.json()).toMatchObject({
       dirty: [expect.objectContaining({ path: 'note.md', index: ' ', worktree: 'M' })],
     })
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('preserves the existing document identity', async () => {
     await write('note.md', 'v1\n')
@@ -853,7 +853,7 @@ describe('POST /api/history/restore', () => {
 
     expect(response.status).toBe(200)
     expect(getDocumentMetadata(metadataDb, 'note')?.id).toBe('preserved-document-id')
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns 409 and preserves an external edit that wins the CAS', async () => {
     await write('note.md', 'historical\n')
@@ -872,7 +872,7 @@ describe('POST /api/history/restore', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({ code: 'HISTORY_CONTENT_CHANGED' })
     expect(await read('note.md')).toBe('external editor wins\n')
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns 409 when an external generation replaces the committed Restore before post-read', async () => {
     await write('note.md', 'historical\n')
@@ -891,7 +891,7 @@ describe('POST /api/history/restore', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({ code: 'HISTORY_CONTENT_CHANGED' })
     expect(await read('note.md')).toBe('external after commit\n')
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('rejects a parent-directory symlink replacement before Restore writes', async () => {
     await write('folder/note.md', 'historical\n')
@@ -916,7 +916,7 @@ describe('POST /api/history/restore', () => {
     } finally {
       await fs.rm(outside, { recursive: true, force: true })
     }
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('fails closed if a parent-directory symlink appears after Restore writes', async () => {
     await write('folder/note.md', 'historical\n')
@@ -940,7 +940,7 @@ describe('POST /api/history/restore', () => {
     } finally {
       await fs.rm(outside, { recursive: true, force: true })
     }
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('uses create-only semantics when the target is missing', async () => {
     await write('folder/note.md', 'historical\n')
@@ -959,7 +959,7 @@ describe('POST /api/history/restore', () => {
     expect(response.status).toBe(200)
     expect(await read('folder/note.md')).toBe('historical\n')
     expect(getDocumentMetadata(metadataDb, 'folder/note')?.id).toBe('missing-target-id')
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns 409 without replacing a create-only incumbent', async () => {
     await write('folder/note.md', 'historical\n')
@@ -977,7 +977,7 @@ describe('POST /api/history/restore', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({ code: 'HISTORY_CONTENT_CHANGED' })
     expect(await read('folder/note.md')).toBe('incumbent\n')
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('fails closed when the prepared missing-file temporary is isolated by a moved parent', async () => {
     await write('folder/note.md', 'historical\n')
@@ -1012,7 +1012,7 @@ describe('POST /api/history/restore', () => {
     } finally {
       await fs.rm(outside, { recursive: true, force: true })
     }
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns a stable path-moved conflict when the parent disappeared', async () => {
     await write('folder/note.md', 'historical\n')
@@ -1025,7 +1025,7 @@ describe('POST /api/history/restore', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({ code: 'HISTORY_PATH_MOVED' })
     await expect(fs.stat(path.join(root, 'folder'))).rejects.toMatchObject({ code: 'ENOENT' })
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('fails closed before writing when a retained folder journal has unknown ownership', async () => {
     await write('folder/note.md', 'historical\n')
@@ -1043,7 +1043,7 @@ describe('POST /api/history/restore', () => {
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({ code: 'HISTORY_PATH_MOVED' })
     expect(await read('folder/note.md')).toBe('current\n')
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('freezes a mutable ref to one immutable commit before writing', async () => {
     await write('note.md', 'v1\n')
@@ -1066,28 +1066,28 @@ describe('POST /api/history/restore', () => {
     expect(body).toMatchObject({ raw: 'v2\n', resolvedRef: secondSha })
     expect(await read('note.md')).toBe('v2\n')
     expect((await historyGit.run(root, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(firstSha)
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns 400 when path is missing', async () => {
     const r = await call('POST', '/restore', { ref: 'HEAD' })
     expect(r.status).toBe(400)
     const body = await r.json() as { error: string }
     expect(body.error).toMatch(/path/i)
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns 400 when ref is missing', async () => {
     const r = await call('POST', '/restore', { path: 'note.md' })
     expect(r.status).toBe(400)
     const body = await r.json() as { error: string }
     expect(body.error).toMatch(/ref/i)
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns 400 on unsafe path or unsupported ref syntax', async () => {
     const unsafePath = await call('POST', '/restore', { path: '../outside.md', ref: 'HEAD' })
     expect(unsafePath.status).toBe(400)
     const branchRef = await call('POST', '/restore', { path: 'note.md', ref: 'main' })
     expect(branchRef.status).toBe(400)
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   // WORKTREE is a sentinel meaning "the file as it sits on disk".
   // Restoring TO the working tree is meaningless (you can't restore
@@ -1101,7 +1101,7 @@ describe('POST /api/history/restore', () => {
     expect(r.status).toBe(400)
     const body = await r.json() as { error: string }
     expect(body.error).toMatch(/working tree/i)
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns 404 when the file does not exist at the requested ref', async () => {
     await write('a.md', 'one\n')
@@ -1111,7 +1111,7 @@ describe('POST /api/history/restore', () => {
     expect(r.status).toBe(404)
     const body = await r.json() as { error: string }
     expect(body.error).toMatch(/does not exist/i)
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns 404 for a bad revision', async () => {
     await write('a.md', 'one\n')
@@ -1121,7 +1121,7 @@ describe('POST /api/history/restore', () => {
       ref: 'deadbeef'.repeat(5),
     })
     expect(r.status).toBe(404)
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 
   it('returns 503 when git is unavailable', async () => {
     const gitMod = await import('../history/git.js')
@@ -1143,5 +1143,5 @@ describe('POST /api/history/restore', () => {
       spy.mockRestore()
       __resetGitCapabilityForTesting()
     }
-  }, RESTORE_INTEGRATION_TIMEOUT_MS)
+  }, HISTORY_GIT_INTEGRATION_TIMEOUT_MS)
 })
