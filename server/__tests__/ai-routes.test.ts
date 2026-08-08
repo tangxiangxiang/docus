@@ -393,6 +393,23 @@ describe('GET/PUT /api/ai/settings', () => {
     expect(oaBody.model).toBe('gpt-4o')
   })
 
+  it('normalizes an OpenAI API-root Base URL and rejects a full endpoint', async () => {
+    const normalized = await call('PUT', '/settings', {
+      provider: 'openai',
+      baseURL: ' https://gateway.example/openai/v1/// ',
+    })
+    expect(normalized.status).toBe(200)
+    expect((await normalized.json() as { baseURL: string }).baseURL)
+      .toBe('https://gateway.example/openai/v1')
+
+    const rejected = await call('PUT', '/settings', {
+      provider: 'openai',
+      baseURL: 'https://gateway.example/openai/v1/chat/completions',
+    })
+    expect(rejected.status).toBe(400)
+    expect(await rejected.json()).toMatchObject({ code: 'openai-base-url-invalid' })
+  })
+
   it('rejects an unknown provider value', async () => {
     const r = await call('PUT', '/settings', { provider: 'gemini' })
     expect(r.status).toBe(400)
@@ -602,6 +619,26 @@ describe('POST /api/ai/chat', () => {
       reason: 'llm-error',
       message: '404 Not Found: /v1/chat/completions',
     })
+  })
+
+  it('preserves a compatibility code and redacts the configured key in SSE diagnostics', async () => {
+    vi.mocked(chatModule.runChat).mockRejectedValueOnce(
+      new ChatError(
+        'llm-error',
+        '400 unsupported parameter: tools; invalid credential sk-ant-test-key',
+        undefined,
+        'openai-tools-unsupported',
+      ),
+    )
+    const r = await call('POST', '/chat', { sessionId: 1, content: 'hi' })
+    const blocks = await sseBodyChunks(r)
+    const last = parseEvent(blocks[blocks.length - 1])
+    const payload = JSON.parse(last.data) as { reason: string; code: string; message: string }
+    expect(payload.reason).toBe('llm-error')
+    expect(payload.code).toBe('openai-tools-unsupported')
+    expect(payload.message).toContain('[redacted]')
+    expect(payload.message).not.toContain('sk-ant-test-key')
+    expect(payload.message.length).toBeLessThanOrEqual(4001)
   })
 
   // ── Edit-10.3: the route normalizes the raw request into the ONE

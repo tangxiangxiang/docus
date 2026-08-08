@@ -29,6 +29,7 @@ import type { AiLiveContextSnapshot } from '../../src/composables/vault/aiLiveCo
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { ChatError } from './errors.js'
+import type { AiErrorCode } from './settings.js'
 import {
   clearChatBackendCache,
   getChatBackend,
@@ -199,7 +200,7 @@ export type ChatEvent =
       oldPath?: string
     }
   | { type: 'done'; userId: number; assistantId: number }
-  | { type: 'error'; reason: string; message?: string }
+  | { type: 'error'; reason: string; message?: string; code?: AiErrorCode }
 
 export type RunChatDeps = {
   db: DatabaseT

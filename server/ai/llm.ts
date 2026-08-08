@@ -27,10 +27,65 @@ import type { Message } from '@anthropic-ai/sdk/resources/messages/messages'
 import OpenAI from 'openai'
 import { ChatError } from './errors.js'
 import { getDb } from '../db.js'
-import { AiKeyConfigurationError, getAiRuntimeConfig, type Provider } from './settings.js'
+import {
+  AiKeyConfigurationError,
+  getAiRuntimeConfig,
+  type Provider,
+} from './settings.js'
 import type { Database as DatabaseT } from 'better-sqlite3'
 
 const MAX_TOKENS = 4096
+
+const OPENAI_TOOLS_UNSUPPORTED_MESSAGE =
+  'This OpenAI-compatible endpoint does not support tool calling. Docus chat requires tool calling for workspace actions; use a compatible model/provider.'
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function safeProviderErrorMessage(error: unknown, apiKey: string): string {
+  return errorMessage(error).split(apiKey).join('[redacted]')
+}
+
+/** Only retry when the provider explicitly rejects the legacy parameter. A
+ * bounded, one-way retry keeps ordinary 4xx errors visible and cannot turn a
+ * provider outage into an unbounded request loop. */
+export function isOpenAiMaxTokensUnsupported(error: unknown): boolean {
+  const message = errorMessage(error)
+  return /\bmax_tokens\b/i.test(message)
+    && /unsupported|not supported|does not support|unknown|unrecognized|invalid|deprecated|not allowed|incompatible/i.test(message)
+}
+
+export function isOpenAiToolsUnsupported(error: unknown): boolean {
+  const message = errorMessage(error)
+  return /tools?|tool_choice|function[ _-]?calling|function[ _-]?call/i.test(message)
+    && /unsupported|not supported|does not support|unknown|unrecognized|invalid|not allowed/i.test(message)
+}
+
+type OpenAiCreate = (
+  params: Record<string, unknown>,
+  options?: { signal?: AbortSignal },
+) => Promise<unknown>
+
+/** Shared Chat Completions request wrapper for streaming and helper calls. */
+async function createOpenAiCompletion(
+  client: OpenAI,
+  params: Record<string, unknown>,
+  maxTokens: number,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const create = client.chat.completions.create.bind(client.chat.completions) as unknown as OpenAiCreate
+  const first = { ...params, max_tokens: maxTokens }
+  try {
+    return await create(first, { signal })
+  } catch (error) {
+    if (!isOpenAiMaxTokensUnsupported(error)) throw error
+    // Exactly one compatibility retry. Remove max_tokens rather than sending
+    // both fields because several gateways reject a request containing both.
+    const { max_tokens: _ignored, ...withoutLegacyLimit } = first
+    return create({ ...withoutLegacyLimit, max_completion_tokens: maxTokens }, { signal })
+  }
+}
 
 export type StreamResult = {
   text: string
@@ -257,16 +312,23 @@ class OpenAIBackend implements ChatBackend {
 
     let response
     try {
-      response = await client.chat.completions.create({
+      response = await createOpenAiCompletion(client, {
         model: opts.model,
-        max_tokens: MAX_TOKENS,
         messages: openaiMessages,
         ...(tools.length > 0 ? { tools, tool_choice: 'auto' as const } : {}),
         stream: true,
-      }, { signal: opts.signal })
+      }, MAX_TOKENS, opts.signal) as AsyncIterable<OpenAI.ChatCompletionChunk>
     } catch (err) {
       if (opts.signal?.aborted) throw new ChatError('aborted')
-      throw new ChatError('llm-error', (err as Error).message)
+      if (tools.length > 0 && isOpenAiToolsUnsupported(err)) {
+        throw new ChatError(
+          'llm-error',
+          `${OPENAI_TOOLS_UNSUPPORTED_MESSAGE} Upstream: ${safeProviderErrorMessage(err, cfg.apiKey)}`,
+          undefined,
+          'openai-tools-unsupported',
+        )
+      }
+      throw new ChatError('llm-error', safeProviderErrorMessage(err, cfg.apiKey))
     }
 
     /* OpenAI streams ChatCompletionChunk objects. Each chunk may carry
@@ -294,7 +356,7 @@ class OpenAIBackend implements ChatBackend {
       for (const tcDelta of delta?.tool_calls ?? []) {
         const entry = toolCallAccum.get(tcDelta.index) ?? { arguments: '' }
         if (tcDelta.id) entry.id = tcDelta.id
-        if (tcDelta.function?.name) entry.name = tcDelta.function.name
+        if (tcDelta.function?.name) entry.name = `${entry.name ?? ''}${tcDelta.function.name}`
         if (tcDelta.function?.arguments) entry.arguments += tcDelta.function.arguments
         toolCallAccum.set(tcDelta.index, entry)
       }
@@ -467,18 +529,17 @@ export async function generateText(opts: GenerateTextOpts): Promise<GenerateText
     const client = new OpenAI({ apiKey: cfg.apiKey, ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}) })
     let response
     try {
-      response = await client.chat.completions.create({
+      response = await createOpenAiCompletion(client, {
         model: opts.model,
-        max_tokens: opts.maxTokens,
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
         messages: [
           { role: 'system', content: opts.system },
           { role: 'user', content: opts.user },
         ],
-      }, { signal: opts.signal })
+      }, opts.maxTokens, opts.signal) as OpenAI.ChatCompletion
     } catch (err) {
       if (opts.signal?.aborted) throw new ChatError('aborted')
-      throw new ChatError('llm-error', (err as Error).message)
+      throw new ChatError('llm-error', safeProviderErrorMessage(err, cfg.apiKey))
     }
     const text = response.choices?.[0]?.message?.content ?? ''
     return { text }

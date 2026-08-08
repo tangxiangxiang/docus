@@ -2,7 +2,7 @@
 // from server/ai/{llm,chat}.ts is an instance of ChatError with a
 // stable `reason` string. The route layer maps reason → HTTP status
 // or SSE event type; nothing else inspects the class.
-import type { AiKeyConfigurationCode } from './settings.js'
+import type { AiErrorCode } from './settings.js'
 
 export type ChatErrorReason =
   | 'no-api-key'
@@ -17,12 +17,12 @@ export type ChatErrorReason =
 export class ChatError extends Error {
   readonly reason: ChatErrorReason
   readonly assistantId?: number
-  readonly code?: AiKeyConfigurationCode
+  readonly code?: AiErrorCode
   constructor(
     reason: ChatErrorReason,
     message?: string,
     assistantId?: number,
-    code?: AiKeyConfigurationCode,
+    code?: AiErrorCode,
   ) {
     super(message ?? reason)
     this.name = 'ChatError'

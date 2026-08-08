@@ -61,6 +61,12 @@ export type AiKeyConfigurationCode =
   | 'master-key-file-unwritable'
   | 'stored-key-invalid'
 
+export type AiCompatibilityCode =
+  | 'openai-base-url-invalid'
+  | 'openai-tools-unsupported'
+
+export type AiErrorCode = AiKeyConfigurationCode | AiCompatibilityCode
+
 /** Safe-to-display configuration errors. Never include key material here. */
 export class AiKeyConfigurationError extends Error {
   readonly code: AiKeyConfigurationCode
@@ -68,6 +74,18 @@ export class AiKeyConfigurationError extends Error {
   constructor(code: AiKeyConfigurationCode, message: string) {
     super(message)
     this.name = 'AiKeyConfigurationError'
+    this.code = code
+  }
+}
+
+/** Validation errors for provider-specific settings. These are safe to
+ * expose to clients because they never contain credentials or ciphertext. */
+export class AiSettingsValidationError extends Error {
+  readonly code: AiCompatibilityCode
+
+  constructor(code: AiCompatibilityCode, message: string) {
+    super(message)
+    this.name = 'AiSettingsValidationError'
     this.code = code
   }
 }
@@ -91,6 +109,46 @@ function defaultMasterKeyFile(): string {
 function keyApiKey(provider: Provider): string { return `ai.${provider}.apiKey` }
 function keyBaseURL(provider: Provider): string { return `ai.${provider}.baseURL` }
 function keyModel(provider: Provider): string { return `ai.${provider}.model` }
+
+/**
+ * OpenAI-compatible endpoints must be configured as an API root. The SDK
+ * appends /chat/completions itself, so accepting a complete endpoint would
+ * produce /chat/completions/chat/completions at runtime. Keep custom path
+ * prefixes intact and only remove harmless trailing slashes.
+ */
+export function normalizeOpenAiBaseURL(input: string): string {
+  const value = input.trim()
+  if (!value) return ''
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new AiSettingsValidationError(
+      'openai-base-url-invalid',
+      'OpenAI Base URL must be an API root such as https://example.com/v1, not a full /chat/completions endpoint',
+    )
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new AiSettingsValidationError(
+      'openai-base-url-invalid',
+      'OpenAI Base URL must be an http(s) API root',
+    )
+  }
+  const pathname = parsed.pathname.replace(/\/+$/, '')
+  if (pathname === '/chat/completions' || pathname.endsWith('/chat/completions')) {
+    throw new AiSettingsValidationError(
+      'openai-base-url-invalid',
+      'OpenAI Base URL must be the API root, for example https://example.com/v1, not the full /chat/completions endpoint',
+    )
+  }
+  if (parsed.search || parsed.hash) {
+    throw new AiSettingsValidationError(
+      'openai-base-url-invalid',
+      'OpenAI Base URL must not include a query string or fragment',
+    )
+  }
+  return value.replace(/\/+$/, '')
+}
 
 function defaultModelFor(provider: Provider): string {
   return provider === 'anthropic' ? DEFAULT_ANTHROPIC_MODEL : DEFAULT_OPENAI_MODEL
@@ -345,7 +403,11 @@ export function saveAiSettings(db: DatabaseT, input: SaveAiSettingsInput): Store
   const current = readStoredAiSettings(db)
   const target = input.provider ?? current.provider
   const apiKey = input.apiKey?.trim()
-  const baseURL = input.baseURL?.trim()
+  const baseURL = input.baseURL === undefined
+    ? undefined
+    : target === 'openai'
+      ? normalizeOpenAiBaseURL(input.baseURL)
+      : input.baseURL.trim()
   const model = input.model?.trim()
   const masterKey = apiKey ? resolveOrCreateMasterKey() : undefined
 

@@ -66,6 +66,8 @@ export type AiKeyErrorCode =
   | 'master-key-file-unreadable'
   | 'master-key-file-unwritable'
   | 'stored-key-invalid'
+  | 'openai-base-url-invalid'
+  | 'openai-tools-unsupported'
 
 export interface AiApiErrorBody {
   error?: string

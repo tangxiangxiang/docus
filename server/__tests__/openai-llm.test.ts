@@ -4,6 +4,7 @@ import { applyMigrations } from '../db'
 import { saveAiSettings } from '../ai/settings'
 import * as sessions from '../ai/sessions'
 import * as messages from '../ai/messages'
+import { ChatError } from '../ai/errors'
 
 const { createRef } = vi.hoisted(() => ({
   createRef: { value: vi.fn() },
@@ -81,5 +82,64 @@ describe('OpenAI Chat Completions backend', () => {
       ['user', 'hi'],
       ['assistant', 'hello world'],
     ])
+  })
+
+  it('reassembles fragmented tool-call names, ids, and JSON arguments', async () => {
+    createRef.value = vi.fn(async () => [
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_123', type: 'function', function: { name: 'read_' } }] }, finish_reason: null }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'file', arguments: '{"path":"' } }] }, finish_reason: null }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'notes/a"}' } }] }, finish_reason: 'tool_calls' }] },
+    ])
+    const result = await getChatBackend(db, 'openai').streamRound({
+      db,
+      model: 'test-model',
+      system: 'system',
+      messages: [{ role: 'user', content: 'read it' }],
+      tools: [{ name: 'read_file', description: 'read', parameters: { type: 'object' } }],
+      onToken: () => {},
+    })
+
+    expect(result.finishReason).toBe('tool_calls')
+    expect(result.toolCalls).toEqual([{ id: 'call_123', name: 'read_file', input: { path: 'notes/a' } }])
+  })
+
+  it('retries max_completion_tokens exactly once after an explicit max_tokens rejection', async () => {
+    createRef.value = vi.fn()
+      .mockRejectedValueOnce(new Error('unsupported parameter: max_tokens'))
+      .mockResolvedValueOnce([
+        { choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] },
+      ])
+    await getChatBackend(db, 'openai').streamRound({
+      db,
+      model: 'test-model',
+      system: 'system',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+      onToken: () => {},
+    })
+
+    expect(createRef.value).toHaveBeenCalledTimes(2)
+    expect(createRef.value.mock.calls[0][0]).toMatchObject({ max_tokens: 4096 })
+    expect(createRef.value.mock.calls[1][0]).toMatchObject({ max_completion_tokens: 4096 })
+    expect(createRef.value.mock.calls[1][0].max_tokens).toBeUndefined()
+  })
+
+  it('reports unsupported OpenAI tools without silently retrying without tools', async () => {
+    createRef.value = vi.fn(async () => {
+      throw new Error('400 unsupported parameter: tools')
+    })
+    await expect(getChatBackend(db, 'openai').streamRound({
+      db,
+      model: 'test-model',
+      system: 'system',
+      messages: [{ role: 'user', content: 'edit it' }],
+      tools: [{ name: 'write_file', description: 'write', parameters: { type: 'object' } }],
+      onToken: () => {},
+    })).rejects.toMatchObject({
+      reason: 'llm-error',
+      code: 'openai-tools-unsupported',
+    } satisfies Partial<ChatError>)
+    expect(createRef.value).toHaveBeenCalledTimes(1)
+    expect(createRef.value.mock.calls[0][0]).toHaveProperty('tools')
   })
 })

@@ -209,6 +209,27 @@ describe('streamChat', () => {
     }])
   })
 
+  it('preserves OpenAI compatibility codes from a chat SSE error event', async () => {
+    globalThis.fetch = vi.fn(async () => sseResponse([
+      {
+        event: 'error',
+        data: {
+          reason: 'llm-error',
+          code: 'openai-tools-unsupported',
+          message: 'This endpoint does not support tool calling',
+        },
+      },
+    ])) as unknown as typeof fetch
+    const collected: unknown[] = []
+    for await (const ev of streamChat({ sessionId: 1, content: 'x' })) collected.push(ev)
+    expect(collected).toEqual([{
+      type: 'error',
+      reason: 'llm-error',
+      code: 'openai-tools-unsupported',
+      message: 'This endpoint does not support tool calling',
+    }])
+  })
+
   // ── Edit-10.3: the request body carries the ONE live-context
   // authority verbatim; the legacy currentNotePath field is gone from
   // the new client wire contract.

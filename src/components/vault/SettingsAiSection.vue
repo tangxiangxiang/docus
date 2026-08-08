@@ -139,10 +139,13 @@ function onProviderChange(event: Event) {
           <input
             :value="baseURL"
             type="url"
-            :placeholder="t('settings.optional')"
+            :placeholder="activeProvider === 'openai' ? 'https://api.openai.com/v1' : t('settings.optional')"
             :disabled="loading || saving"
             @input="onInput('baseURL', $event)"
           />
+          <small v-if="activeProvider === 'openai'" class="settings-field-help">
+            {{ t('settings.openai_base_url_help') }}
+          </small>
         </label>
         <label class="settings-field">
           <span>{{ t('settings.model') }}</span>

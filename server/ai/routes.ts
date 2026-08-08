@@ -37,6 +37,7 @@ import { ChatError } from './errors.js'
 import { resolveAiRuntimeConfig } from './llm.js'
 import {
   AiKeyConfigurationError,
+  AiSettingsValidationError,
   clearAiApiKey,
   getAiCredentialStatus,
   getAiSettingsView,
@@ -69,6 +70,13 @@ function aiKeyErrorResponse(c: any, error: unknown) {
   if (error instanceof AiKeyConfigurationError
     || (error instanceof ChatError && error.reason === 'key-error')) {
     return bad(c, (error as Error).message, 503, (error as AiKeyConfigurationError | ChatError).code)
+  }
+  return null
+}
+
+function aiSettingsValidationResponse(c: any, error: unknown) {
+  if (error instanceof AiSettingsValidationError) {
+    return bad(c, error.message, 400, error.code)
   }
   return null
 }
@@ -326,6 +334,8 @@ ai.put('/settings', async (c) => {
     saveAiSettings(getDb(), { provider, apiKey, baseURL, model })
     return c.json(getAiSettingsView(getDb()))
   } catch (error) {
+    const validation = aiSettingsValidationResponse(c, error)
+    if (validation) return validation
     const response = aiKeyErrorResponse(c, error)
     if (response) return response
     throw error
@@ -654,6 +664,7 @@ ai.post('/chat', async (c) => {
               event: 'error',
               data: JSON.stringify({
                 reason: e.reason,
+                ...(e.code ? { code: e.code } : {}),
                 ...(e.message ? { message: safeProviderMessage(e.message, runtimeConfig.apiKey) } : {}),
               }),
             })

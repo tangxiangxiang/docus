@@ -52,3 +52,11 @@ and use a new fallback key. The forget action is permanent.
 ## AI Provider Configuration
 
 Provider, API key, model, and base URL belong in the Settings UI and SQLite. The current server does not read `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, or OpenAI equivalents from the environment.
+
+For OpenAI-compatible providers, configure the API root, for example
+`https://api.openai.com/v1` or `https://gateway.example/openai/v1`. Do not enter
+`/chat/completions`; the server uses streaming Chat Completions and appends that
+path. Full workspace chat also requires function/tool calling support. A
+provider that only supports plain text may reject Docus requests; Docus keeps
+the failure visible rather than silently dropping tools or changing workspace
+mutation semantics.

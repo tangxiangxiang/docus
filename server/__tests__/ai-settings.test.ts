@@ -11,6 +11,7 @@ import {
   getAiRuntimeConfig,
   getAiCredentialStatus,
   getAiSettingsView,
+  normalizeOpenAiBaseURL,
   readStoredAiSettings,
   saveAiSettings,
   type AiKeyConfigurationCode,
@@ -407,5 +408,16 @@ describe('external AI master key storage', () => {
       expect(readStoredAiSettings(db).anthropic.apiKey).toBe('sk-new-recovery-secret')
       expect(isEncryptedFormat(setting(db, 'ai.anthropic.apiKey'))).toBe(true)
     })
+  })
+
+  it('normalizes OpenAI API roots without rewriting custom prefixes', () => {
+    expect(normalizeOpenAiBaseURL('  https://gateway.example/openai/v1/// '))
+      .toBe('https://gateway.example/openai/v1')
+    expect(normalizeOpenAiBaseURL('https://api.openai.com/v1')).toBe('https://api.openai.com/v1')
+  })
+
+  it('rejects a full OpenAI chat completions endpoint', () => {
+    expect(() => normalizeOpenAiBaseURL('https://gateway.example/v1/chat/completions'))
+      .toThrow(/API root/i)
   })
 })
