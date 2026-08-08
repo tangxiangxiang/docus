@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { promises as fs } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
@@ -22,6 +22,10 @@ import { __resetLinkIndexForTesting } from '../linkIndex'
 import { setContentDir } from '../paths'
 import { __setFolderRaceHooksForTesting } from '../routes/folders'
 import type { FolderMoveJournalV4 } from '../folderMoveTransaction'
+import {
+  terminateProcessTree,
+  waitForChildClose,
+} from './helpers/crashProcessTree'
 
 const TSX_CLI = fileURLToPath(import.meta.resolve('tsx/cli'))
 const DELETE_PREPARED_CHILD = path.join(
@@ -33,6 +37,27 @@ const DELETE_PREPARED_CHILD = path.join(
 let vault: string
 let originalContentDir: string
 let db: Database.Database
+// The folder-delete prepared-rollback fixture deliberately exits with
+// process.exit(93) WITHOUT calling database.close() — the test exists to
+// prove durable recovery across an abrupt process termination. The child
+// therefore owns metadata.sqlite until its stdio streams fully close on
+// the parent side. On Windows that open handle blocks fs.rm until then,
+// so teardown must guarantee the child is fully closed BEFORE we touch
+// the temp tree.
+let crashChild: ChildProcess | null = null
+
+async function ensureCrashChildClosed(): Promise<void> {
+  if (!crashChild) return
+  const child = crashChild
+  crashChild = null
+  try {
+    await terminateProcessTree(child, { timeoutMs: 10_000 })
+  } catch {
+    // Best-effort cleanup. If the child already closed naturally or is
+    // stuck in a way the helper cannot recover from, afterEach proceeds
+    // anyway — fs.rm retry handles the residual SQLite handle on Windows.
+  }
+}
 
 beforeEach(async () => {
   originalContentDir = path.resolve(process.cwd(), 'src/content')
@@ -47,6 +72,11 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  // Tear down the crash child first so the still-open SQLite handle
+  // (held by the child until its stdio streams close on the parent) does
+  // not block fs.rm on Windows. terminateProcessTree is a no-op for a
+  // child that already closed naturally.
+  await ensureCrashChildClosed()
   vi.restoreAllMocks()
   __setCreateOnlyMoveHooksForTesting(null)
   __setDirectoryMoveStrategyOverrideForTesting(null)
@@ -55,7 +85,12 @@ afterEach(async () => {
   db.close()
   setContentDir(originalContentDir)
   __resetLinkIndexForTesting()
-  await fs.rm(vault, { recursive: true, force: true })
+  await fs.rm(vault, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === 'win32' ? 10 : 3,
+    retryDelay: 100,
+  })
 })
 
 async function seedFolder(folder = 'proj'): Promise<void> {
@@ -240,7 +275,11 @@ describe('Round-16 prepared snapshot restore recovery', () => {
     })
     persistedDb.close()
 
-    const child = spawn(process.execPath, [TSX_CLI, DELETE_PREPARED_CHILD], {
+    // Promote the child to module scope so afterEach can terminate it even
+    // if this test throws or times out. The fixture intentionally exits
+    // with process.exit(93) and never closes its SQLite handle — that is
+    // the scenario under test, and teardown must still recover.
+    crashChild = spawn(process.execPath, [TSX_CLI, DELETE_PREPARED_CHILD], {
       env: {
         ...process.env,
         DOCUS_FOLDER_VAULT: vault,
@@ -250,14 +289,17 @@ describe('Round-16 prepared snapshot restore recovery', () => {
     })
     let stdout = ''
     let stderr = ''
-    child.stdout.on('data', chunk => { stdout += chunk.toString() })
-    child.stderr.on('data', chunk => { stderr += chunk.toString() })
-    const exit = await new Promise<number | null>((resolve, reject) => {
-      child.once('error', reject)
-      child.once('exit', code => resolve(code))
-    })
+    crashChild.stdout.on('data', chunk => { stdout += chunk.toString() })
+    crashChild.stderr.on('data', chunk => { stderr += chunk.toString() })
+    // Wait for `close` (exit + stdio streams closed) rather than `exit` so
+    // that on Windows the SQLite handle is fully released before we move
+    // on to journal inspection and recovery.
+    const closed = await waitForChildClose(crashChild)
     expect(stdout, stderr).toContain('READY:DELETE_ROLLBACK_PREPARED')
-    expect(exit).toBe(93)
+    expect(
+      closed.code,
+      `child stdout:\n${stdout}\n\nchild stderr:\n${stderr}`,
+    ).toBe(93)
 
     const prepared = await readOnlyV4Journal()
     expect(prepared.journal.phase).toBe('prepared')
@@ -289,7 +331,7 @@ describe('Round-16 prepared snapshot restore recovery', () => {
     } finally {
       recoveryDb.close()
     }
-  })
+  }, 30_000)
 })
 
 describe('Round-16 reverse final verification', () => {
