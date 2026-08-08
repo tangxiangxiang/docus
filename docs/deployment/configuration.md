@@ -32,6 +32,14 @@ The supplied Compose file does not expose `VAULT_DIR` because it always mounts t
 
 If neither is set, Docus creates `data/.docus-master-key` on the first API-key save with restrictive file permissions. The key is outside SQLite but, in Docker, inside the same persistent `docus-data` volume.
 
+That automatic creation applies only to first setup and recoverable legacy
+migrations. If credentials encrypted with the fallback key already exist and
+the fallback file is missing, Docus returns `master-key-required` without
+creating a new file or changing any AI setting. Restore the original fallback
+file or provide the matching key through an explicit source. An explicitly
+configured but unreadable `DOCUS_MASTER_KEY_FILE` is an error and never falls
+back to the auto-managed path.
+
 Changing the master-key source does not re-encrypt existing credentials automatically to an unrelated key. Preserve the original key until all stored provider credentials have been cleared or successfully read and re-saved.
 
 ## AI Provider Configuration

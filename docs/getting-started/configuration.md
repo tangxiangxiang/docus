@@ -35,4 +35,11 @@ Provider credentials are encrypted before SQLite storage. The encryption master 
 
 An explicit key must encode exactly 32 bytes as either 64 hexadecimal characters or canonical base64. Do not store a real key in the repository.
 
+Reading an empty AI configuration does not create the auto-managed file. If
+SQLite contains provider credentials encrypted with that fallback key and
+`data/.docus-master-key` is missing, Docus reports `master-key-required` and
+leaves both the credentials and all other AI settings unchanged. It does not
+create an unrelated replacement key. In fallback mode, back up and restore
+`data/docus.db` and `data/.docus-master-key` together.
+
 See [Deployment Security](../deployment/security.md) and [Backup and Restore](../deployment/backup-and-restore.md) before changing an existing instance's key.

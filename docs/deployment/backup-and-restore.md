@@ -12,6 +12,12 @@ Docus server persistence spans the vault, the data directory, and any externally
 
 A complete server backup includes the full vault, the full data directory, and the master key when it is managed outside `data/`.
 
+In fallback mode, `data/docus.db` and `data/.docus-master-key` are a recovery
+pair and must be backed up and restored together. Restoring only SQLite leaves
+AI credentials encrypted with that fallback key unreadable. Docus reports
+`master-key-required`; it does not create a replacement key, rewrite the
+ciphertext, or change other AI settings.
+
 ## Consistency Rule
 
 Stop Docus before copying `data/` and the vault. This closes SQLite cleanly and prevents a document mutation from spanning the two backup copies.
@@ -71,6 +77,6 @@ The `--delete` flag makes the restored vault match the backup and removes newer 
 
 - Markdown without SQLite retains note bodies but loses current database-owned titles, summaries, tags, stable IDs, AI settings, and conversations. Startup will reconstruct fallback metadata, not the missing application state.
 - SQLite without the matching vault contains metadata identities for missing files and is not a useful document restore.
-- SQLite without the matching master key preserves encrypted credentials but cannot decrypt them; clear and re-enter each API key.
+- SQLite without the matching master key preserves encrypted credentials but cannot decrypt them. Restore the original key. If the credentials are intentionally abandoned, the old credential rows must be explicitly cleared before reconfiguration; Docus does not clear or replace them during the failed read.
 - Vault files without `.git/` lose History even though current Markdown remains.
 - Clearing browser storage loses unsaved recovery drafts but does not delete server-saved notes.

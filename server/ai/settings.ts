@@ -122,14 +122,31 @@ function decodeKeyMaterial(raw: string, source: string, kind: 'master' | 'stored
   return decoded
 }
 
-function readMasterKeyFile(filePath: string, code: 'master-key-file-unreadable' | 'master-key-file-unwritable'): Buffer {
+type FallbackMasterKeyResolution =
+  | { kind: 'found'; key: Buffer }
+  | { kind: 'missing' }
+
+function readFallbackMasterKey(filePath: string): FallbackMasterKeyResolution {
   let fileValue: string
   try {
     fileValue = readFileSync(filePath, 'utf8')
-  } catch {
-    throw new AiKeyConfigurationError(code, 'The Docus master key file could not be read')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'missing' }
+    throw new AiKeyConfigurationError(
+      'master-key-file-unreadable',
+      'The Docus master key file could not be read',
+    )
   }
-  return decodeKeyMaterial(fileValue, filePath, 'master')
+  return { kind: 'found', key: decodeKeyMaterial(fileValue, filePath, 'master') }
+}
+
+function readMasterKeyFile(filePath: string): Buffer {
+  const resolved = readFallbackMasterKey(filePath)
+  if (resolved.kind === 'found') return resolved.key
+  throw new AiKeyConfigurationError(
+    'master-key-file-unreadable',
+    'The Docus master key file could not be read',
+  )
 }
 
 function createDefaultMasterKey(filePath: string): Buffer {
@@ -144,7 +161,7 @@ function createDefaultMasterKey(filePath: string): Buffer {
     return generated
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      return readMasterKeyFile(filePath, 'master-key-file-unreadable')
+      return readMasterKeyFile(filePath)
     }
     throw new AiKeyConfigurationError(
       'master-key-file-unwritable',
@@ -154,44 +171,38 @@ function createDefaultMasterKey(filePath: string): Buffer {
 }
 
 /**
- * Read the external master key. Environment value takes precedence. When no
- * value is supplied, use a separate local file so a first Settings save does
- * not require a .env file. The file is deliberately outside SQLite.
+ * Read an already-existing master key without creating one. Only a missing
+ * fallback file resolves to undefined; explicit-file failures, unreadable
+ * fallback files, and invalid key material remain configuration errors.
  */
-export function resolveMasterKey(
+export function resolveExistingMasterKey(
   env: NodeJS.ProcessEnv = process.env,
   fallbackFile = defaultMasterKeyFile(),
-): Buffer {
+): Buffer | undefined {
   const configured = env[KEY_MASTER_ENV]?.trim()
   if (configured) return decodeKeyMaterial(configured, KEY_MASTER_ENV, 'master')
 
   const filePath = env[KEY_MASTER_FILE_ENV]?.trim()
-  if (filePath) return readMasterKeyFile(filePath, 'master-key-file-unreadable')
+  if (filePath) return readMasterKeyFile(filePath)
 
-  try {
-    return readMasterKeyFile(fallbackFile, 'master-key-file-unreadable')
-  } catch (error) {
-    if (error instanceof AiKeyConfigurationError && !readFileExists(fallbackFile)) {
-      return createDefaultMasterKey(fallbackFile)
-    }
-    throw error
-  }
+  const resolved = readFallbackMasterKey(fallbackFile)
+  return resolved.kind === 'found' ? resolved.key : undefined
 }
 
-function readFileExists(filePath: string): boolean {
-  try {
-    readFileSync(filePath)
-    return true
-  } catch {
-    return false
-  }
+/** Resolve a master key for an operation that is explicitly allowed to create
+ * the fallback file, such as a first API-key save or a legacy migration. */
+export function resolveOrCreateMasterKey(
+  env: NodeJS.ProcessEnv = process.env,
+  fallbackFile = defaultMasterKeyFile(),
+): Buffer {
+  return resolveExistingMasterKey(env, fallbackFile) ?? createDefaultMasterKey(fallbackFile)
 }
 
 function requireMasterKey(masterKey: Buffer | undefined): Buffer {
   if (!masterKey) {
     throw new AiKeyConfigurationError(
       'master-key-required',
-      'The Docus master key is unavailable; check the data directory or configure DOCUS_MASTER_KEY_FILE',
+      'The Docus master key is unavailable. Restore data/.docus-master-key from backup or configure DOCUS_MASTER_KEY / DOCUS_MASTER_KEY_FILE. The encrypted credentials were not modified.',
     )
   }
   return masterKey
@@ -223,7 +234,10 @@ function loadAndMigrateApiKeys(db: DatabaseT): Map<Provider, string> {
   const hasStoredMaterial = Boolean(legacyKeyValue) || [...rows.values()].some(Boolean)
   if (!hasStoredMaterial) return new Map(SUPPORTED_PROVIDERS.map((provider) => [provider, '']))
 
-  const masterKey = resolveMasterKey()
+  // First inspect existing key sources without creating anything. A fallback
+  // key may be created later only after every stored ciphertext has already
+  // been decrypted with an existing key or the legacy database key.
+  let masterKey = resolveExistingMasterKey()
   const legacyKey = legacyKeyValue ? decodeStoredEncryptionKey(legacyKeyValue) : undefined
   const plaintext = new Map<Provider, string>()
   const providersToMigrate = new Set<Provider>()
@@ -242,9 +256,9 @@ function loadAndMigrateApiKeys(db: DatabaseT): Map<Provider, string> {
 
     let decrypted: string | undefined
     let decryptedWithLegacyKey = false
-    const candidates: Array<{ key: Buffer; legacy: boolean }> = legacyKey
-      ? [{ key: legacyKey, legacy: true }, { key: masterKey, legacy: false }]
-      : [{ key: masterKey, legacy: false }]
+    const candidates: Array<{ key: Buffer; legacy: boolean }> = []
+    if (legacyKey) candidates.push({ key: legacyKey, legacy: true })
+    if (masterKey) candidates.push({ key: masterKey, legacy: false })
     for (const candidate of candidates) {
       try {
         decrypted = decryptApiKey(blob, candidate.key)
@@ -255,6 +269,7 @@ function loadAndMigrateApiKeys(db: DatabaseT): Map<Provider, string> {
       }
     }
     if (decrypted === undefined) {
+      if (!masterKey) requireMasterKey(masterKey)
       throw new AiKeyConfigurationError(
         'master-key-invalid',
         'DOCUS_MASTER_KEY does not match the encrypted AI API key',
@@ -269,10 +284,16 @@ function loadAndMigrateApiKeys(db: DatabaseT): Map<Provider, string> {
   // or the legacy key row itself requires a write transaction.
   if (providersToMigrate.size === 0 && !legacyKeyValue) return plaintext
 
+  // Plaintext and legacy-key ciphertext are still recoverable without the
+  // fallback key, so creating one here is part of their safe migration. This
+  // point is reached only after all encrypted rows were successfully read.
+  masterKey ??= resolveOrCreateMasterKey()
+  const migrationKey = requireMasterKey(masterKey)
+
   const migrate = db.transaction(() => {
     for (const provider of providersToMigrate) {
       const value = plaintext.get(provider) ?? ''
-      if (value) setSetting(db, keyApiKey(provider), encryptApiKey(value, masterKey))
+      if (value) setSetting(db, keyApiKey(provider), encryptApiKey(value, migrationKey))
       else deleteSetting(db, keyApiKey(provider))
     }
     if (legacyKeyValue) deleteSetting(db, KEY_ENCRYPTION_KEY)
@@ -321,7 +342,7 @@ export function saveAiSettings(db: DatabaseT, input: SaveAiSettingsInput): Store
   const apiKey = input.apiKey?.trim()
   const baseURL = input.baseURL?.trim()
   const model = input.model?.trim()
-  const masterKey = apiKey ? resolveMasterKey() : undefined
+  const masterKey = apiKey ? resolveOrCreateMasterKey() : undefined
 
   const save = db.transaction(() => {
     if (input.provider !== undefined) setSetting(db, KEY_ACTIVE_PROVIDER, input.provider)

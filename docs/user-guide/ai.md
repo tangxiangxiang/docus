@@ -8,6 +8,12 @@ API keys are sent only to the Docus server, encrypted before SQLite storage, and
 
 See [Deployment Security](../deployment/security.md) for the master-key model.
 
+If provider credentials were encrypted with the auto-managed key and
+`data/.docus-master-key` is unavailable, Docus reports that the master key is
+required. It does not generate a replacement key or modify the encrypted
+credentials. Restore the original file from backup, or configure the matching
+key through `DOCUS_MASTER_KEY` or `DOCUS_MASTER_KEY_FILE`.
+
 ## Chat and Context
 
 AI chat supports multiple persisted sessions. User messages, assistant replies, and tool-call records are stored in SQLite.
@@ -31,6 +37,6 @@ Review tool-call cards and History changes after an AI-assisted edit. Create a G
 ## Troubleshooting
 
 - **Not configured:** save a key for the active provider in Settings.
-- **Master-key error:** restore the key that encrypted the stored credentials or clear and re-enter the provider key.
+- **Master-key error:** restore the exact key that encrypted the stored credentials. If those credentials are intentionally abandoned, they must be explicitly cleared before a new key is configured; Docus never clears or replaces them automatically.
 - **Tool rejected:** save or resolve the active workspace state, then ask the model to re-read before retrying.
 - **Provider error:** verify the selected model, base URL, network access, and API account.
