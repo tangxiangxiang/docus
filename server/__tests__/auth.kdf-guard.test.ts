@@ -82,14 +82,14 @@ describe('KdfGuard', () => {
     expect(guard.pendingCount).toBe(0)
   })
 
-  it('bounds queue waiting time and restores capacity after job rejection', async () => {
-    const guard = new KdfGuard({ concurrency: 1, maxQueue: 2, maxQueueWaitMs: 20 })
+  it('uses the configured maximum queue wait and restores capacity after rejection', async () => {
+    const guard = new KdfGuard({ concurrency: 1, maxQueue: 2, maxQueueWaitMs: 10 })
     const gate = deferred<void>()
     const first = guard.run(undefined, async () => {
       await gate.promise
       throw new Error('fake KDF failure')
     })
-    const timedOut = guard.run(undefined, async () => 'never', { queueWaitMs: 10 })
+    const timedOut = guard.run(undefined, async () => 'never')
     await expect(timedOut).rejects.toBeInstanceOf(KdfQueueTimeoutError)
     gate.resolve()
     await expect(first).rejects.toThrow('fake KDF failure')

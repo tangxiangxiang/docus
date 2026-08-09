@@ -2,7 +2,6 @@ import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto'
 import {
   defaultKdfGuard,
   type KdfGuard,
-  type KdfRunOptions,
 } from './kdfGuard.js'
 
 export const SCRYPT_N = 32_768
@@ -51,7 +50,7 @@ export type ParsedPasswordHash = {
   readonly derivedKey: Buffer
 }
 
-export type PasswordKdfOptions = KdfRunOptions & {
+export type PasswordKdfOptions = {
   signal?: AbortSignal
   guard?: KdfGuard
 }
@@ -214,7 +213,6 @@ export function hashPassword(
   return guard.run(
     resolved.signal,
     () => deriveScrypt(password, salt),
-    { queueWaitMs: resolved.queueWaitMs },
   ).then((derivedKey) => encodePasswordHash(salt, derivedKey))
 }
 
@@ -244,7 +242,6 @@ export function verifyPassword(
   return guard.run(
     resolved.signal,
     () => deriveScrypt(password, parsed.salt),
-    { queueWaitMs: resolved.queueWaitMs },
   ).then((candidate) => {
     if (candidate.length !== parsed.derivedKey.length) return false
     return timingSafeEqual(candidate, parsed.derivedKey)

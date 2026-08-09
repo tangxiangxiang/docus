@@ -4,7 +4,6 @@ import {
   SESSION_LAST_SEEN_UPDATE_INTERVAL_MS,
   SESSION_LIFETIME_MS,
   type AuthConfig,
-  type SessionCookieName,
 } from './config.js'
 
 export const SESSION_TOKEN_BYTES = 32
@@ -38,9 +37,6 @@ export type SessionLookupResult = {
 
 export type CreateSessionOptions = {
   now?: number
-  lifetimeMs?: number
-  /** Test-only injection; production callers should let crypto generate it. */
-  token?: string
 }
 
 export type CreatedSession = {
@@ -96,15 +92,13 @@ export function createSession(
     ? { now: optionsOrNow }
     : optionsOrNow
   const now = options.now ?? Date.now()
-  const lifetimeMs = options.lifetimeMs ?? SESSION_LIFETIME_MS
-  if (!Number.isFinite(now) || !Number.isFinite(lifetimeMs) || lifetimeMs <= 0) {
-    throw new RangeError('session timestamps must be finite and lifetime must be positive')
+  if (!Number.isFinite(now)) {
+    throw new RangeError('session timestamps must be finite')
   }
 
-  const rawToken = options.token ?? generateSessionToken()
-  if (rawToken.length === 0) throw new RangeError('session token must not be empty')
+  const rawToken = generateSessionToken()
   const tokenHash = hashSessionToken(rawToken)
-  const expiresAt = now + lifetimeMs
+  const expiresAt = now + SESSION_LIFETIME_MS
   const result = db.prepare(
     `INSERT INTO auth_sessions (
        user_id, token_hash, created_at, expires_at, last_seen_at, revoked_at
@@ -140,7 +134,10 @@ export function findSessionByRawToken(
        s.id, s.user_id, s.token_hash, s.created_at, s.expires_at,
        s.last_seen_at, s.revoked_at, u.username, u.disabled
      FROM auth_sessions s
-     LEFT JOIN users u ON u.id = s.user_id
+     JOIN users u ON u.id = s.user_id
+     JOIN auth_instance ai
+       ON ai.id = 1
+      AND ai.owner_user_id = u.id
      WHERE s.token_hash = ?
      LIMIT 1`,
   ).get(tokenHash) as JoinedSessionRow | undefined
@@ -237,9 +234,8 @@ export function touchSessionLastSeen(
  */
 export function selectSessionToken(
   cookies: Readonly<Record<string, string | undefined>>,
-  config: Pick<AuthConfig, 'cookie'> | SessionCookieName,
+  config: Pick<AuthConfig, 'cookie'>,
 ): string | null {
-  const cookieName = typeof config === 'string' ? config : config.cookie.name
-  const rawToken = cookies[cookieName]
+  const rawToken = cookies[config.cookie.name]
   return typeof rawToken === 'string' && rawToken.length > 0 ? rawToken : null
 }

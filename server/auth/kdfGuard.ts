@@ -54,10 +54,6 @@ export type KdfGuardOptions = {
   maxQueueWaitMs?: number
 }
 
-export type KdfRunOptions = {
-  queueWaitMs?: number
-}
-
 type QueueEntry<T> = {
   readonly job: () => Promise<T>
   readonly resolve: (value: T | PromiseLike<T>) => void
@@ -122,12 +118,11 @@ export class KdfGuard {
    * `run(job, signal)` are accepted so callers can use the repository's
    * preferred argument order without creating a second scheduler API.
    */
-  run<T>(signal: AbortSignal | undefined, job: () => Promise<T>, options?: KdfRunOptions): Promise<T>
-  run<T>(job: () => Promise<T>, signal?: AbortSignal, options?: KdfRunOptions): Promise<T>
+  run<T>(signal: AbortSignal | undefined, job: () => Promise<T>): Promise<T>
+  run<T>(job: () => Promise<T>, signal?: AbortSignal): Promise<T>
   run<T>(
     first: AbortSignal | (() => Promise<T>) | undefined,
     second?: (() => Promise<T>) | AbortSignal,
-    options: KdfRunOptions = {},
   ): Promise<T> {
     const signal = typeof first === 'function'
       ? (isAbortSignal(second) ? second : undefined)
@@ -137,11 +132,6 @@ export class KdfGuard {
       return Promise.reject(new TypeError('KDF guard requires an async job'))
     }
     if (signal?.aborted) return Promise.reject(new KdfAbortedError())
-
-    const queueWaitMs = options.queueWaitMs ?? this.maxQueueWaitMs
-    if (!Number.isInteger(queueWaitMs) || queueWaitMs < 1) {
-      return Promise.reject(new RangeError('queueWaitMs must be a positive integer'))
-    }
 
     return new Promise<T>((resolve, reject) => {
       const entry: QueueEntry<T> = {
@@ -175,7 +165,7 @@ export class KdfGuard {
       entry.timer = setTimeout(() => {
         if (entry.started) return
         if (this.removeQueued(entry)) reject(new KdfQueueTimeoutError())
-      }, queueWaitMs)
+      }, this.maxQueueWaitMs)
       this.queue.push(entry as unknown as QueueEntry<unknown>)
     })
   }

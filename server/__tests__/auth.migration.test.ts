@@ -38,7 +38,7 @@ describe('authentication migration', () => {
     expect((db.pragma('foreign_keys') as Array<{ foreign_keys: number }>)[0]?.foreign_keys).toBe(1)
   })
 
-  it('upgrades a pre-auth database without changing domain data', () => {
+  it('applies authentication migration over a v5 version marker without changing domain data', () => {
     const db = freshDb()
     db.exec(`
       CREATE TABLE schema_version (version INTEGER NOT NULL);
