@@ -31,6 +31,7 @@ The implementation must preserve these boundaries:
 7. Keep ordinary unit tests fast; preserve the existing History and Recovery integration lanes.
 8. Land small, reviewable commits that keep typecheck, build, and the relevant test lanes green.
 9. Enforce one rollout invariant across every phase and commit: either application authentication enforcement is not active and the legacy application remains operable, or enforcement is active and a complete browser Setup/Login path can establish an owner session. There must be no landed state where protected APIs are enabled but the browser cannot authenticate.
+10. Enforce browser-visible feature atomicity: an authentication action must not become visible in a landed commit before the server/client transition contract required to complete it safely is available. Logout therefore lands together with save-before-revoke and Draft Store coordination.
 
 ## Current Architecture Reconnaissance
 
@@ -134,8 +135,8 @@ flowchart TD
   A --> G["frontend auth foundation while APIs remain anonymous"]
   F --> T["atomic enforcement cutover"]
   G --> T
-  T --> L["logout UX + auth polish"]
-  L --> D["save barrier + Draft Store auth transitions"]
+  T --> L["auth UX polish"]
+  L --> D["logout + save barrier + Draft Store auth transitions"]
   D --> E["authenticated Playwright + recovery E2E"]
   E --> X["deployment / CI / docs hardening"]
 ```
@@ -222,8 +223,8 @@ The coordinator must not infer auth expiry from status `401` alone. `401 + ai-au
 | `src/views/LoginView.vue` | Keyboard-accessible compact login form and safe generic/rate-limit errors. |
 | `src/views/SetupView.vue` | Bootstrap-token owner setup; keeps `confirmPassword` client-only. |
 | `src/router/index.ts` | Add `/login` and `/setup`, asynchronous auth guard, validated internal redirects, and protected workspace guard. |
-| `src/App.vue` | Mount auth coordinator/provider before `RouterView`, suppress normal Vault chrome on auth routes, and connect NavBar logout requests. |
-| `src/components/NavBar.vue` | Render the least-invasive Logout action and emit a logout request; no save/auth logic. |
+| `src/App.vue` | Mount auth coordinator/provider before `RouterView`, suppress normal Vault chrome on auth routes, and connect the final workspace transition to NavBar logout requests. |
+| `src/components/NavBar.vue` | Render the least-invasive Logout action only after the Phase 7 transition contract exists, and emit a logout request; no save/auth logic. |
 | `src/views/VaultView.vue` | Register/unregister workspace save-and-draft transition callbacks with `useAuth`; preserve current editor/recovery ownership. |
 | `src/composables/vault/editor-tabs/useDocumentSave.ts` | Expose a small auth-transition save barrier built on existing `savePromises`, `doSave`, and `DocumentMutationBarrier`; do not duplicate save logic. |
 | `src/composables/vault/useEditorTabs.ts` | Expose the workspace transition hook and current tab/save state needed by VaultView. |
@@ -817,11 +818,11 @@ An operator can reach `/setup`, create the single owner through the real Phase 2
 
 ### Goal
 
-Perform the one explicit atomic cutover from legacy anonymous application APIs to authenticated application APIs. This phase simultaneously enables the server boundary, splits public liveness from protected vault identity, migrates every browser identity consumer, and wires the runtime configuration required for the selected cookie profile.
+Perform the one explicit atomic cutover from legacy anonymous application APIs to authenticated application APIs. This phase simultaneously enables the server boundary, splits public liveness from protected vault identity, migrates every browser identity consumer, and wires the runtime configuration required for the selected cookie profile. It does not re-land the Phase 3 fixtures or Phase 4 browser foundation.
 
 ### Why this phase comes now
 
-Phase 2 provides real setup/login endpoints, Phase 3 provides real authenticated fixtures, and Phase 4 provides a usable browser path. The rollout invariant is now satisfiable: this phase may turn enforcement on because a normal browser can immediately establish an owner session.
+This phase may begin only after Phase 3 authenticated fixtures are landed and green, and Phase 4's real browser Setup/Login foundation is landed and usable. Phase 2 provides the underlying setup/login endpoints. The rollout invariant is now satisfiable: this phase may turn enforcement on because a normal browser can immediately establish an owner session. Phase 5 depends on those earlier phases; it does not reimplement or duplicate them.
 
 ### Existing files affected
 
@@ -845,7 +846,7 @@ Complete the identity-before-workspace sequence: auth hydration → authenticate
 
 ### Test changes
 
-In one reviewable implementation unit, assert anonymous failure before handlers for every current sensitive route family and unknown `/api/*`, authenticated compatibility, exact public allowlist, health without `vaultId`, protected identity, no-store, cookie profile selection, AI/provider-401 isolation, and mount ordering. Add tests proving every tab/Draft/Recovery/workspace identity consumer uses the protected identity and that an authenticated browser reaches Vault immediately after cutover. Add Docker/default-origin and custom-`DOCS_PORT` checks using the real runtime configuration.
+In one reviewable implementation unit, assert anonymous failure before handlers for every current sensitive route family and unknown `/api/*`, authenticated compatibility using the already-landed real fixtures, exact public allowlist, health without `vaultId`, protected identity, no-store, cookie profile selection, AI/provider-401 isolation, and mount ordering. Add tests proving every tab/Draft/Recovery/workspace identity consumer uses the protected identity and that an authenticated browser reaches Vault immediately after cutover. Add Docker/default-origin and custom-`DOCS_PORT` checks using the real runtime configuration.
 
 ### Security invariants
 
@@ -857,7 +858,7 @@ Hono middleware ordering, route sub-app matching, direct subrouter tests, Docker
 
 ### CI safety strategy
 
-Do not call this commit safe merely because authenticated fixtures make CI green. The same commit must include the browser foundation, real fixture migration, middleware enforcement, health/identity split, all client consumers, and required Docker/origin wiring, and must leave the browser-visible application operable through setup/login/workspace. Run all Vitest lanes, build, browser/Draft Store, and Docker smoke checks without global timeout/worker changes.
+Do not call this commit safe merely because fixtures make CI green. Gate C must already confirm the real authenticated fixtures, and Phase 4 must already confirm that the browser Setup/Login path is usable. The Phase 5 commit itself must atomically include the enforcement boundary, health/identity split, every client identity consumer migration, identity-before-workspace ordering, required Docker/origin wiring, and cutover regression coverage, while leaving the browser-visible application operable through setup/login/workspace. Run all Vitest lanes, build, browser/Draft Store, and Docker smoke checks without global timeout/worker changes.
 
 ### Validation commands
 
@@ -865,25 +866,25 @@ Do not call this commit safe merely because authenticated fixtures make CI green
 
 ### Acceptance criteria
 
-The cutover lands as one reviewable unit: middleware enforcement, exact public allowlist, liveness-only health, protected identity, every `vaultId` consumer migration, identity-before-workspace startup, auth-session handling, runtime `DOCUS_PUBLIC_ORIGIN`/setup/revocation wiring, and corresponding tests are all present. An unauthenticated request cannot reach protected handlers; an authenticated browser can set up/login and enter Vault immediately; tab and Draft/Recovery scopes remain stable.
+Prerequisites are already landed: Phase 3 real authenticated fixtures are green and Phase 4 provides a usable browser Setup/Login path while enforcement is still off. The cutover then lands as one reviewable unit: middleware enforcement, exact public allowlist, liveness-only health, protected identity, every `vaultId` consumer migration, identity-before-workspace startup, auth-session handling, runtime `DOCUS_PUBLIC_ORIGIN`/setup/revocation wiring, and corresponding tests are all present. An unauthenticated request cannot reach protected handlers; an authenticated browser can set up/login and enter Vault immediately; tab and Draft/Recovery scopes remain stable.
 
 ### Suggested commit(s)
 
-`feat(auth): enforce authentication boundary and vault identity` — the atomic cutover containing middleware enforcement, health/identity split, client identity migration, runtime Docker/origin wiring, fixture migration, and security/browser tests. Do not split these concerns across independently landed commits.
+`feat(auth): enforce authentication boundary and vault identity` — the atomic cutover containing middleware enforcement, health/identity split, every client identity migration, identity-before-workspace ordering, runtime Docker/origin wiring, and security/browser tests. It depends on the already-landed Phase 3 fixtures and Phase 4 browser foundation; do not split the cutover concerns across independently landed commits.
 
-## Phase 6 — Logout UX and Authentication Polish
+## Phase 6 — Authentication UX Polish
 
 ### Goal
 
-Expose the NavBar logout action and polish auth-page/redirect/loading/error behavior without bypassing the workspace transition contract.
+Polish the already-functional authentication pages and coordinator without exposing a Logout action before the workspace transition contract exists.
 
 ### Why this phase comes now
 
-After the Phase 5 cutover, the coordinator and protected routes are real. The remaining UI work can be delivered without changing the security boundary, while the actual save-before-revoke orchestration remains a dependency of Phase 7.
+After the Phase 5 cutover, the coordinator, protected routes, and browser Setup/Login path are real. This phase improves the authentication experience without introducing a half-built browser action; complete Logout remains in Phase 7 with its save-before-revoke and Draft Store contract.
 
 ### Existing files affected
 
-`src/App.vue`, `src/router/index.ts`, `src/components/NavBar.vue`, `src/composables/useAuth.ts`, locale/style sources, and auth component/browser tests.
+`src/views/LoginView.vue`, `src/views/SetupView.vue`, `src/composables/useAuth.ts`, `src/router/index.ts`, `src/App.vue` only for auth-page chrome/redirect plumbing, locale/style sources, and auth component/browser tests. Do not add `src/components/NavBar.vue` for Logout in this phase.
 
 ### New files proposed
 
@@ -899,23 +900,23 @@ None beyond narrow fixes exposed by the cutover tests. Do not change provider, V
 
 ### Client changes
 
-Add the NavBar Logout affordance, coordinator logout request, compact auth-page visual polish, focus/loading/error/rate-limit states, and authenticated redirects away from `/login`/`/setup`. NavBar emits a transition intent; it must not directly revoke the session or unmount VaultView. Until the Phase 7 workspace adapter is available, the coordinator must route the intent through an explicit seam rather than perform an immediate revoke.
+Add compact auth-page visual polish, focus/loading/error/rate-limit states, authenticated redirects away from `/login`/`/setup`, and any necessary coordinator presentation refinements. Do not expose a clickable Logout affordance in this phase; no coordinator logout request or partial workspace transition seam should be browser-visible before Phase 7.
 
 ### Test changes
 
-Test logout affordance/keyboard behavior, coordinator handoff, auth-page polish, rate-limit messaging, authenticated redirects, and idempotent request behavior. Include a regression that NavBar cannot revoke before the workspace save/draft transition seam is invoked.
+Test auth-page keyboard/accessibility behavior, coordinator loading and error states, rate-limit messaging, authenticated redirects, stale-response protection, and idempotent auth-page behavior. Include a regression that no Logout affordance is exposed by this phase.
 
 ### Security invariants
 
-No public signup/social login, no token in URL/localStorage, no password logging, and all mutations continue through the server CSRF/session policy. Active logout must not become “revoke first, then unload workspace.”
+No public signup/social login, no token in URL/localStorage, no password logging, and all mutations continue through the server CSRF/session policy. Browser-visible authentication actions must not outpace the transition contract that makes them safe; Logout is intentionally absent until Phase 7.
 
 ### Compatibility risks
 
-`NavBar` is rendered globally while VaultView owns editor state. A direct logout call would race pending saves and drafts; the only allowed path is the coordinator/workspace transition seam completed in Phase 7.
+`NavBar` is rendered globally while VaultView owns editor state. Adding Logout here would create a visible action without a safe save/draft transition; keep that affordance in Phase 7, where the coordinator/workspace adapter is completed.
 
 ### CI safety strategy
 
-Run focused auth component/browser tests plus all existing unit, integration, build, and browser lanes. The application remains operable at this phase because the cutover is already complete and logout is a guarded transition request, not an unsafe immediate revoke.
+Run focused auth component/browser tests plus all existing unit, integration, build, and browser lanes. The application remains operable at this phase because the cutover is complete, the auth pages are functional, and no incomplete Logout affordance is exposed.
 
 ### Validation commands
 
@@ -923,25 +924,25 @@ Run focused auth component/browser tests plus all existing unit, integration, bu
 
 ### Acceptance criteria
 
-Auth pages and redirects are polished and accessible; NavBar can request logout through the coordinator; no direct revoke occurs before the Phase 7 save/flush adapter; provider/domain behavior is unchanged.
+Auth pages and redirects are polished and accessible; loading/focus/error behavior is consistent; no Logout affordance is exposed yet; provider/domain behavior is unchanged.
 
 ### Suggested commit(s)
 
-`feat(auth): add logout experience and auth polish` — NavBar/coordinator transition seam, auth-page polish, and focused UI/E2E tests; full save-before-revoke behavior remains in Phase 7.
+`style(auth): polish authentication experience` — auth-page polish, coordinator presentation states, redirects, and focused UI/E2E tests; no Logout affordance is introduced.
 
-## Phase 7 — Editor Save and Draft Recovery Auth Transitions
+## Phase 7 — Logout, Editor Save, and Draft Recovery Auth Transitions
 
 ### Goal
 
-Integrate active logout and session expiry with current save barriers, `useDocumentSave`, `useEditorTabs`, and Draft Store recovery.
+Introduce the complete Logout action together with active save-before-revoke and session-expiry transitions, integrating them with current save barriers, `useDocumentSave`, `useEditorTabs`, and Draft Store recovery.
 
 ### Why this phase comes now
 
-Only after the Phase 6 transition seam exists can the workspace safely expose save/flush/re-login behavior. This phase must preserve existing editor/recovery protocols.
+Only after the Phase 6 auth-page polish is complete should the workspace expose the complete Logout action. This phase owns the entire browser-visible Logout contract and must preserve existing editor/recovery protocols.
 
 ### Existing files affected
 
-`src/views/VaultView.vue`, `src/composables/vault/useEditorTabs.ts`, `src/composables/vault/editor-tabs/useDocumentSave.ts`, `src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts` only for exported transition seams, and relevant Draft Store/E2E tests.
+`src/components/NavBar.vue`, `src/App.vue`, `src/composables/useAuth.ts`, `src/views/VaultView.vue`, `src/composables/vault/useEditorTabs.ts`, `src/composables/vault/editor-tabs/useDocumentSave.ts`, `src/composables/vault/draft-recovery/useUnsavedDraftPersistence.ts` only for exported transition seams, and relevant Draft Store/E2E tests.
 
 ### New files proposed
 
@@ -957,23 +958,23 @@ None to save semantics, document mutation barriers, History/CAS, or recovery pro
 
 ### Client changes
 
-Expose a save-all-for-active-logout adapter built from current `savePromises`, `doSave`, and `prepareDocumentMutation`; register workspace callbacks; explicitly await `draftPersistence.flushAll()`; expiry skips all server saves and preserves drafts; release/cancel barriers deterministically.
+Add the NavBar Logout affordance and have NavBar emit only a Logout intent. App/coordinator invokes the registered Vault workspace transition, which uses a save-all-for-active-logout adapter built from current `savePromises`, `doSave`, and `prepareDocumentMutation`; inspect dirty/saving/conflict/offline state, wait for legal in-flight work, perform the final normal server save, explicitly await `draftPersistence.flushAll()`, warn/confirm on unsafe state, then call `POST /api/auth/logout` and navigate to login. Expiry skips all server saves, preserves drafts, and follows the protected identity/recovery path after re-login. Release/cancel barriers deterministically.
 
 ### Test changes
 
-Clean/dirty/saving/conflict/offline active logout, save failure confirmation, Draft Store flush failure, session expiry without server save, preserved primary/conflict records, re-login recovery, route restoration, duplicate expiry, and stale pre-login response tests. Add Playwright coverage using revoked/expired sessions.
+Logout affordance/keyboard behavior, NavBar intent emission, coordinator/workspace handoff, clean/dirty/saving/conflict/offline active logout, save failure confirmation, Draft Store flush failure, session expiry without server save, preserved primary/conflict records, re-login recovery, route restoration, duplicate expiry, and stale pre-login response tests. Add Playwright coverage using revoked/expired sessions.
 
 ### Security invariants
 
-Active logout uses the last valid server-save opportunity before revoke; expiry never sends data with an invalid session; Draft Store is never silently cleared; stale requests cannot overwrite new auth state.
+The Logout affordance is introduced only with its complete transition contract. Active logout uses the last valid server-save opportunity before revoke; expiry never sends data with an invalid session; Draft Store is never silently cleared; stale requests cannot overwrite new auth state.
 
 ### Compatibility risks
 
-Holding a `DocumentMutationBarrier` across a user confirmation can deadlock or resume timers incorrectly. Use the existing barrier's `commit()`/`rollback()` paths and ensure cancel resumes saves. Do not rely solely on component unmount/dispose for flush.
+`NavBar` must not fetch `/api/auth/logout`, revoke directly, or own save logic. Holding a `DocumentMutationBarrier` across a user confirmation can deadlock or resume timers incorrectly. Use the existing barrier's `commit()`/`rollback()` paths and ensure cancel resumes saves. Do not rely solely on component unmount/dispose for flush.
 
 ### CI safety strategy
 
-Keep the existing Recovery integration lane untouched. Run focused editor/Draft Store tests first, then full unit/History/Recovery and both Playwright lanes before merging.
+Keep the existing Recovery integration lane untouched. Run focused logout/editor/Draft Store tests first, then full unit/History/Recovery and both Playwright lanes before merging. The application remains operable because the first commit exposing Logout also contains the complete workspace transition.
 
 ### Validation commands
 
@@ -981,11 +982,11 @@ Keep the existing Recovery integration lane untouched. Run focused editor/Draft 
 
 ### Acceptance criteria
 
-Active logout never revokes before the legal save/flush decision; expiry never attempts server save; Draft Store survives both transitions; re-login restores route and normal recovery; existing editor save/conflict behavior is unchanged.
+Logout is visible only when the coordinator, workspace transition adapter, save barrier, Draft Store flush, revoke, and route transition are all present. Active logout never revokes before the legal save/flush decision; expiry never attempts server save; Draft Store survives both transitions; re-login restores route and normal recovery; existing editor save/conflict behavior is unchanged.
 
 ### Suggested commit(s)
 
-`feat(auth): preserve editor saves and drafts across auth transitions` — workspace transition adapter and focused editor/Draft Store/E2E coverage.
+`feat(auth): integrate logout with editor saves and draft recovery` — first browser-visible Logout affordance, coordinator/workspace transition adapter, save-before-revoke, Draft Store flush/expiry wiring, and focused editor/Draft Store/E2E coverage.
 
 ## Phase 8 — Deployment, CI, Documentation, and Release Hardening
 
@@ -1053,13 +1054,13 @@ Each commit should remain independently reviewable and avoid a giant `feat: add 
 2. `feat(auth): add owner setup and session endpoints` — bootstrap/runtime/service/rate-limit/CSRF/auth routes and API tests; application APIs still public temporarily.
 3. `test(auth): add real authenticated server and browser fixtures` — reusable in-memory owner/session helpers, Playwright storage fixture, and application-test migration; no bypass.
 4. `feat(auth): add browser authentication foundation` — auth API/coordinator, `/login`/`/setup`, routing/observation, and focused client/browser tests while application APIs remain anonymous.
-5. `feat(auth): enforce authentication boundary and vault identity` — the single atomic cutover: central middleware, health split, protected identity route, every client `vaultId` consumer migration, auth-session handling, required Docker/origin runtime wiring, fixture migration, and server/browser security tests.
-6. `feat(auth): add logout experience and auth polish` — NavBar/coordinator transition seam, auth-page polish, and UI/E2E tests; no direct revoke before the workspace seam.
-7. `feat(auth): preserve editor saves and drafts across auth transitions` — save barrier adapter, Draft Store flush/expiry wiring, recovery E2E.
+5. `feat(auth): enforce authentication boundary and vault identity` — the single atomic cutover: central middleware, health split, protected identity route, every client `vaultId` consumer migration, identity-before-workspace ordering, required Docker/origin runtime wiring, and server/browser security tests. It depends on the already-landed Phase 3 fixtures and Phase 4 browser foundation.
+6. `style(auth): polish authentication experience` — auth-page polish, coordinator presentation states, redirects, and focused UI/E2E tests; no Logout affordance is introduced.
+7. `feat(auth): integrate logout with editor saves and draft recovery` — first browser-visible Logout affordance, coordinator/workspace transition adapter, save-before-revoke, Draft Store flush/expiry wiring, and recovery E2E.
 8. `chore(auth): harden deployment verification` — only if real deployment/health/CI verification changes remain after the Phase 5 runtime wiring; never defer a required origin/setup configuration to this commit.
 9. `docs(auth): document owner authentication and deployment` — canonical README/deployment/architecture/testing/changelog updates.
 
-Rollout invariant for every commit: before commit 5, enforcement is inactive and the legacy application remains operable; commit 5 and every later commit have a complete browser Setup/Login path and an authenticated workspace path. Commit 5 is the only enforcement boundary and must include all fixture migrations, health/identity changes, client identity migration, and required runtime configuration in one reviewable unit. Commits 6–7 must preserve the active save/draft transition contracts. Commit 9 is documentation-only and must not modify the frozen PRD.
+Rollout invariant for every commit: before commit 5, enforcement is inactive and the legacy application remains operable; commit 5 and every later commit have a complete browser Setup/Login path and an authenticated workspace path. Commit 5 is the only enforcement boundary and must include the health/identity changes, every client identity migration, identity-before-workspace ordering, and required runtime configuration in one reviewable unit; Phase 3 fixtures and the Phase 4 browser foundation are prerequisites, not duplicate work in commit 5. Browser-visible feature atomicity is separate but equally mandatory: commit 6 exposes auth-page polish only, and commit 7 is the first commit that may expose Logout because it includes the complete save-before-revoke and Draft Store transition contract. Commit 9 is documentation-only and must not modify the frozen PRD.
 
 ## Review Gates
 
@@ -1086,7 +1087,7 @@ Rollout invariant for every commit: before commit 5, enforcement is inactive and
 
 ### Gate D — Atomic enforcement cutover
 
-- Phase 4 browser Setup/Login path is present before enforcement.
+- Phase 3 authenticated fixtures are already landed and green, and the Phase 4 browser Setup/Login path is already landed and usable; Phase 5 does not re-land either one.
 - Middleware is registered before route mounts; exact public allowlist and unknown-route fail-closed behavior pass.
 - `/api/health` exposes only `{ ok: true }`; `/api/vault/identity` is protected and all `vaultId` consumers use it.
 - Auth hydration precedes identity fetch, VaultView mount, tab persistence, and Draft Recovery; no null/default scope occurs.
@@ -1094,13 +1095,15 @@ Rollout invariant for every commit: before commit 5, enforcement is inactive and
 - Anonymous protected APIs fail before handlers; authenticated browser setup/login enters Vault immediately.
 - `401 + auth-session-required` is the only Docus expiry signal; AI/provider `401` remains local.
 
-### Gate E — Frontend polish and logout seam
+### Gate E — Authentication UX polish
 
-- Auth-page redirects, focus/loading/error states, and NavBar logout request behavior pass.
-- NavBar cannot revoke before the workspace transition seam is available.
+- Auth-page redirects, focus/loading/error states, accessibility behavior, and rate-limit presentation pass.
+- No Logout affordance is exposed by the polish-only phase.
 
-### Gate F — Recovery
+### Gate F — Logout and Recovery
 
+- Logout appears only with the complete workspace transition contract.
+- NavBar emits intent only; the coordinator/workspace adapter performs the save/draft decision before revoke.
 - Active logout uses final legal server save and then Draft Store flush.
 - Session expiry skips server save and preserves Draft Store.
 - Re-login restores route and normal recovery discovery.
@@ -1127,6 +1130,7 @@ Rollout invariant for every commit: before commit 5, enforcement is inactive and
 | Existing tests break after global auth | Prepare real fixtures before enforcement; migrate in batches | Full three Vitest lanes | 3–5 |
 | VaultView mounts before hydration | Async router guard/coordinator and identity request before component mount | Reload with valid/no/first-run state | 4–5 |
 | `vaultId` scoping regression | Preserve hash/value and key format; protected identity before restore | Tabs/Draft/Recovery identity tests | 5 |
+| Premature Logout affordance | Do not expose Logout before the Phase 7 save-before-revoke and Draft Store transition contract is complete | Phase 6 absence and Phase 7 full-transition browser tests | 6–7 |
 | Draft loss during logout | Existing save barrier + explicit `flushAll()` + confirmation on unsafe state | Dirty/conflict/offline/flush-failure E2E | 7 |
 | Stale API response after re-login | Monotonic auth generation on coordinator and request observation | Delayed response race test | 5–7 |
 | Docker `0.0.0.0`/public-origin confusion | Validate browser-facing origin only; retain loopback host publish | Compose/default and config tests | 5, 8 |
