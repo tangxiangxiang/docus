@@ -75,6 +75,8 @@ export type AiConnectionErrorCode =
   | 'ai-model-unavailable'
   | 'ai-connection-failed'
 
+export type AiApiErrorCode = AiKeyErrorCode | AiConnectionErrorCode
+
 export type AiConnectionState = 'untested' | 'checking' | 'connected' | 'failed'
 
 export interface AiConnectionTestResult {
@@ -87,13 +89,13 @@ export interface AiConnectionTestResult {
 
 export interface AiApiErrorBody {
   error?: string
-  code?: AiKeyErrorCode | AiConnectionErrorCode | 'openai-tools-unsupported'
+  code?: AiApiErrorCode
 }
 
 export type AiApiError = Error & {
   status: number
   body: AiApiErrorBody
-  code?: AiKeyErrorCode
+  code?: AiApiErrorCode
 }
 
 export interface AiCredentialStatus {

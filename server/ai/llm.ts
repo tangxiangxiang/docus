@@ -116,10 +116,10 @@ export interface AiConnectionProbeConfig {
 
 function connectionErrorCode(error: unknown): Exclude<AiConnectionErrorCode, 'ai-connection-timeout'> {
   const message = errorMessage(error)
-  if (/\b(401|403)\b|unauthori[sz]ed|authentication|invalid api key|incorrect api key/i.test(message)) {
+  if (/\b(401|403)\b|unauthori[sz]ed|forbidden|authentication[\s_-](?:failed|failure|error)|invalid (?:x-)?api[ -]?key|incorrect api key|invalid token/i.test(message)) {
     return 'ai-authentication-failed'
   }
-  if (/\b(404|400)\b|model.*(not found|unavailable)|unknown model|does not exist/i.test(message)) {
+  if (/(?:\b(?:unknown|invalid|unsupported)\s+model\b|\bmodel\b[^\n]{0,120}\b(?:not found|unavailable|does not exist|not available)\b|\bno such model\b)/i.test(message)) {
     return 'ai-model-unavailable'
   }
   return 'ai-connection-failed'

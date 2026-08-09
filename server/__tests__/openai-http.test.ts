@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyMigrations } from '../db'
 import { saveAiSettings } from '../ai/settings'
 import { ChatError } from '../ai/errors'
-import { clearChatBackendCache, generateText, getChatBackend } from '../ai/llm'
+import { AiConnectionError, clearChatBackendCache, generateText, getChatBackend, probeAiConnection } from '../ai/llm'
 import * as sessions from '../ai/sessions'
 import * as messages from '../ai/messages'
 import { runChat } from '../ai/chat'
@@ -221,10 +221,140 @@ describe('OpenAI-compatible HTTP protocol', () => {
         model: 'test-model',
       }),
     }))
-    const body = await result.text()
+    const body = await result.json() as { error?: string; code?: string }
     expect(result.status).toBe(401)
-    expect(body).toContain('[redacted]')
-    expect(body).not.toContain('transient-secret')
+    expect(body.code).toBe('ai-authentication-failed')
+    expect(body.error).toContain('[redacted]')
+    expect(body.error).not.toContain('transient-secret')
+  })
+
+  it.each([400, 404])('keeps a generic upstream %i response as a connection failure', async (status) => {
+    server = await startFakeOpenAiServer((_request, response) => {
+      response.writeHead(status, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: { message: status === 404 ? 'Not Found' : 'Bad Request' } }))
+    })
+    const result = await aiRoutes.fetch(new Request('http://localhost/settings/test-connection', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'openai',
+        apiKey: 'transient-api-key',
+        baseURL: `${server.baseURL}/v1`,
+        model: 'test-model',
+      }),
+    }))
+    const body = await result.json() as { code?: string }
+    expect(result.status).toBe(502)
+    expect(body.code).toBe('ai-connection-failed')
+    expect(body.code).not.toBe('ai-model-unavailable')
+  })
+
+  it('classifies an explicit model error as model unavailable', async () => {
+    server = await startFakeOpenAiServer((_request, response) => {
+      response.writeHead(404, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: { message: "The model 'missing-model' does not exist" } }))
+    })
+    const result = await aiRoutes.fetch(new Request('http://localhost/settings/test-connection', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'openai',
+        apiKey: 'transient-api-key',
+        baseURL: `${server.baseURL}/v1`,
+        model: 'missing-model',
+      }),
+    }))
+    const body = await result.json() as { code?: string }
+    expect(result.status).toBe(502)
+    expect(body.code).toBe('ai-model-unavailable')
+  })
+
+  it('reports unsupported tools through the Settings connection-test route without retrying', async () => {
+    server = await startFakeOpenAiServer((_request, response) => {
+      response.writeHead(400, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: { message: 'unsupported parameter: tools' } }))
+    })
+    const result = await aiRoutes.fetch(new Request('http://localhost/settings/test-connection', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'openai',
+        apiKey: 'transient-api-key',
+        baseURL: `${server.baseURL}/v1`,
+        model: 'test-model',
+      }),
+    }))
+    const body = await result.json() as { code?: string }
+    expect(result.status).toBe(502)
+    expect(body.code).toBe('openai-tools-unsupported')
+    expect(server.requests).toHaveLength(1)
+    expect(server.requests[0].body.tools).toBeDefined()
+  })
+
+  it('uses the max_completion_tokens fallback through the Settings connection-test route', async () => {
+    server = await startFakeOpenAiServer((request, response) => {
+      if (request.body.max_tokens !== undefined) {
+        response.writeHead(400, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ error: { message: 'unsupported parameter: max_tokens' } }))
+        return
+      }
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] }))
+    })
+    const result = await aiRoutes.fetch(new Request('http://localhost/settings/test-connection', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'openai',
+        apiKey: 'transient-api-key',
+        baseURL: `${server.baseURL}/v1`,
+        model: 'test-model',
+      }),
+    }))
+    expect(result.status).toBe(200)
+    expect(await result.json()).toMatchObject({ ok: true, model: 'test-model' })
+    expect(server.requests).toHaveLength(2)
+    expect(server.requests[0].body.max_tokens).toBe(16)
+    expect(server.requests[0].body.max_completion_tokens).toBeUndefined()
+    expect(server.requests[1].body.max_tokens).toBeUndefined()
+    expect(server.requests[1].body.max_completion_tokens).toBe(16)
+  })
+
+  it('keeps the Settings connection probe read-only when using a saved key', async () => {
+    server = await startFakeOpenAiServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] }))
+    })
+    saveAiSettings(db, {
+      provider: 'openai',
+      apiKey: 'saved-api-key',
+      baseURL: `${server.baseURL}/v1`,
+      model: 'saved-model',
+    })
+    const before = db.prepare('SELECT key, value FROM settings ORDER BY key').all()
+    const result = await aiRoutes.fetch(new Request('http://localhost/settings/test-connection', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'openai', baseURL: `${server.baseURL}/v1`, model: 'saved-model' }),
+    }))
+    expect(result.status).toBe(200)
+    expect(db.prepare('SELECT key, value FROM settings ORDER BY key').all()).toEqual(before)
+  })
+
+  it('preserves an explicit timeout classification for connection probes', async () => {
+    server = await startFakeOpenAiServer(() => {
+      // Deliberately leave the request open; the probe's short test timeout
+      // must abort it without waiting for the production ten-second limit.
+    })
+    await expect(probeAiConnection({
+      provider: 'openai',
+      apiKey: 'transient-api-key',
+      baseURL: `${server.baseURL}/v1`,
+      model: 'test-model',
+    }, undefined, 25)).rejects.toMatchObject({
+      name: 'AiConnectionError',
+      code: 'ai-connection-timeout',
+    } satisfies Partial<AiConnectionError>)
   })
 
   it('runs an equivalent transient Messages probe for Anthropic', async () => {
