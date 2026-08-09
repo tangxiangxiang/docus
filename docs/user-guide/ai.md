@@ -4,15 +4,16 @@
 
 Open Settings and choose either Anthropic or OpenAI. Enter the API key and, if needed, override the model or HTTP(S) base URL. Each provider keeps a separate saved configuration; switching providers does not copy credentials between them.
 
-The OpenAI provider uses the streaming Chat Completions-compatible protocol. Its
-Base URL is an API root such as `https://api.openai.com/v1` (or a custom path
-prefix), not the full `/chat/completions` endpoint. Docus appends that endpoint
-itself. Chat workspace actions require OpenAI function/tool calling support;
-some gateways support text generation but not the tools required for file
-actions, and Docus reports that incompatibility instead of silently continuing
-without tools.
+The OpenAI provider uses the streaming OpenAI-compatible Chat Completions
+protocol. Its Base URL is an API root such as `https://api.openai.com/v1` (or a
+custom path prefix), not the full `/chat/completions` endpoint. Docus appends
+that endpoint itself. Chat workspace actions require function/tool calling;
+some OpenAI-compatible gateways support text generation but not the tools
+required for file actions, and Docus reports that incompatibility instead of
+silently continuing without tools. During chat, streamed tokens are forwarded
+to the UI and persisted with the session.
 
-API keys are sent only to the Docus server, encrypted before SQLite storage, and never returned to the browser. Provider environment variables such as `ANTHROPIC_API_KEY` are not supported configuration paths.
+API keys are sent only to the Docus server, encrypted before SQLite storage, and never returned to the browser. Provider environment variables such as `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are not supported configuration paths.
 
 See [Deployment Security](../deployment/security.md) for the master-key model.
 
@@ -21,6 +22,49 @@ If provider credentials were encrypted with the auto-managed key and
 required. It does not generate a replacement key or modify the encrypted
 credentials. Restore the original file from backup, or configure the matching
 key through `DOCUS_MASTER_KEY` or `DOCUS_MASTER_KEY_FILE`.
+
+## Test the Current Connection
+
+Settings → AI includes a real, manual connection probe for the configuration
+currently shown in the form. Choose Anthropic or OpenAI, enter a new API key or
+keep the existing credential, set the Base URL and model, then click **Test
+connection**. Opening Settings, changing a field, switching providers, or
+saving does not contact the provider automatically.
+
+The probe tests the displayed provider, credential, Base URL, and model as one
+configuration. A newly entered API key is used immediately without being saved;
+when the API Key field is empty, Docus reuses the selected provider's saved key
+for a read-only test. Unsaved Base URL and model values are also used. The probe
+does not save these transient values or modify Settings. It makes a small
+provider request, so a successful test may use a small amount of API quota.
+
+The status is local to the Settings page and has four states:
+
+- **Not tested** — the current form has not been checked.
+- **Testing** — a probe is in progress.
+- **Connected** — the exact displayed provider, credential, Base URL, and model completed a real Docus-compatible probe. The result includes the provider, model, and latency.
+- **Connection failed** — the probe did not complete successfully and can be run again.
+
+Editing the provider, API key, Base URL, or model invalidates an old Connected
+status and returns it to **Not tested**. The same happens after saving or
+clearing a key, so the status never represents an older configuration.
+
+The probe is deliberately closer to a real Docus chat request than to a simple
+model-list lookup. OpenAI uses a small non-streaming Chat Completions request
+with one harmless tool definition and `tool_choice: auto`; Anthropic uses the
+equivalent minimal Messages request. A normal text response or a valid
+tool-capable response is enough. The harmless tool is not a workspace mutation.
+
+### Connection troubleshooting
+
+- **Authentication failure:** check the API key or token and that the provider account permits the request.
+- **Model unavailable:** confirm that the selected model exists for the configured provider. This status is used only when the provider explicitly identifies a model problem.
+- **Connection failure:** check the network and Base URL. For OpenAI-compatible providers, use the API root, such as `https://api.openai.com/v1`; Docus appends `/chat/completions` itself. A generic HTTP 400 or 404 can indicate a wrong endpoint, gateway prefix, or request shape rather than a missing model.
+- **Connection timeout:** verify the Base URL and network path. The probe has a bounded timeout of about 10 seconds.
+- **Tool/function-calling unsupported:** the OpenAI-compatible endpoint may support plain text generation but reject the tool capability Docus needs for workspace actions. Use a provider or model that supports tool/function calling.
+
+Provider errors are sanitized before they reach the browser, and API keys are
+redacted from visible error messages.
 
 ## Chat and Context
 

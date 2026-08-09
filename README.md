@@ -15,7 +15,7 @@ Docus is a self-hosted Markdown knowledge workspace for writing, organizing, ver
 - **Metadata and search** — SQLite-backed titles, summaries, tags, stable document IDs, file-tree filters, and a command palette.
 - **Links and backlinks** — resolve Wiki and relative Markdown links and keep references coordinated across supported renames and moves.
 - **Explicit history** — create, compare, restore, and withdraw versions in the vault's own Git repository.
-- **Optional AI** — Anthropic or OpenAI chat with live workspace context and validated file/metadata tools.
+- **Optional AI** — Anthropic or OpenAI chat with live workspace context and validated file/metadata tools. Settings includes a manual connection test that validates the currently displayed provider, credential, Base URL, and model before use without saving transient test values; see the [AI guide](docs/user-guide/ai.md).
 - **Self-hosted runtime** — one production process serves the Vue application and Hono API; Docker Compose is included.
 
 ## Quick Start

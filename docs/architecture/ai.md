@@ -41,7 +41,39 @@ Provider, model, base URL, and API key are configured in Settings and stored in 
 
 The master key is not stored in SQLite. Losing it makes stored provider keys unreadable; exposing it together with the database exposes those keys.
 
+## Settings connection probe
+
+The Settings connection test validates the exact provider, credential, Base URL,
+and model currently displayed by the user without turning those values into a
+saved configuration:
+
+```mermaid
+flowchart LR
+  Form["Settings form"] --> Route["POST /api/ai/settings/test-connection"]
+  Route --> Config["Transient provider config + read-only saved credential fallback"]
+  Config --> Probe["Minimal provider probe"]
+  Probe --> Result["Safe result"]
+  Result --> NoWrite["No settings persistence"]
+```
+
+An unsaved API key, Base URL, or model is passed only to this request. If the
+API Key field is empty, the route reads the selected provider's saved credential
+without triggering credential migration or writing any `ai.*` settings rows.
+The probe bypasses the normal chat session, streaming, and persistence flow and
+does not execute workspace mutation tools. Its harmless tool definition exists
+only to verify the tool/function-calling capability required by normal Docus
+workspace actions.
+
+OpenAI uses a non-streaming Chat Completions-compatible request at the configured
+API root; Docus appends `/chat/completions`. Anthropic uses a non-streaming
+Messages API request. Neither provider is tested by merely calling a Models API.
+The probe disables SDK retries and has an approximately 10-second bound. OpenAI
+starts with `max_tokens` and makes at most one compatibility retry with
+`max_completion_tokens` when the provider explicitly rejects the former; other
+provider failures are not retried by this compatibility path.
+Provider errors are classified and sanitized before returning to the browser;
+secrets in upstream messages are replaced with `[redacted]`.
+
 ## Trust boundary
 
 AI output is untrusted input. Tool safety policy blocks unsupported or unsafe mutations, but users should still review results and keep backups. The AI Markdown renderer disables raw HTML. See [AI Assistant](../user-guide/ai.md) and [Security Model](security.md).
-

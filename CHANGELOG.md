@@ -2,6 +2,16 @@
 
 All notable changes to Docus are documented in this file.
 
+## AI Provider & Settings Hardening — 2026-08-09
+
+- Added separate Anthropic and OpenAI provider settings with encrypted saved credentials.
+- Hardened OpenAI-compatible streaming Chat Completions support, API-root Base URL validation, streamed-response persistence, and the bounded `max_tokens` → `max_completion_tokens` compatibility fallback.
+- Added explicit diagnostics for OpenAI-compatible tool/function-calling incompatibility.
+- Added a real manual Settings connection probe for the current transient provider configuration. Probes are read-only, bounded, non-persistent, and redact API keys.
+- Improved connection failure classification for authentication, explicit model errors, timeouts, tool incompatibility, and generic endpoint failures.
+- Tightened the Settings UI controls and simplified Base URL guidance.
+- Standardized History and Crash Recovery integration lanes for cross-platform CI, including Windows-specific serialization where needed.
+
 ## Tags Query & Index Refactor — Process Closure — 2026-07-30
 
 - Completed retrospective process repair for the Tags Query & Index Refactor.
