@@ -30,6 +30,7 @@ The implementation must preserve these boundaries:
 6. Preserve current save barriers and browser Draft Store APIs instead of creating a second editor-save implementation.
 7. Keep ordinary unit tests fast; preserve the existing History and Recovery integration lanes.
 8. Land small, reviewable commits that keep typecheck, build, and the relevant test lanes green.
+9. Enforce one rollout invariant across every phase and commit: either application authentication enforcement is not active and the legacy application remains operable, or enforcement is active and a complete browser Setup/Login path can establish an owner session. There must be no landed state where protected APIs are enabled but the browser cannot authenticate.
 
 ## Current Architecture Reconnaissance
 
@@ -130,17 +131,16 @@ flowchart TD
   P --> A["auth runtime/service/routes"]
   S --> A
   A --> F["real authenticated server fixtures"]
-  F --> T["central /api protection"]
-  T --> V["vault identity endpoint + API security tests"]
-  V --> C["client auth API + coordinator"]
-  C --> R["router hydration and guards"]
-  R --> U["login/setup views + application logout"]
-  U --> D["save barrier + Draft Store auth transitions"]
+  A --> G["frontend auth foundation while APIs remain anonymous"]
+  F --> T["atomic enforcement cutover"]
+  G --> T
+  T --> L["logout UX + auth polish"]
+  L --> D["save barrier + Draft Store auth transitions"]
   D --> E["authenticated Playwright + recovery E2E"]
-  E --> X["Docker / CI / docs hardening"]
+  E --> X["deployment / CI / docs hardening"]
 ```
 
-The critical sequencing rule is `F` before `T`: existing application tests receive real sessions before the middleware is made mandatory.
+The critical sequencing rules are `F` and `G` before `T`: existing application tests receive real sessions and a usable browser Setup/Login path exists before the middleware is made mandatory. `T` is one atomic cutover that includes enforcement, the health/identity split, every browser identity consumer migration, and the runtime configuration required for the selected cookie profile.
 
 ## Target Request Flow
 
@@ -315,6 +315,12 @@ Other planned environment controls:
 | `DOCUS_AUTH_REVOKE_SESSIONS_ON_START=1` | On the next startup, after auth migration/runtime initialization and before serving requests, delete/revoke all `auth_sessions` rows. It is an operator convention/one-shot deployment setting; Docus must not mutate the environment variable. Logs contain only a safe event, never token data. |
 | `HOST`, `PORT`, `VAULT_DIR` | Preserve current listener/vault semantics; none controls cookie security. |
 
+### Enforcement prerequisite wiring
+
+The runtime configuration that makes the selected authentication profile usable must land before or with the enforcement cutover, not in the final documentation phase. The implementation must wire `DOCUS_PUBLIC_ORIGIN`, `DOCUS_SETUP_TOKEN`, and `DOCUS_AUTH_REVOKE_SESSIONS_ON_START` through the real startup and Docker paths before protected application APIs are enabled. The default Compose deployment must resolve its browser-facing origin as `http://127.0.0.1:${DOCS_PORT:-3000}` while the container may still listen on `HOST=0.0.0.0`. `HOST` is only an internal listener binding and never selects cookie security.
+
+Phase 8 may add examples, reverse-proxy guidance, and release documentation, but it must not be the first phase in which the default Docker/local runtime can boot with a valid authentication configuration.
+
 ### Runtime initialization
 
 Implement `initializeAuthRuntime()` as an explicit startup step:
@@ -424,14 +430,14 @@ Reuse existing Docus theme variables and compact controls. Do not mount NavBar, 
 
 ## Vault Identity Migration
 
-Implement this as an endpoint migration, not an identity redesign:
+Implement this as an endpoint migration, not an identity redesign. The health change, protected endpoint, and every browser consumer migration are one atomic Phase 5 cutover; they must not land as separate commits:
 
 1. Keep the existing stable `VAULT_ID` derivation in a shared server identity helper so health and identity do not duplicate it.
 2. Change `/api/health` to `{ ok: true }` only.
 3. Add protected `GET /api/vault/identity` returning `{ vaultId }`.
-4. Add `src/lib/auth-api.ts` (or a narrowly scoped vault identity wrapper) and change `useTabPersistence.ts` to call it once per VaultView mount.
+4. Reuse the Phase 4 auth API/coordinator contract and change `useTabPersistence.ts` plus every direct or indirect stable-identity consumer to call the protected endpoint in the same Phase 5 unit.
 5. Keep the existing `docus:tabs:v1:<vaultId>` key format and `vaultId` values passed into `useEditorTabs`, Draft Store, `VaultView` recovery, document identity, AI live context, and recovery-family logic.
-6. Ensure auth hydration resolves identity before VaultView begins `refresh()`, tab restoration, and recovery discovery.
+6. Ensure auth hydration resolves identity before VaultView begins `refresh()`, tab restoration, and recovery discovery; no consumer may initialize with `vaultId=null` or a temporary default scope.
 7. Add anonymous/protected identity tests and update the health mount test to assert no `vaultId`.
 
 ## Logout / Session Expiration Plan
@@ -556,7 +562,7 @@ If the current production sequence needs `getDb()` for recovery before the expli
 ## Docker and Deployment Plan
 
 - Preserve `HOST=0.0.0.0` inside the image and default Compose host publication `127.0.0.1:${DOCS_PORT:-3000}:3000`.
-- Add eventual `DOCUS_PUBLIC_ORIGIN` and `DOCUS_SETUP_TOKEN` examples to `.env.example`/Compose only in the implementation/docs phase; do not add them in this planning task.
+- The Phase 5 implementation must wire `DOCUS_PUBLIC_ORIGIN`, `DOCUS_SETUP_TOKEN`, and `DOCUS_AUTH_REVOKE_SESSIONS_ON_START` through the runtime/Compose path before enforcement. Phase 8 may add or refine `.env.example`/Compose examples and deployment docs, but must not defer the required runtime configuration.
 - Document local Docker origin as `http://127.0.0.1:<published-port>` and reverse-proxy origin as explicit `https://...`.
 - Do not infer public exposure from container binding and do not auto-trust `X-Forwarded-Proto`, `X-Forwarded-Host`, or `X-Forwarded-For`.
 - Keep `/api/health` anonymous and minimal so the existing Docker healthcheck remains valid. A separate authenticated smoke check should be added only with a real setup/session fixture.
@@ -669,7 +675,7 @@ Cover setup/login/status/logout, wrong/missing token, second/concurrent setup, u
 
 ### Security invariants
 
-Only the auth routes are public by intent; setup closes permanently after the first owner; no raw secret or nested error envelope; provider `401` codes are not involved in this phase.
+The new auth routes are public by intent, while existing application routes remain legacy-anonymous until the Phase 5 cutover; setup closes permanently after the first owner; no raw secret or nested error envelope is introduced; provider `401` codes are not involved in this phase.
 
 ### Compatibility risks
 
@@ -749,23 +755,139 @@ Every application route test that will be protected has a reusable real session;
 
 `test(auth): add real authenticated server and browser fixtures` — helper infrastructure and fixture migration; middleware still disabled, so existing behavior remains green.
 
-## Phase 4 — Central API Protection and Vault Identity
+## Phase 4 — Frontend Authentication Foundation
 
 ### Goal
 
-Enable the default-protect `/api/*` boundary, minimize health, add protected vault identity, and finish server test migration.
+Prepare a complete, minimum viable browser Setup/Login path, auth coordinator, and routing foundation while application APIs remain anonymously usable. This phase makes the browser ready for enforcement; it does not enable the global protected `/api/*` boundary.
 
 ### Why this phase comes now
 
-The auth API and all affected test fixtures now exist. This is the first phase that changes anonymous application access.
+The Phase 2 auth endpoints are already real and Phase 3 fixtures are available. Building the client path now prevents any later main commit from enforcing APIs before a normal user can establish an owner session. The legacy application remains operable at the end of this phase because no application route is protected yet.
 
 ### Existing files affected
 
-`server/index.ts`, `server/routes/health.ts`, `server/routes/shared.ts` or a shared identity helper, all migrated `server/__tests__` route tests, and `src/composables/vault/editor-tabs/useTabPersistence.ts` only after the frontend coordinator can call the identity endpoint.
+`src/main.ts`, `src/App.vue`, `src/router/index.ts`, existing API wrappers/direct fetch consumers only for the shared observation seam, and the existing locale/style/test conventions.
 
 ### New files proposed
 
-`server/auth/middleware.ts`, `server/routes/vaultIdentity.ts`, and focused `server/__tests__/auth-middleware.test.ts`/identity tests.
+`src/lib/auth-api.ts`, `src/lib/auth-session.ts`, `src/composables/useAuth.ts`, `src/views/LoginView.vue`, `src/views/SetupView.vue`, and focused component/composable tests.
+
+### Database changes
+
+None. Use the Phase 2 API; do not add client-side auth persistence or a browser token store.
+
+### Server changes
+
+None to application protection. `/api/auth/*` remains public by the Phase 2 allowlist, while existing Vault/Metadata/AI/History APIs remain anonymously accessible until the atomic Phase 5 cutover.
+
+### Client changes
+
+Implement the singleton auth coordinator, hydration states (`unknown`, `setup-required`, `unauthenticated`, `authenticated`), `/login` and `/setup` routes, safe internal redirect validation, compact accessible forms, client-only `confirmPassword`, loading/focus/error states, exact `401 + auth-session-required` observation infrastructure, and generation/stale-response guards. The coordinator may expose a protected-identity request contract, but it must not start VaultView or change the current anonymous identity consumer before Phase 5.
+
+### Test changes
+
+Add unit/component tests for hydration, setup-required and unauthenticated routing, valid-session routing, login/setup submission, malformed redirect rejection, generic errors, rate-limit messaging, Enter/focus/ARIA behavior, no duplicate `confirmPassword` wire field, exact session-expiry classification, AI/provider `401` isolation, and late-response generation guards. Add a browser smoke that can complete the real Phase 2 setup/login path while the workspace API remains anonymous.
+
+### Security invariants
+
+No bearer token, localStorage auth token, signup, social login, or `NODE_ENV=test` bypass. Frontend state is UX only; the server remains authoritative. Only the top-level `auth-session-required` code is observed as Docus session expiry.
+
+### Compatibility risks
+
+`Response` bodies are single-consumption; use `Response.clone()` before shared auth observation and preserve AI/History/SSE parsers. Keep the existing Vault shell operable for anonymous callers in this phase, and do not mount `VaultView` through the new guard until the identity ordering is cut over atomically.
+
+### CI safety strategy
+
+This commit is independently safe because global application enforcement is still off and the current anonymous workspace path remains available. Run the existing unit, History, Recovery, build, and browser lanes plus focused auth UI/API tests. A green fixture alone is insufficient: the browser-visible legacy application must remain usable at this commit.
+
+### Validation commands
+
+`npm run typecheck`, focused auth client tests, `npm run test:unit`, `npm run test:history-integration`, `npm run test:recovery-integration`, `npm run build`, `npm run test:e2e`, and `npm run test:e2e:draft-store`.
+
+### Acceptance criteria
+
+An operator can reach `/setup`, create the single owner through the real Phase 2 API, log in through `/login`, and return to the current workspace path; unauthenticated users do not see a broken auth loop; no global protection is active; no client auth secret is persisted.
+
+### Suggested commit(s)
+
+`feat(auth): add browser authentication foundation` — auth API/coordinator, routes/views, response observation, and focused client/browser tests; application APIs remain anonymous.
+
+## Phase 5 — Authentication Enforcement Cutover
+
+### Goal
+
+Perform the one explicit atomic cutover from legacy anonymous application APIs to authenticated application APIs. This phase simultaneously enables the server boundary, splits public liveness from protected vault identity, migrates every browser identity consumer, and wires the runtime configuration required for the selected cookie profile.
+
+### Why this phase comes now
+
+Phase 2 provides real setup/login endpoints, Phase 3 provides real authenticated fixtures, and Phase 4 provides a usable browser path. The rollout invariant is now satisfiable: this phase may turn enforcement on because a normal browser can immediately establish an owner session.
+
+### Existing files affected
+
+`server/index.ts`, `server/routes/health.ts`, shared vault identity helpers, `server/prod.ts`, `server/vite-plugin.ts`, `server/prodConfig.ts` only where required by runtime wiring, `src/App.vue`, `src/router/index.ts`, `src/views/VaultView.vue`, `src/composables/vault/editor-tabs/useTabPersistence.ts`, `src/composables/vault/useEditorTabs.ts`, Draft Store/recovery startup consumers, all protected server tests, `Dockerfile`, `docker-compose.yml`, and `.env.example` only for the required runtime configuration.
+
+### New files proposed
+
+`server/auth/middleware.ts`, `server/routes/vaultIdentity.ts`, a shared server identity helper if needed, and focused middleware/identity/mount/cutover tests. Reuse the Phase 4 client auth modules; do not create a second client auth coordinator.
+
+### Database changes
+
+None beyond the Phase 1 migration and Phase 2 runtime. The stable vault identity value and all existing instance-scoped rows remain unchanged.
+
+### Server changes
+
+Register `app.use('/api/*', authBoundary)` before route mounts. Allow only exact public `/api/auth/*` endpoints and liveness `/api/health`; unknown `/api/*` paths fail closed. Protected requests return the existing top-level envelope `401 { error: "Authentication required.", code: "auth-session-required" }` with `Cache-Control: no-store`; provider/domain `401` codes remain untouched. Change `/api/health` to `{ ok: true }` only and add protected `GET /api/vault/identity` returning the existing stable identity. Apply the existing CSRF/Origin/Fetch-Metadata policy without breaking bodyless DELETE.
+
+### Client changes
+
+Complete the identity-before-workspace sequence: auth hydration → authenticated state → `GET /api/vault/identity` → VaultView mount → tab persistence/Draft Store/recovery initialization. Migrate `useTabPersistence` and every direct or indirect stable-identity consumer to the protected identity client in this same cutover. Preserve the `docus:tabs:v1:<vaultId>` localStorage key/value semantics and never start a consumer with `vaultId=null` or a temporary default scope. Keep exact `auth-session-required` handling and generation guards from Phase 4.
+
+### Test changes
+
+In one reviewable implementation unit, assert anonymous failure before handlers for every current sensitive route family and unknown `/api/*`, authenticated compatibility, exact public allowlist, health without `vaultId`, protected identity, no-store, cookie profile selection, AI/provider-401 isolation, and mount ordering. Add tests proving every tab/Draft/Recovery/workspace identity consumer uses the protected identity and that an authenticated browser reaches Vault immediately after cutover. Add Docker/default-origin and custom-`DOCS_PORT` checks using the real runtime configuration.
+
+### Security invariants
+
+This is the only enforcement boundary. There is no intermediate state with protected APIs and no usable browser Setup/Login path. Only `401 + auth-session-required` triggers Docus session expiry; AI/provider authentication errors remain local. Public health is liveness-only, stable identity is protected, unknown APIs fail closed, no forwarded headers are trusted, and no test bypass exists.
+
+### Compatibility risks
+
+Hono middleware ordering, route sub-app matching, direct subrouter tests, Docker health checks, and workspace startup races are cutover risks. Removing `vaultId` from health and migrating all consumers to `/api/vault/identity` must be one atomic change; splitting them would create a broken localStorage/Draft scope. Verify the mount before broad route migration.
+
+### CI safety strategy
+
+Do not call this commit safe merely because authenticated fixtures make CI green. The same commit must include the browser foundation, real fixture migration, middleware enforcement, health/identity split, all client consumers, and required Docker/origin wiring, and must leave the browser-visible application operable through setup/login/workspace. Run all Vitest lanes, build, browser/Draft Store, and Docker smoke checks without global timeout/worker changes.
+
+### Validation commands
+
+`npm run typecheck`, `npm run test:unit`, `npm run test:history-integration`, `npm run test:recovery-integration`, `npm run build`, `npm run test:e2e`, `npm run test:e2e:draft-store`, and the existing Docker smoke command.
+
+### Acceptance criteria
+
+The cutover lands as one reviewable unit: middleware enforcement, exact public allowlist, liveness-only health, protected identity, every `vaultId` consumer migration, identity-before-workspace startup, auth-session handling, runtime `DOCUS_PUBLIC_ORIGIN`/setup/revocation wiring, and corresponding tests are all present. An unauthenticated request cannot reach protected handlers; an authenticated browser can set up/login and enter Vault immediately; tab and Draft/Recovery scopes remain stable.
+
+### Suggested commit(s)
+
+`feat(auth): enforce authentication boundary and vault identity` — the atomic cutover containing middleware enforcement, health/identity split, client identity migration, runtime Docker/origin wiring, fixture migration, and security/browser tests. Do not split these concerns across independently landed commits.
+
+## Phase 6 — Logout UX and Authentication Polish
+
+### Goal
+
+Expose the NavBar logout action and polish auth-page/redirect/loading/error behavior without bypassing the workspace transition contract.
+
+### Why this phase comes now
+
+After the Phase 5 cutover, the coordinator and protected routes are real. The remaining UI work can be delivered without changing the security boundary, while the actual save-before-revoke orchestration remains a dependency of Phase 7.
+
+### Existing files affected
+
+`src/App.vue`, `src/router/index.ts`, `src/components/NavBar.vue`, `src/composables/useAuth.ts`, locale/style sources, and auth component/browser tests.
+
+### New files proposed
+
+No new auth architecture; extend the Phase 4 views/coordinator and add focused UI tests only.
 
 ### Database changes
 
@@ -773,155 +895,39 @@ None.
 
 ### Server changes
 
-Register `app.use('/api/*', authBoundary)` before route mounts; allowlist exact health/auth paths; protect unknown APIs; attach safe owner context; add no-store; change health to liveness-only; serve the existing stable ID from protected `/api/vault/identity`.
+None beyond narrow fixes exposed by the cutover tests. Do not change provider, Vault, History, or session semantics.
 
 ### Client changes
 
-Prepare the identity API call and switch tab persistence only if the auth coordinator/API contract is in place; otherwise land the endpoint/client migration in the first frontend phase as one safe unit. Preserve the existing localStorage key/value.
+Add the NavBar Logout affordance, coordinator logout request, compact auth-page visual polish, focus/loading/error/rate-limit states, and authenticated redirects away from `/login`/`/setup`. NavBar emits a transition intent; it must not directly revoke the session or unmount VaultView. Until the Phase 7 workspace adapter is available, the coordinator must route the intent through an explicit seam rather than perform an immediate revoke.
 
 ### Test changes
 
-Assert anonymous 401 envelopes for every route family/unknown API, authenticated response compatibility, no handler side effects before auth, health without `vaultId`, identity protected/public behavior, no-store, cookie strictness, AI provider-401 isolation, and existing app tests via fixture.
+Test logout affordance/keyboard behavior, coordinator handoff, auth-page polish, rate-limit messaging, authenticated redirects, and idempotent request behavior. Include a regression that NavBar cannot revoke before the workspace save/draft transition seam is invoked.
 
 ### Security invariants
 
-All sensitive APIs fail closed; only `401 + auth-session-required` is the Docus session signal; no public stable vault identity; future API routes are protected by default.
+No public signup/social login, no token in URL/localStorage, no password logging, and all mutations continue through the server CSRF/session policy. Active logout must not become “revoke first, then unload workspace.”
 
 ### Compatibility risks
 
-Hono middleware ordering, route sub-app path matching, route tests that call subrouters directly, Docker healthcheck, and client startup ordering. Verify Hono `app.use('/api/*')` behavior with a mount test before changing every suite.
+`NavBar` is rendered globally while VaultView owns editor state. A direct logout call would race pending saves and drafts; the only allowed path is the coordinator/workspace transition seam completed in Phase 7.
 
 ### CI safety strategy
 
-Land middleware and fixture migrations in the same reviewable unit or keep the boundary behind no runtime flag until all fixtures are ready. Never add `NODE_ENV=test` bypass. Run the complete server/test lanes and Docker health smoke.
+Run focused auth component/browser tests plus all existing unit, integration, build, and browser lanes. The application remains operable at this phase because the cutover is already complete and logout is a guarded transition request, not an unsafe immediate revoke.
 
 ### Validation commands
 
-`npm run typecheck`, `npm run test:unit`, `npm run test:history-integration`, `npm run test:recovery-integration`, `npm run build`, Docker smoke, then Playwright lanes.
+`npm run typecheck`, `npm run test:unit`, `npm run test:history-integration`, `npm run test:recovery-integration`, `npm run build`, `npm run test:e2e`.
 
 ### Acceptance criteria
 
-Anonymous protected requests fail before handlers; authenticated existing behavior is unchanged; health is liveness-only; identity is protected and consumed by tab/draft/recovery scoping; unknown `/api/*` is not public.
+Auth pages and redirects are polished and accessible; NavBar can request logout through the coordinator; no direct revoke occurs before the Phase 7 save/flush adapter; provider/domain behavior is unchanged.
 
 ### Suggested commit(s)
 
-`feat(auth): enforce protected API boundary and vault identity` — middleware, health/identity split, server fixture migration, and route security tests; all protected application tests run through real sessions.
-
-## Phase 5 — Frontend Auth State, API Coordination, and Routing
-
-### Goal
-
-Add the auth API client/coordinator, generation-safe `auth-session-required` observation, hydration, route guards, and identity-before-workspace startup.
-
-### Why this phase comes now
-
-The server boundary is now real and tested; the client must stop mounting VaultView anonymously without changing the domain workspace.
-
-### Existing files affected
-
-`src/main.ts`, `src/App.vue`, `src/router/index.ts`, `src/lib/api.ts`, `src/lib/ai-api.ts`, `src/lib/history-api.ts`, `src/lib/search.ts`, `src/views/VaultView.vue`, `src/composables/vault/useEditorTabs.ts`, and `src/composables/vault/editor-tabs/useTabPersistence.ts`.
-
-### New files proposed
-
-`src/lib/auth-api.ts`, `src/lib/auth-session.ts`, `src/composables/useAuth.ts`, and focused client/composable tests.
-
-### Database changes
-
-None.
-
-### Server changes
-
-No protocol changes. Add only any narrow response/header contract needed by the client tests; preserve provider/domain error codes.
-
-### Client changes
-
-Hydrate once before workspace mount; add `/login`/`/setup` guards; validate redirects; use `Response.clone()` auth observation; migrate `useTabPersistence` to protected identity; block duplicate/stale transitions; keep specialized client errors.
-
-### Test changes
-
-Component/composable tests for all auth states, no login flash, redirects, malformed redirect rejection, identity ordering, one expiry notification, AI 401 isolation, generation guards, and late response behavior.
-
-### Security invariants
-
-Frontend is UX only; protected server routes remain authoritative. No bearer token/localStorage auth. Only `auth-session-required` triggers expiry.
-
-### Compatibility risks
-
-Response bodies can be consumed only once; clone before inspection. SSE/error parsing, History details, edit conflicts, and direct search fetches must remain intact. Do not make `VaultView` mount before identity/hydration.
-
-### CI safety strategy
-
-Auth routes/views can be tested in isolation while authenticated E2E fixture from Phase 3 continues to serve Vault. Run browser tests after guard integration to catch mount/redirect races.
-
-### Validation commands
-
-`npm run typecheck:client`, focused client tests, `npm run test:unit`, `npm run build`, `npm run test:e2e`, and `npm run test:e2e:draft-store`.
-
-### Acceptance criteria
-
-Fresh/unauthenticated/authenticated startup routes correctly; valid sessions never flash login; VaultView waits for identity; client 401 classification is exact and generation-safe; existing API error behavior remains.
-
-### Suggested commit(s)
-
-`feat(auth): add client hydration and protected-route coordination` — auth API/coordinator/router/API observation/identity migration with component tests.
-
-## Phase 6 — Login, Setup, and Application Logout UX
-
-### Goal
-
-Implement compact Login/Setup views, connect NavBar logout, and wire normal auth actions without redesigning the Docus shell.
-
-### Why this phase comes now
-
-The coordinator and routing contract are stable; UI can now expose real server operations without being mistaken for the security boundary.
-
-### Existing files affected
-
-`src/App.vue`, `src/router/index.ts`, `src/components/NavBar.vue`, `src/composables/useAuth.ts`, `src/composables/useI18n.ts` or existing locale source, and global styles only for auth-page conventions.
-
-### New files proposed
-
-`src/views/LoginView.vue`, `src/views/SetupView.vue`, and component tests.
-
-### Database changes
-
-None.
-
-### Server changes
-
-None beyond fixes required by Phase 2 API tests; no provider/Vault/History changes.
-
-### Client changes
-
-Forms, focus/keyboard/error/loading states, redirect handling, compact auth layout, NavBar Logout emission, and authenticated redirect away from auth pages.
-
-### Test changes
-
-Setup/login/logout UI, generic errors, rate-limited messaging, no duplicate confirmPassword wire field, Enter submission, focus/aria behavior, authenticated-user redirect, and logout idempotence.
-
-### Security invariants
-
-No public signup/social login, no token in URL/localStorage, no password logging, and all mutations still use the server routes/CSRF policy.
-
-### Compatibility risks
-
-`NavBar` is rendered globally while VaultView owns editor state. Logout must call the coordinator/workspace transition adapter, not revoke immediately from NavBar or unmount VaultView before drafts are flushed.
-
-### CI safety strategy
-
-Auth component tests are isolated; Playwright auth specs use the real setup/login flow. Existing authenticated fixture keeps ordinary E2E green.
-
-### Validation commands
-
-`npm run typecheck`, `npm run test:unit`, `npm run build`, `npm run test:e2e`.
-
-### Acceptance criteria
-
-Login/setup are compact, accessible, real, and server-enforced; NavBar logout requests the coordinator; no vault chrome appears on auth pages; ordinary workspace E2E still uses reusable auth state.
-
-### Suggested commit(s)
-
-`feat(auth): add login setup and logout experience` — views, route wiring, NavBar action, i18n/style, and component/E2E tests.
+`feat(auth): add logout experience and auth polish` — NavBar/coordinator transition seam, auth-page polish, and focused UI/E2E tests; full save-before-revoke behavior remains in Phase 7.
 
 ## Phase 7 — Editor Save and Draft Recovery Auth Transitions
 
@@ -931,7 +937,7 @@ Integrate active logout and session expiry with current save barriers, `useDocum
 
 ### Why this phase comes now
 
-Only after auth transitions and UI exist can the workspace safely expose save/flush/re-login behavior. This phase must preserve existing editor/recovery protocols.
+Only after the Phase 6 transition seam exists can the workspace safely expose save/flush/re-login behavior. This phase must preserve existing editor/recovery protocols.
 
 ### Existing files affected
 
@@ -989,7 +995,7 @@ Make the implementation operable in dev, bare-metal, Docker, reverse-proxy, back
 
 ### Why this phase comes now
 
-Deployment behavior depends on the final cookie/runtime contract and all test fixtures. Documentation should describe shipped behavior, not an intermediate implementation.
+Deployment documentation and final verification depend on the cookie/runtime contract and all test fixtures. The actual configuration wiring needed for authentication already lands with the Phase 5 cutover; this phase documents and verifies that shipped behavior rather than deferring runtime readiness.
 
 ### Existing files affected
 
@@ -1046,14 +1052,14 @@ Each commit should remain independently reviewable and avoid a giant `feat: add 
 1. `feat(auth): add persistence and credential primitives` — `0006` migration, config, password/session/KDF primitives and tests; no route enforcement.
 2. `feat(auth): add owner setup and session endpoints` — bootstrap/runtime/service/rate-limit/CSRF/auth routes and API tests; application APIs still public temporarily.
 3. `test(auth): add real authenticated server and browser fixtures` — reusable in-memory owner/session helpers, Playwright storage fixture, and application-test migration; no bypass.
-4. `feat(auth): enforce protected API boundary and vault identity` — central middleware, health split, identity route, server security tests, and protected test migration.
-5. `feat(auth): add client hydration and protected-route coordination` — auth API/coordinator, exact 401 observation, router guards, identity client migration, client tests.
-6. `feat(auth): add login setup and logout experience` — auth views, NavBar action, i18n/styles, UI/E2E tests.
+4. `feat(auth): add browser authentication foundation` — auth API/coordinator, `/login`/`/setup`, routing/observation, and focused client/browser tests while application APIs remain anonymous.
+5. `feat(auth): enforce authentication boundary and vault identity` — the single atomic cutover: central middleware, health split, protected identity route, every client `vaultId` consumer migration, auth-session handling, required Docker/origin runtime wiring, fixture migration, and server/browser security tests.
+6. `feat(auth): add logout experience and auth polish` — NavBar/coordinator transition seam, auth-page polish, and UI/E2E tests; no direct revoke before the workspace seam.
 7. `feat(auth): preserve editor saves and drafts across auth transitions` — save barrier adapter, Draft Store flush/expiry wiring, recovery E2E.
-8. `chore(auth): harden deployment verification` — only if needed for environment/health/Docker/CI verification changes.
+8. `chore(auth): harden deployment verification` — only if real deployment/health/CI verification changes remain after the Phase 5 runtime wiring; never defer a required origin/setup configuration to this commit.
 9. `docs(auth): document owner authentication and deployment` — canonical README/deployment/architecture/testing/changelog updates.
 
-For commits 1–3, the existing application remains usable and CI stays green without a middleware flag. Commit 4 is the enforcement boundary and must include all prepared fixture migrations. Commits 5–7 change client mounting/transition behavior and must run the browser lanes. Commit 9 is documentation-only and must not modify the frozen PRD.
+Rollout invariant for every commit: before commit 5, enforcement is inactive and the legacy application remains operable; commit 5 and every later commit have a complete browser Setup/Login path and an authenticated workspace path. Commit 5 is the only enforcement boundary and must include all fixture migrations, health/identity changes, client identity migration, and required runtime configuration in one reviewable unit. Commits 6–7 must preserve the active save/draft transition contracts. Commit 9 is documentation-only and must not modify the frozen PRD.
 
 ## Review Gates
 
@@ -1071,27 +1077,36 @@ For commits 1–3, the existing application remains usable and CI stays green wi
 - Bootstrap fallback/explicit token handling and safe logs are verified.
 - Cookie profiles, Origin/Fetch-Metadata checks, bodyless DELETE, and no-store pass.
 
-### Gate C — Server protection
+### Gate C — Pre-cutover fixture readiness
 
 - Authenticated fixtures exist before middleware enforcement.
-- Health/identity split is correct.
-- Every current sensitive route family and unknown `/api/*` fails closed.
-- AI provider `401` does not become Docus session expiry.
+- Real owner rows, sessions, cookies, and Playwright storage state are used; no test bypass exists.
+- The browser can complete the Phase 2 setup/login flow while application APIs remain anonymous.
+- CI is green and the legacy browser-visible application remains operable.
 
-### Gate D — Frontend
+### Gate D — Atomic enforcement cutover
 
-- Hydration blocks VaultView until auth and identity are ready.
-- `/login`/`/setup` redirects and open-redirect rejection pass.
-- `auth-session-required` observation is centralized and generation-safe.
+- Phase 4 browser Setup/Login path is present before enforcement.
+- Middleware is registered before route mounts; exact public allowlist and unknown-route fail-closed behavior pass.
+- `/api/health` exposes only `{ ok: true }`; `/api/vault/identity` is protected and all `vaultId` consumers use it.
+- Auth hydration precedes identity fetch, VaultView mount, tab persistence, and Draft Recovery; no null/default scope occurs.
+- Required `DOCUS_PUBLIC_ORIGIN`, setup-token, session-revocation, and Docker-origin wiring is active in the same unit.
+- Anonymous protected APIs fail before handlers; authenticated browser setup/login enters Vault immediately.
+- `401 + auth-session-required` is the only Docus expiry signal; AI/provider `401` remains local.
 
-### Gate E — Recovery
+### Gate E — Frontend polish and logout seam
+
+- Auth-page redirects, focus/loading/error states, and NavBar logout request behavior pass.
+- NavBar cannot revoke before the workspace transition seam is available.
+
+### Gate F — Recovery
 
 - Active logout uses final legal server save and then Draft Store flush.
 - Session expiry skips server save and preserves Draft Store.
 - Re-login restores route and normal recovery discovery.
 - Stale pre-transition requests cannot overwrite new state.
 
-### Gate F — Release
+### Gate G — Release
 
 - Dev, bare-metal, Docker, loopback HTTP, HTTPS proxy, and restore invalidation are verified.
 - Canonical documentation is updated.
@@ -1107,19 +1122,19 @@ For commits 1–3, the existing application remains usable and CI stays green wi
 | Owner throttling DoS | Account failures after verification; hot bucket cannot reject a correct password solely | Hot bucket valid-login regression | 2 |
 | Bootstrap-token leakage | Explicit token never logged; fallback generated token printed once only; no DB/response exposure | Captured logs and response-body assertions | 2 |
 | AI 401 mistaken for Docus expiry | Classify exact top-level `auth-session-required` only | AI `401 + ai-authentication-failed` through client | 4–5 |
-| Hono middleware ordering mistake | Mount `/api/*` boundary before route modules and test unknown/public/protected paths | Mount/security matrix | 4 |
-| Accidental public future API | Default-protect unknown `/api/*` | Anonymous request to unknown route | 4 |
-| Existing tests break after global auth | Prepare real fixtures before enforcement; migrate in batches | Full three Vitest lanes | 3–4 |
-| VaultView mounts before hydration | Async router guard/coordinator and identity request before component mount | Reload with valid/no/first-run state | 5 |
-| `vaultId` scoping regression | Preserve hash/value and key format; protected identity before restore | Tabs/Draft/Recovery identity tests | 4–5 |
+| Hono middleware ordering mistake | Mount `/api/*` boundary before route modules and test unknown/public/protected paths | Mount/security matrix | 5 |
+| Accidental public future API | Default-protect unknown `/api/*` | Anonymous request to unknown route | 5 |
+| Existing tests break after global auth | Prepare real fixtures before enforcement; migrate in batches | Full three Vitest lanes | 3–5 |
+| VaultView mounts before hydration | Async router guard/coordinator and identity request before component mount | Reload with valid/no/first-run state | 4–5 |
+| `vaultId` scoping regression | Preserve hash/value and key format; protected identity before restore | Tabs/Draft/Recovery identity tests | 5 |
 | Draft loss during logout | Existing save barrier + explicit `flushAll()` + confirmation on unsafe state | Dirty/conflict/offline/flush-failure E2E | 7 |
 | Stale API response after re-login | Monotonic auth generation on coordinator and request observation | Delayed response race test | 5–7 |
-| Docker `0.0.0.0`/public-origin confusion | Validate browser-facing origin only; retain loopback host publish | Compose/default and config tests | 1, 8 |
+| Docker `0.0.0.0`/public-origin confusion | Validate browser-facing origin only; retain loopback host publish | Compose/default and config tests | 5, 8 |
 | Insecure cookie fallback | Read only profile-selected name; clear alternate only on logout | Cross-profile cookie tests | 1–2 |
 | Origin validation breaks bodyless DELETE | Require JSON content type only for body-bearing routes | Existing `DELETE /api/posts/*`, `/folders/*`, AI key clear | 2, 4 |
 | Reverse proxy caches sensitive JSON | `Cache-Control: no-store` on auth/protected responses | Header assertions and proxy review | 2, 4 |
-| Health identity disclosure | Remove `vaultId` from health; protect identity route | Health/identity API tests | 4 |
-| Startup invalidates sessions unintentionally | Revocation flag is explicit operator convention and never self-mutates | Restart with/without flag | 8 |
+| Health identity disclosure | Remove `vaultId` from health; protect identity route | Health/identity API tests | 5 |
+| Startup invalidates sessions unintentionally | Revocation flag is explicit operator convention and never self-mutates | Restart with/without flag | 5, 8 |
 
 ## Validation Matrix
 
@@ -1130,23 +1145,25 @@ For commits 1–3, the existing application remains usable and CI stays green wi
 | History lane | `npm run test:history-integration` | Phases 3–8; preserve Windows serialization |
 | Recovery lane | `npm run test:recovery-integration` | Phases 3–8; preserve lane-local stress timeout |
 | Build | `npm run build` | Every phase after client/server build changes |
-| General browser | `npm run test:e2e` | Phases 3, 5–8 |
+| General browser | `npm run test:e2e` | Phases 3–8 |
 | Draft Store browser | `npm run test:e2e:draft-store` | Phases 3, 7–8 |
 | CI browser | Existing cross-platform command in `.github/workflows/ci.yml` | Phase 8 and release |
 | Visual | Existing macOS visual job | Phase 8; avoid unrelated baseline changes |
-| Docker | Existing `docker build` + anonymous `/api/health` smoke | Phases 4 and 8 |
-| Security review | Route matrix, cookie/origin, logs, backup/session invalidation | Gates B–F |
+| Docker | Existing `docker build` + anonymous `/api/health` smoke plus authenticated/default-origin checks | Phases 5 and 8 |
+| Security review | Route matrix, cookie/origin, logs, backup/session invalidation | Gates B–G |
 
 `npm test` remains the aggregate command and must continue to run `test:unit`, `test:history-integration`, and `test:recovery-integration` in sequence. No global Vitest timeout, CI timeout, worker policy, or lane exclusion should be widened or bypassed for auth.
 
 ## Definition of Done
 
 - Existing installations apply `0006` without vault rewrite or domain ownership changes.
+- Every landed phase satisfies the rollout invariant: before enforcement the legacy application remains operable; once enforcement is active a complete browser Setup/Login path and authenticated workspace path are available.
 - Fresh installations require bootstrap-protected setup; exactly one owner can exist, including under concurrent setup.
 - Passwords use versioned asynchronous scrypt; KDF work is globally bounded; raw passwords/secrets never persist or log.
 - Sessions use fresh opaque high-entropy tokens, store only SHA-256 hashes, expire after a fixed 30 days, and support revocation/disabled owners/startup invalidation.
 - Cookie profile derives only from `DOCUS_PUBLIC_ORIGIN`; HTTPS reads only `__Host-docus_session`; loopback HTTP reads only `docus_session`; no alternate fallback; public non-loopback HTTP fails fast; Docker internal `0.0.0.0` remains compatible with loopback publishing.
 - `/api/health` is public liveness with no stable `vaultId`; `/api/vault/identity` is protected and supplies the existing stable instance ID for tabs/Draft Store/document/recovery scoping.
+- The health/identity split and every `vaultId` consumer migration land together in the Phase 5 atomic cutover; auth hydration and identity resolution complete before VaultView, tabs, or Draft Recovery initialize.
 - Auth status/setup/login/logout are public only by explicit allowlist; all sensitive and unknown `/api/*` routes fail closed with top-level `auth-session-required` JSON 401.
 - Unsafe methods have SameSite/Origin/Fetch-Metadata protection without breaking bodyless DELETE; protected/auth responses are no-store.
 - The frontend hydrates before VaultView, validates redirects, distinguishes Docus session expiry from provider/domain 401s, and protects against stale responses.
@@ -1155,4 +1172,3 @@ For commits 1–3, the existing application remains usable and CI stays green wi
 - Server and Playwright tests use real authenticated fixtures; no test/dev authentication bypass exists.
 - Current unit, History, Recovery, Playwright, visual, Docker, Ubuntu/macOS/Windows CI lanes pass.
 - Canonical security/deployment/getting-started/architecture/testing/README/changelog documentation reflects shipped behavior; no new archive/spec/closure document was created.
-
