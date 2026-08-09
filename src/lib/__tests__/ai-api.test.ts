@@ -115,6 +115,30 @@ describe('ai-api', () => {
     expect(calls[0].init.method).toBe('DELETE')
   })
 
+  it('testAiConnection posts transient provider settings and forwards AbortSignal', async () => {
+    responses.push({
+      status: 200,
+      body: { ok: true, provider: 'openai', model: 'probe-model', checkedAt: 10, latencyMs: 12 },
+    })
+    const controller = new AbortController()
+    const result = await api.testAiConnection({
+      provider: 'openai',
+      apiKey: 'sk-transient',
+      baseURL: 'https://gateway.example/v1',
+      model: 'probe-model',
+    }, controller.signal)
+    expect(calls[0].url).toBe('/api/ai/settings/test-connection')
+    expect(calls[0].init.method).toBe('POST')
+    expect(calls[0].init.signal).toBe(controller.signal)
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({
+      provider: 'openai',
+      apiKey: 'sk-transient',
+      baseURL: 'https://gateway.example/v1',
+      model: 'probe-model',
+    })
+    expect(result.latencyMs).toBe(12)
+  })
+
   it('includes a selected provider in the credential clear request', async () => {
     responses.push({ status: 200, body: { cleared: true, provider: 'openai' } })
     await api.clearAiApiKey('openai')

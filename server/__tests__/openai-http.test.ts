@@ -27,6 +27,7 @@ type ReceivedRequest = {
   method: string
   url: string
   authorization: string | undefined
+  xApiKey: string | undefined
   body: Record<string, any>
 }
 
@@ -48,6 +49,7 @@ async function startFakeOpenAiServer(handler: Handler): Promise<{
         method: req.method ?? '',
         url: req.url ?? '',
         authorization: req.headers.authorization,
+        xApiKey: typeof req.headers['x-api-key'] === 'string' ? req.headers['x-api-key'] : undefined,
         body,
       }
       requests.push(received)
@@ -135,6 +137,123 @@ describe('OpenAI-compatible HTTP protocol', () => {
     })
     expect(server.requests[0].body).toMatchObject({ model: 'test-model', stream: true })
     expect(server.requests[0].body.tools).toBeUndefined()
+  })
+
+  it('tests the transient Settings configuration with a non-streaming tool probe', async () => {
+    server = await startFakeOpenAiServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' } }] }))
+    })
+    saveAiSettings(db, {
+      provider: 'openai',
+      apiKey: 'stored-api-key',
+      baseURL: `${server.baseURL}/saved/v1`,
+      model: 'saved-model',
+    })
+    const result = await aiRoutes.fetch(new Request('http://localhost/settings/test-connection', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'openai',
+        apiKey: 'transient-api-key',
+        baseURL: `${server.baseURL}/transient/v1`,
+        model: 'transient-model',
+      }),
+    }))
+
+    expect(result.status).toBe(200)
+    expect(await result.json()).toMatchObject({
+      ok: true,
+      provider: 'openai',
+      model: 'transient-model',
+    })
+    expect(server.requests).toHaveLength(1)
+    expect(server.requests[0]).toMatchObject({
+      method: 'POST',
+      url: '/transient/v1/chat/completions',
+      authorization: 'Bearer transient-api-key',
+    })
+    expect(server.requests[0].body).toMatchObject({
+      model: 'transient-model',
+      stream: false,
+      tool_choice: 'auto',
+    })
+    expect(server.requests[0].body.tools?.[0]?.function?.name).toBe('docus_connection_probe')
+    const saved = db.prepare('SELECT value FROM settings WHERE key = ?').get('ai.openai.apiKey') as { value: string }
+    expect(saved.value).not.toContain('transient-api-key')
+    expect((db.prepare('SELECT value FROM settings WHERE key = ?').get('ai.openai.model') as { value: string }).value)
+      .toBe('saved-model')
+  })
+
+  it('uses the saved provider key when the transient key is omitted', async () => {
+    server = await startFakeOpenAiServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }))
+    })
+    saveAiSettings(db, {
+      provider: 'openai',
+      apiKey: 'saved-api-key',
+      baseURL: `${server.baseURL}/v1`,
+      model: 'saved-model',
+    })
+    const result = await aiRoutes.fetch(new Request('http://localhost/settings/test-connection', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'openai', baseURL: `${server.baseURL}/v1`, model: 'new-model' }),
+    }))
+    expect(result.status).toBe(200)
+    expect(server.requests[0].authorization).toBe('Bearer saved-api-key')
+    expect(server.requests[0].body.model).toBe('new-model')
+  })
+
+  it('redacts the transient API key from connection errors', async () => {
+    server = await startFakeOpenAiServer((_request, response) => {
+      response.writeHead(401, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: { message: 'bad credential transient-secret' } }))
+    })
+    const result = await aiRoutes.fetch(new Request('http://localhost/settings/test-connection', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'openai',
+        apiKey: 'transient-secret',
+        baseURL: `${server.baseURL}/v1`,
+        model: 'test-model',
+      }),
+    }))
+    const body = await result.text()
+    expect(result.status).toBe(401)
+    expect(body).toContain('[redacted]')
+    expect(body).not.toContain('transient-secret')
+  })
+
+  it('runs an equivalent transient Messages probe for Anthropic', async () => {
+    server = await startFakeOpenAiServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({
+        id: 'msg_probe',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-test',
+        content: [{ type: 'text', text: 'OK' }],
+        stop_reason: 'end_turn',
+      }))
+    })
+    saveAiSettings(db, {
+      provider: 'anthropic',
+      apiKey: 'anthropic-secret',
+      baseURL: server.baseURL,
+      model: 'claude-test',
+    })
+    const result = await aiRoutes.fetch(new Request('http://localhost/settings/test-connection', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'anthropic', baseURL: server.baseURL, model: 'claude-test' }),
+    }))
+    expect(result.status).toBe(200)
+    expect(server.requests[0]).toMatchObject({ method: 'POST', url: '/v1/messages', xApiKey: 'anthropic-secret' })
+    expect(server.requests[0].body).toMatchObject({ model: 'claude-test', max_tokens: 16 })
+    expect(server.requests[0].body.tools?.[0]?.name).toBe('docus_connection_probe')
   })
 
   it('preserves arbitrary API path prefixes without adding an extra version', async () => {

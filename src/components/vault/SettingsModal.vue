@@ -5,7 +5,11 @@ import {
   getAiCredentialStatus,
   getAiSettings,
   saveAiSettings,
+  testAiConnection,
   type AiCredentialStatus,
+  type AiConnectionErrorCode,
+  type AiConnectionState,
+  type AiConnectionTestResult,
   type AiKeyErrorCode,
   type AiProvider,
   type AiSettings,
@@ -48,6 +52,11 @@ const credentialStatus = ref<AiCredentialStatus | null>(null)
 const apiKey = ref('')
 const baseURL = ref('')
 const model = ref('claude-sonnet-4-6')
+const connectionState = ref<AiConnectionState>('untested')
+const connectionResult = ref<AiConnectionTestResult | null>(null)
+const connectionError = ref('')
+const connectionController = ref<AbortController | null>(null)
+let connectionRunId = 0
 const modalRef = ref<HTMLElement | null>(null)
 const migrationSummary = ref<MetadataMigrationSummary | null>(null)
 const cleanupPreview = ref<FrontmatterCleanupPreview | null>(null)
@@ -70,6 +79,7 @@ const active = ref<SectionId>('ai')
 
 async function load() {
   loading.value = true
+  resetConnectionStatus()
   aiErrorCode.value = undefined
   credentialStatus.value = null
   try {
@@ -91,6 +101,72 @@ async function load() {
     toast.error(t('settings.load_failed', { error: e.message ?? t('common.unknown_error') }))
   } finally {
     loading.value = false
+  }
+}
+
+function resetConnectionStatus() {
+  connectionRunId += 1
+  connectionController.value?.abort()
+  connectionController.value = null
+  connectionState.value = 'untested'
+  connectionResult.value = null
+  connectionError.value = ''
+}
+
+function abortConnectionTest() {
+  connectionRunId += 1
+  connectionController.value?.abort()
+  connectionController.value = null
+}
+
+function updateApiKey(value: string) {
+  apiKey.value = value
+  resetConnectionStatus()
+}
+
+function updateBaseURL(value: string) {
+  baseURL.value = value
+  resetConnectionStatus()
+}
+
+function updateModel(value: string) {
+  model.value = value
+  resetConnectionStatus()
+}
+
+function connectionErrorMessage(error: any): string {
+  const code = error?.code as AiConnectionErrorCode | 'openai-tools-unsupported' | undefined
+  if (code === 'ai-connection-timeout') return t('settings.connection_timeout')
+  if (code === 'ai-authentication-failed') return t('settings.connection_auth_failed')
+  if (code === 'ai-model-unavailable') return t('settings.connection_model_unavailable')
+  return error?.message || t('settings.connection_failed')
+}
+
+async function onTestConnection() {
+  connectionController.value?.abort()
+  const controller = new AbortController()
+  const runId = ++connectionRunId
+  connectionController.value = controller
+  connectionState.value = 'checking'
+  connectionResult.value = null
+  connectionError.value = ''
+  const provider = settings.value?.provider ?? credentialStatus.value?.provider ?? 'anthropic'
+  try {
+    const result = await testAiConnection({
+      provider,
+      ...(apiKey.value.trim() ? { apiKey: apiKey.value } : {}),
+      baseURL: baseURL.value,
+      model: model.value,
+    }, controller.signal)
+    if (runId !== connectionRunId || controller.signal.aborted) return
+    connectionResult.value = result
+    connectionState.value = 'connected'
+  } catch (error) {
+    if (runId !== connectionRunId || controller.signal.aborted) return
+    connectionState.value = 'failed'
+    connectionError.value = connectionErrorMessage(error)
+  } finally {
+    if (runId === connectionRunId) connectionController.value = null
   }
 }
 
@@ -162,6 +238,7 @@ async function previewCleanup() {
 }
 
 async function onSave() {
+  resetConnectionStatus()
   saving.value = true
   try {
     const next = await saveAiSettings({
@@ -189,6 +266,7 @@ async function onSave() {
    (apiKey/baseURL/model) get overwritten by the response so the user
    sees what is now active. */
 async function onSwitchProvider(provider: 'anthropic' | 'openai') {
+  resetConnectionStatus()
   saving.value = true
   try {
     const next = await saveAiSettings({ provider })
@@ -215,6 +293,7 @@ async function onClearKey(provider?: AiProvider) {
     },
   )
   if (!ok) return
+  resetConnectionStatus()
   saving.value = true
   try {
     await clearAiApiKey(target)
@@ -259,6 +338,7 @@ watch(() => props.open, (open) => {
       first?.focus()
     })
   } else {
+    abortConnectionTest()
     void trap.deactivate()
   }
 })
@@ -273,7 +353,7 @@ onMounted(() => {
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     e.preventDefault()
-    emit('close')
+    closeSettings()
     return
   }
   if (e.key === 'Tab') {
@@ -281,7 +361,13 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
+function closeSettings() {
+  abortConnectionTest()
+  emit('close')
+}
+
 onBeforeUnmount(() => {
+  abortConnectionTest()
   void trap.deactivate()
 })
 </script>
@@ -292,7 +378,7 @@ onBeforeUnmount(() => {
       v-if="open"
       class="settings-backdrop"
       role="presentation"
-      @click.self="emit('close')"
+      @click.self="closeSettings"
       @keydown="onKeydown"
       tabindex="-1"
     >
@@ -310,7 +396,7 @@ onBeforeUnmount(() => {
             class="settings-icon-btn"
             :title="t('settings.close')"
             :aria-label="t('settings.close')"
-            @click="emit('close')"
+            @click="closeSettings"
           ><span aria-hidden="true">×</span></button>
         </header>
 
@@ -341,13 +427,17 @@ onBeforeUnmount(() => {
               :credentialStatus="credentialStatus"
               :loading="loading"
               :saving="saving"
-              @update:apiKey="apiKey = $event"
-              @update:baseURL="baseURL = $event"
-              @update:model="model = $event"
+              :connectionState="connectionState"
+              :connectionResult="connectionResult"
+              :connectionError="connectionError"
+              @update:apiKey="updateApiKey"
+              @update:baseURL="updateBaseURL"
+              @update:model="updateModel"
               @save="onSave"
               @clear-key="onClearKey()"
               @forget-credential="onClearKey"
               @switch-provider="onSwitchProvider"
+              @test-connection="onTestConnection"
             />
             <SettingsEditorSection v-else-if="active === 'editor'" />
             <SettingsMetadataSection

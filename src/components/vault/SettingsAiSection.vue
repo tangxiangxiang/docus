@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import { useI18n } from '../../composables/useI18n'
 import type {
   AiCredentialStatus,
+  AiConnectionState,
+  AiConnectionTestResult,
   AiKeyErrorCode,
   AiProvider,
   AiSettings,
@@ -16,6 +18,9 @@ const props = defineProps<{
   model: string
   loading: boolean
   saving: boolean
+  connectionState: AiConnectionState
+  connectionResult: AiConnectionTestResult | null
+  connectionError: string
   recoveryCode?: AiKeyErrorCode
   credentialStatus?: AiCredentialStatus | null
 }>()
@@ -28,6 +33,7 @@ const emit = defineEmits<{
   'clear-key': []
   'forget-credential': [provider: AiProvider]
   'switch-provider': [provider: AiProvider]
+  'test-connection': []
 }>()
 
 const { t } = useI18n()
@@ -171,6 +177,48 @@ function onProviderChange(event: Event) {
               @input="onInput('model', $event)"
             />
           </label>
+        </div>
+      </div>
+      <div class="settings-card settings-connection-card" aria-labelledby="settings-ai-connection-title">
+        <div class="settings-connection-header">
+          <h4 id="settings-ai-connection-title" class="settings-card-title">
+            {{ t('settings.connection_status') }}
+          </h4>
+          <button
+            type="button"
+            class="btn settings-connection-btn"
+            :disabled="loading || saving || connectionState === 'checking'"
+            @click="emit('test-connection')"
+          >{{ t(connectionState === 'checking' ? 'settings.connection_checking' : connectionState === 'failed' ? 'settings.retest_connection' : 'settings.test_connection') }}</button>
+        </div>
+        <div
+          class="settings-connection-status"
+          :class="`is-${connectionState}`"
+          role="status"
+          aria-live="polite"
+        >
+          <span class="settings-connection-dot" aria-hidden="true" />
+          <div class="settings-connection-copy">
+            <strong>
+              {{ t(
+                connectionState === 'connected'
+                  ? 'settings.connection_connected'
+                  : connectionState === 'checking'
+                    ? 'settings.connection_checking'
+                    : connectionState === 'failed'
+                      ? 'settings.connection_failed'
+                      : 'settings.connection_untested',
+              ) }}
+            </strong>
+            <p v-if="connectionState === 'connected' && connectionResult">
+              {{ connectionResult.provider === 'openai' ? 'OpenAI' : 'Anthropic' }} · {{ connectionResult.model }} · {{ connectionResult.latencyMs }} ms
+            </p>
+            <p v-else-if="connectionState === 'checking'">
+              {{ activeProvider === 'openai' ? 'OpenAI' : 'Anthropic' }} · {{ model }}
+            </p>
+            <p v-else-if="connectionState === 'failed'">{{ connectionError }}</p>
+            <p v-else>{{ t('settings.connection_untested_detail') }}</p>
+          </div>
         </div>
       </div>
     </div>

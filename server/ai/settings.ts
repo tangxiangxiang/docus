@@ -291,7 +291,7 @@ function storedApiKeyRows(db: DatabaseT): Map<Provider, string> {
  * exposed. All plaintext/decryption work happens before the write transaction;
  * a failed migration therefore leaves the old rows untouched.
  */
-function loadAndMigrateApiKeys(db: DatabaseT): Map<Provider, string> {
+function loadAndMigrateApiKeys(db: DatabaseT, persistMigration = true): Map<Provider, string> {
   const rows = storedApiKeyRows(db)
   const legacyKeyValue = getSetting(db, KEY_ENCRYPTION_KEY)
   const hasStoredMaterial = Boolean(legacyKeyValue) || [...rows.values()].some(Boolean)
@@ -346,6 +346,7 @@ function loadAndMigrateApiKeys(db: DatabaseT): Map<Provider, string> {
   // deliberately read-only. Only legacy plaintext, legacy-key ciphertext,
   // or the legacy key row itself requires a write transaction.
   if (providersToMigrate.size === 0 && !legacyKeyValue) return plaintext
+  if (!persistMigration) return plaintext
 
   // Plaintext and legacy-key ciphertext are still recoverable without the
   // fallback key, so creating one here is part of their safe migration. This
@@ -381,13 +382,22 @@ function readProviderConfig(
   }
 }
 
-export function readStoredAiSettings(db: DatabaseT): StoredAiSettings {
-  const apiKeys = loadAndMigrateApiKeys(db)
+function readStoredAiSettingsWithMigration(db: DatabaseT, persistMigration: boolean): StoredAiSettings {
+  const apiKeys = loadAndMigrateApiKeys(db, persistMigration)
   return {
     provider: readActiveProvider(db),
     anthropic: readProviderConfig(db, 'anthropic', apiKeys),
     openai: readProviderConfig(db, 'openai', apiKeys),
   }
+}
+
+export function readStoredAiSettings(db: DatabaseT): StoredAiSettings {
+  return readStoredAiSettingsWithMigration(db, true)
+}
+
+/** Read provider credentials without performing legacy key migration. */
+export function readStoredAiSettingsReadOnly(db: DatabaseT): StoredAiSettings {
+  return readStoredAiSettingsWithMigration(db, false)
 }
 
 export interface SaveAiSettingsInput {

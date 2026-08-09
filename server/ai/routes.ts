@@ -34,7 +34,11 @@ import { generateSlug } from './slug.js'
 import { CommitMessagePromptLimitError, generateCommitMessage } from './commitMessage.js'
 import { generateSummary, SummaryPromptLimitError } from './summary.js'
 import { ChatError } from './errors.js'
-import { resolveAiRuntimeConfig } from './llm.js'
+import {
+  AiConnectionError,
+  probeAiConnection,
+  resolveAiRuntimeConfig,
+} from './llm.js'
 import {
   AiKeyConfigurationError,
   AiSettingsValidationError,
@@ -44,6 +48,8 @@ import {
   MAX_AI_API_KEY_LENGTH,
   MAX_AI_BASE_URL_LENGTH,
   MAX_AI_MODEL_LENGTH,
+  normalizeOpenAiBaseURL,
+  readStoredAiSettingsReadOnly,
   saveAiSettings,
   SUPPORTED_PROVIDERS,
   type Provider,
@@ -300,6 +306,86 @@ ai.get('/settings', (c) => {
   try {
     return c.json(getAiSettingsView(getDb()))
   } catch (error) {
+    const response = aiKeyErrorResponse(c, error)
+    if (response) return response
+    throw error
+  }
+})
+
+/**
+ * Probe the exact provider configuration currently shown by Settings. This
+ * route is intentionally transient: an unsaved key/base URL/model is passed
+ * straight to the provider and no settings row is written.
+ */
+ai.post('/settings/test-connection', async (c) => {
+  const body = await c.req.json().catch(() => null) as
+    | { provider?: unknown; apiKey?: unknown; baseURL?: unknown; model?: unknown }
+    | null
+  if (!body) return bad(c, 'body required')
+  if (typeof body.provider !== 'string' || !(SUPPORTED_PROVIDERS as readonly string[]).includes(body.provider)) {
+    return bad(c, `provider must be one of: ${SUPPORTED_PROVIDERS.join(', ')}`)
+  }
+  if (body.apiKey !== undefined && typeof body.apiKey !== 'string') return bad(c, 'apiKey must be a string')
+  if (body.baseURL !== undefined && typeof body.baseURL !== 'string') return bad(c, 'baseURL must be a string')
+  if (body.model !== undefined && typeof body.model !== 'string') return bad(c, 'model must be a string')
+
+  const provider = body.provider as Provider
+  const requestedKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : ''
+  const requestedBaseURL = typeof body.baseURL === 'string' ? body.baseURL.trim() : undefined
+  const requestedModel = typeof body.model === 'string' ? body.model.trim() : undefined
+  if (requestedKey.length > MAX_AI_API_KEY_LENGTH) return bad(c, 'apiKey is too long')
+  if (requestedBaseURL && requestedBaseURL.length > MAX_AI_BASE_URL_LENGTH) return bad(c, 'baseURL is too long')
+  if (requestedModel && requestedModel.length > MAX_AI_MODEL_LENGTH) return bad(c, 'model is too long')
+  if (requestedBaseURL && !isValidHttpUrl(requestedBaseURL)) return bad(c, 'baseURL must be an http(s) URL')
+  if (requestedModel && !isValidModelName(requestedModel)) return bad(c, 'model contains unsupported characters')
+
+  let stored: ReturnType<typeof readStoredAiSettingsReadOnly>
+  try {
+    stored = readStoredAiSettingsReadOnly(getDb())
+  } catch (error) {
+    const validation = aiSettingsValidationResponse(c, error)
+    if (validation) return validation
+    const response = aiKeyErrorResponse(c, error)
+    if (response) return response
+    throw error
+  }
+  const saved = stored[provider]
+  const apiKey = requestedKey || saved.apiKey
+  if (!apiKey) return bad(c, 'AI API key is not configured', 503, 'ai-authentication-failed')
+  let baseURL = requestedBaseURL === undefined ? saved.baseURL : requestedBaseURL
+  if (provider === 'openai' && baseURL) {
+    try {
+      baseURL = normalizeOpenAiBaseURL(baseURL)
+    } catch (error) {
+      const validation = aiSettingsValidationResponse(c, error)
+      if (validation) return validation
+      throw error
+    }
+  }
+  const model = requestedModel || saved.model
+  const startedAt = Date.now()
+  try {
+    await probeAiConnection({
+      provider,
+      apiKey,
+      ...(baseURL ? { baseURL } : {}),
+      model,
+    }, c.req.raw.signal)
+    return c.json({
+      ok: true,
+      provider,
+      model,
+      checkedAt: Date.now(),
+      latencyMs: Math.max(0, Date.now() - startedAt),
+    })
+  } catch (error) {
+    if (error instanceof AiConnectionError) {
+      const status = error.code === 'ai-authentication-failed' ? 401
+        : error.code === 'ai-model-unavailable' ? 502
+          : error.code === 'ai-connection-timeout' ? 504
+            : 502
+      return bad(c, safeProviderMessage(error.message, apiKey), status, error.code)
+    }
     const response = aiKeyErrorResponse(c, error)
     if (response) return response
     throw error

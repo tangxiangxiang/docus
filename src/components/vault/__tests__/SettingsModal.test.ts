@@ -8,6 +8,7 @@ const getAiSettings = vi.fn()
 const getAiCredentialStatus = vi.fn()
 const saveAiSettings = vi.fn()
 const clearAiApiKey = vi.fn()
+const testAiConnection = vi.fn()
 const getMetadataMigrationStatus = vi.fn()
 const getFrontmatterCleanupPreview = vi.fn()
 const cleanDocumentFrontmatter = vi.fn()
@@ -25,6 +26,7 @@ vi.mock('../../../lib/ai-api', () => ({
   getAiCredentialStatus: (...args: unknown[]) => getAiCredentialStatus(...args),
   saveAiSettings: (...args: unknown[]) => saveAiSettings(...args),
   clearAiApiKey: (...args: unknown[]) => clearAiApiKey(...args),
+  testAiConnection: (...args: unknown[]) => testAiConnection(...args),
 }))
 
 vi.mock('../../../lib/api', () => ({
@@ -134,6 +136,13 @@ beforeEach(() => {
   })
   saveAiSettings.mockResolvedValue(openAiSettings())
   clearAiApiKey.mockResolvedValue({ cleared: true, provider: 'openai' })
+  testAiConnection.mockResolvedValue({
+    ok: true,
+    provider: 'openai',
+    model: 'agnes-2.5-flash',
+    checkedAt: 1,
+    latencyMs: 326,
+  })
   getMetadataMigrationStatus.mockResolvedValue(migration)
   getFrontmatterCleanupPreview.mockResolvedValue({ candidates: [], blocked: [] })
   cleanDocumentFrontmatter.mockResolvedValue({ changed: [], failed: [] })
@@ -176,7 +185,65 @@ describe('SettingsModal', () => {
 
     inputValue(keyInput, 'replacement-key')
     await flushPromises()
-    expect(document.body.querySelector('[role="status"]')).toBeNull()
+    expect(document.body.querySelector('.settings-key-status')).toBeNull()
+  })
+
+  it('does not test automatically and shows a real probe result after clicking Test connection', async () => {
+    mountSettings()
+    await flushPromises()
+
+    expect(testAiConnection).not.toHaveBeenCalled()
+    findButton('测试连接').click()
+    await flushPromises()
+
+    expect(testAiConnection).toHaveBeenCalledWith({
+      provider: 'openai',
+      baseURL: 'https://apihub.agnes-ai.com/v1',
+      model: 'agnes-2.5-flash',
+    }, expect.any(AbortSignal))
+    expect(document.body.querySelector('.settings-connection-status')?.textContent).toContain('已连接')
+    expect(document.body.querySelector('.settings-connection-status')?.textContent).toContain('326 ms')
+  })
+
+  it('resets a connected status when the displayed configuration changes', async () => {
+    mountSettings()
+    await flushPromises()
+    findButton('测试连接').click()
+    await flushPromises()
+    expect(document.body.textContent).toContain('已连接')
+
+    inputValue(fieldControl<HTMLInputElement>('模型', 'input'), 'new-model')
+    await flushPromises()
+    expect(document.body.querySelector('.settings-connection-status')?.textContent).toContain('未检测')
+    expect(document.body.textContent).not.toContain('326 ms')
+  })
+
+  it('shows a safe failure state when the probe is rejected', async () => {
+    testAiConnection.mockRejectedValueOnce(Object.assign(new Error('upstream details'), {
+      code: 'ai-authentication-failed',
+    }))
+    mountSettings()
+    await flushPromises()
+    findButton('测试连接').click()
+    await flushPromises()
+
+    const status = document.body.querySelector('.settings-connection-status')
+    expect(status?.textContent).toContain('连接失败')
+    expect(status?.textContent).toContain('认证失败，请检查 API Key。')
+  })
+
+  it('aborts an in-flight probe when the modal closes', async () => {
+    let signal: AbortSignal | undefined
+    testAiConnection.mockImplementationOnce((_input: unknown, nextSignal: AbortSignal) => {
+      signal = nextSignal
+      return new Promise(() => {})
+    })
+    mountSettings()
+    await flushPromises()
+    findButton('测试连接').click()
+    await flushPromises()
+    document.body.querySelector<HTMLButtonElement>('[aria-label="关闭"]')?.click()
+    expect(signal?.aborted).toBe(true)
   })
 
   it('switches providers through the existing save call and uses the optional URL placeholder for Anthropic', async () => {

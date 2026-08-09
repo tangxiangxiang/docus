@@ -69,9 +69,25 @@ export type AiKeyErrorCode =
   | 'openai-base-url-invalid'
   | 'openai-tools-unsupported'
 
+export type AiConnectionErrorCode =
+  | 'ai-connection-timeout'
+  | 'ai-authentication-failed'
+  | 'ai-model-unavailable'
+  | 'ai-connection-failed'
+
+export type AiConnectionState = 'untested' | 'checking' | 'connected' | 'failed'
+
+export interface AiConnectionTestResult {
+  ok: true
+  provider: AiProvider
+  model: string
+  checkedAt: number
+  latencyMs: number
+}
+
 export interface AiApiErrorBody {
   error?: string
-  code?: AiKeyErrorCode
+  code?: AiKeyErrorCode | AiConnectionErrorCode | 'openai-tools-unsupported'
 }
 
 export type AiApiError = Error & {
@@ -213,6 +229,22 @@ export async function saveAiSettings(input: {
 export async function clearAiApiKey(provider?: AiProvider): Promise<{ cleared: true; provider: AiProvider }> {
   const query = provider ? `?provider=${encodeURIComponent(provider)}` : ''
   return jsonOrThrow<{ cleared: true; provider: AiProvider }>(await fetch(`/api/ai/settings/key${query}`, { method: 'DELETE' }))
+}
+
+export async function testAiConnection(
+  input: {
+    provider: AiProvider
+    apiKey?: string
+    baseURL: string
+    model: string
+  },
+  signal?: AbortSignal,
+): Promise<AiConnectionTestResult> {
+  return jsonOrThrow<AiConnectionTestResult>(await fetch('/api/ai/settings/test-connection', {
+    method: 'POST',
+    ...jsonBody(input),
+    signal,
+  }))
 }
 
 export async function suggestSlug(input: {

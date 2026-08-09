@@ -2060,6 +2060,75 @@ main.container {
   font-weight: 600;
   letter-spacing: -0.01em;
 }
+.settings-connection-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-connection-header .settings-card-title {
+  margin-bottom: 0;
+}
+.settings-connection-btn {
+  flex: 0 0 auto;
+}
+.settings-connection-status {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 14px;
+  color: var(--settings-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.settings-connection-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--settings-muted);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--settings-muted) 14%, transparent);
+}
+.settings-connection-status.is-checking .settings-connection-dot {
+  background: var(--settings-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--settings-accent) 18%, transparent);
+  animation: settings-connection-pulse 1.1s ease-in-out infinite;
+}
+.settings-connection-status.is-connected .settings-connection-dot {
+  background: var(--settings-success);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--settings-success) 16%, transparent);
+}
+.settings-connection-status.is-failed .settings-connection-dot {
+  background: var(--settings-danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--settings-danger) 16%, transparent);
+}
+.settings-connection-copy {
+  min-width: 0;
+}
+.settings-connection-copy strong {
+  color: var(--settings-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+.settings-connection-status.is-checking .settings-connection-copy strong {
+  color: var(--settings-accent);
+}
+.settings-connection-status.is-connected .settings-connection-copy strong {
+  color: var(--settings-success);
+}
+.settings-connection-status.is-failed .settings-connection-copy strong {
+  color: var(--settings-danger);
+}
+.settings-connection-copy p {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+@keyframes settings-connection-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
 .settings-field-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

@@ -62,6 +62,23 @@ export function isOpenAiToolsUnsupported(error: unknown): boolean {
     && /unsupported|not supported|does not support|unknown|unrecognized|invalid|not allowed/i.test(message)
 }
 
+export type AiConnectionErrorCode =
+  | 'ai-connection-timeout'
+  | 'ai-authentication-failed'
+  | 'ai-model-unavailable'
+  | 'ai-connection-failed'
+  | 'openai-tools-unsupported'
+
+export class AiConnectionError extends Error {
+  readonly code: AiConnectionErrorCode
+
+  constructor(code: AiConnectionErrorCode, message: string) {
+    super(message)
+    this.name = 'AiConnectionError'
+    this.code = code
+  }
+}
+
 type OpenAiCreate = (
   params: Record<string, unknown>,
   options?: { signal?: AbortSignal },
@@ -84,6 +101,147 @@ async function createOpenAiCompletion(
     // both fields because several gateways reject a request containing both.
     const { max_tokens: _ignored, ...withoutLegacyLimit } = first
     return create({ ...withoutLegacyLimit, max_completion_tokens: maxTokens }, { signal })
+  }
+}
+
+const CONNECTION_PROBE_TIMEOUT_MS = 10_000
+const CONNECTION_PROBE_MAX_TOKENS = 16
+
+export interface AiConnectionProbeConfig {
+  provider: Provider
+  apiKey: string
+  baseURL?: string
+  model: string
+}
+
+function connectionErrorCode(error: unknown): Exclude<AiConnectionErrorCode, 'ai-connection-timeout'> {
+  const message = errorMessage(error)
+  if (/\b(401|403)\b|unauthori[sz]ed|authentication|invalid api key|incorrect api key/i.test(message)) {
+    return 'ai-authentication-failed'
+  }
+  if (/\b(404|400)\b|model.*(not found|unavailable)|unknown model|does not exist/i.test(message)) {
+    return 'ai-model-unavailable'
+  }
+  return 'ai-connection-failed'
+}
+
+function createConnectionSignal(parent: AbortSignal | undefined, timeoutMs: number) {
+  const controller = new AbortController()
+  let timedOut = false
+  const onAbort = () => controller.abort(parent?.reason)
+  if (parent?.aborted) onAbort()
+  else parent?.addEventListener('abort', onAbort, { once: true })
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
+  return {
+    signal: controller.signal,
+    didTimeout: () => timedOut,
+    cleanup: () => {
+      clearTimeout(timer)
+      parent?.removeEventListener('abort', onAbort)
+    },
+  }
+}
+
+/**
+ * Execute the smallest non-streaming request that exercises the same
+ * provider contract as Docus chat. This is deliberately independent from
+ * the database-backed chat backend so transient form values never persist.
+ */
+export async function probeAiConnection(
+  config: AiConnectionProbeConfig,
+  parentSignal?: AbortSignal,
+  timeoutMs = CONNECTION_PROBE_TIMEOUT_MS,
+): Promise<{ provider: Provider; model: string }> {
+  const probe = createConnectionSignal(parentSignal, timeoutMs)
+  try {
+    if (parentSignal?.aborted) throw new AiConnectionError('ai-connection-failed', 'Connection test was cancelled')
+
+    if (config.provider === 'openai') {
+      const client = new OpenAI({
+        apiKey: config.apiKey,
+        ...(config.baseURL ? { baseURL: config.baseURL } : {}),
+        maxRetries: 0,
+      })
+      let response: any
+      try {
+        response = await createOpenAiCompletion(client, {
+          model: config.model,
+          messages: [
+            { role: 'system', content: 'Docus connection probe.' },
+            { role: 'user', content: 'Reply OK.' },
+          ],
+          tools: [{
+            type: 'function',
+            function: {
+              name: 'docus_connection_probe',
+              description: 'A harmless connection probe. Do not call unless needed.',
+              parameters: { type: 'object', properties: {}, additionalProperties: false },
+            },
+          }],
+          tool_choice: 'auto',
+          stream: false,
+        }, CONNECTION_PROBE_MAX_TOKENS, probe.signal)
+      } catch (error) {
+        if (probe.didTimeout()) {
+          throw new AiConnectionError('ai-connection-timeout', 'Connection timed out while contacting the AI provider')
+        }
+        if (parentSignal?.aborted) {
+          throw new AiConnectionError('ai-connection-failed', 'Connection test was cancelled')
+        }
+        if (isOpenAiToolsUnsupported(error)) {
+          throw new AiConnectionError(
+            'openai-tools-unsupported',
+            `${OPENAI_TOOLS_UNSUPPORTED_MESSAGE} Upstream: ${safeProviderErrorMessage(error, config.apiKey)}`,
+          )
+        }
+        throw new AiConnectionError(
+          connectionErrorCode(error),
+          safeProviderErrorMessage(error, config.apiKey),
+        )
+      }
+      if (!response?.choices?.[0]?.message) {
+        throw new AiConnectionError('ai-connection-failed', 'The AI provider returned an empty response')
+      }
+      return { provider: config.provider, model: config.model }
+    }
+
+    const client = new Anthropic({
+      apiKey: config.apiKey,
+      ...(config.baseURL ? { baseURL: config.baseURL } : {}),
+      maxRetries: 0,
+    })
+    let response: any
+    try {
+      response = await client.messages.create({
+        model: config.model,
+        max_tokens: CONNECTION_PROBE_MAX_TOKENS,
+        system: 'Docus connection probe.',
+        messages: [{ role: 'user', content: 'Reply OK.' }],
+        tools: [{
+          name: 'docus_connection_probe',
+          description: 'A harmless connection probe. Do not call unless needed.',
+          input_schema: { type: 'object', properties: {}, additionalProperties: false },
+        }],
+        tool_choice: { type: 'auto' },
+      }, { signal: probe.signal })
+    } catch (error) {
+      if (probe.didTimeout()) {
+        throw new AiConnectionError('ai-connection-timeout', 'Connection timed out while contacting the AI provider')
+      }
+      if (parentSignal?.aborted) {
+        throw new AiConnectionError('ai-connection-failed', 'Connection test was cancelled')
+      }
+      throw new AiConnectionError(connectionErrorCode(error), safeProviderErrorMessage(error, config.apiKey))
+    }
+    if (!response?.content?.length) {
+      throw new AiConnectionError('ai-connection-failed', 'The AI provider returned an empty response')
+    }
+    return { provider: config.provider, model: config.model }
+  } finally {
+    probe.cleanup()
   }
 }
 
