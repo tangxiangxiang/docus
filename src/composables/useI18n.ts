@@ -161,7 +161,6 @@ const STRINGS: Strings = {
   'settings.api_key': { zh: 'API Key', en: 'API Key' },
   'settings.key_saved': { zh: '已保存', en: 'Saved' },
   'settings.base_url': { zh: 'Base URL', en: 'Base URL' },
-  'settings.openai_base_url_help': { zh: '填写 API 根地址，例如 https://api.openai.com/v1；不要包含 /chat/completions。', en: 'Enter the API root, for example https://api.openai.com/v1; do not include /chat/completions.' },
   'settings.optional': { zh: '可选', en: 'Optional' },
   'settings.model': { zh: '模型', en: 'Model' },
   'settings.editor': { zh: '编辑器', en: 'Editor' },

@@ -2166,14 +2166,6 @@ main.container {
   font-size: 0.62rem;
   line-height: 1;
 }
-.settings-field-help {
-  grid-column: 2;
-  grid-row: 2;
-  margin: -1px 0 0;
-  color: var(--settings-muted);
-  font-size: 0.76rem;
-  line-height: 1.4;
-}
 .settings-field > input[type='checkbox'] {
   width: 14px;
   min-width: 14px;
@@ -2309,10 +2301,6 @@ main.container {
   .settings-field > input,
   .settings-field > select,
   .settings-input-wrap {
-    grid-column: 1;
-    grid-row: auto;
-  }
-  .settings-field-help {
     grid-column: 1;
     grid-row: auto;
   }

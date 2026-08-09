@@ -160,9 +160,6 @@ function onProviderChange(event: Event) {
               :disabled="loading || saving"
               @input="onInput('baseURL', $event)"
             />
-            <small v-if="activeProvider === 'openai'" class="settings-field-help">
-              {{ t('settings.openai_base_url_help') }}
-            </small>
           </label>
           <label class="settings-field">
             <span class="settings-field-label">{{ t('settings.model') }}</span>

@@ -150,7 +150,7 @@ afterEach(() => {
 })
 
 describe('SettingsModal', () => {
-  it('opens on AI with active navigation, real providers, helper text, and saved-key status', async () => {
+  it('opens on AI with active navigation, real providers, URL placeholder, and saved-key status', async () => {
     mountSettings()
     await flushPromises()
 
@@ -172,16 +172,14 @@ describe('SettingsModal', () => {
     expect(keyInput.value).toBe('')
     expect(keyInput.placeholder).toBe('••••••••••••••••abcd')
     expect(document.body.querySelector('[role="status"]')?.textContent).toContain('已保存')
-    expect(document.body.textContent).toContain(
-      '填写 API 根地址，例如 https://api.openai.com/v1；不要包含 /chat/completions。',
-    )
+    expect(fieldControl<HTMLInputElement>('Base URL', 'input').placeholder).toBe('https://api.openai.com/v1')
 
     inputValue(keyInput, 'replacement-key')
     await flushPromises()
     expect(document.body.querySelector('[role="status"]')).toBeNull()
   })
 
-  it('switches providers through the existing save call and hides OpenAI-only help for Anthropic', async () => {
+  it('switches providers through the existing save call and uses the optional URL placeholder for Anthropic', async () => {
     saveAiSettings.mockResolvedValueOnce(anthropicSettings())
     mountSettings()
     await flushPromises()
@@ -194,9 +192,7 @@ describe('SettingsModal', () => {
     expect(saveAiSettings).toHaveBeenCalledWith({ provider: 'anthropic' })
     expect(provider.value).toBe('anthropic')
     expect(fieldControl<HTMLInputElement>('模型', 'input').value).toBe('claude-sonnet-4-6')
-    expect(document.body.textContent).not.toContain(
-      '填写 API 根地址，例如 https://api.openai.com/v1；不要包含 /chat/completions。',
-    )
+    expect(fieldControl<HTMLInputElement>('Base URL', 'input').placeholder).toBe('可选')
   })
 
   it('saves edited AI fields without changing the existing settings payload semantics', async () => {
