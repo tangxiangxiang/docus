@@ -25,6 +25,7 @@ const E2E_VAULT = process.env.DOCUS_DRAFT_E2E_VAULT ?? path.join('src', 'content
 import { expect, type APIRequestContext, type Page } from '@playwright/test'
 
 export const DATABASE_NAME = 'docus-draft-recovery'
+const VAULT_READY_TIMEOUT_MS = 15_000
 
 export type AnyRecord = Record<string, any>
 
@@ -239,12 +240,48 @@ export async function createDoc(
   return { raw: detail.raw as string, documentId: detail.metadata.id as string }
 }
 
-// The file tree is fetched at mount time; documents created through the
-// REST API after page load are invisible to it until the next load.
-// Reload before opening freshly created documents.
-export async function reloadApp(page: Page) {
+/**
+ * Wait for the Vault shell and its initial workspace snapshot to be ready.
+ *
+ * The activity-bar button used to be the readiness signal here. It only
+ * proves that the Vue shell mounted, though; on a busy Windows runner the
+ * tree/posts fetches could still be in flight when the test started. The
+ * initial tree and posts responses are the actual startup prerequisites for
+ * opening documents, so wait for those requests and then verify the shell.
+ */
+export async function waitForVaultReady(page: Page) {
+  await expect(page.locator('.vault')).toBeVisible({ timeout: VAULT_READY_TIMEOUT_MS })
+  await expect(page.locator('.activity-bar .ab-btn').first()).toBeVisible({ timeout: VAULT_READY_TIMEOUT_MS })
+}
+
+/**
+ * Navigate to the Vault and wait for its first workspace snapshot. The
+ * response listeners are installed before navigation so fast local requests
+ * cannot race past the readiness gate.
+ */
+export async function gotoVaultReady(page: Page) {
+  const treeResponse = page.waitForResponse(
+    (response) => response.request().method() === 'GET'
+      && new URL(response.url()).pathname === '/api/tree',
+    { timeout: VAULT_READY_TIMEOUT_MS },
+  )
+  const postsResponse = page.waitForResponse(
+    (response) => response.request().method() === 'GET'
+      && new URL(response.url()).pathname === '/api/posts',
+    { timeout: VAULT_READY_TIMEOUT_MS },
+  )
   await page.goto('/')
-  await expect(page.locator('button.ab-btn').first()).toBeVisible()
+  const [tree, posts] = await Promise.all([treeResponse, postsResponse])
+  expect(tree.ok(), `Vault tree request failed: ${tree.status()}`).toBe(true)
+  expect(posts.ok(), `Vault posts request failed: ${posts.status()}`).toBe(true)
+  await waitForVaultReady(page)
+}
+
+// The file tree is fetched at mount time; documents created through the REST
+// API after page load are invisible to it until the next load. Reload before
+// opening freshly created documents.
+export async function reloadApp(page: Page) {
+  await gotoVaultReady(page)
 }
 
 export async function openDoc(page: Page, slug: string) {

@@ -26,6 +26,7 @@ import {
   openAiRail,
   openDoc,
   openRecoveryDialog,
+  gotoVaultReady,
   reloadApp,
   seedRecoveryDraft,
   sendAi,
@@ -46,9 +47,12 @@ let chatBodies: AnyRecord[] = []
 test.beforeEach(async ({ page }) => {
   chatBodies = []
   await interceptAiChat(page, chatBodies)
-  await page.goto('/')
+  // Clear IndexedDB before mounting VaultView so Draft Store startup cannot
+  // race the database deletion. The preview route is same-origin but does
+  // not mount the Vault/Draft Store.
+  await page.goto('/__markdown-test?mode=reading')
   await clearDraftDatabase(page)
-  await expect(page.locator('button.ab-btn').first()).toBeVisible()
+  await gotoVaultReady(page)
 })
 
 test.afterAll(async ({ request }) => {

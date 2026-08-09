@@ -62,6 +62,7 @@ import {
   openAiRail,
   openDoc,
   raceSse,
+  gotoVaultReady,
   reloadApp,
   sendAi,
   setEditorContent,
@@ -71,9 +72,9 @@ const RUN_ID = String(Date.now())
 const createdPaths: string[] = []
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/__markdown-test?mode=reading')
   await clearDraftDatabase(page)
-  await expect(page.locator('button.ab-btn').first()).toBeVisible()
+  await gotoVaultReady(page)
 })
 
 test.afterAll(async ({ request }) => {
