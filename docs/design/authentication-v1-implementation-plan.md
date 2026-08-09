@@ -518,14 +518,14 @@ Add a reusable authenticated fixture under `e2e/fixtures` (exact filename to mat
 
 | Test area | Current behavior | Auth impact | Required fixture/change | Phase |
 | --- | --- | --- | --- | --- |
-| `server/__tests__` unit/service tests | Many use in-memory DB; route tests are anonymous | Protected app routes would return 401 | Add real auth helper; classify public/auth/pure tests; migrate route tests before middleware | 3–4 |
-| AI HTTP/provider tests | Local fake HTTP server; some call `aiRoutes` directly | Mounted `/api/ai/*` must require owner; provider 401 must remain local | Keep direct sub-router tests where appropriate; add authenticated mounted-route tests and AI-401 regression | 2–4 |
-| History integration | Real Git/filesystem lane, Windows serialized | Route calls need session while Git semantics remain unchanged | Use app-level authenticated helper; do not move tests out of History lane | 3–4 |
-| Recovery integration | Real filesystem/SQLite/process lane | No auth in production recovery algorithms; any HTTP child route needs session | Keep lane/config and isolated temp roots; use authenticated fixture only for route children | 3–4 |
-| Playwright general | One isolated Vite server, one worker, no storage state | `/vault` is guarded | Reusable setup/login/session fixture; auth specs cover real UX | 3, 6–7 |
-| Draft Store E2E | Dedicated port 4175 and isolated vault | Auth hydration must precede recovery discovery | Seed owner/session in fixture; add expiry/logout draft-preservation flows | 7 |
-| Visual tests | Static preview/reading pages | Auth pages may need separate non-sensitive visual coverage | Keep existing visual baseline lane; avoid changing Vault baseline unless required | 6–8 |
-| Docker smoke | Anonymous `/api/health` check | Health must remain public; setup requires token | Keep health smoke; add optional authenticated smoke/setup path without weakening liveness | 8 |
+| `server/__tests__` unit/service tests | Many use in-memory DB; route tests are anonymous | Protected app routes would return 401 | Add real auth helper; classify public/auth/pure tests; migrate route tests before middleware | 3, 5 |
+| AI HTTP/provider tests | Local fake HTTP server; some call `aiRoutes` directly | Mounted `/api/ai/*` must require owner; provider 401 must remain local | Keep direct sub-router tests where appropriate; add authenticated mounted-route tests and AI-401 regression | 3–5 |
+| History integration | Real Git/filesystem lane, Windows serialized | Route calls need session while Git semantics remain unchanged | Use app-level authenticated helper; do not move tests out of History lane | 3, 5 |
+| Recovery integration | Real filesystem/SQLite/process lane | No auth in production recovery algorithms; any HTTP child route needs session | Keep lane/config and isolated temp roots; use authenticated fixture only for route children | 3, 5 |
+| Playwright general | One isolated Vite server, one worker, no storage state | `/vault` is guarded | Reusable setup/login/session fixture; auth specs cover real UX | 3–7 |
+| Draft Store E2E | Dedicated port 4175 and isolated vault | Auth hydration must precede recovery discovery | Seed owner/session in fixture; migrate identity startup in the cutover; add expiry/logout draft-preservation flows | 3, 5, 7–8 |
+| Visual tests | Static preview/reading pages | Auth pages may need separate non-sensitive visual coverage | Keep existing visual baseline lane; avoid changing Vault baseline unless required | 4, 6–8 |
+| Docker smoke | Anonymous `/api/health` check | Health must remain public; setup requires token | Keep health smoke; add optional authenticated smoke/setup path without weakening liveness | 5, 8 |
 
 ## Security Regression Matrix
 
@@ -1146,13 +1146,13 @@ Rollout invariant for every commit: before commit 5, enforcement is inactive and
 | --- | --- | --- |
 | Client/server types | `npm run typecheck` | Every phase after code changes |
 | Fast tests | `npm run test:unit` | Every code phase |
-| History lane | `npm run test:history-integration` | Phases 3–8; preserve Windows serialization |
-| Recovery lane | `npm run test:recovery-integration` | Phases 3–8; preserve lane-local stress timeout |
+| History lane | `npm run test:history-integration` | Phases 3, 5; preserve Windows serialization |
+| Recovery lane | `npm run test:recovery-integration` | Phases 3, 5; preserve lane-local stress timeout |
 | Build | `npm run build` | Every phase after client/server build changes |
-| General browser | `npm run test:e2e` | Phases 3–8 |
-| Draft Store browser | `npm run test:e2e:draft-store` | Phases 3, 7–8 |
-| CI browser | Existing cross-platform command in `.github/workflows/ci.yml` | Phase 8 and release |
-| Visual | Existing macOS visual job | Phase 8; avoid unrelated baseline changes |
+| General browser | `npm run test:e2e` | Phases 3–7 |
+| Draft Store browser | `npm run test:e2e:draft-store` | Phases 3, 5, 7–8 |
+| CI browser | Existing cross-platform command in `.github/workflows/ci.yml` | Phases 3–7 and release |
+| Visual | Existing macOS visual job | Phases 4, 6–8; avoid unrelated baseline changes |
 | Docker | Existing `docker build` + anonymous `/api/health` smoke plus authenticated/default-origin checks | Phases 5 and 8 |
 | Security review | Route matrix, cookie/origin, logs, backup/session invalidation | Gates B–G |
 
