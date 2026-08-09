@@ -7,6 +7,8 @@ import type { Plugin } from 'vite'
 import app from './index.ts'
 import { CONTENT_DIR } from './paths.ts'
 import { getDb } from './db.ts'
+import { loadAuthConfig } from './auth/config.ts'
+import { initializeAuthRuntime } from './auth/runtime.ts'
 import { migrateVaultMetadata } from './metadataMigration.ts'
 import { recoverInterruptedOperations } from './crashRecovery.ts'
 import {
@@ -22,6 +24,12 @@ export function serverPlugin(): Plugin {
       try {
         // Reconcile operations interrupted by a previous crash BEFORE any
         // /api request is served (see server/crashRecovery.ts). Never throws.
+        const authOrigin = process.env.DOCUS_PUBLIC_ORIGIN ?? 'http://localhost:5173'
+        initializeAuthRuntime({
+          db: getDb(),
+          config: loadAuthConfig({ ...process.env, DOCUS_PUBLIC_ORIGIN: authOrigin }),
+          env: process.env,
+        })
         const recovery = await recoverInterruptedOperations(CONTENT_DIR, getDb())
         if (recovery.actions.length > 0) {
           console.log(`[docus] crash recovery: resolved ${recovery.actions.length} interrupted operation(s)`)

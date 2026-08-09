@@ -21,6 +21,8 @@ import {
   installVaultWriterShutdownHandlers,
 } from './vaultWriterOwnership.ts'
 import { resolveServerHost } from './prodConfig.ts'
+import { loadAuthConfig } from './auth/config.ts'
+import { initializeAuthRuntime } from './auth/runtime.ts'
 
 const PORT = Number(process.env.PORT ?? 3000)
 const HOST = resolveServerHost()
@@ -60,6 +62,16 @@ try {
   // See server/seed.ts for the rationale.
   await ensureInitialFolders(CONTENT_DIR)
   console.log(`[docus] content dir: ${CONTENT_DIR}`)
+
+  // Authentication is intentionally initialized as a narrow dependency seam
+  // in Phase 2. The global application boundary remains disabled until the
+  // later atomic cutover; auth routes can still use this runtime safely.
+  const authOrigin = process.env.DOCUS_PUBLIC_ORIGIN ?? `http://127.0.0.1:${PORT}`
+  initializeAuthRuntime({
+    db: getDb(),
+    config: loadAuthConfig({ ...process.env, DOCUS_PUBLIC_ORIGIN: authOrigin }),
+    env: process.env,
+  })
 
   // Reconcile operations interrupted by a previous crash (kill -9, power
   // loss, container stop) BEFORE the server accepts a single request.

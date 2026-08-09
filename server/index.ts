@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import aiRoutes from './ai/routes.js'
+import authRoutes from './auth/routes.js'
 import historyRoutes from './history/routes.js'
 import folderRoutes from './routes/folders.js'
 import healthRoutes from './routes/health.js'
@@ -14,6 +15,7 @@ const app = new Hono()
 export { __setMetadataDbForTesting }
 
 app.route('/', healthRoutes)
+app.route('/api/auth', authRoutes)
 app.route('/', metadataRoutes)
 app.route('/', folderRoutes)
 app.route('/', postRoutes)

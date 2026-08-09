@@ -1,0 +1,107 @@
+import type { Database as DatabaseT } from 'better-sqlite3'
+import {
+  BootstrapState,
+  type AuthLogger,
+} from './bootstrap.js'
+import {
+  defaultKdfGuard,
+  type KdfGuard,
+} from './kdfGuard.js'
+import {
+  AuthRateLimiter,
+  SETUP_FAILURE_THRESHOLD,
+  SETUP_FAILURE_WINDOW_MS,
+  SETUP_MAX_BUCKETS,
+  type RateLimiterOptions,
+} from './rateLimit.js'
+import type { AuthConfig } from './config.js'
+import { AuthService } from './service.js'
+
+export type AuthRuntime = {
+  readonly db: DatabaseT
+  readonly config: AuthConfig
+  readonly bootstrap: BootstrapState
+  readonly loginLimiter: AuthRateLimiter
+  readonly setupLimiter: AuthRateLimiter
+  readonly kdfGuard: KdfGuard
+  readonly service: AuthService
+}
+
+export type AuthRuntimeOptions = {
+  readonly db: DatabaseT
+  readonly config: AuthConfig
+  readonly env?: NodeJS.ProcessEnv
+  readonly logger?: AuthLogger
+  readonly kdfGuard?: KdfGuard
+  readonly loginLimiter?: AuthRateLimiter
+  readonly setupLimiter?: AuthRateLimiter
+  readonly rateLimiterOptions?: RateLimiterOptions
+  readonly now?: () => number
+}
+
+let currentRuntime: AuthRuntime | null = null
+
+export function createAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
+  const logger = options.logger ?? console.log
+  const environment = options.env ?? process.env
+  const bootstrap = BootstrapState.create({
+    db: options.db,
+    explicitToken: environment.DOCUS_SETUP_TOKEN,
+    logger,
+  })
+  const loginLimiter = options.loginLimiter
+    ?? new AuthRateLimiter(options.rateLimiterOptions)
+  const setupLimiter = options.setupLimiter
+    ?? new AuthRateLimiter({
+      ...options.rateLimiterOptions,
+      windowMs: Math.min(options.rateLimiterOptions?.windowMs ?? SETUP_FAILURE_WINDOW_MS, SETUP_FAILURE_WINDOW_MS),
+      threshold: Math.min(options.rateLimiterOptions?.threshold ?? SETUP_FAILURE_THRESHOLD, SETUP_FAILURE_THRESHOLD),
+      maxBuckets: Math.min(options.rateLimiterOptions?.maxBuckets ?? SETUP_MAX_BUCKETS, SETUP_MAX_BUCKETS),
+    })
+  const kdfGuard = options.kdfGuard ?? defaultKdfGuard
+  const service = new AuthService({
+    db: options.db,
+    bootstrap,
+    loginLimiter,
+    setupLimiter,
+    kdfGuard,
+    now: options.now,
+  })
+  const runtime: AuthRuntime = {
+    db: options.db,
+    config: options.config,
+    bootstrap,
+    loginLimiter,
+    setupLimiter,
+    kdfGuard,
+    service,
+  }
+
+  if (options.config.revokeSessionsOnStart) {
+    const count = options.db.prepare(`
+      UPDATE auth_sessions
+      SET revoked_at = COALESCE(revoked_at, ?)
+      WHERE revoked_at IS NULL
+    `).run(options.now?.() ?? Date.now()).changes
+    if (count > 0) logger(`[docus] authentication: revoked ${count} session(s) on startup`)
+  }
+  return runtime
+}
+
+export function initializeAuthRuntime(options: AuthRuntimeOptions): AuthRuntime {
+  if (currentRuntime) return currentRuntime
+  currentRuntime = createAuthRuntime(options)
+  return currentRuntime
+}
+
+export function getAuthRuntime(): AuthRuntime | null {
+  return currentRuntime
+}
+
+export function installAuthRuntimeForTesting(runtime: AuthRuntime): void {
+  currentRuntime = runtime
+}
+
+export function resetAuthRuntimeForTesting(): void {
+  currentRuntime = null
+}
