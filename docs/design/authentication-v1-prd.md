@@ -418,6 +418,23 @@ not expose a stable `vaultId` or other vault identity to unauthenticated
 callers. Any protected vault identity endpoint is a separate authenticated
 route.
 
+### `GET /api/vault/identity`
+
+Protected. After auth-status hydration succeeds, the workspace requests the
+stable instance identity needed to scope browser-local state such as tabs,
+Draft Store records, document identity, and recovery families:
+
+```json
+{
+  "vaultId": "<stable-instance-identity>"
+}
+```
+
+This endpoint is intentionally separate from public liveness. An unauthenticated
+request receives the normal `401` auth envelope with
+`code: "auth-session-required"`; an authenticated owner receives the identity.
+The value remains instance-scoped—v1 does not introduce per-user vaults.
+
 ### `GET /api/auth/status`
 
 Public and cache-disabled.
@@ -549,11 +566,13 @@ The browser cookie and server `expires_at` use the same 30-day bound. There is n
 `DOCUS_PUBLIC_ORIGIN` is the single source of truth for the browser-facing
 origin and cookie security mode. It must be an explicit absolute `http://` or
 `https://` origin; Docus never derives it from `Host` or arbitrary forwarded
-headers. An `https://` origin selects secure cookies. A non-loopback listener
-must have an explicit `https://` public origin; loopback-only local development
-may use an explicit `http://localhost` or `http://127.0.0.1` origin. There is no
-independent secure-cookie switch that can create an unsafe combination such as
-`https` public origin with `Secure=0`.
+headers. An `https://` origin selects secure cookies. An `http://` origin is
+allowed only for loopback browser origins (`localhost`, `127.0.0.1`, or `[::1]`);
+other HTTP public origins fail fast. Internal listener addresses do not decide
+this policy: Docker may listen on `0.0.0.0` inside the container while the
+browser-facing `DOCUS_PUBLIC_ORIGIN` remains `http://127.0.0.1:<published-port>`.
+There is no independent secure-cookie switch that can create an unsafe
+combination such as an `https` public origin with `Secure=0`.
 
 | Attribute | Policy |
 | --- | --- |
@@ -565,6 +584,12 @@ independent secure-cookie switch that can create an unsafe combination such as
 | `Domain` | Omitted. The secure production name therefore satisfies the `__Host-` requirements. |
 | Expiry | `Max-Age=2592000` and matching `Expires`. |
 
+The session middleware accepts only the cookie name selected by the current
+`DOCUS_PUBLIC_ORIGIN` security profile. HTTPS mode reads only
+`__Host-docus_session`; loopback HTTP mode reads only `docus_session`. Logout
+clears both names for cleanup, but the alternate name is never accepted as a
+fallback during authentication.
+
 `DOCUS_PUBLIC_ORIGIN` is an explicit canonical origin used by Origin checks,
 cookie selection, and deployment validation. A reverse proxy must preserve the
 browser's `Origin` header; Docus does not trust arbitrary `X-Forwarded-Proto`,
@@ -572,9 +597,10 @@ browser's `Origin` header; Docus does not trust arbitrary `X-Forwarded-Proto`,
 
 ### Local and proxy cases
 
-- `http://localhost` or `http://127.0.0.1` development uses the non-`__Host-` cookie because browsers reject `Secure` cookies over HTTP.
+- `http://localhost`, `http://127.0.0.1`, or `http://[::1]` development uses the non-`__Host-` cookie because browsers reject `Secure` cookies over HTTP.
+- The public origin, not the Node/Docker listener address, determines this profile; a container may bind `0.0.0.0` internally while publishing only a loopback origin to the host.
 - HTTPS bare-metal or Docker deployments set an `https://` `DOCUS_PUBLIC_ORIGIN` and use `__Host-docus_session`.
-- A non-loopback deployment without an explicit public origin fails fast at startup rather than guessing its browser origin.
+- An HTTP origin other than the loopback names above, or an invalid/missing origin for a remotely reachable deployment, fails fast at startup rather than guessing its browser origin.
 - A reverse proxy terminates TLS and forwards both SPA and `/api` traffic to the same Docus listener. Docus derives the secure-cookie profile from the explicit public origin, not from the local proxy hop.
 - A proxy must not cache authenticated HTML or JSON responses.
 
@@ -836,8 +862,10 @@ Using in-memory or isolated SQLite and local `app.fetch` requests:
 - Missing, expired, revoked, and disabled sessions return JSON `401`.
 - Logout revokes the session and clears the cookie; repeated logout is harmless.
 - `/api/health` remains public; all protected route families return `401` without a session.
+- `/api/health` returns liveness only; unauthenticated `/api/vault/identity` returns `401` with `code: "auth-session-required"`, while an authenticated owner receives a stable `vaultId` for browser-local scoping.
 - Authenticated requests retain existing route response behavior.
 - Cookie flags, expiry, cache headers, and no raw token/hash leakage are asserted.
+- The session middleware reads only the cookie name selected by the current origin security profile; the alternate secure/local name is never accepted as an authentication fallback.
 - Mismatched Origin or known cross-site Fetch Metadata is rejected for unsafe methods; same-origin JSON mutations and existing bodyless DELETEs work.
 - Login and setup throttling returns bounded `429` without permanent lockout.
 - A burst of at least 100 login/setup attempts never exceeds the configured KDF concurrency; the bounded queue returns safe overload responses rather than spawning unbounded scrypt work.
@@ -889,6 +917,7 @@ Auth tests must use local app/fake providers only and must not access the public
 | --- | --- | --- |
 | Static assets and SPA shell (`/assets/*`, `/`, `/login`, `/setup`, `/vault*`) | Public transport; protected UX | The browser must load the auth screen. Vue guards keep unauthenticated users out of the workspace, but the shell contains no vault data. |
 | `GET /api/health` | Public | Docker smoke, liveness, and operator checks; response is minimal and does not disclose stable vault identity. |
+| `GET /api/vault/identity` | Protected | Returns the stable instance `vaultId` used to scope browser-local tabs, Draft Store, document identity, and recovery families. |
 | `GET /api/auth/status` | Public | Lets the SPA hydrate auth/setup state. `Cache-Control: no-store`. |
 | `POST /api/auth/setup` | Public handler with bootstrap token | Creates the only owner once; token and transaction rules are enforced server-side. |
 | `POST /api/auth/login` | Public handler with throttling | Creates a session after credential verification. |
@@ -964,7 +993,7 @@ This design does not protect against a host user who can read the process enviro
 | KDF resource exhaustion | Concurrent guesses consume all Node memory/CPU | Shared bounded KDF concurrency and queue for setup, real, and dummy verification; safe overload response | 100+ concurrent-attempt stress test and concurrency instrumentation |
 | Owner lockout from throttling | Attackers prevent the owner from logging in | Failure buckets are accounted for after verification; a correct password is never rejected solely because a bucket is hot | Hot-bucket valid-login regression test |
 | Open redirect | Credential phishing or token leakage | Internal `/vault`/`/` redirect allowlist and normalization | Malicious scheme, host, `//`, backslash, encoded redirect tests |
-| Proxy/TLS misconfiguration | Cookies sent insecurely or setup exposed | Explicit `DOCUS_PUBLIC_ORIGIN` as the origin/security source, fail-fast non-loopback validation, no forwarded-header trust, deployment checklist | Configuration tests and Docker/proxy smoke review |
+| Proxy/TLS misconfiguration | Cookies sent insecurely or setup exposed | Explicit browser-facing `DOCUS_PUBLIC_ORIGIN` as the origin/security source, loopback-only HTTP validation, no forwarded-header trust, deployment checklist | Configuration tests and Docker/proxy smoke review |
 | Stale/expired sessions | Unexpected access or confusing UI | Server expiry/revocation checks, client 401 coordinator, no stale response overwrite | Expiry/revoke API and client state tests |
 | Unsaved editor loss after auth expiry | Owner loses local work | Draft Store flush before redirect, preserve IndexedDB records, recovery on relogin | Draft Store E2E with revoked session |
 | Existing E2E suite disruption | Slow/flaky CI or false failures | Reusable authenticated fixture; only auth specs type credentials; isolated setup per server | Full Playwright lanes and fixture tests |
@@ -1057,6 +1086,7 @@ A later architecture may add roles, ownership, sharing, per-user credentials, an
 - [ ] Logout revokes the server session and clears both secure and local cookie variants.
 - [ ] Expired, revoked, disabled, and missing sessions cannot access protected APIs.
 - [ ] `/api/health` remains available without authentication and does not disclose stable vault identity.
+- [ ] `/api/vault/identity` is protected, returns the stable instance `vaultId` only to an authenticated owner, and is used for browser-local tabs/draft/recovery scoping.
 - [ ] All Vault, posts/files, folders, metadata, links, AI, and History APIs require authentication.
 - [ ] Direct API requests receive the existing top-level `{ error, code }` JSON `401` with `code: "auth-session-required"`, not an HTML login redirect.
 - [ ] Frontend route guards improve UX, but removing or bypassing them cannot access protected server data.
