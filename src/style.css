@@ -614,7 +614,8 @@ body.brand-constellation-active * {
   gap: 6px;            /* search and theme toggle sit close together as a unit */
 }
 .nav-search,
-.theme-toggle {
+.theme-toggle,
+.nav-logout {
   width: 28px;
   height: 28px;
   background: transparent;
@@ -629,11 +630,22 @@ body.brand-constellation-active * {
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .nav-search:hover,
-.theme-toggle:hover {
+.theme-toggle:hover,
+.nav-logout:hover:not(:disabled) {
   color: var(--text-h);
   border-color: var(--border);
   background: var(--bg-soft);
 }
+.nav-logout {
+  width: auto;
+  min-width: 28px;
+  padding: 0 8px;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.nav-logout:disabled { cursor: wait; opacity: 0.6; }
 .nav-actions :where(.nav-search, .theme-toggle, .right-rail-toggle, .view-toggle) svg {
   display: block;
   width: 18px;

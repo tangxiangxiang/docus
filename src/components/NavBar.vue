@@ -9,9 +9,10 @@ import { ICON_EDIT, ICON_EYE, ICON_PANEL_RIGHT_OPEN, ICON_SCOPE_INBOX, ICON_SCOP
 import { useVaultLayout } from '../composables/vault/useVaultLayout'
 import { useI18n } from '../composables/useI18n'
 
-defineProps<{ isVault?: boolean }>()
+const props = defineProps<{ isVault?: boolean; logoutBusy?: boolean }>()
 const emit = defineEmits<{
   'open-search': []
+  logout: []
 }>()
 
 const { theme, toggle } = useTheme()
@@ -125,8 +126,12 @@ const SCOPE_ICONS: Record<string, string> = {
 </script>
 
 <template>
-  <header :class="['navbar', { 'is-vault': isVault }]">
-    <div :class="['navbar-inner', { container: !isVault, 'full-width': isVault }]">
+  <header
+    :class="['navbar', { 'is-vault': props.isVault }]"
+    :inert="props.logoutBusy || undefined"
+    :aria-busy="props.logoutBusy || undefined"
+  >
+    <div :class="['navbar-inner', { container: !props.isVault, 'full-width': props.isVault }]">
       <button
         type="button"
         class="brand"
@@ -141,7 +146,7 @@ const SCOPE_ICONS: Record<string, string> = {
       <!-- Scope filter: lives in the navbar (the file tree header is too
            narrow on 150px sidebars). Hidden outside the vault since the
            rest of the app doesn't have a file tree to filter. -->
-      <div v-if="isVault" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
+      <div v-if="props.isVault" class="scope-chips" role="tablist" :aria-label="t('nav.scope_label')">
         <button
           v-for="root in PROTECTED_ROOTS"
           :key="root"
@@ -159,7 +164,7 @@ const SCOPE_ICONS: Record<string, string> = {
       <div class="nav-spacer" />
       <div class="nav-actions">
         <button
-          v-if="isVault"
+          v-if="props.isVault"
           class="nav-search"
           type="button"
           :title="t('nav.search_hint')"
@@ -182,7 +187,7 @@ const SCOPE_ICONS: Record<string, string> = {
         />
       </button>
         <button
-          v-if="isVault && viewModeApi"
+          v-if="props.isVault && viewModeApi"
           class="view-toggle"
           :class="{ 'is-read': isReadMode }"
           type="button"
@@ -194,7 +199,7 @@ const SCOPE_ICONS: Record<string, string> = {
           <span class="view-toggle-icon" aria-hidden="true" v-html="isReadMode ? ICON_EDIT : ICON_EYE" />
         </button>
         <button
-          v-if="isVault"
+          v-if="props.isVault"
           class="right-rail-toggle"
           type="button"
           :title="t(rightRailCollapsed ? 'nav.right_rail_open' : 'nav.right_rail_close')"
@@ -203,6 +208,19 @@ const SCOPE_ICONS: Record<string, string> = {
           @click="toggleRightRail"
         >
           <span class="right-rail-toggle-icon" aria-hidden="true" v-html="ICON_PANEL_RIGHT_OPEN" />
+        </button>
+        <button
+          v-if="props.isVault"
+          class="nav-logout"
+          type="button"
+          :disabled="props.logoutBusy"
+          :aria-busy="props.logoutBusy || undefined"
+          :title="t('nav.logout')"
+          :aria-label="t('nav.logout')"
+          data-testid="logout-button"
+          @click="emit('logout')"
+        >
+          {{ props.logoutBusy ? t('auth.logging_out') : t('nav.logout') }}
         </button>
       </div>
     </div>

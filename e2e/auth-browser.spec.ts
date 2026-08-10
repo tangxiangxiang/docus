@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 const SETUP_TOKEN = 'docus-auth-browser-setup-token-0123456789'
 
-test('real setup and login UI paths establish the Phase 2 session', async ({ page, context }) => {
+test('real setup, logout, and login UI paths establish the session', async ({ page }) => {
   let setupBody: Record<string, unknown> | null = null
   let loginBody: Record<string, unknown> | null = null
   page.on('request', (request) => {
@@ -50,12 +50,11 @@ test('real setup and login UI paths establish the Phase 2 session', async ({ pag
   expect(JSON.stringify(browserStorage)).not.toContain(SETUP_TOKEN)
   expect(JSON.stringify(browserStorage)).not.toContain('browser-owner-password-strong-123')
 
-  // Test preparation uses the browser context boundary directly; no product
-  // No Logout UI is introduced in Phase 6; Phase 7 owns the complete logout transition.
-  await context.clearCookies()
-  expect((await page.request.get('/api/vault/identity')).status()).toBe(401)
-  await page.goto('/vault')
+  const logoutButton = page.locator('[data-testid="logout-button"]')
+  await expect(logoutButton).toBeVisible()
+  await logoutButton.click()
   await expect(page).toHaveURL(/\/login(?:\?|$)/)
+  expect((await page.request.get('/api/vault/identity')).status()).toBe(401)
   await expect(page.locator('.navbar')).toHaveCount(0)
   await expect(page.locator('#login-username')).toBeFocused()
   await expect(page.getByRole('button', { name: /logout|sign out/i })).toHaveCount(0)

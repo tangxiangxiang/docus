@@ -7,6 +7,7 @@ import { useSplitterDrag } from '../composables/vault/useSplitterDrag'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useI18n } from '../composables/useI18n'
+import { useAuth, type WorkspaceAuthTransitionAdapter } from '../composables/useAuth'
 import { useEditorTabs } from '../composables/vault/useEditorTabs'
 import { createDraftStore } from '../composables/vault/draft-recovery/draftStore'
 import { createUnsavedDraftPersistence } from '../composables/vault/draft-recovery/useUnsavedDraftPersistence'
@@ -158,8 +159,9 @@ const tagsFilter = ref('')
    default grid-auto-flow: row, wrap the splitter to row 2 (status
    bar), which is what produced the gray area the user reported. */
 const toast = useToast()
-const { confirm } = useConfirm()
+const { confirm, confirmCancellable } = useConfirm()
 const { locale, t } = useI18n()
+const auth = useAuth()
 const emptyActions = computed(() => [
   { label: t('vault.command_palette'), keys: shortcuts.format('mod+P') },
   { label: t('vault.toggle_sidebar'), keys: shortcuts.format('mod+B') },
@@ -259,6 +261,9 @@ const {
   prepareDocumentMutation, renameOpenDocuments, removeOpenDocuments,
   reorderOpenDocuments,
   applyLifecycleReferenceWrites,
+  getAuthTransitionSnapshot,
+  prepareAuthTransition,
+  saveAllForActiveLogout,
 } = useEditorTabs({
   vaultId: authoritativeVaultId,
   selectPanel,
@@ -541,6 +546,131 @@ const recoveryManagement = createDraftRecoveryManagement({
     }
   },
 })
+
+let cancelActiveLogoutPrompt: (() => void) | null = null
+async function confirmActiveLogout(
+  message: string,
+  detail: string,
+  options: Parameters<typeof confirmCancellable>[2],
+): Promise<boolean> {
+  const pending = confirmCancellable(message, detail, options)
+  cancelActiveLogoutPrompt = pending.cancel
+  try {
+    return await pending.promise
+  } finally {
+    if (cancelActiveLogoutPrompt === pending.cancel) cancelActiveLogoutPrompt = null
+  }
+}
+
+/**
+ * The workspace is the only owner that knows how editor saves and browser
+ * recovery persistence fit together. Auth owns the session transition, but
+ * it never reaches into these objects directly; this narrow adapter is the
+ * handoff that keeps the two lifecycles ordered.
+ */
+const workspaceAuthTransition: WorkspaceAuthTransitionAdapter = {
+  async prepareActiveLogout(isCurrent) {
+    const preflight = getAuthTransitionSnapshot()
+    if (preflight.unsafe.length > 0 || draftPersistence.hasPendingWrites()) {
+      const confirmed = await confirmActiveLogout(
+        t('auth.logout_pending'),
+        t('auth.logout_pending'),
+        {
+          confirmLabel: t('auth.logout_anyway'),
+          cancelLabel: t('common.cancel'),
+          destructive: true,
+        },
+      )
+      if (!confirmed || !isCurrent()) return { status: 'cancelled' }
+    }
+
+    const transition = await prepareAuthTransition('logout')
+    try {
+      if (!isCurrent()) {
+        // A session-expiry event may have taken ownership while the
+        // active-save phase was waiting. Do not resume autosave in that
+        // case; expiry must flush drafts without starting another server
+        // mutation.
+        transition.release(false)
+        return { status: 'cancelled' }
+      }
+      const saves = await saveAllForActiveLogout(isCurrent)
+      if (!isCurrent()) {
+        transition.release(false)
+        return { status: 'cancelled' }
+      }
+      let flushed = false
+      try {
+        flushed = await draftPersistence.flushAll()
+      } catch {
+        flushed = false
+      }
+      const unsafe = saves.unsafe.length > 0 || !flushed
+      // Never keep the editor barrier while asking the user what to do.
+      // The App shell remains inert for the active transition, so releasing
+      // here cannot create a new mutation before the decision is complete.
+      transition.release(false)
+      const ready = () => ({ status: 'ready' as const, resume: () => transition.release(true) })
+      if (!unsafe) return ready()
+
+      const confirmed = await confirmActiveLogout(
+        !flushed ? t('auth.logout_flush_failed') : t('auth.logout_unsafe'),
+        !flushed ? t('auth.logout_flush_failed') : t('auth.logout_unsafe'),
+        {
+          confirmLabel: t('auth.logout_anyway'),
+          cancelLabel: t('common.cancel'),
+          destructive: true,
+        },
+      )
+      if (!confirmed || !isCurrent()) {
+        // The barrier was deliberately released before this prompt. A
+        // cancellation must nevertheless re-arm ordinary autosave for any
+        // remaining dirty tabs.
+        transition.release(isCurrent())
+        return { status: 'cancelled' }
+      }
+      return ready()
+    } catch (error) {
+      transition.release(isCurrent())
+      throw error
+    }
+  },
+
+  async prepareSessionExpiry(isCurrent) {
+    let transition = await prepareAuthTransition('expired')
+    while (isCurrent()) {
+      let flushed = false
+      try {
+        flushed = await draftPersistence.flushAll()
+      } catch {
+        flushed = false
+      }
+      transition.release(false)
+      if (flushed || !isCurrent()) return { status: 'ready' }
+
+      // Expiry cannot be cancelled back into an authenticated workspace. A
+      // negative answer means retry the browser-only flush, not resume edits.
+      const continueToLogin = await confirm(
+        t('auth.expiry_flush_failed'),
+        t('auth.expiry_flush_failed'),
+        {
+          confirmLabel: t('auth.continue_to_login'),
+          cancelLabel: t('auth.retry_draft_flush'),
+          destructive: true,
+        },
+      )
+      if (continueToLogin || !isCurrent()) return { status: 'ready' }
+      transition = await prepareAuthTransition('expired')
+    }
+    return { status: 'ready' }
+  },
+  cancelActiveLogout() {
+    cancelActiveLogoutPrompt?.()
+  },
+}
+const unregisterWorkspaceAuthTransition = auth.registerWorkspaceTransition(workspaceAuthTransition)
+onBeforeUnmount(unregisterWorkspaceAuthTransition)
+
 function recoveryItem(recoveryId: string) {
   return draftRecovery.items.value.find((item) => item.recoveryId === recoveryId) ?? null
 }

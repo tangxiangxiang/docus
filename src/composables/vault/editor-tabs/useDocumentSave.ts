@@ -20,6 +20,30 @@ export interface DocumentMutationBarrier {
   rollback(): void
 }
 
+export type AuthTransitionKind = 'logout' | 'expired'
+
+export type AuthSaveIssueReason =
+  | 'dirty'
+  | 'saving'
+  | 'external'
+  | 'offline'
+  | 'error'
+  | 'unavailable'
+
+export interface AuthTransitionSnapshot {
+  unsafe: ReadonlyArray<{ path: string; reason: AuthSaveIssueReason }>
+}
+
+export interface AuthSaveAllResult {
+  attempted: readonly string[]
+  unsafe: ReadonlyArray<{ path: string; reason: AuthSaveIssueReason }>
+}
+
+export interface AuthTransitionHandle {
+  readonly kind: AuthTransitionKind
+  release(resumeAutosave?: boolean): void
+}
+
 export interface ApplyRecoveredDraftInput {
   draft: UnsavedDraft
   expectedDiskRaw: string
@@ -48,6 +72,8 @@ export function useDocumentSave(options: {
   const commitBarriers = new Map<string, { revision: number; raw: string }>()
   const lifecycleLocks = new Set<string>()
   let lifecycleGlobalLock = false
+  let authTransitionKind: AuthTransitionKind | null = null
+  let authTransitionPromise: Promise<AuthTransitionHandle> | null = null
   let disposed = false
   const draftOwners = new WeakMap<Tab, DraftOwner>()
 
@@ -113,7 +139,8 @@ export function useDocumentSave(options: {
   }
 
   function scheduleSave(path: string, delay = 800) {
-    if (disposed || lifecycleGlobalLock || commitBarriers.has(path) || lifecycleLocks.has(path)) return
+    if (disposed || authTransitionKind !== null || lifecycleGlobalLock
+      || commitBarriers.has(path) || lifecycleLocks.has(path)) return
     const tab = options.tabs.value.find((candidate) => candidate.path === path)
     if (!tab || hasUnresolvedExternal(tab)) return
     const current = saveTimers.get(path)
@@ -132,11 +159,13 @@ export function useDocumentSave(options: {
     return true
   }
 
-  async function saveLatest(path: string): Promise<void> {
+  async function saveLatest(path: string, allowAuthTransition = false): Promise<void> {
     if (disposed) return
     const tab = options.tabs.value.find((candidate) => candidate.path === path)
     if (!tab || hasUnresolvedExternal(tab)) return
-    if (lifecycleGlobalLock || lifecycleLocks.has(path)) {
+    if ((authTransitionKind !== null && !allowAuthTransition)
+      || (lifecycleGlobalLock && !allowAuthTransition)
+      || lifecycleLocks.has(path)) {
       tab.saveStatus = tab.revision === tab.savedRevision ? 'idle' : 'dirty'
       return
     }
@@ -220,19 +249,25 @@ export function useDocumentSave(options: {
     }
   }
 
-  async function doSave(path: string): Promise<void> {
-    if (disposed || lifecycleGlobalLock || lifecycleLocks.has(path)) return
+  async function doSave(path: string, allowAuthTransition = false): Promise<void> {
+    if (disposed
+      || (authTransitionKind !== null && !allowAuthTransition)
+      || (lifecycleGlobalLock && !allowAuthTransition)
+      || lifecycleLocks.has(path)) return
     const tab = options.tabs.value.find((candidate) => candidate.path === path)
     if (!tab || hasUnresolvedExternal(tab)) return
     const active = savePromises.get(path)
     if (active) return active
     const promise = (async () => {
       do {
-        await saveLatest(path)
+        await saveLatest(path, allowAuthTransition)
         const tab = options.tabs.value.find((candidate) => candidate.path === path)
         const barrier = commitBarriers.get(path)
         if (barrier && (!tab || tab.savedRevision >= barrier.revision)) break
-        if (disposed || lifecycleGlobalLock || lifecycleLocks.has(path)
+        if (disposed
+            || (authTransitionKind !== null && !allowAuthTransition)
+            || (lifecycleGlobalLock && !allowAuthTransition)
+            || lifecycleLocks.has(path)
             || !tab || hasUnresolvedExternal(tab)
             || ['error', 'offline'].includes(tab.saveStatus)
             || tab.revision === tab.savedRevision) break
@@ -243,7 +278,12 @@ export function useDocumentSave(options: {
   }
 
   function onEditorChange(path: string, value: string) {
-    if (disposed) return
+    // Existing file/history transactions intentionally allow the editor to
+    // keep recording a dirty revision while their global barrier is held;
+    // the barrier resumes that autosave after rollback/commit. Auth
+    // transitions are the stricter quiescent case: user edits must not
+    // create a new protected mutation while logout/expiry is committing.
+    if (disposed || authTransitionKind !== null) return
     const tab = options.tabs.value.find((candidate) => candidate.path === path)
     if (!tab) return
     const external = hasUnresolvedExternal(tab)
@@ -359,6 +399,105 @@ export function useDocumentSave(options: {
     await doSave(path)
   }
 
+  function authTransitionSnapshot(): AuthTransitionSnapshot {
+    const unsafe: Array<{ path: string; reason: AuthSaveIssueReason }> = []
+    for (const tab of options.tabs.value) {
+      if (tab.loading || tab.loadError) {
+        unsafe.push({ path: tab.path, reason: 'unavailable' })
+        continue
+      }
+      if (hasUnresolvedExternal(tab)) {
+        unsafe.push({ path: tab.path, reason: 'external' })
+        continue
+      }
+      if (tab.saveStatus === 'offline') {
+        unsafe.push({ path: tab.path, reason: 'offline' })
+        continue
+      }
+      if (tab.saveStatus === 'error') {
+        unsafe.push({ path: tab.path, reason: 'error' })
+        continue
+      }
+      if (tab.savingRevision !== null || tab.saveStatus === 'saving') {
+        unsafe.push({ path: tab.path, reason: 'saving' })
+        continue
+      }
+      if (tab.raw !== tab.originalRaw || tab.revision !== tab.savedRevision) {
+        unsafe.push({ path: tab.path, reason: 'dirty' })
+      }
+    }
+    return { unsafe }
+  }
+
+  async function prepareAuthTransition(kind: AuthTransitionKind): Promise<AuthTransitionHandle> {
+    if (authTransitionPromise) return authTransitionPromise
+    const pending = (async (): Promise<AuthTransitionHandle> => {
+      if (disposed) {
+        return { kind, release() {} }
+      }
+      authTransitionKind = kind
+      lifecycleGlobalLock = true
+      for (const path of saveTimers.keys()) cancelScheduledSave(path)
+      const activePromises = [...savePromises.values()]
+      if (activePromises.length > 0) await Promise.allSettled(activePromises)
+      for (const path of saveTimers.keys()) cancelScheduledSave(path)
+
+      let released = false
+      let resumed = false
+      const resumeScheduledAutosave = () => {
+        if (resumed || disposed) return
+        resumed = true
+        for (const tab of options.tabs.value) {
+          if (tab.revision !== tab.savedRevision) scheduleSave(tab.path)
+        }
+      }
+      const handle: AuthTransitionHandle = {
+        kind,
+        release(resumeAutosave = true) {
+          if (released) {
+            // A transition may have to release its mutation barrier before
+            // asking the owner about an unsafe result. A later cancellation
+            // must still be able to resume ordinary autosave without
+            // reacquiring that barrier.
+            if (resumeAutosave) {
+              if (authTransitionKind === kind) authTransitionKind = null
+              resumeScheduledAutosave()
+            }
+            return
+          }
+          released = true
+          lifecycleGlobalLock = false
+          if (authTransitionPromise === pending) authTransitionPromise = null
+          if (resumeAutosave) {
+            if (authTransitionKind === kind) authTransitionKind = null
+            resumeScheduledAutosave()
+          }
+        },
+      }
+      return handle
+    })()
+    authTransitionPromise = pending
+    if (disposed) authTransitionPromise = null
+    return pending
+  }
+
+  async function saveAllForActiveLogout(
+    isCurrent: () => boolean = () => true,
+  ): Promise<AuthSaveAllResult> {
+    const attempted: string[] = []
+    const paths = options.tabs.value.map((tab) => tab.path)
+    for (const path of paths) {
+      if (!isCurrent()) break
+      cancelScheduledSave(path)
+      const tab = options.tabs.value.find((candidate) => candidate.path === path)
+      if (!tab || tab.loading || tab.loadError || hasUnresolvedExternal(tab)) continue
+      if (tab.revision === tab.savedRevision && tab.savingRevision === null) continue
+      attempted.push(path)
+      await doSave(path, true)
+    }
+    return { attempted, unsafe: authTransitionSnapshot().unsafe }
+  }
+
   async function prepareDocumentMutation(
     paths: readonly string[],
     lockAll = false,
@@ -457,6 +596,8 @@ export function useDocumentSave(options: {
     commitBarriers.clear()
     lifecycleLocks.clear()
     lifecycleGlobalLock = false
+    authTransitionKind = null
+    authTransitionPromise = null
   }
 
   return {
@@ -466,6 +607,9 @@ export function useDocumentSave(options: {
     applyRecoveredDraft,
     handleBeforeUnload,
     doSaveNow,
+    getAuthTransitionSnapshot: authTransitionSnapshot,
+    prepareAuthTransition,
+    saveAllForActiveLogout,
     prepareDocumentMutation,
     prepareHistoryCommit,
     prepareHistoryRestore,

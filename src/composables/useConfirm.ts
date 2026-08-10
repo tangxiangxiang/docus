@@ -22,15 +22,46 @@ export interface ConfirmOptions {
   destructive?: boolean
 }
 
+export interface CancellableConfirm {
+  promise: Promise<boolean>
+  cancel: () => void
+}
+
 const queue = ref<ConfirmRequest[]>([])
 let nextId = 1
 
 export function useConfirm() {
+  function confirmCancellable(
+    message: string,
+    detail?: string,
+    options: ConfirmOptions = {},
+  ): CancellableConfirm {
+    let settled = false
+    let resolveRequest!: (ok: boolean) => void
+    const promise = new Promise<boolean>((resolve) => { resolveRequest = resolve })
+    const id = nextId++
+    const cancel = () => {
+      if (settled) return
+      settled = true
+      queue.value = queue.value.filter((request) => request.id !== id)
+      resolveRequest(false)
+    }
+    queue.value = [...queue.value, {
+      id,
+      message,
+      detail,
+      ...options,
+      resolve: (ok: boolean) => {
+        if (settled) return
+        settled = true
+        resolveRequest(ok)
+      },
+    }]
+    return { promise, cancel }
+  }
+
   function confirm(message: string, detail?: string, options: ConfirmOptions = {}): Promise<boolean> {
-    return new Promise((resolve) => {
-      const id = nextId++
-      queue.value = [...queue.value, { id, message, detail, ...options, resolve }]
-    })
+    return confirmCancellable(message, detail, options).promise
   }
   function answer(id: number, ok: boolean) {
     const req = queue.value.find((r) => r.id === id)
@@ -38,5 +69,5 @@ export function useConfirm() {
     queue.value = queue.value.filter((r) => r.id !== id)
     req.resolve(ok)
   }
-  return { queue, confirm, answer }
+  return { queue, confirm, confirmCancellable, answer }
 }

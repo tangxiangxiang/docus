@@ -51,6 +51,28 @@ describe('createUnsavedDraftPersistence', () => {
     vi.restoreAllMocks()
   })
 
+  it('reports a durable transition flush and exposes pending work read-only', async () => {
+    const persistence = createUnsavedDraftPersistence({ store })
+    persistence.schedule(snapshot('flush', 'pending'))
+    expect(persistence.hasPendingWrites()).toBe(true)
+
+    await expect(persistence.flushAll()).resolves.toBe(true)
+    expect(persistence.hasPendingWrites()).toBe(false)
+    expect((await store.getDraft('vault-1', 'flush'))?.content).toBe('pending')
+  })
+
+  it('reports a failed transition flush without discarding the pending channel', async () => {
+    const failingStore: DraftStore = {
+      ...store,
+      saveDraft: vi.fn().mockRejectedValue(new Error('storage unavailable')),
+    }
+    const persistence = createUnsavedDraftPersistence({ store: failingStore })
+    persistence.schedule(snapshot('failed', 'pending'))
+
+    await expect(persistence.flushAll()).resolves.toBe(false)
+    expect(persistence.hasPendingWrites()).toBe(true)
+  })
+
   it('debounces each document independently and snapshots input synchronously', async () => {
     const persistence = createUnsavedDraftPersistence({ store, now: () => 100 })
     const a = snapshot('a', 'a1')

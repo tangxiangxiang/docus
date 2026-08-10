@@ -46,7 +46,25 @@ describe('NavBar — view-toggle button', () => {
       ['theme-toggle'],
       ['view-toggle'],
       ['right-rail-toggle'],
+      ['nav-logout'],
     ])
+  })
+
+  it('emits a logout intent without owning the auth request', async () => {
+    const { wrapper } = mountNavBar()
+    await wrapper.find('[data-testid="logout-button"]').trigger('click')
+    expect(wrapper.emitted('logout')).toHaveLength(1)
+  })
+
+  it('renders a disabled busy logout button during the transition', () => {
+    const api = makeViewModeApi()
+    const wrapper = mount(NavBar, {
+      props: { isVault: true, logoutBusy: true },
+      global: { provide: { [VaultViewModeKey as symbol]: api } },
+    })
+    const button = wrapper.find('[data-testid="logout-button"]')
+    expect((button.element as HTMLButtonElement).disabled).toBe(true)
+    expect(button.attributes('aria-busy')).toBe('true')
   })
 
   it('clicking the button calls viewModeApi.toggle()', async () => {

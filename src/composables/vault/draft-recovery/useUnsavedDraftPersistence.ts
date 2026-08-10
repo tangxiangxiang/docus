@@ -55,7 +55,11 @@ export interface DraftOwner {
 export interface UnsavedDraftPersistence {
   schedule(snapshot: DraftBufferSnapshot): DraftOwner | null
   flush(vaultId: string, documentId: string): Promise<boolean>
-  flushAll(): Promise<void>
+  /** Flush every live persistence channel and report whether all channels
+   *  reached a durable state. */
+  flushAll(): Promise<boolean>
+  /** Read-only transition probe; it never mutates the Draft Store. */
+  hasPendingWrites(): boolean
   markClean(owner: DraftOwner, acknowledgedRevision: number): Promise<void>
   returnedToBaseline(vaultId: string, documentId: string): Promise<void>
   discard(owner: DraftOwner): Promise<boolean>
@@ -2427,9 +2431,20 @@ export function createUnsavedDraftPersistence(
     return queueTargetWrite(owner, cloneSnapshot(snapshot), allowDisposed)
   }
 
-  async function flushAllInternal(allowDisposed = false): Promise<void> {
-    await Promise.all([...entries.entries()].map(async ([serialized, entry]) => {
-      if (!entry.latestSnapshot) return
+  async function flushAllInternal(allowDisposed = false): Promise<boolean> {
+    const results = await Promise.all([...entries.entries()].map(async ([serialized, entry]) => {
+      if (!entry.latestSnapshot) {
+        if (!entry.pendingWrite) {
+          return entry.mode.kind !== 'primary' || entry.persistedDraft === null
+        }
+        const settled = await entry.pendingWrite.catch(() => false)
+        if (!settled) return false
+        // A failed primary cleanup can leave the previously persisted draft
+        // attached to an otherwise empty entry. Treat that as an unresolved
+        // transition rather than claiming the channel is durable merely
+        // because the delete promise has settled.
+        return entry.mode.kind !== 'primary' || entry.persistedDraft === null
+      }
       // Delegate to `flush()`, which picks the right channel per entry:
       // conflict-pinned entries persist a still-pending snapshot as a
       // conflict record (never the primary record — a primary write
@@ -2439,8 +2454,16 @@ export function createUnsavedDraftPersistence(
       // conflict-channel edit on pagehide/dispose — the bytes would
       // exist neither in the primary store nor the conflict store.
       const [vaultId, documentId] = JSON.parse(serialized) as [string, string]
-      await flush(vaultId, documentId, allowDisposed)
+      const result = await flush(vaultId, documentId, allowDisposed)
+      // A channel can already have a settled snapshot while its previous
+      // store operation is still in flight (for example markClean/delete).
+      // Await that operation as well so auth transitions never tear down the
+      // workspace between the snapshot decision and the durable write.
+      const pending = entry.pendingWrite
+      if (pending) return result && await pending.catch(() => false)
+      return result
     }))
+    return results.every(Boolean)
   }
 
   /** Arm a bounded backoff retry after a failed settlement. This owns
@@ -3752,6 +3775,20 @@ export function createUnsavedDraftPersistence(
     return { identityIds }
   }
 
+  function hasPendingWrites(): boolean {
+    return [...entries.values()].some((entry) => (
+      entry.timer !== null
+      || entry.pendingWrite !== null
+      || entry.latestSnapshotNeedsWrite
+      || entry.fileTransaction !== null
+      || entry.emptyFamilyRecovery !== null
+      || entry.settleRetryAttempt !== null
+      || (entry.latestSnapshot === null
+        && entry.mode.kind === 'primary'
+        && entry.persistedDraft !== null)
+    ))
+  }
+
   function onPageHide(): void {
     void flushAllInternal().catch(() => {})
   }
@@ -3784,6 +3821,7 @@ export function createUnsavedDraftPersistence(
     captureDeleteConfirmation,
     findTrackedIdentitiesByPaths,
     getDraftCleanupProtection,
+    hasPendingWrites,
     invalidateOwner,
     invalidate,
     dispose,

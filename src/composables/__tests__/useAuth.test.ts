@@ -3,10 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../../lib/auth-api', () => ({
   getAuthStatus: vi.fn(),
   login: vi.fn(),
+  logout: vi.fn(),
   setupOwner: vi.fn(),
 }))
 
-import { getAuthStatus, login as loginApi, setupOwner as setupApi } from '../../lib/auth-api'
+import { getAuthStatus, login as loginApi, logout as logoutApi, setupOwner as setupApi } from '../../lib/auth-api'
 import { captureAuthSessionGeneration, observeAuthSessionResponse } from '../../lib/auth-session'
 import { useAuth } from '../useAuth'
 
@@ -16,6 +17,7 @@ beforeEach(() => {
   auth.resetAuthForTesting()
   vi.mocked(getAuthStatus).mockReset()
   vi.mocked(loginApi).mockReset()
+  vi.mocked(logoutApi).mockReset()
   vi.mocked(setupApi).mockReset()
 })
 
@@ -134,5 +136,145 @@ describe('useAuth singleton coordinator', () => {
     expect(auth.sessionExpired.value).toBe(true)
     expect(expired).toHaveBeenCalledOnce()
     stop()
+  })
+
+  it('prepares the workspace before revoking a clean active session', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({
+      authenticated: true,
+      setupRequired: false,
+      user: { id: 1, username: 'owner' },
+    })
+    await auth.ensureHydrated()
+    vi.mocked(logoutApi).mockResolvedValue(undefined)
+    const order: string[] = []
+    const unregister = auth.registerWorkspaceTransition({
+      prepareActiveLogout: async () => {
+        order.push('workspace')
+        return { status: 'ready' }
+      },
+      prepareSessionExpiry: async () => ({ status: 'ready' }),
+    })
+
+    const result = await auth.logout()
+    order.push('after')
+    expect(result).toEqual({ status: 'logged-out', revokeConfirmed: true })
+    expect(order).toEqual(['workspace', 'after'])
+    expect(logoutApi).toHaveBeenCalledOnce()
+    expect(auth.state.value).toBe('unauthenticated')
+    unregister()
+  })
+
+  it('cancels active logout without revoking or changing auth state', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({
+      authenticated: true,
+      setupRequired: false,
+      user: { id: 1, username: 'owner' },
+    })
+    await auth.ensureHydrated()
+    vi.mocked(logoutApi).mockResolvedValue(undefined)
+    const unregister = auth.registerWorkspaceTransition({
+      prepareActiveLogout: async () => ({ status: 'cancelled' }),
+      prepareSessionExpiry: async () => ({ status: 'ready' }),
+    })
+
+    await expect(auth.logout()).resolves.toEqual({ status: 'cancelled' })
+    expect(logoutApi).not.toHaveBeenCalled()
+    expect(auth.state.value).toBe('authenticated')
+    expect(auth.transitionKind.value).toBeNull()
+    unregister()
+  })
+
+  it('keeps an authenticated workspace recoverable when revoke fails', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({
+      authenticated: true,
+      setupRequired: false,
+      user: { id: 1, username: 'owner' },
+    })
+    await auth.ensureHydrated()
+    const revokeError = new Error('auth unavailable')
+    vi.mocked(logoutApi).mockRejectedValue(revokeError)
+    const resume = vi.fn()
+    const unregister = auth.registerWorkspaceTransition({
+      prepareActiveLogout: async () => ({ status: 'ready' as const, resume }),
+      prepareSessionExpiry: async () => ({ status: 'ready' as const }),
+    })
+
+    await expect(auth.logout()).rejects.toBe(revokeError)
+    expect(resume).toHaveBeenCalledOnce()
+    expect(auth.state.value).toBe('authenticated')
+    expect(auth.transitionKind.value).toBeNull()
+    unregister()
+  })
+
+  it('delays expiry notification until the workspace has flushed', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({
+      authenticated: true,
+      setupRequired: false,
+      user: { id: 1, username: 'owner' },
+    })
+    await auth.ensureHydrated()
+    let releaseExpiry!: () => void
+    const expiryReady = new Promise<void>((resolve) => { releaseExpiry = resolve })
+    const prepareSessionExpiry = vi.fn(async () => {
+      await expiryReady
+      return { status: 'ready' as const }
+    })
+    const unregister = auth.registerWorkspaceTransition({
+      prepareActiveLogout: async () => ({ status: 'ready' }),
+      prepareSessionExpiry,
+    })
+    const expired = vi.fn()
+    const stop = auth.onSessionExpired(expired)
+
+    await observeAuthSessionResponse(
+      new Response(JSON.stringify({ code: 'auth-session-required' }), { status: 401 }),
+    )
+    expect(auth.state.value).toBe('unauthenticated')
+    expect(auth.transitionKind.value).toBe('expired')
+    expect(prepareSessionExpiry).toHaveBeenCalledOnce()
+    expect(expired).not.toHaveBeenCalled()
+
+    releaseExpiry()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(expired).toHaveBeenCalledOnce()
+    expect(auth.transitionKind.value).toBeNull()
+    stop()
+    unregister()
+  })
+
+  it('lets session expiry take ownership of an in-flight active logout', async () => {
+    vi.mocked(getAuthStatus).mockResolvedValue({
+      authenticated: true,
+      setupRequired: false,
+      user: { id: 1, username: 'owner' },
+    })
+    await auth.ensureHydrated()
+    let finishLogoutPreparation!: () => void
+    const preparation = new Promise<void>((resolve) => { finishLogoutPreparation = resolve })
+    const prepareSessionExpiry = vi.fn(async () => ({ status: 'ready' as const }))
+    const cancelActiveLogout = vi.fn()
+    const unregister = auth.registerWorkspaceTransition({
+      prepareActiveLogout: async () => {
+        await preparation
+        return { status: 'ready' as const }
+      },
+      prepareSessionExpiry,
+      cancelActiveLogout,
+    })
+    const logoutPending = auth.logout()
+    await Promise.resolve()
+
+    await observeAuthSessionResponse(
+      new Response(JSON.stringify({ code: 'auth-session-required' }), { status: 401 }),
+    )
+    expect(cancelActiveLogout).toHaveBeenCalledOnce()
+    finishLogoutPreparation()
+
+    await expect(logoutPending).resolves.toEqual({ status: 'expired' })
+    await Promise.resolve()
+    expect(logoutApi).not.toHaveBeenCalled()
+    expect(prepareSessionExpiry).toHaveBeenCalledOnce()
+    unregister()
   })
 })

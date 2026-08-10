@@ -176,7 +176,7 @@ export async function login(input: LoginRequest): Promise<AuthenticatedResponse>
   }))
 }
 
-/** Low-level wrapper reserved for the later logout transition phase. */
+/** Low-level session revoke wrapper; workspace coordination belongs to useAuth. */
 export async function logout(): Promise<void> {
   const response = await fetch('/api/auth/logout', {
     method: 'POST',

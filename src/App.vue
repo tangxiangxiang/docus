@@ -10,12 +10,14 @@ import { useAuth } from './composables/useAuth'
 import { shouldShowNormalChrome } from './lib/auth-chrome'
 import { useI18n } from './composables/useI18n'
 import { ensureVaultIdentity, getVaultIdentityState } from './lib/vault-identity'
+import { useToast } from './composables/useToast'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuth()
 const vaultIdentity = getVaultIdentityState()
 const { t } = useI18n()
+const toast = useToast()
 /* Vault routes AND dev previews both set `fullWidth: true` so the
    navbar sits at its shorter height. But only vault routes should
    lock the outer scroll — the dev previews (/__icon-preview,
@@ -63,6 +65,19 @@ async function retryVaultIdentity(): Promise<void> {
   }
 }
 
+async function onLogout(): Promise<void> {
+  if (auth.transitionKind.value) return
+  try {
+    const result = await auth.logout()
+    if (result.status === 'logged-out') {
+      if ('warning' in result) toast.info(t('auth.logout_revoke_unconfirmed'), 6000)
+      await router.replace({ name: 'login' })
+    }
+  } catch {
+    toast.error(t('auth.unavailable'))
+  }
+}
+
 /* The vault uses an internal scrollable surface (FileTree, Editor,
    Preview). It must NOT let the outer document scroll, otherwise
    two scrollbars fight and the page wobbles. We toggle a body
@@ -105,7 +120,13 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
 </script>
 
 <template>
-  <NavBar v-if="showNormalChrome" :is-vault="isVault" @open-search="onOpenSearch" />
+  <NavBar
+    v-if="showNormalChrome"
+    :is-vault="isVault"
+    :logout-busy="auth.transitionKind.value === 'logout'"
+    @open-search="onOpenSearch"
+    @logout="onLogout"
+  />
   <section
     v-if="!showRoutedContent"
     :class="['auth-bootstrap-surface', { 'is-error': bootstrapFailure }]"
@@ -137,6 +158,8 @@ provide(VaultViewModeKey, { mode: viewMode, set: setViewMode, toggle: toggleView
     <main
       :class="['container', { 'full-width': r.meta.fullWidth }]"
       :style="{ '--navbar-h': isVault ? '36px' : '56px' }"
+      :inert="auth.transitionKind.value !== null || undefined"
+      :aria-busy="auth.transitionKind.value !== null || undefined"
     >
       <component :is="Component" />
     </main>
